@@ -1,3 +1,4 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -155,6 +156,7 @@ export async function notificaSaldoBasso(
 ): Promise<void> {
   try {
     if (!deveNotificareGenitori(opts.operazione)) {
+    await ritiraPendingOperazione(supabase, { tipo: 'mensa_saldo_basso', entitaTipo: 'alunno', entitaId: opts.alunnoId, alunnoIds: [opts.alunnoId], operazione: opts.operazione, destinatario: 'genitore' })
       logEvento('mensa', 'info', { operazione: 'notificaSaldoBasso', esito: 'rettifica-storica-silenziosa', alunno_id: opts.alunnoId })
       return
     }

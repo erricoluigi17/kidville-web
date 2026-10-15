@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 
 // =============================================================================
 // `POST /api/gallery` — NESSUNA DIDASCALIA ai contenuti nuovi, e un avviso ai genitori
@@ -98,7 +99,9 @@ beforeEach(() => {
   h.insert.mockImplementation((riga: Record<string, unknown>) => ({
     select: () => ({ single: async () => ({ data: { id: 'media-1', ...riga }, error: null }) }),
   }))
-  h.rpc.mockResolvedValue({ data: { ok: true, created: true, media: { id: UPLOAD } }, error: null })
+  h.rpc.mockImplementation(async (nome: string) => nome === 'notifiche_galleria_accoda'
+    ? { data: null, error: { code: 'PGRST202', message: 'public.notifiche_galleria_accoda missing from schema cache' } }
+    : { data: { ok: true, created: true, media: { id: UPLOAD } }, error: null })
 })
 
 describe('la didascalia del client si ignora: la riga nasce con `caption` NULL', () => {
@@ -123,8 +126,9 @@ describe('la didascalia del client si ignora: la riga nasce con `caption` NULL',
   it('percorso idempotente (con `upload_id`): il payload della RPC ha `caption: null`', async () => {
     const res = await POST(post(corpo({ upload_id: UPLOAD })))
     expect(res.status).toBe(201)
-    expect(h.rpc).toHaveBeenCalledOnce()
-    const payload = h.rpc.mock.calls[0][1].p_payload as Record<string, unknown>
+    const pubblicazioni = h.rpc.mock.calls.filter(c => c[0] === 'gallery_publish_photo')
+    expect(pubblicazioni).toHaveLength(1)
+    const payload = pubblicazioni[0][1].p_payload as Record<string, unknown>
     expect(payload.caption).toBeNull()
     expect(JSON.stringify(h.rpc.mock.calls[0][1])).not.toContain(NOME_FILE)
     // L'impronta della RPC copre l'intero payload: dev'essere lo stesso a ogni replay,
@@ -133,7 +137,7 @@ describe('la didascalia del client si ignora: la riga nasce con `caption` NULL',
     await POST(post(corpo({ upload_id: UPLOAD, caption: 'tutt-altro-nome.jpg' })))
     await POST(post(corpo({ upload_id: UPLOAD, caption: null })))
     await POST(post(corpo({ upload_id: UPLOAD, caption: undefined })))
-    const payloadDelleRipetizioni = h.rpc.mock.calls.map((c) => c[1].p_payload)
+    const payloadDelleRipetizioni = h.rpc.mock.calls.filter(c => c[0] === 'gallery_publish_photo').map((c) => c[1].p_payload)
     expect(payloadDelleRipetizioni).toHaveLength(3)
     for (const p of payloadDelleRipetizioni) expect(p).toEqual(payload)
   })
@@ -173,7 +177,7 @@ describe('l’avviso ai genitori: testo fisso, mai la didascalia né il nome del
       // L'INSEGNANTE, non il media: è la chiave del debounce per insegnante (#131).
       entitaId: OWNER,
       bufferMin: 30,
-      debounce: true,
+      debounce: false,
     })
   })
 

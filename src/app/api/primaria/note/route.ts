@@ -1,3 +1,4 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { oggiRoma, politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { NextRequest, NextResponse } from 'next/server'
@@ -247,54 +248,40 @@ async function caricaBersagli(
 async function ritiraNotificheInCoda(
   supabase: SupabaseClient,
   gruppoId: string | null,
-  alunniEliminati: string[],
+  originali: Pick<RigaNota, 'id' | 'alunno_id' | 'data_evento' | 'creato_il'>[],
   operazione: string,
 ): Promise<number> {
-  // Le note nate prima di questo intervento non portano `entita_id`: non c'è
-  // modo di riconoscerne la notifica senza toccare quelle di altre note.
   if (!gruppoId) return 0
   const campi = { operazione, entita_tipo: 'nota', gruppo_id: gruppoId }
-
-  const { data: restanti, error: errRestanti } = await supabase
-    .from('note_disciplinari')
-    .select('alunno_id')
-    .eq('nota_gruppo_id', gruppoId)
+  const { data: restanti, error: errRestanti } = await supabase.from('note_disciplinari').select('*').eq('nota_gruppo_id', gruppoId)
   if (errRestanti) {
     logEvento('notifica', 'error', { ...campi, esito: 'ritiro-notifiche-restanti-non-lette' }, errRestanti)
     return 0
   }
-  const alunniRestanti = [...new Set(((restanti ?? []) as { alunno_id: string }[]).map((r) => r.alunno_id))]
-
-  let destinatari: string[] | null = null
-  if (alunniRestanti.length > 0) {
+  const giornoDi = (n: Pick<RigaNota, 'data_evento' | 'creato_il'>) => n.data_evento ?? (n.creato_il ? dataEventoDaIstante(n.creato_il) : '1970-01-01')
+  const sostituite = new Set(originali.map(n => n.id))
+  let n = 0
+  for (const giorno of new Set(originali.map(giornoDi))) {
+    const alunniEliminati = [...new Set(originali.filter(n => giornoDi(n) === giorno).map(n => n.alunno_id))]
+    const alunniRestanti = [...new Set(((restanti ?? []) as RigaNota[]).filter(n => !sostituite.has(n.id) && giornoDi(n) === giorno).map(n => n.alunno_id))]
     const [eliminati, rimasti] = await Promise.all([
       getGenitoriDiAlunniEsito(supabase, alunniEliminati),
       getGenitoriDiAlunniEsito(supabase, alunniRestanti),
     ])
     if (!eliminati.completo || !rimasti.completo) {
       logEvento('notifica', 'warn', { ...campi, esito: 'ritiro-notifiche-saltato-legami-incompleti' })
-      return 0
+      continue
     }
     const tengono = new Set([...rimasti.perAlunno.values()].flat())
-    destinatari = [...new Set([...eliminati.perAlunno.values()].flat())].filter((g) => !tengono.has(g))
-    if (destinatari.length === 0) return 0
+    const destinatari = [...new Set([...eliminati.perAlunno.values()].flat())].filter(g => !tengono.has(g))
+    if (!destinatari.length) continue
+    const q = supabase.from('notifiche').delete()
+      .eq('entita_tipo', 'nota').eq('entita_id', gruppoId).in('tipo', [...TIPI_NOTIFICA_NOTA])
+      .in('utente_id', destinatari).is('push_inviata_il', null)
+    const { data: ritirate, error } = await filtraNotifichePerGiorni(q, [giorno]).select('id')
+    if (error) logEvento('notifica', 'error', { ...campi, esito: 'ritiro-notifiche-fallito' }, error)
+    else n += (ritirate ?? []).length
   }
-
-  let q = supabase
-    .from('notifiche')
-    .delete()
-    .eq('entita_tipo', 'nota')
-    .eq('entita_id', gruppoId)
-    .in('tipo', [...TIPI_NOTIFICA_NOTA])
-    .is('push_inviata_il', null)
-  if (destinatari) q = q.in('utente_id', destinatari)
-  const { data: ritirate, error } = await q.select('id')
-  if (error) {
-    // `error`: la nota non c'è più, ma il suo avviso partirà lo stesso.
-    logEvento('notifica', 'error', { ...campi, esito: 'ritiro-notifiche-fallito' }, error)
-    return 0
-  }
-  const n = ((ritirate ?? []) as unknown[]).length
   logEvento('notifica', 'info', { ...campi, esito: 'notifiche-nota-ritirate', n })
   return n
 }
@@ -331,6 +318,7 @@ async function allineaNotificheInCoda(
     testo: string | undefined
     richiedeFirma: boolean | undefined
     operazione: string
+    giorni: string[]
   },
 ): Promise<number> {
   const { gruppoId, alunniModificati, testo, richiedeFirma, operazione } = opts
@@ -362,7 +350,7 @@ async function allineaNotificheInCoda(
     .in('tipo', [...TIPI_NOTIFICA_NOTA])
     .is('push_inviata_il', null)
   if (destinatari) q = q.in('utente_id', destinatari)
-  const { data: allineate, error } = await q.select('id')
+  const { data: allineate, error } = await filtraNotifichePerGiorni(q, opts.giorni).select('id')
   if (error) {
     // `error`: la nota è cambiata, ma l'avviso partirà col contenuto di prima.
     logEvento('notifica', 'error', { ...campi, esito: 'notifica-in-coda-non-allineata' }, error)
@@ -655,26 +643,22 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
       return operazioneNonRiuscita()
     }
 
-    if (cambiaData) await ritiraNotificheInCoda(supabase, t.nota.nota_gruppo_id, [...new Set(cambiate.map(n => n.alunno_id))], operazione)
-    if (politicaModifica.sopprimiGenitori && !cambiaData && t.nota.nota_gruppo_id) {
-      const genitori = await getGenitoriDiAlunniEsito(supabase, [...new Set(cambiate.map(n => n.alunno_id))])
-      if (genitori.completo) {
-        const idsGenitori = [...new Set([...genitori.perAlunno.values()].flat())]
-        if (idsGenitori.length > 0) {
-          const { error: codaErr } = await supabase.from('notifiche').delete().eq('entita_tipo', 'nota').eq('entita_id', t.nota.nota_gruppo_id).in('utente_id', idsGenitori).in('giorno_competenza', giorniOriginali).is('push_inviata_il', null)
-          if (codaErr) logEvento('notifica', 'error', { operazione, esito: 'rettifica-nota-coda-non-ritirata' }, codaErr)
-        }
-      } else logEvento('notifica', 'error', { operazione, esito: 'rettifica-nota-destinatari-non-risolti' })
+    if (cambiaData || politicaModifica.sopprimiGenitori) {
+      await ritiraNotificheInCoda(supabase, t.nota.nota_gruppo_id, cambiate, operazione)
     }
-    const allineate = cambiaData || politicaModifica.sopprimiGenitori ? 0 : await allineaNotificheInCoda(supabase, {
-      gruppoId: t.nota.nota_gruppo_id,
-      // «tutti» (o nota senza gruppo): ogni avviso del gruppo. «Solo questo
-      // alunno» su una nota di gruppo: solo i genitori degli alunni modificati.
-      alunniModificati: t.gruppo ? null : [...new Set(cambiate.map((n) => n.alunno_id))],
-      testo: patch.testo,
-      richiedeFirma: patch.richiede_firma ?? undefined,
-      operazione,
-    })
+    let allineate = 0
+    if (!cambiaData && !politicaModifica.sopprimiGenitori) {
+      for (const giorno of giorniOriginali) {
+        allineate += await allineaNotificheInCoda(supabase, {
+          gruppoId: t.nota.nota_gruppo_id,
+          alunniModificati: [...new Set(cambiate.filter(n => voceDi(n, t.sectionId, t.scuolaId).dataEvento === giorno).map(n => n.alunno_id))],
+          testo: patch.testo,
+          richiedeFirma: patch.richiede_firma ?? undefined,
+          operazione,
+          giorni: [giorno],
+        })
+      }
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -758,7 +742,7 @@ export const DELETE = withRoute('primaria/note:DELETE', async (request: NextRequ
     const ritirate = await ritiraNotificheInCoda(
       supabase,
       t.nota.nota_gruppo_id,
-      [...new Set(via.map((r) => r.alunno_id))],
+      eliminate,
       operazione,
     )
 

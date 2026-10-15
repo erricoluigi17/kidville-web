@@ -41,7 +41,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       qb.select = () => qb
       qb.update = (p: unknown) => { op.verbo = 'update'; op.payload = p; return qb }
       qb.delete = () => { op.verbo = 'delete'; return qb }
-      for (const m of ['eq', 'is', 'not', 'in']) qb[m] = (...a: unknown[]) => { op.filtri.push([m, ...a]); return qb }
+      for (const m of ['eq', 'is', 'not', 'in', 'or']) qb[m] = (...a: unknown[]) => { op.filtri.push([m, ...a]); return qb }
       qb.maybeSingle = async () =>
         tabella === 'presenze' ? { data: h.rigaPresenza, error: h.erroreLettura } : { data: null, error: null }
       const risultato = () => {

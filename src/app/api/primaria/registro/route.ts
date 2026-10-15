@@ -1,3 +1,4 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
@@ -1351,7 +1352,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
       // è `ON DELETE CASCADE` (misurato su `pg_constraint` il 2026-09-25). Un solo
       // DELETE, quindi atomico: mai una firma rimasta senza i suoi destinatari —
       // che la farebbe leggere come assegnata a tutta la classe.
-      const { data: cancellate, error: delErr } = await supabase
+      const { data: cancellate, error: delErr } = eliminazioneStorica?.firma ? { data: eliminazioneStorica.eliminate, error: null } : await supabase
         .from('firme_docenti')
         .delete()
         .eq('id', firma.id)
@@ -1377,7 +1378,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
           const perAlunno = await getGenitoriDiAlunni(supabase, destinatari.map((d) => d.alunno_id))
           const genitori = [...new Set([...perAlunno.values()].flat())]
           if (genitori.length) {
-            const { data: ritirate, error: ritiroErr } = await supabase
+            const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(supabase
               .from('notifiche')
               .delete()
               .eq('tipo', 'compiti')
@@ -1385,8 +1386,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
               .eq('entita_id', lezione.id)
               .eq('corpo', firma.compiti_propri.slice(0, 140))
               .in('utente_id', genitori)
-              .is('push_inviata_il', null)
-              .select('id')
+              .is('push_inviata_il', null), [String(lezione.data).slice(0, 10)]).select('id')
             if (ritiroErr) {
               ritiroRiuscito = false
               logEvento('notifica', 'error', { operazione, esito: 'ritiro-compiti-fallito', tipo: 'compiti', firma_id: firma.id }, ritiroErr)
@@ -1527,14 +1527,13 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
 
     // La notifica «nuovi compiti» ancora in coda si ritira; quella partita resta.
     let notificheRitirate = 0
-    const { data: ritirate, error: ritiroErr } = await supabase
+    const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(supabase
       .from('notifiche')
       .delete()
       .eq('tipo', 'compiti')
       .eq('entita_tipo', 'registro')
       .eq('entita_id', lezione.id)
-      .is('push_inviata_il', null)
-      .select('id')
+      .is('push_inviata_il', null), [String(lezione.data).slice(0, 10)]).select('id')
     if (ritiroErr) {
       // `error` benché l'eliminazione sia riuscita: l'avviso partirà per compiti
       // che non esistono più.

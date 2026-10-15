@@ -1,3 +1,4 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile } from '@/lib/primaria/rettifica-storica';
 import type { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -228,13 +229,12 @@ export async function annullaAppelloAlunno(
 
     // La revoca viene DOPO la scrittura riuscita: ritirare l'avviso e poi non
     // riuscire ad annullare lascerebbe un'assenza registrata senza avviso.
-    const { error: revocaErr } = await supabase
+    const { error: revocaErr } = await filtraNotifichePerGiorni(supabase
         .from('notifiche')
         .delete()
         .eq('tipo', 'assenza_non_comunicata')
         .eq('entita_id', alunnoId)
-        .eq('giorno_competenza', data)
-        .is('push_inviata_il', null);
+        .is('push_inviata_il', null), [data]);
     if (revocaErr) {
         // `error` benché l'annullamento sia riuscito: l'avviso resta in coda e
         // partirà per un appello che non esiste più.

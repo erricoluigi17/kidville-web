@@ -77,6 +77,7 @@ vi.mock('@/lib/forms/degrado-sede', () => ({
         ['PGRST204', '42703'].includes(e?.code ?? ''),
 }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
+vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/destinatari', () => ({
     genitoriDiAlunni: h.genitoriDiAlunni,
     genitoriDiClassi: h.genitoriDiClassi,
@@ -90,7 +91,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return {
             rpc(nome: string, args: Record<string, unknown>) {
                 h.rpcChiamate.push({ nome, args })
-                return Promise.resolve({ data: { ok: true }, error: null })
+                return Promise.resolve({ data: null, error: { code: 'PGRST202', message: `public.${nome} missing from schema cache` } })
             },
             storage: {
                 from(bucket: string) {
@@ -319,14 +320,18 @@ describe('il contratto del corpo', () => {
     })
 })
 
-describe('la pubblicazione di una FOTO non cambia di una riga', () => {
-    it('nessuna copia, nessuna RPC, stessa riga di prima (con la didascalia nulla)', async () => {
+describe('la pubblicazione di una FOTO conserva i gate e aggiunge la provenienza dell’avviso', () => {
+    it('nessuna copia né RPC video; stessa riga di prima e RPC dedicata alle notifiche', async () => {
         const res = await POST(
             post({ file_url: 'uploads/ed1/1.jpg', file_type: 'foto', scuola_id: SEDE, tag_students: [ALU_1] }),
         )
         expect(res.status).toBe(201)
         expect(h.storageToccato).toEqual([])
-        expect(h.rpcChiamate).toEqual([])
+        expect(h.rpcChiamate).toEqual([{ nome: 'notifiche_galleria_accoda', args: {
+            p_scuola_id: SEDE, p_uploaded_by: DOCENTE, p_media_id: MEDIA,
+            p_utente_ids: ['g1', 'g2'], p_buffer_min: 30,
+            p_politica_operazione: expect.objectContaining({ sopprimiGenitori: false }),
+        } }])
         expect(h.insertRecord[0].file_url).toBe('uploads/ed1/1.jpg')
         expect(h.insertRecord[0].file_type).toBe('foto')
         expect(h.insertRecord[0].caption).toBeNull()

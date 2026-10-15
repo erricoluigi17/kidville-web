@@ -9,6 +9,7 @@ vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: h.sede, resolveScuo
 vi.mock('@/lib/gallery/tag-scope', () => ({ assertTagStudentsInScope: h.scope }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: h.consenso }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notify }))
+vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ genitoriDiAlunni: h.destinatari, genitoriDiClassi: h.destinatari, genitoriDiScuola: h.destinatari }))
 vi.mock('@/lib/logging/logger', () => ({ logErrore: h.log, logEvento: h.log, logOk: h.log }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => ({
@@ -32,7 +33,9 @@ beforeEach(() => {
   h.consenso.mockResolvedValue([])
   h.destinatari.mockResolvedValue([ALTRO])
   h.notify.mockResolvedValue(undefined)
-  h.rpc.mockResolvedValue({ data: { ok: true, created: true, media: { id: UPLOAD } }, error: null })
+  h.rpc.mockImplementation(async (nome: string) => nome === 'notifiche_galleria_accoda'
+    ? { data: null, error: { code: 'PGRST202', message: 'public.notifiche_galleria_accoda missing from schema cache' } }
+    : { data: { ok: true, created: true, media: { id: UPLOAD } }, error: null })
   h.insert.mockReturnValue({ select: () => ({ single: async () => ({ data: { id: ALTRO }, error: null }) }) })
 })
 describe('POST foto · protocollo idempotente dopo tutti i gate', () => {
@@ -48,7 +51,9 @@ describe('POST foto · protocollo idempotente dopo tutti i gate', () => {
   })
   it('richieste concorrenti notificano solo il vincitore della RPC', async () => {
     h.rpc.mockResolvedValueOnce({ data: { ok: true, created: true, media: { id: UPLOAD } }, error: null })
-    h.rpc.mockResolvedValue({ data: { ok: true, created: false, media: { id: UPLOAD } }, error: null })
+    h.rpc.mockImplementation(async (nome: string) => nome === 'notifiche_galleria_accoda'
+      ? { data: null, error: { code: 'PGRST202', message: 'public.notifiche_galleria_accoda missing from schema cache' } }
+      : { data: { ok: true, created: false, media: { id: UPLOAD } }, error: null })
     const risultati = await Promise.all([POST(req()), POST(req()), POST(req())])
     expect(risultati.map(r => r.status).sort()).toEqual([200, 200, 201])
     expect(h.notify).toHaveBeenCalledOnce()
@@ -123,7 +128,7 @@ describe('POST foto · protocollo idempotente dopo tutti i gate', () => {
   it('client legacy senza upload_id mantiene il contratto 201', async () => {
     const legacy = { file_url: BODY.file_url, scuola_id: SEDE }
     expect((await POST(req(legacy))).status).toBe(201)
-    expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.rpc.mock.calls.map(c => c[0])).toEqual(['notifiche_galleria_accoda'])
     expect(h.insert).toHaveBeenCalledOnce()
   })
 })

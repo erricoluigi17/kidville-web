@@ -57,6 +57,7 @@ vi.mock('@/lib/news/sanitizza', () => ({
   sanificaContenuto: (...a: unknown[]) => h.sanificaContenuto(...a),
 }))
 vi.mock('@/lib/news/notifiche', () => ({
+  ritiraPendingNews: vi.fn(async () => undefined),
   notificaNewsPubblicata: (...a: unknown[]) => h.notificaNewsPubblicata(...a),
   genitoriDiGrado: (...a: unknown[]) => h.genitoriDiGrado(...a),
   destinatariNews: (...a: unknown[]) => h.destinatariNews(...a),

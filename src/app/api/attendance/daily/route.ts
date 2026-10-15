@@ -1,3 +1,4 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, proiettaRiga } from '@/lib/primaria/rettifica-storica';
 import { politicaNotificaOperazione, puoCorreggereStorico, istanteNelGiornoRoma } from '@/lib/storici/retroattivita';
 import { NextRequest, NextResponse } from 'next/server';
@@ -412,7 +413,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         // L'asimmetria è tutta qui: sbagliare per eccesso di silenzio costa una
         // notifica, sbagliare per eccesso di zelo costa la fiducia in tutte.
         try {
-            if (stato === 'assente' && !primaErr && prima?.stato !== 'assente') {
+            if (stato === 'assente' && !politica.sopprimiGenitori && !primaErr && prima?.stato !== 'assente') {
                 await notificaEvento(supabase, {
                     tipo: 'assenza_non_comunicata',
                     operazione: politica,
@@ -426,7 +427,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                     bufferMin: 10,
                     debounce: true,
                 });
-            } else if (stato !== 'assente' && (primaErr || prima?.stato === 'assente')) {
+            } else if (politica.sopprimiGenitori || (stato !== 'assente' && (primaErr || prima?.stato === 'assente'))) {
                 // REVOCA: l'appello è stato corretto entro il buffer di 10' e la notifica
                 // pending va tolta dalla coda prima che il cron la spedisca.
                 //
@@ -435,13 +436,12 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                 // coprire — e il fallimento della revoca è il caso peggiore dei due: il genitore
                 // riceve "tuo figlio è stato segnato assente" per un'assenza che la maestra ha
                 // già corretto. Non una notifica mancata: una notifica FALSA.
-                const { error: revocaErr } = await supabase
+                const { error: revocaErr } = await filtraNotifichePerGiorni(supabase
                     .from('notifiche')
                     .delete()
                     .eq('tipo', 'assenza_non_comunicata')
                     .eq('entita_id', alunno_id)
-                    .eq('giorno_competenza', data)
-                    .is('push_inviata_il', null);
+                    .is('push_inviata_il', null), [data]);
 
                 if (revocaErr) {
                     // `error` benché la risposta sia 200: la riga resta in coda e la push

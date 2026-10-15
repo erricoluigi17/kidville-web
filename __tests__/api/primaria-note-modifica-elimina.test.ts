@@ -109,6 +109,9 @@ function notifica(id: string, utente: string, extra: Riga = {}): Riga {
     entita_tipo: 'nota',
     entita_id: GRUPPO,
     push_inviata_il: null,
+    creato_il: IERI,
+    giorno_competenza: null,
+    politica_operazione: null,
     ...extra,
   }
 }
@@ -598,4 +601,24 @@ describe('concorrenza delle note firmate', () => {
     expect(ricezioni()).toContain(NOTA_1)
     expect(h.db.storici_revisioni ?? []).toHaveLength(0)
   })
+})
+
+it.each([false,true])('revisione legacy: correzione nota ieri ritira solo giorno originale, cambio data=%s',async sposta=>{
+ come('segreteria')
+ notaDb(NOTA_1)!.data_evento='2026-09-09'
+ const base={giorno_competenza:null,politica_operazione:null,creato_il:'2026-09-09T21:55:00Z',invio_programmato_il:'2026-09-09T22:05:00Z'}
+ h.db.notifiche=[
+  notifica('legacy-ieri',GENITORE_1,base),
+  notifica('legacy-altro-giorno',GENITORE_1,{...base,creato_il:'2026-09-08T08:00:00Z',invio_programmato_il:'2026-09-08T08:10:00Z'}),
+  notifica('legacy-oggi',GENITORE_1,{...base,creato_il:'2026-09-10T08:00:00Z',invio_programmato_il:'2026-09-10T08:10:00Z'}),
+  notifica('inviata-ieri',GENITORE_1,{...base,push_inviata_il:'2026-09-09T22:06:00Z'}),
+  notifica('altra-entita',GENITORE_1,{...base,entita_id:ALTRO_GRUPPO}),
+  notifica('nuova-meta-ieri',GENITORE_1,{...base,giorno_competenza:'2026-09-09'})
+ ]
+ const res=await patch({id:NOTA_1,testo:'Rettifica fittizia',ambito:'alunno',...(sposta?{data:'2026-09-10'}:{})})
+ expect(res.status).toBe(200);expect(notaDb(NOTA_1)?.testo).toBe('Rettifica fittizia')
+ if(sposta)expect(notaDb(NOTA_1)?.data_evento).toBe('2026-09-10')
+ const ids=(h.db.notifiche as Riga[]).map(r=>r.id)
+ expect(ids).not.toContain('legacy-ieri');expect(ids).not.toContain('nuova-meta-ieri')
+ expect(ids).toEqual(expect.arrayContaining(['legacy-altro-giorno','legacy-oggi','inviata-ieri','altra-entita']))
 })

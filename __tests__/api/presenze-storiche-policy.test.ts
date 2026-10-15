@@ -4,13 +4,14 @@ import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 const h = vi.hoisted(() => ({ db: {} as DBFinto, user: {} as AppUser }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: h.user }) }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertSezioneInScope: async () => null, assertAlunniInSezione: async () => null }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db) }))
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ genitoriDiAlunni: async () => ['genitore'] }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/logging/logger', async originale => ({ ...await originale<Record<string, unknown>>(), logEvento: vi.fn(), logErrore: vi.fn() }))
 import { POST, DELETE } from '@/app/api/attendance/daily/route'
+import { POST as primariaPost, DELETE as primariaDelete } from '@/app/api/primaria/appello/route'
 const ALUNNO = '11111111-1111-4111-8111-111111111111'
 const req = (metodo: string, giorno = '2026-10-14', stato = 'assente') => new NextRequest(`http://test/api/attendance/daily?alunno_id=${ALUNNO}&data=${giorno}&versioneAttesa=0`, { method: metodo, ...(metodo === 'POST' ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alunno_id: ALUNNO, versioneAttesa: 0, data: giorno, stato, orario_entrata: stato === 'assente' ? null : '2026-10-15T08:00:00Z' }) } : {}) })
 beforeEach(() => {
@@ -21,6 +22,29 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('appello storico staff: timestamp e notifiche della giornata giusta', () => {
+  it.each(['daily-presente', 'daily-assente', 'daily-delete', 'primaria-presente', 'primaria-assente', 'primaria-delete'])('%s ritira legacy e metadati della sola giornata originale, anche restando assente', async percorso => {
+    h.db.presenze[0].stato = 'assente'
+    const sectionId = '22222222-2222-4222-8222-222222222222'
+    h.db.presenze[0].section_id = sectionId
+    h.db.sections = [{ id: sectionId, scuola_id: 'sede', school_type: 'primaria' }]
+    h.db.alunni[0].section_id = sectionId
+    const base = { utente_id: 'genitore', tipo: 'assenza_non_comunicata', entita_id: ALUNNO, push_inviata_il: null, giorno_competenza: null, politica_operazione: null, creato_il: '2026-10-14T21:55:00Z', invio_programmato_il: '2026-10-14T22:05:00Z' }
+    h.db.notifiche.push(
+      { ...base, id: 'legacy-ieri' },
+      { ...base, id: 'meta-ieri', giorno_competenza: '2026-10-14', creato_il: '2026-10-15T09:00:00Z' },
+      { ...base, id: 'legacy-altro', creato_il: '2026-10-13T09:00:00Z' },
+      { ...base, id: 'legacy-oggi', creato_il: '2026-10-15T09:00:00Z' },
+      { ...base, id: 'gia-inviata', push_inviata_il: '2026-10-14T22:06:00Z' },
+      { ...base, id: 'altro-alunno', entita_id: 'altro-alunno' },
+    )
+    const stato = percorso.endsWith('assente') ? 'assente' : 'presente'
+    const risposta = percorso === 'daily-delete' ? await DELETE(req('DELETE'))
+      : percorso.startsWith('daily-') ? await POST(req('POST', '2026-10-14', stato))
+        : percorso === 'primaria-delete' ? await primariaDelete(new NextRequest(`http://test/api/primaria/appello?sectionId=${sectionId}&alunnoId=${ALUNNO}&data=2026-10-14&versioneAttesa=0`, { method: 'DELETE' }))
+          : await primariaPost(new NextRequest('http://test/api/primaria/appello', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId, alunnoId: ALUNNO, data: '2026-10-14', stato, versioneAttesa: 0 }) }))
+    expect(risposta.status).toBe(200)
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['oggi', 'legacy-altro', 'legacy-oggi', 'gia-inviata', 'altro-alunno'])
+  })
   it('assenza storica non crea campanella o push e non tocca la pending di oggi', async () => {
     expect((await POST(req('POST'))).status).toBe(200)
     expect(h.db.presenze[0]?.stato).toBe('assente')

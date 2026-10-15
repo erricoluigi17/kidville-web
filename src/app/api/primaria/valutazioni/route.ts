@@ -1,3 +1,5 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
+import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { puoCorreggereStorico, politicaNotificaOperazione, oggiRoma } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
@@ -727,18 +729,19 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     // prima: si allinea al testo nuovo. Non è un avviso nuovo (la spec non ne
     // vuole): è la stessa notifica, che non deve partire con un giudizio che non
     // esiste più. Una notifica già partita resta com'è.
-    const notifica = supabase.from('notifiche')
-    const { error: notifErr } = await (politicaModifica.sopprimiGenitori ? notifica.delete() : notifica.update({ corpo: giudizio }))
-      .eq('entita_tipo', 'valutazione')
-      .eq('entita_id', id)
-      .is('push_inviata_il', null)
-    if (notifErr) {
-      logEvento('notifica', 'error', {
-        operazione,
-        esito: 'notifica-in-coda-non-allineata',
-        tipo: 'valutazione',
-        valutazione_id: id,
-      }, notifErr)
+    const legamiNotifica = await getGenitoriDiAlunniEsito(supabase, voce.alunno_id ? [voce.alunno_id] : [])
+    if (!legamiNotifica.completo) {
+      logEvento('notifica', 'error', { operazione, esito: 'valutazione-destinatari-non-risolti', valutazione_id: id })
+    } else {
+      const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
+      if (destinatari.length) {
+        const notifica = supabase.from('notifiche')
+        const q = (politicaModifica.sopprimiGenitori ? notifica.delete() : notifica.update({ corpo: giudizio }))
+          .eq('tipo', 'valutazione').eq('entita_tipo', 'valutazione').eq('entita_id', id)
+          .in('utente_id', destinatari).is('push_inviata_il', null)
+        const { error: notifErr } = await filtraNotifichePerGiorni(q, [giornoOriginale])
+        if (notifErr) logEvento('notifica', 'error', { operazione, esito: 'notifica-in-coda-non-allineata', tipo: 'valutazione', valutazione_id: id }, notifErr)
+      }
     }
 
     // `valoreDopo` porta gli obiettivi EFFETTIVAMENTE collegati, anche dopo un
@@ -841,24 +844,25 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
 
     // Il ritiro viene DOPO la cancellazione riuscita: ritirare l'avviso e poi
     // non riuscire a cancellare lascerebbe una valutazione senza notifica.
-    const { data: ritirate, error: ritiroErr } = await supabase
-      .from('notifiche')
-      .delete()
-      .eq('entita_tipo', 'valutazione')
-      .eq('entita_id', id)
-      .is('push_inviata_il', null)
-      .select('id')
-    if (ritiroErr) {
-      // `error` benché la cancellazione sia riuscita: la notifica resta in coda e
-      // partirà per una valutazione che non esiste più.
-      logEvento('notifica', 'error', {
-        operazione,
-        esito: 'ritiro-notifica-valutazione-fallito',
-        tipo: 'valutazione',
-        valutazione_id: id,
-      }, ritiroErr)
+    let nRitirate = 0
+    let ritiroRiuscito = true
+    const legamiNotifica = await getGenitoriDiAlunniEsito(supabase, voce.alunno_id ? [voce.alunno_id] : [])
+    if (!legamiNotifica.completo) {
+      ritiroRiuscito = false
+      logEvento('notifica', 'error', { operazione, esito: 'valutazione-destinatari-non-risolti', valutazione_id: id })
+    } else {
+      const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
+      if (destinatari.length) {
+        const q = supabase.from('notifiche').delete().eq('tipo', 'valutazione')
+          .eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari).is('push_inviata_il', null)
+        const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(q, [vocePrimaria(voce).dataEvento]).select('id')
+        if (ritiroErr) {
+          ritiroRiuscito = false
+          logEvento('notifica', 'error', { operazione, esito: 'ritiro-notifica-valutazione-fallito', tipo: 'valutazione', valutazione_id: id }, ritiroErr)
+        }
+        else nRitirate = (ritirate ?? []).length
+      }
     }
-    const nRitirate = ((ritirate ?? []) as unknown[]).length
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -885,7 +889,7 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
       section_id: sectionId,
       attore_id: auth.user.id,
       notifiche_ritirate: nRitirate,
-      ritiro_riuscito: !ritiroErr,
+      ritiro_riuscito: ritiroRiuscito,
     }, undefined, { distingui: ['valutazione_id'] })
 
     return NextResponse.json({ success: true, data: { id, notificheRitirate: nRitirate } })

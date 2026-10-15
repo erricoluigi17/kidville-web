@@ -1,3 +1,4 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
@@ -189,6 +190,7 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
         if (errPr) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPr })
         for (const p of (pr ?? []) as { alunno_id?: string | null }[]) if (p.alunno_id) alunni.add(p.alunno_id)
       }
+      await ritiraPendingOperazione(supabase, { tipo: 'pagamento_registrato', entitaTipo: 'transazione', entitaId: id, alunnoIds: [...alunni], scuolaId: tx.scuola_id, operazione: politicaNotificaServizio(user, tx.data_valuta ?? tx.creato_il), destinatario: 'genitore' })
       if (alunni.size > 0) await verificaRevocaSospensioneMorosita(supabase, [...alunni], politicaNotificaServizio(user, tx.data_valuta ?? tx.creato_il))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/transazioni/[id]/annulla:POST', esito: 'revoca_non_verificata' }, e)

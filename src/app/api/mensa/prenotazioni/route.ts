@@ -1,3 +1,4 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 import { politicaNotificaOperazione, deveNotificareGenitori } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -310,7 +311,10 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
       saldo = esito.saldo
       const politica = politicaNotificaOperazione({ attore: user, giornoCompetenza: data })
       if (deveNotificareGenitori(politica)) operazioniNotificabili.push(politica)
-      else logEvento('mensa', 'info', { operazione: 'mensa/prenotazioni:POST', esito: 'rettifica-storica-silenziosa', data })
+      else {
+        await ritiraPendingOperazione(supabase, { tipo: 'mensa_saldo_basso', entitaTipo: 'alunno', entitaId: alunnoId, alunnoIds: [alunnoId], scuolaId, operazione: politica, destinatario: 'genitore' })
+        logEvento('mensa', 'info', { operazione: 'mensa/prenotazioni:POST', esito: 'rettifica-storica-silenziosa', data })
+      }
       esiti.push({ data, ok: true })
     }
 
@@ -444,6 +448,7 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
     }
     const saldo = esito.saldo
+    await ritiraPendingOperazione(supabase, { tipo: 'mensa_saldo_basso', entitaTipo: 'alunno', entitaId: alunnoId, alunnoIds: [alunnoId], scuolaId, operazione: politicaNotificaOperazione({ attore: user, giornoCompetenza: data }), destinatario: 'genitore' })
 
     // Evento critico (riaccredito ticket) → si logga anche il SUCCESSO: saldo dopo
     // il riaccredito + origine (staff che forza fuori orario vs genitore). No PII.

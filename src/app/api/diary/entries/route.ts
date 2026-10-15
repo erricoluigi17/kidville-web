@@ -13,7 +13,7 @@ import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
-import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
+import { notificaTitolariScrittura, enqueueDiarioGenitori, ritiraDiarioGenitori } from '@/lib/primaria/notifiche';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
@@ -847,6 +847,9 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
     });
     if (al?.section_id) {
         await notificaTitolariScrittura(admin, { attore: auth.user, sectionId: al.section_id, scuolaId: al.scuola_id, area: 'diario' });
+    }
+    if (eRettificaStorica(auth.user, date)) {
+        await ritiraDiarioGenitori(admin, { alunnoId: q.data.alunno_id, giorno: date });
     }
 
     logEvento('diary', 'info', { operazione: 'diary/entries:DELETE', esito: 'diario-eliminato', data: date, n: righe.length });

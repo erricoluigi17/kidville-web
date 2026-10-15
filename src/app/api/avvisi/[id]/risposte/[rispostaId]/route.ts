@@ -11,6 +11,7 @@ import { zUuid } from '@/lib/validation/common';
 import { zNumeroPartecipanti } from '@/lib/validation/avvisi';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente';
 
 // =============================================================================
 // PATCH /api/avvisi/[id]/risposte/[rispostaId] — la SEGRETERIA sull'adesione di
@@ -204,22 +205,36 @@ export const PATCH = withRoute(
             // La sede dell'avviso serve all'audit: una riga di
             // `audit_scritture_docente` senza plesso non risponde a «chi ha
             // cambiato cosa, a Giugliano».
-            const { data: avviso } = await supabase
+            let { data: avviso, error: erroreAvviso } = await supabase
                 .from('avvisi')
                 .select('id, scuola_id, giorno_competenza, created_at')
                 .eq('id', avvisoId)
                 .maybeSingle();
+            if (colonnaNuovaAssente(erroreAvviso)) {
+                logEvento('db', 'warn', { operazione: 'avvisi/[id]/risposte/[rispostaId]:PATCH', esito: 'metadati-storici-assenti', avviso: avvisoId }, erroreAvviso);
+                const precedente = await supabase.from('avvisi').select('id, scuola_id, created_at').eq('id', avvisoId).maybeSingle();
+                avviso = precedente.data ? { ...precedente.data, giorno_competenza: null } : null;
+                erroreAvviso = precedente.error;
+            }
+            if (erroreAvviso) {
+                logEvento('db', 'error', { operazione: 'avvisi/[id]/risposte/[rispostaId]:PATCH', esito: 'avviso-non-letto', avviso: avvisoId }, erroreAvviso);
+                return NON_DISPONIBILE();
+            }
 
             // Il valore PRIMA, per il registro immodificabile. Si legge con
             // `avviso_id` accanto a `id`: senza, una segreteria di Giugliano
             // leggerebbe PER ID la riga di Aversa — lo stesso confine che la
             // funzione di database mette dentro la propria `WHERE`.
-            const { data: prima } = await supabase
+            const { data: prima, error: errorePrima } = await supabase
                 .from('avvisi_risposte')
                 .select('id, parent_id, student_id, risposta, numero_partecipanti, stato_adesione, risposto_il')
                 .eq('id', rispostaId)
                 .eq('avviso_id', avvisoId)
                 .maybeSingle();
+            if (errorePrima) {
+                logEvento('db', 'error', { operazione: 'avvisi/[id]/risposte/[rispostaId]:PATCH', esito: 'risposta-non-letta', avviso: avvisoId }, errorePrima);
+                return NON_DISPONIBILE();
+            }
 
             // ⚠️ L'OGGETTO DEI PARAMETRI STA QUI, IN LINEA, e non in una variabile
             // costruita sopra. Non è stile: `isolamento-sede-coverage` legge gli

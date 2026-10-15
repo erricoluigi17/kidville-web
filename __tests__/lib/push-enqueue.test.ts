@@ -4,6 +4,62 @@ import { creaFintoSupabase } from '../fixtures/finto-supabase'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 
 describe('enqueueNotifiche', () => {
+  const ordinaria = { giornoCompetenza: '2026-10-15', giornoOperazioneRoma: '2026-10-15', sopprimiGenitori: false }
+  it.each(['PGRST204', '42703'])('schema precedente %s: la notifica ordinaria è accodata senza i soli metadati nuovi', async code => {
+    const insert = vi.fn()
+      .mockResolvedValueOnce({ error: { code, message: "Could not find the 'giorno_competenza' column" } })
+      .mockResolvedValueOnce({ error: { code, message: "Could not find the 'politica_operazione' column" } })
+      .mockResolvedValueOnce({ error: null })
+    const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+    expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'adesione_ammessa', titolo: 'Conferma', destinatario: 'genitore', operazione: ordinaria })).toBe(true)
+    expect(insert).toHaveBeenCalledTimes(3)
+    const iniziale = insert.mock.calls[0][0][0]
+    const intermedia = insert.mock.calls[1][0][0]
+    const finale = insert.mock.calls[2][0][0]
+    expect(iniziale).toMatchObject({ giorno_competenza: '2026-10-15', politica_operazione: ordinaria })
+    expect(intermedia).toHaveProperty('politica_operazione', ordinaria)
+    expect(intermedia).not.toHaveProperty('giorno_competenza')
+    const senzaMetadati = { ...iniziale }
+    delete senzaMetadati.giorno_competenza
+    delete senzaMetadati.politica_operazione
+    expect(finale).toEqual(senzaMetadati)
+  })
+  it.each([
+    ['giorno_competenza', 'politica_operazione'],
+    ['politica_operazione', 'giorno_competenza'],
+  ])('schema parziale: toglie soltanto %s e conserva %s', async (assente, presente) => {
+    const insert = vi.fn().mockResolvedValueOnce({ error: { code: 'PGRST204', message: `Could not find the '${assente}' column` } }).mockResolvedValueOnce({ error: null })
+    const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+    expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'diario', titolo: 't', operazione: ordinaria })).toBe(true)
+    expect(insert).toHaveBeenCalledTimes(2)
+    const iniziale = insert.mock.calls[0][0][0], finale = insert.mock.calls[1][0][0]
+    expect(finale).not.toHaveProperty(assente)
+    expect(finale[presente]).toEqual(iniziale[presente])
+    expect(finale.invio_programmato_il).toBe(iniziale.invio_programmato_il)
+    expect(finale.utente_id).toBe('u1')
+  })
+  it('schema precedente: una rettifica silenziosa non tenta mai l’inserimento per il genitore', async () => {
+    const insert = vi.fn().mockResolvedValue({ error: { code: 'PGRST204' } })
+    const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+    expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'diario', titolo: 't', destinatario: 'genitore', operazione: { ...ordinaria, giornoCompetenza: '2025-01-01', sopprimiGenitori: true } })).toBe(false)
+    expect(insert).not.toHaveBeenCalled()
+  })
+  it('non usa il fallback per errori reali o quando non ha aggiunto metadati', async () => {
+    for (const [code, operazione] of [['23503', ordinaria], ['PGRST204', undefined]] as const) {
+      const insert = vi.fn().mockResolvedValue({ error: { code } })
+      const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+      expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'diario', titolo: 't', operazione })).toBe(false)
+      expect(insert).toHaveBeenCalledTimes(1)
+    }
+  })
+  it('un altro errore dopo la rimozione dei metadati resta un inserimento fallito', async () => {
+    const insert = vi.fn()
+      .mockResolvedValueOnce({ error: { code: 'PGRST204', message: "Could not find the 'giorno_competenza' column" } })
+      .mockResolvedValueOnce({ error: { code: 'PGRST204', message: "Could not find the 'titolo' column" } })
+    const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+    expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'diario', titolo: 't', operazione: ordinaria })).toBe(false)
+    expect(insert).toHaveBeenCalledTimes(2)
+  })
   it('inserisce una riga notifiche per utente con buffer', async () => {
     const insert = vi.fn().mockResolvedValue({ error: null })
     const from = vi.fn().mockReturnValue({ insert })

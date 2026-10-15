@@ -1,4 +1,4 @@
-import type { ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
+import { oggiRoma, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 // =============================================================================
 // LA PUBBLICAZIONE AUTOMATICA DI UN VIDEO IN GALLERIA — lato server (PR 2 «server e web»).
 //
@@ -130,6 +130,7 @@ export type OpzioniPubblicazioneVideo = {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 type RigaIntento = {
+  giorno_competenza?: string | null
   politica_operazione?: ContestoNotificaOperazione | null
   id: string
   owner_id: string
@@ -147,7 +148,7 @@ type RigaIntento = {
   pubblicazione_errore: string | null
 }
 const COLONNE_INTENTO =
-  'id, owner_id, scuola_id, channel, status, revision, pubblicazione_automatica, tag_alunni, broadcast, classi_destinatarie, n_tag, esito_notificato, pubblicazione_errore, politica_operazione'
+  'id, owner_id, scuola_id, channel, status, revision, pubblicazione_automatica, tag_alunni, broadcast, classi_destinatarie, n_tag, esito_notificato, pubblicazione_errore, politica_operazione, giorno_competenza'
 
 type RigaJob = {
   id: string
@@ -259,14 +260,34 @@ export async function pubblicaVideoGalleria(
 
 async function leggiIntento(ctx: Contesto): Promise<Letto<RigaIntento>> {
   try {
-    const { data, error } = await ctx.supabase
+    let colonne = COLONNE_INTENTO.split(',').map(c => c.trim())
+    let lettura = await ctx.supabase
       .from('video_intents')
-      .select(COLONNE_INTENTO)
+      .select(colonne.join(', '))
       .eq('id', ctx.intentId)
       .maybeSingle()
+    // Il DB CI precedente non ha gli storici, ma i normali intenti video sono già operativi.
+    // Si sfilano soltanto le due colonne nuove effettivamente mancanti, mantenendo ogni
+    // metadato già disponibile su uno schema parziale e la proiezione minima originale.
+    for (let n = 0; lettura.error && n < 2; n += 1) {
+      if (!['42703', 'PGRST204'].includes(lettura.error.code ?? '')) break
+      const assente = /\b(politica_operazione|giorno_competenza)\b/.exec(lettura.error.message ?? '')?.[1]
+      if (!assente || !colonne.includes(assente)) break
+      log(ctx, 'warn', { esito: 'intento-schema-storici-assente' }, lettura.error)
+      colonne = colonne.filter(c => c !== assente)
+      lettura = await ctx.supabase.from('video_intents').select(colonne.join(', ')).eq('id', ctx.intentId).maybeSingle()
+    }
+    const { data, error } = lettura
     if (error) return { ok: false, codice: 'INTENTO_NON_LETTO', errore: error }
     if (!data) return { ok: false, codice: 'INTENTO_ASSENTE' }
-    return { ok: true, valore: data as unknown as RigaIntento }
+    const intento = data as unknown as RigaIntento
+    if (intento.giorno_competenza && !intento.politica_operazione
+      && intento.giorno_competenza < oggiRoma(new Date(ctx.adesso()))) {
+      // Un giorno storico esplicito richiede la decisione trusted dell'apertura: non la
+      // ricostruiamo al dispatch e non trasformiamo dati incompleti in avvisi alle famiglie.
+      return { ok: false, codice: 'INTENTO_POLITICA_ASSENTE' }
+    }
+    return { ok: true, valore: intento }
   } catch (errore) {
     return { ok: false, codice: 'INTENTO_NON_LETTO', errore }
   }
@@ -355,6 +376,7 @@ async function pubblicaDaConfermato(ctx: Contesto, intento: RigaIntento): Promis
       intento,
       scuolaId,
       ownerId,
+      mediaId: typeof pubblicata.dati.media_id === 'string' ? pubblicata.dati.media_id : undefined,
       destinatari: { tag: effettivi, classi: intento.classi_destinatarie },
       nUsciti,
       senzaLiberatoria,
@@ -391,6 +413,7 @@ async function avvisa(
     intento: RigaIntento
     scuolaId: string
     ownerId: string
+    mediaId?: string
     /** `null` = non si sa a chi è stato mostrato (recupero senza la riga di galleria): niente avviso alle famiglie. */
     destinatari: { tag: readonly string[]; classi: readonly string[] | null } | null
     nUsciti: number
@@ -403,6 +426,7 @@ async function avvisa(
       famiglie = await notificaGenitoriGalleria(ctx.supabase, {
         scuolaId: d.scuolaId,
         uploadedBy: d.ownerId,
+        mediaId: d.mediaId,
         tagAlunni: d.destinatari.tag,
         classi: d.destinatari.classi,
         operazione: ctx.operazione,
@@ -501,6 +525,7 @@ async function recuperaPubblicato(ctx: Contesto, intento: RigaIntento): Promise<
       intento,
       scuolaId,
       ownerId,
+      mediaId: letta?.id,
       destinatari: letta === null ? null : { tag: letta.tag, classi: letta.classi },
       nUsciti,
       senzaLiberatoria,
@@ -521,7 +546,7 @@ async function recuperaPubblicato(ctx: Contesto, intento: RigaIntento): Promise<
   return { esito: 'pubblicato', creato: false, segnato: marca.segnato, recupero: true }
 }
 
-type MediaPubblicato = { tag: string[]; broadcast: boolean; classi: string[] | null }
+type MediaPubblicato = { id: string; tag: string[]; broadcast: boolean; classi: string[] | null }
 
 async function leggiMediaPubblicato(
   ctx: Contesto,
@@ -551,6 +576,7 @@ async function leggiMediaPubblicato(
       return { ok: true, valore: null }
     }
     const riga = data as unknown as {
+      id: string
       tag_students: string[] | null
       is_broadcast: boolean | null
       target_classes: string[] | null
@@ -558,6 +584,7 @@ async function leggiMediaPubblicato(
     return {
       ok: true,
       valore: {
+        id: riga.id,
         tag: (riga.tag_students ?? []).map((id) => id.toLowerCase()),
         broadcast: riga.is_broadcast === true,
         classi: riga.target_classes ?? null,

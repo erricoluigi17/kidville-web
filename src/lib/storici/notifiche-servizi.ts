@@ -14,3 +14,9 @@ export function politicaNotificaServizio(attore: AppUser, ...date: (string | nul
   const giorni = date.map(giornoServizio).filter((giorno): giorno is string => giorno !== null).sort()
   return politicaNotificaOperazione({ attore, giornoCompetenza: giorni[0] ?? oggiRoma() })
 }
+
+/** La data originale individua la coda da ritirare anche quando il nuovo giorno è precedente. */
+export function politicaRettificaServizio(attore: AppUser, originale: string | null | undefined, ...date: (string | null | undefined)[]): ContestoNotificaOperazione {
+  const giornoOriginale = giornoServizio(originale) ?? oggiRoma()
+  return { ...politicaNotificaServizio(attore, giornoOriginale, ...date), giornoOriginale }
+}

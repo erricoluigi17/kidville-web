@@ -149,6 +149,7 @@ beforeEach(() => {
   m.logScrittura.mockResolvedValue(undefined)
   m.notificaTitolariScrittura.mockResolvedValue(undefined)
   m.obiettiviDisponibili.mockResolvedValue([{ id: 'o-1' }, { id: 'o-2' }, { id: 'o-3' }])
+  coda('legame_genitori_alunni:select', { data: [{ alunno_id: ALU, genitore_id: 'genitore-fittizio' }], error: null })
   coda('materie:select', { data: { nome: 'Matematica', codice: 'matematica', scuola_id: SEDE }, error: null })
   coda('obiettivi_apprendimento:select', { data: DISPONIBILI, error: null })
 })

@@ -185,3 +185,42 @@ describe('PUT /api/avvisi/[id] — la notifica ai destinatari AGGIUNTI', () => {
     expect(esitiErrore).toContain('notifica-nuovi-destinatari-non-calcolata')
   })
 })
+
+it.each([false,true])('revisione legacy: avviso staff storico ritira pending originaria, spostaoggi=%s',async sposta=>{
+ vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-14T22:06:00Z'))
+ try{
+  h.db=dbBase(['Girasoli'])
+  Object.assign(h.db.avvisi[0],{created_at:'2026-10-14T21:55:00Z',giorno_competenza:null,politica_operazione:null})
+  const base={...notificaIniziale('p1'),giorno_competenza:null,politica_operazione:null,push_inviata_il:null,creato_il:'2026-10-14T21:55:00Z',invio_programmato_il:'2026-10-14T22:05:00Z'}
+  h.db.notifiche=[{...base,id:'legacy-ieri'},{...base,id:'legacy-oggi',creato_il:'2026-10-14T22:00:00Z',invio_programmato_il:'2026-10-14T22:10:00Z'}]
+  const res=await put({...corpo(['Girasoli']),titolo:'Titolo corretto',...(sposta?{giorno_competenza:'2026-10-15'}:{})})
+  expect(res.status).toBe(200);expect(h.db.avvisi[0].titolo).toBe('Titolo corretto')
+  expect(h.db.avvisi[0].politica_operazione).toMatchObject({sopprimiGenitori:true})
+  expect(h.db.notifiche.map(n=>n.id)).toEqual(['legacy-oggi'])
+ }finally{vi.useRealTimers()}
+})
+
+it.each(['data-precedente', 'politica-prima-del-timestamp'])('ritiro avviso usa la giornata originale: %s', async caso => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-14T22:06:00Z'))
+  try {
+    h.db = dbBase(['Girasoli'])
+    Object.assign(h.db.avvisi[0], {
+      created_at: caso === 'data-precedente' ? '2026-10-14T10:00:00Z' : '2026-10-13T10:00:00Z',
+      giorno_competenza: null,
+      politica_operazione: caso === 'data-precedente' ? null : { giornoCompetenza: '2026-10-14', giornoOperazioneRoma: '2026-10-14', sopprimiGenitori: false },
+    })
+    const base = { ...notificaIniziale('p1'), giorno_competenza: null, politica_operazione: null, push_inviata_il: null, invio_programmato_il: '2026-10-14T22:05:00Z' }
+    h.db.notifiche = [
+      { ...base, id: 'originaria', creato_il: '2026-10-14T21:55:00Z' },
+      { ...base, id: 'altro-giorno', creato_il: '2026-10-13T10:00:00Z' },
+    ]
+    const res = await put({ ...corpo(['Girasoli']), giorno_competenza: '2026-10-13' })
+    expect(res.status).toBe(200)
+    expect(h.db.avvisi[0].politica_operazione).toMatchObject({ sopprimiGenitori: true, giornoOriginale: '2026-10-14' })
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['altro-giorno'])
+    expect(h.notificaEvento).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})

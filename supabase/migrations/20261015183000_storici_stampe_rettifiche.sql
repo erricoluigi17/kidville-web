@@ -229,6 +229,133 @@ alter table public.video_intents add column if not exists giorno_competenza date
 alter table public.galleria_media_v2 add column if not exists giorno_competenza date, add column if not exists politica_operazione jsonb;
 alter table public.avvisi add column if not exists giorno_competenza date, add column if not exists politica_operazione jsonb;
 
+-- BEGIN notifiche galleria con provenienza
+-- Una raffica resta un avviso per famiglia/sede/giorno. Il lock e l'unione delle
+-- origini sono nella stessa transazione: upload concorrenti non perdono media.
+-- Le righe precedenti senza provenienza non vengono attribuite a una foto.
+create or replace function public.notifiche_galleria_accoda(
+  p_scuola_id uuid,p_uploaded_by uuid,p_media_id uuid,p_utente_ids uuid[],
+  p_politica_operazione jsonb,p_buffer_min integer default 30
+) returns integer language plpgsql security invoker set search_path to 'public','pg_temp' as $$
+declare giorno date; utente uuid; r record; origine jsonb; ids uuid[]; origini text[]; politica jsonb;
+  accodate integer:=0;
+begin
+  if p_scuola_id is null or p_uploaded_by is null or p_media_id is null
+    or jsonb_typeof(p_politica_operazione) is distinct from 'object'
+    or jsonb_typeof(p_politica_operazione->'sopprimiGenitori') is distinct from 'boolean'
+    or nullif(p_politica_operazione->>'giornoCompetenza','') is null
+    or p_buffer_min is null or p_buffer_min<0 or p_buffer_min>1440 then
+    raise exception 'Contesto annuncio galleria non valido' using errcode='22023';
+  end if;
+  if (p_politica_operazione->>'sopprimiGenitori')::boolean then return 0; end if;
+  giorno:=(p_politica_operazione->>'giornoCompetenza')::date;
+  -- SHARE si coordina anche con il cestino/PATCH: dopo la rettifica un replay
+  -- del vecchio intento non ricrea l'annuncio. Nessun dato personale nei log.
+  select to_jsonb(g) into origine from public.galleria_media_v2 g
+    where g.id=p_media_id and g.scuola_id=p_scuola_id and g.uploaded_by=p_uploaded_by for share;
+  if not found then raise exception 'Contenuto galleria fuori perimetro' using errcode='22023'; end if;
+  if origine->>'eliminato_il' is not null or origine#>>'{politica_operazione,sopprimiGenitori}'='true' then return 0; end if;
+  for utente in select distinct u from unnest(coalesce(p_utente_ids,'{}'::uuid[])) u where u is not null order by u loop
+    perform pg_advisory_xact_lock(hashtextextended('gallery-notifiche|'||p_uploaded_by||'|'||p_scuola_id||'|'||utente||'|'||giorno,0));
+    -- Anche una presa del dispatcher è una registrazione già esistente. Un
+    -- replay non duplica l'annuncio né riscrive la decisione originale.
+    if exists(select 1 from public.notifiche n where n.tipo='galleria' and n.entita_tipo='galleria'
+      and n.entita_id=p_uploaded_by and n.utente_id=utente and n.giorno_competenza=giorno
+      and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
+      and n.politica_operazione#>'{galleria,mediaIds}' @> to_jsonb(array[p_media_id])) then continue; end if;
+    ids:='{}'::uuid[]; origini:='{}'::text[]; politica:=p_politica_operazione;
+    for r in select n.id,n.politica_operazione from public.notifiche n
+      where n.tipo='galleria' and n.entita_tipo='galleria' and n.entita_id=p_uploaded_by
+        and n.utente_id=utente and n.push_inviata_il is null and n.giorno_competenza=giorno
+        and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
+        and jsonb_typeof(n.politica_operazione#>'{galleria,mediaIds}')='array'
+      order by n.creato_il,n.id for update loop
+      if cardinality(ids)=0 then politica:=r.politica_operazione; end if;
+      ids:=array_append(ids,r.id);
+      origini:=origini||array(select jsonb_array_elements_text(r.politica_operazione#>'{galleria,mediaIds}'));
+    end loop;
+    origini:=array(select distinct o from unnest(origini||array[p_media_id::text]) o order by o);
+    politica:=jsonb_set(politica,'{galleria}',jsonb_build_object('scuolaId',p_scuola_id,'mediaIds',to_jsonb(origini)));
+    -- Un nuovo id impedisce al CAS di un dispatcher che aveva già letto la
+    -- vecchia riga di inviare in anticipo il nuovo batch, ancora nel buffer.
+    insert into public.notifiche(utente_id,tipo,titolo,corpo,link,entita_tipo,entita_id,
+      invio_programmato_il,giorno_competenza,politica_operazione)
+    values(utente,'galleria','Nuovi contenuti in galleria','Ci sono nuovi contenuti nella galleria.',
+      '/parent/gallery','galleria',p_uploaded_by,now()+make_interval(mins=>p_buffer_min),giorno,politica);
+    delete from public.notifiche where id=any(ids);
+    accodate:=accodate+1;
+  end loop;
+  begin
+    insert into public.app_log(livello,evento,sorgente,messaggio,fingerprint,contesto)
+    values('info','notifica','server','Annuncio galleria con provenienza accodato','gallery-notifiche-accoda',
+      jsonb_build_object('sede_id',p_scuola_id,'entita_id',p_media_id,'n',accodate));
+  exception when others then raise log 'galleria: logging accodamento non riuscito [%]',SQLSTATE; end;
+  return accodate;
+end $$;
+revoke all on function public.notifiche_galleria_accoda(uuid,uuid,uuid,uuid[],jsonb,integer) from public,anon,authenticated;
+grant execute on function public.notifiche_galleria_accoda(uuid,uuid,uuid,uuid[],jsonb,integer) to service_role;
+
+create or replace function public.notifiche_galleria_ritira(
+  p_scuola_id uuid,p_uploaded_by uuid,p_media_id uuid,p_giorno date
+) returns integer language plpgsql security invoker set search_path to 'public','pg_temp' as $$
+declare utente uuid; r record; origini jsonb; modificate integer:=0;
+begin
+  if p_scuola_id is null or p_uploaded_by is null or p_media_id is null or p_giorno is null then
+    raise exception 'Contesto ritiro galleria non valido' using errcode='22023';
+  end if;
+  perform 1 from public.galleria_media_v2 g where g.id=p_media_id
+    and g.scuola_id=p_scuola_id and g.uploaded_by=p_uploaded_by for share;
+  if not found then raise exception 'Contenuto galleria fuori perimetro' using errcode='22023'; end if;
+  for utente in select distinct n.utente_id from public.notifiche n
+    where n.tipo='galleria' and n.entita_tipo='galleria' and n.entita_id=p_uploaded_by
+      and n.push_inviata_il is null and n.giorno_competenza=p_giorno
+      and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
+      and n.politica_operazione#>'{galleria,mediaIds}' @> to_jsonb(array[p_media_id]) order by n.utente_id loop
+    perform pg_advisory_xact_lock(hashtextextended('gallery-notifiche|'||p_uploaded_by||'|'||p_scuola_id||'|'||utente||'|'||p_giorno,0));
+    for r in select n.id,n.politica_operazione from public.notifiche n
+      where n.tipo='galleria' and n.entita_tipo='galleria' and n.entita_id=p_uploaded_by
+        and n.utente_id=utente and n.push_inviata_il is null and n.giorno_competenza=p_giorno
+        and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
+        and jsonb_typeof(n.politica_operazione#>'{galleria,mediaIds}')='array'
+        and n.politica_operazione#>'{galleria,mediaIds}' @> to_jsonb(array[p_media_id]) for update loop
+      select coalesce(jsonb_agg(x order by x),'[]'::jsonb) into origini
+        from jsonb_array_elements_text(r.politica_operazione#>'{galleria,mediaIds}') x where x<>p_media_id::text;
+      if jsonb_array_length(origini)=0 then delete from public.notifiche where id=r.id;
+      else update public.notifiche set politica_operazione=jsonb_set(r.politica_operazione,'{galleria,mediaIds}',origini) where id=r.id; end if;
+      modificate:=modificate+1;
+    end loop;
+  end loop;
+  begin
+    insert into public.app_log(livello,evento,sorgente,messaggio,fingerprint,contesto)
+    values('info','notifica','server','Origine galleria ritirata dagli annunci pendenti','gallery-notifiche-ritira',
+      jsonb_build_object('sede_id',p_scuola_id,'entita_id',p_media_id,'n',modificate));
+  exception when others then raise log 'galleria: logging ritiro non riuscito [%]',SQLSTATE; end;
+  return modificate;
+end $$;
+revoke all on function public.notifiche_galleria_ritira(uuid,uuid,uuid,date) from public,anon,authenticated;
+grant execute on function public.notifiche_galleria_ritira(uuid,uuid,uuid,date) to service_role;
+
+-- Fonte e ritiro sono atomici anche se la successiva chiamata HTTP si interrompe.
+-- Un errore reale nella coda annulla la modifica della fonte, non viene ignorato.
+create or replace function public.storici_galleria_ritira_alla_modifica() returns trigger
+language plpgsql security invoker set search_path to 'public','pg_temp' as $$
+declare giorno date;
+begin
+  giorno:=coalesce(old.giorno_competenza,(old.politica_operazione->>'giornoCompetenza')::date,
+    (new.politica_operazione->>'giornoOriginale')::date,(old.created_at at time zone 'Europe/Rome')::date);
+  if new.politica_operazione->>'sopprimiGenitori'='true'
+    or (new.eliminato_il is not null and old.eliminato_il is null and giorno<(now() at time zone 'Europe/Rome')::date) then
+    if giorno is null then raise exception 'Competenza originale galleria assente' using errcode='22023'; end if;
+    perform public.notifiche_galleria_ritira(new.scuola_id,new.uploaded_by,new.id,giorno);
+  end if;
+  return new;
+end $$;
+revoke all on function public.storici_galleria_ritira_alla_modifica() from public,anon,authenticated;
+grant execute on function public.storici_galleria_ritira_alla_modifica() to service_role;
+create trigger storici_galleria_ritira_alla_modifica after update of politica_operazione,eliminato_il
+  on public.galleria_media_v2 for each row execute function public.storici_galleria_ritira_alla_modifica();
+-- END notifiche galleria con provenienza
+
 -- Apertura e metadati diventano visibili insieme: il runner non può trovare
 -- un intento storico privo della sua politica e avvisare la famiglia nel frattempo.
 create or replace function public.video_galleria_intent_apri_storico(

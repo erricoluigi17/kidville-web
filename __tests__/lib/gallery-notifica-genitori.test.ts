@@ -99,7 +99,7 @@ describe('il testo: fisso, e non nomina niente', () => {
       entitaTipo: 'galleria',
       entitaId: AUTORE,
       bufferMin: 30,
-      debounce: true,
+      debounce: false,
     })
   })
 
@@ -206,7 +206,7 @@ describe('mai un’eccezione verso chi chiama, mai un guasto muto', () => {
 // che quello che gli si passa produce l'effetto che conta (#131): le notifiche in attesa
 // dello stesso insegnante vengono tolte SOLO per le famiglie di questa chiamata, e il buffer
 // è di 30 minuti.
-describe('la raffica collassa PER FAMIGLIA (#131), col vero `notificaEvento`', () => {
+describe('fallback senza provenienza — col vero `notificaEvento`', () => {
   type Cancellazione = { tipo: unknown; entita: unknown; destinatari: unknown; pending: unknown }
 
   /** Un client che registra le `delete` su `notifiche`: la catena che il debounce usa davvero. */
@@ -245,7 +245,7 @@ describe('la raffica collassa PER FAMIGLIA (#131), col vero `notificaEvento`', (
     h.notifica.mockImplementation(reale.notificaEvento)
   }
 
-  it('toglie le pending dello stesso insegnante SOLO per i destinatari della chiamata', async () => {
+  it('preserva le pending ambigue e accoda soltanto ai destinatari della chiamata', async () => {
     await conIlNotificaEventoVero()
     const registro: Cancellazione[] = []
 
@@ -258,11 +258,8 @@ describe('la raffica collassa PER FAMIGLIA (#131), col vero `notificaEvento`', (
     })
 
     expect(n).toBe(2)
-    // UNA `delete`, filtrata per tipo, per INSEGNANTE e per FAMIGLIA (`utente_id IN (…)`), e
-    // solo sulle notifiche non ancora spedite. Senza il filtro per famiglia ogni foto
-    // cancellava gli avvisi generati dalle precedenti per famiglie che non c'entravano: il
-    // 7-8 settembre ne sono andati persi 168 su 298.
-    expect(registro).toEqual([{ tipo: 'galleria', entita: AUTORE, destinatari: [G1, G2], pending: null }])
+    // Senza origini persistite nemmeno il genitore comune prova la sede del batch.
+    expect(registro).toEqual([])
     // …e subito dopo l'avviso vero, col testo nuovo, in coda per 30 minuti.
     expect(h.accoda).toHaveBeenCalledTimes(1)
     expect(h.accoda.mock.calls[0][1]).toMatchObject({
@@ -301,9 +298,9 @@ describe('la raffica collassa PER FAMIGLIA (#131), col vero `notificaEvento`', (
       operazione: 'gallery:POST',
     })
 
-    expect(registro).toEqual([
-      { tipo: 'galleria', entita: AUTORE, destinatari: [G1], pending: null },
-      { tipo: 'galleria', entita: ALTRO_AUTORE, destinatari: [G2], pending: null },
+    expect(registro).toEqual([])
+    expect(h.accoda.mock.calls.map(c => ({ autore: c[1].entitaId, utenti: c[1].utenteIds }))).toEqual([
+      { autore: AUTORE, utenti: [G1] }, { autore: ALTRO_AUTORE, utenti: [G2] },
     ])
   })
 })

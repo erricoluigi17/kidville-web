@@ -1,3 +1,4 @@
+import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
 import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -111,6 +112,8 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
       pagamento_id: id,
       sconto,
     })
+
+    await ritiraPendingPagamento(supabase, { pagamentoId: id, alunnoId: pag.alunno_id, scuolaId: pag.scuola_id, operazione: politicaNotificaServizio(auth.user, pag.periodo_competenza ?? pag.scadenza ?? pag.creato_il) })
 
     // Lo sconto abbassa il residuo effettivo → può azzerare lo scaduto famiglia:
     // revoca automatica della sospensione (best-effort, mai bloccante).

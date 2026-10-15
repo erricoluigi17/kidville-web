@@ -1,4 +1,4 @@
-import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
+import { deveNotificareGenitori, oggiRoma, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 // =============================================================================
 // L'AVVISO ALLE FAMIGLIE QUANDO UN CONTENUTO ENTRA IN GALLERIA — in UN posto solo.
 //
@@ -23,10 +23,10 @@ import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/s
 // arriva qui come «nessun tag e nessuna classe».
 //
 // ─── COME SI COLLASSA LA RAFFICA ───────────────────────────────────────────────
-// `entitaId = uploadedBy` (l'INSEGNANTE, non il media), `bufferMin: 30`, `debounce:
-// true`: dieci foto di fila diventano un solo avviso per famiglia. Il debounce di
-// `notificaEvento` cancella le notifiche pending dello stesso tipo e della stessa
-// entità SOLO per i destinatari di questa chiamata (#131): senza quel filtro ogni
+// La RPC unisce le origini media sotto lock per autore, SEDE, famiglia e giorno:
+// dieci foto di fila diventano un solo avviso con buffer di 30 minuti. La sede e
+// le origini persistite permettono di ritirare una sola foto senza perdere le altre.
+// Anche i destinatari restano isolati (#131): senza quel filtro ogni
 // foto cancellava gli avvisi generati dalle precedenti per famiglie che non
 // c'entravano, e il 7-8 settembre ne sono andati persi 168 su 298.
 //
@@ -46,6 +46,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { isNotificaAbilitata } from '@/lib/notifiche/config'
 
 export const TITOLO_NOTIFICA_GENITORI_GALLERIA = 'Nuovi contenuti in galleria'
 export const CORPO_NOTIFICA_GENITORI_GALLERIA = 'Ci sono nuovi contenuti nella galleria.'
@@ -67,6 +68,8 @@ export async function notificaGenitoriGalleria(
   input: {
     scuolaId: string
     uploadedBy: string
+    /** Id della riga pubblicata: identifica la provenienza dentro il batch. */
+    mediaId?: string
     tagAlunni: readonly string[] | null | undefined
     classi: readonly string[] | null | undefined
     operazione: string
@@ -75,6 +78,7 @@ export async function notificaGenitoriGalleria(
 ): Promise<number | null> {
   try {
     if (!deveNotificareGenitori(input.politica)) {
+      // Una nuova registrazione storica non identifica gli altri media del batch.
       logEvento('galleria', 'info', { operazione: input.operazione, esito: 'rettifica-storica-silenziosa' })
       return 0
     }
@@ -86,6 +90,33 @@ export async function notificaGenitoriGalleria(
         : classi.length > 0
           ? await genitoriDiClassi(supabase, input.scuolaId, classi)
           : await genitoriDiScuola(supabase, input.scuolaId)
+    if (!(await isNotificaAbilitata(supabase, 'galleria', input.scuolaId))) return 0
+    if (input.mediaId && destinatari.length) {
+      // L'intento moderno conserva la decisione originale. Un intento legacy appena
+      // pubblicato usa il giorno della pubblicazione effettiva, senza inventare uno storico.
+      const giorno = oggiRoma()
+      const politica = input.politica ?? { giornoCompetenza: giorno, giornoOperazioneRoma: giorno, sopprimiGenitori: false }
+      const { data, error } = await supabase.rpc('notifiche_galleria_accoda', {
+        p_scuola_id: input.scuolaId,
+        p_uploaded_by: input.uploadedBy,
+        p_media_id: input.mediaId,
+        p_utente_ids: [...new Set(destinatari)],
+        p_politica_operazione: politica,
+        p_buffer_min: MINUTI_BUFFER_NOTIFICA_GENITORI_GALLERIA,
+      })
+      if (!error) {
+        if (typeof data !== 'number') throw new Error('Risposta accodamento galleria non valida')
+        logEvento('notifica', 'info', { operazione: input.operazione, esito: 'galleria-accodata-con-origini', n: data, sede_id: input.scuolaId })
+        return data
+      }
+      const rpcAssente = ['PGRST202', '42883'].includes(error.code ?? '')
+        && /\bnotifiche_galleria_accoda\b/.test(error.message ?? '')
+      if (!rpcAssente) {
+        logEvento('notifica', 'error', { operazione: input.operazione, esito: 'galleria-accodamento-fallito', sede_id: input.scuolaId }, error)
+        return null
+      }
+      logEvento('notifica', 'warn', { operazione: input.operazione, esito: 'galleria-coda-legacy-senza-aggregazione', sede_id: input.scuolaId }, error)
+    }
     await notificaEvento(supabase, {
       tipo: 'galleria',
       scuolaId: input.scuolaId,
@@ -98,7 +129,9 @@ export async function notificaGenitoriGalleria(
       entitaTipo: 'galleria',
       entitaId: input.uploadedBy,
       bufferMin: MINUTI_BUFFER_NOTIFICA_GENITORI_GALLERIA,
-      debounce: true,
+      // Su un DB precedente non si può provare la sede delle vecchie righe:
+      // nessun debounce può cancellare il batch di un altro media o plesso.
+      debounce: false,
     })
     return destinatari.length
   } catch (e) {

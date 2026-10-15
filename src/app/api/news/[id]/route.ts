@@ -1,4 +1,5 @@
-import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { ritiraPendingNews } from '@/lib/news/notifiche'
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
 import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
@@ -196,9 +197,10 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
     const guard = guardEducator(auth.user, sc.post!, true)
     if (guard) return guard
 
+    const politica = politicaRettificaServizio(auth.user, sc.post!.giorno_competenza ?? sc.post!.politica_operazione?.giornoCompetenza ?? sc.post!.pubblicata_il ?? sc.post!.created_at, sc.post!.politica_operazione?.giornoCompetenza, body.giorno_competenza)
     const updates: Record<string, unknown> = {
-      giorno_competenza: body.giorno_competenza ?? sc.post!.giorno_competenza ?? oggiRoma(),
-      politica_operazione: politicaNotificaServizio(auth.user, sc.post!.politica_operazione?.giornoCompetenza, sc.post!.giorno_competenza ?? sc.post!.pubblicata_il, body.giorno_competenza),
+      giorno_competenza: body.giorno_competenza ?? politica.giornoOriginale,
+      politica_operazione: politica,
     }
     for (const f of ['titolo', 'categoria_id', 'target_scope', 'target_gradi', 'target_classes', 'copertina_url', 'invia_notifica'] as const) {
       if (body[f] !== undefined) updates[f] = body[f]
@@ -399,6 +401,7 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
       post_id: p.data,
       n_file: usciti.length,
     })
+    await ritiraPendingNews(supabase, { ...sc.post!, politica_operazione: politica })
     return NextResponse.json({ disponibile: true, post: data as NewsPost })
   } catch (err) {
     // PRIMA la causa, POI il rimedio: vedi la gemella in `src/app/api/news/route.ts`.

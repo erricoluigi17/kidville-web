@@ -5,6 +5,7 @@ import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { genitoriDiAlunni } from '@/lib/notifiche/destinatari'
 import { logEvento } from '@/lib/logging/logger'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 
 // =============================================================================
 // Wrapper unico per i trigger di notifica: toggle per scuola → risoluzione
@@ -47,8 +48,14 @@ export interface NotificaEventoParams {
 export async function notificaEvento(supabase: SupabaseClient, params: NotificaEventoParams): Promise<void> {
   try {
     if (!deveNotificareGenitori(params.operazione) && (params.destinatario === 'genitore' || (!params.utenteIds?.length && params.alunnoIds?.length))) {
+      await ritiraPendingOperazione(supabase, params)
       logEvento('notifica', 'info', { operazione: 'notificaEvento', esito: 'rettifica-storica-silenziosa', tipo: params.tipo })
       return
+    }
+    if (!deveNotificareGenitori(params.operazione) && params.alunnoIds?.length && params.destinatario !== 'personale') {
+      // I destinatari espliciti di un trigger misto sono personale: ritira
+      // esclusivamente i genitori risolti dagli alunni e prosegui per il personale.
+      await ritiraPendingOperazione(supabase, { ...params, utenteIds: [], destinatario: 'genitore' })
     }
     if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return
 

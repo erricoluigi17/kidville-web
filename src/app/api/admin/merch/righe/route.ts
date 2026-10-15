@@ -1,3 +1,5 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
 import { oggiRoma, istanteNelGiornoRoma } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -32,10 +34,10 @@ export const PATCH = withRoute('admin/merch/righe:PATCH', async (request: Reques
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
 
-    type R = { id: string; stato: string; ordine_id: string; ordinato_il?: string | null; arrivato_il?: string | null; consegnato_il?: string | null; ordine: { scuola_id?: string | null } | { scuola_id?: string | null }[] | null }
+    type R = { id: string; stato: string; ordine_id: string; ordinato_il?: string | null; arrivato_il?: string | null; consegnato_il?: string | null; ordine: { scuola_id?: string | null; alunno_id?: string | null } | { scuola_id?: string | null; alunno_id?: string | null }[] | null }
     const { data: rigaRaw, error } = await supabase
       .from('divise_ordini_righe')
-      .select('id, stato, ordine_id, ordinato_il, arrivato_il, consegnato_il, ordine:ordine_id ( scuola_id )')
+      .select('id, stato, ordine_id, ordinato_il, arrivato_il, consegnato_il, ordine:ordine_id ( scuola_id, alunno_id )')
       .eq('id', riga_id)
       .maybeSingle()
     if (error && SCHEMA_MANCANTE.has(error.code ?? '')) {
@@ -62,6 +64,14 @@ export const PATCH = withRoute('admin/merch/righe:PATCH', async (request: Reques
     const { error: updErr } = await supabase.from('divise_ordini_righe').update(updates).eq('id', riga_id)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
+    if (rettificaData || stato === 'annullato') {
+      const alunnoId = uno(riga.ordine)?.alunno_id
+      const giornoOriginale = da === 'consegnato' ? riga.consegnato_il : riga.arrivato_il
+      if (alunnoId && giornoOriginale && ['arrivato', 'consegnato'].includes(da)) await ritiraPendingOperazione(supabase, {
+        tipo: da === 'consegnato' ? 'merch_consegnato' : 'merch_arrivato', entitaTipo: 'merch_ordine', entitaId: riga.ordine_id, alunnoIds: [alunnoId], scuolaId: sc,
+        operazione: politicaRettificaServizio(auth.user, giornoOriginale, b.data.giorno_competenza), destinatario: 'genitore',
+      })
+    }
     await sincronizzaTestata(supabase, riga.ordine_id)
 
     await logScrittura(supabase, {

@@ -331,8 +331,8 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     //    e la conferma la dà l'editor.
     const primo = richiesta.file[0]
     const rpcGalleria = richiesta.giorno_competenza ? 'video_galleria_intent_apri_storico' : 'video_galleria_intent_apri'
-    const rpcApertura = destinatari ? rpcGalleria : 'video_intent_open'
-    const { data: apertura, error: erroreApertura } = destinatari
+    let rpcApertura = destinatari ? rpcGalleria : 'video_intent_open'
+    let { data: apertura, error: erroreApertura } = destinatari
       ? await supabase.rpc(rpcGalleria, {
           ...(richiesta.giorno_competenza ? { p_giorno_competenza: richiesta.giorno_competenza, p_politica_operazione: politicaNotificaServizio(auth.user, richiesta.giorno_competenza) } : {}),
           p_owner_id: auth.user.id,
@@ -362,6 +362,32 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
           p_target_id: richiesta.targetId,
           p_expected_target_version: richiesta.versioneTargetAttesa,
         })
+    if (destinatari && richiesta.giorno_competenza === oggiRoma() && erroreApertura
+      && (pipelineAssente(erroreApertura) || (['42703', 'PGRST204'].includes(erroreApertura.code ?? '')
+        && /\b(?:politica_operazione|giorno_competenza)\b/.test(erroreApertura.message ?? '')))) {
+      // Lo schema precedente sa già aprire i normali video di oggi. Nessuna decisione storica
+      // deve andare persa: una data passata continua a richiedere la RPC che salva la policy.
+      logEvento('galleria', 'warn', { operazione: OPERAZIONE, esito: 'apertura-odierna-schema-storici-assente' }, erroreApertura)
+      rpcApertura = 'video_galleria_intent_apri'
+      const ripiego = await supabase.rpc('video_galleria_intent_apri', {
+        p_owner_id: auth.user.id,
+        p_scuola_id: scuolaId,
+        p_idempotency_key: primo.chiaveIdempotenza,
+        p_original_path: percorsi[0],
+        p_byte: primo.byte,
+        p_mime: primo.mime,
+        p_durata_s: primo.durataSecondi,
+        p_tag_alunni: destinatari.tagAlunni,
+        p_broadcast: destinatari.broadcast,
+        p_classi: destinatari.classi,
+        p_trasporto: richiesta.trasporto,
+        p_sha256: nativo && primo.sha256 ? `\\x${primo.sha256}` : null,
+        p_token_hash: tokenRinnovo ? hashTokenRinnovoPerPostgres(tokenRinnovo) : null,
+        p_token_scade_il: scadenzaToken ? scadenzaToken.toISOString() : null,
+      })
+      apertura = ripiego.data
+      erroreApertura = ripiego.error
+    }
     if (erroreApertura) {
       if (pipelineAssente(erroreApertura)) {
         return rispostaPipelineAssente(OPERAZIONE, rpcApertura, erroreApertura)

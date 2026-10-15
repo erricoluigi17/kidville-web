@@ -26,7 +26,8 @@ beforeAll(async () => {
     create table public.armadietto_richieste(id uuid primary key);
     create table public.news_posts(id uuid primary key);
     create table public.video_intents(id uuid primary key);
-    create table public.galleria_media_v2(id uuid primary key,file_type text,upload_id uuid);
+    create table public.galleria_media_v2(id uuid primary key,file_type text,upload_id uuid,eliminato_il timestamptz,
+      scuola_id uuid,uploaded_by uuid,created_at timestamptz default now());
     create table public.avvisi(id uuid primary key);
     create table public.chat_messages(id uuid primary key,content text);
     create table public.valutazioni(id uuid primary key,section_id uuid,creato_il timestamptz);

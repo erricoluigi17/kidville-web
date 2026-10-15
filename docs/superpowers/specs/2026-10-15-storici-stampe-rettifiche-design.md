@@ -14,6 +14,10 @@ Staff senza sblocco preventivo sul passato, nelle sedi autorizzate; docenti con 
 
 Il diario usa la data selezionata anche per presenze, orari e movimenti collegati. Originali consolidati e firme si conservano nell’archivio applicativo protetto; nuove versioni non ereditano firme. Le dichiarazioni delle famiglie non vengono riscritte come se fossero state rese sul contenuto nuovo. Audit dei metadati, gestione degli errori PostgREST e logging senza dati personali sono parte dell’implementazione.
 
+Le code precedenti ai metadati sono filtrate per giorno di creazione a Roma; quando disponibili prevalgono la competenza e poi la policy originale. Il momento programmato di invio non prova la giornata del fatto. Uno spostamento di data ritira soltanto le code delle giornate originali.
+
+Per la galleria, `politica_operazione.galleria` conserva `{scuolaId, mediaIds}` per ogni famiglia. Le RPC server `notifiche_galleria_accoda` e `notifiche_galleria_ritira` usano un lock di transazione su autore, sede, famiglia e giornata: il debounce unisce le origini, il ritiro elimina soltanto il media comprovato e cancella l’avviso soltanto se non rimangono altre origini. Fonte cestinata o rettificata impedisce il replay di un vecchio annuncio; il solo replay non modifica lettura o scadenza della push. Le vecchie righe senza provenienza non possono essere attribuite a una foto o sede: si preservano e si segnala l’ambiguità nei log. Il conteggio aggregato reale del 15 ottobre prima del rilascio non rileva pending galleria, comprese quelle senza programmazione.
+
 ## Verifiche
 
 Catalogo completo e categorie concrete; oltre 1.000 righe; appartenenze e trasferimenti; isolamento sedi e ruoli; passato/oggi, mezzanotte Roma e cambio d’ora; code differite; originali e firme; contabilità coerente; PDF lunghi e allegati mancanti; download web/nativi; ambiente senza schema nuovo. ESLint, Vitest, build e Playwright in CI prima del rilascio.

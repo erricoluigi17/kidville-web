@@ -1,3 +1,4 @@
+import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, proiettaRiga, type AttesaStorica, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
@@ -502,16 +503,15 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
           .map((p) => [p.alunno_id, p]),
       )
       const revocati = records
-        .filter((r) => r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente')
+        .filter((r) => politica.sopprimiGenitori || (r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente'))
         .map((r) => r.alunnoId)
       for (const alunnoId of revocati) {
-        const { error: erroreRevoca } = await supabase
+        const { error: erroreRevoca } = await filtraNotifichePerGiorni(supabase
           .from('notifiche')
           .delete()
           .eq('tipo', 'assenza_non_comunicata')
           .eq('entita_id', alunnoId)
-          .eq('giorno_competenza', data)
-          .is('push_inviata_il', null)
+          .is('push_inviata_il', null), [data])
         if (erroreRevoca) logEvento('notifica', 'error', { operazione: 'primaria/appello:POST', esito: 'revoca-assenza-fallita' }, erroreRevoca)
       }
 

@@ -1,4 +1,5 @@
-import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
+import { politicaNotificaServizio, politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -235,7 +236,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
 
-    const politica = politicaNotificaServizio(auth.user,
+    const politica = politicaRettificaServizio(auth.user,
       String(esistente.periodo_competenza ?? esistente.scadenza ?? esistente.creato_il ?? ''),
       typeof updates.scadenza === 'string' ? updates.scadenza : null)
 
@@ -277,6 +278,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       logErrore({ operazione: 'pagamenti/[id]:PATCH', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
     }
+    await ritiraPendingPagamento(supabase, { pagamentoId: id, alunnoId: esistente.alunno_id as string | null, scuolaId: esistente.scuola_id as string | null, operazione: politica })
     if (updates.metodi_ammessi !== undefined && !metodiNonSalvati) {
       const m = updates.metodi_ammessi as string[]
       logEvento('pagamento', 'info', {
@@ -438,6 +440,8 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
         return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
       }
     }
+
+    await ritiraPendingPagamento(supabase, { pagamentoId: id, alunnoId: c.voce.alunno_id as string | null, scuolaId: c.voce.scuola_id as string | null, operazione: politicaNotificaServizio(user, String(c.voce.periodo_competenza ?? c.voce.scadenza ?? c.voce.creato_il ?? '')) })
 
     // La voce è GIÀ cancellata: da qui niente cambia la risposta, ma ogni fallimento si dice.
     // Una voce scaduta tolta può azzerare lo scaduto della famiglia → revoca della sospensione

@@ -1,5 +1,6 @@
-import { oggiRoma, puoCorreggereStorico, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita';
-import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi';
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending';
+import { oggiRoma, deveNotificareGenitori, puoCorreggereStorico, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita';
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -624,7 +625,7 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         if (b.data.giorno_competenza && b.data.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
             return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 });
         }
-        const politica = politicaNotificaServizio(auth.user, prima?.politica_operazione?.giornoCompetenza, prima?.giorno_competenza ?? prima?.created_at, b.data.giorno_competenza);
+        const politica = politicaRettificaServizio(auth.user, prima?.giorno_competenza ?? prima?.politica_operazione?.giornoCompetenza ?? prima?.created_at, prima?.politica_operazione?.giornoCompetenza, b.data.giorno_competenza);
         patch.politica_operazione = politica;
         if (b.data.giorno_competenza) patch.giorno_competenza = b.data.giorno_competenza;
 
@@ -726,11 +727,18 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // famiglie senza avviso. Si manda SOLO a chi non ha già la notifica
         // iniziale, e solo se scope o classi sono davvero cambiati. Best-effort,
         // ma mai muto: se non si sa chi è già stato avvisato non si manda niente.
+        if (!deveNotificareGenitori(politica) && prima?.scuola_id) {
+            const originali = await destinatariAvviso(supabase, prima.scuola_id, prima.target_scope ?? 'globale', prima.target_classes ?? []);
+            for (const tipoPending of [tipoNotificaAvviso(prima.form_model_id, prima.tipo), 'adesione_promemoria', 'adesione_ammessa']) {
+                await ritiraPendingOperazione(supabase, { tipo: tipoPending, entitaTipo: 'avviso', entitaId: id, scuolaId: prima.scuola_id, utenteIds: originali, operazione: politica, destinatario: 'genitore' });
+            }
+        }
+
         const scopeDopo = target_scope ?? prima?.target_scope ?? 'globale';
         const classiPrima = [...(prima?.target_classes ?? [])].sort().join('|');
         const classiDopo = [...classiTarget].sort().join('|');
         const destinatariCambiati = scopeDopo !== (prima?.target_scope ?? 'globale') || classiPrima !== classiDopo;
-        if (destinatariCambiati && prima?.scuola_id) {
+        if (destinatariCambiati && prima?.scuola_id && deveNotificareGenitori(politica)) {
             try {
                 const tipoNotifica = tipoNotificaAvviso(prima.form_model_id, tipoRisultante);
                 const tutti = await destinatariAvviso(supabase, prima.scuola_id, scopeDopo, classiTarget);

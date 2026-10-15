@@ -44,6 +44,8 @@ const h = vi.hoisted(() => ({
   // ── il mondo ──
   intento: null as unknown as Record<string, unknown> | null,
   erroreIntento: null as unknown,
+  colonneIntentoAssenti: [] as string[],
+  codiceColonnaIntento: '42703',
   jobs: [] as Record<string, unknown>[],
   erroreJob: null as unknown,
   alunni: [] as { id: string; scuola_id: string; stato: string | null; consenso_privacy: boolean | null }[],
@@ -79,6 +81,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.log, logErrore: vi.fn(), logOk: vi.fn() }))
+vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/triggers', () => ({
   notificaEvento: vi.fn(async (_s: unknown, p: Record<string, unknown>) => {
     h.ordine.push(`notifica:${String(p.tipo)}`)
@@ -114,8 +117,14 @@ import { CODICI_ESITO_VIDEO } from '@/lib/media/video/contratto'
 function risposta(q: (typeof h.query)[number]): Risposta {
   const filtro = (m: string, c: string) => q.filtri.find((f) => f.m === m && f.c === c)?.v
   switch (q.tabella) {
-    case 'video_intents':
-      return { data: h.erroreIntento ? null : h.intento, error: h.erroreIntento }
+    case 'video_intents': {
+      if (h.erroreIntento) return { data: null, error: h.erroreIntento }
+      const colonne = q.colonne.split(',').map(c => c.trim())
+      const assente = h.colonneIntentoAssenti.find(c => colonne.includes(c))
+      if (assente) return { data: null, error: { code: h.codiceColonnaIntento, message: `column video_intents.${assente} does not exist` } }
+      const data = h.intento && Object.fromEntries(Object.entries(h.intento).filter(([c]) => !h.colonneIntentoAssenti.includes(c)))
+      return { data, error: null }
+    }
     case 'video_jobs':
       return { data: h.erroreJob ? null : h.jobs, error: h.erroreJob }
     case 'alunni': {
@@ -172,6 +181,9 @@ function fromFinto(tabella: string) {
 }
 
 const RPC_DI_BASE: Record<string, (args: Record<string, unknown>) => Risposta> = {
+  // Questi scenari coprono anche il DB CI precedente alla nuova RPC; il contratto
+  // moderno con le origini è provato in gallery-notifiche-origini e nei test SQL.
+  notifiche_galleria_accoda: () => ({ data: null, error: { code: 'PGRST202', message: 'public.notifiche_galleria_accoda missing from schema cache' } }),
   video_galleria_pubblica: (a) => ({
     data: {
       ok: true,
@@ -241,6 +253,8 @@ function intentoDi(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   h.intento = intentoDi()
   h.erroreIntento = null
+  h.colonneIntentoAssenti = []
+  h.codiceColonnaIntento = '42703'
   h.jobs = [
     {
       id: JOB,
@@ -311,6 +325,7 @@ describe('un video pronto, tutti i bambini ancora in sede: si pubblica e si avvi
       'copia',
       'rpc:video_galleria_pubblica',
       'rpc:video_intent_esito_segna',
+      'rpc:notifiche_galleria_accoda',
       'notifica:galleria',
       'notifica:video_esito',
     ])
@@ -1442,8 +1457,68 @@ describe('competenza dell’invio video conservata nel differito', () => {
   it('video corrente completato domani: avviso famiglia con la stessa policy originale', async () => {
     const operazione = { giornoCompetenza: '2026-10-02', giornoOperazioneRoma: '2026-10-02', sopprimiGenitori: false }
     h.intento!.politica_operazione = operazione
+    h.intento!.giorno_competenza = '2026-10-02'
     const esito = await pubblica({ adesso: () => ADESSO + 86_400_000 })
     expect(esito.esito).toBe('pubblicato')
     expect(h.notifiche.find(n => n.tipo === 'galleria')).toMatchObject({ destinatario: 'genitore', operazione })
+  })
+})
+
+
+describe('schema video CI precedente alle colonne storici', () => {
+  it.each(['42703', 'PGRST204'])('colonne storici assenti (%s): pubblica il normale invio e avvisa solo i destinatari effettivi', async codice => {
+    h.colonneIntentoAssenti = ['politica_operazione', 'giorno_competenza']
+    h.codiceColonnaIntento = codice
+    h.intento = intentoDi({ tag_alunni: [BAMBINO_A], n_tag: 1 })
+    const esito = await pubblica()
+    expect(esito).toEqual({ esito: 'pubblicato', creato: true, segnato: true, recupero: false })
+    expect(rpcDi('video_galleria_pubblica')[0].args.p_tag_effettivi).toEqual([BAMBINO_A])
+    expect(notificheDi('galleria')).toHaveLength(1)
+    expect(notificheDi('galleria')[0].utenteIds).toEqual([`genitore-di-${BAMBINO_A}`])
+    expect(notificheDi('video_esito')).toHaveLength(1)
+    expect(h.marca).toBe('pubblicato')
+  })
+
+  it('una colonna obbligatoria assente non viene confusa con il degrado storici', async () => {
+    h.colonneIntentoAssenti = ['status']
+    const esito = await pubblica()
+    expect(esito).toEqual({ esito: 'da-ripetere', codice: 'INTENTO_NON_LETTO' })
+    expect(h.query.filter(q => q.tabella === 'video_intents')).toHaveLength(1)
+    expect(h.copie).toHaveLength(0)
+    expect(h.rpc).toHaveLength(0)
+    expect(h.notifiche).toHaveLength(0)
+  })
+
+  it('schema parziale con giorno passato ma senza policy originale: non pubblica né avvisa', async () => {
+    h.colonneIntentoAssenti = ['politica_operazione']
+    h.intento = intentoDi({ giorno_competenza: '2026-10-01' })
+    const esito = await pubblica()
+    expect(esito).toEqual({ esito: 'da-ripetere', codice: 'INTENTO_POLITICA_ASSENTE' })
+    expect(h.query.filter(q => q.tabella === 'video_intents')).toHaveLength(2)
+    expect(h.copie).toHaveLength(0)
+    expect(h.rpc).toHaveLength(0)
+    expect(h.notifiche).toHaveLength(0)
+    expect(h.marca).toBeNull()
+  })
+
+  it('schema parziale senza giorno: mantiene la policy storica presente e tace alle famiglie', async () => {
+    h.colonneIntentoAssenti = ['giorno_competenza']
+    h.intento = intentoDi({ politica_operazione: { giornoCompetenza: '2026-10-01', giornoOperazioneRoma: '2026-10-02', sopprimiGenitori: true } })
+    const esito = await pubblica()
+    expect(esito.esito).toBe('pubblicato')
+    expect(notificheDi('galleria')).toHaveLength(0)
+    expect(notificheDi('video_esito')).toHaveLength(1)
+  })
+
+  it('recupero dopo la pubblicazione su schema precedente: conserva i destinatari della riga e completa la marca', async () => {
+    h.colonneIntentoAssenti = ['politica_operazione', 'giorno_competenza']
+    h.intento = intentoDi({ status: 'published', tag_alunni: [] })
+    h.media = { id: '70000000-0000-4000-8000-000000000001', tag_students: [BAMBINO_A], is_broadcast: false, target_classes: null }
+    const esito = await pubblica()
+    expect(esito).toEqual({ esito: 'pubblicato', creato: false, segnato: true, recupero: true })
+    expect(h.copie).toHaveLength(0)
+    expect(rpcDi('video_galleria_pubblica')).toHaveLength(0)
+    expect(notificheDi('galleria')[0].utenteIds).toEqual([`genitore-di-${BAMBINO_A}`])
+    expect(h.marca).toBe('pubblicato')
   })
 })

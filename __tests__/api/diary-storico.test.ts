@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { creaFintoSupabase, type DBFinto, type OpzioniFinto } from '../fixtures/finto-supabase'
 
-const h = vi.hoisted(() => ({ db: {} as DBFinto, opzioni: {} as OpzioniFinto, user: {} as AppUser, negato: false, parent: vi.fn(), staff: vi.fn(), riconcilia: vi.fn() }))
+const h = vi.hoisted(() => ({ db: {} as DBFinto, opzioni: {} as OpzioniFinto, user: {} as AppUser, negato: false, parent: vi.fn(), staff: vi.fn(), riconcilia: vi.fn(), notificaReale: false }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db, [], h.opzioni) }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: h.user }) }))
 vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: async () => ({ user: h.user }) }))
@@ -11,7 +11,10 @@ vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => h.negato ?
 vi.mock('@/lib/auth/sede-richiesta', () => ({ restringiASedeRichiesta: () => ({ plessi: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] }) }))
 vi.mock('@/lib/sezioni/risoluzione', () => ({ risolviSezione: async () => ({ sectionIds: ['classe'] }) }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
-vi.mock('@/lib/primaria/notifiche', () => ({ enqueueDiarioGenitori: h.parent, notificaTitolariScrittura: h.staff }))
+vi.mock('@/lib/primaria/notifiche', async originale => {
+  const reale = await originale<typeof import('@/lib/primaria/notifiche')>()
+  return { ...reale, enqueueDiarioGenitori: (...args: Parameters<typeof reale.enqueueDiarioGenitori>) => { h.parent(...args); return h.notificaReale ? reale.enqueueDiarioGenitori(...args) : undefined }, notificaTitolariScrittura: h.staff }
+})
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}), leggiModuleConfig: async () => ({ ok: true, config: { routine_attive: ['umore', 'cambio'] } }) }))
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: h.riconcilia }))
 vi.mock('@/lib/logging/logger', async originale => ({ ...await originale<Record<string, unknown>>(), logEvento: vi.fn(), logErrore: vi.fn() }))
@@ -29,6 +32,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-10-15T10:30:00Z'))
   h.user = { id: 'operatore', role: 'segreteria' }
   h.negato = false
+  h.notificaReale = false
   h.opzioni = {}
   h.db = {
     alunni: [{ id: ALUNNO, nome: 'Bambino fittizio', section_id: 'classe', scuola_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', usa_pannolino: true }],
@@ -43,6 +47,18 @@ afterEach(() => vi.useRealTimers())
 const eventi = () => h.db.eventi_diario as Record<string, unknown>[]
 
 describe('diario amministrativo nella giornata di competenza', () => {
+  it.each(['POST','DELETE'])('%s storico ritira realmente le pending legacy del giorno, lasciando oggi e gli altri genitori', async metodo => {
+    h.notificaReale = true
+    h.db.legame_genitori_alunni = [{ alunno_id: ALUNNO, genitore_id: 'genitore' }]
+    const base = { utente_id: 'genitore', tipo: 'diario', entita_tipo: 'diario', entita_id: ALUNNO, push_inviata_il: null, giorno_competenza: null, politica_operazione: null, creato_il: '2026-10-14T21:55:00Z', invio_programmato_il: '2026-10-14T22:05:00Z' }
+    h.db.notifiche = [
+      { ...base, id: 'legacy-ieri' }, { ...base, id: 'legacy-oggi', creato_il: '2026-10-15T09:55:00Z' },
+      { ...base, id: 'meta-oggi', giorno_competenza: '2026-10-15' },
+      { ...base, id: 'altro-genitore', utente_id: 'altro' }, { ...base, id: 'inviata', push_inviata_il: '2026-10-14T22:06:00Z' },
+    ]
+    expect((await (metodo === 'POST' ? POST : DELETE)(richiesta(metodo, '2026-10-14'))).status).toBe(200)
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['legacy-oggi', 'meta-oggi', 'altro-genitore', 'inviata'])
+  })
   it('aggiorna ieri lasciando oggi invariato e trasmette la policy calcolata sul server', async () => {
     expect((await POST(richiesta('POST', '2026-10-14'))).status).toBe(200)
     expect(eventi().find(e => e.id === 'ieri')?.dettagli).toEqual({ umore: 'felice' })

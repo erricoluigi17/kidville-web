@@ -42,6 +42,7 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   requireStaff: vi.fn(),
   notificaEvento: vi.fn(),
+  rpcNotificaGalleria: vi.fn(),
   generaEInviaDigest: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
@@ -55,7 +56,12 @@ vi.mock('@/lib/auth/require-staff', async (orig) => ({
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  const crea = () => creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture })
+  const crea = () => creaFintoSupabase(h.db, h.tabelle, {
+    scritture: h.scritture,
+    // Questo gruppo verifica il DB CI precedente alla RPC delle origini. Solo
+    // questa funzione ha un contratto esplicito: tutte le RPC ignote lanciano.
+    rpc: { notifiche_galleria_accoda: h.rpcNotificaGalleria },
+  })
   return { createAdminClient: async () => crea(), createClient: async () => crea() }
 })
 // `notificaEvento` e la generazione del digest sono effetti collaterali: qui
@@ -136,6 +142,9 @@ beforeEach(() => {
   h.requireDocente.mockResolvedValue({ user: { id: ADMIN_AB, role: 'admin', scuola_id: SEDE_A } })
   h.requireStaff.mockResolvedValue({ user: { id: ADMIN_AB, role: 'admin', scuola_id: SEDE_A } })
   h.notificaEvento.mockResolvedValue(undefined)
+  h.rpcNotificaGalleria.mockResolvedValue({ data: null, error: {
+    code: 'PGRST202', message: 'Could not find public.notifiche_galleria_accoda in the schema cache',
+  } })
   h.generaEInviaDigest.mockResolvedValue({ edizioni: [{ id: 'ed-1' }] })
 })
 
@@ -165,6 +174,7 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
     expect(h.db.galleria_media_v2).toEqual([])
     expect(inserite('galleria_media_v2')).toEqual([])
     expect(h.notificaEvento).not.toHaveBeenCalled()
+    expect(h.rpcNotificaGalleria).not.toHaveBeenCalled()
   })
 
   it('admin multi-sede CON `scuola_id`: la riga porta QUELLA sede, e i destinatari pure', async () => {
@@ -181,6 +191,12 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
     expect(h.notificaEvento.mock.calls[0][1]).toMatchObject({
       scuolaId: SEDE_B,
       utenteIds: [GEN_B],
+      debounce: false,
+    })
+    expect(h.rpcNotificaGalleria).toHaveBeenCalledExactlyOnceWith({
+      p_scuola_id: SEDE_B, p_uploaded_by: ADMIN_AB, p_media_id: h.db.galleria_media_v2[0].id,
+      p_utente_ids: [GEN_B], p_buffer_min: 30,
+      p_politica_operazione: expect.objectContaining({ sopprimiGenitori: false }),
     })
   })
 
@@ -223,9 +239,16 @@ describe('POST /api/gallery — la foto nasce nella sede DICHIARATA', () => {
     )
     expect(res.status).toBe(201)
     expect(h.db.galleria_media_v2[0]).toMatchObject({ scuola_id: SEDE_A, uploaded_by: ED_A })
+    expect(h.notificaEvento).toHaveBeenCalledTimes(1)
     expect(h.notificaEvento.mock.calls[0][1]).toMatchObject({
       scuolaId: SEDE_A,
       utenteIds: [GEN_A],
+      debounce: false,
+    })
+    expect(h.rpcNotificaGalleria).toHaveBeenCalledExactlyOnceWith({
+      p_scuola_id: SEDE_A, p_uploaded_by: ED_A, p_media_id: h.db.galleria_media_v2[0].id,
+      p_utente_ids: [GEN_A], p_buffer_min: 30,
+      p_politica_operazione: expect.objectContaining({ sopprimiGenitori: false }),
     })
   })
 

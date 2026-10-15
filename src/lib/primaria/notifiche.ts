@@ -2,10 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
-import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
+import { getGenitoriDiAlunni, getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
+import { ritiraNotifichePending } from '@/lib/notifiche/ritira-pending'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
-import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
+import { deveNotificareGenitori, oggiRoma, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import { logEvento } from '@/lib/logging/logger'
 
 interface EnqueueParams {
@@ -48,6 +49,7 @@ export async function enqueueNotifichePerAlunni(
   { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10, scuolaId, operazione }: EnqueueParams
 ): Promise<void> {
   if (!deveNotificareGenitori(operazione)) {
+    if (operazione && entitaId) await ritiraPendingPerAlunni(supabase, { alunnoIds, tipo, entitaId, entitaTipo, giorni: [operazione.giornoOriginale ?? operazione.giornoCompetenza] })
     logEvento('notifica', 'info', { operazione: 'enqueueNotifichePerAlunni', esito: 'rettifica-storica-silenziosa', tipo })
     return
   }
@@ -91,6 +93,7 @@ export async function enqueueDiarioGenitori(
   { alunnoId, nome, bufferMin = 10, scuolaId, operazione }: { alunnoId: string; nome?: string | null; bufferMin?: number; scuolaId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
   if (!deveNotificareGenitori(operazione)) {
+    if (operazione) await ritiraDiarioGenitori(supabase, { alunnoId, giorno: operazione.giornoOriginale ?? operazione.giornoCompetenza })
     logEvento('notifica', 'info', { operazione: 'enqueueDiarioGenitori', esito: 'rettifica-storica-silenziosa', alunno_id: alunnoId })
     return
   }
@@ -98,20 +101,13 @@ export async function enqueueDiarioGenitori(
   // Gate toggle per scuola prima del debounce (se disattivata, non tocca la coda).
   const scuola = scuolaId !== undefined ? scuolaId : await scuolaDiAlunno(supabase, alunnoId)
   if (!(await isNotificaAbilitata(supabase, 'diario', scuola))) return
-  // Debounce: elimina le notifiche diario pending (non inviate) di questo figlio.
+  // Debounce limitato al fatto del giorno: le code di altre giornate restano.
   try {
     // PostgREST NON lancia: il delete fallito tornava in `{ error }` e il catch
     // non scattava. Un debounce che non cancella non rompe niente, ma manda al
     // genitore N notifiche invece di una: va visto, non subìto.
-    let cancellazione = supabase
-      .from('notifiche')
-      .delete()
-      .eq('entita_tipo', 'diario')
-      .eq('entita_id', alunnoId)
-      .is('push_inviata_il', null)
-    if (operazione) cancellazione = cancellazione.eq('giorno_competenza', operazione.giornoCompetenza)
-    const res = await cancellazione
-    if (res?.error) segnalaDebounceDiarioFallito(alunnoId, res.error)
+    const riuscita = await ritiraDiarioGenitori(supabase, { alunnoId, giorno: operazione?.giornoOriginale ?? operazione?.giornoCompetenza ?? oggiRoma() })
+    if (!riuscita) segnalaDebounceDiarioFallito(alunnoId, new Error('Ritiro diario non completato'))
   } catch (e) {
     segnalaDebounceDiarioFallito(alunnoId, e)
   }
@@ -131,6 +127,29 @@ export async function enqueueDiarioGenitori(
     scuolaId: scuola,
     operazione,
   })
+}
+
+async function ritiraPendingPerAlunni(supabase: SupabaseClient, opts: {
+  alunnoIds: string[]; tipo: string; entitaId: string; entitaTipo?: string; giorni: string[]
+}): Promise<boolean> {
+  try {
+  const legami = await getGenitoriDiAlunniEsito(supabase, opts.alunnoIds)
+  if (!legami.completo) {
+    logEvento('notifica', 'error', { operazione: 'ritiraPendingPerAlunni', esito: 'ritiro-destinatari-incompleti', tipo: opts.tipo })
+    return false
+  }
+  const utenteIds = [...new Set([...legami.perAlunno.values()].flat())]
+  if (!utenteIds.length) return true
+  return await ritiraNotifichePending(supabase, { tipo: opts.tipo, entitaId: opts.entitaId, entitaTipo: opts.entitaTipo, utenteIds, giorniOriginali: opts.giorni })
+  } catch (errore) {
+    logEvento('notifica', 'error', { operazione: 'ritiraPendingPerAlunni', esito: 'ritiro-non-eseguito', tipo: opts.tipo }, errore)
+    return false
+  }
+}
+
+/** Anche la cancellazione storica deve ritirare un avviso precedente al nuovo schema. */
+export async function ritiraDiarioGenitori(supabase: SupabaseClient, opts: { alunnoId: string; giorno: string }): Promise<boolean> {
+  return ritiraPendingPerAlunni(supabase, { alunnoIds: [opts.alunnoId], tipo: 'diario', entitaId: opts.alunnoId, entitaTipo: 'diario', giorni: [opts.giorno] })
 }
 
 /**

@@ -58,6 +58,7 @@ vi.mock('@/lib/forms/degrado-sede', () => ({
     ['PGRST204', '42703'].includes(e?.code ?? ''),
 }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
+vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/destinatari', () => ({
   genitoriDiAlunni: h.genitoriDiAlunni,
   genitoriDiClassi: h.genitoriDiClassi,
@@ -66,6 +67,7 @@ vi.mock('@/lib/notifiche/destinatari', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async () => ({ data: null, error: { code: 'PGRST202', message: 'public.notifiche_galleria_accoda missing from schema cache' } }),
     from(tabella: string) {
       // Dal 2026-07-31 la POST verifica che ogni `tag_students` sia nei plessi di
       // chi pubblica, PRIMA del Privacy Lock: senza, il 422 «manca la liberatoria»

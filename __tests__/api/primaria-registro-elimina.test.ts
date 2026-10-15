@@ -105,7 +105,7 @@ function lezione(id: string, data: string, extra: Riga = {}): Riga {
 function notifica(id: string, extra: Riga): Riga {
   return {
     id, tipo: 'compiti', titolo: 'Nuovi compiti assegnati', entita_tipo: 'registro',
-    push_inviata_il: null, corpo: 'Pag. 12', ...extra,
+    push_inviata_il: null, corpo: 'Pag. 12', creato_il: new Date().toISOString(), giorno_competenza: OGGI, politica_operazione: null, ...extra,
   }
 }
 
@@ -175,6 +175,24 @@ beforeEach(() => {
     sblocchi_audit: [],
     utenti_scuole: [],
   } as Record<string, Riga[]>
+})
+
+describe('registro — pending legacy della giornata originale', () => {
+  it.each(['firma', 'lezione'])('DELETE %s conserva le altre giornate, anche se la programmazione attraversa mezzanotte', async ambito => {
+    comeSegreteria()
+    righe('registro_orario').find(r => r.id === LEZ)!.data = LONTANA
+    const base = { utente_id: GENITORE_1, entita_id: LEZ, corpo: 'Scheda 3', giorno_competenza: null, politica_operazione: null, creato_il: `${LONTANA}T22:55:00Z`, invio_programmato_il: `${LONTANA}T23:05:00Z` }
+    h.db.notifiche = [
+      notifica('legacy-originale', base), notifica('meta-originale', { ...base, giorno_competenza: LONTANA, creato_il: new Date().toISOString() }),
+      notifica('legacy-altro', { ...base, creato_il: '2026-01-13T10:00:00Z' }),
+      notifica('meta-altro', { ...base, giorno_competenza: '2026-01-13' }),
+      notifica('inviata', { ...base, push_inviata_il: `${LONTANA}T23:06:00Z` }),
+      notifica('altra-lezione', { ...base, entita_id: LEZ_ALTRA }),
+    ]
+    const response = await DELETE(req(ambito === 'firma' ? `firmaId=${FIRMA_MIA}` : `registroId=${LEZ}`, SEGRETERIA))
+    expect(response.status).toBe(200)
+    expect(righe('notifiche').map(n => n.id)).toEqual(['legacy-altro', 'meta-altro', 'inviata', 'altra-lezione'])
+  })
 })
 
 const idsDi = (t: string) => righe(t).map((r) => r.id)

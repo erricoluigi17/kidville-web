@@ -6,7 +6,7 @@ import { politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }))
 vi.mock('@/lib/sezioni/docenti', () => ({ docentiDiSezione: async () => ['docente'] }))
-vi.mock('@/lib/anagrafiche/legami', () => ({ getGenitoriDiAlunni: async () => new Map([['figlio', ['genitore']]]) }))
+vi.mock('@/lib/anagrafiche/legami', () => ({ getGenitoriDiAlunni: async () => new Map([['figlio', ['genitore']]]), getGenitoriDiAlunniEsito: async () => ({ completo: true, perAlunno: new Map([['figlio', ['genitore']]]) }) }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ genitoriDiAlunni: async () => ['genitore'] }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn() }))
 
@@ -31,11 +31,10 @@ beforeEach(() => {
   ] }
 })
 
-describe('silenzio storico prima del debounce e della campanella', () => {
-  it('una nuova voce storica staff non crea righe, né ritira quelle di oggi o ieri', async () => {
+describe('silenzio storico delle nuove notifiche e delle pending originali', () => {
+  it('una voce storica staff ritira ieri e preserva la pending di oggi senza nuovi avvisi', async () => {
     await enqueueDiarioGenitori(client(), { alunnoId: 'figlio', scuolaId: 'sede', operazione: contesto('2026-10-14') })
-    expect(righe().map(r => r.id)).toEqual(['ieri', 'oggi'])
-    expect(tabelle).toEqual([])
+    expect(righe().map(r => r.id)).toEqual(['oggi'])
   })
   it('il salvataggio odierno debouncia solo oggi e conserva politica originale nella differita', async () => {
     const originale = contesto('2026-10-15')
@@ -61,8 +60,7 @@ describe('silenzio storico prima del debounce e della campanella', () => {
   })
   it('anche genitori con id espliciti vengono soppressi prima del debounce', async () => {
     await notificaEvento(client(), { tipo: 'diario', titolo: 'Aggiornamento', utenteIds: ['genitore'], destinatario: 'genitore', debounce: true, entitaId: 'figlio', operazione: contesto('2026-10-14') })
-    expect(righe().map(r => r.id)).toEqual(['ieri', 'oggi'])
-    expect(tabelle).toEqual([])
+    expect(righe().map(r => r.id)).toEqual(['oggi'])
   })
   it('la coda protegge anche i chiamanti diretti', async () => {
     expect(await enqueueNotifiche(client(), { tipo: 'diario', titolo: 'Aggiornamento', utenteIds: ['genitore'], destinatario: 'genitore', operazione: contesto('2026-10-14') })).toBe(false)

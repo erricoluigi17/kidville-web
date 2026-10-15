@@ -74,6 +74,7 @@ function finto() {
         },
         eq: (...a: unknown[]) => { op.filtri.push(['eq', ...a]); return qb },
         is: (...a: unknown[]) => { op.filtri.push(['is', ...a]); return qb },
+        or: (filtro: string) => { op.filtri.push(['or', filtro]); return qb },
         not: (...a: unknown[]) => { op.filtri.push(['not', ...a]); return qb },
         maybeSingle: async () => ({ data: rigaLetta, error: erroreLettura }),
         then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
@@ -249,6 +250,10 @@ describe('l\'avviso di assenza ancora in coda', () => {
       ['eq', 'entita_id', ALUNNO],
       ['is', 'push_inviata_il', null],
     ]))
+    const giorno = rev.filtri.find(f => f[0] === 'or')?.[1]
+    expect(giorno).toContain(`giorno_competenza.in.(${GIORNO})`)
+    expect(giorno).toContain('creato_il.gte.2026-09-24T22:00:00.000Z')
+    expect(giorno).toContain('creato_il.lt.2026-09-25T22:00:00.000Z')
   })
 
   it('la revoca viene DOPO la scrittura riuscita', async () => {

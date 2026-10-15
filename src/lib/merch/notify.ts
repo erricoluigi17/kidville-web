@@ -1,3 +1,4 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
@@ -40,6 +41,7 @@ async function notifica(
 ): Promise<void> {
   try {
     if (!deveNotificareGenitori(n.operazione)) {
+      await ritiraPendingOperazione(supabase, { tipo: n.tipo, entitaTipo: 'merch_ordine', entitaId: n.ordineId, alunnoIds: [alunnoId], operazione: n.operazione, destinatario: 'genitore' })
       logEvento('notifica', 'info', { operazione: 'merch/notify', esito: 'rettifica-storica-silenziosa', tipo: n.tipo, alunno_id: alunnoId })
       return
     }

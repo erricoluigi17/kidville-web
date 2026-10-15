@@ -1,5 +1,6 @@
 import type { ContestoStorico, SezioneStorico } from '../tipi'
 import type { CategoriaStorico } from '../catalogo'
+import { haUnRuolo } from '@/lib/auth/predicati-ruolo'
 import { aggiungiAllegato, allegato, ammessa, euro, filtroDateEvento, nome, numero, perAlunni, perIds, periodo, relazione, sezione, testo, type Riga } from './servizi-comuni'
 
 export async function raccogliOperativi(ctx: ContestoStorico, categoria: CategoriaStorico): Promise<SezioneStorico | null> {
@@ -39,7 +40,7 @@ export async function raccogliOperativi(ctx: ContestoStorico, categoria: Categor
 
 async function protocolli(ctx: ContestoStorico): Promise<SezioneStorico> {
   const s = sezione('documenti_protocolli', [['alunno', 'Alunno'], ['numero', 'Numero/anno'], ['data', 'Registrato il'], ['tipo', 'Tipo'], ['oggetto', 'Oggetto'], ['mittente', 'Mittente'], ['destinatario', 'Destinatario'], ['annullato', 'Annullato il']])
-  if (!['admin', 'segreteria'].includes(ctx.utente.role)) { s.avvisi.push('Registro protocolli riservato ad amministrazione e segreteria. Nessun protocollo incluso per questo ruolo.'); return s }
+  if (!haUnRuolo(ctx.utente, ['admin', 'segreteria'])) { s.avvisi.push('Registro protocolli riservato ad amministrazione e segreteria. Nessun protocollo incluso per questo ruolo.'); return s }
   const links = await perIds(ctx, 'storici_collegamenti', 'id,alunno_id,scuola_id,tipo,entita_id', 'alunno_id', ctx.alunni.map(a => a.id), q => q.eq('scuola_id', ctx.richiesta.scuolaId).eq('tipo', 'protocollo'))
   if (!links.length) { s.avvisi.push('Non risultano collegamenti espliciti fra gli alunni selezionati e i protocolli. Non viene dedotta alcuna associazione da nomi o testo libero.'); return s }
   const records = await perIds(ctx, 'protocolli', 'id,scuola_id,numero,anno,data_registrazione,tipo,oggetto,mittente,destinatario,annullata_at,file_originale,file_timbrato,file_nome_originale,file_mime', 'id', links.map(l => testo(l.entita_id)), q => periodo(q.eq('scuola_id', ctx.richiesta.scuolaId), ctx, 'data_registrazione', true))

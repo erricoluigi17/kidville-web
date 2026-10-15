@@ -10,6 +10,7 @@ import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { ErroreStorico, erroreQueryStorico, leggiTutte } from '@/lib/storici/db'
 import { rispostaErroreStorico } from '@/lib/storici/http'
+import { utenteStaffStorico } from '@/lib/storici/permessi'
 const querySchema = z.object({ scuolaId: zUuid, alunnoId: zUuid })
 const bodySchema = querySchema.extend({ sectionId: zUuid, dal: zDataYMD, al: zDataYMD.nullable() }).refine(v => !v.al || v.dal < v.al, 'La data finale deve essere successiva a quella iniziale')
 const deleteSchema = z.object({ scuolaId: zUuid, id: zUuid, dal: zDataYMD, al: zDataYMD.nullable() })
@@ -20,7 +21,7 @@ export const GET = withRoute('admin/storici/appartenenze:GET', async (request: N
   if ('response' in q) return q.response
   try {
     const db = await createAdminClient()
-    const sedi = await scuoleDiUtente(db, auth.user)
+    const sedi = await scuoleDiUtente(db, utenteStaffStorico(auth.user))
     if (!sedi.includes(q.data.scuolaId)) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
     const data = await leggiTutte((dal, al) => db.from('alunni_classi_storico').select('id,section_id,dal,al,fonte,creato_il').eq('scuola_id', q.data.scuolaId).eq('alunno_id', q.data.alunnoId).order('dal').order('id').range(dal, al), 'elenco-appartenenze')
     return NextResponse.json({ data }, { headers: { 'Cache-Control': 'private, no-store' } })
@@ -33,7 +34,7 @@ export const POST = withRoute('admin/storici/appartenenze:POST', async (request:
   if ('response' in b) return b.response
   try {
     const db = await createAdminClient()
-    const sedi = await scuoleDiUtente(db, auth.user)
+    const sedi = await scuoleDiUtente(db, utenteStaffStorico(auth.user))
     if (!sedi.includes(b.data.scuolaId)) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
     const { data, error } = await db.rpc('storici_salva_appartenenza', { p_alunno: b.data.alunnoId, p_scuola: b.data.scuolaId, p_sezione: b.data.sectionId, p_dal: b.data.dal, p_al: b.data.al, p_attore: auth.user.id })
     if (error) {
@@ -51,7 +52,7 @@ export const DELETE = withRoute('admin/storici/appartenenze:DELETE', async (requ
   if ('response' in b) return b.response
   try {
     const db = await createAdminClient()
-    if (!(await scuoleDiUtente(db, auth.user)).includes(b.data.scuolaId)) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
+    if (!(await scuoleDiUtente(db, utenteStaffStorico(auth.user))).includes(b.data.scuolaId)) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
     let cancellazione = db.from('alunni_classi_storico').delete().eq('id', b.data.id).eq('scuola_id', b.data.scuolaId).eq('dal', b.data.dal)
     cancellazione = b.data.al === null ? cancellazione.is('al', null) : cancellazione.eq('al', b.data.al)
     const { data, error } = await cancellazione.select('id,alunno_id,section_id,dal,al').maybeSingle()

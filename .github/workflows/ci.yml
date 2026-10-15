@@ -15,6 +15,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# TypeScript a cache vuota supera il limite predefinito di Node 22 (4 GB):
+# misurati oltre 4 GB con extendedDiagnostics. Anche next dev esegue il controllo
+# prima di avviare Playwright. Stessi file e stessi gate, heap esplicito a 6 GB.
+env:
+  NODE_OPTIONS: '--max-old-space-size=6144'
+
 jobs:
   quality:
     name: Lint · Typecheck · Unit

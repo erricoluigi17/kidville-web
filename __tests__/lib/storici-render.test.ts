@@ -54,6 +54,17 @@ describe('file degli storici', () => {
     expect((await PDFDocument.load(r.bytes)).getPageCount()).toBe(4)
     expect(webp).toEqual(prima)
   })
+  it('rappresenta il video con una scheda stampabile senza tentare il download o dichiararlo mancante', async () => {
+    const copia = structuredClone(documento)
+    copia.sezioni[0].allegati = [{ bucket: 'gallery', percorso: 'prova/video.mp4', nome: 'Galleria-video-fittizio.mp4', mime: 'video/mp4' }]
+    const download = vi.fn(() => { throw new Error('Il video non deve essere scaricato dal generatore PDF') })
+    const db = { storage: { from: () => ({ download }) } } as unknown as SupabaseClient
+    const r = await creaPdfStorico(copia, db)
+    expect(download).not.toHaveBeenCalled()
+    expect(r.avvisi).toEqual([])
+    expect((await PDFDocument.load(r.bytes)).getPageCount()).toBe(4)
+    if (process.env.STORICI_PDF_VISIVO_DIR) await writeFile(join(process.env.STORICI_PDF_VISIVO_DIR, 'video-riferimento.pdf'), r.bytes)
+  })
   it('impagina una tabella oltre mille righe, un’immagine e un originale senza omissioni', async () => {
     const copia = structuredClone(documento)
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII='

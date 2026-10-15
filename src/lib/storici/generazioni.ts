@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { loadAppUser } from '@/lib/auth/require-staff'
+import { haUnRuolo } from '@/lib/auth/predicati-ruolo'
 import { logEvento } from '@/lib/logging/logger'
 import { CATALOGO_STORICI, espandiCategorie, richiestaStoricoSchema, type CategoriaStorico } from './catalogo'
 import { BUCKET_STORICI, type DocumentoStorico, type GenerazioneStorico, type SezioneStorico, type ContestoStorico } from './tipi'
@@ -9,6 +10,7 @@ import { erroreQueryStorico, ErroreStorico, leggiTutte } from './db'
 import { raccogliScolastico } from './adattatori/scolastici'
 import { raccogliServizio } from './adattatori/servizi'
 import { creaExcelStorico, creaPdfStorico } from './render'
+import { firmaRuoliStorico, utenteStaffStorico } from './permessi'
 
 export async function raccogliCategoria(ctx: ContestoStorico, categoria: CategoriaStorico): Promise<SezioneStorico> {
   const sezione = await raccogliScolastico(ctx, categoria) ?? await raccogliServizio(ctx, categoria)
@@ -22,7 +24,7 @@ export async function leggiGenerazione(db: SupabaseClient, user: AppUser, id: st
   if (!data) throw new ErroreStorico(404, 'GENERAZIONE_NON_TROVATA', 'Generazione non trovata.')
   const job = data as GenerazioneStorico
   if (new Date(job.scade_il).getTime() <= Date.now()) throw new ErroreStorico(410, 'GENERAZIONE_SCADUTA', 'Il file è scaduto. Genera nuovamente la stampa.')
-  if (job.ruolo_richiedente !== user.role) throw new ErroreStorico(403, 'PERMESSI_MODIFICATI', 'I permessi sono cambiati. Genera nuovamente la stampa.')
+  if (job.ruolo_richiedente !== firmaRuoliStorico(user)) throw new ErroreStorico(403, 'PERMESSI_MODIFICATI', 'I permessi sono cambiati. Genera nuovamente la stampa.')
   const ctx = await preparaContestoStorico(db, user, richiestaStoricoSchema.parse(job.richiesta))
   if (ctx.alunni.map(a => a.id).sort().join(',') !== [...job.alunni_ids].sort().join(',')) throw new ErroreStorico(403, 'PERIMETRO_MODIFICATO', 'Il perimetro degli alunni è cambiato. Genera nuovamente la stampa.')
   return job
@@ -79,7 +81,7 @@ export async function eseguiGenerazione(db: SupabaseClient, id: string, tempoMas
     if (fallimenti >= 3) throw new ErroreStorico(500, 'TENTATIVI_ESAURITI', 'Generazione interrotta dopo tre tentativi. Avvia una nuova stampa.')
     const user = await loadAppUser(job.richiesto_da)
     if (!user) throw new ErroreStorico(403, 'OPERATORE_NON_DISPONIBILE', 'L’operatore non è più autorizzato.')
-    if (job.ruolo_richiedente !== user.role) throw new ErroreStorico(403, 'PERMESSI_MODIFICATI', 'I permessi sono cambiati. Genera nuovamente la stampa.')
+    if (job.ruolo_richiedente !== firmaRuoliStorico(user)) throw new ErroreStorico(403, 'PERMESSI_MODIFICATI', 'I permessi sono cambiati. Genera nuovamente la stampa.')
     const richiesta = richiestaStoricoSchema.parse(job.richiesta)
     const ctx = await preparaContestoStorico(db, user, richiesta)
     if (ctx.alunni.map(a => a.id).sort().join(',') !== [...job.alunni_ids].sort().join(',')) throw new ErroreStorico(403, 'PERIMETRO_MODIFICATO', 'Il perimetro degli alunni è cambiato. Genera nuovamente la stampa.')
@@ -152,7 +154,7 @@ export async function pulisciGenerazioniScadute(db: SupabaseClient): Promise<num
 
 export async function opzioniStorici(db: SupabaseClient, user: AppUser, scuolaId: string) {
   const ctxSedi = await import('@/lib/auth/scope')
-  const sedi = await ctxSedi.scuoleDiUtente(db, user)
+  const sedi = await ctxSedi.scuoleDiUtente(db, utenteStaffStorico(user))
   if (!sedi.some(s => s.toLowerCase() === scuolaId.toLowerCase())) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
   const alunni = await leggiTutte<{ id: string; nome: string; cognome: string; section_id: string | null; archiviato_il: string | null }>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').eq('scuola_id', scuolaId).is('anonimizzato_il', null).order('cognome').order('id').range(dal, al), 'opzioni-alunni')
   const storico = await leggiTutte<{ alunno_id: string; section_id: string; section_nome: string }>((dal, al) => db.from('alunni_classi_storico').select('alunno_id,section_id,section_nome').eq('scuola_id', scuolaId).order('id').range(dal, al), 'opzioni-storiche')
@@ -160,5 +162,5 @@ export async function opzioniStorici(db: SupabaseClient, user: AppUser, scuolaId
   const ex = [...new Set(storico.map(a => a.alunno_id))].filter(id => !gia.has(id))
   for (let i = 0; i < ex.length; i += 100) alunni.push(...await leggiTutte<typeof alunni[number]>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').in('id', ex.slice(i, i + 100)).is('anonimizzato_il', null).order('cognome').order('id').range(dal, al), 'opzioni-ex-alunni'))
   const classiStoriche = [...new Map(storico.map(r => [r.section_id, { id: r.section_id, name: r.section_nome || 'Classe archiviata' }])).values()]
-  return { categorie: CATALOGO_STORICI.map(c => ({ ...c, disponibile: c.id !== 'documenti_protocolli' || ['admin', 'segreteria'].includes(user.role) })), alunni, classiStoriche }
+  return { categorie: CATALOGO_STORICI.map(c => ({ ...c, disponibile: c.id !== 'documenti_protocolli' || haUnRuolo(user, ['admin', 'segreteria']) })), alunni, classiStoriche }
 }

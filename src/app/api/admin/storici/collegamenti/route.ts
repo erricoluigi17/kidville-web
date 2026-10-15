@@ -2,6 +2,7 @@ import { logEvento } from '@/lib/logging/logger'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { haUnRuolo } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { withRoute } from '@/lib/logging/with-route'
@@ -12,6 +13,7 @@ import { ErroreStorico, erroreQueryStorico } from '@/lib/storici/db'
 import { rispostaErroreStorico } from '@/lib/storici/http'
 import { contenutoIscrizione, personeIscrizione } from '@/lib/storici/iscrizioni-collegate'
 import { preparaContestoStorico } from '@/lib/storici/scope'
+import { utenteStaffStorico } from '@/lib/storici/permessi'
 const querySchema = z.object({ scuolaId: zUuid, tipo: z.enum(['iscrizione', 'modulo', 'protocollo']), alunnoId: zUuid.optional(), offset: z.coerce.number().int().min(0).default(0) })
 const bodySchema = querySchema.extend({ alunnoId: zUuid, entitaId: zUuid, indiceFiglio: z.number().int().min(0).nullable().default(null), adultiIndici: z.array(z.number().int().min(0)).max(30).default([]), versione: z.number().int().min(0).default(0) })
 const TABELLE = { iscrizione: 'enrollment_submissions', modulo: 'form_submissions', protocollo: 'protocolli' } as const
@@ -22,7 +24,7 @@ export const GET = withRoute('admin/storici/collegamenti:GET', async (request: N
   if ('response' in q) return q.response
   try {
     const db = await createAdminClient()
-    if (!(await scuoleDiUtente(db, auth.user)).includes(q.data.scuolaId) || (q.data.tipo === 'protocollo' && auth.user.role === 'coordinator')) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Documenti non accessibili.')
+    if (!(await scuoleDiUtente(db, utenteStaffStorico(auth.user))).includes(q.data.scuolaId) || (q.data.tipo === 'protocollo' && !haUnRuolo(auth.user, ['admin', 'segreteria']))) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Documenti non accessibili.')
     const tabella = TABELLE[q.data.tipo]
     const colonne = q.data.tipo === 'protocollo' ? 'id,anno,numero,oggetto,data_registrazione' : q.data.tipo === 'modulo' ? 'id,created_at,status,form_models(title)' : 'id,created_at,status,data'
     const { data, error } = await db.from(tabella).select(colonne).eq('scuola_id', q.data.scuolaId).order(q.data.tipo === 'protocollo' ? 'data_registrazione' : 'created_at', { ascending: false }).order('id').range(q.data.offset, q.data.offset + 199)
@@ -46,7 +48,7 @@ export const POST = withRoute('admin/storici/collegamenti:POST', async (request:
   if ('response' in b) return b.response
   try {
     const db = await createAdminClient()
-    if (!(await scuoleDiUtente(db, auth.user)).includes(b.data.scuolaId) || (b.data.tipo === 'protocollo' && auth.user.role === 'coordinator')) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Documenti non accessibili.')
+    if (!(await scuoleDiUtente(db, utenteStaffStorico(auth.user))).includes(b.data.scuolaId) || (b.data.tipo === 'protocollo' && !haUnRuolo(auth.user, ['admin', 'segreteria']))) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Documenti non accessibili.')
     const { data: fonte, error: errFonte } = await db.from(TABELLE[b.data.tipo]).select(b.data.tipo === 'iscrizione' ? 'id,data' : 'id').eq('id', b.data.entitaId).eq('scuola_id', b.data.scuolaId).maybeSingle()
     if (errFonte) erroreQueryStorico('fonte-collegamento', errFonte)
     if (!fonte) throw new ErroreStorico(404, 'DOCUMENTO_NON_TROVATO', 'Documento non trovato nella sede scelta.')

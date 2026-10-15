@@ -80,7 +80,15 @@ export async function creaPdfStorico(documento: DocumentoStorico, db: SupabaseCl
     if (gia.has(chiave)) continue
     gia.add(chiave)
     try {
-      if (allegato.mime?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(allegato.nome)) { avvisi.push(`Video disponibile nella galleria: ${allegato.nome}`); continue }
+      if (allegato.mime?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(allegato.nome)) {
+        const scheda = new jsPDF({ unit: 'mm', format: 'a4' })
+        scheda.setFontSize(14).text('Video — scheda di riferimento', CARTA.margineSx, CARTA.contenutoInizio)
+        autoTable(scheda, { startY: CARTA.contenutoInizio + 9, head: [['Riferimento', 'Consultazione']], body: [[testo(allegato.nome), 'Video conservato nella relativa scheda della galleria o della news. La raccolta cartacea riporta il riferimento.']], margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 }, styles: { fontSize: 9, overflow: 'linebreak' }, headStyles: { fillColor: [27, 90, 65] } })
+        indice.push([`Video: ${allegato.nome}`, finale.getPageCount() + 1])
+        const schedaPdf = await PDFDocument.load(await applicaCartaIntestata(new Uint8Array(scheda.output('arraybuffer'))))
+        for (const p of await finale.copyPages(schedaPdf, schedaPdf.getPageIndices())) finale.addPage(p)
+        continue
+      }
       let bytes: Uint8Array
       if (allegato.base64) bytes = new Uint8Array(Buffer.from(allegato.base64, 'base64'))
       else {

@@ -33,5 +33,6 @@ export interface GenerazioneStorico {
   id: string; scuola_id: string; richiesto_da: string; richiesta: RichiestaStorico; stato: StatoGenerazione
   cursore: number; tentativi: number; preso_il: string | null; creato_il: string; scade_il: string
   file_path: string | null; errore: string | null; avvisi: string[]; titolo: string | null
+  /** Impronta dei ruoli reali di lavoro, indipendente dalla veste e dal ponte genitore. */
   ruolo_richiedente: string; alunni_ids: string[]
 }

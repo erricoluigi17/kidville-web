@@ -1,17 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
+import { haUnRuolo } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import type { RichiestaStorico } from './catalogo'
 import type { AlunnoStorico, AppartenenzaStorica, ContestoStorico } from './tipi'
 import { ErroreStorico, erroreQueryStorico, leggiTutte } from './db'
+import { utenteStaffStorico } from './permessi'
 
 export function appartieneNelGiorno(appartenenze: AppartenenzaStorica[], alunnoId: string, giorno: string, sectionId?: string): boolean {
   return appartenenze.some(a => a.alunno_id === alunnoId && (!sectionId || a.section_id === sectionId) && a.dal <= giorno && (!a.al || giorno < a.al))
 }
 
 export async function preparaContestoStorico(db: SupabaseClient, utente: AppUser, richiesta: RichiestaStorico): Promise<ContestoStorico> {
-  if (!['admin', 'coordinator', 'segreteria'].includes(utente.role)) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Accesso riservato a segreteria e direzione.')
-  const sedi = await scuoleDiUtente(db, utente)
+  if (!haUnRuolo(utente, ['admin', 'coordinator', 'segreteria'])) throw new ErroreStorico(403, 'ACCESSO_NEGATO', 'Accesso riservato a segreteria e direzione.')
+  const sedi = await scuoleDiUtente(db, utenteStaffStorico(utente))
   if (!sedi.some(id => id.toLowerCase() === richiesta.scuolaId.toLowerCase())) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
   const { data: sede, error: errSede } = await db.from('schools').select('id,nome').eq('id', richiesta.scuolaId).maybeSingle()
   if (errSede) erroreQueryStorico('sede', errSede)

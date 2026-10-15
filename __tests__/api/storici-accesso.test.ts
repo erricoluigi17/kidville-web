@@ -4,7 +4,10 @@ import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 
 const h = vi.hoisted(() => ({ db: {} as DBFinto, user: {} as AppUser, sedi: [] as string[], download: vi.fn() }))
-vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: async () => ['admin', 'coordinator', 'segreteria'].includes(h.user.role) ? { user: h.user } : { response: NextResponse.json({}, { status: 403 }) }, loadAppUser: vi.fn() }))
+vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: async () => {
+  const { haUnRuolo } = await import('@/lib/auth/predicati-ruolo')
+  return haUnRuolo(h.user, ['admin', 'coordinator', 'segreteria']) ? { user: h.user } : { response: NextResponse.json({}, { status: 403 }) }
+}, loadAppUser: vi.fn() }))
 vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: async () => h.sedi }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => {
   const db = creaFintoSupabase(h.db)
@@ -33,6 +36,18 @@ beforeEach(() => {
   }
 })
 describe('download autenticato dello storico', () => {
+  it('la veste genitore non revoca il ruolo reale staff, ma il file mantiene gli stessi ruoli autorizzati', async () => {
+    h.user = { id: 'staff', role: 'genitore', ruoli: ['segreteria', 'genitore'] }
+    h.db.storici_generazioni[0].ruolo_richiedente = 'segreteria'
+    expect((await esegui()).status).toBe(200)
+    expect(h.download).toHaveBeenCalledOnce()
+  })
+  it('una revoca reale invalida il file anche quando il ruolo attivo non cambia', async () => {
+    h.user = { id: 'staff', role: 'coordinator', ruoli: ['coordinator'] }
+    h.db.storici_generazioni[0].ruolo_richiedente = 'coordinator,segreteria'
+    expect((await esegui()).status).toBe(403)
+    expect(h.download).not.toHaveBeenCalled()
+  })
   it('ricontrolla il perimetro e consegna il file senza cache pubblica', async () => {
     const r = await esegui()
     expect(r.status).toBe(200)

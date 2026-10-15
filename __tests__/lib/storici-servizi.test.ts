@@ -201,6 +201,46 @@ describe('adattatori dei servizi storici', () => {
     expect(s?.allegati[0]).toMatchObject({ bucket: 'gallery', percorso: 'uploads/foto.jpg', alunnoId: A })
   })
 
+  it.each([
+    ['uploads/filmato.mp4', 'video/mp4', 'mp4'],
+    ['uploads/filmato.webm', 'video/webm', 'webm'],
+    ['uploads/filmato.mov', 'video/quicktime', 'mov'],
+    ['uploads/video-senza-estensione', 'video/mp4', 'mp4'],
+  ])('galleria video: conserva un riferimento privato riconoscibile per %s', async (percorso, mime, estensione) => {
+    const { ctx } = contesto(contenutiRettificabili('galleria_media_v2', [{ id: 'video-galleria-1', file_type: 'video', file_url: percorso, caption: 'Laboratorio fittizio', giorno_competenza: '2026-01-12', created_at: '2026-01-13T10:00:00Z' }]), { dal: '2026-01-12', al: '2026-01-12' })
+    const s = await raccogliServizio(ctx, 'comunicazioni_galleria')
+    expect(s?.allegati).toEqual([expect.objectContaining({ bucket: 'gallery', percorso, nome: `Video-galleria-video-galleria-1.${estensione}`, mime, alunnoId: A })])
+    expect(s?.righe[0]).toMatchObject({ riferimento: 'Video galleria video-galleria-1', originale: 'Riferimento al video privato', tipo: 'video' })
+    expect(s?.colonne.some(c => c.chiave === 'riferimento')).toBe(true)
+    expect(s?.avvisi.some(a => /originale.*non.*(?:disponibile|incorporato)/i.test(a))).toBe(false)
+  })
+
+  it('news video: il file privato conserva MIME e identificativo della scheda', async () => {
+    const { ctx } = contesto({ ...contenutiRettificabili('news_posts', [{ id: 'news-video', giorno_competenza: '2026-01-12', pubblicata_il: '2026-01-13T10:00:00Z', titolo: 'Video del laboratorio' }]), news_media: [{ id: 'video-news-1', post_id: 'news-video', tipo: 'video', url: 'video/laboratorio.webm' }] }, { dal: '2026-01-12', al: '2026-01-12' })
+    const s = await raccogliServizio(ctx, 'comunicazioni_news')
+    expect(s?.allegati).toEqual([expect.objectContaining({ bucket: 'news', percorso: 'video/laboratorio.webm', nome: 'Video-news-video-news-1.webm', mime: 'video/webm', alunnoId: A })])
+    expect(s?.righe[0].riferimenti).toBe('Video news video-news-1: riferimento al video privato')
+    expect(s?.colonne.some(c => c.chiave === 'riferimenti')).toBe(true)
+    expect(s?.avvisi.some(a => /originale.*non.*(?:disponibile|incorporato)/i.test(a))).toBe(false)
+  })
+
+  it.each([
+    ['youtube', 'https://www.youtube.com/watch?v=filmato-fittizio'],
+    ['vimeo', 'https://vimeo.com/123456789'],
+    ['video', 'https://video.example.org/laboratorio.mp4'],
+  ])('news video esterno %s: conserva il collegamento senza download o falso originale mancante', async (tipo, url) => {
+    const fetchEsterno = vi.fn().mockRejectedValue(new Error('I video esterni non devono essere scaricati'))
+    vi.stubGlobal('fetch', fetchEsterno)
+    try {
+      const { ctx } = contesto({ ...contenutiRettificabili('news_posts', [{ id: 'news-video', giorno_competenza: '2026-01-12', pubblicata_il: '2026-01-13T10:00:00Z', titolo: 'Video esterno del laboratorio' }]), news_media: [{ id: 'video-esterno-1', post_id: 'news-video', tipo, url }] }, { dal: '2026-01-12', al: '2026-01-12' })
+      const s = await raccogliServizio(ctx, 'comunicazioni_news')
+      expect(fetchEsterno).not.toHaveBeenCalled()
+      expect(s?.allegati).toEqual([])
+      expect(s?.righe[0].riferimenti).toBe(`Video news video-esterno-1 (esterno): ${url}`)
+      expect(s?.avvisi.some(a => /originale.*non.*(?:disponibile|incorporato)/i.test(a))).toBe(false)
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('non include una notifica dello stesso genitore riferita all’altro figlio', async () => {
     const { ctx } = contesto({ utenti: [{ id: 'parent1', ruolo: 'genitore' }], notifiche: [
       { id: 'n1', utente_id: 'parent1', entita_tipo: 'diario', entita_id: A, titolo: 'Aggiornamento A', creato_il: '2026-01-12T10:00:00Z' },
@@ -219,6 +259,23 @@ describe('adattatori dei servizi storici', () => {
     const s = await raccogliServizio(ctx, 'comunicazioni_avvisi')
     expect(s?.righe.map(r => r.titolo)).toEqual(['Avviso storico'])
     expect(s?.allegati[0]).toMatchObject({ bucket: 'avvisi_allegati', percorso: 'documenti/prova.pdf', alunnoId: A })
+  })
+
+  it.each([
+    ['comunicazioni_avvisi', 'avvisi'],
+    ['comunicazioni_news', 'news_posts'],
+  ] as const)('%s: conserva il target del nome storico dopo rimozione della classe, senza inventare il grado', async (categoria, tabella) => {
+    const { ctx } = contesto({ ...contenutiRettificabili(tabella, [
+      { id: 'nome-storico', titolo: 'Destinato alla classe rimossa', target_scope: 'classi', target_classes: ['Classe rimossa prova'], created_at: '2026-01-12T10:00:00Z', pubblicata_il: '2026-01-12T10:00:00Z' },
+      { id: 'altro-nome', titolo: 'Destinato a un’altra classe', target_scope: 'classi', target_classes: ['Classe diversa'], created_at: '2026-01-12T10:00:00Z', pubblicata_il: '2026-01-12T10:00:00Z' },
+      { id: 'altra-sede', titolo: 'Destinato alla classe di un altro plesso', target_scope: 'classi', target_classes: ['Classe altro plesso'], created_at: '2026-01-12T10:00:00Z', pubblicata_il: '2026-01-12T10:00:00Z' },
+      { id: 'grado-non-documentato', titolo: 'Grado non determinabile dal nome', target_scope: 'grado', target_gradi: ['primaria'], created_at: '2026-01-12T10:00:00Z', pubblicata_il: '2026-01-12T10:00:00Z' },
+    ]), sections: [] }, { classe: true })
+    ctx.appartenenze[0].section_nome = 'Classe rimossa prova'
+    ctx.appartenenze.push({ ...ctx.appartenenze[0], scuola_id: 'altro-plesso', section_id: 'classe-altro-plesso', section_nome: 'Classe altro plesso' })
+    const s = await raccogliServizio(ctx, categoria)
+    expect(s?.righe.map(r => r.titolo)).toEqual(['Destinato alla classe rimossa'])
+    expect(s?.righe[0]._alunno_id).toBe(A)
   })
 
   it('non anticipa il contenuto di una risposta successiva al periodo', async () => {
@@ -243,6 +300,26 @@ describe('adattatori dei servizi storici', () => {
     expect(s?.righe).toEqual([])
     expect(letture).toEqual([])
     expect(s?.avvisi.join(' ')).toContain('riservato')
+  })
+
+  it.each(['admin', 'segreteria'] as const)('protocolli: il ruolo reale %s autorizza anche nella veste genitore', async ruolo => {
+    const { ctx, letture } = contesto({ storici_collegamenti: [{ id: 'l1', scuola_id: SCUOLA, alunno_id: A, tipo: 'protocollo', entita_id: 'pr1' }], protocolli: [{ id: 'pr1', scuola_id: SCUOLA, numero: 5, anno: 2026, data_registrazione: '2026-01-12T10:00:00Z', oggetto: 'Documento fittizio', file_originale: '2026/5/originale.pdf', file_timbrato: '2026/5/timbrato.pdf' }] })
+    ctx.utente.role = 'genitore'
+    ctx.utente.ruoli = [ruolo, 'genitore']
+    const s = await raccogliServizio(ctx, 'documenti_protocolli')
+    expect(s?.righe).toHaveLength(1)
+    expect(s?.righe[0]).toMatchObject({ numero: '5/2026', oggetto: 'Documento fittizio' })
+    expect(letture.some(l => l.tabella === 'protocolli')).toBe(true)
+  })
+
+  it('protocolli: il coordinator nella veste genitore resta escluso prima di qualsiasi lettura', async () => {
+    const { ctx, letture } = contesto()
+    ctx.utente.role = 'genitore'
+    ctx.utente.ruoli = ['coordinator', 'genitore']
+    const s = await raccogliServizio(ctx, 'documenti_protocolli')
+    expect(s?.righe).toEqual([])
+    expect(s?.avvisi.join(' ')).toContain('riservato')
+    expect(letture).toEqual([])
   })
 
   it('protocolli: esige link esplicito, filtra sede e restituisce originali e timbrati', async () => {

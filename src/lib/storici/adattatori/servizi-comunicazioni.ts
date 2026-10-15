@@ -16,6 +16,26 @@ function fileAvviso(valore: unknown): string | null {
   catch { logEvento('registro', 'warn', { operazione: 'storici/allegato-avviso', esito: 'formato-non-riconosciuto' }); return null }
 }
 
+function formatoVideo(valore: unknown): { mime: string; estensione: string } {
+  const estensione = /\.([a-z0-9]+)$/i.exec(testo(valore).split(/[?#]/)[0])?.[1]?.toLowerCase()
+  if (estensione === 'webm') return { mime: 'video/webm', estensione: 'webm' }
+  if (estensione === 'mov') return { mime: 'video/quicktime', estensione: 'mov' }
+  // I video pubblicati dalla pipeline vengono normalizzati in MP4; le righe
+  // legacy che conservano un contenitore diverso mantengono il proprio formato.
+  return { mime: 'video/mp4', estensione: estensione === 'm4v' ? 'm4v' : 'mp4' }
+}
+function urlVideoEsterno(valore: unknown): string | null {
+  const v = testo(valore).trim()
+  if (!/^https?:\/\//i.test(v)) return null
+  try {
+    const url = new URL(v)
+    return url.username || url.password ? null : url.href
+  } catch {
+    logEvento('registro', 'warn', { operazione: 'storici/riferimento-video', esito: 'url-non-valido' })
+    return null
+  }
+}
+
 export async function classiStoriche(ctx: ContestoStorico): Promise<Riga[]> {
   return perIds(ctx, 'sections', 'id,name,school_type', 'id', ctx.appartenenze.map(a => a.section_id), q => q.eq('scuola_id', ctx.richiesta.scuolaId))
 }
@@ -24,7 +44,9 @@ function targetAlunno(ctx: ContestoStorico, id: string, data: unknown, classi: R
   if (!ammessa(ctx, id, d)) return []
   return ctx.appartenenze.filter(a => a.scuola_id === ctx.richiesta.scuolaId && a.alunno_id === id && a.dal <= d && (!a.al || d < a.al)).map(a => {
     const c = classi.find(x => x.id === a.section_id), grado = c?.school_type
-    return { scuola_id: ctx.richiesta.scuolaId, classe_sezione: testo(c?.name) || null, grado: grado === 'nido' || grado === 'infanzia' || grado === 'primaria' ? grado : null }
+    // La classe può essere stata rimossa: il nome verificato dell'appartenenza
+    // resta utilizzabile per il target. Il grado non si deduce mai dal nome.
+    return { scuola_id: ctx.richiesta.scuolaId, classe_sezione: testo(c?.name) || testo(a.section_nome).trim() || null, grado: grado === 'nido' || grado === 'infanzia' || grado === 'primaria' ? grado : null }
   })
 }
 function destinatari(ctx: ContestoStorico, r: Riga, data: unknown, classi: Riga[], news = false): string[] {
@@ -54,7 +76,7 @@ export async function raccogliComunicazioni(ctx: ContestoStorico, categoria: Cat
       if (r.attachment_url && !file) s.avvisi.push('Un allegato dell’avviso è un collegamento esterno o non riconoscibile: non è incorporato.')
       s.righe.push({ _alunno_id: id, alunno: nome(ctx, id), data: dataCompetenza(r, 'created_at'), registrata: testo(r.created_at), titolo: testo(r.titolo), contenuto: testo(r.contenuto), tipo: testo(r.tipo), scadenza: testo(r.scadenza), allegato: file ? 'Allegato' : '' })
     }
-    s.avvisi.push('Sono inclusi anche gli avvisi scaduti. Il targeting per classe usa le appartenenze storiche e il nome della classe conservato oggi.')
+    s.avvisi.push('Sono inclusi anche gli avvisi scaduti. Il targeting per classe usa le appartenenze storiche e il nome della classe attuale oppure conservato nell’appartenenza quando la classe è stata rimossa.')
     s.avvisi.push('Gli avvisi comuni alla scuola sono attribuiti solo nei giorni con appartenenza storica documentata dell’alunno.')
     return s
   }
@@ -91,32 +113,44 @@ export async function raccogliComunicazioni(ctx: ContestoStorico, categoria: Cat
     return s
   }
   if (categoria === 'comunicazioni_galleria') {
-    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Data evento'], ['registrata', 'Caricamento reale'], ['didascalia', 'Didascalia'], ['tipo', 'Tipo'], ['originale', 'Originale']])
+    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Data evento'], ['registrata', 'Caricamento reale'], ['riferimento', 'Riferimento media'], ['didascalia', 'Didascalia'], ['tipo', 'Tipo'], ['originale', 'Originale']])
     const media = ctx.alunni.length ? await tutte(ctx, 'galleria_media_v2', 'id,scuola_id,tag_students,caption,file_url,file_type,created_at,giorno_competenza,eliminato_il,file_rimosso_il', q => periodoCompetenza(soloVive(q.eq('scuola_id', ctx.richiesta.scuolaId).is('file_rimosso_il', null).overlaps('tag_students', ctx.alunni.map(a => a.id))), ctx, 'created_at')) : []
     for (const r of media) for (const id of lista(r.tag_students).filter(id => ammessa(ctx, id, dataCompetenza(r, 'created_at')))) {
-      const file = allegato('gallery', r.file_url, `Galleria-${testo(r.id)}`, id)
+      const video = r.file_type === 'video', formato = video ? formatoVideo(r.file_url) : null
+      const riferimento = `${video ? 'Video' : 'Media'} galleria ${testo(r.id)}`
+      const file = allegato('gallery', r.file_url, video ? `Video-galleria-${testo(r.id)}.${formato!.estensione}` : `Galleria-${testo(r.id)}`, id, formato?.mime)
       aggiungiAllegato(s, file)
       if (!file) s.avvisi.push('Un media della galleria non dispone di un originale riconoscibile e non è incorporato.')
-      s.righe.push({ _alunno_id: id, alunno: nome(ctx, id), data: dataCompetenza(r, 'created_at'), registrata: testo(r.created_at), didascalia: testo(r.caption), tipo: testo(r.file_type), originale: file ? 'Allegato' : 'Non disponibile' })
+      s.righe.push({ _alunno_id: id, alunno: nome(ctx, id), data: dataCompetenza(r, 'created_at'), registrata: testo(r.created_at), riferimento, didascalia: testo(r.caption), tipo: testo(r.file_type), originale: file ? video ? 'Riferimento al video privato' : 'Allegato' : 'Non disponibile' })
     }
     s.avvisi.push('Sono inclusi soltanto media vivi con tag esplicito dell’alunno, esclusi broadcast senza tag e file rimossi.')
     return s
   }
   if (categoria === 'comunicazioni_news') {
-    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Data evento'], ['registrata', 'Pubblicazione reale'], ['titolo', 'Titolo'], ['contenuto', 'Contenuto'], ['stato', 'Stato corrente']])
+    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Data evento'], ['registrata', 'Pubblicazione reale'], ['titolo', 'Titolo'], ['contenuto', 'Contenuto'], ['riferimenti', 'Riferimenti media'], ['stato', 'Stato corrente']])
     const classi = await classiStoriche(ctx)
     const posts = await tutte(ctx, 'news_posts', 'id,scuola_id,target_scope,target_gradi,target_classes,pubblicata_il,giorno_competenza,titolo,contenuto_testo,stato,copertina_url', q => q.in('stato', ['pubblicata', 'nascosta']).or(`and(or(scuola_id.eq.${ctx.richiesta.scuolaId},scuola_id.is.null),or(${filtroPeriodoCompetenza(ctx, 'pubblicata_il')}))`))
     const pertinenti = posts.map(r => ({ r, ids: destinatari(ctx, r, dataCompetenza(r, 'pubblicata_il'), classi, true) })).filter(x => x.ids.length)
     const media = await perIds(ctx, 'news_media', 'id,post_id,tipo,url,ordine', 'post_id', pertinenti.map(x => testo(x.r.id)))
     for (const { r, ids } of pertinenti) for (const id of ids) {
-      s.righe.push({ _alunno_id: id, alunno: nome(ctx, id), data: dataCompetenza(r, 'pubblicata_il'), registrata: testo(r.pubblicata_il), titolo: testo(r.titolo), contenuto: testo(r.contenuto_testo), stato: testo(r.stato) })
+      const riferimenti: string[] = []
       for (const m of [...media.filter(m => m.post_id === r.id), ...(r.copertina_url ? [{ id: `${testo(r.id)}-copertina`, url: r.copertina_url, tipo: 'immagine' }] : [])]) {
-        const file = allegato('news', m.url, `News-${testo(m.id)}`, id)
+        const video = ['video', 'youtube', 'vimeo'].includes(testo(m.tipo)), formato = video ? formatoVideo(m.url) : null
+        const riferimento = `${video ? 'Video' : 'Media'} news ${testo(m.id)}`
+        const fornitoreEsterno = m.tipo === 'youtube' || m.tipo === 'vimeo'
+        const file = fornitoreEsterno ? null : allegato('news', m.url, video ? `Video-news-${testo(m.id)}.${formato!.estensione}` : `News-${testo(m.id)}`, id, formato?.mime)
         aggiungiAllegato(s, file)
-        if (!file) s.avvisi.push('Un media news è esterno (ad esempio YouTube/Vimeo) e non può essere incorporato come originale.')
+        const esterno = !file && video ? urlVideoEsterno(m.url) : null
+        if (file) riferimenti.push(`${riferimento}: ${video ? 'riferimento al video privato' : 'originale allegato'}`)
+        else if (esterno) riferimenti.push(`${riferimento} (esterno): ${esterno}`)
+        else {
+          riferimenti.push(`${riferimento}: originale non disponibile`)
+          s.avvisi.push('Un media news è esterno o non riconoscibile e non può essere incorporato come originale.')
+        }
       }
+      s.righe.push({ _alunno_id: id, alunno: nome(ctx, id), data: dataCompetenza(r, 'pubblicata_il'), registrata: testo(r.pubblicata_il), titolo: testo(r.titolo), contenuto: testo(r.contenuto_testo), riferimenti: riferimenti.join('\n'), stato: testo(r.stato) })
     }
-    s.avvisi.push('Target ricostruito con le appartenenze storiche e i nomi/gradi delle classi conservati oggi; sono comprese le news già pubblicate e poi nascoste.')
+    s.avvisi.push('Target ricostruito con le appartenenze storiche e i nomi/gradi delle classi attuali. Per le classi rimosse si usa soltanto il nome conservato nell’appartenenza, senza dedurre il grado; sono comprese le news già pubblicate e poi nascoste.')
     return s
   }
   if (categoria === 'comunicazioni_notifiche') return notifiche(ctx)

@@ -9,6 +9,7 @@ import { preparaContestoStorico } from '@/lib/storici/scope'
 import { raccogliScolastico } from '@/lib/storici/adattatori/scolastici'
 import { creaPdfStorico } from '@/lib/storici/render'
 import { eseguiGenerazione, pulisciGenerazioniScadute } from '@/lib/storici/generazioni'
+import { firmaRuoliStorico } from '@/lib/storici/permessi'
 
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => ({ loadAppUser: vi.fn() }))
@@ -100,6 +101,13 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('generazioni storiche, lease e recupero', () => {
+  it('genera un lavoro creato nella veste genitore quando il loader rilegge solo il ruolo di lavoro', async () => {
+    const attore: AppUser = { ...user, role: 'genitore', ruoli: ['admin', 'genitore'] }
+    const a = archivio(lavoro({ ruolo_richiedente: firmaRuoliStorico(attore) }))
+    vi.mocked(loadAppUser).mockResolvedValue({ ...user, role: 'admin' })
+    await eseguiGenerazione(a.db, JOB)
+    expect(a.job()).toMatchObject({ stato: 'completato', file_path: FINALE })
+  })
   it('non pulisce il lavoro attivo che scade durante il rendering e poi lo elimina senza orfani', async () => {
     const a = archivio(lavoro())
     let rimossiDuranteRender: number | undefined

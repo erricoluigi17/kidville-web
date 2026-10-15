@@ -11,6 +11,7 @@ import { preparaContestoStorico } from '@/lib/storici/scope'
 import { eseguiGenerazione } from '@/lib/storici/generazioni'
 import { erroreQueryStorico } from '@/lib/storici/db'
 import { rispostaErroreStorico } from '@/lib/storici/http'
+import { firmaRuoliStorico, utenteStaffStorico } from '@/lib/storici/permessi'
 export const maxDuration = 300
 const getQuerySchema = z.object({})
 export const GET = withRoute('admin/storici/generazioni:GET', async (request: NextRequest) => {
@@ -20,7 +21,7 @@ export const GET = withRoute('admin/storici/generazioni:GET', async (request: Ne
   if ('response' in q) return q.response
   try {
     const db = await createAdminClient()
-    const sedi = await scuoleDiUtente(db, auth.user)
+    const sedi = await scuoleDiUtente(db, utenteStaffStorico(auth.user))
     if (!sedi.length) return NextResponse.json({ data: [] })
     const { data, error } = await db.from('storici_generazioni').select('id,stato,cursore,richiesta,creato_il,scade_il,titolo,avvisi,errore').eq('richiesto_da', auth.user.id).in('scuola_id', sedi).gt('scade_il', new Date().toISOString()).order('creato_il', { ascending: false }).limit(20)
     if (error) erroreQueryStorico('elenco-generazioni', error)
@@ -35,7 +36,7 @@ export const POST = withRoute('admin/storici/generazioni:POST', async (request: 
   try {
     const db = await createAdminClient()
     const ctx = await preparaContestoStorico(db, auth.user, b.data)
-    const { data, error } = await db.from('storici_generazioni').insert({ scuola_id: b.data.scuolaId, richiesto_da: auth.user.id, ruolo_richiedente: auth.user.role, alunni_ids: ctx.alunni.map(a => a.id), richiesta: b.data, titolo: ctx.titolo, avvisi: ctx.avvisi }).select('id,scade_il').single()
+    const { data, error } = await db.from('storici_generazioni').insert({ scuola_id: b.data.scuolaId, richiesto_da: auth.user.id, ruolo_richiedente: firmaRuoliStorico(auth.user), alunni_ids: ctx.alunni.map(a => a.id), richiesta: b.data, titolo: ctx.titolo, avvisi: ctx.avvisi }).select('id,scade_il').single()
     if (error) erroreQueryStorico('crea-generazione', error)
     logEvento('registro', 'info', { operazione: 'storici/crea', esito: 'accodata', entita_id: data.id, n: b.data.categorie.length })
     after(() => eseguiGenerazione(db, data.id))

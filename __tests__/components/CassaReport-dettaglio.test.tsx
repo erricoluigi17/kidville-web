@@ -27,6 +27,41 @@ function prepara() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Riepilogo: somme e movimenti delle categorie', () => {
+  it('sincronizza sede e mensilità con report, categorie, CSV e dettaglio', async () => {
+    const fn = prepara();
+    fn.mockImplementation(async (url) => {
+      const u = String(url);
+      const q = new URL(u, 'http://localhost').searchParams;
+      const selezione = q.get('scuola_id') === 'sc-b' && q.get('da') === '2027-02-01' && q.get('a') === '2027-02-28';
+      if (u.includes('/cassa/dettaglio')) return res({ ...dettaglio, totali: { totale: 80, contanti: 0, altri: 80 }, righe: [{ ...dettaglio.righe[0], descrizione: 'Retta febbraio di Beta', importo: 80 }] });
+      if (u.includes('/cassa/report')) {
+        const totale = selezione ? q.has('categoria_pagamento_id') ? 80 : 240 : 140;
+        return res({ ...report, entrate_per_categoria: [{ ...report.entrate_per_categoria[0], totale, per_metodo: { bonifico: totale } }] });
+      }
+      return res({ success: true, data: [{ id: cat, nome: 'Retta' }] });
+    });
+    render(<CassaReport userId="u1" scuolaId={null} sedi={[{ id: 'sc-a', nome: 'Alfa' }, { id: 'sc-b', nome: 'Beta' }]} />);
+    await screen.findByTestId('cassa-report-totali');
+    fireEvent.change(screen.getByLabelText('Mensilità', { exact: true }), { target: { value: '2027-02' } });
+    fireEvent.change(screen.getByLabelText('Categoria di pagamento'), { target: { value: cat } });
+    fireEvent.change(screen.getByLabelText('Sede', { exact: true }), { target: { value: 'sc-b' } });
+    await screen.findByTestId('cassa-report-totali');
+    expect(screen.getByLabelText('Categoria di pagamento')).toHaveValue('');
+    expect(screen.getByTestId('cassa-report-totali')).toHaveTextContent('240,00');
+    await screen.findByRole('option', { name: 'Retta' });
+    fireEvent.change(screen.getByLabelText('Categoria di pagamento'), { target: { value: cat } });
+    await waitFor(() => expect(screen.getByTestId('cassa-report-totali')).toHaveTextContent('80,00'));
+    const link = screen.getByRole('link', { name: /Scarica CSV/ });
+    expect(Object.fromEntries(new URL(link.getAttribute('href')!, 'http://localhost').searchParams)).toMatchObject({ scuola_id: 'sc-b', da: '2027-02-01', a: '2027-02-28', categoria_pagamento_id: cat, format: 'csv' });
+    expect(fn.mock.calls.some(([u]) => String(u).includes('/settings/categorie') && String(u).includes('scuola_id=sc-b'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Vedi entrate di Retta' }));
+    const dialogo = await screen.findByRole('dialog');
+    await within(dialogo).findByText('Retta febbraio di Beta');
+    expect(within(dialogo).getByTestId('cassa-dettaglio-totali')).toHaveTextContent('80,00');
+    const q = new URL(String(fn.mock.calls.find(([u]) => String(u).includes('/cassa/dettaglio'))![0]), 'http://localhost').searchParams;
+    expect(Object.fromEntries(q)).toMatchObject({ scuola_id: 'sc-b', da: '2027-02-01', a: '2027-02-28', categoria_id: cat });
+  });
+
   it('mostra le somme complete e la differenza, con il contante distinto', async () => {
     prepara(); render(<CassaReport userId="u1" scuolaId="sc-a" />);
     const totali = await screen.findByTestId('cassa-report-totali');

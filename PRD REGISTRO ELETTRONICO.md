@@ -1,3 +1,11 @@
+## 🛠️ Changelog — Contabilità: filtri per sede, mensilità e categoria — 2026-10-15 (branch `codex/contabilita-filtri-sede-mese`)
+
+**Stato: filtri implementati.** Verifiche locali: ESLint zero warning, TypeScript, **30.650 test passati su 1.803 file** (25 condizionali saltati), build e controllo artefatto verdi (**3.021 file JS**). Il collaudo Playwright, incluso il nuovo scenario mobile con due sedi e risposte dipendenti dai filtri, viene eseguito in CI prima del merge.
+
+- Filtri **Sede** e **Mensilità** direttamente nelle viste Uscite e Riepilogo, accanto alla categoria. Mese corrente di Roma preselezionato; selezionare un mese imposta il primo e l’ultimo giorno inclusi, anche negli anni bisestili. «Tutti i mesi» rimuove il periodo; Dal/Al consentono un intervallo personalizzato.
+- La sede si sceglie fra quelle attive del cockpit. Cambiandola si conserva la mensilità, si azzera la categoria e si ricaricano categorie, movimenti e totali. La nuova uscita usa la sede filtrata; nel riepilogo anche CSV e dettagli delle categorie ricevono gli stessi filtri. Le categorie di pagamento filtrano le entrate, le categorie di cassa filtrano le uscite nella vista dedicata.
+- Risposte e categorie della sede precedente non vengono presentate come dati della nuova sede. Autorizzazione e logging delle letture restano nei percorsi API esistenti, con errori client registrati; nessuna migrazione o modifica ai dati storici.
+
 ## ✅ Changelog — Contabilità: uscite dettagliate e riepilogo per categoria — 2026-10-14 (branch `codex/contabilita-uscite-categorie`)
 
 **Stato: ✅ in produzione dal 15/10/2026, PR [#231](https://github.com/erricoluigi17/kidville-web/pull/231), commit `9338857b14d6`; CI della PR e verifica dopo il deploy verdi.**

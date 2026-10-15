@@ -28,6 +28,7 @@ import { hdr, card, h3, input, label } from '../settings/ui';
 import { BTN_SECONDARY, MODAL_CARD_QUASI_SCHERMO, MODAL_SHADOW } from './ui';
 import { CassaDettaglio } from './CassaDettaglio';
 import { LinkDocumento } from './LinkDocumento';
+import { FiltriSedeMensilitaCassa, useFiltriCassa } from './FiltriSedeMensilitaCassa';
 import { metodoLabel, meseItaliano } from '@/lib/cassa/tipi';
 import type { SedeCassa } from './CassaSede';
 
@@ -92,18 +93,18 @@ export function categorieDelFiltro(dati: readonly CategoriaPag[]): CategoriaPag[
   return [...perChiave.values()];
 }
 
-export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
+export function CassaReport({ userId, scuolaId: sedePagina, sedi = NESSUNA_SEDE }: Props) {
   const t = useTranslations('adminContabilita');
+  const { scuolaId, scegliSede, mensilita, scegliMensilita, da, a, setDa, setA } = useFiltriCassa(sedePagina, sedi);
   const piuSedi = scuolaId == null;
   /** Il nome di una sede: quello del server, poi quello del selettore, poi l'uuid. */
   const nomeSede = (id: string, dalServer?: string | null) => dalServer?.trim() || sedi.find((s) => s.id === id)?.nome.trim() || id;
   // Con più sedi la query NON porta `scuola_id`: la route legge le sedi attive (K3).
   const sedeQ = scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : '';
-  const [da, setDa] = useState('');
-  const [a, setA] = useState('');
   const [categoriaPag, setCategoriaPag] = useState('');
   const [intero, setIntero] = useState(false);
-  const [categoriePag, setCategoriePag] = useState<CategoriaPag[]>([]);
+  const [rispostaCategorie, setRispostaCategorie] = useState<{ sedeQ: string; righe: CategoriaPag[] } | null>(null);
+  const categoriePag = rispostaCategorie?.sedeQ === sedeQ ? rispostaCategorie.righe : [];
   // Categorie NON lette (GET rifiutata, rete caduta, corpo senza `success`) ≠ «nessuna
   // categoria»: il filtro resta con il solo «Tutte», e la pagina dice perché.
   const [categorieNonLette, setCategorieNonLette] = useState(false);
@@ -121,16 +122,16 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
         if (!r.ok || d?.success !== true) {
           // Un 403/500 (o un corpo senza `success`) non è «nessuna categoria».
           logClient({ livello: 'error', evento: 'fetch', messaggio: 'cassa-report-categorie-lettura-rifiutata', route: '/admin/pagamenti', stato: r.status });
-          if (active) { setCategoriePag([]); setCategorieNonLette(true); }
+          if (active) { setRispostaCategorie({ sedeQ, righe: [] }); setCategorieNonLette(true); }
           return;
         }
         if (!active) return;
-        setCategoriePag(categorieDelFiltro(d.data ?? []));
+        setRispostaCategorie({ sedeQ, righe: categorieDelFiltro(d.data ?? []) });
         setCategorieNonLette(false);
       })
       .catch((err) => {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-report-categorie-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-        if (active) { setCategoriePag([]); setCategorieNonLette(true); }
+        if (active) { setRispostaCategorie({ sedeQ, righe: [] }); setCategorieNonLette(true); }
       });
     return () => { active = false; };
   }, [userId, sedeQ]);
@@ -204,6 +205,7 @@ export function CassaReport({ userId, scuolaId, sedi = NESSUNA_SEDE }: Props) {
       <h3 className={h3}><BarChart3 size={16} /> {t('cassaRepTitolo')}</h3>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
+        <FiltriSedeMensilitaCassa prefisso="report" sedi={sedi} scuolaId={scuolaId} onSede={(id) => { scegliSede(id); setCategoriaPag(''); setIntero(false); }} mensilita={mensilita} onMensilita={(mese) => { scegliMensilita(mese); setIntero(false); }} disabled={intero} />
         <div>
           <label htmlFor="report-da" className={label}>{t('cassaRepDal')}</label>
           <input id="report-da" type="date" value={da} onChange={(e) => setDa(e.target.value)} disabled={intero} className={cx(input, intero && 'opacity-50')} />

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { IDS, STORAGE } from './fixtures';
 
 // Dati fittizi: il dettaglio SQL è verificato in PGlite; qui si prova il percorso UI
 // anche sul DB CI non migrato. Il service worker non deve aggirare page.route.
@@ -67,4 +67,43 @@ test('uscite su mobile: filtri, note e paginazione con totale completo', async (
   expect(new URL((await nuova).url()).searchParams.get('pagina')).toBe('1');
   await expect(page.getByText('Cancelleria ottobre', { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test.describe('Filtri di sede e mensilità', () => {
+  test.use({ storageState: STORAGE.adminTutteLeSedi });
+
+  test('sede, mensilità e categoria aggiornano movimenti, somme ed export', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route('**/api/admin/sedi', (r) => r.fulfill({ json: { success: true, data: [{ id: IDS.SCUOLA, nome: 'Sede Alfa' }, { id: IDS.SCUOLA_COLLAUDO, nome: 'Sede Beta' }] } }));
+    await page.route('**/api/pagamenti/cassa/dettaglio?*', (r) => {
+      const q = new URL(r.request().url()).searchParams;
+      const selezionata = q.get('scuola_id') === IDS.SCUOLA_COLLAUDO && q.get('da') === '2028-02-01' && q.get('a') === '2028-02-29' && q.get('categoria_id') === spesa;
+      return r.fulfill({ json: { disponibile: true, conteggio: selezionata ? 1 : 0, pagina: 1, limite: 50, totali: { totale: selezionata ? 23 : 0, contanti: 0, altri: selezionata ? 23 : 0 }, righe: selezionata ? [{ id: 'spesa-fittizia-beta', origine: 'cassa', scuola_id: IDS.SCUOLA_COLLAUDO, scuola_nome: 'Sede Beta', data: '2028-02-12', importo: 23, metodo: 'bonifico', categoria_id: spesa, categoria_nome: 'Cancelleria', descrizione: 'Spesa di Beta a febbraio', note: null, allegato_path: null, storno_di: null, stornato_il: null, pagamento_id: null }] : [] } });
+    });
+    await page.goto('/admin/pagamenti?vista=uscite');
+    await expect(page.getByRole('heading', { name: 'Uscite dettagliate' })).toBeVisible({ timeout: 15_000 });
+    await page.getByLabel('Mensilità', { exact: true }).fill('2028-02');
+    await page.getByLabel('Sede', { exact: true }).selectOption(IDS.SCUOLA_COLLAUDO);
+    await expect(page.getByLabel('Mensilità', { exact: true })).toHaveValue('2028-02');
+    await page.getByLabel('Categoria', { exact: true }).selectOption(spesa);
+    await expect(page.getByText('Spesa di Beta a febbraio', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('cassa-dettaglio-totali')).toContainText('23,00');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await page.route('**/api/pagamenti/cassa/report?*', (r) => {
+      const q = new URL(r.request().url()).searchParams;
+      const totale = q.get('scuola_id') === IDS.SCUOLA_COLLAUDO && q.get('da') === '2027-02-01' && q.get('a') === '2027-02-28' && q.get('categoria_pagamento_id') === categoria ? 80 : 140;
+      return r.fulfill({ json: { disponibile: true, entrate_per_categoria: [{ categoria_id: categoria, categoria_nome: 'Retta', totale, per_metodo: { bonifico: totale } }], uscite_per_categoria: [], mensile: [], per_sede: [] } });
+    });
+    await page.goto('/admin/pagamenti?vista=riepilogo');
+    await expect(page.getByTestId('cassa-report-totali')).toContainText('140,00', { timeout: 15_000 });
+    await page.getByLabel('Mensilità', { exact: true }).fill('2027-02');
+    await page.getByLabel('Sede', { exact: true }).selectOption(IDS.SCUOLA_COLLAUDO);
+    await page.getByLabel('Categoria di pagamento', { exact: true }).selectOption(categoria);
+    await expect(page.getByTestId('cassa-report-totali')).toContainText('80,00');
+    const csv = page.getByRole('link', { name: /Scarica CSV/ });
+    const q = new URL((await csv.getAttribute('href'))!, 'http://localhost').searchParams;
+    expect(Object.fromEntries(q)).toMatchObject({ scuola_id: IDS.SCUOLA_COLLAUDO, da: '2027-02-01', a: '2027-02-28', categoria_pagamento_id: categoria, format: 'csv' });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
 });

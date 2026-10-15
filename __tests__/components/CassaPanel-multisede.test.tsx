@@ -363,7 +363,7 @@ describe('CassaPanel — più sedi (scuolaId null)', () => {
     expect(screen.getByText('Scegli la sede: fondo cassa e soglia d’avviso sono di ogni sede.')).toBeTruthy();
   });
 
-  it('Categorie e Impostazioni con UNA sede: nessun selettore, e le due letture portano la sede della pagina', async () => {
+  it('Categorie e Impostazioni con UNA sede: nessun selettore di scrittura, e le due letture portano la sede della pagina', async () => {
     sediCtx.valore = UNA_SEDE;
     const fn = installFetch({ totali: TOTALI, usciteMese: USCITE_MESE_UNA, saldo: SALDO_UNA });
     const { container } = render(<CassaPanel userId="u1" scuolaId="sc-a" />);
@@ -375,7 +375,10 @@ describe('CassaPanel — più sedi (scuolaId null)', () => {
     }
     expect(container.querySelector('#cassa-cat-sede')).toBeNull();
     expect(container.querySelector('#cassa-cfg-sede')).toBeNull();
-    expect(screen.queryByRole('combobox', { name: 'Sede' })).toBeNull();
+    const filtriSede = screen.getAllByRole('combobox', { name: 'Sede' });
+    expect(filtriSede).toHaveLength(1);
+    expect(filtriSede[0]).toHaveAttribute('id', 'report-sede');
+    expect(filtriSede[0]).toHaveValue('sc-a');
   });
 
   it('svuota cassa con più sedi: il selettore c’è, e nessun saldo prima della scelta', async () => {

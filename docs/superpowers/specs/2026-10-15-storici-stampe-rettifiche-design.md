@@ -10,7 +10,7 @@ Lavori privati persistenti, raccolta paginata, lease atomico, avanzamento per ca
 
 ## Correzioni
 
-Staff senza sblocco preventivo sul passato, nelle sedi autorizzate; docenti con regole esistenti. La competenza è distinta dall’istante reale di scrittura e viene calcolata nel fuso Europe/Rome. Inserimenti, modifiche, cancellazioni e rettifiche del passato non generano avvisi ai genitori, neppure differiti. Il genitore vede i dati corretti consultandoli. Le notifiche al personale mantengono le regole precedenti. La policy è calcolata dal server e sopravvive alle code e ai ritentativi.
+Staff senza sblocco preventivo sul passato, nelle sedi autorizzate; docenti con regole esistenti. La competenza è distinta dall’istante reale di scrittura e viene calcolata nel fuso Europe/Rome. Inserimenti, modifiche, cancellazioni e rettifiche del passato non generano avvisi ai genitori, neppure differiti. Il genitore vede i dati corretti consultandoli. Anche il calendario del diario genitore usa il giorno civile di Roma per inizializzazione, etichette, navigazione e ripresa; un dispositivo in un altro fuso non sposta la giornata richiesta. Le notifiche al personale mantengono le regole precedenti. La policy è calcolata dal server e sopravvive alle code e ai ritentativi.
 
 Il diario usa la data selezionata anche per presenze, orari e movimenti collegati. Originali consolidati e firme si conservano nell’archivio applicativo protetto; nuove versioni non ereditano firme. Le dichiarazioni delle famiglie non vengono riscritte come se fossero state rese sul contenuto nuovo. Audit dei metadati, gestione degli errori PostgREST e logging senza dati personali sono parte dell’implementazione.
 

@@ -22,3 +22,7 @@ Per ogni gruppo: test comportamentali prima della modifica dove applicabile, imp
 Completamento del 16/10: PR #235, qualità e build verdi (31.121 test su 1.842 file). Due scenari E2E falliti dopo mezzanotte: il seed conservava solo il giorno iniziale. Preparazione delle due giornate contigue nel calendario Roma, con prove indipendenti del rollover e del cambio d’ora; nessuna modifica alle asserzioni E2E. Ripetere tutti i gate sul commit corretto.
 
 Correzione del seed conclusa: 9 prove mirate verdi (inclusa la guardia DB isolato), 4 verifiche indipendenti dei resolver reali verdi dopo le due riproduzioni rosse. Il piano puro usa una sola lettura dell’orologio e due giornate civili Roma, con UUID menù distinti e medesimi dati di ciascuna sede.
+
+Secondo giro PR #235: qualità e build verdi (31.129 test/1.843 file), dashboard e menù passano; due failure del diario genitore provano il difetto UTC nella data iniziale della pagina. API e buffer già verificati dal positivo; riproduzione indipendente prima rossa. Correggere il calendario della pagina per Europe/Rome, incluse navigazione, Ieri e ripresa, quindi ripetere tutti i gate.
+
+Calendario del diario genitore corretto: giorno Roma, ±1 civile, Ieri al cambio d’ora, navigazione a Oggi prima di mezzogiorno, ripresa e notifica; visualizzazione ancorata a mezzogiorno UTC. 48 test di componente verdi; revisione indipendente 5/5 sia UTC sia Honolulu. Nuova build e artefatto di 3.081 JS verdi, suite globale in esecuzione prima del nuovo giro CI.

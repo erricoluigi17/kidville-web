@@ -18,3 +18,7 @@ Piano approvato il 15/10/2026. Branch `codex/storici-stampe-rettifiche`. Rilasci
 Gate della PR di completamento: ripetere ESLint, Vitest, build e Playwright sul nuovo commit, quindi verificare nuovamente in produzione anche i 401 con `private, no-store`. Nessuna migrazione aggiuntiva. La pulizia di tutti i branch secondari avviene solo dopo questo deploy verificato; gli esiti sono registrati nella PR.
 
 Per ogni gruppo: test comportamentali prima della modifica dove applicabile, implementazione minima, prove negative di autorizzazione, regressioni, aggiornamento PRD. Nessun placeholder o categoria fittizia può essere marcato operativo. Le fonti senza collegamento universale usano associazioni esplicite verificabili, mai abbinamenti per nome.
+
+Completamento del 16/10: PR #235, qualità e build verdi (31.121 test su 1.842 file). Due scenari E2E falliti dopo mezzanotte: il seed conservava solo il giorno iniziale. Preparazione delle due giornate contigue nel calendario Roma, con prove indipendenti del rollover e del cambio d’ora; nessuna modifica alle asserzioni E2E. Ripetere tutti i gate sul commit corretto.
+
+Correzione del seed conclusa: 9 prove mirate verdi (inclusa la guardia DB isolato), 4 verifiche indipendenti dei resolver reali verdi dopo le due riproduzioni rosse. Il piano puro usa una sola lettura dell’orologio e due giornate civili Roma, con UUID menù distinti e medesimi dati di ciascuna sede.

@@ -93,7 +93,7 @@ function ContabilitaMultiSede({ children }: { children: (scuolaId: string | null
 function PagamentiInner() {
     const t = useTranslations('adminContabilita');
     const { userId } = useSessionIdentity();
-    const { sedi } = useSediAttive();
+    const { sedi, effettive } = useSediAttive();
     const router = useRouter();
     const params = useSearchParams();
     const fromUrl = params.get('vista');
@@ -206,7 +206,7 @@ function PagamentiInner() {
 
                             {vista === 'cassa' && userId && <CassaPanel userId={userId} scuolaId={scuolaId} />}
                             {vista === 'uscite' && userId && <UscitePanel userId={userId} scuolaId={scuolaId} />}
-                            {vista === 'riepilogo' && userId && <CassaReport userId={userId} scuolaId={scuolaId} sedi={sedi} />}
+                            {vista === 'riepilogo' && userId && <CassaReport userId={userId} scuolaId={scuolaId} sedi={sedi.filter((s) => effettive.includes(s.id))} />}
                         </Card>
                     )}
                 </ContabilitaMultiSede>

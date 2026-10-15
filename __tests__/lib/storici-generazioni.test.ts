@@ -137,6 +137,22 @@ describe('generazioni storiche, lease e recupero', () => {
     expect(a.files.size).toBe(0)
   })
 
+  it('la cancellazione dell’account durante l’upload conserva il lease e permette di eliminare ogni file', async () => {
+    const a = archivio(lavoro())
+    a.duranteUpload(async path => {
+      if (path !== FINALE) return
+      Object.assign(a.job()!, { richiesto_da: null, stato: 'errore', scade_il: new Date(Date.now() - 1).toISOString() })
+      expect(await pulisciGenerazioniScadute(a.db)).toBe(0)
+    })
+    await eseguiGenerazione(a.db, JOB)
+    expect(a.files.has(FINALE)).toBe(true)
+    expect(a.job()?.richiesto_da).toBeNull()
+    expect(a.job()?.preso_il).toBeNull()
+    expect(await pulisciGenerazioniScadute(a.db)).toBe(1)
+    expect(a.job()).toBeNull()
+    expect(a.files.size).toBe(0)
+  })
+
   it('recupera un lease abbandonato ed elimina il finale anche senza manifest', async () => {
     const a = archivio(lavoro({ stato: 'in_corso', scade_il: new Date(Date.now() - 1).toISOString(), preso_il: new Date(Date.now() - 331_000).toISOString() }))
     a.files.set(FINALE, new Uint8Array([37, 80]))

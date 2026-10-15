@@ -136,8 +136,8 @@ create trigger storici_traccia_classe after insert or update of section_id,scuol
 create table if not exists public.storici_generazioni (
   id uuid primary key default gen_random_uuid(),
   scuola_id uuid not null references public.schools(id),
-  richiesto_da uuid not null references public.utenti(id) on delete cascade,
-  ruolo_richiedente text not null check(ruolo_richiedente in ('admin','coordinator','segreteria')),
+  richiesto_da uuid references public.utenti(id) on delete set null,
+  ruolo_richiedente text not null check(ruolo_richiedente ~ '^(admin(,coordinator)?(,segreteria)?|coordinator(,segreteria)?|segreteria)$'),
   alunni_ids uuid[] not null default '{}'::uuid[],
   richiesta jsonb not null,
   stato text not null default 'in_coda' check(stato in ('in_coda','in_corso','completato','parziale','errore')),
@@ -157,6 +157,29 @@ grant all on public.storici_generazioni to service_role;
 create index if not exists storici_generazioni_coda on public.storici_generazioni(stato,preso_il,creato_il);
 create index if not exists storici_generazioni_scuola on public.storici_generazioni(scuola_id);
 create index if not exists storici_generazioni_richiedente on public.storici_generazioni(richiesto_da);
+
+-- Il manifest sopravvive all'account finché il worker può rimuovere i suoi file.
+-- Non azzerare il lease: un upload già iniziato deve terminare prima del cleanup.
+create or replace function public.storici_scade_account() returns trigger
+language plpgsql security definer set search_path to 'public','pg_temp' as $$
+declare n integer;
+begin
+  update public.storici_generazioni
+    set scade_il=least(scade_il,now()),stato='errore',errore='Operatore non disponibile.'
+    where richiesto_da=old.id;
+  get diagnostics n=row_count;
+  if n>0 then
+    begin
+      insert into public.app_log(livello,evento,sorgente,messaggio,fingerprint,contesto)
+      values('info','registro','server','Lavori scaduti alla cancellazione account','storici-account-scaduto',jsonb_build_object('entita_id',old.id,'n',n));
+    exception when others then raise log 'storici: logging scadenza account non riuscito [%]', SQLSTATE;
+    end;
+  end if;
+  return old;
+end $$;
+revoke all on function public.storici_scade_account() from public,anon,authenticated;
+grant execute on function public.storici_scade_account() to service_role;
+create trigger storici_scade_account before delete on public.utenti for each row execute function public.storici_scade_account();
 
 create table if not exists public.storici_revisioni (
   id uuid primary key default gen_random_uuid(),

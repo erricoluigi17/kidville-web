@@ -79,7 +79,7 @@ export async function eseguiGenerazione(db: SupabaseClient, id: string, tempoMas
   }
   try {
     if (fallimenti >= 3) throw new ErroreStorico(500, 'TENTATIVI_ESAURITI', 'Generazione interrotta dopo tre tentativi. Avvia una nuova stampa.')
-    const user = await loadAppUser(job.richiesto_da)
+    const user = job.richiesto_da ? await loadAppUser(job.richiesto_da) : null
     if (!user) throw new ErroreStorico(403, 'OPERATORE_NON_DISPONIBILE', 'L’operatore non è più autorizzato.')
     if (job.ruolo_richiedente !== firmaRuoliStorico(user)) throw new ErroreStorico(403, 'PERMESSI_MODIFICATI', 'I permessi sono cambiati. Genera nuovamente la stampa.')
     const richiesta = richiestaStoricoSchema.parse(job.richiesta)

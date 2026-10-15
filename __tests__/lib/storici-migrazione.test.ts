@@ -45,6 +45,33 @@ beforeAll(async () => {
 }, 30000)
 afterAll(async () => { await db?.close() })
 describe('migrazione degli storici sul vero motore PostgreSQL', () => {
+  it('accetta tutte le impronte canoniche dei ruoli reali di lavoro, senza il ruolo genitore', async () => {
+    await db.exec('begin')
+    try {
+      const firme = ['admin', 'coordinator', 'segreteria', 'admin,coordinator', 'admin,segreteria', 'coordinator,segreteria', 'admin,coordinator,segreteria']
+      for (const firma of firme) {
+        await db.query('insert into storici_generazioni(scuola_id,richiesto_da,ruolo_richiedente,richiesta) values($1,$2,$3,$4)', [sede, attore, firma, {}])
+      }
+      expect((await db.query('select ruolo_richiedente from storici_generazioni order by ruolo_richiedente')).rows).toEqual([...firme].sort().map(ruolo_richiedente => ({ ruolo_richiedente })))
+      for (const firma of ['genitore', 'admin,genitore', 'coordinator,admin', 'admin,admin', '']) {
+        await db.exec('savepoint ruolo_invalido')
+        await expect(db.query('insert into storici_generazioni(scuola_id,richiesto_da,ruolo_richiedente,richiesta) values($1,$2,$3,$4)', [sede, attore, firma, {}])).rejects.toMatchObject({ code: '23514' })
+        await db.exec('rollback to savepoint ruolo_invalido')
+      }
+    } finally { await db.exec('rollback') }
+  })
+  it('la cancellazione dell’account scade i file ma conserva il lavoro e il lease per la pulizia', async () => {
+    await db.exec('begin')
+    try {
+      const lavoro = '99999999-9999-4999-8999-999999999999'
+      const file = `${sede}/${lavoro}/storico.pdf`
+      await db.query("insert into storici_generazioni(id,scuola_id,richiesto_da,ruolo_richiedente,richiesta,stato,file_path,preso_il) values($1,$2,$3,'admin',$4,'in_corso',$5,now())", [lavoro, sede, attore, { categorie: ['diario_note'], formato: 'pdf' }, file])
+      const prima = (await db.query<{ preso_il: Date }>('select preso_il from storici_generazioni where id=$1', [lavoro])).rows[0]
+      await db.query('delete from utenti where id=$1', [attore])
+      const dopo = await db.query('select richiesto_da,file_path,stato,scade_il<=now() as scaduto,preso_il from storici_generazioni where id=$1', [lavoro])
+      expect(dopo.rows).toEqual([{ richiesto_da: null, file_path: file, stato: 'errore', scaduto: true, preso_il: prima.preso_il }])
+    } finally { await db.exec('rollback') }
+  })
   it('la RPC dei collegamenti usa il vincolo vero e impedisce assegnazioni concorrenti', async () => {
     await db.exec('begin')
     try {

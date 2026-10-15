@@ -30,7 +30,7 @@ export interface DocumentoStorico { titolo: string; scuolaNome: string; dal: str
 export const BUCKET_STORICI = 'storici-stampe'
 export type StatoGenerazione = 'in_coda' | 'in_corso' | 'completato' | 'parziale' | 'errore'
 export interface GenerazioneStorico {
-  id: string; scuola_id: string; richiesto_da: string; richiesta: RichiestaStorico; stato: StatoGenerazione
+  id: string; scuola_id: string; richiesto_da: string | null; richiesta: RichiestaStorico; stato: StatoGenerazione
   cursore: number; tentativi: number; preso_il: string | null; creato_il: string; scade_il: string
   file_path: string | null; errore: string | null; avvisi: string[]; titolo: string | null
   /** Impronta dei ruoli reali di lavoro, indipendente dalla veste e dal ponte genitore. */

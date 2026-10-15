@@ -324,6 +324,10 @@ export type CoperturaBucket =
   | { stato: 'escluso'; motivo: string }
 
 export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
+  'storici-stampe': {
+    stato: 'coperto-fuori-oblio',
+    come: 'Copie temporanee PDF/Excel e parti JSON, private e scaricabili solo dall’autore autorizzato per 24 ore. La scadenza ordinaria, l’oblio dell’alunno o la cancellazione dell’account rendono subito indisponibile il lavoro; il cron storici-stampe chiama pulisciGenerazioniScadute, rimuove parti e finale prima del manifest e ritenta gli errori. Il lease resta protetto durante gli upload: prove SQL in __tests__/lib/storici-migrazione.test.ts e prove di interleaving in __tests__/lib/storici-generazioni.test.ts.',
+  },
   form_attachments: {
     stato: 'coperto',
     canali: ['alunno', 'genitore'],

@@ -801,5 +801,9 @@
   "archiviazioneMantieneValutazioni": "Assessments, report cards and boards stay in place",
   "archiviazioneMantieneChat": "Conversations with families remain readable",
   "archiviazioneMantieneAudit": "The audit log still says who did what",
-  "diaryClasseStorica": "historical"
+  "diaryClasseStorica": "historical",
+  "tracciaDocenteAppartenenzeStoriche": "Historical class memberships recorded",
+  "tracciaDocenteCollegamentiStorici": "Document links verified",
+  "tracciaDocenteRettificheStoriche": "Historical corrections recorded",
+  "tracciaDocenteRettificheChat": "Chat messages corrected"
 }

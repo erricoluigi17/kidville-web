@@ -6,7 +6,7 @@ Scelte approvate dall’utente il 15 ottobre 2026. Segreteria e direzione accedo
 
 Centro unico con scorciatoie contestuali, sede esplicita, destinatario alunno XOR classe, intervallo di date e categorie. PDF impaginati e Excel per tabelle. Classe dell’epoca tramite intervalli di appartenenza semiaperti, non elenco attuale. Dati non documentati e originali non disponibili producono avvertenze di completezza. Nessuna ricostruzione inventata di versioni mai conservate. L’orario e la ricostruzione del menù dichiarano la provenienza dalle configurazioni disponibili.
 
-Lavori privati persistenti, raccolta paginata, lease atomico, avanzamento per categoria, ripresa tramite cron, download autenticato e rivalidato. Artefatti e parti intermedie scadono dopo 24 ore; rimozione tramite Storage API. Il PDF conserva indice, numerazione e originali stampabili. I video rimangono schede di riferimento. Chat, fascicolo e protocolli mantengono i gate specifici e gli audit di accesso.
+Lavori privati persistenti, raccolta paginata, lease atomico, avanzamento per categoria, ripresa tramite cron, download autenticato e rivalidato. Tutte le risposte HTTP del namespace, incluse quelle di gate, validazione, cron ed errore, applicano `Cache-Control: private, no-store`; status, stream e intestazioni dei file vengono preservati. Artefatti e parti intermedie scadono dopo 24 ore; rimozione tramite Storage API. Il PDF conserva indice, numerazione e originali stampabili. I video rimangono schede di riferimento. Chat, fascicolo e protocolli mantengono i gate specifici e gli audit di accesso.
 
 ## Correzioni
 

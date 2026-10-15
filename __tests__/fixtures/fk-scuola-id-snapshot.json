@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-12",
-  "generato_alle": "2026-10-12T12:11:45Z",
-  "sha256": "25160f53c6acab553ca8186dcfb8a874be6b501af015fcf1fd75d87463de1335",
+  "generato_il": "2026-10-15",
+  "generato_alle": "2026-10-15T21:38:56Z",
+  "sha256": "efa447610a826ddec4437fcecc21626aeb64e3175e5c385b3e09916dd3222567",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -14,6 +14,12 @@
       "tabella": "alunni",
       "not_null": true,
       "fk_nome": "alunni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "alunni_classi_storico",
+      "not_null": true,
+      "fk_nome": "alunni_classi_storico_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {
@@ -446,6 +452,24 @@
       "tabella": "solleciti",
       "not_null": true,
       "fk_nome": "solleciti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "storici_collegamenti",
+      "not_null": true,
+      "fk_nome": "storici_collegamenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "storici_generazioni",
+      "not_null": true,
+      "fk_nome": "storici_generazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "storici_revisioni",
+      "not_null": true,
+      "fk_nome": "storici_revisioni_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

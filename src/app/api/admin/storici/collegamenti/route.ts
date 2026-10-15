@@ -10,14 +10,14 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { ErroreStorico, erroreQueryStorico } from '@/lib/storici/db'
-import { rispostaErroreStorico } from '@/lib/storici/http'
+import { conCacheStorico, rispostaErroreStorico } from '@/lib/storici/http'
 import { contenutoIscrizione, personeIscrizione } from '@/lib/storici/iscrizioni-collegate'
 import { preparaContestoStorico } from '@/lib/storici/scope'
 import { utenteStaffStorico } from '@/lib/storici/permessi'
 const querySchema = z.object({ scuolaId: zUuid, tipo: z.enum(['iscrizione', 'modulo', 'protocollo']), alunnoId: zUuid.optional(), offset: z.coerce.number().int().min(0).default(0) })
 const bodySchema = querySchema.extend({ alunnoId: zUuid, entitaId: zUuid, indiceFiglio: z.number().int().min(0).nullable().default(null), adultiIndici: z.array(z.number().int().min(0)).max(30).default([]), versione: z.number().int().min(0).default(0) })
 const TABELLE = { iscrizione: 'enrollment_submissions', modulo: 'form_submissions', protocollo: 'protocolli' } as const
-export const GET = withRoute('admin/storici/collegamenti:GET', async (request: NextRequest) => {
+export const GET = withRoute('admin/storici/collegamenti:GET', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const q = parseQuery(request, querySchema)
@@ -40,8 +40,8 @@ export const GET = withRoute('admin/storici/collegamenti:GET', async (request: N
     }
     return NextResponse.json({ data: pubbliche, collegamenti }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (error) { logEvento('registro', 'info', { operazione: 'storici/richiesta', esito: 'richiesta-non-completata' }); return rispostaErroreStorico(error, 'admin/storici/collegamenti:GET') }
-})
-export const POST = withRoute('admin/storici/collegamenti:POST', async (request: NextRequest) => {
+}))
+export const POST = withRoute('admin/storici/collegamenti:POST', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, bodySchema)
@@ -60,4 +60,4 @@ export const POST = withRoute('admin/storici/collegamenti:POST', async (request:
     await logScrittura(db, { attore: auth.user, scuolaId: b.data.scuolaId, entitaTipo: 'storico_collegamento', entitaId: data as string, azione: 'insert', valoreDopo: { alunno_id: b.data.alunnoId, tipo: b.data.tipo, entita_id: b.data.entitaId } })
     return NextResponse.json({ id: data })
   } catch (error) { logEvento('registro', 'info', { operazione: 'storici/richiesta', esito: 'richiesta-non-completata' }); return rispostaErroreStorico(error, 'admin/storici/collegamenti:POST') }
-})
+}))

@@ -10,11 +10,11 @@ import { richiestaStoricoSchema } from '@/lib/storici/catalogo'
 import { preparaContestoStorico } from '@/lib/storici/scope'
 import { eseguiGenerazione } from '@/lib/storici/generazioni'
 import { erroreQueryStorico } from '@/lib/storici/db'
-import { rispostaErroreStorico } from '@/lib/storici/http'
+import { conCacheStorico, rispostaErroreStorico } from '@/lib/storici/http'
 import { firmaRuoliStorico, utenteStaffStorico } from '@/lib/storici/permessi'
 export const maxDuration = 300
 const getQuerySchema = z.object({})
-export const GET = withRoute('admin/storici/generazioni:GET', async (request: NextRequest) => {
+export const GET = withRoute('admin/storici/generazioni:GET', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const q = parseQuery(request, getQuerySchema)
@@ -27,8 +27,8 @@ export const GET = withRoute('admin/storici/generazioni:GET', async (request: Ne
     if (error) erroreQueryStorico('elenco-generazioni', error)
     return NextResponse.json({ data }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (error) { return rispostaErroreStorico(error, 'admin/storici/generazioni:GET') }
-})
-export const POST = withRoute('admin/storici/generazioni:POST', async (request: NextRequest) => {
+}))
+export const POST = withRoute('admin/storici/generazioni:POST', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, richiestaStoricoSchema)
@@ -42,4 +42,4 @@ export const POST = withRoute('admin/storici/generazioni:POST', async (request: 
     after(() => eseguiGenerazione(db, data.id))
     return NextResponse.json({ id: data.id, stato: 'in_coda', scadeIl: data.scade_il }, { status: 202 })
   } catch (error) { return rispostaErroreStorico(error, 'admin/storici/generazioni:POST') }
-})
+}))

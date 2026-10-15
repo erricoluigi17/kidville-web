@@ -106,6 +106,7 @@ const FK_VERSO_SCUOLE: Record<string, string> = {
 // Aggiornato allo scatto del 2026-08-10: 44 tabelle su 66.
 // ─────────────────────────────────────────────────────────────────────────────
 const NOT_NULL_ATTESE: readonly string[] = [
+    'alunni_classi_storico', 'storici_collegamenti', 'storici_generazioni', 'storici_revisioni',
     'admin_settings', 'alunni', 'armadietto', 'candidature_insegnanti', 'cassa_chiusure',
     'cassa_movimenti', 'certificati_competenze', 'crediti_famiglia', 'divise_articoli',
     'divise_ordini', 'enrollment_submissions', 'eventi_agenda', 'fatture_emesse',

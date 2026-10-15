@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-12",
-  "generato_alle": "2026-10-12T12:11:43Z",
-  "sha256": "491cb485f75840e9fab69f23babfeefca18c9a51c171409926cb833894dc3d12",
+  "generato_il": "2026-10-15",
+  "generato_alle": "2026-10-15T21:39:03Z",
+  "sha256": "ca3ff531b3243e19e6ed2b8abec2122ec50510cff584ac7ce059abff16ea511a",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -482,6 +482,7 @@
   "tabelle_con_scuola_id": [
     "admin_settings",
     "alunni",
+    "alunni_classi_storico",
     "app_log",
     "armadietto",
     "armadietto_richieste",
@@ -554,6 +555,9 @@
     "sidi_import_batches",
     "sidi_sync_state",
     "solleciti",
+    "storici_collegamenti",
+    "storici_generazioni",
+    "storici_revisioni",
     "task_interni",
     "utenti",
     "utenti_scuole",
@@ -564,6 +568,7 @@
     "admin_settings",
     "allegati_registro",
     "alunni",
+    "alunni_classi_storico",
     "anagrafica_personale",
     "app_log",
     "armadietto",
@@ -691,6 +696,9 @@
     "sidi_import_batches",
     "sidi_sync_state",
     "solleciti",
+    "storici_collegamenti",
+    "storici_generazioni",
+    "storici_revisioni",
     "student_documents",
     "student_guardians",
     "student_parents",

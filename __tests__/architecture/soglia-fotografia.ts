@@ -224,8 +224,6 @@ export function posterioriCheContengono(
 // produzione — cambia davvero solo quella delle migrazioni; le altre cinque cambiano solo
 // l'istante dello scatto, con la stessa sha256 (la policy nuova vive in `realtime`, non in `public`).
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261015183000_storici_stampe_rettifiche.sql':
-        'Storici, appartenenze, generazioni private e copie delle rettifiche: migrazione della PR corrente, applicata dall’integrazione al merge. Dopo l’applicazione, la PR-B rimuove questa voce e rigenera dalla produzione le fotografie di migrazioni, RLS, indici unici e FK verso utenti interessate; nessuna fotografia viene anticipata con lo schema locale.',
 }
 
 /**

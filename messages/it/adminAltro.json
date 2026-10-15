@@ -801,5 +801,9 @@
   "archiviazioneMantieneValutazioni": "Valutazioni, pagelle e scrutini restano al loro posto",
   "archiviazioneMantieneChat": "Le conversazioni con le famiglie restano leggibili",
   "archiviazioneMantieneAudit": "Il giornale delle scritture continua a dire chi ha fatto cosa",
-  "diaryClasseStorica": "storica"
+  "diaryClasseStorica": "storica",
+  "tracciaDocenteAppartenenzeStoriche": "Appartenenze storiche registrate",
+  "tracciaDocenteCollegamentiStorici": "Collegamenti documentali verificati",
+  "tracciaDocenteRettificheStoriche": "Rettifiche storiche registrate",
+  "tracciaDocenteRettificheChat": "Messaggi chat rettificati"
 }

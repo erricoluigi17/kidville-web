@@ -22,6 +22,14 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('appello storico staff: timestamp e notifiche della giornata giusta', () => {
+  it('la correzione odierna mantiene il claim ordinario già in gestione al dispatcher', async () => {
+    h.db.presenze[0].data = '2026-10-15'
+    h.db.presenze[0].stato = 'assente'
+    h.db.notifiche[0].push_inviata_il = '2026-10-15T09:00:00Z'
+    h.db.notifiche[0].push_presa_scade_il = '2026-10-15T09:10:00Z'
+    expect((await POST(req('POST', '2026-10-15', 'presente'))).status).toBe(200)
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['oggi'])
+  })
   it.each(['daily-presente', 'daily-assente', 'daily-delete', 'primaria-presente', 'primaria-assente', 'primaria-delete'])('%s ritira legacy e metadati della sola giornata originale, anche restando assente', async percorso => {
     h.db.presenze[0].stato = 'assente'
     const sectionId = '22222222-2222-4222-8222-222222222222'
@@ -32,6 +40,9 @@ describe('appello storico staff: timestamp e notifiche della giornata giusta', (
     h.db.notifiche.push(
       { ...base, id: 'legacy-ieri' },
       { ...base, id: 'meta-ieri', giorno_competenza: '2026-10-14', creato_il: '2026-10-15T09:00:00Z' },
+      { ...base, id: 'claim-ieri', push_inviata_il: '2026-10-15T09:00:00Z', push_presa_scade_il: '2026-10-15T09:10:00Z' },
+      { ...base, id: 'finalizzata-ieri', push_inviata_il: '2026-10-15T09:00:00Z', push_presa_scade_il: null },
+      { ...base, id: 'claim-oggi', giorno_competenza: '2026-10-15', push_inviata_il: '2026-10-15T09:00:00Z', push_presa_scade_il: '2026-10-15T09:10:00Z' },
       { ...base, id: 'legacy-altro', creato_il: '2026-10-13T09:00:00Z' },
       { ...base, id: 'legacy-oggi', creato_il: '2026-10-15T09:00:00Z' },
       { ...base, id: 'gia-inviata', push_inviata_il: '2026-10-14T22:06:00Z' },
@@ -43,7 +54,7 @@ describe('appello storico staff: timestamp e notifiche della giornata giusta', (
         : percorso === 'primaria-delete' ? await primariaDelete(new NextRequest(`http://test/api/primaria/appello?sectionId=${sectionId}&alunnoId=${ALUNNO}&data=2026-10-14&versioneAttesa=0`, { method: 'DELETE' }))
           : await primariaPost(new NextRequest('http://test/api/primaria/appello', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId, alunnoId: ALUNNO, data: '2026-10-14', stato, versioneAttesa: 0 }) }))
     expect(risposta.status).toBe(200)
-    expect(h.db.notifiche.map(n => n.id)).toEqual(['oggi', 'legacy-altro', 'legacy-oggi', 'gia-inviata', 'altro-alunno'])
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['oggi', 'finalizzata-ieri', 'claim-oggi', 'legacy-altro', 'legacy-oggi', 'gia-inviata', 'altro-alunno'])
   })
   it('assenza storica non crea campanella o push e non tocca la pending di oggi', async () => {
     expect((await POST(req('POST'))).status).toBe(200)

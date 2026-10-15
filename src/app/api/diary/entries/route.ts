@@ -849,7 +849,7 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         await notificaTitolariScrittura(admin, { attore: auth.user, sectionId: al.section_id, scuolaId: al.scuola_id, area: 'diario' });
     }
     if (eRettificaStorica(auth.user, date)) {
-        await ritiraDiarioGenitori(admin, { alunnoId: q.data.alunno_id, giorno: date });
+        await ritiraDiarioGenitori(admin, { alunnoId: q.data.alunno_id, giorno: date, storico: true });
     }
 
     logEvento('diary', 'info', { operazione: 'diary/entries:DELETE', esito: 'diario-eliminato', data: date, n: righe.length });

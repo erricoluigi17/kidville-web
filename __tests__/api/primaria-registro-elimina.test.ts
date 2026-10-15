@@ -184,6 +184,8 @@ describe('registro — pending legacy della giornata originale', () => {
     const base = { utente_id: GENITORE_1, entita_id: LEZ, corpo: 'Scheda 3', giorno_competenza: null, politica_operazione: null, creato_il: `${LONTANA}T22:55:00Z`, invio_programmato_il: `${LONTANA}T23:05:00Z` }
     h.db.notifiche = [
       notifica('legacy-originale', base), notifica('meta-originale', { ...base, giorno_competenza: LONTANA, creato_il: new Date().toISOString() }),
+      notifica('claim-originale', { ...base, push_inviata_il: '2026-01-13T08:00:00Z', push_presa_scade_il: '2026-01-13T08:10:00Z' }),
+      notifica('finalizzata-originale', { ...base, push_inviata_il: '2026-01-13T08:00:00Z', push_presa_scade_il: null }),
       notifica('legacy-altro', { ...base, creato_il: '2026-01-13T10:00:00Z' }),
       notifica('meta-altro', { ...base, giorno_competenza: '2026-01-13' }),
       notifica('inviata', { ...base, push_inviata_il: `${LONTANA}T23:06:00Z` }),
@@ -191,7 +193,7 @@ describe('registro — pending legacy della giornata originale', () => {
     ]
     const response = await DELETE(req(ambito === 'firma' ? `firmaId=${FIRMA_MIA}` : `registroId=${LEZ}`, SEGRETERIA))
     expect(response.status).toBe(200)
-    expect(righe('notifiche').map(n => n.id)).toEqual(['legacy-altro', 'meta-altro', 'inviata', 'altra-lezione'])
+    expect(righe('notifiche').map(n => n.id)).toEqual(['finalizzata-originale', 'legacy-altro', 'meta-altro', 'inviata', 'altra-lezione'])
   })
 })
 

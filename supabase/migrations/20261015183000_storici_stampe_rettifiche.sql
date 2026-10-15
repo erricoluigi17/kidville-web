@@ -306,15 +306,18 @@ begin
   perform 1 from public.galleria_media_v2 g where g.id=p_media_id
     and g.scuola_id=p_scuola_id and g.uploaded_by=p_uploaded_by for share;
   if not found then raise exception 'Contenuto galleria fuori perimetro' using errcode='22023'; end if;
+  -- push_inviata_il è valorizzata anche alla PRESA. Finché esiste il lease,
+  -- il bidello può rimettere la riga in coda: va ritirata anche quella presa.
+  -- Un invio finalizzato ha il lease NULL e rimane conservato.
   for utente in select distinct n.utente_id from public.notifiche n
     where n.tipo='galleria' and n.entita_tipo='galleria' and n.entita_id=p_uploaded_by
-      and n.push_inviata_il is null and n.giorno_competenza=p_giorno
+      and (n.push_inviata_il is null or n.push_presa_scade_il is not null) and n.giorno_competenza=p_giorno
       and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
       and n.politica_operazione#>'{galleria,mediaIds}' @> to_jsonb(array[p_media_id]) order by n.utente_id loop
     perform pg_advisory_xact_lock(hashtextextended('gallery-notifiche|'||p_uploaded_by||'|'||p_scuola_id||'|'||utente||'|'||p_giorno,0));
     for r in select n.id,n.politica_operazione from public.notifiche n
       where n.tipo='galleria' and n.entita_tipo='galleria' and n.entita_id=p_uploaded_by
-        and n.utente_id=utente and n.push_inviata_il is null and n.giorno_competenza=p_giorno
+        and n.utente_id=utente and (n.push_inviata_il is null or n.push_presa_scade_il is not null) and n.giorno_competenza=p_giorno
         and n.politica_operazione#>>'{galleria,scuolaId}'=p_scuola_id::text
         and jsonb_typeof(n.politica_operazione#>'{galleria,mediaIds}')='array'
         and n.politica_operazione#>'{galleria,mediaIds}' @> to_jsonb(array[p_media_id]) for update loop

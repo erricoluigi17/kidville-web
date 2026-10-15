@@ -33,3 +33,17 @@ export function filtroGiornatePending(giorni: readonly string[], disponibili: { 
 export function filtraNotifichePerGiorni<T extends { or: (filtro: string) => T }>(query: T, giorni: readonly string[]): T {
   return query.or(filtroGiornatePending(giorni))
 }
+
+/** La presa scrive push_inviata_il prima dell'invio; solo la lease NULL indica un invio concluso. */
+export function filtroStatoRitiroStorico(leaseDisponibile = true): string {
+  return leaseDisponibile ? 'push_inviata_il.is.null,push_presa_scade_il.not.is.null' : 'push_inviata_il.is.null'
+}
+
+/** Un solo OR esterno mantiene in AND il giorno del fatto e lo stato ritirabile. */
+export function filtroRitiroStoricoPending(
+  giorni: readonly string[],
+  disponibili: Parameters<typeof filtroGiornatePending>[1] = {},
+  leaseDisponibile = true,
+): string {
+  return `and(or(${filtroGiornatePending(giorni, disponibili)}),or(${filtroStatoRitiroStorico(leaseDisponibile)}))`
+}

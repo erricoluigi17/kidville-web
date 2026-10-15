@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
-import { filtroGiornatePending } from './giornate-pending'
+import { filtroGiornatePending, filtroRitiroStoricoPending } from './giornate-pending'
 import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 
 export interface RitiroNotifichePending {
@@ -14,6 +14,8 @@ export interface RitiroNotifichePending {
   utenteIds?: readonly string[]
   alunnoIds?: readonly string[]
   giorniOriginali: readonly string[]
+  /** Il ritiro storico comprende le prese non finalizzate; il debounce ordinario no. */
+  storico?: boolean
 }
 
 /** Ritira solo righe ancora pendenti dello stesso fatto e dei suoi genitori. */
@@ -36,19 +38,23 @@ export async function ritiraNotifichePending(supabase: SupabaseClient, params: R
     let nRitirate = 0
     for (const blocco of aBlocchi([...destinatari], ID_PER_QUERY)) {
       const disponibili = { giornoCompetenza: true, politicaOperazione: true }
+      let leaseDisponibile = true
       const cancella = () => {
         let q = supabase.from('notifiche').delete().eq('tipo', params.tipo)
-          .eq('entita_id', params.entitaId).in('utente_id', blocco).is('push_inviata_il', null)
+          .eq('entita_id', params.entitaId).in('utente_id', blocco)
         if (params.entitaTipo) q = q.eq('entita_tipo', params.entitaTipo)
+        if (params.storico) return q.or(filtroRitiroStoricoPending(params.giorniOriginali, disponibili, leaseDisponibile)).select('id')
+        q = q.is('push_inviata_il', null)
         return q.or(filtroGiornatePending(params.giorniOriginali, disponibili)).select('id')
       }
       let risultato = await cancella()
-      for (let n = 0; risultato.error && n < 2; n += 1) {
+      for (let n = 0; risultato.error && n < (params.storico ? 3 : 2); n += 1) {
         if (!['42703', 'PGRST204'].includes(risultato.error.code ?? '')) break
-        const assente = /\b(giorno_competenza|politica_operazione)\b/.exec(risultato.error.message ?? '')?.[1]
+        const assente = /\b(giorno_competenza|politica_operazione|push_presa_scade_il)\b/.exec(risultato.error.message ?? '')?.[1]
         const campo = assente === 'giorno_competenza' ? 'giornoCompetenza' : assente === 'politica_operazione' ? 'politicaOperazione' : null
-        if (!campo || !disponibili[campo]) break
-        disponibili[campo] = false
+        if (assente === 'push_presa_scade_il' && params.storico && leaseDisponibile) leaseDisponibile = false
+        else if (campo && disponibili[campo]) disponibili[campo] = false
+        else break
         logEvento('notifica', 'warn', { operazione: 'ritiraNotifichePending', esito: 'ritiro-schema-precedente', tipo: params.tipo }, risultato.error)
         risultato = await cancella()
       }
@@ -74,5 +80,5 @@ export async function ritiraPendingOperazione(supabase: SupabaseClient, params: 
   if (params.destinatario === 'personale' || deveNotificareGenitori(params.operazione) || !params.operazione) return false
   // La galleria aggrega più media per autore: il ritiro usa la RPC con provenienza.
   if (params.tipo === 'galleria') return false
-  return ritiraNotifichePending(supabase, { ...params, giorniOriginali: [params.operazione.giornoOriginale ?? params.operazione.giornoCompetenza] })
+  return ritiraNotifichePending(supabase, { ...params, storico: true, giorniOriginali: [params.operazione.giornoOriginale ?? params.operazione.giornoCompetenza] })
 }

@@ -25,7 +25,7 @@ const params = () => ({ tipo: 'avviso', entitaTipo: 'avviso', entitaId: 'fonte',
 const ids = (db: DBFinto) => db.notifiche.map(n => n.id)
 
 /** Lo schema rifiuta la query PRIMA che il finto applichi una delete. */
-function schemaPrecedente(db: DBFinto, assenti: string[], filtri: string[]) {
+function schemaPrecedente(db: DBFinto, assenti: string[], filtri: string[], codice = '42703') {
   const reale = creaFintoSupabase(db)
   return { from(tabella: string) {
     let builder: object = reale.from(tabella)
@@ -33,7 +33,7 @@ function schemaPrecedente(db: DBFinto, assenti: string[], filtri: string[]) {
     const proxy: object = new Proxy({}, { get(_target, nome) {
       if (nome === 'then') return (risolvi: (v: unknown) => unknown, rifiuta: (e: unknown) => unknown) => {
         const assente = assenti.find(c => filtro.includes(c))
-        if (assente) return Promise.resolve({ data: null, error: { code: '42703', message: `column notifiche.${assente} does not exist` } }).then(risolvi, rifiuta)
+        if (assente) return Promise.resolve({ data: null, error: { code: codice, message: `column notifiche.${assente} does not exist` } }).then(risolvi, rifiuta)
         return Promise.resolve(builder).then(risolvi, rifiuta)
       }
       return (...args: unknown[]) => {
@@ -79,6 +79,62 @@ describe('ritiro pending servizi — righe reali filtrate', () => {
     else expect(await enqueueNotifiche(creaFintoSupabase(db), input)).toBe(false)
     expect(ids(db)).toEqual(['oggi'])
     expect(h.toggle).not.toHaveBeenCalled()
+  })
+
+  it.each(['trigger', 'enqueue'] as const)('%s ritira anche claim non finalizzati e preserva consegne definitive e altri perimetri', async percorso => {
+    const claim = { push_inviata_il: '2026-10-14T22:06:00Z', push_presa_scade_il: '2026-10-14T22:11:00Z' }
+    const db = { notifiche: [
+      base('pending'), base('claim', claim), base('claim-scaduto', { ...claim, push_presa_scade_il: '2026-10-14T22:05:00Z' }),
+      base('finalizzata', { ...claim, push_presa_scade_il: null }),
+      base('claim-oggi', { ...claim, giorno_competenza: '2026-10-15' }),
+      base('claim-altra-sede', { ...claim, entita_id: 'fonte-altra-sede' }),
+      base('claim-altra-famiglia', { ...claim, utente_id: 'altro-genitore' }),
+      base('claim-altro-tipo', { ...claim, tipo: 'avviso_risposta' }),
+    ] }
+    const input = { ...params(), titolo: 'Avviso', operazione: politica(), destinatario: 'genitore' as const }
+    if (percorso === 'trigger') await notificaEvento(creaFintoSupabase(db), input)
+    else expect(await enqueueNotifiche(creaFintoSupabase(db), input)).toBe(false)
+    expect(ids(db)).toEqual(['finalizzata', 'claim-oggi', 'claim-altra-sede', 'claim-altra-famiglia', 'claim-altro-tipo'])
+    expect(db.notifiche[0]).toMatchObject({ push_inviata_il: claim.push_inviata_il, push_presa_scade_il: null })
+  })
+
+  it('il ritiro ordinario conserva i claim e le consegne finalizzate', async () => {
+    const db = { notifiche: [base('pending'), base('claim', { push_inviata_il: '2026-10-14T22:06:00Z', push_presa_scade_il: '2026-10-14T22:11:00Z' }), base('finalizzata', { push_inviata_il: '2026-10-14T22:06:00Z', push_presa_scade_il: null })] }
+    expect(await ritiraNotifichePending(creaFintoSupabase(db), params())).toBe(true)
+    expect(ids(db)).toEqual(['claim', 'finalizzata'])
+  })
+
+  it.each(['42703', 'PGRST204'])('schema senza lease (%s): fallback solo pushNULL e avviso, mai tutte le inviate', async codice => {
+    const db = { notifiche: [base('pending'), base('non-null-legacy', { push_inviata_il: '2026-10-14T22:06:00Z' }), base('finalizzata', { push_inviata_il: '2026-10-14T22:06:00Z', push_presa_scade_il: null }), base('oggi', { giorno_competenza: '2026-10-15' })] }
+    const filtri: string[] = []
+    const input = { ...params(), titolo: 'Avviso', operazione: politica(), destinatario: 'genitore' as const }
+    expect(await enqueueNotifiche(schemaPrecedente(db, ['push_presa_scade_il'], filtri, codice), input)).toBe(false)
+    expect(ids(db)).toEqual(['non-null-legacy', 'finalizzata', 'oggi'])
+    expect(filtri).toHaveLength(2)
+    expect(filtri[0]).toContain('push_presa_scade_il')
+    expect(filtri[1]).not.toContain('push_presa_scade_il')
+    expect(filtri[1]).toContain('push_inviata_il.is.null')
+    expect(h.log).toHaveBeenCalledWith('notifica', 'warn', expect.objectContaining({ esito: 'ritiro-schema-precedente' }), expect.objectContaining({ code: codice, message: expect.stringContaining('push_presa_scade_il') }))
+  })
+
+  it('schema senza tutti e tre i metadati: ritenta soltanto colonne nominate, preserva gli invii non nulli', async () => {
+    const db = { notifiche: [base('pending'), base('non-null-legacy', { push_inviata_il: '2026-10-14T22:06:00Z' }), base('oggi', { creato_il: '2026-10-14T22:00:00Z' })] }
+    const filtri: string[] = []
+    expect(await ritiraPendingOperazione(schemaPrecedente(db, ['giorno_competenza', 'politica_operazione', 'push_presa_scade_il'], filtri), { ...params(), operazione: politica(), destinatario: 'genitore' })).toBe(true)
+    expect(ids(db)).toEqual(['non-null-legacy', 'oggi'])
+    expect(filtri).toHaveLength(4)
+    expect(filtri.at(-1)).toContain('push_inviata_il.is.null')
+    for (const colonna of ['giorno_competenza', 'politica_operazione', 'push_presa_scade_il']) expect(filtri.at(-1)).not.toContain(colonna)
+  })
+
+  it('un errore reale che nomina la lease non abilita il fallback e lascia intatta la coda', async () => {
+    const db = { notifiche: [base('pending'), base('claim', { push_inviata_il: '2026-10-14T22:06:00Z', push_presa_scade_il: '2026-10-14T22:11:00Z' })] }
+    const filtri: string[] = []
+    expect(await ritiraPendingOperazione(schemaPrecedente(db, ['push_presa_scade_il'], filtri, '42501'), { ...params(), operazione: politica(), destinatario: 'genitore' })).toBe(false)
+    expect(ids(db)).toEqual(['pending', 'claim'])
+    expect(filtri).toHaveLength(1)
+    expect(h.log).not.toHaveBeenCalledWith('notifica', 'warn', expect.objectContaining({ esito: 'ritiro-schema-precedente' }), expect.anything())
+    expect(h.log).toHaveBeenCalledWith('notifica', 'error', expect.objectContaining({ esito: 'ritiro-pending-fallito' }), expect.objectContaining({ code: '42501', message: expect.stringContaining('push_presa_scade_il') }))
   })
 
   it('data spostata indietro: ritira il giorno ORIGINALE, preserva la coda del nuovo giorno', async () => {

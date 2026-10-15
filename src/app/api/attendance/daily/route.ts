@@ -1,4 +1,4 @@
-import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, proiettaRiga } from '@/lib/primaria/rettifica-storica';
 import { politicaNotificaOperazione, puoCorreggereStorico, istanteNelGiornoRoma } from '@/lib/storici/retroattivita';
 import { NextRequest, NextResponse } from 'next/server';
@@ -436,12 +436,11 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                 // coprire — e il fallimento della revoca è il caso peggiore dei due: il genitore
                 // riceve "tuo figlio è stato segnato assente" per un'assenza che la maestra ha
                 // già corretto. Non una notifica mancata: una notifica FALSA.
-                const { error: revocaErr } = await filtraNotifichePerGiorni(supabase
+                const { error: revocaErr } = await eseguiRitiroGiornate(() => supabase
                     .from('notifiche')
                     .delete()
                     .eq('tipo', 'assenza_non_comunicata')
-                    .eq('entita_id', alunno_id)
-                    .is('push_inviata_il', null), [data]);
+                    .eq('entita_id', alunno_id), { giorni: [data], storica: politica.sopprimiGenitori, operazione: 'attendance/daily:POST' });
 
                 if (revocaErr) {
                     // `error` benché la risposta sia 200: la riga resta in coda e la push

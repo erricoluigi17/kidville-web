@@ -23,6 +23,13 @@ beforeEach(() => {
 })
 
 describe('enqueueDiarioGenitori', () => {
+  it('il debounce ordinario lascia intatta la notifica presa in carico dal dispatcher', async () => {
+    h.db.notifiche.push({ id: 'claim', tipo: 'diario', utente_id: 'p1', entita_id: 'a1', entita_tipo: 'diario', giorno_competenza: oggiRoma(), push_inviata_il: new Date().toISOString(), push_presa_scade_il: new Date(Date.now() + 600_000).toISOString() })
+    await enqueueDiarioGenitori(makeClient() as never, { alunnoId: 'a1', nome: 'Nome fittizio' })
+    expect(h.db.notifiche.find(n => n.id === 'claim')).toBeDefined()
+    expect(h.db.notifiche.find(n => n.id === 'pending')).toBeUndefined()
+    expect(inserts()).toHaveLength(1)
+  })
   it('debounce: rimuove le notifiche diario pending del figlio prima di accodare', async () => {
     await enqueueDiarioGenitori(makeClient() as never, { alunnoId: 'a1', nome: 'Sofia' })
     expect(deletes()).toHaveLength(1)

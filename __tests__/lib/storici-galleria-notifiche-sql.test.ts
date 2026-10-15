@@ -24,7 +24,7 @@ beforeAll(async () => {
       politica_operazione jsonb,giorno_competenza date,created_at timestamptz default '2000-01-14T12:00:00Z');
     create table notifiche(id uuid primary key default gen_random_uuid(),utente_id uuid,tipo text,titolo text,corpo text,link text,
       entita_tipo text,entita_id uuid,creato_il timestamptz default now(),letta_il timestamptz,push_inviata_il timestamptz,
-      invio_programmato_il timestamptz,giorno_competenza date,politica_operazione jsonb);
+      invio_programmato_il timestamptz,giorno_competenza date,politica_operazione jsonb,push_presa_scade_il timestamptz);
     create table app_log(livello text,evento text,sorgente text,messaggio text,fingerprint text,contesto jsonb);
   `)
   const migrazione = readFileSync(join(process.cwd(), 'supabase/migrations/20261015183000_storici_stampe_rettifiche.sql'), 'utf8')
@@ -161,6 +161,26 @@ describe('annunci galleria atomici con provenienza del singolo contenuto', () =>
     expect(await righe()).toHaveLength(2)
     const originale = (await db.query<{ politica_operazione: { galleria: { mediaIds: string[] } } }>('select politica_operazione from notifiche where giorno_competenza=$1',[giorno])).rows[0]
     expect(originale.politica_operazione.galleria.mediaIds).toEqual([altraFoto])
+  })
+  it('ritira anche la presa recuperabile di un worker morto, preservando un invio concluso', async () => {
+    await accoda()
+    await db.exec(`insert into notifiche(utente_id,tipo,titolo,entita_tipo,entita_id,giorno_competenza,politica_operazione,push_inviata_il)
+      select utente_id,tipo,titolo,entita_tipo,entita_id,giorno_competenza,politica_operazione,now() from notifiche;
+      update notifiche set push_inviata_il=now(),push_presa_scade_il=now()+interval '4 minutes' where push_inviata_il is null;`)
+    await db.query('update galleria_media_v2 set eliminato_il=now() where id=$1',[media])
+    expect(await righe()).toHaveLength(1)
+    expect((await righe())[0].push_inviata_il).not.toBeNull()
+    // Il recupero del dispatcher non trova più la presa da rimettere in coda.
+    expect((await db.query('update notifiche set push_inviata_il=null,push_presa_scade_il=null where push_presa_scade_il is not null returning id')).rows).toEqual([])
+  })
+  it('un worker interrotto può recuperare solo le origini del batch che non sono state ritirate', async () => {
+    await accoda()
+    await accoda(altraFoto)
+    await db.exec("update notifiche set push_inviata_il=now(),push_presa_scade_il=now()+interval '4 minutes'")
+    await db.query('update galleria_media_v2 set politica_operazione=$1 where id=$2',[{ ...politica,sopprimiGenitori:true },media])
+    await db.exec('update notifiche set push_inviata_il=null,push_presa_scade_il=null where push_presa_scade_il is not null')
+    expect(await righe()).toHaveLength(1)
+    expect((await righe())[0].politica_operazione.galleria?.mediaIds).toEqual([altraFoto])
   })
   it('un replay non rinvia la push né riaccende la campanella, una foto nuova sì', async () => {
     await accoda()

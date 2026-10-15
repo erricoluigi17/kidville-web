@@ -1,4 +1,4 @@
-import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche } from '@/lib/primaria/rettifica-storica'
 import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
@@ -658,12 +658,11 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
       // Il nome si rilegge: la notifica in coda lo porta nel titolo, e riscriverlo senza lo toglierebbe.
       const nome = await nomeAlunnoPerNotifica(supabase, voce.alunno_id, operazione)
       const { titolo, corpo } = testoNotifica(tipoDopo, materiaNome, String(dopo.data ?? ''), nome)
-      const coda = supabase.from('notifiche')
-      const { error: notifErr } = await filtraNotifichePerGiorni((storica ? coda.delete() : coda.update({ titolo, corpo }))
-        .eq('tipo', TIPO_NOTIFICA)
-        .eq('entita_tipo', ENTITA_NOTIFICA)
-        .eq('entita_id', id)
-        .is('push_inviata_il', null), [String(voce.data).slice(0, 10)])
+      const { error: notifErr } = await eseguiRitiroGiornate(() => {
+        const coda = supabase.from('notifiche')
+        return (storica ? coda.delete() : coda.update({ titolo, corpo }))
+          .eq('tipo', TIPO_NOTIFICA).eq('entita_tipo', ENTITA_NOTIFICA).eq('entita_id', id)
+      }, { giorni: [String(voce.data).slice(0, 10)], storica, operazione })
       if (notifErr) {
         notificaAllineata = false
         logEvento('notifica', 'error', {
@@ -756,12 +755,12 @@ export const DELETE = withRoute('primaria/giustifiche-didattiche:DELETE', async 
 
     // Il ritiro viene DOPO la cancellazione riuscita: ritirare l'avviso e poi non
     // riuscire a cancellare lascerebbe un impreparato senza notifica.
-    const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(supabase
+    const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase
       .from('notifiche')
       .delete()
       .in('entita_tipo', [ENTITA_NOTIFICA, ENTITA_NOTIFICA_GENITORE])
       .eq('entita_id', id)
-      .is('push_inviata_il', null), [String(voce.data).slice(0, 10)]).select('id')
+      .select('id'), { giorni: [String(voce.data).slice(0, 10)], storica: eRettificaStorica(auth.user, String(voce.data).slice(0, 10)), operazione })
     if (ritiroErr) {
       // `error` benché la cancellazione sia riuscita: la notifica resta in coda e
       // partirà per un impreparato che non esiste più.

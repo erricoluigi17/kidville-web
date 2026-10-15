@@ -20,6 +20,8 @@ beforeEach(() => {
     legame_genitori_alunni: [{ alunno_id: alunno, genitore_id: 'genitore' }],
     notifiche: [
       { ...base, id: 'legacy-ieri' }, { ...base, id: 'metadata-ieri', giorno_competenza: '2026-09-09', creato_il: '2026-09-10T10:00:00Z' },
+      { ...base, id: 'claim-ieri', push_inviata_il: '2026-09-10T09:00:00Z', push_presa_scade_il: '2026-09-10T09:10:00Z' },
+      { ...base, id: 'finalizzata-ieri', push_inviata_il: '2026-09-10T09:00:00Z', push_presa_scade_il: null },
       { ...base, id: 'legacy-oggi', creato_il: '2026-09-10T08:00:00Z' },
       { ...base, id: 'metadata-oggi', giorno_competenza: '2026-09-10' },
       { ...base, id: 'politica-oggi', politica_operazione: { giornoCompetenza: '2026-09-10' } },
@@ -36,6 +38,6 @@ describe('valutazioni — pending legacy e spostamento della competenza', () => 
       : new NextRequest('http://test/api/primaria/valutazioni', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, versioneAttesa: 0, modalita: 'sintetico', giudizioSintetico: 'Ottimo', argomento: 'Argomento fittizio', ...(metodo === 'PATCH-data' ? { data: '2026-09-10' } : {}) }) })
     const response = await (metodo === 'DELETE' ? DELETE : PATCH)(request)
     expect(response.status).toBe(200)
-    expect(h.db.notifiche.map(n => n.id)).toEqual(['legacy-oggi', 'metadata-oggi', 'politica-oggi', 'inviata', 'altro-destinatario', 'altra-entita', 'altro-tipo'])
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['finalizzata-ieri', 'legacy-oggi', 'metadata-oggi', 'politica-oggi', 'inviata', 'altro-destinatario', 'altra-entita', 'altro-tipo'])
   })
 })

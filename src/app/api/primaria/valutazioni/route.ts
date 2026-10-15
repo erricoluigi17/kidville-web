@@ -1,4 +1,4 @@
-import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { puoCorreggereStorico, politicaNotificaOperazione, oggiRoma } from '@/lib/storici/retroattivita'
@@ -735,11 +735,11 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     } else {
       const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
       if (destinatari.length) {
-        const notifica = supabase.from('notifiche')
-        const q = (politicaModifica.sopprimiGenitori ? notifica.delete() : notifica.update({ corpo: giudizio }))
-          .eq('tipo', 'valutazione').eq('entita_tipo', 'valutazione').eq('entita_id', id)
-          .in('utente_id', destinatari).is('push_inviata_il', null)
-        const { error: notifErr } = await filtraNotifichePerGiorni(q, [giornoOriginale])
+        const { error: notifErr } = await eseguiRitiroGiornate(() => {
+          const notifica = supabase.from('notifiche')
+          return (politicaModifica.sopprimiGenitori ? notifica.delete() : notifica.update({ corpo: giudizio }))
+            .eq('tipo', 'valutazione').eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari)
+        }, { giorni: [giornoOriginale], storica: politicaModifica.sopprimiGenitori, operazione })
         if (notifErr) logEvento('notifica', 'error', { operazione, esito: 'notifica-in-coda-non-allineata', tipo: 'valutazione', valutazione_id: id }, notifErr)
       }
     }
@@ -853,9 +853,9 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
     } else {
       const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
       if (destinatari.length) {
-        const q = supabase.from('notifiche').delete().eq('tipo', 'valutazione')
-          .eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari).is('push_inviata_il', null)
-        const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(q, [vocePrimaria(voce).dataEvento]).select('id')
+        const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase.from('notifiche').delete().eq('tipo', 'valutazione')
+          .eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari).select('id'),
+          { giorni: [vocePrimaria(voce).dataEvento], storica: eRettificaStorica(auth.user, vocePrimaria(voce).dataEvento), operazione })
         if (ritiroErr) {
           ritiroRiuscito = false
           logEvento('notifica', 'error', { operazione, esito: 'ritiro-notifica-valutazione-fallito', tipo: 'valutazione', valutazione_id: id }, ritiroErr)

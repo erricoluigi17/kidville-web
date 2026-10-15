@@ -53,11 +53,13 @@ describe('diario amministrativo nella giornata di competenza', () => {
     const base = { utente_id: 'genitore', tipo: 'diario', entita_tipo: 'diario', entita_id: ALUNNO, push_inviata_il: null, giorno_competenza: null, politica_operazione: null, creato_il: '2026-10-14T21:55:00Z', invio_programmato_il: '2026-10-14T22:05:00Z' }
     h.db.notifiche = [
       { ...base, id: 'legacy-ieri' }, { ...base, id: 'legacy-oggi', creato_il: '2026-10-15T09:55:00Z' },
+      { ...base, id: 'claim-ieri', push_inviata_il: '2026-10-15T09:00:00Z', push_presa_scade_il: '2026-10-15T09:10:00Z' },
+      { ...base, id: 'finalizzata-ieri', push_inviata_il: '2026-10-15T09:00:00Z', push_presa_scade_il: null },
       { ...base, id: 'meta-oggi', giorno_competenza: '2026-10-15' },
       { ...base, id: 'altro-genitore', utente_id: 'altro' }, { ...base, id: 'inviata', push_inviata_il: '2026-10-14T22:06:00Z' },
     ]
     expect((await (metodo === 'POST' ? POST : DELETE)(richiesta(metodo, '2026-10-14'))).status).toBe(200)
-    expect(h.db.notifiche.map(n => n.id)).toEqual(['legacy-oggi', 'meta-oggi', 'altro-genitore', 'inviata'])
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['legacy-oggi', 'finalizzata-ieri', 'meta-oggi', 'altro-genitore', 'inviata'])
   })
   it('aggiorna ieri lasciando oggi invariato e trasmette la policy calcolata sul server', async () => {
     expect((await POST(richiesta('POST', '2026-10-14'))).status).toBe(200)

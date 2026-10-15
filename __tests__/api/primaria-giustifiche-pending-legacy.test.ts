@@ -18,6 +18,8 @@ beforeEach(() => {
     sections: [{ id: 'classe', scuola_id: 'sede' }], materie: [{ id: 'materia', nome: 'Materia fittizia', scuola_id: 'sede' }],
     notifiche: [
       { ...base, id: 'legacy-ieri' }, { ...base, id: 'metadata-ieri', giorno_competenza: '2026-09-09', creato_il: '2026-09-10T10:00:00Z' },
+      { ...base, id: 'claim-ieri', push_inviata_il: '2026-09-10T09:00:00Z', push_presa_scade_il: '2026-09-10T09:10:00Z' },
+      { ...base, id: 'finalizzata-ieri', push_inviata_il: '2026-09-10T09:00:00Z', push_presa_scade_il: null },
       { ...base, id: 'legacy-oggi', creato_il: '2026-09-10T08:00:00Z' },
       { ...base, id: 'metadata-oggi', giorno_competenza: '2026-09-10' },
       { ...base, id: 'inviata', push_inviata_il: '2026-09-09T22:06:00Z' },
@@ -31,6 +33,6 @@ describe('giustifiche didattiche — ritiro della sola competenza originale', ()
     const request = metodo === 'DELETE' ? new NextRequest(`http://test/api/primaria/giustifiche-didattiche?id=${id}&versioneAttesa=0`, { method: 'DELETE' })
       : new NextRequest('http://test/api/primaria/giustifiche-didattiche', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, versioneAttesa: 0, tipo: 'giustificato', motivo: 'Correzione fittizia', ...(metodo === 'PATCH-data' ? { data: '2026-09-10' } : {}) }) })
     expect((await (metodo === 'DELETE' ? DELETE : PATCH)(request)).status).toBe(200)
-    expect(h.db.notifiche.map(n => n.id)).toEqual(['legacy-oggi', 'metadata-oggi', 'inviata', 'altra-entita'])
+    expect(h.db.notifiche.map(n => n.id)).toEqual(['finalizzata-ieri', 'legacy-oggi', 'metadata-oggi', 'inviata', 'altra-entita'])
   })
 })

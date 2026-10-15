@@ -1,4 +1,4 @@
-import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
@@ -1155,7 +1155,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
 // accanto alla SUA lezione ancora viva sarebbe un file sparito senza motivo.
 //
 // ─── LA NOTIFICA «NUOVI COMPITI» ─────────────────────────────────────────────
-// Quella già partita (`push_inviata_il` valorizzato) resta: nessuna rettifica.
+// Quella finalizzata resta; una presa ancora recuperabile si ritira solo nello storico staff.
 // Quella ancora in coda (buffer di 10') si RITIRA, e solo dopo la scrittura
 // riuscita — ritirarla e poi non riuscire a eliminare lascerebbe compiti veri
 // senza avviso. Lezione eliminata → tutte le sue `compiti` in coda. Firma
@@ -1374,19 +1374,20 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
       let notificheRitirate = 0
       let ritiroRiuscito = true
       if (firma.compiti_propri && destinatari.length) {
+        const corpoCompiti = firma.compiti_propri.slice(0, 140)
         try {
           const perAlunno = await getGenitoriDiAlunni(supabase, destinatari.map((d) => d.alunno_id))
           const genitori = [...new Set([...perAlunno.values()].flat())]
           if (genitori.length) {
-            const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(supabase
+            const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase
               .from('notifiche')
               .delete()
               .eq('tipo', 'compiti')
               .eq('entita_tipo', 'registro')
               .eq('entita_id', lezione.id)
-              .eq('corpo', firma.compiti_propri.slice(0, 140))
+              .eq('corpo', corpoCompiti)
               .in('utente_id', genitori)
-              .is('push_inviata_il', null), [String(lezione.data).slice(0, 10)]).select('id')
+              .select('id'), { giorni: [String(lezione.data).slice(0, 10)], storica: eRettificaStorica(user, String(lezione.data).slice(0, 10)), operazione })
             if (ritiroErr) {
               ritiroRiuscito = false
               logEvento('notifica', 'error', { operazione, esito: 'ritiro-compiti-fallito', tipo: 'compiti', firma_id: firma.id }, ritiroErr)
@@ -1527,13 +1528,13 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
 
     // La notifica «nuovi compiti» ancora in coda si ritira; quella partita resta.
     let notificheRitirate = 0
-    const { data: ritirate, error: ritiroErr } = await filtraNotifichePerGiorni(supabase
+    const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase
       .from('notifiche')
       .delete()
       .eq('tipo', 'compiti')
       .eq('entita_tipo', 'registro')
       .eq('entita_id', lezione.id)
-      .is('push_inviata_il', null), [String(lezione.data).slice(0, 10)]).select('id')
+      .select('id'), { giorni: [String(lezione.data).slice(0, 10)], storica: eRettificaStorica(user, String(lezione.data).slice(0, 10)), operazione })
     if (ritiroErr) {
       // `error` benché l'eliminazione sia riuscita: l'avviso partirà per compiti
       // che non esistono più.

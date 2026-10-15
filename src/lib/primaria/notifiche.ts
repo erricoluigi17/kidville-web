@@ -49,7 +49,7 @@ export async function enqueueNotifichePerAlunni(
   { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10, scuolaId, operazione }: EnqueueParams
 ): Promise<void> {
   if (!deveNotificareGenitori(operazione)) {
-    if (operazione && entitaId) await ritiraPendingPerAlunni(supabase, { alunnoIds, tipo, entitaId, entitaTipo, giorni: [operazione.giornoOriginale ?? operazione.giornoCompetenza] })
+    if (operazione && entitaId) await ritiraPendingPerAlunni(supabase, { alunnoIds, tipo, entitaId, entitaTipo, giorni: [operazione.giornoOriginale ?? operazione.giornoCompetenza], storico: true })
     logEvento('notifica', 'info', { operazione: 'enqueueNotifichePerAlunni', esito: 'rettifica-storica-silenziosa', tipo })
     return
   }
@@ -93,7 +93,7 @@ export async function enqueueDiarioGenitori(
   { alunnoId, nome, bufferMin = 10, scuolaId, operazione }: { alunnoId: string; nome?: string | null; bufferMin?: number; scuolaId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
   if (!deveNotificareGenitori(operazione)) {
-    if (operazione) await ritiraDiarioGenitori(supabase, { alunnoId, giorno: operazione.giornoOriginale ?? operazione.giornoCompetenza })
+    if (operazione) await ritiraDiarioGenitori(supabase, { alunnoId, giorno: operazione.giornoOriginale ?? operazione.giornoCompetenza, storico: true })
     logEvento('notifica', 'info', { operazione: 'enqueueDiarioGenitori', esito: 'rettifica-storica-silenziosa', alunno_id: alunnoId })
     return
   }
@@ -130,7 +130,7 @@ export async function enqueueDiarioGenitori(
 }
 
 async function ritiraPendingPerAlunni(supabase: SupabaseClient, opts: {
-  alunnoIds: string[]; tipo: string; entitaId: string; entitaTipo?: string; giorni: string[]
+  alunnoIds: string[]; tipo: string; entitaId: string; entitaTipo?: string; giorni: string[]; storico?: boolean
 }): Promise<boolean> {
   try {
   const legami = await getGenitoriDiAlunniEsito(supabase, opts.alunnoIds)
@@ -140,7 +140,7 @@ async function ritiraPendingPerAlunni(supabase: SupabaseClient, opts: {
   }
   const utenteIds = [...new Set([...legami.perAlunno.values()].flat())]
   if (!utenteIds.length) return true
-  return await ritiraNotifichePending(supabase, { tipo: opts.tipo, entitaId: opts.entitaId, entitaTipo: opts.entitaTipo, utenteIds, giorniOriginali: opts.giorni })
+  return await ritiraNotifichePending(supabase, { tipo: opts.tipo, entitaId: opts.entitaId, entitaTipo: opts.entitaTipo, utenteIds, giorniOriginali: opts.giorni, storico: opts.storico })
   } catch (errore) {
     logEvento('notifica', 'error', { operazione: 'ritiraPendingPerAlunni', esito: 'ritiro-non-eseguito', tipo: opts.tipo }, errore)
     return false
@@ -148,8 +148,8 @@ async function ritiraPendingPerAlunni(supabase: SupabaseClient, opts: {
 }
 
 /** Anche la cancellazione storica deve ritirare un avviso precedente al nuovo schema. */
-export async function ritiraDiarioGenitori(supabase: SupabaseClient, opts: { alunnoId: string; giorno: string }): Promise<boolean> {
-  return ritiraPendingPerAlunni(supabase, { alunnoIds: [opts.alunnoId], tipo: 'diario', entitaId: opts.alunnoId, entitaTipo: 'diario', giorni: [opts.giorno] })
+export async function ritiraDiarioGenitori(supabase: SupabaseClient, opts: { alunnoId: string; giorno: string; storico?: boolean }): Promise<boolean> {
+  return ritiraPendingPerAlunni(supabase, { alunnoIds: [opts.alunnoId], tipo: 'diario', entitaId: opts.alunnoId, entitaTipo: 'diario', giorni: [opts.giorno], storico: opts.storico })
 }
 
 /**

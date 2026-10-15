@@ -1,3 +1,4 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { filtraNotifichePerGiorni } from '@/lib/notifiche/giornate-pending'
 import { oggiRoma, politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
@@ -250,6 +251,7 @@ async function ritiraNotificheInCoda(
   gruppoId: string | null,
   originali: Pick<RigaNota, 'id' | 'alunno_id' | 'data_evento' | 'creato_il'>[],
   operazione: string,
+  storica: boolean,
 ): Promise<number> {
   if (!gruppoId) return 0
   const campi = { operazione, entita_tipo: 'nota', gruppo_id: gruppoId }
@@ -275,10 +277,9 @@ async function ritiraNotificheInCoda(
     const tengono = new Set([...rimasti.perAlunno.values()].flat())
     const destinatari = [...new Set([...eliminati.perAlunno.values()].flat())].filter(g => !tengono.has(g))
     if (!destinatari.length) continue
-    const q = supabase.from('notifiche').delete()
+    const { data: ritirate, error } = await eseguiRitiroGiornate(() => supabase.from('notifiche').delete()
       .eq('entita_tipo', 'nota').eq('entita_id', gruppoId).in('tipo', [...TIPI_NOTIFICA_NOTA])
-      .in('utente_id', destinatari).is('push_inviata_il', null)
-    const { data: ritirate, error } = await filtraNotifichePerGiorni(q, [giorno]).select('id')
+      .in('utente_id', destinatari).select('id'), { giorni: [giorno], storica, operazione })
     if (error) logEvento('notifica', 'error', { ...campi, esito: 'ritiro-notifiche-fallito' }, error)
     else n += (ritirate ?? []).length
   }
@@ -644,7 +645,7 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     }
 
     if (cambiaData || politicaModifica.sopprimiGenitori) {
-      await ritiraNotificheInCoda(supabase, t.nota.nota_gruppo_id, cambiate, operazione)
+      await ritiraNotificheInCoda(supabase, t.nota.nota_gruppo_id, cambiate, operazione, politicaModifica.sopprimiGenitori)
     }
     let allineate = 0
     if (!cambiaData && !politicaModifica.sopprimiGenitori) {
@@ -744,6 +745,7 @@ export const DELETE = withRoute('primaria/note:DELETE', async (request: NextRequ
       t.nota.nota_gruppo_id,
       eliminate,
       operazione,
+      eliminate.some(n => eRettificaStorica(auth.user, voceDi(n, t.sectionId, t.scuolaId).dataEvento)),
     )
 
     await logScrittura(supabase, {

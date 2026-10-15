@@ -10,7 +10,7 @@ Piano approvato il 15/10/2026. Branch `codex/storici-stampe-rettifiche`. Non ril
 - [x] Verificare centro unico, scorciatoie, generazione PDF/Excel, originali e download; PDF fittizi di 14 e 47 pagine verificati visivamente.
 - [x] Completare integrazione delle notifiche e delle rettifiche nei moduli restanti.
 - [x] Revisionare requisiti, correttezza del codice e isolamento dei dati; correggere tutti i rilievi, incluso il diario di classi rimosse.
-- [x] Giro finale globale: ESLint zero warning, TypeScript, 30.933 test passati su 1.832 file (25 condizionali), build e controllo artefatto verdi (3.077 file JS).
+- [x] Giro finale globale: ESLint zero warning, TypeScript, 30.934 test passati su 1.832 file (25 condizionali), build e controllo artefatto verdi (3.077 file JS).
 - [ ] CI Playwright e qualità verdi, merge con applicazione delle tre migrazioni da integrazione.
 - [ ] Verificare produzione e advisor; rigenerare le fotografie reali, poi pulire i branch dopo il deploy riuscito.
 

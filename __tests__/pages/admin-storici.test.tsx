@@ -26,6 +26,12 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 describe('centro storico staff', () => {
+  it('l’etichetta visibile del formato è distinta dal testo delle opzioni', async () => {
+    render(<StoriciPanel />)
+    await screen.findByRole('option', { name: 'Fittizio Alunno (archiviato)' })
+    const formato = screen.getByRole('combobox', { name: 'Formato' }) as HTMLSelectElement
+    expect(Array.from(formato.labels ?? []).map(l => l.textContent?.trim())).toEqual(['Formato'])
+  })
   it('include gli archiviati, tutte le categorie e invia le date scelte', async () => {
     render(<StoriciPanel />)
     await screen.findByRole('option', { name: 'Fittizio Alunno (archiviato)' })

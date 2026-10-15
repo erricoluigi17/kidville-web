@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Barlow_Condensed, Maven_Pro } from "next/font/google";
+import localFont from "next/font/local";
 import { cookies } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
@@ -8,15 +8,24 @@ import { haCookieSessione } from "@/lib/auth/session-cookie";
 import { RootProviders } from "@/components/providers/RootProviders";
 import "./globals.css";
 
-const barlow = Barlow_Condensed({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800", "900"],
+const barlow = localFont({
+  src: [
+    { path: "./fonts/BarlowCondensed-Regular.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/BarlowCondensed-Medium.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/BarlowCondensed-SemiBold.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/BarlowCondensed-Bold.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/BarlowCondensed-ExtraBold.woff2", weight: "800", style: "normal" },
+    { path: "./fonts/BarlowCondensed-Black.woff2", weight: "900", style: "normal" },
+  ],
+  display: "swap",
   variable: "--loaded-barlow",
 });
 
-const maven = Maven_Pro({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+const maven = localFont({
+  src: "./fonts/MavenPro-Variable.woff2",
+  weight: "400 800",
+  style: "normal",
+  display: "swap",
   variable: "--loaded-maven",
 });
 

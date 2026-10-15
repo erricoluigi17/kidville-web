@@ -298,7 +298,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
             const res = await fetch('/api/attendance/daily', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ alunno_id: alunnoId, data: giorno, [colonna]: ora }),
+                body: JSON.stringify({ alunno_id: alunnoId, versioneAttesa: students.find(s => s.student_id === alunnoId)?.byDate[giorno]?.storico_versione, data: giorno, [colonna]: ora }),
             });
             if (!res.ok) throw new Error(String(res.status));
         } catch (err) {

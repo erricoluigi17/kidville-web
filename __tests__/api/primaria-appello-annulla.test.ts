@@ -113,6 +113,8 @@ const toccaPresenze = () => h.operazioni.some((o) => o.tabella === 'presenze')
 const revocheNotifiche = () => h.operazioni.filter((o) => o.tabella === 'notifiche' && o.verbo === 'delete')
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-09-25T10:00:00Z'))
   vi.clearAllMocks()
   h.oggi = '2026-09-25'
   h.oggiVero = false

@@ -1,3 +1,4 @@
+import { rettificaStoricaFinta } from './storici-rpc'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // =============================================================================
@@ -921,6 +922,7 @@ export function creaFintoSupabase(
   const client: Record<string, unknown> = {
     from,
     rpc: async (nome: string, args: Riga = {}) => {
+      if (nome === 'storici_applica_rettifica' && !opzioni.rpc?.[nome]) return rettificaStoricaFinta(db, args, opzioni)
       const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]
       if (!impl) {
         throw new Error(

@@ -25,6 +25,7 @@
  * il test diventa rosso su entrambe le asserzioni, lo status e la mutazione.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { NextRequest, NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
@@ -108,7 +109,7 @@ describe('POST /api/attendance/daily — lo scope di sede vale anche in scrittur
   })
 
   it('alunno nel proprio scope ⇒ la presenza si scrive (il gate non blocca il lavoro vero)', async () => {
-    const res = await POST(richiesta({ alunno_id: ALUNNO_ALTRA_SEDE, data: '2026-01-04', stato: 'presente' }))
+    const res = await POST(richiesta({ alunno_id: ALUNNO_ALTRA_SEDE, data: oggiFiscaleISO(), stato: 'presente' }))
     expect(res.status).toBe(200)
     expect(h.scritture.some((s) => s.tabella === 'presenze')).toBe(true)
   })

@@ -1,3 +1,5 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { createHash } from 'node:crypto'
 import { NextResponse, type NextRequest } from 'next/server'
 
@@ -249,6 +251,10 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
       )
     }
 
+    if (richiesta.giorno_competenza && (richiesta.giorno_competenza > oggiRoma() || !puoCorreggereStorico(auth.user))) {
+      return NextResponse.json({ error: 'Data di competenza non consentita', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 })
+    }
+
     const supabase = await createAdminClient()
 
     // ── CANCELLO 2 · DOVE STAI SCRIVENDO ─────────────────────────────────────
@@ -324,9 +330,11 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     //    l'impegno, e da lì il video esce da solo); una News apre soltanto (`video_intent_open`),
     //    e la conferma la dà l'editor.
     const primo = richiesta.file[0]
-    const rpcApertura = destinatari ? 'video_galleria_intent_apri' : 'video_intent_open'
+    const rpcGalleria = richiesta.giorno_competenza ? 'video_galleria_intent_apri_storico' : 'video_galleria_intent_apri'
+    const rpcApertura = destinatari ? rpcGalleria : 'video_intent_open'
     const { data: apertura, error: erroreApertura } = destinatari
-      ? await supabase.rpc('video_galleria_intent_apri', {
+      ? await supabase.rpc(rpcGalleria, {
+          ...(richiesta.giorno_competenza ? { p_giorno_competenza: richiesta.giorno_competenza, p_politica_operazione: politicaNotificaServizio(auth.user, richiesta.giorno_competenza) } : {}),
           p_owner_id: auth.user.id,
           p_scuola_id: scuolaId,
           p_idempotency_key: primo.chiaveIdempotenza,

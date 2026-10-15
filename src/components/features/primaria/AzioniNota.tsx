@@ -1,5 +1,6 @@
 'use client';
 
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useId, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { Pencil, Trash2, Lock } from 'lucide-react';
@@ -48,6 +49,8 @@ const RUOLI_STAFF_VOCE = new Set(['segreteria', 'admin', 'coordinator']);
 
 /** Una nota come la restituisce `GET /api/primaria/note`. */
 export interface NotaElenco {
+  storico_versione?: number;
+  versioni_gruppo?: Record<string, number>;
   id: string;
   alunno_id: string;
   /** L'autore della nota: con la sede e il ruolo decide chi può agire dopo uno sblocco. */
@@ -57,6 +60,7 @@ export interface NotaElenco {
   richiede_firma: boolean;
   firmata_il: string | null;
   creato_il: string;
+  data_evento?: string | null;
   nota_gruppo_id?: string | null;
   alunni?: { nome: string; cognome: string } | null;
   /** Autorizzato E (entro il termine O sbloccato). Assente = no (fail-closed). */
@@ -179,7 +183,7 @@ export function AzioniNota({
   // note in elenco, e «Elimina la nota di …» ripetuto uguale non dice QUALE.
   const quando = {
     alunno: nomeAlunno,
-    data: formattaIstante(nota.creato_il, locale, { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    data: formattaIstante(nota.data_evento ? `${nota.data_evento}T12:00:00Z` : nota.creato_il, locale, { day: '2-digit', month: '2-digit', year: 'numeric' }),
     ora: formattaIstante(nota.creato_il, locale, { hour: '2-digit', minute: '2-digit' }),
   };
 
@@ -240,6 +244,7 @@ export function AzioniNota({
           nomeAlunno={nomeAlunno}
           firmateNelGruppo={firmateNelGruppo}
           userId={userId}
+          gestioneStorica={RUOLI_STAFF_VOCE.has(ruolo ?? '')}
           onChiudi={() => setAperta(null)}
           onCambiato={onCambiato}
           onEsito={onEsito}
@@ -265,6 +270,7 @@ interface ModaleProps {
   nomeAlunno: string;
   firmateNelGruppo: number;
   userId: string;
+  gestioneStorica?: boolean;
   onChiudi: () => void;
   onCambiato: () => void;
   onEsito: (testo: string, tipo: 'ok' | 'errore') => void;
@@ -309,7 +315,7 @@ async function invia(
       return {
         ok: false,
         messaggio: messaggioDaCorpo(corpo, fallback),
-        ricarica: res.status === 403 || res.status === 404 || res.status === 423,
+        ricarica: res.status === 403 || res.status === 404 || res.status === 409 || res.status === 423,
       };
     }
     return { ok: true, corpo: (corpo ?? {}) as Record<string, unknown> };
@@ -377,9 +383,11 @@ function SceltaAmbito({
   );
 }
 
-function ModaleModificaNota({ nota, nomeAlunno, firmateNelGruppo, userId, onChiudi, onCambiato, onEsito }: ModaleProps) {
+function ModaleModificaNota({ nota, nomeAlunno, firmateNelGruppo, userId, gestioneStorica, onChiudi, onCambiato, onEsito }: ModaleProps) {
   const t = useTranslations('teacherPrimaria');
   const idBase = useId();
+  const giornoOriginale = nota.data_evento ?? oggiRoma(new Date(nota.creato_il));
+  const [dataCompetenza, setDataCompetenza] = useState(giornoOriginale);
   const [categoria, setCategoria] = useState(nota.categoria);
   const [testo, setTesto] = useState(nota.testo);
   const [richiedeFirma, setRichiedeFirma] = useState(!!nota.richiede_firma);
@@ -392,7 +400,7 @@ function ModaleModificaNota({ nota, nomeAlunno, firmateNelGruppo, userId, onChiu
     onChiudi();
   };
 
-  const campi = () => campiCambiati(nota, { categoria, testo, richiedeFirma });
+  const campi = () => ({ ...campiCambiati(nota, { categoria, testo, richiedeFirma }), ...(gestioneStorica && dataCompetenza !== giornoOriginale ? { data: dataCompetenza } : {}) });
 
   const manda = async (ambito: Ambito) => {
     if (inVolo) return;
@@ -404,7 +412,7 @@ function ModaleModificaNota({ nota, nomeAlunno, firmateNelGruppo, userId, onChiu
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ id: nota.id, ambito, ...c }),
+        body: JSON.stringify({ id: nota.id, ambito, ...c, versioneAttesa: nota.storico_versione, versioniAttese: nota.versioni_gruppo }),
       },
       'modifica',
       t('noteErroreModifica'),
@@ -485,6 +493,10 @@ function ModaleModificaNota({ nota, nomeAlunno, firmateNelGruppo, userId, onChiu
 
         {passo === 'form' ? (
           <>
+            {gestioneStorica && <label className="mt-3 block font-maven text-xs text-kidville-sub">
+              {t('storicoDataCompetenza')}
+              <input type="date" value={dataCompetenza} max={oggiRoma()} onChange={e => { if (e.target.value) setDataCompetenza(e.target.value); }} className="mt-1 block w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
+            </label>}
             <p className="mt-3 font-maven text-xs font-semibold text-kidville-sub">{t('noteCategoria')}</p>
             <div className="mt-1 flex flex-wrap gap-1.5" role="group" aria-label={t('noteCategoria')}>
               {CATEGORIE_NOTA.map((c) => (
@@ -560,6 +572,8 @@ function ModaleEliminaNota({ nota, nomeAlunno, firmateNelGruppo, userId, onChiud
     setInVolo(true);
     setErrore('');
     const qs = new URLSearchParams({ id: nota.id, ambito, userId });
+    if (nota.storico_versione !== undefined) qs.set('versioneAttesa', String(nota.storico_versione));
+    if (nota.versioni_gruppo) qs.set('versioniAttese', JSON.stringify(nota.versioni_gruppo));
     const esito = await invia(
       `/api/primaria/note?${qs.toString()}`,
       { method: 'DELETE', headers: { 'x-user-id': userId } },

@@ -283,7 +283,7 @@ describe('PATCH /api/pagamenti/riconciliazione/[id]', () => {
     expect(params.alunnoIds).toEqual(['al-1'])
     expect(params.entitaId).toBe(PID)
     // …e un bonifico che salda lo scaduto deve poter revocare la sospensione.
-    expect(h.verificaRevoca).toHaveBeenCalledWith(expect.anything(), ['al-1'])
+    expect(h.verificaRevoca).toHaveBeenCalledWith(expect.anything(), ['al-1'], expect.objectContaining({ giornoCompetenza: h.movimento!.data_operazione, sopprimiGenitori: true }))
   })
 
   it('conferma di un movimento già confermato → 409 (nessun avviso)', async () => {

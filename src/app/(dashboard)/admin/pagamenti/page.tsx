@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { ContabilitaNav, VISTE_CONTABILITA, type VistaContabilita } from '@/components/features/admin/pagamenti/ContabilitaNav';
 import { CockpitPage, PageHeader, SectionTitle } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { Card } from '@/components/ui/Card';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeNotice, SedeRequired, useSediAttive } from '@/lib/context/sede-context';
@@ -131,6 +132,7 @@ function PagamentiInner() {
                 subtitle={t('pagPageSottotitolo')}
                 actions={
                     <>
+                        <LinkStorici gruppo="contabilita" />
                         <Link href={withUser('/admin/mensa')} className={linkCls}><UtensilsCrossed size={15} /> {t('pagPageMensaCucina')}</Link>
                         <Link href={withUser('/admin/impostazioni')} className={linkCls}><Settings size={15} /> {t('pagPageImpostazioni')}</Link>
                     </>

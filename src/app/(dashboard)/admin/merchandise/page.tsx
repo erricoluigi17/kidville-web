@@ -1,5 +1,7 @@
 'use client';
 
+import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { formatData } from '@/lib/i18n/date';
@@ -177,6 +179,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
   const t = useTranslations('adminContabilita');
   const locale = useLocale();
   const STATO_LABEL: Record<StatoRiga, string> = { da_ordinare: t('merchStatoDaOrdinare'), ordinato: t('merchStatoOrdinato'), arrivato: t('merchStatoArrivato'), consegnato: t('merchStatoConsegnato'), annullato: t('merchStatoAnnullato') };
+  const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
   const [q, setQ] = useState('');
   const [filtro, setFiltro] = useState('');
   const [sel, setSel] = useState<Ordine | null>(null);
@@ -193,7 +196,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
 
   const azione = async (path: string, method: string, body: unknown) => {
     setBusy(true);
-    const res = await jsend(userId, path, method, body);
+    const res = await jsend(userId, path, method, { ...(body as Record<string, unknown>), giorno_competenza: giornoCompetenza });
     setBusy(false);
     if (res.ok) reload(); else alert(res.error ?? t('merchOperazioneNonRiuscita'));
   };
@@ -206,6 +209,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
 
   return (
     <div className={CARD}>
+      <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
       <Toolbar search={q} onSearch={setQ} placeholder={t('merchCercaAlunno')}>
         <CockpitSelect value={filtro} onChange={setFiltro} options={[{ value: '', label: t('merchTuttiGliStati') }, ...(['da_ordinare', 'ordinato', 'arrivato', 'consegnato', 'annullato'] as StatoRiga[]).map((s) => ({ value: s, label: STATO_LABEL[s] }))]} />
         <button type="button" className={BTN_GHOST} onClick={reload}><RefreshCw size={14} /> {t('merchAggiorna')}</button>
@@ -245,6 +249,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
       <Drawer open={!!selCorrente} onClose={() => setSel(null)} title={t('merchOrdine')} subtitle={selCorrente?.alunni ? `${selCorrente.alunni.nome} ${selCorrente.alunni.cognome}` : ''} width={480}>
         {selCorrente && (
           <div className="space-y-3">
+            <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
             {selCorrente.pagamento && selCorrente.pagamento.stato !== 'pagato' && (
               <div className="flex items-start gap-2 rounded-input border border-kidville-warn/40 bg-kidville-warn-soft p-3">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0 text-kidville-warn" />
@@ -263,6 +268,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
                     {s === 'da_ordinare' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('evadi-magazzino', 'POST', { riga_id: r.id })}><Warehouse size={13} /> {t('merchEvadiMagazzino')}</button>}
                     {s === 'ordinato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('ordini-fornitore/checkin', 'POST', { righe_ids: [r.id] })}><Truck size={13} /> {t('merchRegistraArrivo')}</button>}
                     {s === 'arrivato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('consegna', 'POST', { righe_ids: [r.id] })}><PackageCheck size={13} /> {t('merchConsegna')}</button>}
+                    {['ordinato', 'arrivato', 'consegnato'].includes(s) && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('righe', 'PATCH', { riga_id: r.id, stato: s })}><Pencil size={13} /> {t('merchRettificaData')}</button>}
                     {s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => cambioTaglia(r)}><Repeat size={13} /> {t('merchCambiaTaglia')}</button>}
                     {s !== 'consegnato' && s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => { if (window.confirm(`${t('merchAnnullare')} ${r.quantita}× ${r.articolo_nome}${r.taglia ? ` (${r.taglia})` : ''}?`)) azione('righe', 'PATCH', { riga_id: r.id, stato: 'annullato' }); }}><X size={13} /> {t('merchAnnullaRiga')}</button>}
                   </div>
@@ -398,6 +404,7 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
 // ============================ Da ordinare ============================
 function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChanged: () => void }) {
   const t = useTranslations('adminContabilita');
+  const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
   const [gruppi, setGruppi] = useState<DaOrdGruppo[]>([]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -428,7 +435,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
     if (righeIds.length === 0) return;
     if (!window.confirm(`${t('merchEvadereMagazzino')} ${righeIds.length} ${righeIds.length === 1 ? t('merchRigaSing') : t('merchRigaPlur')}? ${t('merchStockScalato')}`)) return;
     setBusy(true);
-    for (const id of righeIds) { const r = await jsend(userId, 'evadi-magazzino', 'POST', { riga_id: id }); if (!r.ok) { alert(r.error ?? t('merchStockInsufficiente')); break; } }
+    for (const id of righeIds) { const r = await jsend(userId, 'evadi-magazzino', 'POST', { riga_id: id, giorno_competenza: giornoCompetenza }); if (!r.ok) { alert(r.error ?? t('merchStockInsufficiente')); break; } }
     setBusy(false); load(); onChanged();
   };
 
@@ -437,6 +444,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
 
   return (
     <div className="space-y-4">
+      <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
       {gruppi.map((g, gi) => {
         const tutteIds = g.articoli.flatMap((a) => a.taglie.flatMap((t) => t.righe_ids));
         return (
@@ -480,6 +488,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
 function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: () => void }) {
   const t = useTranslations('adminContabilita');
   const locale = useLocale();
+  const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
   const [po, setPo] = useState<PO[]>([]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -498,7 +507,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
     const ids = selezionate.length > 0 ? selezionate : righeIds; // nessuna selezione = tutte le righe da ricevere
     if (ids.length === 0) return;
     setBusy(true);
-    const res = await jsend(userId, 'ordini-fornitore/checkin', 'POST', { righe_ids: ids });
+    const res = await jsend(userId, 'ordini-fornitore/checkin', 'POST', { righe_ids: ids, giorno_competenza: giornoCompetenza });
     setBusy(false);
     if (res.ok) { setSel(new Set()); load(); onChanged(); } else alert(res.error ?? t('merchOperazioneNonRiuscita'));
   };
@@ -508,6 +517,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
 
   return (
     <div className="space-y-4">
+      <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
       {aperti.map((p) => {
         const daRicevere = p.righe.filter((r) => r.stato === 'ordinato');
         return (
@@ -542,12 +552,13 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
 // ============================ Consegne ============================
 function ConsegnePanel({ userId, ordini, reload }: { userId: string | null; ordini: Ordine[]; reload: () => void }) {
   const t = useTranslations('adminContabilita');
+  const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
   const [busy, setBusy] = useState(false);
   const daConsegnare = ordini.map((o) => ({ o, righe: o.righe.filter((r) => (r.stato ?? 'da_ordinare') === 'arrivato') })).filter((x) => x.righe.length > 0);
 
   const consegna = async (righeIds: string[]) => {
     setBusy(true);
-    const res = await jsend(userId, 'consegna', 'POST', { righe_ids: righeIds });
+    const res = await jsend(userId, 'consegna', 'POST', { righe_ids: righeIds, giorno_competenza: giornoCompetenza });
     setBusy(false);
     if (res.ok) reload(); else alert(res.error ?? t('merchOperazioneNonRiuscita'));
   };
@@ -555,6 +566,7 @@ function ConsegnePanel({ userId, ordini, reload }: { userId: string | null; ordi
   if (daConsegnare.length === 0) return <div className={CARD}><EmptyState emoji="📦">{t('merchNienteConsegnare')}</EmptyState></div>;
   return (
     <div className="space-y-3">
+      <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
       {daConsegnare.map(({ o, righe }) => {
         const nonPagato = o.pagamento && o.pagamento.stato !== 'pagato';
         return (

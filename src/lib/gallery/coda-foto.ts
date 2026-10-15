@@ -219,6 +219,7 @@ async function drain(scope: AmbitoCodaFoto): Promise<void> {
                         upload_id: uploadId, file_url: path, file_type: 'foto', caption: null,
                         tag_students: row.tag_students, is_broadcast: row.is_broadcast,
                         target_classes: row.target_classes,
+                        ...(row.giorno_competenza ? { giorno_competenza: row.giorno_competenza } : {}),
                     }),
                 }, TETTO_PUBBLICAZIONE_MS))
             } catch {

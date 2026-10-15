@@ -151,7 +151,7 @@ describe('GIORNO della classe: la route scrive, permesso-voce ritrova', () => {
     const altraData = voce({ tipo: 'impreparato', id: IMPREPARATO_2, dataEvento: VENERDI_PRIMA })
     expect(await permesso(altraData)).toEqual(BLOCCATA)
 
-    const r = await statoVoci(lettore(), { id: DIRIGENTE, role: 'coordinator' }, [stessa, altraClasse, altraData], ADESSO)
+    const r = await statoVoci(lettore(), { id: MAESTRA, role: 'educator' }, [stessa, altraClasse, altraData], ADESSO)
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.esiti.get(chiaveVoce('valutazione', VALUTAZIONE))).toMatchObject({ bloccata: false, modificabile: true })

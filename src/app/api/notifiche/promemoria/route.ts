@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -273,7 +274,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
 
       const { data: richieste, error } = await supabase
         .from('armadietto_richieste')
-        .select('id, alunno_id, materiale, quantita_residua')
+        .select('*')
         .eq('stato', 'aperta')
         .is('promemoria_inviato_il', null)
       if (error) {
@@ -281,8 +282,12 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         saltate.push('armadietto')
       } else {
         for (const r of (richieste ?? []) as Array<{
-          id: string; alunno_id: string; materiale: string; quantita_residua: number | null
+          id: string; alunno_id: string; materiale: string; quantita_residua: number | null; politica_operazione?: ContestoNotificaOperazione | null
         }>) {
+          if (!deveNotificareGenitori(r.politica_operazione)) {
+            logEvento('cron', 'info', { operazione: JOB, esito: 'rettifica-storica-silenziosa', entita_id: r.id })
+            continue
+          }
           const { data: alunno, error: errAlunno } = await supabase
             .from('alunni').select('nome, scuola_id').eq('id', r.alunno_id).maybeSingle()
           // Fallita in silenzio, `alunno` è `null`: la notifica partirebbe lo stesso, ma senza

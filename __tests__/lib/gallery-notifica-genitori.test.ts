@@ -89,6 +89,8 @@ describe('il testo: fisso, e non nomina niente', () => {
     await chiama()
     expect(h.notifica).toHaveBeenCalledWith(SUPABASE, {
       tipo: 'galleria',
+      destinatario: 'genitore',
+      operazione: undefined,
       scuolaId: SEDE,
       utenteIds: [G1, G2],
       titolo: 'Nuovi contenuti in galleria',

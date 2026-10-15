@@ -1,3 +1,5 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma, istanteNelGiornoRoma } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -5,7 +7,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { notificaMerchConsegnato } from '@/lib/merch/notify'
 import { withRoute } from '@/lib/logging/with-route'
@@ -16,7 +18,7 @@ import { logErrore } from '@/lib/logging/logger'
 // saldato" per ordine (NON bloccante). Notifica i genitori.
 
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
-const bodySchema = z.object({ righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga') })
+const bodySchema = z.object({ giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(), righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga') })
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
 export const POST = withRoute('admin/merch/consegna:POST', async (request: Request) => {
@@ -54,7 +56,7 @@ export const POST = withRoute('admin/merch/consegna:POST', async (request: Reque
       return NextResponse.json({ error: 'Solo le righe arrivate possono essere consegnate' }, { status: 409 })
     }
 
-    const now = new Date().toISOString()
+    const now = b.data.giorno_competenza ? istanteNelGiornoRoma(b.data.giorno_competenza) : new Date().toISOString()
     // guard ottimistico: consegna SOLO le righe ancora 'arrivato' (anti-race)
     const { data: updatedRows, error: updErr } = await supabase
       .from('divise_ordini_righe')
@@ -93,7 +95,7 @@ export const POST = withRoute('admin/merch/consegna:POST', async (request: Reque
       }
     }
     for (const [alunnoId, info] of perAlunno) {
-      await notificaMerchConsegnato(supabase, { alunnoId, articoli: info.articoli, ordineId: info.ordineId })
+      await notificaMerchConsegnato(supabase, { alunnoId, articoli: info.articoli, ordineId: info.ordineId, operazione: politicaNotificaServizio(auth.user, now) })
     }
 
     await logScrittura(supabase, {

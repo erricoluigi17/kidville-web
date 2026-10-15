@@ -1562,5 +1562,8 @@
   "cassaRepAltriMetodi": "Other methods",
   "cassaRepVediEntrate": "View income for {categoria}",
   "cassaRepVediUscite": "View expenses for {categoria}",
-  "cassaRepCategoriaGlobale": "{categoria} — Global"
+  "cassaRepCategoriaGlobale": "{categoria} — Global",
+  "merchRettificaData": "Correct date",
+  "ticketDupTitoloStorico": "A top-up is already recorded for this day",
+  "ticketDupPrecedenteStorico": "The top-up on {data}"
 }

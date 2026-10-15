@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 // =============================================================================
 // L'AVVISO ALLE FAMIGLIE QUANDO UN CONTENUTO ENTRA IN GALLERIA — in UN posto solo.
 //
@@ -69,9 +70,14 @@ export async function notificaGenitoriGalleria(
     tagAlunni: readonly string[] | null | undefined
     classi: readonly string[] | null | undefined
     operazione: string
+    politica?: ContestoNotificaOperazione | null
   },
 ): Promise<number | null> {
   try {
+    if (!deveNotificareGenitori(input.politica)) {
+      logEvento('galleria', 'info', { operazione: input.operazione, esito: 'rettifica-storica-silenziosa' })
+      return 0
+    }
     const tagged = [...(input.tagAlunni ?? [])]
     const classi = Array.isArray(input.classi) ? input.classi.filter(Boolean) : []
     const destinatari =
@@ -84,6 +90,8 @@ export async function notificaGenitoriGalleria(
       tipo: 'galleria',
       scuolaId: input.scuolaId,
       utenteIds: destinatari,
+      destinatario: 'genitore',
+      operazione: input.politica ?? undefined,
       titolo: TITOLO_NOTIFICA_GENITORI_GALLERIA,
       corpo: CORPO_NOTIFICA_GENITORI_GALLERIA,
       link: '/parent/gallery',

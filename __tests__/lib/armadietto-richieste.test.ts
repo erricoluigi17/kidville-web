@@ -29,7 +29,7 @@ function admin() {
   return {
     from: vi.fn((t: string) => {
       const qb: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'in', 'neq', 'order']) qb[m] = () => qb
+      for (const m of ['select', 'eq', 'in', 'neq', 'order', 'or']) qb[m] = () => qb
       qb.maybeSingle = () => Promise.resolve({
         data: { section_id: 'sec1', scuola_id: 'sc1' }, error: null,
       })
@@ -179,5 +179,31 @@ describe('riconciliaTutto', () => {
     const esito = await riconciliaTutto(admin())
     expect(esito.alunni).toBe(2)      // a1 una volta sola
     expect(esito.aperte).toBe(2)
+  })
+})
+
+
+describe('politica persistita dei movimenti storici', () => {
+  const politica = { giornoCompetenza: '2026-10-14', giornoOperazioneRoma: '2026-10-15', sopprimiGenitori: true }
+  it('la riconciliazione differita riprende la policy dell’ultimo consumo storico', async () => {
+    h.stock.mockResolvedValue({ Pannolini: 1 })
+    h.movimenti.current = [{ alunno_id: 'a1', materiale: 'Pannolini', politica_operazione: politica }]
+    await riconciliaRichieste(admin(), { alunnoId: 'a1' })
+    expect(h.insert).toHaveBeenCalledWith('armadietto_richieste', expect.objectContaining({ politica_operazione: politica }))
+  })
+  it('una rettifica pannolini non sopprime gli avvisi di altri materiali', async () => {
+    h.stock.mockResolvedValue({ Pannolini: 1, Salviette: 1 })
+    h.soglie.mockResolvedValue({ Pannolini: { allerta: 5, emergenza: 2 }, Salviette: { allerta: 5, emergenza: 2 } })
+    await riconciliaRichieste(admin(), { alunnoId: 'a1', operazione: politica, materiale: 'Pannolini' })
+    const salviette = h.insert.mock.calls.find(c => c[1].materiale === 'Salviette')?.[1]
+    expect(salviette).toBeDefined()
+    expect(salviette).not.toHaveProperty('politica_operazione')
+  })
+  it('un nuovo movimento ordinario riabilita gli avvisi per una richiesta rimasta silenziosa', async () => {
+    h.stock.mockResolvedValue({ Pannolini: 1 })
+    h.vive.current = [{ id: 'r1', materiale: 'Pannolini', livello: 'rosso', stato: 'aperta', politica_operazione: politica }]
+    h.movimenti.current = [{ alunno_id: 'a1', materiale: 'Pannolini', politica_operazione: null }]
+    await riconciliaRichieste(admin(), { alunnoId: 'a1' })
+    expect(h.update).toHaveBeenCalledWith('armadietto_richieste', expect.objectContaining({ politica_operazione: null }))
   })
 })

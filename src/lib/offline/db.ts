@@ -82,6 +82,7 @@ export interface LocalStudentDocument {
 }
 
 export interface LocalGalleryMedia {
+    giorno_competenza?: string;
     id: string;
     uploaded_by: string;
     /** Sede scelta nel gesto originale; assente solo nelle righe legacy. */

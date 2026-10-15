@@ -178,17 +178,18 @@ describe('CHI — l’impreparato dichiarato dal GENITORE', () => {
   })
 })
 
-describe('FINO A QUANDO — il termine vale per tutti', () => {
+describe('FINO A QUANDO — il termine vale per i docenti', () => {
   it('oltre i 2 giorni l’autore prende 423 VOCE_BLOCCATA col limite', async () => {
     const esito = await verificaPermessoVoce(client(), maestra, voce({ dataEvento: LUNEDI }), ADESSO)
     expect(esito).toEqual({ ok: false, stato: 423, codice: 'VOCE_BLOCCATA', giorniLimite: 2 })
   })
 
-  it('anche la Direzione e la Segreteria sono fermate dal termine', async () => {
+  it('Direzione e Segreteria correggono lo storico senza termini e senza query sblocchi', async () => {
     for (const u of [dirigente, segreteria]) {
       const esito = await verificaPermessoVoce(client(), u, voce({ dataEvento: LUNEDI }), ADESSO)
-      expect(esito.ok).toBe(false)
-      expect(esito).toMatchObject({ stato: 423 })
+      expect(esito.ok).toBe(true)
+      expect(tabelle).not.toContain('sblocchi_audit')
+      expect(tabelle).not.toContain('admin_settings')
     }
   })
 
@@ -371,13 +372,13 @@ describe('statoVoci — la variante per gli elenchi', () => {
     const voci = Array.from({ length: 12 }, (_, i) =>
       voce({ id: `e9157200-0000-4000-8000-0000000001${String(i).padStart(2, '0')}`, dataEvento: i % 2 ? LUNEDI : IERI }),
     )
-    const r = await statoVoci(client(), dirigente, voci, ADESSO)
+    const r = await statoVoci(client(), maestra, voci, ADESSO)
     expect(r.ok).toBe(true)
     expect(tabelle.filter((t) => t === 'admin_settings')).toHaveLength(1)
     expect(letturaSblocchi()).toBeLessThanOrEqual(2)
     if (r.ok) {
       expect([...r.esiti.values()].filter((e) => e.bloccata)).toHaveLength(6)
-      // La Direzione vede il blocco (per mostrare «Sblocca»), non la modifica.
+      // Il docente continua a vedere il blocco sulle sei voci oltre il termine.
       expect([...r.esiti.values()].filter((e) => e.modificabile)).toHaveLength(6)
     }
   })
@@ -388,7 +389,7 @@ describe('statoVoci — la variante per gli elenchi', () => {
       voce({ id: VOCE_1, sectionId: SEZ_A, dataEvento: LUNEDI }),
       voce({ id: VOCE_2, sectionId: SEZ_B, dataEvento: LUNEDI }),
     ]
-    const r = await statoVoci(client(), dirigente, voci, ADESSO)
+    const r = await statoVoci(client(), maestra, voci, ADESSO)
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toMatchObject({ bloccata: true, modificabile: false })

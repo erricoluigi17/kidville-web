@@ -50,6 +50,7 @@ export function puoEliminareLezione(ruolo: string | null | undefined): boolean {
 export type Eliminazione =
   | {
       modo: 'firma';
+      versioneAttesa?: number;
       firmaId: string;
       /** L'ora (1..8) della riga: serve alla pagina per segnare la riga bloccata. */
       ora: number;
@@ -60,6 +61,7 @@ export type Eliminazione =
     }
   | {
       modo: 'lezione';
+      versioneAttesa?: number;
       registroId: string;
       ora: number;
       nFirme: number;
@@ -71,6 +73,7 @@ export function urlEliminazione(e: Eliminazione, userId: string): string {
   const q = new URLSearchParams(
     e.modo === 'firma' ? { firmaId: e.firmaId, userId } : { registroId: e.registroId, userId },
   );
+  if (e.versioneAttesa !== undefined) q.set('versioneAttesa', String(e.versioneAttesa));
   return `/api/primaria/registro?${q.toString()}`;
 }
 

@@ -1,3 +1,4 @@
+import type { ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 // =============================================================================
 // LA PUBBLICAZIONE AUTOMATICA DI UN VIDEO IN GALLERIA — lato server (PR 2 «server e web»).
 //
@@ -129,6 +130,7 @@ export type OpzioniPubblicazioneVideo = {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 type RigaIntento = {
+  politica_operazione?: ContestoNotificaOperazione | null
   id: string
   owner_id: string
   scuola_id: string | null
@@ -145,7 +147,7 @@ type RigaIntento = {
   pubblicazione_errore: string | null
 }
 const COLONNE_INTENTO =
-  'id, owner_id, scuola_id, channel, status, revision, pubblicazione_automatica, tag_alunni, broadcast, classi_destinatarie, n_tag, esito_notificato, pubblicazione_errore'
+  'id, owner_id, scuola_id, channel, status, revision, pubblicazione_automatica, tag_alunni, broadcast, classi_destinatarie, n_tag, esito_notificato, pubblicazione_errore, politica_operazione'
 
 type RigaJob = {
   id: string
@@ -404,6 +406,7 @@ async function avvisa(
         tagAlunni: d.destinatari.tag,
         classi: d.destinatari.classi,
         operazione: ctx.operazione,
+        politica: d.intento.politica_operazione,
       })
     }
     await notificaEsitoDocente(ctx.supabase, {

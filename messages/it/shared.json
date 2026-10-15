@@ -737,5 +737,13 @@
   "erroreModuloFirmatoCompilazioneNonLetta": "Non è stato possibile leggere la compilazione: riprova fra poco.",
   "erroreModuloFirmatoScansioneAssente": "La scansione originale non è disponibile. Contatta la segreteria.",
   "erroreModuloFirmatoPdfTroppoGrande": "Firma salvata; il PDF supera il limite dell’archivio e deve essere recuperato dalla segreteria.",
-  "erroreModuloFirmatoInCancellazione": "Il documento è in cancellazione e non è disponibile."
+  "erroreModuloFirmatoInCancellazione": "Il documento è in cancellazione e non è disponibile.",
+  "erroreGiustificaCambiata": "La giustificazione è cambiata. Ricarica la pagina prima di correggerla.",
+  "erroreGiustificaNonAnnullata": "La giustificazione non è stata annullata. Riprova.",
+  "erroreStoricoNonDisponibile": "Le correzioni e gli archivi storici non sono ancora disponibili in questo ambiente.",
+  "erroreDiarioDataBloccata": "Non puoi modificare il diario nella giornata scelta.",
+  "erroreStoricoNonRiuscito": "Operazione sugli storici non riuscita. Riprova.",
+  "erroreStoricoScaduto": "La stampa è scaduta. Generala nuovamente.",
+  "erroreStoricoRichiestaRifiutata": "Verifica sede, destinatario, periodo e stato del documento.",
+  "erroreStoricoVersioneCambiata": "Un altro operatore ha modificato la registrazione. Ricarica prima di correggerla."
 }

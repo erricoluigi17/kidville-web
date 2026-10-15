@@ -67,11 +67,16 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
       .eq('id', alunnoId)
       .maybeSingle();
 
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('id, sender_id, content, attachment_url, attachment_type, created_at')
-      .eq('thread_id', q.data.thread_id)
-      .order('created_at', { ascending: true });
+    const colonneOriginali = 'id, sender_id, content, attachment_url, attachment_type, created_at';
+    const leggi = (colonne: string) => supabase.from('chat_messages').select(colonne)
+      .eq('thread_id', q.data.thread_id).order('created_at', { ascending: true });
+    let { data, error } = await leggi(`${colonneOriginali},rettifica_staff,rettifica_staff_il,rettifica_versione`);
+    // La CI può usare lo schema precedente: le conversazioni restano leggibili,
+    // mentre la rettifica richiede esplicitamente la nuova migrazione.
+    if (error && ['42703', 'PGRST204'].includes(error.code)) {
+      logErrore({ operazione: 'admin/chat/messages:GET', evento: 'schema-rettifiche-assente', stato: 503 }, error);
+      ({ data, error } = await leggi(colonneOriginali));
+    }
     if (error) {
       // PostgREST non lancia: ritorna `{ error }`. Il `catch` sotto non scatta
       // mai su questo ramo, quindi la riga di log va emessa qui (AGENTS §7).
@@ -106,7 +111,7 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
 
     // In tabella c'è il PERCORSO nel bucket privato (S32): anche la supervisione
     // riceve un link firmato a tempo, generato dietro a questo gate.
-    const messaggi = await firmaAllegatiChat(supabase, data ?? [], 'admin/chat/messages:GET');
+    const messaggi = await firmaAllegatiChat(supabase, (data ?? []) as unknown as Array<{ id: string; attachment_url: string | null } & Record<string, unknown>>, 'admin/chat/messages:GET');
     return NextResponse.json({ success: true, data: messaggi });
   } catch (err) {
     logErrore({ operazione: 'admin/chat/messages:GET', stato: 500 }, err);

@@ -9,6 +9,7 @@ import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
 import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
 import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
+import { NotaRettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
 
 /**
  * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
@@ -273,6 +274,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             >
                 {msg.content}
             </p>
+            <NotaRettificaChat testo={msg.rettifica_staff} />
 
             {/* Traduzione (solo messaggi in ingresso, e solo se serve davvero) */}
             {!isMine && msg.content?.trim() && !unavailable && mostraTraduci && (

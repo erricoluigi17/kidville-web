@@ -375,3 +375,23 @@ describe('L4-g — `oraLezione` ha il range del database (CHECK 1..8)', () => {
     expect(upsertDi('registro_orario')!.ora_lezione).toBe(3)
   })
 })
+
+describe('rettifica storica del consolidato firmato', () => {
+  beforeEach(() => {
+    h.requireDocente.mockResolvedValue({user:{id:DOCENTE,role:'segreteria',scuola_id:SEDE_A}})
+    h.db.registro_orario=[{id:'registro-storico',storico_versione:0,scuola_id:SEDE_A,section_id:SEZ,data:BASE.data,ora_lezione:2,argomento:'Argomento fittizio originale',compiti:'Compiti fittizi originali'}]
+    h.db.firme_docenti=[{id:'firma-storica',storico_versione:0,registro_id:'registro-storico',maestra_id:DOCENTE,tipo_compresenza:'principale',firmato_il:'2026-09-09T10:00:00Z',argomento_proprio:'Testo proprio fittizio'}]
+    h.db.storici_revisioni=[]
+  })
+  it('conserva argomento e firma originari nella stessa rettifica atomica', async () => {
+    expect((await POST(post({...BASE,argomento:'Argomento corretto fittizio',versioneAttesa:0}))).status).toBe(200)
+    expect(h.db.registro_orario[0].argomento).toBe('Argomento corretto fittizio')
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({contenuto:{tabella:'registro_orario',riga:expect.objectContaining({argomento:'Argomento fittizio originale'})}}),expect.objectContaining({contenuto:{tabella:'firme_docenti',riga:expect.objectContaining({firmato_il:'2026-09-09T10:00:00Z',argomento_proprio:'Testo proprio fittizio'})}})]))
+  })
+  it('cofirma successiva al form:409 senza sovrascrivere i contenuti altrui', async () => {
+    h.db.registro_orario[0].storico_versione=1
+    expect((await POST(post({...BASE,argomento:'Argomento corretto fittizio',versioneAttesa:0}))).status).toBe(409)
+    expect(h.db.registro_orario[0].argomento).toBe('Argomento fittizio originale')
+    expect(h.db.storici_revisioni).toHaveLength(0)
+  })
+})

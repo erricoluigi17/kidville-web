@@ -330,6 +330,7 @@ export interface ConciliazioneRegistrata {
   movimentoConfermato: boolean
   /** I bambini toccati: lo STESSO elenco su cui si è deciso il pagante. */
   alunniCoinvolti: string[]
+  dataOperazione?: string | null
 }
 
 export interface EsitoConciliazione {
@@ -1170,6 +1171,7 @@ export async function registraConciliazione(
       importoTotale: importoMovimento,
       movimentoConfermato,
       alunniCoinvolti,
+      dataOperazione: movimento.data_operazione,
     },
   }
 }

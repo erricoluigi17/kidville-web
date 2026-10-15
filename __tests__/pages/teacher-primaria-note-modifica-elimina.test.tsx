@@ -93,6 +93,7 @@ beforeEach(() => {
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     const metodo = init?.method ?? 'GET';
     if (url.startsWith('/api/primaria/classe/')) return risposta(200, { success: true, data: { alunni: [A, B] } });
+    if (url.startsWith('/api/admin/sections/')) return risposta(200, { success: true, assigned: [{ id: DOCENTE, nome: 'Ada', cognome: 'Fittizia', ruolo: 'educator' }] });
     if (url.startsWith('/api/primaria/me')) return risposta(200, { success: true, data: { ruolo } });
     if (url.startsWith('/api/primaria/sblocca') && metodo === 'POST') return risposta(200, { success: true });
     if (url.startsWith('/api/primaria/note') && metodo === 'GET') {
@@ -426,4 +427,30 @@ describe('AzioniNota da sola: la modale non sopravvive alla nota non più aziona
     expect(screen.getByRole('button', { name: /Modifica la nota di Rossi Mario/ })).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+});
+
+
+describe('nuova nota staff con competenza storica', () => {
+  it('dal form condiviso parte la data scelta e il docente esplicito', async () => {
+    ruolo = 'segreteria';
+    render(<NotePage />);
+    await screen.findByRole('option', { name: 'Fittizia Ada' });
+    fireEvent.change(screen.getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+    fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Bianchi Anna' }));
+    fireEvent.change(screen.getByPlaceholderText('Testo della nota…'), { target: { value: 'Rettifica fittizia' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Invia nota' }));
+    await waitFor(() => expect(chiamate('POST', '/api/primaria/note')).toHaveLength(1));
+    expect(JSON.parse(String((chiamate('POST', '/api/primaria/note')[0]![1] as RequestInit).body))).toMatchObject({ data: '2020-04-02', docenteId: DOCENTE, alunnoIds: [B.id] });
+  });
+});
+
+
+it('la modale staff può cambiare solo la data della nota', async () => {
+  ruolo = 'segreteria';
+  const dialogo = await montaEApri(/^Modifica la nota/);
+  fireEvent.change(within(dialogo).getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+  fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+  await waitFor(() => expect(chiamate('PATCH', '/api/primaria/note')).toHaveLength(1));
+  expect(JSON.parse(String((chiamate('PATCH', '/api/primaria/note')[0]![1] as RequestInit).body))).toMatchObject({ data: '2020-04-02' });
 });

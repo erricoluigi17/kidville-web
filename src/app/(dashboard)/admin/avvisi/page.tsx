@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
 import { AlertTriangle, Bell, ClipboardList, Eye, Hourglass, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW, Tabs } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { Badge } from '@/components/ui/Badge';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm, type ClasseAvviso, type DatiAvviso, type EsitoInvioAvviso } from '@/components/features/avvisi/AvvisoForm';
@@ -280,12 +281,14 @@ function AdminAvvisiInner() {
                 title={t('avvisiTitolo')}
                 subtitle={t('avvisiSottotitolo')}
                 actions={
+                    <><LinkStorici gruppo="servizi" />
                     <button
                         onClick={() => { setEditingAvviso(null); setShowForm(true); }}
                         className={HEADER_BTN}
                     >
                         <Plus size={16} strokeWidth={1.8} /> {t('avvisiNuovoAvviso')}
                     </button>
+                    </>
                 }
             />
 

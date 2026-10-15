@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { creaFintoSupabase } from '../fixtures/finto-supabase'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 
 describe('enqueueNotifiche', () => {
@@ -8,7 +9,7 @@ describe('enqueueNotifiche', () => {
     const from = vi.fn().mockReturnValue({ insert })
     const supabase = { from } as unknown as SupabaseClient
 
-    await enqueueNotifiche(supabase, {
+    const accodata = await enqueueNotifiche(supabase, {
       utenteIds: ['u1', 'u2'],
       tipo: 'valutazione',
       titolo: 'Nuova valutazione',
@@ -19,6 +20,7 @@ describe('enqueueNotifiche', () => {
       bufferMin: 10,
     })
 
+    expect(accodata).toBe(true)
     expect(from).toHaveBeenCalledWith('notifiche')
     const rows = insert.mock.calls[0][0] as Array<Record<string, unknown>>
     expect(rows).toHaveLength(2)
@@ -51,7 +53,7 @@ describe('enqueueNotifiche', () => {
     const from = vi.fn().mockReturnValue({ insert })
     const supabase = { from } as unknown as SupabaseClient
 
-    await enqueueNotifiche(supabase, { utenteIds: [], tipo: 'x', titolo: 't' })
+    expect(await enqueueNotifiche(supabase, { utenteIds: [], tipo: 'x', titolo: 't' })).toBe(false)
     expect(from).not.toHaveBeenCalled()
   })
 
@@ -64,4 +66,19 @@ describe('enqueueNotifiche', () => {
     const rows = insert.mock.calls[0][0] as Array<Record<string, unknown>>
     expect(rows).toHaveLength(2)
   })
+  it('toggle disattivato restituisce false senza scrivere in coda', async () => {
+    const db = { admin_settings: [{ scuola_id: 'sede-disattivata-core', notifiche_config: { toggles: { diario: false } } }], notifiche: [] }
+    expect(await enqueueNotifiche(creaFintoSupabase(db), { utenteIds: ['u1'], tipo: 'diario', titolo: 't', scuolaId: 'sede-disattivata-core' })).toBe(false)
+    expect(db.notifiche).toHaveLength(0)
+  })
+
+  it.each([
+    ['errore PostgREST', () => Promise.resolve({ error: { code: '23503', message: 'vincolo fittizio' } })],
+    ['guasto trasporto', () => Promise.reject(new Error('trasporto fittizio'))],
+  ])('%s restituisce false: il chiamante non dichiara una notifica accodata', async (_caso, risultato) => {
+    const insert = vi.fn(risultato)
+    const supabase = { from: () => ({ insert }) } as unknown as SupabaseClient
+    expect(await enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'diario', titolo: 't' })).toBe(false)
+  })
+
 })

@@ -162,6 +162,8 @@ describe('l’avviso ai genitori: testo fisso, mai la didascalia né il nome del
     expect(h.notify).toHaveBeenCalledOnce()
     expect(h.notify.mock.calls[0][1]).toEqual({
       tipo: 'galleria',
+      destinatario: 'genitore',
+      operazione: expect.objectContaining({ sopprimiGenitori: false }),
       scuolaId: SEDE,
       utenteIds: [FAMIGLIA_1, FAMIGLIA_2],
       titolo: 'Nuovi contenuti in galleria',

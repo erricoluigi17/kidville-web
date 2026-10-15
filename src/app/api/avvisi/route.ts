@@ -1,3 +1,5 @@
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -19,7 +21,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { tipoNotificaAvviso, titoloNotificaAvviso, destinatariAvviso } from '@/lib/avvisi/notifica-avviso';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-import { zUuid } from '@/lib/validation/common';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
@@ -61,6 +63,7 @@ const getQuerySchema = z.object({
 });
 
 const postBodySchema = z.object({
+    giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
     // NB: `author_id` NON è più nel body (M7): l'autore è sempre la sessione.
     // I massimi vengono dal DDL e stanno in `@/lib/validation/avvisi`: senza,
     // un titolo lungo usciva come 500 col tipo della colonna dentro (S34).
@@ -105,13 +108,13 @@ const AVVISO_COLS =
 
 /** Le storiche PIÙ le sette del cantiere A2 (due scadenze, contatore, tetto). */
 const AVVISO_COLS_SCADENZE =
-    `${AVVISO_COLS}, scadenza_avviso, scadenza_adesione, chiedi_numero, etichetta_numero, numero_min, numero_max, posti_totali`;
+    `${AVVISO_COLS}, giorno_competenza, scadenza_avviso, scadenza_adesione, chiedi_numero, etichetta_numero, numero_min, numero_max, posti_totali`;
 
 type AvvisoRow = {
     id: string; author_id: string; titolo: string; contenuto: string;
     tipo: string | null; target_scope: string | null; target_classes: string[] | null;
     scadenza: string | null; attachment_url: string | null; created_at: string;
-    form_model_id?: string | null;
+    form_model_id?: string | null; giorno_competenza?: string | null;
     /**
      * Il plesso dell'avviso. FACOLTATIVA nel tipo perché la chiede solo il ramo
      * GENITORE — che la usa per decidere quali figli un globale riferisce — e non
@@ -855,6 +858,10 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
+        if (b.data.giorno_competenza && b.data.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+            return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria' }, { status: 403 });
+        }
+        const politica = politicaNotificaServizio(auth.user, b.data.giorno_competenza);
         const {
             titolo, contenuto, tipo, target_scope, target_classes, attachment_url, form_model_id,
             scadenza_avviso, scadenza_adesione, chiedi_numero, etichetta_numero,
@@ -1054,6 +1061,7 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             attachment_url: normalizzaAllegatoAvviso(attachment_url),
             form_model_id: form_model_id ?? null,
             scuola_id: scuolaId, // tenant
+            ...(b.data.giorno_competenza ? { giorno_competenza: b.data.giorno_competenza, politica_operazione: politica } : {}),
         };
         // ── IL DEGRADO SI DICHIARA, E LA TENANCY NON SI SFILA MAI IN SILENZIO. ──
         //
@@ -1083,6 +1091,10 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(insRes.error.message);
             const col = m?.[1] ?? m?.[2];
             if (!col || !(col in avvisoRecord)) break;
+            if (['giorno_competenza', 'politica_operazione'].includes(col)) {
+                logEvento('avvisi', 'error', { operazione: 'avvisi:POST', esito: 'schema-politica-storica-assente' }, insRes.error);
+                return NextResponse.json({ error: 'Archivio storico non disponibile. Riprova.' }, { status: 503 });
+            }
             if (col === 'scuola_id' && !(await degradoSedeLecito(supabase, 'avvisi:POST'))) {
                 // Isolamento di sede non disponibile su impianto multi-sede: è un
                 // incidente, quindi `error`, mai `info`. E si NEGA prima di riprovare:
@@ -1143,6 +1155,8 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
                 tipo: tipoNotifica,
                 scuolaId,
                 utenteIds: destinatari,
+                destinatario: 'genitore',
+                operazione: politica,
                 titolo: titoloNotifica,
                 corpo: contenuto.length > 140 ? `${contenuto.slice(0, 140)}…` : contenuto,
                 link: '/parent/avvisi',

@@ -350,6 +350,11 @@ interface Esenzione {
 }
 
 const AMMESSE: Record<string, Esenzione> = {
+  'src/lib/storici/generazioni.ts::opzioniStorici': {
+    scoperte: 1,
+    ragione:
+      'storici richiesti dall’utente per alunno o classe e periodo: il selettore deve includere anche archiviati ed ex alunni della sede per rendere raggiungibili registri e documenti conservati; non è un elenco operativo di frequentanti. I trasferiti sono aggiunti soltanto attraverso appartenenze storiche della sede, gli anonimizzati restano esclusi e ogni generazione rivalida ruolo, sede e perimetro.',
+  },
   // ── ANAGRAFICA: la scheda di un archiviato deve restare raggiungibile ───────
   // È il punto del modello a due tempi. L'archiviazione NON anonimizza: nome,
   // cognome e codice fiscale restano intatti proprio perché registri e pagamenti

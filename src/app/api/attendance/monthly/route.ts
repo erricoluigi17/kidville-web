@@ -1,3 +1,5 @@
+import { versioniStoriche } from '@/lib/primaria/rettifica-storica';
+import { puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -13,6 +15,7 @@ import { logErrore } from '@/lib/logging/logger';
 import { meseCivile } from '@/i18n/config';
 
 export interface MonthlyAttendanceRecord {
+    storico_versione?: number;
     student_id: string;
     student_nome: string;
     student_cognome: string;
@@ -168,10 +171,12 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         // stessa lettura non possono cadere in due giorni diversi perché la
         // mezzanotte è passata a metà `map`.
         const oggi = oggiFiscaleISO();
+        const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'presenze', (presenzeData ?? []).map(r => String(r.id))) : new Map<string, number>();
         const records: MonthlyAttendanceRecord[] = (presenzeData ?? []).map(row => {
             const alunno = alunniMap[row.alunno_id];
             return {
                 student_id:       row.alunno_id,
+                storico_versione: versioni.get(String(row.id)),
                 student_nome:     alunno?.nome     ?? '—',
                 student_cognome:  alunno?.cognome  ?? '—',
                 section_name:     alunno?.classe_sezione ?? null,

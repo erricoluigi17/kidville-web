@@ -23,7 +23,8 @@
       "/lavora-con-noi": "Work with us",
       "/anagrafica-personale": "Your personal details",
       "/cancellazione-account": "Account deletion",
-      "/cancellazione-account/conferma": "Confirm deletion"
+      "/cancellazione-account/conferma": "Confirm deletion",
+      "/admin/storici": "Archives and printing"
     },
     "segmenti": {
       "alunni": "Students",

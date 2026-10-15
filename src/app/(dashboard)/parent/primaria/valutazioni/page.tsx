@@ -16,7 +16,7 @@ import type { ImpreparatoGenitore } from '@/lib/primaria/visibilita-genitore';
 interface ValBreve {
   id: string; tipo: string; modalita: string;
   giudizio_sintetico: string | null; giudizio_testo: string | null;
-  creato_il: string; argomento: string | null;
+  creato_il: string; argomento: string | null; data_evento?: string | null;
 }
 interface MateriaVoce {
   materiaId: string; nome: string; valutazioni: ValBreve[];
@@ -108,7 +108,7 @@ function raggruppa(
       anteprima: m.valutazioni.find((v) => v.giudizio_sintetico)?.giudizio_sintetico ?? null,
       numValutazioni: m.valutazioni.length,
       numImpreparati: 0,
-      voci: m.valutazioni.map((v) => ({ genere: 'valutazione' as const, quando: v.creato_il, v })),
+      voci: m.valutazioni.map((v) => ({ genere: 'valutazione' as const, quando: v.data_evento ? `${v.data_evento}T12:00:00` : v.creato_il, v })),
     });
   }
   const aggiunti: Gruppo[] = [];
@@ -453,7 +453,7 @@ function ValutazioniGenitore() {
         )}
         <span className="font-maven text-xs capitalize text-kidville-sub">{v.tipo}</span>
         <span className="font-maven text-xs text-kidville-sub ml-auto">
-          {f.dataBreve(v.creato_il)}
+          {f.dataBreve(v.data_evento ?? v.creato_il)}
         </span>
       </div>
       {v.argomento && <p className="font-maven text-xs text-kidville-sub">{v.argomento}</p>}

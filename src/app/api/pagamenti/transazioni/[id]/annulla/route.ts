@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -57,7 +58,7 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
     // NON può stare nella RPC (gira a service-role, non conosce la sede del chiamante).
     const { data: tx, error: txErr } = await supabase
       .from('pagamenti_transazioni')
-      .select('id, scuola_id, pagante_parent_id, annullata_il')
+      .select('id, scuola_id, pagante_parent_id, annullata_il, data_valuta, creato_il')
       .eq('id', id)
       .maybeSingle()
     if (txErr) {
@@ -188,7 +189,7 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
         if (errPr) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPr })
         for (const p of (pr ?? []) as { alunno_id?: string | null }[]) if (p.alunno_id) alunni.add(p.alunno_id)
       }
-      if (alunni.size > 0) await verificaRevocaSospensioneMorosita(supabase, [...alunni])
+      if (alunni.size > 0) await verificaRevocaSospensioneMorosita(supabase, [...alunni], politicaNotificaServizio(user, tx.data_valuta ?? tx.creato_il))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/transazioni/[id]/annulla:POST', esito: 'revoca_non_verificata' }, e)
     }

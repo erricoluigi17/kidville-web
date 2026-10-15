@@ -23,6 +23,7 @@ import {
   Newspaper,
   Flag,
   ListOrdered,
+  Printer,
 } from 'lucide-react';
 
 /**
@@ -115,6 +116,7 @@ export const NAV_GROUPS: NavGroup[] = [
     title: 'Amministrazione',
     titleKey: 'navgruppo_amministrazione',
     items: [
+      { href: '/admin/storici', label: 'Storici e stampe', labelKey: 'nav_storici', icon: Printer, roles: ['admin', 'coordinator', 'segreteria'] },
       { href: '/admin/pagamenti', label: 'Contabilità', labelKey: 'nav_pagamenti', icon: Euro },
       // Coda fatture (nucleo §4, docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md):
       // sta SOTTO Contabilità nell'elenco, come voce a sé — non una vista interna di

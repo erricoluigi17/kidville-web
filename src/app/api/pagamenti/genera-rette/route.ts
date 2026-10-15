@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
@@ -457,6 +458,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
         } else {
           await notificaEvento(supabase, {
             tipo: 'pagamento_emesso',
+            operazione: politicaNotificaServizio(auth.user, periodo),
             scuolaId,
             alunnoIds: alunniIds,
             titolo: `Retta ${mese} disponibile`,

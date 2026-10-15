@@ -18,11 +18,12 @@ export async function pubblicaFotoIdempotente(
 ): Promise<{ data: Record<string, unknown>; created: boolean; response?: never } | { response: NextResponse; data?: never; created?: never }> {
   const insieme = (value: unknown) => [...new Set((Array.isArray(value) ? value : []) as string[])].sort()
   const classi = insieme(record.target_classes)
-  const { data, error } = await supabase.rpc('gallery_publish_photo', {
+  const { data, error } = await supabase.rpc(record.giorno_competenza ? 'gallery_publish_photo_storico' : 'gallery_publish_photo', {
     p_owner_id: autore,
     p_scuola_id: scuolaId,
     p_upload_id: uploadId,
     p_payload: {
+      ...(record.giorno_competenza ? { giorno_competenza: record.giorno_competenza, politica_operazione: record.politica_operazione } : {}),
       file_url: record.file_url,
       file_type: 'foto',
       // MAI una didascalia (decisione del titolare, 2026-10-02): nessun contenuto nuovo ne ha

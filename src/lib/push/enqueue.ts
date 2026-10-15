@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { logEvento } from '@/lib/logging/logger'
@@ -32,12 +33,20 @@ export interface EnqueueNotificheParams {
   bufferMin?: number
   /** Scuola per il gate dei toggle notifiche (assente = nessun gate, fail-open). */
   scuolaId?: string | null
+  /** Contesto calcolato dal server per l'operazione originale. */
+  operazione?: ContestoNotificaOperazione
+  destinatario?: 'genitore' | 'personale'
 }
 
+/** True solo quando le righe sono state accodate; false per esclusioni o scrittura fallita. */
 export async function enqueueNotifiche(
   supabase: SupabaseClient,
   params: EnqueueNotificheParams
-): Promise<void> {
+): Promise<boolean> {
+  if (params.destinatario === 'genitore' && !deveNotificareGenitori(params.operazione)) {
+    logEvento('notifica', 'info', { operazione: 'enqueueNotifiche', esito: 'rettifica-storica-silenziosa', tipo: params.tipo })
+    return false
+  }
   const utenti = [...new Set(params.utenteIds ?? [])].filter(Boolean)
   if (utenti.length === 0) {
     // IL SECONDO IMBUTO, e usciva muto come il primo. Qui arrivano anche i chiamanti che NON
@@ -58,9 +67,9 @@ export async function enqueueNotifiche(
       sede_id: params.scuolaId ?? null,
       n_richiesti: params.utenteIds?.length ?? 0,
     })
-    return
+    return false
   }
-  if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return
+  if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return false
 
   const programmato = new Date(Date.now() + (params.bufferMin ?? 0) * 60_000).toISOString()
   const rows = utenti.map((uid) => ({
@@ -72,6 +81,7 @@ export async function enqueueNotifiche(
     entita_tipo: params.entitaTipo ?? null,
     entita_id: params.entitaId ?? null,
     invio_programmato_il: programmato,
+    ...(params.operazione ? { giorno_competenza: params.operazione.giornoCompetenza, politica_operazione: params.operazione } : {}),
   }))
 
   // POSTGREST NON LANCIA: `insert` RITORNA `{ error }`, non solleva. Il `try/catch` che stava
@@ -99,7 +109,9 @@ export async function enqueueNotifiche(
         tipo: params.tipo,
         n: rows.length,
       }, error)
+      return false
     }
+    return true
   } catch (err) {
     // Il ramo che resta possibile davvero: un guasto di TRASPORTO (il fetch che esplode prima
     // di arrivare a PostgREST). Non è il caso che il difetto descriveva, ma esiste — e non deve
@@ -111,5 +123,6 @@ export async function enqueueNotifiche(
       tipo: params.tipo,
       n: rows.length,
     }, err)
+    return false
   }
 }

@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { notificaEvento } from '@/lib/notifiche/triggers'
@@ -84,6 +85,7 @@ export async function genitoriDiGrado(
 }
 
 export interface PostDaNotificare {
+  politica_operazione?: ContestoNotificaOperazione | null
   id: string
   titolo: string
   scuola_id: string | null
@@ -165,6 +167,10 @@ export async function destinatariNews(
  */
 export async function notificaNewsPubblicata(supabase: SupabaseClient, post: PostDaNotificare): Promise<void> {
   if (post.notifica_inviata_il) return // già notificata: idempotenza
+  if (!deveNotificareGenitori(post.politica_operazione)) {
+    logEvento('news', 'info', { operazione: OPERAZIONE, esito: 'rettifica-storica-silenziosa', post_id: post.id })
+    return
+  }
   if (!post.invia_notifica) return // notifiche disattivate per questo post
 
   const { destinatari, sediRisolte } = await destinatariNews(supabase, post)
@@ -196,6 +202,8 @@ export async function notificaNewsPubblicata(supabase: SupabaseClient, post: Pos
     tipo: 'news',
     scuolaId: post.scuola_id,
     utenteIds: destinatari,
+    destinatario: 'genitore',
+    operazione: post.politica_operazione ?? undefined,
     titolo: `News: ${post.titolo}`,
     corpo,
     link: `/parent/news/${post.id}`,

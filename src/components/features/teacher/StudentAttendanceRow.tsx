@@ -36,6 +36,10 @@ export interface AttendanceRecord {
      * annullare (il server risponderebbe `NIENTE_DA_ANNULLARE`).
      */
     appelloFatto?: boolean;
+    giustificata?: boolean;
+    giustificataIl?: string | null;
+    rettificaStoricaAmmessa?: boolean;
+    storico_versione?: number;
     /**
      * La riga è SOLO la comunicazione d'assenza del genitore: l'appello non è
      * ancora stato fatto. Si mostra come tale, perché il bottone «Assente»

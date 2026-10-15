@@ -1428,3 +1428,22 @@ describe('nessun identificativo di bambino, nessun nome e nessun percorso in nes
     }
   })
 })
+
+
+describe('competenza dell’invio video conservata nel differito', () => {
+  it('video storico: pubblica e informa il personale, senza avvisi alle famiglie', async () => {
+    h.intento!.politica_operazione = { giornoCompetenza: '2026-10-01', giornoOperazioneRoma: '2026-10-02', sopprimiGenitori: true }
+    const esito = await pubblica()
+    expect(esito.esito).toBe('pubblicato')
+    expect(h.notifiche.some(n => n.tipo === 'galleria')).toBe(false)
+    expect(h.notifiche.some(n => n.tipo === 'video_esito')).toBe(true)
+  })
+
+  it('video corrente completato domani: avviso famiglia con la stessa policy originale', async () => {
+    const operazione = { giornoCompetenza: '2026-10-02', giornoOperazioneRoma: '2026-10-02', sopprimiGenitori: false }
+    h.intento!.politica_operazione = operazione
+    const esito = await pubblica({ adesso: () => ADESSO + 86_400_000 })
+    expect(esito.esito).toBe('pubblicato')
+    expect(h.notifiche.find(n => n.tipo === 'galleria')).toMatchObject({ destinatario: 'genitore', operazione })
+  })
+})

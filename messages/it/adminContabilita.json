@@ -1562,5 +1562,8 @@
   "cassaRepAltriMetodi": "Altri metodi",
   "cassaRepVediEntrate": "Vedi entrate di {categoria}",
   "cassaRepVediUscite": "Vedi uscite di {categoria}",
-  "cassaRepCategoriaGlobale": "{categoria} — Globale"
+  "cassaRepCategoriaGlobale": "{categoria} — Globale",
+  "merchRettificaData": "Rettifica data",
+  "ticketDupTitoloStorico": "Attenzione: ricarica già registrata nel giorno scelto",
+  "ticketDupPrecedenteStorico": "La ricarica del {data}"
 }

@@ -76,6 +76,9 @@
   "diaryTitle": "Diario 0-6",
   "diarySubtitle": "Presenze del giorno in consultazione (l’appello resta alle maestre) e compilazione/aggiornamento del diario di sezione.",
   "diaryNessunaSezione": "Nessuna sezione nido/infanzia nei tuoi plessi. Se non è quello che ti aspetti, verifica che il tuo profilo utente abbia una sede associata (Anagrafica → Staff).",
+  "diaryLabelData": "Data del diario",
+  "diaryStatPresentiData": "Presenti nella data scelta",
+  "diaryVuotoPresentiData": "Nessuna presenza registrata nella data scelta. Passa a “Tutti” per vedere la sezione.",
   "diaryLabelSede": "Sede:",
   "diaryLabelSezione": "Sezione:",
   "diaryToggleTitleTutti": "Sto mostrando tutti i bambini",
@@ -797,5 +800,6 @@
   "archiviazioneMantieneRegistro": "Il registro resta intatto: presenze, diario e note firmate non si toccano",
   "archiviazioneMantieneValutazioni": "Valutazioni, pagelle e scrutini restano al loro posto",
   "archiviazioneMantieneChat": "Le conversazioni con le famiglie restano leggibili",
-  "archiviazioneMantieneAudit": "Il giornale delle scritture continua a dire chi ha fatto cosa"
+  "archiviazioneMantieneAudit": "Il giornale delle scritture continua a dire chi ha fatto cosa",
+  "diaryClasseStorica": "storica"
 }

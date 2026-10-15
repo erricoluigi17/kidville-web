@@ -5,6 +5,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import { logEvento } from '@/lib/logging/logger'
 
 interface EnqueueParams {
@@ -18,14 +19,20 @@ interface EnqueueParams {
   bufferMin?: number
   /** Scuola per il gate dei toggle; se assente viene risolta dal primo alunno. */
   scuolaId?: string | null
+  operazione?: ContestoNotificaOperazione
 }
 
 /** Risolve la scuola di un alunno (per il gate dei toggle). Best-effort. */
 async function scuolaDiAlunno(supabase: SupabaseClient, alunnoId: string): Promise<string | null> {
   try {
-    const { data } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    const { data, error } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    if (error) {
+      logEvento('notifica', 'warn', { operazione: 'scuolaDiAlunno', esito: 'sede-non-letta', alunno_id: alunnoId }, error)
+      return null
+    }
     return (data?.scuola_id as string | undefined) ?? null
-  } catch {
+  } catch (err) {
+    logEvento('notifica', 'warn', { operazione: 'scuolaDiAlunno', esito: 'sede-non-letta', alunno_id: alunnoId }, err)
     return null
   }
 }
@@ -38,8 +45,12 @@ async function scuolaDiAlunno(supabase: SupabaseClient, alunnoId: string): Promi
  */
 export async function enqueueNotifichePerAlunni(
   supabase: SupabaseClient,
-  { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10, scuolaId }: EnqueueParams
+  { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10, scuolaId, operazione }: EnqueueParams
 ): Promise<void> {
+  if (!deveNotificareGenitori(operazione)) {
+    logEvento('notifica', 'info', { operazione: 'enqueueNotifichePerAlunni', esito: 'rettifica-storica-silenziosa', tipo })
+    return
+  }
   if (!alunnoIds || alunnoIds.length === 0) return
 
   // Gate toggle per scuola PRIMA di risolvere i genitori (risparmia la query).
@@ -63,6 +74,8 @@ export async function enqueueNotifichePerAlunni(
     entitaTipo,
     entitaId,
     bufferMin,
+    operazione,
+    destinatario: 'genitore',
   })
 }
 
@@ -75,8 +88,12 @@ export async function enqueueNotifichePerAlunni(
  */
 export async function enqueueDiarioGenitori(
   supabase: SupabaseClient,
-  { alunnoId, nome, bufferMin = 10, scuolaId }: { alunnoId: string; nome?: string | null; bufferMin?: number; scuolaId?: string | null },
+  { alunnoId, nome, bufferMin = 10, scuolaId, operazione }: { alunnoId: string; nome?: string | null; bufferMin?: number; scuolaId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
+  if (!deveNotificareGenitori(operazione)) {
+    logEvento('notifica', 'info', { operazione: 'enqueueDiarioGenitori', esito: 'rettifica-storica-silenziosa', alunno_id: alunnoId })
+    return
+  }
   if (!alunnoId) return
   // Gate toggle per scuola prima del debounce (se disattivata, non tocca la coda).
   const scuola = scuolaId !== undefined ? scuolaId : await scuolaDiAlunno(supabase, alunnoId)
@@ -86,12 +103,14 @@ export async function enqueueDiarioGenitori(
     // PostgREST NON lancia: il delete fallito tornava in `{ error }` e il catch
     // non scattava. Un debounce che non cancella non rompe niente, ma manda al
     // genitore N notifiche invece di una: va visto, non subìto.
-    const res = await supabase
+    let cancellazione = supabase
       .from('notifiche')
       .delete()
       .eq('entita_tipo', 'diario')
       .eq('entita_id', alunnoId)
       .is('push_inviata_il', null)
+    if (operazione) cancellazione = cancellazione.eq('giorno_competenza', operazione.giornoCompetenza)
+    const res = await cancellazione
     if (res?.error) segnalaDebounceDiarioFallito(alunnoId, res.error)
   } catch (e) {
     segnalaDebounceDiarioFallito(alunnoId, e)
@@ -110,6 +129,7 @@ export async function enqueueDiarioGenitori(
     entitaId: alunnoId,
     bufferMin,
     scuolaId: scuola,
+    operazione,
   })
 }
 

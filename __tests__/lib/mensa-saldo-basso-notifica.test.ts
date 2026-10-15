@@ -100,7 +100,7 @@ describe('notificaSaldoBasso — niente web-push diretto, la riga resta al dispa
     for (const r of stato.notifiche) {
       expect(r).toMatchObject({ tipo: 'mensa_saldo_basso', entita_tipo: 'alunno', entita_id: ALUNNO, link: '/parent/mensa' })
       expect(r.push_inviata_il ?? null).toBeNull()
-      expect(r.invio_programmato_il ?? null).toBeNull()
+      expect(Number.isFinite(Date.parse(String(r.invio_programmato_il)))).toBe(true)
     }
     // Il gate del tipo si chiede con la sede dell'alunno.
     expect(isNotificaAbilitata).toHaveBeenCalledWith(expect.anything(), 'mensa_saldo_basso', SEDE_A)
@@ -177,5 +177,28 @@ describe('notificaSaldoBasso — niente web-push diretto, la riga resta al dispa
 
     expect(scritture.filter((s) => s.tabella === 'notifiche')).toHaveLength(0)
     expect(getGenitoriDiAlunno).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('saldo basso storico: la coda conserva la decisione originale', () => {
+  it('rettifica storica: nessuna riga, destinatari e dispositivi non vengono letti', async () => {
+    const stato = db()
+    const lette: string[] = []
+    await notificaSaldoBasso(creaFintoSupabase(stato, lette), { ...OPTS, operazione: {
+      giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-13', sopprimiGenitori: true,
+    } })
+    expect(stato.notifiche).toHaveLength(0)
+    expect(getGenitoriDiAlunno).not.toHaveBeenCalled()
+    expect(lette).toHaveLength(0)
+    expect(logCon('rettifica-storica-silenziosa')).toBeDefined()
+  })
+
+  it('operazione corrente: politica persistita, il dispatch successivo non la ricalcola', async () => {
+    const stato = db()
+    const operazione = { giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-12', sopprimiGenitori: false }
+    await notificaSaldoBasso(creaFintoSupabase(stato), { ...OPTS, operazione })
+    expect(stato.notifiche).toHaveLength(2)
+    expect(stato.notifiche[0]).toMatchObject({ giorno_competenza: '2026-01-12', politica_operazione: operazione })
   })
 })

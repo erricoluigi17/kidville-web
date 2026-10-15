@@ -155,7 +155,7 @@ describe('enqueueNotifiche — l\'insert che falliva in silenzio', () => {
     const { supabase } = creaClient({ insertError: ERR_PG })
     await expect(
       enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'avviso', titolo: 'T' })
-    ).resolves.toBeUndefined()
+    ).resolves.toBe(false)
   })
 
   it('insert riuscito → nessuna riga di errore (il log non fa rumore quando tutto va)', async () => {
@@ -170,7 +170,7 @@ describe('enqueueNotifiche — l\'insert che falliva in silenzio', () => {
     const { supabase } = creaClient({ insertLancia: true })
     await expect(
       enqueueNotifiche(supabase, { utenteIds: ['u1'], tipo: 'avviso', titolo: 'T' })
-    ).resolves.toBeUndefined()
+    ).resolves.toBe(false)
 
     const errori = righe('error')
     expect(errori).toHaveLength(1)

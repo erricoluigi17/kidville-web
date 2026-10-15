@@ -12,6 +12,8 @@ import { DocentiSenzaNotifiche } from '@/components/features/admin/messaggi/Doce
 import { segnalaChatLetta } from '@/components/features/chat/contatore-non-letti';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { RettificaMessaggio, type RettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 
 interface OversightThread {
   id: string;
@@ -22,7 +24,7 @@ interface OversightThread {
   sospensione: SospensioneInfo | null;
 }
 interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: string; nome: string }[]; classi: string[] }
-interface Msg { id: string; sender_id: string; content: string; created_at: string }
+interface Msg extends RettificaChat { id: string; sender_id: string; content: string; created_at: string }
 interface RisultatoRicerca {
   messaggio_id: string;
   thread_id: string;
@@ -308,7 +310,7 @@ function MessaggiInner() {
 
   return (
     <CockpitPage max={1200}>
-      <PageHeader eyebrow={t('eyebrow')} icon={MessageCircle} title={t('messaggiTitolo')} subtitle={t('messaggiSottotitolo')} />
+      <PageHeader eyebrow={t('eyebrow')} icon={MessageCircle} title={t('messaggiTitolo')} subtitle={t('messaggiSottotitolo')} actions={<LinkStorici gruppo="servizi" />} />
 
       <Tabs
         value={tab}
@@ -374,6 +376,7 @@ function MessaggiInner() {
                     return (
                       <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${mine ? 'ml-auto bg-kidville-green text-white' : 'bg-kidville-cream text-kidville-ink'}`}>
                         <p>{m.content}</p>
+                        <RettificaMessaggio messaggio={m} onSaved={r => setChatMsgs(v => v.map(x => x.id === m.id ? { ...x, ...r } : x))} />
                         <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-kidville-muted'}`}>{fmtWhen(m.created_at, locale)}</p>
                       </div>
                     );
@@ -535,6 +538,7 @@ function MessaggiInner() {
                         <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${fromTeacher ? 'ml-auto bg-kidville-info-soft text-kidville-ink' : 'bg-kidville-cream text-kidville-ink'}`}>
                           <p className="text-[10px] font-bold text-kidville-muted mb-0.5">{fromTeacher ? (selThread.teacher?.nome ?? t('messaggiRuoloInsegnante')) : (selThread.parent?.nome ?? t('messaggiRuoloGenitore'))}</p>
                           <p>{m.content}</p>
+                          <RettificaMessaggio messaggio={m} onSaved={r => setOversightMsgs(v => v.map(x => x.id === m.id ? { ...x, ...r } : x))} />
                           <p className="text-[10px] mt-1 text-kidville-muted">{fmtWhen(m.created_at, locale)}</p>
                         </div>
                       );

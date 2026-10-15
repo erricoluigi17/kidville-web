@@ -25,6 +25,8 @@ import { idNativi, nomeElemento, type ElementoCaricabile } from '@/lib/gallery/s
 import { scartaPreparatiNativi } from '@/lib/gallery/selettore-nativo';
 import { durataVideoDalFile, sedeDelCaricamento, sediDalCookie } from '@/lib/gallery/video-galleria-flusso';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -149,6 +151,8 @@ function TeacherGalleryContent() {
         if (avvisi.length > 0) regioneAvvisi.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
     }, [avvisi]);
     const [userRole, setUserRole] = useState<string>('educator');
+    const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
+    const competenzaStaff = ['admin', 'coordinator', 'segreteria'].includes(userRole) ? giornoCompetenza : undefined;
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOnline = useOnlineStatus();
 
@@ -625,6 +629,7 @@ function TeacherGalleryContent() {
                         tag: f.is_broadcast ? [] : f.tag_students,
                         broadcast: f.is_broadcast,
                         durataSecondi: f.nativo.durataSecondi,
+                        giornoCompetenza: competenzaStaff,
                     });
                     if (!avvio.ok) {
                         if (registraRifiutoVideo(avvio, f.nativo.nome)) break;
@@ -646,6 +651,7 @@ function TeacherGalleryContent() {
                         tag: f.is_broadcast ? [] : f.tag_students,
                         broadcast: f.is_broadcast,
                         durataSecondi: durata,
+                        giornoCompetenza: competenzaStaff,
                     });
                     if (!avvio.ok) {
                         if (registraRifiutoVideo(avvio, f.file.name)) break;
@@ -673,6 +679,7 @@ function TeacherGalleryContent() {
                     const id = crypto.randomUUID();
                     await accodaFotoGalleria({
                         id, uploaded_by: teacherId, scuola_id: sedeVideo,
+                        giorno_competenza: competenzaStaff,
                         caption: f.file.name,
                         tag_students: f.is_broadcast ? [] : f.tag_students,
                         is_broadcast: f.is_broadcast,
@@ -986,6 +993,7 @@ function TeacherGalleryContent() {
                         <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide mb-4">
                             {t('galleryStep1')}
                         </h2>
+                        {competenzaStaff && <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />}
                         <MediaUploader onUpload={handleUploadFiles} />
                     </motion.div>
                 )}

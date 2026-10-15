@@ -251,3 +251,21 @@ describe('notificaNewsPubblicata — post di UNA sede (comportamento invariato)'
     expect(notificaEvento.mock.calls.length).toBe(0)
   })
 })
+
+
+describe('news retroattive', () => {
+  it('una registrazione storica non accoda e non risulta inviata', async () => {
+    const stato = dbBase()
+    await notificaNewsPubblicata(creaFintoSupabase(stato), post({ politica_operazione: {
+      giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-13', sopprimiGenitori: true,
+    } }))
+    expect(notificaEvento).not.toHaveBeenCalled()
+    expect(stato.news_posts[0].notifica_inviata_il).toBeNull()
+  })
+
+  it('la pubblicazione differita conserva il permesso originale anche dopo quel giorno', async () => {
+    const operazione = { giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-12', sopprimiGenitori: false }
+    await notificaNewsPubblicata(creaFintoSupabase(dbBase()), post({ politica_operazione: operazione }))
+    expect(notificaEvento).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ destinatario: 'genitore', operazione }))
+  })
+})

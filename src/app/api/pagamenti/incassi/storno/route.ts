@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -228,7 +229,7 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
     // registrato in un'altra sede — e uno storno e' un movimento contabile
     // definitivo, non una lettura.
     const { data: incassoDaStornare, error: errIncasso } = await supabase
-      .from('incassi').select('pagamento_id').eq('id', incasso_id).maybeSingle()
+      .from('incassi').select('pagamento_id, data_incasso, creato_il').eq('id', incasso_id).maybeSingle()
     // Un guasto non è «non trovato» (fase 5 robustezza, sesto pezzo).
     if (errIncasso) return rispostaGuastoDb('pagamenti/incassi/storno:POST', 'db:incassi', errIncasso)
     if (!incassoDaStornare) {
@@ -251,7 +252,7 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
           const { data: pag, error: errPag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagId).maybeSingle()
           if (errPag) throw new Error('lettura di pagamenti per la revoca non riuscita', { cause: errPag })
           const alunnoId = (pag as { alunno_id?: string | null } | null)?.alunno_id
-          if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+          if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId], politicaNotificaServizio(user, incassoDaStornare.data_incasso ?? incassoDaStornare.creato_il))
         }
       } catch (e) {
         logEvento('pagamento', 'error', { operazione: 'pagamenti/incassi/storno:POST', esito: 'revoca_non_verificata' }, e)

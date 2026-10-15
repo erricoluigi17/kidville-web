@@ -272,10 +272,11 @@ describe('DELETE /api/primaria/allegati — nel cestino, il file resta', () => {
     expect(riga('allegati_registro', ALL_VECCHIO)!.eliminato_il).not.toBeNull()
   })
 
-  it('anche la Segreteria è fermata dal termine (vale per tutti)', async () => {
+  it('la Segreteria può cestinare oltre il termine e conserva file e originale', async () => {
     comeSegreteria()
     const res = await DELETE(reqDelete(ALL_VECCHIO, SEGRETERIA))
-    expect(res.status).toBe(423)
+    expect(res.status).toBe(200)
+    expect(h.db.allegati_registro.find(a => a.id === ALL_VECCHIO)).toMatchObject({ registro_id: LEZ_VECCHIA, eliminato_da: SEGRETERIA, file_url: expect.any(String) })
   })
 
   it('un allegato già nel cestino non si elimina di nuovo: 404', async () => {

@@ -83,7 +83,7 @@ describe('PATCH pagamento — guardie importo', () => {
   it('cambio importo → hook di revoca sospensione con l\'alunno toccato', async () => {
     await PATCH(patch({ importo: 200 }), ctx)
     expect(h.revoca).toHaveBeenCalledTimes(1)
-    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'])
+    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'], expect.objectContaining({ giornoCompetenza: new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' }), sopprimiGenitori: false }))
   })
 
   it('cambio solo descrizione → nessun hook di revoca (importo/scadenza invariati)', async () => {

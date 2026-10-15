@@ -281,6 +281,8 @@
   "valutazioniImpreparatoMotivoLabel": "Reason (optional)",
   "valutazioniImpreparatoMateriaLabel": "Subject",
   "valutazioniImpreparatoSenzaMateria": "No subject",
+  "storicoDataCompetenza": "Record date",
+  "storicoSenzaAvvisiFamiglia": "Recording a past day updates the history without sending alerts to the family.",
   "valutazioniImpreparatoDataLabel": "Date",
   "valutazioniImpreparatoSegnato": "Unprepared mark saved ✓",
   "valutazioniImpreparatoErrore": "Unprepared mark not saved. Try again.",

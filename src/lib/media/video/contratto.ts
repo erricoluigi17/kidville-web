@@ -1,3 +1,4 @@
+import { zDataYMD } from '@/lib/validation/common'
 import { z } from 'zod'
 
 import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from './limiti'
@@ -857,6 +858,7 @@ export type FileVideoDichiarato = z.infer<typeof schemaFileVideoDichiarato>
  */
 export const schemaAperturaIntentVideo = z
   .object({
+    giorno_competenza: zDataYMD.optional(),
     canale: z.enum(CANALI_VIDEO),
     azione: z.enum(AZIONI_INTENT_VIDEO),
     scuolaId: z.string().uuid().nullable(),

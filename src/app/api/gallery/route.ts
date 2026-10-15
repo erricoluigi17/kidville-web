@@ -1,3 +1,5 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi';
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -11,7 +13,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
 import { sezioniDiNome } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-import { zUuid } from '@/lib/validation/common';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { cancelliBroadcastGalleria, cancelliSedeGalleria } from '@/lib/gallery/cancelli-destinatari';
@@ -137,6 +139,7 @@ const getQuerySchemaCoerente = getQuerySchema.superRefine((q, ctx) => {
 });
 
 const postBodySchema = z.object({
+    giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
     // `uploaded_by` dal client è volutamente ignorato (si usa l'utente del gate).
     //
     // ⚠️ `optional()` dal 2026-09-18, e NON è un allentamento: lo rende
@@ -824,6 +827,11 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
+        if (b.data.giorno_competenza && b.data.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+            return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 });
+        }
+        const politica = politicaNotificaServizio(auth.user, b.data.giorno_competenza);
+
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
 
@@ -898,6 +906,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         }
 
         const baseRecord: Record<string, unknown> = {
+            ...(b.data.giorno_competenza ? { giorno_competenza: b.data.giorno_competenza, politica_operazione: politica } : {}),
             uploaded_by,
             file_url: fileUrlDaSalvare,
             file_type: file_type ?? 'foto',
@@ -968,6 +977,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             tagAlunni: tag_students,
             classi: target_classes,
             operazione: 'gallery:POST',
+            politica,
         });
 
         // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun

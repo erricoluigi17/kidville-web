@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -37,7 +38,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
     const supabase = await createAdminClient()
     const { data: pag, error: pErr } = await supabase
       .from('pagamenti')
-      .select('id, alunno_id, scuola_id, importo, importo_pagato, tipo')
+      .select('id, alunno_id, scuola_id, importo, importo_pagato, tipo, periodo_competenza, scadenza, creato_il')
       .eq('id', id)
       .maybeSingle()
     if (pErr) {
@@ -115,7 +116,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
     // revoca automatica della sospensione (best-effort, mai bloccante).
     try {
       const alunnoId = (pag as { alunno_id?: string | null }).alunno_id
-      if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+      if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId], politicaNotificaServizio(auth.user, pag.periodo_competenza ?? pag.scadenza ?? pag.creato_il))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]/sconto:POST', esito: 'revoca_non_verificata' }, e)
     }

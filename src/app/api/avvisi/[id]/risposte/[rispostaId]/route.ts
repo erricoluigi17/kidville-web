@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -205,7 +206,7 @@ export const PATCH = withRoute(
             // cambiato cosa, a Giugliano».
             const { data: avviso } = await supabase
                 .from('avvisi')
-                .select('id, scuola_id')
+                .select('id, scuola_id, giorno_competenza, created_at')
                 .eq('id', avvisoId)
                 .maybeSingle();
 
@@ -215,7 +216,7 @@ export const PATCH = withRoute(
             // funzione di database mette dentro la propria `WHERE`.
             const { data: prima } = await supabase
                 .from('avvisi_risposte')
-                .select('id, parent_id, student_id, risposta, numero_partecipanti, stato_adesione')
+                .select('id, parent_id, student_id, risposta, numero_partecipanti, stato_adesione, risposto_il')
                 .eq('id', rispostaId)
                 .eq('avviso_id', avvisoId)
                 .maybeSingle();
@@ -307,6 +308,8 @@ export const PATCH = withRoute(
                         tipo: 'adesione_ammessa',
                         scuolaId: (avviso?.scuola_id as string | null) ?? null,
                         utenteIds: [prima.parent_id as string],
+                        destinatario: 'genitore',
+                        operazione: politicaNotificaServizio(auth.user, prima.risposto_il ?? avviso?.giorno_competenza ?? avviso?.created_at),
                         titolo: 'Adesione confermata',
                         corpo: 'La tua adesione è stata confermata: ora c’è posto.',
                         link: '/parent/avvisi',

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Images, RotateCcw } from 'lucide-react';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { StatoElenco, type TestiStatoElenco } from '@/components/ui/StatoElenco';
 import type { FiltroAttivo, StatoElencoTipo } from '@/lib/ui/filtri/tipi';
 import { useSediAttive } from '@/lib/context/sede-context';
@@ -900,6 +901,7 @@ export default function AdminGalleryPage() {
                 eyebrow={t('galSedeEyebrow')}
                 title={t('galSedeTitolo')}
                 subtitle={t('galSedeSottotitolo')}
+                actions={<LinkStorici gruppo="servizi" />}
             />
 
             {/* ─── Barra: sede + filtri ───────────────────────────────────── */}

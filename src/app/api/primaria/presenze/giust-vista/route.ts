@@ -1,3 +1,4 @@
+import { politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -70,6 +71,8 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
           .maybeSingle()
         await notificaEvento(supabase, {
           tipo: 'giustifica_vista',
+          destinatario: 'genitore',
+          operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: String(updated.data) }),
           scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
           utenteIds: [genitoreId],
           titolo: 'Giustifica presa in visione',

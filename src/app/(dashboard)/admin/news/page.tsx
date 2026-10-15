@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { Newspaper, Megaphone } from 'lucide-react';
 import { NewsNav, VISTE_NEWS, type VistaNews } from '@/components/features/admin/news/NewsNav';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { Card } from '@/components/ui/Card';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
@@ -64,7 +65,7 @@ function NewsInner() {
         eyebrow={t('eyebrow')}
         title={t('newsTitolo')}
         subtitle={t('newsSottotitolo')}
-        actions={<Link href={withUser('/admin/avvisi')} className={linkCls}><Megaphone size={15} /> {t('newsLinkAvvisi')}</Link>}
+        actions={<><LinkStorici gruppo="servizi" /><Link href={withUser('/admin/avvisi')} className={linkCls}><Megaphone size={15} /> {t('newsLinkAvvisi')}</Link></>}
       />
 
       <NewsNav value={vista} onChange={cambiaVista} />

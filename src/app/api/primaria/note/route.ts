@@ -1,3 +1,5 @@
+import { oggiRoma, politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -18,7 +20,7 @@ import {
   type VocePrimaria,
 } from '@/lib/primaria/permesso-voce'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -30,13 +32,15 @@ const TIPI_NOTIFICA_NOTA = ['nota', 'nota_firma'] as const
 
 /** Le colonne di una nota che servono a permessi, audit e risposta. */
 const COLONNE_NOTA =
-  'id, alunno_id, section_id, maestra_id, categoria, testo, richiede_firma, firmata_il, firmata_da, oscurata_ad_altri, nota_gruppo_id, creato_il'
+  '*'
 
 const CODICE_NOTA_NON_TROVATA = 'NOTA_NON_TROVATA'
 const CODICE_OPERAZIONE = 'NOTA_OPERAZIONE_NON_RIUSCITA'
 const CODICE_LETTURA = 'LETTURA_FALLITA'
 
 interface RigaNota {
+  storico_versione?: number
+
   id: string
   alunno_id: string
   section_id: string | null
@@ -49,6 +53,7 @@ interface RigaNota {
   oscurata_ad_altri: boolean | null
   nota_gruppo_id: string | null
   creato_il: string | null
+  data_evento?: string | null
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -62,6 +67,7 @@ const getQuerySchema = z.object({
 // z.unknown() come chiave di z.object è required a runtime.
 const postBodySchema = z.object({
   sectionId: zUuid,
+  data: zDataYMD.optional(),
   alunnoIds: z.array(zUuid).min(1, 'alunnoIds[] obbligatorio'),
   categoria: z.enum(CATEGORIE, { error: `categoria in ${CATEGORIE.join('/')}` }),
   testo: z.string().min(1, 'testo obbligatorio'),
@@ -77,6 +83,9 @@ const postBodySchema = z.object({
 const patchBodySchema = z
   .object({
     id: zUuid,
+    versioneAttesa: z.number().int().nonnegative().optional(),
+    versioniAttese: z.record(z.string(), z.number().int().nonnegative()).optional(),
+    data: zDataYMD.optional(),
     categoria: z.enum(CATEGORIE, { error: `categoria in ${CATEGORIE.join('/')}` }).optional(),
     // Niente `.trim()` che TRASFORMA: POST salva il testo così come arriva (spesso
     // con un a capo finale dalla textarea), e un testo rifilato messo a confronto
@@ -90,12 +99,14 @@ const patchBodySchema = z
     richiedeFirma: z.boolean().optional(),
     ambito: z.enum(AMBITI, { error: `ambito in ${AMBITI.join('/')}` }),
   })
-  .refine((b) => b.categoria !== undefined || b.testo !== undefined || b.richiedeFirma !== undefined, {
+  .refine((b) => b.categoria !== undefined || b.testo !== undefined || b.richiedeFirma !== undefined || b.data !== undefined, {
     message: 'nessuna modifica indicata (categoria, testo o richiedeFirma)',
   })
 
 const deleteQuerySchema = z.object({
   id: zUuid,
+  versioneAttesa: z.coerce.number().int().nonnegative().optional(),
+  versioniAttese: z.preprocess(v => { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { logEvento('registro', 'warn', { operazione: 'storici/valida-versioni', esito: 'versioni-client-non-valide' }); return null } }, z.record(z.string(), z.number().int().nonnegative()).optional()),
   ambito: z.enum(AMBITI, { error: `ambito in ${AMBITI.join('/')}` }),
 })
 
@@ -138,7 +149,7 @@ async function scuolaDellaSezione(
 }
 
 /** Una nota come VOCE per `permesso-voce`: autore = `maestra_id`, data = data di Roma di `creato_il`. */
-function voceDi(n: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il'>, sectionId: string, scuolaId: string | null): VocePrimaria {
+function voceDi(n: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'data_evento'>, sectionId: string, scuolaId: string | null): VocePrimaria {
   return {
     tipo: 'nota',
     id: n.id,
@@ -148,7 +159,7 @@ function voceDi(n: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il'>, sectionId:
     // `creato_il` senza valore non ha una data: la più vecchia possibile, cioè
     // oltre il termine. Si modifica solo con lo sblocco della Direzione, che è
     // il verso giusto in cui sbagliare su un registro con valore legale.
-    dataEvento: n.creato_il ? dataEventoDaIstante(n.creato_il) : '1970-01-01',
+    dataEvento: n.data_evento ?? (n.creato_il ? dataEventoDaIstante(n.creato_il) : '1970-01-01'),
   }
 }
 
@@ -172,6 +183,7 @@ async function caricaBersagli(
   id: string,
   ambito: (typeof AMBITI)[number],
   operazione: string,
+  nuovaDataEvento?: string,
 ): Promise<Bersagli> {
   const { data: letta, error } = await supabase.from('note_disciplinari').select(COLONNE_NOTA).eq('id', id).maybeSingle()
   if (error) {
@@ -205,7 +217,7 @@ async function caricaBersagli(
     if (bersagli.length === 0) return { response: notaNonTrovata() }
   }
 
-  const voci = bersagli.map((n) => voceDi(n, sectionId, sede.scuolaId))
+  const voci = bersagli.map((n) => ({ ...voceDi(n, sectionId, sede.scuolaId), nuovaDataEvento }))
   const stato = await statoVoci(supabase, utente, voci)
   if (!stato.ok) return { response: rispostaPermessoNegato(stato) }
   // Le voci negate dal lotto si ri-verificano UNA per UNA con la porta singola,
@@ -370,18 +382,18 @@ async function statoNoteDellaClasse(
   supabase: SupabaseClient,
   utente: AppUser,
   sectionId: string,
-  note: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'nota_gruppo_id'>[],
+  note: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'data_evento' | 'nota_gruppo_id'>[],
 ): Promise<{ esito: (id: string) => StatoVoce | undefined; perGruppo: Map<string, string[]> } | null> {
   const operazione = 'primaria/note:GET'
   const sede = await scuolaDellaSezione(supabase, sectionId, operazione, null)
   if (!sede.ok) return null
 
   const gruppi = [...new Set(note.map((n) => n.nota_gruppo_id).filter((g): g is string => !!g))]
-  const membri: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'nota_gruppo_id'>[] = []
+  const membri: Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'data_evento' | 'nota_gruppo_id'>[] = []
   if (gruppi.length > 0) {
     const { data: righe, error: errGruppi } = await supabase
       .from('note_disciplinari')
-      .select('id, maestra_id, creato_il, nota_gruppo_id')
+      .select('*')
       .in('nota_gruppo_id', gruppi)
       .eq('section_id', sectionId)
     if (errGruppi) {
@@ -391,7 +403,7 @@ async function statoNoteDellaClasse(
     membri.push(...((righe ?? []) as typeof membri))
   }
 
-  const perId = new Map<string, Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il'>>()
+  const perId = new Map<string, Pick<RigaNota, 'id' | 'maestra_id' | 'creato_il' | 'data_evento'>>()
   for (const n of [...note, ...membri]) perId.set(n.id, n)
   const stato = await statoVoci(
     supabase,
@@ -428,7 +440,7 @@ export const GET = withRoute('primaria/note:GET', async (request: NextRequest) =
     if (scopeErr) return scopeErr
     const { data, error } = await supabase
       .from('note_disciplinari')
-      .select('id, alunno_id, maestra_id, categoria, testo, richiede_firma, firmata_il, oscurata_ad_altri, nota_gruppo_id, creato_il, alunni(nome, cognome)')
+      .select('*, alunni(nome, cognome)')
       .eq('section_id', sectionId)
       .order('creato_il', { ascending: false })
       .limit(50)
@@ -457,6 +469,7 @@ export const GET = withRoute('primaria/note:GET', async (request: NextRequest) =
         modificabile: e?.modificabile ?? false,
         bloccata: e?.bloccata ?? false,
         giorni_limite: e?.giorniLimite ?? null,
+        versioni_gruppo: Object.fromEntries(note.filter(n => ids.includes(n.id)).map(n => [n.id, n.storico_versione])),
         n_alunni_gruppo: ids.length,
         gruppo_modificabile: !!esiti && ids.every((id) => esiti.esito(id)?.modificabile === true),
       }
@@ -496,7 +509,12 @@ export const POST = withRoute('primaria/note:POST', async (request: NextRequest)
     // Gruppo condiviso per assegnazione massiva (trattamento coerente delle note collettive).
     const notaGruppoId = crypto.randomUUID()
 
+    const giornoCompetenza = b.data.data ?? oggiRoma()
+    if (giornoCompetenza !== oggiRoma() && !puoCorreggereStorico(auth.user)) {
+      return NextResponse.json({ error: 'Solo la Segreteria e la Direzione possono inserire note nel passato.', codice: 'VOCE_BLOCCATA' }, { status: 423 })
+    }
     const rows = alunnoIds.map((aid) => ({
+      ...(giornoCompetenza !== oggiRoma() ? { data_evento: giornoCompetenza } : {}),
       alunno_id: aid,
       section_id: sectionId,
       maestra_id: maestraId,
@@ -510,6 +528,7 @@ export const POST = withRoute('primaria/note:POST', async (request: NextRequest)
     const { data, error } = await supabase.from('note_disciplinari').insert(rows).select()
     if (error) {
       logErrore({ operazione: 'primaria/note:POST', stato: 500, evento: 'db' }, error)
+      if (giornoCompetenza !== oggiRoma() && ['42703', 'PGRST204'].includes(error.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile: aggiornare lo schema.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
       return operazioneNonRiuscita()
     }
 
@@ -530,6 +549,7 @@ export const POST = withRoute('primaria/note:POST', async (request: NextRequest)
     try {
       await enqueueNotifichePerAlunni(supabase, {
         alunnoIds,
+        operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza }),
         ...avvisoNota(!!richiedeFirma),
         corpo: corpoAvviso(testo),
         link: '/parent/primaria/note',
@@ -567,10 +587,18 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     const { id, ambito, categoria, testo, richiedeFirma } = b.data
 
     const supabase = await createAdminClient()
-    const t = await caricaBersagli(supabase, auth.user, id, ambito, operazione)
+    const t = await caricaBersagli(supabase, auth.user, id, ambito, operazione, b.data.data)
     if ('response' in t) return t.response
 
-    const patch: Partial<Pick<RigaNota, 'categoria' | 'testo' | 'richiede_firma'>> = {}
+    if (b.data.data !== undefined) {
+      const { error: schemaErr } = await supabase.from('note_disciplinari').select('data_evento').eq('id', id).limit(1)
+      if (schemaErr) {
+        logEvento('registro', 'error', { operazione, esito: 'data-evento-non-disponibile' }, schemaErr)
+        return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
+      }
+    }
+    const patch: Partial<Pick<RigaNota, 'categoria' | 'testo' | 'richiede_firma' | 'data_evento'>> = {}
+    if (b.data.data !== undefined) patch.data_evento = b.data.data
     if (categoria !== undefined) patch.categoria = categoria
     if (testo !== undefined) patch.testo = testo
     if (richiedeFirma !== undefined) patch.richiede_firma = richiedeFirma
@@ -579,7 +607,7 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     // cancellare la firma di un genitore. Il testo si confronta RIFILATO: spazi
     // o a capo in coda non sono una modifica.
     const stessoValore = (n: RigaNota, k: keyof typeof patch): boolean =>
-      k === 'testo' ? String(n.testo ?? '').trim() === String(patch.testo ?? '').trim() : n[k] === patch[k]
+      k === 'data_evento' ? voceDi(n, t.sectionId, t.scuolaId).dataEvento === patch.data_evento : k === 'testo' ? String(n.testo ?? '').trim() === String(patch.testo ?? '').trim() : n[k] === patch[k]
     const cambiate = t.bersagli.filter((n) =>
       (Object.keys(patch) as (keyof typeof patch)[]).some((k) => !stessoValore(n, k)),
     )
@@ -587,6 +615,9 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
       logEvento('registro', 'info', { operazione, esito: 'nota-invariata', gruppo: t.gruppo, n: 0 })
       return NextResponse.json({ success: true, data: t.bersagli, modificate: 0, firme_azzerate: 0 })
     }
+    const cambiaData = b.data.data !== undefined && cambiate.some(n => voceDi(n, t.sectionId, t.scuolaId).dataEvento !== b.data.data)
+    const giorniOriginali = [...new Set(cambiate.map(n => voceDi(n, t.sectionId, t.scuolaId).dataEvento))]
+    const politicaModifica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: b.data.data ?? giorniOriginali[0], giornoOriginale: [...giorniOriginali].sort()[0] })
     const ids = cambiate.map((n) => n.id)
     const firmate = cambiate.filter((n) => n.firmata_il != null).length
 
@@ -597,33 +628,45 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     // uguale (`nota-invariata`) senza più cancellarla. Così, se si ferma qui, la
     // nota è intatta; se si ferma all'update, al nuovo tentativo la nota risulta
     // ancora «cambiata» e il lavoro si completa.
-    const { data: ricezioni, error: errRicezioni } = await supabase
-      .from('nota_ricezioni')
-      .delete()
-      .in('nota_id', ids)
-      .select('id')
-    if (errRicezioni) {
-      logEvento('registro', 'error', {
-        operazione,
-        esito: 'firme-nota-non-azzerate',
-        entita_tipo: 'nota',
-        n: ids.length,
-      }, errRicezioni)
-      return operazioneNonRiuscita()
+    let ricezioni: unknown[] | null
+    let dopo: unknown[] | null
+    let error: unknown = null
+    const valori = { ...patch, ...(cambiaData && t.nota.nota_gruppo_id ? { nota_gruppo_id: crypto.randomUUID() } : {}), firmata_il: null, firmata_da: null }
+    if (politicaModifica.sopprimiGenitori) {
+      if (t.bersagli.some(n => n.storico_versione === undefined) || !t.scuolaId) return storicoIndisponibile()
+      const azioni: AzioneStorica[] = []
+      for (const n of cambiate) {
+        azioni.push({ tabella: 'nota_ricezioni', operazione: 'delete', filtro: { nota_id: n.id } })
+        azioni.push({ tabella: 'note_disciplinari', operazione: 'update', filtro: { id: n.id, section_id: t.sectionId }, valori })
+      }
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: t.scuolaId, sectionId: t.sectionId, modulo: 'note', giorno: giorniOriginali[0], attese: t.bersagli.map(n => ({ tabella: 'note_disciplinari', filtro: { id: n.id, section_id: t.sectionId }, versione: b.data.versioniAttese?.[n.id] ?? (n.id === id ? b.data.versioneAttesa : undefined) })), azioni })
+      if ('response' in rettifica) return rettifica.response
+      ricezioni = rettifica.righe.filter((_,i) => i % 2 === 0).flat()
+      dopo = rettifica.righe.filter((_,i) => i % 2 === 1).flat()
+    } else {
+      const r = await supabase.from('nota_ricezioni').delete().in('nota_id', ids).select('id')
+      if (r.error) { logErrore({ operazione, evento: 'db' }, r.error); return operazioneNonRiuscita() }
+      ricezioni = r.data
+      const n = await supabase.from('note_disciplinari').update(valori).in('id', ids).eq('section_id', t.sectionId).select(COLONNE_NOTA)
+      dopo = n.data; error = n.error
     }
-
-    const { data: dopo, error } = await supabase
-      .from('note_disciplinari')
-      .update({ ...patch, firmata_il: null, firmata_da: null })
-      .in('id', ids)
-      .eq('section_id', t.sectionId)
-      .select(COLONNE_NOTA)
     if (error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, error)
       return operazioneNonRiuscita()
     }
 
-    const allineate = await allineaNotificheInCoda(supabase, {
+    if (cambiaData) await ritiraNotificheInCoda(supabase, t.nota.nota_gruppo_id, [...new Set(cambiate.map(n => n.alunno_id))], operazione)
+    if (politicaModifica.sopprimiGenitori && !cambiaData && t.nota.nota_gruppo_id) {
+      const genitori = await getGenitoriDiAlunniEsito(supabase, [...new Set(cambiate.map(n => n.alunno_id))])
+      if (genitori.completo) {
+        const idsGenitori = [...new Set([...genitori.perAlunno.values()].flat())]
+        if (idsGenitori.length > 0) {
+          const { error: codaErr } = await supabase.from('notifiche').delete().eq('entita_tipo', 'nota').eq('entita_id', t.nota.nota_gruppo_id).in('utente_id', idsGenitori).in('giorno_competenza', giorniOriginali).is('push_inviata_il', null)
+          if (codaErr) logEvento('notifica', 'error', { operazione, esito: 'rettifica-nota-coda-non-ritirata' }, codaErr)
+        }
+      } else logEvento('notifica', 'error', { operazione, esito: 'rettifica-nota-destinatari-non-risolti' })
+    }
+    const allineate = cambiaData || politicaModifica.sopprimiGenitori ? 0 : await allineaNotificheInCoda(supabase, {
       gruppoId: t.nota.nota_gruppo_id,
       // «tutti» (o nota senza gruppo): ogni avviso del gruppo. «Solo questo
       // alunno» su una nota di gruppo: solo i genitori degli alunni modificati.
@@ -689,12 +732,19 @@ export const DELETE = withRoute('primaria/note:DELETE', async (request: NextRequ
     if ('response' in t) return t.response
 
     const ids = t.bersagli.map((n) => n.id)
-    const { data: cancellate, error } = await supabase
-      .from('note_disciplinari')
-      .delete()
-      .in('id', ids)
-      .eq('section_id', t.sectionId)
-      .select('id, alunno_id')
+    let cancellate: unknown[] | null
+    let error: unknown = null
+    if (t.bersagli.some(n => eRettificaStorica(auth.user, voceDi(n, t.sectionId, t.scuolaId).dataEvento))) {
+      if (t.bersagli.some(n => n.storico_versione === undefined) || !t.scuolaId) return storicoIndisponibile()
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: t.scuolaId, sectionId: t.sectionId, modulo: 'note', giorno: voceDi(t.nota, t.sectionId, t.scuolaId).dataEvento,
+        attese: t.bersagli.map(n => ({ tabella: 'note_disciplinari', filtro: { id: n.id, section_id: t.sectionId }, versione: q.data.versioniAttese?.[n.id] ?? (n.id === id ? q.data.versioneAttesa : undefined) })),
+        azioni: t.bersagli.map(n => ({ tabella: 'note_disciplinari', operazione: 'delete', filtro: { id: n.id, section_id: t.sectionId } })) })
+      if ('response' in rettifica) return rettifica.response
+      cancellate = rettifica.righe.flat()
+    } else {
+      const esito = await supabase.from('note_disciplinari').delete().in('id', ids).eq('section_id', t.sectionId).select('id, alunno_id')
+      cancellate = esito.data; error = esito.error
+    }
     if (error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, error)
       return operazioneNonRiuscita()

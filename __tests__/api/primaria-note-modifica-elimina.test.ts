@@ -83,6 +83,7 @@ function come(u: keyof typeof utenti) {
 function nota(id: string, extra: Riga = {}): Riga {
   return {
     id,
+    storico_versione: 0,
     alunno_id: ALUNNO_1,
     section_id: SEZ,
     maestra_id: MAESTRA,
@@ -174,9 +175,9 @@ function richiesta(metodo: string, url: string, body?: unknown): NextRequest {
   } as unknown as NextRequest
 }
 const BASE = 'http://localhost/api/primaria/note'
-const patch = (body: Record<string, unknown>) => PATCH(richiesta('PATCH', BASE, body))
+const patch = (body: Record<string, unknown>) => PATCH(richiesta('PATCH', BASE, { versioneAttesa: 0, versioniAttese: Object.fromEntries((h.db.note_disciplinari ?? []).map(n => [n.id, 0])), ...body }))
 const elimina = (id: string, ambito?: string) =>
-  DELETE(richiesta('DELETE', `${BASE}?id=${id}${ambito ? `&ambito=${ambito}` : ''}`))
+  DELETE(richiesta('DELETE', `${BASE}?id=${id}&versioneAttesa=0&versioniAttese=${encodeURIComponent(JSON.stringify(Object.fromEntries((h.db.note_disciplinari ?? []).map(n => [n.id, 0]))))}${ambito ? `&ambito=${ambito}` : ''}`))
 
 const note = () => h.db.note_disciplinari as Riga[]
 const notaDb = (id: string) => note().find((n) => n.id === id)
@@ -379,16 +380,15 @@ describe('Permessi: autore, staff, sede, termine, sblocchi', () => {
     expect(notaDb(NOTA_1)?.testo).toBe('Testo originale')
   })
 
-  it('il termine vale anche per la Direzione: oltre 2 giorni 423 finché non c\'è lo sblocco del GIORNO', async () => {
+  it('la Direzione elimina lo storico senza sblocco conservando originale e firme', async () => {
     come('dirigente')
     const res = await elimina(NOTA_VECCHIA, 'alunno')
-    expect(res.status).toBe(423)
-    expect((await res.json()).codice).toBe('VOCE_BLOCCATA')
-    expect(notaDb(NOTA_VECCHIA)).toBeDefined()
-
-    h.db.sblocchi_audit.push({ entita_tipo: 'giorno', entita_id: null, section_id: SEZ, data: '2026-09-05', ora_lezione: null })
-    expect((await elimina(NOTA_VECCHIA, 'alunno')).status).toBe(200)
+    expect(res.status).toBe(200)
     expect(notaDb(NOTA_VECCHIA)).toBeUndefined()
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([
+      expect.objectContaining({ entita_id: NOTA_VECCHIA, modulo: 'note' }),
+    ]))
+    expect(h.db.sblocchi_audit).toHaveLength(0)
   })
 
   it('«tutti» esige il permesso su OGNI nota: uno sblocco per voce su una sola non basta per il gruppo', async () => {
@@ -543,5 +543,59 @@ describe('POST — la notifica porta il gruppo, così si può ritirare', () => {
     const accodate = h.db.notifiche as Riga[]
     expect(accodate.map((n) => n.utente_id).sort()).toEqual([GENITORE_1, GENITORE_2].sort())
     for (const n of accodate) expect(n).toMatchObject({ entita_tipo: 'nota', entita_id: gruppo, tipo: 'nota_firma' })
+  })
+})
+
+
+describe('rettifiche storiche: originale firmato conservato prima di toccarlo', () => {
+  it('preserva testo e ricezioni della nota storica prima della modifica staff', async () => {
+    come('dirigente')
+    notaDb(NOTA_1)!.creato_il = CINQUE_GIORNI_FA
+    const res = await patch({ id: NOTA_1, testo: 'Rettifica storica', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({ entita_id: NOTA_1, contenuto: { tabella: 'note_disciplinari', riga: expect.objectContaining({ testo: 'Testo originale', firmata_il: '2026-09-09T12:00:00Z' }) } }), expect.objectContaining({ contenuto: { tabella: 'nota_ricezioni', riga: expect.objectContaining({ nota_id: NOTA_1, genitore_id: GENITORE_1 }) } })]))
+    expect(notaDb(NOTA_1)?.firmata_il).toBeNull()
+    expect(ricezioni()).not.toContain(NOTA_1)
+  })
+  it.each(['modifica', 'elimina'])('archivio non disponibile: %s rifiutata senza perdere nota o firma', async operazione => {
+    come('dirigente')
+    notaDb(NOTA_1)!.creato_il = CINQUE_GIORNI_FA
+    h.db.storici_revisioni = []
+    h.errori = { 'storici_revisioni:insert': { code: 'PGRST205', message: 'schema non disponibile' } }
+    const res = operazione === 'modifica' ? await patch({ id: NOTA_1, testo: 'Rettifica storica', ambito: 'alunno' }) : await elimina(NOTA_1, 'alunno')
+    expect(res.status).toBe(503)
+    expect(notaDb(NOTA_1)).toMatchObject({ testo: 'Testo originale', firmata_il: '2026-09-09T12:00:00Z' })
+    expect(ricezioni()).toContain(NOTA_1)
+  })
+})
+
+
+describe('spostamento della competenza della nota', () => {
+  it('lo staff sposta la nota nel passato conservando originale e firme, senza perdere avvisi di altre note', async () => {
+    come('dirigente')
+    const res = await patch({ id: NOTA_1, data: '2020-04-02', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(notaDb(NOTA_1)?.data_evento).toBe('2020-04-02')
+    expect(notaDb(NOTA_1)?.nota_gruppo_id).not.toBe(GRUPPO)
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({ entita_id: NOTA_1, contenuto: { tabella: 'note_disciplinari', riga: expect.objectContaining({ nota_gruppo_id: GRUPPO, testo: 'Testo originale' }) } }), expect.objectContaining({ contenuto: { tabella: 'nota_ricezioni', riga: expect.objectContaining({ nota_id: NOTA_1 }) } })]))
+    expect(notificheIds()).toContain('5') // altro gruppo, stesso genitore
+    expect(notificheIds()).toContain('2') // nota di un altro bambino rimasta nel giorno originale
+  })
+  it('il docente deve rispettare il termine anche della data nuova', async () => {
+    const res = await patch({ id: NOTA_1, data: '2020-04-02', ambito: 'alunno' })
+    expect(res.status).toBe(423)
+    expect(notaDb(NOTA_1)?.data_evento).toBeUndefined()
+    expect(ricezioni()).toContain(NOTA_1)
+  })
+})
+
+describe('concorrenza delle note firmate', () => {
+  it('una firma nuova dopo apertura del form rende obsoleta la rettifica staff', async () => {
+    come('dirigente')
+    notaDb(NOTA_1)!.storico_versione = 1
+    expect((await patch({id:NOTA_1,testo:'Correzione fittizia',ambito:'alunno'})).status).toBe(409)
+    expect(notaDb(NOTA_1)).toMatchObject({testo:'Testo originale',firmata_il:'2026-09-09T12:00:00Z'})
+    expect(ricezioni()).toContain(NOTA_1)
+    expect(h.db.storici_revisioni ?? []).toHaveLength(0)
   })
 })

@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
@@ -84,6 +85,7 @@ export function chiaveDigest(edizioneId: string, email: string): string {
 }
 
 export interface PostDigest {
+  politica_operazione?: ContestoNotificaOperazione | null
   id: string
   titolo: string
   stato: string
@@ -138,7 +140,7 @@ function estratto(testo: string | null | undefined, max = 160): string | null {
 
 export function componiDigest(posts: PostDigest[], params: ComponiDigestParams): DigestComposto | null {
   const { anno, mese, sede } = params
-  const delMese = (posts ?? []).filter((p) => p.stato === 'pubblicata' && nelMese(p.pubblicata_il, anno, mese))
+  const delMese = (posts ?? []).filter((p) => p.stato === 'pubblicata' && deveNotificareGenitori(p.politica_operazione) && nelMese(p.pubblicata_il, anno, mese))
   if (delMese.length === 0) return null
 
   const ordinati = [...delMese].sort((a, b) => {
@@ -428,7 +430,7 @@ export async function generaEInviaDigest(
     const { inizio, fine } = estremiMese(anno, mese)
     const { data: postRows, error: postErr } = await supabase
       .from('news_posts')
-      .select('id, titolo, stato, pinned, pubblicata_il, contenuto_testo, categoria_id, target_scope')
+      .select('id, titolo, stato, pinned, pubblicata_il, contenuto_testo, categoria_id, target_scope, politica_operazione')
       .eq('stato', 'pubblicata')
       .or(`scuola_id.eq.${sede.id},scuola_id.is.null`)
       .gte('pubblicata_il', inizio)

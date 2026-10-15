@@ -76,6 +76,9 @@
   "diaryTitle": "0-6 Diary",
   "diarySubtitle": "View today’s attendance (roll call stays with the teachers) and fill in/update the class diary.",
   "diaryNessunaSezione": "No nursery/preschool section in your locations. If that’s not what you expected, check that your user profile has an associated location (Directory → Staff).",
+  "diaryLabelData": "Diary date",
+  "diaryStatPresentiData": "Present on the selected date",
+  "diaryVuotoPresentiData": "No attendance recorded on the selected date. Choose “All” to view the class.",
   "diaryLabelSede": "Location:",
   "diaryLabelSezione": "Section:",
   "diaryToggleTitleTutti": "Showing all children",
@@ -797,5 +800,6 @@
   "archiviazioneMantieneRegistro": "The register stays intact: attendance, diary and signed notes are untouched",
   "archiviazioneMantieneValutazioni": "Assessments, report cards and boards stay in place",
   "archiviazioneMantieneChat": "Conversations with families remain readable",
-  "archiviazioneMantieneAudit": "The audit log still says who did what"
+  "archiviazioneMantieneAudit": "The audit log still says who did what",
+  "diaryClasseStorica": "historical"
 }

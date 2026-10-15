@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -385,6 +386,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
       )
       await notificaEvento(supabase, {
         tipo: 'pagamento_emesso',
+            operazione: politicaNotificaServizio(auth.user, scadenza, ...(rate?.map(r => r.scadenza) ?? [])),
         scuolaId: sediGenerate.size === 1 ? [...sediGenerate][0] : null,
         alunnoIds: alunniGenerati,
         titolo: 'Nuovo pagamento disponibile',

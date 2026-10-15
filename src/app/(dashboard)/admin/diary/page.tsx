@@ -1,6 +1,7 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { oggiRoma } from '@/lib/storici/retroattivita';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { voceDaMostrare } from '@/lib/diary/registrazione';
 import { useTranslations } from 'next-intl';
 import { BookOpen, CheckCircle2, Users } from 'lucide-react';
@@ -8,6 +9,7 @@ import { CockpitPage, PageHeader, StatCard, CockpitSelect } from '@/components/u
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 
 // Diario 0-6 nel cockpit (segreteria/direzione): selettore sede/sezione dai
 // plessi consentiti, presenze del giorno in consultazione (l'appello resta
@@ -17,14 +19,16 @@ interface SezioneScoped { id: string; name: string; school_type: string }
 interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: SezioneScoped[] }
 
 function todayISO() {
-  return new Date().toISOString().split('T')[0];
+  return oggiRoma();
 }
 
 function AdminDiaryInner() {
   const t = useTranslations('adminAltro');
   const { userId } = useSessionIdentity();
+  const [dataDiario, setDataDiario] = useState(todayISO);
   const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
   const [scuolaId, setScuolaId] = useState('');
+  const [classiStoriche, setClassiStoriche] = useState<{ scuolaId: string; classi: SezioneScoped[] } | null>(null);
   // La sezione si sceglie per UUID (2026-09-28): per nome, due sezioni omonime di due sedi
   // («Girasoli» esiste in più plessi) si mescolavano — bambini di una sede con le routine
   // dell'altra, e «Compilato» che contava entrambe.
@@ -32,14 +36,16 @@ function AdminDiaryInner() {
   const [scopedLoaded, setScopedLoaded] = useState(false);
   const [compilati, setCompilati] = useState<number | null>(null);
 
+  const giroCompilati = useRef(0);
   const loadCompilati = (sez: string | null, sede: string) => {
     if (!sez || !userId) return;
-    const qs = new URLSearchParams({ sectionId: sez, date: todayISO(), userId });
+    const giro = ++giroCompilati.current;
+    const qs = new URLSearchParams({ sectionId: sez, date: dataDiario, userId });
     if (sede) qs.set('scuola_id', sede);
     fetch(`/api/diary/entries?${qs.toString()}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        if (!Array.isArray(d)) return;
+        if (giro !== giroCompilati.current || !Array.isArray(d)) return;
         // Contava le righe vuote, quindi diceva sempre «tutta la classe»: è il
         // numero su cui la direzione si fida per sapere se il diario è stato
         // compilato davvero. Ora conta chi ha una registrazione vera.
@@ -52,7 +58,13 @@ function AdminDiaryInner() {
       .catch((err: unknown) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-compilati-non-letti: ${nomeErrore(err)}` }));
   };
 
-  const scuola = useMemo(() => scuole.find(s => s.scuolaId === scuolaId) ?? null, [scuole, scuolaId]);
+  const storico = dataDiario < todayISO();
+  const scuola = useMemo(() => {
+    const corrente = scuole.find(s => s.scuolaId === scuolaId);
+    if (!corrente) return null;
+    const precedenti = storico && classiStoriche?.scuolaId === scuolaId ? classiStoriche.classi : [];
+    return { ...corrente, sezioni: [...new Map([...precedenti, ...corrente.sezioni].map(s => [s.id, s])).values()] };
+  }, [scuole, scuolaId, classiStoriche, storico]);
   const sezione = scuola?.sezioni.find(s => s.id === sectionId)?.name ?? null;
 
   // La sede del selettore arriva all'editor (2026-09-28): le routine sono per sede, e la
@@ -63,6 +75,7 @@ function AdminDiaryInner() {
     onSaved: () => loadCompilati(sectionId, scuolaId),
     sectionId: sectionId ?? undefined,
     scuolaId: scuolaId || null,
+    date: dataDiario,
   });
 
   useEffect(() => {
@@ -72,7 +85,7 @@ function AdminDiaryInner() {
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (!active || !d?.success) return;
-        const list: ScuolaScoped[] = (d.data ?? []).filter((g: ScuolaScoped) => g.sezioni.length > 0);
+        const list: ScuolaScoped[] = d.data ?? [];
         setScuole(list);
         const first = list[0];
         setScuolaId(cur => cur || (first?.scuolaId ?? ''));
@@ -84,9 +97,19 @@ function AdminDiaryInner() {
   }, [userId]);
 
   useEffect(() => {
+    if (!userId || !scuolaId || !storico) return;
+    let attivo = true;
+    fetch(`/api/admin/storici/catalogo?scuolaId=${scuolaId}&userId=${userId}`)
+      .then(async r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(d => { if (attivo) setClassiStoriche({ scuolaId, classi: (d.classiStoriche ?? []).map((s: { id: string; name: string }) => ({ ...s, school_type: '' })) }); })
+      .catch((err: unknown) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-classi-storiche-non-lette: ${nomeErrore(err)}` }));
+    return () => { attivo = false; };
+  }, [scuolaId, userId, storico]);
+
+  useEffect(() => {
     loadCompilati(sectionId, scuolaId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId, scuolaId, userId]);
+  }, [sectionId, scuolaId, userId, dataDiario]);
 
   const pickScuola = (id: string) => {
     setScuolaId(id);
@@ -109,6 +132,7 @@ function AdminDiaryInner() {
         icon={BookOpen}
         title={t('diaryTitle')}
         subtitle={t('diarySubtitle')}
+        actions={<LinkStorici scuolaId={scuolaId || undefined} sectionId={sectionId ?? undefined} gruppo="diario" dal={dataDiario} al={dataDiario} />}
       />
 
       {scopedLoaded && scuole.length === 0 ? (
@@ -121,6 +145,15 @@ function AdminDiaryInner() {
         <>
           {/* Selettori sede/sezione + filtro presenze */}
           <div className="mb-4 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2">
+              <span className="font-maven text-sm text-kidville-ink/70">{t('diaryLabelData')}</span>
+              <input type="date" value={dataDiario} max={todayISO()}
+                className="rounded-xl border border-kidville-line bg-white px-3 py-2 font-maven text-sm"
+                onChange={e => { if (e.target.value) {
+                  setDataDiario(e.target.value); setCompilati(null); day.resetSelection();
+                  if (e.target.value === todayISO() && !scuole.find(s => s.scuolaId === scuolaId)?.sezioni.some(s => s.id === sectionId)) setSectionId(scuole.find(s => s.scuolaId === scuolaId)?.sezioni[0]?.id ?? null);
+                } }} />
+            </label>
             {scuole.length > 1 && (
               <label className="flex items-center gap-2">
                 <span className="font-maven text-sm text-kidville-ink/70">{t('diaryLabelSede')}</span>
@@ -136,7 +169,7 @@ function AdminDiaryInner() {
               <CockpitSelect
                 value={sectionId ?? ''}
                 onChange={pickSezione}
-                options={(scuola?.sezioni ?? []).map(s => ({ value: s.id, label: `${s.name} (${s.school_type})` }))}
+                options={(scuola?.sezioni ?? []).map(s => ({ value: s.id, label: `${s.name} (${s.school_type || t('diaryClasseStorica')})` }))}
               />
             </label>
             <button
@@ -156,7 +189,7 @@ function AdminDiaryInner() {
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
             <StatCard
               icon={Users}
-              label={day.showAll ? t('diaryStatAlunniTutti') : t('diaryStatPresentiOggi')}
+              label={day.showAll ? t('diaryStatAlunniTutti') : t('diaryStatPresentiData')}
               value={day.isLoading ? '…' : day.students.length}
               sub={sezione ? t('diarySezioneSub', { sezione }) : undefined}
             />
@@ -164,7 +197,7 @@ function AdminDiaryInner() {
               icon={CheckCircle2}
               label={t('diaryStatCompilato')}
               value={compilati ?? '…'}
-              sub={t('diaryOggi')}
+              sub={dataDiario}
               tone="yellow"
             />
           </div>
@@ -173,13 +206,13 @@ function AdminDiaryInner() {
           {!day.isLoading && (
             <div className="rounded-card bg-kidville-white p-4 shadow-sm">
               <p className="font-barlow mb-2 text-xs font-bold uppercase tracking-wide text-kidville-green">
-                {day.showAll ? t('diaryHeadingAlunni') : t('diaryStatPresentiOggi')}
+                {day.showAll ? t('diaryHeadingAlunni') : t('diaryStatPresentiData')}
               </p>
               {day.students.length === 0 ? (
                 <p className="font-maven text-sm text-kidville-muted">
                   {day.showAll
                     ? t('diaryVuotoTutti')
-                    : t('diaryVuotoPresenti')}
+                    : t('diaryVuotoPresentiData')}
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">

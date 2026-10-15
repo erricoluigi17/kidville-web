@@ -1,3 +1,5 @@
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche } from '@/lib/primaria/rettifica-storica'
+import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -90,6 +92,7 @@ const postBodySchema = z.object({
 const patchBodySchema = z
   .object({
     id: zUuid,
+    versioneAttesa: z.number().int().nonnegative().optional(),
     tipo: z.enum(TIPI).optional(),
     motivo: zMotivo,
     materiaId: zUuid.nullable().optional(),
@@ -100,7 +103,7 @@ const patchBodySchema = z
     { message: 'Nessun campo da modificare' },
   )
 
-const deleteQuerySchema = z.object({ id: zUuid })
+const deleteQuerySchema = z.object({ id: zUuid, versioneAttesa: z.coerce.number().int().nonnegative().optional() })
 
 // ─── Pezzi comuni ────────────────────────────────────────────────────────────
 
@@ -177,12 +180,13 @@ function rispostaMateriaNonValida(): NextResponse {
  * sede, data, origine) e quelle della fotografia per l'audit. La sede è quella
  * della CLASSE (`sections.scuola_id`): da lì si leggono i termini.
  */
-const COLONNE_VOCE = 'id, alunno_id, section_id, materia_id, data, motivo, tipo, origine, creato_da, creato_il, sections(scuola_id), materie(nome)'
+const COLONNE_VOCE = '*, sections(scuola_id), materie(nome)'
 const COLONNE_VOCE_SENZA_TIPO = COLONNE_VOCE.replace(' tipo,', '')
 
 type Embed<T> = T | T[] | null | undefined
 
 interface RigaVoce {
+  [campo: string]: unknown
   id: string
   alunno_id: string
   section_id: string | null
@@ -393,6 +397,7 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
     // senza bottoni (fail-closed), e il flag lo dichiara. Il guasto l'ha già
     // loggato permesso-voce.
     const esiti = stato.ok ? stato.esiti : null
+    const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'giustifiche_didattiche', righe.map(r => r.id)) : new Map<string, number>()
     const elenco = righe.map((r) => {
       // `creato_da` serve al permesso, non alla pagina.
       const { creato_da: _autore, ...resto } = r
@@ -400,6 +405,7 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
       const e = esiti?.get(chiaveVoce('impreparato', r.id))
       return {
         ...resto,
+        storico_versione: versioni.get(r.id),
         tipo: tipoDiRiga(r),
         modificabile: e?.modificabile ?? false,
         bloccata: e?.bloccata ?? false,
@@ -503,6 +509,7 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
       const { titolo, corpo } = testoNotifica(salvatoTipo, materiaNome, data, nome)
       await enqueueNotifichePerAlunni(supabase, {
         alunnoIds: [alunnoId],
+        operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: data }),
         tipo: TIPO_NOTIFICA,
         titolo,
         corpo,
@@ -605,7 +612,14 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
         .eq('id', id)
         .eq('section_id', sectionId)
         .select(colonne)
-    let scritte = Object.keys(patch).length > 0 ? await scrivi(patch, COLONNE_VOCE) : null
+    const storica = eRettificaStorica(auth.user, data ?? voce.data, voce.data)
+    let scritte: { data: unknown; error: { code?: string; message: string } | null } | null
+    if (storica && Object.keys(patch).length > 0) {
+      if (voce.storico_versione === undefined || !scuolaId) return storicoIndisponibile()
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, alunnoId: voce.alunno_id, sectionId, modulo: 'giustifiche-didattiche', giorno: voce.data, attese: [{ tabella: 'giustifiche_didattiche', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni: [{ tabella: 'giustifiche_didattiche', operazione: 'update', filtro: { id, section_id: sectionId }, valori: patch }] })
+      if ('response' in rettifica) return rettifica.response
+      scritte = { data: rettifica.righe[0], error: null }
+    } else scritte = Object.keys(patch).length > 0 ? await scrivi(patch, COLONNE_VOCE) : null
     if (scritte?.error && COLONNA_ASSENTE.has(codiceDi(scritte.error))) {
       // DB non migrato (E2E della CI): senza la colonna `tipo` si scrive il resto.
       logEvento('registro', 'info', { operazione, esito: 'tipo-non-disponibile-schema' }, scritte.error)
@@ -643,9 +657,8 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
       // Il nome si rilegge: la notifica in coda lo porta nel titolo, e riscriverlo senza lo toglierebbe.
       const nome = await nomeAlunnoPerNotifica(supabase, voce.alunno_id, operazione)
       const { titolo, corpo } = testoNotifica(tipoDopo, materiaNome, String(dopo.data ?? ''), nome)
-      const { error: notifErr } = await supabase
-        .from('notifiche')
-        .update({ titolo, corpo })
+      const coda = supabase.from('notifiche')
+      const { error: notifErr } = await (storica ? coda.delete() : coda.update({ titolo, corpo }))
         .eq('tipo', TIPO_NOTIFICA)
         .eq('entita_tipo', ENTITA_NOTIFICA)
         .eq('entita_id', id)
@@ -723,12 +736,17 @@ export const DELETE = withRoute('primaria/giustifiche-didattiche:DELETE', async 
     const sectionId = voce.section_id as string
     const scuolaId = scuolaDellaClasse(voce)
 
-    const { data: tolte, error: delErr } = await supabase
-      .from('giustifiche_didattiche')
-      .delete()
-      .eq('id', id)
-      .eq('section_id', sectionId)
-      .select('id')
+    let tolte: unknown[] | null
+    let delErr: unknown = null
+    if (eRettificaStorica(auth.user, voce.data)) {
+      if (voce.storico_versione === undefined || !scuolaId) return storicoIndisponibile()
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, alunnoId: voce.alunno_id, sectionId, modulo: 'giustifiche-didattiche', giorno: voce.data, attese: [{ tabella: 'giustifiche_didattiche', filtro: { id, section_id: sectionId }, versione: q.data.versioneAttesa }], azioni: [{ tabella: 'giustifiche_didattiche', operazione: 'delete', filtro: { id, section_id: sectionId } }] })
+      if ('response' in rettifica) return rettifica.response
+      tolte = rettifica.righe[0]
+    } else {
+      const esito = await supabase.from('giustifiche_didattiche').delete().eq('id', id).eq('section_id', sectionId).select('id')
+      tolte = esito.data; delErr = esito.error
+    }
     if (delErr) {
       logEvento('registro', 'error', { operazione, esito: 'impreparato-non-eliminato', giustifica_id: id }, delErr)
       return rispostaNonSalvato()

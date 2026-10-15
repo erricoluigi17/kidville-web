@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
@@ -35,15 +36,21 @@ async function genitoriDiAlunno(supabase: SupabaseClient, alunnoId: string): Pro
 async function notifica(
   supabase: SupabaseClient,
   alunnoId: string,
-  n: { tipo: string; titolo: string; corpo: string; ordineId?: string | null },
+  n: { tipo: string; titolo: string; corpo: string; ordineId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
   try {
+    if (!deveNotificareGenitori(n.operazione)) {
+      logEvento('notifica', 'info', { operazione: 'merch/notify', esito: 'rettifica-storica-silenziosa', tipo: n.tipo, alunno_id: alunnoId })
+      return
+    }
     const genitori = await genitoriDiAlunno(supabase, alunnoId)
     if (genitori.length === 0) return
     // Scuola dell'alunno per il gate dei toggle notifiche (best-effort).
     const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
     await enqueueNotifiche(supabase, {
       utenteIds: genitori,
+      destinatario: 'genitore',
+      operazione: n.operazione,
       tipo: n.tipo,
       titolo: n.titolo,
       corpo: n.corpo,
@@ -67,7 +74,7 @@ async function notifica(
 /** Notifica "articolo arrivato": pronto per il ritiro/consegna. */
 export async function notificaMerchArrivato(
   supabase: SupabaseClient,
-  opts: { alunnoId: string; nomeAlunno?: string | null; articoli: string[]; ordineId?: string | null },
+  opts: { alunnoId: string; nomeAlunno?: string | null; articoli: string[]; ordineId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
   const lista = opts.articoli.slice(0, 4).join(', ') + (opts.articoli.length > 4 ? '…' : '')
   await notifica(supabase, opts.alunnoId, {
@@ -75,13 +82,14 @@ export async function notificaMerchArrivato(
     titolo: 'Merchandise arrivato',
     corpo: `È arrivato il materiale ordinato${lista ? `: ${lista}` : ''}. Sarà consegnato a scuola.`,
     ordineId: opts.ordineId,
+    operazione: opts.operazione,
   })
 }
 
 /** Notifica "consegnato": materiale consegnato all'alunno. */
 export async function notificaMerchConsegnato(
   supabase: SupabaseClient,
-  opts: { alunnoId: string; nomeAlunno?: string | null; articoli: string[]; ordineId?: string | null },
+  opts: { alunnoId: string; nomeAlunno?: string | null; articoli: string[]; ordineId?: string | null; operazione?: ContestoNotificaOperazione },
 ): Promise<void> {
   const lista = opts.articoli.slice(0, 4).join(', ') + (opts.articoli.length > 4 ? '…' : '')
   await notifica(supabase, opts.alunnoId, {
@@ -89,5 +97,6 @@ export async function notificaMerchConsegnato(
     titolo: 'Merchandise consegnato',
     corpo: `Il materiale è stato consegnato${lista ? `: ${lista}` : ''}.`,
     ordineId: opts.ordineId,
+    operazione: opts.operazione,
   })
 }

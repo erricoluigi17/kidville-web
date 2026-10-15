@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => {
   interface Chiamata {
     table: string
-    op: 'select' | 'update' | 'delete' | 'insert'
+    op: 'select' | 'update' | 'delete' | 'insert' | 'rpc'
     payload?: unknown
     cols?: string
     filtri: unknown[][]
@@ -24,6 +24,7 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc(nome: string, args: unknown) { state.chiamate.push({ table: nome, op: 'rpc', payload: args, filtri: [] }); return Promise.resolve(take(`${nome}:rpc`)) },
       from(table: string) {
         const c: Chiamata = { table, op: 'select', filtri: [] }
         state.chiamate.push(c)
@@ -101,7 +102,7 @@ const faGiorni = (n: number) => new Date(Date.now() - n * GIORNO).toISOString()
 
 function riga(over: Record<string, unknown> = {}) {
   return {
-    id: VAL, alunno_id: ALU, maestra_id: AUTORE, section_id: SEZ, materia: 'Matematica', materia_id: MAT,
+    id: VAL, storico_versione: 0, alunno_id: ALU, maestra_id: AUTORE, section_id: SEZ, materia: 'Matematica', materia_id: MAT,
     tipo: 'orale', modalita: 'sintetico', argomento: 'Tabelline',
     dim_autonomia: null, dim_continuita: null, dim_tipologia: null, dim_risorse: null,
     giudizio_sintetico: 'Buono', giudizio_testo: null, annotazione_numerica: null,
@@ -123,12 +124,12 @@ function utente(id: string, role: string) {
 function patch(body: unknown): NextRequest {
   return new NextRequest(`http://localhost/api/primaria/valutazioni?userId=${AUTORE}`, {
     method: 'PATCH',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ versioneAttesa: 0, ...(body as Record<string, unknown>) }),
     headers: { 'content-type': 'application/json' },
   })
 }
 function del(id: string): NextRequest {
-  return new NextRequest(`http://localhost/api/primaria/valutazioni?id=${id}&userId=${AUTORE}`, { method: 'DELETE' })
+  return new NextRequest(`http://localhost/api/primaria/valutazioni?id=${id}&versioneAttesa=0&userId=${AUTORE}`, { method: 'DELETE' })
 }
 
 const chiamate = (table: string, op: string) => h.state.chiamate.filter((c) => c.table === table && c.op === op)
@@ -218,8 +219,7 @@ describe('PATCH /api/primaria/valutazioni', () => {
     expect(chiamate('valutazioni', 'update')).toHaveLength(1)
   })
 
-  it('423 VOCE_BLOCCATA oltre il termine (orale di 5 giorni fa), anche per la Direzione', async () => {
-    utente(ALTRA, 'admin')
+  it('423 VOCE_BLOCCATA per il docente oltre il termine (orale di 5 giorni fa)', async () => {
     coda('valutazioni:select', { data: riga({ creato_il: faGiorni(5) }), error: null })
     const res = await PATCH(patch(CORPO))
     expect(res.status).toBe(423)
@@ -530,5 +530,24 @@ describe('GET /api/primaria/valutazioni — modificabile e bloccata per voce', (
     const body = await res.json()
     expect(body.statoVociDisponibile).toBe(false)
     expect(body.data[0]).toMatchObject({ id: MIA_RECENTE, modificabile: false, bloccata: false })
+  })
+})
+
+
+describe('spostamento della competenza della valutazione', () => {
+  it('lo staff cambia data senza limiti conservando la data originale in archivio', async () => {
+    utente(ALTRA, 'admin')
+    const originale = riga({ data_evento: '2026-10-15' })
+    coda('valutazioni:select', { data: originale, error: null })
+    coda('storici_applica_rettifica:rpc', { data: [{ righe: [riga({ data_evento: '2020-04-02' })] }], error: null })
+    expect((await PATCH(patch({ ...CORPO, data: '2020-04-02' }))).status).toBe(200)
+    expect(chiamate('storici_applica_rettifica', 'rpc')[0]?.payload).toMatchObject({ contesto: expect.objectContaining({ giorno_competenza: '2026-10-15' }), attese: [expect.objectContaining({ versione: 0 })], azioni: expect.arrayContaining([expect.objectContaining({ tabella: 'valutazioni', operazione: 'update', valori: expect.objectContaining({ data_evento: '2020-04-02' }) })]) })
+    expect(chiamate('notifiche', 'delete')).toHaveLength(1)
+    expect(chiamate('notifiche', 'update')).toHaveLength(0)
+  })
+  it('il docente resta vincolato al termine della data nuova', async () => {
+    coda('valutazioni:select', { data: riga(), error: null })
+    expect((await PATCH(patch({ ...CORPO, data: '2020-04-02' }))).status).toBe(423)
+    expect(chiamate('valutazioni', 'update')).toHaveLength(0)
   })
 })

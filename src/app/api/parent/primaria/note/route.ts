@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
@@ -28,11 +28,23 @@ export const GET = withRoute('parent/primaria/note:GET', async (request: NextReq
     if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
-    const { data: note } = await supabase
+    const leggi = (conData: boolean) => supabase
       .from('note_disciplinari')
-      .select('id, categoria, testo, richiede_firma, firmata_il, creato_il')
+      .select(conData
+        ? 'id, categoria, testo, richiede_firma, firmata_il, creato_il, data_evento'
+        : 'id, categoria, testo, richiede_firma, firmata_il, creato_il')
       .eq('alunno_id', studentId)
       .order('creato_il', { ascending: false })
+    let risultato = await leggi(true)
+    if (risultato.error && ['42703', 'PGRST204'].includes(risultato.error.code ?? '')) {
+      logEvento('registro', 'info', { operazione: 'parent/primaria/note:GET', esito: 'data-evento-schema-precedente' }, risultato.error)
+      risultato = await leggi(false)
+    }
+    if (risultato.error) {
+      logErrore({ operazione: 'parent/primaria/note:GET', stato: 500, evento: 'db' }, risultato.error)
+      return NextResponse.json({ error: 'Lettura non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
+    const note = risultato.data
 
     return NextResponse.json({ success: true, data: note ?? [] })
   } catch (err) {

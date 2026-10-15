@@ -97,8 +97,8 @@ describe('DELETE /api/diary/entries', () => {
     await DELETE(req(QS))
     expect(h.clausole.alunno_id).toBe(ALUNNO)
     expect(h.clausole.tipo_evento).toBe('nanna_inizio')
-    expect(String(h.clausole.gte)).toContain('2026-09-07')
-    expect(String(h.clausole.lte)).toContain('2026-09-07')
+    expect(h.clausole.gte).toBe('2026-09-06T22:00:00.000Z')
+    expect(h.clausole.lte).toBe('2026-09-07T21:59:59.999Z')
   })
 
   it('il gate di ruolo viene PRIMA: negato ⇒ nessuna cancellazione', async () => {

@@ -49,6 +49,7 @@ beforeEach(() => {
       });
     }
     if (u.includes('/api/diary/config')) return risposta({ routine_attive: null, routine_personalizzate: [] });
+    if (u.includes('/api/admin/storici/catalogo')) return risposta({ classiStoriche: [{ id: '33333333-0000-4000-8000-000000000003', name: 'Classe rimossa' }] });
     if (u.includes('/api/diary/students')) return risposta([{ id: 'a1', nome: 'Ada', cognome: 'B', note_mediche: null }]);
     return risposta([]);
   }));
@@ -58,6 +59,14 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const chiamateA = (frammento: string) => stub.chiamate.filter((u) => u.includes(frammento));
 
 describe('/admin/diary — sezioni omonime di sedi diverse', () => {
+  it('nel passato permette di scegliere una classe rimossa dall’elenco corrente', async () => {
+    const { container } = render(<AdminDiaryPage />);
+    await screen.findByDisplayValue('Giugliano');
+    fireEvent.change(container.querySelector('input[type="date"]')!, { target: { value: '2020-10-15' } });
+    const voce = await screen.findByRole('option', { name: /Classe rimossa/ });
+    fireEvent.change(voce.closest('select')!, { target: { value: '33333333-0000-4000-8000-000000000003' } });
+    await waitFor(() => expect(chiamateA('/api/diary/students').some(u => u.includes('sectionId=33333333-0000-4000-8000-000000000003') && u.includes('date=2020-10-15') && u.includes(`scuola_id=${GIUGLIANO}`))).toBe(true));
+  });
   it('bambini, voci e «Compilato» si chiedono per UUID della sezione; le routine per la sede scelta', async () => {
     render(<AdminDiaryPage />);
     await waitFor(() => expect(chiamateA('/api/diary/students').some((u) => u.includes(`sectionId=${SEZ_G}`))).toBe(true));

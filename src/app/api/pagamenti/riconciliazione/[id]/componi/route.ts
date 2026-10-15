@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -226,6 +227,7 @@ export const POST = withRoute(
         try {
           await notificaEvento(supabase, {
             tipo: 'pagamento_registrato',
+            operazione: politicaNotificaServizio(user, esito.ok.dataOperazione),
             scuolaId: body.scuola_id,
             alunnoIds: alunniCoinvolti,
             titolo: 'Pagamento registrato',
@@ -241,7 +243,7 @@ export const POST = withRoute(
           }, e)
         }
         try {
-          await verificaRevocaSospensioneMorosita(supabase, alunniCoinvolti)
+          await verificaRevocaSospensioneMorosita(supabase, alunniCoinvolti, politicaNotificaServizio(user, esito.ok.dataOperazione))
         } catch (e) {
           logEvento('pagamento', 'error', { operazione: OPERAZIONE, esito: 'revoca_non_verificata' }, e)
         }

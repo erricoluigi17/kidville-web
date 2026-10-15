@@ -1,3 +1,5 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma, istanteNelGiornoRoma } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -6,7 +8,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { sincronizzaTestata, poCompleto, type StatoRiga } from '@/lib/merch/stati'
 import { notificaMerchArrivato } from '@/lib/merch/notify'
 import { withRoute } from '@/lib/logging/with-route'
@@ -18,7 +20,7 @@ import { logErrore } from '@/lib/logging/logger'
 
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 
-const bodySchema = z.object({
+const bodySchema = z.object({ giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
   righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga'),
 })
 
@@ -69,7 +71,7 @@ export const POST = withRoute('admin/merch/ordini-fornitore/checkin:POST', async
       return NextResponse.json({ error: 'Solo righe già ordinate possono essere ricevute (check-in)' }, { status: 409 })
     }
 
-    const now = new Date().toISOString()
+    const now = b.data.giorno_competenza ? istanteNelGiornoRoma(b.data.giorno_competenza) : new Date().toISOString()
     // guard ottimistico: aggiorna SOLO le righe ancora 'ordinato' (anti-race)
     const { data: updatedRows, error: updErr } = await supabase.from('divise_ordini_righe').update({ stato: 'arrivato', arrivato_il: now }).in('id', righe_ids).eq('stato', 'ordinato').select('id')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
@@ -93,7 +95,7 @@ export const POST = withRoute('admin/merch/ordini-fornitore/checkin:POST', async
       perAlunno.set(aid, cur)
     }
     for (const [alunnoId, info] of perAlunno) {
-      await notificaMerchArrivato(supabase, { alunnoId, articoli: info.articoli, ordineId: info.ordineId })
+      await notificaMerchArrivato(supabase, { alunnoId, articoli: info.articoli, ordineId: info.ordineId, operazione: politicaNotificaServizio(auth.user, now) })
     }
 
     await logScrittura(supabase, {

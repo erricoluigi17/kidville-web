@@ -1,5 +1,7 @@
 'use client';
 
+import { oggiRoma } from '@/lib/storici/retroattivita';
+import { CompetenzaStorica } from '@/components/features/primaria/CompetenzaStorica';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -33,6 +35,8 @@ function paginaCorrente(): string | undefined {
 export default function ValutazioniPage() {
   const t = useTranslations('teacherPrimaria');
   const f = useDateFormat();
+  const [dataCompetenza, setDataCompetenza] = useState(oggiRoma);
+  const [docenteId, setDocenteId] = useState('');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -61,6 +65,8 @@ export default function ValutazioniPage() {
   const [recentiIncomplete, setRecentiIncomplete] = useState(false);
   /** Il ruolo di chi guarda (`/api/primaria/me`): decide solo se «Sblocca» si mostra. */
   const [ruolo, setRuolo] = useState<string | null>(null);
+  const [profiloStorico, setProfiloStorico] = useState(false);
+  const gestioneStorica = profiloStorico || ['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '');
   /** L'esito dell'ultima modifica/eliminazione, sopra l'elenco, con la selezione a cui appartiene. */
   const [esitoElenco, setEsitoElenco] = useState<{ testo: string; tipo: 'ok' | 'errore'; selezione: string } | null>(null);
   /**
@@ -251,7 +257,7 @@ export default function ValutazioniPage() {
     let vivo = true;
     fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (vivo && d?.success && typeof d.data?.ruolo === 'string') setRuolo(d.data.ruolo); })
+      .then((d) => { if (vivo && d?.success && typeof d.data?.ruolo === 'string') { setRuolo(d.data.ruolo); setProfiloStorico(d.data.puoCorreggereStorico === true); } })
       .catch((err) => {
         logClient({
           livello: 'warn',
@@ -289,7 +295,7 @@ export default function ValutazioniPage() {
           sectionId,
           alunnoId: alunnoInviato,
           materiaId: materiaId || undefined,
-          data: dataCivile(),
+          data: gestioneStorica ? dataCompetenza : dataCivile(),
           tipo: tipoNuovoImpreparato,
           motivo: motivo || undefined,
         }),
@@ -345,6 +351,7 @@ export default function ValutazioniPage() {
     if (!userId) { setMsg(t('comuneIdentitaNonRisolta')); return; }
     // Collegamento obiettivo obbligatorio quando la materia/livello ne ha di configurati (DL-015).
     if (obiettivi.length > 0 && obiettiviSel.length === 0) { setMsg(t('valutazioniCollegaObiettivo')); return; }
+    if (gestioneStorica && !docenteId) { setMsg(t('firmaModalDocenteObbligatorio')); return; }
     setSaving(true);
     // Fino al 2026-09-30: nessun `try`, e una fetch che lanciava lasciava il
     // bottone su «Salvataggio…» per sempre; un rifiuto si mostrava ma non si
@@ -357,6 +364,7 @@ export default function ValutazioniPage() {
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({
           alunnoId, sectionId, materiaId, tipoProva, modalita,
+          ...(gestioneStorica ? { data: dataCompetenza, docenteId } : {}),
           dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
           giudizioSintetico,
           giudizioTesto: giudizioTesto || undefined,
@@ -448,6 +456,8 @@ export default function ValutazioniPage() {
             </select>
           )}
         </div>
+
+        <CompetenzaStorica attiva={gestioneStorica} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataCompetenza} docenteId={docenteId} onDocente={setDocenteId} />
 
         {obiettivi.length > 0 && (
           <div className="mb-3 rounded-card border border-kidville-green/20 bg-kidville-cream/40 p-3">
@@ -599,7 +609,7 @@ export default function ValutazioniPage() {
                   <AzioniVoce
                     voce={voce}
                     userId={userId ?? ''}
-                    ruolo={ruolo}
+                    ruolo={gestioneStorica && !['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '') ? 'segreteria' : ruolo}
                     permessiDisponibili={permessiDisponibili && !!userId}
                     scala={scala}
                     obiettivi={obiettivi}
@@ -645,7 +655,7 @@ export default function ValutazioniPage() {
                           ✎ {String(v.annotazione_numerica).replace('.', ',')}
                         </span>
                       )}
-                      <span className="text-xs text-kidville-sub">{f.dataBreve(v.creato_il)}</span>
+                      <span className="text-xs text-kidville-sub">{f.dataBreve(v.data_evento ?? v.creato_il)}</span>
                     </div>
                     {v.argomento && <p className="font-maven text-xs text-kidville-ink mt-0.5"><span className="text-kidville-sub">{t('valutazioniArgomentoRecente')}</span> {v.argomento}</p>}
                     {v.giudizio_testo && <p className="font-maven text-xs text-kidville-sub mt-0.5">{v.giudizio_testo}</p>}

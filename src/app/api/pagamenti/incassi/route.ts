@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -262,6 +263,7 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
         const saldato = (aggiornato as { stato?: string } | null)?.stato === 'pagato'
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',
+          operazione: politicaNotificaServizio(user, body.data_incasso),
           scuolaId: (pag.scuola_id as string | undefined) ?? null,
           alunnoIds: [pag.alunno_id as string],
           titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
@@ -285,7 +287,7 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
     // Revoca automatica della sospensione se lo scaduto famiglia è azzerato
     // (best-effort: mai bloccante per la risposta, errori loggati dentro l'helper).
     try {
-      if (pag.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [pag.alunno_id])
+      if (pag.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [pag.alunno_id], politicaNotificaServizio(user, body.data_incasso))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/incassi:POST', esito: 'revoca_non_verificata' }, e)
     }

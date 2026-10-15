@@ -1,3 +1,4 @@
+import { politicaNotificaOperazione, deveNotificareGenitori } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -274,6 +275,7 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     }
 
     const esiti: { data: string; ok: boolean; motivo?: string; codice?: string }[] = []
+    const operazioniNotificabili = []
     let fallbackUsato = false
     let esitiOltreCutoff = 0
 
@@ -306,6 +308,9 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
       if (esito.fallback) fallbackUsato = true
       if (!esito.ok) { esiti.push({ data, ok: false, motivo: esito.motivo }); continue }
       saldo = esito.saldo
+      const politica = politicaNotificaOperazione({ attore: user, giornoCompetenza: data })
+      if (deveNotificareGenitori(politica)) operazioniNotificabili.push(politica)
+      else logEvento('mensa', 'info', { operazione: 'mensa/prenotazioni:POST', esito: 'rettifica-storica-silenziosa', data })
       esiti.push({ data, ok: true })
     }
 
@@ -316,8 +321,8 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     }
 
     // notifica saldo basso (best-effort) se sceso sotto soglia per effetto degli scali
-    if (saldo < config.sogliaSaldoBasso && esiti.some(e => e.ok)) {
-      await notificaSaldoBasso(supabase, { alunnoId, saldo, nomeAlunno: al ? `${al.nome} ${al.cognome}` : null })
+    if (saldo < config.sogliaSaldoBasso && operazioniNotificabili.length > 0) {
+      await notificaSaldoBasso(supabase, { alunnoId, saldo, operazione: operazioniNotificabili[0], nomeAlunno: al ? `${al.nome} ${al.cognome}` : null })
     }
 
     // alert allergie (best-effort): se il menu di una data prenotata contiene

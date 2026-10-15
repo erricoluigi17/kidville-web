@@ -12,6 +12,10 @@ import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
+import { appartenenzeNelGiorno } from '@/lib/storici/alunni-giorno';
+import { rispostaErroreStorico } from '@/lib/storici/http';
+import { leggiTutte } from '@/lib/storici/db';
 
 // Singolo alunno per id.
 const getByIdQuerySchema = z.object({
@@ -143,35 +147,50 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     // due passi separati, e il secondo — il filtro — usava il NOME. Bastava che
     // `alunni.classe_sezione` differisse di uno spazio da `sections.name` perché
     // la classe si aprisse vuota, con 200 e senza un log.
-    const classe = await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+    const storica = puoCorreggereStorico(auth.user) && date < oggiRoma();
+    // Lo staff può aprire anche una sezione rimossa: l'appartenenza verificata
+    // nella sede/giornata è la prova. I docenti mantengono il gate ordinario.
+    const classe = storica && q.data.sectionId
+        ? { sectionIds: [q.data.sectionId], response: undefined }
+        : await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
     if (classe.response) return classe.response;
     if (classe.sectionIds.length === 0) return NextResponse.json([]);
 
-    const { data: alunni, error } = await admin
-        .from('alunni')
+    let idsStorici: string[] | null = null;
+    if (storica) {
+        try { idsStorici = [...new Set((await appartenenzeNelGiorno(admin, { scuole: plessi, sectionIds: classe.sectionIds, giorno: date })).map(a => a.alunno_id))]; }
+        catch (error) { logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'appartenenze-non-lette' }, error); return rispostaErroreStorico(error, 'diary/students:GET'); }
+        if (!idsStorici.length) return NextResponse.json([]);
+    }
+    // La lettura storica usa gli UUID del roster; la lettura ordinaria resta
+    // agganciata alla sezione e alla sede attuali, come prima.
         // `allergeni` e `allergies` accanto a `note_mediche`: la home del docente
         // mostrava un riquadro intitolato «Allergie e note mediche» che di allergie
         // non sapeva niente — contava `note_mediche`, cioè la casella «Note Mediche
         // (BES, DSA, patologie)» del modulo d'iscrizione. Nessun nuovo livello di
         // esposizione: questa route consegna già la nota medica agli stessi occhi,
         // dietro lo stesso gate (`requireDocente` + sezioni assegnate).
-        .select('id, nome, cognome, note_mediche, allergeni, allergies, classe_sezione, consenso_privacy')
+    const colonneAlunni = 'id, nome, cognome, note_mediche, allergeni, allergies, classe_sezione, consenso_privacy';
         // Per UUID, non per nome. `.in` e non `.eq`: un admin multi-plesso che
         // chiede un nome omonimo ha legittimamente più di una sezione.
-        .in('section_id', classe.sectionIds)
+    const queryAlunni = idsStorici
+        ? admin.from('alunni').select(colonneAlunni).in('id', idsStorici).in('scuola_id', plessi)
+        : admin.from('alunni').select(colonneAlunni).in('section_id', classe.sectionIds).in('scuola_id', plessi);
+    const { data: alunni, error } = await queryAlunni
         // Difesa in profondità: il gate impedisce di NOMINARE una sezione
         // altrui, questo filtro impedisce che ci finisca dentro un bambino la
         // cui `scuola_id` non combacia con quella della sua sezione.
         .in('scuola_id', plessi)
+        .is('anonimizzato_il', null)
         .order('cognome');
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    if (!alunni || alunni.length === 0) {
+    if ((!alunni || alunni.length === 0) && !idsStorici?.length) {
         return NextResponse.json([]);
     }
 
-    const alunnoIds = alunni.map(a => a.id);
+    const alunnoIds = (alunni ?? []).map(a => a.id);
 
     // Legami per questi alunni, in BLOCCO e dall'unione delle due sorgenti
     // (runtime + anagrafica): 3 query fisse come prima, mai una per alunno.
@@ -207,10 +226,21 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     }
 
     // Arricchisci gli alunni con i genitori
-    let enrichedAlunni = alunni.map(a => ({
+    let enrichedAlunni = (alunni ?? []).map(a => ({
         ...a,
         parents: parentsMap[a.id] ?? []
     }));
+    if (idsStorici) {
+        // Un trasferimento non autorizza la vecchia sede a leggere sanitari e
+        // famiglia correnti. Il roster storico conserva soltanto l'identità.
+        const mancanti = idsStorici.filter(id => !alunnoIds.includes(id));
+        for (let i = 0; i < mancanti.length; i += 100) {
+            try {
+                const ex = await leggiTutte<{ id: string; nome: string; cognome: string }>((dal, al) => admin.from('alunni').select('id,nome,cognome').in('id', mancanti.slice(i, i + 100)).is('anonimizzato_il', null).order('id').range(dal, al), 'diario-identita-storiche');
+                enrichedAlunni.push(...ex.map(a => ({ id: a.id, nome: a.nome, cognome: a.cognome, note_mediche: null, allergeni: null, allergies: null, classe_sezione: sezione, consenso_privacy: null, parents: [] })));
+            } catch (err) { logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'identita-storiche-non-lette' }, err); return rispostaErroreStorico(err, 'diary/students:GET'); }
+        }
+    }
 
     // Se richiesto, filtra solo gli alunni presenti quel giorno
     if (onlyPresent && enrichedAlunni.length > 0) {
@@ -218,7 +248,8 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
             .from('presenze')
             .select('alunno_id, stato')
             .eq('data', date)
-            .in('alunno_id', alunnoIds)
+            .in('scuola_id', plessi)
+            .in('alunno_id', enrichedAlunni.map(a => a.id))
             .in('stato', ['presente', 'ritardo', 'uscita_anticipata']);
 
         if (prezError) {

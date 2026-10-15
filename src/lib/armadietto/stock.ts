@@ -16,11 +16,14 @@ import { logErrore } from '@/lib/logging/logger'
 export async function stockDiAlunno(
     admin: SupabaseClient,
     alunnoId: string,
+    sede?: { scuolaId: string; includiSenzaSede?: boolean },
 ): Promise<Record<string, number> | null> {
-    const { data, error } = await admin
+    let query = admin
         .from('armadietto')
         .select('materiale, quantita, portato')
         .eq('alunno_id', alunnoId)
+    if (sede) query = sede.includiSenzaSede ? query.or(`scuola_id.is.null,scuola_id.eq.${sede.scuolaId}`) : query.eq('scuola_id', sede.scuolaId)
+    const { data, error } = await query
 
     if (error) {
         logErrore({ operazione: 'armadietto/stock', evento: 'db' }, error)

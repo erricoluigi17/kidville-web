@@ -1,5 +1,6 @@
 'use client';
 
+import { AnnullaGiustifica } from '@/components/features/presenze/AnnullaGiustifica';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -25,6 +26,8 @@ interface Riga {
   id: string; nome: string; cognome: string; stato: Stato | null;
   orario_entrata: string | null; orario_uscita: string | null;
   presenza_id: string | null; giustificata: boolean;
+  giustificata_il?: string | null; rettifica_storica_ammessa?: boolean;
+  storico_versione?: number | null;
   giustificazione_testo: string | null; giust_vista_il: string | null;
   /**
    * L'appello di questo alunno l'ha fatto qualcuno della scuola (`registrato_da` non
@@ -256,7 +259,7 @@ export default function AppelloPage() {
       const res = await fetch(`/api/primaria/appello?userId=${userId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ sectionId, data, alunnoId, stato, ...campi }),
+        body: JSON.stringify({ sectionId, data, alunnoId, stato, ...campi, versioneAttesa: righe.find(r => r.id === alunnoId)?.storico_versione }),
       });
       statoHttp = res.status;
       if (res.status === 422) {
@@ -522,6 +525,8 @@ export default function AppelloPage() {
 
     try {
       const qs = new URLSearchParams({ sectionId, alunnoId, data, userId });
+      const versione = righe.find(r => r.id === alunnoId)?.storico_versione;
+      if (versione != null) qs.set('versioneAttesa', String(versione));
       const res = await fetch(`/api/primaria/appello?${qs.toString()}`, {
         method: 'DELETE',
         headers: { 'x-user-id': userId },
@@ -671,7 +676,7 @@ export default function AppelloPage() {
       const res = await fetch(`/api/attendance/daily?userId=${userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ alunno_id: alunnoId, data, [colonna]: ora }),
+        body: JSON.stringify({ alunno_id: alunnoId, versioneAttesa: riga.storico_versione ?? undefined, data, [colonna]: ora }),
       });
       if (!res.ok) throw new Error(String(res.status));
     } catch (err) {
@@ -784,15 +789,18 @@ export default function AppelloPage() {
     // `finally`: ora `saving` ferma anche ogni «Annulla»; se la POST lanciasse, un
     // `saving` rimasto acceso li bloccherebbe fino al ricaricamento della pagina.
     try {
-      await fetch(`/api/primaria/appello?userId=${userId}`, {
+      const res = await fetch(`/api/primaria/appello?userId=${userId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({
           sectionId,
           data,
-          records: righe.map((r) => ({ alunnoId: r.id, stato: 'presente' })),
+          records: righe.map((r) => ({ alunnoId: r.id, versioneAttesa: r.storico_versione, stato: 'presente' })),
         }),
       });
+      if (!res.ok) { const errore = await erroreDaRisposta(res, t('comuneErrore')); setErroreSalvataggio(errore.testo); await load(); }
+      else if (data < oggiFiscaleISO() && righe.some(r => r.rettifica_storica_ammessa)) await load();
+    } catch (err) { logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-blocco-non-salvato: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' }); await load();
     } finally {
       setSaving(false);
     }
@@ -948,7 +956,7 @@ export default function AppelloPage() {
                       la scuola (`appello_fatto`): su una riga con la sola comunicazione
                       del genitore il comando non potrebbe mai riuscire. Il server
                       rifiuta comunque ogni altro caso. */}
-                {data === oggiIso() && r.appello_fatto && (
+                {(data === oggiIso() || r.rettifica_storica_ammessa) && r.appello_fatto && (
                   <button
                     id={`btn-annulla-appello-${r.id}`}
                     type="button"
@@ -965,6 +973,7 @@ export default function AppelloPage() {
                     <span className="hidden sm:inline">{t('appelloAnnulla')}</span>
                   </button>
                 )}
+                {r.rettifica_storica_ammessa && r.giustificata && r.presenza_id && <AnnullaGiustifica nomeAlunno={`${r.cognome} ${r.nome}`} presenzaId={r.presenza_id} firmaIl={r.giustificata_il ?? null} versioneAttesa={r.storico_versione ?? undefined} userId={userId} onCambiato={load} />}
                 {/* Stato giustificazione genitore + presa visione del docente. */}
                 {r.giustificata && (
                   r.giust_vista_il ? (

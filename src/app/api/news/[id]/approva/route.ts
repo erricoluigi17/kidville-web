@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -114,7 +115,7 @@ export const POST = withRoute('news/[id]/approva:POST', async (request: NextRequ
     }
 
     const now = new Date().toISOString()
-    const updates: Record<string, unknown> = { updated_at: now }
+    const updates: Record<string, unknown> = { updated_at: now, politica_operazione: post.politica_operazione ?? politicaNotificaServizio(auth.user, post.giorno_competenza ?? post.pubblicata_il) }
     let pubblicato = false
 
     if (esito === 'approva') {
@@ -158,6 +159,7 @@ export const POST = withRoute('news/[id]/approva:POST', async (request: NextRequ
     if (pubblicato) {
       const merged = { ...post, ...(data as NewsPost) }
       await notificaNewsPubblicata(supabase, {
+        politica_operazione: merged.politica_operazione,
         id: merged.id,
         titolo: merged.titolo,
         scuola_id: merged.scuola_id,

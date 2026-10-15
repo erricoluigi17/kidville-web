@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
+import { oggiFiscaleISO as oggiRoma } from '@/lib/format/fiscal-date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { configDiVoce, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
@@ -252,14 +253,17 @@ function fraseRoutine(dettagli: Record<string, unknown> | null, t: Traduci): str
 
 // ─── Utilities data ────────────────────────────────────────────────────────────
 
-function toDateKey(d: Date): string {
-    return d.toISOString().split('T')[0];
+function giornoVicino(dateKey: string, delta: number): string {
+    // Aritmetica sulla data civile, indipendente da fuso del dispositivo e DST.
+    const d = new Date(dateKey + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + delta);
+    return d.toISOString().slice(0, 10);
 }
 
 function formatDayLabel(dateKey: string, t: Traduci, locale: string): string {
-    const d = new Date(dateKey + 'T12:00:00');
-    const today = toDateKey(new Date());
-    const yesterday = toDateKey(new Date(Date.now() - 86400000));
+    const d = new Date(dateKey + 'T12:00:00Z');
+    const today = oggiRoma();
+    const yesterday = giornoVicino(today, -1);
     if (dateKey === today)     return t('giornoOggi');
     if (dateKey === yesterday) return t('giornoIeri');
     return intlDateTime(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(d);
@@ -450,7 +454,7 @@ function ParentDiaryContent() {
     // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
     const { schoolType, ready: schoolTypeReady } = useChildSchoolType();
 
-    const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
+    const [dateKey, setDateKey] = useState<string>(() => oggiRoma());
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
     // true quando il diario del giorno viene dalla cache offline (rete assente).
     const [offline, setOffline] = useState(false);
@@ -475,11 +479,9 @@ function ParentDiaryContent() {
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
         setDateKey(prev => {
-            const d = new Date(prev + 'T12:00:00');
-            d.setDate(d.getDate() + delta);
-            // Non andare oltre oggi
-            if (d > new Date()) return prev;
-            return toDateKey(d);
+            const prossimo = giornoVicino(prev, delta);
+            // Si confrontano giornate, così si può tornare a oggi anche prima di mezzogiorno.
+            return prossimo <= oggiRoma() ? prossimo : prev;
         });
     };
 
@@ -594,7 +596,7 @@ function ParentDiaryContent() {
     // leggeva ancora «La maestra non ha ancora compilato», con le voci già scritte). Se non
     // arriva niente di fresco si riprova una volta, dopo `RITENTA_DOPO_MS`.
     usePollingVisibile(() => {
-        const oggi = toDateKey(new Date());
+        const oggi = oggiRoma();
         if (oggi !== oggiVisto.current) {
             const mostravaOggi = dateKey === oggiVisto.current;
             oggiVisto.current = oggi;
@@ -611,7 +613,7 @@ function ParentDiaryContent() {
     // navigazione non rimonta la pagina, quindi è l'avviso a riportarla a oggi e a rileggere.
     // Se la notifica è di un altro figlio, a cambiarlo ci pensa la navigazione (`?id=`).
     useEffect(() => ascoltaNotificaAperta('/parent/diary', () => {
-        const oggi = toDateKey(new Date());
+        const oggi = oggiRoma();
         oggiVisto.current = oggi;
         if (dateKey !== oggi) {
             setDirection(1);
@@ -637,7 +639,7 @@ function ParentDiaryContent() {
         ? studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
         : '?';
 
-    const isToday = dateKey === toDateKey(new Date());
+    const isToday = dateKey === oggiRoma();
 
     // Umore del giorno (M5.4): entries è già deduplicato all'ultimo evento per
     // tipo, quindi qui c'è al più l'umore più recente del giorno. L'evento vive
@@ -749,7 +751,7 @@ function ParentDiaryContent() {
                     <p className="font-maven text-xs text-kidville-muted">
                         {intlDateTime(f.locale, {
                             day: 'numeric', month: 'long', year: 'numeric',
-                        }).format(new Date(dateKey + 'T12:00:00'))}
+                        }).format(new Date(dateKey + 'T12:00:00Z'))}
                     </p>
                 </div>
 

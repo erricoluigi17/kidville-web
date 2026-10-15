@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-12",
-  "generato_alle": "2026-10-12T12:11:48Z",
-  "sha256": "f25fea0670f4c53ae6be05db4036e8fc68b6c75029de2a255066f2c943e54fa5",
+  "generato_il": "2026-10-15",
+  "generato_alle": "2026-10-15T21:38:46Z",
+  "sha256": "d010af8651a35a5d4168a256dcaed66c240a492e2fba0a4c32c0bed1541dc7bc",
   "fk": [
     {
       "tabella": "allegati_registro",
@@ -12,6 +12,11 @@
     {
       "tabella": "allegati_registro",
       "colonna": "eliminato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "alunni_classi_storico",
+      "colonna": "creato_da",
       "azione": "set-null"
     },
     {
@@ -67,6 +72,11 @@
     {
       "tabella": "cassa_movimenti",
       "colonna": "registrato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "chat_messages",
+      "colonna": "rettifica_staff_da",
       "azione": "set-null"
     },
     {
@@ -238,6 +248,21 @@
       "tabella": "scrutinio_giudizi",
       "colonna": "proposto_da",
       "azione": "blocca"
+    },
+    {
+      "tabella": "storici_collegamenti",
+      "colonna": "creato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "storici_generazioni",
+      "colonna": "richiesto_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "storici_revisioni",
+      "colonna": "attore_id",
+      "azione": "set-null"
     },
     {
       "tabella": "student_documents",

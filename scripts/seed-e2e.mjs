@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 import { requireE2EPassword } from '../e2e/lib/e2e-password.mjs';
+import { pianoGiorniSeedE2E } from './lib/seed-e2e-giornate.mjs';
 
 // ── Env: process.env (CI) con fallback a .env.local (dev locale) ────────────
 function loadEnvLocal() {
@@ -185,6 +186,8 @@ export const IDS = {
   // valgono anche di sabato e di domenica (la rotazione no).
   MENU_OVR_S1: 'e2e00000-0000-4000-8000-000000001101',
   MENU_OVR_S2: 'e2e00000-0000-4000-8000-000000001102',
+  MENU_OVR_S1_DOMANI: 'e2e00000-0000-4000-8000-000000001103',
+  MENU_OVR_S2_DOMANI: 'e2e00000-0000-4000-8000-000000001104',
 
   // ── SEDE 2 — la sede che l'isolamento deve tenere fuori ───────────────────
   // Stesso prefisso `e2e00000`: `isScuolaE2E` (src/lib/scuole/reali.ts) riconosce
@@ -1152,7 +1155,10 @@ async function ripulisciVideoE2E() {
 async function main() {
   console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2,
     '· sede visibile ai moduli pubblici', IDS.SCUOLA_COLLAUDO);
-  const oggi = ymdRoma(0);
+  // Una sola lettura dell'orologio per i due giorni della suite: può superare
+  // mezzanotte fra seed e dashboard/mensa, mantenendo identiche le loro attese.
+  const pianoGiorni = pianoGiorniSeedE2E(new Date(), IDS, DOPPIO_PROFILO_E2E);
+  const [oggi] = pianoGiorni.giorni;
   await ensureBuckets();
 
   // 1. Scuole (schools = tabella referenziata dalle FK; scuole = registry admin)
@@ -1484,11 +1490,8 @@ async function main() {
   // esiste. Si avvisa NOMINANDO la tabella saltata, e si prosegue.
   await ripulisciModuliPersonale();
 
-  // 7. Presenze di oggi: SOLO Tulipani (Girasoli resta "appello mancante")
-  must('presenze', await db.from('presenze').insert([
-    { alunno_id: IDS.A3, data: oggi, stato: 'presente', orario_entrata: '08:45', scuola_id: IDS.SCUOLA, section_id: IDS.SEC_TULIPANI },
-    { alunno_id: IDS.A4, data: oggi, stato: 'assente', scuola_id: IDS.SCUOLA, section_id: IDS.SEC_TULIPANI },
-  ]));
+  // 7. Oggi e successivo: SOLO Tulipani (Girasoli resta "appello mancante").
+  must('presenze', await db.from('presenze').insert(pianoGiorni.presenze));
 
   // 8. Diario di oggi per Aurora (timeline + umore per il diario genitore)
   const now = new Date().toISOString();
@@ -1586,7 +1589,7 @@ async function main() {
   await caricaFileGalleriaE2E();
   await seminaGalleriaImpaginazione();
 
-  // 16. Menu mensa di OGGI, diverso nelle due sedi.
+  // 16. Menu mensa di oggi e successivo, diverso nelle due sedi.
   //
   // È un `override` per DATA e non una riga di rotazione: la rotazione dipende
   // dal giorno della settimana (`giorniAttivi` di default è lun-ven), quindi in
@@ -1607,20 +1610,7 @@ async function main() {
   // Il perimetro del delete sono le sole due sedi di collaudo.
   must('reset menu mensa E2E', await db.from('mensa_menu_override').delete()
     .in('scuola_id', [IDS.SCUOLA, IDS.SCUOLA2]));
-  must('mensa_menu_override', await db.from('mensa_menu_override').insert([
-    {
-      id: IDS.MENU_OVR_S1, scuola_id: IDS.SCUOLA, data: oggi, chiuso: false,
-      menu_config_id: null,
-      portate: { primo: DOPPIO_PROFILO_E2E.primoSede1, secondo: 'Frittata E2E', contorno: 'Insalata E2E', frutta: 'Mela E2E' },
-      note: 'Menu E2E della sede 1',
-    },
-    {
-      id: IDS.MENU_OVR_S2, scuola_id: IDS.SCUOLA2, data: oggi, chiuso: false,
-      menu_config_id: null,
-      portate: { primo: DOPPIO_PROFILO_E2E.primoSede2, secondo: 'Platessa E2E', contorno: 'Carote E2E', frutta: 'Pera E2E' },
-      note: 'Menu E2E della sede 2',
-    },
-  ]));
+  must('mensa_menu_override', await db.from('mensa_menu_override').insert(pianoGiorni.menu));
 
   // 17. La conversazione lunga della sede 2 (vedi `CHAT_LUNGA_E2E`): il thread e i
   //     suoi 60 messaggi, riscritti da zero — il reset del punto 6 li ha cancellati.
@@ -1677,7 +1667,7 @@ async function main() {
   //     per accenderle, sta sulla funzione.
   await seminaRiconciliazione();
 
-  console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi (Europe/Rome):', oggi);
+  console.log('✅ Seed E2E completato (idempotente, 2 sedi). Giornate (Europe/Rome):', pianoGiorni.giorni.join(', '));
 }
 
 main().catch((err) => {

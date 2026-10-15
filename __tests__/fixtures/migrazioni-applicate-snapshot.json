@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-14",
-  "generato_alle": "2026-10-14T23:31:48Z",
-  "sha256": "7d8ece8c80f9f68fe21357aaeaea65b6b28c5d80e5b1e6463b93f57adbe25752",
+  "generato_il": "2026-10-15",
+  "generato_alle": "2026-10-15T21:38:44Z",
+  "sha256": "7f7ed1bb68a761e7b27968e6454f696a36ded250dbadf10715d847cac4dd6cbc",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -887,6 +887,18 @@
     {
       "version": "20261014215153",
       "name": "report_cassa_dettaglio"
+    },
+    {
+      "version": "20261015183000",
+      "name": "storici_stampe_rettifiche"
+    },
+    {
+      "version": "20261015183100",
+      "name": "storici_ticket"
+    },
+    {
+      "version": "20261015183200",
+      "name": "storici_versioni"
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 // Le regole PURE della decisione «questo docente si cancella o si archivia?», più
-// l'integrità del registro delle 58 chiavi esterne verso `utenti(id)`.
+// l'integrità del registro delle 63 chiavi esterne verso `utenti(id)`.
 //
 // ⚠️ PROVA PER ROTTURA — eseguita il 2026-09-20, una mutazione alla volta su un
 // file ripristinato da copia pulita. I numeri sono misurati, non previsti: la
@@ -49,12 +49,24 @@ describe('decisioneEliminazione — i quattro esiti', () => {
     // RIUSCIREBBE, portandosi via la conversazione con una famiglia. È la voce
     // per cui il registro distingue «cascade» da «non conta».
     const voci = pulito().map((v) =>
-      v.tabella === 'chat_messages' ? voce('chat_messages', 'sender_id', 1) : v,
+      v.tabella === 'chat_messages' && v.colonna === 'sender_id' ? voce('chat_messages', 'sender_id', 1) : v,
     )
     const verdetto = decisioneEliminazione(esito(voci, false))
     expect(verdetto.decisione).toBe('archivia')
     expect(verdetto.motivi).toHaveLength(1)
-    expect(verdetto.motivi[0]).toMatchObject({ tabella: 'chat_messages', n: 1 })
+    expect(verdetto.motivi[0]).toMatchObject({ tabella: 'chat_messages', colonna: 'sender_id', n: 1 })
+  })
+
+  it.each([
+    ['alunni_classi_storico', 'creato_da'],
+    ['storici_collegamenti', 'creato_da'],
+    ['storici_revisioni', 'attore_id'],
+    ['chat_messages', 'rettifica_staff_da'],
+  ])('una sola traccia storica %s.%s → archivia conservando il motivo esatto', (tabella, colonna) => {
+    const voci = pulito().map((v) => v.tabella === tabella && v.colonna === colonna ? voce(tabella, colonna, 1) : v)
+    const verdetto = decisioneEliminazione(esito(voci, false))
+    expect(verdetto.decisione).toBe('archivia')
+    expect(verdetto.motivi).toEqual([voce(tabella, colonna, 1)])
   })
 
   it('ponte genitore e zero tracce → profilo-doppio, senza motivi', () => {
@@ -108,21 +120,24 @@ describe('decisioneEliminazione — le due regole che si sbagliano', () => {
 })
 
 describe('TRACCE_DOCENTE — integrità del registro', () => {
-  it('copre tutte e 58 le chiavi esterne verso utenti(id), senza doppioni', () => {
+  it('copre tutte e 63 le chiavi esterne verso utenti(id), senza doppioni', () => {
     // 56 misurate da `pg_constraint` il 2026-09-20, 58 il 2026-09-25: le due nuove
     // sono `allegati_registro.eliminato_da` e `student_documents.eliminato_da`
     // (cestino del registro e del fascicolo, `SET NULL`). Il numero SALE perché il
     // database ne ha due in più, non per far tornare un conto. Sta qui e non solo
     // nel commento perché una FK nuova deve rendere rosso qualcosa.
-    expect(TRACCE_DOCENTE).toHaveLength(58)
+    // Il 15/10/2026 la fotografia reale ne conta 63: +5 per appartenenze,
+    // collegamenti, revisioni, rettifiche chat e lavori temporanei degli storici.
+    expect(TRACCE_DOCENTE).toHaveLength(63)
     const chiavi = TRACCE_DOCENTE.map((v) => `${v.tabella}.${v.colonna}`)
     expect(new Set(chiavi).size).toBe(chiavi.length)
   })
 
-  it('46 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
+  it('50 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
     // 44 fino al 2026-09-25; le due `eliminato_da` del cestino pesano come
     // `galleria_media_v2.eliminato_da` (vedi il registro).
-    expect(VOCI_CHE_PESANO).toHaveLength(46)
+    // +4 tracce storiche misurate e classificate dopo il rilascio del 15/10.
+    expect(VOCI_CHE_PESANO).toHaveLength(50)
     for (const v of VOCI_CHE_PESANO) {
       expect(v.chiave, `${v.tabella}.${v.colonna} pesa ma non ha chiave`).toBeTruthy()
       expect(v.perche, `${v.tabella}.${v.colonna} pesa e non deve motivare`).toBeUndefined()
@@ -132,7 +147,7 @@ describe('TRACCE_DOCENTE — integrità del registro', () => {
   it('ogni voce che NON pesa motiva perché, e non ha chiave', () => {
     // «Non conta» è un'affermazione, non un valore di default: va scritta.
     const leggere = TRACCE_DOCENTE.filter((v) => !v.pesa)
-    expect(leggere).toHaveLength(12)
+    expect(leggere).toHaveLength(13)
     for (const v of leggere) {
       expect(v.perche, `${v.tabella}.${v.colonna} non pesa senza dire perché`).toBeTruthy()
       expect(v.chiave).toBeUndefined()

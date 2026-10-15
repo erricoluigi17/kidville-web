@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/bucket-storage-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/bucket-storage-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-02",
-  "sha256": "0683668480c67a809f85c93e8c58a09296a773eec2ed4fddac93b2e180dceb1f",
+  "generato_il": "2026-10-15",
+  "sha256": "dbca5a42308ff74134d116ca004a2f3d4d10fd2468cce6b8e70ab11c946c0629",
   "bucket": [
     {
       "id": "avvisi_allegati",
@@ -65,6 +65,10 @@
     },
     {
       "id": "sensitive_documents",
+      "pubblico": false
+    },
+    {
+      "id": "storici-stampe",
       "pubblico": false
     },
     {

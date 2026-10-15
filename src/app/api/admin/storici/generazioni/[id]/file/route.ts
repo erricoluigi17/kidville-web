@@ -8,8 +8,8 @@ import { zUuid } from '@/lib/validation/common'
 import { leggiGenerazione } from '@/lib/storici/generazioni'
 import { BUCKET_STORICI } from '@/lib/storici/tipi'
 import { ErroreStorico, erroreQueryStorico } from '@/lib/storici/db'
-import { rispostaErroreStorico } from '@/lib/storici/http'
-export const GET = withRoute('admin/storici/generazioni/[id]/file:GET', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
+import { conCacheStorico, rispostaErroreStorico } from '@/lib/storici/http'
+export const GET = withRoute('admin/storici/generazioni/[id]/file:GET', conCacheStorico(async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const p = parseData(zUuid, (await context.params).id)
@@ -24,4 +24,4 @@ export const GET = withRoute('admin/storici/generazioni/[id]/file:GET', async (r
     logEvento('registro', 'info', { operazione: 'storici/download', esito: 'file-consegnato', entita_id: job.id, byte: data.size })
     return new NextResponse(new Uint8Array(await data.arrayBuffer()), { headers: { 'Content-Type': job.richiesta.formato === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `inline; filename="storico-${job.richiesta.dal}-${job.richiesta.al}.${job.richiesta.formato}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } })
   } catch (error) { return rispostaErroreStorico(error, 'admin/storici/generazioni/[id]/file:GET') }
-})
+}))

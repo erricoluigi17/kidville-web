@@ -22,7 +22,7 @@
 //
 // ─── IL FATTO DA CUI NASCE ──────────────────────────────────────────────────
 //
-// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 58 chiavi
+// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 63 chiavi
 // esterne puntano a `utenti(id)`. Una cancellazione vera quindi:
 //   • viene RIFIUTATA da Postgres se esiste una riga su una FK `NO ACTION`
 //     (diario, presenze, valutazioni, registro, firme, pagamenti…);
@@ -80,13 +80,20 @@ export interface VoceTraccia {
 }
 
 /**
- * IL REGISTRO — tutte e 58 le FK verso `utenti(id)`, misurate da `pg_constraint`
+ * IL REGISTRO — tutte e 63 le FK verso `utenti(id)`, misurate da `pg_constraint`
  * il 2026-09-20 (56) e il 2026-09-25 (+2: i due `eliminato_da` del cestino del
- * registro e del fascicolo). Non dai file di migrazione: ricostruirle dai `.sql`
+ * registro e del fascicolo), poi il 2026-10-15 (+5 per gli storici). Non dai file di migrazione: ricostruirle dai `.sql`
  * ne trova ~46, e le dieci che mancano sono esattamente quelle che nessuno si
  * ricorda.
  */
 export const TRACCE_DOCENTE: VoceTraccia[] = [
+  // Fotografia della produzione dopo il rilascio degli storici, 15/10/2026.
+  { tabella: 'alunni_classi_storico', colonna: 'creato_da', azioneFk: 'set-null', pesa: true, chiave: 'tracciaDocenteAppartenenzeStoriche' },
+  { tabella: 'storici_collegamenti', colonna: 'creato_da', azioneFk: 'set-null', pesa: true, chiave: 'tracciaDocenteCollegamentiStorici' },
+  { tabella: 'storici_revisioni', colonna: 'attore_id', azioneFk: 'set-null', pesa: true, chiave: 'tracciaDocenteRettificheStoriche' },
+  { tabella: 'chat_messages', colonna: 'rettifica_staff_da', azioneFk: 'set-null', pesa: true, chiave: 'tracciaDocenteRettificheChat' },
+  { tabella: 'storici_generazioni', colonna: 'richiesto_da', azioneFk: 'set-null', pesa: false,
+    perche: 'Lavoro temporaneo del solo richiedente: cancellare l’account lo fa scadere subito; il manifest conserva soltanto i percorsi da rimuovere, con lease protetto e pulizia tramite cron.' },
   // ───────────────────────────────────────────────────────────────────────────
   // NON PESANO — roba di servizio di cui l'account è l'unico titolare, oppure
   // assegnazioni correnti che la procedura sgancia da sé prima di agire.

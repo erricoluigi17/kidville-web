@@ -9,12 +9,12 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { ErroreStorico, erroreQueryStorico, leggiTutte } from '@/lib/storici/db'
-import { rispostaErroreStorico } from '@/lib/storici/http'
+import { conCacheStorico, rispostaErroreStorico } from '@/lib/storici/http'
 import { utenteStaffStorico } from '@/lib/storici/permessi'
 const querySchema = z.object({ scuolaId: zUuid, alunnoId: zUuid })
 const bodySchema = querySchema.extend({ sectionId: zUuid, dal: zDataYMD, al: zDataYMD.nullable() }).refine(v => !v.al || v.dal < v.al, 'La data finale deve essere successiva a quella iniziale')
 const deleteSchema = z.object({ scuolaId: zUuid, id: zUuid, dal: zDataYMD, al: zDataYMD.nullable() })
-export const GET = withRoute('admin/storici/appartenenze:GET', async (request: NextRequest) => {
+export const GET = withRoute('admin/storici/appartenenze:GET', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const q = parseQuery(request, querySchema)
@@ -26,8 +26,8 @@ export const GET = withRoute('admin/storici/appartenenze:GET', async (request: N
     const data = await leggiTutte((dal, al) => db.from('alunni_classi_storico').select('id,section_id,dal,al,fonte,creato_il').eq('scuola_id', q.data.scuolaId).eq('alunno_id', q.data.alunnoId).order('dal').order('id').range(dal, al), 'elenco-appartenenze')
     return NextResponse.json({ data }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (error) { logEvento('registro', 'info', { operazione: 'storici/richiesta', esito: 'richiesta-non-completata' }); return rispostaErroreStorico(error, 'admin/storici/appartenenze:GET') }
-})
-export const POST = withRoute('admin/storici/appartenenze:POST', async (request: NextRequest) => {
+}))
+export const POST = withRoute('admin/storici/appartenenze:POST', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, bodySchema)
@@ -44,8 +44,8 @@ export const POST = withRoute('admin/storici/appartenenze:POST', async (request:
     await logScrittura(db, { attore: auth.user, scuolaId: b.data.scuolaId, sectionId: b.data.sectionId, entitaTipo: 'appartenenza_storica', entitaId: data, azione: 'insert', valoreDopo: b.data })
     return NextResponse.json({ id: data })
   } catch (error) { logEvento('registro', 'info', { operazione: 'storici/richiesta', esito: 'richiesta-non-completata' }); return rispostaErroreStorico(error, 'admin/storici/appartenenze:POST') }
-})
-export const DELETE = withRoute('admin/storici/appartenenze:DELETE', async (request: NextRequest) => {
+}))
+export const DELETE = withRoute('admin/storici/appartenenze:DELETE', conCacheStorico(async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, deleteSchema)
@@ -61,4 +61,4 @@ export const DELETE = withRoute('admin/storici/appartenenze:DELETE', async (requ
     await logScrittura(db, { attore: auth.user, scuolaId: b.data.scuolaId, sectionId: data.section_id, entitaTipo: 'appartenenza_storica', entitaId: data.id, azione: 'delete', valorePrima: data })
     return NextResponse.json({ success: true })
   } catch (error) { logEvento('registro', 'info', { operazione: 'storici/richiesta', esito: 'richiesta-non-completata' }); return rispostaErroreStorico(error, 'admin/storici/appartenenze:DELETE') }
-})
+}))

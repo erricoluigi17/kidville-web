@@ -213,6 +213,7 @@ function mimeDichiarati(bucket: string): string[] {
  * prodotto, e va nell'elenco qui sotto con la sua ragione.
  */
 const RISERVATI = [
+  'storici-stampe',
   'avvisi_allegati',
   'cassa-giustificativi',
   'certificati-medici',

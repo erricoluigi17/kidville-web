@@ -51,6 +51,7 @@ interface Destinatario { id: string; firma_id: string; alunno_id: string }
  * docente non l'ha mai vista da nessuna parte — né in elenco né riaprendo la modale.
  */
 interface Riga {
+  storico_versione?: number;
   id: string;
   ora_lezione: number;
   materia: string | null;
@@ -826,6 +827,7 @@ export default function RegistroPage() {
                               setEsito(null);
                               setEliminazione({
                                 modo: 'firma',
+                                versioneAttesa: riga?.storico_versione,
                                 firmaId: f.id,
                                 ora,
                                 unica: (riga?.firme_docenti?.length ?? 0) <= 1,
@@ -914,6 +916,7 @@ export default function RegistroPage() {
                           setEsito(null);
                           setEliminazione({
                             modo: 'lezione',
+                            versioneAttesa: riga.storico_versione,
                             registroId: riga.id,
                             ora,
                             nFirme: riga.firme_docenti?.length ?? 0,
@@ -1486,7 +1489,7 @@ function FirmaModal({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({
-        sectionId: targetSectionId, data, oraLezione: ordine, materiaId: altraClasse ? null : (materiaId || null),
+        sectionId: targetSectionId, versioneAttesa: riga?.storico_versione ?? (riga ? undefined : null), data, oraLezione: ordine, materiaId: altraClasse ? null : (materiaId || null),
         // Argomento/compiti/consegna sono i contenuti CONDIVISI di classe: si inviano SOLO per
         // l'assegnazione a tutta la classe. In modalità «Alunni selezionati» (perAlunni) i
         // textarea condivisi non sono nemmeno mostrati e i loro stati restano vuoti: inviarli

@@ -92,5 +92,12 @@
   "annullaAppelloNienteDaAnnullare": "There is only the parent’s absence notice: attendance was not taken, so there is nothing to undo.",
   "annullaAppelloCambiato": "The attendance changed in the meantime: the list has been refreshed, please try again.",
   "annullaAppelloErrore": "Could not undo the attendance. Please try again.",
-  "comunicazioneGenitore": "Absence reported by the parent"
+  "comunicazioneGenitore": "Absence reported by the parent",
+  "giustificaAnnullaAria": "Revoke {alunno}’s justification",
+  "giustificaAnnulla": "Revoke justification",
+  "giustificaAnnullaConferma": "Revoke this justification? The original text and signature remain in the history.",
+  "giustificaConfermaAnnulla": "Confirm revocation",
+  "giustificaMantieni": "Keep justification",
+  "giustificaAnnullata": "Justification revoked. Original preserved.",
+  "giustificaAnnullaErrore": "Justification was not revoked. Reload attendance and try again."
 }

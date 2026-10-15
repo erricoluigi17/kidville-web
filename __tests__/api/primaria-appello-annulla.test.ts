@@ -52,7 +52,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         qb.select = (c: string) => { if (op.verbo === 'select') op.colonne = c; return qb }
         qb.update = (p: unknown) => { op.verbo = 'update'; op.payload = p; return qb }
         qb.delete = () => { op.verbo = 'delete'; return qb }
-        for (const m of ['eq', 'is', 'not', 'in']) qb[m] = (...a: unknown[]) => { op.filtri.push([m, ...a]); return qb }
+        for (const m of ['eq', 'is', 'not', 'in', 'or']) qb[m] = (...a: unknown[]) => { op.filtri.push([m, ...a]); return qb }
         qb.maybeSingle = async () => {
           if (tabella !== 'presenze') return { data: null, error: null }
           if (h.erroreLettura) return { data: null, error: h.erroreLettura }
@@ -113,6 +113,8 @@ const toccaPresenze = () => h.operazioni.some((o) => o.tabella === 'presenze')
 const revocheNotifiche = () => h.operazioni.filter((o) => o.tabella === 'notifiche' && o.verbo === 'delete')
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-09-25T10:00:00Z'))
   vi.clearAllMocks()
   h.oggi = '2026-09-25'
   h.oggiVero = false

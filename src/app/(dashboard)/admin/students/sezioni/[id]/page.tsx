@@ -7,6 +7,7 @@ import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, ArrowLeft, Building2, GraduationCap, Loader2, Lock, Pencil, Plus, RotateCcw, Settings, User, X } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 // ⚠️ `Btn` e non un `<button>` a mano: lo stato spento di questa famiglia è
 // DIPINTO (5,75:1) invece che sbiadito con un'alfa, che sul verde saturo del
 // primario misurava 1,20:1 — testo quasi invisibile (lock
@@ -627,6 +628,7 @@ export default function SezioneDetailPage() {
                             <span className="font-maven flex items-center gap-1 text-sm text-kidville-muted">
                                 <User size={14} /> {t('contAlunni', { n: students.length })}
                             </span>
+                            <LinkStorici scuolaId={sezione.scuolaId} sectionId={sezione.id} />
                         </div>
                     </div>
                 </div>

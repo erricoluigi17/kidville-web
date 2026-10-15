@@ -1,3 +1,5 @@
+import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
+import { politicaNotificaServizio, politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -214,8 +216,8 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
     // scoping di sede: non modificare pagamenti fuori dalle sedi attive.
     // Legge anche importo_pagato + sconto per la guardia importo (retry senza sconto
     // su DB non migrato → sconto = 0).
-    const selEsistente = 'scuola_id, stato, alunno_id, descrizione, importo_pagato, sconto'
-    const selEsistenteBase = 'scuola_id, stato, alunno_id, descrizione, importo_pagato'
+    const selEsistente = 'scuola_id, stato, alunno_id, descrizione, importo_pagato, sconto, periodo_competenza, scadenza, creato_il'
+    const selEsistenteBase = 'scuola_id, stato, alunno_id, descrizione, importo_pagato, scadenza, creato_il'
     let esistente: Record<string, unknown> | null = null
     const selE = await supabase.from('pagamenti').select(selEsistente).eq('id', id).maybeSingle()
     if (selE.error && (selE.error as { code?: string }).code === '42703') {
@@ -233,6 +235,10 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
     if (!sedi.includes(String((esistente as { scuola_id: string }).scuola_id))) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
+
+    const politica = politicaRettificaServizio(auth.user,
+      String(esistente.periodo_competenza ?? esistente.scadenza ?? esistente.creato_il ?? ''),
+      typeof updates.scadenza === 'string' ? updates.scadenza : null)
 
     // GUARDIA (finding #3): il nuovo importo, al netto dello sconto, non può
     // scendere sotto quanto GIÀ incassato — prima si stornano gli incassi.
@@ -272,6 +278,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       logErrore({ operazione: 'pagamenti/[id]:PATCH', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
     }
+    await ritiraPendingPagamento(supabase, { pagamentoId: id, alunnoId: esistente.alunno_id as string | null, scuolaId: esistente.scuola_id as string | null, operazione: politica })
     if (updates.metodi_ammessi !== undefined && !metodiNonSalvati) {
       const m = updates.metodi_ammessi as string[]
       logEvento('pagamento', 'info', {
@@ -311,7 +318,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       // scaduto famiglia → revoca automatica della sospensione (best-effort).
       try {
         const alunnoId = (esistente as { alunno_id?: string | null }).alunno_id
-        if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+        if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId], politica)
       } catch (e) {
         logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]:PATCH', esito: 'revoca_non_verificata' }, e)
       }
@@ -324,6 +331,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
       if (updates.stato === 'pagato' && prev.stato !== 'pagato' && prev.alunno_id) {
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',
+          operazione: politica,
           scuolaId: prev.scuola_id ?? null,
           alunnoIds: [prev.alunno_id],
           titolo: 'Pagamento registrato',
@@ -433,11 +441,13 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
       }
     }
 
+    await ritiraPendingPagamento(supabase, { pagamentoId: id, alunnoId: c.voce.alunno_id as string | null, scuolaId: c.voce.scuola_id as string | null, operazione: politicaNotificaServizio(user, String(c.voce.periodo_competenza ?? c.voce.scadenza ?? c.voce.creato_il ?? '')) })
+
     // La voce è GIÀ cancellata: da qui niente cambia la risposta, ma ogni fallimento si dice.
     // Una voce scaduta tolta può azzerare lo scaduto della famiglia → revoca della sospensione
     // per morosità, come fa la PATCH quando cambiano importo o scadenza.
     try {
-      if (c.voce.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [String(c.voce.alunno_id)])
+      if (c.voce.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [String(c.voce.alunno_id)], politicaNotificaServizio(user, String(c.voce.periodo_competenza ?? c.voce.scadenza ?? c.voce.creato_il ?? '')))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]:DELETE', esito: 'revoca_non_verificata', pagamento_id: id }, e)
     }

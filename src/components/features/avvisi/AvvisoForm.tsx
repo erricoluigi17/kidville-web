@@ -1,6 +1,8 @@
 import { useState, useRef, useId } from 'react';
 import { useTranslations } from 'next-intl';
 import { X, Send, Upload, Link, AlertTriangle, Check } from 'lucide-react';
+import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { Avviso } from './AvvisoCard';
 import { AvvisoFormScadenze, useScadenze, type MotivoScadenza, type PayloadScadenze } from './AvvisoFormScadenze';
 import { AvvisoFormAdesione, useCampiAdesione, type PayloadAdesione } from './AvvisoFormAdesione';
@@ -31,6 +33,7 @@ export interface ClasseAvviso {
 
 /** La parte di corpo che questo modulo scrive da sé: `scuola_id` è contratto, non extra. */
 interface CampiComuniAvviso {
+    giorno_competenza?: string;
     titolo: string;
     contenuto: string;
     tipo: string;
@@ -277,6 +280,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     // Il messaggio del server quando rifiuta. Prima non esisteva: il modale si
     // chiudeva lo stesso e l'operatore restava convinto di aver pubblicato.
     const [errore, setErrore] = useState('');
+    const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // ── Sede di pubblicazione ────────────────────────────────────────────────
@@ -326,6 +330,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             // Nessun invio è stato ancora tentato su QUESTA apertura: i campi
             // ripartono senza rimproveri addosso.
             setTentatoInvio(false);
+            setGiornoCompetenza(initialAvviso?.giorno_competenza ?? (initialAvviso?.created_at ? oggiRoma(new Date(initialAvviso.created_at)) : oggiRoma()));
             if (initialAvviso) {
                 setTitolo(initialAvviso.titolo);
                 setContenuto(initialAvviso.contenuto);
@@ -651,6 +656,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         }
 
         const esito = await onSubmit({
+            ...(!soloClassiProprie ? { giorno_competenza: giornoCompetenza } : {}),
             titolo: titolo.trim(), contenuto: contenuto.trim(), tipo,
             target_scope: scope, target_classes: scope === 'classe' ? selectedClasses : [],
             // 🔴 Le due fette arrivano già pronte, con dentro la regola che conta: a
@@ -729,6 +735,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 significato è comunque quello giusto — «questa regione sta
                 cambiando, aspetta prima di leggerla». */}
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white" aria-busy={submitting}>
+                {!soloClassiProprie && <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />}
                 {errore && (
                     <div role="alert" className="flex items-start gap-2 rounded-2xl bg-kidville-error-soft px-4 py-3 font-maven text-sm text-kidville-error">
                         <AlertTriangle size={16} className="mt-0.5 shrink-0" strokeWidth={1.8} />

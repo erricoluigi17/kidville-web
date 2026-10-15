@@ -117,6 +117,7 @@ function rifiuta(codice: CodiceRifiuto, nRicevute: number, nRifiutate: number): 
 export async function applicaRoutineAlLotto<T extends VoceDiario>(
     admin: SupabaseClient,
     entries: T[],
+    sediStoriche?: ReadonlyMap<string, string>,
 ): Promise<{ voci: T[] } | { response: NextResponse }> {
     const toccate = entries.filter((e) => (eTipoBase(e.tipo_evento) || e.tipo_evento.startsWith(PREFISSO)) && !muta(e));
     if (toccate.length === 0) return { voci: entries };
@@ -124,7 +125,7 @@ export async function applicaRoutineAlLotto<T extends VoceDiario>(
     // La sede di ogni bambino: le routine sono della SUA sede, non di chi scrive. Se non si legge,
     // `sedeDi` resta `null`: le routine base passano, quelle della scuola si rifiutano (503).
     const ids = [...new Set(toccate.map((e) => e.alunno_id))];
-    const { data: alunni, error } = await admin.from('alunni').select('id, scuola_id').in('id', ids);
+    const { data: alunni, error } = sediStoriche ? { data: ids.map(id => ({ id, scuola_id: sediStoriche.get(id) ?? null })), error: null } : await admin.from('alunni').select('id, scuola_id').in('id', ids);
     // Senza `stato`: la richiesta può finire 200 (le routine base passano) o 503 (quelle della scuola).
     if (error) logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, error);
     const sedeDi = error ? null : new Map<string, string | null>(

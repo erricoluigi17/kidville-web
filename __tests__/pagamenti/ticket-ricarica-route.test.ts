@@ -141,3 +141,15 @@ describe('ricarica ticket — la route traduce la RPC', () => {
     expect(h.rpc.mock.calls.map((c) => c[0])).toEqual(['ricarica_ticket_mensa'])
   })
 })
+
+
+describe('ricarica ticket nel giorno scelto', () => {
+  it.each([0, 1])('ricarica di oggi meno %i giorni: RPC storica e policy coerenti', async delta => {
+    const oggi = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' })
+    const giorno = new Date(Date.parse(`${oggi}T12:00:00Z`) - delta * 86_400_000).toISOString().slice(0, 10)
+    const res = await POST(post({ ...CORPO, giorno_competenza: giorno }))
+    expect(res.status).toBe(201)
+    expect(h.rpc).toHaveBeenCalledExactlyOnceWith('ricarica_ticket_mensa_storico', expect.objectContaining({ p_giorno_competenza: giorno }))
+    expect(h.notifica).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operazione: expect.objectContaining({ giornoCompetenza: giorno, sopprimiGenitori: delta === 1 }) }))
+  })
+})

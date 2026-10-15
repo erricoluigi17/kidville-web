@@ -91,7 +91,7 @@ describe('POST sconto', () => {
   it('sconto valido → hook di revoca sospensione con l\'alunno toccato', async () => {
     await POST(post({ sconto: 30, sconto_motivo: 'sconto fratelli' }), ctx)
     expect(h.revoca).toHaveBeenCalledTimes(1)
-    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'])
+    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'], expect.objectContaining({ giornoCompetenza: new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' }), sopprimiGenitori: false }))
   })
 
   it('(g) colonna sconto assente (PGRST204) → 503 pulito', async () => {

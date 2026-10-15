@@ -1,3 +1,4 @@
+import { type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { stockDiAlunno } from '@/lib/armadietto/stock'
@@ -12,6 +13,7 @@ interface RichiestaViva {
     materiale: string
     livello: 'giallo' | 'rosso'
     stato: 'aperta' | 'presa_in_carico'
+    politica_operazione?: ContestoNotificaOperazione | null
 }
 
 /**
@@ -42,11 +44,11 @@ interface RichiestaViva {
  */
 export async function riconciliaRichieste(
     admin: SupabaseClient,
-    { alunnoId }: { alunnoId: string },
+    { alunnoId, operazione, materiale: materialeOperazione, sedeStorica }: { alunnoId: string; operazione?: ContestoNotificaOperazione; materiale?: string; sedeStorica?: { scuolaId: string; sectionId: string | null } },
 ): Promise<EsitoRiconciliazione> {
     const esito: EsitoRiconciliazione = { aperte: 0, aggiornate: 0, evase: 0 }
 
-    const { data: al, error: alErr } = await admin
+    const { data: al, error: alErr } = sedeStorica ? { data: { scuola_id: sedeStorica.scuolaId, section_id: sedeStorica.sectionId }, error: null } : await admin
         .from('alunni').select('section_id, scuola_id').eq('id', alunnoId).maybeSingle()
     if (alErr || !al?.scuola_id) {
         logEvento('db', 'warn', {
@@ -55,13 +57,27 @@ export async function riconciliaRichieste(
         return esito
     }
 
-    const stock = await stockDiAlunno(admin, alunnoId)
+    const stock = await stockDiAlunno(admin, alunnoId, { scuolaId: al.scuola_id, includiSenzaSede: !sedeStorica })
     if (stock === null) return esito   // già loggato da stockDiAlunno
+
+    // L'ultimo movimento custodisce la politica anche se la passata immediata fallisce:
+    // il cron ricostruisce la richiesta con la decisione originale, senza avvisi tardivi.
+    let movimentiQuery = admin.from('armadietto').select('*').eq('alunno_id', alunnoId).order('created_at', { ascending: false })
+    movimentiQuery = sedeStorica ? movimentiQuery.eq('scuola_id', al.scuola_id) : movimentiQuery.or(`scuola_id.is.null,scuola_id.eq.${al.scuola_id}`)
+    const { data: movimenti, error: erroreMovimenti } = await movimentiQuery
+    if (erroreMovimenti) {
+        logErrore({ operazione: 'armadietto/riconcilia:politica', evento: 'db' }, erroreMovimenti)
+        return esito
+    }
+    const politiche = new Map<string, ContestoNotificaOperazione | null>()
+    for (const m of (movimenti ?? []) as Array<{ materiale: string; politica_operazione?: ContestoNotificaOperazione | null }>) {
+        if (!politiche.has(m.materiale)) politiche.set(m.materiale, m.politica_operazione ?? null)
+    }
 
     const soglie = await soglieMateriali(admin, (al.section_id as string | null) ?? null)
 
     const { data: viveRaw, error: viveErr } = await admin
-        .from(TAVOLA).select('id, materiale, livello, stato').eq('alunno_id', alunnoId).neq('stato', 'evasa')
+        .from(TAVOLA).select('*').eq('alunno_id', alunnoId).eq('scuola_id', al.scuola_id).neq('stato', 'evasa')
     if (viveErr) {
         logErrore({ operazione: 'armadietto/riconcilia', evento: 'db' }, viveErr)
         return esito
@@ -88,6 +104,8 @@ export async function riconciliaRichieste(
         const q = stock[materiale]
         if (q === undefined) continue
         const viva = vive.get(materiale)
+        const politica = materialeOperazione === materiale ? operazione : politiche.get(materiale)
+        const metadati = politica ? { politica_operazione: politica } : viva?.politica_operazione ? { politica_operazione: null } : {}
         const sotto = q <= soglia.allerta
         const livello: 'giallo' | 'rosso' = q <= soglia.emergenza ? 'rosso' : 'giallo'
 
@@ -107,7 +125,7 @@ export async function riconciliaRichieste(
             // numero che il genitore legge nella notifica.
             const nuovo = viva.livello === 'rosso' ? 'rosso' : livello
             const { error } = await admin.from(TAVOLA)
-                .update({ livello: nuovo, quantita_residua: q, aggiornato_il: adesso })
+                .update({ livello: nuovo, quantita_residua: q, aggiornato_il: adesso, ...metadati })
                 .eq('id', viva.id)
             if (error) logErrore({ operazione: 'armadietto/riconcilia:aggiorna', evento: 'db' }, error)
             else esito.aggiornate++
@@ -151,6 +169,7 @@ export async function riconciliaRichieste(
             livello,
             quantita_residua: q,
             stato: 'aperta',
+            ...metadati,
             creato_il: adesso,
             aggiornato_il: adesso,
         })

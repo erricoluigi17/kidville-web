@@ -1,5 +1,8 @@
 'use client';
 
+import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
+import { oggiRoma } from '@/lib/storici/retroattivita';
+
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations } from 'next-intl';
@@ -74,6 +77,8 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [pacchettiErrati, setPacchettiErrati] = useState<Record<string, true>>({});
     // Sedi con una GET dei pacchetti in volo.
     const pacchettiInVolo = useRef(new Set<string>());
+    const [giornoCompetenza, setGiornoCompetenza] = useState(oggiRoma);
+    const titoloDuplicato = giornoCompetenza < oggiRoma() ? t('ticketDupTitoloStorico') : t('ticketDupTitolo');
     const [pezzi, setPezzi] = useState(PEZZI_INIZIALI);
     const [costo, setCosto] = useState(COSTO_INIZIALE);
     const [metodo, setMetodo] = useState('contanti');
@@ -263,7 +268,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             const res = await fetch('/api/pagamenti/ticket', {
                 method: 'POST',
                 headers: hdr(userId),
-                body: JSON.stringify({ alunno_id: sel.id, pezzi, costo, metodo, ...(conferma ? { conferma_duplicato: conferma } : {}) }),
+                body: JSON.stringify({ alunno_id: sel.id, pezzi, costo, metodo, giorno_competenza: giornoCompetenza, ...(conferma ? { conferma_duplicato: conferma } : {}) }),
             });
             const j = await res.json().catch(() => ({}));
 
@@ -402,6 +407,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                         <option value="contanti">{t('ticket_contanti')}</option><option value="bonifico">{t('ticket_bonifico')}</option><option value="pos">{t('ticket_pos')}</option>
                                     </select></div>
                             </div>
+                            <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />
                             <button ref={btnRicaricaRef} onClick={() => ricarica()} disabled={inviando}
                                 className="w-full py-2.5 rounded-pill bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center justify-center gap-1 transition-colors hover:bg-kidville-green-dark disabled:opacity-60 disabled:cursor-not-allowed">
                                 <Plus size={15} /> {t('ticket_ricarica_btn')}
@@ -488,18 +494,18 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             <Modal
                 open={!!dup}
                 onClose={() => setDup(null)}
-                title={t('ticketDupTitolo')}
+                title={titoloDuplicato}
                 returnFocusRef={btnRicaricaRef}
                 className={MODAL_CARD}
                 style={{ boxShadow: MODAL_SHADOW }}
             >
                 <h3 className="flex items-center gap-2 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-error-strong">
-                    <AlertTriangle size={18} /> {t('ticketDupTitolo')}
+                    <AlertTriangle size={18} /> {titoloDuplicato}
                 </h3>
                 <p className="mt-2 font-maven text-sm text-kidville-ink">{t('ticketDupSpiega')}</p>
                 {dup && (
                     <div className="mt-3 rounded-card bg-kidville-cream/60 px-3 py-2">
-                        <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('ticketDupPrecedenteTitolo')}</p>
+                        <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{giornoCompetenza < oggiRoma() ? t('ticketDupPrecedenteStorico', { data: dataIt(giornoCompetenza) }) : t('ticketDupPrecedenteTitolo')}</p>
                         <dl className="mt-1 space-y-0.5 font-maven text-sm text-kidville-ink">
                             <div className="flex justify-between gap-3"><dt className="text-kidville-sub">{t('ticketDupOra')}</dt><dd><b>{f.ora(dup.creato_il)}</b></dd></div>
                             <div className="flex justify-between gap-3"><dt className="text-kidville-sub">{t('ticketDupTicket')}</dt><dd><b>{dup.pezzi}</b></dd></div>

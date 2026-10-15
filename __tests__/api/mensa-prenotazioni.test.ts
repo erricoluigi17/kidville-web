@@ -11,6 +11,7 @@ const SEGRETERIA = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'
 
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
+  notificaSaldoBasso: vi.fn(),
   entroCutoff: vi.fn(),
   genitoreHasFiglio: vi.fn(),
   logEvento: vi.fn(),
@@ -50,7 +51,7 @@ vi.mock('@/lib/mensa/server', () => ({
   entroCutoff: h.entroCutoff,
 }))
 vi.mock('@/lib/mensa/resolveMenu', () => ({ resolveMenuGiorno: () => h.menu }))
-vi.mock('@/lib/mensa/notify', () => ({ notificaSaldoBasso: async () => {} }))
+vi.mock('@/lib/mensa/notify', () => ({ notificaSaldoBasso: h.notificaSaldoBasso }))
 vi.mock('@/lib/mensa/allergie-check', () => ({ controllaAllergie: async () => {} }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFiglio }))
 // Appendice logging: si spia SOLO logEvento (il resto resta reale e silenzioso
@@ -521,5 +522,50 @@ describe('mensa/prenotazioni · cutoff in ora italiana, per sede (implementazion
       ['lte', 'data', '2026-09-25'],
     ])
     expect((await res.json()).data.cutoffOra).toBe('09:30')
+  })
+})
+
+
+describe('saldo mensa e competenza retroattiva', () => {
+  const oggi = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' })
+  const ieri = () => new Date(Date.parse(`${oggi()}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
+  const staff = () => h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+
+  it('nuovo scalo ieri: ledger scritto e nessun avviso famiglia', async () => {
+    staff()
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: ieri() }))
+    expect(res.status).toBe(201)
+    expect(h.ledger).toHaveLength(1)
+    expect(h.ledger[0].data).toBe(ieri())
+    expect(h.notificaSaldoBasso).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('lotto misto oggi/ieri (inversione=%s): avvisa sullo scalo di oggi', async inverso => {
+    staff()
+    const date = inverso ? [oggi(), ieri()] : [ieri(), oggi()]
+    const res = await POST(postReq({ alunno_id: ALUNNO, date }))
+    expect(res.status).toBe(201)
+    expect(h.ledger).toHaveLength(2)
+    expect(h.notificaSaldoBasso).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({
+      operazione: expect.objectContaining({ giornoCompetenza: oggi(), sopprimiGenitori: false }),
+    }))
+  })
+
+  it('oggi già prenotato non rende notificabile una rettifica di ieri', async () => {
+    staff()
+    h.existingPren = { id: 'gia-prenotato', stato: 'prenotato' }
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: [ieri(), oggi()] }))
+    expect(res.status).toBe(201)
+    expect(h.ledger).toHaveLength(0)
+    expect(h.notificaSaldoBasso).not.toHaveBeenCalled()
+  })
+
+  it('errore sullo scalo di oggi: nessun avviso inventato', async () => {
+    staff()
+    h.rpcError = { code: 'XX000' }
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: oggi() }))
+    expect(res.status).toBe(201)
+    expect(h.ledger).toHaveLength(0)
+    expect(h.notificaSaldoBasso).not.toHaveBeenCalled()
   })
 })

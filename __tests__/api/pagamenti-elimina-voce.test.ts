@@ -93,7 +93,7 @@ describe('DELETE /api/pagamenti/[id] · chi può', () => {
       expect(res.status).toBe(200)
       expect(h.db.pagamenti).toHaveLength(0)
       expect(scritte('registro_modifiche', 'insert')).toHaveLength(1)
-      expect(h.revoca).toHaveBeenCalledWith(expect.anything(), [ALU])
+      expect(h.revoca).toHaveBeenCalledWith(expect.anything(), [ALU], expect.objectContaining({ giornoCompetenza: new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' }), sopprimiGenitori: false }))
       expect(eventi('voce-eliminata')).toHaveLength(1)
     })
   }

@@ -1,3 +1,4 @@
+import type { ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 /**
  * Sospensione account moroso (DL-021 · Contabilità v2) — granularità FAMIGLIA.
  *
@@ -310,6 +311,7 @@ export async function accountGenitoriDiAlunni(supabase: SupabaseClient, alunnoId
 export async function verificaRevocaSospensioneMorosita(
   supabase: SupabaseClient,
   alunnoIds: string[],
+  operazione?: ContestoNotificaOperazione,
 ): Promise<{ revocati: string[] }> {
   const revocati: string[] = []
   try {
@@ -394,6 +396,7 @@ export async function verificaRevocaSospensioneMorosita(
       // Notifica formale al genitore (best-effort, testo neutro in push).
       await notificaEvento(supabase, {
         tipo: 'sospensione_morosita',
+        operazione,
         scuolaId: (a.scuola_id as string | undefined) ?? null,
         alunnoIds: [a.id],
         titolo: 'Avviso amministrativo',

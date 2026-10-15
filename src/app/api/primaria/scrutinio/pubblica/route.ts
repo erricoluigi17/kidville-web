@@ -1,3 +1,4 @@
+import { politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -7,7 +8,7 @@ import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -31,11 +32,12 @@ export const POST = withRoute('primaria/scrutinio/pubblica:POST', async (request
 
     const supabase = await createAdminClient()
 
-    const { data: scrutinio } = await supabase
+    const { data: scrutinio, error: erroreScrutinio } = await supabase
       .from('scrutini')
-      .select('id, section_id, stato, pubblicato')
+      .select('id, section_id, stato, pubblicato, periodo_id')
       .eq('id', scrutinioId)
       .maybeSingle()
+    if (erroreScrutinio) throw erroreScrutinio
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Pubblicabile solo a scrutinio chiuso' }, { status: 409 })
 
@@ -58,11 +60,18 @@ export const POST = withRoute('primaria/scrutinio/pubblica:POST', async (request
     // Notifica genitori solo al passaggio a pubblicato=true (best-effort).
     if (pubblicato && !scrutinio.pubblicato) {
       try {
-        const { data: alunni } = await supabase.from('alunni').select('id').eq('section_id', scrutinio.section_id)
+        const { data: periodo, error: errorePeriodo } = await supabase.from('scrutinio_periodi').select('data_fine').eq('id', scrutinio.periodo_id).maybeSingle()
+        if (errorePeriodo || !periodo?.data_fine) {
+          logEvento('notifica', 'error', { operazione: 'primaria/scrutinio/pubblica:POST', esito: 'competenza-pagella-non-risolta' }, errorePeriodo ?? undefined)
+          return NextResponse.json({ success: true, data: updated, notifica_saltata: true })
+        }
+        const { data: alunni, error: erroreAlunni } = await supabase.from('alunni').select('id').eq('section_id', scrutinio.section_id)
+        if (erroreAlunni) throw erroreAlunni
         const alunniIds = (alunni ?? []).map((a) => a.id)
         if (alunniIds.length > 0) {
           await enqueueNotifichePerAlunni(supabase, {
             alunnoIds: alunniIds,
+            operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: String(periodo.data_fine) }),
             tipo: 'pagella',
             titolo: 'Pagella disponibile',
             corpo: 'Il documento di valutazione è disponibile nell’area riservata.',
@@ -71,7 +80,7 @@ export const POST = withRoute('primaria/scrutinio/pubblica:POST', async (request
             entitaId: scrutinioId,
           })
         }
-      } catch { /* non bloccare */ }
+      } catch (err) { logEvento('notifica', 'error', { operazione: 'primaria/scrutinio/pubblica:POST', esito: 'pagella-non-notificata' }, err) }
     }
 
     return NextResponse.json({ success: true, data: updated })

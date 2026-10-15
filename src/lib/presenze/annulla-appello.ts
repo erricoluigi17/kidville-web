@@ -1,3 +1,6 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile } from '@/lib/primaria/rettifica-storica';
+import type { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -75,6 +78,7 @@ export interface PresenzaEsito {
 }
 
 export type EsitoAnnullaAppello =
+    | { esito: 'rettifica-rifiutata'; response: NextResponse }
     | { esito: 'non-trovata' }
     | { esito: 'niente-da-annullare' }
     | { esito: 'cambiata-nel-frattempo' }
@@ -98,6 +102,7 @@ export type EsitoAnnullaAppello =
 
 export interface AnnullaAppelloInput {
     alunnoId: string;
+    versioneAttesa?: number;
     /** YYYY-MM-DD. Il «solo oggi» lo controlla la rotta. */
     data: string;
     /**
@@ -115,6 +120,7 @@ export interface AnnullaAppelloInput {
 }
 
 interface RigaDecisione {
+    [campo: string]: unknown;
     id: string;
     alunno_id: string;
     data: string;
@@ -147,7 +153,7 @@ export async function annullaAppelloAlunno(
 
     let lettura = supabase
         .from('presenze')
-        .select(COLONNE_DECISIONE)
+        .select(eRettificaStorica(attore, data) ? '*' : COLONNE_DECISIONE)
         .eq('alunno_id', alunnoId)
         .eq('data', data);
     if (input.sectionId) lettura = lettura.eq('section_id', input.sectionId);
@@ -169,7 +175,15 @@ export async function annullaAppelloAlunno(
     const conComunicazione = riga.giustificata_da !== null && riga.giustificata_da !== undefined;
 
     let presenza: PresenzaEsito | null = null;
-    if (conComunicazione) {
+    if (eRettificaStorica(attore, data)) {
+        const aggiornatoIl = new Date().toISOString();
+        if (riga.storico_versione === undefined) return { esito: 'rettifica-rifiutata', response: storicoIndisponibile() };
+        const rettifica = await applicaRettificaStorica(supabase, { attore, scuolaId: riga.scuola_id, alunnoId, sectionId: riga.section_id, modulo: 'presenze', giorno: data,
+            attese: [{ tabella: 'presenze', filtro: { id: riga.id, scuola_id: riga.scuola_id }, versione: input.versioneAttesa }],
+            azioni: [{ tabella: 'presenze', operazione: conComunicazione ? 'update' : 'delete', filtro: { id: riga.id, scuola_id: riga.scuola_id }, ...(conComunicazione ? { valori: { stato: 'assente', registrato_da: null, orario_entrata: null, orario_uscita: null, note_appello: null, aggiornato_il: aggiornatoIl } } : {}) }] });
+        if ('response' in rettifica) return { esito: 'rettifica-rifiutata', response: rettifica.response };
+        if (conComunicazione) presenza = rettifica.righe[0]?.[0] as unknown as PresenzaEsito;
+    } else if (conComunicazione) {
         // L'update NON nomina i campi della comunicazione del genitore: una
         // `.update()` non può azzerare la colonna che non nomina.
         const ripristino = {
@@ -215,12 +229,11 @@ export async function annullaAppelloAlunno(
 
     // La revoca viene DOPO la scrittura riuscita: ritirare l'avviso e poi non
     // riuscire ad annullare lascerebbe un'assenza registrata senza avviso.
-    const { error: revocaErr } = await supabase
+    const { error: revocaErr } = await eseguiRitiroGiornate(() => supabase
         .from('notifiche')
         .delete()
         .eq('tipo', 'assenza_non_comunicata')
-        .eq('entita_id', alunnoId)
-        .is('push_inviata_il', null);
+        .eq('entita_id', alunnoId), { giorni: [data], storica: eRettificaStorica(attore, data), operazione });
     if (revocaErr) {
         // `error` benché l'annullamento sia riuscito: l'avviso resta in coda e
         // partirà per un appello che non esiste più.

@@ -1,3 +1,6 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending';
+import { oggiRoma, deveNotificareGenitori, puoCorreggereStorico, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita';
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -24,7 +27,7 @@ import { dataCivile } from '@/i18n/config';
 import { oraCivile } from '@/lib/format/confini-giorno';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
-import { zUuid } from '@/lib/validation/common';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { percorsoAllegatoArchiviatoAvviso, percorsoAllegatoAvviso, rimuoviAllegatoAvvisoSeOrfano } from '@/lib/allegati/rimozione';
 import { withRoute } from '@/lib/logging/with-route';
@@ -81,6 +84,7 @@ const MAX_COLONNE_SFILATE = 12;
 // perché, per esteso. Entrambe si chiamano solo dietro ad `assertAvvisoInScope`.
 
 const putBodySchema = z.object({
+    giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
     // Stessi massimi del POST, dallo stesso modulo: il PUT riscrive le medesime
     // colonne, e un limite copiato a mano qui si sarebbe disallineato al primo
     // cambio di DDL — che è come il difetto S34 è sopravvissuto sugli avvisi
@@ -370,8 +374,8 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // anche nel ripiego perché è una colonna storica: senza, sul DB E2E il gate
         // dell'autore leggerebbe `undefined` e negherebbe a ogni docente il proprio.
         const COLONNE_PRIMA =
-            'author_id, form_model_id, scuola_id, target_scope, target_classes, tipo, scadenza, scadenza_avviso, scadenza_adesione, posti_totali, chiedi_numero';
-        const COLONNE_PRIMA_STORICHE = 'author_id, scuola_id, target_scope, target_classes, tipo, scadenza';
+            'giorno_competenza, politica_operazione, created_at, author_id, form_model_id, scuola_id, target_scope, target_classes, tipo, scadenza, scadenza_avviso, scadenza_adesione, posti_totali, chiedi_numero';
+        const COLONNE_PRIMA_STORICHE = 'created_at, author_id, scuola_id, target_scope, target_classes, tipo, scadenza';
         let letturaPrima = await supabase
             .from('avvisi')
             .select(COLONNE_PRIMA)
@@ -409,7 +413,7 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             );
         }
         const prima = rigaPrima as {
-            author_id?: string | null; form_model_id?: string | null;
+            politica_operazione?: ContestoNotificaOperazione | null; giorno_competenza?: string | null; created_at?: string | null; author_id?: string | null; form_model_id?: string | null;
             scuola_id?: string; target_scope?: string; target_classes?: string[] | null;
             tipo?: string | null; scadenza?: string | null;
             scadenza_avviso?: string | null; scadenza_adesione?: string | null;
@@ -618,6 +622,13 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         }
         if (posti_totali !== undefined) patch.posti_totali = posti_totali ?? null;
 
+        if (b.data.giorno_competenza && b.data.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+            return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 });
+        }
+        const politica = politicaRettificaServizio(auth.user, prima?.giorno_competenza ?? prima?.politica_operazione?.giornoCompetenza ?? prima?.created_at, prima?.politica_operazione?.giornoCompetenza, b.data.giorno_competenza);
+        patch.politica_operazione = politica;
+        if (b.data.giorno_competenza) patch.giorno_competenza = b.data.giorno_competenza;
+
         // Update resiliente alle colonne nuove mancanti (DB E2E della CI, non
         // migrato): PostgREST risponde `PGRST204` nominando la colonna che non ha e
         // si riprova senza. Ogni colonna sfilata lascia la sua riga — `colonna` è
@@ -633,6 +644,10 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(updRes.error.message);
             const col = m?.[1] ?? m?.[2];
             if (!col || !(col in patch)) break;
+            if (['giorno_competenza', 'politica_operazione'].includes(col)) {
+                logEvento('avvisi', 'error', { operazione: 'avvisi/[id]:PUT', esito: 'schema-politica-storica-assente', avviso: id }, updRes.error);
+                return NextResponse.json({ error: 'Archivio storico non disponibile. Riprova.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 });
+            }
             logEvento('avvisi', 'warn', {
                 operazione: 'avvisi/[id]:PUT',
                 esito: 'degrado-colonna-sfilata',
@@ -712,11 +727,18 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // famiglie senza avviso. Si manda SOLO a chi non ha già la notifica
         // iniziale, e solo se scope o classi sono davvero cambiati. Best-effort,
         // ma mai muto: se non si sa chi è già stato avvisato non si manda niente.
+        if (!deveNotificareGenitori(politica) && prima?.scuola_id) {
+            const originali = await destinatariAvviso(supabase, prima.scuola_id, prima.target_scope ?? 'globale', prima.target_classes ?? []);
+            for (const tipoPending of [tipoNotificaAvviso(prima.form_model_id, prima.tipo), 'adesione_promemoria', 'adesione_ammessa']) {
+                await ritiraPendingOperazione(supabase, { tipo: tipoPending, entitaTipo: 'avviso', entitaId: id, scuolaId: prima.scuola_id, utenteIds: originali, operazione: politica, destinatario: 'genitore' });
+            }
+        }
+
         const scopeDopo = target_scope ?? prima?.target_scope ?? 'globale';
         const classiPrima = [...(prima?.target_classes ?? [])].sort().join('|');
         const classiDopo = [...classiTarget].sort().join('|');
         const destinatariCambiati = scopeDopo !== (prima?.target_scope ?? 'globale') || classiPrima !== classiDopo;
-        if (destinatariCambiati && prima?.scuola_id) {
+        if (destinatariCambiati && prima?.scuola_id && deveNotificareGenitori(politica)) {
             try {
                 const tipoNotifica = tipoNotificaAvviso(prima.form_model_id, tipoRisultante);
                 const tutti = await destinatariAvviso(supabase, prima.scuola_id, scopeDopo, classiTarget);
@@ -727,6 +749,8 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
                         tipo: tipoNotifica,
                         scuolaId: prima.scuola_id,
                         utenteIds: nuovi,
+                        destinatario: 'genitore',
+                        operazione: politica,
                         titolo: titoloNotificaAvviso(tipoNotifica, titolo),
                         corpo: contenuto.length > 140 ? `${contenuto.slice(0, 140)}…` : contenuto,
                         link: '/parent/avvisi',

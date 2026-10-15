@@ -1,3 +1,5 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma } from '@/lib/storici/retroattivita'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -6,7 +8,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { dataCivile } from '@/i18n/config'
@@ -17,6 +19,7 @@ const getQuerySchema = z.object({
 })
 
 const postBodySchema = z.object({
+  giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
   alunno_id: zUuid,
   // pezzi/costo possono arrivare come numero o stringa numerica (come incassi);
   // i vincoli pezzi > 0 e costo >= 0 sono quelli del check storico
@@ -112,7 +115,7 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
     // Confini del giorno CIVILE (Europe/Rome): la RPC filtra su `creato_il` dentro
     // questi limiti, MAI sulla colonna `data`, che ha DEFAULT CURRENT_DATE e segue il
     // fuso della sessione Postgres (fra mezzanotte e le due nomina il giorno sbagliato).
-    const oggi = dataCivile()
+    const oggi = body.giorno_competenza ?? dataCivile()
     const dalle = inizioGiornoCivile(oggi)
     const alle = fineGiornoCivile(oggi)
     if (!body.conferma_duplicato && (!dalle || !alle)) {
@@ -120,7 +123,19 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
       logEvento('db', 'warn', { operazione: 'pagamenti/ticket:POST', esito: 'guardia_duplicato_non_verificata', alunno_id })
     }
 
-    const rpc = await supabase.rpc('ricarica_ticket_mensa', {
+    const rpc = body.giorno_competenza
+      ? await supabase.rpc('ricarica_ticket_mensa_storico', {
+      p_alunno_id: alunno_id,
+      p_pezzi: Number(pezzi),
+      p_costo: Number(costo),
+      p_operatore: user.id,
+      p_metodo: body.metodo ?? null,
+      p_conferma_duplicato: !!body.conferma_duplicato,
+      p_giorno_dalle: dalle ?? null,
+      p_giorno_alle: alle ?? null,
+      p_giorno_competenza: body.giorno_competenza,
+    })
+      : await supabase.rpc('ricarica_ticket_mensa', {
       p_alunno_id: alunno_id,
       p_pezzi: Number(pezzi),
       p_costo: Number(costo),
@@ -182,6 +197,7 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
     try {
       await notificaEvento(supabase, {
         tipo: 'mensa_ricarica',
+        operazione: politicaNotificaServizio(user, body.giorno_competenza),
         scuolaId: (scuolaId as string | undefined) ?? null,
         alunnoIds: [alunno_id],
         titolo: 'Ricarica mensa registrata',

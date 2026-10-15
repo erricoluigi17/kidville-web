@@ -1,4 +1,10 @@
+import { appartenenzeNelGiorno } from '@/lib/storici/alunni-giorno';
+import { rispostaErroreStorico } from '@/lib/storici/http';
 import { NextRequest, NextResponse } from 'next/server';
+import type { AppUser } from '@/lib/auth/predicati-ruolo';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AttesaStorica, type AzioneStorica } from '@/lib/primaria/rettifica-storica';
+import { oggiRoma, intervalloGiornoRoma, istanteNelGiornoRoma, politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
@@ -7,7 +13,7 @@ import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
-import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
+import { notificaTitolariScrittura, enqueueDiarioGenitori, ritiraDiarioGenitori } from '@/lib/primaria/notifiche';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
@@ -41,6 +47,7 @@ const getTeacherQuerySchema = z.object({
 // Un evento diario: campi pass-through verso il DB lasciati permissivi
 // (il comportamento attuale non impone vincoli su orari/dettagli/nota).
 const entrySchema = z.object({
+    versioneAttesa: z.number().int().nonnegative().nullable().optional(),
     alunno_id: zUuid,
     // UN VOCABOLARIO CHIUSO (2026-09-28, seconda revisione): i tipi base e `routine:<id>`. Era una
     // stringa libera, e da quando le routine si accendono e si spengono per sede una stringa libera
@@ -71,6 +78,7 @@ const entrySchema = z.object({
 
 // Il body può essere un singolo evento o un array di eventi.
 const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
+const postQuerySchema = z.object({ date: zDataYMD.optional(), scuola_id: zUuid.optional(), sectionId: zUuid.optional() });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ORARIO DELLE ATTIVITÀ (D1, 26/09/2026) — contratto in
@@ -201,18 +209,19 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
         const gate = await requireParentOfStudent(request, q.data.alunno_id);
         if (gate.response) return gate.response;
         const fromDate = q.data.from ?? (() => {
-            const d = new Date(); d.setDate(d.getDate() - 14); return d.toISOString().split('T')[0];
+            return new Date(Date.parse(`${oggiRoma()}T12:00:00Z`) - 14 * 86_400_000).toISOString().slice(0, 10);
         })();
-        const toDate = q.data.to ?? new Date().toISOString().split('T')[0];
+        const toDate = q.data.to ?? oggiRoma();
 
         // Buffer visibilità (come le valutazioni primaria, PRD §4.5): il genitore
         // vede una voce solo trascorsi `buffer_visibilita_min` minuti dalla
         // creazione, così la maestra ha la finestra di correzione. Default 10'.
-        const { data: alunno } = await admin
+        const { data: alunno, error: erroreSede } = await admin
             .from('alunni')
             .select('scuola_id')
             .eq('id', q.data.alunno_id)
             .maybeSingle();
+        if (erroreSede) logErrore({ operazione: 'diary/entries:GET', evento: 'db' }, erroreSede);
         const diarioCfg = await getModuleConfig<{ buffer_visibilita_min?: number }>(
             admin, 'diario_config', alunno?.scuola_id,
         );
@@ -228,8 +237,8 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
                 ? 'id, tipo_evento, orario_inizio, dettagli, nota_libera, nota_bambino'
                 : 'id, tipo_evento, orario_inizio, dettagli, nota_libera')
             .eq('alunno_id', q.data.alunno_id)
-            .gte('orario_inizio', `${fromDate}T00:00:00.000Z`)
-            .lte('orario_inizio', `${toDate}T23:59:59.999Z`)
+            .gte('orario_inizio', intervalloGiornoRoma(fromDate).startOfDay)
+            .lte('orario_inizio', intervalloGiornoRoma(toDate).endOfDay)
             // Nasconde le voci create da meno di `bufferMin` (finestra di correzione).
             .lte('creato_il', soglia)
             .order('orario_inizio', { ascending: false });
@@ -270,7 +279,7 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     const q = parseQuery(request, getTeacherQuerySchema);
     if ('response' in q) return q.response;
     const sezione = q.data.sezione;
-    const date = q.data.date ?? new Date().toISOString().split('T')[0];
+    const date = q.data.date ?? oggiRoma();
     // Contratto storico: senza sezione la risposta è vuota, non un 400.
     if (!sezione && !q.data.sectionId) return NextResponse.json([]);
 
@@ -287,21 +296,32 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     // GATE per SEZIONE ASSEGNATA prima di leggere gli alunni: `requireDocente`
     // verifica il ruolo, non la classe (R108). Educator → solo le sue sezioni.
     // Il gate passava e l'elenco restava vuoto lo stesso: si filtrava per NOME.
-    const classe = await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+    const storica = puoCorreggereStorico(auth.user) && date < oggiRoma();
+    const classe = storica && q.data.sectionId
+        ? { sectionIds: [q.data.sectionId], response: undefined }
+        : await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
     if (classe.response) return classe.response;
     if (classe.sectionIds.length === 0) return NextResponse.json([]);
 
-    const { data: alunni } = await admin
-        .from('alunni')
-        .select('id')
-        .in('section_id', classe.sectionIds)
-        .in('scuola_id', plessi);
+    let idsStorici: string[] | null = null;
+    if (storica) {
+        try { idsStorici = [...new Set((await appartenenzeNelGiorno(admin, { scuole: plessi, sectionIds: classe.sectionIds, giorno: date })).map(a => a.alunno_id))]; }
+        catch (error) { logEvento('registro', 'error', { operazione: 'diary/entries:GET', esito: 'appartenenze-non-lette' }, error); return rispostaErroreStorico(error, 'diary/entries:GET'); }
+        if (!idsStorici.length) return NextResponse.json([]);
+    }
+    const queryAlunni = idsStorici
+        ? admin.from('alunni').select('id').in('id', idsStorici).is('anonimizzato_il', null)
+        : admin.from('alunni').select('id').in('section_id', classe.sectionIds).in('scuola_id', plessi).is('anonimizzato_il', null);
+    const { data: alunni, error: erroreAlunni } = await queryAlunni;
 
+    if (erroreAlunni) {
+        logErrore({ operazione: 'diary/entries:GET', evento: 'db' }, erroreAlunni);
+        return NextResponse.json({ error: 'Lettura degli alunni non riuscita', codice: 'DIARIO_LETTURA_FALLITA' }, { status: 500 });
+    }
     if (!alunni || alunni.length === 0) return NextResponse.json([]);
 
     const ids = alunni.map(a => a.id);
-    const startOfDay = `${date}T00:00:00.000Z`;
-    const endOfDay   = `${date}T23:59:59.999Z`;
+    const { startOfDay, endOfDay } = intervalloGiornoRoma(date);
 
     const { data, error } = await admin
         .from('eventi_diario')
@@ -316,12 +336,40 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     return NextResponse.json(data);
 });
 
+/** Il perimetro di una rettifica è quello comprovato per quel giorno, non la classe corrente. */
+async function contestoStoricoDiario(admin: Awaited<ReturnType<typeof createAdminClient>>, utente: AppUser, request: NextRequest, giorno: string, scuolaId: string | undefined, alunnoIds: string[], sectionId?: string): Promise<{ response: NextResponse } | { scuola_id: string; sezioni: Map<string, string> }> {
+    if (!scuolaId) return { response: rifiutoSede('SEDE_DA_SPECIFICARE') };
+    const scuole = await resolveScuoleAttive(request, admin, utente);
+    if (!scuole.includes(scuolaId)) return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') };
+    try {
+        const membri = await appartenenzeNelGiorno(admin, { scuole: [scuolaId], sectionIds: sectionId ? [sectionId] : undefined, alunnoIds, giorno });
+        const sezioni = new Map<string, string>();
+        for (const id of alunnoIds) {
+            const classi = new Set(membri.filter(m => m.alunno_id === id).map(m => m.section_id));
+            if (classi.size !== 1) return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') };
+            sezioni.set(id, [...classi][0]);
+        }
+        return { scuola_id: scuolaId, sezioni };
+    } catch (err) {
+        logErrore({ operazione: 'diary/perimetro-storico', evento: 'db' }, err);
+        return { response: rispostaErroreStorico(err, 'diary/perimetro-storico') };
+    }
+}
+
 // POST /api/diary/entries — salva (upsert) eventi diario
 // Per ogni alunno+tipo_evento: se già esiste oggi → UPDATE, altrimenti → INSERT
 export const POST = withRoute('diary/entries:POST', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
+    const query = parseQuery(request, postQuerySchema);
+    if ('response' in query) return query.response;
+    const giorno = query.data.date ?? oggiRoma();
+    if (giorno !== oggiRoma() && !puoCorreggereStorico(auth.user)) {
+        logEvento('diary', 'info', { operazione: 'diary/entries:POST', esito: 'data-storica-docente-negata', data: giorno });
+        return NextResponse.json({ error: 'Il docente può compilare solo il diario di oggi.', codice: 'DIARIO_DATA_BLOCCATA' }, { status: 423 });
+    }
+    const operazione = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: giorno });
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
     const admin = await createAdminClient();
@@ -332,17 +380,24 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     const orarioNonValido = validaOrariAttivita(entries, Array.isArray(b.data));
     if (orarioNonValido) return orarioNonValido;
 
-    // Scope: ogni alunno deve essere nello scope dell'attore (tenant + classe).
     const alunnoIds = [...new Set(entries.map((e) => e.alunno_id).filter(Boolean))];
-    for (const aid of alunnoIds) {
-        const scopeErr = await assertAlunnoInScope(admin, auth.user, aid);
-        if (scopeErr) return scopeErr;
+    const storica = eRettificaStorica(auth.user, giorno);
+    let contestoStorico: { scuola_id: string; sezioni: Map<string, string> } | null = null;
+    if (storica) {
+        const contesto = await contestoStoricoDiario(admin, auth.user, request, giorno, query.data.scuola_id, alunnoIds, query.data.sectionId);
+        if ('response' in contesto) return contesto.response;
+        contestoStorico = contesto;
+    } else {
+        for (const aid of alunnoIds) {
+            const scopeErr = await assertAlunnoInScope(admin, auth.user, aid);
+            if (scopeErr) return scopeErr;
+        }
     }
 
     // Le routine della SEDE DEL BAMBINO (2026-09-28): spente, inesistenti o con un valore che non
     // vale non si scrivono (422, tutto-o-niente); quelle della scuola escono con la fotografia
     // scritta dal server. Vedi `applicaRoutineAlLotto`.
-    const routine = await applicaRoutineAlLotto(admin, entries);
+    const routine = await applicaRoutineAlLotto(admin, entries, contestoStorico ? new Map(alunnoIds.map(id => [id, contestoStorico.scuola_id])) : undefined);
     if ('response' in routine) return routine.response;
     const verificate = routine.voci;
 
@@ -380,20 +435,119 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         });
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const startOfDay = `${today}T00:00:00.000Z`;
-    const endOfDay = `${today}T23:59:59.999Z`;
+    const today = giorno;
+    const { startOfDay, endOfDay } = intervalloGiornoRoma(giorno);
 
-    const results = [];
+    const atteseStoriche: AttesaStorica[] = [];
+    const azioniStoriche: AzioneStorica[] = [];
+
+    const results: Array<{ id: string; alunno_id: string; tipo_evento: string; storico_versione?: number }> = [];
     const errors = [];
     // `togli_nota` senza una riga di oggi: non si crea niente, e lo si conta per il log qui sotto.
     let togliNotaSenzaRiga = 0;
+
+    const scalaPannolino = async (entry: typeof daScrivere[number]) => {
+        // #9 — Scalo automatico pannolino: ad ogni evento "bagno" scala 1 pannolino
+        // dall'armadietto, SOLO per i bambini con flag "usa_pannolino" in anagrafica.
+        // Best-effort e idempotente per giorno: non blocca mai il salvataggio del diario.
+        if (entry.tipo_evento === 'bagno' && results.some(r => r.alunno_id === entry.alunno_id && r.tipo_evento === 'bagno')) {
+            try {
+                // `scuola_id` insieme a `usa_pannolino`: lo scalo scrive su
+                // `armadietto`, e ogni scrittura dichiara la sua sede. Fino al
+                // 2026-07-31 questo insert — come gli altri due su `armadietto` —
+                // la ometteva, e in produzione la colonna è NULL su tutte le righe.
+                let anagrafica = admin.from('alunni').select('usa_pannolino, scuola_id').eq('id', entry.alunno_id);
+                if (contestoStorico) anagrafica = anagrafica.eq('scuola_id', contestoStorico.scuola_id);
+                const { data: attuale, error: erroreAlunno } = await anagrafica.maybeSingle();
+                if (erroreAlunno) throw erroreAlunno;
+                let al = attuale;
+                if (!al && contestoStorico) {
+                    // Un ex alunno non concede accesso ai suoi dati correnti nell'altra sede.
+                    // Per il consumo valgono le evidenze dei pannolini già movimentati qui.
+                    const { data: evidenze, error: erroreEvidenze } = await admin.from('armadietto').select('id').eq('alunno_id', entry.alunno_id).eq('scuola_id', contestoStorico.scuola_id).eq('materiale', 'Pannolini').lte('date', giorno).limit(1);
+                    if (erroreEvidenze) throw erroreEvidenze;
+                    if (evidenze?.length) al = { usa_pannolino: true, scuola_id: contestoStorico.scuola_id };
+                    else logEvento('diary', 'info', { operazione: 'diary/entries:POST', esito: 'scalo-storico-senza-evidenza-pannolini' });
+                }
+                const scuolaAlunno = (al?.scuola_id as string | undefined) ?? null;
+                if (al?.usa_pannolino === true && !scuolaAlunno) {
+                    // Sede non risolvibile: si SALTA lo scalo invece di scrivere una
+                    // riga senza plesso. Va detto per lo stesso motivo del catch qui
+                    // sotto: è una scorta che a fine mese non torna.
+                    logEvento('diary', 'warn', {
+                        operazione: 'diary/entries:POST',
+                        esito: 'scalo-pannolino-saltato-senza-sede',
+                    });
+                }
+
+                if (al?.usa_pannolino === true && scuolaAlunno) {
+                    // Evita doppio scalo nello stesso giorno (idempotenza su update ripetuti)
+                    const { data: giaScalato, error: erroreMovimento } = await admin
+                        .from('armadietto')
+                        .select('id')
+                        .eq('alunno_id', entry.alunno_id)
+                        .eq('materiale', 'Pannolini')
+                        .eq('scuola_id', scuolaAlunno)
+                        .eq('date', today)
+                        .eq('portato', false)
+                        .limit(1);
+
+                    if (erroreMovimento) throw erroreMovimento;
+                    if (!giaScalato || giaScalato.length === 0) {
+                        const { error: erroreScalo } = await admin.from('armadietto').insert({
+                            alunno_id: entry.alunno_id,
+                            scuola_id: scuolaAlunno,
+                            nome_oggetto: 'Pannolini',
+                            materiale: 'Pannolini',
+                            quantita: 1,
+                            quantita_residua: 0,
+                            date: today,
+                            politica_operazione: operazione,
+                            portato: false, // consumo: sottrae dallo stock aggregato
+                            livello_allerta: 5,
+                            livello_emergenza: 2,
+                        });
+                        if (erroreScalo) throw erroreScalo;
+                        logEvento('diary', 'info', { operazione: 'diary/entries:POST', esito: 'pannolino-scalato', data: giorno, alunno_id: entry.alunno_id });
+
+                        // Lo scalo è il DATO, la richiesta è la CONSEGUENZA: la
+                        // conseguenza non può far fallire il dato. Se la
+                        // riconciliazione esplode, il movimento resta scritto e il
+                        // cron delle 06:00 rimetterà le cose a posto. Un catch che
+                        // non logga sarebbe un bug (AGENTS.md regola 6).
+                        //
+                        // Dentro il ramo dell'insert e non fuori: qui lo stock è
+                        // appena cambiato. Se il pannolino era già stato scalato
+                        // oggi (idempotenza per giorno) non c'è nessun movimento
+                        // nuovo da riconciliare, e ripassare a ogni evento «bagno»
+                        // di ogni bambino della sezione sarebbe solo lavoro inutile
+                        // sul database.
+                        try {
+                            await riconciliaRichieste(admin, { alunnoId: entry.alunno_id, operazione, materiale: 'Pannolini', ...(contestoStorico ? { sedeStorica: { scuolaId: contestoStorico.scuola_id, sectionId: contestoStorico.sezioni.get(entry.alunno_id) ?? null } } : {}) });
+                        } catch (e) {
+                            logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, e);
+                        }
+                    }
+                }
+            } catch (e) {
+                // Lo scalo del pannolino è un effetto collaterale: se salta, il diario è comunque
+                // salvato e la richiesta non deve fallire. Ma «saltato» va detto — è una scorta che
+                // non viene scalata, cioè un armadietto che a fine mese non torna, e senza questa
+                // riga la discrepanza sarebbe inspiegabile. `warn` e non `error`: il dato principale
+                // è salvo. Va in tabella (vaPersistito persiste i warn), che è dove la si conta.
+                logEvento('diary', 'warn', {
+                    operazione: 'diary/entries:POST',
+                    esito: 'scalo-pannolino-saltato',
+                }, e);
+            }
+        }
+    };
 
     for (const entry of daScrivere) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
         const { data: existing, error: erroreRicerca } = await admin
             .from('eventi_diario')
-            .select('id, dettagli')
+            .select('*')
             .eq('alunno_id', entry.alunno_id)
             .eq('tipo_evento', entry.tipo_evento)
             .gte('orario_inizio', startOfDay)
@@ -420,6 +574,11 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             continue;
         }
 
+        if (storica) {
+            if (existing?.length && existing[0].storico_versione === undefined) return storicoIndisponibile();
+            atteseStoriche.push({ tabella: 'eventi_diario', filtro: existing?.length ? { id: existing[0].id } : { alunno_id: entry.alunno_id, tipo_evento: entry.tipo_evento, giorno_competenza: giorno }, versione: entry.versioneAttesa });
+        }
+
         if (existing && existing.length > 0) {
             // UPDATE — resiliente alla colonna nota_bambino non ancora migrata (DB E2E CI):
             // PGRST204/42703 → rimuove la colonna mancante e riprova. In prod esiste → 0 retry.
@@ -437,7 +596,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                 dettagli: tieniPrecedente
                     ? { ...(entry.dettagli as Record<string, unknown>), valore: precedente?.valore }
                     : entry.dettagli ?? null,
-                orario_fine: entry.orario_fine ?? null,
+                orario_fine: entry.orario_fine == null ? null : istanteNelGiornoRoma(giorno, new Date(String(entry.orario_fine))),
                 nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
                 // activity_description escluso: colonna non ancora migrata
@@ -445,6 +604,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             // Togliendo la sola nota del bambino, una nota di sezione vuota a schermo non cancella
             // quella salvata sulla riga (l'editor non la ripristina mai: vuota non vuol dire tolta).
             if (togliNota(entry) && !String(entry.nota_libera ?? '').trim()) delete updateRecord.nota_libera;
+            if (storica) { azioniStoriche.push({ tabella: 'eventi_diario', operazione: 'update', filtro: { id: existing[0].id }, valori: updateRecord }); continue; }
             let updRes = await admin.from('eventi_diario').update(updateRecord).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
             let uAttempts = 0;
             while (updRes.error && ['PGRST204', '42703'].includes((updRes.error as { code?: string }).code ?? '') && uAttempts < 4) {
@@ -464,14 +624,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                 // Provenienza operativa = chi registra (anche la segreteria). Non è una firma valutativa.
                 maestra_id: auth.user.id,
                 tipo_evento: entry.tipo_evento,
-                orario_inizio: entry.orario_inizio ?? new Date().toISOString(),
-                orario_fine: entry.orario_fine ?? null,
+                orario_inizio: istanteNelGiornoRoma(giorno, entry.orario_inizio ? new Date(String(entry.orario_inizio)) : new Date()),
+                orario_fine: entry.orario_fine == null ? null : istanteNelGiornoRoma(giorno, new Date(String(entry.orario_fine))),
                 dettagli: entry.dettagli ?? null,
                 nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
                 nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
                 // activity_description escluso: colonna non ancora migrata su Supabase
                 pubblicato: false,
             };
+            if (storica) { azioniStoriche.push({ tabella: 'eventi_diario', operazione: 'insert', valori: insertRecord }); continue; }
             let insRes = await admin.from('eventi_diario').insert(insertRecord).select('id, alunno_id, tipo_evento');
             let iAttempts = 0;
             while (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '') && iAttempts < 4) {
@@ -486,88 +647,14 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             else if (insRes.data) results.push(...insRes.data);
         }
 
-        // #9 — Scalo automatico pannolino: ad ogni evento "bagno" scala 1 pannolino
-        // dall'armadietto, SOLO per i bambini con flag "usa_pannolino" in anagrafica.
-        // Best-effort e idempotente per giorno: non blocca mai il salvataggio del diario.
-        if (entry.tipo_evento === 'bagno') {
-            try {
-                // `scuola_id` insieme a `usa_pannolino`: lo scalo scrive su
-                // `armadietto`, e ogni scrittura dichiara la sua sede. Fino al
-                // 2026-07-31 questo insert — come gli altri due su `armadietto` —
-                // la ometteva, e in produzione la colonna è NULL su tutte le righe.
-                const { data: al } = await admin
-                    .from('alunni')
-                    .select('usa_pannolino, scuola_id')
-                    .eq('id', entry.alunno_id)
-                    .maybeSingle();
+        if (!storica) await scalaPannolino(entry);
+    }
 
-                const scuolaAlunno = (al?.scuola_id as string | undefined) ?? null;
-                if (al?.usa_pannolino === true && !scuolaAlunno) {
-                    // Sede non risolvibile: si SALTA lo scalo invece di scrivere una
-                    // riga senza plesso. Va detto per lo stesso motivo del catch qui
-                    // sotto: è una scorta che a fine mese non torna.
-                    logEvento('diary', 'warn', {
-                        operazione: 'diary/entries:POST',
-                        esito: 'scalo-pannolino-saltato-senza-sede',
-                    });
-                }
-
-                if (al?.usa_pannolino === true && scuolaAlunno) {
-                    // Evita doppio scalo nello stesso giorno (idempotenza su update ripetuti)
-                    const { data: giaScalato } = await admin
-                        .from('armadietto')
-                        .select('id')
-                        .eq('alunno_id', entry.alunno_id)
-                        .eq('materiale', 'Pannolini')
-                        .eq('date', today)
-                        .eq('portato', false)
-                        .limit(1);
-
-                    if (!giaScalato || giaScalato.length === 0) {
-                        await admin.from('armadietto').insert({
-                            alunno_id: entry.alunno_id,
-                            scuola_id: scuolaAlunno,
-                            nome_oggetto: 'Pannolini',
-                            materiale: 'Pannolini',
-                            quantita: 1,
-                            quantita_residua: 0,
-                            date: today,
-                            portato: false, // consumo: sottrae dallo stock aggregato
-                            livello_allerta: 5,
-                            livello_emergenza: 2,
-                        });
-
-                        // Lo scalo è il DATO, la richiesta è la CONSEGUENZA: la
-                        // conseguenza non può far fallire il dato. Se la
-                        // riconciliazione esplode, il movimento resta scritto e il
-                        // cron delle 06:00 rimetterà le cose a posto. Un catch che
-                        // non logga sarebbe un bug (AGENTS.md regola 6).
-                        //
-                        // Dentro il ramo dell'insert e non fuori: qui lo stock è
-                        // appena cambiato. Se il pannolino era già stato scalato
-                        // oggi (idempotenza per giorno) non c'è nessun movimento
-                        // nuovo da riconciliare, e ripassare a ogni evento «bagno»
-                        // di ogni bambino della sezione sarebbe solo lavoro inutile
-                        // sul database.
-                        try {
-                            await riconciliaRichieste(admin, { alunnoId: entry.alunno_id });
-                        } catch (e) {
-                            logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, e);
-                        }
-                    }
-                }
-            } catch (e) {
-                // Lo scalo del pannolino è un effetto collaterale: se salta, il diario è comunque
-                // salvato e la richiesta non deve fallire. Ma «saltato» va detto — è una scorta che
-                // non viene scalata, cioè un armadietto che a fine mese non torna, e senza questa
-                // riga la discrepanza sarebbe inspiegabile. `warn` e non `error`: il dato principale
-                // è salvo. Va in tabella (vaPersistito persiste i warn), che è dove la si conta.
-                logEvento('diary', 'warn', {
-                    operazione: 'diary/entries:POST',
-                    esito: 'scalo-pannolino-saltato',
-                }, e);
-            }
-        }
+    if (storica && azioniStoriche.length && contestoStorico) {
+        const rettifica = await applicaRettificaStorica(admin, { attore: auth.user, scuolaId: contestoStorico.scuola_id, sectionId: [...new Set(contestoStorico.sezioni.values())].length === 1 ? [...contestoStorico.sezioni.values()][0] : null, modulo: 'diario', giorno, attese: atteseStoriche, azioni: azioniStoriche });
+        if ('response' in rettifica) return rettifica.response;
+        results.push(...rettifica.righe.flat().map(r => ({ id: String(r.id), alunno_id: String(r.alunno_id), tipo_evento: String(r.tipo_evento), storico_versione: Number(r.storico_versione) })));
+        for (const entry of daScrivere) await scalaPannolino(entry);
     }
 
     if (togliNotaSenzaRiga > 0) {
@@ -581,7 +668,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
     // Audit (diff) + notifica al docente titolare se scrive segreteria/direzione.
     if (results.length > 0) {
-        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', results[0].alunno_id).maybeSingle();
+        const { data: al, error: erroreContesto } = contestoStorico ? { data: { scuola_id: contestoStorico.scuola_id, section_id: contestoStorico.sezioni.get(results[0].alunno_id) }, error: null } : await admin.from('alunni').select('section_id, scuola_id').eq('id', results[0].alunno_id).maybeSingle();
+        if (erroreContesto) logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, erroreContesto);
         await logScrittura(admin, {
             attore: auth.user, entitaTipo: 'diario', azione: 'update',
             scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: results,
@@ -592,13 +680,15 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
         // Push genitori per aggiornamento diario (buffer 10' + debounce) — 1 per figlio.
         const figliIds = [...new Set(results.map((r) => r.alunno_id).filter(Boolean))];
-        const { data: nomi } = await admin.from('alunni').select('id, nome').in('id', figliIds);
+        const { data: nomi, error: erroreNomi } = await admin.from('alunni').select('id, nome').in('id', figliIds);
+        if (erroreNomi) logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, erroreNomi);
         const nomeById = new Map((nomi ?? []).map((n) => [n.id, n.nome as string | null]));
         for (const aid of figliIds) {
-            await enqueueDiarioGenitori(admin, { alunnoId: aid, nome: nomeById.get(aid) });
+            await enqueueDiarioGenitori(admin, { alunnoId: aid, nome: nomeById.get(aid), operazione });
         }
     }
 
+    logEvento('diary', 'info', { operazione: 'diary/entries:POST', esito: 'diario-salvato', data: giorno, n: results.length, n_errori: errors.length });
     if (errors.length > 0) {
         return NextResponse.json({ saved: results, errors }, { status: 207 });
     }
@@ -657,6 +747,9 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 // ─────────────────────────────────────────────────────────────────────────────────
 
 const deleteQuerySchema = z.object({
+    scuola_id: zUuid.optional(),
+    sectionId: zUuid.optional(),
+    versioniAttese: z.preprocess(v => { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { logEvento('registro', 'warn', { operazione: 'storici/valida-versioni', esito: 'versioni-client-non-valide' }); return null } }, z.record(z.string(), z.number().int().nonnegative()).optional()),
     alunno_id: zUuid,
     // Nanna, bagno e pasti: vedi «perimetro stretto» qui sopra. Deve restare
     // allineato a `TIPI_ELIMINABILI` — c'è un lock che lo verifica.
@@ -681,20 +774,25 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
 
     const admin = await createAdminClient();
 
-    // Scope: tenant + classe. Un educator può cancellare solo nelle sue sezioni.
-    const scopeErr = await assertAlunnoInScope(admin, auth.user, q.data.alunno_id);
-    if (scopeErr) return scopeErr;
+    const date = q.data.date ?? oggiRoma();
+    let contestoStorico: { scuola_id: string; sezioni: Map<string, string> } | null = null;
+    if (eRettificaStorica(auth.user, date)) {
+        const contesto = await contestoStoricoDiario(admin, auth.user, request, date, q.data.scuola_id, [q.data.alunno_id], q.data.sectionId);
+        if ('response' in contesto) return contesto.response;
+        contestoStorico = contesto;
+    } else {
+        const scopeErr = await assertAlunnoInScope(admin, auth.user, q.data.alunno_id);
+        if (scopeErr) return scopeErr;
+    }
 
-    const date = q.data.date ?? new Date().toISOString().split('T')[0];
-    const startOfDay = `${date}T00:00:00.000Z`;
-    const endOfDay = `${date}T23:59:59.999Z`;
+    const { startOfDay, endOfDay } = intervalloGiornoRoma(date);
 
     // Si legge PRIMA di cancellare: è l'unico momento in cui il valore di prima
     // esiste ancora, ed è ciò che l'audit deve conservare. Con `nota_bambino`
     // dentro: sta sulla stessa riga e sparisce con lei.
     const { data: prima, error: erroreLettura } = await admin
         .from('eventi_diario')
-        .select('id, alunno_id, tipo_evento, dettagli, nota_bambino')
+        .select('*')
         .eq('alunno_id', q.data.alunno_id)
         .eq('tipo_evento', q.data.tipo_evento)
         .gte('orario_inizio', startOfDay)
@@ -714,24 +812,31 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         return NextResponse.json({ eliminati: 0 });
     }
 
-    const { error } = await admin
-        .from('eventi_diario')
-        .delete()
-        .eq('alunno_id', q.data.alunno_id)
-        .eq('tipo_evento', q.data.tipo_evento)
-        .gte('orario_inizio', startOfDay)
-        .lte('orario_inizio', endOfDay);
+    let error: unknown = null;
+    if (eRettificaStorica(auth.user, date)) {
+        if (righe.some(r => r.storico_versione === undefined)) return storicoIndisponibile();
+        if (!contestoStorico) return storicoIndisponibile();
+        const rettifica = await applicaRettificaStorica(admin, { attore: auth.user, scuolaId: contestoStorico.scuola_id, alunnoId: q.data.alunno_id, sectionId: contestoStorico.sezioni.get(q.data.alunno_id), modulo: 'diario', giorno: date,
+            attese: righe.map(r => ({ tabella: 'eventi_diario', filtro: { id: r.id }, versione: q.data.versioniAttese?.[String(r.id)] })),
+            azioni: righe.map(r => ({ tabella: 'eventi_diario', operazione: 'delete', filtro: { id: r.id } })) });
+        if ('response' in rettifica) return rettifica.response;
+    } else {
+        const esito = await admin.from('eventi_diario').delete().in('id', righe.map(r => r.id)).eq('alunno_id', q.data.alunno_id).eq('tipo_evento', q.data.tipo_evento).gte('orario_inizio', startOfDay).lte('orario_inizio', endOfDay);
+        error = esito.error;
+    }
 
     if (error) {
         logErrore({ operazione: 'diary/entries:DELETE', stato: 500, evento: 'diary' }, error);
         return NextResponse.json({ error: 'Cancellazione non riuscita', codice: 'DIARIO_NON_ELIMINATO' }, { status: 500 });
     }
 
-    const { data: al } = await admin
+    const { data: al, error: erroreContesto } = contestoStorico ? { data: { scuola_id: contestoStorico.scuola_id, section_id: contestoStorico.sezioni.get(q.data.alunno_id) }, error: null } : await admin
         .from('alunni')
         .select('section_id, scuola_id')
         .eq('id', q.data.alunno_id)
         .maybeSingle();
+
+    if (erroreContesto) logErrore({ operazione: 'diary/entries:DELETE', evento: 'db' }, erroreContesto);
 
     // `entitaId` = il BAMBINO (2026-09-28): il valore di prima porta la sua nota e il testo delle
     // routine, e l'oblio GDPR ritrova le righe d'audit per `entita_id`. Senza, restavano per sempre.
@@ -740,6 +845,13 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null,
         valorePrima: righe, valoreDopo: null,
     });
+    if (al?.section_id) {
+        await notificaTitolariScrittura(admin, { attore: auth.user, sectionId: al.section_id, scuolaId: al.scuola_id, area: 'diario' });
+    }
+    if (eRettificaStorica(auth.user, date)) {
+        await ritiraDiarioGenitori(admin, { alunnoId: q.data.alunno_id, giorno: date, storico: true });
+    }
 
+    logEvento('diary', 'info', { operazione: 'diary/entries:DELETE', esito: 'diario-eliminato', data: date, n: righe.length });
     return NextResponse.json({ eliminati: righe.length });
 });

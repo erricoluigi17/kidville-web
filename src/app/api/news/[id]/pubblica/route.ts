@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -53,6 +54,7 @@ async function caricaPostConScope(
 
 function postDaNotificare(post: NewsPost): PostDaNotificare {
   return {
+    politica_operazione: post.politica_operazione,
     id: post.id,
     titolo: post.titolo,
     scuola_id: post.scuola_id,
@@ -111,7 +113,7 @@ export const POST = withRoute('news/[id]/pubblica:POST', async (request: NextReq
       if ('response' in gate) return gate.response
     }
 
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), politica_operazione: post.politica_operazione ?? politicaNotificaServizio(auth.user, post.giorno_competenza ?? post.pubblicata_il) }
     switch (azione) {
       case 'pubblica':
         updates.stato = 'pubblicata'

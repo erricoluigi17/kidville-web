@@ -1,5 +1,7 @@
 'use client';
 
+import { oggiRoma } from '@/lib/storici/retroattivita';
+
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -71,7 +73,7 @@ function now() {
 }
 
 function todayISO() {
-    return new Date().toISOString().split('T')[0];
+    return oggiRoma();
 }
 
 /**
@@ -95,6 +97,8 @@ function svuotaCancella(tipo: string | null): boolean {
 
 /** Una voce di oggi della sezione, come la restituisce `GET /api/diary/entries?date=`. */
 interface VoceDiOggi {
+    id?: string;
+    storico_versione?: number;
     alunno_id: string;
     tipo_evento: string;
     orario_inizio: string;
@@ -193,9 +197,12 @@ export function useDiaryDay(
          * configurazione non si chiede, così non lampeggiano le routine di un'altra sede.
          */
         scuolaId?: string | null;
+        /** Giorno civile Roma scelto dal cockpit amministrativo. */
+        date?: string;
     },
 ) {
     const t = useTranslations('teacherDiario');
+    const dataDiario = opts?.date ?? todayISO();
     const etichettaAllergene = useAllergeneLabel();
     const [students, setStudents] = useState<DiaryStudent[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
@@ -316,6 +323,9 @@ export function useDiaryDay(
     // Le letture delle voci di oggi in volo: scrive solo l'ultima partita (una risposta vecchia
     // rimetterebbe una voce appena cancellata, o le tessere spente della sezione di prima).
     const giroVoci = useRef(0);
+    // Il token appartiene al contenuto caricato nel modulo: il polling delle tessere
+    // non può aggiornare la versione di una bozza rimasta aperta.
+    const fotografiaEditor = useRef<{ tipo: DiaryEventType; voci: VoceDiOggi[] } | null>(null);
 
     /** I tipi spenti che oggi hanno voci vere, date le voci e i tipi accesi. */
     const tipiSpentiDa = (voci: VoceDiOggi[], accesi: readonly string[]): DiaryEventType[] => [...new Set(
@@ -499,7 +509,7 @@ export function useDiaryDay(
     // le route filtravano `alunni.classe_sezione` per uguaglianza esatta: uno
     // spazio di differenza dal nome della sezione e il diario si apriva senza
     // nessun bambino, con 200 e senza un log.
-    const paramClasse = parametroClasse({ id: opts?.sectionId, name: sezione ?? '' });
+    const paramClasse = `${parametroClasse({ id: opts?.sectionId, name: sezione ?? '' })}${opts?.scuolaId ? `&scuola_id=${encodeURIComponent(opts.scuolaId)}` : ''}`;
     useEffect(() => { paramClasseRef.current = paramClasse; }, [paramClasse]);
 
     /**
@@ -509,7 +519,7 @@ export function useDiaryDay(
     const leggiVociDiOggi = async (): Promise<VoceDiOggi[] | null> => {
         if (!sezione || !userId) return null;
         try {
-            const res = await fetch(`/api/diary/entries?${paramClasse}&date=${todayISO()}&userId=${userId}&scopo=spente`);
+            const res = await fetch(`/api/diary/entries?${paramClasse}&date=${dataDiario}&userId=${userId}&scopo=spente`);
             const d: unknown = await res.json();
             return Array.isArray(d) ? (d as VoceDiOggi[]) : null;
         } catch (err) {
@@ -532,7 +542,7 @@ export function useDiaryDay(
         void leggiVociDiOggi().then(voci => { if (active && voci && mio === giroVoci.current) setVociDiOggi(voci); });
         return () => { active = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [paramClasse, userId]);
+    }, [paramClasse, userId, dataDiario]);
 
     // Al ritorno in primo piano, e ogni dieci minuti a schermo acceso: routine della sede e voci
     // di oggi, rilette. Se la rilettura delle routine non riesce (la rete che si riconnette) si
@@ -545,7 +555,7 @@ export function useDiaryDay(
     /** La lista dei bambini della sezione, col filtro dato; `null` se non si è letta. */
     const leggiBambini = async (soloPresenti: boolean): Promise<DiaryStudent[] | null> => {
         try {
-            const res = await fetch(`/api/diary/students?${paramClasse}&onlyPresent=${soloPresenti ? 'true' : 'false'}&userId=${userId}`);
+            const res = await fetch(`/api/diary/students?${paramClasse}&date=${dataDiario}&onlyPresent=${soloPresenti ? 'true' : 'false'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 // ── LE ALLERGIE VENGONO DALLE ALLERGIE ─────────────────────────
@@ -597,8 +607,9 @@ export function useDiaryDay(
     useEffect(() => {
         if (!sezione || !userId) return;
         const mio = ++giroBambini.current;
+        queueMicrotask(() => { if (mio === giroBambini.current) setIsLoading(true); });
         const soloPresenti = !showAll;
-        const classe = paramClasse;
+        const classe = `${paramClasse}|${dataDiario}`;
         void leggiBambini(soloPresenti).then(lista => {
             if (mio !== giroBambini.current) return;
             if (lista) {
@@ -614,7 +625,7 @@ export function useDiaryDay(
             setIsLoading(false);
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showAll, paramClasse, userId]);
+    }, [showAll, paramClasse, userId, dataDiario]);
 
     // Ripristina lo stato UI dai dati già salvati su Supabase per un certo tipo evento
     const restoreFromSupabase = async (eventType: DiaryEventType, studentList?: DiaryStudent[]) => {
@@ -631,7 +642,7 @@ export function useDiaryDay(
         // Il giro delle voci si prende alla PARTENZA della lettura: vince l'ultima partita.
         const mioVoci = ++giroVoci.current;
         try {
-            const today = todayISO();
+            const today = dataDiario;
             const res = await fetch(`/api/diary/entries?${paramClasse}&date=${today}&userId=${userId}`);
             if (superato()) return;
             const entries = await res.json();
@@ -642,6 +653,7 @@ export function useDiaryDay(
             if (mioVoci === giroVoci.current) setVociDiOggi(entries as VoceDiOggi[]);
 
             const filtered = entries.filter((e: { tipo_evento: string }) => e.tipo_evento === eventType);
+            fotografiaEditor.current = { tipo: eventType, voci: filtered };
             if (filtered.length === 0) { nessuna(); return; }
 
             // Per ogni studente, prendi l'ultimo salvataggio
@@ -763,6 +775,7 @@ export function useDiaryDay(
         }
         // Prima imposta il tipo e lo stato pulito
         tipoAperto.current = type;
+        fotografiaEditor.current = null;
         setSelectedEvent(type);
         setSavedStudentIds(new Set());
         setRegistrate({ tipo: null, righe: {} });
@@ -841,9 +854,14 @@ export function useDiaryDay(
         const qs = new URLSearchParams({
             alunno_id: studentId,
             tipo_evento: tipo,
-            date: todayISO(),
+            date: dataDiario,
             userId: uid,
+            ...(opts?.scuolaId ? { scuola_id: opts.scuolaId } : {}),
+            ...(opts?.sectionId ? { sectionId: opts.sectionId } : {}),
         });
+        const fotografia = fotografiaEditor.current;
+        const voci = fotografia?.tipo === tipo ? fotografia.voci : vociDiOggi;
+        qs.set('versioniAttese', JSON.stringify(Object.fromEntries(voci.filter(v => v.alunno_id === studentId && v.tipo_evento === tipo).map(v => [v.id, v.storico_versione]))));
         const res = await fetch(`/api/diary/entries?${qs.toString()}`, {
             method: 'DELETE',
             headers: { 'x-user-id': uid },
@@ -855,6 +873,9 @@ export function useDiaryDay(
             const e = new Error(String(res.status));
             e.name = `HTTP${res.status}`;
             throw e;
+        }
+        if (fotografia === fotografiaEditor.current && fotografia?.tipo === tipo) {
+            fotografiaEditor.current = { tipo, voci: fotografia.voci.filter(v => v.alunno_id !== studentId) };
         }
     };
 
@@ -1127,8 +1148,12 @@ export function useDiaryDay(
             let salvati = 0;
             if (targetStudents.length > 0) {
                 const payload = targetStudents.map(({ student, dettagli }) => {
+                    const fotografia = fotografiaEditor.current;
+                    const precedenti = fotografia?.tipo === selectedEvent ? fotografia.voci.filter(v => v.alunno_id === student.id) : null;
+                    const precedente = precedenti?.reduce<VoceDiOggi | undefined>((ultimo, voce) => !ultimo || voce.orario_inizio > ultimo.orario_inizio ? voce : ultimo, undefined);
                     return {
                         alunno_id: student.id,
+                        versioneAttesa: precedenti === null ? undefined : precedente ? precedente.storico_versione : null,
                         maestra_id: userId,
                         tipo_evento: selectedEvent,
                         orario_inizio: nowIso,
@@ -1144,7 +1169,7 @@ export function useDiaryDay(
                     };
                 });
 
-                const res = await fetch(`/api/diary/entries?userId=${userId}`, {
+                const res = await fetch(`/api/diary/entries?userId=${userId}&date=${dataDiario}${opts?.scuolaId ? `&scuola_id=${opts.scuolaId}` : ''}${opts?.sectionId ? `&sectionId=${opts.sectionId}` : ''}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                     body: JSON.stringify(payload),
@@ -1202,6 +1227,15 @@ export function useDiaryDay(
                 // una risposta senza id («upsert silent») segnava salvati TUTTI gli inviati — anche le
                 // voci che il server aveva saltato perché mute.
                 const salvatiIds = savedIds;
+                if (stessoRiquadro() && fotografiaEditor.current?.tipo === selectedEvent) {
+                    const voci = [...fotografiaEditor.current.voci];
+                    savedItems.forEach((salvata: { id?: string; alunno_id?: string; storico_versione?: number }) => {
+                        const precedente = voci.find(v => v.id === salvata.id);
+                        if (precedente) precedente.storico_versione = salvata.storico_versione;
+                        else if (salvata.id && salvata.alunno_id) voci.push({ id: salvata.id, alunno_id: salvata.alunno_id, tipo_evento: selectedEvent, orario_inizio: nowIso, storico_versione: salvata.storico_versione, dettagli: null });
+                    });
+                    fotografiaEditor.current = { tipo: selectedEvent, voci };
+                }
                 if (errori.length > 0) {
                     // Solo il conteggio: niente nomi, niente messaggi del server.
                     logClient({ livello: 'warn', evento: 'fetch', messaggio: 'diario-salvataggio-parziale', campi: { non_salvate: errori.length, inviate: targetStudents.length } });
@@ -1384,6 +1418,7 @@ export function useDiaryDay(
     const solaLettura = selectedEvent !== null && !eventTypes.includes(selectedEvent) && tipiSpenti.includes(selectedEvent);
 
     return {
+        dataDiario,
         students,
         isLoading,
         showAll,
@@ -1437,7 +1472,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const {
         students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, listaSoloPresenti, segniTolti,
         routineDi, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
-        activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
+        dataDiario, activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
         isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, segnaTuttiFatto, handleSave,
@@ -1595,7 +1630,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                     </div>
                                     <div>
                                         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide break-words">{eventLabel(selectedEvent ?? '', fonte)}</h2>
-                                        <p className="font-maven text-[11px] text-kidville-muted">{t('numBambini', { count: students.length })} • {todayISO()}</p>
+                                        <p className="font-maven text-[11px] text-kidville-muted">{t('numBambini', { count: students.length })} • {dataDiario}</p>
                                     </div>
                                 </div>
                                 <button
@@ -1668,7 +1703,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         students={students}
                                         studentStates={studentStates}
                                         onMealSelect={updateMealCourse}
-                                        date={todayISO()}
+                                        date={dataDiario}
                                         classId={sezione ?? ''}
                                         savedStudentIds={savedStudentIds}
                                         isMerenda={selectedEvent === 'merenda'}

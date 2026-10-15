@@ -1,3 +1,5 @@
+import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -80,10 +82,11 @@ export const PATCH = withRoute('pagamenti/incassi/[id]:PATCH', async (request: R
 
     // stato pagamento ricalcolato dal trigger
     const { data: pagamento, error: errPag } = await supabase
-      .from('pagamenti').select('id, importo, importo_pagato, stato, data_incasso')
+      .from('pagamenti').select('id, alunno_id, scuola_id, importo, importo_pagato, stato, data_incasso')
       .eq('id', incasso.pagamento_id).maybeSingle()
     if (errPag) guastoSecondario('pagamenti/incassi/[id]:PATCH', 'pagamento-non-riletto', errPag)
 
+    if (pagamento) await ritiraPendingPagamento(supabase, { pagamentoId: old.pagamento_id, alunnoId: pagamento.alunno_id, scuolaId: pagamento.scuola_id, operazione: politicaRettificaServizio(user, old.data_incasso ?? old.creato_il, body.data_incasso) })
     return NextResponse.json({ success: true, data: { incasso, pagamento } })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/incassi/[id]:PATCH', stato: 500 }, err)

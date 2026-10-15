@@ -30,6 +30,8 @@
  * ─────────────────────────────────────────────────────────────────────────────────
  */
 
+import { AnnullaGiustifica } from '@/components/features/presenze/AnnullaGiustifica';
+import { istanteNelGiornoRoma } from '@/lib/storici/retroattivita';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { Loader2, WifiOff, RefreshCw, ChevronLeft, ChevronRight, Calendar, Check } from 'lucide-react';
@@ -303,11 +305,16 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                 orario_entrata: string | null;
                 orario_uscita: string | null;
                 giustificazione_testo?: string | null;
+                giustificata?: boolean;
+                giustificata_il?: string | null;
+                rettifica_storica_ammessa?: boolean;
+                storico_versione?: number;
                 registrato_da?: string | null;
             }) => {
                 const fatto = typeof row.registrato_da === 'string' && row.registrato_da !== '';
                 map[row.alunno_id] = {
                     id: row.id,
+                    storico_versione: row.storico_versione,
                     alunno_id: row.alunno_id,
                     data: row.data,
                     stato: row.stato,
@@ -317,6 +324,9 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                     // (vedi `StudentAttendanceRow`). È il dato che rende vera la
                     // frase mostrata alla famiglia al momento della raccolta.
                     giustificazione_testo: row.giustificazione_testo ?? null,
+                    giustificata: row.giustificata,
+                    giustificataIl: row.giustificata_il,
+                    rettificaStoricaAmmessa: row.rettifica_storica_ammessa,
                     appelloFatto: fatto,
                     comunicazioneGenitore:
                         eOggi && !fatto && row.registrato_da === null && row.stato === 'assente',
@@ -362,7 +372,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
     // ── Cambia stato — scrive DIRETTAMENTE su Supabase ──
     const handleSetStato = async (studentId: string, stato: AttendanceStato) => {
         setLoadingStudentId(studentId);
-        const now = new Date().toISOString();
+        const now = istanteNelGiornoRoma(selectedDate);
 
         const orario_entrata = stato === 'assente' ? null : (records[studentId]?.orario_entrata ?? now);
         // `?? now` e non `now`, simmetrico alla riga sopra. Con `now` secco, ogni
@@ -401,7 +411,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
             const res = await fetch('/api/attendance/daily', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ alunno_id: studentId, data: selectedDate, stato, orario_entrata, orario_uscita }),
+                body: JSON.stringify({ alunno_id: studentId, versioneAttesa: records[studentId]?.storico_versione ?? (records[studentId]?.id ? undefined : null), data: selectedDate, stato, orario_entrata, orario_uscita }),
             });
             statoHttp = res.status;
             if (!res.ok) {
@@ -481,7 +491,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
             const res = await fetch('/api/attendance/daily', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ alunno_id: studentId, data: selectedDate, [chiave]: ora }),
+                body: JSON.stringify({ alunno_id: studentId, versioneAttesa: records[studentId]?.storico_versione, data: selectedDate, [chiave]: ora }),
             });
             statoHttp = res.status;
             if (!res.ok) throw new Error('Rettifica rifiutata');
@@ -534,6 +544,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
         let statoHttp: number | undefined;
         try {
             const qs = new URLSearchParams({ alunno_id: studentId, data: selectedDate });
+            if (records[studentId]?.storico_versione !== undefined) qs.set('versioneAttesa', String(records[studentId].storico_versione));
             const res = await fetch(`/api/attendance/daily?${qs.toString()}`, { method: 'DELETE' });
             statoHttp = res.status;
             const corpo = (await res.json().catch(() => null)) as {
@@ -813,8 +824,8 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
             {/* Lista studenti (filtrata) */}
             <div className="flex flex-col gap-2">
                 {visibleStudents.map(student => (
+                    <div key={student.id}>
                     <StudentAttendanceRow
-                        key={student.id}
                         student={student}
                         record={records[student.id]}
                         onSetStato={handleSetStato}
@@ -824,8 +835,12 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                         orarioInCorso={orarioInCorso?.studentId === student.id ? orarioInCorso.campo : null}
                         // Solo il giorno stesso, in data di ROMA — la stessa regola che il
                         // server applica con `APPELLO_ANNULLA_SOLO_OGGI`.
-                        onAnnulla={appelloDiOggi ? handleAnnulla : undefined}
+                        onAnnulla={appelloDiOggi || records[student.id]?.rettificaStoricaAmmessa ? handleAnnulla : undefined}
                     />
+                    {records[student.id]?.rettificaStoricaAmmessa && records[student.id]?.giustificata && records[student.id]?.id && (
+                        <AnnullaGiustifica nomeAlunno={`${student.lastName} ${student.firstName}`} presenzaId={records[student.id]!.id!} firmaIl={records[student.id]?.giustificataIl ?? null} versioneAttesa={records[student.id]?.storico_versione} onCambiato={fetchTodayRecords} />
+                    )}
+                    </div>
                 ))}
                 {visibleStudents.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-sub">

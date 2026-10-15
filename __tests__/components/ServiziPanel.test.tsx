@@ -289,7 +289,10 @@ describe('ServiziPanel — Termina, Modifica, Elimina a due tempi', () => {
     scritture = [DA_DECIDERE_CON_ELIMINABILI]
     await apri()
     await terminaVerdi()
-    await screen.findByRole('dialog', { name: 'Che cosa facciamo delle voci già generate?' })
+    const dialogo = await screen.findByRole('dialog', { name: 'Che cosa facciamo delle voci già generate?' })
+    // Il dialogo può comparire prima del finally della richiesta: finché invio
+    // è true, anche Escape è intenzionalmente disabilitato come «Annulla».
+    await waitFor(() => expect(within(dialogo).getByRole('button', { name: 'Annulla' })).toBeEnabled())
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(vedi('PATCH')).toHaveLength(1)

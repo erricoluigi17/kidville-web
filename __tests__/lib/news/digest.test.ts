@@ -69,3 +69,11 @@ describe('componiDigest', () => {
     expect(componiDigest([], { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })).toBeNull()
   })
 })
+
+
+it('il digest email esclude le rettifiche storiche ma conserva le pubblicazioni differite ordinarie', () => {
+  const res = componiDigest(posts.map(p => ({ ...p, politica_operazione: {
+    giornoCompetenza: '2026-06-01', giornoOperazioneRoma: '2026-06-02', sopprimiGenitori: p.id === 'b',
+  } })), { scuolaId: SEDE, anno: 2026, mese: 6, sede: CONTESTO })
+  expect(res!.post_ids).toEqual(['f', 'a'])
+})

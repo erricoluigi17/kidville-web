@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -606,6 +607,7 @@ export const POST = withRoute('pagamenti/transazioni:POST', async (request: Requ
       try {
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',
+          operazione: politicaNotificaServizio(user, body.data_valuta),
           scuolaId: g.scuola_id,
           alunnoIds: [...g.alunni],
           titolo: 'Pagamento registrato',
@@ -627,7 +629,7 @@ export const POST = withRoute('pagamenti/transazioni:POST', async (request: Requ
     // Revoca automatica della sospensione se lo scaduto famiglia è azzerato (best-effort).
     const alunniIds = [...new Set(elenco.flatMap((g) => [...g.alunni]))]
     try {
-      if (alunniIds.length > 0) await verificaRevocaSospensioneMorosita(supabase, alunniIds)
+      if (alunniIds.length > 0) await verificaRevocaSospensioneMorosita(supabase, alunniIds, politicaNotificaServizio(user, body.data_valuta))
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: OP, esito: 'revoca_non_verificata' }, e)
     }

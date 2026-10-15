@@ -47,6 +47,7 @@ export function rispostaAppelloNonAnnullato(): NextResponse {
 
 export function rispostaAnnullaAppello(r: EsitoAnnullaAppello): NextResponse {
     switch (r.esito) {
+        case 'rettifica-rifiutata': return r.response;
         case 'errore':
             return rispostaAppelloNonAnnullato();
         case 'non-trovata':

@@ -85,10 +85,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
         d.eq = (col: string, val: unknown) => { filtri[col] = val; return d }
         // RISOLVE con `{ error }`: non solleva. È il comportamento vero di PostgREST — quello
         // che rendeva il catch della route codice morto.
-        d.is = async (col: string, val: unknown) => {
-          filtri[col] = val
+        d.is = (col: string, val: unknown) => { filtri[col] = val; return d }
+        d.or = (filtro: string) => { filtri.or = filtro; return d }
+        d.then = (risolvi: (risultato: unknown) => unknown) => {
           h.deletes.push({ ...filtri })
-          return { error: h.deleteError }
+          return Promise.resolve({ error: h.deleteError }).then(risolvi)
         }
         return d
       }
@@ -151,6 +152,8 @@ describe('attendance/daily:POST — la REVOCA della notifica di assenza', () => 
     expect(res.status).toBe(200)
     // Ma la notifica pending è rimasta in coda e partirà: il genitore riceverà un avviso FALSO.
     expect(h.deletes).toHaveLength(1)
+    expect(h.deletes[0].or).toContain('giorno_competenza.in.(2026-07-13)')
+    expect(h.deletes[0].or).toContain('creato_il.gte.2026-07-12T22:00:00.000Z')
     const errori = righe('error').filter((r) => r.evento === 'notifica')
     expect(errori).toHaveLength(1)
     expect(errori[0].campi).toMatchObject({

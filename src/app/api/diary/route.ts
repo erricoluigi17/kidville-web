@@ -1,3 +1,4 @@
+import { oggiRoma, intervalloGiornoRoma, politicaNotificaOperazione } from '@/lib/storici/retroattivita';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
@@ -139,6 +140,7 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
 
         // Calcola il timestamp per la notifica (evento + 10 min buffer)
         const eventTime = timestamp_evento ? new Date(timestamp_evento) : new Date();
+        const operazione = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: oggiRoma(eventTime) });
         const notificaAt = new Date(eventTime.getTime() + 10 * 60 * 1000);
 
         const { data, error } = await supabase
@@ -150,7 +152,7 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
                 timestamp_evento: eventTime.toISOString(),
                 note: note ?? null,
                 dettagli: dettagli ?? null,
-                notifica_programmata_il: notificaAt.toISOString(),
+                notifica_programmata_il: operazione.sopprimiGenitori ? null : notificaAt.toISOString(),
             })
             .select()
             .single();
@@ -227,10 +229,9 @@ export const GET = withRoute('diary:GET', async (request: NextRequest) => {
             const fuoriSezione = await assertSezioneInScope(adminScope, auth.user, q.data.classe_id);
             if (fuoriSezione) return fuoriSezione;
 
-            const date = q.data.date ?? new Date().toISOString().split('T')[0];
+            const date = q.data.date ?? oggiRoma();
             // Vista insegnante: tutti gli eventi della classe per una data specifica
-            const startOfDay = `${date}T00:00:00.000Z`;
-            const endOfDay = `${date}T23:59:59.999Z`;
+            const { startOfDay, endOfDay } = intervalloGiornoRoma(date);
 
             const { data, error } = await supabase
                 .from('daily_routines')

@@ -32,7 +32,8 @@ const isNotificaAbilitata = vi.fn<(...a: unknown[]) => Promise<boolean>>(async (
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: (...a: unknown[]) => isNotificaAbilitata(...a) }))
 // I genitori dell'alunno: la risoluzione runtime+anagrafica ha i suoi test.
 const getGenitoriDiAlunno = vi.fn<(...a: unknown[]) => Promise<string[]>>(async () => ['gen-1', 'gen-2'])
-vi.mock('@/lib/anagrafiche/legami', () => ({ getGenitoriDiAlunno: (...a: unknown[]) => getGenitoriDiAlunno(...a) }))
+const getGenitoriDiAlunniEsito = vi.fn(async () => ({ perAlunno: new Map([['figlio', ['gen-1', 'gen-2']]]), completo: true }))
+vi.mock('@/lib/anagrafiche/legami', () => ({ getGenitoriDiAlunno: (...a: unknown[]) => getGenitoriDiAlunno(...a), getGenitoriDiAlunniEsito: () => getGenitoriDiAlunniEsito() }))
 
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
 
@@ -65,6 +66,7 @@ beforeEach(() => {
   isNotificaAbilitata.mockClear()
   isNotificaAbilitata.mockResolvedValue(true)
   getGenitoriDiAlunno.mockClear()
+  getGenitoriDiAlunniEsito.mockClear()
   getGenitoriDiAlunno.mockResolvedValue(['gen-1', 'gen-2'])
 })
 
@@ -100,7 +102,7 @@ describe('notificaSaldoBasso — niente web-push diretto, la riga resta al dispa
     for (const r of stato.notifiche) {
       expect(r).toMatchObject({ tipo: 'mensa_saldo_basso', entita_tipo: 'alunno', entita_id: ALUNNO, link: '/parent/mensa' })
       expect(r.push_inviata_il ?? null).toBeNull()
-      expect(r.invio_programmato_il ?? null).toBeNull()
+      expect(Number.isFinite(Date.parse(String(r.invio_programmato_il)))).toBe(true)
     }
     // Il gate del tipo si chiede con la sede dell'alunno.
     expect(isNotificaAbilitata).toHaveBeenCalledWith(expect.anything(), 'mensa_saldo_basso', SEDE_A)
@@ -177,5 +179,36 @@ describe('notificaSaldoBasso — niente web-push diretto, la riga resta al dispa
 
     expect(scritture.filter((s) => s.tabella === 'notifiche')).toHaveLength(0)
     expect(getGenitoriDiAlunno).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('saldo basso storico: la coda conserva la decisione originale', () => {
+  it('rettifica storica: ritira i pending originali, preserva oggi, inviati e altre famiglie', async () => {
+    const stato = db()
+    const pending = { tipo: 'mensa_saldo_basso', entita_tipo: 'alunno', entita_id: ALUNNO, utente_id: 'gen-1', giorno_competenza: null, politica_operazione: null, creato_il: '2026-01-12T22:55:00Z', invio_programmato_il: '2026-01-12T23:05:00Z', push_inviata_il: null }
+    stato.notifiche = [
+      { ...pending, id: 'ieri' }, { ...pending, id: 'oggi', creato_il: '2026-01-12T23:00:00Z' },
+      { ...pending, id: 'inviata', push_inviata_il: '2026-01-12T23:05:00Z' }, { ...pending, id: 'altra-famiglia', utente_id: 'altro' },
+    ]
+    const lette: string[] = []
+    await notificaSaldoBasso(creaFintoSupabase(stato, lette), { ...OPTS, operazione: {
+      giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-13', sopprimiGenitori: true,
+    } })
+    expect(stato.notifiche.map(n => n.id)).toEqual(['oggi', 'inviata', 'altra-famiglia'])
+    expect(getGenitoriDiAlunno).not.toHaveBeenCalled()
+    expect(getGenitoriDiAlunniEsito).toHaveBeenCalledTimes(1)
+    expect(lette).toEqual(['notifiche'])
+    expect(sendPush).not.toHaveBeenCalled()
+    expect(sendNativePush).not.toHaveBeenCalled()
+    expect(logCon('rettifica-storica-silenziosa')).toBeDefined()
+  })
+
+  it('operazione corrente: politica persistita, il dispatch successivo non la ricalcola', async () => {
+    const stato = db()
+    const operazione = { giornoCompetenza: '2026-01-12', giornoOperazioneRoma: '2026-01-12', sopprimiGenitori: false }
+    await notificaSaldoBasso(creaFintoSupabase(stato), { ...OPTS, operazione })
+    expect(stato.notifiche).toHaveLength(2)
+    expect(stato.notifiche[0]).toMatchObject({ giorno_competenza: '2026-01-12', politica_operazione: operazione })
   })
 })

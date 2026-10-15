@@ -9,6 +9,7 @@ import {
   Trash2, Download, Shield, Inbox, Send, Stamp, X, FileSpreadsheet
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { DateField } from '@/components/ui/DateField';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
@@ -487,11 +488,11 @@ function ModulisticaInner() {
         title={t('modPageTitle')}
         subtitle={t('modPageSubtitle')}
         actions={
-          activeTab === 'moduli-genitori' ? (
+          <><LinkStorici gruppo="documenti" />{activeTab === 'moduli-genitori' ? (
             <button onClick={() => openBuilder('class')} className={HEADER_BTN}>
               <Plus size={18} /> {t('modNuovoModuloGenitori')}
             </button>
-          ) : undefined
+          ) : undefined}</>
         }
       />
 

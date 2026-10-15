@@ -46,7 +46,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}
       const chain = () => b
-      b.select = chain; b.eq = chain; b.in = chain; b.order = chain; b.limit = chain
+      b.select = chain; b.eq = chain; b.in = chain; b.order = chain; b.limit = chain; b.is = chain
       b.maybeSingle = async () => ({ data: righe()[0] ?? null, error: null })
       b.then = (resolve: (v: unknown) => unknown) => resolve({ data: righe(), error: null })
       return b

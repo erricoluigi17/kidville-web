@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -349,6 +350,7 @@ export const POST = withRoute('pagamenti/riconciliazione/riepilogo-visto:POST', 
             try {
                 await notificaEvento(supabase, {
                     tipo: TIPO_NOTIFICA,
+            operazione: politicaNotificaServizio(auth.user, x.riga.data_operazione),
                     // Il toggle si valuta sulla sede in cui il denaro è stato
                     // registrato: è quella che il movimento porta addosso.
                     scuolaId: x.riga.scuola_id,

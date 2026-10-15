@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => {
   interface Chiamata {
     table: string
-    op: 'select' | 'update' | 'delete' | 'insert'
+    op: 'select' | 'update' | 'delete' | 'insert' | 'rpc'
     payload?: unknown
     cols?: string
     filtri: unknown[][]
@@ -25,6 +25,7 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc(nome: string, args: unknown) { state.chiamate.push({ table: nome, op: 'rpc', payload: args, filtri: [] }); return Promise.resolve(take(`${nome}:rpc`)) },
       from(table: string) {
         const c: Chiamata = { table, op: 'select', filtri: [] }
         state.chiamate.push(c)
@@ -95,7 +96,7 @@ const giorniFa = (n: number) => dataRomaDi(new Date(Date.now() - n * GIORNO))
 
 function riga(over: Record<string, unknown> = {}) {
   return {
-    id: IMP, alunno_id: ALU, section_id: SEZ, materia_id: MAT, data: giorniFa(0),
+    id: IMP, storico_versione: 0, alunno_id: ALU, section_id: SEZ, materia_id: MAT, data: giorniFa(0),
     motivo: null, tipo: 'impreparato', origine: 'docente', creato_da: AUTORE,
     creato_il: new Date().toISOString(),
     sections: { scuola_id: SEDE }, materie: { nome: 'Matematica' },
@@ -563,13 +564,23 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
     expect(chiamate('giustifiche_didattiche', 'delete')).toHaveLength(0)
   })
 
-  it('423 oltre il termine anche per la Segreteria: niente cancellazione, niente ritiro', async () => {
-    utente(ALTRA, 'segreteria')
+  it('423 oltre il termine per il docente: niente cancellazione, niente ritiro', async () => {
+    utente(AUTORE, 'educator')
     coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(4) }), error: null })
     const res = await DELETE(del(IMP))
     expect(res.status).toBe(423)
     expect(chiamate('giustifiche_didattiche', 'delete')).toHaveLength(0)
     expect(chiamate('notifiche', 'delete')).toHaveLength(0)
+  })
+
+  it('la Segreteria elimina lo storico attraverso snapshot e CAS atomici, con la versione letta dal form', async () => {
+    utente(ALTRA, 'segreteria')
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(4) }), error: null })
+    coda('storici_applica_rettifica:rpc', { data: [{ righe: [{ id: IMP }] }], error: null })
+    const richiesta = new NextRequest(`${URL_BASE}?id=${IMP}&versioneAttesa=0`, { method: 'DELETE' })
+    expect((await DELETE(richiesta)).status).toBe(200)
+    expect(chiamate('storici_applica_rettifica','rpc')[0]?.payload).toMatchObject({ attese: [expect.objectContaining({ versione: 0 })], azioni: [expect.objectContaining({ tabella: 'giustifiche_didattiche', operazione: 'delete' })] })
+    expect(chiamate('giustifiche_didattiche','delete')).toHaveLength(0)
   })
 
   it('oltre il termine con lo sblocco del GIORNO della classe si elimina', async () => {

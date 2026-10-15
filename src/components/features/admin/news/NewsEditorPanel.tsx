@@ -6,6 +6,8 @@
 // diretta né «Tutte le sedi»). Il client invia SOLO il JSON del rich-text: HTML e
 // sanificazione sono di competenza del server. Degrada su ambiente non migrato.
 
+import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSONContent } from '@tiptap/react';
 import { Save, Send, CalendarClock, Megaphone, ExternalLink, ShieldCheck, CheckCircle2, X, Users } from 'lucide-react';
@@ -57,6 +59,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
   const [gradi, setGradi] = useState<NewsGrado[]>(postIniziale?.target_gradi ?? []);
   const [classi, setClassi] = useState<string[]>(postIniziale?.target_classes ?? []);
   const [tuttiSedi, setTuttiSedi] = useState(inModifica ? postIniziale?.scuola_id === null : false);
+  const [giornoCompetenza, setGiornoCompetenza] = useState(postIniziale?.giorno_competenza ?? (postIniziale?.pubblicata_il ? oggiRoma(new Date(postIniziale.pubblicata_il)) : oggiRoma()));
   const [inviaNotifica, setInviaNotifica] = useState(postIniziale?.invia_notifica ?? true);
   const [programmataIl, setProgrammataIl] = useState('');
 
@@ -210,6 +213,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         invia_notifica: inviaNotifica,
         scuola_id: canAllSedi && tuttiSedi ? null : scuolaId,
       };
+      if (modalita === 'admin') body.giorno_competenza = giornoCompetenza;
       // La dichiarazione viaggia SOLO se è stata resa: l'assenza del campo è
       // ciò che fa rispondere 422 al server. Mandare `[]` «per sicurezza»
       // sarebbe dichiarare al posto dell'operatore — cioè il difetto di prima.
@@ -261,6 +265,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
 
   return (
     <div className="space-y-5">
+      {modalita === 'admin' && <CompetenzaServizio value={giornoCompetenza} onChange={setGiornoCompetenza} />}
       {/* Tipo */}
       <div>
         <span className={labelCls}>{t('editorTipoContenuto')}</span>

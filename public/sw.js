@@ -226,8 +226,8 @@
 // (anagrafica degli alunni in sola lettura per le insegnanti). Senza, l'elenco di
 // /offline avrebbe reso «Alunni» capitalizzando l'URL, e la copia vecchia della
 // pagina sarebbe rimasta nella CacheStorage dei dispositivi che l'hanno già salvata.
-const VERSIONE = 'v13';
-// IMPRONTA-PAGINA-OFFLINE: 702f3130c4a6eadfbe7f5875e5a19674c62476e32b9f44354fb3a9b44f2b411d
+const VERSIONE = 'v14';
+// IMPRONTA-PAGINA-OFFLINE: b7430479f9831fa4b7c0ff73b791cddf491aaf7c48c8e9b99a58c02320a55c62
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

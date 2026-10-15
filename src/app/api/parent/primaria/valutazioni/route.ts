@@ -79,19 +79,28 @@ export const GET = withRoute('parent/primaria/valutazioni:GET', async (request: 
     const bufferMin = await leggiBufferVisibilita(supabase, (alunno.scuola_id as string | null) ?? null, OPERAZIONE)
     const soglia = sogliaVisibilita(bufferMin)
 
+    const leggiValutazioni = (conData: boolean) => supabase
+      .from('valutazioni')
+      .select(conData
+        ? 'id, materia_id, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il, argomento, data_evento'
+        : 'id, materia_id, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il, argomento')
+      .eq('alunno_id', studentId)
+      .lte('creato_il', soglia)
+      .order('creato_il', { ascending: false })
+    const conCompetenza = async () => {
+      let res = await leggiValutazioni(true)
+      if (res.error && COLONNA_ASSENTE.has(res.error.code ?? '')) {
+        logEvento('registro', 'info', { operazione: OPERAZIONE, esito: 'data-evento-schema-precedente' }, res.error)
+        res = await leggiValutazioni(false)
+      }
+      return res
+    }
+
     const [
       { data: valutazioni, error: valutazioniErr },
       { data: materie, error: materieErr },
     ] = await Promise.all([
-      supabase
-        .from('valutazioni')
-        .select('id, materia_id, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il, argomento')
-        .eq('alunno_id', studentId)
-        // Buffer a tempo: visibile solo se creata da più di `bufferMin`, così il
-        // docente ha la finestra di correzione. Nessun filtro `pubblicato`: per le
-        // valutazioni in itinere non viene mai impostato a true (PRD §4.5).
-        .lte('creato_il', soglia)
-        .order('creato_il', { ascending: false }),
+      conCompetenza(),
       supabase
         .from('materie')
         .select('id, nome')
@@ -136,7 +145,7 @@ export const GET = withRoute('parent/primaria/valutazioni:GET', async (request: 
 
     // Raggruppa per materia. Nessuna media: è riservata al docente (vedi nota in testa).
     const perMateria = new Map<string, { valutazioni: unknown[] }>()
-    for (const v of valutazioni ?? []) {
+    for (const v of (valutazioni ?? []) as unknown as Array<{ materia_id: string }>) {
       const entry = perMateria.get(v.materia_id) ?? { valutazioni: [] }
       entry.valutazioni.push(v)
       perMateria.set(v.materia_id, entry)

@@ -1,3 +1,6 @@
+import { ritiraPendingNews } from '@/lib/news/notifiche'
+import { politicaRettificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -5,7 +8,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, type AppUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseData } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -78,6 +81,7 @@ const MEDIA_ESTRANEO =
   'Il contenuto richiama un’immagine che appartiene a un altro articolo: caricala di nuovo con il pulsante delle immagini.'
 
 const patchBodySchema = z.object({
+  giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
   titolo: z.string().min(1).optional(),
   contenuto_json: z.unknown().optional(),
   categoria_id: zUuid.nullish(),
@@ -182,6 +186,9 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const body = b.data
+    if (body.giorno_competenza && body.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+      return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 })
+    }
 
     const supabase = await createAdminClient()
     clientPerAnnullo = supabase
@@ -190,7 +197,11 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
     const guard = guardEducator(auth.user, sc.post!, true)
     if (guard) return guard
 
-    const updates: Record<string, unknown> = {}
+    const politica = politicaRettificaServizio(auth.user, sc.post!.giorno_competenza ?? sc.post!.politica_operazione?.giornoCompetenza ?? sc.post!.pubblicata_il ?? sc.post!.created_at, sc.post!.politica_operazione?.giornoCompetenza, body.giorno_competenza)
+    const updates: Record<string, unknown> = {
+      giorno_competenza: body.giorno_competenza ?? politica.giornoOriginale,
+      politica_operazione: politica,
+    }
     for (const f of ['titolo', 'categoria_id', 'target_scope', 'target_gradi', 'target_classes', 'copertina_url', 'invia_notifica'] as const) {
       if (body[f] !== undefined) updates[f] = body[f]
     }
@@ -390,6 +401,7 @@ export const PATCH = withRoute('news/[id]:PATCH', async (request: NextRequest, {
       post_id: p.data,
       n_file: usciti.length,
     })
+    await ritiraPendingNews(supabase, { ...sc.post!, politica_operazione: politica })
     return NextResponse.json({ disponibile: true, post: data as NewsPost })
   } catch (err) {
     // PRIMA la causa, POI il rimedio: vedi la gemella in `src/app/api/news/route.ts`.

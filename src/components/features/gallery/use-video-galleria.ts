@@ -198,6 +198,7 @@ export interface OpzioniVideoGalleria {
 
 /** I bambini scelti per un video, e se va a tutta la classe. */
 export interface SceltaVideo {
+    giornoCompetenza?: string;
     tag: string[];
     broadcast: boolean;
     durataSecondi: number | null;
@@ -1021,6 +1022,7 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                     file,
                     scuolaId: sede,
                     durataSecondi: scelta.durataSecondi,
+                    giornoCompetenza: scelta.giornoCompetenza,
                     chiaveIdempotenza,
                     destinatari,
                     trasporto: trasporto.nome,
@@ -1200,6 +1202,7 @@ export function useVideoGalleria(opzioni: OpzioniVideoGalleria): ApiVideoGalleri
                     file: { nome: nativo.nome, byte: nativo.byte, mime: nativo.mime, sha256: nativo.sha256 },
                     scuolaId: sede,
                     durataSecondi: scelta.durataSecondi,
+                    giornoCompetenza: scelta.giornoCompetenza,
                     chiaveIdempotenza,
                     destinatari,
                     ripiego: ripiegoRef.current,

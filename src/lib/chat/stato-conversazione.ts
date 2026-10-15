@@ -30,6 +30,9 @@ export interface ChatMessage {
     thread_id: string;
     sender_id: string;
     content: string;
+    rettifica_staff?: string | null;
+    rettifica_staff_il?: string | null;
+    rettifica_versione?: number;
     attachment_url: string | null;
     attachment_type: string | null;
     read_at: string | null;
@@ -165,8 +168,14 @@ export function unisciMessaggio(
     else attachmentUrl = attuale.attachment_url;
 
     const base = fonte === 'server' ? entrante : attuale;
+    // Una risposta di polling partita prima della rettifica non può farla sparire.
+    const rettifica = (entrante.rettifica_versione ?? -1) > (attuale.rettifica_versione ?? -1)
+        ? entrante : attuale;
     const invariato =
         attuale.content === base.content &&
+        attuale.rettifica_staff === rettifica.rettifica_staff &&
+        attuale.rettifica_versione === rettifica.rettifica_versione &&
+        attuale.rettifica_staff_il === rettifica.rettifica_staff_il &&
         attuale.sender_id === base.sender_id &&
         attuale.created_at === base.created_at &&
         attuale.attachment_type === base.attachment_type &&
@@ -179,6 +188,9 @@ export function unisciMessaggio(
     return {
         ...attuale,
         content: base.content,
+        rettifica_staff: rettifica.rettifica_staff,
+        rettifica_staff_il: rettifica.rettifica_staff_il,
+        rettifica_versione: rettifica.rettifica_versione,
         sender_id: base.sender_id,
         created_at: base.created_at,
         attachment_type: base.attachment_type,

@@ -1,3 +1,6 @@
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
+import { enqueueNotifiche } from '@/lib/push/enqueue'
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
@@ -149,9 +152,14 @@ export async function notificaAllergie(
 // rispediva comunque — lui sì, sul canale giusto per ogni dispositivo.
 export async function notificaSaldoBasso(
   supabase: SupabaseClient,
-  opts: { alunnoId: string; saldo: number; nomeAlunno?: string | null }
+  opts: { alunnoId: string; saldo: number; nomeAlunno?: string | null; operazione?: ContestoNotificaOperazione }
 ): Promise<void> {
   try {
+    if (!deveNotificareGenitori(opts.operazione)) {
+    await ritiraPendingOperazione(supabase, { tipo: 'mensa_saldo_basso', entitaTipo: 'alunno', entitaId: opts.alunnoId, alunnoIds: [opts.alunnoId], operazione: opts.operazione, destinatario: 'genitore' })
+      logEvento('mensa', 'info', { operazione: 'notificaSaldoBasso', esito: 'rettifica-storica-silenziosa', alunno_id: opts.alunnoId })
+      return
+    }
     // Gate toggle: scuola risolta dall'alunno (best-effort, fail-open).
     const { data: alunno, error: erroreAlunno } = await supabase
       .from('alunni').select('scuola_id').eq('id', opts.alunnoId).maybeSingle()
@@ -177,26 +185,15 @@ export async function notificaSaldoBasso(
     const corpo = `Il saldo ticket mensa${opts.nomeAlunno ? ` di ${opts.nomeAlunno}` : ''} è sceso a ${opts.saldo}. Contatta la segreteria per ricaricare.`
     const link = '/parent/mensa'
 
-    const { error } = await supabase.from('notifiche').insert(
-      genitori.map(g => ({
-        utente_id: g,
-        tipo: 'mensa_saldo_basso',
-        titolo,
-        corpo,
-        link,
-        entita_tipo: 'alunno',
-        entita_id: opts.alunnoId,
-      }))
-    )
-    // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo l'avviso
-    // si perdeva in silenzio, e il log di successo qui sotto avrebbe mentito.
-    if (error) {
-      logEvento('mensa', 'error', {
-        operazione: 'notificaSaldoBasso',
-        esito: 'notifiche-non-inserite',
-        alunno_id: opts.alunnoId,
-        n: genitori.length,
-      }, error)
+    const accodata = await enqueueNotifiche(supabase, {
+      utenteIds: genitori,
+      tipo: 'mensa_saldo_basso', titolo, corpo, link,
+      entitaTipo: 'alunno', entitaId: opts.alunnoId,
+      scuolaId: alunno?.scuola_id ?? null,
+      operazione: opts.operazione, destinatario: 'genitore',
+    })
+    if (!accodata) {
+      logEvento('mensa', 'error', { operazione: 'notificaSaldoBasso', esito: 'notifiche-non-inserite', alunno_id: opts.alunnoId, n: genitori.length })
       return
     }
     // Il SUCCESSO si logga anche lui: senza, «nessun log» non distingue

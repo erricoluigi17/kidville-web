@@ -10,6 +10,7 @@ import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
 import { PrenotazioneSegreteria } from '@/components/features/admin/mensa/PrenotazioneSegreteria';
 import { TicketResiduiPanel } from '@/components/features/admin/mensa/TicketResiduiPanel';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 import { gestisceMensa } from '@/lib/mensa/gestione-staff';
@@ -48,6 +49,7 @@ function MensaInner() {
         subtitle={t('mensaSottotitolo')}
         actions={
           <>
+            <LinkStorici gruppo="contabilita" />
             <Link href={withUser('/admin/pagamenti')} className={linkCls}><Ticket size={15} /> {t('ricaricaTicket')}</Link>
             <Link href={withUser('/admin/impostazioni?sezione=mensa')} className={linkCls}><Settings size={15} /> {t('impostazioniMensa')}</Link>
           </>

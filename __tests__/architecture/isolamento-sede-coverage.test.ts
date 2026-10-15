@@ -2524,7 +2524,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // sedi attive del modello prima del contenuto. Nessuna esenzione.
             // 352 → 353 il 2026-10-15: nuova GET pagamenti/cassa/dettaglio,
             // scope sediLetturaCassa → p_scuola_ids; nessuna nuova esenzione.
-            routeConServiceRole: 353,
+            // 353 → 363 il 2026-10-15: otto route admin/storici, la rettifica staff
+            // della chat e attendance/justification. Le nuove letture/scritture sono
+            // controllate; nessuna voce aggiunta ad AMMESSE.
+            routeConServiceRole: 363,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2817,7 +2820,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 549 → 551 il 2026-10-14: i due handler di `forms/signed-pdf` sono
             // entrambi controllati; handlerEsentati resta invariato.
             // 551 → 552 il 2026-10-15: il GET del dettaglio cassa resta controllato.
-            handlerControllati: 552,
+            // 552 → 566 il 2026-10-15: quattordici handler delle dieci route
+            // dichiarate sopra; handlerEsentati resta 112.
+            handlerControllati: 566,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

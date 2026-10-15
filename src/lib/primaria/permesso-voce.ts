@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { haRuolo, haUnRuolo, type AppRole, type AppUser } from '@/lib/auth/predicati-ruolo'
 import { logEvento } from '@/lib/logging/logger'
@@ -22,7 +23,7 @@ import {
  *    lo può togliere anche qualunque docente della classe (`utenti_sezioni`).
  *  · FINO A QUANDO — il termine di `timelock.ts` sulla DATA DI ROMA dell'evento:
  *    2 giorni, 15 per le prove scritte/pratiche, valori per sede da
- *    `admin_settings`. Il termine vale per TUTTI, Segreteria e Direzione comprese.
+ *    `admin_settings`. Segreteria e Direzione possono correggere senza scadenza, dopo il gate di sede.
  *  · OLTRE IL TERMINE — solo con uno sblocco in `sblocchi_audit`: per la VOCE
  *    (`entita_tipo` = tipo, `entita_id` = id) oppure per il GIORNO della classe
  *    (`entita_tipo` = 'giorno', `section_id`, `data`). Per registro e firma vale
@@ -38,7 +39,7 @@ import {
 
 export type TipoVoce = 'registro' | 'firma' | 'valutazione' | 'nota' | 'impreparato' | 'allegato'
 
-/** I ruoli che possono modificare/eliminare anche le voci altrui (sempre entro il termine). */
+/** I ruoli che possono modificare/eliminare anche le voci altrui (senza scadenza). */
 const RUOLI_STAFF: readonly AppRole[] = ['segreteria', 'admin', 'coordinator']
 
 /**
@@ -305,6 +306,11 @@ export async function verificaPermessoVoce(
     return { ok: false, stato: 403, codice: 'VOCE_NON_AUTORE' }
   }
 
+  if (puoCorreggereStorico(utente)) {
+    logEvento('registro', 'info', { operazione: 'primaria/permesso-voce', esito: 'rettifica-staff-autorizzata', ...campi })
+    return { ok: true }
+  }
+
   const ter = await terminiPerSede(supabase, [voce])
   if (!ter.ok) return LETTURA_FALLITA
   const { date, giorniLimite } = oltreTermine(voce, ter.perSede.get(voce.scuolaId ?? '') as Deadlines, adesso)
@@ -346,6 +352,11 @@ export async function statoVoci(
 ): Promise<EsitoBatch> {
   const esiti = new Map<string, StatoVoce>()
   if (voci.length === 0) return { ok: true, esiti }
+
+  if (puoCorreggereStorico(utente)) {
+    for (const v of voci) esiti.set(chiaveVoce(v.tipo, v.id), { modificabile: true, bloccata: false, giorniLimite: 0 })
+    return { ok: true, esiti }
+  }
 
   const aut = await autorizzate(supabase, utente, voci)
   if (!aut.ok) return LETTURA_FALLITA

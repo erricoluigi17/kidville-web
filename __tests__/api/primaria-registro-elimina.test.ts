@@ -80,7 +80,7 @@ vi.mock('@/lib/anagrafiche/legami', async (originale) => ({
 import { DELETE } from '@/app/api/primaria/registro/route'
 
 const req = (query: string, utente = DOCENTE) =>
-  new NextRequest(`http://localhost/api/primaria/registro?userId=${utente}&${query}`, {
+  new NextRequest(`http://localhost/api/primaria/registro?userId=${utente}&versioneAttesa=0&${query}`, {
     method: 'DELETE',
     headers: { 'x-user-id': utente },
   })
@@ -96,7 +96,7 @@ const scritte = (t: string, op?: string) =>
 
 function lezione(id: string, data: string, extra: Riga = {}): Riga {
   return {
-    id, scuola_id: SEDE_A, section_id: SEZ, classe_sezione: '1A', data, ora_lezione: 2,
+    id, storico_versione: 0, scuola_id: SEDE_A, section_id: SEZ, classe_sezione: '1A', data, ora_lezione: 2,
     materia_id: null, argomento: 'Le frazioni', compiti: 'Pag. 12', data_consegna_compiti: null,
     ...extra,
   }
@@ -105,7 +105,7 @@ function lezione(id: string, data: string, extra: Riga = {}): Riga {
 function notifica(id: string, extra: Riga): Riga {
   return {
     id, tipo: 'compiti', titolo: 'Nuovi compiti assegnati', entita_tipo: 'registro',
-    push_inviata_il: null, corpo: 'Pag. 12', ...extra,
+    push_inviata_il: null, corpo: 'Pag. 12', creato_il: new Date().toISOString(), giorno_competenza: OGGI, politica_operazione: null, ...extra,
   }
 }
 
@@ -175,6 +175,26 @@ beforeEach(() => {
     sblocchi_audit: [],
     utenti_scuole: [],
   } as Record<string, Riga[]>
+})
+
+describe('registro — pending legacy della giornata originale', () => {
+  it.each(['firma', 'lezione'])('DELETE %s conserva le altre giornate, anche se la programmazione attraversa mezzanotte', async ambito => {
+    comeSegreteria()
+    righe('registro_orario').find(r => r.id === LEZ)!.data = LONTANA
+    const base = { utente_id: GENITORE_1, entita_id: LEZ, corpo: 'Scheda 3', giorno_competenza: null, politica_operazione: null, creato_il: `${LONTANA}T22:55:00Z`, invio_programmato_il: `${LONTANA}T23:05:00Z` }
+    h.db.notifiche = [
+      notifica('legacy-originale', base), notifica('meta-originale', { ...base, giorno_competenza: LONTANA, creato_il: new Date().toISOString() }),
+      notifica('claim-originale', { ...base, push_inviata_il: '2026-01-13T08:00:00Z', push_presa_scade_il: '2026-01-13T08:10:00Z' }),
+      notifica('finalizzata-originale', { ...base, push_inviata_il: '2026-01-13T08:00:00Z', push_presa_scade_il: null }),
+      notifica('legacy-altro', { ...base, creato_il: '2026-01-13T10:00:00Z' }),
+      notifica('meta-altro', { ...base, giorno_competenza: '2026-01-13' }),
+      notifica('inviata', { ...base, push_inviata_il: `${LONTANA}T23:06:00Z` }),
+      notifica('altra-lezione', { ...base, entita_id: LEZ_ALTRA }),
+    ]
+    const response = await DELETE(req(ambito === 'firma' ? `firmaId=${FIRMA_MIA}` : `registroId=${LEZ}`, SEGRETERIA))
+    expect(response.status).toBe(200)
+    expect(righe('notifiche').map(n => n.id)).toEqual(['finalizzata-originale', 'legacy-altro', 'meta-altro', 'inviata', 'altra-lezione'])
+  })
 })
 
 const idsDi = (t: string) => righe(t).map((r) => r.id)
@@ -391,15 +411,16 @@ describe('DELETE /api/primaria/registro — il termine e gli sblocchi', () => {
     h.db.registro_orario = h.db.registro_orario.map((r) => (r.id === LEZ ? { ...r, data: LONTANA } : r))
   })
 
-  it('oltre il termine → 423 VOCE_BLOCCATA, anche per la Segreteria sulla lezione intera', async () => {
+  it('il docente oltre il termine resta423; la Segreteria elimina con token e conserva consolidato e firme', async () => {
     const res = await DELETE(req(`firmaId=${FIRMA_MIA}`))
     expect(res.status).toBe(423)
     expect((await res.json()).codice).toBe('VOCE_BLOCCATA')
 
     comeSegreteria()
     const res2 = await DELETE(req(`registroId=${LEZ}`, SEGRETERIA))
-    expect(res2.status).toBe(423)
-    expect(h.scritture).toEqual([])
+    expect(res2.status).toBe(200)
+    expect(idsDi('registro_orario')).not.toContain(LEZ)
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({ contenuto: { tabella: 'registro_orario', riga: expect.objectContaining({ id: LEZ, argomento: 'Le frazioni' }) } }),expect.objectContaining({ contenuto: { tabella: 'firme_docenti', riga: expect.objectContaining({ id: FIRMA_MIA, compiti_propri: 'Scheda 3' }) } })]))
   })
 
   it('con lo sblocco del GIORNO della classe → passa', async () => {

@@ -43,6 +43,7 @@ function finto() {
         delete: () => { verbo = 'delete'; return qb },
         eq: (...a: unknown[]) => { filtri.push(['eq', ...a]); return qb },
         is: (...a: unknown[]) => { filtri.push(['is', ...a]); return qb },
+        or: (filtro: string) => { filtri.push(['or', filtro]); return qb },
         not: (...a: unknown[]) => { filtri.push(['not', ...a]); return qb },
         maybeSingle: async () => {
           const s = filtri.find((f) => f[0] === 'eq' && f[1] === 'section_id')

@@ -1,3 +1,4 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
 import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
@@ -378,7 +379,7 @@ export async function promemoriaAdesioni(
   const limite = (giornoLimite && fineGiornoCivile(giornoLimite)) ?? new Date(adesso + (nMax + 2) * MS_GIORNO).toISOString()
   const { data: avvisi, error: errAvvisi } = await supabase
     .from('avvisi')
-    .select('id, titolo, scuola_id, target_scope, target_classes, scadenza_adesione')
+    .select('id, titolo, scuola_id, target_scope, target_classes, scadenza_adesione, politica_operazione')
     .eq('tipo', 'adesione')
     .not('scadenza_adesione', 'is', null)
     .gte('scadenza_adesione', adessoISO)
@@ -400,7 +401,12 @@ export async function promemoriaAdesioni(
     target_scope: string | null
     target_classes: string[] | null
     scadenza_adesione: string | null
+    politica_operazione?: ContestoNotificaOperazione | null
   }>) {
+    if (!deveNotificareGenitori(avviso.politica_operazione)) {
+      logEvento('avvisi', 'info', { operazione: 'avvisi/promemoria', esito: 'rettifica-storica-silenziosa', avviso: avviso.id })
+      continue
+    }
     // Il gemello IN MEMORIA del `.not('scadenza_adesione','is',null)` qui sopra, e
     // non è un doppione inutile: `scadenza_adesione` è obbligatoria sugli avvisi
     // di adesione solo DOPO la migrazione di irrigidimento (che è un'altra PR), e
@@ -535,6 +541,8 @@ export async function promemoriaAdesioni(
     // per scontato.
     await notificaEvento(supabase, {
       tipo: 'adesione_promemoria',
+      destinatario: 'genitore',
+      operazione: avviso.politica_operazione ?? undefined,
       scuolaId: avviso.scuola_id,
       utenteIds: destinatari,
       titolo: 'Adesione in scadenza',

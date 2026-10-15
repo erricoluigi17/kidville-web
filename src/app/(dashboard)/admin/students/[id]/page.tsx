@@ -8,6 +8,7 @@ import { CockpitPage } from '@/components/ui/cockpit';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
 import { StaffDetailPanel, type TabScheda } from '@/components/features/admin/StaffDetailPanel';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 // Scheda anagrafica a TUTTA AREA (sidebar + TopBar del cockpit restano). Sostituisce
@@ -239,6 +240,7 @@ function AnagraficaDetailInner() {
     return (
         <CockpitPage max={960}>
             {Back}
+            {!isParent && !isStaff && student && <div className="mb-4"><LinkStorici alunnoId={id} scuolaId={typeof student.scuola_id === 'string' ? student.scuola_id : undefined} /></div>}
             {isParent ? (
                 <ParentDetailPanel
                     variant="page"

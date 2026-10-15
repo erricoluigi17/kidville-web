@@ -33,6 +33,7 @@ export interface FiglioAvviso {
 }
 
 export interface Avviso {
+    giorno_competenza?: string | null;
     id: string;
     author_id: string;
     titolo: string;

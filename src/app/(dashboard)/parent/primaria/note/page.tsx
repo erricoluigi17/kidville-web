@@ -11,7 +11,7 @@ import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Nota {
   id: string; categoria: string; testo: string;
-  richiede_firma: boolean; firmata_il: string | null; creato_il: string;
+  richiede_firma: boolean; firmata_il: string | null; creato_il: string; data_evento?: string | null;
 }
 
 const CATEGORIE: Record<string, { labelKey: string; cls: string }> = {
@@ -105,7 +105,7 @@ function NoteGenitore() {
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-maven font-semibold ${catCls}`}>{catLabel}</span>
                   <span className="font-maven text-xs text-kidville-muted">
-                    {f.dataBreve(n.creato_il)}
+                    {f.dataBreve(n.data_evento ?? n.creato_il)}
                   </span>
                   {n.richiede_firma && (
                     n.firmata_il

@@ -1,3 +1,4 @@
+import { rettificaStoricaFinta } from './storici-rpc'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // =============================================================================
@@ -199,6 +200,15 @@ function regexDaPattern(pattern: string, insensibile: boolean): RegExp {
 /** Valori confrontabili di una colonna, anche annidata (`alunni.scuola_id`).
  *  Nodo annidato assente ⇒ elenco vuoto ⇒ la riga non passa (join `!inner`). */
 function valoriDi(riga: Riga, colonna: string): unknown[] {
+  if (colonna.includes('->')) {
+    const [radice, ...percorso] = colonna.split(/->>?/)
+    let valore: unknown = riga[radice]
+    for (const chiave of percorso) {
+      if (valore == null || typeof valore !== 'object') return [null]
+      valore = (valore as Riga)[chiave]
+    }
+    return [valore ?? null]
+  }
   if (!colonna.includes('.')) return [riga[colonna]]
   const [radice, ...resto] = colonna.split('.')
   const campo = resto.join('.')
@@ -921,6 +931,7 @@ export function creaFintoSupabase(
   const client: Record<string, unknown> = {
     from,
     rpc: async (nome: string, args: Riga = {}) => {
+      if (nome === 'storici_applica_rettifica' && !opzioni.rpc?.[nome]) return rettificaStoricaFinta(db, args, opzioni)
       const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]
       if (!impl) {
         throw new Error(

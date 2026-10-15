@@ -281,6 +281,8 @@
   "valutazioniImpreparatoMotivoLabel": "Motivo (facoltativo)",
   "valutazioniImpreparatoMateriaLabel": "Materia",
   "valutazioniImpreparatoSenzaMateria": "Nessuna materia",
+  "storicoDataCompetenza": "Data di competenza",
+  "storicoSenzaAvvisiFamiglia": "La registrazione di una giornata passata aggiorna lo storico senza inviare avvisi alla famiglia.",
   "valutazioniImpreparatoDataLabel": "Data",
   "valutazioniImpreparatoSegnato": "Impreparato segnato ✓",
   "valutazioniImpreparatoErrore": "Impreparato non salvato. Riprova.",

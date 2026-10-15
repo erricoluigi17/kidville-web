@@ -1,10 +1,12 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -31,6 +33,7 @@ const zGradi = z.array(z.enum(['nido', 'infanzia', 'primaria'])).nullish()
 const zClassi = z.array(z.string()).nullish()
 
 const postBodySchema = z.object({
+  giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
   tipo: z.enum(NEWS_TIPI, { error: 'tipo non valido' }),
   titolo: z.string({ error: 'titolo è obbligatorio' }).min(1, 'titolo è obbligatorio'),
   contenuto_json: z.unknown().optional(),
@@ -156,6 +159,9 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
     const body = b.data
+    if (body.giorno_competenza && body.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+      return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria' }, { status: 403 })
+    }
 
     const isEducator = auth.user.role === 'educator'
     const isAdmin = auth.user.role === 'admin'
@@ -285,6 +291,8 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
     }
 
     const record: Record<string, unknown> = {
+      giorno_competenza: body.giorno_competenza ?? oggiRoma(),
+      politica_operazione: politicaNotificaServizio(auth.user, body.giorno_competenza),
       tipo: body.tipo,
       stato,
       titolo: body.titolo,
@@ -357,6 +365,7 @@ export const POST = withRoute('news:POST', async (request: NextRequest) => {
 
     if (stato === 'pubblicata') {
       await notificaNewsPubblicata(supabase, {
+        politica_operazione: post.politica_operazione,
         id: post.id,
         titolo: post.titolo,
         scuola_id: post.scuola_id,

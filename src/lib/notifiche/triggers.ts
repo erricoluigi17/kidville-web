@@ -1,9 +1,11 @@
+import { deveNotificareGenitori, type ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { genitoriDiAlunni } from '@/lib/notifiche/destinatari'
 import { logEvento } from '@/lib/logging/logger'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
+import { ritiraPendingOperazione } from '@/lib/notifiche/ritira-pending'
 
 // =============================================================================
 // Wrapper unico per i trigger di notifica: toggle per scuola → risoluzione
@@ -39,14 +41,26 @@ export interface NotificaEventoParams {
    * stesso tipo+entita_id prima di ri-accodare — le raffiche collassano in una.
    */
   debounce?: boolean
+  operazione?: ContestoNotificaOperazione
+  destinatario?: 'genitore' | 'personale'
 }
 
 export async function notificaEvento(supabase: SupabaseClient, params: NotificaEventoParams): Promise<void> {
   try {
+    if (!deveNotificareGenitori(params.operazione) && (params.destinatario === 'genitore' || (!params.utenteIds?.length && params.alunnoIds?.length))) {
+      await ritiraPendingOperazione(supabase, params)
+      logEvento('notifica', 'info', { operazione: 'notificaEvento', esito: 'rettifica-storica-silenziosa', tipo: params.tipo })
+      return
+    }
+    if (!deveNotificareGenitori(params.operazione) && params.alunnoIds?.length && params.destinatario !== 'personale') {
+      // I destinatari espliciti di un trigger misto sono personale: ritira
+      // esclusivamente i genitori risolti dagli alunni e prosegui per il personale.
+      await ritiraPendingOperazione(supabase, { ...params, utenteIds: [], destinatario: 'genitore' })
+    }
     if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return
 
     const destinatari = new Set<string>(params.utenteIds ?? [])
-    if (params.alunnoIds?.length) {
+    if (params.alunnoIds?.length && deveNotificareGenitori(params.operazione)) {
       for (const id of await genitoriDiAlunni(supabase, params.alunnoIds)) destinatari.add(id)
     }
     if (destinatari.size === 0) {
@@ -123,14 +137,15 @@ export async function notificaEvento(supabase: SupabaseClient, params: NotificaE
           // stessa tabella (`@/lib/gdpr/esegui`), e restituisce le righe tolte,
           // quindi il conteggio è un fatto e non un'intestazione da interpretare.
           // Va per ULTIMO: dopo `.select()` il builder non espone più `.eq()`.
-          const res = await supabase
+          let cancellazione = supabase
             .from('notifiche')
             .delete()
             .eq('tipo', params.tipo)
             .eq('entita_id', params.entitaId)
             .in('utente_id', blocco)
             .is('push_inviata_il', null)
-            .select('id')
+          if (params.operazione) cancellazione = cancellazione.eq('giorno_competenza', params.operazione.giornoCompetenza)
+          const res = await cancellazione.select('id')
           if (res.error) { error = res.error; break }
           nCancellate += (res.data ?? []).length
         }
@@ -193,6 +208,8 @@ export async function notificaEvento(supabase: SupabaseClient, params: NotificaE
       // Il toggle è già stato verificato qui sopra (config in cache: il
       // doppio check dentro enqueueNotifiche costa zero query).
       scuolaId: params.scuolaId ?? null,
+      operazione: params.operazione,
+      destinatario: params.destinatario,
     })
   } catch (err) {
     // Qui è saltata la PREPARAZIONE della notifica (toggle, lookup dei destinatari, enqueue):

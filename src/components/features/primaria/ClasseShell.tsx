@@ -20,6 +20,7 @@ import { ArrowLeft, LayoutGrid, ClipboardList, BookOpenCheck, CheckSquare, Star,
 import { useTranslations } from 'next-intl';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { isoToIt, itToIso } from '@/lib/format/data';
+import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 
 /**
  * Il giorno scritto nell'URL (`?data=yyyy-mm-dd`), ma SOLO se è un giorno vero.
@@ -234,6 +235,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
           </nav>
         </div>
       </header>
+      {inCockpit && isStaff && <div className="mx-auto max-w-5xl px-4 pt-3"><LinkStorici sectionId={sectionId} gruppo="primaria" /></div>}
 
       {/* Avviso-ponte NON bloccante: mostrato UNA sola volta (solo su Panoramica),
           non ripetuto su ogni tab della classe. */}

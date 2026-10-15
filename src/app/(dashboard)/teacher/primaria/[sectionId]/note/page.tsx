@@ -1,5 +1,8 @@
 'use client';
 
+import { oggiRoma } from '@/lib/storici/retroattivita';
+import { CompetenzaStorica } from '@/components/features/primaria/CompetenzaStorica';
+import { useDateFormat } from '@/lib/i18n/date';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -14,6 +17,9 @@ type Nota = NotaElenco;
 
 export default function NotePage() {
   const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
+  const [dataCompetenza, setDataCompetenza] = useState(oggiRoma);
+  const [docenteId, setDocenteId] = useState('');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -36,6 +42,8 @@ export default function NotePage() {
   const [permessiDisponibili, setPermessiDisponibili] = useState(true);
   /** Il ruolo di chi guarda (`/api/primaria/me`): decide solo se «Sblocca» si mostra. */
   const [ruolo, setRuolo] = useState<string | null>(null);
+  const [profiloStorico, setProfiloStorico] = useState(false);
+  const gestioneStorica = profiloStorico || ['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '');
   /** L'esito dell'ultima modifica/eliminazione, sopra l'elenco. */
   const [esitoElenco, setEsitoElenco] = useState<{ testo: string; tipo: 'ok' | 'errore' } | null>(null);
 
@@ -105,7 +113,7 @@ export default function NotePage() {
     let vivo = true;
     fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (vivo && d?.success && typeof d.data?.ruolo === 'string') setRuolo(d.data.ruolo); })
+      .then((d) => { if (vivo && d?.success && typeof d.data?.ruolo === 'string') { setRuolo(d.data.ruolo); setProfiloStorico(d.data.puoCorreggereStorico === true); } })
       .catch((err) => {
         logClient({
           livello: 'warn',
@@ -130,21 +138,29 @@ export default function NotePage() {
     setMsg('');
     if (sel.length === 0 || !testo) { setMsg(t('noteSelezionaAlunniTesto')); return; }
     if (!userId) { setMsg(t('comuneIdentitaNonRisolta')); return; }
+    if (gestioneStorica && !docenteId) { setMsg(t('firmaModalDocenteObbligatorio')); return; }
     setSaving(true);
-    const r = await fetch(`/api/primaria/note?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ sectionId, alunnoIds: sel, categoria, testo, richiedeFirma }),
-    });
-    const d = await r.json();
-    setSaving(false);
-    if (!r.ok) setMsg(d.error || t('comuneErrore'));
-    else { setMsg(t('noteInviata')); setTesto(''); setSel([]); ricaricaNote(); }
+    try {
+      const r = await fetch(`/api/primaria/note?userId=${userId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ sectionId, alunnoIds: sel, categoria, testo, richiedeFirma, ...(gestioneStorica ? { data: dataCompetenza, docenteId } : {}) }),
+      });
+      const d = await r.json();
+      if (!r.ok) setMsg(d.error || t('comuneErrore'));
+      else { setMsg(t('noteInviata')); setTesto(''); setSel([]); ricaricaNote(); }
+    } catch (err) {
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `nota-salvataggio-fallito: ${err instanceof Error ? err.name : 'errore'}` });
+      setMsg(t('comuneErrore'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <div className="rounded-card bg-white p-5 shadow-sm">
+        <CompetenzaStorica attiva={gestioneStorica} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataCompetenza} docenteId={docenteId} onDocente={setDocenteId} />
         <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-3 flex items-center gap-2">
           <AlertTriangle size={18} className="text-kidville-warn" /> {t('noteNuova')}
         </h2>
@@ -214,13 +230,14 @@ export default function NotePage() {
                     </span>
                   )}
                 </div>
+                <p className="font-maven text-xs text-kidville-sub">{f.dataBreve(n.data_evento ?? n.creato_il)}</p>
                 <p className="font-maven text-xs text-kidville-muted mt-0.5">{n.testo}</p>
                 <AzioniNota
                   nota={n}
                   nomeAlunno={nomeAlunno}
                   firmateNelGruppo={n.nota_gruppo_id ? firmatePerGruppo.get(n.nota_gruppo_id) ?? 0 : n.firmata_il ? 1 : 0}
                   userId={userId ?? ''}
-                  ruolo={ruolo}
+                  ruolo={gestioneStorica && !['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '') ? 'segreteria' : ruolo}
                   permessiDisponibili={permessiDisponibili && !!userId}
                   onCambiato={ricaricaNote}
                   onEsito={(testo, tipo) => setEsitoElenco({ testo, tipo })}

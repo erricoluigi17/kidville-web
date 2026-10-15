@@ -42,13 +42,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn(async () => ({
     from(tabella: string) {
       const qb: Record<string, unknown> = {}
-      qb.select = (c: string) => { if (tabella === 'presenze') h.colonnePresenze = c; return qb }
+      let colonne = '';
+      qb.select = (c: string) => { colonne = c; if (tabella === 'presenze' && c.includes('giust_vista_da')) h.colonnePresenze = c; return qb }
       qb.eq = () => qb
+      qb.in = () => qb
       qb.order = () => qb
       // Come PostgREST, `presenze` restituisce SOLO le colonne chieste: una colonna
       // non letta non può decidere il booleano.
       const proietta = (r: Record<string, unknown>) => {
-        const chieste = h.colonnePresenze.split(',').map((c) => c.trim())
+        const chieste = colonne.split(',').map((c) => c.trim())
         return Object.fromEntries(Object.entries(r).filter(([k]) => chieste.includes(k)))
       }
       qb.then = (res: (v: unknown) => unknown) =>

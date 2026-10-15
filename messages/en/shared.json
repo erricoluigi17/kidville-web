@@ -737,5 +737,13 @@
   "erroreModuloFirmatoCompilazioneNonLetta": "The submission could not be read: please try again shortly.",
   "erroreModuloFirmatoScansioneAssente": "The original scan is not available. Contact the school office.",
   "erroreModuloFirmatoPdfTroppoGrande": "Signature saved; the PDF exceeds the archive limit and must be recovered by the school office.",
-  "erroreModuloFirmatoInCancellazione": "The document is being deleted and is not available."
+  "erroreModuloFirmatoInCancellazione": "The document is being deleted and is not available.",
+  "erroreGiustificaCambiata": "The justification has changed. Reload the page before correcting it.",
+  "erroreGiustificaNonAnnullata": "The justification was not revoked. Please try again.",
+  "erroreStoricoNonDisponibile": "Historical corrections and archives are not available in this environment yet.",
+  "erroreDiarioDataBloccata": "You cannot edit the diary for the selected day.",
+  "erroreStoricoNonRiuscito": "The archive operation failed. Please try again.",
+  "erroreStoricoScaduto": "The export has expired. Please generate it again.",
+  "erroreStoricoRichiestaRifiutata": "Check the location, recipient, date range and document status.",
+  "erroreStoricoVersioneCambiata": "Another member of staff changed the record. Reload before correcting it."
 }

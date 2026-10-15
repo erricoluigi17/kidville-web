@@ -92,5 +92,12 @@
   "annullaAppelloNienteDaAnnullare": "C’è solo la comunicazione del genitore: l’appello non è stato fatto, non c’è niente da annullare.",
   "annullaAppelloCambiato": "La presenza è cambiata nel frattempo: l’elenco è stato aggiornato, riprova.",
   "annullaAppelloErrore": "Non sono riuscito ad annullare l’appello. Riprova.",
-  "comunicazioneGenitore": "Assenza comunicata dal genitore"
+  "comunicazioneGenitore": "Assenza comunicata dal genitore",
+  "giustificaAnnullaAria": "Annulla la giustifica di {alunno}",
+  "giustificaAnnulla": "Annulla giustifica",
+  "giustificaAnnullaConferma": "Annullare questa giustifica? Il testo e la firma originali restano conservati nello storico.",
+  "giustificaConfermaAnnulla": "Conferma annullamento",
+  "giustificaMantieni": "Mantieni giustifica",
+  "giustificaAnnullata": "Giustifica annullata. Originale conservato.",
+  "giustificaAnnullaErrore": "Giustifica non annullata. Rileggi la presenza e riprova."
 }

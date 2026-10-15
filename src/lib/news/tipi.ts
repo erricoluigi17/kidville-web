@@ -1,3 +1,4 @@
+import type { ContestoNotificaOperazione } from '@/lib/storici/retroattivita'
 // =============================================================================
 // Tipi e costanti della sezione «News» (client-safe: nessun import server).
 // Single source of truth condivisa da route, lib e frontend.
@@ -48,6 +49,8 @@ export interface NewsMedia {
 }
 
 export interface NewsPost {
+  giorno_competenza?: string | null
+  politica_operazione?: ContestoNotificaOperazione | null
   id: string
   tipo: NewsTipo
   stato: NewsStato

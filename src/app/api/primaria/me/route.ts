@@ -1,3 +1,4 @@
+import { puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
@@ -34,6 +35,7 @@ export const GET = withRoute('primaria/me:GET', async (request: NextRequest) => 
         gradi: ctx.gradi,
         ruolo: appUser?.role ?? null,
         isDirigente,
+        puoCorreggereStorico: appUser ? puoCorreggereStorico(appUser) : false,
         funzioni: ctx.gradi.reduce<Record<string, Record<string, boolean>>>((acc, g) => {
           acc[g] = ctx.matrice?.[g] ?? {}
           return acc

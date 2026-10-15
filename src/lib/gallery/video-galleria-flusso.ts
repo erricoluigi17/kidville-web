@@ -840,6 +840,7 @@ export async function apriIntentoVideoGalleria(
   dati: {
     file: { name: string; size: number; type: string }
     scuolaId: string
+    giornoCompetenza?: string
     durataSecondi: number | null
     chiaveIdempotenza: string
     destinatari: DestinatariVideo
@@ -863,6 +864,7 @@ export async function apriIntentoVideoGalleria(
     '/api/video-uploads',
     json({
       canale: 'gallery',
+      ...(dati.giornoCompetenza ? { giorno_competenza: dati.giornoCompetenza } : {}),
       // `publish` e non `attach_private`: in Galleria un video si carica per
       // pubblicarlo, e l'azione dichiarata è ciò che l'intento promette.
       azione: 'publish',
@@ -979,6 +981,7 @@ export async function apriIntentoVideoGalleriaNativo(
   dati: {
     file: { nome: string; byte: number; mime: string; sha256: string }
     scuolaId: string
+    giornoCompetenza?: string
     durataSecondi: number | null
     chiaveIdempotenza: string
     destinatari: DestinatariVideo
@@ -996,6 +999,7 @@ export async function apriIntentoVideoGalleriaNativo(
     '/api/video-uploads',
     json({
       canale: 'gallery',
+      ...(dati.giornoCompetenza ? { giorno_competenza: dati.giornoCompetenza } : {}),
       azione: 'publish',
       scuolaId: dati.scuolaId,
       ambitoGlobale: false,

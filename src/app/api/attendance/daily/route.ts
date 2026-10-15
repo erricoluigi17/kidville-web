@@ -1,3 +1,6 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, proiettaRiga } from '@/lib/primaria/rettifica-storica';
+import { politicaNotificaOperazione, puoCorreggereStorico, istanteNelGiornoRoma } from '@/lib/storici/retroattivita';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -44,6 +47,8 @@ const COLONNE_APPELLO = [
     'orario_entrata',
     'orario_uscita',
     'panic_alert',
+    'giustificata',
+    'giustificata_il',
     'giustificazione_testo',
     // Chi ha fatto l'appello (uuid dello staff, come nella GET della primaria).
     // Serve alla schermata per distinguere l'appello FATTO dalla sola comunicazione
@@ -71,6 +76,7 @@ const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as 
 
 const postBodySchema = z.object({
     alunno_id: zUuid,
+    versioneAttesa: z.number().int().nonnegative().nullable().optional(),
     data: zDataYMD,
     stato: z.enum(STATI_VALIDI),
     orario_entrata: z.string().nullable().optional(),
@@ -232,7 +238,8 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
             return NextResponse.json([]);
         }
 
-        return NextResponse.json(rows ?? []);
+        const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'presenze', ((rows ?? []) as unknown as Record<string, unknown>[]).map(r => String(r.id))) : new Map<string, number>();
+        return NextResponse.json(((rows ?? []) as unknown as Record<string, unknown>[]).map(row => ({ ...row, storico_versione: versioni.get(String(row.id)), rettifica_storica_ammessa: puoCorreggereStorico(auth.user) })));
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:GET', stato: 200 }, err);
         return NextResponse.json([]);
@@ -293,9 +300,10 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         // `prima?.stato !== 'assente'` diventa vera e la notifica «tuo figlio è
         // stato segnato assente» riparte a OGNI ri-salvataggio dell'appello. Non
         // una notifica mancata: una notifica DUPLICATA su un dato di un minore.
+        const storica = eRettificaStorica(auth.user, data);
         const { data: prima, error: primaErr } = await supabase
             .from('presenze')
-            .select('stato')
+            .select(storica ? '*' : 'stato')
             .eq('alunno_id', alunno_id)
             .eq('data', data)
             .maybeSingle();
@@ -310,12 +318,21 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             }, primaErr);
         }
 
+        if (storica && primaErr) return storicoIndisponibile();
+        if (storica && prima && prima.storico_versione === undefined) return storicoIndisponibile();
+        const politica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: data });
+        const nellaGiornata = (orario: string | null | undefined) => {
+            if (!orario) return null;
+            if (/^\d{2}:\d{2}$/.test(orario)) return aOrarioIso(data, orario);
+            const istante = new Date(orario);
+            return Number.isFinite(istante.getTime()) ? istanteNelGiornoRoma(data, istante) : orario;
+        };
         const record = {
             alunno_id,
             data,
             stato,
-            orario_entrata: orario_entrata ?? null,
-            orario_uscita: orario_uscita ?? null,
+            orario_entrata: nellaGiornata(orario_entrata),
+            orario_uscita: nellaGiornata(orario_uscita),
             scuola_id: alunno.scuola_id,
             section_id: alunno.section_id,
             aggiornato_il: new Date().toISOString(),
@@ -342,11 +359,19 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         };
 
         // Upsert su (alunno_id, data) — un solo record per bambino per giorno
-        const { data: result, error } = await supabase
-            .from('presenze')
-            .upsert(record, { onConflict: 'alunno_id,data' })
-            .select(COLONNE_ESITO)
-            .single();
+        let result: Record<string, unknown> | null
+        let error: unknown = null
+        if (storica) {
+            if (!alunno.scuola_id) return storicoIndisponibile();
+            const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(alunno.scuola_id), alunnoId: alunno_id, sectionId: alunno.section_id, modulo: 'presenze', giorno: data,
+                attese: [{ tabella: 'presenze', filtro: { alunno_id, data }, versione: b.data.versioneAttesa }],
+                azioni: [{ tabella: 'presenze', operazione: prima ? 'update' : 'insert', ...(prima ? { filtro: { id: prima.id, scuola_id: prima.scuola_id } } : {}), valori: record }] });
+            if ('response' in rettifica) return rettifica.response;
+            result = proiettaRiga(rettifica.righe[0]?.[0] ?? {}, `${COLONNE_ESITO}, storico_versione`);
+        } else {
+            const esito = await supabase.from('presenze').upsert(record, { onConflict: 'alunno_id,data' }).select(COLONNE_ESITO).single();
+            result = esito.data; error = esito.error;
+        }
 
         if (error) {
             // IL `message` DI POSTGREST NON ESCE DA QUI, e fino al 2026-08-08 usciva:
@@ -388,9 +413,10 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         // L'asimmetria è tutta qui: sbagliare per eccesso di silenzio costa una
         // notifica, sbagliare per eccesso di zelo costa la fiducia in tutte.
         try {
-            if (stato === 'assente' && !primaErr && prima?.stato !== 'assente') {
+            if (stato === 'assente' && !politica.sopprimiGenitori && !primaErr && prima?.stato !== 'assente') {
                 await notificaEvento(supabase, {
                     tipo: 'assenza_non_comunicata',
+                    operazione: politica,
                     scuolaId: (alunno.scuola_id as string | undefined) ?? null,
                     alunnoIds: [alunno_id],
                     titolo: 'Assenza registrata all’appello',
@@ -401,7 +427,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                     bufferMin: 10,
                     debounce: true,
                 });
-            } else if (stato !== 'assente' && (primaErr || prima?.stato === 'assente')) {
+            } else if (politica.sopprimiGenitori || (stato !== 'assente' && (primaErr || prima?.stato === 'assente'))) {
                 // REVOCA: l'appello è stato corretto entro il buffer di 10' e la notifica
                 // pending va tolta dalla coda prima che il cron la spedisca.
                 //
@@ -410,12 +436,11 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                 // coprire — e il fallimento della revoca è il caso peggiore dei due: il genitore
                 // riceve "tuo figlio è stato segnato assente" per un'assenza che la maestra ha
                 // già corretto. Non una notifica mancata: una notifica FALSA.
-                const { error: revocaErr } = await supabase
+                const { error: revocaErr } = await eseguiRitiroGiornate(() => supabase
                     .from('notifiche')
                     .delete()
                     .eq('tipo', 'assenza_non_comunicata')
-                    .eq('entita_id', alunno_id)
-                    .is('push_inviata_il', null);
+                    .eq('entita_id', alunno_id), { giorni: [data], storica: politica.sopprimiGenitori, operazione: 'attendance/daily:POST' });
 
                 if (revocaErr) {
                     // `error` benché la risposta sia 200: la riga resta in coda e la push
@@ -521,6 +546,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
 const patchBodySchema = z
     .object({
         alunno_id: zUuid,
+        versioneAttesa: z.number().int().nonnegative().optional(),
         data: zDataYMD,
         orario_entrata: zOraHHMM.optional(),
         orario_uscita: zOraHHMM.optional(),
@@ -553,7 +579,7 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
 
         const { data: prima, error: erroreLettura } = await supabase
             .from('presenze')
-            .select(COLONNE_RETTIFICA)
+            .select(eRettificaStorica(auth.user, data) ? '*' : COLONNE_RETTIFICA)
             .eq('alunno_id', alunno_id)
             .eq('data', data)
             .maybeSingle();
@@ -607,15 +633,17 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
         if (vuoleEntrata) aggiornamento.orario_entrata = aOrarioIso(data, b.data.orario_entrata as string);
         if (vuoleUscita) aggiornamento.orario_uscita = aOrarioIso(data, b.data.orario_uscita as string);
 
-        const { data: result, error } = await supabase
-            .from('presenze')
-            .update(aggiornamento)
-            .eq('id', riga.id as string)
-            // La sede viene dalla riga appena LETTA e verificata, non dalla
-            // richiesta: è la forma che `isolamento-sede-coverage` riconosce.
-            .eq('scuola_id', riga.scuola_id as string)
-            .select(COLONNE_ESITO)
-            .single();
+        let result: Record<string, unknown> | null
+        let error: unknown = null
+        if (eRettificaStorica(auth.user, data)) {
+            if (riga.storico_versione === undefined || !riga.scuola_id) return storicoIndisponibile();
+            const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(riga.scuola_id), alunnoId: alunno_id, sectionId: riga.section_id as string | null, modulo: 'presenze', giorno: data, attese: [{ tabella: 'presenze', filtro: { id: riga.id, scuola_id: riga.scuola_id }, versione: b.data.versioneAttesa }], azioni: [{ tabella: 'presenze', operazione: 'update', filtro: { id: riga.id, scuola_id: riga.scuola_id }, valori: aggiornamento }] });
+            if ('response' in rettifica) return rettifica.response;
+            result = proiettaRiga(rettifica.righe[0]?.[0] ?? {}, `${COLONNE_ESITO}, storico_versione`);
+        } else {
+            const esito = await supabase.from('presenze').update(aggiornamento).eq('id', riga.id as string).eq('scuola_id', riga.scuola_id as string).select(COLONNE_ESITO).single();
+            result = esito.data; error = esito.error;
+        }
 
         if (error) {
             // Il `message` di PostgREST resta nel log, dove dice PERCHÉ: porta nomi
@@ -712,6 +740,7 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
  * esecuzione della spec), quindi qui non arriva mai «in differita».
  */
 const deleteQuerySchema = z.object({
+    versioneAttesa: z.coerce.number().int().nonnegative().optional(),
     alunno_id: zUuid,
     data: zDataYMD,
 });
@@ -731,13 +760,14 @@ export const DELETE = withRoute('attendance/daily:DELETE', async (request: NextR
         const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
         if (fuoriScope) return fuoriScope;
 
-        if (data !== oggiFiscaleISO()) return rispostaAnnullaSoloOggi();
+        if (data !== oggiFiscaleISO() && !puoCorreggereStorico(auth.user)) return rispostaAnnullaSoloOggi();
 
         const r = await annullaAppelloAlunno(supabase, {
             alunnoId: alunno_id,
             data,
             attore: auth.user,
             operazione: 'attendance/daily:DELETE',
+            versioneAttesa: q.data.versioneAttesa,
         });
 
         // Stati, codici e le sei colonne: un contratto solo, condiviso con la

@@ -1,3 +1,5 @@
+import { politicaNotificaServizio, politicaRettificaServizio } from '@/lib/storici/notifiche-servizi';
+import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -11,11 +13,12 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
 import { sezioniDiNome } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-import { zUuid } from '@/lib/validation/common';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { cancelliBroadcastGalleria, cancelliSedeGalleria } from '@/lib/gallery/cancelli-destinatari';
 import { notificaGenitoriGalleria } from '@/lib/gallery/notifica-genitori';
+import { ritiraNotificheMediaStorico } from '@/lib/gallery/notifiche-pending';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
 import { percorsoUploadProprio, pubblicaFotoIdempotente } from '@/lib/gallery/pubblicazione-foto';
 // ─── UN VIDEO NON SI PUBBLICA DA QUI (PR 2 video, 2026-10-02) ────────────────
@@ -137,6 +140,7 @@ const getQuerySchemaCoerente = getQuerySchema.superRefine((q, ctx) => {
 });
 
 const postBodySchema = z.object({
+    giorno_competenza: zDataYMD.refine(g => g <= oggiRoma(), 'Data futura non consentita').optional(),
     // `uploaded_by` dal client è volutamente ignorato (si usa l'utente del gate).
     //
     // ⚠️ `optional()` dal 2026-09-18, e NON è un allentamento: lo rende
@@ -824,6 +828,11 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
+        if (b.data.giorno_competenza && b.data.giorno_competenza < oggiRoma() && !puoCorreggereStorico(auth.user)) {
+            return NextResponse.json({ error: 'La registrazione storica è riservata alla segreteria', codice: 'STORICO_RICHIESTA_RIFIUTATA' }, { status: 403 });
+        }
+        const politica = politicaNotificaServizio(auth.user, b.data.giorno_competenza);
+
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
 
@@ -898,6 +907,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         }
 
         const baseRecord: Record<string, unknown> = {
+            ...(b.data.giorno_competenza ? { giorno_competenza: b.data.giorno_competenza, politica_operazione: politica } : {}),
             uploaded_by,
             file_url: fileUrlDaSalvare,
             file_type: file_type ?? 'foto',
@@ -965,9 +975,11 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         const nDestinatari = await notificaGenitoriGalleria(supabase, {
             scuolaId,
             uploadedBy: uploaded_by,
+            mediaId: data.id,
             tagAlunni: tag_students,
             classi: target_classes,
             operazione: 'gallery:POST',
+            politica,
         });
 
         // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
@@ -1294,6 +1306,9 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // prima; chi ce l'ha scopre che l'operazione che voleva è già avvenuta.
         const giaNelCestino = ((media as { eliminato_il?: string | null }).eliminato_il ?? null) !== null;
         if (giaNelCestino) {
+            // Un tentativo precedente può aver cestinato su un DB precedente al
+            // trigger atomico e perso il solo ritiro: la RPC è idempotente.
+            await ritiraNotificheMediaStorico(supabase, { attore: auth.user, media: { ...media, scuola_id: sedeMedia }, operazione: 'gallery:DELETE' });
             // `info`, non `warn`: non è niente di rotto. Due persone della
             // segreteria che premono Elimina sulla stessa foto — una dal telefono
             // in sezione, una dal computer in ufficio — sono la normalità di una
@@ -1365,6 +1380,7 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // Stessa risposta del controllo qui sopra: l'esito per chi chiama è
         // identico, ed è vero.
         if ((cestinaRes.data ?? []).length === 0) {
+            await ritiraNotificheMediaStorico(supabase, { attore: auth.user, media: { ...media, scuola_id: sedeMedia }, operazione: 'gallery:DELETE' });
             logEvento('galleria', 'info', {
                 operazione: 'gallery:DELETE',
                 esito: 'gia-eliminato',
@@ -1392,25 +1408,12 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             scuolaId: sedeMedia,
         });
 
-        // ─── QUANTE NOTIFICHE RESTANO IN VOLO ────────────────────────────────
-        //
-        // Si CONTANO, non si cancellano — e la differenza è una decisione presa,
-        // non una pigrizia. `gallery:POST` accoda le notifiche (oggi da
-        // `@/lib/gallery/notifica-genitori`) con
-        // `entitaId: uploaded_by` (l'INSEGNANTE, non il media): è la chiave del
-        // debounce per insegnante, corretta il 07-08/09 dopo che 168 notifiche su
-        // 298 erano andate perse e 153 genitori non erano mai stati avvisati.
-        // Ritirare «le notifiche di QUESTA foto» richiederebbe di cambiare quella
-        // chiave nell'id del media, e trasformerebbe 37 foto in un pomeriggio in
-        // 37 notifiche per famiglia: il rimedio, sullo stesso percorso che ha già
-        // prodotto l'incidente, sarebbe peggiore del buco.
-        //
-        // Il costo del non ritirare è misurato e accettato: la notifica dice
-        // «Nuovi contenuti in galleria» (dal 2026-10-02; prima «Nuove foto in
-        // galleria») e non nomina nessun media, quindi il
-        // collegamento continua a funzionare e mostra le foto rimaste. Ma il
-        // NUMERO va saputo, perché è l'unica cosa che dice quanti annunci
-        // sopravvivono alla foto che li ha generati.
+        await ritiraNotificheMediaStorico(supabase, { attore: auth.user, media: { ...media, scuola_id: sedeMedia }, operazione: 'gallery:DELETE' });
+
+        // La RPC ha già ritirato soltanto l'origine comprovata del media storico.
+        // Qui si misura il numero residuo di batch dell'autore: le righe legacy
+        // prive di provenienza restano conservate, perché potrebbero annunciare
+        // altre foto o sedi. Il helper registra separatamente questa ambiguità.
         let nNotifichePendenti: number | null = null;
         {
             const contate = await supabase
@@ -1738,6 +1741,8 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         if (is_broadcast !== undefined) updateData.is_broadcast = is_broadcast;
         if (target_classes !== undefined) updateData.target_classes = target_classes;
         if (caption !== undefined) updateData.caption = caption;
+        const politicaModifica = politicaRettificaServizio(auth.user, media.giorno_competenza ?? media.politica_operazione?.giornoCompetenza ?? media.created_at);
+        if (politicaModifica.sopprimiGenitori) updateData.politica_operazione = politicaModifica;
 
         // `ancheNelCestino` e non `soloVive`, ed è la forma che il modulo stesso
         // prevede per «le scritture per id su una riga già letta»: chi decide se
@@ -1765,10 +1770,11 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             return NextResponse.json({ error: updateErr.message }, { status: 500 });
         }
 
+        await ritiraNotificheMediaStorico(supabase, { attore: auth.user, media: { ...media, scuola_id: sedeMedia }, operazione: 'gallery:PATCH' });
+
         return NextResponse.json(updatedMedia);
     } catch (error) {
         logErrore({ operazione: 'gallery:PATCH', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 });
-

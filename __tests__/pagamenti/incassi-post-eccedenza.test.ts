@@ -9,6 +9,7 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 //  (c) non scrive MAI incassi, crediti o sconti da sé.
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
+  revoca: vi.fn(),
   spill: vi.fn(),
   notifica: vi.fn(),
   disponibile: vi.fn(),
@@ -21,7 +22,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/pagamenti/spill', () => ({ applyOverpaymentSpill: (...a: unknown[]) => h.spill(...a) }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: (...a: unknown[]) => h.notifica(...a) }))
-vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: async () => undefined }))
+vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: h.revoca }))
 vi.mock('@/lib/pagamenti/credito', () => ({
   creditoDisponibile: (...a: unknown[]) => h.disponibile(...a),
 }))
@@ -189,5 +190,18 @@ describe('POST incassi — la route traduce la RPC', () => {
     h.pag = { ...h.pag, parent_payment_id: '55555555-5555-4555-8555-555555555555' }
     await POST(post({ pagamento_id: PID, importo: 80 }))
     expect(h.spill).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+describe('incasso con data di competenza', () => {
+  it.each([0, 1])('data reale oggi meno %i giorni governa avviso e revoca collegata', async giorni => {
+    const oggi = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' })
+    const data = new Date(Date.parse(`${oggi}T12:00:00Z`) - giorni * 86_400_000).toISOString().slice(0, 10)
+    const res = await POST(post({ pagamento_id: PID, importo: 80, data_incasso: data }))
+    expect(res.status).toBe(201)
+    expect(argsRpc().p_data_incasso).toBe(data)
+    expect(h.notifica).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operazione: expect.objectContaining({ giornoCompetenza: data, sopprimiGenitori: giorni === 1 }) }))
+    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'], expect.objectContaining({ giornoCompetenza: data, sopprimiGenitori: giorni === 1 }))
   })
 })

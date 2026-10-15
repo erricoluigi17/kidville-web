@@ -1,3 +1,4 @@
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -692,6 +693,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
         const saldato = (aggiornato as { stato?: string } | null)?.stato === 'pagato'
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',
+            operazione: politicaNotificaServizio(auth.user, mov.data_operazione),
           scuolaId: pagDett.scuolaId,
           alunnoIds: [pagDett.alunnoId],
           titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
@@ -701,7 +703,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           entitaId: pagamentoId,
           debounce: true,
         })
-        await verificaRevocaSospensioneMorosita(supabase, [pagDett.alunnoId])
+        await verificaRevocaSospensioneMorosita(supabase, [pagDett.alunnoId], politicaNotificaServizio(auth.user, mov.data_operazione))
       }
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/riconciliazione/[id]:PATCH', esito: 'avviso_o_revoca_non_eseguiti' }, e)

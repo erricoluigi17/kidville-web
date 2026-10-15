@@ -1,3 +1,6 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, proiettaRiga, type AttesaStorica, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
+import { politicaNotificaOperazione, puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -64,6 +67,7 @@ const postBaseSchema = z.object({
 }).loose()
 
 const recordSchema = z.object({
+  versioneAttesa: z.number().int().nonnegative().nullable().optional(),
   alunnoId: zUuid,
   stato: z.enum(STATI),
   noteAppello: z.string().nullish(),
@@ -137,6 +141,7 @@ interface RigaAppello {
   orario_entrata: string | null
   orario_uscita: string | null
   giustificata: boolean | null
+  giustificata_il?: string | null
   giustificazione_testo?: string | null
   giust_vista_il: string | null
   giust_vista_da: string | null
@@ -165,6 +170,7 @@ const COLONNE_RIGA_APPELLO = [
   'orario_entrata',
   'orario_uscita',
   'giustificata',
+  'giustificata_il',
   'giustificazione_testo',
   'giust_vista_il',
   'giust_vista_da',
@@ -220,6 +226,7 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
       )
     }
 
+    const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'presenze', ((presenze ?? []) as unknown as Record<string, unknown>[]).map(p => String(p.id))) : new Map<string, number>()
     const righe = (presenze ?? []) as unknown as RigaAppello[]
     const statoByAlunno = new Map(righe.map((p) => [p.alunno_id, p]))
     const data_ = (alunni ?? []).map((a) => {
@@ -227,6 +234,7 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
       return {
         ...a,
         presenza_id: p?.id ?? null,
+        storico_versione: p ? versioni.get(p.id) : null,
         stato: p?.stato ?? null,
         note_appello: p?.note_appello ?? null,
         // Senza riga: `false`, mai `undefined` — la finestra parte da una spunta spenta.
@@ -234,6 +242,8 @@ export const GET = withRoute('primaria/appello:GET', async (request: NextRequest
         orario_entrata: p?.orario_entrata ?? null,
         orario_uscita: p?.orario_uscita ?? null,
         giustificata: p?.giustificata ?? false,
+        giustificata_il: p?.giustificata_il ?? null,
+        rettifica_storica_ammessa: puoCorreggereStorico(auth.user),
         giustificazione_testo: p?.giustificazione_testo ?? null,
         giust_vista_il: p?.giust_vista_il ?? null,
         // Solo il booleano, mai lo uuid: vedi `COLONNE_RIGA_APPELLO`.
@@ -268,6 +278,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     const b = await parseBody(request, postBaseSchema)
     if ('response' in b) return b.response
     const { sectionId, data } = b.data
+    const politica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: data })
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
@@ -283,7 +294,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     // a `null`. Il ramo bulk non aveva il problema perché il client i suoi campi li
     // elenca da sé.
     const singolo: Record<string, unknown> = {}
-    for (const campo of ['alunnoId', 'stato', 'noteAppello', 'orarioEntrata', 'orarioUscita', 'assenzaOrariaGiustificata'] as const) {
+    for (const campo of ['alunnoId', 'versioneAttesa', 'stato', 'noteAppello', 'orarioEntrata', 'orarioUscita', 'assenzaOrariaGiustificata'] as const) {
       if (campo in (b.data as Record<string, unknown>)) singolo[campo] = (b.data as Record<string, unknown>)[campo]
     }
     const rawRecords = Array.isArray(b.data.records) ? b.data.records : [singolo]
@@ -329,6 +340,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
       return NextResponse.json({ error: 'Sede della sezione non risolvibile' }, { status: 500 })
     }
 
+    const storica = eRettificaStorica(auth.user, data)
     // Stato PRIMA (per audit diff).
     //
     // ─── SI CHIEDONO LE COLONNE DELL'APPELLO, NON VENTICINQUE ───────────────
@@ -346,12 +358,13 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     // raccontano lo stato della giustifica come booleano/data): un diff su
     // colonne che la rotta non tocca non ha mai detto niente a nessuno.
     const alunnoIds = records.map((r) => r.alunnoId)
-    const { data: prima, error: primaErr } = await supabase
+    const { data: primaGrezza, error: primaErr } = await supabase
       .from('presenze')
-      .select(COLONNE_APPELLO)
+      .select(storica ? '*' : COLONNE_APPELLO)
       .eq('section_id', sectionId)
       .eq('data', data)
       .in('alunno_id', alunnoIds)
+    const prima = primaGrezza as unknown as Record<string, unknown>[] | null
     if (primaErr) {
       // PostgREST non lancia (AGENTS.md, regola 7).
       //
@@ -430,11 +443,19 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
       }
     })
 
-    const { data: saved, error } = await supabase
-      .from('presenze')
-      .upsert(rows, { onConflict: 'alunno_id,data' })
-      .select(COLONNE_APPELLO)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    let saved: Record<string, unknown>[] | null
+    if (storica) {
+      if ((prima ?? []).some(p => p.storico_versione === undefined)) return storicoIndisponibile()
+      const attese: AttesaStorica[] = records.map(r => ({ tabella: 'presenze', filtro: { alunno_id: r.alunnoId, data }, versione: r.versioneAttesa }))
+      const azioni: AzioneStorica[] = rows.map(row => ({ tabella: 'presenze', operazione: esistente.has(row.alunno_id) ? 'update' : 'insert', ...(esistente.has(row.alunno_id) ? { filtro: { alunno_id: row.alunno_id, data, scuola_id: scuolaId } } : {}), valori: row }))
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, sectionId, modulo: 'presenze', giorno: data, attese, azioni })
+      if ('response' in rettifica) return rettifica.response
+      saved = rettifica.righe.flat().map(r => proiettaRiga(r, COLONNE_APPELLO))
+    } else {
+      const esito = await supabase.from('presenze').upsert(rows, { onConflict: 'alunno_id,data' }).select(COLONNE_APPELLO)
+      if (esito.error) { logErrore({ operazione: 'primaria/appello:POST', evento: 'db' }, esito.error); return NextResponse.json({ error: 'Salvataggio non riuscito' }, { status: 500 }) }
+      saved = esito.data
+    }
 
     // Giustificazioni salvate o tolte: evento di dominio, con il SUCCESSO (AGENTS.md,
     // regola 5). Solo uuid e stato: la nota è il motivo — spesso sanitario — di un
@@ -467,7 +488,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
       entitaTipo: 'presenze',
       azione: 'update',
       sectionId,
-      valorePrima: prima ?? [],
+      valorePrima: (prima ?? []).map(r => proiettaRiga(r, COLONNE_APPELLO)),
       valoreDopo: saved ?? [],
     })
     await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'appello', link: `/teacher/primaria/${sectionId}/appello` })
@@ -482,15 +503,15 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
           .map((p) => [p.alunno_id, p]),
       )
       const revocati = records
-        .filter((r) => r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente')
+        .filter((r) => politica.sopprimiGenitori || (r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente'))
         .map((r) => r.alunnoId)
       for (const alunnoId of revocati) {
-        await supabase
+        const { error: erroreRevoca } = await eseguiRitiroGiornate(() => supabase
           .from('notifiche')
           .delete()
           .eq('tipo', 'assenza_non_comunicata')
-          .eq('entita_id', alunnoId)
-          .is('push_inviata_il', null)
+          .eq('entita_id', alunnoId), { giorni: [data], storica: politica.sopprimiGenitori, operazione: 'primaria/appello:POST' })
+        if (erroreRevoca) logEvento('notifica', 'error', { operazione: 'primaria/appello:POST', esito: 'revoca-assenza-fallita' }, erroreRevoca)
       }
 
       const nuoviAssenti = records
@@ -507,6 +528,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
         for (const a of (anagrafiche ?? []) as Array<{ id: string; nome?: string | null }>) {
           await notificaEvento(supabase, {
             tipo: 'assenza_non_comunicata',
+            operazione: politica,
             scuolaId,
             alunnoIds: [a.id],
             titolo: 'Assenza registrata all’appello',
@@ -562,6 +584,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
  * Nessuna coda offline: l'annullamento chiede la connessione.
  */
 const deleteQuerySchema = z.object({
+  versioneAttesa: z.coerce.number().int().nonnegative().optional(),
   sectionId: zUuid,
   alunnoId: zUuid,
   data: zDataYMD,
@@ -586,7 +609,7 @@ export const DELETE = withRoute('primaria/appello:DELETE', async (request: NextR
 
     // «Oggi» è quello di Roma: il runtime gira in UTC e fra mezzanotte e le due
     // `toISOString()` direbbe ancora ieri.
-    if (data !== oggiFiscaleISO()) return rispostaAnnullaSoloOggi()
+    if (data !== oggiFiscaleISO() && !puoCorreggereStorico(auth.user)) return rispostaAnnullaSoloOggi()
 
     const r = await annullaAppelloAlunno(supabase, {
       alunnoId,
@@ -594,6 +617,7 @@ export const DELETE = withRoute('primaria/appello:DELETE', async (request: NextR
       sectionId,
       attore: auth.user,
       operazione: 'primaria/appello:DELETE',
+      versioneAttesa: q.data.versioneAttesa,
     })
 
     if (r.esito === 'cancellata' || r.esito === 'ripristinata-comunicazione') {

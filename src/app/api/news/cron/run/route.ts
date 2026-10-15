@@ -111,7 +111,7 @@ async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextRes
   // 1) Promuovi le programmate scadute → pubblicate (+ notifica idempotente).
   const { data: prog, error: progErr } = await supabase
     .from('news_posts')
-    .select('id, titolo, scuola_id, target_scope, target_gradi, target_classes, contenuto_testo, invia_notifica, notifica_inviata_il')
+    .select('id, titolo, scuola_id, target_scope, target_gradi, target_classes, contenuto_testo, invia_notifica, notifica_inviata_il, politica_operazione')
     .eq('stato', 'programmata')
     .lte('programmata_il', nowIso)
     .limit(100)

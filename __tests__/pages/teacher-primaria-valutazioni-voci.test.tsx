@@ -178,6 +178,7 @@ beforeEach(() => {
         },
       });
     }
+    if (url.startsWith('/api/admin/sections/')) return risposta(200, { success: true, assigned: [{ id: DOCENTE, nome: 'Ada', cognome: 'Fittizia', ruolo: 'educator' }] });
     if (url.startsWith('/api/primaria/me')) return risposta(200, { success: true, data: { ruolo } });
     if (url.startsWith('/api/primaria/sblocca') && metodo === 'POST') return risposta(200, { success: true });
     if (metodo === 'GET' && letturaB && url.includes(`alunnoId=${ALUNNO_B.id}`)) return letturaB(url);
@@ -870,4 +871,36 @@ describe('giudizio sintetico obbligatorio (2026-10-04)', () => {
       giudizioTesto: 'Testo delle dimensioni',
     });
   });
+});
+
+
+describe('nuova valutazione staff con competenza storica', () => {
+  it('dal form condiviso parte la data scelta e il docente esplicito', async () => {
+    ruolo = 'segreteria';
+    await montaEScegli();
+    await screen.findByRole('option', { name: 'Fittizia Ada' });
+    fireEvent.change(screen.getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+    fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
+    scegliGiudizio('Buono');
+    fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Argomento fittizio' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    await waitFor(() => expect(chiamate('POST', '/api/primaria/valutazioni')).toHaveLength(1));
+    expect(corpoDi(chiamate('POST', '/api/primaria/valutazioni')[0]!)).toMatchObject({ data: '2020-04-02', docenteId: DOCENTE });
+  });
+  it('l’ordinamento usa la competenza anche per valutazioni inserite oggi', () => {
+    const voci = unisciVociRecenti([valutazione({ data_evento: '2020-04-02', creato_il: '2026-10-15T10:00:00Z' })], [impreparato({ data: '2026-01-10' })]);
+    expect(voci.map(v => v.giorno)).toEqual(['2026-01-10', '2020-04-02']);
+  });
+});
+
+
+it('la modale staff può cambiare solo la data della valutazione', async () => {
+  ruolo = 'segreteria';
+  await montaEScegli();
+  fireEvent.click(await screen.findByRole('button', { name: /^Modifica la valutazione/ }));
+  const dialogo = await screen.findByRole('dialog');
+  fireEvent.change(within(dialogo).getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+  fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+  await waitFor(() => expect(chiamate('PATCH', '/api/primaria/valutazioni')).toHaveLength(1));
+  expect(corpoDi(chiamate('PATCH', '/api/primaria/valutazioni')[0]!)).toMatchObject({ data: '2020-04-02' });
 });

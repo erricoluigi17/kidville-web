@@ -31,6 +31,8 @@ const h = vi.hoisted(() => ({
   esitoRpc: null as unknown,
   lastRpc: null as { nome: string; args: Record<string, unknown> } | null,
   nRpc: 0,
+  schemaPrecedente: false,
+  erroreAvviso: null as { code: string; message?: string } | null,
   rispostaPrima: null as Record<string, unknown> | null,
 }))
 
@@ -59,10 +61,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
     },
     from(table: string) {
       const b: Record<string, unknown> = {}
-      b.select = () => b
+      let colonne = ''
+      b.select = (valore: string) => { colonne = valore; return b }
       b.eq = () => b
       b.maybeSingle = async () => {
-        if (table === 'avvisi') return { data: { id: AVVISO_ID, scuola_id: 'sc-1' }, error: null }
+        if (table === 'avvisi') {
+          const error = h.erroreAvviso ?? (h.schemaPrecedente && colonne.includes('giorno_competenza') ? { code: '42703', message: 'colonna giorno_competenza assente' } : null)
+          return { data: error ? null : { id: AVVISO_ID, scuola_id: 'sc-1', created_at: new Date().toISOString() }, error }
+        }
         if (table === 'avvisi_risposte') return { data: h.rispostaPrima, error: null }
         return { data: null, error: null }
       }
@@ -87,6 +93,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.lastRpc = null
   h.nRpc = 0
+  h.schemaPrecedente = false
+  h.erroreAvviso = null
   h.utente = { id: 'u-1', role: 'admin', scuola_id: 'sc-1' }
   h.rispostaPrima = {
     id: RISPOSTA_ID, parent_id: PARENT_ID, student_id: 'al-1',
@@ -129,6 +137,20 @@ describe('PATCH /api/avvisi/[id]/risposte/[rispostaId] — gate', () => {
 })
 
 describe('PATCH /api/avvisi/[id]/risposte/[rispostaId] — i tre gesti', () => {
+  it('sullo schema precedente conserva sede, audit e notifica ordinaria della conferma', async () => {
+    h.schemaPrecedente = true
+    const res = await PATCH(req({ stato: 'ammessa' }), ctx())
+    expect(res.status).toBe(200)
+    expect(h.logScrittura.mock.calls[0][1]).toMatchObject({ scuolaId: 'sc-1' })
+    expect(h.notificaEvento).toHaveBeenCalledTimes(1)
+    expect(h.notificaEvento.mock.calls[0][1]).toMatchObject({ scuolaId: 'sc-1', operazione: { sopprimiGenitori: false } })
+  })
+  it('un errore di lettura reale ferma la scrittura prima della RPC', async () => {
+    h.erroreAvviso = { code: '42501', message: 'accesso fittizio negato' }
+    expect((await PATCH(req({ stato: 'ammessa' }), ctx())).status).toBe(503)
+    expect(h.nRpc).toBe(0)
+    expect(h.notificaEvento).not.toHaveBeenCalled()
+  })
   it('ammettere dalla coda: 200, audit scritto e UNA SOLA notifica alla famiglia', async () => {
     const res = await PATCH(req({ stato: 'ammessa' }), ctx())
     expect(res.status).toBe(200)

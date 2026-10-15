@@ -1,5 +1,6 @@
 'use client';
 
+import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Pencil, Trash2, Lock } from 'lucide-react';
@@ -48,6 +49,7 @@ type Embed<T> = T | T[] | null | undefined;
 
 /** Una valutazione come la restituisce `GET /api/primaria/valutazioni`. */
 export interface ValutazioneRecente {
+  storico_versione?: number;
   id: string;
   maestra_id?: string | null;
   tipo: string | null;
@@ -61,6 +63,7 @@ export interface ValutazioneRecente {
   giudizio_testo: string | null;
   annotazione_numerica: number | null;
   creato_il: string;
+  data_evento?: string | null;
   valutazione_obiettivi?: { obiettivo_id: string; obiettivi_apprendimento?: Embed<ObiettivoSelezionabile> }[] | null;
   /** Autorizzato E (entro il termine O sbloccato). Assente = no (fail-closed). */
   modificabile?: boolean;
@@ -71,6 +74,7 @@ export interface ValutazioneRecente {
 
 /** Un impreparato come lo restituisce `GET /api/primaria/giustifiche-didattiche` (forma per alunno). */
 export interface ImpreparatoRecente {
+  storico_versione?: number;
   id: string;
   alunno_id?: string;
   materia_id: string | null;
@@ -117,7 +121,7 @@ export function unisciVociRecenti(
   const voci: VoceRecente[] = [
     ...valutazioni.map((v) => ({
       genere: 'valutazione' as const,
-      giorno: giornoDiRoma(v.creato_il),
+      giorno: v.data_evento ?? giornoDiRoma(v.creato_il),
       istante: istanteDi(v.creato_il),
       voce: v,
     })),
@@ -355,7 +359,7 @@ async function invia(
       return {
         ok: false,
         messaggio: messaggioDaCorpo(corpo, fallback),
-        ricarica: res.status === 403 || res.status === 404 || res.status === 423,
+        ricarica: res.status === 403 || res.status === 404 || res.status === 409 || res.status === 423,
       };
     }
     return { ok: true };
@@ -454,7 +458,7 @@ export function AzioniVoce({
   const nomi =
     voce.genere === 'valutazione'
       ? (() => {
-          const p = { data: f.dataBreve(voce.voce.creato_il), argomento: voce.voce.argomento ?? '—' };
+          const p = { data: f.dataBreve(voce.voce.data_evento ?? voce.voce.creato_il), argomento: voce.voce.argomento ?? '—' };
           return {
             modifica: t('valutazioniModificaValutazioneNome', p),
             elimina: t('valutazioniEliminaValutazioneNome', p),
@@ -511,6 +515,7 @@ export function AzioniVoce({
       {aperta === 'modifica' && voce.genere === 'valutazione' && (
         <ModaleModificaValutazione
           valutazione={voce.voce}
+          gestioneStorica={['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '')}
           scala={scala}
           obiettivi={obiettivi}
           userId={userId}
@@ -600,6 +605,7 @@ function Scelta<T extends string | boolean>({
 
 function ModaleModificaValutazione({
   valutazione,
+  gestioneStorica,
   scala,
   obiettivi,
   userId,
@@ -608,11 +614,14 @@ function ModaleModificaValutazione({
   onEsito,
 }: ModaleBase & {
   valutazione: ValutazioneRecente;
+  gestioneStorica?: boolean;
   scala: readonly string[];
   obiettivi: readonly ObiettivoSelezionabile[];
 }) {
   const t = useTranslations('teacherPrimaria');
   const idBase = useId();
+  const giornoOriginale = valutazione.data_evento ?? giornoDiRoma(valutazione.creato_il);
+  const [dataCompetenza, setDataCompetenza] = useState(giornoOriginale);
   const [b, setB] = useState<BozzaValutazione>(() => bozzaDaValutazione(valutazione));
   const [errore, setErrore] = useState('');
   const [inVolo, setInVolo] = useState(false);
@@ -653,7 +662,7 @@ function ModaleModificaValutazione({
       setErrore(t('valutazioniCollegaObiettivo'));
       return;
     }
-    if (!valutazioneCambiata(valutazione, b)) {
+    if (!valutazioneCambiata(valutazione, b) && !(gestioneStorica && dataCompetenza !== giornoOriginale)) {
       setErrore(t('valutazioniNessunCambio'));
       return;
     }
@@ -663,7 +672,7 @@ function ModaleModificaValutazione({
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify(corpoModificaValutazione(valutazione, b)),
+        body: JSON.stringify({ ...corpoModificaValutazione(valutazione, b), versioneAttesa: valutazione.storico_versione, ...(gestioneStorica && dataCompetenza !== giornoOriginale ? { data: dataCompetenza } : {}) }),
       },
       'valutazione-modifica',
       t('valutazioniErroreModifica'),
@@ -696,6 +705,10 @@ function ModaleModificaValutazione({
           {t('valutazioniModificaValutazioneTitolo')}
         </h2>
         <Errore testo={errore} />
+        {gestioneStorica && <label className="mt-3 block font-maven text-xs text-kidville-sub">
+          {t('storicoDataCompetenza')}
+          <input type="date" value={dataCompetenza} max={oggiRoma()} onChange={e => { if (e.target.value) setDataCompetenza(e.target.value); }} className="mt-1 block w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
+        </label>}
 
         {opzioniObiettivi.length > 0 && (
           <fieldset className="mt-3">
@@ -892,7 +905,7 @@ function ModaleModificaImpreparato({
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ id: impreparato.id, ...campi }),
+        body: JSON.stringify({ id: impreparato.id, ...campi, versioneAttesa: impreparato.storico_versione }),
       },
       'impreparato-modifica',
       t('valutazioniErroreModifica'),
@@ -1009,6 +1022,7 @@ function ModaleElimina({ voce, userId, onChiudi, onCambiato, onEsito }: ModaleBa
     setInVolo(true);
     setErrore('');
     const qs = new URLSearchParams({ id: voce.voce.id, userId });
+    if (voce.voce.storico_versione !== undefined) qs.set('versioneAttesa', String(voce.voce.storico_versione));
     const esito = await invia(
       `/api/primaria/${valutazione ? 'valutazioni' : 'giustifiche-didattiche'}?${qs.toString()}`,
       { method: 'DELETE', headers: { 'x-user-id': userId } },

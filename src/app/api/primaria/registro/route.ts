@@ -1,3 +1,6 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
+import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -68,6 +71,7 @@ const zOraLezione = z.coerce
 // te ne sto parlando», `''`/`null` significano «azzeralo». Non renderle
 // obbligatorie: il client in assegnazione mirata le OMETTE apposta.
 const postBodySchema = z.object({
+  versioneAttesa: z.number().int().nonnegative().nullable().optional(),
   sectionId: zUuid,
   data: zDataYMD,
   oraLezione: zOraLezione,
@@ -159,6 +163,7 @@ async function statoTermineGiornata(
   righe: ReadonlyArray<{ id: string; ora_lezione: number; firme_docenti?: unknown }>,
 ): Promise<StatoTermineGiornata> {
   const operazione = 'primaria/registro:GET'
+  if (puoCorreggereStorico(utente)) return { ...TERMINE_NON_LETTO, letto: true }
 
   // Lo stesso calcolo della POST (`classe_orale`, data di Roma, termini per sede).
   const lock = await isOltreScadenza(supabase, scuolaId, data, 'classe_orale')
@@ -306,6 +311,7 @@ export const GET = withRoute('primaria/registro:GET', async (request: NextReques
     const campanelle = resCampanelle.data ?? []
     const orarioCelle = resOrario.data ?? []
     const righe = resRighe.data ?? []
+    const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'registro_orario', righe.map(r => r.id)) : new Map<string, number>()
 
     // Risoluzione nomi docente (firme + orario) senza dipendere dalle FK del cache.
     const docenteIds = new Set<string>()
@@ -361,6 +367,7 @@ export const GET = withRoute('primaria/registro:GET', async (request: NextReques
 
     const righeConNomi = righe.map((r) => ({
       ...r,
+      storico_versione: versioni.get(r.id),
       // Gli allegati nel CESTINO non sono più della lezione (`@/lib/primaria/cestino-allegati-registro`).
       allegati_registro: allegatiRegistroViviDalJoin(r.allegati_registro as { eliminato_il?: string | null }[] | null),
       firme_docenti: ((r.firme_docenti ?? []) as { id: string; maestra_id: string }[]).map((f) => ({
@@ -493,7 +500,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
     // dello sblocco (sotto) e a sapere se la riga è GIÀ documentata (firma vuota).
     const { data: esistente, error: esistenteErr } = await supabase
       .from('registro_orario')
-      .select('id, materia_id, argomento, compiti, data_consegna_compiti')
+      .select('*')
       .eq('section_id', sectionId)
       .eq('data', data)
       .eq('ora_lezione', oraLezione)
@@ -512,7 +519,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
 
     // Vincolo temporale: registro di classe = 'classe_orale' (default 2 giorni).
     const lock = await isOltreScadenza(supabase, section.scuola_id, data, 'classe_orale')
-    if (lock.locked) {
+    if (lock.locked && !puoCorreggereStorico(auth.user)) {
       // Override solo se il dirigente ha sbloccato questa riga.
       let overridden = false
       if (esistente) {
@@ -865,7 +872,29 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
       da_orario: daOrario ?? false,
       ...sharedFields,
     }
-    let regRes = await supabase
+    let salvataggioStorico: { registro: Record<string, unknown>; firma: Record<string, unknown> } | null = null
+    if (eRettificaStorica(auth.user, data)) {
+      if (esistente && esistente.storico_versione === undefined) return storicoIndisponibile()
+      const registroId = esistente?.id ?? crypto.randomUUID()
+      const { data: firmeStoriche, error: erroreFirme } = await supabase.from('firme_docenti').select('*').eq('registro_id', registroId)
+      if (erroreFirme) { logErrore({ operazione: 'primaria/registro:POST', evento: 'db' }, erroreFirme); return storicoIndisponibile() }
+      if (tipoCompresenza === 'principale' && (firmeStoriche ?? []).some(f => f.tipo_compresenza === 'principale' && f.maestra_id !== firmaUserId)) return NextResponse.json({ error: 'Esiste già una firma principale per questa ora. Firma come compresenza o cofirma.' }, { status: 409 })
+      const firmaOriginale = (firmeStoriche ?? []).find(f => f.maestra_id === firmaUserId)
+      const firmaId = firmaOriginale?.id ?? crypto.randomUUID()
+      const valoriFirma = { registro_id: registroId, maestra_id: firmaUserId, tipo_compresenza: tipoCompresenza, ...(argomentoProprio !== undefined ? { argomento_proprio: haDestinatari ? argomentoProprio || null : null } : {}), ...(compitiPropri !== undefined ? { compiti_propri: haDestinatari ? compitiPropri || null : null } : {}) }
+      const azioni: AzioneStorica[] = [
+        { tabella: 'registro_orario', operazione: esistente ? 'update' : 'insert', ...(esistente ? { filtro: { id: registroId, scuola_id: section.scuola_id } } : {}), valori: { ...rigaRegistro, ...(!esistente ? { id: registroId } : {}) } },
+        { tabella: 'firme_docenti', operazione: firmaOriginale ? 'update' : 'insert', ...(firmaOriginale ? { filtro: { id: firmaId, registro_id: registroId } } : {}), valori: { ...valoriFirma, ...(!firmaOriginale ? { id: firmaId } : {}) } },
+      ]
+      if (haDestinatari) {
+        azioni.push({ tabella: 'registro_destinatari', operazione: 'delete', filtro: { firma_id: firmaId } })
+        for (const alunno_id of destinatariIds) azioni.push({ tabella: 'registro_destinatari', operazione: 'insert', valori: { registro_id: registroId, firma_id: firmaId, alunno_id } })
+      }
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(section.scuola_id), sectionId, modulo: 'registro', giorno: data, attese: [{ tabella: 'registro_orario', filtro: { section_id: sectionId, data, ora_lezione: oraLezione }, versione: b.data.versioneAttesa }], azioni })
+      if ('response' in rettifica) return rettifica.response
+      salvataggioStorico = { registro: rettifica.righe[0][0], firma: rettifica.righe[1][0] }
+    }
+    let regRes = salvataggioStorico ? { data: salvataggioStorico.registro, error: null } : await supabase
       .from('registro_orario')
       .upsert(rigaRegistro, { onConflict: CHIAVE_REGISTRO })
       .select()
@@ -943,7 +972,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
     if (argomentoProprio !== undefined) firmaFields.argomento_proprio = haDestinatari ? argomentoProprio || null : null
     if (compitiPropri !== undefined) firmaFields.compiti_propri = haDestinatari ? compitiPropri || null : null
 
-    const { data: firmaRow, error: firmaErr } = await supabase
+    const { data: firmaRow, error: firmaErr } = salvataggioStorico ? { data: salvataggioStorico.firma, error: null } : await supabase
       .from('firme_docenti')
       .upsert(firmaFields, { onConflict: 'registro_id,maestra_id' })
       .select()
@@ -959,7 +988,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
     // Destinatari (assegnazione mirata): sostituisce quelli della firma. Solo quando
     // l'assegnazione è mirata ad alunni selezionati (haDestinatari); l'assegnazione di
     // classe non tocca la tabella. PostgREST non lancia: controlla ogni ritorno.
-    if (haDestinatari && firmaRow) {
+    if (haDestinatari && firmaRow && !salvataggioStorico) {
       const { error: delDestErr } = await supabase.from('registro_destinatari').delete().eq('firma_id', firmaRow.id)
       if (delDestErr) {
         logErrore({ operazione: 'primaria/registro:POST', evento: 'db', stato: 500 }, delDestErr)
@@ -986,6 +1015,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
     // NON è muto — si logga (uuid, mai i testi dei compiti).
     try {
       const notificaCompiti = {
+        operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: data }),
         tipo: 'compiti',
         titolo: 'Nuovi compiti assegnati',
         link: '/parent/compiti',
@@ -1125,7 +1155,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
 // accanto alla SUA lezione ancora viva sarebbe un file sparito senza motivo.
 //
 // ─── LA NOTIFICA «NUOVI COMPITI» ─────────────────────────────────────────────
-// Quella già partita (`push_inviata_il` valorizzato) resta: nessuna rettifica.
+// Quella finalizzata resta; una presa ancora recuperabile si ritira solo nello storico staff.
 // Quella ancora in coda (buffer di 10') si RITIRA, e solo dopo la scrittura
 // riuscita — ritirarla e poi non riuscire a eliminare lascerebbe compiti veri
 // senza avviso. Lezione eliminata → tutte le sue `compiti` in coda. Firma
@@ -1136,6 +1166,7 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
 const deleteQuerySchema = z
   .object({
     firmaId: zUuid.optional(),
+    versioneAttesa: z.coerce.number().int().nonnegative().optional(),
     registroId: zUuid.optional(),
   })
   .refine((q) => !!q.firmaId !== !!q.registroId, {
@@ -1179,7 +1210,7 @@ type FirmaDaEliminare = {
   compiti_propri: string | null
 }
 
-const COLONNE_LEZIONE = 'id, scuola_id, section_id, data, ora_lezione, materia_id, argomento, compiti, data_consegna_compiti'
+const COLONNE_LEZIONE = '*'
 const COLONNE_FIRMA = 'id, registro_id, maestra_id, tipo_compresenza, argomento_proprio, compiti_propri'
 
 export const DELETE = withRoute('primaria/registro:DELETE', async (request: NextRequest) => {
@@ -1286,13 +1317,31 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
     if (firmeErr) return letturaFallita('firme-lezione-non-lette', firmeErr, { registro_id: lezione.id })
     const firme = (firmeLette ?? []) as { id: string; maestra_id: string; tipo_compresenza: string | null }[]
 
+    let destinatariPrimaFirma: { id: string; alunno_id: string }[] | null = null
+    let eliminazioneStorica: { firma: boolean; eliminate: Record<string, unknown>[]; cestino: Record<string, unknown>[] } | null = null
+    if (eRettificaStorica(user, String(lezione.data).slice(0, 10))) {
+      if ((lezione as unknown as Record<string, unknown>).storico_versione === undefined || !lezione.scuola_id) return storicoIndisponibile()
+      const soloFirma = Boolean(firma && firme.some(f => f.id !== firma!.id))
+      if (soloFirma) {
+        const prima = await supabase.from('registro_destinatari').select('id, alunno_id').eq('firma_id', firma!.id)
+        if (prima.error) return letturaFallita('destinatari-non-letti', prima.error, { firma_id: firma!.id })
+        destinatariPrimaFirma = prima.data ?? []
+      }
+      const azioni: AzioneStorica[] = soloFirma
+        ? [{ tabella: 'firme_docenti', operazione: 'delete', filtro: { id: firma!.id, registro_id: lezione.id } }]
+        : [{ tabella: 'allegati_registro', operazione: 'update', filtro: { registro_id: lezione.id, eliminato_il: null }, valori: { eliminato_il: new Date().toISOString(), eliminato_da: user.id, slot_section_id: lezione.section_id, slot_data: lezione.data, slot_ora_lezione: lezione.ora_lezione } }, { tabella: 'registro_orario', operazione: 'delete', filtro: { id: lezione.id, scuola_id: lezione.scuola_id } }]
+      const rettifica = await applicaRettificaStorica(supabase, { attore: user, scuolaId: lezione.scuola_id, sectionId: lezione.section_id, modulo: 'registro', giorno: String(lezione.data).slice(0, 10), attese: [{ tabella: 'registro_orario', filtro: { id: lezione.id, scuola_id: lezione.scuola_id }, versione: q.data.versioneAttesa }], azioni })
+      if ('response' in rettifica) return rettifica.response
+      eliminazioneStorica = { firma: soloFirma, eliminate: rettifica.righe[soloFirma ? 0 : 1], cestino: soloFirma ? [] : rettifica.righe[0] }
+    }
+
     // ═══ 4a. SOLO LA FIRMA: la lezione ha altre firme e resta ═══════════════
     // ⚠️ La finestra fra questa lettura e il DELETE è di millisecondi: una
     // cofirma che arrivasse proprio lì verrebbe cancellata con la lezione. Non
     // c'è un DELETE condizionato su un'altra tabella in PostgREST; lo si accetta
     // e lo si scrive.
     if (firma && firme.some((f) => f.id !== firma!.id)) {
-      const { data: destLetti, error: destErr } = await supabase
+      const { data: destLetti, error: destErr } = destinatariPrimaFirma !== null ? { data: destinatariPrimaFirma, error: null } : await supabase
         .from('registro_destinatari')
         .select('id, alunno_id')
         .eq('firma_id', firma.id)
@@ -1303,7 +1352,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
       // è `ON DELETE CASCADE` (misurato su `pg_constraint` il 2026-09-25). Un solo
       // DELETE, quindi atomico: mai una firma rimasta senza i suoi destinatari —
       // che la farebbe leggere come assegnata a tutta la classe.
-      const { data: cancellate, error: delErr } = await supabase
+      const { data: cancellate, error: delErr } = eliminazioneStorica?.firma ? { data: eliminazioneStorica.eliminate, error: null } : await supabase
         .from('firme_docenti')
         .delete()
         .eq('id', firma.id)
@@ -1325,20 +1374,20 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
       let notificheRitirate = 0
       let ritiroRiuscito = true
       if (firma.compiti_propri && destinatari.length) {
+        const corpoCompiti = firma.compiti_propri.slice(0, 140)
         try {
           const perAlunno = await getGenitoriDiAlunni(supabase, destinatari.map((d) => d.alunno_id))
           const genitori = [...new Set([...perAlunno.values()].flat())]
           if (genitori.length) {
-            const { data: ritirate, error: ritiroErr } = await supabase
+            const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase
               .from('notifiche')
               .delete()
               .eq('tipo', 'compiti')
               .eq('entita_tipo', 'registro')
               .eq('entita_id', lezione.id)
-              .eq('corpo', firma.compiti_propri.slice(0, 140))
+              .eq('corpo', corpoCompiti)
               .in('utente_id', genitori)
-              .is('push_inviata_il', null)
-              .select('id')
+              .select('id'), { giorni: [String(lezione.data).slice(0, 10)], storica: eRettificaStorica(user, String(lezione.data).slice(0, 10)), operazione })
             if (ritiroErr) {
               ritiroRiuscito = false
               logEvento('notifica', 'error', { operazione, esito: 'ritiro-compiti-fallito', tipo: 'compiti', firma_id: firma.id }, ritiroErr)
@@ -1398,7 +1447,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
     // `trg_allegati_registro_copia_slot` l'ha già copiato all'aggancio: è lo
     // stesso valore, e l'allegato non dipende dalla memoria di un trigger per
     // poter tornare a casa.
-    const cestino = await allegatiRegistroVivi(
+    const cestino = eliminazioneStorica ? { data: eliminazioneStorica.cestino, error: null } : await allegatiRegistroVivi(
       supabase
         .from('allegati_registro')
         .update({
@@ -1450,7 +1499,7 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
     // La cancellazione. Firme e destinatari se ne vanno con la lezione
     // (`firme_docenti_registro_id_fkey`, `registro_destinatari_registro_id_fkey`:
     // `ON DELETE CASCADE`). La sede è quella della riga LETTA, ripetuta qui.
-    const { data: eliminate, error: delLezErr } = await supabase
+    const { data: eliminate, error: delLezErr } = eliminazioneStorica ? { data: eliminazioneStorica.eliminate, error: null } : await supabase
       .from('registro_orario')
       .delete()
       .eq('id', lezione.id)
@@ -1479,14 +1528,13 @@ export const DELETE = withRoute('primaria/registro:DELETE', async (request: Next
 
     // La notifica «nuovi compiti» ancora in coda si ritira; quella partita resta.
     let notificheRitirate = 0
-    const { data: ritirate, error: ritiroErr } = await supabase
+    const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase
       .from('notifiche')
       .delete()
       .eq('tipo', 'compiti')
       .eq('entita_tipo', 'registro')
       .eq('entita_id', lezione.id)
-      .is('push_inviata_il', null)
-      .select('id')
+      .select('id'), { giorni: [String(lezione.data).slice(0, 10)], storica: eRettificaStorica(user, String(lezione.data).slice(0, 10)), operazione })
     if (ritiroErr) {
       // `error` benché l'eliminazione sia riuscita: l'avviso partirà per compiti
       // che non esistono più.

@@ -1022,3 +1022,37 @@ describe('POST /api/video-uploads — il trasporto nativo (app 1.2): URL di PUT,
     expect(h.rpc).not.toHaveBeenCalled()
   })
 })
+
+
+describe('apertura video ordinaria sullo schema precedente agli storici', () => {
+  const oggi = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' })
+  const ieri = () => new Date(Date.parse(`${oggi()}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
+
+  it.each(['PGRST202', '42703', 'PGRST204'])('staff con data odierna esplicita: metadati assenti (%s), apre comunque con la RPC ordinaria', async codice => {
+    h.rpc.mockImplementation(async (nome: string) => nome === 'video_galleria_intent_apri_storico'
+      ? { data: null, error: { code: codice, message: codice === 'PGRST202' ? 'funzione sconosciuta' : 'column video_intents.politica_operazione does not exist' } }
+      : { data: esitoGalleria(), error: null })
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'segreteria', scuola_id: SEDE } })
+    const res = await POST(richiesta({ ...CORPO_GALLERIA, giorno_competenza: oggi() }))
+    expect(res.status).toBe(201)
+    expect(h.rpc.mock.calls.map(c => c[0])).toEqual(['video_galleria_intent_apri_storico', 'video_galleria_intent_apri'])
+    expect(h.rpc.mock.calls[1][1]).toMatchObject({ p_scuola_id: SEDE, p_tag_alunni: [ALUNNO_A] })
+    expect(h.rpc.mock.calls[1][1]).not.toHaveProperty('p_giorno_competenza')
+    expect(h.rpc.mock.calls[1][1]).not.toHaveProperty('p_politica_operazione')
+  })
+
+  it('data passata: la RPC ordinaria non può perdere il silenzio storico', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'segreteria', scuola_id: SEDE } })
+    const res = await POST(richiesta({ ...CORPO_GALLERIA, giorno_competenza: ieri() }))
+    expect(res.status).toBe(503)
+    expect(h.rpc.mock.calls.map(c => c[0])).toEqual(['video_galleria_intent_apri_storico'])
+  })
+
+  it('un errore applicativo del wrapper non viene aggirato neppure per oggi', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'segreteria', scuola_id: SEDE } })
+    h.rpc.mockResolvedValueOnce({ data: null, error: { code: '42501', message: 'permission denied' } })
+    const res = await POST(richiesta({ ...CORPO_GALLERIA, giorno_competenza: oggi() }))
+    expect(res.status).toBe(500)
+    expect(h.rpc.mock.calls.map(c => c[0])).toEqual(['video_galleria_intent_apri_storico'])
+  })
+})

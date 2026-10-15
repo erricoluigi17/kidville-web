@@ -1,3 +1,7 @@
+import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
+import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
+import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, type AzioneStorica } from '@/lib/primaria/rettifica-storica'
+import { puoCorreggereStorico, politicaNotificaOperazione, oggiRoma } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -111,12 +115,14 @@ const postBodySchema = z
 const patchBodySchema = z
   .object({
     id: zUuid,
+    versioneAttesa: z.number().int().nonnegative().optional(),
+    data: zDataYMD.optional(),
     tipoProva: z.string().nullish(),
     ...campiGiudizio,
   })
   .refine(dimsSeDimensioni, REGOLA_DIMS)
 
-const deleteQuerySchema = z.object({ id: zUuid })
+const deleteQuerySchema = z.object({ id: zUuid, versioneAttesa: z.coerce.number().int().nonnegative().optional() })
 
 /** Il termine della voce: scritto/pratico = 15 giorni, il resto 2 (valori per sede). */
 function lockTipoDaTipo(tipo: string | null | undefined): LockTipo {
@@ -172,9 +178,7 @@ function obiettiviDaCollegare(
  * quella della CLASSE (`sections.scuola_id`): da lì si leggono i termini.
  */
 const COLONNE_VOCE = `
-  id, alunno_id, maestra_id, section_id, materia, materia_id, tipo, modalita, argomento,
-  dim_autonomia, dim_continuita, dim_tipologia, dim_risorse,
-  giudizio_sintetico, giudizio_testo, annotazione_numerica, lock_tipo, pubblicato, creato_il,
+  *,
   valutazione_obiettivi(obiettivo_id),
   sections(scuola_id)
 `
@@ -188,6 +192,7 @@ interface RigaVoce {
   tipo: string | null
   lock_tipo: string | null
   creato_il: string | null
+  data_evento?: string | null
   valutazione_obiettivi?: { obiettivo_id: string }[] | null
   sections?: { scuola_id: string | null } | { scuola_id: string | null }[] | null
   [colonna: string]: unknown
@@ -210,7 +215,7 @@ function fotografia(riga: RigaVoce): Record<string, unknown> {
   return { ...resto, obiettivi_ids: obiettiviDellaRiga(riga) }
 }
 
-function vocePrimaria(riga: RigaVoce): VocePrimaria {
+function vocePrimaria(riga: RigaVoce, nuovaDataEvento?: string): VocePrimaria {
   return {
     tipo: 'valutazione',
     id: riga.id,
@@ -219,8 +224,9 @@ function vocePrimaria(riga: RigaVoce): VocePrimaria {
     scuolaId: scuolaDellaClasse(riga),
     // Convenzione della spec: la data dell'evento di una valutazione è la data
     // di ROMA di `creato_il`. Una data illeggibile è bloccata (fail-closed).
-    dataEvento: dataEventoDaIstante(String(riga.creato_il ?? '')),
+    dataEvento: riga.data_evento ?? dataEventoDaIstante(String(riga.creato_il ?? '')),
     lockTipo: lockTipoDiRiga(riga),
+    nuovaDataEvento,
   }
 }
 
@@ -247,6 +253,7 @@ async function voceAutorizzata(
   user: Parameters<typeof verificaPermessoVoce>[1],
   id: string,
   operazione: string,
+  nuovaDataEvento?: string,
 ): Promise<{ riga: RigaVoce } | { response: NextResponse }> {
   const { data, error } = await supabase
     .from('valutazioni')
@@ -274,7 +281,7 @@ async function voceAutorizzata(
   const scopeErr = await assertSezioneInScope(supabase, user, riga.section_id)
   if (scopeErr) return { response: scopeErr }
 
-  const permesso = await verificaPermessoVoce(supabase, user, vocePrimaria(riga))
+  const permesso = await verificaPermessoVoce(supabase, user, vocePrimaria(riga, nuovaDataEvento))
   if (!permesso.ok) return { response: rispostaPermessoNegato(permesso) }
   return { riga }
 }
@@ -297,9 +304,7 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
     let query = supabase
       .from('valutazioni')
       .select(`
-        id, alunno_id, maestra_id, section_id, materia, materia_id, tipo, modalita, argomento,
-        dim_autonomia, dim_continuita, dim_tipologia, dim_risorse,
-        giudizio_sintetico, giudizio_testo, annotazione_numerica, lock_tipo, pubblicato, creato_il,
+        *,
         valutazione_obiettivi(obiettivo_id, obiettivi_apprendimento(id, codice, descrizione)),
         sections(scuola_id)
       `)
@@ -422,10 +427,10 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     const obiettiviCollegati = scelta.ids ?? []
 
     // Vincolo temporale (scritto/pratico=15gg, orale=2gg). Data evento = data o oggi.
-    const eventDate = data ?? new Date().toISOString().slice(0, 10)
+    const eventDate = data ?? oggiRoma()
     const lockTipo = lockTipoDaTipo(tipoProva)
     const lock = await isOltreScadenza(supabase, materia.scuola_id, eventDate, lockTipo)
-    if (lock.locked) {
+    if (lock.locked && !puoCorreggereStorico(auth.user)) {
       return NextResponse.json(
         { error: `Inserimento bloccato: superato il termine di ${lock.giorniLimite} giorni.`, locked: true },
         { status: 423 }
@@ -458,11 +463,16 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
         voto_numerico: null, // voto ufficiale numerico vietato alla primaria
         annotazione_numerica: annNum, // appunto privato del docente (mai al genitore)
         lock_tipo: lockTipo,
+        ...(eventDate !== oggiRoma() ? { data_evento: eventDate } : {}),
         pubblicato: false, // buffer notifica (F1.8)
       })
       .select()
       .single()
-    if (valErr) return NextResponse.json({ error: valErr.message }, { status: 500 })
+    if (valErr) {
+      logErrore({ operazione: 'primaria/valutazioni:POST', evento: 'db' }, valErr)
+      if (eventDate !== oggiRoma() && ['42703', 'PGRST204'].includes(valErr.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile: aggiornare lo schema.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
+      return NextResponse.json({ error: 'Valutazione non salvata' }, { status: 500 })
+    }
 
     // Righe di collegamento valutazione↔obiettivo (DL-015). Best-effort: l'eventuale
     // errore non annulla la valutazione già creata.
@@ -504,6 +514,7 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
       const nome = await nomeAlunnoPerNotifica(supabase, alunnoId, 'primaria/valutazioni:POST')
       await enqueueNotifichePerAlunni(supabase, {
         alunnoIds: [alunnoId],
+        operazione: politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: eventDate }),
         tipo: 'valutazione',
         titolo: nome ? `Nuova valutazione di ${materia.nome} per ${nome}` : `Nuova valutazione di ${materia.nome}`,
         corpo: giudizio,
@@ -569,7 +580,7 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
 
     // `tipoProva` assente = il tipo resta quello salvato (vedi patchBodySchema).
     const tipoRichiesto = b.data.tipoProva
-    const lettura = await voceAutorizzata(supabase, auth.user, id, operazione)
+    const lettura = await voceAutorizzata(supabase, auth.user, id, operazione, b.data.data)
     if ('response' in lettura) return lettura.response
     const voce = lettura.riga
     const sectionId = voce.section_id as string
@@ -631,10 +642,13 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
       testo = await renderGiudizioDescrittivo(supabase, materia.scuola_id, dims)
     }
 
-    const { data: aggiornate, error: updErr } = await supabase
-      .from('valutazioni')
-      .update({
+    const giornoOriginale = vocePrimaria(voce).dataEvento
+    const giornoNuovo = b.data.data ?? giornoOriginale
+    const politicaModifica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: giornoNuovo, giornoOriginale })
+    const storica = eRettificaStorica(auth.user, giornoNuovo, giornoOriginale)
+    const valori = {
         argomento: argomento.trim(),
+        ...(b.data.data !== undefined ? { data_evento: b.data.data } : {}),
         tipo,
         modalita,
         dim_autonomia: modalita === 'dimensioni' ? dims?.autonomia ?? null : null,
@@ -645,12 +659,26 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
         giudizio_testo: testo,
         annotazione_numerica: annNum,
         lock_tipo: lockTipo,
-      })
-      .eq('id', id)
-      .eq('section_id', sectionId)
-      .select()
+    }
+    let aggiornate: unknown[] | null
+    let updErr: { code?: string; message: string } | null = null
+    if (storica) {
+      if (voce.storico_versione === undefined) return storicoIndisponibile()
+      const azioni: AzioneStorica[] = [{ tabella: 'valutazioni', operazione: 'update', filtro: { id, section_id: sectionId }, valori }]
+      if (scelta.ids !== null) {
+        azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'delete', filtro: { valutazione_id: id } })
+        for (const obiettivo_id of scelta.ids) azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'insert', valori: { valutazione_id: id, obiettivo_id } })
+      }
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(materia.scuola_id), alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno: giornoOriginale, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni })
+      if ('response' in rettifica) return rettifica.response
+      aggiornate = rettifica.righe[0]
+    } else {
+      const esito = await supabase.from('valutazioni').update(valori).eq('id', id).eq('section_id', sectionId).select()
+      aggiornate = esito.data; updErr = esito.error
+    }
     if (updErr) {
       logEvento('registro', 'error', { operazione, esito: 'valutazione-non-aggiornata', valutazione_id: id }, updErr)
+      if (b.data.data !== undefined && ['42703', 'PGRST204'].includes(updErr.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
       return NON_SALVATA()
     }
     const val = ((aggiornate ?? []) as Record<string, unknown>[])[0]
@@ -669,7 +697,8 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     let dopoObiettivi = primaObiettivi
     let obiettiviCambiati = false
     let obiettiviErr: unknown = null
-    if (scelta.ids !== null) {
+    if (storica && scelta.ids !== null) { dopoObiettivi = scelta.ids; obiettiviCambiati = true }
+    if (!storica && scelta.ids !== null) {
       const nuovi = new Set(scelta.ids)
       const vecchi = new Set(primaObiettivi)
       const daTogliere = primaObiettivi.filter((o) => !nuovi.has(o))
@@ -700,19 +729,19 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     // prima: si allinea al testo nuovo. Non è un avviso nuovo (la spec non ne
     // vuole): è la stessa notifica, che non deve partire con un giudizio che non
     // esiste più. Una notifica già partita resta com'è.
-    const { error: notifErr } = await supabase
-      .from('notifiche')
-      .update({ corpo: giudizio })
-      .eq('entita_tipo', 'valutazione')
-      .eq('entita_id', id)
-      .is('push_inviata_il', null)
-    if (notifErr) {
-      logEvento('notifica', 'error', {
-        operazione,
-        esito: 'notifica-in-coda-non-allineata',
-        tipo: 'valutazione',
-        valutazione_id: id,
-      }, notifErr)
+    const legamiNotifica = await getGenitoriDiAlunniEsito(supabase, voce.alunno_id ? [voce.alunno_id] : [])
+    if (!legamiNotifica.completo) {
+      logEvento('notifica', 'error', { operazione, esito: 'valutazione-destinatari-non-risolti', valutazione_id: id })
+    } else {
+      const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
+      if (destinatari.length) {
+        const { error: notifErr } = await eseguiRitiroGiornate(() => {
+          const notifica = supabase.from('notifiche')
+          return (politicaModifica.sopprimiGenitori ? notifica.delete() : notifica.update({ corpo: giudizio }))
+            .eq('tipo', 'valutazione').eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari)
+        }, { giorni: [giornoOriginale], storica: politicaModifica.sopprimiGenitori, operazione })
+        if (notifErr) logEvento('notifica', 'error', { operazione, esito: 'notifica-in-coda-non-allineata', tipo: 'valutazione', valutazione_id: id }, notifErr)
+      }
     }
 
     // `valoreDopo` porta gli obiettivi EFFETTIVAMENTE collegati, anche dopo un
@@ -792,12 +821,18 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
     const sectionId = voce.section_id as string
     const scuolaId = scuolaDellaClasse(voce)
 
-    const { data: cancellate, error: delErr } = await supabase
-      .from('valutazioni')
-      .delete()
-      .eq('id', id)
-      .eq('section_id', sectionId)
-      .select('id')
+    let cancellate: unknown[] | null
+    let delErr: unknown = null
+    const giorno = vocePrimaria(voce).dataEvento
+    if (eRettificaStorica(auth.user, giorno)) {
+      if (voce.storico_versione === undefined || !scuolaId) return storicoIndisponibile()
+      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: q.data.versioneAttesa }], azioni: [{ tabella: 'valutazioni', operazione: 'delete', filtro: { id, section_id: sectionId } }] })
+      if ('response' in rettifica) return rettifica.response
+      cancellate = rettifica.righe[0]
+    } else {
+      const esito = await supabase.from('valutazioni').delete().eq('id', id).eq('section_id', sectionId).select('id')
+      cancellate = esito.data; delErr = esito.error
+    }
     if (delErr) {
       logEvento('registro', 'error', { operazione, esito: 'valutazione-non-eliminata', valutazione_id: id }, delErr)
       return NextResponse.json(
@@ -809,24 +844,25 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
 
     // Il ritiro viene DOPO la cancellazione riuscita: ritirare l'avviso e poi
     // non riuscire a cancellare lascerebbe una valutazione senza notifica.
-    const { data: ritirate, error: ritiroErr } = await supabase
-      .from('notifiche')
-      .delete()
-      .eq('entita_tipo', 'valutazione')
-      .eq('entita_id', id)
-      .is('push_inviata_il', null)
-      .select('id')
-    if (ritiroErr) {
-      // `error` benché la cancellazione sia riuscita: la notifica resta in coda e
-      // partirà per una valutazione che non esiste più.
-      logEvento('notifica', 'error', {
-        operazione,
-        esito: 'ritiro-notifica-valutazione-fallito',
-        tipo: 'valutazione',
-        valutazione_id: id,
-      }, ritiroErr)
+    let nRitirate = 0
+    let ritiroRiuscito = true
+    const legamiNotifica = await getGenitoriDiAlunniEsito(supabase, voce.alunno_id ? [voce.alunno_id] : [])
+    if (!legamiNotifica.completo) {
+      ritiroRiuscito = false
+      logEvento('notifica', 'error', { operazione, esito: 'valutazione-destinatari-non-risolti', valutazione_id: id })
+    } else {
+      const destinatari = [...new Set([...legamiNotifica.perAlunno.values()].flat())]
+      if (destinatari.length) {
+        const { data: ritirate, error: ritiroErr } = await eseguiRitiroGiornate(() => supabase.from('notifiche').delete().eq('tipo', 'valutazione')
+          .eq('entita_tipo', 'valutazione').eq('entita_id', id).in('utente_id', destinatari).select('id'),
+          { giorni: [vocePrimaria(voce).dataEvento], storica: eRettificaStorica(auth.user, vocePrimaria(voce).dataEvento), operazione })
+        if (ritiroErr) {
+          ritiroRiuscito = false
+          logEvento('notifica', 'error', { operazione, esito: 'ritiro-notifica-valutazione-fallito', tipo: 'valutazione', valutazione_id: id }, ritiroErr)
+        }
+        else nRitirate = (ritirate ?? []).length
+      }
     }
-    const nRitirate = ((ritirate ?? []) as unknown[]).length
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -853,7 +889,7 @@ export const DELETE = withRoute('primaria/valutazioni:DELETE', async (request: N
       section_id: sectionId,
       attore_id: auth.user.id,
       notifiche_ritirate: nRitirate,
-      ritiro_riuscito: !ritiroErr,
+      ritiro_riuscito: ritiroRiuscito,
     }, undefined, { distingui: ['valutazione_id'] })
 
     return NextResponse.json({ success: true, data: { id, notificheRitirate: nRitirate } })

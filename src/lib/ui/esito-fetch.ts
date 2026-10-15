@@ -70,6 +70,14 @@ import { DEFAULT_LOCALE, isLocale, type Locale } from '@/i18n/config';
  * difetto di partenza, perché ricadrebbe sulla prosa italiana.
  */
 export const CODICI_ERRORE = {
+    GIUSTIFICA_CAMBIATA: 'erroreGiustificaCambiata',
+    GIUSTIFICA_NON_ANNULLATA: 'erroreGiustificaNonAnnullata',
+    STORICO_NON_DISPONIBILE: 'erroreStoricoNonDisponibile',
+    DIARIO_DATA_BLOCCATA: 'erroreDiarioDataBloccata',
+    STORICO_NON_RIUSCITO: 'erroreStoricoNonRiuscito',
+    STORICO_SCADUTO: 'erroreStoricoScaduto',
+    STORICO_RICHIESTA_RIFIUTATA: 'erroreStoricoRichiestaRifiutata',
+    STORICO_VERSIONE_CAMBIATA: 'erroreStoricoVersioneCambiata',
     /**
      * I CODICI DELLA PIPELINE VIDEO CHE UNA FAMIGLIA LEGGE, innestati invece che ribattuti. Il
      * numero non sta scritto qui: era «quattordici» e «sessantadue» e sono invecchiati due

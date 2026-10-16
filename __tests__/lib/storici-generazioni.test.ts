@@ -7,9 +7,10 @@ import { espandiCategorie, type CategoriaStorico } from '@/lib/storici/catalogo'
 import { loadAppUser } from '@/lib/auth/require-staff'
 import { preparaContestoStorico } from '@/lib/storici/scope'
 import { raccogliScolastico } from '@/lib/storici/adattatori/scolastici'
-import { creaPdfStorico } from '@/lib/storici/render'
-import { eseguiGenerazione, pulisciGenerazioniScadute } from '@/lib/storici/generazioni'
+import { creaExcelStorico, creaPdfStorico } from '@/lib/storici/render'
+import { eseguiGenerazione, pulisciGenerazioniScadute, raggruppaPerAlunno } from '@/lib/storici/generazioni'
 import { firmaRuoliStorico } from '@/lib/storici/permessi'
+import { logEvento } from '@/lib/logging/logger'
 
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => ({ loadAppUser: vi.fn() }))
@@ -24,9 +25,11 @@ const STAFF = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 const PREFIX = `${SEDE}/${JOB}`
 const FINALE = `${PREFIX}/storico.pdf`
 const user: AppUser = { id: STAFF, role: 'admin', scuola_id: SEDE }
+const CATEGORIE_REGISTRO = ['primaria_registro', 'primaria_compiti', 'primaria_firme', 'documenti_didattici'] as const
 
 function sezione(categoria: CategoriaStorico): SezioneStorico {
-  return { categoria, titolo: categoria, colonne: [], righe: [], allegati: [], avvisi: [] }
+  return { categoria, titolo: categoria, colonne: [], righe: [], allegati: [], avvisi: [],
+    ...((CATEGORIE_REGISTRO as readonly CategoriaStorico[]).includes(categoria) ? { _versione_raccolta: 1 } : {}) }
 }
 function lavoro(patch: Partial<GenerazioneStorico> = {}): GenerazioneStorico {
   return { id: JOB, scuola_id: SEDE, richiesto_da: STAFF, ruolo_richiedente: 'admin', alunni_ids: [ALUNNO],
@@ -101,6 +104,149 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('generazioni storiche, lease e recupero', () => {
+  it('mette le lezioni comuni in testa una volta e crea solo schede con contenuti personali', () => {
+    const a = archivio(lavoro()), altro = 'altro-alunno'
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    a.ctx.alunni.push({ ...a.ctx.alunni[0], id: altro, nome: 'Altro' })
+    const s = sezione('primaria_registro')
+    s.righe = [{ _ambito: 'classe', _registro_id: 'lezione', argomento: 'Comune' },
+      { _ambito: 'alunno', _alunno_id: ALUNNO, _firma_id: 'firma', argomento: 'Personale' }]
+    s.allegati = [{ bucket: 'registro-allegati', percorso: 'comune.pdf', nome: 'comune.pdf' },
+      { bucket: 'registro-allegati', percorso: 'personale.pdf', nome: 'personale.pdf', alunnoId: ALUNNO }]
+    const risultato = raggruppaPerAlunno([s], a.ctx)
+    expect(risultato).toHaveLength(2)
+    expect(risultato[0].righe).toEqual([s.righe[0]])
+    expect(risultato[0].allegati).toEqual([s.allegati[0]])
+    expect(risultato[1].titolo).toContain('Prova Nome fittizio')
+    expect(risultato[1].righe).toEqual([s.righe[1]])
+    expect(risultato[1].allegati).toEqual([s.allegati[1]])
+  })
+
+  it('non genera schede vuote quando il registro contiene solo lezioni comuni', () => {
+    const a = archivio(lavoro())
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    a.ctx.alunni.push({ ...a.ctx.alunni[0], id: 'altro-alunno' })
+    const s = sezione('primaria_registro')
+    s.righe = [{ _ambito: 'classe', _registro_id: 'lezione', argomento: 'Comune' }]
+    expect(raggruppaPerAlunno([s], a.ctx).map(s => s.righe)).toEqual([s.righe])
+  })
+
+  it('conserva righe senza ambito esplicito e sezioni vuote delle altre categorie', () => {
+    const a = archivio(lavoro())
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    const s = sezione('diario_pasti'), vuota = sezione('diario_sonno')
+    s.righe = [{ valore: 'Dato condiviso legacy' }]
+    expect(raggruppaPerAlunno([s, vuota], a.ctx)).toEqual([
+      { ...s, titolo: `Prova Nome fittizio — ${s.titolo}`, generati: undefined },
+      { ...vuota, titolo: `Prova Nome fittizio — ${vuota.titolo}`, generati: undefined },
+    ])
+  })
+
+  it('non moltiplica le categorie registro vuote e raccoglie una sola volta anche i soli allegati comuni', () => {
+    const a = archivio(lavoro())
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    a.ctx.alunni = Array.from({ length: 25 }, (_, i) => ({ ...a.ctx.alunni[0], id: `alunno-${i}` }))
+    const s = sezione('primaria_registro')
+    s.allegati = [{ bucket: 'registro-allegati', percorso: 'solo-allegato.pdf', nome: 'solo-allegato.pdf' }]
+    const risultato = raggruppaPerAlunno([s, sezione('primaria_compiti'), sezione('primaria_firme'), sezione('documenti_didattici')], a.ctx)
+    expect(risultato).toHaveLength(1)
+    expect(risultato[0].allegati).toEqual(s.allegati)
+    expect(risultato[0].titolo).toContain('contenuti comuni di classe')
+  })
+
+  it('mantiene la sezione comune nel dossier di un singolo alunno', () => {
+    const a = archivio(lavoro()), s = sezione('primaria_registro')
+    a.ctx.richiesta.raggruppamento = 'alunno'
+    s.righe = [{ _ambito: 'classe', _registro_id: 'lezione', argomento: 'Comune' }]
+    expect(raggruppaPerAlunno([s], a.ctx)).toEqual([s])
+  })
+
+  it('riporta gli avvisi di copertura una volta anche con sole firme personali e ignora schede vuote', () => {
+    const a = archivio(lavoro())
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    a.ctx.alunni.push({ ...a.ctx.alunni[0], id: 'altro-alunno' })
+    const s = sezione('primaria_firme')
+    s.righe = [{ _ambito: 'alunno', _alunno_id: ALUNNO, argomento: 'Personale' }]
+    s.avvisi = ['Copertura delle appartenenze incompleta']
+    const risultato = raggruppaPerAlunno([s], a.ctx)
+    expect(risultato.filter(s => s.titolo.includes('contenuti comuni'))).toHaveLength(1)
+    expect(risultato.filter(s => s.titolo.includes('Prova Nome fittizio'))).toHaveLength(1)
+    expect(risultato.filter(s => s.titolo.includes('altro-alunno'))).toHaveLength(0)
+    expect(risultato.flatMap(s => s.avvisi)).toEqual(s.avvisi)
+    expect(risultato).toHaveLength(2)
+  })
+
+  it('ricostruisce dalla fonte le parti registro legacy prima del rendering', async () => {
+    const j = lavoro({ cursore: 4 }); j.richiesta.categorie = [...CATEGORIE_REGISTRO]
+    const a = archivio(j)
+    CATEGORIE_REGISTRO.forEach((categoria, i) => a.files.set(`${PREFIX}/parti/${i}.json`, Buffer.from(JSON.stringify({
+      categoria, titolo: categoria, colonne: [], righe: [{ _alunno_id: ALUNNO, argomento: 'Legacy duplicato' }], allegati: [], avvisi: [],
+    }))))
+    vi.mocked(raccogliScolastico).mockImplementation(async (_ctx, categoria) => ({ ...sezione(categoria), righe: [{ _ambito: 'classe', _registro_id: categoria, argomento: 'Raccolto dalla fonte' }] }))
+    await eseguiGenerazione(a.db, JOB)
+    expect(vi.mocked(raccogliScolastico).mock.calls.map(c => c[1])).toEqual(CATEGORIE_REGISTRO)
+    const documento = vi.mocked(creaPdfStorico).mock.calls[0][0]
+    expect(documento.sezioni.every(s => s._versione_raccolta === 1 && s.righe.length === 1 && s.righe[0]._ambito === 'classe')).toBe(true)
+    expect(JSON.stringify(documento)).not.toContain('Legacy duplicato')
+    CATEGORIE_REGISTRO.forEach((categoria, i) => {
+      expect(JSON.parse(Buffer.from(a.files.get(`${PREFIX}/parti/${i}.json`)!).toString())).toMatchObject({ categoria, _versione_raccolta: 1 })
+      expect(logEvento).toHaveBeenCalledWith('registro', 'info', expect.objectContaining({ operazione: 'storici/ricostruisci-parte', tipo: categoria, entita_id: JOB }))
+    })
+    expect(a.job()).toMatchObject({ stato: 'completato', cursore: 4, preso_il: null })
+  })
+
+  it('riusa le parti registro già raccolte con la versione corrente', async () => {
+    const j = lavoro(); j.richiesta.categorie = ['primaria_registro']
+    const a = archivio(j)
+    a.files.set(`${PREFIX}/parti/0.json`, Buffer.from(JSON.stringify(sezione('primaria_registro'))))
+    await eseguiGenerazione(a.db, JOB)
+    expect(raccogliScolastico).not.toHaveBeenCalled()
+    expect(a.job()?.stato).toBe('completato')
+  })
+
+  it('non sovrascrive una parte legacy se il lease cambia durante la ricostruzione', async () => {
+    const j = lavoro(); j.richiesta.categorie = ['primaria_registro']
+    const a = archivio(j), vecchiaParte = Buffer.from(JSON.stringify({ ...sezione('primaria_registro'), _versione_raccolta: undefined }))
+    a.files.set(`${PREFIX}/parti/0.json`, vecchiaParte)
+    vi.mocked(raccogliScolastico).mockImplementationOnce(async (_ctx, categoria) => {
+      a.job()!.preso_il = 'lease-di-un-altro-processo'
+      return sezione(categoria)
+    })
+    await eseguiGenerazione(a.db, JOB)
+    expect(a.files.get(`${PREFIX}/parti/0.json`)).toEqual(vecchiaParte)
+    expect(creaPdfStorico).not.toHaveBeenCalled()
+    expect(a.job()?.preso_il).toBe('lease-di-un-altro-processo')
+  })
+
+  it('salva la parte legacy ricostruita e rilascia il lease quando esaurisce il tempo', async () => {
+    const j = lavoro({ cursore: 2 }); j.richiesta.categorie = ['primaria_registro', 'primaria_compiti']
+    const a = archivio(j)
+    j.richiesta.categorie.forEach((categoria, i) => a.files.set(`${PREFIX}/parti/${i}.json`, Buffer.from(JSON.stringify({
+      ...sezione(categoria), _versione_raccolta: undefined,
+    }))))
+    vi.mocked(raccogliScolastico).mockImplementation(async (_ctx, categoria) => {
+      vi.advanceTimersByTime(11)
+      return sezione(categoria)
+    })
+    await eseguiGenerazione(a.db, JOB, 10)
+    expect(vi.mocked(raccogliScolastico).mock.calls.map(c => c[1])).toEqual(['primaria_registro'])
+    expect(creaPdfStorico).not.toHaveBeenCalled()
+    expect(a.job()).toMatchObject({ stato: 'in_coda', cursore: 2, tentativi: 0, preso_il: null })
+    expect(JSON.parse(Buffer.from(a.files.get(`${PREFIX}/parti/0.json`)!).toString())._versione_raccolta).toBe(1)
+    await eseguiGenerazione(a.db, JOB)
+    expect(vi.mocked(raccogliScolastico).mock.calls.map(c => c[1])).toEqual(['primaria_registro', 'primaria_compiti'])
+    expect(a.job()?.stato).toBe('completato')
+  })
+
+  it('attende il renderer Excel asincrono prima di caricare il file', async () => {
+    const j = lavoro(); j.richiesta.formato = 'xlsx'
+    const a = archivio(j), bytes = new Uint8Array([80, 75, 3, 4])
+    vi.mocked(creaExcelStorico).mockImplementation(async () => bytes)
+    await eseguiGenerazione(a.db, JOB)
+    expect(a.files.get(`${PREFIX}/storico.xlsx`)).toEqual(bytes)
+    expect(a.job()?.stato).toBe('completato')
+  })
+
   it('genera un lavoro creato nella veste genitore quando il loader rilegge solo il ruolo di lavoro', async () => {
     const attore: AppUser = { ...user, role: 'genitore', ruoli: ['admin', 'genitore'] }
     const a = archivio(lavoro({ ruolo_richiedente: firmaRuoliStorico(attore) }))

@@ -58,6 +58,7 @@
     "core-js": "^3.50.0",
     "dexie": "^4.4.2",
     "dexie-react-hooks": "^4.4.0",
+    "exceljs": "^4.4.0",
     "framer-motion": "^12.38.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",

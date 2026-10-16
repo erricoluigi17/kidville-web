@@ -49,10 +49,10 @@ const SULLA_CARTA: Record<string, string> = {
   'src/lib/protocolli/documento-pdf.ts': 'documenti su richiesta, protocollati in uscita',
   'src/lib/fea/receipt-pdf.ts': 'ricevuta di firma FEA (senza pulsante, ma non diverge)',
   'src/lib/forms/signed-pdf.ts': 'modulo genitori completo firmato — snapshot immutabile e archivio privato',
-  'src/lib/presenze/registro-pdf.ts': "registro presenze — l'unico foglio orizzontale",
+  'src/lib/presenze/registro-pdf.ts': 'registro presenze su foglio orizzontale',
   'src/lib/cassa/stampa.ts': 'conteggio contanti per sede e cassa di provenienza, con carta applicata dalla route report',
   'src/lib/merch/pdf.ts': "ordine al fornitore — l'unico che esce verso un terzo",
-  'src/lib/storici/render.ts': 'dossier storici per alunno o classe: riepiloghi e indice sulla carta comune, con originali privati incorporati',
+  'src/lib/storici/impaginazione-pdf.ts': 'contenuti dei dossier storici: tabelle orizzontali e schede verticali, carta applicata dal compositore render.ts',
 }
 
 /**
@@ -63,6 +63,7 @@ const SULLA_CARTA: Record<string, string> = {
  * stampa di servizio interna o un export di lavoro non aggiunge nulla e costa 1,1 MB a file.
  */
 const FUORI_PERIMETRO: Record<string, string> = {
+  'src/lib/storici/render-excel.ts': 'jsPDF misura soltanto le larghezze dei glifi per le righe Excel; non produce o esporta documenti PDF e non applica carta intestata al workbook.',
   // ── Hanno ancora una banda propria: difetto noto, riparazione da decidere ──────
   'src/lib/competenze/certificato-pdf.ts':
     "⚠️ DIFETTO NOTO: dipinge rect(0,0,210,42) verde con barretta gialla e ci scrive dentro " +

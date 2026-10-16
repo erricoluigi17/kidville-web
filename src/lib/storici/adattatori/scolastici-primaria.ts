@@ -83,6 +83,7 @@ export async function note(ctx: ContestoStorico, categoria: CategoriaStorico): P
 export async function registro(ctx: ContestoStorico, categoria: CategoriaStorico): Promise<SezioneStorico> {
   const s = nuovaSezione(categoria, { data: 'Data', alunno: 'Alunno', classe: 'Classe', ora: 'Ora', materia: 'Materia', ambito: 'Destinazione',
     argomento: 'Argomento', compiti: 'Compiti', consegna: 'Consegna', docente: 'Docente', tipoFirma: 'Tipo firma', firmatoIl: 'Firmato il', allegati: 'Allegati' })
+  s._versione_raccolta = 1
   const classi = await sezioni(ctx)
   const lezioni = await perIds(ctx, 'registro_orario', 'section_id', classi.map(c => testo(c.id)), q => q.gte('data', ctx.richiesta.dal).lte('data', ctx.richiesta.al)
     .or(`scuola_id.is.null,scuola_id.eq.${ctx.richiesta.scuolaId}`), '*,materie(nome)')
@@ -94,32 +95,37 @@ export async function registro(ctx: ContestoStorico, categoria: CategoriaStorico
   const autori = await persone(ctx, firme.map(f => testo(f.maestra_id)))
   for (const r of lezioni) {
     const data = giorno(r.data), sectionId = testo(r.section_id)
+    const ammessi = ctx.alunni.filter(a => ammesso(ctx, a.id, data, sectionId))
+    if (!ammessi.length) continue
     const proprie = firme.filter(f => f.registro_id === r.id)
-    for (const a of ctx.alunni.filter(a => ammesso(ctx, a.id, data, sectionId))) {
-      const base = { _alunno_id: a.id, data, alunno: nome(ctx, a.id), classe: testo(classi.find(c => c.id === sectionId)?.name), ora: cella(r.ora_lezione),
-        materia: materia(r), consegna: giorno(r.data_consegna_compiti), allegati: files.filter(f => f.registro_id === r.id).map(f => testo(f.file_name)).join('; ') }
-      const firmaClasse = proprie.filter(f => !destinatari.some(d => d.firma_id === f.id))
-      if (!['primaria_firme', 'documenti_didattici'].includes(categoria) && (testo(r.argomento) || testo(r.compiti)) && (categoria !== 'primaria_compiti' || testo(r.compiti))) {
-        s.righe.push({ ...base, ambito: 'Classe', argomento: testo(r.argomento), compiti: testo(r.compiti),
-          docente: firmaClasse.map(f => autori.get(testo(f.maestra_id)) ?? '').filter(Boolean).join(', '), tipoFirma: '', firmatoIl: '' })
-      }
-      for (const f of proprie) {
-        if (categoria === 'documenti_didattici') continue
-        const ds = destinatari.filter(d => d.firma_id === f.id)
-        const destinata = ds.length > 0
-        if (destinata && !ds.some(d => d.alunno_id === a.id)) continue
-        // Le vecchie righe con destinatario senza firma non autorizzano contenuti propri di una firma.
-        if (categoria !== 'primaria_firme' && !destinata) continue
-        if (categoria === 'primaria_compiti' && !testo(f.compiti_propri)) continue
-        s.righe.push({ ...base, ambito: destinata ? 'Destinatario individuale' : 'Classe',
-          argomento: destinata ? testo(f.argomento_proprio) : testo(r.argomento), compiti: destinata ? testo(f.compiti_propri) : testo(r.compiti),
-          docente: autori.get(testo(f.maestra_id)) ?? '', tipoFirma: testo(f.tipo_compresenza), firmatoIl: testo(f.firmato_il) })
-      }
-      if (categoria !== 'primaria_firme') for (const f of files.filter(f => f.registro_id === r.id && (categoria !== 'primaria_compiti' || f.ambito === 'compiti'))) {
-        aggiungiAllegato(s, allegato('registro-allegati', f.storage_path || f.file_url, testo(f.file_name), a.id, f.tipo === 'pdf' ? 'application/pdf' : undefined))
-        if (categoria === 'documenti_didattici') s.righe.push({ ...base, ambito: testo(f.ambito), argomento: testo(r.argomento), compiti: testo(r.compiti), allegati: testo(f.file_name) })
+    const filesLezione = files.filter(f => f.registro_id === r.id)
+    const base = { _ambito: 'classe', _registro_id: testo(r.id), _classe_id: sectionId, data, alunno: '',
+      classe: testo(classi.find(c => c.id === sectionId)?.name), ora: cella(r.ora_lezione), materia: materia(r),
+      consegna: giorno(r.data_consegna_compiti), allegati: filesLezione.map(f => testo(f.file_name)).join('; ') }
+    const firmaClasse = proprie.filter(f => !destinatari.some(d => d.firma_id === f.id))
+    if (!['primaria_firme', 'documenti_didattici'].includes(categoria) && (testo(r.argomento) || testo(r.compiti)) && (categoria !== 'primaria_compiti' || testo(r.compiti))) {
+      s.righe.push({ ...base, ambito: 'Classe', argomento: testo(r.argomento), compiti: testo(r.compiti),
+        docente: firmaClasse.map(f => autori.get(testo(f.maestra_id)) ?? '').filter(Boolean).join(', '), tipoFirma: '', firmatoIl: '' })
+    }
+    for (const f of proprie) {
+      if (categoria === 'documenti_didattici') continue
+      const ds = destinatari.filter(d => d.firma_id === f.id)
+      const destinata = ds.length > 0
+      // Le vecchie righe con destinatario senza firma non autorizzano contenuti propri di una firma.
+      if (categoria !== 'primaria_firme' && !destinata) continue
+      if (categoria === 'primaria_compiti' && !testo(f.compiti_propri)) continue
+      const firma = { ...base, _firma_id: testo(f.id), ambito: destinata ? 'Destinatario individuale' : 'Classe',
+        argomento: destinata ? testo(f.argomento_proprio) : testo(r.argomento), compiti: destinata ? testo(f.compiti_propri) : testo(r.compiti),
+        docente: autori.get(testo(f.maestra_id)) ?? '', tipoFirma: testo(f.tipo_compresenza), firmatoIl: testo(f.firmato_il) }
+      if (!destinata) s.righe.push(firma)
+      else for (const a of ammessi.filter(a => ds.some(d => d.alunno_id === a.id))) {
+        s.righe.push({ ...firma, _ambito: 'alunno', _alunno_id: a.id, alunno: nome(ctx, a.id) })
       }
     }
+    if (categoria !== 'primaria_firme') for (const f of filesLezione.filter(f => categoria !== 'primaria_compiti' || f.ambito === 'compiti')) {
+      aggiungiAllegato(s, allegato('registro-allegati', f.storage_path || f.file_url, testo(f.file_name), undefined, f.tipo === 'pdf' ? 'application/pdf' : undefined))
+    }
+    if (categoria === 'documenti_didattici' && filesLezione.length) s.righe.push({ ...base, ambito: 'Classe', argomento: testo(r.argomento), compiti: testo(r.compiti) })
   }
   return s
 }

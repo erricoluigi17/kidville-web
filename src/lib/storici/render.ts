@@ -1,71 +1,30 @@
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import * as XLSX from 'xlsx'
 import sharp from 'sharp'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { applicaCartaIntestata } from '@/lib/carta/applica'
-import { CARTA } from '@/lib/carta/geometria'
 import { logEvento } from '@/lib/logging/logger'
 import type { DocumentoStorico } from './tipi'
+import { areaPdf, ImpaginazioneStoricoPdf, testoPdf, valorePdf } from './impaginazione-pdf'
 
-export function creaExcelStorico(documento: DocumentoStorico): Uint8Array {
-  const libro = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(libro, XLSX.utils.aoa_to_sheet([
-    ['Storici e stampe', documento.titolo], ['Sede', documento.scuolaNome],
-    ['Dal', documento.dal], ['Al', documento.al], ['Generato il', documento.generatoIl],
-    ...documento.avvisi.map(a => ['Avvertenza', a]),
-  ]), 'Riepilogo')
-  documento.sezioni.forEach((sezione, index) => {
-    const righe = [sezione.colonne.map(c => c.titolo), ...sezione.righe.map(r => sezione.colonne.map(c => r[c.chiave] ?? ''))]
-    // aoa_to_sheet conserva le stringhe come stringhe, comprese quelle che iniziano con =.
-    const foglio = XLSX.utils.aoa_to_sheet(righe)
-    foglio['!cols'] = sezione.colonne.map(() => ({ wch: 28 }))
-    const nome = `${index + 1} ${sezione.titolo}`.replace(/[\\/?*\[\]:]/g, ' ').slice(0, 31)
-    XLSX.utils.book_append_sheet(libro, foglio, nome)
-  })
-  const avvisi = documento.sezioni.flatMap(s => s.avvisi.map(a => [s.titolo, a]))
-  if (avvisi.length) XLSX.utils.book_append_sheet(libro, XLSX.utils.aoa_to_sheet([['Sezione', 'Avvertenza'], ...avvisi]), 'Avvertenze')
-  return new Uint8Array(XLSX.write(libro, { type: 'buffer', bookType: 'xlsx' }))
-}
+export { creaExcelStorico } from './render-excel'
 
-const testo = (v: unknown) => String(v ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
 const BUCKET_ALLEGATI = new Set(['registro-allegati', 'pagelle', 'certificati-competenze', 'form_attachments', 'certificati-medici', 'sensitive_documents', 'fatture', 'avvisi_allegati', 'chat-allegati', 'gallery', 'news', 'protocollo'])
 
 export async function creaPdfStorico(documento: DocumentoStorico, db: SupabaseClient): Promise<{ bytes: Uint8Array; avvisi: string[] }> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const impaginazione = new ImpaginazioneStoricoPdf(documento)
+  const doc = impaginazione.doc
   const indice: Array<[string, number]> = []
   const avvisi = [...documento.avvisi, ...documento.sezioni.flatMap(s => s.avvisi)]
-  function testata(titolo: string) {
-    doc.setFont('helvetica', 'bold').setFontSize(14)
-    const righe = doc.splitTextToSize(testo(titolo), CARTA.margineDx - CARTA.margineSx)
-    doc.text(righe, CARTA.margineSx, CARTA.contenutoInizio)
-    const y = CARTA.contenutoInizio + righe.length * 6
-    doc.setFont('helvetica', 'normal').setFontSize(9)
-    doc.text(doc.splitTextToSize(`${documento.scuolaNome} · ${documento.dal} / ${documento.al}`, 166), CARTA.margineSx, y)
-    return y + 9
-  }
-  const y = testata(documento.titolo)
-  autoTable(doc, {
-    startY: y, head: [['Storici e stampe']],
-    body: [[`Generato il ${documento.generatoIl}`], ['Documento riservato allo staff autorizzato.'], ...avvisi.map(a => [testo(a)])],
-    margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 },
-    styles: { fontSize: 9, overflow: 'linebreak' }, headStyles: { fillColor: [27, 90, 65] },
-  })
+  impaginazione.nuovaPagina(documento.titolo, true)
+  impaginazione.testo(`Generato il ${valorePdf(documento.generatoIl)}`, 'Storici e stampe')
+  impaginazione.testo('Documento riservato allo staff autorizzato.')
+  for (const avviso of [...new Set(avvisi)]) impaginazione.testo(avviso)
   for (const sezione of documento.sezioni) {
-    doc.addPage()
-    indice.push([sezione.titolo, doc.getNumberOfPages()])
-    const startY = testata(sezione.titolo)
-    autoTable(doc, {
-      startY, head: [sezione.colonne.length ? sezione.colonne.map(c => testo(c.titolo)) : ['Contenuto']],
-      body: sezione.righe.length ? sezione.righe.map(r => sezione.colonne.map(c => testo(r[c.chiave]))) : [['Nessuna registrazione disponibile nel periodo scelto.']],
-      margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 },
-      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' }, headStyles: { fillColor: [27, 90, 65] },
-      didDrawPage: () => { doc.setFontSize(7); doc.text(testo(sezione.titolo), CARTA.margineSx, CARTA.contenutoInizio - 4) },
-    })
+    indice.push([sezione.titolo, doc.getNumberOfPages() + 1])
+    impaginazione.sezione(sezione)
     if (sezione.avvisi.length) {
-      doc.addPage()
-      autoTable(doc, { startY: testata(`${sezione.titolo}: avvertenze`), body: sezione.avvisi.map(a => [testo(a)]), margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 }, styles: { fontSize: 9 } })
+      impaginazione.nuovaPagina(`${sezione.titolo}: avvertenze`)
+      for (const avviso of sezione.avvisi) impaginazione.testo(avviso)
     }
   }
   const generato = await applicaCartaIntestata(new Uint8Array(doc.output('arraybuffer')))
@@ -81,11 +40,12 @@ export async function creaPdfStorico(documento: DocumentoStorico, db: SupabaseCl
     gia.add(chiave)
     try {
       if (allegato.mime?.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(allegato.nome)) {
-        const scheda = new jsPDF({ unit: 'mm', format: 'a4' })
-        scheda.setFontSize(14).text('Video — scheda di riferimento', CARTA.margineSx, CARTA.contenutoInizio)
-        autoTable(scheda, { startY: CARTA.contenutoInizio + 9, head: [['Riferimento', 'Consultazione']], body: [[testo(allegato.nome), 'Video conservato nella relativa scheda della galleria o della news. La raccolta cartacea riporta il riferimento.']], margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 }, styles: { fontSize: 9, overflow: 'linebreak' }, headStyles: { fillColor: [27, 90, 65] } })
+        const video = new ImpaginazioneStoricoPdf(documento)
+        video.nuovaPagina('Video — scheda di riferimento', true)
+        video.testo(allegato.nome, 'Riferimento')
+        video.testo('Video conservato nella relativa scheda della galleria o della news. La raccolta cartacea riporta il riferimento.', 'Consultazione')
         indice.push([`Video: ${allegato.nome}`, finale.getPageCount() + 1])
-        const schedaPdf = await PDFDocument.load(await applicaCartaIntestata(new Uint8Array(scheda.output('arraybuffer'))))
+        const schedaPdf = await PDFDocument.load(await applicaCartaIntestata(new Uint8Array(video.doc.output('arraybuffer'))))
         for (const p of await finale.copyPages(schedaPdf, schedaPdf.getPageIndices())) finale.addPage(p)
         continue
       }
@@ -123,18 +83,26 @@ export async function creaPdfStorico(documento: DocumentoStorico, db: SupabaseCl
       logEvento('registro', 'warn', { operazione: 'storici/allegato', esito: 'originale-non-incorporato', bucket: allegato.bucket }, error)
     }
   }
-  const toc = new jsPDF({ unit: 'mm', format: 'a4' })
-  toc.setFontSize(14).text('Indice del dossier', CARTA.margineSx, CARTA.contenutoInizio)
-  autoTable(toc, { startY: CARTA.contenutoInizio + 8, head: [['Sezione o allegato', 'Pagina']], body: indice.map(([titolo, pagina]) => [testo(titolo), String(pagina)]), margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 }, styles: { fontSize: 9 }, headStyles: { fillColor: [27, 90, 65] } })
+  const sommario = new ImpaginazioneStoricoPdf(documento)
+  sommario.nuovaPagina('Indice del dossier', true)
+  for (const [titolo, pagina] of indice) sommario.testo(`${testoPdf(titolo)} · Pagina ${pagina}`)
   if (avvisi.length) {
-    toc.addPage()
-    autoTable(toc, { startY: CARTA.contenutoInizio, head: [['Avvertenze di completezza']], body: [...new Set(avvisi)].map(a => [testo(a)]), margin: { left: CARTA.margineSx, right: 22, top: CARTA.contenutoInizio, bottom: 34 }, styles: { fontSize: 9 } })
+    sommario.testo('Avvertenze di completezza')
+    for (const avviso of [...new Set(avvisi)]) sommario.testo(avviso)
   }
-  const indicePdf = await PDFDocument.load(await applicaCartaIntestata(new Uint8Array(toc.output('arraybuffer'))))
+  const indicePdf = await PDFDocument.load(await applicaCartaIntestata(new Uint8Array(sommario.doc.output('arraybuffer'))))
   for (const p of await finale.copyPages(indicePdf, indicePdf.getPageIndices())) finale.addPage(p)
   const font = await finale.embedFont(StandardFonts.Helvetica)
   const totale = finale.getPageCount()
   // La numerazione è un'aggiunta della raccolta; i file originali archiviati restano intatti.
-  finale.getPages().forEach((p, i) => p.drawText(`${i + 1} / ${totale}`, { x: 24, y: 15, size: 7, font, color: rgb(.35, .35, .35) }))
-  return { bytes: await finale.save(), avvisi: [...new Set(avvisi)] }
+  finale.getPages().forEach((p, i) => {
+    const orizzontale = p.getWidth() > p.getHeight()
+    const area = areaPdf(orizzontale)
+    // Gli originali possono avere dimensioni diverse da A4: il riferimento si
+    // adatta al loro foglio senza riscalarne o ridisegnarne i contenuti.
+    p.drawText(`${i + 1} / ${totale}`, { x: area.sx / (orizzontale ? 297 : 210) * p.getWidth(), y: p.getHeight() * (1 - area.servizio / area.altezza), size: 7, font, color: rgb(.35, .35, .35) })
+  })
+  const bytes = await finale.save()
+  logEvento('registro', 'info', { operazione: 'storici/pdf', esito: 'generato', n: totale, byte: bytes.byteLength })
+  return { bytes, avvisi: [...new Set(avvisi)] }
 }

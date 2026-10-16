@@ -11,8 +11,8 @@ import { join } from 'node:path'
 import sharp from 'sharp'
 const documento: DocumentoStorico = { titolo: 'Classe di prova', scuolaNome: 'Scuola di prova', dal: '2026-09-01', al: '2026-10-15', generatoIl: '2026-10-15T12:00:00Z', avvisi: [], sezioni: [{ categoria: 'diario_note', titolo: 'Note individuali e di sezione', colonne: [{ chiave: 'data', titolo: 'Data' }, { chiave: 'nota', titolo: 'Nota' }], righe: [{ data: '15/10/2026', nota: '=1+2' }], allegati: [], avvisi: [] }] }
 describe('file degli storici', () => {
-  it('produce un vero Excel e conserva il testo libero senza formule eseguibili', () => {
-    const bytes = creaExcelStorico(documento)
+  it('produce un vero Excel e conserva il testo libero senza formule eseguibili', async () => {
+    const bytes = await creaExcelStorico(documento)
     const wb = XLSX.read(bytes, { type: 'array' })
     const ws = wb.Sheets[wb.SheetNames[1]]
     expect(ws.B2.v).toBe('=1+2')
@@ -73,7 +73,7 @@ describe('file degli storici', () => {
     const r = await creaPdfStorico(copia, db)
     expect(r.avvisi).toEqual([])
     expect((await PDFDocument.load(r.bytes)).getPageCount()).toBeGreaterThan(20)
-    const wb = XLSX.read(creaExcelStorico(copia), { type: 'array' })
+    const wb = XLSX.read(await creaExcelStorico(copia), { type: 'array' })
     expect(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[1]])).toHaveLength(1254)
     if (process.env.STORICI_PDF_VISIVO_DIR) await writeFile(join(process.env.STORICI_PDF_VISIVO_DIR, 'presenze-estese.pdf'), r.bytes)
   })

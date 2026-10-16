@@ -12,6 +12,7 @@ import { CASSA_SCHEMA_ASSENTE, calcolaAggregatiMovimenti } from '@/lib/cassa/sal
 import type { RigaMovimentoCassa } from '@/lib/cassa/tipi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/pagamenti/leggi-a-blocchi'
 
 // =============================================================================
 // MODULO CASSA · registro movimenti (contratto §3.5).
@@ -53,6 +54,8 @@ const postBodySchema = z
     // L'INSERT sotto normalizza con `?? null` / `?? undefined` (RC1).
     data: zDataYMD.nullish(),
     categoria_id: zUuid.nullish(),
+    // null = cassa generale; undefined = scelta non ancora fatta (vietata per uscite).
+    cassa_categoria_id: zUuid.nullable().optional(),
     descrizione: z.string().max(500).nullish(),
     note: z.string().max(1000).nullish(),
     allegato_path: z.string().max(500).nullish(),
@@ -60,6 +63,9 @@ const postBodySchema = z
   .superRefine((v, ctx) => {
     if (v.tipo === 'uscita' && !v.categoria_id) {
       ctx.addIssue({ code: 'custom', path: ['categoria_id'], message: 'La categoria è obbligatoria per un\'uscita' })
+    }
+    if (v.tipo === 'uscita' && v.cassa_categoria_id === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['cassa_categoria_id'], message: 'Scegli da quale cassa prelevare il denaro' })
     }
   })
 
@@ -73,6 +79,7 @@ interface MovimentoRow {
   metodo: RigaMovimentoCassa['metodo']
   data: string
   categoria_id: string | null
+  cassa_categoria_id?: string | null
   descrizione: string | null
   note: string | null
   allegato_path: string | null
@@ -89,6 +96,7 @@ interface MovimentoRow {
 interface IncassoVirtualeRow {
   id: string
   scuola_id: string
+  cassa_categoria_id: string | null
   importo: number | string
   metodo: string
   data_incasso: string
@@ -104,11 +112,11 @@ function categoriaNome(r: MovimentoRow): string | null {
   return obj?.nome ?? null
 }
 
-/** La sede di un incasso, dall'embed `pagamenti!inner(scuola_id)` (to-one; difensivo su array). */
-function scuolaIncasso(r: Record<string, unknown>): string | null {
+/** Sede e cassa dell'incasso dal suo pagamento (to-one; difensivo su array). */
+function campoPagamentoIncasso(r: Record<string, unknown>, campo: 'scuola_id' | 'categoria_id'): string | null {
   const p = r.pagamenti
   const obj = Array.isArray(p) ? (p[0] as Record<string, unknown> | undefined) : (p as Record<string, unknown> | undefined)
-  return typeof obj?.scuola_id === 'string' ? obj.scuola_id : null
+  return typeof obj?.[campo] === 'string' ? obj[campo] : null
 }
 
 export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Request) => {
@@ -151,25 +159,23 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
     }
 
     // 1) Movimenti reali delle sedi (con nome categoria). Degrada sul DB CI non migrato.
-    let movQuery = supabase
-      .from('cassa_movimenti')
-      .select('*, cassa_categorie(nome)')
-      .in('scuola_id', sedi)
-    if (da) movQuery = movQuery.gte('data', da)
-    if (a) movQuery = movQuery.lte('data', a)
-    if (tipo) movQuery = movQuery.eq('tipo', tipo)
-    if (categoria_id) movQuery = movQuery.eq('categoria_id', categoria_id)
-    const { data: movRaw, error: eMov } = await movQuery.order('data', { ascending: false })
-    if (eMov) {
-      const code = (eMov as { code?: string }).code ?? ''
+    const movLetti = await leggiABlocchi<MovimentoRow>(() => {
+      let query = supabase.from('cassa_movimenti').select('*, cassa_categorie(nome)').in('scuola_id', sedi)
+      if (da) query = query.gte('data', da)
+      if (a) query = query.lte('data', a)
+      if (tipo) query = query.eq('tipo', tipo)
+      if (categoria_id) query = query.eq('categoria_id', categoria_id)
+      return query.order('data', { ascending: false })
+    })
+    if (!movLetti.ok) {
+      const code = movLetti.motivo === 'errore' ? (movLetti.error as { code?: string })?.code ?? '' : ''
       if (CASSA_SCHEMA_ASSENTE.has(code)) {
         logEvento('cassa', 'info', { operazione: 'pagamenti/cassa/movimenti:GET', esito: 'schema-assente' })
         return NextResponse.json({ disponibile: false, movimenti: [] })
       }
-      logErrore({ operazione: 'pagamenti/cassa/movimenti:GET', stato: 500, evento: 'db' }, eMov)
-      return NextResponse.json({ error: 'Errore nel recupero dei movimenti' }, { status: 500 })
+      return letturaRegistroFallita('cassa-movimenti', movLetti)
     }
-    const movimentiReali = (movRaw ?? []) as MovimentoRow[]
+    const movimentiReali = movLetti.righe
 
     // 2) Entrate AUTO virtuali: incassi contanti delle sedi, non stornati. La sede
     //    di ogni riga è quella del SUO pagamento (embed), non il parametro: con
@@ -179,45 +185,57 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
     const incassiVirtuali: IncassoVirtualeRow[] = []
     let incassiSenzaSede = 0
     if (!tipo || tipo === 'entrata') {
-      let incQuery = supabase
-        .from('incassi')
-        .select('id, importo, metodo, data_incasso, creato_il, pagamenti!inner(scuola_id)')
-        .eq('metodo', 'contanti')
-        .in('pagamenti.scuola_id', sedi)
-        .is('stornato_il', null)
-      if (da) incQuery = incQuery.gte('data_incasso', da)
-      if (a) incQuery = incQuery.lte('data_incasso', a)
-      const { data: incRaw, error: eInc } = await incQuery
-      if (eInc) {
-        // Le entrate auto sono un arricchimento: se la lettura fallisce, la lista
-        // dei movimenti reali resta valida. Loggato, non fatale.
-        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti:GET', esito: 'incassi-auto-non-letti' }, eInc)
-      } else {
-        for (const r of (incRaw ?? []) as Record<string, unknown>[]) {
-          // `pagamenti!inner` + `.in('pagamenti.scuola_id', sedi)`: la sede c'è sempre.
-          // Un embed senza sede non si attribuisce a caso a un cassetto: si scarta QUI,
-          // prima di tutto, e si conta. Scartarlo solo dalla lista (com'era nel primo
-          // giro del K3) lo lasciava dentro `totali.entrate`: un importo che non
-          // compariva in nessuna riga e in nessun cassetto.
-          const sedeInc = scuolaIncasso(r)
-          if (!sedeInc) {
-            incassiSenzaSede++
-            continue
-          }
-          incassiVirtuali.push({
-            id: String(r.id),
-            scuola_id: sedeInc,
-            importo: r.importo as number | string,
-            metodo: String(r.metodo),
-            data_incasso: String(r.data_incasso),
-            creato_il: (r.creato_il as string | null) ?? null,
-          })
+      const incLetti = await leggiABlocchi<Record<string, unknown>>(() => {
+        let query = supabase.from('incassi')
+          .select('id, importo, metodo, data_incasso, creato_il, pagamenti!inner(scuola_id,categoria_id)')
+          .eq('metodo', 'contanti').in('pagamenti.scuola_id', sedi).is('stornato_il', null)
+        if (da) query = query.gte('data_incasso', da)
+        if (a) query = query.lte('data_incasso', a)
+        return query.order('data_incasso', { ascending: false })
+      })
+      // Un incasso perso rende incompleti lista e totali: il registro è tutto-o-niente.
+      if (!incLetti.ok) return letturaRegistroFallita('cassa-incassi-auto', incLetti)
+
+      for (const r of incLetti.righe) {
+        // `pagamenti!inner` + `.in('pagamenti.scuola_id', sedi)`: la sede c'è sempre.
+        // Un embed senza sede non si attribuisce a caso a un cassetto: si scarta QUI,
+        // prima di tutto, e si conta. Scartarlo solo dalla lista (com'era nel primo
+        // giro del K3) lo lasciava dentro `totali.entrate`: un importo che non
+        // compariva in nessuna riga e in nessun cassetto.
+        const sedeInc = campoPagamentoIncasso(r, 'scuola_id')
+        if (!sedeInc) {
+          incassiSenzaSede++
+          continue
         }
+        incassiVirtuali.push({
+          id: String(r.id),
+          scuola_id: sedeInc,
+          cassa_categoria_id: campoPagamentoIncasso(r, 'categoria_id'),
+          importo: r.importo as number | string,
+          metodo: String(r.metodo),
+          data_incasso: String(r.data_incasso),
+          creato_il: (r.creato_il as string | null) ?? null,
+        })
       }
     }
 
     const nomi = await nomiSediCassa(supabase, sedi, 'pagamenti/cassa/movimenti:GET')
     const nomeDi = (id: string | null) => (id ? nomi.get(id) ?? null : null)
+
+    // I nomi delle casse sono distinti dalle categorie di spesa. Le entrate
+    // virtuali ereditano la cassa del pagamento, come il conteggio per categoria.
+    // Solo quando nessuna riga ha un'attribuzione si evita il catalogo aggiuntivo.
+    const casseIds = [...new Set([
+      ...movimentiReali.map(m => m.cassa_categoria_id),
+      ...incassiVirtuali.map(i => i.cassa_categoria_id),
+    ].filter((id): id is string => !!id))]
+    const nomiCasse = new Map<string, string | null>()
+    if (casseIds.length > 0) {
+      const casseLette = await leggiABlocchi<{ id: string; nome: string | null }>(() => supabase
+        .from('payment_categories').select('id, nome').in('id', casseIds))
+      if (!casseLette.ok) return letturaRegistroFallita('cassa-provenienze', casseLette)
+      for (const cassa of casseLette.righe) nomiCasse.set(cassa.id, cassa.nome)
+    }
 
     // 3) Componi la lista.
     const righe: RigaMovimentoConSede[] = []
@@ -232,6 +250,8 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
         metodo: m.metodo,
         data: m.data,
         categoria_id: m.categoria_id,
+        cassa_categoria_id: m.cassa_categoria_id ?? null,
+        cassa_categoria_nome: m.cassa_categoria_id ? nomiCasse.get(m.cassa_categoria_id) ?? null : null,
         categoria_nome: categoriaNome(m),
         descrizione: m.descrizione,
         note: m.note,
@@ -257,6 +277,8 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
         metodo: 'contanti',
         data: inc.data_incasso,
         categoria_id: null,
+        cassa_categoria_id: inc.cassa_categoria_id,
+        cassa_categoria_nome: inc.cassa_categoria_id ? nomiCasse.get(inc.cassa_categoria_id) ?? null : null,
         categoria_nome: 'Incasso',
         descrizione: null,
         note: null,
@@ -311,6 +333,13 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
   }
 })
 
+/** Nessuna pagina parziale della lista deve sembrare un registro completo. */
+function letturaRegistroFallita(tipo: string, esito: Extract<EsitoABlocchi<unknown>, { ok: false }>): Response {
+  const errore = esito.motivo === 'errore' ? esito.error : new Error(`${descriviTetto(tipo, esito)}, registro rifiutato per intero`)
+  logErrore({ operazione: 'pagamenti/cassa/movimenti:GET', stato: 500, evento: esito.motivo === 'tetto' ? 'lettura-troncata' : 'db' }, errore)
+  return NextResponse.json({ error: 'Impossibile leggere tutti i movimenti di cassa' }, { status: 500 })
+}
+
 /**
  * Uscite (tipo='uscita', tutti i metodi) del mese corrente Europe/Rome, per sede e
  * in totale. Su errore della lettura → `null` + log `error` con esito proprio: il
@@ -324,19 +353,20 @@ async function caricaUsciteMese(
   nomeDi: (id: string | null) => string | null,
 ): Promise<{ da: string; a: string; totale: number; per_sede: { scuola_id: string; scuola_nome: string | null; totale: number }[] } | null> {
   const mese = meseCorrenteRoma()
-  const { data, error } = await supabase
+  const esito = await leggiABlocchi<{ scuola_id: string; importo: number | string }>(() => supabase
     .from('cassa_movimenti')
     .select('scuola_id, importo')
     .in('scuola_id', sedi)
     .eq('tipo', 'uscita')
     .gte('data', mese.da)
-    .lte('data', mese.a)
-  if (error) {
-    logEvento('cassa', 'error', { operazione: 'pagamenti/cassa/movimenti:GET', esito: 'uscite-mese-non-lette', sedi: sedi.length }, error)
+    .lte('data', mese.a))
+  if (!esito.ok) {
+    const errore = esito.motivo === 'errore' ? esito.error : new Error(descriviTetto('cassa-uscite-mese', esito))
+    logEvento('cassa', 'error', { operazione: 'pagamenti/cassa/movimenti:GET', esito: 'uscite-mese-non-lette', sedi: sedi.length }, errore)
     return null
   }
   const perSede = new Map<string, number>(sedi.map((s) => [s, 0]))
-  for (const r of (data ?? []) as { scuola_id: string; importo: number | string }[]) {
+  for (const r of esito.righe) {
     if (!perSede.has(r.scuola_id)) continue
     perSede.set(r.scuola_id, (perSede.get(r.scuola_id) ?? 0) + Number(r.importo))
   }
@@ -359,6 +389,19 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
     if (sede.response) return sede.response
     const scuolaId = sede.scuolaId as string
 
+    if (body.cassa_categoria_id) {
+      const categoria = await supabase.from('payment_categories')
+        .select('id, scuola_id, attivo').eq('id', body.cassa_categoria_id).maybeSingle()
+      if (categoria.error) {
+        logErrore({ operazione: 'pagamenti/cassa/movimenti:POST', stato: 500, evento: 'db' }, categoria.error)
+        return NextResponse.json({ error: 'Impossibile verificare la cassa scelta', codice: 'LETTURA_FALLITA' }, { status: 500 })
+      }
+      if (!categoria.data || categoria.data.attivo !== true || (categoria.data.scuola_id !== null && categoria.data.scuola_id !== scuolaId)) {
+        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti:POST', esito: 'cassa-provenienza-non-valida', scuola_id: scuolaId, categoria_id: body.cassa_categoria_id })
+        return NextResponse.json({ error: 'La cassa scelta non è disponibile per questa sede', codice: 'CASSA_CATEGORIA_NON_VALIDA', details: [{ path: 'cassa_categoria_id' }] }, { status: 400 })
+      }
+    }
+
     const ins = await supabase
       .from('cassa_movimenti')
       .insert({
@@ -368,6 +411,7 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
         metodo: body.metodo,
         data: body.data ?? undefined,
         categoria_id: body.categoria_id ?? null,
+        ...(body.cassa_categoria_id !== undefined ? { cassa_categoria_id: body.cassa_categoria_id } : {}),
         descrizione: body.descrizione ?? null,
         note: body.note ?? null,
         allegato_path: body.allegato_path ?? null,
@@ -380,6 +424,10 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
       if (CASSA_SCHEMA_ASSENTE.has(code)) {
         logEvento('cassa', 'info', { operazione: 'pagamenti/cassa/movimenti:POST', esito: 'schema-assente' })
         return NextResponse.json({ disponibile: false }, { status: 503 })
+      }
+      if (code === '23514' || code === '23503') {
+        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti:POST', esito: 'categoria-non-valida', scuola_id: scuolaId }, ins.error)
+        return NextResponse.json({ error: 'La categoria scelta non è più disponibile: aggiorna la selezione', codice: 'CASSA_CATEGORIA_NON_VALIDA' }, { status: 400 })
       }
       logErrore({ operazione: 'pagamenti/cassa/movimenti:POST', stato: 500, evento: 'db' }, ins.error)
       return NextResponse.json({ error: 'Errore nella registrazione del movimento' }, { status: 500 })
@@ -426,6 +474,7 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
       esito: 'registrato',
       movimento_id: movimento.id,
       tipo: body.tipo,
+      categoria_id: body.cassa_categoria_id ?? null,
       metodo: body.metodo,
       importo: round2(body.importo),
       scuola_id: scuolaId,

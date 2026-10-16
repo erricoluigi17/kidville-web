@@ -36,6 +36,8 @@ import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from '
 import { CassaMovimentoModal } from './CassaMovimentoModal';
 import { CassaChiusuraModal } from './CassaChiusuraModal';
 import { CassaReport } from './CassaReport';
+import { CassaFiltriMovimenti } from './CassaFiltriMovimenti';
+import { filtraMovimentiCassa, FILTRI_CASSA_INIZIALI, type FiltriMovimentiCassa } from '@/lib/cassa/filtri';
 import { CassaCategorieManager } from './CassaCategorieManager';
 import { CassaImpostazioni } from './CassaImpostazioni';
 import type { SedeCassa } from './CassaSede';
@@ -149,6 +151,12 @@ export function CassaPanel({ userId, scuolaId }: Props) {
 
   const [disponibile, setDisponibile] = useState<boolean | null>(null);
   const [movimenti, setMovimenti] = useState<RigaMovimento[]>([]);
+  // Il filtro sede della lista sparisce passando a una sede sola: anche il suo
+  // valore deve sparire, altrimenti resterebbe un filtro invisibile sul nuovo elenco.
+  const [statoFiltri, setStatoFiltri] = useState<{ sede: string | null; filtri: FiltriMovimentiCassa }>({ sede: scuolaId, filtri: { ...FILTRI_CASSA_INIZIALI } });
+  const filtriMovimenti = statoFiltri.sede === scuolaId ? statoFiltri.filtri : FILTRI_CASSA_INIZIALI;
+  const setFiltriMovimenti = (filtri: FiltriMovimentiCassa) => setStatoFiltri({ sede: scuolaId, filtri });
+  const elencoFiltrato = useMemo(() => filtraMovimentiCassa(movimenti, filtriMovimenti), [movimenti, filtriMovimenti]);
   const [totali, setTotali] = useState<TotaliCassa | null>(null);
   const [usciteMese, setUsciteMese] = useState<UsciteMese | null>(null);
   // `saldo` = le SOMME, solo quando tutte le sedi lette sono disponibili (K3 §2).
@@ -255,6 +263,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   /** Il nome di una sede: quello del server, poi quello del selettore, poi l'uuid. */
   const nomeSede = (id: string | null | undefined, dalServer?: string | null): string =>
     dalServer?.trim() || (id ? sediCockpit.find((s) => s.id === id)?.nome.trim() : '') || id || '—';
+
+  const nomeCassa = (r: RigaMovimentoCassa) => r.cassa_categoria_id ? r.cassa_categoria_nome?.trim() || r.cassa_categoria_id : t('cassaFiltroMovGenerale');
 
   // Le sedi LETTE, nell'ordine del server (quello di `resolveScuoleAttive`): prima il
   // saldo, poi le uscite del mese, poi le sedi del cockpit e gli svuotamenti, così una
@@ -501,11 +511,12 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       {/* Lista movimenti — tabella desktop + card mobile */}
       <div>
         <SectionTitle icon={CalendarDays} title={t('cassaSecMovimenti')} sub={t('cassaSecMovimentiSub')} />
-        {movimenti.length === 0 ? (
+        {!errore && <CassaFiltriMovimenti filtri={filtriMovimenti} onChange={setFiltriMovimenti} movimenti={movimenti} sedi={sediCassa} piuSedi={piuSedi} risultati={elencoFiltrato.movimenti.length} errore={elencoFiltrato.errore} />}
+        {elencoFiltrato.movimenti.length === 0 ? (
           // Empty-state SOLO quando non c'è un errore di caricamento (l'alert
           // sopra ha già spiegato il fallimento): evita il fuorviante «nessun
           // movimento» quando in realtà la rete è caduta (P4).
-          !errore && <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaNessunMovimento')}</p>
+          !errore && !elencoFiltrato.errore && <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t(movimenti.length ? 'cassaFiltroMovNessunRisultato' : 'cassaNessunMovimento')}</p>
         ) : (
           <>
             <div className="hidden lg:block" data-testid="cassa-movimenti-tabella">
@@ -517,6 +528,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                       {piuSedi && <th scope="col" className={TH}>{t('cassaMsThSede')}</th>}
                       <th scope="col" className={TH}>{t('cassaThMovimento')}</th>
                       <th scope="col" className={TH}>{t('cassaThCategoria')}</th>
+                      <th scope="col" className={TH}>{t('cassaFiltroMovCassa')}</th>
                       <th scope="col" className={TH}>{t('cassaThMetodo')}</th>
                       <th scope="col" className={TH}>{t('cassaThDescrizione')}</th>
                       <th scope="col" className={cx(TH, 'text-right')}>{t('cassaThImporto')}</th>
@@ -524,7 +536,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {movimenti.map((r) => {
+                    {elencoFiltrato.movimenti.map((r) => {
                       const info = TIPO_INFO[r.tipo] ?? TIPO_INFO.entrata;
                       return (
                         <tr key={r.id} className={cx(TROW, r.stornato_il && 'opacity-55')}>
@@ -539,6 +551,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                             </span>
                           </td>
                           <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? '—'}</span></td>
+                          <td className={TD}><span className="font-maven text-sm text-kidville-ink">{nomeCassa(r)}</span></td>
                           <td className={TD}><span className="font-maven text-xs text-kidville-sub">{metodoLabel(r.metodo)}</span></td>
                           <td className={TD}>
                             <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-ink">
@@ -569,7 +582,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
             </div>
 
             <div className="space-y-2 lg:hidden">
-              {movimenti.map((r) => {
+              {elencoFiltrato.movimenti.map((r) => {
                 const info = TIPO_INFO[r.tipo] ?? TIPO_INFO.entrata;
                 return (
                   <div key={r.id} data-testid="cassa-movimento-card" className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', r.stornato_il && 'opacity-55')}>
@@ -586,6 +599,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                     <p className="mt-0.5 font-maven text-xs text-kidville-sub">
                       {dataIt(r.data)} · {piuSedi ? `${nomeSede(r.scuola_id, r.scuola_nome)} · ` : ''}{metodoLabel(r.metodo)}{r.categoria_nome ? ` · ${r.categoria_nome}` : ''}
                     </p>
+                    <p className="mt-0.5 font-maven text-xs text-kidville-sub">{t('cassaFiltroMovCassa')}: {nomeCassa(r)}</p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       {r.allegato_path && (
                         <button type="button" onClick={() => apriGiustificativo(r.allegato_path as string)} className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green"><Paperclip size={12} /> {t('cassaGiustificativo')}</button>

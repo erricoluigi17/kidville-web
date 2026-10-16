@@ -36,6 +36,7 @@ interface MovRow {
   importo: number | string
   metodo: string
   categoria_id: string | null
+  cassa_categoria_id?: string | null
   stornato_il: string | null
   storno_di: string | null
   chiusura_id: string | null
@@ -103,6 +104,7 @@ export const POST = withRoute('pagamenti/cassa/movimenti/storno:POST', async (re
         importo: -Number(orig.importo),
         metodo: orig.metodo,
         categoria_id: orig.categoria_id ?? null,
+        ...(orig.cassa_categoria_id !== undefined ? { cassa_categoria_id: orig.cassa_categoria_id } : {}),
         storno_di: orig.id,
         registrato_da: user.id,
       })

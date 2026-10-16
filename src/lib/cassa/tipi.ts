@@ -44,6 +44,8 @@ export interface CassaMovimento {
   metodo: CassaMetodo
   data: string /* YYYY-MM-DD */
   categoria_id: string | null
+  /** Cassa di provenienza/destinazione: categoria di incasso; null = generale. */
+  cassa_categoria_id?: string | null
   descrizione: string | null
   note: string | null
   allegato_path: string | null
@@ -61,6 +63,8 @@ export interface RigaMovimentoCassa extends Omit<CassaMovimento, 'id'> {
   id: string // per le virtuali: `incasso:<incasso_id>`
   origine: 'cassa' | 'incasso' // 'incasso' = virtuale, non stornabile da qui
   categoria_nome: string | null
+  /** Nome della categoria di incasso attribuita al movimento, se disponibile. */
+  cassa_categoria_nome?: string | null
 }
 
 export interface EntratoOggiVoce {

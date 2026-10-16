@@ -27,6 +27,7 @@ import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 import type { CassaCategoria, CassaMetodo } from '@/lib/cassa/tipi';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { CampoSedeCassa, useSedeCassa, type SedeCassa } from './CassaSede';
+import { CampoCassaProvenienza } from './CampoCassaProvenienza';
 
 interface Props {
   userId: string;
@@ -54,6 +55,7 @@ const CAT_ERRORE_ID = 'cassa-mov-categorie-errore';
 const CAMPO_LABEL_KEY: Record<string, string> = {
   importo: 'cassaMovCampoImporto',
   categoria_id: 'cassaMovCampoCategoria',
+  cassa_categoria_id: 'cassaFonteCampo',
   metodo: 'cassaMovCampoMetodo',
   data: 'cassaMovCampoData',
   descrizione: 'cassaMovCampoDescrizione',
@@ -119,6 +121,7 @@ export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, 
   const [tipo, setTipo] = useState<'uscita' | 'entrata'>(tipoIniziale);
   const [importo, setImporto] = useState<number>(0);
   const [categoriaId, setCategoriaId] = useState('');
+  const [cassaCategoriaId, setCassaCategoriaId] = useState('');
   const [metodo, setMetodo] = useState<CassaMetodo>('contanti');
   // Data di default nel fuso Europe/Rome (P2): il runtime UTC anteponeva la
   // mezzanotte italiana → un movimento di sera prendeva la data del giorno dopo.
@@ -178,6 +181,7 @@ export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, 
     // Le categorie di sede non valgono per un'altra sede: la scelta si rifà sulla lista nuova.
     setCategorie([]);
     setCategoriaId('');
+    setCassaCategoriaId('');
     setCategorieFallitePer(null);
     setError(null);
     setCampiErrati(new Set());
@@ -199,6 +203,7 @@ export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, 
     // rimanda con aria-describedby); qui si marca soltanto il campo, senza un secondo testo.
     if (tipo === 'uscita' && categorieNonLette) { setCampiErrati(new Set(['categoria_id'])); return; }
     if (tipo === 'uscita' && !categoriaId) { setError(t('cassaMovCategoriaUscita')); setCampiErrati(new Set(['categoria_id'])); return; }
+    if (tipo === 'uscita' && !cassaCategoriaId) { setError(t('cassaFonteObbligatoria')); setCampiErrati(new Set(['cassa_categoria_id'])); return; }
     setSaving(true);
     let allegatoPath: string | null = null;
     try {
@@ -217,6 +222,7 @@ export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, 
         note: note.trim() || null,
       };
       if (tipo === 'uscita') body.categoria_id = categoriaId;
+      if (cassaCategoriaId) body.cassa_categoria_id = cassaCategoriaId === 'generale' ? null : cassaCategoriaId;
       if (allegatoPath) body.allegato_path = allegatoPath;
 
       const res = await fetch(`/api/pagamenti/cassa/movimenti?userId=${userId}`, {
@@ -333,6 +339,8 @@ export function CassaMovimentoModal({ userId, sedi, sedeIniziale, tipoIniziale, 
             )}
           </div>
         )}
+
+        <CampoCassaProvenienza userId={userId} scuolaId={scuolaId} valore={cassaCategoriaId} onCambia={setCassaCategoriaId} uscita={isUscita} disabled={saving} erroreId={campiErrati.has('cassa_categoria_id') ? ERRORE_ID : undefined} />
 
         <div className="grid grid-cols-2 gap-3">
           <div>

@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   saldoNonDisponibile: new Set<string>(),
   // Guasto della SOLA query delle uscite del mese (la lista resta leggibile).
   guastoUsciteMese: false,
+  guastoSecondaPagina: '' as string,
   // L'embed `pagamenti` degli incassi non viene filtrato per sede (dato sporco).
   incassiSenzaFiltroSede: false,
   verificaSoglia: vi.fn(),
@@ -73,7 +74,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         ...opzioni.rpc,
       },
     })
-    return h.guastoUsciteMese || h.incassiSenzaFiltroSede ? conGuasti(client) : client
+    return h.guastoUsciteMese || h.incassiSenzaFiltroSede || h.guastoSecondaPagina ? conGuasti(client) : client
   },
 }))
 // `caricaSaldoCassa` VERA per tutte le sedi, tranne quelle in `h.saldoNonDisponibile`:
@@ -159,6 +160,11 @@ function conGuasti<T extends object>(client: T): T {
       if (p !== 'from' || typeof v !== 'function') return v
       return (tabella: string) => {
         const q = (v as (tab: string) => object).call(t, tabella)
+        if (tabella === h.guastoSecondaPagina) {
+          return avvolgiBuilder(q, (nome, orig) => nome === 'range'
+            ? (da: unknown, a: unknown) => Number(da) >= 1000 ? builderInErrore() : orig(da, a)
+            : null);
+        }
         if (tabella === 'cassa_movimenti' && h.guastoUsciteMese) {
           return avvolgiBuilder(q, (nome, orig) =>
             nome === 'select'
@@ -216,6 +222,7 @@ function incasso(id: string, scuola_id: string, importo: number, data: string) {
 
 function dbDiProva(): Record<string, Record<string, unknown>[]> {
   return {
+    payment_categories: [{ id: CAT_PAG, nome: 'Retta' }],
     schools: [
       { id: SEDE_A, nome: 'Sede Alfa' },
       { id: SEDE_B, nome: 'Sede Beta' },
@@ -259,6 +266,7 @@ beforeEach(() => {
   h.fondi = { [SEDE_A]: 100, [SEDE_B]: 50, [SEDE_C]: 1000 }
   h.saldoNonDisponibile = new Set()
   h.guastoUsciteMese = false
+  h.guastoSecondaPagina = ''
   h.incassiSenzaFiltroSede = false
 })
 
@@ -614,3 +622,129 @@ describe('GET categorie — globali + tutte le sedi attive', () => {
     atteseLogFuoriScope('pagamenti/cassa/categorie:GET')
   })
 })
+
+
+describe('registro cassa completo oltre max_rows', () => {
+  it('legge tutte le pagine di movimenti, incassi e uscite del mese', async () => {
+    h.opzioni = { maxRighe: 1000 };
+    h.db.cassa_movimenti = Array.from({ length: 1005 }, (_, i) => movimento(`m${String(i).padStart(5, '0')}`, SEDE_A, 'uscita', 1, 'contanti', OGGI));
+    h.db.incassi = Array.from({ length: 1007 }, (_, i) => incasso(`i${String(i).padStart(5, '0')}`, SEDE_A, 2, OGGI));
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.movimenti).toHaveLength(2012);
+    expect(new Set(body.movimenti.map((r: { id: string }) => r.id)).size).toBe(2012);
+    expect(body.totali.entrate).toBe(2014);
+    expect(body.totali.uscite_contanti).toBe(1005);
+    expect(body.uscite_mese.totale).toBe(1005);
+  });
+
+  it('un errore sugli incassi rifiuta la lista, senza falsi totali parziali', async () => {
+    h.opzioni = { errori: { incassi: { code: 'XX000', message: 'lettura incassi fallita' } } };
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(500);
+    expect(await res.json()).not.toHaveProperty('movimenti');
+    expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ stato: 500 }), expect.anything());
+  });
+});
+
+
+describe('pagine mancanti del registro cassa', () => {
+  it.each(['cassa_movimenti', 'incassi'])('rifiuta anche il guasto della seconda pagina di %s', async tabella => {
+    h.opzioni = { maxRighe: 1000 };
+    h.guastoSecondaPagina = tabella;
+    h.db.cassa_movimenti = Array.from({ length: 1005 }, (_, i) => movimento(`m${i}`, SEDE_A, 'uscita', 1, 'contanti', OGGI));
+    h.db.incassi = Array.from({ length: 1005 }, (_, i) => incasso(`i${i}`, SEDE_A, 2, OGGI));
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(500);
+    expect(await res.json()).not.toHaveProperty('totali');
+    expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ stato: 500, evento: 'db' }), ERRORE_USCITE_MESE);
+  });
+
+  it('rifiuta oltre 50.000 righe con log esplicito del limite', async () => {
+    h.opzioni = { maxRighe: 1000 };
+    h.db.cassa_movimenti = Array.from({ length: 50001 }, (_, i) => movimento(`m${String(i).padStart(6, '0')}`, SEDE_A, 'uscita', 1, 'contanti', OGGI));
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(500);
+    expect(await res.json()).not.toHaveProperty('movimenti');
+    expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ stato: 500, evento: 'lettura-troncata' }), expect.objectContaining({ message: expect.stringContaining('cassa-movimenti oltre 50000') }));
+  });
+});
+
+
+describe('nome della cassa di provenienza nel registro', () => {
+  it('arricchisce i movimenti senza confondere la categoria di spesa', async () => {
+    h.db.cassa_movimenti = [{ ...movimento('m-cassa', SEDE_A, 'uscita', 10, 'contanti', OGGI), cassa_categoria_id: CAT_PAG, cassa_categorie: { nome: 'Materiale' } }];
+    h.db.payment_categories = [{ id: CAT_PAG, nome: 'Quota mensa' }];
+    const body = await (await movimentiGET(req('movimenti'))).json();
+    expect(body.movimenti.find((r: { id: string }) => r.id === 'm-cassa')).toMatchObject({ cassa_categoria_id: CAT_PAG, cassa_categoria_nome: 'Quota mensa', categoria_nome: 'Materiale' });
+  });
+  it('non maschera un errore di lettura delle casse come cassa generale', async () => {
+    h.db.cassa_movimenti = [{ ...movimento('m-cassa', SEDE_A, 'uscita', 10, 'contanti', OGGI), cassa_categoria_id: CAT_PAG }];
+    h.db.payment_categories = [];
+    h.opzioni = { errori: { payment_categories: { code: 'XX000', message: 'casse non lette' } } };
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(500);
+    expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ stato: 500 }), expect.anything());
+  });
+});
+
+
+describe('limiti delle letture accessorie del registro', () => {
+  it('al limite delle uscite mese restituisce null e log error, senza somma parziale', async () => {
+    h.opzioni = { maxRighe: 1000 };
+    h.db.cassa_movimenti = Array.from({ length: 50001 }, (_, i) => movimento(`m${String(i).padStart(6, '0')}`, SEDE_A, 'uscita', 1, 'contanti', OGGI));
+    const res = await movimentiGET(req('movimenti', 'tipo=entrata'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.uscite_mese).toBeNull();
+    expect(h.logEvento).toHaveBeenCalledWith('cassa', 'error', expect.objectContaining({ esito: 'uscite-mese-non-lette' }), expect.objectContaining({ message: expect.stringContaining('cassa-uscite-mese oltre 50000') }));
+  });
+  it('il dato storico senza provenienza non richiede il catalogo delle casse', async () => {
+    h.db.incassi = h.db.incassi.map(r => ({ ...r, pagamenti: { ...(r.pagamenti as Record<string, unknown>), categoria_id: null } }));
+    const body = await (await movimentiGET(req('movimenti'))).json();
+    expect(body.movimenti.length).toBeGreaterThan(0);
+    expect(body.movimenti.every((r: { cassa_categoria_id: string | null }) => r.cassa_categoria_id === null)).toBe(true);
+    expect(h.lette).not.toContain('payment_categories');
+  });
+  it('una cassa con nome non disponibile mantiene il suo UUID, senza diventare generale', async () => {
+    h.db.cassa_movimenti = [{ ...movimento('m-cassa', SEDE_A, 'uscita', 10, 'contanti', OGGI), cassa_categoria_id: CAT_PAG }];
+    h.db.payment_categories = [];
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.movimenti.find((r: { id: string }) => r.id === 'm-cassa')).toMatchObject({ cassa_categoria_id: CAT_PAG, cassa_categoria_nome: null });
+  });
+});
+
+
+describe('provenienza delle entrate virtuali da incasso', () => {
+  it('eredita la cassa dal pagamento e legge i nomi anche senza movimenti reali', async () => {
+    h.db.cassa_movimenti = [];
+    h.db.payment_categories = [{ id: CAT_PAG, nome: 'Saggio' }];
+    h.db.incassi = [
+      incasso('i-saggio', SEDE_A, 30, OGGI),
+      { ...incasso('i-generale', SEDE_A, 20, OGGI), pagamenti: { scuola_id: SEDE_A, categoria_id: null } },
+      { ...incasso('i-stornato', SEDE_A, 90, OGGI), stornato_il: `${OGGI}T12:00:00Z` },
+    ];
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.movimenti).toHaveLength(2);
+    expect(body.movimenti.find((r: { id: string }) => r.id === 'incasso:i-saggio')).toMatchObject({ cassa_categoria_id: CAT_PAG, cassa_categoria_nome: 'Saggio', origine: 'incasso' });
+    expect(body.movimenti.find((r: { id: string }) => r.id === 'incasso:i-generale')).toMatchObject({ cassa_categoria_id: null, cassa_categoria_nome: null });
+    expect(body.totali.entrate).toBe(50);
+  });
+
+  it('supporta embed a array senza duplicare le righe di cassa', async () => {
+    h.db.cassa_movimenti = [{ ...movimento('m-materiale', SEDE_A, 'uscita', 10, 'contanti', OGGI), cassa_categoria_id: CAT_PAG }];
+    h.db.payment_categories = [{ id: CAT_PAG, nome: 'Saggio' }];
+    h.db.incassi = [{ ...incasso('i-saggio', SEDE_A, 30, OGGI), pagamenti: [{ scuola_id: SEDE_A, categoria_id: CAT_PAG }] }];
+    const res = await movimentiGET(req('movimenti'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.movimenti).toHaveLength(2);
+    expect(body.movimenti.filter((r: { id: string }) => r.id === 'm-materiale')).toHaveLength(1);
+    expect(body.movimenti.find((r: { id: string }) => r.id === 'incasso:i-saggio')).toMatchObject({ cassa_categoria_id: CAT_PAG, cassa_categoria_nome: 'Saggio' });
+  });
+});

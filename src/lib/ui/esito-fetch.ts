@@ -814,6 +814,7 @@ export const CODICI_ERRORE = {
     TROPPE_SEDI: 'erroreTroppeSedi',
     CORPO_NON_VALIDO: 'erroreCorpoNonValido',
     LETTURA_FALLITA: 'erroreLetturaFallita',
+    CASSA_CATEGORIA_NON_VALIDA: 'erroreCassaCategoriaNonValida',
     /**
      * PRIMARIA — modifica ed eliminazione delle voci (`src/lib/primaria/permesso-voce.ts`).
      * 403: la voce è di un altro docente. 423: oltre il termine, serve lo sblocco della
@@ -3277,6 +3278,9 @@ export const CODICI_ERRORE = {
      */
     REPORT_CASSA_NON_CALCOLATO: 'erroreReportCassaNonCalcolato',
     REPORT_CASSA_NON_QUADRA: 'erroreReportCassaNonQuadra',
+    CONTEGGIO_CASSA_NON_DISPONIBILE: 'apiConteggioNonDisponibile',
+    CONTEGGIO_CASSA_NON_QUADRA: 'apiConteggioNonQuadra',
+    CONTEGGIO_SEDI_NON_DISPONIBILI: 'apiConteggioSediNonDisponibili',
     /**
      * 500 — `GET /api/admin/dashboard`: una lettura dei KPI è fallita per un guasto vero (non per
      * lo schema assente del DB E2E). Prima diventava uno zero che sembrava un dato.

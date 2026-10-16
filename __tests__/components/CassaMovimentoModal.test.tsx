@@ -18,6 +18,7 @@ function mockFetch(opts: MockOpts = {}) {
   const calls = { movimenti: [] as Record<string, unknown>[], uploadUrl: 0, put: 0 };
   const fn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const u = String(url);
+    if (u.includes('/admin/settings/categorie')) return jsonRes({ success: true, data: [] });
     if (u.includes('/cassa/categorie')) {
       return jsonRes({
         disponibile: true,
@@ -80,6 +81,7 @@ describe('CassaMovimentoModal — un 400 con details nomina il campo in errore (
   function mockFetch400(details: { path: string; message?: string }[]) {
     const fn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const u = String(url);
+      if (u.includes('/admin/settings/categorie')) return jsonRes({ success: true, data: [] });
       if (u.includes('/cassa/categorie')) return jsonRes({ disponibile: true, categorie: [] });
       if (u.includes('/cassa/movimenti') && init?.method === 'POST') {
         return jsonRes({ error: 'Dati non validi', details }, 400);

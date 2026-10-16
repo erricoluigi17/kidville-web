@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { CassaPanel, direzioneNegativa, importoSegnato, importoTone } from '@/components/features/admin/pagamenti/CassaPanel';
 
 // Segno «meno» tipografico (U+2212) usato dalla UI per gli importi in uscita.
@@ -45,15 +45,17 @@ interface MockOpts {
   /** Le chiusure già eseguite. Prima era cablato a `[]`: «mai svuotata» e «già
    *  svuotata» erano lo stesso caso, e un test che li distingue non esisteva. */
   chiusure?: unknown[];
+  usciteMese?: unknown;
 }
 
 function installFetch(opts: MockOpts = {}) {
-  const { movimenti = [], disponibile = true, totali, saldo, chiusure = [] } = opts;
+  const { movimenti = [], disponibile = true, totali, saldo, chiusure = [], usciteMese } = opts;
   const fn = vi.fn(async (url: RequestInfo | URL) => {
     const u = String(url);
     if (u.includes('/cassa/movimenti')) {
       const body: Record<string, unknown> = { disponibile, movimenti };
       if (totali) body.totali = totali;
+      if (usciteMese) body.uscite_mese = usciteMese;
       return jsonRes(body);
     }
     if (u.includes('/cassa/saldo')) return jsonRes(saldo ?? { disponibile: false });
@@ -314,5 +316,75 @@ describe('lo svuotamento della cassa si trova', () => {
     render(<CassaPanel userId="u1" scuolaId="sc-1" />);
     expect(await screen.findByText(/Mai svuotata/i)).toBeTruthy();
     expect(screen.getAllByRole('button', { name: /Svuota cassa/i })).toHaveLength(1);
+  });
+});
+
+
+describe('CassaPanel — filtri del registro condivisi sui due layout', () => {
+  it('combina tipo e ricerca, aggiorna entrambi i layout e resetta tutto', async () => {
+    const fn = installFetch({ movimenti: [RIGA_CASSA, RIGA_VIRTUALE] });
+    const { container } = render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findAllByText('Detersivi');
+    fireEvent.change(screen.getByLabelText('Tipo movimento'), { target: { value: 'uscita' } });
+    fireEvent.change(screen.getByLabelText('Cerca nei movimenti'), { target: { value: 'PULIZIE' } });
+    expect(screen.getByRole('status').textContent).toContain('1 di 2');
+    expect(within(screen.getByTestId('cassa-movimenti-tabella')).getByText('Detersivi')).toBeTruthy();
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(1);
+    expect(container.textContent).not.toContain('Retta luglio');
+    fireEvent.click(screen.getByRole('button', { name: 'Azzera filtri' }));
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(2);
+    expect(screen.getByLabelText('Tipo movimento')).toHaveValue('');
+    expect(screen.getByLabelText('Cerca nei movimenti')).toHaveValue('');
+    expect(fn.mock.calls.filter(([url]) => String(url).includes('/cassa/movimenti'))).toHaveLength(1);
+  });
+
+  it('segnala intervalli invalidi senza mostrare movimenti o un falso elenco vuoto', async () => {
+    installFetch({ movimenti: [RIGA_CASSA] });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findAllByText('Detersivi');
+    fireEvent.change(screen.getByLabelText('Dalla data'), { target: { value: '2026-10-20' } });
+    fireEvent.change(screen.getByLabelText('Alla data'), { target: { value: '2026-10-01' } });
+    expect(screen.getByRole('alert').textContent).toContain('intervallo di date');
+    expect(screen.queryByTestId('cassa-movimenti-tabella')).toBeNull();
+    expect(screen.queryByText(/Nessun movimento corrisponde/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Azzera filtri' }));
+    fireEvent.change(screen.getByLabelText('Cerca nei movimenti'), { target: { value: 'non presente' } });
+    expect(screen.getByText('Nessun movimento corrisponde ai filtri selezionati.')).toBeTruthy();
+  });
+});
+
+
+describe('CassaPanel — KPI indipendenti dai filtri della lista', () => {
+  it('non ricalcola saldo e uscite mese quando la ricerca non trova risultati', async () => {
+    installFetch({
+      movimenti: [RIGA_CASSA, RIGA_VIRTUALE],
+      totali: { entrate: 50, uscite_contanti: 20, uscite_altre: 0, prelievi: 0, rettifiche: 0 },
+      saldo: { disponibile: true, fondo: 100, saldo_atteso: 130, entrate_contanti: 50, uscite_contanti: 20, prelievi: 0, rettifiche: 0, entrato_oggi: [] },
+      usciteMese: { da: '2026-10-01', a: '2026-10-31', totale: 77 },
+    });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findByText('€ 130,00');
+    fireEvent.change(screen.getByLabelText('Cerca nei movimenti'), { target: { value: 'non esiste' } });
+    expect(screen.getByText('Nessun movimento corrisponde ai filtri selezionati.')).toBeTruthy();
+    expect(screen.getByText('€ 130,00')).toBeTruthy();
+    expect(screen.getByText('€ 77,00')).toBeTruthy();
+  });
+});
+
+
+describe('CassaPanel — provenienza visibile e filtrabile', () => {
+  it('distingue cassa e spesa nei due layout e nel filtro', async () => {
+    installFetch({ movimenti: [RIGA_VIRTUALE, { ...RIGA_CASSA, cassa_categoria_id: 'p1', cassa_categoria_nome: 'Quota mensa' }] });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findAllByText('Detersivi');
+    fireEvent.change(screen.getByLabelText('Cassa di provenienza'), { target: { value: 'p1' } });
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(1);
+    expect(within(screen.getByTestId('cassa-movimenti-tabella')).getByText('Quota mensa')).toBeTruthy();
+    expect(screen.getByTestId('cassa-movimento-card').textContent).toContain('Quota mensa');
+    expect(screen.getByTestId('cassa-movimento-card').textContent).toContain('Pulizie e igiene');
+    fireEvent.change(screen.getByLabelText('Cassa di provenienza'), { target: { value: '__generale__' } });
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(1);
+    expect(screen.getByTestId('cassa-movimento-card').textContent).toContain('Retta luglio');
+    expect(screen.getByTestId('cassa-movimento-card').textContent).toContain('Cassa generale');
   });
 });

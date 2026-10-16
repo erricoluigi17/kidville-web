@@ -479,3 +479,30 @@ describe('CassaPanel — più sedi (scuolaId null)', () => {
     expect(log.client).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', messaggio: 'cassa-chiusure-caricamento-fallito: TypeError', stato: 0 }));
   });
 });
+
+
+describe('filtri movimenti per sede', () => {
+  it('filtra la sede solo nella lista e ripristina entrambe le sedi col reset', async () => {
+    installFetch({ movimenti: [RIGA_A, RIGA_B], totali: TOTALI, usciteMese: USCITE_MESE_DUE, saldo: SALDO_DUE });
+    render(<CassaPanel userId="u1" scuolaId={null} />);
+    await screen.findByTestId('cassa-per-sede');
+    fireEvent.change(screen.getByLabelText('Sede dei movimenti'), { target: { value: 'sc-b' } });
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(1);
+    expect(screen.getByTestId('cassa-movimento-card').textContent).toContain('Quota Beta');
+    expect(screen.getByTestId('cassa-per-sede-sc-a').textContent).toContain('€ 130,00');
+    expect(screen.getByTestId('cassa-per-sede-sc-b').textContent).toContain('€ 70,00');
+    fireEvent.click(screen.getByRole('button', { name: 'Azzera filtri' }));
+    expect(screen.getAllByTestId('cassa-movimento-card')).toHaveLength(2);
+  });
+
+  it('il cambio di sede della pagina azzera un filtro sede che diventerebbe invisibile', async () => {
+    installFetch({ movimenti: [RIGA_A, RIGA_B] });
+    const { rerender } = render(<CassaPanel userId="u1" scuolaId={null} />);
+    await screen.findAllByText('Detersivi Alfa');
+    fireEvent.change(screen.getByLabelText('Sede dei movimenti'), { target: { value: 'sc-a' } });
+    installFetch({ movimenti: [RIGA_B] });
+    rerender(<CassaPanel userId="u1" scuolaId="sc-b" />);
+    expect(await screen.findAllByText('Quota Beta')).toHaveLength(2);
+    expect(screen.queryByLabelText('Sede dei movimenti')).toBeNull();
+  });
+});

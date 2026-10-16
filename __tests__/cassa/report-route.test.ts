@@ -17,7 +17,16 @@ const h = vi.hoisted(() => ({
   // Sposta il SUM piatto della funzione: simula un report che non quadra.
   spostaControllo: 0,
   argsRpc: [] as Record<string, unknown>[],
+  argsCashRpc: [] as Record<string, unknown>[],
+  conteggio: { data: { righe: [], totali: { entrate: 0, uscite: 0, prelievi: 0, rettifiche: 0, netto: 0 } } as unknown, error: null as unknown },
+  categoria: { data: null as unknown, error: null as unknown },
+  nomiSedi: [] as { id: string; nome: string }[],
+  buildPdf: vi.fn(() => Buffer.from("%PDF-test")),
+  carta: vi.fn(async (b: Uint8Array) => b),
 }))
+
+vi.mock('@/lib/cassa/stampa', async (orig) => ({ ...(await orig<typeof import('@/lib/cassa/stampa')>()), costruisciConteggioPdf: h.buildPdf }))
+vi.mock('@/lib/carta', () => ({ applicaCartaIntestata: h.carta }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: (...a: unknown[]) => h.requireStaff(...a) }))
 // Dal 2026-09-26 (K3) la GET legge le sedi attive + la `restringiSedi` VERA
@@ -36,6 +45,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
     // Dal 2026-10-10 il report lo calcola `report_cassa_aggregato`: il finto la emula
     // con la semantica di riferimento sulle stesse righe (e propaga l'errore iniettato).
     rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'conteggio_cassa_provenienza') { h.argsCashRpc.push(args); return h.conteggio }
       if (nome !== 'report_cassa_aggregato') throw new Error(`rpc ${nome} non emulata`)
       const errore = h.incassi.error ?? h.movimenti.error
       if (errore) return { data: null, error: errore }
@@ -49,9 +59,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
       return { data, error: null }
     },
     from: (table: string) => {
-      const result = table === 'incassi' ? h.incassi : table === 'schools' ? { data: [], error: null } : h.movimenti
+      const result = table === 'payment_categories' ? h.categoria : table === 'incassi' ? h.incassi : table === 'schools' ? { data: h.nomiSedi, error: null } : h.movimenti
       const b: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'in', 'gte', 'lte', 'order']) b[m] = () => b
+      for (const m of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'maybeSingle']) b[m] = () => b
       b.then = (resolve: (v: unknown) => unknown) => resolve(result)
       return b
     },
@@ -85,7 +95,11 @@ beforeEach(() => {
   h.incassi = { data: [], error: null }
   h.movimenti = { data: [], error: null }
   h.spostaControllo = 0
+  h.categoria = { data: { id: CAT_SAGGIO, nome: 'Saggio', scuola_id: SC }, error: null }
+  h.nomiSedi = [{ id: SC, nome: 'Kidville Alfa' }]
   h.argsRpc = []
+  h.argsCashRpc = []
+  h.conteggio = { data: { righe: [], totali: { entrate: 0, uscite: 0, prelievi: 0, rettifiche: 0, netto: 0 } }, error: null }
 })
 
 // ── CONTRATTO ETICHETTE (P1/P3, condiviso con E3) ────────────────────────────
@@ -333,4 +347,97 @@ describe('GET /api/pagamenti/cassa/report', () => {
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('REPORT_CASSA_NON_CALCOLATO')
   })
+})
+
+
+describe('GET report PDF', () => {
+  it('genera PDF privato sulla carta e logga il successo; totale ignora la categoria residua', async () => {
+    const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale&categoria_pagamento_id=${CAT_SAGGIO}&da=2026-09-01&a=2026-09-30`))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/pdf')
+    expect(res.headers.get('cache-control')).toContain('private')
+    expect(res.headers.get('cache-control')).toContain('no-store')
+    expect(Buffer.from(await res.arrayBuffer()).toString()).toBe('%PDF-test')
+    expect(h.argsRpc).toHaveLength(0)
+    expect(h.argsCashRpc.at(-1)).toEqual({ p_scuola_ids: [SC], p_da: '2026-09-01', p_a: '2026-09-30' })
+    expect(h.buildPdf).toHaveBeenCalledWith(expect.objectContaining({ raggruppamento: 'totale', da: '2026-09-01', a: '2026-09-30', sedi: [expect.objectContaining({ nome: 'Kidville Alfa' })] }))
+    expect(h.carta).toHaveBeenCalledTimes(1)
+    expect(h.logEvento).toHaveBeenCalledWith('cassa', 'info', expect.objectContaining({ esito: 'export-pdf', sedi: 1 }))
+  })
+
+  it('per categoria usa solo la RPC cash e passa la scelta al renderer', async () => {
+    const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=categoria&categoria_pagamento_id=${CAT_SAGGIO}`))
+    expect(res.status).toBe(200)
+    expect(h.argsRpc).toHaveLength(0)
+    expect(h.argsCashRpc).toHaveLength(1)
+    expect(h.buildPdf).toHaveBeenCalledWith(expect.objectContaining({ raggruppamento: 'categoria', categoriaId: CAT_SAGGIO }))
+  })
+
+  it.each(['format=pdf', 'format=pdf&raggruppamento=sede', 'format=pdf&raggruppamento=totale&da=2026-10-01&a=2026-09-30'])('rifiuta una scelta o un periodo invalido: %s', async (qs) => {
+    const res = await GET(req(`scuola_id=${SC}&${qs}`))
+    expect(res.status).toBe(400)
+    expect(h.argsRpc).toHaveLength(0)
+    expect(h.buildPdf).not.toHaveBeenCalled()
+  })
+
+  it('non consegna PDF se i totali cash non quadrano', async () => {
+    h.conteggio = { data: { righe: [], totali: { entrate: 1, uscite: 0, prelievi: 0, rettifiche: 0, netto: 1 } }, error: null }
+    const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('CONTEGGIO_CASSA_NON_QUADRA')
+    expect(h.buildPdf).not.toHaveBeenCalled()
+  })
+})
+
+
+it('PDF: RPC cash assente → 503 esplicito e nessun file parziale', async () => {
+  h.conteggio = { data: null, error: { code: 'PGRST202', message: 'function absent' } }
+  const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale`))
+  expect(res.status).toBe(503)
+  expect((await res.json()).codice).toBe('CONTEGGIO_CASSA_NON_DISPONIBILE')
+  expect(h.buildPdf).not.toHaveBeenCalled()
+  expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ evento: 'conteggio-contanti-db' }), expect.anything())
+})
+
+it('PDF: risultato cash non quadrato o fuori scope → 500 e nessun documento', async () => {
+  h.conteggio = { data: { righe: [], totali: { entrate: 1, uscite: 0, prelievi: 0, rettifiche: 0, netto: 1 } }, error: null }
+  const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale`))
+  expect(res.status).toBe(500)
+  expect((await res.json()).codice).toBe('CONTEGGIO_CASSA_NON_QUADRA')
+  expect(h.buildPdf).not.toHaveBeenCalled()
+})
+
+
+it('PDF scaricabile ha Content-Disposition attachment', async () => {
+  const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale&scarica=1`))
+  expect(res.status).toBe(200)
+  expect(res.headers.get('content-disposition')).toBe('attachment; filename="conteggio-cassa.pdf"')
+})
+
+it('PDF non esce senza nomi delle sedi, evitando etichette sbagliate', async () => {
+  h.nomiSedi = []
+  const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale`))
+  expect(res.status).toBe(503)
+  expect((await res.json()).codice).toBe('CONTEGGIO_SEDI_NON_DISPONIBILI')
+  expect(h.buildPdf).not.toHaveBeenCalled()
+})
+
+it('PDF non accetta una riga della RPC fuori dalle sedi autorizzate', async () => {
+  const importi = { entrate: 10, uscite: 0, prelievi: 0, rettifiche: 0, netto: 10 }
+  h.conteggio = { data: { righe: [{ ...importi, scuola_id: '33333333-3333-4333-8333-333333333333', cassa_categoria_id: null, cassa_nome: null }], totali: importi }, error: null }
+  const res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=totale`))
+  expect(res.status).toBe(500)
+  expect(h.buildPdf).not.toHaveBeenCalled()
+})
+
+
+it('PDF identifica la categoria senza movimenti e non accetta categorie di altre sedi', async () => {
+  let res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=categoria&categoria_pagamento_id=${CAT_SAGGIO}`))
+  expect(res.status).toBe(200)
+  expect(h.buildPdf).toHaveBeenCalledWith(expect.objectContaining({ categoriaNome: 'Saggio' }))
+  h.buildPdf.mockClear()
+  h.categoria = { data: { id: CAT_SAGGIO, nome: 'Saggio altra sede', scuola_id: '33333333-3333-4333-8333-333333333333' }, error: null }
+  res = await GET(req(`scuola_id=${SC}&format=pdf&raggruppamento=categoria&categoria_pagamento_id=${CAT_SAGGIO}`))
+  expect(res.status).toBe(403)
+  expect(h.buildPdf).not.toHaveBeenCalled()
 })

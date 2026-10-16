@@ -745,5 +745,9 @@
   "erroreStoricoNonRiuscito": "The archive operation failed. Please try again.",
   "erroreStoricoScaduto": "The export has expired. Please generate it again.",
   "erroreStoricoRichiestaRifiutata": "Check the location, recipient, date range and document status.",
-  "erroreStoricoVersioneCambiata": "Another member of staff changed the record. Reload before correcting it."
+  "erroreStoricoVersioneCambiata": "Another member of staff changed the record. Reload before correcting it.",
+  "apiConteggioNonDisponibile": "Unable to calculate the cash count. Please try again later.",
+  "apiConteggioNonQuadra": "The cash count totals do not match. The document was not generated.",
+  "apiConteggioSediNonDisponibili": "Unable to identify the locations for the count. Please try again.",
+  "erroreCassaCategoriaNonValida": "The selected cash account or category is no longer available for this location. Update your selection."
 }

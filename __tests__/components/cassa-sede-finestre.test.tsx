@@ -54,6 +54,7 @@ function finto(risposta: (c: Chiamata) => Response | Promise<Response>) {
       corpo: init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null,
     };
     chiamate.push(c);
+    if (c.url.includes('/admin/settings/categorie')) return jsonRes({ success: true, data: [] });
     return risposta(c);
   });
   vi.stubGlobal('fetch', fn);
@@ -142,6 +143,7 @@ describe('CassaMovimentoModal — sede della scrittura', () => {
 
     // Le categorie della sede unica arrivano (presenza, non assenza).
     const categoria = await screen.findByRole('option', { name: 'Pulizie Alfa' });
+    fireEvent.change(screen.getByLabelText(/Cassa di provenienza/), { target: { value: 'generale' } });
     expect(selettoreSede()).toBeNull();
     fireEvent.change(screen.getByLabelText(/Importo/), { target: { value: '12' } });
     fireEvent.change(screen.getByLabelText(/Categoria/), { target: { value: (categoria as HTMLOptionElement).value } });
@@ -184,6 +186,7 @@ describe('CassaMovimentoModal — sede della scrittura', () => {
 
     fireEvent.change(screen.getByLabelText(/Importo/), { target: { value: '40' } });
     fireEvent.change(screen.getByLabelText(/Categoria/), { target: { value: 'cat-b' } });
+    fireEvent.change(screen.getByLabelText(/Cassa di provenienza/), { target: { value: 'generale' } });
     fireEvent.change(screen.getByLabelText(/Foto/i), { target: { files: [new File(['x'], 'scontrino.jpg', { type: 'image/jpeg' })] } });
     fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
 

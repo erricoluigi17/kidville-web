@@ -8,7 +8,7 @@ const categoria = '11111111-1111-4111-8111-111111111111';
 const spesa = '22222222-2222-4222-8222-222222222222';
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/admin/settings/categorie?*', (r) => r.fulfill({ json: { success: true, data: [{ id: categoria, nome: 'Retta', slug: 'retta', scuola_id: null }] } }));
+  await page.route('**/api/admin/settings/categorie?*', (r) => r.fulfill({ json: { success: true, data: [{ id: categoria, nome: 'Retta', slug: 'retta', scuola_id: null, attivo: true }] } }));
   await page.route('**/api/pagamenti/cassa/categorie?*', (r) => r.fulfill({ json: { disponibile: true, categorie: [{ id: spesa, nome: 'Cancelleria', scuola_id: null, attivo: true }] } }));
   await page.route('**/api/pagamenti/cassa/report?*', (r) => r.fulfill({ json: {
     disponibile: true, entrate_per_categoria: [{ categoria_id: categoria, categoria_nome: 'Retta', totale: 140, per_metodo: { contanti: 40, bonifico: 100 } }],
@@ -106,4 +106,40 @@ test.describe('Filtri di sede e mensilità', () => {
     expect(Object.fromEntries(q)).toMatchObject({ scuola_id: IDS.SCUOLA_COLLAUDO, da: '2027-02-01', a: '2027-02-28', categoria_pagamento_id: categoria, format: 'csv' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
+});
+
+
+test('stampa conteggio su mobile: totale indipendente dal filtro, categoria esplicita e PDF nativo', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin/pagamenti?vista=riepilogo');
+  await expect(page.getByTestId('cassa-report-totali')).toContainText('140,00', { timeout: 15_000 });
+  await page.getByLabel('Dal', { exact: true }).fill('2026-09-01');
+  await page.getByLabel('Al', { exact: true }).fill('2026-09-30');
+  await page.getByLabel('Categoria di pagamento', { exact: true }).selectOption(categoria);
+  const stampa = page.getByRole('button', { name: 'Stampa conteggio', exact: true });
+  await stampa.click();
+  const dialogo = page.getByRole('dialog', { name: 'Stampa conteggio' });
+  await expect(dialogo.getByRole('radio', { name: 'Totale', exact: true })).toBeChecked();
+  await expect(dialogo.getByText('01/09/2026 — 30/09/2026', { exact: true })).toBeVisible();
+  const apri = dialogo.getByRole('link', { name: 'Apri PDF', exact: true });
+  let q = new URL((await apri.getAttribute('href'))!, 'http://localhost').searchParams;
+  expect(Object.fromEntries(q)).toMatchObject({ format: 'pdf', raggruppamento: 'totale', da: '2026-09-01', a: '2026-09-30' });
+  expect(q.has('categoria_pagamento_id')).toBe(false);
+  await dialogo.getByRole('radio', { name: 'Per categoria', exact: true }).check();
+  q = new URL((await apri.getAttribute('href'))!, 'http://localhost').searchParams;
+  expect(q.get('raggruppamento')).toBe('categoria');
+  expect(q.has('categoria_pagamento_id')).toBe(false);
+  await dialogo.getByLabel('Categoria di incasso', { exact: true }).selectOption(categoria);
+  const scarica = dialogo.getByRole('link', { name: 'Scarica PDF', exact: true });
+  q = new URL((await scarica.getAttribute('href'))!, 'http://localhost').searchParams;
+  expect(q.get('categoria_pagamento_id')).toBe(categoria);
+  expect(q.get('scarica')).toBe('1');
+  await expect(dialogo.getByText(/escluso fondo iniziale/)).toBeVisible();
+  const bounds = await dialogo.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  await page.keyboard.press('Escape');
+  await expect(dialogo).not.toBeVisible();
+  await expect(stampa).toBeFocused();
 });

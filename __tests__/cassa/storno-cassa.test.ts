@@ -120,6 +120,13 @@ describe('RC3 — osservabilità di marcatura e audit', () => {
 })
 
 describe('POST /api/pagamenti/cassa/movimenti/storno', () => {
+  it('il contromovimento conserva la cassa di provenienza dell’originale', async () => {
+    const categoria = 'ca000000-0000-4000-8000-000000000001'
+    h.orig = { ...h.orig, cassa_categoria_id: categoria }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    expect(h.inserts.find((i) => i.table === 'cassa_movimenti')?.row).toMatchObject({ cassa_categoria_id: categoria, importo: -20 })
+  })
   it('motivo troppo corto → 400', async () => {
     const res = await POST(post({ movimento_id: MOV, motivo: 'x' }))
     expect(res.status).toBe(400)

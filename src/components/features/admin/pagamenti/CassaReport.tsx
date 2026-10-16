@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { BarChart3, Download, X } from 'lucide-react';
+import { BarChart3, Download, Printer, X } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
 import { cx } from '@/lib/ui/cx';
@@ -27,6 +27,7 @@ import { Modal } from '@/components/ui/Modal';
 import { hdr, card, h3, input, label } from '../settings/ui';
 import { BTN_SECONDARY, MODAL_CARD_QUASI_SCHERMO, MODAL_SHADOW } from './ui';
 import { CassaDettaglio } from './CassaDettaglio';
+import { CassaStampaModal } from './CassaStampaModal';
 import { LinkDocumento } from './LinkDocumento';
 import { FiltriSedeMensilitaCassa, useFiltriCassa } from './FiltriSedeMensilitaCassa';
 import { metodoLabel, meseItaliano } from '@/lib/cassa/tipi';
@@ -111,6 +112,8 @@ export function CassaReport({ userId, scuolaId: sedePagina, sedi = NESSUNA_SEDE 
   const [risposta, setRisposta] = useState<{ filtro: object; dati?: ReportData; stato?: number } | null>(null);
   const [dettaglio, setDettaglio] = useState<{ filtro: object; tipo: 'entrata' | 'uscita'; categoriaId: string | null; nome: string; scuolaId: string | null } | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
+  const triggerStampa = useRef<HTMLButtonElement | null>(null);
+  const [stampa, setStampa] = useState<{ filtro: object } | null>(null);
 
   // Categorie di PAGAMENTO (per il filtro entrate cross-mese).
   useEffect(() => {
@@ -238,7 +241,8 @@ export function CassaReport({ userId, scuolaId: sedePagina, sedi = NESSUNA_SEDE 
             <span className="font-maven text-xs text-kidville-green">{t('cassaRepInteroImporto')}</span>
           </label>
         )}
-        {dati?.disponibile && !periodoInvalido && <LinkDocumento href={csvHref} modo="scarica" nomeFile="report-cassa.csv" mime="text/csv" etichetta="report-cassa" className={cx(BTN_SECONDARY, 'ml-auto')}><Download size={14} /> {t('cassaRepScaricaCsv')}</LinkDocumento>}
+        {dati?.disponibile && !periodoInvalido && <button type="button" ref={triggerStampa} onClick={() => setStampa({ filtro })} className={cx(BTN_SECONDARY, 'ml-auto')}><Printer size={14} /> {t('cassaStampaTitolo')}</button>}
+        {dati?.disponibile && !periodoInvalido && <LinkDocumento href={csvHref} modo="scarica" nomeFile="report-cassa.csv" mime="text/csv" etichetta="report-cassa" className={BTN_SECONDARY}><Download size={14} /> {t('cassaRepScaricaCsv')}</LinkDocumento>}
       </div>
 
       {periodoInvalido ? <p role="alert" className="font-maven text-sm text-kidville-error-strong">{t('cassaDetPeriodoInvalido')}</p> : dati === null && !errore ? (
@@ -262,6 +266,13 @@ export function CassaReport({ userId, scuolaId: sedePagina, sedi = NESSUNA_SEDE 
           {perSede.length > 1 && <DettaglioPerSede perSede={perSede} nomeSede={nomeSede} apri={apri} />}
         </div>
       )}
+      {stampa?.filtro === filtro && !errore && !periodoInvalido && <CassaStampaModal
+        userId={userId} scuolaId={scuolaId}
+        nomiSedi={scuolaId ? [nomeSede(scuolaId, dati?.per_sede?.find((s) => s.scuola_id === scuolaId)?.scuola_nome)] : (dati?.per_sede ?? []).map((s) => nomeSede(s.scuola_id, s.scuola_nome))}
+        da={intero ? undefined : da} a={intero ? undefined : a}
+        categorie={categoriePag.map((c) => ({ id: c.id, etichetta: etichettaCategoria(c) }))}
+        onClose={() => setStampa(null)} returnFocusRef={triggerStampa}
+      />}
       {dettaglio && dettaglio.filtro === filtro && !errore && !periodoInvalido && <Modal open safeArea title={t('cassaRepDetTitolo', { categoria: dettaglio.nome })} onClose={() => setDettaglio(null)} returnFocusRef={trigger} className={MODAL_CARD_QUASI_SCHERMO} style={{ boxShadow: MODAL_SHADOW }}>
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5"><h2 className={h3}>{t('cassaRepDetTitolo', { categoria: dettaglio.nome })}</h2><button type="button" onClick={() => setDettaglio(null)} aria-label={t('cassaDetChiudi')} className={BTN_SECONDARY}><X size={18} /></button></div>
         <div className="min-h-0 flex-1 overflow-y-auto p-5"><CassaDettaglio userId={userId} scuolaId={dettaglio.scuolaId} tipo={dettaglio.tipo} categoriaId={dettaglio.categoriaId} da={intero ? undefined : da} a={intero ? undefined : a} /></div>

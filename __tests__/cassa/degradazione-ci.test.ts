@@ -128,6 +128,7 @@ const ROTTE: { nome: string; chiama: () => Promise<Response> }[] = [
           importo: 12.5,
           metodo: 'contanti',
           categoria_id: CAT,
+          cassa_categoria_id: null,
           descrizione: 'Test degradazione',
         }),
       ),

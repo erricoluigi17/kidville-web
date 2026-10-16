@@ -51,6 +51,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.gte = () => b
       b.lte = () => b
       b.order = () => b
+      b.range = async (da: number, a: number) => {
+        const r = table === 'cassa_movimenti' ? h.movimentiResp : table === 'incassi' ? h.incassiResp : { data: [], error: null }
+        return { ...r, data: Array.isArray(r.data) ? r.data.slice(da, a + 1) : null }
+      }
       b.insert = (row: unknown) => {
         h.inserts.push({ table, row })
         b._insert = row
@@ -212,14 +216,14 @@ describe('POST /api/pagamenti/cassa/movimenti', () => {
   it("uscita da SEGRETERIA → notifica gli admin (notificaUscitaNonAdmin)", async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE } })
     const catId = '11111111-1111-4111-8111-111111111111'
-    const res = await POST(postReq({ scuola_id: SEDE, tipo: 'uscita', importo: 15, metodo: 'contanti', categoria_id: catId }))
+    const res = await POST(postReq({ scuola_id: SEDE, tipo: 'uscita', importo: 15, metodo: 'contanti', categoria_id: catId, cassa_categoria_id: null }))
     expect(res.status).toBe(201)
     expect(h.notificaUscita).toHaveBeenCalledTimes(1)
   })
 
   it('uscita da ADMIN → NON notifica (è l\'admin stesso)', async () => {
     const catId = '11111111-1111-4111-8111-111111111111'
-    const res = await POST(postReq({ scuola_id: SEDE, tipo: 'uscita', importo: 15, metodo: 'contanti', categoria_id: catId }))
+    const res = await POST(postReq({ scuola_id: SEDE, tipo: 'uscita', importo: 15, metodo: 'contanti', categoria_id: catId, cassa_categoria_id: null }))
     expect(res.status).toBe(201)
     expect(h.notificaUscita).not.toHaveBeenCalled()
   })

@@ -189,3 +189,52 @@ describe('CassaReport — più sedi (scuolaId null)', () => {
     expect((screen.getByLabelText('Categoria di pagamento') as HTMLSelectElement).hasAttribute('aria-describedby')).toBe(false);
   });
 });
+
+
+describe('CassaReport — stampa conteggio', () => {
+  it('apre una scelta e stampa il totale senza ereditare la categoria a schermo', async () => {
+    installFetch({ report: REPORT_UNA, categorie: CATEGORIE_DUE.slice(0, 2) });
+    render(<CassaReport userId="u1" scuolaId="sc-a" sedi={[SEDI[0]]} />);
+    await screen.findByRole('option', { name: 'Gita' });
+    fireEvent.change(screen.getByLabelText('Categoria di pagamento'), { target: { value: 'ga' } });
+    await screen.findByTestId('cassa-report-totali');
+    fireEvent.change(screen.getByLabelText('Dal'), { target: { value: '2026-09-01' } });
+    fireEvent.change(screen.getByLabelText('Al'), { target: { value: '2026-09-30' } });
+    const pulsante = await screen.findByRole('button', { name: 'Stampa conteggio' });
+    fireEvent.click(pulsante);
+    const modale = screen.getByRole('dialog', { name: 'Stampa conteggio' });
+    expect(within(modale).getByText(/Alfa/)).toBeTruthy();
+    expect(within(modale).getByText(/01\/09\/2026.*30\/09\/2026/)).toBeTruthy();
+    expect((within(modale).getByLabelText('Totale') as HTMLInputElement).checked).toBe(true);
+    const href = within(modale).getByRole('link', { name: 'Apri PDF' }).getAttribute('href');
+    const query = new URL(href!, 'http://localhost').searchParams;
+    expect(query.get('format')).toBe('pdf');
+    expect(query.get('raggruppamento')).toBe('totale');
+    expect(query.get('scuola_id')).toBe('sc-a');
+    expect(query.get('da')).toBe('2026-09-01');
+    expect(query.get('a')).toBe('2026-09-30');
+    expect(query.has('categoria_pagamento_id')).toBe(false);
+  });
+
+  it('per categoria usa la scelta della modale, anche tutte, senza riusare il vecchio filtro', async () => {
+    installFetch({ report: REPORT_DUE, categorie: CATEGORIE_DUE });
+    render(<CassaReport userId="u1" scuolaId={null} sedi={SEDI} />);
+    await screen.findByRole('option', { name: 'Gita — Beta' });
+    fireEvent.change(screen.getByLabelText('Categoria di pagamento'), { target: { value: 'ga' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Stampa conteggio' }));
+    const modale = screen.getByRole('dialog', { name: 'Stampa conteggio' });
+    fireEvent.click(within(modale).getByLabelText('Per categoria'));
+    const categoria = within(modale).getByLabelText('Categoria di incasso');
+    const parametri = () => new URL(within(modale).getByRole('link', { name: 'Scarica PDF' }).getAttribute('href')!, 'http://localhost').searchParams;
+    expect(parametri().get('raggruppamento')).toBe('categoria');
+    expect(parametri().has('scuola_id')).toBe(false);
+    expect(parametri().has('categoria_pagamento_id')).toBe(false);
+    fireEvent.change(categoria, { target: { value: 'gb' } });
+    expect(parametri().get('categoria_pagamento_id')).toBe('gb');
+    expect(within(modale).getByText(/Il filtro comprende entrate e uscite contanti/)).toBeTruthy();
+    fireEvent.click(within(modale).getByLabelText('Totale'));
+    expect(parametri().has('categoria_pagamento_id')).toBe(false);
+    fireEvent.click(within(modale).getByRole('button', { name: 'Chiudi' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});

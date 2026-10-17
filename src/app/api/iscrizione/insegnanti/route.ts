@@ -75,8 +75,12 @@ import type { FormPage } from '@/types/database.types'
  */
 const OPERAZIONE = 'iscrizione/insegnanti:POST'
 
-/** L'unico posto in cui si nomina il cockpit di segreteria. */
-const LINK_COCKPIT = '/admin/modulistica?tab=candidature'
+/**
+ * L'unico posto in cui si nomina il cockpit di segreteria. Dal 2026-10-17 è una pagina propria;
+ * le notifiche spedite prima portano `/admin/modulistica?tab=candidature`, che rimanda qui da
+ * `redirects()` in `next.config.ts`.
+ */
+const LINK_COCKPIT = '/admin/candidature'
 
 /** I ruoli che in segreteria leggono le candidature. */
 const RUOLI_SEGRETERIA = ['admin', 'coordinator', 'segreteria']

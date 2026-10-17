@@ -391,6 +391,22 @@ const TITOLI_AMMESSI = TITOLI_STUDIO.map((o) => String(o.value))
 /** `z.enum` da un elenco costruito a runtime, senza cast sparsi nello schema. */
 const zFraElenco = (valori: string[]) => z.enum(valori as [string, ...string[]])
 
+/**
+ * `?posizione=cuoca,segreteria` — una o più posizioni, separate da virgola (dal 2026-10-17
+ * la barra le offre a pastiglie spuntabili; `motore.ts` scrive un campo `multi` così). Un
+ * valore solo resta valido: i collegamenti di prima continuano a funzionare.
+ *
+ * Basta UN pezzo sconosciuto — o vuoto, come in `cuoca,` — per un 400: un filtro acceso a
+ * metà, che scarta in silenzio la parte che non capisce, mostrerebbe un elenco più largo di
+ * quello chiesto con l'aria di essere quello giusto. Il tetto si conta su ciò che è ARRIVATO,
+ * prima di togliere i doppioni.
+ */
+const zPosizioni = z
+  .string()
+  .transform((s) => s.split(',').map((v) => v.trim()))
+  .pipe(z.array(zFraElenco(POSIZIONI_AMMESSE)).min(1).max(POSIZIONI_AMMESSE.length))
+  .transform((v) => [...new Set(v)])
+
 const getQuerySchema = z.object({
   // Un percorso di storage non è lungo: una stringa senza tetto è solo
   // superficie d'attacco in più (stesso tetto di `pagamenti/cassa/allegato:GET`).
@@ -412,7 +428,7 @@ const getQuerySchema = z.object({
   stato: zOpzionale(z.enum(STATI_CANDIDATURA)),
   /** La sede su cui guardare: RESTRINGE le sedi attive, non le sostituisce. */
   scuola_id: zOpzionale(zUuid),
-  posizione: zOpzionale(zFraElenco(POSIZIONI_AMMESSE)),
+  posizione: zOpzionale(zPosizioni),
   grado: zOpzionale(zFraElenco(GRADI_AMMESSI)),
   titolo: zOpzionale(zFraElenco(TITOLI_AMMESSI)),
   /** Sigla di provincia. Il confronto col database è già senza maiuscole. */
@@ -610,7 +626,9 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
       // da un filtro — e la richiesta esce con un 503 che nomina la colonna nel
       // log. È il degrado giusto: un elenco NON filtrato spacciato per filtrato
       // sarebbe la bugia che tutto questo lavoro esiste per togliere.
-      if (q.data.posizione) query = query.contains('posizioni', [q.data.posizione])
+      // Più posizioni = «almeno una delle scelte» (`&&`, `overlaps`), non «tutte»: chi
+      // cerca «cuoca o segreteria» cerca un bacino di persone, non un'intersezione.
+      if (q.data.posizione) query = query.overlaps('posizioni', q.data.posizione)
       if (q.data.grado) query = query.contains('gradi', [q.data.grado])
       if (q.data.titolo) query = query.eq('titolo_studio', q.data.titolo)
       // Per PREFISSO: la colonna è `varchar(2)`, quindi con due lettere è

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, within } from '@testing-library/react'
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -189,7 +189,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   urlChieste = []
   elencoInGuasto = false
-  window.history.replaceState(null, '', '/admin/modulistica?tab=candidature')
+  window.history.replaceState(null, '', '/admin/candidature')
   vi.stubGlobal('fetch', vi.fn(fetchFinto))
 })
 
@@ -330,6 +330,26 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     const conOffset = urlChieste.filter((u) => /offset=(?!0\b)\d+/.test(u))
     expect(conOffset.length).toBeGreaterThan(0)
     for (const u of conOffset) expect(u).toContain('stato=rifiutata')
+  })
+
+  // Dal 2026-10-17 la posizione sta IN VISTA, a pastiglie spuntabili, e se ne scelgono
+  // anche più d'una. Prima era una tendina a scelta singola nascosta dietro «⚙ Filtri»:
+  // `getByRole` non trova i controlli dentro un pannello `hidden`, quindi questo test è
+  // rosso finché le pastiglie non stanno nella riga principale.
+  it('la posizione si sceglie a pastiglie in vista, anche più d’una, e viaggia come lista', async () => {
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(cognomiVisibili().length).toBe(PAGINA))
+    const gruppo = screen.getByRole('group', { name: 'Posizione' })
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Cuoca / aiuto cucina' }))
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Segreteria / amministrazione' }))
+    expect(within(gruppo).getByRole('button', { name: 'Cuoca / aiuto cucina' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(
+      () =>
+        expect(
+          urlChieste.some((u) => new URL(u, 'http://x').searchParams.get('posizione') === 'cuoca,segreteria'),
+        ).toBe(true),
+      { timeout: 5000 },
+    )
   })
 
   it('🔴 se la lettura del NUOVO filtro fallisce, le righe del VECCHIO non restano a schermo', async () => {

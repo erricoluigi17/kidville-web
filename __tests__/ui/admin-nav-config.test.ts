@@ -56,3 +56,36 @@ describe('NAV_GROUPS — copre le rotte cardine della nav', () => {
     },
   );
 });
+
+// Le candidature («Lavora con noi») escono da Modulistica e diventano una voce
+// propria del menu (decisione del titolare, 2026-10-17): sono centinaia di
+// curriculum da scorrere ogni settimana, e una linguetta al quarto posto di una
+// pagina che parla d'altro non è un posto dove si torna.
+describe('Candidature — voce propria nel gruppo Amministrazione', () => {
+  const amministrazione = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_amministrazione');
+  const voci = amministrazione?.items ?? [];
+  const candidature = voci.find((i) => i.href === '/admin/candidature') as NavItem;
+
+  it('esiste, nel gruppo Amministrazione, subito sopra Modulistica', () => {
+    expect(candidature).toBeDefined();
+    const posCand = voci.findIndex((i) => i.href === '/admin/candidature');
+    const posModulistica = voci.findIndex((i) => i.href === '/admin/modulistica');
+    expect(posCand).toBe(posModulistica - 1);
+  });
+
+  // Gli stessi tre ruoli che `requireStaff` ammette sulla GET dell'elenco: la
+  // `cuoca` entra nell'area admin per il report cucina, e una voce che promette i
+  // curriculum per poi risponderle 403 sarebbe un menu che mente.
+  it('la vedono admin, coordinatrice e segreteria — non la cuoca', () => {
+    expect(visibleItem(candidature, 'admin')).toBe(true);
+    expect(visibleItem(candidature, 'coordinator')).toBe(true);
+    expect(visibleItem(candidature, 'segreteria')).toBe(true);
+    expect(visibleItem(candidature, 'cuoca')).toBe(false);
+  });
+
+  it.each(['it', 'en'])("l'etichetta nav_candidature esiste nel catalogo %s", async (lingua) => {
+    const catalogo = (await import(`../../messages/${lingua}/etichette.json`)).default as Record<string, unknown>;
+    expect(candidature.labelKey).toBe('nav_candidature');
+    expect(typeof catalogo.nav_candidature).toBe('string');
+  });
+});

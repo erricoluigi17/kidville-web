@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, within } from '@testing-library/react'
 
 // ⚠️ Le frasi si prendono dal CATALOGO, mai ricopiate qui: un testo congelato in
 // un test rende rosso il giorno in cui qualcuno migliora una parola, e verde il
@@ -140,7 +140,7 @@ beforeEach(() => {
     total: 1,
     colonnaAssente: false,
   }
-  window.history.replaceState(null, '', '/admin/modulistica?tab=candidature')
+  window.history.replaceState(null, '', '/admin/candidature')
   vi.stubGlobal('fetch', vi.fn(fetchFinto))
 })
 
@@ -157,7 +157,11 @@ import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/Ca
  * per etichetta visibile prenderebbe il primo dei due, cioè un test che passa
  * guardando il controllo sbagliato: si cercano per `id`, che nel markup è unico.
  */
-const filtro = () => document.getElementById('filtro-etichetta') as HTMLSelectElement | null
+// Dal 2026-10-17 il filtro è un GRUPPO di pastiglie (`fieldset`), non più una tendina:
+// `disabled` sul `fieldset` spegne tutte le pastiglie insieme.
+const filtro = () => document.getElementById('filtro-etichetta') as HTMLFieldSetElement | null
+/** Una pastiglia del filtro, per nome visibile, cercata DENTRO il gruppo del filtro. */
+const pastiglia = (nome: string) => within(filtro() as HTMLElement).getByRole('button', { name: nome })
 const menuDi = (id: string) => document.getElementById(`etichetta-${id}`) as HTMLSelectElement | null
 
 const attendiElenco = () => waitFor(() => expect(screen.getByText('Prima Candidata')).toBeInTheDocument())
@@ -252,6 +256,40 @@ describe('CandidatureInsegnanti — l’etichetta di selezione', () => {
       etichetta: null,
     })
     await waitFor(() => expect(menuDi(CON_ETICHETTA)?.value).toBe(''))
+  })
+
+  // Dal 2026-10-17: pastiglie in vista e a scelta MULTIPLA (decisione del titolare).
+  // Nessuna accesa = tutte; più accese = «almeno una di queste», «Senza etichetta» compresa.
+  it('il filtro si sceglie a pastiglie, anche più d’una, «Senza etichetta» compresa', async () => {
+    render(<CandidatureInsegnanti />)
+    await attendiElenco()
+    await waitFor(() => expect(filtro()).not.toBeNull())
+    expect(screen.getByText('Seconda Candidata')).toBeInTheDocument()
+
+    fireEvent.click(pastiglia(itAdminAltro.candEtichettaDaRichiamare))
+    await waitFor(() => expect(screen.queryByText('Seconda Candidata')).toBeNull())
+    expect(screen.getByText('Prima Candidata')).toBeInTheDocument()
+    expect(pastiglia(itAdminAltro.candEtichettaDaRichiamare)).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(pastiglia(itAdminAltro.candEtichettaFiltroSenza))
+    await waitFor(() => expect(screen.getByText('Seconda Candidata')).toBeInTheDocument())
+    expect(screen.getByText('Prima Candidata')).toBeInTheDocument()
+
+    fireEvent.click(pastiglia(itAdminAltro.candEtichettaDaRichiamare))
+    await waitFor(() => expect(screen.queryByText('Prima Candidata')).toBeNull())
+    expect(screen.getByText('Seconda Candidata')).toBeInTheDocument()
+  })
+
+  it('un’etichetta che nessuno ha non mostra nessuno — e spegnendola torna l’elenco intero', async () => {
+    render(<CandidatureInsegnanti />)
+    await attendiElenco()
+    await waitFor(() => expect(filtro()).not.toBeNull())
+    fireEvent.click(pastiglia(itAdminAltro.candEtichettaAssunta))
+    await waitFor(() => expect(screen.queryByText('Prima Candidata')).toBeNull())
+    expect(screen.queryByText('Seconda Candidata')).toBeNull()
+    fireEvent.click(pastiglia(itAdminAltro.candEtichettaAssunta))
+    await waitFor(() => expect(screen.getByText('Seconda Candidata')).toBeInTheDocument())
+    expect(screen.getByText('Prima Candidata')).toBeInTheDocument()
   })
 
   it('🔴 mappa TAGLIATA (`total` > righe): il filtro si SPEGNE e lo dice', async () => {

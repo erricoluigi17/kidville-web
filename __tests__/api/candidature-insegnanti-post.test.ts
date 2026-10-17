@@ -722,7 +722,9 @@ describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
     expect(h.notifiche).toHaveLength(1)
     expect(h.notifiche[0].tipo).toBe('candidatura_ricevuta')
     expect(h.notifiche[0].scuolaId).toBe(SEDE_A)
-    expect(h.notifiche[0].link).toBe('/admin/modulistica?tab=candidature')
+    // La pagina propria delle candidature, dal 2026-10-17 (prima: la linguetta di Modulistica,
+    // che per le notifiche già spedite rimanda qui da `next.config.ts`).
+    expect(h.notifiche[0].link).toBe('/admin/candidature')
     // IL CORPO DICE QUALE DEI TRE FATTI È SUCCESSO, e nessun'altra asserzione lo
     // teneva fermo: svuotarlo lasciava la suite verde, cioè la segreteria poteva
     // ricevere una notifica senza testo senza un rosso.

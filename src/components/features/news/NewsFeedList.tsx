@@ -8,6 +8,7 @@ import { cx } from '@/lib/ui/cx'
 import type { NewsCategoria, NewsPost } from '@/lib/news/tipi'
 import { NewsCard } from './NewsCard'
 import { NewsArchivioDrawer, formattaMeseArchivio } from './NewsArchivioDrawer'
+import { DUE_COLONNE } from '@/lib/ui/larghezza-pagina'
 
 // =============================================================================
 // Contratto API tollerante (Step 3 sviluppa in parallelo): il feed può tornare
@@ -280,7 +281,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Feed */}
       {!loading && !errore && posts.length > 0 && (
-        <div className="flex flex-col gap-3">
+        <div data-kv-colonne className={DUE_COLONNE}>
           {posts.map((p) => (
             <NewsCard
               key={p.id}

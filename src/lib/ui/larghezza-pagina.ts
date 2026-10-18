@@ -24,18 +24,23 @@ export const COLONNA_DOCENTE_LARGA = 'mx-auto max-w-[460px] tablet:max-w-5xl';
 const COLONNA_GENITORE = 'max-w-[430px] tablet:max-w-[720px]';
 const COLONNA_GENITORE_LARGA = 'max-w-[430px] tablet:max-w-5xl';
 
-/** Larghe con le loro sottorotte (`/parent/news/<id>` compresa). */
-export const ROTTE_LARGHE_GENITORE: readonly string[] = [
-  '/parent/chat',
+/** Larghe con le loro sottorotte: la chat a due riquadri. */
+export const ROTTE_LARGHE_GENITORE: readonly string[] = ['/parent/chat'];
+
+/**
+ * Larghe SOLO in sé. Sono elenchi di schede che da 1024 px vanno su due colonne; le loro
+ * sottorotte sono pagine da leggere (`/parent/news/<id>`, il digest) e restano a 720. Per
+ * prefisso, `/parent` allargherebbe tutta l'area del genitore, e una pagina futura sotto
+ * `/parent/pagamenti` nascerebbe larga senza che nessuno l'abbia deciso.
+ */
+export const ROTTE_LARGHE_GENITORE_ESATTE: readonly string[] = [
+  '/parent',
   '/parent/gallery',
   '/parent/mensa',
   '/parent/pagamenti',
   '/parent/avvisi',
   '/parent/news',
 ];
-
-/** Larghe SOLO in sé: `/parent` per prefisso allargherebbe tutta l'area del genitore. */
-export const ROTTE_LARGHE_GENITORE_ESATTE: readonly string[] = ['/parent'];
 
 export function classeColonnaGenitore(pathname: string): string {
   const larga =

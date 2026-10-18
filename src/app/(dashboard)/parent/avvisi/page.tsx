@@ -9,6 +9,7 @@ import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { fetchConCache } from '@/lib/offline/read-cache';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { DUE_COLONNE } from '@/lib/ui/larghezza-pagina';
 
 // m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce — nome, `student_id`
 // e, dal 2026-09-19, lo STATO DELLA RIGA di ciascuno — così il feed unificato può
@@ -192,7 +193,7 @@ function ParentAvvisiContent() {
 
             {/* Avvisi */}
             {!loading && avvisi.length > 0 && (
-                <div className="space-y-3">
+                <div data-kv-colonne className={DUE_COLONNE}>
                     {avvisi.map((avviso, idx) => {
                         // m3: il/i figlio/i cui si riferisce l'avviso (entrambi se globale).
                         const figli = avviso.figli ?? [];

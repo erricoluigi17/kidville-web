@@ -30,16 +30,13 @@ describe('larghezza-pagina — le colonne di genitori e docenti', () => {
     expect(classeColonnaGenitore('/parent/diary')).toBe('max-w-[430px] tablet:max-w-[720px]');
   });
 
-  it('le schermate su più colonne del genitore sono larghe', () => {
-    for (const r of [
-      '/parent/gallery',
-      '/parent/mensa',
-      '/parent/pagamenti',
-      '/parent/avvisi',
-      '/parent/news',
-      '/parent/news/abc',
-    ]) {
+  it('le schermate su più colonne del genitore sono larghe, le loro pagine di lettura no', () => {
+    for (const r of ['/parent/gallery', '/parent/mensa', '/parent/pagamenti', '/parent/avvisi', '/parent/news']) {
       expect(classeColonnaGenitore(r), r).toBe('max-w-[430px] tablet:max-w-5xl');
+    }
+    // Il dettaglio di una news e il digest sono testo da leggere: restano nella colonna da 720.
+    for (const r of ['/parent/news/abc', '/parent/news/digest', '/parent/news/digest/abc']) {
+      expect(classeColonnaGenitore(r), r).toBe('max-w-[430px] tablet:max-w-[720px]');
     }
   });
 

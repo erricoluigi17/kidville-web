@@ -8,11 +8,14 @@ import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { colonneGalleria } from '@/lib/ui/larghezza-pagina';
+import { useFormatoGuscio } from '@/lib/ui/use-formato-guscio';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentGalleryContent() {
     const t = useTranslations('parentServizi');
     const { parentId, studentId, ready } = useParentIdentity();
+    const formato = useFormatoGuscio();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -143,10 +146,10 @@ function ParentGalleryContent() {
                         </motion.div>
                     ) : (
                         <div className="bg-white rounded-2xl border border-kidville-green/10 p-3 sm:p-4 shadow-sm">
-                            {/* Due colonne DICHIARATE: la colonna del genitore è larga ~358 px sul
-                                telefono, e il numero non si deduce dal viewport (vedi la prop
-                                `colonne` di MediaGrid). */}
-                            <MediaGrid items={media} showActions colonne={2} />
+                            {/* Colonne DICHIARATE, non dedotte dal viewport (vedi la prop
+                                `colonne` di MediaGrid): 2 nella colonna da telefono, 3 sul
+                                binario e 4 con la sidebar, dove la pagina è larga. */}
+                            <MediaGrid items={media} showActions colonne={colonneGalleria(formato)} />
                         </div>
                     )}
 

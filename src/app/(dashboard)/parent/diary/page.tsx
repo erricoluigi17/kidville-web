@@ -19,6 +19,7 @@ import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '
 import { voceDaMostrare } from '@/lib/diary/registrazione';
 import { orarioAttivita, oraDiLatoAttivita } from '@/lib/diary/attivita';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
+import { useFormatoGuscio } from '@/lib/ui/use-formato-guscio';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { oraDiRoma } from '@/lib/presenze/orario';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
@@ -393,6 +394,7 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
 function PhotosSection({ photos }: { photos: MediaItem[] }) {
     const t = useTranslations('diario');
     const [open, setOpen] = useState(false);
+    const formato = useFormatoGuscio();
     if (photos.length === 0) return null;
     return (
         <motion.div
@@ -432,9 +434,10 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         className="overflow-hidden"
                     >
                         <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-kidville-cream-dark rounded-b-3xl">
-                            {/* Due colonne dichiarate: qui la griglia vive dentro una scheda del
-                                diario, ancora più stretta della galleria. */}
-                            <MediaGrid items={photos} showActions colonne={2} />
+                            {/* Colonne dichiarate: qui la griglia vive dentro una scheda del
+                                diario, ancora più stretta della galleria. Due sul telefono; tre
+                                da tablet, dove la scheda sta nella colonna di lettura da 720. */}
+                            <MediaGrid items={photos} showActions colonne={formato === 'telefono' ? 2 : 3} />
                         </div>
                     </motion.div>
                 )}

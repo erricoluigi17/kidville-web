@@ -310,6 +310,11 @@ describe('MediaGrid — le colonne della griglia le decide il CHIAMANTE', () => 
         render(<MediaGrid items={[FOTO]} colonne={3} />);
         expect(classi(screen.getByTestId('griglia-media'))).toContain('grid-cols-3');
     });
+
+    it('la griglia dichiara quante colonne le ha chiesto il chiamante (la legge l’E2E tablet)', () => {
+        render(<MediaGrid items={[FOTO]} colonne={4} />);
+        expect(screen.getByTestId('griglia-media').getAttribute('data-kv-colonne')).toBe('4');
+    });
 });
 
 describe('MediaGrid — la card della griglia', () => {

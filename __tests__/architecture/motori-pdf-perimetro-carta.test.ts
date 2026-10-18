@@ -52,7 +52,7 @@ const SULLA_CARTA: Record<string, string> = {
   'src/lib/presenze/registro-pdf.ts': 'registro presenze su foglio orizzontale',
   'src/lib/cassa/stampa.ts': 'conteggio contanti per sede e cassa di provenienza, con carta applicata dalla route report',
   'src/lib/merch/pdf.ts': "ordine al fornitore — l'unico che esce verso un terzo",
-  'src/lib/storici/impaginazione-pdf.ts': 'contenuti dei dossier storici: tabelle orizzontali e schede verticali, carta applicata dal compositore render.ts',
+  'src/lib/storici/impaginazione-pdf.ts': 'contenuti dei dossier storici: tabelle per giorno, verticali o orizzontali, carta applicata dal compositore render.ts',
 }
 
 /**

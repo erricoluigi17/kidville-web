@@ -116,3 +116,14 @@ Il gate resta quello di progetto: eslint, tsc, vitest, build, E2E in CI.
 - Il modo in cui l'app salva il diario (una riga per bambino): resta com'è.
 - Modelli su misura per ogni categoria (approccio B, scartato).
 - Struttura dell'Excel.
+
+## Aggiornamento in implementazione (18/10)
+
+- La nota di sezione non è più una colonna: l'adattatore la trasforma in una riga del giorno
+  (`_nota_giorno`), una per giorno e testo, in tutte le voci del diario. Il PDF la stampa sotto il
+  titolo del giorno; Excel e il blocco comune del dossier la vedono una volta.
+- Nel dossier per alunno la riga di classe porta la partecipazione a soli conteggi; nomi e note
+  individuali restano nelle schede dei singoli.
+- L'autrice sale in testata quando è la stessa per tutta la sezione, non per singolo giorno.
+- Oltre 7 colonne i dati brevi in eccesso vanno in «Altri dati», e le larghezze delle colonne
+  sono calcolate: con 12 colonne `autoTable` riduceva l'argomento a un carattere (193 pagine).

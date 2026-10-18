@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * TopBar MOBILE del cockpit Direzione/Segreteria (<lg) — barra VERDE del brand.
+ * TopBar MOBILE del cockpit Direzione/Segreteria (<744 px) — barra VERDE del brand.
+ * Da 744 px (iPad mini in verticale) c'è la topbar desktop col binario del tablet.
  *
  * Sostituisce, sotto i 1024px, la vecchia topbar bianca (badge K + hamburger →
  * drawer) con la stessa barra verde persistente dell'AppBar genitore/docente:
@@ -36,7 +37,7 @@ export function AdminTopBarMobile() {
   const { userId, withUser } = useAdminIdentity();
 
   return (
-    <header className="kv-admin-topbar kv-appbar-admin sticky top-0 z-[105] flex items-center gap-2.5 bg-kidville-green px-4 pb-3 pt-2 lg:hidden">
+    <header className="kv-admin-topbar kv-appbar-admin sticky top-0 z-[105] flex items-center gap-2.5 bg-kidville-green px-4 pb-3 pt-2 tablet:hidden">
       <Link href={withUser('/admin')} aria-label={t('homeAria')} className="mr-auto">
         <Image
           src="/logo-light.png"
@@ -48,7 +49,7 @@ export function AdminTopBarMobile() {
         />
       </Link>
       <SedeSelector userId={userId} compatto />
-      <AdminNotificationsPanel userId={userId} attivoSu="(max-width: 1023.98px)" />
+      <AdminNotificationsPanel userId={userId} attivoSu="(max-width: 743.98px)" />
     </header>
   );
 }

@@ -1,6 +1,35 @@
+## 📱 Changelog — iPad, PR 3 di 3: la segreteria su tablet, e le card degli avvisi che restavano bianche — 2026-10-18 (branch `feat/ipad-tablet-segreteria`)
+
+**Stato:** implementato sul branch, in attesa di CI e merge. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr3.md`.
+
+Su iPad il cockpit della segreteria aveva due forme, tutte e due sbagliate. Sotto i 1024 px (iPad mini e 11" in verticale) era la versione telefono, con la pillola in basso e il foglio «Menu» intorno a pagine che da 768 px mostrano già tabelle da scrivania. Da 1024 px c'era la sidebar piena da 256 px: su un 11" in orizzontale (1194 px) lasciava 938 px a un registro transazioni largo almeno 820, più i margini.
+
+- **Tre forme del guscio** (`src/app/(dashboard)/admin/layout.tsx`):
+  - **telefono** (< 744 px): com'era, cioè topbar verde mobile, pillola in basso e foglio «Menu»;
+  - **tablet** (744–1279 px): la topbar desktop da 64 px e il **binario a icone da 88 px** (`AdminBinario`). Ha i quattro tab della pillola (Home, Avvisi, Contabilità, Mensa: una lista sola, `tab-admin.ts`, per le due navigazioni), Anagrafica e «Menu». «Menu» apre lo stesso contenuto del foglio (`AdminMenuSheet`, variante `pannello`) in un pannello largo 360 px accanto al binario: stesse voci, stesso filtro per ruolo, stessa scelta della sede, stesso focus trap. Si accende una voce sola: su una pagina che sta solo nel menu si accende «Menu» (`aria-current="true"`), come nella pillola;
+  - **scrivania** (≥ 1280 px): la sidebar piena di prima, che ora parte da 1280 (`xl:`) invece che da 1024. Con il binario, sull'11" in orizzontale restano 1106 px invece di 938.
+- **Gli overlay del contenuto** (`fixed inset-0` dentro `[data-cockpit-content]`) partono dopo la navigazione, larga `--kv-rail-w`: 88 px col binario, 16rem con la sidebar. Prima la regola valeva da 1024 px con `16rem` scritto a mano; ora la variabile la dichiara il guscio (`data-kv-guscio-admin`).
+- **Pagine dense:**
+  - **Impostazioni:** la sidebar delle sezioni compare da 1024 px invece che da 768. Col binario, i suoi 224 px lasciavano al modulo ~400 px; sotto i 1024 restano le pillole scorrevoli. In più, la sidebar si appoggia a `top-20` invece che a `top-6`: a `top-6` la sua cima finiva sotto la topbar appiccicata.
+  - **Anagrafica:** le cinque statistiche vanno su tre colonne fra 768 e 1023 px (erano cinque da ~110 px, con le etichette a capo) e su cinque da 1024.
+- **Comandi che comparivano solo al passaggio del mouse.** In Tailwind v4 `hover:` vale solo dove c'è un mouse, quindi su iPad non comparivano mai. Ora si vedono senza mouse (`[@media(hover:none)]`) e col fuoco della tastiera:
+  - il cestino di un campo nel costruttore dei moduli: su iPad un campo non si poteva togliere;
+  - «Apri ›» sulle schede delle sezioni.
+
+  Lock nuovo: `__tests__/architecture/comandi-non-solo-al-passaggio.test.ts`. Resta fuori, dichiarato come eccezione, il velo con didascalia e autore delle miniature della galleria: il visore che si apre al tocco ripete le stesse informazioni.
+- **«Esci» leggibile.** Nella sidebar e nel menu della segreteria passa da `text-kidville-error` (#E53935, 4,23:1 sul bianco) a `text-kidville-error-strong`: è lo stesso difetto corretto nella PR 1 per genitori e docenti.
+- **Le card degli avvisi bianche.** Nelle schermate WebKit dell'E2E tablet di #239 e #240 due card degli avvisi per giro restavano a opacità 0, in posizioni diverse ogni volta. La card è un `motion.div` che entra con `initial={{ opacity: 0 }}` e aveva anche `transition-all`: framer-motion anima l'opacità con le Web Animations e alla fine la scrive in linea, e la transizione CSS sulla stessa proprietà dello stesso elemento gli contende quel valore.
+  - Lo stesso schema era in **sette** componenti: card degli avvisi, contatti delle due chat, elenco delle conversazioni, tagger dei bambini in galleria, campi del costruttore dei moduli, card dei compiti. Ora hanno `transition-colors` o una `transition-[…]` limitata a colore, sfondo, bordo e ombra.
+  - Due di loro avevano un secondo difetto, che vale su ogni browser: il bambino non taggabile (`opacity-40`) e il compito approvato (`opacity-80`) non sono mai apparsi spenti, perché lo stile in linea `opacity: 1` dell'animazione cancellava la classe. Ora quell'opacità la dichiara l'animazione.
+  - Lock nuovo: `__tests__/architecture/motion-senza-transizioni-css.test.ts`.
+- **Test.**
+  - **Unit:** `__tests__/ui/admin-binario.test.tsx` (voci, voce accesa, «Menu» acceso sulle pagine del menu, pannello e non foglio, `Esc` col ritorno del fuoco, chiusura al cambio di rotta). Verificato che morde: senza la variante `pannello` o senza la chiusura al cambio di rotta diventa rosso. Aggiornati `admin-layout-shell` (`tablet:pb-0`, il binario prima della sidebar) e `sede-mobile-e-ricarica` (il foglio vive sotto i 744 px). Anche i due lock nuovi sono stati fatti fallire di proposito.
+  - **E2E** `e2e/tablet-layout.spec.ts`: sei rotte della segreteria (home, anagrafica, contabilità, avvisi, mensa, impostazioni) a 768 e 1194 px. Per ciascuna si verificano la pagina giusta, il binario largo 88 px, la pillola e la sidebar piena nascoste, nessuno scorrimento di lato, il contenuto a destra del binario e largo più di 600 px, e la schermata allegata. In più il «Menu» del binario: il pannello non copre né il binario né la topbar, e porta alla voce scelta. Su `/parent/avvisi` ogni `[data-kv-avviso]` deve arrivare a opacità 1; se resta sotto, il messaggio dice quali card e con quale stile in linea.
+- **Logging:** nessun log nuovo. L'intervento è solo di disposizione e di stile: nessuna route, integrazione esterna o percorso d'errore nuovo.
+
 ## 📱 Changelog — iPad, PR 2 di 3: le schermate principali di genitori e docenti su più colonne — 2026-10-18 (branch `feat/ipad-tablet-colonne`)
 
-**Stato:** implementato sul branch, in attesa di CI e merge. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr2.md`.
+**Stato:** ✅ in produzione dal 18/10/2026 — PR #240 (`59369522`), merge alle 19:09 e rilascio di produzione alle 19:10, «Verifica dopo il deploy» `success`. In produzione il CSS servito contiene le classi nuove (`lg:grid-cols-2`, `lg:contents`, `tablet:max-w-5xl`). CI della PR: 27 test tablet su 27 al primo tentativo. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr2.md`.
 
 Dopo la PR 1 ogni pagina di genitori e docenti stava in una colonna da 720 px. Le schermate tablet della CI di #239 mostravano a 1194 px (iPad Pro 11" in orizzontale) gli elenchi di schede impilati in quella colonna, con metà dello schermo vuota accanto, e la galleria a due foto per riga da 400 px l'una. Il piano di questa PR è stato scritto guardando quelle schermate, pagina per pagina.
 

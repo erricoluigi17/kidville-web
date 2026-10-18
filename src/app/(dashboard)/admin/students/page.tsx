@@ -758,8 +758,10 @@ function AdminStudentsInner() {
           {viewType === 'child' && (
             /* Cinque colonne, non quattro: con la quinta card su una griglia da
                quattro l'ultima andrebbe a capo da sola, e una card orfana su una
-               riga sua sembra un errore di caricamento. */
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+               riga sua sembra un errore di caricamento. Cinque però solo da 1024 px:
+               su un iPad in verticale, col binario del cockpit, cinque card facevano
+               ~110 px l'una e le etichette andavano a capo. Lì sono tre più due. */
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
               <StatCard icon={Users} label={t('statTotale')} value={students.length} tone="green" />
               <StatCard icon={CheckCircle2} label={t('statIscritti')} value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
               <StatCard icon={GraduationCap} label={t('statConBes')} value={students.filter((s) => s.bes).length} tone="warn" />

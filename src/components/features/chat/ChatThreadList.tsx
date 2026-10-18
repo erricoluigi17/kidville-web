@@ -112,7 +112,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect, e
                         onClick={() => onSelect(thread)}
                         className={`
                             w-full flex items-center gap-3 px-3.5 py-3.5 text-left
-                            transition-all duration-200
+                            transition-colors duration-200
                             hover:bg-kidville-cream/40
                             ${isSelected ? 'bg-kidville-cream/60' : ''}
                             ${hasUnread && !isSelected ? 'bg-kidville-yellow-soft/50 border-l-2 border-kidville-yellow' : 'border-l-2 border-transparent'}

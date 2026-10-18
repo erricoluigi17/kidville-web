@@ -261,7 +261,10 @@ export function SectionsView() {
                                     <span className="flex items-center gap-1"><SedeIcon size={14} /> {section.scuolaNome}</span>
                                 )}
                             </div>
-                            <div className="mt-3 flex items-center gap-1 text-xs font-bold text-kidville-green opacity-0 group-hover:opacity-100 transition-opacity">
+                            {/* «Apri ›» compare al passaggio del mouse; senza mouse (iPad) e col
+                                fuoco della tastiera resta in vista: è l'unico segno che la
+                                scheda si apre. */}
+                            <div className="mt-3 flex items-center gap-1 text-xs font-bold text-kidville-green opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                                 {t('secApri')} <ChevronRight size={14} />
                             </div>
                         </Link>

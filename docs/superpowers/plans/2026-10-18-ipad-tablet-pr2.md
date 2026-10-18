@@ -46,8 +46,12 @@ it('la home del genitore è larga, le sue sottorotte no', () => {
 });
 
 it('le schermate su più colonne del genitore sono larghe', () => {
-  for (const r of ['/parent/gallery', '/parent/mensa', '/parent/pagamenti', '/parent/avvisi', '/parent/news', '/parent/news/abc']) {
+  for (const r of ['/parent/gallery', '/parent/mensa', '/parent/pagamenti', '/parent/avvisi', '/parent/news']) {
     expect(classeColonnaGenitore(r), r).toBe('max-w-[430px] tablet:max-w-5xl');
+  }
+  // Il dettaglio di una news e il digest sono testo da leggere: restano a 720.
+  for (const r of ['/parent/news/abc', '/parent/news/digest']) {
+    expect(classeColonnaGenitore(r), r).toBe('max-w-[430px] tablet:max-w-[720px]');
   }
 });
 
@@ -74,12 +78,12 @@ import type { FormatoGuscio } from '@/lib/ui/use-formato-guscio';
 export const COLONNA_DOCENTE = 'mx-auto max-w-[460px] tablet:max-w-[720px]';
 export const COLONNA_DOCENTE_LARGA = 'mx-auto max-w-[460px] tablet:max-w-5xl';
 
-/** Le rotte larghe, sottorotte comprese. */
-export const ROTTE_LARGHE_GENITORE: readonly string[] = [
-  '/parent/chat', '/parent/gallery', '/parent/mensa', '/parent/pagamenti', '/parent/avvisi', '/parent/news',
+/** Larghe con le sottorotte: la chat a due riquadri. */
+export const ROTTE_LARGHE_GENITORE: readonly string[] = ['/parent/chat'];
+/** Larghe SOLO in sé: le sottorotte (dettaglio news, digest) sono pagine da leggere. */
+export const ROTTE_LARGHE_GENITORE_ESATTE: readonly string[] = [
+  '/parent', '/parent/gallery', '/parent/mensa', '/parent/pagamenti', '/parent/avvisi', '/parent/news',
 ];
-/** Le rotte larghe SOLO in sé: `/parent` col prefisso allargherebbe tutta l'area. */
-export const ROTTE_LARGHE_GENITORE_ESATTE: readonly string[] = ['/parent'];
 
 export function classeColonnaGenitore(pathname: string): string {
   const larga =
@@ -99,6 +103,7 @@ export function colonneGalleria(formato: FormatoGuscio): 2 | 3 | 4 {
  * all'elenco impilato di prima.
  */
 export const DUE_COLONNE = 'grid gap-3 lg:grid-cols-2 lg:items-start';
+export const GRIGLIA_BAMBINI = 'grid gap-2 lg:grid-cols-2 lg:items-start';
 ```
 
 - [ ] **Step 4:** stesso comando → PASS. **Step 5:** commit `feat(tablet): rotte larghe e colonne della galleria in larghezza-pagina`.

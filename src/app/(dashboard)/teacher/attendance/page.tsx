@@ -11,6 +11,7 @@ import { AppelloGiornaliero } from '@/components/features/teacher/attendance/App
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 type Tab = 'oggi' | 'mese';
 
@@ -72,7 +73,7 @@ function TeacherAttendanceContent() {
     };
 
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* ── Header verde (DR) ── */}
             <PageHeaderCard
                 eyebrow={t('eyebrowRegistro')}
@@ -166,7 +167,7 @@ function TeacherAttendanceContent() {
 export default function TeacherAttendancePage() {
     return (
         <Suspense fallback={
-            <div className="mx-auto flex min-h-[60vh] max-w-[460px] flex-col items-center justify-center gap-4 px-4">
+            <div className={`${COLONNA_DOCENTE} flex min-h-[60vh] flex-col items-center justify-center gap-4 px-4`}>
                 <Loader2 size={32} className="animate-spin text-kidville-green" />
             </div>
         }>

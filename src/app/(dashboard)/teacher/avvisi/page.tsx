@@ -11,6 +11,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
@@ -140,7 +141,7 @@ function TeacherAvvisiContent() {
     };
 
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* Header verde (DR) */}
             <PageHeaderCard
                 eyebrow={t('avvisiEyebrow')}

@@ -1,8 +1,8 @@
 {
   "_": "Debito misurato di `text-kidville-muted` come INCHIOSTRO. Vedi __tests__/a11y/testo-muted-allowlist.test.ts. Questa lista può solo accorciarsi.",
   "misurato_il": "2026-08-02",
-  "totale_file": 175,
-  "totale_occorrenze": 1140,
+  "totale_file": 173,
+  "totale_occorrenze": 1132,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -573,10 +573,6 @@
       "n": 3
     },
     {
-      "path": "src/components/features/parent/BottomNav.tsx",
-      "n": 4
-    },
-    {
       "path": "src/components/features/parent/LezioniCompitiSections.tsx",
       "n": 6
     },
@@ -643,10 +639,6 @@
     {
       "path": "src/components/features/teacher/SemaforoAutorizzazione.tsx",
       "n": 3
-    },
-    {
-      "path": "src/components/features/teacher/TeacherBottomNav.tsx",
-      "n": 4
     },
     {
       "path": "src/components/features/teacher/attendance/MonthlyAttendanceTable.tsx",

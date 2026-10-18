@@ -10,6 +10,7 @@ import {
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ function LockerSettingsInner() {
 
     // ─────────────────────────────────────────────────────────────────────────
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* Header verde (DR) */}
             <PageHeaderCard
                 eyebrow={t('settingsEyebrow')}

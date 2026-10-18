@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { getTranslations } from 'next-intl/server';
 import { AppBar } from '@/components/features/shell/AppBar';
 import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
-import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
+import { NavigazioneDocente } from '@/components/features/teacher/NavigazioneDocente';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
@@ -23,7 +23,9 @@ export default async function TeacherLayout({ children }: { children: React.Reac
   return (
     // --kv-appbar-h (definita in globals.css su [data-kv-shell]): offset per gli
     // sticky sotto la barra (ClasseShell); fallback 0px → /admin invariato.
-    <div className="min-h-screen bg-kidville-cream" data-kv-shell>
+    // `data-kv-guscio-tablet`: da 744 px la barra in basso lascia il posto a un binario a
+    // sinistra, e `--kv-rail-w` (globals.css) dice al contenuto quanto spazio lasciargli.
+    <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
       {/* `focus:text-kidville-yellow-ink`: giallo su verde vale 4,05:1, la
           soglia per un testo 16px/400 è 4,5:1, e la rete di `globals.css` non
           aggancia le classi generate dalle varianti. Gemello dello skip link
@@ -51,12 +53,14 @@ export default async function TeacherLayout({ children }: { children: React.Reac
           campi: note dell'appello, diario, chat. Il rimedio viveva montato su
           una sola delle tre shell, con la lezione scritta in un commento. */}
       <CampoNonCoperto />
-      <main id="content" tabIndex={-1} className="pb-28 outline-none">
+      {/* `tablet:pb-10`: il `pb-28` riserva il posto alla barra in basso, che da 744 px non c'è. */}
+      <main id="content" tabIndex={-1} className="pb-28 tablet:pb-10 pl-[var(--kv-rail-w)] outline-none">
         {children}
       </main>
-      {/* TeacherBottomNav usa useSearchParams (?userId=) → Suspense per il prerender. */}
+      {/* Barra in basso sul telefono, binario o sidebar sul tablet: UNA sola montata.
+          Usa useSearchParams (?userId=) → Suspense per il prerender. */}
       <Suspense fallback={null}>
-        <TeacherBottomNav />
+        <NavigazioneDocente />
       </Suspense>
     </div>
   );

@@ -103,8 +103,11 @@ export function AppBar({ area }: AppBarProps) {
 
   return (
     <header className="kv-appbar sticky top-0 z-30 bg-kidville-green">
+      {/* Sul telefono il contenuto della barra segue la colonna (460/430 px). Da 744 px la colonna
+          si sposta a destra del binario e si allarga: la barra va a tutta larghezza, col marchio
+          sopra il binario e la campanella nell'angolo, come in ogni app per iPad. */}
       <div
-        className={`mx-auto flex w-full items-center gap-2.5 px-4 pb-3 pt-2 ${
+        className={`mx-auto flex w-full items-center gap-2.5 px-4 pb-3 pt-2 tablet:max-w-none tablet:px-6 ${
           area === 'teacher' ? 'max-w-[460px]' : 'max-w-[430px]'
         }`}
       >

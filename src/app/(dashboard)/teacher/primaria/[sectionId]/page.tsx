@@ -7,6 +7,7 @@ import { AlertTriangle, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { dataCivile } from '@/i18n/config';
 import { etichetteAllergie, useAllergeneLabel } from '@/lib/mensa/allergeni';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 interface Alunno { id: string; nome: string; cognome: string; allergies?: string | null; allergeni?: string[] }
 interface Materia { id: string; nome: string }
@@ -70,7 +71,7 @@ export default function ClasseOverviewPage() {
     etichetteAllergie({ allergeni: a.allergeni, allergies: a.allergies }, etichettaAllergene).join(' · ') || null;
 
   return (
-    <div className="mx-auto flex max-w-[460px] flex-col gap-4">
+    <div className={`${COLONNA_DOCENTE} flex flex-col gap-4`}>
       {/* Presenze di oggi (KPI) */}
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-yellow-dark">{t('overviewPresenzeOggi')}</p>

@@ -11,6 +11,7 @@ import { TaskForm } from '@/components/features/teacher/tasks/TaskForm';
 import { TaskEditModal } from '@/components/features/teacher/tasks/TaskEditModal';
 import { TaskResolutionModal } from '@/components/features/teacher/tasks/TaskResolutionModal';
 import { useTasks, type TasksTab } from '@/components/features/teacher/tasks/useTasks';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 function TeacherTasksContent() {
     const tr = useTranslations('teacherTasks');
@@ -27,7 +28,7 @@ function TeacherTasksContent() {
     } = t;
 
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* Header verde (DR) */}
             <PageHeaderCard
                 eyebrow={tr('pageEyebrow')}

@@ -21,6 +21,7 @@ import { HeroCard } from '@/components/features/shell/HeroCard';
 import { AvvisoNotificheDocente } from '@/components/features/teacher/AvvisoNotificheDocente';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 // Scorciatoie del giorno (DR ScorciatoieBlock), con `grado` come le voci della
 // bottom-nav: le voci 0-6 sono gated dalla matrice funzioni
@@ -259,7 +260,7 @@ function TeacherDashboardInner() {
   );
 
   return (
-    <div className="mx-auto max-w-[460px] px-4 pt-5">
+    <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
       {/* ── HERO (DR yellow card) — wordmark/campanella nella AppBar ───── */}
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}

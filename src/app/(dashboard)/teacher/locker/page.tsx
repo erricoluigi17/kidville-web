@@ -14,6 +14,7 @@ import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockMo
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 function currentYearMonth() {
     const d = new Date();
@@ -345,7 +346,7 @@ function TeacherLockerInner() {
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* Header verde (DR) */}
             <PageHeaderCard
                 eyebrow={t('lockerEyebrow')}

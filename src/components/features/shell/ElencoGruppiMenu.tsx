@@ -54,7 +54,7 @@ export function ElencoGruppiMenu({ gruppi, pathname, hrefDi, onChiudi, etichetta
     <div className="flex flex-col gap-[18px]">
       {gruppi.map((g) => (
         <div key={g.label}>
-          <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-muted mb-2 pl-1">
+          <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-sub mb-2 pl-1">
             {g.label}
           </p>
           <div
@@ -80,14 +80,14 @@ export function ElencoGruppiMenu({ gruppi, pathname, hrefDi, onChiudi, etichetta
                         {it.label}
                       </span>
                       {it.soon && (
-                        <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-muted">
+                        <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-sub">
                           {etichettaInArrivo}
                         </span>
                       )}
                     </span>
-                    <span className="block font-maven text-xs text-kidville-muted mt-0.5">{it.sub}</span>
+                    <span className="block font-maven text-xs text-kidville-sub mt-0.5">{it.sub}</span>
                   </span>
-                  {it.href && <ChevronRight size={16} className="text-kidville-muted/60 flex-shrink-0" strokeWidth={2} />}
+                  {it.href && <ChevronRight size={16} className="text-kidville-sub/60 flex-shrink-0" strokeWidth={2} />}
                 </>
               );
 

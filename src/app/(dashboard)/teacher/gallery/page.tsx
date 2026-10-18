@@ -30,6 +30,7 @@ import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { useClientValue } from '@/lib/hooks/use-client-value';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 // =============================================================================
 // GLI ERRORI DEL SERVER SI LEGGONO NELLA LINGUA DELL'INTERFACCIA (2026-08-03).
@@ -854,7 +855,7 @@ function TeacherGalleryContent() {
     };
 
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
             {/* Offline Alert Bar */}
             {!isOnline && (
                 <div className="flex items-center gap-2 mb-4 p-3 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn rounded-2xl text-xs font-medium">

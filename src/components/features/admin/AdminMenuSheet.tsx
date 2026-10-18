@@ -4,7 +4,7 @@
  * Bottom-sheet «Menu» del cockpit Direzione/Segreteria (<744 px).
  *
  * DAL 2026-10-18 HA ANCHE UNA SECONDA FORMA, il pannello del tablet (`variante="pannello"`): da
- * 744 a 1279 px la navigazione è il binario a icone (`AdminBinario`), e il suo «Menu» apre questo
+ * 744 a 1023 px (iPad in verticale) la navigazione è il binario a icone (`AdminBinario`), e il suo «Menu» apre questo
  * stesso contenuto in un pannello accanto al binario invece che dal basso. Stesse voci, stesso
  * filtro per ruolo, stessa scelta della sede, stessa tastiera (focus-trap, Esc, ritorno del
  * fuoco, Indietro di Android): cambia solo dove sta.
@@ -78,7 +78,7 @@ interface AdminMenuSheetProps {
 // Le due forme, per intero (Tailwind legge le classi dal sorgente: mai montarle a pezzi).
 const CONTENITORE: Record<'foglio' | 'pannello', string> = {
   foglio: 'tablet:hidden fixed inset-0 z-[110]',
-  pannello: 'hidden tablet:block xl:hidden fixed bottom-0 left-[88px] right-0 top-16 z-[110]',
+  pannello: 'hidden tablet:block lg:hidden fixed bottom-0 left-[88px] right-0 top-16 z-[110]',
 };
 const DIALOGO: Record<'foglio' | 'pannello', string> = {
   foglio:

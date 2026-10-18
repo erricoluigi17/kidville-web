@@ -27,8 +27,13 @@ import { STORAGE, attendiFineCaricamento } from './fixtures';
  * `grid-template-columns`: una classe giusta che il CSS non applica (un `lg:` mai generato, una
  * regola sovrascritta) qui diventa rossa, mentre un test unitario la vedrebbe verde.
  *
- * Dalla PR 3 ci sono anche la segreteria (`verificaGuscioAdmin`: binario fino a 1279 px, quindi
- * in tutti e due i progetti) e le card degli avvisi che restavano bianche (punto 6).
+ * Dalla PR 3 ci sono anche la segreteria (`verificaGuscioAdmin`) e le card degli avvisi che
+ * restavano bianche (punto 6).
+ *
+ * Dal 18/10 sera, su richiesta del titolare che usa un iPad 11" in orizzontale e ci vedeva «il menu
+ * del telefono» e «le scritte tagliate»: anche la segreteria ha la sidebar piena da 1024 px (prima
+ * da 1280), quindi binario a 768 e sidebar a 1194 per TUTTI i ruoli; e il punto 7, nessuna scritta
+ * tagliata nella barra in alto e nella navigazione (`verificaScritteIntere`).
  *
  * `retries: 0` nei due progetti: una misura sbagliata è la stessa anche al terzo tentativo.
  */
@@ -86,6 +91,92 @@ const COLONNE_ATTESE: Record<string, { binario: number; sidebar: number }> = {
   '/teacher/attendance': { binario: 1, sidebar: 2 },
   '/teacher/gallery': { binario: 3, sidebar: 4 },
 };
+
+/**
+ * 7. NESSUNA SCRITTA TAGLIATA nella barra in alto e nella navigazione. Il titolare, su un iPad 11"
+ * in orizzontale, leggeva il testo d'esempio della ricerca della segreteria fermo a «…codice
+ * fiscale.» e, in verticale, a «Cerca alı»: nessun test lo vedeva, perché in jsdom le misure non
+ * esistono.
+ *
+ * Per ogni nodo di testo visibile dei `contenitori` si confronta la sua estensione VERA (un `Range`
+ * misura il testo intero anche dove l'antenato lo nasconde) con ogni antenato che taglia
+ * (`overflow` diverso da `visible`); in più, un blocco che taglia e ha `scrollWidth` oltre la sua
+ * larghezza è un `truncate` coi puntini. Non contano i testi per i lettori di schermo (`sr-only`:
+ * larghi 1 px, con `clip`) né quelli spenti (opacità 0, `visibility: hidden`).
+ *
+ * Il testo d'esempio di un campo non è un nodo di testo: lo si misura col `canvas`, nel font del
+ * campo, contro la larghezza utile (senza i padding). Lo si esige da 1024 px; sotto (iPad mini in
+ * verticale) il campo può non bastare e finisce coi puntini (`text-ellipsis`): la misura va
+ * comunque negli allegati del test, per sapere quanto manca.
+ */
+async function verificaScritteIntere(page: Page, rotta: string, contenitori: string[]) {
+  await page.evaluate(async () => {
+    await document.fonts.ready; // il `canvas` misura nel font vero, non in quello di riserva
+  });
+  const esito = await page.evaluate((selettori) => {
+    const tagliate: string[] = [];
+    const segnaposti: { testo: string; larghezzaTesto: number; larghezzaUtile: number }[] = [];
+    let testiMisurati = 0;
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    for (const sel of selettori) {
+      for (const radice of document.querySelectorAll<HTMLElement>(sel)) {
+        if (radice.getClientRects().length === 0) continue; // `display: none` (es. la topbar del telefono)
+        const walker = document.createTreeWalker(radice, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const testo = n.textContent?.trim();
+          if (!testo) continue;
+          const range = document.createRange();
+          range.selectNodeContents(n);
+          const r = range.getBoundingClientRect();
+          if (r.width === 0) continue;
+          let nascosto = false;
+          let tagliataDa: string | null = null;
+          for (let el = n.parentElement; el; el = el.parentElement) {
+            const s = getComputedStyle(el);
+            const b = el.getBoundingClientRect();
+            if (s.visibility === 'hidden' || s.opacity === '0' || b.width <= 1 || s.clipPath !== 'none' || (s.clip && s.clip !== 'auto')) {
+              nascosto = true;
+              break;
+            }
+            if (!tagliataDa && s.display !== 'inline' && s.overflowX !== 'visible') {
+              if (r.right > b.right + 1 || r.left < b.left - 1) tagliataDa = `<${el.tagName.toLowerCase()}> largo ${Math.round(b.width)} px`;
+              else if (el === n.parentElement && el.scrollWidth > el.clientWidth + 1) tagliataDa = `puntini in <${el.tagName.toLowerCase()}>`;
+            }
+            if (el === radice) break;
+          }
+          if (nascosto) continue;
+          testiMisurati++;
+          if (tagliataDa) tagliate.push(`«${testo}» (${Math.round(r.width)} px, ${tagliataDa})`);
+        }
+        for (const campo of radice.querySelectorAll<HTMLInputElement>('input[placeholder]')) {
+          if (campo.getClientRects().length === 0 || !campo.placeholder) continue;
+          const s = getComputedStyle(campo);
+          ctx.font = `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+          segnaposti.push({
+            testo: campo.placeholder,
+            larghezzaTesto: Math.ceil(ctx.measureText(campo.placeholder).width),
+            larghezzaUtile: Math.floor(campo.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight)),
+          });
+        }
+      }
+    }
+    return { tagliate, segnaposti, testiMisurati };
+  }, contenitori);
+
+  const larghezza = page.viewportSize()!.width;
+  // Si esige una PRESENZA: zero testi misurati vuol dire selettori sbagliati, non barre perfette.
+  expect(esito.testiMisurati, `«${rotta}»: nessun testo trovato in ${contenitori.join(', ')}`).toBeGreaterThan(3);
+  expect(esito.tagliate, `«${rotta}» a ${larghezza} px: scritte tagliate nella barra in alto o nel menu`).toEqual([]);
+  await test.info().attach(`testi-d-esempio${rotta.replaceAll('/', '_')}-${larghezza}px`, {
+    body: JSON.stringify(esito.segnaposti, null, 2),
+    contentType: 'application/json',
+  });
+  if (larghezza >= 1024) {
+    for (const c of esito.segnaposti) {
+      expect(c.larghezzaTesto, `«${rotta}» a ${larghezza} px: il testo d'esempio «${c.testo}» non sta nel campo`).toBeLessThanOrEqual(c.larghezzaUtile);
+    }
+  }
+}
 
 async function verificaGuscioTablet(page: Page, rotta: string) {
   await page.goto(rotta);
@@ -148,6 +239,8 @@ async function verificaGuscioTablet(page: Page, rotta: string) {
   //    sotto 1); se resta rosso, il messaggio dice quali e con quale stile in linea.
   if (rotta === '/parent/avvisi') await attendiCardAvvisoVisibili(page);
 
+  await verificaScritteIntere(page, rotta, ['header.kv-appbar', '[data-kv-barra-laterale]']);
+
   await test.info().attach(`${rotta.replaceAll('/', '_')}-${larghezza}px`, {
     body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
     contentType: 'image/png',
@@ -177,10 +270,12 @@ async function attendiCardAvvisoVisibili(page: Page) {
 }
 
 /**
- * LA SEGRETERIA SU IPAD (PR 3). Fra 744 e 1279 px il cockpit ha la topbar desktop e il binario a
- * icone da 88 px (`AdminBinario`); la barra in basso del telefono e la sidebar piena da 256 px
- * (che c'è da 1280) non devono vedersi. Le stesse misure di genitori e docenti: pagina giusta,
- * nessuno scorrimento di lato, contenuto a destra del binario e largo.
+ * LA SEGRETERIA SU IPAD. Da 744 px il cockpit ha la topbar desktop; sotto i 1024 px (iPad in
+ * verticale) il binario a icone da 88 px (`AdminBinario`), da 1024 (iPad in orizzontale, iPad 13"
+ * in verticale) la sidebar piena da 256 px, come genitori e docenti. La PR 3 (#241) teneva il
+ * binario fino a 1279: il titolare, sull'11" in orizzontale, ci ha visto «il menu del telefono».
+ * In nessun formato la barra in basso del telefono. Le stesse misure di genitori e docenti: pagina
+ * giusta, nessuno scorrimento di lato, contenuto a destra della navigazione e largo.
  */
 async function verificaGuscioAdmin(page: Page, rotta: string) {
   await page.goto(rotta);
@@ -188,16 +283,24 @@ async function verificaGuscioAdmin(page: Page, rotta: string) {
   await expect(page, `«${rotta}» è finita altrove`).not.toHaveURL(/\/auth\/login/);
   expect(new URL(page.url()).pathname).toBe(rotta);
 
-  const binario = page.locator('[data-kv-binario-admin]');
-  await expect(binario).toBeVisible({ timeout: 20_000 });
+  const conSidebar = page.viewportSize()!.width >= 1024;
+  const selNav = conSidebar ? '[data-kv-sidebar-admin]' : '[data-kv-binario-admin]';
+  const nav = page.locator(selNav);
+  await expect(nav).toBeVisible({ timeout: 20_000 });
   await attendiFineCaricamento(page);
 
   await expect(page.locator('[data-kv-barra-bassa-admin]'), 'la barra del telefono si vede ancora').toBeHidden();
-  await expect(page.locator('[data-kv-sidebar-admin]'), 'la sidebar piena c’è già sotto i 1280 px').toBeHidden();
-  await expect(binario.getByRole('link', { name: 'Home' })).toBeVisible();
+  if (conSidebar) {
+    await expect(page.locator('[data-kv-binario-admin]'), 'in orizzontale c’è ancora il binario a icone').toBeHidden();
+    // La sidebar piena ha tutte le voci, non i cinque tab del binario.
+    expect(await nav.getByRole('link').count(), 'la sidebar non ha le voci del menu').toBeGreaterThan(8);
+  } else {
+    await expect(page.locator('[data-kv-sidebar-admin]'), 'la sidebar piena c’è già sotto i 1024 px').toBeHidden();
+    await expect(nav.getByRole('link', { name: 'Home' })).toBeVisible();
+  }
 
-  const misure = await page.evaluate(() => {
-    const nav = document.querySelector('[data-kv-binario-admin]')!.getBoundingClientRect();
+  const misure = await page.evaluate((sel) => {
+    const nav = document.querySelector(sel)!.getBoundingClientRect();
     const contenuto = document.querySelector('[data-cockpit-content]')!.getBoundingClientRect();
     return {
       scorrimento: document.documentElement.scrollWidth,
@@ -207,13 +310,15 @@ async function verificaGuscioAdmin(page: Page, rotta: string) {
       sinistraContenuto: contenuto.left,
       larghezzaContenuto: contenuto.width,
     };
-  });
+  }, selNav);
   expect(misure.scorrimento, `«${rotta}» scorre di lato: ${JSON.stringify(misure)}`).toBeLessThanOrEqual(misure.finestra + 1);
-  expect(misure.larghezzaBinario, 'il binario non è largo 88 px').toBeCloseTo(88, 0);
-  expect(misure.sinistraContenuto, `il contenuto di «${rotta}» finisce sotto il binario`).toBeGreaterThanOrEqual(misure.destraBinario - 1);
+  expect(misure.larghezzaBinario, conSidebar ? 'la sidebar non è larga 256 px' : 'il binario non è largo 88 px').toBeCloseTo(conSidebar ? 256 : 88, 0);
+  expect(misure.sinistraContenuto, `il contenuto di «${rotta}» finisce sotto la navigazione`).toBeGreaterThanOrEqual(misure.destraBinario - 1);
   expect(misure.larghezzaContenuto, `il contenuto di «${rotta}» è stretto: ${JSON.stringify(misure)}`).toBeGreaterThan(600);
 
   await attendiPaginaFerma(page);
+
+  await verificaScritteIntere(page, rotta, ['[data-kv-topbar-admin]', selNav]);
 
   await test.info().attach(`${rotta.replaceAll('/', '_')}-${page.viewportSize()!.width}px`, {
     body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
@@ -242,12 +347,13 @@ test.describe('docente su iPad', () => {
 test.describe('segreteria su iPad', () => {
   test.use({ storageState: STORAGE.admin });
   for (const rotta of ROTTE_SEGRETERIA) {
-    test(`${rotta}: binario, nessuna barra in basso, nessuno scorrimento di lato`, async ({ page }) => {
+    test(`${rotta}: binario in verticale, sidebar in orizzontale, nessuna scritta tagliata`, async ({ page }) => {
       await verificaGuscioAdmin(page, rotta);
     });
   }
 
   test('«Menu» del binario apre il pannello accanto e porta alla voce scelta', async ({ page }) => {
+    test.skip(page.viewportSize()!.width >= 1024, 'da 1024 px c’è la sidebar con tutte le voci: non c’è un Menu da aprire');
     await page.goto('/admin');
     const binario = page.locator('[data-kv-binario-admin]');
     await expect(binario).toBeVisible({ timeout: 20_000 });

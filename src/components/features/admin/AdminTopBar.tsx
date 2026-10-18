@@ -41,11 +41,11 @@ export function AdminTopBar() {
   const ruoloLabel = t(ROLE_LABEL_KEY[ruolo] ?? (ruolo ? 'ruoloStaff' : 'ruoloSegreteria'));
 
   return (
-    <header className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 tablet:flex">
+    <header data-kv-topbar-admin className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 tablet:flex">
         {/* brand — wordmark ufficiale (stessa metrica dell'AppBar genitore/docente).
-            Largo 214 px solo con la sidebar piena (≥1280), per allinearsi a lei: col
-            binario del tablet quei 214 px sarebbero tolti alla ricerca. */}
-        <div className="flex w-auto shrink-0 items-center xl:w-[214px]">
+            Largo 214 px solo con la sidebar piena (≥1024), per allinearsi a lei: col
+            binario del tablet in verticale quei 214 px sarebbero tolti alla ricerca. */}
+        <div className="flex w-auto shrink-0 items-center lg:w-[214px]">
           <Link href={withUser('/admin')} aria-label={t('homeAria')} className="shrink-0">
             <Image
               src="/logo-light.png"
@@ -58,7 +58,11 @@ export function AdminTopBar() {
           </Link>
         </div>
 
-        {/* ricerca globale (reale, /api/admin/search — M7.2) */}
+        {/* ricerca globale (reale, /api/admin/search — M7.2). Prende TUTTO lo spazio libero,
+            fino a 460 px: fino al 2026-10-18 lo divideva a metà con uno spaziatore `flex-1`, e
+            su un iPad 11" in orizzontale il testo d'esempio si fermava a «…codice fiscale.»,
+            in verticale a «Cerca alı». `text-ellipsis`: dove lo spazio non basta comunque
+            (iPad mini in verticale), il testo finisce coi puntini invece che a metà lettera. */}
         <div className="relative min-w-0 max-w-[460px] flex-1">
           <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-kidville-white/60"><Search size={17} /></span>
           <input
@@ -69,7 +73,7 @@ export function AdminTopBar() {
             onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
             placeholder={t('ricercaPlaceholder')}
             aria-label={t('ricercaAria')}
-            className="h-10 w-full rounded-full border-none bg-white/15 pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
+            className="h-10 w-full text-ellipsis rounded-full border-none bg-white/15 pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
           />
           {searchOpen && (
             <AdminSearchPanel
@@ -80,17 +84,19 @@ export function AdminTopBar() {
           )}
         </div>
 
-        <div className="flex-1" />
+        {/* Il gruppo di destra si spinge in fondo da solo (`ml-auto`), senza rubare spazio alla
+            ricerca. */}
+        <div className="ml-auto flex shrink-0 items-center gap-4">
+          {/* selettore sede (reale) */}
+          <SedeSelector userId={userId} />
 
-        {/* selettore sede (reale) */}
-        <SedeSelector userId={userId} />
+          {/* centro notifiche (reale, /api/notifiche — M7.3); attiva fetch/poll
+              solo quando questa topbar desktop è effettivamente visibile */}
+          <AdminNotificationsPanel userId={userId} attivoSu="(min-width: 744px)" />
 
-        {/* centro notifiche (reale, /api/notifiche — M7.3); attiva fetch/poll
-            solo quando questa topbar desktop è effettivamente visibile */}
-        <AdminNotificationsPanel userId={userId} attivoSu="(min-width: 744px)" />
-
-        {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) + menu Esci */}
-        <UserMenu ruoloLabel={ruoloLabel} />
+          {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) + menu Esci */}
+          <UserMenu ruoloLabel={ruoloLabel} />
+        </div>
     </header>
   );
 }

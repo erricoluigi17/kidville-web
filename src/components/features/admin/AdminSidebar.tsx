@@ -13,7 +13,10 @@ import { ContatoreCodaFatture } from './ContatoreCodaFatture';
 // Voce "Esci" in fondo alla sidebar (il cockpit desktop ha il menu account nella
 // TopBar; qui resta come scorciatoia). Sul telefono la nav è la bottom-nav +
 // bottom-sheet «Menu» (AdminBottomNav/AdminMenuSheet), sul tablet il binario
-// (AdminBinario): questa sidebar c'è da 1280 px. `error-strong` e non `error`: «Esci»
+// (AdminBinario, solo in verticale): questa sidebar c'è da 1024 px, cioè su ogni iPad in
+// orizzontale. Con la PR 3 dell'iPad (PR n. 241, 18/10/2026) partiva da 1280, e un 11" in orizzontale
+// (1180–1210 px) aveva il binario a icone: per il titolare era «il menu del telefono», non quello
+// da computer. Corretto lo stesso giorno. `error-strong` e non `error`: «Esci»
 // è testo, e il rosso `error` su bianco fa 4,23:1 (soglia 4,5).
 const LOGOUT_ROW_CLS =
   'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm font-semibold text-kidville-error-strong transition-colors hover:bg-kidville-error-soft';
@@ -51,7 +54,7 @@ export function AdminSidebar() {
     // Sidebar desktop — sotto la TopBar (top-16, h calc), z-[105] sopra ai modali
     // (z-50/[60]/[100]): resta sempre visibile e cliccabile anche con un modal aperto.
     // Il brand vive nella TopBar → qui si parte dal menu.
-    <aside data-kv-sidebar-admin className="hidden xl:flex xl:flex-col xl:w-64 xl:shrink-0 xl:sticky xl:top-16 xl:h-[calc(100vh-4rem)] z-[105] border-r border-kidville-line bg-kidville-white overflow-y-auto pt-4">
+    <aside data-kv-sidebar-admin className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] z-[105] border-r border-kidville-line bg-kidville-white overflow-y-auto pt-4">
       <nav className="kv-admin-nav flex flex-col gap-4 px-3 pb-6">
         {NAV_GROUPS.map((group, gi) => {
           const items = group.items.filter((item) => visibleItem(item, ruolo));

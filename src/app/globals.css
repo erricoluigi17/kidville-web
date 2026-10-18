@@ -433,9 +433,9 @@ body {
    Cockpit Direzione/Segreteria — la cornice persistente (binario o sidebar) non
    deve MAI essere coperta da un overlay/modal a tutto schermo. Da 744 px gli
    overlay `fixed inset-0` dentro l'area contenuto partono DOPO la navigazione,
-   larga `--kv-rail-w`: 88 px col binario del tablet (744–1279), 16rem con la
-   sidebar piena (≥1280). Prima del 2026-10-18 la regola valeva da 1024 px e
-   diceva `16rem` a mano. Regola NON-layered (Tailwind v4) -> vince sulle utility
+   larga `--kv-rail-w`: 88 px col binario del tablet in verticale (744–1023),
+   16rem con la sidebar piena (≥1024, ogni iPad in orizzontale). Prima del
+   2026-10-18 la regola valeva da 1024 px e diceva `16rem` a mano. Regola NON-layered (Tailwind v4) -> vince sulle utility
    `inset-0` senza !important.
    ============================================================================= */
 [data-kv-guscio-admin] {
@@ -449,7 +449,7 @@ body {
     left: var(--kv-rail-w);
   }
 }
-@media (min-width: 80rem) {
+@media (min-width: 64rem) {
   [data-kv-guscio-admin] {
     --kv-rail-w: 16rem;
   }

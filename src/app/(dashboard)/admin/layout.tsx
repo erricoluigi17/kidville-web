@@ -12,10 +12,11 @@ import { requireArea } from '@/lib/auth/area-guard';
 // TELEFONO (<744 px): topbar verde del brand (`AdminTopBarMobile`, wordmark + sede +
 //   campanella, NIENTE hamburger) in cima e bottom-nav a pillola (`AdminBottomNav`:
 //   Home · Avvisi · Contabilità · Mensa + «Menu» → bottom-sheet) in fondo.
-// TABLET (744–1279 px): TopBar desktop (`AdminTopBar`) e, nella riga [nav | contenuto],
-//   il binario a icone da 88 px (`AdminBinario`), il cui «Menu» apre lo stesso contenuto
-//   del foglio in un pannello accanto.
-// SCRIVANIA (≥1280 px): TopBar e sidebar piena da 256 px (`AdminSidebar`, `xl:`).
+// TABLET IN VERTICALE (744–1023 px): TopBar desktop (`AdminTopBar`) e, nella riga
+//   [nav | contenuto], il binario a icone da 88 px (`AdminBinario`), il cui «Menu» apre lo
+//   stesso contenuto del foglio in un pannello accanto.
+// ORIZZONTALE E SCRIVANIA (≥1024 px, ogni iPad in orizzontale): TopBar e sidebar piena da
+//   256 px (`AdminSidebar`, `lg:`), come per genitori e docenti.
 // `data-kv-guscio-admin` porta `--kv-rail-w` (0 / 88px / 16rem, globals.css): lo legge la
 // regola che fa partire gli overlay del contenuto dopo la navigazione.
 // L'attributo di shell sul wrapper porta le regole safe-area native (`.cap-native`

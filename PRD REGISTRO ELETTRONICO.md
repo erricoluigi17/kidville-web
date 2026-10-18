@@ -19,7 +19,7 @@ Segnalazione del titolare: «sistemare grafica e design su iPad». Su iPad ogni 
   - navigazione laterale nel formato giusto e barra in basso assente;
   - nessuno scorrimento orizzontale: in modalità desktop iPadOS rimpicciolisce le pagine che sbordano;
   - contenuto fuori dal binario e largo più di 600 px;
-  - una schermata allegata al report per ogni rotta.
+  - una schermata allegata al report per ogni rotta, più il pannello «Menu» del binario aperto. La schermata si scatta solo a velo del caricatore **sparito** (attributo `false` e opacità 0) e a rete ferma. Al primo giro di CI 10 schermate su 24 erano state scattate col velo ancora addosso: `attendiFineCaricamento` termina appena l'attributo cambia, mentre la dissolvenza dura altri 280 ms. Le asserzioni erano verdi, ma le schermate non provavano niente.
 - Il test del foglio Menu di `parent-news` gira a 390×844, perché a 1280 px ora c'è la sidebar. Lo stesso vale per F5 e F6 della suite manuale `primaria-360` («una sola voce attiva nella barra in basso»), che girava a 1366 px. Censiti gli E2E della CI che cercano per testo o ruolo un'etichetta del menu senza `.first()`: nessuno troverebbe un doppione nella sidebar. Sono intestazioni, che la sidebar non ha, testi più lunghi dell'etichetta o `test.fixme`.
 
 ## 🖨️ Changelog — Stampe degli storici per giorno, attività di sezione una volta sola — 2026-10-18 (branch `fix/storici-impaginazione-per-giorno`)

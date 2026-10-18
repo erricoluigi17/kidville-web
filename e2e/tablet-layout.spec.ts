@@ -26,7 +26,39 @@ import { STORAGE, attendiFineCaricamento } from './fixtures';
  * `retries: 0` nei due progetti: una misura sbagliata è la stessa anche al terzo tentativo.
  */
 
-const ROTTE_GENITORE = ['/parent', '/parent/diary', '/parent/avvisi', '/parent/mensa', '/parent/pagamenti', '/parent/gallery', '/parent/chat'];
+/**
+ * LA PAGINA FERMA, PRIMA DELLA SCHERMATA. `attendiFineCaricamento` non basta per una fotografia:
+ * aspetta che sparisca `[data-visible="true"]`, e appena l'attributo diventa "false" il selettore
+ * non trova più niente, mentre il velo del caricatore sfuma ancora per 280 ms
+ * (`PageLoader.module.css`). Il primo giro di CI della PR #239 ha allegato al report 10 schermate
+ * su 24 col velo addosso: a 768 px pieno, a 1194 px a metà. E molte delle altre avevano ancora gli
+ * scheletri al posto dei dati. Le asserzioni erano verdi, ma quelle schermate non provavano niente.
+ *
+ * Qui si aspetta il velo SPARITO (attributo "false" E opacità 0). È un'asserzione: un caricatore
+ * rimasto acceso fa fallire il test. Poi si aspetta la rete ferma, con un tetto: una pagina che
+ * interroga il server di continuo non deve bloccare il test, ma non lo si tace.
+ */
+async function attendiPaginaFerma(page: Page) {
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[role="status"][data-visible]')].every(
+        (el) => el.getAttribute('data-visible') === 'false' && Number(getComputedStyle(el).opacity) === 0,
+      ),
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.waitForLoadState('networkidle', { timeout: 8_000 }).catch((errore) => {
+    console.warn(
+      `[tablet-layout] rete non ferma dopo 8 s su ${page.url()}: schermata scattata lo stesso —`,
+      errore instanceof Error ? errore.message.split('\n')[0] : String(errore),
+    );
+  });
+}
+
+/** Il bollino «N» di `next dev` (la CI gira in dev): in produzione non c'è, e copre «Esci». */
+const SENZA_INDICATORE_DEV = 'nextjs-portal { display: none !important; }';
+
+const ROTTE_GENITORE =['/parent', '/parent/diary', '/parent/avvisi', '/parent/mensa', '/parent/pagamenti', '/parent/gallery', '/parent/chat'];
 const ROTTE_DOCENTE = ['/teacher', '/teacher/attendance', '/teacher/diary', '/teacher/gallery', '/teacher/chat'];
 
 async function verificaGuscioTablet(page: Page, rotta: string) {
@@ -63,8 +95,9 @@ async function verificaGuscioTablet(page: Page, rotta: string) {
   expect(misure.sinistraContenuto, `il contenuto di «${rotta}» finisce sotto il binario`).toBeGreaterThanOrEqual(misure.destraBinario - 1);
   expect(misure.larghezzaContenuto, `il contenuto di «${rotta}» è ancora una striscia da telefono`).toBeGreaterThan(600);
 
+  await attendiPaginaFerma(page);
   await test.info().attach(`${rotta.replaceAll('/', '_')}-${larghezza}px`, {
-    body: await page.screenshot(),
+    body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
     contentType: 'image/png',
   });
 }
@@ -94,9 +127,23 @@ test.describe('il menu del binario', () => {
     await page.goto('/parent');
     await expect(page.locator('[data-kv-barra-laterale]')).toBeVisible({ timeout: 20_000 });
     await attendiFineCaricamento(page);
+    await attendiPaginaFerma(page);
     await page.locator('[data-kv-barra-laterale]').getByRole('button', { name: /Menu/i }).click();
     const pannello = page.getByRole('dialog');
     await expect(pannello).toBeVisible();
+    // La schermata del pannello aperto, a molla ferma: `toBeVisible` è vero già al primo fotogramma.
+    await expect
+      .poll(() =>
+        pannello.evaluate((el) => {
+          const s = getComputedStyle(el);
+          return s.opacity === '1' && (s.transform === 'none' || s.transform === 'matrix(1, 0, 0, 1, 0, 0)');
+        }),
+      )
+      .toBe(true);
+    await test.info().attach(`menu-binario-${page.viewportSize()!.width}px`, {
+      body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
+      contentType: 'image/png',
+    });
     await pannello.getByRole('link', { name: /Mensa/i }).click();
     await expect(page).toHaveURL(/\/parent\/mensa/, { timeout: 15_000 });
     await expect(page.getByRole('dialog')).toHaveCount(0);

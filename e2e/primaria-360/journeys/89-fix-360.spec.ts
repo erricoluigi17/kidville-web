@@ -37,21 +37,28 @@ test.describe('360 fix · docente1 (TEST 1A)', () => {
     await expect(page.getByText('Girasoli')).toHaveCount(0);
   });
 
-  test('F5 · bottom-nav docente: una sola voce attiva per rotta', async ({ page }) => {
-    const uid = readAppIds()['docente1'];
-    const cases: [string, string][] = [
-      ['/teacher/primaria', 'Registro'],
-      ['/teacher/gallery', 'Foto'],
-      ['/teacher/chat', 'Messaggi'],
-      ['/teacher/tasks', 'Menu'],
-    ];
-    for (const [route, expected] of cases) {
-      await page.goto(withUser(route, uid), { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(700);
-      const active = await activeMainTabs(page);
-      expect(active, `rotta ${route}: attese 1 voce attiva, trovate ${active.length} (${active.join(',')})`).toHaveLength(1);
-      expect(active[0], `rotta ${route}: voce attiva errata`).toBe(expected);
-    }
+  // La barra in basso è del TELEFONO: dal 18/10/2026, ai 1366 px di questa suite l'area docente
+  // ha la sidebar del tablet, con un'altra struttura e senza la voce «Menu». Il tablet ha il suo
+  // spec, `e2e/tablet-layout.spec.ts`.
+  test.describe('sul telefono', () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test('F5 · bottom-nav docente: una sola voce attiva per rotta', async ({ page }) => {
+      const uid = readAppIds()['docente1'];
+      const cases: [string, string][] = [
+        ['/teacher/primaria', 'Registro'],
+        ['/teacher/gallery', 'Foto'],
+        ['/teacher/chat', 'Messaggi'],
+        ['/teacher/tasks', 'Menu'],
+      ];
+      for (const [route, expected] of cases) {
+        await page.goto(withUser(route, uid), { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(700);
+        const active = await activeMainTabs(page);
+        expect(active, `rotta ${route}: attese 1 voce attiva, trovate ${active.length} (${active.join(',')})`).toHaveLength(1);
+        expect(active[0], `rotta ${route}: voce attiva errata`).toBe(expected);
+      }
+    });
   });
 
   test('F7 · impostazioni armadietto: nessuno spinner permanente', async ({ page }) => {
@@ -96,24 +103,29 @@ test.describe('360 fix · genitore1 (Alunno1)', () => {
     await expect(page.getByText(/Prenota o disdici entro le/i)).toBeVisible({ timeout: 10000 });
   });
 
-  test('F6 · bottom-nav genitore: una sola voce attiva per rotta', async ({ page }) => {
-    const cases: [string, string][] = [
-      ['/parent/primaria', 'Scuola'],
-      ['/parent/primaria/note', 'Scuola'],
-      ['/parent/avvisi', 'Avvisi'],
-      ['/parent/mensa', 'Menu'],
-    ];
-    for (const [route, expected] of cases) {
-      await page.goto(route, { waitUntil: 'domcontentloaded' });
-      // Attende che il tab atteso sia reso: per le rotte primaria significa attendere
-      // la risoluzione async di isPrimaria (useChildSchoolType → /api/parent/primaria).
-      const nav = page.locator('nav[aria-label="Navigazione principale"]').first();
-      await nav.getByText(expected, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
-      await page.waitForTimeout(300);
-      const active = await activeMainTabs(page);
-      expect(active, `rotta ${route}: attese 1 voce attiva, trovate ${active.length} (${active.join(',')})`).toHaveLength(1);
-      expect(active[0], `rotta ${route}: voce attiva errata`).toBe(expected);
-    }
+  // Come F5: la barra in basso è del telefono, a 1366 px c'è la sidebar del tablet.
+  test.describe('sul telefono', () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+
+    test('F6 · bottom-nav genitore: una sola voce attiva per rotta', async ({ page }) => {
+      const cases: [string, string][] = [
+        ['/parent/primaria', 'Scuola'],
+        ['/parent/primaria/note', 'Scuola'],
+        ['/parent/avvisi', 'Avvisi'],
+        ['/parent/mensa', 'Menu'],
+      ];
+      for (const [route, expected] of cases) {
+        await page.goto(route, { waitUntil: 'domcontentloaded' });
+        // Attende che il tab atteso sia reso: per le rotte primaria significa attendere
+        // la risoluzione async di isPrimaria (useChildSchoolType → /api/parent/primaria).
+        const nav = page.locator('nav[aria-label="Navigazione principale"]').first();
+        await nav.getByText(expected, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+        await page.waitForTimeout(300);
+        const active = await activeMainTabs(page);
+        expect(active, `rotta ${route}: attese 1 voce attiva, trovate ${active.length} (${active.join(',')})`).toHaveLength(1);
+        expect(active[0], `rotta ${route}: voce attiva errata`).toBe(expected);
+      }
+    });
   });
 
   test('F8 · note: pluralizzazione corretta (4 note in attesa)', async ({ page }) => {

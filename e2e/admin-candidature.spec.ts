@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { IDS, STORAGE } from './fixtures'
+import { IDS, NOMI_SEDI, STORAGE } from './fixtures'
 
 /**
  * «Candidature» — la pagina propria (2026-10-17) e il dettaglio che resta dov'è.
@@ -66,6 +66,18 @@ async function serverFinto(page: Page) {
   })
 }
 
+/**
+ * Aspetta che le righe portino il NOME della sede: è il segno che il contesto ha ricevuto le
+ * sedi accessibili. Prima ogni riga dice «Sede non indicata», e il cambio di testo ne cambia
+ * l'altezza: uno scroll misurato prima è la misura di una pagina che sta ancora cambiando
+ * (PR #238: 62 px, 3 volte su 3, con `/api/admin/sedi` a 700 ms). Che il foglio aperto NON si
+ * chiuda all'arrivo delle sedi lo prova il test unitario `CandidatureInsegnanti.test.tsx` ›
+ * «le sedi che ARRIVANO dopo il clic…».
+ */
+async function sediArrivate(page: Page) {
+  await expect(page.getByRole('button', { name: /^Prova1 Candidata / })).toContainText(NOMI_SEDI.scuola)
+}
+
 test('la voce «Candidature» sta nel menu e apre la pagina propria', async ({ page }) => {
   await serverFinto(page)
   await page.goto('/admin')
@@ -87,6 +99,7 @@ test('computer: aprendo una candidatura in fondo, il dettaglio è a schermo e la
   await page.setViewportSize({ width: 1280, height: 800 })
   await serverFinto(page)
   await page.goto('/admin/candidature')
+  await sediArrivate(page)
   const riga = page.getByText('Prova45 Candidata', { exact: true })
   await riga.scrollIntoViewIfNeeded()
   const primaDelClic = await page.evaluate(() => window.scrollY)
@@ -110,6 +123,7 @@ test('telefono: il dettaglio si apre in un foglio, e chiudendolo la lista è dov
   await page.setViewportSize({ width: 375, height: 812 })
   await serverFinto(page)
   await page.goto('/admin/candidature')
+  await sediArrivate(page)
   const riga = page.getByText('Prova30 Candidata', { exact: true })
   await riga.scrollIntoViewIfNeeded()
   const primaDelClic = await page.evaluate(() => window.scrollY)

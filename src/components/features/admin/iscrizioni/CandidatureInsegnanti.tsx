@@ -1212,12 +1212,22 @@ export function CandidatureInsegnanti() {
    * Non è una fuga: quei dati erano stati letti quando il titolo c'era. È una
    * schermata che sopravvive al proprio scope, che è la premessa di una fuga.
    *
-   * `reFetchKey` è `effettive.join(',')` (`sede-context.tsx:246`): cambia SOLO
+   * `reFetchKey` è `effettive.join(',')` (`sede-context.tsx:246`): cambia
    * quando cambiano le sedi attive, mai per una ricarica dopo una decisione.
-   * Non serve distinguere: la chiusura non ruba mai un pannello a chi sta
-   * lavorando.
+   *
+   * ⚠️ TRANNE UNA VOLTA, e quella si salta: il passaggio da `''` a N quando il
+   * contesto riceve le sedi accessibili, centinaia di millisecondi dopo il primo
+   * disegno. Non è un cambio di scope — il server legge le sedi dal cookie
+   * (`resolveScuoleAttive`), e il cookie è lo stesso di un attimo prima — ma
+   * fino al 2026-10-18 qui contava come tale: chiudeva il pannello che l'utente
+   * aveva appena aperto e rileggeva l'elenco. In CI (`/api/admin/sedi` a 700 ms)
+   * il foglio del telefono spariva sotto le dita, 3 volte su 3.
    */
+  const sediVisteRef = useRef(reFetchKey)
   useEffect(() => {
+    const prima = sediVisteRef.current
+    sediVisteRef.current = reFetchKey
+    if (prima === '' && reFetchKey !== '') return
     chiudiRef.current()
     // ⚠️ NON azzera, e la differenza col cambio di FILTRO è deliberata. Qui le
     // righe restano a schermo (attenuate) finché non arriva la sede nuova: è il

@@ -75,8 +75,70 @@ describe('adattatori scolastici degli storici', () => {
     const ctx = contesto(d.db)
     ctx.appartenenze = ctx.appartenenze.map(p => ({ ...p, section_nome: 'Prima storica' }))
     const s = await raccogliScolastico(ctx, 'primaria_registro')
-    expect(s?.righe).toHaveLength(2)
+    expect(s?.righe).toHaveLength(1)
     expect(s?.righe.every(r => r.classe === 'Prima storica' && r.argomento === 'Lezione conservata')).toBe(true)
+  })
+  it.each(['primaria_registro', 'primaria_compiti'] as const)('raccoglie una lezione comune una volta per 25 alunni in %s', async categoria => {
+    const d = database({ sections: [classe], registro_orario: [{ id: 'lezione', section_id: CLASSE, scuola_id: SEDE,
+      data: '2026-09-01', ora_lezione: 1, argomento: 'Lettura', compiti: 'Pagina 10' }] })
+    const ctx = contesto(d.db)
+    ctx.alunni = Array.from({ length: 25 }, (_, i) => ({ id: `alunno-${i}`, nome: `Nome ${i}`, cognome: 'Prova', scuola_id: SEDE, section_id: CLASSE }))
+    ctx.appartenenze = ctx.alunni.map(a => ({ alunno_id: a.id, scuola_id: SEDE, section_id: CLASSE, dal: '2026-01-01', al: null }))
+    const s = await raccogliScolastico(ctx, categoria)
+    expect(s?.righe).toEqual([expect.objectContaining({ _ambito: 'classe', _registro_id: 'lezione', _classe_id: CLASSE, argomento: 'Lettura', compiti: 'Pagina 10' })])
+    expect(s?.righe[0]._alunno_id).toBeUndefined()
+    expect(s?._versione_raccolta).toBe(1)
+  })
+
+  it('conserva lezioni distinte con testo identico e ammette solo giorni della classe storica', async () => {
+    const d = database({ sections: [classe], registro_orario: ['2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03'].map((data, i) => ({
+      id: `lezione-${i}`, section_id: CLASSE, scuola_id: SEDE, data, ora_lezione: 1, argomento: 'Stesso testo',
+    })) })
+    const ctx = contesto(d.db)
+    ctx.appartenenze = [{ alunno_id: A, scuola_id: SEDE, section_id: CLASSE, dal: '2026-09-01', al: '2026-09-03' }]
+    const s = await raccogliScolastico(ctx, 'primaria_registro')
+    expect(s?.righe.map(r => r._registro_id)).toEqual(['lezione-1', 'lezione-2'])
+    expect(s?.righe.every(r => r.argomento === 'Stesso testo')).toBe(true)
+  })
+
+  it('mantiene le firme di classe distinte una volta per firma', async () => {
+    const d = database({ sections: [classe], registro_orario: [{ id: 'lezione', section_id: CLASSE, scuola_id: SEDE, data: '2026-09-01', argomento: 'Classe' }],
+      firme_docenti: ['f1', 'f2'].map(id => ({ id, registro_id: 'lezione', maestra_id: 'docente', firmato_il: '2026-09-01T10:00:00Z' })) })
+    const s = await raccogliScolastico(contesto(d.db), 'primaria_firme')
+    expect(s?.righe).toHaveLength(2)
+    expect(s?.righe.map(r => r._firma_id)).toEqual(['f1', 'f2'])
+    expect(s?.righe.every(r => r._ambito === 'classe' && r._registro_id === 'lezione' && !r._alunno_id)).toBe(true)
+  })
+
+  it('raccoglie gli allegati didattici in una sola riga comune per lezione', async () => {
+    const d = database({ sections: [classe], registro_orario: [{ id: 'lezione', section_id: CLASSE, scuola_id: SEDE, data: '2026-09-01', argomento: 'Classe' }],
+      allegati_registro: ['scheda', 'lettura'].map(id => ({ id, registro_id: 'lezione', file_name: `${id}.pdf`, storage_path: `${id}.pdf`, tipo: 'pdf', ambito: 'lezione' })) })
+    const s = await raccogliScolastico(contesto(d.db), 'documenti_didattici')
+    expect(s?.righe).toEqual([expect.objectContaining({ _ambito: 'classe', _registro_id: 'lezione', allegati: 'lettura.pdf; scheda.pdf' })])
+    expect(s?.allegati).toHaveLength(2)
+    expect(s?.allegati.every(a => !a.alunnoId)).toBe(true)
+  })
+
+  it('mantiene nel dossier singolo le sole lezioni comuni pertinenti all’alunno', async () => {
+    const d = database({ sections: [classe], registro_orario: [{ id: 'lezione', section_id: CLASSE, scuola_id: SEDE, data: '2026-09-01', argomento: 'Classe' }] })
+    const ctx = contesto(d.db)
+    ctx.richiesta.sectionId = undefined; ctx.richiesta.alunnoId = A
+    ctx.alunni = ctx.alunni.filter(a => a.id === A)
+    const s = await raccogliScolastico(ctx, 'primaria_registro')
+    expect(s?.righe).toEqual([expect.objectContaining({ _ambito: 'classe', _registro_id: 'lezione', argomento: 'Classe' })])
+    ctx.appartenenze = []
+    expect((await raccogliScolastico(ctx, 'primaria_registro'))?.righe).toEqual([])
+  })
+
+  it.each(['primaria_registro', 'primaria_compiti', 'primaria_firme'] as const)('attribuisce varianti personali solo ai rispettivi destinatari in %s', async categoria => {
+    const d = database({ sections: [classe], registro_orario: [{ id: 'lezione', section_id: CLASSE, scuola_id: SEDE, data: '2026-09-01', argomento: 'Classe', compiti: 'Per tutti' }],
+      firme_docenti: [A, B, 'estraneo'].map(id => ({ id: `firma-${id}`, registro_id: 'lezione', argomento_proprio: `Argomento ${id}`, compiti_propri: `Compito ${id}` })),
+      registro_destinatari: [A, B, 'estraneo'].map(id => ({ id, registro_id: 'lezione', firma_id: `firma-${id}`, alunno_id: id })) })
+    const s = await raccogliScolastico(contesto(d.db), categoria)
+    for (const id of [A, B]) expect(s?.righe.filter(r => r._alunno_id === id)).toEqual([expect.objectContaining({
+      _ambito: 'alunno', _registro_id: 'lezione', _firma_id: `firma-${id}`, argomento: `Argomento ${id}`, compiti: `Compito ${id}`,
+    })])
+    expect(JSON.stringify(s)).not.toContain('estraneo')
   })
   it('nel dossier individuale esclude eventi senza sede fuori dalle appartenenze documentate', async () => {
     const d = database({ eventi_diario: [
@@ -280,8 +342,9 @@ describe('adattatori scolastici degli storici', () => {
       utenti: [{ id: 'docente', nome: 'Maria', cognome: 'Bianchi' }] })
     const ctx = contesto(d.db)
     const registro = await raccogliScolastico(ctx, 'primaria_registro')
-    expect(registro?.righe.filter(r => r._alunno_id === B).map(r => r.argomento)).toEqual(['Classe'])
-    expect(registro?.righe.filter(r => r._alunno_id === A).map(r => r.argomento)).toEqual(['Classe', 'Riservato Anna'])
+    expect(registro?.righe.filter(r => r._ambito === 'classe').map(r => r.argomento)).toEqual(['Classe'])
+    expect(registro?.righe.filter(r => r._alunno_id === B)).toEqual([])
+    expect(registro?.righe.filter(r => r._alunno_id === A)).toEqual([expect.objectContaining({ _ambito: 'alunno', _registro_id: 'lezione', _firma_id: 'f1', argomento: 'Riservato Anna' })])
     expect(JSON.stringify(registro)).not.toContain('Riservato estraneo')
     const firme = await raccogliScolastico(ctx, 'primaria_firme')
     expect(firme?.righe).toHaveLength(1)

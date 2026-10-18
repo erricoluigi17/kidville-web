@@ -118,6 +118,23 @@ const nextConfig: NextConfig = {
     return [{ source: '/:path*', headers: HEADER_SICUREZZA }];
   },
 
+  // Le linguette di Modulistica diventate pagine proprie. «Candidature» è uscita il 2026-10-17,
+  // e il suo vecchio indirizzo è scritto nel `link` di ogni notifica `candidatura_ricevuta`
+  // già spedita: senza questo rimando campanella e push aprirebbero «Moduli inviabili».
+  // Le altre query del link passano alla destinazione (guida di Next, `redirects.md`), quindi
+  // i filtri sopravvivono. Temporaneo e non 308: un permanente resta nella cache del browser.
+  // Lock: `__tests__/architecture/linguette-trasferite-rimandano.test.ts`.
+  async redirects() {
+    return [
+      {
+        source: '/admin/modulistica',
+        has: [{ type: 'query', key: 'tab', value: 'candidature' }],
+        destination: '/admin/candidature',
+        permanent: false,
+      },
+    ];
+  },
+
   // ⚠️ NON aggiungere MAI `compiler: { removeConsole: true }` (né la sua variante
   // `{ exclude: [...] }`).
   //

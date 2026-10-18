@@ -17,8 +17,9 @@ import { useAdminIdentity } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
-import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { BarraFiltri, ETICHETTA_CAMPO_FILTRO, classePastiglia, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { ColonnaDettaglio } from '@/components/ui/ColonnaDettaglio'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
 import { ETICHETTE_CANDIDATURA, SENZA_ETICHETTA, campiCandidature } from './filtri-candidature'
@@ -224,7 +225,7 @@ interface EsitoScartato {
   guasto: 'respinta' | 'senzaRisposta' | null
 }
 
-const ROUTE_LOG = '/admin/modulistica'
+const ROUTE_LOG = '/admin/candidature'
 const API = '/api/admin/candidature-insegnanti'
 
 /** Gli stati che il server usa in colonna, e la chiave i18n del loro badge. */
@@ -358,6 +359,13 @@ const CHIAVE_ETICHETTA: Record<string, string> = {
   non_idonea: 'candEtichettaNonIdonea',
   assunta: 'candEtichettaAssunta',
 }
+
+/**
+ * Le voci del filtro per etichetta, nell'ordine in cui si disegnano e in cui si
+ * scrivono nello stato (`filtroEtichetta`): «Senza etichetta» prima, poi il
+ * vocabolario nell'ordine di `ETICHETTE_CANDIDATURA`.
+ */
+const VOCI_FILTRO_ETICHETTA: readonly string[] = [SENZA_ETICHETTA, ...ETICHETTE_CANDIDATURA]
 
 /** Il tono del badge di ogni etichetta: solo token, mai un hex (Alto Contrasto). */
 const TINTA_ETICHETTA: Record<string, string> = {
@@ -634,8 +642,25 @@ export function CandidatureInsegnanti() {
   })
   /** L'ultima lettura della mappa è FALLITA: le righe possono averne una che non si vede. */
   const [etichetteFallite, setEtichetteFallite] = useState(false)
-  /** Il filtro: `''` = tutte, `SENZA_ETICHETTA` = solo quelle mai etichettate. */
+  /**
+   * Il filtro, a scelta MULTIPLA dal 2026-10-17: `''` = tutte; altrimenti le voci
+   * scelte separate da virgola, nell'ordine fisso di `VOCI_FILTRO_ETICHETTA`
+   * (`SENZA_ETICHETTA` = quelle mai etichettate). Una STRINGA e non un array,
+   * apposta: gli effetti e i riferimenti qui sotto confrontano il filtro con `===`
+   * per sapere se è cambiato, e un array nuovo a ogni clic sarebbe sempre
+   * «cambiato» — una ricarica di tutte le pagine a ogni ridisegno.
+   */
   const [filtroEtichetta, setFiltroEtichetta] = useState('')
+
+  /** Accende o spegne una voce del filtro, tenendo la stringa nella sua forma canonica. */
+  function commutaFiltroEtichetta(voce: string) {
+    setFiltroEtichetta((prec) => {
+      const scelte = new Set(prec === '' ? [] : prec.split(','))
+      if (scelte.has(voce)) scelte.delete(voce)
+      else scelte.add(voce)
+      return VOCI_FILTRO_ETICHETTA.filter((v) => scelte.has(v)).join(',')
+    })
+  }
   /** L'`id` della candidatura su cui una PATCH d'etichetta è in volo. */
   const [salvandoEtichetta, setSalvandoEtichetta] = useState<string | null>(null)
   /**
@@ -791,6 +816,7 @@ export function CandidatureInsegnanti() {
     },
     opzioniSedeAttive(sedi, sediAttive),
     (iso) => f.dataBreve(iso),
+    etichettaPosizione,
   )
   const filtri = useFiltri<RigaElenco>(campi)
 
@@ -1040,8 +1066,10 @@ export function CandidatureInsegnanti() {
         }
         const esito = await tutteLePagine(sediKey, chiave, mio)
         if (esito === null || mio !== gettoneElenco.current) return
-        const cercata = etichettaSel === SENZA_ETICHETTA ? '' : etichettaSel
-        const visibili = esito.righe.filter((r) => (mappa.perId[r.id] ?? '') === cercata)
+        // «Almeno una delle voci scelte»: una riga senza etichetta conta come
+        // `SENZA_ETICHETTA`, che nel vocabolario non esiste e non può confondersi.
+        const scelte = new Set(etichettaSel.split(','))
+        const visibili = esito.righe.filter((r) => scelte.has(mappa.perId[r.id] ?? SENZA_ETICHETTA))
         setRighe(visibili)
         // ESATTO, e non una stima: `visibili` è l'incrocio fra l'insieme intero
         // che gli altri filtri lasciano passare e la mappa intera delle etichette.
@@ -1432,6 +1460,11 @@ export function CandidatureInsegnanti() {
    */
   function chiudiDettaglio() {
     gettoneDettaglio.current += 1
+    // Anche il velo: dal 2026-10-17, sul telefono, il dettaglio è un foglio che si
+    // chiude con Escape, la X o lo sfondo ANCHE mentre sta ancora arrivando. Il
+    // `finally` di `apriDettaglio` non lo spegnerebbe più (il gettone è avanzato), e
+    // il foglio resterebbe aperto su un caricamento che nessuno aspetta.
+    setAprendo(null)
     setSedeScelta(null)
     setSelezionata(null)
   }
@@ -1715,29 +1748,33 @@ export function CandidatureInsegnanti() {
           migrato): un menu che non salva niente è peggio di nessun menu. */}
       {totaleLinguetta > 0 && !etichette.colonnaAssente && (
         <div className="mb-5 flex flex-wrap items-end gap-3">
-          <div>
-            <label
-              htmlFor="filtro-etichetta"
-              className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub"
-            >
-              {t('candEtichettaFiltro')}
-            </label>
-            <select
-              id="filtro-etichetta"
-              value={filtroEtichetta}
-              disabled={etichette.troncata}
-              onChange={(e) => setFiltroEtichetta(e.target.value)}
-              className="h-[42px] cursor-pointer rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink transition-colors hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 disabled:opacity-50"
-            >
-              <option value="">{t('candEtichettaFiltroTutte')}</option>
-              <option value={SENZA_ETICHETTA}>{t('candEtichettaFiltroSenza')}</option>
-              {ETICHETTE_CANDIDATURA.map((v) => (
-                <option key={v} value={v}>
-                  {t(CHIAVE_ETICHETTA[v])}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Pastiglie, come quelle della barra, e a scelta MULTIPLA (2026-10-17):
+              nessuna accesa = tutte. `fieldset`/`legend` perché sono un GRUPPO di
+              interruttori, e `disabled` sul `fieldset` li spegne tutti insieme quando
+              la mappa è troncata. */}
+          <fieldset
+            id="filtro-etichetta"
+            disabled={etichette.troncata}
+            className="min-w-0 border-0 p-0 disabled:opacity-50"
+          >
+            <legend className={ETICHETTA_CAMPO_FILTRO}>{t('candEtichettaFiltro')}</legend>
+            <div className="flex flex-wrap items-center gap-2">
+              {VOCI_FILTRO_ETICHETTA.map((v) => {
+                const attiva = filtroEtichetta.split(',').includes(v)
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={attiva}
+                    onClick={() => commutaFiltroEtichetta(v)}
+                    className={classePastiglia(attiva)}
+                  >
+                    {v === SENZA_ETICHETTA ? t('candEtichettaFiltroSenza') : t(CHIAVE_ETICHETTA[v])}
+                  </button>
+                )
+              })}
+            </div>
+          </fieldset>
           <p className="flex items-start gap-1.5 pb-2 font-maven text-xs text-kidville-sub">
             <Tag size={13} className="mt-0.5 shrink-0" /> {t('candEtichettaNota')}
           </p>
@@ -1808,7 +1845,9 @@ export function CandidatureInsegnanti() {
           </div>
         )
       ) : (
-        <div className="grid gap-5 md:grid-cols-2">
+        // `lg:items-start`: la cella del dettaglio è alta quanto IL DETTAGLIO, non quanto
+        // l'elenco — è ciò che lascia a `ColonnaDettaglio` lo spazio per restare ferma.
+        <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
           {/* Elenco */}
           {/* ⚠️ L'attenuazione sta sulla COLONNA dell'elenco, non sulla griglia:
               la griglia contiene anche il PANNELLO di dettaglio, che con un
@@ -1982,18 +2021,26 @@ export function CandidatureInsegnanti() {
             )}
           </div>
 
-          {/* Dettaglio */}
-          <div aria-busy={aprendo !== null}>
+          {/* Dettaglio: fermo accanto alla lista sul computer, in un foglio sopra la
+              lista sul telefono (vedi `ColonnaDettaglio`). */}
+          <ColonnaDettaglio
+            aperto={aprendo !== null || selezionata !== null}
+            onChiudi={chiudiDettaglio}
+            titolo={t('candPageTitolo')}
+            occupato={aprendo !== null}
+            chiaveContenuto={aprendo ?? selezionata?.id ?? null}
+            segnaposto={
+              <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center font-maven text-kidville-sub">
+                {t('candSelezionaDettagli')}
+              </div>
+            }
+          >
             {aprendo ? (
               <div role="status" className="flex items-center justify-center gap-3 rounded-card border border-kidville-line bg-kidville-white p-10">
                 <Loader2 className="h-5 w-5 animate-spin text-kidville-green" />
                 <span className="font-maven text-kidville-sub">{t('caricamento')}</span>
               </div>
-            ) : !selezionata ? (
-              <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center font-maven text-kidville-sub">
-                {t('candSelezionaDettagli')}
-              </div>
-            ) : (
+            ) : selezionata ? (
               <PannelloDettaglio
                 cand={selezionata}
                 nomeSede={nomeSede(selezionata.scuola_id)}
@@ -2031,8 +2078,8 @@ export function CandidatureInsegnanti() {
                 }}
                 onIndietro={chiudiDettaglio}
               />
-            )}
-          </div>
+            ) : null}
+          </ColonnaDettaglio>
         </div>
       )}
     </>
@@ -2311,13 +2358,18 @@ function PannelloDettaglio({
         : t('candAzioneInCorso')
 
   /**
-   * Il fuoco si sposta sull'intestazione del pannello a ogni apertura: su schermo
-   * stretto il pannello SOSTITUISCE l'elenco, e chi naviga da tastiera restava
-   * sul pulsante della riga con il «torna indietro» irraggiungibile senza
-   * attraversare tutto.
+   * Il fuoco si sposta sull'intestazione del pannello a ogni apertura: chi naviga
+   * da tastiera restava sul pulsante della riga, e per raggiungere il dettaglio
+   * doveva riattraversare tutto l'elenco.
+   *
+   * ⚠️ `preventScroll`, e non è un dettaglio: un `focus()` nudo fa scorrere la
+   * pagina fino all'elemento. Fino al 2026-10-17 l'intestazione stava in cima alla
+   * colonna destra, e aprire il cinquantesimo curriculum riportava in cima alla
+   * pagina. Ora la colonna è ferma accanto alla lista (`ColonnaDettaglio`): il
+   * titolo è già a schermo, e non c'è niente da far scorrere.
    */
   const titoloRef = useRef<HTMLHeadingElement>(null)
-  useEffect(() => { titoloRef.current?.focus() }, [cand.id])
+  useEffect(() => { titoloRef.current?.focus({ preventScroll: true }) }, [cand.id])
 
   // Comune e provincia sono DUE colonne e sono entrambe facoltative: si uniscono
   // solo quelle che ci sono. Un `Giugliano ()` a schermo direbbe che manca un
@@ -2343,7 +2395,7 @@ function PannelloDettaglio({
       <button
         type="button"
         onClick={onIndietro}
-        className="flex items-center gap-1 font-maven text-sm text-kidville-sub md:hidden"
+        className="flex items-center gap-1 font-maven text-sm text-kidville-sub lg:hidden"
       >
         <ChevronLeft size={16} /> {t('candIndietro')}
       </button>

@@ -24,6 +24,7 @@ import {
   Flag,
   ListOrdered,
   Printer,
+  UserCheck,
 } from 'lucide-react';
 
 /**
@@ -133,6 +134,12 @@ export const NAV_GROUPS: NavGroup[] = [
       // Registro protocolli: riservato ad admin+segreteria (decisione spec
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
+      // Candidature «Lavora con noi»: fino al 2026-10-17 erano la quarta linguetta di
+      // Modulistica, e il vecchio indirizzo `?tab=candidature` (scritto in ogni
+      // notifica `candidatura_ricevuta` già spedita) rimanda qui da `next.config.ts`.
+      // `roles` = quelli di `requireStaff` sulla GET dell'elenco: la `cuoca` non vede
+      // una voce che le risponderebbe 403.
+      { href: '/admin/candidature', label: 'Candidature', labelKey: 'nav_candidature', icon: UserCheck, roles: ['admin', 'coordinator', 'segreteria'] },
       { href: '/admin/modulistica', label: 'Modulistica', labelKey: 'nav_modulistica', icon: FileText },
       // Archivio dei documenti firmati di ogni alunno (moduli, fascicolo,
       // certificati). Il gate dei documenti sanitari è nelle API, non qui.

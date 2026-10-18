@@ -1993,6 +1993,84 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
     await waitFor(() => expect(document.activeElement).toBe(intestazione))
   })
 
+  it('sul telefono il dettaglio si apre in un foglio sopra la lista, e «Indietro» lo chiude', async () => {
+    // Prima finiva SOTTO tutto l'elenco: con cento curriculum, cento righe più in giù.
+    const originale = window.matchMedia
+    window.matchMedia = vi.fn((q: string) => ({
+      matches: q === '(max-width: 1023.98px)',
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    try {
+      await apriPrima()
+      const foglio = screen.getByRole('dialog')
+      expect(foglio).toHaveTextContent('Apri il curriculum')
+      // La lista è rimasta sotto, intatta: chiudendo si torna lì.
+      expect(screen.getAllByText('Anna Bianchi').length).toBeGreaterThan(1)
+      fireEvent.click(within(foglio).getByRole('button', { name: 'Indietro' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    } finally {
+      window.matchMedia = originale
+    }
+  })
+
+  it('sul telefono il foglio si chiude anche MENTRE il dettaglio sta arrivando, e non si riapre da solo', async () => {
+    // Col foglio, chiudere durante il caricamento diventa possibile (Escape, la X, lo
+    // sfondo): il velo non deve restare appeso, e la risposta arrivata dopo non deve
+    // riaprire un pannello che qualcuno ha appena chiuso.
+    const originale = window.matchMedia
+    window.matchMedia = vi.fn((q: string) => ({
+      matches: q === '(max-width: 1023.98px)',
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    let rispondi: (v: unknown) => void = () => {}
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes('?id=')
+        ? new Promise((r) => { rispondi = r })
+        : ok(rispostaPredefinita(url)),
+    )
+    try {
+      render(<CandidatureInsegnanti />)
+      await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+      fireEvent.click(screen.getByText('Anna Bianchi'))
+      await screen.findByRole('dialog')
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+      rispondi({ ok: true, status: 200, json: async () => ({ data: DETTAGLIO }) })
+      // Si aspetta una PRESENZA (la lista), non un'assenza: poi si guarda che il foglio
+      // non sia tornato.
+      await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+      await new Promise((r) => setTimeout(r, 0))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.queryByText('Apri il curriculum')).toBeNull()
+    } finally {
+      window.matchMedia = originale
+    }
+  })
+
+  it('…ma SENZA far scorrere la pagina: la lista resta dov’era', async () => {
+    // Il difetto del 2026-10-17: `focus()` senza opzioni fa scorrere il browser fino
+    // all'elemento, e l'intestazione stava in cima alla colonna destra. Chi apriva il
+    // cinquantesimo curriculum si ritrovava in cima alla pagina, lontano dalla riga.
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    try {
+      await apriPrima()
+      const intestazione = screen.getByRole('heading', { name: 'Anna Bianchi', level: 2 })
+      await waitFor(() => expect(document.activeElement).toBe(intestazione))
+      const sulTitolo = focus.mock.contexts
+        .map((el, i) => ({ el, opzioni: focus.mock.calls[i][0] }))
+        .filter((c) => c.el === intestazione)
+      expect(sulTitolo.length).toBeGreaterThan(0)
+      for (const c of sulTitolo) expect(c.opzioni).toEqual({ preventScroll: true })
+    } finally {
+      focus.mockRestore()
+    }
+  })
+
   it('il contenitore del dettaglio dichiara `aria-busy` mentre carica', async () => {
     fetchMock.mockImplementation((url: string) => {
       const u = String(url)
@@ -2033,13 +2111,13 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
       'candCredInviate', 'candCredNonInviate', 'candHoPresoNota',
       'candEsitoPresaInCarico', 'candSospesaTitolo', 'candSospesaTesto', 'candSospesaAzioniSpente',
       'candCvBloccato', 'candCvApriManuale',
+      // La pagina propria (`/admin/candidature`, dal 2026-10-17): titolo e sottotitolo.
+      'candPageTitolo', 'candPageSottotitolo',
     ]
     for (const k of chiavi) {
       expect(itAdminAltro, `it/adminAltro.json → ${k}`).toHaveProperty(k)
       expect(enAdminAltro, `en/adminAltro.json → ${k}`).toHaveProperty(k)
     }
-    expect(itAdminModulistica).toHaveProperty('modTabCandidature')
-    expect(enAdminModulistica).toHaveProperty('modTabCandidature')
   })
 
   it('adminAltro e adminModulistica: it ed en espongono lo stesso set di chiavi', () => {

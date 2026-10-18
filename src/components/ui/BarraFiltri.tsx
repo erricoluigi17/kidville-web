@@ -104,6 +104,16 @@ const PASTIGLIA_ON = 'bg-kidville-green text-kidville-white';
 const PASTIGLIA_OFF =
   'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50';
 
+/**
+ * La pastiglia della barra e l'etichetta dei suoi campi, per i filtri che vivono FUORI dalla
+ * barra ma devono sembrarne parte (il filtro per etichetta delle candidature, che ha un server
+ * suo). Una seconda copia delle classi divergerebbe al primo ritocco di stile.
+ */
+export const ETICHETTA_CAMPO_FILTRO = ETICHETTA;
+export function classePastiglia(attiva: boolean): string {
+  return cx(PASTIGLIA, attiva ? PASTIGLIA_ON : PASTIGLIA_OFF);
+}
+
 /** Un campo che non ha (più) niente da scegliere non si disegna. */
 function daNascondere<R>(campo: CampoFiltro<R>): boolean {
   return Boolean(campo.nascondiSeVuoto && 'opzioni' in campo && campo.opzioni.length === 0);

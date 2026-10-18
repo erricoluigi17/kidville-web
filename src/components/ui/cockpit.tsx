@@ -308,7 +308,15 @@ export const TROW = 'transition-colors hover:bg-kidville-cream';
  * porta `aria-labelledby`: così lo screen reader annuncia il NOME del pannello,
  * e non il primo bottone che gli capita.
  */
-export function Drawer({ open, onClose, title, subtitle, children, footer, width = 460 }: { open: boolean; onClose: () => void; title?: React.ReactNode; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
+export function Drawer({ open, onClose, title, subtitle, children, footer, width = 460, pieno = false }: {
+  open: boolean; onClose: () => void; title?: React.ReactNode; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; width?: number;
+  /**
+   * Sotto `width` il pannello occupa TUTTA la larghezza invece del 92%. Serve a chi usa il
+   * drawer come foglio a tutto schermo sul telefono (`ColonnaDettaglio`): lì la striscia di
+   * sfondo a sinistra non mostra niente, e toglie spazio a un dettaglio già stretto.
+   */
+  pieno?: boolean;
+}) {
   const t = useTranslations('shared');
   const idBase = useId();
   const titoloId = `${idBase}-drawer-titolo`;
@@ -446,7 +454,7 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
     >
       <div aria-hidden="true" className="absolute inset-0 bg-kidville-ink/30 backdrop-blur-[1px]" onClick={onClose} />
       <div
-        className="absolute inset-y-0 right-0 flex max-w-[92%] flex-col bg-kidville-white"
+        className={`absolute inset-y-0 right-0 flex ${pieno ? 'max-w-full' : 'max-w-[92%]'} flex-col bg-kidville-white`}
         style={{ width, boxShadow: SHADOW_FLOAT }}
       >
         {(title || subtitle) && (

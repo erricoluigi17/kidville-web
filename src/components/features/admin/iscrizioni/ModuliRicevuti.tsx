@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { useDateFormat } from '@/lib/i18n/date'
 import {
@@ -16,6 +16,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { ColonnaDettaglio } from '@/components/ui/ColonnaDettaglio'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
 import { campiRicevuti } from './filtri-ricevuti'
@@ -148,6 +149,20 @@ export function ModuliRicevuti() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<SubmissionRow | null>(null)
   const [aprendo, setAprendo] = useState<string | null>(null)
+  /**
+   * Un gettone per apertura: avanza a ogni clic su una riga e a ogni chiusura. Dal
+   * 2026-10-17, sul telefono, il dettaglio è un foglio che si chiude (Escape, la X, lo
+   * sfondo) anche mentre sta ancora arrivando — e senza gettone la risposta arrivata
+   * dopo lo RIAPRIREBBE da sola, o due clic veloci mostrerebbero la domanda sbagliata.
+   */
+  const gettoneDettaglio = useRef(0)
+
+  /** Chiude il dettaglio, anche a metà caricamento: la risposta in volo non tocca più lo schermo. */
+  function chiudiDettaglio() {
+    gettoneDettaglio.current += 1
+    setAprendo(null)
+    setSelected(null)
+  }
   const [assignments, setAssignments] = useState<Record<string, string>>({})
   /**
    * LA RETTA, CHIESTA AL MOMENTO DELL'IMPORT — e perché non era così prima.
@@ -317,6 +332,7 @@ export function ModuliRicevuti() {
    * peggio di un errore.
    */
   async function openDetail(row: RigaElenco) {
+    const mio = ++gettoneDettaglio.current
     setSelected(null)
     setAprendo(row.id)
     setAssignments(row.assigned_classes ?? {})
@@ -336,6 +352,8 @@ export function ModuliRicevuti() {
         headers: { 'x-sedi': reFetchKey },
       })
       const json = await res.json()
+      // Chiuso, o superato da un altro clic, mentre la risposta viaggiava.
+      if (mio !== gettoneDettaglio.current) return
       if (!res.ok || !json?.data) {
         logClient({
           livello: 'warn',
@@ -354,9 +372,9 @@ export function ModuliRicevuti() {
         messaggio: `iscrizione-dettaglio-fallito: ${nomeErrore(e)}`,
         route: '/admin/iscrizioni',
       })
-      alert(t('ricevutiDettaglioNonAperto'))
+      if (mio === gettoneDettaglio.current) alert(t('ricevutiDettaglioNonAperto'))
     } finally {
-      setAprendo(null)
+      if (mio === gettoneDettaglio.current) setAprendo(null)
     }
   }
 
@@ -546,7 +564,9 @@ export function ModuliRicevuti() {
           onPulisci={filtri.pulisci}
         />
       ) : (
-        <div className="grid gap-5 md:grid-cols-2">
+        // `lg:items-start`: la cella del dettaglio è alta quanto il dettaglio, non quanto
+        // la lista — è ciò che lascia a `ColonnaDettaglio` lo spazio per restare ferma.
+        <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
           {/* Lista */}
           {/* L'attenuazione sta sulla COLONNA dell'elenco: il pannello di
               dettaglio non ha niente da aspettare quando cambia un filtro. */}
@@ -610,18 +630,26 @@ export function ModuliRicevuti() {
             )}
           </div>
 
-          {/* Dettaglio */}
-          <div>
+          {/* Dettaglio: fermo accanto alla lista sul computer, in un foglio sopra la
+              lista sul telefono (vedi `ColonnaDettaglio`). */}
+          <ColonnaDettaglio
+            aperto={aprendo !== null || selected !== null}
+            onChiudi={chiudiDettaglio}
+            titolo={t('ricevutiDettaglioTitolo')}
+            occupato={aprendo !== null}
+            chiaveContenuto={aprendo ?? selected?.id ?? null}
+            segnaposto={
+              <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line text-kidville-muted font-maven">
+                {t('ricevutiSelezionaDettagli')}
+              </div>
+            }
+          >
             {aprendo ? (
               <div className="bg-kidville-white rounded-card p-10 flex items-center justify-center gap-3 border border-kidville-line">
                 <Loader2 className="w-5 h-5 animate-spin text-kidville-green" />
                 <span className="font-maven text-kidville-sub">{t('caricamento')}</span>
               </div>
-            ) : !selected ? (
-              <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line text-kidville-muted font-maven">
-                {t('ricevutiSelezionaDettagli')}
-              </div>
-            ) : (
+            ) : selected ? (
               <DetailPanel
                 row={selected}
                 sections={sections}
@@ -647,10 +675,10 @@ export function ModuliRicevuti() {
                 onReject={doReject}
                 onViewDoc={viewDoc}
                 docBloccato={docBloccato}
-                onBack={() => setSelected(null)}
+                onBack={chiudiDettaglio}
               />
-            )}
-          </div>
+            ) : null}
+          </ColonnaDettaglio>
         </div>
       )}
     </>
@@ -718,7 +746,7 @@ function DetailPanel({
 
   return (
     <div className="bg-kidville-white rounded-card border border-kidville-line p-5 space-y-5">
-      <button onClick={onBack} className="md:hidden flex items-center gap-1 text-sm text-kidville-muted">
+      <button onClick={onBack} className="lg:hidden flex items-center gap-1 text-sm text-kidville-muted">
         <ChevronLeft size={16} /> {t('ricevutiIndietro')}
       </button>
 

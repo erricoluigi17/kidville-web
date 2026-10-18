@@ -1,11 +1,11 @@
 'use client';
 
 import { Suspense, useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import {
-  FileText, Plus, UserCheck, Calendar, Users, IdCard,
+  FileText, Plus, Calendar, Users, IdCard,
   Trash2, Download, Shield, Inbox, Send, Stamp, X, FileSpreadsheet
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
@@ -16,7 +16,6 @@ import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliIn
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
 import { ElencoClassi } from '@/components/features/admin/iscrizioni/ElencoClassi';
 import { RinviaCredenziali } from '@/components/features/admin/iscrizioni/RinviaCredenziali';
-import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
 import { PrestampatiSegreteria } from '@/components/features/prestampati/PrestampatiSegreteria';
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri';
@@ -107,7 +106,23 @@ function defaultFieldForType(formType: FormType): FormField {
  * e la cura era ricordarsene. Ora l'elenco è uno: il tipo si deriva da qui, la barra si
  * disegna da qui, e `?tab=` si confronta con questo.
  */
-const TAB_ORDINE = ['inviabili', 'ricevuti', 'elenco-classi', 'candidature', 'personale', 'prestampati', 'moduli-genitori'] as const;
+const TAB_ORDINE = ['inviabili', 'ricevuti', 'elenco-classi', 'personale', 'prestampati', 'moduli-genitori'] as const;
+
+/**
+ * Le linguette che sono DIVENTATE una pagina, con il loro indirizzo nuovo.
+ *
+ * Diverse da quelle smontate (vedi `tabRichiestaSconosciuta` più sotto): il loro lavoro non è
+ * sparito, si è spostato, e il vecchio `?tab=` deve portare là — non su «Moduli inviabili» con
+ * un avviso che parla d'altro. «Candidature» è uscita il 2026-10-17 per diventare una voce del
+ * menu, e il suo vecchio indirizzo è scritto nel `link` di ogni notifica
+ * `candidatura_ricevuta` già spedita.
+ *
+ * Il rimando principale lo fa il server (`redirects()` in `next.config.ts`), prima ancora che
+ * questa pagina si carichi. Questa tabella copre la navigazione che resta dentro l'app.
+ */
+const LINGUETTE_TRASFERITE: Readonly<Record<string, string>> = {
+  candidature: '/admin/candidature',
+};
 
 type ModulisticaTab = (typeof TAB_ORDINE)[number];
 
@@ -126,11 +141,12 @@ function ModulisticaInner() {
   const f = useDateFormat();
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const tabParam = searchParams.get('tab');
+  const destinazioneTrasferita = tabParam !== null ? LINGUETTE_TRASFERITE[tabParam] : undefined;
   // Le linguette raggiungibili da `?tab=` sono ESATTAMENTE quelle della barra
-  // (`TAB_ORDINE`, in cima al file): `candidature` e `personale` sono il bersaglio dei
-  // collegamenti delle notifiche (`/admin/modulistica?tab=candidature`, e i link profondi
-  // del cockpit `?tab=personale&pratica=<uuid>`), le altre di segnalibri e cronologia.
+  // (`TAB_ORDINE`, in cima al file): `personale` è il bersaglio dei link profondi del
+  // cockpit (`?tab=personale&pratica=<uuid>`), le altre di segnalibri e cronologia.
   const initialTab: ModulisticaTab = eTabDiQuestaPagina(tabParam) ? tabParam : 'inviabili';
   const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
 
@@ -148,7 +164,19 @@ function ModulisticaInner() {
    * servono — la domanda a cui rispondere non è «quale linguetta cercavi», è «dov'è finito
    * quello che cercavi», e la risposta è la stessa per tutte.
    */
-  const tabRichiestaSconosciuta = tabParam !== null && tabParam !== '' && !eTabDiQuestaPagina(tabParam);
+  const tabRichiestaSconosciuta =
+    tabParam !== null && tabParam !== '' && !eTabDiQuestaPagina(tabParam) && destinazioneTrasferita === undefined;
+
+  // La linguetta trasferita: si va alla pagina nuova portandosi dietro gli altri parametri
+  // del link (i filtri di una notifica, un segnalibro con `?posizione=`). `replace` e non
+  // `push`: «Indietro» non deve riportare su un indirizzo che rimanda di nuovo avanti.
+  useEffect(() => {
+    if (destinazioneTrasferita === undefined) return;
+    const resto = new URLSearchParams(searchParams.toString());
+    resto.delete('tab');
+    const coda = resto.toString();
+    router.replace(coda ? `${destinazioneTrasferita}?${coda}` : destinazioneTrasferita);
+  }, [destinazioneTrasferita, searchParams, router]);
   const [avvisoTabChiuso, setAvvisoTabChiuso] = useState(false);
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
@@ -527,7 +555,6 @@ function ModulisticaInner() {
             inviabili: t('modTabInviabili'),
             ricevuti: t('modTabRicevuti'),
             'elenco-classi': t('modTabElencoClassi'),
-            candidature: t('modTabCandidature'),
             personale: t('modTabPersonale'),
             prestampati: tPrestampati('titolo'),
             'moduli-genitori': t('modTabModuliGenitori'),
@@ -536,7 +563,6 @@ function ModulisticaInner() {
             inviabili: Send,
             ricevuti: Inbox,
             'elenco-classi': FileSpreadsheet,
-            candidature: UserCheck,
             personale: IdCard,
             prestampati: Stamp,
             'moduli-genitori': Users,
@@ -544,7 +570,7 @@ function ModulisticaInner() {
         }))}
       />
 
-      {/* Moduli inviabili / ricevuti / candidature / personale: operano multi-sede —
+      {/* Moduli inviabili / ricevuti / personale: operano multi-sede —
           leggono e scrivono dichiarando le sedi attive con `x-sedi`, quindi non passano
           dalla guardia di sede singola (che pretende UNA sede sola).
 
@@ -565,8 +591,6 @@ function ModulisticaInner() {
             <RinviaCredenziali />
           </div>
         </>
-      ) : activeTab === 'candidature' ? (
-        <CandidatureInsegnanti />
       ) : activeTab === 'personale' ? (
         <PratichePersonale />
       ) : activeTab === 'prestampati' ? (

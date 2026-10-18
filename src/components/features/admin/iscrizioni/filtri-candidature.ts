@@ -100,6 +100,12 @@ export function campiCandidature<R>(
   etichetteStato: EtichetteStatoCandidatura,
   opzioniSede: readonly OpzioneFiltro[],
   formattaData: (iso: string) => string,
+  /**
+   * Il nome di una posizione come lo legge la Segreteria nella riga (`candPos*`),
+   * tradotto. Non l'etichetta del modulo pubblico: lì «Altro» porta con sé
+   * «(specifica qui sotto)», che su una pastiglia di filtro non vuol dire niente.
+   */
+  etichettaPosizione: (valore: string) => string,
 ): CampoFiltro<R>[] {
   return [
     {
@@ -141,14 +147,20 @@ export function campiCandidature<R>(
       etichetta: t('filtriCandDaEvadere'),
       dove: 'server',
     },
+    // Dal 2026-10-17 IN VISTA e a scelta MULTIPLA (decisione del titolare): chi
+    // scorre cento curriculum cerca spesso due mestieri insieme («cuoca o
+    // collaboratrice»). Il motore la scrive come `?posizione=a,b`, e la rotta la
+    // legge come «almeno una delle scelte» (`overlaps`). Sul telefono resta nel
+    // foglio «Filtri», come ogni campo che non è a pastiglie singole.
     {
-      tipo: 'scelta',
+      tipo: 'multi',
       chiave: 'posizione',
       etichetta: t('filtriCandPosizione'),
       dove: 'server',
+      primario: true,
       opzioni: POSIZIONI_OPTIONS.map((o): OpzioneFiltro => ({
         valore: String(o.value),
-        etichetta: String(o.label),
+        etichetta: etichettaPosizione(String(o.value)),
       })),
     },
     {

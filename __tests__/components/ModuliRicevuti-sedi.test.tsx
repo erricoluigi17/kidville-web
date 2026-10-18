@@ -158,3 +158,74 @@ describe('ModuliRicevuti — sede della domanda', () => {
     expect(Object.keys(itAdminAltro).sort()).toEqual(Object.keys(enAdminAltro).sort())
   })
 })
+
+/**
+ * IL DETTAGLIO RESTA DOV'È (2026-10-17). Stesso difetto delle candidature: il pannello stava
+ * in cima alla colonna destra, quindi aprendo una domanda in fondo alla lista il dettaglio
+ * compariva fuori dallo schermo; sul telefono finiva sotto tutto l'elenco.
+ */
+describe('ModuliRicevuti — il dettaglio accanto alla lista, o sopra di essa', () => {
+  it('computer: il dettaglio sta nella colonna ferma accanto alla lista', async () => {
+    render(<ModuliRicevuti />)
+    await waitFor(() => expect(screen.getByText('Ada Verdi')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Ada Verdi'))
+    const select = await screen.findByLabelText(/Classe \/ Sezione/i)
+    const colonna = select.closest('[aria-busy]') as HTMLElement | null
+    expect(colonna, 'il dettaglio non sta in una colonna con `aria-busy`').toBeTruthy()
+    expect(colonna?.className).toContain('lg:sticky')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('telefono: il dettaglio si apre in un foglio, e «Indietro» lo chiude', async () => {
+    const originale = window.matchMedia
+    window.matchMedia = vi.fn((q: string) => ({
+      matches: q === '(max-width: 1023.98px)',
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    try {
+      render(<ModuliRicevuti />)
+      await waitFor(() => expect(screen.getByText('Ada Verdi')).toBeInTheDocument())
+      fireEvent.click(screen.getByText('Ada Verdi'))
+      const foglio = await screen.findByRole('dialog')
+      expect(await within(foglio).findByLabelText(/Classe \/ Sezione/i)).toBeInTheDocument()
+      fireEvent.click(within(foglio).getByRole('button', { name: itAdminAltro.ricevutiIndietro }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    } finally {
+      window.matchMedia = originale
+    }
+  })
+
+  it('telefono: chiuso mentre il dettaglio arriva, il foglio non si riapre da solo', async () => {
+    const originale = window.matchMedia
+    window.matchMedia = vi.fn((q: string) => ({
+      matches: q === '(max-width: 1023.98px)',
+      media: q,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    let rispondi: (v: unknown) => void = () => {}
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes('?id=')
+        ? new Promise((r) => { rispondi = r })
+        : Promise.resolve({ ok: true, status: 200, json: async () => rispostaPer(url) }),
+    )
+    try {
+      render(<ModuliRicevuti />)
+      await waitFor(() => expect(screen.getByText('Ada Verdi')).toBeInTheDocument())
+      fireEvent.click(screen.getByText('Ada Verdi'))
+      await screen.findByRole('dialog')
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+      rispondi({ ok: true, status: 200, json: async () => ({ data: INVII[0] }) })
+      await waitFor(() => expect(screen.getByText('Ada Verdi')).toBeInTheDocument())
+      await new Promise((r) => setTimeout(r, 0))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.queryByLabelText(/Classe \/ Sezione/i)).toBeNull()
+    } finally {
+      window.matchMedia = originale
+    }
+  })
+})

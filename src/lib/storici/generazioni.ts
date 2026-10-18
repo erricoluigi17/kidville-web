@@ -12,6 +12,8 @@ import { raccogliServizio } from './adattatori/servizi'
 import { creaExcelStorico, creaPdfStorico } from './render'
 import { firmaRuoliStorico, utenteStaffStorico } from './permessi'
 
+const CATEGORIE_REGISTRO: readonly CategoriaStorico[] = ['primaria_registro', 'primaria_compiti', 'primaria_firme', 'documenti_didattici']
+
 export async function raccogliCategoria(ctx: ContestoStorico, categoria: CategoriaStorico): Promise<SezioneStorico> {
   const sezione = await raccogliScolastico(ctx, categoria) ?? await raccogliServizio(ctx, categoria)
   if (!sezione) throw new ErroreStorico(500, 'ADATTATORE_ASSENTE', 'La categoria scelta non ha un generatore disponibile.')
@@ -44,12 +46,25 @@ async function leggiParte(db: SupabaseClient, path: string): Promise<SezioneStor
 
 export function raggruppaPerAlunno(sezioni: SezioneStorico[], ctx: ContestoStorico): SezioneStorico[] {
   if (ctx.richiesta.raggruppamento !== 'alunno' || ctx.richiesta.alunnoId) return sezioni
-  return ctx.alunni.flatMap(a => sezioni.map(s => ({
-    ...s, titolo: `${a.cognome} ${a.nome} — ${s.titolo}`,
-    righe: s.righe.filter(r => !r._alunno_id || r._alunno_id === a.id),
-    allegati: s.allegati.filter(f => !f.alunnoId || f.alunnoId === a.id),
-    generati: s.generati?.filter(f => !f.alunnoId || f.alunnoId === a.id),
-  })))
+  const comuni = new Set(sezioni.filter(s => s.righe.some(r => r._ambito === 'classe') || (
+    CATEGORIE_REGISTRO.includes(s.categoria) && (s.allegati.some(f => !f.alunnoId) || s.generati?.some(f => !f.alunnoId) || s.avvisi.length > 0))))
+  const registroComune = sezioni.filter(s => comuni.has(s)).map(s => ({
+    ...s, titolo: `${s.titolo} — contenuti comuni di classe`, righe: s.righe.filter(r => r._ambito === 'classe'),
+    allegati: s.allegati.filter(f => !f.alunnoId), generati: s.generati?.filter(f => !f.alunnoId),
+  }))
+  const schede = ctx.alunni.flatMap(a => sezioni.flatMap(s => {
+    const separata = comuni.has(s)
+    const scheda = {
+      ...s, titolo: `${a.cognome} ${a.nome} — ${s.titolo}`,
+      righe: s.righe.filter(r => r._ambito !== 'classe' && (!r._alunno_id || r._alunno_id === a.id)),
+      allegati: s.allegati.filter(f => f.alunnoId === a.id || (!separata && !f.alunnoId)),
+      generati: s.generati?.filter(f => f.alunnoId === a.id || (!separata && !f.alunnoId)),
+      avvisi: separata ? [] : s.avvisi,
+    }
+    const vuota = !scheda.righe.length && !scheda.allegati.length && !scheda.generati?.length
+    return (separata || (CATEGORIE_REGISTRO.includes(s.categoria) && !s.avvisi.length)) && vuota ? [] : [scheda]
+  }))
+  return [...registroComune, ...schede]
 }
 
 /** Lease a confronto atomico: polling e cron non eseguono lo stesso lavoro. */
@@ -96,12 +111,26 @@ export async function eseguiGenerazione(db: SupabaseClient, id: string, tempoMas
     }
     if (cursore < categorie.length) { await aggiorna({ stato: 'in_coda', preso_il: null }); return }
     const sezioni: SezioneStorico[] = []
-    for (let i = 0; i < categorie.length; i++) sezioni.push(await leggiParte(db, `${basePath(job)}/parti/${i}.json`))
+    for (let i = 0; i < categorie.length; i++) {
+      const path = `${basePath(job)}/parti/${i}.json`
+      let sezione = await leggiParte(db, path)
+      if (CATEGORIE_REGISTRO.includes(categorie[i]) && sezione._versione_raccolta !== 1) {
+        if (Date.now() - inizio >= tempoMassimoMs) { await aggiorna({ stato: 'in_coda', preso_il: null }); return }
+        sezione = await raccogliCategoria(ctx, categorie[i])
+        await verificaLease()
+        await salvaParte(db, path, sezione)
+        await aggiorna({ tentativi: 0 })
+        fallimenti = 0
+        logEvento('registro', 'info', { operazione: 'storici/ricostruisci-parte', esito: 'sezione-ricostruita', entita_id: id, tipo: categorie[i], n: sezione.righe.length })
+        if (Date.now() - inizio >= tempoMassimoMs) { await aggiorna({ stato: 'in_coda', preso_il: null }); return }
+      }
+      sezioni.push(sezione)
+    }
     const documento: DocumentoStorico = { titolo: ctx.titolo, scuolaNome: ctx.scuolaNome, dal: richiesta.dal, al: richiesta.al, generatoIl: new Date().toISOString(), avvisi: ctx.avvisi, sezioni: raggruppaPerAlunno(sezioni, ctx) }
     let avvisi = [...ctx.avvisi, ...sezioni.flatMap(s => s.avvisi)]
     let bytes: Uint8Array
     if (richiesta.formato === 'pdf') { const pdf = await creaPdfStorico(documento, db); bytes = pdf.bytes; avvisi = pdf.avvisi }
-    else bytes = creaExcelStorico(documento)
+    else bytes = await creaExcelStorico(documento)
     const filePath = `${basePath(job)}/storico.${richiesta.formato}`
     await verificaLease()
     const { error: errFile } = await db.storage.from(BUCKET_STORICI).upload(filePath, bytes, { contentType: richiesta.formato === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', upsert: true })

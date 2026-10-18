@@ -18,6 +18,8 @@ export interface ColonnaStorico { chiave: string; titolo: string }
 export type CellaStorico = string | number | boolean | null
 export interface AllegatoStorico { bucket: string; percorso: string; nome: string; mime?: string; alunnoId?: string }
 export interface SezioneStorico {
+  /** Versione interna delle parti persistite: assente nelle raccolte precedenti. */
+  _versione_raccolta?: number
   categoria: CategoriaStorico
   titolo: string
   colonne: ColonnaStorico[]

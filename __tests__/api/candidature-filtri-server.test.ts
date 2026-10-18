@@ -114,6 +114,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
         registra(col, (v) => Array.isArray(v) && vals.every((x) => (v as unknown[]).includes(x)))
         return b
       }
+      // `&&` di Postgres: almeno UN elemento in comune.
+      b.overlaps = (col: string, vals: unknown[]) => {
+        registra(col, (v) => Array.isArray(v) && vals.some((x) => (v as unknown[]).includes(x)))
+        return b
+      }
       b.or = (espressione: string) => {
         h.ors.push(espressione)
         // `col.ilike.%term%` separate da virgola: si ricostruisce l'OR vero.
@@ -290,6 +295,38 @@ describe('GET /api/admin/candidature-insegnanti — posizione, grado, titolo, es
     ]
     const { json } = await elenco('?posizione=cuoca')
     expect(json.data?.map((r) => r.id)).toEqual([uuid(1)])
+  })
+
+  // Dal 2026-10-17 la posizione si sceglie a pastiglie, anche più d'una: «cuoca o
+  // segreteria» vuol dire chi si è proposto per ALMENO uno dei due mestieri, non per tutti
+  // e due — chi seleziona il personale cerca un bacino, non un'intersezione.
+  it('`?posizione=cuoca,segreteria` tiene chi si è candidata per ALMENO una delle due', async () => {
+    h.righe = [
+      candidatura({ i: 1, posizioni: ['insegnante_nido', 'cuoca'] }),
+      candidatura({ i: 2, posizioni: ['segreteria'] }),
+      candidatura({ i: 3, posizioni: ['insegnante_primaria'] }),
+    ]
+    const { json } = await elenco('?posizione=cuoca,segreteria')
+    expect(json.data?.map((r) => r.id)).toEqual([uuid(1), uuid(2)])
+    expect(json.total).toBe(2)
+  })
+
+  it('una posizione ripetuta vale una volta sola', async () => {
+    h.righe = [
+      candidatura({ i: 1, posizioni: ['cuoca'] }),
+      candidatura({ i: 2, posizioni: ['segreteria'] }),
+    ]
+    const { res, json } = await elenco('?posizione=cuoca,cuoca')
+    expect(res.status).toBe(200)
+    expect(json.data?.map((r) => r.id)).toEqual([uuid(1)])
+  })
+
+  it('basta UN valore sconosciuto nella lista per un 400: niente filtri mezzi accesi', async () => {
+    h.righe = [candidatura({ i: 1, posizioni: ['cuoca'] })]
+    for (const qs of ['?posizione=cuoca,capo', '?posizione=cuoca,', '?posizione=,']) {
+      const res = await chiedi(qs)
+      expect(res.status, qs).toBe(400)
+    }
   })
 
   it('`?grado=primaria` tiene solo chi ha quella fascia', async () => {

@@ -39,12 +39,12 @@ import itPrestampatiSegreteria from '../../messages/it/prestampatiSegreteria.jso
  * `it` che non hanno mai passato un `?tab=` nemmeno una volta, cioè una schermata provata
  * solo dalla porta d'ingresso principale. È il buco che i vecchi collegamenti attraversavano.
  */
-const h = vi.hoisted(() => ({ fetchMock: vi.fn(), query: '' }));
+const h = vi.hoisted(() => ({ fetchMock: vi.fn(), query: '', replace: vi.fn() }));
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(h.query),
   usePathname: () => '/admin/modulistica',
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: h.replace, refresh: vi.fn() }),
 }));
 
 vi.mock('@/lib/context/sede-context', () => ({
@@ -71,7 +71,6 @@ vi.mock('@/components/features/admin/iscrizioni/ModuliInviabili', () => ({
   ModuliInviabili: () => <div data-testid="pannello-inviabili" />,
 }));
 vi.mock('@/components/features/admin/iscrizioni/ModuliRicevuti', () => ({ ModuliRicevuti: () => null }));
-vi.mock('@/components/features/admin/iscrizioni/CandidatureInsegnanti', () => ({ CandidatureInsegnanti: () => null }));
 vi.mock('@/components/features/admin/personale/PratichePersonale', () => ({ PratichePersonale: () => null }));
 vi.mock('@/components/features/prestampati/PrestampatiSegreteria', () => ({ PrestampatiSegreteria: () => null }));
 
@@ -84,7 +83,7 @@ beforeEach(() => {
 
 import AdminModulisticaPage from '@/app/(dashboard)/admin/modulistica/page';
 
-/** Le sette linguette, nell'ordine in cui la barra le mostra, con il testo dei cataloghi. */
+/** Le sei linguette, nell'ordine in cui la barra le mostra, con il testo dei cataloghi. */
 const LINGUETTE = [
   itAdminModulistica.modTabInviabili,
   itAdminModulistica.modTabRicevuti,
@@ -92,7 +91,9 @@ const LINGUETTE = [
   // perché è la sua altra metà — le domande arrivano da lì, la classe e la retta
   // da qui, e il giro automatico non parte finché mancano.
   itAdminModulistica.modTabElencoClassi,
-  itAdminModulistica.modTabCandidature,
+  // 🔻 «Candidature» è uscita il 2026-10-17: è una voce propria del menu
+  // (`/admin/candidature`), e il suo vecchio `?tab=` rimanda là — vedi il gruppo
+  // «le linguette TRASFERITE» qui sotto.
   itAdminModulistica.modTabPersonale,
   itPrestampatiSegreteria.titolo,
   itAdminModulistica.modTabModuliGenitori,
@@ -112,7 +113,7 @@ function linguettaAttiva(container: HTMLElement): string | null {
 }
 
 describe('/admin/modulistica — la barra delle linguette', () => {
-  it('mostra SETTE linguette, e ognuna col suo testo italiano vero', () => {
+  it('mostra SEI linguette, e ognuna col suo testo italiano vero', () => {
     const { container } = render(<AdminModulisticaPage />);
     expect(etichetteDellaBarra(container)).toEqual(LINGUETTE);
   });
@@ -157,7 +158,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
    */
   describe('un `?tab=` che non esiste più non lascia la pagina vuota', () => {
     for (const parola of ['odt', 'attesa', 'linguetta-mai-esistita']) {
-      it(`?tab=${parola} → sette linguette, «Moduli inviabili» accesa e il suo pannello disegnato`, () => {
+      it(`?tab=${parola} → sei linguette, «Moduli inviabili» accesa e il suo pannello disegnato`, () => {
         h.query = `tab=${parola}`;
         const { container, getByTestId } = render(<AdminModulisticaPage />);
 
@@ -215,7 +216,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
       expect(avviso(container)).toBeNull();
     });
 
-    for (const parola of ['ricevuti', 'candidature', 'personale', 'prestampati', 'moduli-genitori']) {
+    for (const parola of ['ricevuti', 'personale', 'prestampati', 'moduli-genitori']) {
       it(`?tab=${parola} è una linguetta VERA: apre la sua e non avvisa di niente`, () => {
         h.query = `tab=${parola}`;
         const { container } = render(<AdminModulisticaPage />);
@@ -246,7 +247,40 @@ describe('/admin/modulistica — la barra delle linguette', () => {
   });
 
   /**
-   * LA BARRA E LA SUA UNICA FONTE. Le sette linguette nascono da `TAB_ORDINE`, in cima alla
+   * LE LINGUETTE TRASFERITE — una pagina che se ne va, non una che sparisce.
+   *
+   * «Candidature» è uscita da qui il 2026-10-17 ed è diventata `/admin/candidature`. Il suo
+   * vecchio indirizzo non è un segnalibro raro: è scritto nel `link` di OGNI notifica
+   * `candidatura_ricevuta` già spedita (~1.000 a ottobre), che campanella, push e service
+   * worker aprono così come sono. Il ripiego generico qui sopra la porterebbe su «Moduli
+   * inviabili» con un avviso che parla di domande di iscrizione: due errori in una riga.
+   *
+   * Il rimando vero lo fa il server (`redirects()` in `next.config.ts`). Questo è il secondo,
+   * per la navigazione che resta dentro l'app: e i filtri del link non si perdono per strada.
+   */
+  describe('le linguette TRASFERITE portano alla loro pagina nuova', () => {
+    it('?tab=candidature → /admin/candidature, senza avvisi sbagliati', () => {
+      h.query = 'tab=candidature';
+      const { container } = render(<AdminModulisticaPage />);
+      expect(h.replace).toHaveBeenCalledWith('/admin/candidature');
+      expect(container.querySelector('[role="status"]')).toBeNull();
+    });
+
+    it('…e porta con sé gli altri parametri del link (i filtri)', () => {
+      h.query = 'tab=candidature&posizione=cuoca&stato=pending';
+      render(<AdminModulisticaPage />);
+      expect(h.replace).toHaveBeenCalledWith('/admin/candidature?posizione=cuoca&stato=pending');
+    });
+
+    it('una linguetta che c\'è ancora non rimanda da nessuna parte', () => {
+      h.query = 'tab=ricevuti';
+      render(<AdminModulisticaPage />);
+      expect(h.replace).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * LA BARRA E LA SUA UNICA FONTE. Le sei linguette nascono da `TAB_ORDINE`, in cima alla
    * pagina, e `?tab=` si confronta con lo stesso elenco. Prima vivevano in quattro punti
    * diversi dello stesso file, e due volte su due un `?tab=` è finito sulla linguetta
    * sbagliata in silenzio perché il quarto punto non era stato aggiornato.
@@ -255,7 +289,7 @@ describe('/admin/modulistica — la barra delle linguette', () => {
    * `?tab=` che si apre, e nessuna è raggiungibile solo con il mouse.
    */
   it('ogni linguetta della barra è raggiungibile anche da `?tab=`', () => {
-    const valori = ['inviabili', 'ricevuti', 'elenco-classi', 'candidature', 'personale', 'prestampati', 'moduli-genitori'];
+    const valori = ['inviabili', 'ricevuti', 'elenco-classi', 'personale', 'prestampati', 'moduli-genitori'];
     expect(valori).toHaveLength(LINGUETTE.length);
 
     for (const [i, valore] of valori.entries()) {

@@ -1,6 +1,6 @@
 ## 📱 Changelog — iPad, PR 3 di 3: la segreteria su tablet, e le card degli avvisi che restavano bianche — 2026-10-18 (branch `feat/ipad-tablet-segreteria`)
 
-**Stato:** implementato sul branch, in attesa di CI e merge. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr3.md`.
+**Stato:** ✅ in produzione dal 18/10/2026 — PR #241 (`9116c893`), merge alle 20:49 e rilascio di produzione alle 20:50, «Verifica dopo il deploy» `success`, CI di `main` verde. In produzione il CSS servito contiene le regole nuove (`data-kv-guscio-admin`, `tablet:w-[88px]`, `@media (hover:none)`). CI della PR: 217 test E2E su 217 al primo tentativo, nessun ripescaggio, compresi i 14 nuovi della segreteria (6 pagine e il «Menu» del binario, a 768 e a 1194 px) e la verifica delle card degli avvisi a opacità 1 su WebKit. Unit: 1863 file verdi. Con questa PR il lavoro iPad in tre PR è completo. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr3.md`.
 
 Su iPad il cockpit della segreteria aveva due forme, tutte e due sbagliate. Sotto i 1024 px (iPad mini e 11" in verticale) era la versione telefono, con la pillola in basso e il foglio «Menu» intorno a pagine che da 768 px mostrano già tabelle da scrivania. Da 1024 px c'era la sidebar piena da 256 px: su un 11" in orizzontale (1194 px) lasciava 938 px a un registro transazioni largo almeno 820, più i margini.
 

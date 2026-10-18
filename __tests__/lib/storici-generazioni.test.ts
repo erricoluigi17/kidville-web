@@ -131,6 +131,21 @@ describe('generazioni storiche, lease e recupero', () => {
     expect(raggruppaPerAlunno([s], a.ctx).map(s => s.righe)).toEqual([s.righe])
   })
 
+  it('porta attività e note di sezione del diario nel blocco comune e lascia ai bambini le loro righe', () => {
+    const a = archivio(lavoro()), altro = 'altro-alunno'
+    a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }
+    a.ctx.alunni.push({ ...a.ctx.alunni[0], id: altro, nome: 'Altro' })
+    const s = sezione('diario_attivita')
+    s.righe = [{ _ambito: 'classe', _nota_giorno: true, data: '2026-09-10', dettaglio: 'Uscita in giardino' },
+      { _ambito: 'classe', data: '2026-09-10', tipo: 'Pittura', dettaglio: 'Colori a dita', valore: 'Ha partecipato: 2 bambini' },
+      { _alunno_id: ALUNNO, data: '2026-09-10', tipo: 'Pittura', dettaglio: '', valore: 'Ha partecipato' },
+      { _alunno_id: altro, data: '2026-09-10', tipo: 'Pittura', dettaglio: '', valore: 'Ha partecipato' }]
+    const risultato = raggruppaPerAlunno([s], a.ctx)
+    expect(risultato.map(r => r.righe.length)).toEqual([2, 1, 1])
+    expect(risultato[0].titolo).toContain('contenuti comuni di classe')
+    expect(risultato.slice(1).flatMap(r => r.righe).every(r => r.dettaglio === '')).toBe(true)
+  })
+
   it('conserva righe senza ambito esplicito e sezioni vuote delle altre categorie', () => {
     const a = archivio(lavoro())
     a.ctx.richiesta = { ...a.ctx.richiesta, alunnoId: undefined, sectionId: SEDE, raggruppamento: 'alunno' }

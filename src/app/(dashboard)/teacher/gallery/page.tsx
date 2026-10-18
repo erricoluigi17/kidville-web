@@ -30,7 +30,8 @@ import { oggiRoma } from '@/lib/storici/retroattivita';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { useClientValue } from '@/lib/hooks/use-client-value';
-import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
+import { COLONNA_DOCENTE_LARGA, colonneGalleria } from '@/lib/ui/larghezza-pagina';
+import { useFormatoGuscio } from '@/lib/ui/use-formato-guscio';
 
 // =============================================================================
 // GLI ERRORI DEL SERVER SI LEGGONO NELLA LINGUA DELL'INTERFACCIA (2026-08-03).
@@ -75,6 +76,7 @@ function TeacherGalleryContent() {
     // per un gesto solo.
     const tShared = useTranslations('shared');
     const { userId: teacherId } = useSessionIdentity();
+    const formato = useFormatoGuscio();
 
     // =========================================================================
     // V11 · I VIDEO NON PASSANO PIÙ DALLA PORTA DELLE FOTO.
@@ -855,7 +857,7 @@ function TeacherGalleryContent() {
     };
 
     return (
-        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
+        <div className={`${COLONNA_DOCENTE_LARGA} px-4 pt-5`}>
             {/* Offline Alert Bar */}
             {!isOnline && (
                 <div className="flex items-center gap-2 mb-4 p-3 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn rounded-2xl text-xs font-medium">
@@ -982,7 +984,7 @@ function TeacherGalleryContent() {
                             /* `scaricabile`: il solo «Scarica» (card e visore) anche per i
                                docenti — non `showActions`, che porterebbe Condividi e
                                «Segnala», gesti del genitore. */
-                            <MediaGrid items={media} scaricabile onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} />
+                            <MediaGrid items={media} scaricabile onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} colonne={colonneGalleria(formato)} />
                         )}
                     </motion.div>
                 )}

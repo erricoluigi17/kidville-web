@@ -403,9 +403,11 @@ export function MensaCalendar({ userId, studentId }: Props) {
           <span className="sr-only">{t('caricamento')}</span>
         </div>
       ) : (
-        <div className="space-y-2.5">
+        // Da 1024 px i giorni vanno su due colonne (vedi `DUE_COLONNE` in larghezza-pagina):
+        // sotto, una griglia a una colonna con lo stesso passo dell'elenco di prima.
+        <div data-kv-colonne className="grid gap-2.5 lg:grid-cols-2 lg:items-start">
           {giorni.length === 0 && (
-            <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('nessunGiorno')}</p>
+            <p className="font-maven text-sm text-kidville-sub text-center py-8 lg:col-span-2">{t('nessunGiorno')}</p>
           )}
           {giorni.map((g, idx) => {
             const d = new Date(`${g.data}T00:00:00Z`);

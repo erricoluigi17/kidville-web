@@ -44,6 +44,7 @@ import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { formattaIstante } from '@/i18n/config';
 import { conIniziale } from '@/lib/i18n/date';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { GRIGLIA_BAMBINI } from '@/lib/ui/larghezza-pagina';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -229,7 +230,12 @@ function Summary({
 
 // ─── Vista Oggi ───────────────────────────────────────────────────────────────
 
-export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; sectionId?: string }) {
+/**
+ * `griglia`: da 1024 px le righe dei bambini vanno su due colonne. La passa solo la pagina del
+ * docente, che sul tablet ha la colonna larga: una riga sola da 900 px allontanerebbe il nome dai
+ * bottoni di presenza. La segreteria (`admin/appello`) ha un suo impaginato e non la passa.
+ */
+export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { sezione: string; sectionId?: string; griglia?: boolean }) {
     // L'uuid quando c'è, il nome quando no: la scelta sta in `parametroClasse`,
     // un posto solo per tutte e tre le chiamate qui sotto.
     const paramClasse = parametroClasse({ id: sectionId, name: sezione });
@@ -822,7 +828,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
             )}
 
             {/* Lista studenti (filtrata) */}
-            <div className="flex flex-col gap-2">
+            <div data-kv-colonne={griglia || undefined} className={griglia ? GRIGLIA_BAMBINI : 'flex flex-col gap-2'}>
                 {visibleStudents.map(student => (
                     <div key={student.id}>
                     <StudentAttendanceRow
@@ -843,7 +849,7 @@ export function AppelloGiornaliero({ sezione, sectionId }: { sezione: string; se
                     </div>
                 ))}
                 {visibleStudents.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-sub">
+                    <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-sub lg:col-span-2">
                         {t('nessunAlunnoFiltro')}
                     </div>
                 )}

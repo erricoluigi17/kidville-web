@@ -1,6 +1,31 @@
+## 📱 Changelog — iPad, PR 2 di 3: le schermate principali di genitori e docenti su più colonne — 2026-10-18 (branch `feat/ipad-tablet-colonne`)
+
+**Stato:** implementato sul branch, in attesa di CI e merge. Nessuna migrazione DB e nessuna build nativa: l'app già installata riceve tutto al rilascio. Piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr2.md`.
+
+Dopo la PR 1 ogni pagina di genitori e docenti stava in una colonna da 720 px. Le schermate tablet della CI di #239 mostravano a 1194 px (iPad Pro 11" in orizzontale) gli elenchi di schede impilati in quella colonna, con metà dello schermo vuota accanto, e la galleria a due foto per riga da 400 px l'una. Il piano di questa PR è stato scritto guardando quelle schermate, pagina per pagina.
+
+- **Due colonne da 1024 px, cioè da dove compare la sidebar.** Lì lo spazio utile parte da 768 px. Sul binario (744–1023) resta una colonna sola: due colonne da ~320 px stringerebbero schede pensate per un telefono da 390. La regola sta in `DUE_COLONNE` e `GRIGLIA_BAMBINI` (`src/lib/ui/larghezza-pagina.ts`). Sotto i 1024 px una griglia a una colonna con lo stesso passo è identica all'elenco impilato di prima, quindi **sul telefono non cambia niente**: l'ordine del DOM è quello di sempre.
+- **Genitore.**
+  - **Home:** le schede vanno su due colonne, riempite riga per riga nell'ordine del telefono. Saluto, sospensione, azioni rapide e piè di pagina restano a tutta larghezza.
+  - **Avvisi, News** (il feed) e **Mensa** (i giorni): schede su due colonne.
+  - **Pagamenti:** due pile, a sinistra totale, totale famiglia, «Come pagare» e notifiche, a destra le voci. Niente `sticky` sulla pila di sinistra: con molte voci è più alta dello schermo, e le causali in fondo resterebbero irraggiungibili.
+  - **Galleria:** 2 colonne sul telefono, 3 sul binario, 4 con la sidebar (`colonneGalleria`).
+  - **Diario:** **resta in una colonna**. È una cronologia, e due colonne ne romperebbero l'ordine di lettura. Solo le foto della giornata passano a 3 colonne da tablet.
+- **Docente.**
+  - **Home:** due pile, a sinistra quello che c'è da sapere (bacheca, allergie), a destra quello che c'è da fare (appello, scorciatoie, agenda). Se a sinistra non c'è niente, la pila di destra si scioglie (`lg:contents`) invece di lasciare una colonna vuota.
+  - **Appello:** le righe dei bambini su due colonne, con la prop `griglia` di `AppelloGiornaliero`. La passa solo la pagina docente: l'appello della segreteria resta com'è fino alla PR 3.
+  - **Diario:** le schede per bambino di nanna, bagno, umore, pasti, attività e routine della scuola su due colonne: metà dello scorrimento per compilare una routine. Rispetto allo spec («elenco dei bambini ed editor affiancati»): il diario non ha un elenco separato dall'editor, e affiancarli avrebbe voluto dire riprogettarlo.
+  - **Galleria:** come quella del genitore.
+- **Le pagine larghe** (`max-w-5xl` invece di 720) si dichiarano in `larghezza-pagina.ts`. Per il genitore: home, galleria, mensa, pagamenti, avvisi e feed delle news, **a confronto esatto**. Il dettaglio di una news e il digest sono testo da leggere e restano a 720, e una pagina futura sotto `/parent/pagamenti` nasce stretta finché qualcuno non la dichiara. Per il docente c'è `COLONNA_DOCENTE_LARGA`, usata da home, appello, diario e galleria.
+- **Niente container query**, anche se misurerebbero la colonna invece della finestra: `container-type` rende il contenitore il blocco di riferimento dei discendenti `position: fixed`, cioè di fogli, modali e visori.
+- **Test.**
+  - **Unit:** `__tests__/ui/larghezza-pagina.test.ts` (rotte larghe esatte, colonne della galleria, il punto `lg:`). Verificato che morde: senza `lg:grid-cols-2` in `DUE_COLONNE` diventa rosso. `MediaGrid` dichiara in `data-kv-colonne` quante colonne gli ha chiesto il chiamante.
+  - **E2E** `e2e/tablet-layout.spec.ts`: su 8 rotte conta le colonne vere dal `grid-template-columns` calcolato dal motore. A 768 px: 1 per gli elenchi e 3 per le gallerie. A 1194 px: 2 e 4. Una classe giusta che il CSS non applica qui diventa rossa. `/parent/news` entra nelle rotte del guscio.
+- **Logging:** nessun log nuovo. L'intervento è solo di disposizione: nessuna route, integrazione esterna o percorso d'errore nuovo.
+
 ## 📱 Changelog — iPad, PR 1 di 3: genitori e docenti con la navigazione laterale e la colonna larga — 2026-10-18 (branch `feat/ipad-tablet`)
 
-**Stato:** implementato sul branch secondario, gate locali verdi; Playwright in CI (due progetti tablet nuovi) prima del merge. Nessuna migrazione DB, nessuna nuova build dell'app nativa: l'app già installata carica `app.kidville.it` e riceve tutto al rilascio. Spec `docs/superpowers/specs/2026-10-18-ipad-tablet-design.md`, piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr1.md`.
+**Stato:** ✅ in produzione dal 18/10/2026 — PR #239 (`ed7ea825`), rilascio di produzione `success` alle 16:06, CI di `main` verde. In produzione il CSS servito contiene le regole del tablet (`--kv-rail-w` a 0, 88px e 16rem). Nessuna migrazione DB, nessuna nuova build dell'app nativa: l'app già installata carica `app.kidville.it` e riceve tutto al rilascio. Spec `docs/superpowers/specs/2026-10-18-ipad-tablet-design.md`, piano `docs/superpowers/plans/2026-10-18-ipad-tablet-pr1.md`.
 
 Segnalazione del titolare: «sistemare grafica e design su iPad». Su iPad ogni schermata di genitori e docenti era una colonna da telefono (430/460 px) in mezzo allo schermo, con la barra in basso centrata. Sull'11" in verticale restava vuota metà della larghezza, in orizzontale due terzi. La segreteria passava alla versione telefono sotto i 1024 px. Decisioni del titolare (18/10): si rifà tutto l'insieme, perché l'iPad lo usano maestre, genitori, segreteria e il revisore Apple. Si fa un tablet vero, con menu laterale e contenuto largo, e si interviene solo sul sito. Il lavoro è diviso in tre PR: PR 1 il guscio di genitori e docenti, PR 2 le schermate principali su più colonne, PR 3 la segreteria.
 

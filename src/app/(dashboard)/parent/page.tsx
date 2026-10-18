@@ -343,70 +343,79 @@ function ParentHomeContent() {
         })}
       </div>
 
-      {/* ── PRESENZE OGGI (badge "A scuola" reale) ── */}
-      {parentId && studentId && (
+      {/* ── LE SCHEDE ──────────────────────────────
+          Da 1024 px (sidebar) su due colonne: ogni scheda è indipendente, e la griglia le
+          riempie riga per riga nell'ordine del telefono. Sotto i 1024 è un blocco qualunque,
+          quindi sul telefono e sul binario nulla cambia. Il `px-4` di ogni scheda diventa il
+          margine fra le colonne. */}
+      <div data-kv-colonne className="lg:grid lg:grid-cols-2 lg:items-start">
+
+        {/* ── PRESENZE OGGI (badge "A scuola" reale) ── */}
+        {parentId && studentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader
+              eyebrow={t('eyebrowPresenze')}
+              title={t('titoloOggiAScuola')}
+              actionLabel={t('azioneStorico')}
+              actionHref={wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance')}
+            />
+            <PresenzeTodayCard studentId={studentId} parentId={parentId} />
+          </div>
+        )}
+
+        {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
+        {parentId && (
+          <div className="pt-4">
+            <PagamentiSummary userId={parentId} href={wi('/parent/pagamenti')} />
+          </div>
+        )}
+
+        {/* ── DIARIO OGGI (solo infanzia) ───────────── */}
+        {!isPrimaria && studentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader eyebrow={t('eyebrowDiario')} title={firstName ? t('diarioGiornataDi', { nome: firstName }) : t('diarioTitolo')} />
+            <DiaryTodayCard studentId={studentId} href={wi('/parent/diary')} />
+          </div>
+        )}
+
+        {/* ── AVVISI (top 2, sola lettura) ──────────── */}
+        {parentId && studentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloAvvisi')} actionLabel={t('azioneTutti')} actionHref={wi('/parent/avvisi')} />
+            <AvvisiPreview parentId={parentId} studentId={studentId} />
+          </div>
+        )}
+
+        {/* ── NEWS (top 3, sola lettura; si nasconde se vuoto) ── */}
+        {parentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloNews')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/news')} />
+            <NewsPreview parentId={parentId} studentId={studentId} />
+          </div>
+        )}
+
+        {/* ── GALLERIA OGGI ─────────────────────────── */}
+        {parentId && studentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader eyebrow={t('eyebrowGalleria')} title={t('titoloFotoDiOggi')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/gallery')} />
+            <GalleryTodayCard studentId={studentId} parentId={parentId} href={wi('/parent/gallery')} />
+          </div>
+        )}
+
+        {/* ── ARMADIETTO · SCORTE (teaser DR) ───────── */}
+        {studentId && (
+          <div className="px-4 pt-5">
+            <SectionHeader eyebrow={t('eyebrowArmadietto')} title={t('titoloScorte')} actionLabel={t('azioneGestisci')} actionHref={wi('/parent/locker')} />
+            <LockerTodayCard studentId={studentId} classeSezione={classeSezione} />
+          </div>
+        )}
+
+        {/* ── CALENDARIO · AGENDA (eventi_agenda M6) ── */}
         <div className="px-4 pt-5">
-          <SectionHeader
-            eyebrow={t('eyebrowPresenze')}
-            title={t('titoloOggiAScuola')}
-            actionLabel={t('azioneStorico')}
-            actionHref={wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance')}
-          />
-          <PresenzeTodayCard studentId={studentId} parentId={parentId} />
+          <SectionHeader eyebrow={t('eyebrowCalendario')} title={t('titoloProssimiAppuntamenti')} />
+          <AgendaTodayCard studentId={studentId} />
         </div>
-      )}
 
-      {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
-      {parentId && (
-        <div className="pt-4">
-          <PagamentiSummary userId={parentId} href={wi('/parent/pagamenti')} />
-        </div>
-      )}
-
-      {/* ── DIARIO OGGI (solo infanzia) ───────────── */}
-      {!isPrimaria && studentId && (
-        <div className="px-4 pt-5">
-          <SectionHeader eyebrow={t('eyebrowDiario')} title={firstName ? t('diarioGiornataDi', { nome: firstName }) : t('diarioTitolo')} />
-          <DiaryTodayCard studentId={studentId} href={wi('/parent/diary')} />
-        </div>
-      )}
-
-      {/* ── AVVISI (top 2, sola lettura) ──────────── */}
-      {parentId && studentId && (
-        <div className="px-4 pt-5">
-          <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloAvvisi')} actionLabel={t('azioneTutti')} actionHref={wi('/parent/avvisi')} />
-          <AvvisiPreview parentId={parentId} studentId={studentId} />
-        </div>
-      )}
-
-      {/* ── NEWS (top 3, sola lettura; si nasconde se vuoto) ── */}
-      {parentId && (
-        <div className="px-4 pt-5">
-          <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloNews')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/news')} />
-          <NewsPreview parentId={parentId} studentId={studentId} />
-        </div>
-      )}
-
-      {/* ── GALLERIA OGGI ─────────────────────────── */}
-      {parentId && studentId && (
-        <div className="px-4 pt-5">
-          <SectionHeader eyebrow={t('eyebrowGalleria')} title={t('titoloFotoDiOggi')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/gallery')} />
-          <GalleryTodayCard studentId={studentId} parentId={parentId} href={wi('/parent/gallery')} />
-        </div>
-      )}
-
-      {/* ── ARMADIETTO · SCORTE (teaser DR) ───────── */}
-      {studentId && (
-        <div className="px-4 pt-5">
-          <SectionHeader eyebrow={t('eyebrowArmadietto')} title={t('titoloScorte')} actionLabel={t('azioneGestisci')} actionHref={wi('/parent/locker')} />
-          <LockerTodayCard studentId={studentId} classeSezione={classeSezione} />
-        </div>
-      )}
-
-      {/* ── CALENDARIO · AGENDA (eventi_agenda M6) ── */}
-      <div className="px-4 pt-5">
-        <SectionHeader eyebrow={t('eyebrowCalendario')} title={t('titoloProssimiAppuntamenti')} />
-        <AgendaTodayCard studentId={studentId} />
       </div>
 
       {/* ── NOTA / FOOTER ─────────────────────────── */}

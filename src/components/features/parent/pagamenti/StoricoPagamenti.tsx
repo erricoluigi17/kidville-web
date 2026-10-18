@@ -179,76 +179,85 @@ export function StoricoPagamenti({ userId }: Props) {
             ammetteBonifico: ammetteBonifico(p.metodi_ammessi),
         }));
 
+    // Due pile, nell'ordine del telefono: a sinistra quanto e come pagare, a destra le voci.
+    // Sotto i 1024 px sono una sopra l'altra come prima; da lì (sidebar) affiancate, e le voci
+    // partono in cima allo schermo invece che sotto totale, IBAN e causali. Niente `sticky` sulla
+    // pila di sinistra: con molte voci aperte è più alta dello schermo, e il suo fondo (le
+    // causali da copiare) resterebbe irraggiungibile finché non finisce l'elenco accanto.
     return (
-        <div className="space-y-5">
-            {sospesi.length > 0 && (
-                <div className="flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 text-kidville-error">
-                    <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-                    <p className="font-maven text-sm">
-                        <span className="font-bold">{t('sospesoTitolo')}</span> ({sospesi.join(', ')}). {t('sospesoTesto')}
-                    </p>
-                </div>
-            )}
-
-            {!loading && !error && totaleDovuto > 0 && (
-                <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
-                    <p className="font-maven text-[12.5px] text-white">{t('totaleDaSaldare')}</p>
-                    <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow-ink">
-                        {formatEuro(totaleDovuto)}
-                    </p>
-                    <p className="font-maven text-xs text-white mt-1">
-                        {t('vociDaSaldare', { count: vociAperte })}
-                    </p>
-                </div>
-            )}
-
-            {!loading && !error && mostraTotaleFamiglia && (
-                <div className="rounded-card border border-kidville-line bg-white p-4">
-                    <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-2">{t('totaleFamiglia')}</p>
-                    <div className="space-y-1.5">
-                        {[...perFiglio.entries()].map(([id, f]) => (
-                            <div key={id} className="flex items-center justify-between font-maven text-sm">
-                                <span className="text-kidville-ink">{f.nome}</span>
-                                <span className="font-bold text-kidville-green">{formatEuro(f.totale)}</span>
-                            </div>
-                        ))}
+        <div data-kv-colonne className="space-y-5 lg:grid lg:grid-cols-2 lg:items-start lg:gap-5 lg:space-y-0">
+            <div className="space-y-5">
+                {sospesi.length > 0 && (
+                    <div className="flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 text-kidville-error">
+                        <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                        <p className="font-maven text-sm">
+                            <span className="font-bold">{t('sospesoTitolo')}</span> ({sospesi.join(', ')}). {t('sospesoTesto')}
+                        </p>
                     </div>
-                    <div className="mt-2 flex items-center justify-between border-t border-kidville-line pt-2 font-maven text-sm">
-                        <span className="font-bold text-kidville-green">{t('totaleComplessivo')}</span>
-                        <span className="font-black text-kidville-green">{formatEuro(totaleDovuto)}</span>
+                )}
+
+                {!loading && !error && totaleDovuto > 0 && (
+                    <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
+                        <p className="font-maven text-[12.5px] text-white">{t('totaleDaSaldare')}</p>
+                        <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow-ink">
+                            {formatEuro(totaleDovuto)}
+                        </p>
+                        <p className="font-maven text-xs text-white mt-1">
+                            {t('vociDaSaldare', { count: vociAperte })}
+                        </p>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
-                le causali dentro) o contanti. `ComePagare` rende `null` da solo
-                quando non c'è nessuna voce aperta — e QUELLA è l'unica condizione:
-                dal 2026-09-06 la card segue il residuo, non la causale suggerita.
+                {!loading && !error && mostraTotaleFamiglia && (
+                    <div className="rounded-card border border-kidville-line bg-white p-4">
+                        <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-2">{t('totaleFamiglia')}</p>
+                        <div className="space-y-1.5">
+                            {[...perFiglio.entries()].map(([id, f]) => (
+                                <div key={id} className="flex items-center justify-between font-maven text-sm">
+                                    <span className="text-kidville-ink">{f.nome}</span>
+                                    <span className="font-bold text-kidville-green">{formatEuro(f.totale)}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-2 flex items-center justify-between border-t border-kidville-line pt-2 font-maven text-sm">
+                            <span className="font-bold text-kidville-green">{t('totaleComplessivo')}</span>
+                            <span className="font-black text-kidville-green">{formatEuro(totaleDovuto)}</span>
+                        </div>
+                    </div>
+                )}
 
-                La card porta la stessa pelle delle sorelle di questa pagina —
-                `rounded-card border border-kidville-line`, fondo bianco, `p-4` e
-                NESSUNA ombra: misurato sui pixel, «Totale famiglia» qui sopra e le
-                card dell'elenco qui sotto passano di netto dal crema del fondo al
-                filetto, senza sfumatura. Un'elevazione in più su una sola card la
-                farebbe sembrare incollata invece che nata qui. */}
-            {!loading && !error && <ComePagare sedi={sedi} voci={vociCausale} />}
+                {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
+                    le causali dentro) o contanti. `ComePagare` rende `null` da solo
+                    quando non c'è nessuna voce aperta — e QUELLA è l'unica condizione:
+                    dal 2026-09-06 la card segue il residuo, non la causale suggerita.
 
-            <div className="flex justify-end"><PushOptIn userId={userId} /></div>
+                    La card porta la stessa pelle delle sorelle di questa pagina —
+                    `rounded-card border border-kidville-line`, fondo bianco, `p-4` e
+                    NESSUNA ombra: misurato sui pixel, «Totale famiglia» qui sopra e le
+                    card dell'elenco qui sotto passano di netto dal crema del fondo al
+                    filetto, senza sfumatura. Un'elevazione in più su una sola card la
+                    farebbe sembrare incollata invece che nata qui. */}
+                {!loading && !error && <ComePagare sedi={sedi} voci={vociCausale} />}
 
-            {loading ? (
-                <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('caricamento')}</p>
-            ) : error ? (
-                <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
-            ) : pagamenti.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('nessunPagamento')}</p>
-            ) : (
-                gruppi.map((g) => (
-                    <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
-                        {g.daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                        {g.pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                    </Section>
-                ))
-            )}
+                <div className="flex justify-end"><PushOptIn userId={userId} /></div>
+            </div>
+
+            <div className="space-y-5">
+                {loading ? (
+                    <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('caricamento')}</p>
+                ) : error ? (
+                    <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
+                ) : pagamenti.length === 0 ? (
+                    <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('nessunPagamento')}</p>
+                ) : (
+                    gruppi.map((g) => (
+                        <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
+                            {g.daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                            {g.pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                        </Section>
+                    ))
+                )}
+            </div>
         </div>
     );
 }

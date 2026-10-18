@@ -588,7 +588,7 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
 
     return (
         <>
-            <div data-testid="griglia-media" className={`grid ${CLASSI_COLONNE[colonne]} gap-3`}>
+            <div data-testid="griglia-media" data-kv-colonne={colonne} className={`grid ${CLASSI_COLONNE[colonne]} gap-3`}>
                 {items.map((item, idx) => {
                     // `url` in una const locale: il restringimento di tipo su
                     // `item.file_url` non sopravvivrebbe dentro gli handler.

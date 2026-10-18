@@ -6,6 +6,7 @@ import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary
 import { motion } from 'framer-motion';
 import { AlertTriangle, Stethoscope, UtensilsCrossed } from 'lucide-react';
 import { MEAL_QUANTITIES } from './eventConfig';
+import { GRIGLIA_BAMBINI } from '@/lib/ui/larghezza-pagina';
 
 // ─── Hook mockato per il menu del giorno ──────────────────────────────────────
 
@@ -205,78 +206,81 @@ export function MealDetailInline({
             )}
 
             {/* ── Card per studente (layout come Nanna) ── */}
-            {students.map((student, idx) => {
-                const corsi = studentStates[student.id]?.corsi as Record<string, string | null>;
-                const hasAllergie = (student.allergie?.length ?? 0) > 0;
-                const isSaved = savedStudentIds.has(student.id);
+            {/* Da 1024 px le schede dei bambini vanno su due colonne (`GRIGLIA_BAMBINI`). */}
+            <div className={GRIGLIA_BAMBINI}>
+                {students.map((student, idx) => {
+                    const corsi = studentStates[student.id]?.corsi as Record<string, string | null>;
+                    const hasAllergie = (student.allergie?.length ?? 0) > 0;
+                    const isSaved = savedStudentIds.has(student.id);
 
-                return (
-                    <motion.div
-                        key={student.id}
-                        custom={idx}
-                        variants={itemVariants}
-                        initial="hidden"
-                        animate="visible"
-                        className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
-                    >
-                        {/* Avatar + Nome */}
-                        <div className="flex items-center gap-3 mb-3">
-                            <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs ${hasAllergie ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-cream text-kidville-green'}`}>
-                                {student.firstName[0]}{student.lastName[0]}
+                    return (
+                        <motion.div
+                            key={student.id}
+                            custom={idx}
+                            variants={itemVariants}
+                            initial="hidden"
+                            animate="visible"
+                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                        >
+                            {/* Avatar + Nome */}
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs ${hasAllergie ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-cream text-kidville-green'}`}>
+                                    {student.firstName[0]}{student.lastName[0]}
+                                </div>
+                                <span className={`font-maven font-medium text-sm flex-1 ${hasAllergie ? 'text-kidville-error' : 'text-kidville-green'}`}>
+                                    {student.firstName} {student.lastName}
+                                    {hasAllergie && <span className="ml-1">⚠️</span>}
+                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                </span>
+                                {isSaved && onElimina && (
+                                    <BottoneEliminaRegistrazione
+                                        nome={`${student.firstName} ${student.lastName}`}
+                                        evento={etichettaEvento ?? ''}
+                                        haNota={Boolean(noteBambino?.[student.id]?.trim())}
+                                        onElimina={() => onElimina(student.id)}
+                                    />
+                                )}
                             </div>
-                            <span className={`font-maven font-medium text-sm flex-1 ${hasAllergie ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                                {student.firstName} {student.lastName}
-                                {hasAllergie && <span className="ml-1">⚠️</span>}
-                                {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
-                            </span>
-                            {isSaved && onElimina && (
-                                <BottoneEliminaRegistrazione
-                                    nome={`${student.firstName} ${student.lastName}`}
-                                    evento={etichettaEvento ?? ''}
-                                    haNota={Boolean(noteBambino?.[student.id]?.trim())}
-                                    onElimina={() => onElimina(student.id)}
-                                />
-                            )}
-                        </div>
 
-                        {/* Portate con pulsanti quantità */}
-                        <div className="space-y-2.5">
-                            {activeCourses.map(corso => {
-                                const selQ = corsi?.[corso.id] ?? null;
-                                return (
-                                    <div key={corso.id}>
-                                        <p className="font-maven text-[11px] text-kidville-muted mb-1.5">
-                                            {corso.icon} {corso.nome?.trim() || corso.portata}
-                                        </p>
-                                        <div className="flex gap-1.5">
-                                            {MEAL_QUANTITIES.map(q => (
-                                                <button
-                                                    key={q.value}
-                                                    // Il click è un TOGGLE (ritoccare la stessa quantità
-                                                    // riporta a `null`), e finora lo stato viveva solo nel
-                                                    // colore: uno screen reader non poteva saperlo, e nemmeno
-                                                    // un test poteva sapere se stava per selezionare o
-                                                    // deselezionare. È la stessa dichiarazione che i pulsanti
-                                                    // dell'umore hanno già.
-                                                    aria-pressed={selQ === q.value}
-                                                    onClick={() => onMealSelect(student.id, corso.id, selQ === q.value ? null : q.value)}
-                                                    className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-150 active:scale-95 ${
-                                                        selQ === q.value
-                                                            ? 'bg-kidville-green text-kidville-yellow border-kidville-green shadow-sm'
-                                                            : 'bg-kidville-cream text-kidville-muted border-kidville-line hover:border-kidville-line'
-                                                    }`}
-                                                >
-                                                    {q.short}
-                                                </button>
-                                            ))}
+                            {/* Portate con pulsanti quantità */}
+                            <div className="space-y-2.5">
+                                {activeCourses.map(corso => {
+                                    const selQ = corsi?.[corso.id] ?? null;
+                                    return (
+                                        <div key={corso.id}>
+                                            <p className="font-maven text-[11px] text-kidville-muted mb-1.5">
+                                                {corso.icon} {corso.nome?.trim() || corso.portata}
+                                            </p>
+                                            <div className="flex gap-1.5">
+                                                {MEAL_QUANTITIES.map(q => (
+                                                    <button
+                                                        key={q.value}
+                                                        // Il click è un TOGGLE (ritoccare la stessa quantità
+                                                        // riporta a `null`), e finora lo stato viveva solo nel
+                                                        // colore: uno screen reader non poteva saperlo, e nemmeno
+                                                        // un test poteva sapere se stava per selezionare o
+                                                        // deselezionare. È la stessa dichiarazione che i pulsanti
+                                                        // dell'umore hanno già.
+                                                        aria-pressed={selQ === q.value}
+                                                        onClick={() => onMealSelect(student.id, corso.id, selQ === q.value ? null : q.value)}
+                                                        className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-150 active:scale-95 ${
+                                                            selQ === q.value
+                                                                ? 'bg-kidville-green text-kidville-yellow border-kidville-green shadow-sm'
+                                                                : 'bg-kidville-cream text-kidville-muted border-kidville-line hover:border-kidville-line'
+                                                        }`}
+                                                    >
+                                                        {q.short}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </motion.div>
-                );
-            })}
+                                    );
+                                })}
+                            </div>
+                        </motion.div>
+                    );
+                })}
+            </div>
         </div>
     );
 }

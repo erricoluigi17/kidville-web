@@ -166,6 +166,10 @@ export default defineConfig({
         // `retries: 2` ereditati. La seconda e' dove un crawler instabile
         // sparirebbe dentro i ripescaggi, senza che nessuno conti i ripescati.
         /contrasto-schermate\.spec\.ts$/,
+        // QUARTA, per la stessa ragione: lo spec del tablet ha senso solo alle misure di un iPad
+        // (progetti `tablet-*` qui sotto). A 1280 px desktop proverebbe la sidebar e basta, e
+        // girerebbe una seconda volta con i `retries: 2` che i progetti tablet tolgono apposta.
+        /tablet-layout\.spec\.ts$/,
       ],
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
@@ -205,6 +209,30 @@ export default defineConfig({
       // chromium): sono cookie e localStorage in JSON, riusabili da qualunque
       // motore. Senza questa dipendenza gli spec autenticati partirebbero prima
       // che i file esistano e fallirebbero su un redirect al login.
+      dependencies: ['setup'],
+    },
+    /**
+     * IL TABLET (2026-10-18) — genitori e docenti su iPad, nei due formati della navigazione
+     * laterale: `iPad Mini` (768 px, il binario a icone) e `iPad Pro 11 landscape` (1194 px, la
+     * sidebar). WebKit, il motore della WebView iOS: sono gli stessi browser che il job E2E
+     * installa già per il progetto `webkit`.
+     *
+     * `retries: 0` come il crawler `contrasto`: lo spec misura larghezze e scorrimenti, e una
+     * misura sbagliata è la stessa al terzo tentativo. Con i ripescaggi un rosso su tre
+     * passerebbe per verde.
+     */
+    {
+      name: 'tablet-verticale',
+      testMatch: /tablet-layout\.spec\.ts$/,
+      retries: 0,
+      use: { ...devices['iPad Mini'] },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'tablet-orizzontale',
+      testMatch: /tablet-layout\.spec\.ts$/,
+      retries: 0,
+      use: { ...devices['iPad Pro 11 landscape'] },
       dependencies: ['setup'],
     },
     ...(SMOKE_ARTEFATTO

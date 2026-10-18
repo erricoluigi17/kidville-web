@@ -9,12 +9,11 @@ import {
   Home, Bell, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, BarChart3, X, Euro, UtensilsCrossed,
   GraduationCap, ClipboardList, AlertTriangle, Megaphone, CalendarX2, IdCard,
-  ChevronRight, Newspaper,
+  Newspaper,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
-import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
-import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { useBadgeChatNonLetti } from '@/components/features/chat/BadgeChatNonLetti';
+import { ElencoGruppiMenu } from '@/components/features/shell/ElencoGruppiMenu';
 
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
@@ -53,28 +52,20 @@ const PILL = 'relative w-10 h-[30px] rounded-full flex items-center justify-cent
 const ICONA = 'w-[18px] h-[18px] transition-colors duration-200';
 const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200';
 
-export default function BottomNav() {
+/**
+ * LE VOCI DELLA NAVIGAZIONE DEL GENITORE — tab principali e gruppi del menu, filtrati per grado.
+ *
+ * Esportate perché sul tablet le disegna anche `BarraLaterale` (binario e sidebar): una lista
+ * sola, così le due navigazioni non possono divergere. Restano IN QUESTO FILE e non in un modulo
+ * a parte di proposito: i lock delle tinte (`tinte-funzioni-uniche`), dei selettori Maestro e
+ * dell'altezza della barra leggono le voci da qui, e spostarle li renderebbe ciechi — verdi
+ * perché non trovano più niente da guardare.
+ *
+ * Una sola istanza montata per volta (`NavigazioneGenitore` sceglie fra barra e binario), quindi
+ * i figli e i non letti si chiedono una volta sola.
+ */
+export function useVociGenitore() {
   const pathname = usePathname();
-  const [showMenu, setShowMenu] = useState(false);
-
-  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
-  // Chiuderlo dentro l'`onClick` del `<Link>` smontava il link stesso nello
-  // stesso istante in cui Next avviava la navigazione — che è una transizione
-  // React. Se il payload RSC arrivava prima dello smontaggio la navigazione
-  // passava; se arrivava dopo, si perdeva e l'URL restava fermo. Misurato sulla
-  // traccia Playwright della run 30920578641: click ricevuto, RSC `/parent/news`
-  // 200 in 283 ms, URL su `/parent` per tutti i 5 s successivi. Non era il test
-  // fragile: sulla rete lenta di un genitore, toccare una voce del menu non
-  // portava da nessuna parte. Lock: `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`.
-  // Si usa l'aggiustamento di stato in render (l'escape hatch documentato da
-  // React per lo stato derivato) e non un `useEffect`: nessun giro di render in
-  // più, e nessuna finestra in cui il foglio è aperto sulla pagina nuova.
-  const [rottaVista, setRottaVista] = useState(pathname);
-  if (rottaVista !== pathname) {
-    setRottaVista(pathname);
-    setShowMenu(false);
-  }
-
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
   // Testi della navigazione dal namespace i18n «nav» (label tab, gruppi e voci
@@ -164,15 +155,45 @@ export default function BottomNav() {
   // dedicato (Home/Scuola·Diario/Avvisi/Chat) → una sola voce attiva.
   const anyMainTabActive = mainTabs.some((tab) => tab.href && isActive(tab.href));
 
+  return { t, pathname, mainTabs, visibleGroups, isActive, isMenuSectionActive, anyMainTabActive, nonLetti };
+}
+
+export default function BottomNav() {
+  const { t, pathname, mainTabs, visibleGroups, isActive, isMenuSectionActive, anyMainTabActive, nonLetti } =
+    useVociGenitore();
+  const [showMenu, setShowMenu] = useState(false);
+
+  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
+  // Chiuderlo dentro l'`onClick` del `<Link>` smontava il link stesso nello
+  // stesso istante in cui Next avviava la navigazione — che è una transizione
+  // React. Se il payload RSC arrivava prima dello smontaggio la navigazione
+  // passava; se arrivava dopo, si perdeva e l'URL restava fermo. Misurato sulla
+  // traccia Playwright della run 30920578641: click ricevuto, RSC `/parent/news`
+  // 200 in 283 ms, URL su `/parent` per tutti i 5 s successivi. Non era il test
+  // fragile: sulla rete lenta di un genitore, toccare una voce del menu non
+  // portava da nessuna parte. Lock: `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`.
+  // Si usa l'aggiustamento di stato in render (l'escape hatch documentato da
+  // React per lo stato derivato) e non un `useEffect`: nessun giro di render in
+  // più, e nessuna finestra in cui il foglio è aperto sulla pagina nuova.
+  const [rottaVista, setRottaVista] = useState(pathname);
+  if (rottaVista !== pathname) {
+    setRottaVista(pathname);
+    setShowMenu(false);
+  }
+
   return (
     <>
       {/* ── BOTTOM NAV PILL ─────────────────────── */}
       {/* `data-kv-barra-bassa`: l'aggancio con cui `CampoNonCoperto` sa dove
           comincia lo strato fisso in fondo. Un attributo e non un numero: la
           barra vera è ciò che conta, e `--kv-bottomnav-h` è una FORMULA che ha
-          già mentito una volta (i 2px del bordo, qui sotto). */}
+          già mentito una volta (i 2px del bordo, qui sotto).
+          `tablet:hidden`: da 744 px al suo posto c'è `BarraLaterale`, montata da
+          `NavigazioneGenitore` appena l'idratazione sa la larghezza. Prima di
+          quell'istante il server ha reso questa barra (non può sapere lo
+          schermo): invisibile, non salta in faccia per un attimo. */}
       <div data-kv-barra-bassa
-        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3 tablet:hidden"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         {/* ⚠️ IL FILO CHIARO È UN ANELLO INTERNO, NON UN BORDO (2026-08-08).
             Con `border border-white/60` la pillola occupava 62px invece di 60 —
@@ -328,96 +349,16 @@ export default function BottomNav() {
                   </button>
                 </div>
 
-                <div className="flex flex-col gap-[18px]">
-                  {visibleGroups.map((g) => (
-                    <div key={g.label}>
-                      <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-muted mb-2 pl-1">
-                        {g.label}
-                      </p>
-                      <div
-                        className="bg-white rounded-card overflow-hidden"
-                        style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }}
-                      >
-                        {g.items.map((it, i) => {
-                          const Icon = it.icon;
-                          const active = it.href ? pathname.startsWith(it.href) : false;
-                          const borderCls = i < g.items.length - 1 ? 'border-b border-kidville-line' : '';
-
-                          const inner = (
-                            <>
-                              <span
-                                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
-                                style={{ background: it.tint + '18', color: it.tint }}
-                              >
-                                <Icon size={21} strokeWidth={1.8} />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-2">
-                                  <span className="font-barlow font-extrabold text-base uppercase leading-none text-kidville-green truncate">
-                                    {it.label}
-                                  </span>
-                                  {it.soon && (
-                                    <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-muted">
-                                      {t('badgeInArrivo')}
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="block font-maven text-xs text-kidville-muted mt-0.5">{it.sub}</span>
-                              </span>
-                              {it.href && <ChevronRight size={16} className="text-kidville-muted/60 flex-shrink-0" strokeWidth={2} />}
-                            </>
-                          );
-
-                          if (!it.href) {
-                            return (
-                              <div
-                                key={it.id}
-                                aria-disabled="true"
-                                className={`flex items-center gap-[13px] px-3 py-[11px] opacity-60 ${borderCls}`}
-                              >
-                                {inner}
-                              </div>
-                            );
-                          }
-                          return (
-                            <Link
-                              key={it.id}
-                              href={it.href}
-                              // Solo sulla voce della rotta in cui si è già: lì non
-                              // avviene nessuna navigazione, quindi il cambio di
-                              // `pathname` non arriverebbe mai e il foglio resterebbe
-                              // aperto per sempre. Altrove NON si chiude qui: vedi il
-                              // commento in cima al componente.
-                              onClick={active ? () => setShowMenu(false) : undefined}
-                              aria-current={active ? 'page' : undefined}
-                              className={`flex items-center gap-[13px] px-3 py-[11px] active:bg-kidville-cream ${borderCls}`}
-                            >
-                              {inner}
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Cambio di veste — visibile SOLO a chi ha davvero due profili (le
-                      cinque insegnanti che sono anche genitori). Per le altre 617
-                      persone il componente non renderizza niente: un'affordance
-                      morta in un menu che si apre ogni giorno è rumore, non una
-                      funzione in più. Sta SOPRA «Alto contrasto» (che è una
-                      preferenza) e lontano da «Esci» (che è distruttivo). */}
-                  <CambiaProfiloMenuButton
-                    iconSize={21}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-green-soft disabled:opacity-60"
-                  />
-
-
-                  {/* Uscita — prima non c'era alcun logout nell'area Genitore. */}
-                  <LogoutMenuButton
-                    iconSize={21}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-error shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-error-soft disabled:opacity-60"
-                  />
-                </div>
+                {/* Le carte dei gruppi, il cambio di profilo e l'uscita: lo stesso elenco che
+                    sul tablet apre il binario (`BarraLaterale`). La chiusura sul tocco della voce
+                    in cui si è già — e il perché NON si chiude altrove — sta nel componente. */}
+                <ElencoGruppiMenu
+                  gruppi={visibleGroups}
+                  pathname={pathname}
+                  hrefDi={(href) => href}
+                  onChiudi={() => setShowMenu(false)}
+                  etichettaInArrivo={t('badgeInArrivo')}
+                />
               </div>
             </motion.div>
           </>

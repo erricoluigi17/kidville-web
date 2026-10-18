@@ -10,6 +10,7 @@ import { logClient } from '@/lib/logging/client';
 import { PannelloSemaforo } from '@/components/features/teacher/PannelloSemaforo';
 import { PannelloCertificatiMedici } from '@/components/features/teacher/PannelloCertificatiMedici';
 import type { ModuloSelezionabile } from '@/components/features/teacher/filtri-modulistica';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 interface FormTemplate {
   id: string;
@@ -125,7 +126,7 @@ function ContenutoModulistica() {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-[460px] flex-1 flex-col px-4 pt-5">
+    <div className={`${COLONNA_DOCENTE} flex w-full flex-1 flex-col px-4 pt-5`}>
       {/* Header verde (DR) */}
       <PageHeaderCard
         eyebrow={t('modulisticaEyebrow')}

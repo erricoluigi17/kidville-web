@@ -48,32 +48,40 @@ test('la home genitore monta il widget News senza crash', async ({ page }) => {
   expect(erroriPagina).toEqual([]);
 });
 
-test('la voce «News» è presente nel Menu sheet e porta al feed', async ({ page }) => {
-  await page.goto('/parent');
-  // ⚠️ RETTIFICA DEL 2026-08-04 — questo commento diceva il falso, e va letto perché
-  // spiega perché il test è stato rosso per giorni.
-  //
-  // Diceva: «l'overlay del loader globale intercetta i click, il click riusciva e la
-  // navigazione non partiva perché era l'overlay a riceverlo». Sbagliato. La traccia
-  // Playwright della run 30920578641 mostra che il click ARRIVA al link e che la
-  // richiesta RSC verso `/parent/news` parte e torna 200 in 283 ms — poi l'URL resta
-  // fermo per 5 secondi. Il difetto era nel prodotto: `BottomNav` chiudeva il foglio
-  // dentro l'`onClick` del `<Link>`, smontando il link mentre Next portava la
-  // navigazione in una transizione React. Corretto lì, con lock unitario in
-  // `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`.
-  //
-  // L'attesa qui sotto resta perché è comunque giusta (il foglio si apre meglio a
-  // pagina ferma), non perché fosse la cura.
-  await attendiFineCaricamento(page);
-  // Apre il Menu sheet (bottom-nav) e clicca la voce News del gruppo Comunicazioni.
-  await page.getByRole('button', { name: /Menu/i }).click();
-  const voceNews = page.getByRole('link', { name: /News/i }).filter({ hasText: 'Novità e comunicati' });
-  await expect(voceNews.first()).toBeVisible({ timeout: 10_000 });
-  await voceNews.first().click();
-  // Timeout esplicito come tutte le sorelle di questo file: era l'unica asserzione a
-  // correre con i 5 s di default, su un server `next dev` che compila su richiesta.
-  await expect(page).toHaveURL(/\/parent\/news/, { timeout: 15_000 });
-  // E la pagina deve essere davvero quella: un URL giusto su una schermata vuota
-  // passerebbe lo stesso.
-  await expect(page.getByRole('heading', { name: 'News' }).first()).toBeVisible({ timeout: 15_000 });
+// Il foglio «Menu» è della barra in basso del TELEFONO. Dal 18/10/2026, a 1280 px (il viewport
+// del progetto `chromium`) l'area genitore ha la sidebar con tutte le voci e il foglio non c'è
+// più: senza questo viewport il test cercherebbe un bottone che a quella larghezza non esiste.
+// Il menu del tablet ha il suo test in `tablet-layout.spec.ts`.
+test.describe('sul telefono', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('la voce «News» è presente nel Menu sheet e porta al feed', async ({ page }) => {
+    await page.goto('/parent');
+    // ⚠️ RETTIFICA DEL 2026-08-04 — questo commento diceva il falso, e va letto perché
+    // spiega perché il test è stato rosso per giorni.
+    //
+    // Diceva: «l'overlay del loader globale intercetta i click, il click riusciva e la
+    // navigazione non partiva perché era l'overlay a riceverlo». Sbagliato. La traccia
+    // Playwright della run 30920578641 mostra che il click ARRIVA al link e che la
+    // richiesta RSC verso `/parent/news` parte e torna 200 in 283 ms — poi l'URL resta
+    // fermo per 5 secondi. Il difetto era nel prodotto: `BottomNav` chiudeva il foglio
+    // dentro l'`onClick` del `<Link>`, smontando il link mentre Next portava la
+    // navigazione in una transizione React. Corretto lì, con lock unitario in
+    // `__tests__/ui/bottom-nav-menu-navigazione.test.tsx`.
+    //
+    // L'attesa qui sotto resta perché è comunque giusta (il foglio si apre meglio a
+    // pagina ferma), non perché fosse la cura.
+    await attendiFineCaricamento(page);
+    // Apre il Menu sheet (bottom-nav) e clicca la voce News del gruppo Comunicazioni.
+    await page.getByRole('button', { name: /Menu/i }).click();
+    const voceNews = page.getByRole('link', { name: /News/i }).filter({ hasText: 'Novità e comunicati' });
+    await expect(voceNews.first()).toBeVisible({ timeout: 10_000 });
+    await voceNews.first().click();
+    // Timeout esplicito come tutte le sorelle di questo file: era l'unica asserzione a
+    // correre con i 5 s di default, su un server `next dev` che compila su richiesta.
+    await expect(page).toHaveURL(/\/parent\/news/, { timeout: 15_000 });
+    // E la pagina deve essere davvero quella: un URL giusto su una schermata vuota
+    // passerebbe lo stesso.
+    await expect(page.getByRole('heading', { name: 'News' }).first()).toBeVisible({ timeout: 15_000 });
+  });
 });

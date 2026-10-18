@@ -8,6 +8,7 @@ import { BookOpen, Users, ChevronRight } from 'lucide-react';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 interface Classe {
   id: string;
@@ -42,7 +43,7 @@ function HubInner() {
 
   return (
     <div className="min-h-screen bg-kidville-cream/40">
-      <div className="mx-auto max-w-[460px] px-4 pt-5">
+      <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
         {/* Header verde (DR) */}
         <PageHeaderCard eyebrow={t('hubEyebrow')} title={t('hubTitolo')} />
         <div className="mt-3">

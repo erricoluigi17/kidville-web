@@ -73,6 +73,9 @@ const BARRE: readonly { file: string; chi: string }[] = [
     { file: 'src/components/features/teacher/TeacherBottomNav.tsx', chi: 'bottom-nav insegnante' },
     { file: 'src/components/features/parent/BottomNav.tsx', chi: 'bottom-nav genitore' },
     { file: 'src/components/features/admin/AdminBottomNav.tsx', chi: 'bottom-nav cockpit' },
+    // Dal 18/10/2026, sul tablet (da 744 px) al posto della barra in basso di genitori e docenti
+    // c'è un binario a sinistra, alto quanto lo schermo: il visore deve coprire anche quello.
+    { file: 'src/components/features/shell/BarraLaterale.tsx', chi: 'binario/sidebar tablet genitore e docente' },
 ];
 
 /**

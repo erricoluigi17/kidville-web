@@ -62,9 +62,15 @@ const TOKEN = 'text-kidville-muted';
  *             lascia un posto libero a chi verrà dopo — e il tetto scende di uno proprio
  *             per non lasciarlo libero un'altra volta. `TETTO_FILE` resta 177: il file usa
  *             ancora il token altrove, non è stato bonificato.
+ * 2026-10-18 — 177/1170 → 175/1162. Il menu raggruppato di genitori e docenti esce dalle due
+ *             barre in basso (`BottomNav`, `TeacherBottomNav`) e diventa `ElencoGruppiMenu`,
+ *             condiviso col binario del tablet. Le sue 4+4 righe in `muted` (intestazioni dei
+ *             gruppi, sottotitoli, «In arrivo», freccia) passano a `text-kidville-sub`: le due
+ *             barre escono dall'allowlist con zero usi, e i tetti scendono di 2 file e 8
+ *             occorrenze per non lasciare quei posti liberi a chi verrà dopo.
  */
-const TETTO_FILE = 177;
-const TETTO_OCCORRENZE = 1170;
+const TETTO_FILE = 175;
+const TETTO_OCCORRENZE = 1162;
 
 /**
  * Bonificati, e non possono rientrare.

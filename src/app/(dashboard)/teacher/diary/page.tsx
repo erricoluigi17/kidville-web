@@ -12,6 +12,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
@@ -106,7 +107,7 @@ function TeacherDiaryInner() {
 
     if (sezioniLoaded && !sezione) {
         return (
-            <div className="mx-auto max-w-[460px] px-4 pt-5">
+            <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
                 <PageHeaderCard eyebrow={t('inSezione')} title={t('diarioDelGiorno')} />
                 <div className="mt-4 rounded-3xl border border-kidville-line bg-white p-8 text-center shadow-sm">
                     <p className="font-maven text-sm text-kidville-muted">
@@ -129,7 +130,7 @@ function TeacherDiaryInner() {
     }
 
     return (
-        <div className="mx-auto max-w-[460px] px-4 pt-5">
+        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
 
             {/* Header verde (DR) */}
             <PageHeaderCard

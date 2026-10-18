@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* TABLET — 744 px è l'iPad mini in verticale, il più stretto degli iPad. `md` (768) lo
+   lascerebbe fuori, e ridefinire `md` toccherebbe 46 file che lo usano già con un altro
+   significato. Tailwind ordina i breakpoint per valore: `tablet:` cade fra `sm:` e `md:`.
+   Il guscio di genitori e docenti cambia forma qui (vedi `[data-kv-guscio-tablet]` più sotto
+   e `src/lib/ui/use-formato-guscio.ts`, che usa la stessa misura in JS). */
+@theme {
+  --breakpoint-tablet: 46.5rem;
+}
+
 @theme inline {
   /* ── Brand (esistenti) ── */
   --color-kidville-green: #006A5F;
@@ -254,6 +263,30 @@ body {
      `__tests__/pages/assenze-rifiniture-secondo-collaudo.test.tsx` lo rilegge da
      `BottomNav.tsx` e fallisce se la pillola cambia altezza. */
   --kv-bottomnav-h: calc(60px + max(12px, env(safe-area-inset-bottom)));
+}
+
+/* IL GUSCIO TABLET di genitori e docenti (`[data-kv-guscio-tablet]` sui loro due layout, non
+   sull'admin, che ha la sua sidebar). Da 744 px la barra in basso non c'è più: al suo posto un
+   binario a sinistra (88 px), che da 1024 px diventa una sidebar (16rem). `--kv-rail-w` è lo
+   spazio che il contenuto deve lasciargli. `--kv-bottomnav-h` va a zero perché chi si appoggia
+   sopra la barra (il piede appiccicato dell'assenza, gli avvisi settimanali) non lasci una fascia
+   vuota in fondo allo schermo.
+   ⚠️ Questo blocco sta DOPO la dichiarazione principale apposta: il lock
+   `assenze-rifiniture-secondo-collaudo` legge la PRIMA `--kv-bottomnav-h` del foglio e la
+   confronta con l'altezza vera della pillola. */
+[data-kv-guscio-tablet] {
+  --kv-rail-w: 0px;
+}
+@media (min-width: 46.5rem) {
+  [data-kv-guscio-tablet] {
+    --kv-rail-w: 88px;
+    --kv-bottomnav-h: 0px;
+  }
+}
+@media (min-width: 64rem) {
+  [data-kv-guscio-tablet] {
+    --kv-rail-w: 16rem;
+  }
 }
 
 /* =============================================================================

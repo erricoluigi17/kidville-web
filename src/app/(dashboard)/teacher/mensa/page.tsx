@@ -14,6 +14,7 @@ import { AlertTriangle, RefreshCw, CalendarDays, UtensilsCrossed } from 'lucide-
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { useAllergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
 
 interface AlunnoReport { id: string; nome: string; classe: string; allergeni: string[]; conflitti: unknown[] }
 interface ClasseReport { classe: string; conteggio: number; alunni: AlunnoReport[] }
@@ -90,7 +91,7 @@ function MensaDocente() {
   const aggiorna = () => { setLoading(true); setReloadKey((k) => k + 1); };
 
   return (
-    <div className="mx-auto max-w-[460px] px-4 pt-6">
+    <div className={`${COLONNA_DOCENTE} px-4 pt-6`}>
       {/* Header verde (DR) */}
       <PageHeaderCard
         eyebrow={t('mensaEyebrow')}

@@ -97,17 +97,20 @@ let reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
 /** La sede scelta nel selettore in alto: è quella su cui si decide. */
 let sedeCorrenteFinta: string | null = null
 vi.mock('@/lib/context/sede-context', () => ({
+  // `''` è il contesto che non sa ancora quali sedi hai: niente sedi, `loading`.
   useSediAttive: () => ({
-    sedi: [
-      { id: 'sc-giugliano', nome: 'Kidville Giugliano' },
-      { id: 'sc-aversa', nome: 'Kidville Aversa' },
-    ],
+    sedi: reFetchKeyCorrente
+      ? [
+          { id: 'sc-giugliano', nome: 'Kidville Giugliano' },
+          { id: 'sc-aversa', nome: 'Kidville Aversa' },
+        ]
+      : [],
     selezionate: [],
-    effettive: reFetchKeyCorrente.split(','),
+    effettive: reFetchKeyCorrente ? reFetchKeyCorrente.split(',') : [],
     sedeCorrente: sedeCorrenteFinta,
     reFetchKey: reFetchKeyCorrente,
     epocaSede: 0,
-    loading: false,
+    loading: reFetchKeyCorrente === '',
     toggle: vi.fn(),
     soloSede: vi.fn(),
     tutte: vi.fn(),
@@ -714,6 +717,33 @@ describe('CandidatureInsegnanti — cambio di sede con una lettura già in volo'
         'il pannello è rimasto a schermo con i dati di una sede che non è più in scope',
       ).not.toBeInTheDocument(),
     )
+  })
+
+  it('🔴 le sedi che ARRIVANO dopo il clic non chiudono il pannello e non rileggono l’elenco', async () => {
+    // ⚠️ IL PRIMO CARICAMENTO DELLE SEDI NON È UN CAMBIO DI SEDE.
+    //
+    // `reFetchKey` passa da `''` a N quando il contesto riceve le sedi accessibili,
+    // centinaia di millisecondi dopo il primo disegno. L'effetto lo trattava come
+    // un cambio di scope: chiudeva il pannello appena aperto e rileggeva l'elenco.
+    // Chi apriva una candidatura subito, se la vedeva sparire; il telefono
+    // perdeva anche il punto della lista (E2E della PR #238, rosso 3 volte su 3
+    // con /api/admin/sedi a 700 ms). Lo scope del server è il cookie, e il
+    // cookie non è cambiato: non c'è niente da chiudere né da rileggere.
+    reFetchKeyCorrente = ''
+    const { rerender } = render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Anna Bianchi'))
+    await waitFor(() => expect(screen.getByText('+39 000 0000000')).toBeInTheDocument())
+    const lettureElenco = () =>
+      fetchMock.mock.calls.filter(([u]) => !String(u).includes('id=') && !String(u).includes('/etichetta')).length
+    const prima = lettureElenco()
+
+    reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
+    rerender(<CandidatureInsegnanti />)
+    await attendi(50)
+
+    expect(screen.getByText('+39 000 0000000'), 'le sedi appena arrivate hanno chiuso il pannello').toBeInTheDocument()
+    expect(lettureElenco(), 'le sedi appena arrivate hanno riletto l’elenco').toBe(prima)
   })
 
   it('«Mostra altre» è SPENTO mentre una lettura d’elenco è in volo: non si accoda a un elenco che sta per cambiare', async () => {

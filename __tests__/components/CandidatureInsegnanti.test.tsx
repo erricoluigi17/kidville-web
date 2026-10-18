@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent, within, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within, cleanup, act } from '@testing-library/react'
 import { axe, toHaveNoViolations } from 'jest-axe'
 
 import itAdminAltro from '../../messages/it/adminAltro.json'
@@ -1323,11 +1323,18 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
    * togliendo `gettoneDettaglio.current += 1` da `chiudiDettaglio` la suite
    * restava 42/42 verde (misurato).
    */
-  function serverConPatchLentaSenzaEmail(ritardoMs: number) {
+  /**
+   * La PATCH risponde dopo `ritardoMs`, oppure — con `'a mano'` — solo quando il test chiama la
+   * funzione restituita. Il secondo modo serve ai test che guardano DENTRO la finestra della
+   * PATCH: con un timer la finestra è tempo vero, e su un runner carico si chiudeva prima che il
+   * test avesse finito di guardarci dentro (CI della #242, 18/10: «Approva» di Anna già acceso).
+   */
+  function serverConPatchLentaSenzaEmail(ritardoMs: number | 'a mano'): () => void {
+    let rilascia: () => void = () => {}
     fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
       if (init?.method === 'PATCH') {
-        return new Promise((risolvi) =>
-          setTimeout(() => risolvi({
+        return new Promise((risolvi) => {
+          const rispondi = () => risolvi({
             ok: true,
             status: 200,
             json: async () => ({
@@ -1337,8 +1344,10 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
               credentialsEmailSent: false,
               warnings: ['Email delle credenziali NON inviata: the domain is not verified.'],
             }),
-          }), ritardoMs),
-        )
+          })
+          if (ritardoMs === 'a mano') rilascia = rispondi
+          else setTimeout(rispondi, ritardoMs)
+        })
       }
       const u = String(url)
       if (u.includes(`id=${ELENCO[1].id}`)) {
@@ -1347,6 +1356,7 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
       if (u.includes('id=')) return ok({ data: DETTAGLIO })
       return ok({ data: [ELENCO[0], BRUNO_IN_ATTESA], total: 2 })
     })
+    return () => rilascia()
   }
 
   it('«INDIETRO» durante la PATCH: l’esito non si perde in silenzio, e il pannello non si riapre', async () => {
@@ -1504,7 +1514,8 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     // pannello di Bruno aveva i due pulsanti spenti, senza `title` e senza una
     // riga che dicesse perché. Il test esistente guardava solo DOPO l'atterraggio,
     // cioè fuori dalla finestra in cui l'interfaccia sembrava rotta.
-    serverConPatchLentaSenzaEmail(300)
+    // La PATCH resta in volo finché il test non la rilascia: la finestra non dipende dal runner.
+    const rilasciaPatch = serverConPatchLentaSenzaEmail('a mano')
     render(<CandidatureInsegnanti />)
     await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
 
@@ -1530,11 +1541,10 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
     expect(approva).toHaveAttribute('title', itAdminAltro.candAzioneInCorso)
     expect(screen.getByText(itAdminAltro.candAzioneInCorso)).toBeInTheDocument()
 
-    // E quando la PATCH atterra, il motivo se ne va con lei.
-    await waitFor(
-      () => expect(screen.queryByText(itAdminAltro.candAzioneInCorso)).not.toBeInTheDocument(),
-      { timeout: 2000 },
-    )
+    // E quando la PATCH atterra, il motivo se ne va con lei. Qui l'assenza non è un verde falso:
+    // il motivo c'era (asserito sopra) e la risposta arriva davvero, dentro `act`.
+    await act(async () => rilasciaPatch())
+    await waitFor(() => expect(screen.queryByText(itAdminAltro.candAzioneInCorso)).not.toBeInTheDocument())
   })
 })
 

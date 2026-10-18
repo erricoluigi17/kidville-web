@@ -70,7 +70,9 @@ test('la voce «Candidature» sta nel menu e apre la pagina propria', async ({ p
   await serverFinto(page)
   await page.goto('/admin')
   await page.getByRole('link', { name: 'Candidature', exact: true }).first().click()
-  await expect(page).toHaveURL(/\/admin\/candidature$/)
+  // I link della sidebar portano con sé `?userId=…` (identità di sessione): si controlla il
+  // percorso, che finisce lì o prosegue con la query — non con un altro segmento.
+  await expect(page).toHaveURL(/\/admin\/candidature(\?|$)/)
   await expect(page.getByRole('heading', { level: 1, name: 'Candidature' })).toBeVisible()
 })
 

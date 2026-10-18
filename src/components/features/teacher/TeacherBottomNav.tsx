@@ -8,15 +8,14 @@ import { useTranslations } from 'next-intl';
 import {
   Home, NotebookPen, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, FileSignature, ClipboardCheck, Users, Megaphone,
-  ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper, Contact,
+  ListTodo, UtensilsCrossed, CalendarDays, User, X, Newspaper, Contact,
 } from 'lucide-react';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
-import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
-import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 import { useBadgeChatNonLetti } from '@/components/features/chat/BadgeChatNonLetti';
+import { ElencoGruppiMenu } from '@/components/features/shell/ElencoGruppiMenu';
 
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
@@ -61,25 +60,19 @@ const PILL = 'relative w-10 h-[30px] rounded-full flex items-center justify-cent
 const ICONA = 'w-[18px] h-[18px] transition-colors duration-200';
 const ETICHETTA = 'text-[9px] font-barlow font-bold uppercase tracking-wider transition-colors duration-200';
 
-export default function TeacherBottomNav() {
+/**
+ * LE VOCI DELLA NAVIGAZIONE DEL DOCENTE — tab principali e gruppi del menu, filtrati per grado,
+ * con `withUser` che propaga `?userId=` su ogni link.
+ *
+ * Esportate perché sul tablet le disegna anche `BarraLaterale` (binario e sidebar): una lista
+ * sola. Restano IN QUESTO FILE di proposito, come le gemelle di `parent/BottomNav`: i lock delle
+ * tinte e dei selettori Maestro le leggono da qui. Una sola istanza montata per volta
+ * (`NavigazioneDocente`), quindi i gradi si chiedono una volta sola.
+ */
+export function useVociDocente() {
   const t = useTranslations('teacherNav');
   const pathname = usePathname();
   const search = useSearchParams();
-  const [showMenu, setShowMenu] = useState(false);
-
-  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
-  // Stesso difetto trovato sulla bottom-nav del genitore e corretto insieme:
-  // chiudere il foglio dentro l'`onClick` del `<Link>` smonta il link mentre
-  // Next sta portando la navigazione in una transizione React, e se il payload
-  // RSC arriva dopo lo smontaggio la navigazione si perde in silenzio. Lo
-  // schema era copiato in tutte e due le barre: la regola vive ora in tutte e
-  // due, con lo stesso lock a difenderla
-  // (`__tests__/ui/bottom-nav-menu-navigazione.test.tsx`).
-  const [rottaVista, setRottaVista] = useState(pathname);
-  if (rottaVista !== pathname) {
-    setRottaVista(pathname);
-    setShowMenu(false);
-  }
   // Identità a due passaggi (SSR → idratazione): `withUser` omette il parametro
   // finché l'uuid non è risolto, così l'HTML del server e il primo render del
   // client coincidono e nessun href porta mai la stringa «null».
@@ -182,13 +175,36 @@ export default function TeacherBottomNav() {
   // dedicato (Dashboard/Diario·Registro/Messaggi/Foto) → una sola voce attiva.
   const anyMainTabActive = mainTabs.some((t) => t.href && isActive(t.href));
 
+  return { t, pathname, withUser, mainTabs, visibleGroups, isActive, isMenuSectionActive, anyMainTabActive, nonLetti };
+}
+
+export default function TeacherBottomNav() {
+  const { t, pathname, withUser, mainTabs, visibleGroups, isActive, isMenuSectionActive, anyMainTabActive, nonLetti } =
+    useVociDocente();
+  const [showMenu, setShowMenu] = useState(false);
+
+  // ── Il foglio si chiude QUANDO la rotta è cambiata, non quando si clicca ──
+  // Stesso difetto trovato sulla bottom-nav del genitore e corretto insieme:
+  // chiudere il foglio dentro l'`onClick` del `<Link>` smonta il link mentre
+  // Next sta portando la navigazione in una transizione React, e se il payload
+  // RSC arriva dopo lo smontaggio la navigazione si perde in silenzio. Lo
+  // schema era copiato in tutte e due le barre: la regola vive ora in tutte e
+  // due, con lo stesso lock a difenderla
+  // (`__tests__/ui/bottom-nav-menu-navigazione.test.tsx`).
+  const [rottaVista, setRottaVista] = useState(pathname);
+  if (rottaVista !== pathname) {
+    setRottaVista(pathname);
+    setShowMenu(false);
+  }
+
   return (
     <>
       {/* ── BOTTOM NAV PILL ─────────────────────── */}
       {/* `data-kv-barra-bassa`: come sulla barra del genitore, è l'aggancio con
-          cui `CampoNonCoperto` sa dove comincia lo strato fisso in fondo. */}
+          cui `CampoNonCoperto` sa dove comincia lo strato fisso in fondo.
+          `tablet:hidden`: da 744 px c'è `BarraLaterale` (vedi `NavigazioneDocente`). */}
       <div data-kv-barra-bassa
-        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[460px] z-50 px-3 pb-3"
+        className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[460px] z-50 px-3 pb-3 tablet:hidden"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         {/* ⚠️ ANELLO INTERNO, NON BORDO — la stessa correzione fatta sulla barra
             del genitore il 2026-08-08, che qui era rimasta indietro. `border`
@@ -306,93 +322,15 @@ export default function TeacherBottomNav() {
                   </button>
                 </div>
 
-                <div className="flex flex-col gap-[18px]">
-                  {visibleGroups.map((g) => (
-                    <div key={g.label}>
-                      <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-muted mb-2 pl-1">
-                        {g.label}
-                      </p>
-                      <div
-                        className="bg-white rounded-card overflow-hidden"
-                        style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }}
-                      >
-                        {g.items.map((it, i) => {
-                          const Icon = it.icon;
-                          const active = it.href ? pathname.startsWith(it.href) : false;
-                          const borderCls = i < g.items.length - 1 ? 'border-b border-kidville-line' : '';
-
-                          const inner = (
-                            <>
-                              <span
-                                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
-                                style={{ background: it.tint + '18', color: it.tint }}
-                              >
-                                <Icon size={21} strokeWidth={1.8} />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-2">
-                                  <span className="font-barlow font-extrabold text-base uppercase leading-none text-kidville-green truncate">
-                                    {it.label}
-                                  </span>
-                                  {it.soon && (
-                                    <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-muted">
-                                      {t('badgeInArrivo')}
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="block font-maven text-xs text-kidville-muted mt-0.5">{it.sub}</span>
-                              </span>
-                              {it.href && <ChevronRight size={16} className="text-kidville-muted/60 flex-shrink-0" strokeWidth={2} />}
-                            </>
-                          );
-
-                          if (!it.href) {
-                            return (
-                              <div
-                                key={it.id}
-                                aria-disabled="true"
-                                className={`flex items-center gap-[13px] px-3 py-[11px] opacity-60 ${borderCls}`}
-                              >
-                                {inner}
-                              </div>
-                            );
-                          }
-                          return (
-                            <Link
-                              key={it.id}
-                              href={withUser(it.href)}
-                              // Solo sulla rotta corrente: lì nessuna navigazione
-                              // avverrebbe, quindi `pathname` non cambierebbe mai e
-                              // il foglio resterebbe aperto.
-                              onClick={active ? () => setShowMenu(false) : undefined}
-                              aria-current={active ? 'page' : undefined}
-                              className={`flex items-center gap-[13px] px-3 py-[11px] active:bg-kidville-cream ${borderCls}`}
-                            >
-                              {inner}
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Cambio di veste — l'altra metà del difetto: fino a oggi, per
-                      guardare il diario del proprio figlio, un'insegnante che è
-                      anche genitore doveva USCIRE e rientrare scegliendo
-                      «Genitore». Il componente non renderizza niente per chi ha un
-                      profilo solo (617 persone su 622). */}
-                  <CambiaProfiloMenuButton
-                    iconSize={21}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-green-soft disabled:opacity-60"
-                  />
-
-
-                  {/* Uscita — prima non c'era alcun logout nell'area Docente. */}
-                  <LogoutMenuButton
-                    iconSize={21}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-error shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-error-soft disabled:opacity-60"
-                  />
-                </div>
+                {/* Lo stesso elenco del genitore e del binario del tablet (`ElencoGruppiMenu`):
+                    qui con `withUser`, che propaga `?userId=` su ogni voce. */}
+                <ElencoGruppiMenu
+                  gruppi={visibleGroups}
+                  pathname={pathname}
+                  hrefDi={withUser}
+                  onChiudi={() => setShowMenu(false)}
+                  etichettaInArrivo={t('badgeInArrivo')}
+                />
               </div>
             </motion.div>
           </>

@@ -74,12 +74,15 @@ beforeEach(() => {
 });
 
 describe('AdminBinario — il binario del cockpit sul tablet', () => {
-  it('c’è solo fra 744 e 1279 px: `tablet:flex` e `xl:hidden`', () => {
+  it('c’è solo sull’iPad in verticale, fra 744 e 1023 px: `tablet:flex` e `lg:hidden`', () => {
+    // In orizzontale (da 1024 px) c'è la sidebar piena, come per genitori e docenti: decisione del
+    // titolare del 18/10, che dopo la PR 3 vedeva sull'11" in orizzontale «il menu del telefono».
     const { container } = render(<AdminBinario />);
     const cls = binario(container).className.split(/\s+/);
     expect(cls).toContain('hidden');
     expect(cls).toContain('tablet:flex');
-    expect(cls).toContain('xl:hidden');
+    expect(cls).toContain('lg:hidden');
+    expect(cls).not.toContain('xl:hidden');
     // largo come `--kv-rail-w` del tablet: se cambia uno, cambia l'altro (globals.css).
     expect(cls).toContain('tablet:w-[88px]');
   });

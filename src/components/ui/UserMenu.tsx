@@ -48,7 +48,9 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
         <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-[15px] font-extrabold uppercase text-kidville-green">
           {ruoloLabel[0] ?? 'S'}
         </span>
-        <span className="leading-[1.15] text-left">
+        {/* Il ruolo scritto c'è da 1024 px. Sull'iPad in verticale resta l'iniziale nel cerchio:
+            quei ~90 px servono alla ricerca, e il nome del pulsante («Menu account») non cambia. */}
+        <span className="hidden leading-[1.15] text-left lg:block">
           <span className="block font-barlow text-sm font-extrabold uppercase text-kidville-white">{ruoloLabel}</span>
           <span className="block font-maven text-[11px] text-kidville-yellow">Kidville</span>
         </span>

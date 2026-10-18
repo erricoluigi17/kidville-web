@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * IL BINARIO DEL COCKPIT SU TABLET (744–1279 px).
+ * IL BINARIO DEL COCKPIT SU TABLET IN VERTICALE (744–1023 px).
  *
  * Fino al 18/10/2026 la segreteria su iPad aveva due forme, entrambe sbagliate:
  *  - sotto i 1024 px (iPad mini e 11" in verticale) la versione telefono, con la pillola in basso
@@ -11,8 +11,13 @@
  *
  * Il binario prende 88 px: i quattro tab della barra in basso (`TAB_ADMIN`, la stessa lista),
  * Anagrafica, che nel foglio del telefono sta in evidenza in cima, e «Menu». «Menu» apre lo stesso
- * contenuto del foglio (`AdminMenuSheet`) in un pannello accanto al binario. Da 1280 px torna la
- * sidebar piena (`AdminSidebar`, `xl:`).
+ * contenuto del foglio (`AdminMenuSheet`) in un pannello accanto al binario. Da 1024 px c'è la
+ * sidebar piena (`AdminSidebar`, `lg:`), come per genitori e docenti.
+ *
+ * Nella PR 3 (n. 241) il binario arrivava fino a 1279 px, per lasciare più spazio alle tabelle
+ * sull'11" in orizzontale. Il titolare, che usa l'iPad soprattutto in orizzontale, l'ha bocciato
+ * il 18/10: in orizzontale vuole il menu da computer. Le tabelle larghe scorrono nel loro
+ * contenitore (`overflow-x-auto`), la pagina no.
  *
  * Geometria identica alla sidebar: `sticky top-16`, alta `100vh - 4rem`, `z-[105]` sopra gli
  * overlay del contenuto, che da 744 px partono a `--kv-rail-w` (globals.css). La topbar da 64 px
@@ -75,7 +80,7 @@ export function AdminBinario() {
   return (
     <aside
       data-kv-binario-admin
-      className="hidden tablet:flex xl:hidden tablet:w-[88px] tablet:shrink-0 tablet:flex-col tablet:sticky tablet:top-16 tablet:h-[calc(100vh-4rem)] z-[105] overflow-y-auto border-r border-kidville-line bg-kidville-white"
+      className="hidden tablet:flex lg:hidden tablet:w-[88px] tablet:shrink-0 tablet:flex-col tablet:sticky tablet:top-16 tablet:h-[calc(100vh-4rem)] z-[105] overflow-y-auto border-r border-kidville-line bg-kidville-white"
     >
       <nav aria-label={t('navAria')} className="kv-admin-bottomnav flex flex-col items-stretch gap-1 px-2 py-3">
         {voci.map((v) => {

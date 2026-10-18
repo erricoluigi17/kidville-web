@@ -251,6 +251,10 @@ function Sidebar({ ariaNav, tab, gruppi, pathname, hrefDi, idBadge, nonLetti, te
   const voci = [home, ...gruppi.flatMap((g) => g.items)];
   const attiva = voceAttiva(pathname, voci, home.href ?? '');
 
+  // Le etichette vanno A CAPO, non coi puntini: in 256 px restano 168 px di testo, e «Registro e
+  // valutazioni» (22 caratteri a 14 px) ci stava a un pixel. Fino al 2026-10-18 erano `truncate`, e
+  // il titolare sull'iPad vedeva le scritte tagliate. Una riga in più costa 20 px, una parola
+  // mozzata costa la voce.
   const riga = (v: { id: string; label: string; icon: LucideIcon; href: string | null; tint?: string; soon?: boolean }): ReactNode => {
     const Icon = v.icon;
     const attivo = v.id === attiva;
@@ -258,7 +262,7 @@ function Sidebar({ ariaNav, tab, gruppi, pathname, hrefDi, idBadge, nonLetti, te
       return (
         <div key={v.id} aria-disabled="true" className={`${RIGA_SIDEBAR} ${RIGA_INATTIVA} opacity-60`}>
           <Icon size={20} strokeWidth={2.2} className="shrink-0" style={v.tint ? { color: v.tint } : undefined} />
-          <span className="min-w-0 flex-1 truncate">{v.label}</span>
+          <span className="min-w-0 flex-1 leading-snug">{v.label}</span>
           {v.soon && (
             <span className="rounded-pill bg-kidville-neutral-soft px-1.5 py-0.5 font-barlow text-[9.5px] font-bold uppercase tracking-wide text-kidville-sub">
               {testi.inArrivo}
@@ -286,7 +290,7 @@ function Sidebar({ ariaNav, tab, gruppi, pathname, hrefDi, idBadge, nonLetti, te
             style={!attivo && v.tint ? { color: v.tint } : undefined}
           />
         </span>
-        <span className="min-w-0 flex-1 truncate">{v.label}</span>
+        <span className="min-w-0 flex-1 leading-snug">{v.label}</span>
       </Link>
     );
   };

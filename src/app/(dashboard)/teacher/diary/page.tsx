@@ -12,7 +12,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
-import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
+import { COLONNA_DOCENTE, COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
@@ -129,8 +129,10 @@ function TeacherDiaryInner() {
         );
     }
 
+    // Colonna larga: da 1024 px le schede dei bambini degli editor vanno su due colonne
+    // (`GRIGLIA_BAMBINI`), e la striscia delle routine ci sta senza scorrere.
     return (
-        <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
+        <div className={`${COLONNA_DOCENTE_LARGA} px-4 pt-5`}>
 
             {/* Header verde (DR) */}
             <PageHeaderCard

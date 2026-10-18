@@ -26,6 +26,7 @@ import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { etichetteAllergie, isNegazione, useAllergeneLabel } from '@/lib/mensa/allergeni';
+import { GRIGLIA_BAMBINI } from '@/lib/ui/larghezza-pagina';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -1749,173 +1750,181 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 )}
 
                                 {/* ── NANNA (inizio) / SVEGLIA (fine) — due eventi distinti (PRD §3.1.1) ── */}
-                                {!solaLettura && (selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine') && students.map((student, idx) => {
-                                    const state = studentStates[student.id] ?? {};
-                                    const isSaved = savedStudentIds.has(student.id);
-                                    const isInizio = selectedEvent === 'nanna_inizio';
-                                    return (
-                                        <motion.div
-                                            key={student.id}
-                                            custom={idx}
-                                            variants={itemVariants}
-                                            initial="hidden"
-                                            animate="visible"
-                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
-                                        >
-                                            <div className="flex items-center gap-3 mb-3">
-                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
-                                                    {student.firstName[0]}{student.lastName[0]}
-                                                </div>
-                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
-                                                    {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
-                                                </span>
-                                                {/* ELIMINA — compare solo su una registrazione che ESISTE
-                                                    in archivio (la ✅). Dal 24/09 anche svuotare il campo e
-                                                    salvare cancella la riga (vedi `idsDaTogliere`): il cestino
-                                                    resta la via diretta, senza passare dal Salva. */}
-                                                {isSaved && (
-                                                    <BottoneEliminaRegistrazione
-                                                        nome={`${student.firstName} ${student.lastName}`}
-                                                        evento={eventLabel(selectedEvent)}
-                                                        haNota={Boolean(notaBambino[student.id]?.trim())}
-                                                        onElimina={() => void eliminaRegistrazione(student.id)}
+                                {!solaLettura && (selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine') && (
+                                    <div className={GRIGLIA_BAMBINI}>
+                                        {students.map((student, idx) => {
+                                            const state = studentStates[student.id] ?? {};
+                                            const isSaved = savedStudentIds.has(student.id);
+                                            const isInizio = selectedEvent === 'nanna_inizio';
+                                            return (
+                                                <motion.div
+                                                    key={student.id}
+                                                    custom={idx}
+                                                    variants={itemVariants}
+                                                    initial="hidden"
+                                                    animate="visible"
+                                                    className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
+                                                >
+                                                    <div className="flex items-center gap-3 mb-3">
+                                                        <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                            {student.firstName[0]}{student.lastName[0]}
+                                                        </div>
+                                                        <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                            {student.firstName} {student.lastName}
+                                                            {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                                        </span>
+                                                        {/* ELIMINA — compare solo su una registrazione che ESISTE
+                                                            in archivio (la ✅). Dal 24/09 anche svuotare il campo e
+                                                            salvare cancella la riga (vedi `idsDaTogliere`): il cestino
+                                                            resta la via diretta, senza passare dal Salva. */}
+                                                        {isSaved && (
+                                                            <BottoneEliminaRegistrazione
+                                                                nome={`${student.firstName} ${student.lastName}`}
+                                                                evento={eventLabel(selectedEvent)}
+                                                                haNota={Boolean(notaBambino[student.id]?.trim())}
+                                                                onElimina={() => void eliminaRegistrazione(student.id)}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                                        {isInizio
+                                                            ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
+                                                            : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
+                                                        <p className="font-maven text-xs text-kidville-muted">
+                                                            {isInizio ? t('siAddormenta') : t('siSveglia')}
+                                                        </p>
+                                                    </div>
+                                                    <input
+                                                        type="time"
+                                                        value={(isInizio ? (state.orario_inizio as string) : (state.orario_fine as string)) ?? ''}
+                                                        onChange={e => updateStudent(student.id, isInizio ? { orario_inizio: e.target.value } : { orario_fine: e.target.value })}
+                                                        className={`w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-kidville-info/40 focus:border-kidville-info/60' : 'focus:ring-kidville-yellow-dark/40 focus:border-kidville-yellow-dark/60'}`}
                                                     />
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-1.5 mb-1.5">
-                                                {isInizio
-                                                    ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
-                                                    : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
-                                                <p className="font-maven text-xs text-kidville-muted">
-                                                    {isInizio ? t('siAddormenta') : t('siSveglia')}
-                                                </p>
-                                            </div>
-                                            <input
-                                                type="time"
-                                                value={(isInizio ? (state.orario_inizio as string) : (state.orario_fine as string)) ?? ''}
-                                                onChange={e => updateStudent(student.id, isInizio ? { orario_inizio: e.target.value } : { orario_fine: e.target.value })}
-                                                className={`w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-kidville-info/40 focus:border-kidville-info/60' : 'focus:ring-kidville-yellow-dark/40 focus:border-kidville-yellow-dark/60'}`}
-                                            />
-                                        </motion.div>
-                                    );
-                                })}
+                                                </motion.div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
 
                                 {/* ── BAGNO ── */}
-                                {!solaLettura && selectedEvent === 'bagno' && students.map((student, idx) => {
-                                    const state = studentStates[student.id] ?? {};
-                                    const pipi = (state.pipi as number) ?? 0;
-                                    const cacca = (state.cacca as number) ?? 0;
-                                    const vasino = (state.vasino as number) ?? 0;
-                                    const isSaved = savedStudentIds.has(student.id);
-                                    return (
-                                        <motion.div
-                                            key={student.id}
-                                            custom={idx}
-                                            variants={itemVariants}
-                                            initial="hidden"
-                                            animate="visible"
-                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
-                                        >
-                                            {/* Avatar + Nome */}
-                                            <div className="flex items-center gap-3 mb-3">
-                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
-                                                    {student.firstName[0]}{student.lastName[0]}
-                                                </div>
-                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
-                                                    {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
-                                                </span>
-                                                {/* Senza questo cestino il salvataggio selettivo sarebbe una
-                                                    trappola: portare i contatori a zero e risalvare NON
-                                                    cancella la riga, la esclude soltanto dal payload. */}
-                                                {isSaved && (
-                                                    <BottoneEliminaRegistrazione
-                                                        nome={`${student.firstName} ${student.lastName}`}
-                                                        evento={eventLabel('bagno')}
-                                                        haNota={Boolean(notaBambino[student.id]?.trim())}
-                                                        onElimina={() => void eliminaRegistrazione(student.id)}
-                                                    />
-                                                )}
-                                            </div>
-                                            {/* Contatori in griglia: impilati su mobile, in riga da sm+ */}
-                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                                {/* Pipì */}
-                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <span className="text-lg leading-none">💧</span>
-                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-info truncate">{bathroomLabel('pipi')}</span>
+                                {!solaLettura && selectedEvent === 'bagno' && (
+                                    <div className={GRIGLIA_BAMBINI}>
+                                        {students.map((student, idx) => {
+                                            const state = studentStates[student.id] ?? {};
+                                            const pipi = (state.pipi as number) ?? 0;
+                                            const cacca = (state.cacca as number) ?? 0;
+                                            const vasino = (state.vasino as number) ?? 0;
+                                            const isSaved = savedStudentIds.has(student.id);
+                                            return (
+                                                <motion.div
+                                                    key={student.id}
+                                                    custom={idx}
+                                                    variants={itemVariants}
+                                                    initial="hidden"
+                                                    animate="visible"
+                                                    className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
+                                                >
+                                                    {/* Avatar + Nome */}
+                                                    <div className="flex items-center gap-3 mb-3">
+                                                        <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                            {student.firstName[0]}{student.lastName[0]}
+                                                        </div>
+                                                        <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                            {student.firstName} {student.lastName}
+                                                            {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                                        </span>
+                                                        {/* Senza questo cestino il salvataggio selettivo sarebbe una
+                                                            trappola: portare i contatori a zero e risalvare NON
+                                                            cancella la riga, la esclude soltanto dal payload. */}
+                                                        {isSaved && (
+                                                            <BottoneEliminaRegistrazione
+                                                                nome={`${student.firstName} ${student.lastName}`}
+                                                                evento={eventLabel('bagno')}
+                                                                haNota={Boolean(notaBambino[student.id]?.trim())}
+                                                                onElimina={() => void eliminaRegistrazione(student.id)}
+                                                            />
+                                                        )}
                                                     </div>
-                                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                                        <button
-                                                            onClick={() => counter(student.id, 'pipi', -1)}
-                                                            aria-label={t('bagnoPipiMeno')}
-                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
-                                                        >
-                                                            <Minus size={10} strokeWidth={1.5} />
-                                                        </button>
-                                                        <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
-                                                        <button
-                                                            onClick={() => counter(student.id, 'pipi', 1)}
-                                                            aria-label={t('bagnoPipiPiu')}
-                                                            className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                        >
-                                                            <Plus size={10} strokeWidth={1.5} />
-                                                        </button>
+                                                    {/* Contatori in griglia: impilati su mobile, in riga da sm+ */}
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                        {/* Pipì */}
+                                                        <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-lg leading-none">💧</span>
+                                                                <span className="sm:hidden font-maven font-semibold text-xs text-kidville-info truncate">{bathroomLabel('pipi')}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'pipi', -1)}
+                                                                    aria-label={t('bagnoPipiMeno')}
+                                                                    className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
+                                                                >
+                                                                    <Minus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                                <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'pipi', 1)}
+                                                                    aria-label={t('bagnoPipiPiu')}
+                                                                    className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                                >
+                                                                    <Plus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {/* Cacca */}
+                                                        <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-lg leading-none">💩</span>
+                                                                <span className="sm:hidden font-maven font-semibold text-xs text-kidville-warn truncate">{bathroomLabel('cacca')}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'cacca', -1)}
+                                                                    aria-label={t('bagnoCaccaMeno')}
+                                                                    className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
+                                                                >
+                                                                    <Minus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                                <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'cacca', 1)}
+                                                                    aria-label={t('bagnoCaccaPiu')}
+                                                                    className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                                >
+                                                                    <Plus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {/* Vasino (potty training) */}
+                                                        <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <span className="text-lg leading-none">🚽</span>
+                                                                <span className="sm:hidden font-maven font-semibold text-xs text-kidville-success truncate">{bathroomLabel('vasino')}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'vasino', -1)}
+                                                                    aria-label={t('bagnoVasinoMeno')}
+                                                                    className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
+                                                                >
+                                                                    <Minus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                                <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
+                                                                <button
+                                                                    onClick={() => counter(student.id, 'vasino', 1)}
+                                                                    aria-label={t('bagnoVasinoPiu')}
+                                                                    className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                                >
+                                                                    <Plus size={10} strokeWidth={1.5} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                                {/* Cacca */}
-                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <span className="text-lg leading-none">💩</span>
-                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-warn truncate">{bathroomLabel('cacca')}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                                        <button
-                                                            onClick={() => counter(student.id, 'cacca', -1)}
-                                                            aria-label={t('bagnoCaccaMeno')}
-                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
-                                                        >
-                                                            <Minus size={10} strokeWidth={1.5} />
-                                                        </button>
-                                                        <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
-                                                        <button
-                                                            onClick={() => counter(student.id, 'cacca', 1)}
-                                                            aria-label={t('bagnoCaccaPiu')}
-                                                            className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                        >
-                                                            <Plus size={10} strokeWidth={1.5} />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                {/* Vasino (potty training) */}
-                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <span className="text-lg leading-none">🚽</span>
-                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-success truncate">{bathroomLabel('vasino')}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                                        <button
-                                                            onClick={() => counter(student.id, 'vasino', -1)}
-                                                            aria-label={t('bagnoVasinoMeno')}
-                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
-                                                        >
-                                                            <Minus size={10} strokeWidth={1.5} />
-                                                        </button>
-                                                        <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
-                                                        <button
-                                                            onClick={() => counter(student.id, 'vasino', 1)}
-                                                            aria-label={t('bagnoVasinoPiu')}
-                                                            className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                        >
-                                                            <Plus size={10} strokeWidth={1.5} />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </motion.div>
-                                    );
-                                })}
+                                                </motion.div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
 
                                 {/* ── ROUTINE DELLA SCUOLA (2026-09-28): il controllo del suo tipo di risposta ── */}
                                 {/* Le opzioni della routine sono cambiate mentre la maestra compilava:
@@ -1941,66 +1950,70 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 )}
 
                                 {/* ── UMORE (M5.4): picker 5 valori per alunno → dettagli.umore ── */}
-                                {!solaLettura && selectedEvent === 'umore' && students.map((student, idx) => {
-                                    const sel = umoreFromDettagli(studentStates[student.id]);
-                                    const isSaved = savedStudentIds.has(student.id);
-                                    return (
-                                        <motion.div
-                                            key={student.id}
-                                            role="group"
-                                            aria-label={`${student.firstName} ${student.lastName}`}
-                                            custom={idx}
-                                            variants={itemVariants}
-                                            initial="hidden"
-                                            animate="visible"
-                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
-                                        >
-                                            <div className="flex items-center gap-3 mb-3">
-                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
-                                                    {student.firstName[0]}{student.lastName[0]}
-                                                </div>
-                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
-                                                    {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
-                                                </span>
-                                                {/* Dal 2026-09-28 anche l'umore si toglie: spenta la routine, sceglierne
-                                                    un altro non sarebbe più possibile. */}
-                                                {isSaved && (
-                                                    <BottoneEliminaRegistrazione
-                                                        nome={`${student.firstName} ${student.lastName}`}
-                                                        evento={eventLabel('umore')}
-                                                        haNota={Boolean(notaBambino[student.id]?.trim())}
-                                                        onElimina={() => void eliminaRegistrazione(student.id)}
-                                                    />
-                                                )}
-                                            </div>
-                                            <div className="grid grid-cols-5 gap-1.5">
-                                                {UMORE_VALUES.map(v => {
-                                                    const c = UMORE_CONFIG[v];
-                                                    const active = sel === v;
-                                                    return (
-                                                        <button
-                                                            key={v}
-                                                            onClick={() => updateStudent(student.id, { umore: active ? null : v })}
-                                                            className={`flex flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-all ${
-                                                                active
-                                                                    ? 'border-kidville-yellow-dark/60 bg-kidville-yellow-soft scale-105 shadow-sm'
-                                                                    : 'border-kidville-line bg-white hover:bg-kidville-cream'
-                                                            }`}
-                                                            aria-pressed={active}
-                                                            aria-label={`${student.firstName}: ${umoreLabel(v)}`}
-                                                        >
-                                                            <span className="text-xl leading-none">{c.emoji}</span>
-                                                            <span className={`font-maven text-[10px] ${active ? 'font-bold text-kidville-yellow-dark' : 'text-kidville-muted'}`}>
-                                                                {umoreLabel(v)}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </motion.div>
-                                    );
-                                })}
+                                {!solaLettura && selectedEvent === 'umore' && (
+                                    <div className={GRIGLIA_BAMBINI}>
+                                        {students.map((student, idx) => {
+                                            const sel = umoreFromDettagli(studentStates[student.id]);
+                                            const isSaved = savedStudentIds.has(student.id);
+                                            return (
+                                                <motion.div
+                                                    key={student.id}
+                                                    role="group"
+                                                    aria-label={`${student.firstName} ${student.lastName}`}
+                                                    custom={idx}
+                                                    variants={itemVariants}
+                                                    initial="hidden"
+                                                    animate="visible"
+                                                    className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
+                                                >
+                                                    <div className="flex items-center gap-3 mb-3">
+                                                        <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                            {student.firstName[0]}{student.lastName[0]}
+                                                        </div>
+                                                        <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                            {student.firstName} {student.lastName}
+                                                            {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                                        </span>
+                                                        {/* Dal 2026-09-28 anche l'umore si toglie: spenta la routine, sceglierne
+                                                            un altro non sarebbe più possibile. */}
+                                                        {isSaved && (
+                                                            <BottoneEliminaRegistrazione
+                                                                nome={`${student.firstName} ${student.lastName}`}
+                                                                evento={eventLabel('umore')}
+                                                                haNota={Boolean(notaBambino[student.id]?.trim())}
+                                                                onElimina={() => void eliminaRegistrazione(student.id)}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                    <div className="grid grid-cols-5 gap-1.5">
+                                                        {UMORE_VALUES.map(v => {
+                                                            const c = UMORE_CONFIG[v];
+                                                            const active = sel === v;
+                                                            return (
+                                                                <button
+                                                                    key={v}
+                                                                    onClick={() => updateStudent(student.id, { umore: active ? null : v })}
+                                                                    className={`flex flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-all ${
+                                                                        active
+                                                                            ? 'border-kidville-yellow-dark/60 bg-kidville-yellow-soft scale-105 shadow-sm'
+                                                                            : 'border-kidville-line bg-white hover:bg-kidville-cream'
+                                                                    }`}
+                                                                    aria-pressed={active}
+                                                                    aria-label={`${student.firstName}: ${umoreLabel(v)}`}
+                                                                >
+                                                                    <span className="text-xl leading-none">{c.emoji}</span>
+                                                                    <span className={`font-maven text-[10px] ${active ? 'font-bold text-kidville-yellow-dark' : 'text-kidville-muted'}`}>
+                                                                        {umoreLabel(v)}
+                                                                    </span>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </motion.div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
 
                             {/* ── Nota di SEZIONE (uguale per tutti i genitori) ── */}

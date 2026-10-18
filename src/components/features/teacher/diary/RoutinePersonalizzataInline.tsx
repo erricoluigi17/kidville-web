@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { MAX_TESTO, type RoutinePersonalizzata } from '@/lib/diary/routine';
+import { GRIGLIA_BAMBINI } from '@/lib/ui/larghezza-pagina';
 
 /**
  * IL PANNELLO DI UNA ROUTINE AGGIUNTA DALLA SCUOLA (2026-09-28).
@@ -111,112 +112,115 @@ export function RoutinePersonalizzataInline({
                 </p>
             )}
 
-            {students.map((student, idx) => {
-                const valore = studentStates[student.id]?.valore;
-                const isSaved = savedStudentIds.has(student.id);
-                const nomeIntero = `${student.firstName} ${student.lastName}`;
-                const etichettaCampo = `${def.nome} — ${nomeIntero}`;
-                const nonPiuValido = student.id in nonPiuValidi
-                    ? testoValoreRoutine(nonPiuValidi[student.id], t('routineFatto')) ?? String(nonPiuValidi[student.id])
-                    : null;
-                return (
-                    <motion.div
-                        key={student.id}
-                        role="group"
-                        aria-label={nomeIntero}
-                        custom={idx}
-                        variants={itemVariants}
-                        initial="hidden"
-                        animate="visible"
-                        className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
-                    >
-                        <div className="flex items-center gap-3 mb-3">
-                            <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
-                                {student.firstName[0]}{student.lastName[0]}
+            {/* Da 1024 px le schede dei bambini vanno su due colonne (`GRIGLIA_BAMBINI`). */}
+            <div className={GRIGLIA_BAMBINI}>
+                {students.map((student, idx) => {
+                    const valore = studentStates[student.id]?.valore;
+                    const isSaved = savedStudentIds.has(student.id);
+                    const nomeIntero = `${student.firstName} ${student.lastName}`;
+                    const etichettaCampo = `${def.nome} — ${nomeIntero}`;
+                    const nonPiuValido = student.id in nonPiuValidi
+                        ? testoValoreRoutine(nonPiuValidi[student.id], t('routineFatto')) ?? String(nonPiuValidi[student.id])
+                        : null;
+                    return (
+                        <motion.div
+                            key={student.id}
+                            role="group"
+                            aria-label={nomeIntero}
+                            custom={idx}
+                            variants={itemVariants}
+                            initial="hidden"
+                            animate="visible"
+                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
+                        >
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                    {student.firstName[0]}{student.lastName[0]}
+                                </div>
+                                <span className="font-maven font-medium text-sm text-kidville-green flex-1 min-w-0 break-words">
+                                    {nomeIntero}
+                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                </span>
+                                {(isSaved || nonPiuValido !== null) && (
+                                    <BottoneEliminaRegistrazione
+                                        nome={nomeIntero}
+                                        evento={def.nome}
+                                        haNota={Boolean(noteBambino[student.id]?.trim())}
+                                        onElimina={() => onElimina(student.id)}
+                                    />
+                                )}
                             </div>
-                            <span className="font-maven font-medium text-sm text-kidville-green flex-1 min-w-0 break-words">
-                                {nomeIntero}
-                                {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
-                            </span>
-                            {(isSaved || nonPiuValido !== null) && (
-                                <BottoneEliminaRegistrazione
-                                    nome={nomeIntero}
-                                    evento={def.nome}
-                                    haNota={Boolean(noteBambino[student.id]?.trim())}
-                                    onElimina={() => onElimina(student.id)}
+
+                            {nonPiuValido !== null && (
+                                <p className="mb-2 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn break-words">
+                                    {t('routineNonPiuValido', { valore: nonPiuValido })}
+                                </p>
+                            )}
+
+                            {def.risposta === 'spunta' && (
+                                <button
+                                    type="button"
+                                    aria-pressed={valore === true}
+                                    onClick={() => onValore(student.id, valore === true ? null : true)}
+                                    className={`w-full rounded-xl border-2 px-3 py-2 font-maven text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
+                                        valore === true
+                                            ? 'border-kidville-green bg-kidville-green text-kidville-yellow'
+                                            : 'border-kidville-line bg-white text-kidville-green'
+                                    }`}
+                                >
+                                    {valore === true && <Check size={14} strokeWidth={2.5} />}
+                                    {t('routineFatto')}
+                                </button>
+                            )}
+
+                            {def.risposta === 'scelta' && (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {def.opzioni.map((opzione) => {
+                                        const attiva = scelte(valore).includes(opzione);
+                                        return (
+                                            <button
+                                                key={opzione}
+                                                type="button"
+                                                aria-pressed={attiva}
+                                                onClick={() => toccaOpzione(student.id, opzione)}
+                                                className={`rounded-pill border px-3 py-1.5 font-maven text-sm transition-all ${
+                                                    attiva
+                                                        ? 'border-kidville-green bg-kidville-green text-kidville-yellow font-semibold'
+                                                        : 'border-kidville-line bg-white text-kidville-green'
+                                                }`}
+                                            >
+                                                {opzione}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {def.risposta === 'orario' && (
+                                <input
+                                    type="time"
+                                    aria-label={etichettaCampo}
+                                    value={typeof valore === 'string' ? valore : ''}
+                                    onChange={(e) => onValore(student.id, e.target.value || null)}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
                                 />
                             )}
-                        </div>
 
-                        {nonPiuValido !== null && (
-                            <p className="mb-2 rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn break-words">
-                                {t('routineNonPiuValido', { valore: nonPiuValido })}
-                            </p>
-                        )}
-
-                        {def.risposta === 'spunta' && (
-                            <button
-                                type="button"
-                                aria-pressed={valore === true}
-                                onClick={() => onValore(student.id, valore === true ? null : true)}
-                                className={`w-full rounded-xl border-2 px-3 py-2 font-maven text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
-                                    valore === true
-                                        ? 'border-kidville-green bg-kidville-green text-kidville-yellow'
-                                        : 'border-kidville-line bg-white text-kidville-green'
-                                }`}
-                            >
-                                {valore === true && <Check size={14} strokeWidth={2.5} />}
-                                {t('routineFatto')}
-                            </button>
-                        )}
-
-                        {def.risposta === 'scelta' && (
-                            <div className="flex flex-wrap gap-1.5">
-                                {def.opzioni.map((opzione) => {
-                                    const attiva = scelte(valore).includes(opzione);
-                                    return (
-                                        <button
-                                            key={opzione}
-                                            type="button"
-                                            aria-pressed={attiva}
-                                            onClick={() => toccaOpzione(student.id, opzione)}
-                                            className={`rounded-pill border px-3 py-1.5 font-maven text-sm transition-all ${
-                                                attiva
-                                                    ? 'border-kidville-green bg-kidville-green text-kidville-yellow font-semibold'
-                                                    : 'border-kidville-line bg-white text-kidville-green'
-                                            }`}
-                                        >
-                                            {opzione}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-
-                        {def.risposta === 'orario' && (
-                            <input
-                                type="time"
-                                aria-label={etichettaCampo}
-                                value={typeof valore === 'string' ? valore : ''}
-                                onChange={(e) => onValore(student.id, e.target.value || null)}
-                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
-                            />
-                        )}
-
-                        {def.risposta === 'testo' && (
-                            <input
-                                type="text"
-                                aria-label={etichettaCampo}
-                                maxLength={MAX_TESTO}
-                                value={typeof valore === 'string' ? valore : ''}
-                                placeholder={t('routineTestoPlaceholder', { nome: student.firstName })}
-                                onChange={(e) => onValore(student.id, e.target.value === '' ? null : e.target.value)}
-                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
-                            />
-                        )}
-                    </motion.div>
-                );
-            })}
+                            {def.risposta === 'testo' && (
+                                <input
+                                    type="text"
+                                    aria-label={etichettaCampo}
+                                    maxLength={MAX_TESTO}
+                                    value={typeof valore === 'string' ? valore : ''}
+                                    placeholder={t('routineTestoPlaceholder', { nome: student.firstName })}
+                                    onChange={(e) => onValore(student.id, e.target.value === '' ? null : e.target.value)}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
+                                />
+                            )}
+                        </motion.div>
+                    );
+                })}
+            </div>
         </>
     );
 }

@@ -21,7 +21,7 @@ import { HeroCard } from '@/components/features/shell/HeroCard';
 import { AvvisoNotificheDocente } from '@/components/features/teacher/AvvisoNotificheDocente';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
-import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
+import { COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
 
 // Scorciatoie del giorno (DR ScorciatoieBlock), con `grado` come le voci della
 // bottom-nav: le voci 0-6 sono gated dalla matrice funzioni
@@ -255,12 +255,14 @@ function TeacherDashboardInner() {
   const avvisiRecenti = avvisi.slice(0, 3);
   // Voci primaria: bastano i gradi (l'hub /teacher/primaria aggrega più
   // funzioni); voci 0-6: resta il gate della matrice funzioni.
+  // C'è qualcosa da mettere nella pila di sinistra? (vedi le due pile qui sotto)
+  const colonnaSinistra = avvisiRecenti.length > 0 || allergie.length > 0 || noteMediche.length > 0;
   const shortcuts = SHORTCUTS.filter((s) =>
     s.always || (s.grado === 'primaria' ? hasPrimaria : isEnabled(s.key)),
   );
 
   return (
-    <div className={`${COLONNA_DOCENTE} px-4 pt-5`}>
+    <div className={`${COLONNA_DOCENTE_LARGA} px-4 pt-5`}>
       {/* ── HERO (DR yellow card) — wordmark/campanella nella AppBar ───── */}
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}
@@ -321,277 +323,291 @@ function TeacherDashboardInner() {
         </div>
       )}
 
-      {/* ── COMUNICAZIONI (bacheca del docente · DR AvvisiBlock) ── */}
-      {avvisiRecenti.length > 0 && (
-        <section className="mt-5 rounded-[22px] px-3 pb-3 pt-0.5"
-          style={{ background: 'linear-gradient(180deg, var(--color-kidville-yellow-soft) 0%, rgba(251,240,221,0) 72%)' }}>
-          <div className="flex items-center gap-3 px-1 py-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-kidville-yellow text-kidville-green"
-              style={{ boxShadow: '0 8px 18px -10px rgba(230,177,0,.9)' }}>
-              <Megaphone size={20} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('comunicazioniTitolo')}</h2>
-                <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-kidville-green px-1.5 font-barlow text-xs font-extrabold text-kidville-yellow">{avvisi.length}</span>
-              </div>
-              <p className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">{t('comunicazioniSottotitolo')}</p>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2.5">
-            {avvisiRecenti.map((a) => {
-              const isAdesione = a.tipo === 'adesione';
-              return (
-                <div key={a.id} className="rounded-2xl bg-white p-3.5"
-                  style={{ boxShadow: 'inset 0 0 0 1.6px var(--color-kidville-yellow), 0 8px 20px -14px rgba(230,177,0,.6)' }}>
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-kidville-green text-kidville-yellow">
-                      <Eye size={18} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-green">
-                          {isAdesione ? t('badgeAdesione') : t('badgePresaVisione')}
-                        </span>
-                        <span className="ml-auto font-maven text-[10.5px] text-kidville-sub">
-                          {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at, locale)}
-                        </span>
-                      </div>
-                      <h3 className="mb-0.5 truncate font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">{a.titolo}</h3>
-                      <p className="line-clamp-2 font-maven text-xs leading-snug text-kidville-ink">{a.contenuto}</p>
-                      {a.stats && (
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-success">
-                            <Check size={11} strokeWidth={2.8} /> {t('letture', { count: a.stats.letti })}
-                          </span>
-                          {isAdesione && (
-                            <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-info-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-info">
-                              {t('adesioniSiNo', { si: a.stats.adesioni_si, no: a.stats.adesioni_no })}
-                            </span>
-                          )}
-                        </div>
-                      )}
+      {/* ── DUE PILE DA 1024 px ─────────────────────────────
+          A sinistra quello che c'è da SAPERE (bacheca, allergie), a destra quello che
+          c'è da FARE (appello, scorciatoie, agenda): è l'ordine del telefono, diviso in
+          due. Sotto i 1024 px è un blocco qualunque e il telefono non cambia. Se a
+          sinistra non c'è niente, la pila di destra si scioglie (`lg:contents`) e le sue
+          sezioni riempiono da sole le due colonne, invece di lasciarne una vuota. */}
+      <div data-kv-colonne className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
+        {colonnaSinistra && (
+          <div>
+            {/* ── COMUNICAZIONI (bacheca del docente · DR AvvisiBlock) ── */}
+            {avvisiRecenti.length > 0 && (
+              <section className="mt-5 rounded-[22px] px-3 pb-3 pt-0.5"
+                style={{ background: 'linear-gradient(180deg, var(--color-kidville-yellow-soft) 0%, rgba(251,240,221,0) 72%)' }}>
+                <div className="flex items-center gap-3 px-1 py-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-kidville-yellow text-kidville-green"
+                    style={{ boxShadow: '0 8px 18px -10px rgba(230,177,0,.9)' }}>
+                    <Megaphone size={20} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('comunicazioniTitolo')}</h2>
+                      <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-kidville-green px-1.5 font-barlow text-xs font-extrabold text-kidville-yellow">{avvisi.length}</span>
                     </div>
+                    <p className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">{t('comunicazioniSottotitolo')}</p>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          <Link href={withUser('/teacher/avvisi')}
-            className="mx-auto mt-3 flex h-9 w-fit items-center gap-1.5 rounded-pill px-4 font-barlow text-xs font-extrabold uppercase text-kidville-green"
-            style={{ boxShadow: 'inset 0 0 0 1.5px rgba(0,106,95,.25)' }}>
-            <Megaphone size={14} /> {t('apriBacheca')} <ChevronRight size={14} strokeWidth={2.4} />
-          </Link>
-        </section>
-      )}
-
-      {/* ── BANNER ALLERGIE E NOTE MEDICHE (DR AllergieBanner) ──
-           Una card sola, DUE gruppi. Il titolo prometteva due cose e il contenuto
-           ne mostrava una: l'elenco filtrava `note_mediche` — la casella «Note
-           Mediche (BES, DSA, patologie)» — e la chiamava «allergie». */}
-      {(allergie.length > 0 || noteMediche.length > 0) && (
-        <section className="mt-5">
-          <div className="overflow-hidden rounded-[20px] bg-white"
-            style={{ boxShadow: 'inset 0 0 0 1.6px var(--color-kidville-cream-dark), 0 10px 26px -18px rgba(120,80,10,.4)' }}>
-            <div className="flex items-center gap-3 border-b border-kidville-line px-4 pb-3 pt-3.5"
-              style={{ background: 'linear-gradient(180deg, var(--color-kidville-yellow-soft), #fff)' }}>
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-kidville-yellow text-kidville-green">
-                <AlertTriangle size={20} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
-                <div className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">
-                  {/* ── IL SOTTOTITOLO DICE ENTRAMBI I NUMERI ───────────────────
-                      MISURATO sullo screenshot del 2026-09-07: il titolino diceva
-                      «3 bambini da seguire · sezione 2 ANNI» sopra un elenco di
-                      CINQUE nomi — tre con allergie, due con note mediche. Il
-                      conteggio era giusto (le allergie sono il gruppo che il
-                      titolo nomina per primo) e proprio per questo si leggeva
-                      come un difetto del programma: due numeri diversi a due
-                      centimetri, e nessuna parola a legarli.
-
-                      Ora la frase nomina i due gruppi. Ogni metà compare solo se
-                      il suo gruppo esiste: «0 con allergie · 2 con note mediche»
-                      sarebbe un conteggio a zero stampato sopra un elenco pieno,
-                      cioè il difetto di prima al contrario. La composizione è in
-                      JS perché è un ELENCO di frammenti, non una frase con due
-                      variabili: un ICU che debba anche far sparire una metà
-                      diventa un `plural` annidato che nessun traduttore rilegge.
-                      Il lessico resta quello della schermata — «classe» per la
-                      primaria, «sezione» per lo 0-6 — e vive nell'ultimo
-                      frammento, come nelle chiavi che c'erano prima. */}
-                  {[
-                    allergie.length > 0 ? t('allergieConta', { count: allergie.length }) : null,
-                    noteMediche.length > 0 ? t('noteMedicheConta', { count: noteMediche.length }) : null,
-                    t(isPrimariaOnly ? 'allergieGruppoClasse' : 'allergieGruppoSezione', { sezione: nomeSezione }),
-                  ].filter((p): p is string => p !== null).join(' · ')}
-                </div>
-              </div>
-            </div>
-            {allergie.length > 0 && (
-              <div className="px-2.5 pb-1 pt-1">
-                <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
-                  {t('gruppoAllergie')}
-                </div>
-                {allergie.map((s, i) => {
-                  // Le chiavi riconosciute con emoji ed etichetta tradotta, PIÙ il
-                  // testo libero così com'è: «fragole» o «nichel» non sono fra i 14
-                  // UE e sparirebbero, e a chi sta in classe non si nasconde niente.
-                  //
-                  // L'unione è di due insiemi: le chiavi COME STANNO IN ARCHIVIO
-                  // (anche fuori dalle 14, che `normalizzaAllergeni` scarterebbe in
-                  // silenzio lasciando una riga col solo nome) e quelle inferite dal
-                  // testo quando l'archivio è vuoto — che è ciò che fa
-                  // `allergeniAlunno`, e per cui «lattosio» diventa «Latte / lattosio».
-                  const chiavi = Array.from(new Set([...chiaviAllergeni(s), ...allergeniAlunno(s)]));
-                  // ⚠️ IL TESTO MOSTRA SOLO CIÒ CHE I CHIP NON DICONO GIÀ. Misurato
-                  // sullo screenshot del 2026-09-07: accanto al chip «🥜 ARACHIDI»
-                  // c'era la parola «arachidi», e accanto a «🥛 LATTE / LATTOSIO» il
-                  // testo «LATTOSIO, FRAGOLE» — lo stesso dato due volte sulla stessa
-                  // riga, in una colonna larga il 58% dello schermo di un telefono.
-                  // La regola sta nel motore (`testoResiduoAllergie`) e non qui:
-                  // è la stessa disciplina di `etichetteAllergie`, e il lock
-                  // `allergie-un-motore-solo` pretende che ci resti. Residuo vuoto ⇒
-                  // nessun testo: il chip ha già detto tutto.
-                  const residuo = testoResiduoAllergie(s.allergies, chiavi);
-                  return (
-                    <div key={s.id} data-testid="teacher-allergia-riga" className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-error" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
+                <div className="flex flex-col gap-2.5">
+                  {avvisiRecenti.map((a) => {
+                    const isAdesione = a.tipo === 'adesione';
+                    return (
+                      <div key={a.id} className="rounded-2xl bg-white p-3.5"
+                        style={{ boxShadow: 'inset 0 0 0 1.6px var(--color-kidville-yellow), 0 8px 20px -14px rgba(230,177,0,.6)' }}>
+                        <div className="flex items-start gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-kidville-green text-kidville-yellow">
+                            <Eye size={18} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-green">
+                                {isAdesione ? t('badgeAdesione') : t('badgePresaVisione')}
+                              </span>
+                              <span className="ml-auto font-maven text-[10.5px] text-kidville-sub">
+                                {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at, locale)}
+                              </span>
+                            </div>
+                            <h3 className="mb-0.5 truncate font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">{a.titolo}</h3>
+                            <p className="line-clamp-2 font-maven text-xs leading-snug text-kidville-ink">{a.contenuto}</p>
+                            {a.stats && (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-success">
+                                  <Check size={11} strokeWidth={2.8} /> {t('letture', { count: a.stats.letti })}
+                                </span>
+                                {isAdesione && (
+                                  <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-info-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-info">
+                                    {t('adesioniSiNo', { si: a.stats.adesioni_si, no: a.stats.adesioni_no })}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex max-w-[58%] flex-wrap items-center justify-end gap-1">
-                        {chiavi.map((k) => (
-                          <span key={k} className="inline-flex items-center gap-0.5 truncate rounded-pill bg-kidville-error-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
-                            <span aria-hidden="true">{allergeneEmoji(k)}</span> {etichettaAllergene(k)}
-                          </span>
-                        ))}
-                        {residuo !== '' && (
-                          <span className="inline-flex items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
-                            {residuo}
-                          </span>
-                        )}
+                    );
+                  })}
+                </div>
+                <Link href={withUser('/teacher/avvisi')}
+                  className="mx-auto mt-3 flex h-9 w-fit items-center gap-1.5 rounded-pill px-4 font-barlow text-xs font-extrabold uppercase text-kidville-green"
+                  style={{ boxShadow: 'inset 0 0 0 1.5px rgba(0,106,95,.25)' }}>
+                  <Megaphone size={14} /> {t('apriBacheca')} <ChevronRight size={14} strokeWidth={2.4} />
+                </Link>
+              </section>
+            )}
+
+            {/* ── BANNER ALLERGIE E NOTE MEDICHE (DR AllergieBanner) ──
+                 Una card sola, DUE gruppi. Il titolo prometteva due cose e il contenuto
+                 ne mostrava una: l'elenco filtrava `note_mediche` — la casella «Note
+                 Mediche (BES, DSA, patologie)» — e la chiamava «allergie». */}
+            {(allergie.length > 0 || noteMediche.length > 0) && (
+              <section className="mt-5">
+                <div className="overflow-hidden rounded-[20px] bg-white"
+                  style={{ boxShadow: 'inset 0 0 0 1.6px var(--color-kidville-cream-dark), 0 10px 26px -18px rgba(120,80,10,.4)' }}>
+                  <div className="flex items-center gap-3 border-b border-kidville-line px-4 pb-3 pt-3.5"
+                    style={{ background: 'linear-gradient(180deg, var(--color-kidville-yellow-soft), #fff)' }}>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-kidville-yellow text-kidville-green">
+                      <AlertTriangle size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
+                      <div className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">
+                        {/* ── IL SOTTOTITOLO DICE ENTRAMBI I NUMERI ───────────────────
+                            MISURATO sullo screenshot del 2026-09-07: il titolino diceva
+                            «3 bambini da seguire · sezione 2 ANNI» sopra un elenco di
+                            CINQUE nomi — tre con allergie, due con note mediche. Il
+                            conteggio era giusto (le allergie sono il gruppo che il
+                            titolo nomina per primo) e proprio per questo si leggeva
+                            come un difetto del programma: due numeri diversi a due
+                            centimetri, e nessuna parola a legarli.
+
+                            Ora la frase nomina i due gruppi. Ogni metà compare solo se
+                            il suo gruppo esiste: «0 con allergie · 2 con note mediche»
+                            sarebbe un conteggio a zero stampato sopra un elenco pieno,
+                            cioè il difetto di prima al contrario. La composizione è in
+                            JS perché è un ELENCO di frammenti, non una frase con due
+                            variabili: un ICU che debba anche far sparire una metà
+                            diventa un `plural` annidato che nessun traduttore rilegge.
+                            Il lessico resta quello della schermata — «classe» per la
+                            primaria, «sezione» per lo 0-6 — e vive nell'ultimo
+                            frammento, come nelle chiavi che c'erano prima. */}
+                        {[
+                          allergie.length > 0 ? t('allergieConta', { count: allergie.length }) : null,
+                          noteMediche.length > 0 ? t('noteMedicheConta', { count: noteMediche.length }) : null,
+                          t(isPrimariaOnly ? 'allergieGruppoClasse' : 'allergieGruppoSezione', { sezione: nomeSezione }),
+                        ].filter((p): p is string => p !== null).join(' · ')}
                       </div>
                     </div>
+                  </div>
+                  {allergie.length > 0 && (
+                    <div className="px-2.5 pb-1 pt-1">
+                      <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
+                        {t('gruppoAllergie')}
+                      </div>
+                      {allergie.map((s, i) => {
+                        // Le chiavi riconosciute con emoji ed etichetta tradotta, PIÙ il
+                        // testo libero così com'è: «fragole» o «nichel» non sono fra i 14
+                        // UE e sparirebbero, e a chi sta in classe non si nasconde niente.
+                        //
+                        // L'unione è di due insiemi: le chiavi COME STANNO IN ARCHIVIO
+                        // (anche fuori dalle 14, che `normalizzaAllergeni` scarterebbe in
+                        // silenzio lasciando una riga col solo nome) e quelle inferite dal
+                        // testo quando l'archivio è vuoto — che è ciò che fa
+                        // `allergeniAlunno`, e per cui «lattosio» diventa «Latte / lattosio».
+                        const chiavi = Array.from(new Set([...chiaviAllergeni(s), ...allergeniAlunno(s)]));
+                        // ⚠️ IL TESTO MOSTRA SOLO CIÒ CHE I CHIP NON DICONO GIÀ. Misurato
+                        // sullo screenshot del 2026-09-07: accanto al chip «🥜 ARACHIDI»
+                        // c'era la parola «arachidi», e accanto a «🥛 LATTE / LATTOSIO» il
+                        // testo «LATTOSIO, FRAGOLE» — lo stesso dato due volte sulla stessa
+                        // riga, in una colonna larga il 58% dello schermo di un telefono.
+                        // La regola sta nel motore (`testoResiduoAllergie`) e non qui:
+                        // è la stessa disciplina di `etichetteAllergie`, e il lock
+                        // `allergie-un-motore-solo` pretende che ci resti. Residuo vuoto ⇒
+                        // nessun testo: il chip ha già detto tutto.
+                        const residuo = testoResiduoAllergie(s.allergies, chiavi);
+                        return (
+                          <div key={s.id} data-testid="teacher-allergia-riga" className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-error" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
+                            </div>
+                            <div className="flex max-w-[58%] flex-wrap items-center justify-end gap-1">
+                              {chiavi.map((k) => (
+                                <span key={k} className="inline-flex items-center gap-0.5 truncate rounded-pill bg-kidville-error-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                                  <span aria-hidden="true">{allergeneEmoji(k)}</span> {etichettaAllergene(k)}
+                                </span>
+                              ))}
+                              {residuo !== '' && (
+                                <span className="inline-flex items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                                  {residuo}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {noteMediche.length > 0 && (
+                    <div className="border-t border-kidville-line px-2.5 pb-1 pt-1">
+                      <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
+                        {t('gruppoNoteMediche')}
+                      </div>
+                      {noteMediche.map((s, i) => (
+                        <div key={s.id} className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-yellow-dark" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
+                          </div>
+                          {/* La NOTA MEDICA di un bambino non è un accento cromatico:
+                              su `cream-dark` il giallo scuro stava a 1,59:1 — il
+                              contrasto più basso di tutta l'app, proprio sull'unica riga
+                              che un docente deve poter leggere di sfuggita. `ink` la
+                              porta a 9,51:1 (AAA). */}
+                          <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                            {s.note_mediche}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Link href={withUser(isPrimariaOnly ? '/teacher/primaria' : '/teacher/diary')}
+                    className="flex w-full items-center justify-center gap-1.5 border-t border-kidville-line bg-kidville-cream py-2.5 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green">
+                    {isPrimariaOnly ? <BookOpen size={15} /> : <NotebookPen size={15} />}
+                    {isPrimariaOnly ? t('allergieCtaRegistro') : t('allergieCtaDiario')}
+                    <ChevronRight size={14} strokeWidth={2.4} />
+                  </Link>
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        <div className={colonnaSinistra ? undefined : 'lg:contents'}>
+          {/* ── APPELLO DEL GIORNO (DR AppelloCard) ─────────── */}
+          <section className="mt-5">
+            <div className="relative overflow-hidden rounded-[18px] p-4"
+              style={appelloFatto
+                ? { background: '#fff', boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }
+                : { background: 'var(--color-kidville-green)', boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+              <div className="flex items-center gap-3">
+                <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${appelloFatto ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-yellow text-kidville-green'}`}>
+                  <ClipboardCheck size={24} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>{t('appelloTitolo')}</div>
+                  <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-kidville-ink' : 'text-white/80'}`}>
+                    {appelloFatto
+                      ? t('appelloPresentiAssenti', { presenti, assenti })
+                      : t(isPrimariaOnly ? 'appelloNonRegistratoClasse' : 'appelloNonRegistratoSezione', { count: studentCount })}
+                  </div>
+                </div>
+                <span className={`rounded-pill px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide ${appelloFatto ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-yellow text-kidville-green'}`}>
+                  {appelloFatto ? t('appelloBadgeFatto') : t('appelloBadgeDaFare')}
+                </span>
+              </div>
+              <Link href={withUser('/teacher/attendance')}
+                className={`mt-3.5 flex h-11 w-full items-center justify-center gap-2 rounded-pill font-barlow text-sm font-extrabold uppercase ${appelloFatto ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-yellow text-kidville-green'}`}>
+                <ClipboardCheck size={18} /> {appelloFatto ? t('appelloCtaModifica') : t('appelloCtaFai')} <ChevronRight size={16} strokeWidth={2.4} />
+              </Link>
+            </div>
+          </section>
+
+          {/* ── SCORCIATOIE (DR ScorciatoieBlock) ───────────── */}
+          <section className="mt-6">
+            <div className="mb-3 px-0.5">
+              <Eyebrow>{t('scorciatoieEyebrow')}</Eyebrow>
+              <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('scorciatoieTitolo')}</h2>
+            </div>
+            {loading ? (
+              <div className="grid grid-cols-2 gap-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-28 animate-pulse rounded-2xl border border-kidville-line bg-white/60" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {shortcuts.map((s) => {
+                  const Icon = s.icon;
+                  // Il dettaglio dell'appello dipende dallo stato + conteggio (ICU);
+                  // per le altre scorciatoie la chiave è `shortcut_<key>_detail`.
+                  const detail =
+                    s.key === 'appello'
+                      ? (appelloFatto ? t('shortcut_appello_detailFatto', { count: presenti }) : t('shortcut_appello_detailDaFare'))
+                      : t(`shortcut_${s.key}_detail`);
+                  return (
+                    <Link key={s.key} href={withUser(s.href)}
+                      className="flex flex-col rounded-2xl bg-white p-3.5"
+                      style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 22px -16px rgba(0,84,75,.28)' }}>
+                      <span className="kv-tinta-inline-pastiglia mb-2.5 flex h-9 w-9 items-center justify-center rounded-xl"
+                        style={{ background: s.tint + '18', color: s.tint }}>
+                        <Icon size={20} />
+                      </span>
+                      <span className="kv-tinta-inline font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{t(`shortcut_${s.key}_eyebrow`)}</span>
+                      <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{t(`shortcut_${s.key}_title`)}</span>
+                      <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-kidville-ink">{detail}</span>
+                    </Link>
                   );
                 })}
               </div>
             )}
-            {noteMediche.length > 0 && (
-              <div className="border-t border-kidville-line px-2.5 pb-1 pt-1">
-                <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
-                  {t('gruppoNoteMediche')}
-                </div>
-                {noteMediche.map((s, i) => (
-                  <div key={s.id} className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-yellow-dark" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
-                    </div>
-                    {/* La NOTA MEDICA di un bambino non è un accento cromatico:
-                        su `cream-dark` il giallo scuro stava a 1,59:1 — il
-                        contrasto più basso di tutta l'app, proprio sull'unica riga
-                        che un docente deve poter leggere di sfuggita. `ink` la
-                        porta a 9,51:1 (AAA). */}
-                    <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
-                      {s.note_mediche}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Link href={withUser(isPrimariaOnly ? '/teacher/primaria' : '/teacher/diary')}
-              className="flex w-full items-center justify-center gap-1.5 border-t border-kidville-line bg-kidville-cream py-2.5 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green">
-              {isPrimariaOnly ? <BookOpen size={15} /> : <NotebookPen size={15} />}
-              {isPrimariaOnly ? t('allergieCtaRegistro') : t('allergieCtaDiario')}
-              <ChevronRight size={14} strokeWidth={2.4} />
-            </Link>
-          </div>
-        </section>
-      )}
+          </section>
 
-      {/* ── APPELLO DEL GIORNO (DR AppelloCard) ─────────── */}
-      <section className="mt-5">
-        <div className="relative overflow-hidden rounded-[18px] p-4"
-          style={appelloFatto
-            ? { background: '#fff', boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }
-            : { background: 'var(--color-kidville-green)', boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-          <div className="flex items-center gap-3">
-            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${appelloFatto ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-yellow text-kidville-green'}`}>
-              <ClipboardCheck size={24} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>{t('appelloTitolo')}</div>
-              <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-kidville-ink' : 'text-white/80'}`}>
-                {appelloFatto
-                  ? t('appelloPresentiAssenti', { presenti, assenti })
-                  : t(isPrimariaOnly ? 'appelloNonRegistratoClasse' : 'appelloNonRegistratoSezione', { count: studentCount })}
-              </div>
+          {/* ── AGENDA (DR AgendaCard · eventi_agenda M6) ── */}
+          <section className="mt-6">
+            <div className="mb-3 px-0.5">
+              <Eyebrow>{t('agendaEyebrow')}</Eyebrow>
+              <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t(isPrimariaOnly ? 'agendaTitoloClasse' : 'agendaTitoloSezione')}</h2>
             </div>
-            <span className={`rounded-pill px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide ${appelloFatto ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-yellow text-kidville-green'}`}>
-              {appelloFatto ? t('appelloBadgeFatto') : t('appelloBadgeDaFare')}
-            </span>
-          </div>
-          <Link href={withUser('/teacher/attendance')}
-            className={`mt-3.5 flex h-11 w-full items-center justify-center gap-2 rounded-pill font-barlow text-sm font-extrabold uppercase ${appelloFatto ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-yellow text-kidville-green'}`}>
-            <ClipboardCheck size={18} /> {appelloFatto ? t('appelloCtaModifica') : t('appelloCtaFai')} <ChevronRight size={16} strokeWidth={2.4} />
-          </Link>
+            <TeacherAgendaCard
+              sezione={nomeSezione}
+              sectionId={activeSection?.id ?? null}
+              userId={userId}
+              gruppo={nounGruppo}
+            />
+          </section>
         </div>
-      </section>
-
-      {/* ── SCORCIATOIE (DR ScorciatoieBlock) ───────────── */}
-      <section className="mt-6">
-        <div className="mb-3 px-0.5">
-          <Eyebrow>{t('scorciatoieEyebrow')}</Eyebrow>
-          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('scorciatoieTitolo')}</h2>
-        </div>
-        {loading ? (
-          <div className="grid grid-cols-2 gap-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-28 animate-pulse rounded-2xl border border-kidville-line bg-white/60" />
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {shortcuts.map((s) => {
-              const Icon = s.icon;
-              // Il dettaglio dell'appello dipende dallo stato + conteggio (ICU);
-              // per le altre scorciatoie la chiave è `shortcut_<key>_detail`.
-              const detail =
-                s.key === 'appello'
-                  ? (appelloFatto ? t('shortcut_appello_detailFatto', { count: presenti }) : t('shortcut_appello_detailDaFare'))
-                  : t(`shortcut_${s.key}_detail`);
-              return (
-                <Link key={s.key} href={withUser(s.href)}
-                  className="flex flex-col rounded-2xl bg-white p-3.5"
-                  style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 22px -16px rgba(0,84,75,.28)' }}>
-                  <span className="kv-tinta-inline-pastiglia mb-2.5 flex h-9 w-9 items-center justify-center rounded-xl"
-                    style={{ background: s.tint + '18', color: s.tint }}>
-                    <Icon size={20} />
-                  </span>
-                  <span className="kv-tinta-inline font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{t(`shortcut_${s.key}_eyebrow`)}</span>
-                  <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{t(`shortcut_${s.key}_title`)}</span>
-                  <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-kidville-ink">{detail}</span>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* ── AGENDA (DR AgendaCard · eventi_agenda M6) ── */}
-      <section className="mt-6">
-        <div className="mb-3 px-0.5">
-          <Eyebrow>{t('agendaEyebrow')}</Eyebrow>
-          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t(isPrimariaOnly ? 'agendaTitoloClasse' : 'agendaTitoloSezione')}</h2>
-        </div>
-        <TeacherAgendaCard
-          sezione={nomeSezione}
-          sectionId={activeSection?.id ?? null}
-          userId={userId}
-          gruppo={nounGruppo}
-        />
-      </section>
+      </div>
 
       {/* footer */}
       <div className="px-4 pb-2 pt-5 text-center font-maven text-[10.5px] text-kidville-sub">

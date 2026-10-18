@@ -6,6 +6,7 @@ import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, ChevronDown, CheckCircle } from 'lucide-react';
 import { oraAttivitaValida } from '@/lib/diary/attivita';
+import { GRIGLIA_BAMBINI } from '@/lib/ui/larghezza-pagina';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -268,7 +269,7 @@ function ActivityAccordion({
                             {/* Partecipazione per studente */}
                             <div>
                                 <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">{t('partecipazione')}</p>
-                                <div className="space-y-2">
+                                <div className={GRIGLIA_BAMBINI}>
                                     {students.map(student => {
                                         const sel = activity.studentPartecipazione[student.id] ?? null;
                                         const isSaved = savedStudentIds.has(student.id);

@@ -311,7 +311,9 @@ function Sidebar({ ariaNav, tab, gruppi, pathname, hrefDi, idBadge, nonLetti, te
         />
         <LogoutMenuButton
           iconSize={20}
-          className={`${RIGA_SIDEBAR} w-full text-kidville-error hover:bg-kidville-error-soft disabled:opacity-60`}
+          // `error-strong` e non `error`: «Esci» è testo, e `#E53935` su bianco fa 4,23:1 (soglia
+          // 4,5). La sidebar lo tiene sempre in vista, e il crawler `contrasto` l'ha misurato.
+          className={`${RIGA_SIDEBAR} w-full text-kidville-error-strong hover:bg-kidville-error-soft disabled:opacity-60`}
         />
       </div>
     </>

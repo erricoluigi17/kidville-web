@@ -315,6 +315,71 @@ describe('adattatori scolastici degli storici', () => {
     expect(d.pagine.filter(p => p[0] === 'eventi_diario')).toEqual([['eventi_diario', 0, 499], ['eventi_diario', 500, 999], ['eventi_diario', 1000, 1499]])
   })
 
+  describe('attività e note di sezione del diario', () => {
+    const C = 'alunno-c'
+    const eventi = () => [A, B, C].map((id, i) => ({
+      id: `att-${id}`, alunno_id: id, tipo_evento: 'attivita', orario_inizio: '2026-09-10T08:00:00Z', maestra_id: 'edu',
+      nota_libera: 'Uscita in giardino' as string | null, nota_bambino: id === C ? 'Ha guidato il gioco' : null,
+      dettagli: { activities: [{ tipo: 'Pittura', descrizione: 'Colori a dita', ora_inizio: '10:00', ora_fine: '10:45', partecipazione: (i === 0 ? 'Con entusiasmo' : 'Ha partecipato') as string | null }] },
+    }))
+    const tre = (db: SupabaseClient) => contesto(db, {
+      alunni: [{ id: A, nome: 'Anna', cognome: 'Rossi', scuola_id: SEDE, section_id: CLASSE }, { id: B, nome: 'Bruno', cognome: 'Verdi', scuola_id: SEDE, section_id: CLASSE },
+        { id: C, nome: 'Carla', cognome: 'Bianchi', scuola_id: SEDE, section_id: CLASSE }],
+      appartenenze: [A, B, C].map(id => ({ alunno_id: id, scuola_id: SEDE, section_id: CLASSE, dal: '2020-01-01', al: null })),
+    })
+    const utenti = [{ id: 'edu', nome: 'Edu', cognome: 'Sintetica' }]
+
+    it('in stampa di classe accorpa l’attività: una riga, partecipazione raggruppata, nota di sezione una volta', async () => {
+      const s = await raccogliScolastico(tre(database({ eventi_diario: eventi(), utenti }).db), 'diario_attivita')
+      expect(s?.righe).toEqual([
+        expect.objectContaining({ _ambito: 'classe', _nota_giorno: true, data: '2026-09-10', tipo: 'Nota di sezione', dettaglio: 'Uscita in giardino', autore: 'Sintetica Edu' }),
+        expect.objectContaining({ _ambito: 'classe', data: '2026-09-10', alunno: '', tipo: 'Pittura', dettaglio: 'Colori a dita', inizio: '10:00', fine: '10:45',
+          valore: 'Ha partecipato: 2 bambini · Con entusiasmo: Rossi Anna', notaIndividuale: 'Bianchi Carla: Ha guidato il gioco', autore: 'Sintetica Edu' }),
+      ])
+      expect(s?.righe.some(r => r._alunno_id)).toBe(false)
+      expect(s?.colonne.map(c => c.chiave)).not.toContain('notaSezione')
+    })
+
+    it('con un solo valore di partecipazione scrive «tutti» e senza valore il solo conteggio', async () => {
+      const uguali = eventi().map(e => ({ ...e, nota_libera: null, nota_bambino: null, dettagli: { activities: [{ ...e.dettagli.activities[0], partecipazione: 'Ha partecipato' }] } }))
+      const s = await raccogliScolastico(tre(database({ eventi_diario: uguali, utenti }).db), 'diario_attivita')
+      expect(s?.righe.map(r => r.valore)).toEqual(['Ha partecipato: tutti i 3 bambini'])
+      const senza = eventi().map(e => ({ ...e, nota_libera: null, dettagli: { activities: [{ ...e.dettagli.activities[0], partecipazione: null }] } }))
+      const t = await raccogliScolastico(tre(database({ eventi_diario: senza, utenti }).db), 'diario_attivita')
+      expect(t?.righe.map(r => r.valore)).toEqual(['3 bambini'])
+    })
+
+    it('nel dossier per alunno mette la descrizione nella riga di classe e ai singoli solo la propria partecipazione', async () => {
+      const ctx = tre(database({ eventi_diario: eventi(), utenti }).db)
+      ctx.richiesta.raggruppamento = 'alunno'
+      const s = await raccogliScolastico(ctx, 'diario_attivita')
+      const classe = s?.righe.filter(r => r._ambito === 'classe' && !r._nota_giorno)
+      expect(classe).toEqual([expect.objectContaining({ dettaglio: 'Colori a dita', valore: 'Ha partecipato: 2 bambini · Con entusiasmo: 1 bambino', notaIndividuale: '' })])
+      const singoli = s?.righe.filter(r => r._alunno_id) ?? []
+      expect(singoli.map(r => [r._alunno_id, r.dettaglio, r.valore, r.notaIndividuale])).toEqual([
+        [A, '', 'Con entusiasmo', ''], [B, '', 'Ha partecipato', ''], [C, '', 'Ha partecipato', 'Ha guidato il gioco'],
+      ])
+      expect(JSON.stringify(classe)).not.toContain('Rossi')
+    })
+
+    it('nella stampa di un solo alunno non accorpa e tiene la descrizione', async () => {
+      const ctx = tre(database({ eventi_diario: eventi(), utenti }).db)
+      ctx.richiesta.sectionId = undefined; ctx.richiesta.alunnoId = A
+      ctx.alunni = ctx.alunni.filter(a => a.id === A)
+      const s = await raccogliScolastico(ctx, 'diario_attivita')
+      expect(s?.righe).toEqual([
+        expect.objectContaining({ _nota_giorno: true, dettaglio: 'Uscita in giardino' }),
+        expect.objectContaining({ _alunno_id: A, alunno: 'Rossi Anna', dettaglio: 'Colori a dita', valore: 'Con entusiasmo' }),
+      ])
+    })
+
+    it('nelle note tiene le sole note individuali per bambino e la nota di sezione una volta per giorno', async () => {
+      const s = await raccogliScolastico(tre(database({ eventi_diario: eventi(), utenti }).db), 'diario_note')
+      expect(s?.righe.filter(r => r._nota_giorno)).toHaveLength(1)
+      expect(s?.righe.filter(r => r._alunno_id).map(r => [r._alunno_id, r.notaIndividuale])).toEqual([[C, 'Ha guidato il gioco']])
+    })
+  })
+
   it('separa fatti del registro e comunicazioni non ancora confermate di oggi o future', async () => {
     const oggi = oggiFiscaleISO()
     const d = database({ presenze: [

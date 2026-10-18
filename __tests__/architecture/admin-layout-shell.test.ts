@@ -44,9 +44,23 @@ describe('admin layout — shell mobile montata (Step 4)', () => {
     expect(src).toContain('AdminBottomNav');
   });
 
-  it('libera lo spazio della bottom-nav flottante sul contenuto (pb-28 lg:pb-0)', () => {
+  it('libera lo spazio della bottom-nav flottante sul contenuto (pb-28 tablet:pb-0)', () => {
+    // Dal 2026-10-18 (iPad PR 3) la bottom-nav c'è solo sotto i 744 px: da lì in su c'è il
+    // binario, e il fondo del contenuto non deve più riservarle 112 px.
     expect(src).toContain('pb-28');
-    expect(src).toContain('lg:pb-0');
+    expect(src).toContain('tablet:pb-0');
+    expect(src).not.toContain('lg:pb-0');
+  });
+
+  it('monta il binario del tablet prima della sidebar piena, e dichiara la larghezza della nav', () => {
+    // `data-kv-guscio-admin` porta `--kv-rail-w` (globals.css), che la regola degli overlay del
+    // contenuto legge per partire DOPO la navigazione.
+    expect(src).toContain('data-kv-guscio-admin');
+    const binario = src.indexOf('<AdminBinario');
+    const sidebar = src.indexOf('<AdminSidebar');
+    expect(binario).toBeGreaterThan(-1);
+    expect(sidebar).toBeGreaterThan(binario);
+    expect(src).toContain('tablet:flex');
   });
 
   it('avvolge il contenuto in <SedeScopeBoundary> (ri-caricamento al cambio sede)', () => {

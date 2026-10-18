@@ -157,8 +157,10 @@ function Inner() {
                     subtitle={t('impostazioniSottotitolo')}
                 />
 
-                {/* Nav mobile: pills scrollabili raggruppate */}
-                <nav className="mb-6 md:hidden -mx-4 px-4 overflow-x-auto">
+                {/* Nav telefono e tablet in verticale: pills scrollabili raggruppate. Fino al
+                    2026-10-18 la sidebar delle sezioni compariva da 768 px (`md:`): col binario
+                    del cockpit (88 px) i suoi 224 px lasciavano al modulo ~400 px. Ora da 1024. */}
+                <nav className="mb-6 lg:hidden -mx-4 px-4 overflow-x-auto">
                     <div className="flex gap-2 w-max">
                         {GRUPPI.map((g, gi) => (
                             <div key={g.gruppoKey} className={`flex gap-2 ${gi > 0 ? 'border-l border-kidville-line pl-2' : ''}`}>
@@ -183,8 +185,9 @@ function Inner() {
                 </nav>
 
                 <div className="flex gap-6 items-start">
-                    {/* Sidebar desktop */}
-                    <aside className="hidden md:block w-56 shrink-0 sticky top-6 bg-kidville-white rounded-2xl shadow-sm p-4">
+                    {/* Sidebar desktop. `top-20` e non `top-6`: sopra c'è la barra appiccicata
+                        da 64 px (`AdminTopBar`), e a `top-6` la cima della sidebar ci finiva sotto. */}
+                    <aside className="hidden lg:block w-56 shrink-0 sticky top-20 bg-kidville-white rounded-2xl shadow-sm p-4">
                         {GRUPPI.map((g) => (
                             <div key={g.gruppoKey} className="mb-4 last:mb-0">
                                 <p className="font-barlow font-bold text-[11px] text-kidville-muted uppercase tracking-wider mb-1 px-2">
@@ -213,7 +216,7 @@ function Inner() {
 
                     {/* Contenuto */}
                     <main className="flex-1 min-w-0">
-                        <h2 className="md:hidden font-barlow font-black text-lg text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
+                        <h2 className="lg:hidden font-barlow font-black text-lg text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
                             {voceAttiva?.icon} {voceAttiva ? t(voceAttiva.labelKey) : null}
                         </h2>
                         {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}

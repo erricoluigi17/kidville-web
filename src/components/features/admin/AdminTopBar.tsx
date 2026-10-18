@@ -4,9 +4,10 @@
  * TopBar del cockpit Direzione/Segreteria (desktop). Barra verde persistente:
  * logo · ricerca globale (reale, /api/admin/search — M7.2) · selettore sede
  * (reale, /api/admin/schools) · centro notifiche (reale, /api/notifiche —
- * M7.3) · avatar+ruolo. Mirror di DR `ds.css .kv-topbar`. Su mobile è
- * nascosta (`lg:flex`/`hidden`): sotto i 1024px c'è `AdminTopBarMobile` (barra
- * verde) e la navigazione è la bottom-nav — il vecchio drawer non esiste più.
+ * M7.3) · avatar+ruolo. Mirror di DR `ds.css .kv-topbar`. Sul telefono è
+ * nascosta (`tablet:flex`/`hidden`): sotto i 744 px c'è `AdminTopBarMobile` (barra
+ * verde) e la navigazione è la bottom-nav. Da 744 px c'è questa, alta 64 px: il
+ * binario del tablet e la sidebar si appoggiano sotto (`top-16`).
  * La campanella riceve `attivoSu` così solo la topbar visibile fa fetch/poll
  * (entrambe restano nel DOM a ogni breakpoint: senza guardia raddoppierebbero).
  */
@@ -40,9 +41,11 @@ export function AdminTopBar() {
   const ruoloLabel = t(ROLE_LABEL_KEY[ruolo] ?? (ruolo ? 'ruoloStaff' : 'ruoloSegreteria'));
 
   return (
-    <header className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 lg:flex">
-        {/* brand — wordmark ufficiale (stessa metrica dell'AppBar genitore/docente) */}
-        <div className="flex w-[214px] shrink-0 items-center">
+    <header className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 tablet:flex">
+        {/* brand — wordmark ufficiale (stessa metrica dell'AppBar genitore/docente).
+            Largo 214 px solo con la sidebar piena (≥1280), per allinearsi a lei: col
+            binario del tablet quei 214 px sarebbero tolti alla ricerca. */}
+        <div className="flex w-auto shrink-0 items-center xl:w-[214px]">
           <Link href={withUser('/admin')} aria-label={t('homeAria')} className="shrink-0">
             <Image
               src="/logo-light.png"
@@ -84,7 +87,7 @@ export function AdminTopBar() {
 
         {/* centro notifiche (reale, /api/notifiche — M7.3); attiva fetch/poll
             solo quando questa topbar desktop è effettivamente visibile */}
-        <AdminNotificationsPanel userId={userId} attivoSu="(min-width: 1024px)" />
+        <AdminNotificationsPanel userId={userId} attivoSu="(min-width: 744px)" />
 
         {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) + menu Esci */}
         <UserMenu ruoloLabel={ruoloLabel} />

@@ -82,7 +82,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         exit={{ opacity: 0, y: -8, scale: 0.97 }}
         transition={{ duration: 0.15 }}
         onClick={onClick}
-        className={`group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-all ${
+        className={`group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-[color,background-color,border-color,box-shadow] ${
           isSelected
             ? 'border-kidville-green/60 bg-kidville-success-soft shadow-lg shadow-kidville-green/10'
             : 'border-kidville-line bg-white hover:border-kidville-green/50 hover:bg-kidville-cream'
@@ -126,10 +126,12 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
           </div>
         </div>
 
-        {/* Delete */}
+        {/* Delete. Col mouse compare al passaggio; senza mouse (iPad, telefono) resta sempre in
+            vista, e dalla tastiera compare quando prende il fuoco. In Tailwind v4 `hover:` vale
+            solo dove `(hover: hover)`: fino al 2026-10-18 su touch il cestino non c'era mai. */}
         <button
           onClick={e => { e.stopPropagation(); onDelete() }}
-          className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-error hover:bg-kidville-error/10 transition-all"
+          className="flex-shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-error hover:bg-kidville-error/10 transition-all"
           title={t('draggableEliminaCampo')}
         >
           <Trash2 className="w-3.5 h-3.5" />

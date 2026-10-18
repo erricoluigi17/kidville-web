@@ -320,12 +320,14 @@ export function TaskCard({
     const progressPct = totalSubtasks > 0 ? Math.round((approvedSubtasks / totalSubtasks) * 100) : 0;
 
     return (
+        // L'opacità è di framer-motion, anche l'80% del compito approvato: con `opacity-80`
+        // fra le classi, lo stile in linea `opacity: 1` dell'animazione la cancellava. E
+        // niente `transition-all`, che contende a framer opacità e spostamento.
         <motion.div
             initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
+            animate={{ opacity: task.status === 'approved' ? 0.8 : 1, y: 0 }}
             transition={{ delay: index * 0.05, duration: 0.3 }}
-            className={`w-full backdrop-blur-xl rounded-3xl border shadow-sm transition-all duration-200 overflow-hidden relative
-                ${task.status === 'approved' ? 'opacity-80' : ''}
+            className={`w-full backdrop-blur-xl rounded-3xl border shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 overflow-hidden relative
                 ${isUpdated 
                     ? 'bg-kidville-warn-soft/70 border-kidville-warn ring-4 ring-kidville-warn/30 shadow-lg shadow-kidville-warn/20' 
                     : task.status === 'approved' 

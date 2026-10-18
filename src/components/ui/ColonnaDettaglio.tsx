@@ -20,9 +20,9 @@ import { useSchermoStretto } from '@/lib/ui/use-schermo-stretto';
  *   sopra la lista. La lista sotto non si muove, quindi chiudendo si torna esattamente dov'eri;
  *   il fuoco, l'Escape e il ritorno del fuoco alla riga li fa già il `Drawer`.
  *
- * Fra 768 e 1023 px le due colonne non si tengono: lì la barra in alto è quella mobile, ad
- * altezza variabile (e con l'area sicura nell'app nativa), e una colonna `sticky` le finirebbe
- * sotto.
+ * Fra 744 e 1023 px le due colonne non si tengono: col binario del tablet (88 px, dal
+ * 2026-10-18) restano 656–936 px, e due colonne affiancate sarebbero due strisce. Fino a quella
+ * data, sotto i 1024 la barra in alto era anche quella mobile, ad altezza variabile.
  *
  * ⚠️ `aria-busy` resta un booleano sempre presente nel ramo «colonna»: i test dei pannelli
  * trovano il contenitore del dettaglio con `[aria-busy]` e si aspettano `"false"` a riposo.

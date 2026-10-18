@@ -220,10 +220,12 @@ describe('R73 — la sede si sceglie anche dal telefono', () => {
     expect(cookieSedi()).toBe(SEDE_B)
   })
 
-  it('il bottom-sheet vive sotto i 1024px (`lg:hidden`): è la superficie mobile, non un doppione desktop', async () => {
+  it('il bottom-sheet vive sotto i 744px (`tablet:hidden`): è la superficie mobile, non un doppione del tablet', async () => {
+    // Fino al 2026-10-18 valeva sotto i 1024 (`lg:hidden`); con la PR 3 dell'iPad da 744 px c'è il
+    // binario, il cui «Menu» apre lo stesso contenuto in un pannello accanto.
     await montaShell(<PaginaMonoSede />)
     const sheet = await apriMenuMobile()
-    const radice = sheet.closest('.lg\\:hidden')
+    const radice = sheet.closest('.tablet\\:hidden')
     expect(radice).not.toBeNull()
   })
 

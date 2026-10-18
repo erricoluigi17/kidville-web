@@ -27,6 +27,9 @@ import { STORAGE, attendiFineCaricamento } from './fixtures';
  * `grid-template-columns`: una classe giusta che il CSS non applica (un `lg:` mai generato, una
  * regola sovrascritta) qui diventa rossa, mentre un test unitario la vedrebbe verde.
  *
+ * Dalla PR 3 ci sono anche la segreteria (`verificaGuscioAdmin`: binario fino a 1279 px, quindi
+ * in tutti e due i progetti) e le card degli avvisi che restavano bianche (punto 6).
+ *
  * `retries: 0` nei due progetti: una misura sbagliata è la stessa anche al terzo tentativo.
  */
 
@@ -64,6 +67,7 @@ const SENZA_INDICATORE_DEV = 'nextjs-portal { display: none !important; }';
 
 const ROTTE_GENITORE = ['/parent', '/parent/diary', '/parent/avvisi', '/parent/mensa', '/parent/pagamenti', '/parent/gallery', '/parent/news', '/parent/chat'];
 const ROTTE_DOCENTE = ['/teacher', '/teacher/attendance', '/teacher/diary', '/teacher/gallery', '/teacher/chat'];
+const ROTTE_SEGRETERIA = ['/admin', '/admin/students', '/admin/pagamenti', '/admin/avvisi', '/admin/mensa', '/admin/impostazioni'];
 
 /**
  * Quante colonne ha il primo `[data-kv-colonne]` della pagina: sul binario (768 px) e con la
@@ -138,7 +142,80 @@ async function verificaGuscioTablet(page: Page, rotta: string) {
       .toBe(attese[formato]);
   }
 
+  // 6. Le card degli avvisi arrivano TUTTE a opacità 1. Nelle schermate WebKit di #239 e #240 due
+  //    per giro restavano bianche, in posizioni diverse: framer-motion ne animava l'opacità e
+  //    `transition-all` gliela contendeva. Si aspetta una PRESENZA (almeno una card, e nessuna
+  //    sotto 1); se resta rosso, il messaggio dice quali e con quale stile in linea.
+  if (rotta === '/parent/avvisi') await attendiCardAvvisoVisibili(page);
+
   await test.info().attach(`${rotta.replaceAll('/', '_')}-${larghezza}px`, {
+    body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
+    contentType: 'image/png',
+  });
+}
+
+async function attendiCardAvvisoVisibili(page: Page) {
+  const stato = () =>
+    page.evaluate(() => {
+      const card = [...document.querySelectorAll<HTMLElement>('[data-kv-avviso]')];
+      const spente = card
+        .map((el, i) => ({
+          i,
+          opacita: getComputedStyle(el).opacity,
+          inLinea: el.style.opacity,
+          animazioni: el.getAnimations().length,
+        }))
+        .filter((c) => c.opacita !== '1');
+      return { card: card.length, spente };
+    });
+  await expect
+    .poll(async () => {
+      const s = await stato();
+      return s.card > 0 && s.spente.length === 0 ? 'tutte visibili' : JSON.stringify(s);
+    }, { message: 'card degli avvisi rimaste a opacità < 1', timeout: 5_000 })
+    .toBe('tutte visibili');
+}
+
+/**
+ * LA SEGRETERIA SU IPAD (PR 3). Fra 744 e 1279 px il cockpit ha la topbar desktop e il binario a
+ * icone da 88 px (`AdminBinario`); la barra in basso del telefono e la sidebar piena da 256 px
+ * (che c'è da 1280) non devono vedersi. Le stesse misure di genitori e docenti: pagina giusta,
+ * nessuno scorrimento di lato, contenuto a destra del binario e largo.
+ */
+async function verificaGuscioAdmin(page: Page, rotta: string) {
+  await page.goto(rotta);
+
+  await expect(page, `«${rotta}» è finita altrove`).not.toHaveURL(/\/auth\/login/);
+  expect(new URL(page.url()).pathname).toBe(rotta);
+
+  const binario = page.locator('[data-kv-binario-admin]');
+  await expect(binario).toBeVisible({ timeout: 20_000 });
+  await attendiFineCaricamento(page);
+
+  await expect(page.locator('[data-kv-barra-bassa-admin]'), 'la barra del telefono si vede ancora').toBeHidden();
+  await expect(page.locator('[data-kv-sidebar-admin]'), 'la sidebar piena c’è già sotto i 1280 px').toBeHidden();
+  await expect(binario.getByRole('link', { name: 'Home' })).toBeVisible();
+
+  const misure = await page.evaluate(() => {
+    const nav = document.querySelector('[data-kv-binario-admin]')!.getBoundingClientRect();
+    const contenuto = document.querySelector('[data-cockpit-content]')!.getBoundingClientRect();
+    return {
+      scorrimento: document.documentElement.scrollWidth,
+      finestra: window.innerWidth,
+      destraBinario: nav.right,
+      larghezzaBinario: nav.width,
+      sinistraContenuto: contenuto.left,
+      larghezzaContenuto: contenuto.width,
+    };
+  });
+  expect(misure.scorrimento, `«${rotta}» scorre di lato: ${JSON.stringify(misure)}`).toBeLessThanOrEqual(misure.finestra + 1);
+  expect(misure.larghezzaBinario, 'il binario non è largo 88 px').toBeCloseTo(88, 0);
+  expect(misure.sinistraContenuto, `il contenuto di «${rotta}» finisce sotto il binario`).toBeGreaterThanOrEqual(misure.destraBinario - 1);
+  expect(misure.larghezzaContenuto, `il contenuto di «${rotta}» è stretto: ${JSON.stringify(misure)}`).toBeGreaterThan(600);
+
+  await attendiPaginaFerma(page);
+
+  await test.info().attach(`${rotta.replaceAll('/', '_')}-${page.viewportSize()!.width}px`, {
     body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
     contentType: 'image/png',
   });
@@ -160,6 +237,40 @@ test.describe('docente su iPad', () => {
       await verificaGuscioTablet(page, rotta);
     });
   }
+});
+
+test.describe('segreteria su iPad', () => {
+  test.use({ storageState: STORAGE.admin });
+  for (const rotta of ROTTE_SEGRETERIA) {
+    test(`${rotta}: binario, nessuna barra in basso, nessuno scorrimento di lato`, async ({ page }) => {
+      await verificaGuscioAdmin(page, rotta);
+    });
+  }
+
+  test('«Menu» del binario apre il pannello accanto e porta alla voce scelta', async ({ page }) => {
+    await page.goto('/admin');
+    const binario = page.locator('[data-kv-binario-admin]');
+    await expect(binario).toBeVisible({ timeout: 20_000 });
+    await attendiFineCaricamento(page);
+    await attendiPaginaFerma(page);
+
+    await binario.getByRole('button', { name: /menu/i }).click();
+    const pannello = page.locator('[data-kv-menu-admin="pannello"]').getByRole('dialog');
+    await expect(pannello).toBeVisible();
+    // Il pannello parte DOPO il binario e sotto la topbar: non copre la navigazione.
+    const box = (await pannello.boundingBox())!;
+    expect(box.x, 'il pannello copre il binario').toBeGreaterThanOrEqual(87);
+    expect(box.y, 'il pannello copre la topbar').toBeGreaterThanOrEqual(63);
+    await test.info().attach(`menu-binario-admin-${page.viewportSize()!.width}px`, {
+      body: await page.screenshot({ style: SENZA_INDICATORE_DEV }),
+      contentType: 'image/png',
+    });
+
+    await pannello.getByRole('link', { name: /impostazioni/i }).click();
+    await expect(page).toHaveURL(/\/admin\/impostazioni/, { timeout: 15_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(binario.getByRole('button', { name: /menu/i })).toHaveAttribute('aria-current', 'true');
+  });
 });
 
 test.describe('il menu del binario', () => {

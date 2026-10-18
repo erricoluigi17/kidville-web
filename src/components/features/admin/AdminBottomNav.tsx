@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Bottom-nav mobile del cockpit Direzione/Segreteria (<lg).
+ * Bottom-nav mobile del cockpit Direzione/Segreteria (<744 px: da lì c'è il binario, `AdminBinario`).
  *
  * Mutua il linguaggio della BottomNav genitore/docente (pillola bianca fluttuante,
  * icona in un pill che diventa verde da attiva, label in maiuscolo) SENZA
@@ -27,35 +27,16 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Home, Bell, Euro, UtensilsCrossed, LayoutGrid } from 'lucide-react';
+import { LayoutGrid } from 'lucide-react';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { activeHref, visibleItem, NAV_GROUPS, type NavItem } from './admin-nav-config';
 import { AdminMenuSheet } from './AdminMenuSheet';
+import { TAB_ADMIN } from './tab-admin';
 
 const FLAT: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
-interface Tab {
-  href: string;
-  /** chiave i18n della label (namespace adminNav). */
-  labelKey: string;
-  icon: typeof Home;
-  /** attivo dato l'href risolto da activeHref (match più lungo). */
-  isActive: (current: string) => boolean;
-}
-
-// 4 tab reali del cockpit. Label proprie della nav mobile (Home invece di
-// "Dashboard"); href e gating (roles) restano quelli della config condivisa.
-const TABS: Tab[] = [
-  { href: '/admin', labelKey: 'tabHome', icon: Home, isActive: (c) => c === '/admin' },
-  { href: '/admin/avvisi', labelKey: 'tabAvvisi', icon: Bell, isActive: (c) => c === '/admin/avvisi' },
-  { href: '/admin/pagamenti', labelKey: 'tabContabilita', icon: Euro, isActive: (c) => c === '/admin/pagamenti' },
-  {
-    href: '/admin/mensa',
-    labelKey: 'tabMensa',
-    icon: UtensilsCrossed,
-    isActive: (c) => c === '/admin/mensa' || c === '/admin/mensa/cucina',
-  },
-];
+// I 4 tab reali del cockpit stanno in `tab-admin.ts`, condivisi col binario del tablet.
+const TABS = TAB_ADMIN;
 
 // pill dell'icona: 44px di area toccabile, verde da attivo (gancio HC).
 const PILL_BASE =
@@ -80,7 +61,8 @@ export function AdminBottomNav() {
   return (
     <>
       <div
-        className="lg:hidden fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[520px] z-50 px-3"
+        data-kv-barra-bassa-admin
+        className="tablet:hidden fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[520px] z-50 px-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         <div className="kv-admin-bottomnav bg-kidville-white/95 backdrop-blur-2xl rounded-[26px] border border-kidville-line shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)]">

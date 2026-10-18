@@ -1,7 +1,13 @@
 'use client';
 
 /**
- * Bottom-sheet «Menu» del cockpit Direzione/Segreteria (<lg).
+ * Bottom-sheet «Menu» del cockpit Direzione/Segreteria (<744 px).
+ *
+ * DAL 2026-10-18 HA ANCHE UNA SECONDA FORMA, il pannello del tablet (`variante="pannello"`): da
+ * 744 a 1279 px la navigazione è il binario a icone (`AdminBinario`), e il suo «Menu» apre questo
+ * stesso contenuto in un pannello accanto al binario invece che dal basso. Stesse voci, stesso
+ * filtro per ruolo, stessa scelta della sede, stessa tastiera (focus-trap, Esc, ritorno del
+ * fuoco, Indietro di Android): cambia solo dove sta.
  *
  * È la seconda metà della navigazione mobile: la bottom-nav (`AdminBottomNav`)
  * tiene i 4 tab ad alta frequenza (Home · Avvisi · Contabilità · Mensa), qui
@@ -62,7 +68,24 @@ interface AdminMenuSheetProps {
   userId?: string | null;
   /** Bottone «Menu» a cui restituire il focus alla chiusura. */
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
+  /**
+   * `foglio` (predefinito): dal basso, sotto i 744 px. `pannello`: accanto al binario del tablet,
+   * sotto la topbar (`top-16`) e a destra degli 88 px del binario.
+   */
+  variante?: 'foglio' | 'pannello';
 }
+
+// Le due forme, per intero (Tailwind legge le classi dal sorgente: mai montarle a pezzi).
+const CONTENITORE: Record<'foglio' | 'pannello', string> = {
+  foglio: 'tablet:hidden fixed inset-0 z-[110]',
+  pannello: 'hidden tablet:block xl:hidden fixed bottom-0 left-[88px] right-0 top-16 z-[110]',
+};
+const DIALOGO: Record<'foglio' | 'pannello', string> = {
+  foglio:
+    'kv-admin-sheet absolute left-1/2 bottom-0 -translate-x-1/2 w-full max-w-[520px] max-h-[70vh] overflow-y-auto rounded-t-[26px] bg-kidville-white shadow-[0_-8px_40px_rgba(0,0,0,0.18)] px-4 pt-4',
+  pannello:
+    'kv-admin-sheet absolute bottom-0 left-0 top-0 w-[360px] max-w-full overflow-y-auto border-r border-kidville-line bg-kidville-white shadow-2xl px-4 pt-4',
+};
 
 // Gli href dei 4 tab già in bottom-nav: NON si ripetono nello sheet. Anagrafica
 // (/admin/students) è mostrata in evidenza in cima → esclusa anch'essa dai gruppi.
@@ -98,7 +121,7 @@ function SedeRigaMenu({ nome, attiva, onClick }: { nome: string; attiva: boolean
   );
 }
 
-export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, returnFocusRef }: AdminMenuSheetProps) {
+export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, returnFocusRef, variante = 'foglio' }: AdminMenuSheetProps) {
   const t = useTranslations('adminNav');
   // Etichette delle voci di nav dal config condiviso (namespace `etichette`).
   // Fallback all'IT del config se la chiave manca → nessuna rottura.
@@ -177,7 +200,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
   }
 
   return (
-    <div className="lg:hidden fixed inset-0 z-[110]" onKeyDown={onKeyDown}>
+    <div className={CONTENITORE[variante]} data-kv-menu-admin={variante} onKeyDown={onKeyDown}>
       {/* Overlay: chiude al click. Sotto lo sheet, sopra il resto. */}
       <div
         className="absolute inset-0 bg-kidville-green/30 backdrop-blur-[2px]"
@@ -189,7 +212,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
         role="dialog"
         aria-modal="true"
         aria-labelledby="admin-menu-sheet-title"
-        className="kv-admin-sheet absolute left-1/2 bottom-0 -translate-x-1/2 w-full max-w-[520px] max-h-[70vh] overflow-y-auto rounded-t-[26px] bg-kidville-white shadow-[0_-8px_40px_rgba(0,0,0,0.18)] px-4 pt-4"
+        className={DIALOGO[variante]}
         style={{ paddingBottom: 'max(20px, calc(env(safe-area-inset-bottom) + 16px))' }}
       >
         <div className="flex items-center justify-between mb-3 px-1">
@@ -286,7 +309,9 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
             profili: qui è il caso della segreteria che è anche genitore. */}
         <div className="mt-4 border-t border-kidville-line pt-3 flex flex-col gap-1">
           <CambiaProfiloMenuButton className={`${FOOTER_BTN_CLS} text-kidville-green hover:bg-kidville-green-soft disabled:opacity-60`} />
-          <LogoutMenuButton className={`${FOOTER_BTN_CLS} text-kidville-error hover:bg-kidville-error-soft disabled:opacity-60`} />
+          {/* `error-strong` e non `error`: «Esci» è testo, e il rosso `error` su bianco fa 4,23:1 (soglia
+              4,5). Lo stesso difetto corretto il 18/10 nei menu di genitori e docenti. */}
+          <LogoutMenuButton className={`${FOOTER_BTN_CLS} text-kidville-error-strong hover:bg-kidville-error-soft disabled:opacity-60`} />
         </div>
       </div>
     </div>

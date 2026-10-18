@@ -399,11 +399,18 @@ export function AvvisoCard({ avviso, index, isTeacher, classiNote, onReadReceipt
     };
 
     return (
+        // `transition-colors` e non `transition-all` (2026-10-18). L'opacità e lo
+        // spostamento li anima framer-motion; una transizione CSS sulle stesse proprietà
+        // dello stesso elemento gli contende il valore finale, e nelle schermate WebKit
+        // dell'E2E tablet (#239, #240) due card per giro restavano a opacità 0 — bianche,
+        // in posizioni diverse ogni volta. Al CSS resta il bordo che cambia colore alla
+        // lettura. `data-kv-avviso` è il gancio dell'E2E che lo verifica.
         <motion.div
+            data-kv-avviso
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.05, duration: 0.3 }}
-            className={`overflow-hidden rounded-3xl border bg-kidville-white shadow-sm transition-all ${
+            className={`overflow-hidden rounded-3xl border bg-kidville-white shadow-sm transition-colors ${
                 unread ? 'border-kidville-yellow/60' : 'border-kidville-line'
             }`}
         >

@@ -132,14 +132,18 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                         return (
                             <motion.button
                                 key={student.id}
+                                // L'opacità è di framer-motion, anche quella «spenta» di chi non si
+                                // può taggare: con `opacity-40` fra le classi, lo stile in linea
+                                // `opacity: 1` dell'animazione la cancellava. E niente
+                                // `transition-all`: contende a framer opacità e spostamento.
                                 initial={{ opacity: 0, y: 6 }}
-                                animate={{ opacity: 1, y: 0 }}
+                                animate={{ opacity: isDisabled ? 0.4 : 1, y: 0 }}
                                 transition={{ delay: idx * 0.02, duration: 0.2 }}
                                 onClick={() => !isDisabled && handleStudentClick(student)}
                                 disabled={isDisabled}
-                                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-left transition-all ${
+                                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-left transition-[color,background-color,border-color,box-shadow] ${
                                     isDisabled
-                                        ? 'bg-kidville-cream opacity-40 cursor-not-allowed border-transparent'
+                                        ? 'bg-kidville-cream cursor-not-allowed border-transparent'
                                         : isSelected
                                             ? 'bg-kidville-green text-white shadow-md shadow-kidville-green/20'
                                             : 'bg-white hover:bg-kidville-cream border border-kidville-line'

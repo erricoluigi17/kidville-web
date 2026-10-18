@@ -443,7 +443,7 @@ function TeacherChatContent() {
                                                     animate={{ opacity: 1, y: 0 }}
                                                     transition={{ delay: idx * 0.04 }}
                                                     onClick={() => handleNewChat(contact)}
-                                                    className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-kidville-cream/30 hover:bg-kidville-cream/60 transition-all text-left"
+                                                    className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-kidville-cream/30 hover:bg-kidville-cream/60 transition-colors text-left"
                                                 >
                                                     <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                                         {initials}

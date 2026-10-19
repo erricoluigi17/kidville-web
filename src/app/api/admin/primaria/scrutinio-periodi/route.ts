@@ -26,8 +26,18 @@ import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 /** '' equivale ad assente: il cockpit può mandare il parametro ancora vuoto. */
 const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
 
+/**
+ * Archiviazione (fase 4 della robustezza, D3-C): un periodo chiuso esce dall'elenco senza che
+ * niente di ciò che vi è appeso venga toccato. Sul DB E2E della CI la colonna non c'è: in lettura
+ * `42703` (si rilegge senza il filtro: là nessuno ha mai archiviato niente), in scrittura
+ * `PGRST204`/`42703` (si risponde 503 e lo si dice).
+ */
+const CODICI_COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
 const getQuerySchema = z.object({
   annoScolastico: z.string().optional(),
+  // `si` = anche i periodi archiviati (la segreteria li rivede per ripristinarli).
+  archiviati: z.enum(['si']).optional(),
   // Sede dichiarata dal pannello (che è mono-sede: sta dentro `SedeRequired`).
   // È una PREFERENZA, non un'autorizzazione: vale solo se rientra nei plessi in
   // scope, e non allarga mai — vedi l'intersezione nell'handler.
@@ -52,6 +62,8 @@ const patchBodySchema = z.object({
   dataInizio: z.string().nullish(),
   dataFine: z.string().nullish(),
   attivo: z.boolean().nullish(),
+  // true = archivia (e disattiva), false = ripristina nell'elenco.
+  archiviato: z.boolean().nullish(),
 })
 
 const deleteQuerySchema = z.object({
@@ -67,7 +79,7 @@ export const GET = withRoute('admin/primaria/scrutinio-periodi:GET', async (requ
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { annoScolastico: anno, scuolaId } = q.data
+    const { annoScolastico: anno, scuolaId, archiviati } = q.data
 
     const supabase = await createAdminClient()
     // Scope vuoto ⇒ `.in('scuola_id', [])` ⇒ nessuna riga: si NEGA, mai
@@ -76,15 +88,29 @@ export const GET = withRoute('admin/primaria/scrutinio-periodi:GET', async (requ
     // periodi propri, che sarebbero una risposta a una domanda mai fatta.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     const sedi = scuolaId ? plessi.filter((id) => id === scuolaId) : plessi
-    let query = supabase
-      .from('scrutinio_periodi')
-      .select('*')
-      .in('scuola_id', sedi)
-      .order('ordine')
-    if (anno) query = query.eq('anno_scolastico', anno)
+    const leggi = (escludiArchiviati: boolean) => {
+      let query = supabase
+        .from('scrutinio_periodi')
+        .select('*')
+        .in('scuola_id', sedi)
+        .order('ordine')
+      if (anno) query = query.eq('anno_scolastico', anno)
+      if (escludiArchiviati) query = query.is('archiviato_il', null)
+      return query
+    }
 
-    const { data, error } = await query
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    let { data, error } = await leggi(archiviati !== 'si')
+    if (error && archiviati !== 'si' && CODICI_COLONNA_ASSENTE.has(error.code ?? '')) {
+      // DB non migrato: la colonna non c'è, quindi nessun periodo può essere archiviato.
+      logEvento('registro', 'info', {
+        operazione: 'admin/primaria/scrutinio-periodi:GET', esito: 'archiviazione-non-disponibile-schema', error_code: error.code,
+      })
+      ;({ data, error } = await leggi(false))
+    }
+    if (error) {
+      logErrore({ operazione: 'admin/primaria/scrutinio-periodi:GET', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:GET', stato: 500 }, err)
@@ -137,7 +163,7 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
 
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
-    const { id, nome, ordine, dataInizio, dataFine, attivo } = b.data
+    const { id, nome, ordine, dataInizio, dataFine, attivo, archiviato } = b.data
 
     const patch: Record<string, unknown> = {}
     if (nome !== undefined) patch.nome = nome
@@ -145,6 +171,13 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
     if (dataInizio !== undefined) patch.data_inizio = dataInizio
     if (dataFine !== undefined) patch.data_fine = dataFine
     if (attivo !== undefined) patch.attivo = attivo
+    if (archiviato === true) {
+      // Un periodo archiviato non si compila più: si disattiva nella stessa scrittura.
+      patch.archiviato_il = new Date().toISOString()
+      patch.attivo = false
+    } else if (archiviato === false) {
+      patch.archiviato_il = null
+    }
 
     const supabase = await createAdminClient()
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
@@ -154,10 +187,32 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
       .eq('id', id)
       .in('scuola_id', plessi)
       .select()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      if (archiviato != null && CODICI_COLONNA_ASSENTE.has(error.code ?? '')) {
+        logEvento('registro', 'warn', {
+          operazione: 'admin/primaria/scrutinio-periodi:PATCH', esito: 'archiviazione-non-disponibile-schema', periodo_id: id, error_code: error.code,
+        })
+        return NextResponse.json(
+          { error: 'L’archiviazione dei periodi non è ancora disponibile su questo database.', codice: 'ARCHIVIAZIONE_NON_DISPONIBILE' },
+          { status: 503 },
+        )
+      }
+      logErrore({ operazione: 'admin/primaria/scrutinio-periodi:PATCH', stato: 500, evento: 'db' }, error)
+      return NextResponse.json({ error: 'Errore interno', codice: 'SCRITTURA_FALLITA' }, { status: 500 })
+    }
     // 0 righe = periodo inesistente OPPURE di un altro plesso: si risponde 404
     // in entrambi i casi, così la risposta non diventa un oracolo di esistenza.
     if (!data || data.length === 0) return NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
+    if (archiviato != null) {
+      // Chi ha tolto (o rimesso) un periodo dall'elenco, e quando: è una scrittura su un
+      // contenitore di documenti scolastici, e deve lasciare traccia anche quando riesce.
+      logEvento('registro', 'info', {
+        operazione: 'admin/primaria/scrutinio-periodi:PATCH',
+        esito: archiviato ? 'periodo-archiviato' : 'periodo-ripristinato',
+        periodo_id: id,
+        utente_id: auth.user.id,
+      })
+    }
     return NextResponse.json({ success: true, data: data[0] })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:PATCH', stato: 500 }, err)
@@ -173,7 +228,7 @@ function rispostaPeriodoConScrutini(periodoId: string, causa: string, err?: unkn
   }, err)
   return NextResponse.json(
     {
-      error: 'Il periodo ha già scrutini: non si può eliminare. Si può correggere (date, nome) dalla modifica del periodo.',
+      error: 'Il periodo ha già scrutini: non si può eliminare. Si può archiviare: esce dall’elenco, e scrutini e pagelle restano.',
       codice: 'PERIODO_CON_SCRUTINI',
     },
     { status: 409 },

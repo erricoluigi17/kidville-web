@@ -60,3 +60,62 @@ describe('ScrutinioPeriodiManager — la sede si dichiara, non si deduce', () =>
     expect(chiamate[0].url).toContain(`scuolaId=${SEDE_SCELTA}`);
   });
 });
+
+// =============================================================================
+// Fase 4 della robustezza (D3-C): un periodo si ARCHIVIA. Il pulsante chiede conferma,
+// manda `archiviato: true`, e un periodo archiviato offre solo «Rimetti in elenco».
+// =============================================================================
+describe('ScrutinioPeriodiManager — archiviare invece di cancellare', () => {
+  const chiamate: Chiamata[] = [];
+  const periodo = (archiviato_il: string | null) => ({
+    id: 'p-1', nome: 'Primo quadrimestre', anno_scolastico: '2026/2027', ordine: 1,
+    data_inizio: null, data_fine: null, attivo: true, archiviato_il,
+  });
+  function fetchConPeriodo(archiviato_il: string | null) {
+    return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      chiamate.push({
+        url: String(url),
+        metodo: init?.method ?? 'GET',
+        body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null,
+      });
+      return { ok: true, json: async () => ({ success: true, data: [periodo(archiviato_il)] }) };
+    });
+  }
+  beforeEach(() => { chiamate.length = 0; });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('«Archivia periodo» chiede conferma e manda archiviato: true', async () => {
+    vi.stubGlobal('fetch', fetchConPeriodo(null));
+    const conferma = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<ScrutinioPeriodiManager scuolaId={SEDE_SCELTA} userId="u-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Archivia periodo' }));
+    await waitFor(() => expect(chiamate.some((c) => c.metodo === 'PATCH')).toBe(true));
+    expect(conferma).toHaveBeenCalledTimes(1);
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.body).toEqual({ id: 'p-1', archiviato: true });
+  });
+
+  it('se la conferma è negata non parte niente', async () => {
+    vi.stubGlobal('fetch', fetchConPeriodo(null));
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<ScrutinioPeriodiManager scuolaId={SEDE_SCELTA} userId="u-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Archivia periodo' }));
+    expect(chiamate.some((c) => c.metodo === 'PATCH')).toBe(false);
+  });
+
+  it('un periodo archiviato mostra il segno e solo «Rimetti in elenco», che manda archiviato: false', async () => {
+    vi.stubGlobal('fetch', fetchConPeriodo('2026-10-19T20:00:00.000Z'));
+    render(<ScrutinioPeriodiManager scuolaId={SEDE_SCELTA} userId="u-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rimetti in elenco' }));
+    expect(screen.getByText('archiviato')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Elimina periodo' })).toBeNull();
+    await waitFor(() => expect(chiamate.some((c) => c.metodo === 'PATCH')).toBe(true));
+    expect(chiamate.find((c) => c.metodo === 'PATCH')!.body).toEqual({ id: 'p-1', archiviato: false });
+  });
+
+  it('«Mostra anche gli archiviati» rilegge con archiviati=si', async () => {
+    vi.stubGlobal('fetch', fetchConPeriodo(null));
+    render(<ScrutinioPeriodiManager scuolaId={SEDE_SCELTA} userId="u-1" />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Mostra anche gli archiviati/ }));
+    await waitFor(() => expect(chiamate.some((c) => c.url.includes('archiviati=si'))).toBe(true));
+  });
+});

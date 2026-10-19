@@ -383,6 +383,11 @@ const h = vi.hoisted(() => ({
     tipiNonRegistrati: [] as { event_type: string }[],
     erroreTipi: null as unknown,
 
+    // ── IL BATTITO DEL RUNNER (fase 4, D6-a) ──
+    /** Le righe di `app_log` del runner nell'ultima ora. Di default un battito di due minuti fa: la catena è viva. */
+    battitiRunner: [] as { visto_l_ultima: string | null; contesto: unknown }[],
+    erroreBattitiRunner: null as unknown,
+
     eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
     staffNegato: null as unknown,
 }))
@@ -434,7 +439,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 qb.__opzioni = opzioni
                 return qb
             }
-            for (const m of ['not', 'is', 'lt', 'lte', 'gt', 'eq', 'order', 'limit']) {
+            for (const m of ['not', 'is', 'lt', 'lte', 'gt', 'gte', 'eq', 'or', 'order', 'limit']) {
                 qb[m] = (...argomenti: unknown[]) => {
                     clausole.push({ metodo: m, argomenti })
                     return qb
@@ -462,6 +467,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 const colonne = qb.__colonne as string
                 const ids = (qb.__in as string[] | undefined) ?? []
 
+                if (colonne === 'visto_l_ultima, contesto') {
+                    // Il battito del runner (`@/lib/media/video/catena`): non entra nella sequenza, che
+                    // descrive ciò che il giro FA, non ciò che legge per decidere.
+                    return Promise.resolve({ data: h.erroreBattitiRunner ? null : h.battitiRunner, error: h.erroreBattitiRunner }).then(res)
+                }
                 if (colonne === 'id, original_path') {
                     h.sequenza.push({ tipo: 'leggi-scaduti', valore: null })
                     return Promise.resolve({ data: h.scaduti, error: h.erroreScaduti }).then(res)
@@ -622,6 +632,14 @@ function chiamata(headers: Record<string, string> = { 'x-cron-secret': CRON_SECR
 const battito = () =>
     h.eventi.filter((e) => e.evento === 'cron' && e.livello === 'info' && 'ms' in e.campi)
 
+/** Una riga di battito del runner di `minuti` fa, con un esito che vale come battito. */
+function battitoRunner(minuti: number, esito = 'coda-vuota') {
+    return {
+        visto_l_ultima: new Date(Date.now() - minuti * 60_000).toISOString(),
+        contesto: { campi: { operazione: 'video-runner-tick', esito } },
+    }
+}
+
 beforeEach(() => {
     process.env.CRON_SECRET = CRON_SECRET
     h.sequenza = []
@@ -674,6 +692,8 @@ beforeEach(() => {
     h.elencazioniUscite = []
     h.erroreElenco = null
     h.erroreElencoUscite = null
+    h.battitiRunner = [battitoRunner(2)]
+    h.erroreBattitiRunner = null
     h.eventi = []
     h.staffNegato = null
 })
@@ -742,6 +762,64 @@ describe('lo schema video non applicato: si dichiara, non si finge', () => {
 
         expect(res.status).toBe(500)
         expect(battito()[0].campi.esito).toBe('scadenze-fallite')
+    })
+})
+
+describe('la catena di conversione ferma: niente incaglio, niente originali falliti distrutti (fase 4, D6-a)', () => {
+    const letturaScaduti = () => h.query.find((q) => q.tabella === 'video_jobs' && q.colonne === 'id, original_path')
+    const filtroCatena = () => letturaScaduti()?.clausole.find((c) => c.metodo === 'or')
+
+    it('con il runner che batte, incaglio a 168 ore e nessun filtro sugli originali', async () => {
+        const res = await POST(chiamata())
+        const corpo = await res.json()
+        expect(h.rpc.find((r) => r.nome === 'video_retention_scadenze')?.argomenti.p_ore_incaglio).toBe(7 * 24)
+        expect(filtroCatena()).toBeUndefined()
+        expect(corpo.catena_ferma).toBe(false)
+        expect(h.eventi.find((e) => e.campi.esito === 'catena-ferma')).toBeUndefined()
+    })
+
+    it('senza un battito da un’ora: incaglio sospeso e solo convertiti, annullati e abbandonati si tolgono', async () => {
+        h.battitiRunner = [battitoRunner(61)]
+        const res = await POST(chiamata())
+        const corpo = await res.json()
+
+        expect(h.rpc.find((r) => r.nome === 'video_retention_scadenze')?.argomenti.p_ore_incaglio).toBe(8760)
+        expect(filtroCatena()?.argomenti).toEqual(['status.in.(ready,cancelled),error_code.eq.UPLOAD_ABBANDONATO'])
+        expect(corpo.catena_ferma).toBe(true)
+        const avviso = h.eventi.find((e) => e.campi.esito === 'catena-ferma')
+        expect(avviso?.livello).toBe('warn')
+        expect(avviso?.campi.stato).toBe('nessun-battito')
+        // Il resto del giro gira lo stesso: è una pulizia trattenuta, non un giro saltato.
+        expect(battito()[0].campi.catena_ferma).toBe(true)
+    })
+
+    it('una riga del runner che NON vale come battito (un errore) non tiene viva la catena', async () => {
+        h.battitiRunner = [battitoRunner(1, 'guasto')]
+        await POST(chiamata())
+        expect(filtroCatena()).toBeDefined()
+    })
+
+    it('se il battito non si legge, «non so» vale «ferma», con il codice nel log', async () => {
+        h.erroreBattitiRunner = { code: '57014', message: 'canceled' }
+        await POST(chiamata())
+        expect(h.rpc.find((r) => r.nome === 'video_retention_scadenze')?.argomenti.p_ore_incaglio).toBe(8760)
+        const avviso = h.eventi.find((e) => e.campi.esito === 'catena-ferma')
+        expect(avviso?.campi).toMatchObject({ stato: 'lettura-fallita', error_code: '57014' })
+    })
+
+    it('la lettura del battito chiede proprio il runner, nell’ultima ora', async () => {
+        await POST(chiamata())
+        const q = h.query.find((x) => x.tabella === 'app_log' && x.colonne === 'visto_l_ultima, contesto')
+        expect(q?.clausole).toEqual(
+            expect.arrayContaining([
+                { metodo: 'eq', argomenti: ['evento', 'cron'] },
+                { metodo: 'eq', argomenti: ['contesto->campi->>operazione', 'video-runner-tick'] },
+            ]),
+        )
+        const da = q?.clausole.find((c) => c.metodo === 'gte')?.argomenti[1] as string
+        const minuti = (Date.now() - Date.parse(da)) / 60_000
+        expect(minuti).toBeGreaterThan(59)
+        expect(minuti).toBeLessThan(61)
     })
 })
 

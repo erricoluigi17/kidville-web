@@ -79,7 +79,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: () => {
       const qb: Record<string, unknown> = {}
-      for (const m of ['select', 'in', 'lt', 'eq']) qb[m] = () => qb
+      for (const m of ['select', 'in', 'lt', 'eq', 'order', 'limit']) qb[m] = () => qb
       qb.delete = () => ({
         in: (_c: string, ids: unknown) => {
           h.sequenza.push({ tipo: 'delete', valore: ids })

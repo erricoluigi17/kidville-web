@@ -110,6 +110,11 @@ import { BUCKET_ALLEGATI_REGISTRO } from '@/lib/primaria/allegati-registro'
  *    default `now()` lo impedisce in pratica) non scade: `lt` non la prende, e la
  *    purga non inventa un'età che la riga non dichiara.
  *
+ * 10. **UN ALLEGATO IN USO NON SCADE** (fase 4 della robustezza, D6-b, 19/10/2026).
+ *    Vivo e attaccato a una lezione tenuta dentro il termine: il termine conta dal più
+ *    recente fra caricamento e lezione (`allegatiRegistroInUso`). Senza poterlo
+ *    verificare il contenitore non tocca niente. Le righe nel cestino non sono in uso.
+ *
  * ─── COSA NON ENTRA NEI LOG ─────────────────────────────────────────────────
  *
  * Niente percorsi (portano l'uuid dell'alunno o della lezione e il nome del
@@ -196,6 +201,43 @@ type Contenitore = {
     scadute: (s: Supabase, soglia: string) => Lettura
     reclami: (s: Supabase, colonna: string, percorsi: string[]) => Lettura
     cancella: (s: Supabase, soglia: string, ids: string[]) => Cancellazione
+    /**
+     * Facoltativo: fra le righe lette, quelle ancora IN USO, che quindi non sono scadute anche se
+     * la colonna del termine lo direbbe (fase 4 della robustezza, D6-b). Torna gli id da lasciare
+     * stare; con un errore il contenitore non tocca niente (fail-closed, come i reclami).
+     */
+    inUso?: (s: Supabase, righe: Riga[], soglia: string) => Promise<{ ids: Set<string>; error: null } | { ids: null; error: unknown }>
+}
+
+/**
+ * IN USO, per la conservazione degli allegati del registro (fase 4, D6-b): un allegato VIVO
+ * attaccato a una lezione che c'è ancora e che si è tenuta dentro il termine. Il termine del
+ * titolare (365 giorni) resta, ma conta dal più recente fra il caricamento e la lezione: un file
+ * caricato un anno fa e agganciato a una lezione di questa settimana è materiale che docente e
+ * famiglie stanno usando, e distruggerlo lascerebbe nel registro un allegato che non si apre.
+ * Le righe nel CESTINO non sono in uso per definizione: per loro vale il caricamento, come prima.
+ */
+async function allegatiRegistroInUso(
+    s: Supabase,
+    righe: Riga[],
+    soglia: string,
+): Promise<{ ids: Set<string>; error: null } | { ids: null; error: unknown }> {
+    const vive = righe.filter((r) => r.eliminato_il == null && typeof r.registro_id === 'string' && r.registro_id !== '')
+    const lezioni = [...new Set(vive.map((r) => r.registro_id as string))]
+    const recenti = new Set<string>()
+    // La data della lezione è un giorno (`date`): si confronta con il giorno della soglia.
+    const giornoSoglia = soglia.slice(0, 10)
+    for (let i = 0; i < lezioni.length; i += LOTTO_IN) {
+        const { data, error } = await s
+            .from('registro_orario')
+            .select('id, data')
+            .in('id', lezioni.slice(i, i + LOTTO_IN))
+        if (error) return { ids: null, error }
+        for (const l of (data ?? []) as { id?: unknown; data?: unknown }[]) {
+            if (typeof l.id === 'string' && typeof l.data === 'string' && l.data >= giornoSoglia) recenti.add(l.id)
+        }
+    }
+    return { ids: new Set(vive.filter((r) => recenti.has(r.registro_id as string)).map((r) => r.id)), error: null }
 }
 
 /**
@@ -246,7 +288,7 @@ const CONTENITORI_CESTINO_REGISTRO: readonly Contenitore[] = [
         colonnePercorso: ['file_url'],
         scadute: (s, soglia) =>
             allegatiRegistroAncheNelCestino(
-                s.from('allegati_registro').select('id, file_url'),
+                s.from('allegati_registro').select('id, file_url, registro_id, eliminato_il'),
                 'la conservazione conta dal CARICAMENTO e vale per vivi e cestinati insieme: decisione del ' +
                     'titolare del 2026-09-25, un allegato del registro si distrugge oltre il termine anche se ' +
                     'nessuno lo ha mai eliminato, e filtrare i soli vivi lascerebbe indietro quelli nel cestino.',
@@ -254,6 +296,7 @@ const CONTENITORI_CESTINO_REGISTRO: readonly Contenitore[] = [
                 .lt('creato_il', soglia)
                 .order('creato_il', { ascending: true })
                 .limit(TETTO_LOTTO),
+        inUso: allegatiRegistroInUso,
         reclami: reclamiAllegatiRegistro,
         // La `delete` ripete la condizione della lettura: una riga caricata DOPO la
         // soglia non è cancellabile da qui nemmeno se il suo id arrivasse per errore.
@@ -311,6 +354,8 @@ type EsitoContenitore = {
     fileGiaAssenti: number
     fileBloccanti: number
     fileAncoraReclamati: number
+    /** Righe oltre il termine che il contenitore ha riconosciuto IN USO, e quindi lasciato stare. */
+    inUso: number
     lottoPieno: boolean
     conteggioVerificato: boolean
 }
@@ -325,6 +370,7 @@ const NIENTE: EsitoContenitore = {
     fileGiaAssenti: 0,
     fileBloccanti: 0,
     fileAncoraReclamati: 0,
+    inUso: 0,
     lottoPieno: false,
     conteggioVerificato: false,
 }
@@ -396,10 +442,44 @@ async function purgaContenitore(
         return esito
     }
 
-    const righe = ((data ?? []) as unknown as Record<string, unknown>[])
+    const lette = ((data ?? []) as unknown as Record<string, unknown>[])
         .filter((r): r is Riga => typeof r.id === 'string' && r.id.length > 0)
+    // Il lotto pieno si misura su ciò che la lettura ha restituito, non su ciò che resta dopo il
+    // filtro dell'uso: è il tetto della QUERY che taglia.
+    esito.lottoPieno = lette.length >= TETTO_LOTTO
+
+    // ── LE RIGHE ANCORA IN USO (solo dove il contenitore lo dichiara) ───────
+    let righe = lette
+    if (c.inUso && lette.length > 0) {
+        const uso = await c.inUso(supabase, lette, soglia)
+        if (uso.ids === null) {
+            esito.esito = 'lettura-fallita'
+            logEvento(
+                'cron',
+                'error',
+                {
+                    ...base,
+                    esito: 'uso-non-verificato',
+                    error_code: codiceDi(uso.error),
+                    n_righe: lette.length,
+                    msg: `${JOB}: non so se queste righe sono ancora in uso, quindi non ne tocco nessuna`,
+                },
+                uso.error,
+            )
+            return esito
+        }
+        if (uso.ids.size > 0) {
+            righe = lette.filter((r) => !uso.ids.has(r.id))
+            esito.inUso = uso.ids.size
+            logEvento('cron', 'info', {
+                ...base,
+                esito: 'righe-in-uso',
+                n_righe: uso.ids.size,
+                msg: `${JOB}: ${uso.ids.size} righe oltre il termine dal caricamento sono attaccate a una lezione recente: restano`,
+            })
+        }
+    }
     esito.scadute = righe.length
-    esito.lottoPieno = righe.length >= TETTO_LOTTO
     if (esito.lottoPieno) {
         logEvento('cron', 'warn', {
             ...base,
@@ -703,6 +783,7 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
             n_cestino_file: a.fileRimossi + f.fileRimossi,
             n_conservazione_righe: k.cancellate,
             n_conservazione_file: k.fileRimossi,
+            n_conservazione_in_uso: k.inUso,
             n_allegati_righe: a.cancellate,
             n_allegati_file: a.fileRimossi,
             n_fascicolo_righe: f.cancellate,

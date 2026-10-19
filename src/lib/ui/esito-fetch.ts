@@ -3365,6 +3365,19 @@ export const CODICI_ERRORE = {
     PAPER_ORIGINAL_MISSING: 'erroreModuloFirmatoScansioneAssente',
     PDF_TOO_LARGE: 'erroreModuloFirmatoPdfTroppoGrande',
     SUBMISSION_ERASURE_PENDING: 'erroreModuloFirmatoInCancellazione',
+    /**
+     * 503 — fase 4 della robustezza: archiviare un periodo di scrutinio su un database che non
+     * ha ancora la colonna `archiviato_il` (il database della CI non è migrato). Non è un guasto
+     * da riprovare fra poco: è una funzione che su quel database non c'è.
+     */
+    ARCHIVIAZIONE_NON_DISPONIBILE: 'erroreArchiviazioneNonDisponibile',
+    /**
+     * 500 — una scrittura sul database non riuscita, fuori da `pagamenti` (`src/lib/db/guasto.ts`,
+     * fase 11 della robustezza: «errori non ignorati»). Stessa frase di `PAGAMENTI_SCRITTURA_FALLITA`
+     * e per la stessa ragione: in una route a più passi il primo può essere già scritto, quindi la
+     * frase non promette che non sia stato registrato niente.
+     */
+    SCRITTURA_FALLITA: 'erroreScritturaFallita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

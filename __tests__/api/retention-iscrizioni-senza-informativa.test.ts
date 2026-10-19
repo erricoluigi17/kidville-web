@@ -74,7 +74,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.filtriEq.push({ colonna, valore })
         return qb
       }
-      for (const m of ['in', 'lt']) qb[m] = () => qb
+      for (const m of ['in', 'lt', 'order', 'limit']) qb[m] = () => qb
       qb.delete = () => ({
         in: (_c: string, ids: unknown) => {
           h.cancellati.push(...(ids as string[]))

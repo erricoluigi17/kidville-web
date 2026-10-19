@@ -96,6 +96,28 @@ function senzaCommenti(sql: string): string {
 /** Il predicato che l'automa NON deve più usare per decidere «non più iscritto». */
 const NEGAZIONE = /COALESCE\s*\(\s*a\.stato\s*,\s*'iscritto'\s*\)\s*=\s*'iscritto'/i
 
+/**
+ * La stessa negazione scritta al rovescio: «stato diverso da iscritto». È la forma che
+ * `storici_tick` (20261015183000) usava per azzerare i motivi nelle stampe storiche, sospesi
+ * compresi; corretta il 19/10/2026 (fase 4 della robustezza, D6).
+ */
+const NEGAZIONE_DIVERSO = /COALESCE\s*\(\s*a\.stato\s*,\s*'iscritto'\s*\)\s*(?:<>|!=)\s*'iscritto'/i
+
+/** Il corpo dell'ULTIMA definizione di una funzione, senza commenti. */
+function corpoUltimaDefinizione(funzione: string): { nome: string; corpo: string } | null {
+  const file = ultimaDefinizione(funzione)
+  if (!file) return null
+  const sql = senzaCommenti(file.sql)
+  const inizio = sql.search(new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+public\\.${funzione}\\s*\\(`, 'i'))
+  const resto = sql.slice(inizio)
+  const apertura = resto.match(/\$(\w*)\$/)
+  if (!apertura || apertura.index === undefined) return null
+  const delim = apertura[0]
+  const da = apertura.index + delim.length
+  const a = resto.indexOf(delim, da)
+  return { nome: file.nome, corpo: a === -1 ? resto.slice(da) : resto.slice(da, a) }
+}
+
 describe('lock architettura · l’allowlist degli stati vale anche in SQL', () => {
   it('la funzione SQL esiste e dice ESATTAMENTE quello che dice TypeScript', () => {
     const file = ultimaDefinizione('stati_alunno_non_piu_iscritto')
@@ -142,6 +164,37 @@ describe('lock architettura · l’allowlist degli stati vale anche in SQL', () 
     ).toBe(false)
   })
 
+  it('fase 4 (D6): la regola «uscito da almeno 7 giorni» vive in UNA funzione, che passa dall’allowlist', () => {
+    const regola = corpoUltimaDefinizione('alunno_uscita_consolidata')
+    expect(regola, 'nessuna migrazione definisce `public.alunno_uscita_consolidata`').not.toBeNull()
+    expect(regola!.corpo).toContain('stati_alunno_non_piu_iscritto')
+    const giorni = regola!.corpo.match(/make_interval\s*\(\s*days\s*=>\s*(\d+)\s*\)/i)
+    expect(giorni, 'la grazia dopo il ritiro non è più scritta come `make_interval(days => N)`').not.toBeNull()
+    expect(Number(giorni![1]), 'la grazia dopo il ritiro è scesa sotto i 7 giorni').toBeGreaterThanOrEqual(7)
+  })
+
+  it('fase 4 (D6): l’automa e le stampe storiche decidono con la STESSA regola, mai con una negazione', () => {
+    for (const funzione of ['presenze_giustificazioni_retention_tick', 'storici_tick']) {
+      const def = corpoUltimaDefinizione(funzione)
+      expect(def, `nessuna migrazione definisce \`public.${funzione}\``).not.toBeNull()
+      expect(
+        def!.corpo.includes('alunno_uscita_consolidata'),
+        `${def!.nome}: \`${funzione}\` non passa da \`alunno_uscita_consolidata\`: un ritiro di ieri ` +
+          'azzererebbe stanotte i motivi delle assenze di quel bambino.',
+      ).toBe(true)
+      expect(NEGAZIONE.test(def!.corpo), `${def!.nome}: \`${funzione}\` usa «tutto tranne iscritto»`).toBe(false)
+      expect(NEGAZIONE_DIVERSO.test(def!.corpo), `${def!.nome}: \`${funzione}\` usa «stato <> iscritto»`).toBe(false)
+    }
+  })
+
+  it('fase 4 (D6): l’automa ha un INTERRUTTORE dichiarato, e lo sblocco è esplicito', () => {
+    const def = corpoUltimaDefinizione('presenze_giustificazioni_retention_tick')!
+    const soglia = def.corpo.match(/v_soglia\s+constant\s+int\s*:=\s*(\d+)/i)
+    expect(soglia, 'l’automa non dichiara più `v_soglia constant int := N`').not.toBeNull()
+    expect(Number(soglia![1])).toBeGreaterThan(0)
+    expect(def.corpo).toContain("current_setting('app.conservazione_forza', true)")
+  })
+
   it('CONTROLLO POSITIVO: i due riconoscitori vedono davvero ciò che cercano', () => {
     // Senza questa prova, un `allowlistSql` che tornasse sempre `null` e una
     // `NEGAZIONE` che non combaciasse mai lascerebbero il lock verde per sempre —
@@ -154,6 +207,8 @@ describe('lock architettura · l’allowlist degli stati vale anche in SQL', () 
     expect(NEGAZIONE.test("AND COALESCE(a.stato, 'iscritto') = ANY (public.stati_alunno_non_piu_iscritto())")).toBe(false)
     // …e la citazione DENTRO un commento non conta come regola.
     expect(NEGAZIONE.test(senzaCommenti("-- qui c'era COALESCE(a.stato, 'iscritto') = 'iscritto'"))).toBe(false)
+    expect(NEGAZIONE_DIVERSO.test("and coalesce(a.stato,'iscritto')<>'iscritto'")).toBe(true)
+    expect(NEGAZIONE_DIVERSO.test("and public.alunno_uscita_consolidata(a.stato, a.stato_cambiato_il)")).toBe(false)
     expect(senzaCommenti("SELECT 1; -- nota").trim()).toBe('SELECT 1;')
   })
 

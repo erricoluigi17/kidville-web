@@ -749,5 +749,7 @@
   "apiConteggioNonDisponibile": "Unable to calculate the cash count. Please try again later.",
   "apiConteggioNonQuadra": "The cash count totals do not match. The document was not generated.",
   "apiConteggioSediNonDisponibili": "Unable to identify the locations for the count. Please try again.",
-  "erroreCassaCategoriaNonValida": "The selected cash account or category is no longer available for this location. Update your selection."
+  "erroreCassaCategoriaNonValida": "The selected cash account or category is no longer available for this location. Update your selection.",
+  "erroreArchiviazioneNonDisponibile": "Archiving periods is not available in this environment yet.",
+  "erroreScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
 }

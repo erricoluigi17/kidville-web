@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { Plus, Trash2, GraduationCap } from 'lucide-react';
+import { Plus, Trash2, GraduationCap, Archive, ArchiveRestore } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { creaMuta } from '@/lib/ui/muta';
 
 interface Periodo {
   id: string; nome: string; anno_scolastico: string; ordine: number;
   data_inizio: string | null; data_fine: string | null; attivo: boolean;
+  /** Fase 4 della robustezza: un periodo archiviato esce dall'elenco, e niente di suo si perde. */
+  archiviato_il?: string | null;
 }
 
 const annoCorrente = () => {
@@ -34,17 +36,19 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
   const [dataInizio, setDataInizio] = useState('');
   const [dataFine, setDataFine] = useState('');
   const [msg, setMsg] = useState('');
+  const [mostraArchiviati, setMostraArchiviati] = useState(false);
 
   const load = useCallback(async () => {
     let next: Periodo[] | null = null;
     try {
-      const r = await fetch(`/api/admin/primaria/scrutinio-periodi?scuolaId=${scuolaId}&annoScolastico=${anno}&userId=${userId}`, { headers: { 'x-user-id': userId } });
+      const archiviati = mostraArchiviati ? '&archiviati=si' : '';
+      const r = await fetch(`/api/admin/primaria/scrutinio-periodi?scuolaId=${scuolaId}&annoScolastico=${anno}&userId=${userId}${archiviati}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
       if (d.success) next = d.data;
     } finally {
       if (next) setPeriodi(next);
     }
-  }, [scuolaId, anno, userId]);
+  }, [scuolaId, anno, userId, mostraArchiviati]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -90,6 +94,24 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
     );
   };
 
+  /**
+   * Archiviare non cancella: il periodo esce dall'elenco e non si compila più, e scrutini e
+   * pagelle restano. È l'uscita per un periodo che non si può eliminare perché ha scrutini.
+   */
+  const archivia = async (p: Periodo, archiviato: boolean) => {
+    if (archiviato && !confirm(t('periodiConfermaArchivia'))) return;
+    await mutaSalva(
+      `/api/admin/primaria/scrutinio-periodi?userId=${userId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ id: p.id, archiviato }),
+      },
+      archiviato ? 'primaria-scrutinio-periodo-archivia-respinto' : 'primaria-scrutinio-periodo-ripristina-respinto',
+      p.nome,
+    );
+  };
+
   const toggleAttivo = async (p: Periodo) => {
     await mutaSalva(
       `/api/admin/primaria/scrutinio-periodi?userId=${userId}`,
@@ -114,9 +136,13 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
         <p role="alert" className="font-maven mb-4 rounded-card bg-kidville-error/10 px-4 py-2 text-sm text-kidville-error">{msg}</p>
       )}
 
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <label className="font-maven text-sm text-kidville-ink">{t('periodiAnnoScolastico')}</label>
         <input value={anno} onChange={(e) => setAnno(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm w-28" />
+        <label className="font-maven ml-auto inline-flex items-center gap-1.5 text-xs text-kidville-sub">
+          <input type="checkbox" checked={mostraArchiviati} onChange={(e) => setMostraArchiviati(e.target.checked)} />
+          {t('periodiMostraArchiviati')}
+        </label>
       </div>
 
       <ul className="divide-y divide-kidville-line mb-4">
@@ -125,6 +151,9 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
           <li key={p.id} className="flex items-center justify-between gap-2 py-2.5">
             <div>
               <span className="font-maven text-sm font-semibold text-kidville-ink">{p.ordine}. {p.nome}</span>
+              {p.archiviato_il && (
+                <span className="font-maven ml-2 rounded-pill bg-kidville-line px-2 py-0.5 text-[11px] text-kidville-sub">{t('periodiArchiviatoBadge')}</span>
+              )}
               {(p.data_inizio || p.data_fine) && (
                 <span className="font-maven text-xs text-kidville-muted ml-2">
                   {p.data_inizio ? f.dataBreve(p.data_inizio) : '…'} – {p.data_fine ? f.dataBreve(p.data_fine) : '…'}
@@ -132,10 +161,17 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
               )}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
-                {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
-              </button>
-              <button onClick={() => rimuovi(p)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              {p.archiviato_il ? (
+                <button onClick={() => archivia(p, false)} aria-label={t('periodiRipristina')} title={t('periodiRipristina')} className="text-kidville-sub hover:text-kidville-green"><ArchiveRestore size={15} /></button>
+              ) : (
+                <>
+                  <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
+                    {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
+                  </button>
+                  <button onClick={() => archivia(p, true)} aria-label={t('periodiArchivia')} title={t('periodiArchivia')} className="text-kidville-sub hover:text-kidville-ink"><Archive size={15} /></button>
+                  <button onClick={() => rimuovi(p)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+                </>
+              )}
             </div>
           </li>
         ))}

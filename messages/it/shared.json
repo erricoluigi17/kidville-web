@@ -749,5 +749,7 @@
   "apiConteggioNonDisponibile": "Impossibile calcolare il conteggio contanti. Riprova più tardi.",
   "apiConteggioNonQuadra": "I totali del conteggio contanti non quadrano. Il documento non è stato generato.",
   "apiConteggioSediNonDisponibili": "Impossibile identificare le sedi del conteggio. Riprova.",
-  "erroreCassaCategoriaNonValida": "La cassa o la categoria scelta non è più disponibile per questa sede. Aggiorna la selezione."
+  "erroreCassaCategoriaNonValida": "La cassa o la categoria scelta non è più disponibile per questa sede. Aggiorna la selezione.",
+  "erroreArchiviazioneNonDisponibile": "L’archiviazione dei periodi non è ancora disponibile su questo ambiente.",
+  "erroreScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
 }

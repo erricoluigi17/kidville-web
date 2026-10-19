@@ -478,6 +478,63 @@ describe('POST /api/gdpr/retention-cestino-registro — la purga', () => {
     })
 })
 
+describe('POST /api/gdpr/retention-cestino-registro — un allegato IN USO non scade (fase 4, D6-b)', () => {
+    const giornoDa = (giorni: number) => new Date(Date.now() - giorni * GIORNO).toISOString().slice(0, 10)
+    const lezione = (n: number, giorniFa: number) => ({ id: uuid(n), data: giornoDa(giorniFa) })
+
+    it('vivo e attaccato a una lezione recente resta; vivo su una lezione vecchia, senza lezione o nel cestino esce', async () => {
+        semina(
+            [
+                { ...caricato(1, vecchio()), registro_id: uuid(501) }, //           lezione di 3 giorni fa → resta
+                { ...caricato(2, vecchio()), registro_id: uuid(502) }, //           lezione di 400 giorni fa → esce
+                { ...caricato(3, vecchio()), registro_id: null }, //                lezione eliminata → esce
+                { ...caricato(4, vecchio(), giovane()), registro_id: uuid(501) }, // nel cestino → esce
+            ],
+            [],
+        )
+        h.tabelle.registro_orario = [lezione(501, 3), lezione(502, 400)]
+
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        const corpo = await res.json()
+        expect(corpo.conservazione).toMatchObject({ inUso: 1, scadute: 3, cancellate: 3, trattenute: 0 })
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+        expect(h.bucket[B_ALLEGATI].has(`registro/${uuid(900)}/file-1.pdf`)).toBe(true)
+        expect(battito()?.campi).toMatchObject({ n_conservazione_in_uso: 1, n_conservazione_righe: 3 })
+        expect(h.eventi.find((e) => e.campi.esito === 'righe-in-uso')?.campi.n_righe).toBe(1)
+    })
+
+    it('la lezione è proprio quella del termine: un giorno dentro resta, un giorno fuori esce', async () => {
+        semina(
+            [
+                { ...caricato(1, vecchio()), registro_id: uuid(501) },
+                { ...caricato(2, vecchio()), registro_id: uuid(502) },
+            ],
+            [],
+        )
+        h.tabelle.registro_orario = [
+            lezione(501, GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO - 1),
+            lezione(502, GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO + 1),
+        ]
+        await chiama()
+        expect(ids('allegati_registro')).toEqual([uuid(1)])
+    })
+
+    it('se le lezioni non si leggono, la conservazione non tocca NIENTE e il giro esce 500', async () => {
+        semina([{ ...caricato(1, vecchio()), registro_id: uuid(501) }, { ...caricato(2, vecchio()), registro_id: null }], [])
+        h.tabelle.registro_orario = [lezione(501, 3)]
+        h.errori['registro_orario:reclami'] = { code: '57014', message: 'canceled' }
+
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        expect(ids('allegati_registro')).toEqual([uuid(1), uuid(2)])
+        expect(h.sequenza.some((x) => x.tipo === 'remove' && x.dove === B_ALLEGATI)).toBe(false)
+        const err = h.eventi.find((e) => e.campi.esito === 'uso-non-verificato')
+        expect(err?.livello).toBe('error')
+        expect(err?.campi.error_code).toBe('57014')
+    })
+})
+
 describe('POST /api/gdpr/retention-cestino-registro — la conservazione a 365 giorni dal caricamento', () => {
     // Decisione del titolare del 2026-09-25: gli allegati del registro si distruggono
     // `GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO` giorni dopo il CARICAMENTO, vivi o nel

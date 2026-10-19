@@ -174,12 +174,17 @@
   "periodiAriaDataFine": "Period end date",
   "periodiInserisciNome": "Enter the period name",
   "periodiAggiungiPeriodo": "Add period",
-  "periodiConfermaElimina": "Delete the period? Linked assessments will also be removed.",
+  "periodiConfermaElimina": "Delete the period? Only a period without assessments can be deleted: if it has any, archive it.",
   "docentiMaterieRimuovi": "Remove assignment",
   "materieElimina": "Delete subject",
   "obiettiviElimina": "Delete objective",
   "obiettiviModifica": "Edit objective",
   "obiettiviSalvaModifica": "Save",
   "obiettiviAnnullaModifica": "Cancel",
-  "periodiElimina": "Delete period"
+  "periodiElimina": "Delete period",
+  "periodiArchivia": "Archive period",
+  "periodiConfermaArchivia": "Archive the period? It leaves the list and can no longer be filled in. Assessments and report cards stay, and it can be put back.",
+  "periodiRipristina": "Put back in the list",
+  "periodiArchiviatoBadge": "archived",
+  "periodiMostraArchiviati": "Show archived too"
 }

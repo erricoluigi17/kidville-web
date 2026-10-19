@@ -5,6 +5,8 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { parseQuery } from '@/lib/validation/http'
+import { z } from 'zod'
 
 /**
  * LA CONSERVAZIONE DELLE DOMANDE D'ISCRIZIONE, FATTA DA DOVE SI PUÒ FARE.
@@ -113,6 +115,26 @@ const MESI_CONSERVAZIONE = 24
 
 const BUCKET_ALLEGATI = 'form_attachments'
 
+/**
+ * L'INTERRUTTORE (fase 4 della robustezza, D6, 19/10/2026). Fino a qui questa route leggeva TUTTE le
+ * domande oltre la soglia e le cancellava in un colpo solo: nessun tetto, nessun limite. Un errore
+ * nella soglia (un mese sbagliato, un fuso, uno stato riclassificato) sarebbe diventato la
+ * cancellazione irreversibile di centinaia di domande d'iscrizione di minori nella stessa notte.
+ *
+ * Ora un giro normale ne cancella al massimo `SOGLIA_INTERRUTTORE`: se ne trova di più NON NE TOCCA
+ * NESSUNA, risponde 409 (la sorveglianza oraria lo registra come errore, e il campanello lo vede) e
+ * aspetta una persona. Il mese normale ne trova poche: le domande compilate due anni prima e mai
+ * evase. Centinaia insieme sono un'anomalia, oppure la prima scadenza vera (luglio 2028), e in tutti
+ * e due i casi qualcuno deve guardare prima.
+ *
+ * Lo sblocco, dopo aver guardato: la stessa chiamata con `?forza=si` (col segreto del cron o da
+ * staff). Anche forzata, un giro tratta al massimo `TETTO_LOTTO` domande: le altre al giro dopo.
+ */
+const SOGLIA_INTERRUTTORE = 50
+const TETTO_LOTTO = 200
+
+const querySchema = z.object({ forza: z.enum(['si']).optional() })
+
 type Domanda = {
     id: string
     data: unknown
@@ -182,6 +204,10 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             canale = 'manuale'
         }
 
+        const q = parseQuery(request, querySchema)
+        if ('response' in q) return q.response
+        const forzata = q.data.forza === 'si'
+
         const supabase = await createAdminClient()
         const soglia = new Date()
         soglia.setMonth(soglia.getMonth() - MESI_CONSERVAZIONE)
@@ -203,6 +229,10 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             // `percorsiCitatiDaAltriPost`, e per lo stesso motivo: quello che sta
             // dopo è irreversibile.
             .eq('raccolta_senza_informativa', false)
+            // Le più vecchie per prime, e mai più di quante l'interruttore lasci passare (+1, per
+            // sapere che sono troppe senza leggerle tutte).
+            .order('created_at', { ascending: true })
+            .limit(forzata ? TETTO_LOTTO : SOGLIA_INTERRUTTORE + 1)
 
         if (erroreLettura) {
             // PostgREST non lancia: senza questo controllo un guasto di lettura
@@ -224,6 +254,26 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
         }
 
         const lette = (scadute ?? []) as Domanda[]
+
+        // ── L'INTERRUTTORE ── prima di qualunque rimozione, file compresi.
+        if (!forzata && lette.length > SOGLIA_INTERRUTTORE) {
+            logEvento('cron', 'error', {
+                operazione: JOB,
+                esito: 'interruttore',
+                canale,
+                n_domande: lette.length,
+                soglia: SOGLIA_INTERRUTTORE,
+                mesi: MESI_CONSERVAZIONE,
+                ms: Date.now() - t0,
+                msg:
+                    `${JOB}: più di ${SOGLIA_INTERRUTTORE} domande oltre i ${MESI_CONSERVAZIONE} mesi in un giro solo: ` +
+                    `NESSUNA cancellata. Va guardato; poi si sblocca con ?forza=si`,
+            })
+            return NextResponse.json(
+                { ok: false, motivo: 'interruttore', domande_oltre_soglia: lette.length, soglia: SOGLIA_INTERRUTTORE },
+                { status: 409 },
+            )
+        }
         // LA SECONDA GUARDIA, sulle righe già lette. Se il filtro del database non
         // fosse arrivato — colonna assente, `eq` ignorato da un client, una modifica
         // futura alla query — qui la riga si ferma comunque. Costa niente e toglie di
@@ -323,6 +373,8 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             n_file_gia_assenti: esito.giaAssenti.length,
             n_file_bloccanti: daNonToccare.size,
             mesi: MESI_CONSERVAZIONE,
+            forzata,
+            lotto_pieno: forzata && lette.length >= TETTO_LOTTO,
             ms: Date.now() - t0,
             msg: `${JOB}: ${domandeCancellate} domande e ${esito.rimossi.length} allegati oltre i ${MESI_CONSERVAZIONE} mesi`,
         })

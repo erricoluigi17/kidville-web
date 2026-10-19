@@ -187,12 +187,17 @@
   "periodiAriaDataFine": "Data fine periodo",
   "periodiInserisciNome": "Inserisci il nome del periodo",
   "periodiAggiungiPeriodo": "Aggiungi periodo",
-  "periodiConfermaElimina": "Eliminare il periodo? Verranno rimossi anche gli scrutini collegati.",
+  "periodiConfermaElimina": "Eliminare il periodo? Si elimina solo un periodo senza scrutini: se ne ha, va archiviato.",
   "docentiMaterieRimuovi": "Rimuovi assegnazione",
   "materieElimina": "Elimina materia",
   "obiettiviElimina": "Elimina obiettivo",
   "obiettiviModifica": "Modifica obiettivo",
   "obiettiviSalvaModifica": "Salva",
   "obiettiviAnnullaModifica": "Annulla",
-  "periodiElimina": "Elimina periodo"
+  "periodiElimina": "Elimina periodo",
+  "periodiArchivia": "Archivia periodo",
+  "periodiConfermaArchivia": "Archiviare il periodo? Esce dall’elenco e non si compila più. Scrutini e pagelle restano, e lo si può rimettere in elenco.",
+  "periodiRipristina": "Rimetti in elenco",
+  "periodiArchiviatoBadge": "archiviato",
+  "periodiMostraArchiviati": "Mostra anche gli archiviati"
 }

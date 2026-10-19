@@ -7,6 +7,7 @@ import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { scansionaEsitiDiConversione } from '@/lib/media/video/esiti'
 import { tipiRegistrati } from '@/lib/media/video/outbox/destinatari'
+import { MINUTI_CATENA_FERMA, statoCatenaVideo } from '@/lib/media/video/catena'
 import {
     codiceDi,
     consumaOutbox,
@@ -198,6 +199,20 @@ const ORE_UPLOAD_ABBANDONATO = 48
  * era già suonato molto prima.
  */
 const ORE_INCAGLIO = 7 * 24
+
+/**
+ * L'incaglio SOSPESO, quando la catena di conversione è ferma (`@/lib/media/video/catena`): il
+ * massimo che `video_retention_scadenze` accetta (8760 ore, un anno). Un video fermo perché è ferma
+ * la catena non è incagliato: aspetta che riparta.
+ */
+const ORE_INCAGLIO_SOSPESO = 8760
+
+/**
+ * Con la catena ferma, gli unici originali che si possono togliere: quelli il cui destino non dipende
+ * dalla conversione. Convertiti (`ready`), annullati da chi li ha caricati (`cancelled`), upload mai
+ * finiti (`UPLOAD_ABBANDONATO`). Un `failed` per qualunque altra ragione può essere la catena stessa.
+ */
+const FILTRO_ORIGINALI_SENZA_CATENA = 'status.in.(ready,cancelled),error_code.eq.UPLOAD_ABBANDONATO'
 
 /** Da quante ore un job in coda è «in ritardo» ai fini del solo conteggio. */
 const ORE_RITARDO_CODA = 1
@@ -831,6 +846,7 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
     let nTimbrati = 0
     let nTrattenuti = 0
     let lottoPieno = false
+    let catenaFerma = false
     let rimozione: EsitoRimozione = NIENTE_DA_TOGLIERE
     let nUsciteScadute = 0
     let nUsciteRimosse = 0
@@ -961,6 +977,28 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             }
         }
 
+        // ── LA CATENA È VIVA? (fase 4, D6-a) ────────────────────────────────
+        //
+        // Se il runner non batte da un'ora, «incagliato» non è più un fatto di quel video: è
+        // la catena ferma. Allora non si dichiara incagliato nessuno (passo 3) e non si
+        // distrugge l'originale di un video fallito (passo 4): è ciò che serve per rifare la
+        // conversione quando la catena riparte. Upload abbandonati, annullati e convertiti
+        // restano trattati come sempre: il loro originale non dipende dalla catena.
+        const catena = await statoCatenaVideo(supabase, adesso)
+        catenaFerma = catena.stato === 'ferma'
+        if (catena.stato === 'ferma') {
+            logEvento('cron', 'warn', {
+                operazione: JOB,
+                esito: 'catena-ferma',
+                canale,
+                // `stato` e non `motivo`: `motivo` è testo libero per la redazione, e sparirebbe.
+                stato: catena.motivo,
+                error_code: catena.motivo === 'lettura-fallita' ? catena.codice : undefined,
+                minuti: MINUTI_CATENA_FERMA,
+                msg: `${JOB}: nessun battito del runner da ${MINUTI_CATENA_FERMA} minuti (${catena.motivo}): incaglio sospeso e originali dei video falliti conservati`,
+            })
+        }
+
         // ── 3. LE SCADENZE ──────────────────────────────────────────────────
         //
         // Prima di ogni rimozione, e non per abitudine: è il passo che toglie le righe
@@ -971,7 +1009,10 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             'video_retention_scadenze',
             {
                 p_ore_upload: ORE_UPLOAD_ABBANDONATO,
-                p_ore_incaglio: ORE_INCAGLIO,
+                // Con la catena ferma l'incaglio si sospende con il massimo che la RPC accetta (un
+                // anno): le altre due reti del passo (upload abbandonati, conclusi senza scadenza)
+                // girano lo stesso.
+                p_ore_incaglio: catenaFerma ? ORE_INCAGLIO_SOSPESO : ORE_INCAGLIO,
                 p_limite: TETTO_LOTTO,
             },
         )
@@ -1052,13 +1093,19 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
         // L'elenco esce dall'indice parziale `video_jobs_retention_originali_idx`,
         // ordinato per scadenza crescente: se il tetto taglia, deve tagliare i meno
         // in ritardo.
-        const { data: datiScaduti, error: erroreScaduti } = await supabase
+        let elencoScaduti = supabase
             .from('video_jobs')
             .select('id, original_path')
             .eq('original_bucket', BUCKET_ORIGINALI)
             .is('original_deleted_at', null)
             .not('original_delete_after', 'is', null)
             .lte('original_delete_after', adesso.toISOString())
+        if (catenaFerma) {
+            // Il filtro sta nella query, non dopo: con il tetto del lotto, righe trattenute in
+            // testa all'elenco impedirebbero di raggiungere quelle che si possono togliere.
+            elencoScaduti = elencoScaduti.or(FILTRO_ORIGINALI_SENZA_CATENA)
+        }
+        const { data: datiScaduti, error: erroreScaduti } = await elencoScaduti
             .order('original_delete_after', { ascending: true })
             .limit(TETTO_LOTTO)
 
@@ -1348,6 +1395,7 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             // Il lotto tagliato si dichiara: chi lancia il giro a mano deve sapere se
             // richiamarlo, e non deve dedurlo da un conteggio.
             lotto_pieno: lottoPieno,
+            catena_ferma: catenaFerma,
             uscite_scadute: nUsciteScadute,
             uscite_rimosse: nUsciteRimosse,
             uscite_trattenute: nUsciteTrattenute,
@@ -1432,6 +1480,7 @@ export const POST = withRoute('gdpr/retention-video:POST', async (request: NextR
             n_non_pubblicati_rifiutati: nNonPubblicatiRifiutati,
             n_abbandonati: nAbbandonati,
             n_incagliati: nIncagliati,
+            catena_ferma: catenaFerma,
             n_conclusi_senza_scadenza: nSenzaScadenza,
             n_uscite_dichiarate: nUsciteDichiarate,
             n_originali_scaduti: nScaduti,

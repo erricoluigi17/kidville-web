@@ -1,4 +1,17 @@
+## 📱 Changelog — iPad in verticale: la ricerca della segreteria con un testo d'esempio che ci sta — 2026-10-19 (branch `feat/ipad-ricerca-verticale`)
+
+Con la PR #243 la ricerca della segreteria si legge intera sull'iPad in orizzontale: 284 px di testo in 406 utili. In verticale (768 px, col binario) restavano 256 px utili, e il testo d'esempio «Cerca alunno, genitore, codice fiscale…» finiva coi puntini, 28 px prima della fine. Quei 28 px valgono per la sede degli E2E: lo spazio lo decide il nome della sede accanto alla ricerca, e con «KIDVILLE GIUGLIANO» ne sarebbero mancati circa 75. Stringere margini e spaziature non bastava.
+
+- **Testo d'esempio corto sotto i 1024 px** (`AdminTopBar`): «Cerca alunno, genitore, CF…» (chiave nuova `ricercaPlaceholderBreve` in `messages/it` e `messages/en`). «CF» è già l'abbreviazione usata nel resto del cockpit. Da 1024 px resta quello intero. Il formato lo dà `useFormatoGuscio`, con le stesse soglie del guscio che il lock `menu-desktop-in-orizzontale` tiene allineate. Il nome accessibile del campo («Ricerca globale», `aria-label`) non cambia. `text-ellipsis` resta come rete per un nome di sede ancora più lungo.
+- **Test.**
+  - **Unit** nuovo `__tests__/ui/admin-topbar-ricerca.test.tsx`: testo intero con la sidebar, corto col binario. Verificato che morde: col testo intero in tutti i formati diventa rosso.
+  - **E2E** `e2e/tablet-layout.spec.ts`: il testo d'esempio deve stare intero nel campo in tutti i formati, non più solo da 1024 px. Sulle rotte della segreteria si verifica anche che il motore vero scelga il testo giusto, intero a 1194 e corto a 768.
+  - **PRD:** riga di stato della voce della #243.
+- **Logging:** nessun log nuovo. Solo un testo e la sua scelta per formato: nessuna route, integrazione esterna o percorso d'errore.
+
 ## 📱 Changelog — iPad in orizzontale: il menu da computer per tutti i ruoli, e nessuna scritta tagliata in alto — 2026-10-19 (branch `feat/ipad-orizzontale-desktop`)
+
+**Stato:** ✅ in produzione dal 18/10/2026 (sera) — PR #243 (`4b180ac8`), merge alle 22:54 UTC e rilascio di produzione alle 22:55, «Verifica dopo il deploy» `success`, health 200. Nel CSS servito in produzione c'è `@media (min-width:64rem){[data-kv-guscio-admin]{--kv-rail-w:16rem}}`, e la vecchia soglia a 80rem non c'è più. CI della PR: 216 test E2E su 216 al primo tentativo, nessun ripescaggio. Nel progetto `tablet-orizzontale` 19 test più 2 saltati: sono i due «Menu» del binario, che da 1024 px non c'è. Unit verde. Unica cosa rimasta: sull'iPad in verticale il testo d'esempio della ricerca della segreteria finiva ancora coi puntini (284 px di testo in 256 utili), corretto nella voce qui sopra.
 
 La sera del 18/10, con la PR 3 appena in produzione, il titolare ha provato l'app sul suo iPad 11", che usa soprattutto in orizzontale. Ha visto due cose: «il menu è posto di lato ma come quello del cellulare e non quello desktop», e le scritte della barra in alto tagliate. Ha chiesto il menu da computer in orizzontale per **tutti** i ruoli, e il controllo di tutti.
 

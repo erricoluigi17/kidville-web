@@ -21,6 +21,7 @@ import { UserMenu } from '@/components/ui/UserMenu';
 import { AdminSearchPanel } from './AdminSearchPanel';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { useFormatoGuscio } from '@/lib/ui/use-formato-guscio';
 
 // Mappa ruolo → chiave i18n della label (namespace adminNav). Sono le etichette
 // UI del cockpit, locali a questa TopBar (non provengono dalla lib `labelRuolo`).
@@ -37,6 +38,9 @@ export function AdminTopBar() {
   const { userId, ruolo, withUser } = useAdminIdentity();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  // Le stesse soglie del guscio (lock `menu-desktop-in-orizzontale`): da 1024 px c'è la sidebar
+  // e la ricerca ha spazio per il testo d'esempio intero. Server e primo render dicono `telefono`.
+  const formato = useFormatoGuscio();
 
   const ruoloLabel = t(ROLE_LABEL_KEY[ruolo] ?? (ruolo ? 'ruoloStaff' : 'ruoloSegreteria'));
 
@@ -61,8 +65,13 @@ export function AdminTopBar() {
         {/* ricerca globale (reale, /api/admin/search — M7.2). Prende TUTTO lo spazio libero,
             fino a 460 px: fino al 2026-10-18 lo divideva a metà con uno spaziatore `flex-1`, e
             su un iPad 11" in orizzontale il testo d'esempio si fermava a «…codice fiscale.»,
-            in verticale a «Cerca alı». `text-ellipsis`: dove lo spazio non basta comunque
-            (iPad mini in verticale), il testo finisce coi puntini invece che a metà lettera. */}
+            in verticale a «Cerca alı».
+            Sull'iPad in verticale (sotto i 1024 px, col binario) il testo d'esempio è quello
+            corto, «…CF…»: il campo resta largo ~310 px, e il testo intero ne chiede 284 di soli
+            caratteri, più l'icona e i margini. Lo spazio lo decide il nome della sede accanto:
+            con «KIDVILLE E2E» mancavano 28 px, con «KIDVILLE GIUGLIANO» ne mancherebbero ~75, quindi
+            stringere i margini non bastava. `text-ellipsis` resta come rete: un nome di sede
+            ancora più lungo fa finire il testo coi puntini, non a metà lettera. */}
         <div className="relative min-w-0 max-w-[460px] flex-1">
           <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-kidville-white/60"><Search size={17} /></span>
           <input
@@ -71,7 +80,7 @@ export function AdminTopBar() {
             onFocus={() => setSearchOpen(true)}
             onBlur={() => setSearchOpen(false)}
             onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
-            placeholder={t('ricercaPlaceholder')}
+            placeholder={t(formato === 'sidebar' ? 'ricercaPlaceholder' : 'ricercaPlaceholderBreve')}
             aria-label={t('ricercaAria')}
             className="h-10 w-full text-ellipsis rounded-full border-none bg-white/15 pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
           />

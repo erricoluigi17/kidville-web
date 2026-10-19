@@ -105,9 +105,10 @@ const COLONNE_ATTESE: Record<string, { binario: number; sidebar: number }> = {
  * larghi 1 px, con `clip`) né quelli spenti (opacità 0, `visibility: hidden`).
  *
  * Il testo d'esempio di un campo non è un nodo di testo: lo si misura col `canvas`, nel font del
- * campo, contro la larghezza utile (senza i padding). Lo si esige da 1024 px; sotto (iPad mini in
- * verticale) il campo può non bastare e finisce coi puntini (`text-ellipsis`): la misura va
- * comunque negli allegati del test, per sapere quanto manca.
+ * campo, contro la larghezza utile (senza i padding), in TUTTI i formati. Con la PR 243 si
+ * esigeva solo da 1024 px: a 768 la ricerca della segreteria aveva 284 px di testo in 256 utili e
+ * finiva coi puntini. Dal 19/10 sotto i 1024 px usa il testo corto («…CF…»), e qui si verifica
+ * anche che il motore vero scelga quello giusto per il formato. La misura va negli allegati.
  */
 async function verificaScritteIntere(page: Page, rotta: string, contenitori: string[]) {
   await page.evaluate(async () => {
@@ -171,10 +172,14 @@ async function verificaScritteIntere(page: Page, rotta: string, contenitori: str
     body: JSON.stringify(esito.segnaposti, null, 2),
     contentType: 'application/json',
   });
-  if (larghezza >= 1024) {
-    for (const c of esito.segnaposti) {
-      expect(c.larghezzaTesto, `«${rotta}» a ${larghezza} px: il testo d'esempio «${c.testo}» non sta nel campo`).toBeLessThanOrEqual(c.larghezzaUtile);
-    }
+  for (const c of esito.segnaposti) {
+    expect(c.larghezzaTesto, `«${rotta}» a ${larghezza} px: il testo d'esempio «${c.testo}» non sta nel campo`).toBeLessThanOrEqual(c.larghezzaUtile);
+  }
+  if (rotta.startsWith('/admin')) {
+    // Una PRESENZA: senza la ricerca nella topbar il ciclo qui sopra non verificherebbe niente.
+    expect(esito.segnaposti.map((c) => c.testo), `«${rotta}» a ${larghezza} px: testo d'esempio della ricerca`).toEqual([
+      larghezza >= 1024 ? 'Cerca alunno, genitore, codice fiscale…' : 'Cerca alunno, genitore, CF…',
+    ]);
   }
 }
 

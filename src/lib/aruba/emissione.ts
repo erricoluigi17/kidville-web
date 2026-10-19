@@ -58,6 +58,7 @@ import {
   MOTIVO_PARTITA_NON_REGISTRATA,
 } from '@/lib/pagamenti/fattura-partita-non-registrata'
 import { vincoloDelRifiuto } from '@/lib/fatturazione/vincolo-registro'
+import { NUMERI_FUORI_SERIE, numeroFuoriSerie } from '@/lib/fatturazione/numeri-fuori-serie'
 import {
   adultoEGenitoreDi,
   applicaIntestatarioScelto,
@@ -2275,12 +2276,46 @@ export async function emettiFatturaPagamento(
       })
     }
 
-    const numRes = await supabase.rpc('prossimo_numero_fattura_sezionale', {
+    let numRes = await supabase.rpc('prossimo_numero_fattura_sezionale', {
       p_sezionale: sezionale,
       p_anno: anno,
       p_min: ultimoAruba,
     })
-    if (numRes.error || typeof numRes.data !== 'number') {
+    // ── UN NUMERO FUORI SERIE È OCCUPATO: SI SCAVALCA ───────────────────────────
+    // `NUMERI_FUORI_SERIE` toglie quei documenti dal pavimento (`client.ts`), così la serie
+    // riprende dal contatore. Ma il numero esiste su Aruba e allo SdI: quando il contatore
+    // ci arriva, la RPC lo proporrebbe di nuovo, e due documenti con lo stesso numero nella
+    // stessa serie non possono esistere. Si richiede la RPC con quel numero come pavimento:
+    // `GREATEST(contatore, numero) + 1` dà il successivo. Il tetto ai giri è il numero di
+    // voci dell'elenco più uno: oltre, l'elenco non c'entra più ed è un guasto.
+    for (
+      let giro = 0;
+      giro <= NUMERI_FUORI_SERIE.length &&
+      !numRes.error &&
+      typeof numRes.data === 'number' &&
+      numeroFuoriSerie(sezionale, anno, numRes.data);
+      giro++
+    ) {
+      logEvento('fattura', 'info', {
+        operazione: 'emettiFatturaPagamento:prossimoNumero',
+        esito: 'numero-fuori-serie-scavalcato',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        anno,
+        numero: numRes.data,
+        msg: `serie ${sezionale}: il ${numRes.data} è un documento fuori serie già su Aruba, si passa al successivo`,
+      })
+      numRes = await supabase.rpc('prossimo_numero_fattura_sezionale', {
+        p_sezionale: sezionale,
+        p_anno: anno,
+        p_min: numRes.data,
+      })
+    }
+    if (
+      numRes.error ||
+      typeof numRes.data !== 'number' ||
+      numeroFuoriSerie(sezionale, anno, numRes.data)
+    ) {
       // PostgREST non lancia (AGENTS.md, regola 7): senza questa riga il difetto è
       // muto e in segreteria si legge solo «Numerazione fattura non disponibile».
       // Il fatto di dominio va come messaggio principale e l'errore del database

@@ -53,6 +53,13 @@ import type { Sezionale } from '@/lib/fatturazione/sezionale'
  * su una tabella di tre voci: nessuna I/O, nessuno stato, nessun ciclo di import.
  */
 import { codiceStatoAruba, CODICE_NON_INTERPRETATO } from '@/lib/aruba/stato'
+/**
+ * Il secondo import a runtime, e anche questo è un dato puro: l'elenco dei numeri che
+ * stanno su Aruba ma non devono spostare la serie (il caso «Asilo 2826/2026» del 16/10).
+ * Il filtro sta QUI e non in `emissione.ts` perché qui si calcola il massimo: un chiamante
+ * riceve solo quel numero, e da quel numero l'eccezione non si può più togliere.
+ */
+import { numeroFuoriSerie } from '@/lib/fatturazione/numeri-fuori-serie'
 
 export interface ArubaConfig {
   username?: string
@@ -1058,6 +1065,12 @@ interface EsitoPagina {
    */
   chiaviPrimoElemento: string[]
   /**
+   * Quante etichette di questa pagina erano in `NUMERI_FUORI_SERIE` e NON sono entrate nel
+   * massimo. Si somma e si logga: un'eccezione che agisce in silenzio è un'eccezione di cui
+   * nessuno saprà dire, fra un anno, perché la serie non ci sia saltata sopra.
+   */
+  esclusi: number
+  /**
    * L'involucro di pagina, per quel che serve a sapere SE ABBIAMO VISTO TUTTO.
    *
    * Misurato contro l'API vera il 2026-09-07: i campi stanno **in cima** alla risposta,
@@ -1172,6 +1185,7 @@ async function paginaUltimoNumero(
 
   const massimi = new Map<Sezionale, number>(params.sezionali.map((s) => [s, 0]))
   let leggibili = 0
+  let esclusi = 0
   let campione = ''
   /** Le CHIAVI del primo elemento: la diagnosi del prossimo cambio di forma. */
   let chiaviPrimoElemento: string[] = []
@@ -1187,11 +1201,17 @@ async function paginaUltimoNumero(
       // solo posta a tutte le serie invece che a una, senza riscaricare niente.
       for (const sezionale of params.sezionali) {
         const n = numeroSezionaleDaEtichetta(etichetta, sezionale, params.anno)
+        // Un numero in `NUMERI_FUORI_SERIE` resta un documento letto (conta in `leggibili`),
+        // ma non fa da pavimento: altrimenti la serie ci salterebbe sopra per sempre.
+        if (n !== null && numeroFuoriSerie(sezionale, params.anno, n)) {
+          esclusi++
+          continue
+        }
         if (n !== null && n > (massimi.get(sezionale) ?? 0)) massimi.set(sezionale, n)
       }
     }
   }
-  return { massimi, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento, involucro }
+  return { massimi, ricevuti: documenti.length, leggibili, esclusi, campione, chiaviPrimoElemento, involucro }
 }
 
 /**
@@ -1343,6 +1363,7 @@ export async function arubaUltimiNumeriFattura(
     const massimi = new Map<Sezionale, number>(serie.map((s) => [s, 0]))
     let ricevutiTotali = 0
     let leggibiliTotali = 0
+    let esclusiTotali = 0
     let campione = ''
     let chiavi: string[] = []
     /** Quanti documenti Aruba dichiara di avere in tutto. `null` se non lo dice. */
@@ -1385,6 +1406,8 @@ export async function arubaUltimiNumeriFattura(
           pagine: pagineLette,
           ricevuti: ricevutiTotali,
           totale_dichiarato: totaleDichiarato,
+          // Le etichette di `NUMERI_FUORI_SERIE` viste e tenute fuori dal massimo.
+          fuori_serie: esclusiTotali,
         },
         undefined,
         { distingui: ['pagine', 'anno'] },
@@ -1393,8 +1416,15 @@ export async function arubaUltimiNumeriFattura(
     }
 
     for (let n = 1; n <= PAGINE_MAX; n++) {
-      const { massimi: massimiPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento, involucro } =
-        await pagina(anno, serie, n)
+      const {
+        massimi: massimiPagina,
+        ricevuti,
+        leggibili,
+        esclusi,
+        campione: campionePagina,
+        chiaviPrimoElemento,
+        involucro,
+      } = await pagina(anno, serie, n)
       pagineLette = n
       for (const s of serie) {
         const trovato = massimiPagina.get(s) ?? 0
@@ -1402,6 +1432,7 @@ export async function arubaUltimiNumeriFattura(
       }
       ricevutiTotali += ricevuti
       leggibiliTotali += leggibili
+      esclusiTotali += esclusi
       if (campione === '' && campionePagina !== '') campione = campionePagina
       if (chiavi.length === 0 && chiaviPrimoElemento.length > 0) chiavi = chiaviPrimoElemento
       if (totaleDichiarato === null) totaleDichiarato = involucro.totalElements

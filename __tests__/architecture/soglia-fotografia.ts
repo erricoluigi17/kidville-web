@@ -229,10 +229,11 @@ export function posterioriCheContengono(
 // tabelle, e la guardia della RLS la vede per le parole `drop table`. Nessuna policy, nessuna
 // tabella, nessuna colonna cambia: le fotografie della RLS e delle tabelle restano identiche, cambia
 // solo quella delle migrazioni. Si toglie con la PR-B dopo il merge, rigenerando dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261019202225_realtime_pubblicazione_potata.sql':
-        'fase 9b: ALTER PUBLICATION supabase_realtime DROP TABLE (sei tabelle), nessuna policy toccata; la applica l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
-}
+// SVUOTATA il 19/10 (PR-B dopo il merge di #247, `c14b3521`): applicata dall'integrazione, una riga
+// sola nel registro (226 migrazioni), pubblicazione `supabase_realtime` a 0 tabelle; fotografie
+// rigenerate dalla produzione — cambia davvero solo quella delle migrazioni, le altre sei solo
+// l'istante dello scatto.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

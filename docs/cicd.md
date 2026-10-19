@@ -246,23 +246,45 @@ pubblico). Tre correzioni fatte nello stesso lavoro:
 `/api/health` (`regione`, controllo `regione`) e da `x-vercel-id`; la verifica dopo il deploy la controlla a ogni
 rilascio.
 
-### Collegare un monitor esterno (il campanello vero) — 5 minuti, account del titolare
+### Monitor esterno — Worker di Cloudflare (`monitor-esterno/`), dal 19/10/2026
 
-I cron di GitHub **non sono affidabili**: misurato il 09/10/2026, il campanello programmato «ogni 15 minuti» è partito 12 volte in due giorni e mezzo, una ogni 3,5–7,5 ore. Il workflow qui sotto è un **rinforzo**, non il campanello: senza un monitor esterno un sito fermo può restare senza allarme per ore. UptimeRobot gratuito vale solo per uso non commerciale (dal 2024): per Kidville si usa Better Stack.
-Con Better Stack (gratis: 10 sonde ogni 3 minuti; avvisi via email, SMS e app) o UptimeRobot (gratis: 50 sonde ogni
-5 minuti):
+I cron di GitHub **non sono affidabili**: misurato il 09/10/2026, il campanello programmato «ogni 15 minuti» è partito 12
+volte in due giorni e mezzo, una ogni 3,5–7,5 ore. Un sito fermo poteva restare senza allarme per ore.
 
-1. nuova sonda HTTP su **`https://app.kidville.it/api/health/vivo`**, ogni 1–3 minuti;
-2. «allarma se» il codice non è 200 **o** la pagina non contiene `"stato":"ok"`; tempo massimo 10 secondi;
-3. conferma dopo 2 controlli falliti di fila (un singolo scatto di rete non deve svegliare nessuno);
-4. **non** puntare il monitor su `/api/health` (può essere `degraded` per un cron muto: è un avviso, non un guasto) né
-   su `/api/health/qualita`.
+**Scelta del titolare (19/10):** niente account nuovi (Better Stack), si usa l'account **Cloudflare** che c'è già (lo
+stesso di R2). Un Worker, `kidville-monitor-esterno`, gira con il **cron di Cloudflare** (puntuale) ogni 5 minuti:
 
-Il monitor non vede il backup: quello lo guarda `campanello.yml`.
+1. legge **`https://app.kidville.it/api/health/vivo`**, due tentativi a 20 secondi, 10 secondi di tempo massimo;
+2. se il vivo **non** risponde 200, fa partire **subito** `campanello.yml` (`workflow_dispatch`, input
+   `origine=cloudflare`), che ricontrolla con i suoi tre tentativi, apre la segnalazione e manda l'email;
+3. ogni quarto d'ora (:00, :15, :30, :45) lo fa partire **comunque**: è il **battito** che dà al campanello il ritmo che
+   il suo `cron` non rispetta.
 
-### `campanello.yml` — ogni ~15 minuti, senza account nuovi
+Il Worker non duplica l'allarme (segnalazione, email, chiusura da sola restano del campanello): lo fa **suonare in
+tempo**. Non ha un indirizzo pubblico (`workers_dev = false`) e non legge dati delle famiglie.
 
-Guarda tre cose; se una non va **apre una segnalazione** nel repository (etichetta `campanello`, titolo
+**Chi sorveglia il sorvegliante.** I giri partiti da Cloudflare hanno il titolo «Campanello (da Cloudflare)». Ogni giro
+del campanello che **non** parte da lì (il `cron` di GitHub, un giro a mano) guarda quando è arrivato l'ultimo battito:
+oltre **90 minuti** (sei battiti mancati) apre `monitor-esterno-muto`. Il Worker spento, il token scaduto o Cloudflare
+fermo diventano un allarme, non un silenzio.
+
+**Il segreto** è uno solo, nei segreti del Worker (mai nel repository, che è pubblico): `GITHUB_TOKEN_CAMPANELLO`, un
+token GitHub **a grana fine** limitato a `erricoluigi17/kidville-web` e al solo permesso **Actions: read and write**.
+Scade: la data è scritta qui sotto e in `00 CONTESTO/04_scadenze.md` del brain. Alla scadenza si genera un token nuovo
+con gli stessi limiti e lo si rimette con `pbpaste | npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`.
+
+| Cosa | Comando (dalla cartella `monitor-esterno/`) |
+|---|---|
+| pubblicare / aggiornare | `npx wrangler@4.148.0 deploy` |
+| leggere i giri | `npx wrangler@4.148.0 tail` (oppure il pannello: Workers → `kidville-monitor-esterno` → Logs) |
+| spegnere | `npx wrangler@4.148.0 delete` (poi il campanello aprirà `monitor-esterno-muto`, ed è giusto) |
+
+Si prova con `__tests__/lib/monitor-esterno.test.ts` (fetch finto, numeri letterali). Il monitor non vede il backup:
+quello lo guarda `campanello.yml`.
+
+### `campanello.yml` — ogni ~15 minuti (il battito di Cloudflare), con il `cron` di GitHub come rinforzo
+
+Guarda quattro cose; se una non va **apre una segnalazione** nel repository (etichetta `campanello`, titolo
 `[chiave] testo`, corpo pubblico: solo ciò che gli endpoint di salute già espongono) e **manda un'email** (Resend, ai
 `SENTINELLA_DESTINATARI`); quando il problema rientra **chiude la segnalazione da sola**.
 
@@ -276,6 +298,8 @@ Guarda tre cose; se una non va **apre una segnalazione** nel repository (etichet
   `schedule`: un giro lanciato a mano può essere in modalità `prova` (scrive sotto `prove/` e non è un backup) e
   dall'API dei giri non si distingue da `completo`. Perché da GitHub e non dall'app: GitHub è l'unico che sa la
   verità, ha già un token, e chiederlo da Vercel (indirizzi condivisi) sarebbe a 60 richieste l'ora.
+- **Il monitor esterno**: un giro partito da Cloudflare è la prova che il monitor è vivo; gli altri guardano l'ultimo
+  battito, e oltre **90 minuti** (o nessuno) → `monitor-esterno-muto`. Vedi la sezione qui sopra.
 - **Una segnalazione si chiude solo se la sua chiave è stata misurata in quel giro**: con il sito giù la salute non si
   legge, e le segnalazioni `salute:*` restano aperte (non è «rientrato», è «non l'ho guardato»). Lo stesso per il backup
   quando l'API dei giri non risponde.
@@ -300,6 +324,7 @@ dell'allarme del backup): `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`.
 | `[salute:regione]` | la funzione gira fuori da `dub1` | `vercel.json` (`regions`) e il deploy: Instant Rollback se è nuovo |
 | `[salute:schema-atteso]` / `[salute:auth]` | una tabella manca / Auth non risponde | migrazione non applicata (integrazione Supabase) / stato di Auth |
 | `[backup-vecchio]` | l'ultimo giro **automatico** del backup è più vecchio di 30 ore, o non c'è | i giri di `backup-notturno.yml` (`gh run list --workflow backup-notturno.yml`) e `docs/runbook-ripristino.md`. Un giro **manuale** `completo` fa il backup ma non spegne l'allarme: aspetta il primo giro automatico |
+| `[monitor-esterno-muto]` | da oltre 90 minuti non arriva un giro del campanello partito da Cloudflare | il Worker `kidville-monitor-esterno` nel pannello di Cloudflare (Logs): un `401 Bad credentials` vuol dire token GitHub scaduto (vedi «Monitor esterno»); un Worker sparito si ripubblica con `npx wrangler@4.148.0 deploy` |
 | `[deploy:<sha>]` | il rilascio non passa la verifica (versione, vivo, regione, salute `down`) | il testo dice cosa; Instant Rollback se il sito è rotto |
 | `[prova]` | è la prova dell'allarme (`simula_guasto`): non è successo niente | si chiude da sola al giro successivo |
 

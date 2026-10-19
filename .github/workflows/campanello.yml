@@ -14,10 +14,12 @@ name: Campanello (sito, salute, backup)
 # allarme per il caso «non è partito» (GitHub avvisa solo di un giro che parte e fallisce): il primo
 # giro programmato è partito con 6 ore e 45 minuti di ritardo.
 #
-# È UN RINFORZO, NON IL CAMPANELLO DEFINITIVO. I cron di GitHub ritardano di 10-30 minuti e a volte
-# saltano un giro. Il campanello vero è un monitor esterno su `/api/health/vivo` (Better Stack o
-# UptimeRobot, gratis, account del titolare: vedi `docs/cicd.md`). Questo copre il tempo finché non
-# c'è, senza nessun account nuovo, e controlla anche il backup, che un monitor esterno non vede.
+# CHI LO FA PARTIRE. Il `cron` qui sotto non basta: misurato il 09/10, GitHub fa partire i giri
+# programmati ogni 3,5–7,5 ore invece che ogni 15 minuti. Dal 19/10 il ritmo lo dà il MONITOR ESTERNO,
+# un Worker di Cloudflare (`monitor-esterno/`, account del titolare): ogni 5 minuti legge il vivo e,
+# se non risponde, fa partire subito questo workflow con `origine=cloudflare`; ogni quarto d'ora lo fa
+# partire comunque (il «battito»). Il `cron` resta come rinforzo, e serve proprio ad accorgersi che il
+# Worker si è fermato: controllo `monitor-esterno-muto`, vedi `docs/cicd.md`.
 #
 # COME SI PROVA. `gh workflow run campanello.yml -f simula_guasto=true` apre una segnalazione PROVA e
 # manda l'email marcata PROVA, senza guardare il sito. Il giro normale successivo la chiude da solo.
@@ -36,6 +38,10 @@ name: Campanello (sito, salute, backup)
 # che non sa a chi scrivere è peggio di nessun allarme.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Il titolo del giro dice chi l'ha fatto partire: è così che il campanello riconosce i battiti del
+# monitor esterno (`TITOLO_DA_FUORI` in `scripts/campanello/allarme.mjs`).
+run-name: Campanello${{ inputs.origine == 'cloudflare' && ' (da Cloudflare)' || '' }}
+
 on:
   schedule:
     # Quattro volte l'ora, a minuti non tondi: alle :00 le code di GitHub sono intasate.
@@ -46,6 +52,10 @@ on:
         description: "Apre una segnalazione PROVA e manda l'email marcata PROVA, senza guardare il sito. Serve a vedere che l'allarme arrivi."
         type: boolean
         default: false
+      origine:
+        description: "Chi fa partire il giro. Il monitor esterno di Cloudflare manda «cloudflare»; a mano si lascia vuoto."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -77,5 +87,6 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           SENTINELLA_DESTINATARI: ${{ secrets.SENTINELLA_DESTINATARI }}
           SIMULA_GUASTO: ${{ inputs.simula_guasto }}
+          ORIGINE: ${{ inputs.origine }}
           URL_BASE: https://app.kidville.it
         run: node scripts/campanello/campanello.mjs

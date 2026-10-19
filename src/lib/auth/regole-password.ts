@@ -27,7 +27,7 @@
 /**
  * Il minimo, in caratteri.
  *
- * NON è il minimo del provider: `minimum_password_length = 6` in
+ * NON è il minimo del provider: `minimum_password_length = 8` (dal 2026-10-19) in
  * `supabase/config.toml` è il pavimento di GoTrue, cioè il punto sotto il quale
  * la password verrebbe rifiutata comunque. Dieci è la POLITICA nostra, e sta
  * sopra il pavimento di proposito: se un domani il provider alzasse il suo

@@ -15,6 +15,8 @@ const API = 'https://api.github.com'
 const ETICHETTA = 'campanello'
 const TEMPO_MAX_MS = 15_000
 const MITTENTE = 'Kidville <noreply@mail.kidville.it>'
+/** Il pezzo del titolo che `campanello.yml` (`run-name`) mette ai giri partiti dal monitor esterno. */
+export const TITOLO_DA_FUORI = '(da Cloudflare)'
 
 /** Escape minimo per l'HTML dell'email: i testi vengono dalla nostra app, ma non si fida di nessuno. */
 export function escapeHtml(testo) {
@@ -94,6 +96,18 @@ export function creaGitHub({ repo, token, fetchImpl = fetch }) {
                 `/repos/${repo}/actions/workflows/backup-notturno.yml/runs?event=schedule&status=success&per_page=5`,
             )
             return r?.workflow_runs ?? []
+        },
+
+        /**
+         * I giri del campanello fatti partire dal MONITOR ESTERNO (Cloudflare), dal più recente.
+         * Li riconosce il titolo del giro (`run-name` in `campanello.yml`), che porta l'input `origine`.
+         */
+        async giriDaFuori() {
+            const r = await chiama(
+                'GET',
+                `/repos/${repo}/actions/workflows/campanello.yml/runs?event=workflow_dispatch&per_page=50`,
+            )
+            return (r?.workflow_runs ?? []).filter((g) => typeof g?.display_title === 'string' && g.display_title.includes(TITOLO_DA_FUORI))
         },
 
         /** `identical` / `ahead` / `behind` / `diverged`: la posizione di `a` rispetto a `b`. */

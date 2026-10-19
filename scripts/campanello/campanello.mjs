@@ -14,9 +14,11 @@
 //                  ritardo. Qui GitHub è l'unica fonte che sa la verità, ed ha già un token: chiederlo
 //                  dall'app, da indirizzi condivisi di Vercel, sarebbe a 60 richieste l'ora.
 //
-// È un RINFORZO, non il campanello definitivo: i cron di GitHub ritardano di 10-30 minuti e a volte
-// saltano un giro. Il campanello vero è un monitor esterno sul `/api/health/vivo` (vedi
-// `docs/cicd.md`); questo copre il tempo finché non c'è, senza nessun account nuovo.
+//   4. IL MONITOR ESTERNO  da quanto non arriva un giro partito dal Worker di Cloudflare
+//                  (`monitor-esterno/worker.mjs`). Misurato il 09/10: il `cron` di GitHub fa partire
+//                  questo file ogni 3,5–7,5 ore, non ogni 15 minuti. Dal 19/10 il ritmo lo dà il Worker
+//                  (un battito ogni quarto d'ora, e subito se il vivo non risponde); il `cron` resta
+//                  come rinforzo, e serve proprio ad accorgersi che il Worker si è fermato.
 //
 // Il giro NON fallisce quando trova un incidente: l'allarme è la segnalazione + l'email. Fallisce solo
 // se l'allarme non riesce a partire (email rifiutata o impossibile), perché un campanello che non sa
@@ -25,7 +27,7 @@
 import { pathToFileURL } from 'node:url'
 import { allarma, creaGitHub } from './allarme.mjs'
 import { leggi, leggiConTentativi } from './lettura.mjs'
-import { riconcilia, valutaBackup, valutaSalute, valutaVivo } from './valuta.mjs'
+import { riconcilia, valutaBackup, valutaMonitorEsterno, valutaSalute, valutaVivo } from './valuta.mjs'
 
 const ATTESA_TRA_TENTATIVI_VIVO_MS = 15_000
 const ATTESA_TRA_LETTURE_SALUTE_MS = 45_000
@@ -40,6 +42,7 @@ export async function esegui({
     segreti,
     linkGiro,
     simulaGuasto = false,
+    daFuori = false,
     adesso = () => Date.now(),
     dormi = (ms) => new Promise((r) => setTimeout(r, ms)),
     fetchImpl = fetch,
@@ -98,6 +101,23 @@ export async function esegui({
             // Non si apre un incidente su una lettura mancata: si dice, e il giro dopo riprova.
             log(`::warning::età del backup non verificabile in questo giro: ${err instanceof Error ? err.message : String(err)}`)
         }
+
+        // 4. IL MONITOR ESTERNO. Un giro partito da Cloudflare è la prova che il monitor è vivo; gli
+        //    altri (il `cron` di GitHub, un giro a mano) guardano quando è arrivato l'ultimo battito.
+        if (daFuori) {
+            log('monitor esterno: questo giro è partito da Cloudflare → ok')
+            verificate.add('monitor-esterno-muto')
+        } else {
+            try {
+                const giri = await gh.giriDaFuori()
+                const incMonitor = valutaMonitorEsterno({ giri, adesso: adesso() })
+                log(`monitor esterno: ${giri.length} giri da Cloudflare letti → ${incMonitor ? 'INCIDENTE' : 'ok'}`)
+                verificate.add('monitor-esterno-muto')
+                if (incMonitor) incidenti.push(incMonitor)
+            } catch (err) {
+                log(`::warning::monitor esterno non verificabile in questo giro: ${err instanceof Error ? err.message : String(err)}`)
+            }
+        }
     }
 
     const aperte = await gh.elencaAperte()
@@ -147,6 +167,7 @@ async function main() {
         segreti: { chiaveResend: RESEND_API_KEY, destinatari: SENTINELLA_DESTINATARI },
         linkGiro,
         simulaGuasto: process.env.SIMULA_GUASTO === 'true',
+        daFuori: process.env.ORIGINE === 'cloudflare',
     })
     console.log(`fine: ${esito.incidenti.length} incidenti, ${JSON.stringify(esito.esiti)}`)
     if (esito.errori.length > 0) {

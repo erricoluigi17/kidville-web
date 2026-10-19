@@ -124,6 +124,40 @@ export function valutaBackup({ giri, adesso }) {
     }
 }
 
+/** Oltre quanti minuti senza un giro partito da Cloudflare il monitor esterno è «muto».
+ *
+ *  Il Worker (`monitor-esterno/worker.mjs`) fa partire il campanello ogni quarto d'ora. 90 minuti =
+ *  sei battiti mancati di fila: un ritardo di GitHub nell'avviare un `workflow_dispatch` si misura in
+ *  secondi o minuti, non in un'ora e mezza. Oltre, il Worker è spento, il suo token è scaduto o
+ *  Cloudflare non lo fa partire — e il sito torna a essere sorvegliato solo dal `cron` di GitHub, che
+ *  misurato gira ogni 3,5–7,5 ore. */
+export const MINUTI_ALLARME_MONITOR_ESTERNO = 90
+
+/**
+ * IL MONITOR ESTERNO. `giri` = i giri del campanello partiti da Cloudflare, dal più recente
+ * (`GET …/runs?event=workflow_dispatch`, filtrati sul titolo). Nessun giro, o il più recente più
+ * vecchio di `MINUTI_ALLARME_MONITOR_ESTERNO` → `monitor-esterno-muto`.
+ * @returns {Incidente | null}
+ */
+export function valutaMonitorEsterno({ giri, adesso }) {
+    const ultimo = (giri ?? []).find((g) => g && Number.isFinite(Date.parse(g.created_at)))
+    if (!ultimo) {
+        return {
+            chiave: 'monitor-esterno-muto',
+            titolo: 'Il monitor esterno (Cloudflare) non fa partire il campanello',
+            dettaglio: 'Nessun giro del campanello partito da Cloudflare. Il Worker kidville-monitor-esterno è spento o il suo token GitHub non funziona: vedi docs/cicd.md, «Monitor esterno».',
+        }
+    }
+    const etaMs = adesso - Date.parse(ultimo.created_at)
+    if (etaMs <= MINUTI_ALLARME_MONITOR_ESTERNO * 60_000) return null
+    const minuti = Math.floor(etaMs / 60_000)
+    return {
+        chiave: 'monitor-esterno-muto',
+        titolo: `Il monitor esterno (Cloudflare) tace da ${minuti} minuti`,
+        dettaglio: `L'ultimo giro del campanello partito da Cloudflare è di ${minuti} minuti fa (soglia ${MINUTI_ALLARME_MONITOR_ESTERNO}). Il Worker è spento, il suo token GitHub è scaduto o Cloudflare non lo fa partire: vedi docs/cicd.md, «Monitor esterno».`,
+    }
+}
+
 /**
  * LA VERIFICA DOPO IL DEPLOY. Restituisce l'elenco dei guasti (vuoto = rilascio buono) e, a parte, le
  * note che non fermano niente.

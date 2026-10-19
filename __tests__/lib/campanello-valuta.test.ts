@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+    MINUTI_ALLARME_MONITOR_ESTERNO,
     ORE_ALLARME_BACKUP,
     PROMEMORIA_DOPO_MS,
     REGIONE_ATTESA,
@@ -7,6 +8,7 @@ import {
     riconcilia,
     valutaBackup,
     valutaDopoDeploy,
+    valutaMonitorEsterno,
     valutaSalute,
     valutaVivo,
 } from '../../scripts/campanello/valuta.mjs'
@@ -104,6 +106,38 @@ describe('valutaSalute', () => {
         const inc = valutaSalute(corpo([{ nome: 'x] [app-giu', esito: 'degradato' }]))
 
         expect(inc).toEqual([])
+    })
+})
+
+describe('valutaMonitorEsterno', () => {
+    const MIN = 60_000
+    const battito = (minutiFa: number) => ({ display_title: 'Campanello (da Cloudflare)', created_at: new Date(ADESSO - minutiFa * MIN).toISOString() })
+
+    it('la soglia è 90 minuti (sei battiti da 15 mancati di fila)', () => {
+        expect(MINUTI_ALLARME_MONITOR_ESTERNO).toBe(90)
+    })
+
+    // NUMERI LETTERALI: 90 e 91 inchiodano il confine.
+    it('un battito 90 minuti fa non è ancora un incidente; 91 sì', () => {
+        expect(valutaMonitorEsterno({ giri: [battito(90)], adesso: ADESSO })).toBeNull()
+        const inc = valutaMonitorEsterno({ giri: [battito(91)], adesso: ADESSO })
+        expect(inc?.chiave).toBe('monitor-esterno-muto')
+        expect(inc?.titolo).toContain('91 minuti')
+    })
+
+    it('conta il più recente: un battito vecchio dopo uno fresco non accende niente', () => {
+        expect(valutaMonitorEsterno({ giri: [battito(5), battito(500)], adesso: ADESSO })).toBeNull()
+    })
+
+    it('nessun battito → incidente, con il rimando alla documentazione', () => {
+        const inc = valutaMonitorEsterno({ giri: [], adesso: ADESSO })
+
+        expect(inc?.chiave).toBe('monitor-esterno-muto')
+        expect(inc?.dettaglio).toContain('docs/cicd.md')
+    })
+
+    it('una data illeggibile non conta come battito', () => {
+        expect(valutaMonitorEsterno({ giri: [{ created_at: 'boh' }], adesso: ADESSO })?.chiave).toBe('monitor-esterno-muto')
     })
 })
 

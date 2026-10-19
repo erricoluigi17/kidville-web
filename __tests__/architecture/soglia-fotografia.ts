@@ -223,7 +223,15 @@ export function posterioriCheContengono(
 // dall'integrazione, una riga sola nel registro (219 migrazioni); fotografie rigenerate dalla
 // produzione — cambia davvero solo quella delle migrazioni; le altre cinque cambiano solo
 // l'istante dello scatto, con la stessa sha256 (la policy nuova vive in `realtime`, non in `public`).
+//
+// 2026-10-19 · FASE 9b «pubblicazione Realtime potata» (S4-C):
+// `20261019202225_realtime_pubblicazione_potata.sql` è un `ALTER PUBLICATION … DROP TABLE` su sei
+// tabelle, e la guardia della RLS la vede per le parole `drop table`. Nessuna policy, nessuna
+// tabella, nessuna colonna cambia: le fotografie della RLS e delle tabelle restano identiche, cambia
+// solo quella delle migrazioni. Si toglie con la PR-B dopo il merge, rigenerando dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261019202225_realtime_pubblicazione_potata.sql':
+        'fase 9b: ALTER PUBLICATION supabase_realtime DROP TABLE (sei tabelle), nessuna policy toccata; la applica l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
 }
 
 /**

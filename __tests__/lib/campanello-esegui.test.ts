@@ -26,7 +26,7 @@ interface Segnalazione {
 }
 
 /** Un GitHub in memoria con la stessa interfaccia di `creaGitHub`. */
-function ghFinto(opzioni: { giri?: unknown[] | Error; aperte?: Segnalazione[]; confronto?: string } = {}) {
+function ghFinto(opzioni: { giri?: unknown[] | Error; daFuori?: unknown[] | Error; aperte?: Segnalazione[]; confronto?: string } = {}) {
     const segnalazioni: Segnalazione[] = opzioni.aperte ?? []
     let prossimo = 100
     return {
@@ -59,6 +59,11 @@ function ghFinto(opzioni: { giri?: unknown[] | Error; aperte?: Segnalazione[]; c
         async giriBackupRiusciti() {
             if (opzioni.giri instanceof Error) throw opzioni.giri
             return opzioni.giri ?? [{ conclusion: 'success', updated_at: new Date(ADESSO - 5 * ORA).toISOString() }]
+        },
+        async giriDaFuori() {
+            if (opzioni.daFuori instanceof Error) throw opzioni.daFuori
+            // Di base il monitor esterno è vivo: un battito 10 minuti fa.
+            return opzioni.daFuori ?? [{ display_title: 'Campanello (da Cloudflare)', created_at: new Date(ADESSO - 10 * 60_000).toISOString() }]
         },
         async confronta() {
             return opzioni.confronto ?? 'sconosciuto'
@@ -251,6 +256,40 @@ describe('il giro del campanello', () => {
         expect(log.mock.calls.some((c) => String(c[0]).includes('non verificabile'))).toBe(true)
     })
 
+    it('senza battiti da Cloudflare da 2 ore apre `monitor-esterno-muto` (e manda l\'email)', async () => {
+        const gh = ghFinto({ daFuori: [{ display_title: 'Campanello (da Cloudflare)', created_at: new Date(ADESSO - 2 * ORA).toISOString() }] })
+        const f = fetchFinto({ [`${BASE}/api/health/vivo`]: [VIVO_OK], [`${BASE}/api/health`]: [SALUTE_OK] })
+
+        const { esito } = await giro(gh, f)
+
+        expect(gh.segnalazioni.map((s) => s.titolo.split(']')[0])).toEqual(['[monitor-esterno-muto'])
+        expect(gh.segnalazioni[0].titolo).toContain('120 minuti')
+        expect(f.richiesteA('https://api.resend.com/emails')).toBe(1)
+        expect(esito.errori).toEqual([])
+    })
+
+    it('un giro partito da Cloudflare non legge i giri e chiude `monitor-esterno-muto`', async () => {
+        const gh = ghFinto({ daFuori: new Error('non deve essere chiamato'), aperte: [segnalazioneAperta(11, 'monitor-esterno-muto')] })
+        const f = fetchFinto({ [`${BASE}/api/health/vivo`]: [VIVO_OK], [`${BASE}/api/health`]: [SALUTE_OK] })
+
+        const { esito, log } = await giro(gh, f, { daFuori: true })
+
+        expect(esito.esiti.chiuse).toBe(1)
+        expect(gh.segnalazioni[0].aperta).toBe(false)
+        expect(log.mock.calls.some((c) => String(c[0]).includes('non verificabile'))).toBe(false)
+    })
+
+    it('se i giri da Cloudflare non si leggono NON apre e NON chiude `monitor-esterno-muto`', async () => {
+        const gh = ghFinto({ daFuori: new Error('GitHub GET … → 502'), aperte: [segnalazioneAperta(11, 'monitor-esterno-muto')] })
+        const f = fetchFinto({ [`${BASE}/api/health/vivo`]: [VIVO_OK], [`${BASE}/api/health`]: [SALUTE_OK] })
+
+        const { esito, log } = await giro(gh, f)
+
+        expect(esito.incidenti).toEqual([])
+        expect(gh.segnalazioni[0].aperta).toBe(true)
+        expect(log.mock.calls.some((c) => String(c[0]).includes('monitor esterno non verificabile'))).toBe(true)
+    })
+
     it('un incidente aperto da più di 24 ore riceve un promemoria, senza email', async () => {
         const gh = ghFinto({ aperte: [segnalazioneAperta(7, 'app-giu', 30)] })
         const f = fetchFinto({ [`${BASE}/api/health/vivo`]: [VIVO_GIU] })
@@ -377,6 +416,26 @@ describe('creaGitHub (le chiamate vere all\'API)', () => {
         const gh = creaGitHub({ repo: 'o/r', token: 't', fetchImpl: f.impl })
 
         expect(await gh.giriBackupRiusciti()).toHaveLength(1)
+    })
+
+    it('dei giri lanciati a mano tiene solo quelli partiti da Cloudflare (dal titolo)', async () => {
+        const f = fetchFinto({
+            'https://api.github.com/repos/o/r/actions/workflows/campanello.yml/runs?event=workflow_dispatch&per_page=50': [
+                {
+                    status: 200,
+                    corpo: {
+                        workflow_runs: [
+                            { display_title: 'Campanello', created_at: 'a' },
+                            { display_title: 'Campanello (da Cloudflare)', created_at: 'b' },
+                            { created_at: 'c' },
+                        ],
+                    },
+                },
+            ],
+        })
+        const gh = creaGitHub({ repo: 'o/r', token: 't', fetchImpl: f.impl })
+
+        expect((await gh.giriDaFuori()).map((g: { created_at: string }) => g.created_at)).toEqual(['b'])
     })
 })
 

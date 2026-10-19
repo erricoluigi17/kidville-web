@@ -3,6 +3,7 @@ import { loadResolveOptions } from '@/lib/mensa/server'
 import { resolveMenuGiorno, type ResolveOptions } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie } from '@/lib/mensa/allergeni'
 import { notificaAllergie } from '@/lib/mensa/notify'
+import { logEvento } from '@/lib/logging/logger'
 
 interface AlunnoAllergie {
   id: string
@@ -55,11 +56,21 @@ export async function controllaAllergiePerId(
   scuolaId: string,
   options?: ResolveOptions
 ): Promise<boolean> {
-  const { data: al } = await supabase
+  const { data: al, error } = await supabase
     .from('alunni')
     .select('id, nome, cognome, classe_sezione, section_id, scuola_id, allergies, allergeni')
     .eq('id', alunnoId)
     .single()
+  // `false` resta la risposta («nessun avviso inviato»), ma un guasto qui è un AVVISO ALLERGIE
+  // che non parte: non può essere muto. `PGRST116` è il «nessuna riga» di `.single()`.
+  if (error && (error as { code?: string }).code !== 'PGRST116') {
+    logEvento('mensa', 'error', {
+      operazione: 'mensa/allergie-check:controllaAllergiePerId',
+      esito: 'alunno-non-letto',
+      entita_id: alunnoId,
+    }, error)
+    return false
+  }
   if (!al) return false
   return controllaAllergie(supabase, al as AlunnoAllergie, data, scuolaId, options)
 }

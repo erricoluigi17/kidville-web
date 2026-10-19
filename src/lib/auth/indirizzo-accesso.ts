@@ -127,11 +127,21 @@ export async function allineaIndirizzoAccesso(
         // si tocca niente. Due anagrafiche per la stessa persona, o due persone
         // sulla stessa casella: il codice non può scegliere, e sceglierne una
         // chiuderebbe fuori l'altra.
-        const { data: occupante } = await admin
+        const { data: occupante, error: erroreOccupante } = await admin
             .from('utenti')
             .select('id')
             .eq('email', voluto)
             .maybeSingle()
+        // Un guasto qui NON è «indirizzo libero»: proseguire vorrebbe dire riscrivere il
+        // login senza aver guardato se la casella è già di un altro account.
+        if (erroreOccupante) {
+            logEvento('auth', 'error', {
+                operazione: 'auth/indirizzo-accesso:allinea',
+                esito: 'occupante-indirizzo-non-letto',
+                entita_id: authUserId,
+            }, erroreOccupante)
+            return { stato: 'sconosciuto' }
+        }
         const idOccupante = (occupante as { id?: string } | null)?.id
         if (idOccupante && idOccupante !== authUserId) {
             logEvento('auth', 'warn', {

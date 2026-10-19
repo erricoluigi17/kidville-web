@@ -19,6 +19,7 @@ import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './Ra
 import { formattaIstante } from '@/i18n/config'
 import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica'
 import { isNativeApp } from '@/lib/push/native-register'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 /* ── helpers ───────────────────────────────────────────────── */
 
@@ -154,7 +155,7 @@ export function RankingTable() {
       .then((data: { id: string; title: string }[]) => {
         if (Array.isArray(data)) setFormModels(data)
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `graduatoria-modelli-non-caricati: ${nomeErrore(err)}` }))
   }, [userId])
 
   /* ── fetch rankings (via route server gated) ── */

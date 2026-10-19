@@ -95,7 +95,8 @@ function ParentChatContent() {
         fetch('/api/chat/config')
             .then(r => r.json())
             .then(d => { if (d.success) setChatCfg(d.data); })
-            .catch(() => {});
+            // Accessoria: senza config la chat funziona, manca solo l'avviso di fuori orario.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-config-non-caricata: ${nomeErrore(err)}`, route: '/parent/chat' }));
     }, []);
 
     // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di

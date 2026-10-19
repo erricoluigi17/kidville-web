@@ -69,7 +69,10 @@ const PREFISSO_TOPIC = 'chat:';
  */
 async function preparaCanalePrivato(): Promise<string | null> {
     const supabase = getSupabase();
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+    // Una sessione illeggibile NON è «nessuna sessione»: si rifiuta, e il chiamante la logga come
+    // `chat-realtime-identita-fallita` invece di confonderla con `chat-realtime-senza-identita`.
+    if (error) throw error;
     const uid = data.session?.user?.id ?? null;
     if (!uid) return null;
     await supabase.realtime.setAuth();

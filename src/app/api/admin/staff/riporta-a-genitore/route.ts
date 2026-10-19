@@ -8,6 +8,7 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { puoEliminareStaff } from '@/lib/personale/permessi-eliminazione'
 import { cancellaFascicoloPersonale } from '@/lib/personale/cancella-fascicolo'
@@ -207,12 +208,16 @@ export const POST = withRoute('admin/staff/riporta-a-genitore:POST', async (requ
 
     // 6. LA VERIFICA DELLA PROMESSA. Una promessa che nessuno misura smette di
     //    essere vera in silenzio: è il passo 7 di `collega-profilo-esistente`.
-    const { data: ponteDopo } = await supabase
+    //    Un guasto di questa lettura NON è «ponte perso»: si dice che la verifica non è
+    //    stata fatta, con un esito suo, invece di gridare un difetto che forse non c'è.
+    const { data: ponteDopo, error: errPonteDopo } = await supabase
       .from('parents')
       .select('id')
       .eq('auth_user_id', utenteId)
       .maybeSingle()
-    if (!ponteDopo) {
+    if (errPonteDopo) {
+      guastoSecondario('anagrafica', OPERAZIONE, 'ponte-genitore-non-verificato', errPonteDopo)
+    } else if (!ponteDopo) {
       logEvento('anagrafica', 'error', {
         operazione: OPERAZIONE,
         esito: 'ponte-genitore-perso-dopo-la-scrittura',

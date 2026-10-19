@@ -159,6 +159,14 @@ describe('GET /api/primaria/fascicolo — l’elenco esclude il cestino', () => 
     expect(ha(q, 'is', 'eliminato_il', null)).toBe(true)
     expect(ha(q, 'eq', 'student_id', ALUNNO)).toBe(true)
   })
+
+  it('gate caduto per un guasto del database: 500 LETTURA_FALLITA, non il 403 «non è tuo» (fase 11)', async () => {
+    rbac.puoAccedereFascicolo.mockResolvedValue({ consentito: false, ruolo: 'educator', motivo: 'errore' })
+    const res = await ELENCO(new NextRequest(`http://localhost/api/primaria/fascicolo?alunnoId=${ALUNNO}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(queryDi('student_documents')).toHaveLength(0)
+  })
 })
 
 describe('PATCH /api/primaria/fascicolo', () => {
@@ -245,6 +253,15 @@ describe('PATCH /api/primaria/fascicolo', () => {
     const res = await PATCH(json('http://localhost/api/primaria/fascicolo', 'PATCH', { id: DOC, descrizione: 'x' }))
     expect(res.status).toBe(403)
     expect((await res.json()).codice).toBe('DOCUMENTO_SANITARIO_NEGATO')
+  })
+
+  it('gate caduto per un guasto del database: 500 LETTURA_FALLITA, nessuna scrittura (fase 11)', async () => {
+    rbac.puoAccedereFascicolo.mockResolvedValue({ consentito: false, ruolo: 'educator', motivo: 'errore' })
+    h.state.code = { student_documents: [{ data: documento(), error: null }] }
+    const res = await PATCH(json('http://localhost/api/primaria/fascicolo', 'PATCH', { id: DOC, descrizione: 'x' }))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(queryDi('student_documents').some((q) => q.chiamate.some(([m]) => m === 'update'))).toBe(false)
   })
 
   it('documento nel cestino (la lettura viva non lo trova): 404', async () => {

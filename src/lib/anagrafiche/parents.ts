@@ -266,11 +266,20 @@ export async function linkOrCreateParent(
 
   // 1. Genitore già esistente per CF (solo se il CF è valorizzato).
   if (record.fiscal_code) {
-    const { data: existing } = await supabase
+    const { data: existing, error: erroreCf } = await supabase
       .from('parents')
       .select('id, auth_user_id, emails, first_name, last_name')
       .eq('fiscal_code', record.fiscal_code)
       .maybeSingle();
+    // Un guasto qui NON è «nessun genitore con quel CF»: proseguire creerebbe un doppione
+    // della stessa persona (o fallirebbe sul vincolo UNIQUE con un messaggio fuorviante).
+    if (erroreCf) {
+      logEvento('anagrafica', 'error', {
+        operazione: 'linkOrCreateParent:riuso',
+        esito: 'ricerca-per-cf-non-riuscita',
+      }, erroreCf);
+      throw new Error('Ricerca del genitore per codice fiscale non riuscita', { cause: erroreCf });
+    }
     if (existing) {
       parentId = existing.id;
       identityInput = {

@@ -108,6 +108,17 @@ describe('POST /api/parent/primaria/note/firma', () => {
     expect(res.status).toBe(404)
   })
 
+  // Fase 11 (errori non ignorati): la nota si leggeva col solo `data`, e un guasto
+  // era «Nota non trovata» — al genitore si diceva che la nota non esisteva, e la
+  // presa visione (valore legale) non veniva mai riprovata.
+  it('un guasto sulla nota NON è «nota non trovata»: 500 col codice, e nessuna firma scritta', async () => {
+    h.state.queues = { note_disciplinari: [{ data: null, error: { code: '08006', message: 'connection failure' } }] }
+    const res = await POST(req({ notaId: 'n-1', code: '1', expiry: 1, ticket: 't' }))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+    expect(h.state.captured.upsert).toEqual([])
+  })
+
   it('403 se il genitore non è collegato all\'alunno della nota', async () => {
     h.state.queues = {
       note_disciplinari: [{ data: { id: 'n-1', alunno_id: 'a1111111-1111-4111-8111-111111111111', richiede_firma: true }, error: null }],

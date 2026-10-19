@@ -16,6 +16,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { assertConfigMensaInScope } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE } from '@/lib/mensa/chiave-menu'
 import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 
@@ -98,7 +99,11 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
         rotQ = rotQ.is('menu_config_id', null)
         ovrQ = ovrQ.is('menu_config_id', null)
       }
-      const [{ data: rotazione }, { data: override }, config] = await Promise.all([rotQ, ovrQ, loadMensaConfig(supabase, scuolaId)])
+      const [{ data: rotazione, error: errRotazione }, { data: override, error: errOverride }, config] = await Promise.all([rotQ, ovrQ, loadMensaConfig(supabase, scuolaId)])
+      // È la schermata con cui la segreteria MODIFICA il menu: letto vuoto per un guasto, il
+      // prossimo salvataggio partirebbe da un menu che sembra non esserci.
+      if (errRotazione) return rispostaGuastoDb('mensa/menu:GET', 'db:mensa_menu_rotazione', errRotazione)
+      if (errOverride) return rispostaGuastoDb('mensa/menu:GET', 'db:mensa_menu_override', errOverride)
       return NextResponse.json({ success: true, data: { rotazione: rotazione ?? [], override: override ?? [], config } })
     }
 
@@ -118,7 +123,9 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
       // dal client). Il genitore può vedere solo i propri figli (stesso pattern
       // di mensa/prenotazioni: `genitoreHasFiglio`, unione runtime
       // `legame_genitori_alunni` + anagrafica `student_parents`).
-      const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
+      const { data: al, error: errAlunno } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
+      // Un guasto non è «alunno non trovato», e la sede del menu viene da qui.
+      if (errAlunno) return rispostaGuastoDb('mensa/menu:GET', 'db:alunni', errAlunno)
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
       // PRESENTAZIONE: in veste di famiglia si guarda il menu dei PROPRI figli, e
       // il legame è ciò che lo prova. In veste di lavoro il perimetro è la sede, ed
@@ -176,7 +183,9 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
     // Se il menu è stato risolto per un alunno, includi il nome del menu nella risposta
     let menuNome: string | null = null
     if (menuConfigId) {
-      const { data: cfg } = await supabase.from('mensa_menu_config').select('nome').eq('id', menuConfigId).maybeSingle()
+      const { data: cfg, error: errCfg } = await supabase.from('mensa_menu_config').select('nome').eq('id', menuConfigId).maybeSingle()
+      // Il nome del menu si mostra soltanto: i giorni sono già risolti, e col ripiego escono senza.
+      if (errCfg) guastoLetturaAccessoria('mensa', 'mensa/menu:GET', 'nome-menu-non-letto', errCfg)
       menuNome = (cfg?.nome as string | null) ?? null
     }
 

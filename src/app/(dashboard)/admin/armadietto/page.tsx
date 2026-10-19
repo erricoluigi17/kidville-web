@@ -8,6 +8,7 @@ import {
   TABLE, TABLE_WRAP, TD, TH, TROW,
 } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockModal';
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
 
@@ -71,7 +72,9 @@ function AdminArmadiettoInner() {
         setScuolaId(cur => cur || (first?.scuolaId ?? ''));
         setSezione(cur => cur ?? first?.sezioni[0]?.name ?? null);
       })
-      .catch(() => {})
+      // Letture che riempiono la pagina: `warn` come la fetch che non parte (vedi
+      // `eAnnullata` in `@/lib/logging/client`), il 5xx lo registra già il patch di `fetch`.
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-sezioni-non-caricate: ${nomeErrore(err)}` }))
       .finally(() => { if (active) setScopedLoaded(true); });
     return () => { active = false; };
   }, [userId]);
@@ -83,7 +86,7 @@ function AdminArmadiettoInner() {
     fetch(`/api/locker/inventory?classe_sezione=${enc}&mode=stock&userId=${uid}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (Array.isArray(d)) setStock(d); })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-scorte-non-caricate: ${nomeErrore(err)}` }))
       .finally(() => setDayLoading(false));
     const today = todayISO();
     fetch(`/api/locker/inventory?classe_sezione=${enc}&mode=carico&month=${today.slice(0, 7)}&userId=${uid}`)
@@ -95,7 +98,7 @@ function AdminArmadiettoInner() {
           inventario: (s.inventario ?? []).filter(r => r.date === today),
         })));
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-consegne-oggi-non-caricate: ${nomeErrore(err)}` }));
   };
 
   useEffect(() => {
@@ -122,7 +125,7 @@ function AdminArmadiettoInner() {
           })),
         })));
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-mensile-non-caricato: ${nomeErrore(err)}` }))
       .finally(() => setMensileLoading(false));
   };
 

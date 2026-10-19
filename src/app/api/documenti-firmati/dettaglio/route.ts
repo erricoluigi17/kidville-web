@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { rispostaGuastoAccesso } from '@/lib/primaria/fascicolo-gestione'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { categoriaDocumento, etichettaTipo, istanteFirma } from '@/lib/documenti/registro'
@@ -12,6 +13,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import CATALOGO from '../../../../../messages/it/shared.json'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 
 /**
  * GET /api/documenti-firmati/dettaglio?fonte=&id= — apre UN documento.
@@ -54,6 +56,10 @@ interface Risolto {
   extra?: Record<string, unknown>
 }
 
+/**
+ * Il documento, `null` se non c'è (o è orfano di alunno). Un GUASTO del database lancia: non è
+ * «documento non trovato», e il chiamante lo trasforma in un 500 invece che in un 404.
+ */
 async function risolvi(
   supabase: SupabaseClient,
   fonte: Fonte,
@@ -65,15 +71,20 @@ async function risolvi(
       .select('id, student_id, form_id, answers, is_signed, signature_log, created_at, origine')
       .eq('id', id)
       .maybeSingle()
-    if (error || !data || !data.student_id) return null
+    if (error) throw error
+    if (!data || !data.student_id) return null
 
     let titolo: string | null = null
     if (data.form_id) {
-      const { data: modello } = await supabase
+      const { data: modello, error: errModello } = await supabase
         .from('forms_templates')
         .select('title')
         .eq('id', data.form_id)
         .maybeSingle()
+      // Il titolo si mostra soltanto: il modulo si apre comunque, col titolo di ripiego.
+      if (errModello) {
+        guastoLetturaAccessoria('fascicolo', 'documenti-firmati/dettaglio:GET', 'titolo-modulo-non-letto', errModello)
+      }
       titolo = (modello as { title?: string | null } | null)?.title ?? null
     }
 
@@ -103,7 +114,8 @@ async function risolvi(
         .select('id, student_id, document_type, descrizione, file_name, storage_path, file_url, expiry_date, created_at')
         .eq('id', id),
     ).maybeSingle()
-    if (error || !data || !data.student_id) return null
+    if (error) throw error
+    if (!data || !data.student_id) return null
     return {
       alunnoId: data.student_id as string,
       tipo: (data.document_type as string | null) ?? null,
@@ -123,7 +135,8 @@ async function risolvi(
     .select('id, alunno_id, file_path, data_inizio, data_fine, stato, creato_il')
     .eq('id', id)
     .maybeSingle()
-  if (error || !data || !data.alunno_id) return null
+  if (error) throw error
+  if (!data || !data.alunno_id) return null
   return {
     alunnoId: data.alunno_id as string,
     tipo: 'certificato_medico',
@@ -160,7 +173,13 @@ export const GET = withRoute('documenti-firmati/dettaglio:GET', async (request: 
     const { fonte, id, finalita } = q.data
 
     const supabase = await createAdminClient()
-    const risolto = await risolvi(supabase, fonte, id)
+    let risolto: Risolto | null
+    try {
+      risolto = await risolvi(supabase, fonte, id)
+    } catch (err) {
+      // Un guasto non è «documento non trovato»: il 404 direbbe che il documento non esiste.
+      return rispostaGuastoDb('documenti-firmati/dettaglio:GET', `db:${fonte}`, err)
+    }
     // 404 anche quando la riga esiste ma è orfana di alunno: non c'è un
     // fascicolo a cui appartenga, quindi non c'è nessuno che possa aprirla.
     if (!risolto) {
@@ -178,6 +197,8 @@ export const GET = withRoute('documenti-firmati/dettaglio:GET', async (request: 
 
     if (categoria === 'sanitario') {
       const accesso = await puoAccedereFascicolo(supabase, user.id, risolto.alunnoId)
+      const guastoGate = rispostaGuastoAccesso(accesso)
+      if (guastoGate) return guastoGate
       if (!accesso.consentito) {
         logEvento('fascicolo', 'warn', {
           operazione: 'documenti-firmati/dettaglio:GET',

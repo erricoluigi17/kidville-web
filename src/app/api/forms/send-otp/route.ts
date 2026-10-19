@@ -22,6 +22,7 @@ import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -612,7 +613,10 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
     }
     const { data: submission, error: fetchErr } = selRes
 
-    if (fetchErr || !submission) {
+    // Un guasto non è «submission non trovata»: il 404 direbbe al genitore che il modulo da
+    // firmare non esiste, mentre il database non ha risposto.
+    if (fetchErr) return rispostaGuastoDb('forms/send-otp:PATCH', 'db:form_submissions', fetchErr)
+    if (!submission) {
       return NextResponse.json({ error: 'Submission non trovata' }, { status: 404 })
     }
 
@@ -649,11 +653,15 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
     const signedAt = new Date().toISOString()
 
     // Modalità firma del modello (DL-031): single (1 firmatario) o joint (2).
-    const { data: model } = await supabase
+    const { data: model, error: modelErr } = await supabase
       .from('form_models')
       .select('signature_mode')
       .eq('id', submission.model_id)
       .maybeSingle()
+    // 🔴 La modalità DECIDE il completamento: letta «single» per un guasto, un modulo a firma
+    // congiunta risulterebbe completo con UNA sola firma. Ci si ferma PRIMA di consumare il
+    // codice (`otp_secret` è ancora lì): il genitore riprova con lo stesso.
+    if (modelErr) return rispostaGuastoDb('forms/send-otp:PATCH', 'db:form_models', modelErr)
     const mode = (model?.signature_mode as string | undefined) ?? 'single'
 
     // Slot già firmati → indice di QUESTO firmatario e completamento per policy.

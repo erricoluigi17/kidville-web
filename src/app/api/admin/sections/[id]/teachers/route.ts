@@ -10,6 +10,7 @@ import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 
 // ============================================================
 // Insegnanti di riferimento di una sezione — gate Direzione + segreteria.
@@ -89,7 +90,9 @@ export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request:
     const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
     if (fuoriSezione) return fuoriSezione;
 
-    const { data: section } = await supabase.from('sections').select('id, scuola_id').eq('id', sectionId).maybeSingle();
+    const { data: section, error: errSezione } = await supabase.from('sections').select('id, scuola_id').eq('id', sectionId).maybeSingle();
+    // Un guasto non è «sezione non trovata».
+    if (errSezione) return rispostaGuastoDb('admin/sections/[id]/teachers:GET', 'db:sections', errSezione);
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 });
 
     // CHI LAVORA IN QUESTA SEDE NON È `utenti.scuola_id`: è l'unione fra quella

@@ -12,6 +12,7 @@ import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { tabellaMancante } from '@/lib/db/tolleranza-schema';
+import { guastoSecondario } from '@/lib/db/guasto';
 
 /**
  * LA TABELLA CHE NON C'È — e non è un guasto da 500.
@@ -163,7 +164,10 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
             return erroreScrittura(error);
         }
 
-        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        const { data: al, error: errAlunno } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        // La riga del diario è GIÀ scritta: un 500 inviterebbe a ripeterla. Senza la sede la
+        // traccia esce senza plesso e i titolari non vengono avvisati — e lo si dice.
+        if (errAlunno) guastoSecondario('diary', 'diary:POST', 'sede-alunno-non-letta', errAlunno);
         await logScrittura(admin, {
             attore: auth.user, entitaTipo: 'diario', entitaId: data.id, azione: 'insert',
             scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: data,

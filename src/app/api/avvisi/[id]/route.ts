@@ -32,6 +32,7 @@ import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/st
 import { percorsoAllegatoArchiviatoAvviso, percorsoAllegatoAvviso, rimuoviAllegatoAvvisoSeOrfano } from '@/lib/allegati/rimozione';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria } from '@/lib/db/guasto';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -283,11 +284,15 @@ export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { param
         if (visibilitaErr) return visibilitaErr;
 
         // Autore con query separata (nessun FK embed, come la route lista).
-        const { data: author } = await supabase
+        const { data: author, error: errAutore } = await supabase
             .from('utenti')
             .select('nome, cognome, ruolo, first_name, last_name, role')
             .eq('id', data.author_id)
             .maybeSingle();
+        // Il nome dell'autore si mostra soltanto: col ripiego l'avviso esce con l'autore «?».
+        if (errAutore) {
+            guastoLetturaAccessoria('avvisi', 'avvisi/[id]:GET', 'autore-non-letto', errAutore);
+        }
 
         // Il bucket degli allegati è PRIVATO (2026-07-31): l'indirizzo si firma
         // qui, dietro al gate della route, e vale dieci minuti.

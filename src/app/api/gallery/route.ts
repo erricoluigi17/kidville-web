@@ -43,6 +43,7 @@ import { ancheNelCestino, colonnaCestinoAssente, soloNelCestino, soloVive } from
 import { logScrittura } from '@/lib/audit/scrittura';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1209,11 +1210,15 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         }
 
         // 2. Recupera il ruolo dell'utente da utenti
-        const { data: utentiRecord } = await supabase
+        const { data: utentiRecord, error: errRuolo } = await supabase
             .from('utenti')
             .select('ruolo, scuola_id')
             .eq('id', userId)
             .maybeSingle();
+        // Le quattro letture di qui in giù DECIDONO l'autorizzazione: un guasto letto come
+        // «nessun ruolo» o «nessuna classe» diventerebbe un 403 «non sei autorizzato» detto a chi
+        // lo è. Si risponde 500, e il media resta com'è.
+        if (errRuolo) return rispostaGuastoDb('gallery:DELETE', 'db:utenti', errRuolo);
 
         const role = utentiRecord?.ruolo;
         const userScuolaId = utentiRecord?.scuola_id;
@@ -1229,11 +1234,12 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             authorized = true;
         } else if (isCoordinator) {
             // I coordinatori possono eliminare i media nel proprio plesso/scuola
-            const { data: uploaderRecord } = await supabase
+            const { data: uploaderRecord, error: errUploader } = await supabase
                 .from('utenti')
                 .select('scuola_id')
                 .eq('id', media.uploaded_by)
                 .maybeSingle();
+            if (errUploader) return rispostaGuastoDb('gallery:DELETE', 'db:utenti', errUploader);
 
             if (uploaderRecord?.scuola_id === userScuolaId) {
                 authorized = true;
@@ -1257,11 +1263,12 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
                     // un altro plesso faceva entrare il NOME della SUA classe fra
                     // «le classi del docente», e da lì autorizzava sull'omonima.
                     // Stesso presidio già in `educator-sections`.
-                    const { data: myStudents } = await supabase
+                    const { data: myStudents, error: errMieiAlunni } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
                         .in('id', myTaggedStudentIds)
                         .in('scuola_id', plessi);
+                    if (errMieiAlunni) return rispostaGuastoDb('gallery:DELETE', 'db:alunni', errMieiAlunni);
 
                     myClassNames = [...new Set(
                         (myStudents ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
@@ -1273,11 +1280,12 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
 
                 let hasStudentIntersection = false;
                 if (media.tag_students && media.tag_students.length > 0) {
-                    const { data: taggedStudents } = await supabase
+                    const { data: taggedStudents, error: errTaggati } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
                         .in('id', media.tag_students)
                         .in('scuola_id', plessi);
+                    if (errTaggati) return rispostaGuastoDb('gallery:DELETE', 'db:alunni', errTaggati);
 
                     hasStudentIntersection = taggedStudents?.some(
                         (s: { classe_sezione: string }) => myClassNames.includes(s.classe_sezione)
@@ -1517,11 +1525,15 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         // misurano i tag e il consenso (vedi il blocco più in basso).
 
         // 2. Recupera il ruolo dell'utente da utenti
-        const { data: utentiRecord } = await supabase
+        const { data: utentiRecord, error: errRuolo } = await supabase
             .from('utenti')
             .select('ruolo, scuola_id')
             .eq('id', userId)
             .maybeSingle();
+        // Le quattro letture di qui in giù DECIDONO l'autorizzazione: un guasto letto come
+        // «nessun ruolo» o «nessuna classe» diventerebbe un 403 «non sei autorizzato» detto a chi
+        // lo è. Si risponde 500, e il media resta com'è.
+        if (errRuolo) return rispostaGuastoDb('gallery:PATCH', 'db:utenti', errRuolo);
 
         const role = utentiRecord?.ruolo;
         const userScuolaId = utentiRecord?.scuola_id;
@@ -1535,11 +1547,12 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         if (isAdmin) {
             authorized = true;
         } else if (isCoordinator) {
-            const { data: uploaderRecord } = await supabase
+            const { data: uploaderRecord, error: errUploader } = await supabase
                 .from('utenti')
                 .select('scuola_id')
                 .eq('id', media.uploaded_by)
                 .maybeSingle();
+            if (errUploader) return rispostaGuastoDb('gallery:PATCH', 'db:utenti', errUploader);
 
             if (uploaderRecord?.scuola_id === userScuolaId) {
                 authorized = true;
@@ -1563,11 +1576,12 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
                     // frammento. Senza, un vecchio tag su un bambino di un altro
                     // plesso fa entrare il NOME della SUA classe fra «le classi
                     // del docente», e da lì autorizza a RISCRIVERE l'omonima.
-                    const { data: myStudents } = await supabase
+                    const { data: myStudents, error: errMieiAlunni } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
                         .in('id', myTaggedStudentIds)
                         .in('scuola_id', plessi);
+                    if (errMieiAlunni) return rispostaGuastoDb('gallery:PATCH', 'db:alunni', errMieiAlunni);
 
                     myClassNames = [...new Set(
                         (myStudents ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
@@ -1578,11 +1592,12 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
 
                 let hasStudentIntersection = false;
                 if (media.tag_students && media.tag_students.length > 0) {
-                    const { data: taggedStudents } = await supabase
+                    const { data: taggedStudents, error: errTaggati } = await supabase
                         .from('alunni')
                         .select('classe_sezione')
                         .in('id', media.tag_students)
                         .in('scuola_id', plessi);
+                    if (errTaggati) return rispostaGuastoDb('gallery:PATCH', 'db:alunni', errTaggati);
 
                     hasStudentIntersection = taggedStudents?.some(
                         (s: { classe_sezione: string }) => myClassNames.includes(s.classe_sezione)

@@ -8,6 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // Anagrafica fornitori Merchandise (Fase B, step B3) — CRUD riservato allo staff.
 // Service-role + scoping per plesso + audit. GET degrada a lista vuota dove la
@@ -137,7 +138,9 @@ export const PATCH = withRoute('admin/merch/fornitori:PATCH', async (request: Re
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: existing } = await supabase.from('merch_fornitori').select('id, scuola_id').eq('id', id).maybeSingle()
+    const { data: existing, error: errEsistente } = await supabase.from('merch_fornitori').select('id, scuola_id').eq('id', id).maybeSingle()
+    // Un guasto non è «fornitore non trovato».
+    if (errEsistente) return rispostaGuastoDb('admin/merch/fornitori:PATCH', 'db:merch_fornitori', errEsistente)
     if (!existing) return NextResponse.json({ error: 'Fornitore non trovato' }, { status: 404 })
     if (!plessi.includes(existing.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: fornitore fuori dal tuo plesso' }, { status: 403 })
@@ -185,7 +188,9 @@ export const DELETE = withRoute('admin/merch/fornitori:DELETE', async (request: 
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: existing } = await supabase.from('merch_fornitori').select('id, scuola_id').eq('id', id).maybeSingle()
+    const { data: existing, error: errEsistente } = await supabase.from('merch_fornitori').select('id, scuola_id').eq('id', id).maybeSingle()
+    // Un guasto non è «fornitore non trovato».
+    if (errEsistente) return rispostaGuastoDb('admin/merch/fornitori:DELETE', 'db:merch_fornitori', errEsistente)
     if (!existing) return NextResponse.json({ error: 'Fornitore non trovato' }, { status: 404 })
     if (!plessi.includes(existing.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: fornitore fuori dal tuo plesso' }, { status: 403 })

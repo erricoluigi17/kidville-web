@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { rispostaGuastoAccesso } from '@/lib/primaria/fascicolo-gestione'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -45,6 +46,8 @@ export const GET = withRoute('primaria/fascicolo/file:GET', async (request: Next
     if (!doc) return NextResponse.json({ error: 'Documento non trovato' }, { status: 404 })
 
     const access = await puoAccedereFascicolo(supabase, userId, doc.student_id)
+    const guastoGate = rispostaGuastoAccesso(access)
+    if (guastoGate) return guastoGate
     if (!access.consentito) return NextResponse.json({ error: 'Accesso non consentito' }, { status: 403 })
 
     const path = doc.storage_path || doc.file_url

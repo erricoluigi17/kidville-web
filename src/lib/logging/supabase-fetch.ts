@@ -3,6 +3,7 @@ import { contesto, inLogger } from './context';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
+import { limitaRetryAfter, METODI_RITENTABILI, STATI_RITENTABILI } from '@/lib/supabase/attesa-ritentativi';
 
 /**
  * Il `fetch` strumentato dei client Supabase.
@@ -168,8 +169,8 @@ const CORPO_LETTURA_MAX = 64_000;
  * ci si appoggia davvero.
  */
 const TENTATIVI_MAX = 3;
-const STATI_RITENTABILI = new Set([503, 520]);
-const METODI_RITENTABILI = new Set(['GET', 'HEAD', 'OPTIONS']);
+// Stati e metodi ritentabili: in `src/lib/supabase/attesa-ritentativi.ts`, condivisi col client
+// del browser (fase 11), così le due copie della politica di postgrest non possono divergere.
 
 export interface Bersaglio {
     area: 'db' | 'rpc' | 'storage' | 'auth' | 'altro';
@@ -381,8 +382,22 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
             // L'osservabilità non può rompere la risposta che sta osservando: si perde il log.
         }
 
-        return res;
+        return conAttesaLimitata(b, res);
     };
+}
+
+/**
+ * IL TETTO SULL'ATTESA FRA I TENTATIVI DI POSTGREST (fase 11 della robustezza, S6 — 2026-10-19).
+ * Il perché sta in `src/lib/supabase/attesa-ritentativi.ts`. Qui si applica solo alle risposte
+ * che postgrest ritenterà davvero (`verràRitentato`): sull'ultimo tentativo l'header non conta
+ * più, e storage e auth non ritentano affatto.
+ */
+export function conAttesaLimitata(b: Pick<Descrizione, 'area' | 'metodo' | 'tentativo'>, res: Response): Response {
+    try {
+        return verràRitentato(b, stato(res)) ? limitaRetryAfter(res) : res;
+    } catch {
+        return res;
+    }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -449,7 +464,7 @@ function campiDi(b: Descrizione, extra: Record<string, Valore>): Record<string, 
  *
  * `stato` assente = errore di rete (che postgrest ritenta con le stesse regole).
  */
-function verràRitentato(b: Descrizione, stato: number | undefined): boolean {
+function verràRitentato(b: Pick<Descrizione, 'area' | 'metodo' | 'tentativo'>, stato: number | undefined): boolean {
     // Solo postgrest ritenta: storage-js e auth-js non hanno nessun retry. Sopprimere lì
     // significherebbe perdere il log, non risparmiarlo.
     if (b.area !== 'db' && b.area !== 'rpc') return false;

@@ -213,7 +213,10 @@ function inFila<T>(jobId: string, operazione: () => Promise<T>): Promise<T> {
   // L'esito della precedente l'ha già ricevuto (e loggato) chi l'aveva chiesta:
   // qui serve solo sapere quando è finita.
   const risultato = precedente.then(operazione, operazione)
-  const fine = risultato.then(() => undefined, () => undefined)
+  // La fila aspetta che l'operazione FINISCA, comunque finisca. Non è un errore inghiottito:
+  // il rifiuto viaggia in `risultato`, che torna al chiamante — è lui a riceverlo e a loggarlo
+  // (`segnalaDeposito`). Loggarlo anche qui farebbe due righe dello stesso guasto.
+  const fine = Promise.allSettled([risultato]).then(() => undefined)
   codaPerJob.set(jobId, fine)
   void fine.then(() => {
     if (codaPerJob.get(jobId) === fine) codaPerJob.delete(jobId)

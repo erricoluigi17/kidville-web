@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Loader2 } from 'lucide-react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Selettore multiplo di sezioni reale, alimentato da /api/admin/sections/scoped
 // (scope-safe per ruolo). Il valore sono i NOMI delle sezioni, coerente con lo
@@ -36,7 +37,7 @@ export function SezioniMultiSelect({
     fetch(`/api/admin/sections/scoped${qs}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setGruppi(d.data ?? []); })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `sezioni-selettore-non-caricate: ${nomeErrore(err)}` }))
       .finally(() => setLoading(false));
   }, [grado]);
 

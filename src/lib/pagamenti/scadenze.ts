@@ -5,6 +5,17 @@ import { logEvento } from '@/lib/logging/logger'
 // generate vanno riallineate al nuovo giorno, altrimenti l'accordo col
 // genitore varrebbe solo dalla prossima generazione. Best-effort: un errore
 // qui non deve far fallire il salvataggio anagrafico.
+//
+// Best-effort NON vuol dire che un guasto diventa un valore (fase 11). PostgREST non lancia:
+// una categoria non letta si leggeva «non c'è la retta», e soprattutto le impostazioni di sede
+// non lette diventavano il giorno 5 di default — e le scadenze venivano RISCRITTE su un giorno
+// che nessuno aveva scelto. Ora ogni lettura non riuscita ferma il riallineamento (0) e lo dice.
+
+/** Il riallineamento si ferma per un guasto: la riga, e `0` al chiamante come sempre. */
+function fermato(operazione: string, esito: string, alunnoId: string, error: unknown): number {
+    logEvento('pagamento', 'warn', { operazione, esito, alunno_id: alunnoId }, error)
+    return 0
+}
 
 export async function riallineaScadenzeRetteFuture(
     supabase: SupabaseClient,
@@ -12,36 +23,41 @@ export async function riallineaScadenzeRetteFuture(
     giorno: number | null | undefined,
 ): Promise<number> {
     try {
-        const { data: cat } = await supabase
+        const { data: cat, error: errCat } = await supabase
             .from('payment_categories')
             .select('id')
             .eq('slug', 'retta')
             .is('scuola_id', null)
             .maybeSingle()
+        if (errCat) return fermato('riallineaScadenzeRetteFuture', 'categoria-retta-non-letta', alunnoId, errCat)
         if (!cat) return 0
 
         // giorno effettivo: override alunno, altrimenti default di scuola (5)
         let g = giorno ?? null
         if (g == null) {
-            const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
-            const { data: sett } = await supabase
+            const { data: al, error: errAl } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+            if (errAl) return fermato('riallineaScadenzeRetteFuture', 'sede-alunno-non-letta', alunnoId, errAl)
+            const { data: sett, error: errSett } = await supabase
                 .from('admin_settings')
                 .select('retta_giorno_scadenza')
                 .eq('scuola_id', (al as { scuola_id?: string } | null)?.scuola_id)
                 .maybeSingle()
+            // Il default 5 vale per una sede che NON l'ha impostato, non per una lettura fallita.
+            if (errSett) return fermato('riallineaScadenzeRetteFuture', 'giorno-di-sede-non-letto', alunnoId, errSett)
             g = Number((sett as { retta_giorno_scadenza?: number } | null)?.retta_giorno_scadenza ?? 5)
         }
         if (!(g >= 1 && g <= 28)) return 0
 
         const oggi = new Date().toISOString().slice(0, 10)
         const primoMeseCorrente = `${oggi.slice(0, 8)}01`
-        const { data: rette } = await supabase
+        const { data: rette, error: errRette } = await supabase
             .from('pagamenti')
             .select('id, periodo_competenza, stato, importo_pagato')
             .eq('alunno_id', alunnoId)
             .eq('categoria_id', (cat as { id: string }).id)
             .gte('periodo_competenza', primoMeseCorrente)
             .in('stato', ['da_pagare', 'parziale', 'scaduto'])
+        if (errRette) return fermato('riallineaScadenzeRetteFuture', 'rette-non-lette', alunnoId, errRette)
 
         let aggiornate = 0
         for (const r of (rette || []) as { id: string; periodo_competenza: string; stato: string; importo_pagato?: number | null }[]) {
@@ -52,7 +68,16 @@ export async function riallineaScadenzeRetteFuture(
                 patch.stato = Number(r.importo_pagato || 0) > 0 ? 'parziale' : 'da_pagare'
             }
             const { error } = await supabase.from('pagamenti').update(patch).eq('id', r.id)
-            if (!error) aggiornate++
+            if (error) {
+                logEvento('pagamento', 'warn', {
+                    operazione: 'riallineaScadenzeRetteFuture',
+                    esito: 'scadenza-non-riallineata',
+                    alunno_id: alunnoId,
+                    pagamento_id: r.id,
+                }, error)
+                continue
+            }
+            aggiornate++
         }
         return aggiornate
     } catch (e) {
@@ -110,12 +135,13 @@ export async function riallineaImportoRetteFuture(
         // è precisamente il modo di regalare (o addebitare) una retta.
         if (typeof importo !== 'number' || !(importo > 0)) return 0
 
-        const { data: cat } = await supabase
+        const { data: cat, error: errCat } = await supabase
             .from('payment_categories')
             .select('id')
             .eq('slug', 'retta')
             .is('scuola_id', null)
             .maybeSingle()
+        if (errCat) return fermato('riallineaImportoRetteFuture', 'categoria-retta-non-letta', alunnoId, errCat)
         if (!cat) return 0
 
         const primoMeseCorrente = `${new Date().toISOString().slice(0, 8)}01`

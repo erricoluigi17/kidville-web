@@ -5,6 +5,14 @@ import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { sediReali } from '@/lib/scuole/reali'
+import { intestazioniCachePubblica } from '@/lib/security/cache-pubblica'
+
+/**
+ * Dieci minuti in CDN (fase 12): una sede nuova o disattivata compare nel modulo entro dieci
+ * minuti, e le visite intanto non svegliano la funzione. Solo sulla risposta buona.
+ */
+const CACHE_SECONDI = 600
+const CACHE_STANTIO = 3600
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -47,8 +55,11 @@ export const GET = withRoute('iscrizione/sedi:GET', async (request: NextRequest)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({
-    success: true,
-    data: reali.map((s) => ({ id: s.id, nome: s.nome })),
-  })
+  return NextResponse.json(
+    {
+      success: true,
+      data: reali.map((s) => ({ id: s.id, nome: s.nome })),
+    },
+    { headers: intestazioniCachePubblica(request, CACHE_SECONDI, CACHE_STANTIO) },
+  )
 })

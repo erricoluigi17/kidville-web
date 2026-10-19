@@ -9,6 +9,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -40,7 +41,8 @@ export const GET = withRoute('forms/export/delibera:GET', async (request: NextRe
     const { modelId } = q.data
 
     const supabase = await createAdminClient()
-    const { data: model } = await supabase.from('form_models').select('title').eq('id', modelId).maybeSingle()
+    const { data: model, error: errModello } = await supabase.from('form_models').select('title').eq('id', modelId).maybeSingle()
+    if (errModello) return rispostaGuastoDb('forms/export/delibera:GET', 'db:form_models', errModello)
     if (!model) return NextResponse.json({ error: 'Modello non trovato' }, { status: 404 })
 
     // Isolamento per sede — stesso blocco di `forms/export/pdf` e

@@ -6,6 +6,7 @@ import { requireEnv } from '@/lib/security/require-env';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { tabellaMancante } from '@/lib/db/tolleranza-schema';
 
 const querySchema = z.object({}); // nessun parametro in ingresso
 
@@ -33,28 +34,61 @@ export const POST = withRoute('admin/wipe:POST', async (request: Request) => {
             'daily_routines', 'presenze', 'firme_docenti', 'registro_orario', 'note_disciplinari'
         ];
 
+        // ─── UNA TABELLA È PULITA SE ALMENO UNA DELLE DUE DELETE È RIUSCITA ─────────
+        // Le due forme esistono perché non tutte le tabelle hanno sia `id` sia `created_at`:
+        // su una delle due il filtro può cadere su una colonna che non c'è, ed è atteso. Ma
+        // PostgREST NON lancia: fino al 2026-10-19 il risultato si buttava, il `catch` sotto
+        // non scattava mai e la risposta diceva «Wipe completed» anche a righe rimaste.
+        // Ora una tabella che nessuna delle due ha svuotato finisce in `nonPulite` e la
+        // risposta è 500. La sola tabella ASSENTE (l'elenco è storico) resta «saltata», `info`.
+        const nonPulite: string[] = [];
+        const svuota = async (table: string, tentativi: Array<() => PromiseLike<{ error: unknown }>>) => {
+            // Tutte e due, sempre, come prima: la seconda forma prende anche ciò che la prima lascia.
+            const errori: unknown[] = [];
+            for (const t of tentativi) {
+                const { error } = await t();
+                if (error) errori.push(error);
+            }
+            if (errori.length < tentativi.length) return;
+            if (errori.some((e) => tabellaMancante(e as { code?: string } | null))) {
+                logEvento('db', 'info', { operazione: 'admin/wipe:POST', esito: 'tabella-saltata', tabella: table }, errori[0]);
+                return;
+            }
+            nonPulite.push(table);
+            logEvento('db', 'error', { operazione: 'admin/wipe:POST', esito: 'tabella-non-svuotata', tabella: table }, errori[errori.length - 1]);
+        };
+
         for (const table of tablesToClear) {
             try {
-                await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-                await supabase.from(table).delete().not('created_at', 'is', null);
+                await svuota(table, [
+                    () => supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+                    () => supabase.from(table).delete().not('created_at', 'is', null),
+                ]);
             } catch (e) {
-                // Errore IGNORABILE per costruzione: la lista è un elenco storico e alcune di
-                // queste tabelle non esistono in tutti gli ambienti — un wipe che si fermasse
-                // alla prima assente non pulirebbe le successive. Ma «saltata» va detto (AGENTS
-                // regola 6: un catch che non logga è un bug), altrimenti una tabella rimasta
-                // sporca dopo un wipe "riuscito" sarebbe inspiegabile. `info`: non è un guasto.
-                logEvento('db', 'info', {
+                // Un'eccezione vera (rete, tempo scaduto) non è una tabella assente: la tabella
+                // resta da svuotare, e la risposta lo dice.
+                nonPulite.push(table);
+                logEvento('db', 'error', {
                     operazione: 'admin/wipe:POST',
-                    esito: 'tabella-saltata',
+                    esito: 'tabella-non-svuotata',
                     tabella: table,
                 }, e);
             }
         }
 
-        await supabase.from('alunni').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('parents').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        await supabase.from('adults').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        // Tre chiamate scritte per esteso, non un ciclo: il nome della tabella resta un letterale
+        // che i lock di sede sanno leggere.
+        await svuota('alunni', [() => supabase.from('alunni').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
+        await svuota('parents', [() => supabase.from('parents').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
+        await svuota('adults', [() => supabase.from('adults').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
 
+        if (nonPulite.length > 0) {
+            // `tabelle` porta i soli NOMI delle tabelle rimaste sporche: nessun dato di persona.
+            return NextResponse.json(
+                { success: false, error: 'Scrittura sul database non riuscita', codice: 'SCRITTURA_FALLITA', tabelle: nonPulite },
+                { status: 500 }
+            );
+        }
         return NextResponse.json({ success: true, message: 'Wipe completed' });
     } catch (err) {
         logErrore({ operazione: 'admin/wipe:POST', stato: 500 }, err);

@@ -6,6 +6,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 const getQuerySchema = z.object({
   parentId: zUuid,
@@ -25,20 +26,24 @@ export const GET = withRoute('debug/scrutini:GET', async (request: NextRequest) 
     // ⚠️ GREZZA DI PROPOSITO (A6): route diagnostica. Deve mostrare il contenuto
     // REALE di `legame_genitori_alunni`, non l'unione con `student_parents`:
     // serve proprio a vedere quando le due sorgenti non coincidono.
-    const { data: legami } = await supabase
+    const { data: legami, error: errLegami } = await supabase
       .from('legame_genitori_alunni')
       .select('alunno_id')
       .eq('genitore_id', parentId)
+    // Una route diagnostica che risponde «nessun figlio collegato» a un guasto è una diagnosi
+    // falsa: ogni lettura qui È la risposta, e un guasto la ferma.
+    if (errLegami) return rispostaGuastoDb('debug/scrutini:GET', 'db:legame_genitori_alunni', errLegami)
     result.legami = legami
 
     const figliIds = (legami ?? []).map(l => l.alunno_id)
 
     // 2. Dati alunni collegati
     if (figliIds.length) {
-      const { data: figli } = await supabase
+      const { data: figli, error: errFigli } = await supabase
         .from('alunni')
         .select('id, nome, cognome, section_id, classe_sezione')
         .in('id', figliIds)
+      if (errFigli) return rispostaGuastoDb('debug/scrutini:GET', 'db:alunni', errFigli)
       result.figli = figli
 
       // 3. Per ogni figlio con section_id, cerca scrutini pubblicati
@@ -60,18 +65,20 @@ export const GET = withRoute('debug/scrutini:GET', async (request: NextRequest) 
     }
 
     // 4. Tutti gli scrutini per riferimento
-    const { data: tutti } = await supabase
+    const { data: tutti, error: errTutti } = await supabase
       .from('scrutini')
       .select('id, section_id, stato, pubblicato')
+    if (errTutti) return rispostaGuastoDb('debug/scrutini:GET', 'db:scrutini', errTutti)
     result.tuttiScrutini = tutti
 
     // 5. Cosa restituisce /api/parent/students (auto-resolve)
     // ⚠️ GREZZA DI PROPOSITO (A6), come sopra: `/api/parent/students` usa ormai
     // l'unione, e qui si vuole vedere la differenza fra le due — non nasconderla.
-    const { data: studentsApi } = await supabase
+    const { data: studentsApi, error: errAutoResolve } = await supabase
       .from('legame_genitori_alunni')
       .select('alunno_id, alunni(id, nome, cognome, section_id, classe_sezione)')
       .eq('genitore_id', parentId)
+    if (errAutoResolve) return rispostaGuastoDb('debug/scrutini:GET', 'db:legame_genitori_alunni', errAutoResolve)
     result.autoResolve = studentsApi
 
     return NextResponse.json(result)

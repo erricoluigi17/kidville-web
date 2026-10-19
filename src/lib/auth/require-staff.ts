@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
 import { impostaUtente } from '@/lib/logging/context'
-import { logEvento } from '@/lib/logging/logger'
+import { logEvento, type Livello } from '@/lib/logging/logger'
 import { ACTIVE_ROLE_COOKIE, leggiCookie, risolviRuoloAttivo } from './active-role'
 // Dei cinque predicati si importano per nome solo i DUE che il corpo di questo
 // file usa davvero (`haUnRuolo` nei tre gate, `ruoliDi` in `conPonteGenitore`,
@@ -230,6 +230,26 @@ async function risolviDaAuthUid(authUid: string): Promise<{
 }
 
 /**
+ * Il livello con cui si dice un errore di `auth.getUser()`, o `null` quando non c'è niente da
+ * dire. GoTrue non lancia: l'errore torna nel valore, e il `catch` qui sotto non lo vede mai.
+ *   · `AuthSessionMissingError` — nessun cookie di sessione: è OGNI richiesta anonima (e ogni
+ *     richiesta del percorso header), e non parte nemmeno una chiamata. Nessuna riga;
+ *   · 4xx di GoTrue — token scaduto o non valido: rimanda al login, ed è normale. `info`, come
+ *     `requireSessioneAuth` e come i 4xx di `withRoute`;
+ *   · GoTrue che non risponde (`AuthRetryableFetchError`, status assente o 5xx) — `error`:
+ *     l'utente VALIDO viene trattato da anonimo e rimandato al login, e senza questa riga
+ *     l'unico sintomo sarebbe un'app che butta fuori tutti senza motivo apparente.
+ * Il comportamento verso l'utente non cambia: senza sessione leggibile si resta anonimi
+ * (fail-closed), mai un accesso concesso.
+ */
+function livelloErroreSessione(error: { name?: string; status?: number } | null | undefined): Livello | null {
+  if (!error || error.name === 'AuthSessionMissingError') return null
+  const status = typeof error.status === 'number' ? error.status : 0
+  if (error.name === 'AuthRetryableFetchError' || status === 0 || status >= 500) return 'error'
+  return 'info'
+}
+
+/**
  * Risolve l'identità della richiesta preferendo la **sessione reale** (Supabase
  * Auth) all'identità legacy via header/query. Un `x-user-id`/`?userId=` fornito
  * dal client che **differisce** dalla sessione viene IGNORATO (anti-spoofing).
@@ -249,7 +269,9 @@ export async function resolveIdentity(request: Request): Promise<Identita> {
   let sessionUid: string | null = null
   try {
     const supabase = await createClient()
-    const { data } = await supabase.auth.getUser()
+    const { data, error } = await supabase.auth.getUser()
+    const livello = livelloErroreSessione(error)
+    if (livello) logEvento('auth', livello, { operazione: 'resolveIdentity', esito: 'sessione-non-verificata' }, error)
     sessionUid = data?.user?.id ?? null
   } catch (err) {
     // Errore IGNORABILE, e per questo si logga a `info` invece di tacere (AGENTS
@@ -312,7 +334,9 @@ export async function resolveIdentity(request: Request): Promise<Identita> {
 export async function resolveSessionAppId(): Promise<string | null> {
   try {
     const supabase = await createClient()
-    const { data } = await supabase.auth.getUser()
+    const { data, error } = await supabase.auth.getUser()
+    const livello = livelloErroreSessione(error)
+    if (livello) logEvento('auth', livello, { operazione: 'resolveSessionAppId', esito: 'sessione-non-verificata' }, error)
     const uid = data?.user?.id ?? null
     if (!uid) return null
     const { appId } = await risolviDaAuthUid(uid)
@@ -693,7 +717,12 @@ export async function requireSessioneAuth(): Promise<
       // stabilita `getUser()`, che la verifica col server — ma è ciò che serve a chi
       // debba agire sulle altre sessioni della stessa persona (`auth.admin.signOut`).
       // Letto qui perché è l'unico punto che ha in mano il client di sessione.
-      const { data: sessione } = await supabase.auth.getSession()
+      const { data: sessione, error: erroreSessione } = await supabase.auth.getSession()
+      // Accessorio: l'identità è già verificata, e senza token la route rinuncia solo a
+      // chiudere le altre sessioni. Ma un token assente con una sessione valida va detto.
+      if (erroreSessione) {
+        logEvento('auth', 'warn', { operazione: 'requireSessioneAuth', esito: 'token-sessione-non-letto' }, erroreSessione)
+      }
       accessToken = sessione?.session?.access_token ?? null
     }
   } catch (err) {

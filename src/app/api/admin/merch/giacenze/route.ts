@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { caricaGiacenze } from '@/lib/merch/giacenze'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 
 // GET  /api/admin/merch/giacenze — matrice giacenze automatiche + storico rettifiche.
 // POST /api/admin/merch/giacenze — rettifica di magazzino (carico/reso/scarico/…).
@@ -44,6 +45,8 @@ export const GET = withRoute('admin/merch/giacenze:GET', async (request: Request
       .in('scuola_id', plessi)
       .order('creato_il', { ascending: false })
       .limit(100)
+    // Lo storico accompagna la matrice, non la decide: col guasto esce vuoto, e lo si dice.
+    if (st.error) guastoLetturaAccessoria('db', 'admin/merch/giacenze:GET', 'storico-rettifiche-non-letto', st.error)
     const storico = st.error ? [] : (st.data ?? [])
 
     return NextResponse.json({ success: true, data: { matrice, storico } })
@@ -62,11 +65,13 @@ export const POST = withRoute('admin/merch/giacenze:POST', async (request: Reque
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: art } = await supabase
+    const { data: art, error: errArticolo } = await supabase
       .from('divise_articoli')
       .select('id, scuola_id, nome')
       .eq('id', b.data.articolo_id)
       .maybeSingle()
+    // Un guasto non è «articolo non trovato».
+    if (errArticolo) return rispostaGuastoDb('admin/merch/giacenze:POST', 'db:divise_articoli', errArticolo)
     if (!art) return NextResponse.json({ error: 'Articolo non trovato' }, { status: 404 })
     if (!plessi.includes(art.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: articolo fuori dal tuo plesso' }, { status: 403 })

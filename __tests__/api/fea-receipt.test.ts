@@ -75,6 +75,21 @@ describe('GET /api/fea/receipt', () => {
     expect(res.status).toBe(404)
   })
 
+  it('un guasto del database è 500, non «Firma non trovata»', async () => {
+    // Prima il `{ error }` si buttava: `data` nullo → 404, cioè una ricevuta negata a chi ha
+    // firmato, con la parola «non trovata» detta per un database che non aveva risposto.
+    h.state.rows = { pagella_ricezioni: { data: null, error: { code: '08006', message: 'connessione persa' } } }
+    const res = await GET(req('entita=pagella&id=e-1'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+  })
+
+  it('un id che non è un uuid (22P02) resta il 404 documentato, non un guasto', async () => {
+    h.state.rows = { forms_submissions: { data: null, error: { code: '22P02', message: 'invalid input syntax for type uuid' } } }
+    const res = await GET(req('entita=forms&id=non-un-uuid'))
+    expect(res.status).toBe(404)
+  })
+
   it('403 se il chiamante non è il firmatario', async () => {
     h.state.rows = {
       pagella_ricezioni: { data: { id: 'e-1', scrutinio_id: 's', alunno_id: 'a', genitore_id: 'altro', firma }, error: null },

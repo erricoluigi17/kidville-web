@@ -13,6 +13,7 @@ import { sincronizzaTestata, poCompleto, type StatoRiga } from '@/lib/merch/stat
 import { notificaMerchArrivato } from '@/lib/merch/notify'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 
 // POST /api/admin/merch/ordini-fornitore/checkin — check-in arrivi (anche parziali):
 // le righe indicate passano 'ordinato' → 'arrivato'. Un PO viene chiuso quando
@@ -26,13 +27,24 @@ const bodySchema = z.object({ giorno_competenza: zDataYMD.refine(g => g <= oggiR
 
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
+// Passo accessorio DOPO il check-in (le righe sono già «arrivato»): un guasto qui lascia il PO
+// aperto, non disfa gli arrivi — rispondere 500 inviterebbe a ripetere un check-in riuscito.
+// Si dice con una riga `error`, e il PO si chiude al check-in successivo o a mano.
+const OP_CHECKIN = 'admin/merch/ordini-fornitore/checkin:POST'
+
 async function chiudiPOcompleti(supabase: SupabaseClient, poIds: string[]): Promise<void> {
   for (const poId of [...new Set(poIds)]) {
     if (!poId) continue
-    const { data: righe } = await supabase.from('divise_ordini_righe').select('stato').eq('ordine_fornitore_id', poId)
+    const { data: righe, error: errRighe } = await supabase.from('divise_ordini_righe').select('stato').eq('ordine_fornitore_id', poId)
+    if (errRighe) {
+      // Senza le righe lette non si sa se è completo: non si chiude, e la riga dice quale PO.
+      guastoSecondario('db', OP_CHECKIN, 'stato-po-non-letto', errRighe)
+      continue
+    }
     const stati = (righe ?? []).map((r) => String(r.stato) as StatoRiga)
     if (poCompleto(stati)) {
-      await supabase.from('merch_ordini_fornitore').update({ stato: 'chiuso', chiuso_il: new Date().toISOString() }).eq('id', poId)
+      const { error: errChiudi } = await supabase.from('merch_ordini_fornitore').update({ stato: 'chiuso', chiuso_il: new Date().toISOString() }).eq('id', poId)
+      if (errChiudi) guastoSecondario('db', OP_CHECKIN, 'po-non-chiuso', errChiudi)
     }
   }
 }

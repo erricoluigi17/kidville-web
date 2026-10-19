@@ -54,6 +54,8 @@ interface Stato {
     erroreUtenti?: { message: string } | null
     /** Righe di `utenti` per email, per il controllo preventivo di collisione. */
     utentiPerEmail?: Record<string, string>
+    /** Guasto sulla lettura di `utenti` per il controllo di collisione. */
+    erroreOccupante?: { code: string; message: string } | null
 }
 
 function admin(stato: Stato) {
@@ -82,6 +84,7 @@ function admin(stato: Stato) {
                 select: () => ({
                     eq: (_c: string, v: string) => ({
                         maybeSingle: async () => {
+                            if (stato.erroreOccupante) return { data: null, error: stato.erroreOccupante }
                             const id = (stato.utentiPerEmail ?? {})[v]
                             return { data: id ? { id } : null, error: null }
                         },
@@ -176,6 +179,15 @@ describe('allineaIndirizzoAccesso', () => {
         expect(esito.stato).toBe('allineato')
         expect(esito.stato === 'allineato' && esito.copiaApplicativaIndietro).toBe(true)
         expect(h.logEvento.mock.calls.some(([, livello]) => livello === 'error')).toBe(true)
+    })
+
+    it('se il controllo di collisione non risponde non si scrive niente: un guasto non è «libero»', async () => {
+        const a = admin({ emailAccount: 'vecchio@x.it', erroreOccupante: { code: '57014', message: 'timeout' } })
+        const esito = await allineaIndirizzoAccesso(a.client, UID, 'nuovo@x.it')
+        expect(esito.stato).toBe('sconosciuto')
+        expect(a.calls.update, 'il login non si riscrive alla cieca').toHaveLength(0)
+        expect(h.logEvento.mock.calls.some(([, livello, campi]) =>
+            livello === 'error' && (campi as { esito?: string }).esito === 'occupante-indirizzo-non-letto')).toBe(true)
     })
 
     it('se non si riesce a LEGGERE l’indirizzo dell’account non si scrive niente', async () => {

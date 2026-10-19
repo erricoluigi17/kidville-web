@@ -14,6 +14,7 @@ import { zUuid } from '@/lib/validation/common';
 import { zNumeroPartecipanti } from '@/lib/validation/avvisi';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -238,11 +239,12 @@ export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request
         // Isolamento per sede: l'avviso appartiene a un plesso (`avvisi.scuola_id`)
         // e le risposte portano nome dei genitori e dei bambini. Senza questo si
         // leggevano le adesioni di un avviso di un'altra sede.
-        const { data: avviso } = await supabase
+        const { data: avviso, error: errAvviso } = await supabase
             .from('avvisi')
             .select('id, scuola_id, author_id, target_scope, target_classes')
             .eq('id', avvisoId)
             .maybeSingle();
+        if (errAvviso) return rispostaGuastoDb('avvisi/[id]/risposte:GET', 'db:avvisi', errAvviso);
         if (!avviso) return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
         const plessiAvviso = await scuoleDiUtente(supabase, auth.user);
         if (!avviso.scuola_id || !plessiAvviso.includes(avviso.scuola_id as string)) {
@@ -655,13 +657,18 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
                     esito: 'presa_visione_non_atomica_rpc_assente',
                     avviso: avvisoId,
                 });
-                const { data: esistente } = await supabase
+                const { data: esistente, error: erroreEsistente } = await supabase
                     .from('avvisi_risposte')
                     .select('letto_il, risposta, risposto_il')
                     .eq('avviso_id', avvisoId)
                     .eq('parent_id', parent_id)
                     .eq('student_id', student_id)
                     .maybeSingle();
+                // La riga esistente si riscrive sotto: letta «null» per un guasto, l'upsert
+                // cancellerebbe un'adesione già data. Ci si ferma.
+                if (erroreEsistente) {
+                    return rispostaGuastoDb('avvisi/[id]/risposte:POST', 'db:avvisi_risposte', erroreEsistente);
+                }
                 const { data: rigaRipiego, error: erroreRipiego } = await supabase
                     .from('avvisi_risposte')
                     .upsert(
@@ -793,11 +800,15 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
         // Buffer 60' + debounce per avviso → una notifica riassuntiva, non 30.
         try {
             if (vaNotificatoAutore && avviso?.author_id && avviso.author_id !== parent_id) {
-                const { data: autore } = await supabase
+                const { data: autore, error: erroreAutore } = await supabase
                     .from('utenti')
                     .select('role, ruolo')
                     .eq('id', avviso.author_id)
                     .maybeSingle();
+                // Il ruolo sceglie solo il link della notifica: col ripiego punta all'area docente.
+                if (erroreAutore) {
+                    guastoLetturaAccessoria('avvisi', 'avvisi/[id]/risposte:POST', 'ruolo-autore-non-letto', erroreAutore);
+                }
                 const ruoloAutore = ((autore?.role as string) || (autore?.ruolo as string) || '').toLowerCase();
                 const areaStaff = ['admin', 'coordinator', 'segreteria'].includes(ruoloAutore);
                 await notificaEvento(supabase, {

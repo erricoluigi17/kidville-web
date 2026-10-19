@@ -8,6 +8,7 @@ import { Download, FileSpreadsheet, Receipt, RefreshCw } from 'lucide-react';
 import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { RevisioneFatturePanel, type SedeRevisione } from './RevisioneFatturePanel';
@@ -91,7 +92,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                 setAlunni(frequentanti);
                 if (frequentanti[0]) setAttAlunno((cur) => cur || frequentanti[0].id);
             })
-            .catch(() => {});
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `fiscale-alunni-non-caricati: ${nomeErrore(err)}` }));
     }, [userId, scuolaId]);
 
     const anni = [annoCorrente, annoCorrente - 1, annoCorrente - 2];

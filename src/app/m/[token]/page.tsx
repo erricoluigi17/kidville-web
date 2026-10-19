@@ -6,6 +6,7 @@ import { createAdminClient, createClient } from '@/lib/supabase/server-client'
 import { WizardContainer } from '@/components/features/parent/forms/WizardContainer'
 import { btnClass } from '@/components/ui/Btn'
 import { accessoConsentito } from '@/lib/forms/publish'
+import { logErrore } from '@/lib/logging/logger'
 import type { FormSchemaConfig } from '@/types/database.types'
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -23,11 +24,19 @@ export default async function PublicFormPage({
   const t = await getTranslations('public')
 
   const admin = await createAdminClient()
-  const { data: model } = await admin
+  const { data: model, error: erroreModello } = await admin
     .from('form_models')
     .select('id, title, description, schema, requires_signature, published_at, access_mode')
     .eq('public_token', token)
     .maybeSingle()
+
+  // Un database che non risponde NON è un modulo inesistente: il 404 direbbe alla famiglia che il
+  // link è sbagliato. Si lancia, e risponde la pagina d'errore (`app/error.tsx`, con «Riprova»).
+  // Il token non entra nel messaggio: è la credenziale che apre il modulo.
+  if (erroreModello) {
+    logErrore({ operazione: 'm/[token]:page', stato: 500, evento: 'db:form_models' }, erroreModello)
+    throw new Error('Lettura del modulo pubblico non riuscita')
+  }
 
   if (!model || !model.published_at) {
     notFound()

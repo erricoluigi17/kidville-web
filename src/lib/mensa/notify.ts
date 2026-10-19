@@ -8,6 +8,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
 import { logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 import { formattaIstante } from '@/i18n/config'
 
 const PORTATA_LABEL: Record<string, string> = { primo: 'primo', secondo: 'secondo', contorno: 'contorno', frutta: 'frutta' }
@@ -92,13 +93,16 @@ export async function notificaAllergie(
     const link = `/admin/mensa/cucina?data=${opts.data}`
 
     // dedup: già notificato per questo alunno + questa data?
-    const { data: gia } = await supabase
+    const { data: gia, error: errGia } = await supabase
       .from('notifiche')
       .select('id')
       .eq('tipo', 'mensa_allergia')
       .eq('entita_id', opts.alunnoId)
       .eq('link', link)
       .limit(1)
+    // Il controllo dei doppioni non risponde: si INVIA lo stesso. Per un alert di sicurezza un
+    // doppione è il male minore, l'avviso mancato no. Ma la riga dice perché potrebbe arrivarne due.
+    if (errGia) guastoLetturaAccessoria('mensa', 'notificaAllergie', 'dedup-non-letto-si-invia', errGia)
     if (gia && gia.length > 0) return { inviata: false }
 
     const dettaglio = opts.conflitti

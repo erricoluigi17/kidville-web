@@ -12,6 +12,7 @@ import { TicketResiduiPanel } from '@/components/features/admin/mensa/TicketResi
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 import { gestisceMensa } from '@/lib/mensa/gestione-staff';
 
@@ -35,7 +36,7 @@ function MensaInner() {
         const set = Array.from(new Set(d.map((a: { classe_sezione?: string }) => a.classe_sezione).filter(Boolean))) as string[];
         setSezioni(set.sort());
       }
-    }).catch(() => {});
+    }).catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `mensa-sezioni-non-caricate: ${nomeErrore(err)}` }));
   }, [userId, sedeCorrente]);
 
   const linkCls = 'inline-flex h-[40px] items-center gap-1.5 rounded-pill border border-kidville-line bg-kidville-white px-4 font-barlow text-[13px] font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green';

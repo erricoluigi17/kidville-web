@@ -112,6 +112,40 @@ si mostra, poi si scrive.
 4. **Gli oblii** non si ripristinano mai: chi è stato dimenticato non è più nella scatola (`public.scatola_nera_dimentica`
    l'ha tolto), e `scatola_nera.oblii` dice chi e quando.
 
+## Scenario A0-bis — «Una riga è stata MODIFICATA male negli ultimi 90 giorni» (lo storico delle modifiche)
+
+Dal 2026-10-19 (fase 12 della roadmap) ogni UPDATE su **13 tabelle** lascia in `scatola_nera.modifiche` la riga
+**com'era prima**, per 90 giorni: valutazioni e obiettivi, presenze e giustifiche didattiche, pagamenti, quote e incassi,
+scrutini (giudizi, comportamento, giudizio descrittivo, periodi) e pagelle. L'elenco esatto sta nella migrazione
+`*_scatola_nera_modifiche.sql`. Non si copia una modifica che tocca solo `updated_at`/`aggiornato_il`, né la retention
+notturna delle giustificazioni (svuota testi per legge: copiarli li terrebbe in vita). **Fuori**: l'anagrafica e
+tutto il resto, per cui si passa allo scenario A.
+
+Sempre dal **SQL editor** (ruolo `postgres`), leggendo prima e mostrando poi.
+
+1. **Trova** le modifiche. Per persona o per tabella e periodo:
+   ```sql
+   SELECT id, modificata_il, transazione, tabella, riga_id, cambiate, ruolo, origine
+     FROM scatola_nera.modifiche
+    WHERE '<uuid>' = ANY(soggetti)              -- oppure: tabella = 'valutazioni' AND modificata_il > now() - interval '2 days'
+    ORDER BY id DESC;
+   ```
+   `cambiate` dice quali colonne sono cambiate; una UPDATE su più righe ha una sola `transazione`.
+2. **Guarda** quante righe torneranno indietro, senza copiarne il contenuto: sono dati di minori.
+   `SELECT tabella, count(*) FROM scatola_nera.modifiche WHERE transazione = <n> GROUP BY 1;`
+3. **Ripristina**, dopo averlo mostrato:
+   ```sql
+   SELECT scatola_nera.ripristina_modifiche_transazione(<transazione>);   -- tutta una UPDATE sbagliata
+   SELECT scatola_nera.ripristina_modifiche(ARRAY[<id>, <id>]::bigint[]);  -- oppure solo alcune righe
+   ```
+   La risposta è `{"ripristinate": n, "righe_assenti": [...], "fallite": [...]}`. Le modifiche si riapplicano dalla
+   più recente alla più vecchia, quindi ogni riga torna allo stato **prima della prima** modifica scelta. Una riga
+   che nel frattempo è stata cancellata va in `righe_assenti`: prima la si riporta con lo scenario A0. Le colonne
+   generate e le identity non si toccano. Il ripristino è a sua volta un UPDATE, e quindi lascia la sua copia: se
+   era sbagliato, si annulla allo stesso modo.
+4. **Attenzione al dopo.** Ripristinare un pagamento o un incasso non ricalcola le fatture già emesse né rimanda
+   avvisi già partiti: si guarda la contabilità della persona prima di dire «fatto».
+
 ## Scenario A — «Un errore nei dati è stato scoperto» (riga o tabella sbagliata)
 
 1. **Non fare niente di fretta e non scrivere nulla in produzione.** Annota quando è successo l'errore e cosa è cambiato.

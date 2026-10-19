@@ -68,17 +68,28 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
   let links: { student_id: string; parent_id: string }[] = []
   let parents: { id: string; first_name: string | null; last_name: string | null }[] = []
   if (ids.length > 0) {
-    const { data: l } = await supabase
+    // I genitori si MOSTRANO accanto al bambino prima di un'anonimizzazione che non ha annulla:
+    // un guasto qui non è «nessun genitore collegato». Stesso codice dell'elenco, che il
+    // pannello sa già dire (`OblioPanel`).
+    const { data: l, error: errLegami } = await supabase
       .from('student_parents')
       .select('student_id, parent_id')
       .in('student_id', ids)
+    if (errLegami) {
+      logErrore({ operazione: OP, stato: 500, evento: 'db:student_parents' }, errLegami)
+      return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_CANDIDATI_NON_LETTI' }, { status: 500 })
+    }
     links = (l as typeof links) ?? []
     const parentIds = Array.from(new Set(links.map((x) => x.parent_id)))
     if (parentIds.length > 0) {
-      const { data: p } = await supabase
+      const { data: p, error: errGenitori } = await supabase
         .from('parents')
         .select('id, first_name, last_name')
         .in('id', parentIds)
+      if (errGenitori) {
+        logErrore({ operazione: OP, stato: 500, evento: 'db:parents' }, errGenitori)
+        return NextResponse.json({ error: 'Errore interno', codice: 'GDPR_CANDIDATI_NON_LETTI' }, { status: 500 })
+      }
       parents = (p as typeof parents) ?? []
     }
   }

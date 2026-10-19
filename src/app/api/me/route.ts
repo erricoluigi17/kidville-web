@@ -10,6 +10,7 @@ import type { Profilo } from '@/lib/auth/profili'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 
 // GET /api/me — profilo dell'utente corrente (gated, service-role server-side).
 // Sostituisce le letture anon dirette di `utenti` (gallery docente, modulistica
@@ -37,8 +38,22 @@ export const GET = withRoute('me:GET', async (request: Request) => {
   let authUid: string | null = null
   try {
     const sessionClient = await createClient()
-    const { data } = await sessionClient.auth.getUser()
+    const { data, error } = await sessionClient.auth.getUser()
     authUid = data?.user?.id ?? null
+    // GoTrue non lancia: l'errore torna nel valore, e il `catch` qui sotto non lo vede. Stessa
+    // scala di `livelloErroreSessione` in `require-staff.ts` (che non è esportata, e quel modulo
+    // è sostituito per intero da centinaia di mock): nessuna sessione = ogni richiesta anonima,
+    // nessuna riga; token scaduto o non valido (4xx) = rimanda al login, `info`; GoTrue che non
+    // risponde = un utente VALIDO trattato da anonimo, `error`. Si prosegue senza sessione in
+    // tutti e tre i casi, come prima: fail-closed, mai un accesso concesso.
+    if (error && error.name !== 'AuthSessionMissingError') {
+      const status = typeof error.status === 'number' ? error.status : 0
+      const grave = error.name === 'AuthRetryableFetchError' || status === 0 || status >= 500
+      logEvento('auth', grave ? 'error' : 'info', {
+        operazione: 'me:GET',
+        esito: grave ? 'sessione-non-verificabile' : 'sessione-non-valida',
+      }, error)
+    }
   } catch (err) {
     // Errore IGNORABILE, e per questo si logga a `info` invece di tacere (AGENTS regola 6:
     // un catch che non logga è un bug; se un errore è davvero ignorabile, lo si logga
@@ -62,10 +77,30 @@ export const GET = withRoute('me:GET', async (request: Request) => {
 
   if (authUid) {
     // Percorso sessione: 2 query parallele, niente lookup ripetuti.
-    const [{ data: staff }, { data: parent }] = await Promise.all([
+    const [{ data: staffLetto, error: errStaff }, { data: parentLetto, error: errParent }] = await Promise.all([
       supabase.from('utenti').select('*').eq('id', authUid).maybeSingle(),
       supabase.from('parents').select('*').eq('auth_user_id', authUid).maybeSingle(),
     ])
+    /*
+     * UN GUASTO NON È «UTENTE NON TROVATO». Prima un `{ error }` qui diventava `null`, e un
+     * utente autenticato riceveva il 401 «Utente non trovato» — che la pagina di accesso tratta
+     * come accesso non completato. Ora:
+     *   · la riga `utenti` decide ruolo e archiviazione: se non si legge, 500;
+     *   · il ponte `parents` aggiunge la veste di genitore a chi è GIÀ staff vivo: lì il guasto
+     *     degrada (la schermata si apre col solo profilo da staff) e lo si dice. Dove invece è
+     *     l'unica identità possibile — nessuno staff vivo — decide anche lui: 500.
+     * Questa route si chiama a ogni apertura dell'app: il 500 ha il codice, e il guasto la riga.
+     */
+    if (errStaff) return rispostaGuastoDb('me:GET', 'db:utenti', errStaff)
+    const staffVivoLetto = !!staffLetto && !profiloStaffRevocato(
+      (staffLetto as { archiviato_il?: string | null }).archiviato_il,
+    )
+    if (errParent) {
+      if (!staffVivoLetto) return rispostaGuastoDb('me:GET', 'db:parents', errParent)
+      guastoLetturaAccessoria('auth', 'me:GET', 'veste-genitore-non-letta', errParent)
+    }
+    const staff = staffLetto
+    const parent = errParent ? null : parentLetto
     /*
      * L'ARCHIVIAZIONE, E PERCHÉ VA GESTITA **QUI** E NON SOLO IN `profili.ts`.
      *
@@ -122,10 +157,12 @@ export const GET = withRoute('me:GET', async (request: Request) => {
     // Il path non serve come campo: `operazione` lo dice già, ed è la chiave con cui si cerca.
     logEvento('auth', 'warn', { operazione: 'me:GET', esito: 'header-fallback' })
 
-    const { data: staff } = await supabase.from('utenti').select('*').eq('id', headerId).maybeSingle()
+    const { data: staff, error: errStaff } = await supabase.from('utenti').select('*').eq('id', headerId).maybeSingle()
+    if (errStaff) return rispostaGuastoDb('me:GET', 'db:utenti', errStaff)
     data = staff as Record<string, unknown> | null
     if (!data) {
-      const { data: parent } = await supabase.from('parents').select('*').eq('id', headerId).maybeSingle()
+      const { data: parent, error: errParent } = await supabase.from('parents').select('*').eq('id', headerId).maybeSingle()
+      if (errParent) return rispostaGuastoDb('me:GET', 'db:parents', errParent)
       if (parent) {
         data = parent as Record<string, unknown>
         daParents = true

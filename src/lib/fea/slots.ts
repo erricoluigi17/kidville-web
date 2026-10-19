@@ -57,17 +57,25 @@ export async function recordSignerSlot(
   }
 }
 
-/** Tutti gli slot di un'entità, ordinati per slot_index. */
+/**
+ * Tutti gli slot di un'entità, ordinati per slot_index.
+ *
+ * Un guasto del database LANCIA (errore con `cause`, che il `logErrore` del chiamante registra
+ * col codice Postgres). Un elenco vuoto qui decide: «nessuno ha ancora firmato» farebbe scrivere
+ * il secondo firmatario sullo slot 0 del primo, e calcolerebbe il completamento di una firma
+ * congiunta su un conteggio falso.
+ */
 export async function getSlots(
   supabase: SupabaseClient,
   entitaTipo: string,
   entitaId: string
 ): Promise<SignerSlot[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('fea_signatures')
     .select('*')
     .eq('entita_tipo', entitaTipo)
     .eq('entita_id', entitaId)
     .order('slot_index', { ascending: true })
+  if (error) throw new Error('Lettura degli slot di firma non riuscita', { cause: error })
   return (data as SignerSlot[] | null) ?? []
 }

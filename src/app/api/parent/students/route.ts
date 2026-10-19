@@ -8,6 +8,7 @@ import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo'
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireUser), non dall'handler.
@@ -132,13 +133,16 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
     // Arricchimento sede PER FIGLIO (multi-sede): scuola_id è soft-ref senza FK
     // → lookup separato sugli id distinti. Best-effort: un errore qui non fa
     // fallire la lista figli (campi a null) — regge anche il DB E2E CI non migrato.
+    // Best-effort ma non muto: la riga dice che i campi sede sono usciti a null
+    // per un guasto, non perché la sede non li ha.
     const scuolaIds = [...new Set(rows.map(r => r.scuola_id).filter(Boolean))] as string[]
     const scuolaById = new Map<string, { nome: string | null; citta: string | null; indirizzo: string | null; anagrafica: AnagraficaSede }>()
     if (scuolaIds.length > 0) {
-      const { data: scuole } = await supabase
+      const { data: scuole, error: errScuole } = await supabase
         .from('scuole')
         .select('id, nome, citta, indirizzo, config')
         .in('id', scuolaIds)
+      if (errScuole) guastoLetturaAccessoria('multi_sede', 'parent/students:GET', 'sedi-figli-non-lette', errScuole)
       for (const s of scuole ?? []) {
         scuolaById.set(s.id as string, {
           nome: (s.nome as string | null) ?? null,

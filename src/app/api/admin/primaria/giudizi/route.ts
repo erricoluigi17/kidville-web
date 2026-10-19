@@ -7,6 +7,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 
 // ============================================================
@@ -66,7 +67,7 @@ export const GET = withRoute('admin/primaria/giudizi:GET', async (request: NextR
     if (s.response) return s.response
     const sede = s.scuolaId!
 
-    const [{ data: scala }, { data: template }] = await Promise.all([
+    const [{ data: scala, error: errScala }, { data: template, error: errTemplate }] = await Promise.all([
       supabase.from('giudizi_sintetici_scala').select('*').eq('scuola_id', sede).order('ordine'),
       supabase
         .from('giudizio_template')
@@ -74,6 +75,9 @@ export const GET = withRoute('admin/primaria/giudizi:GET', async (request: NextR
         .or(`scuola_id.eq.${sede},scuola_id.is.null`)
         .order('dimensione'),
     ])
+    // Sono il contenuto della risposta: un guasto non è «scala non ancora configurata».
+    if (errScala) return rispostaGuastoDb('admin/primaria/giudizi:GET', 'db:giudizi_sintetici_scala', errScala)
+    if (errTemplate) return rispostaGuastoDb('admin/primaria/giudizi:GET', 'db:giudizio_template', errTemplate)
     return NextResponse.json({ success: true, data: { scala: scala ?? [], template: template ?? [] } })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/giudizi:GET', stato: 500 }, err)
@@ -123,12 +127,14 @@ export const POST = withRoute('admin/primaria/giudizi:POST', async (request: Nex
 
       // Etichetta vecchia: serve per propagare la rinomina ai giudizi descrittivi
       // configurati (referenziati per testo via etichetta_voto).
-      const { data: prev } = await supabase
+      const { data: prev, error: errPrev } = await supabase
         .from('giudizi_sintetici_scala')
         .select('etichetta')
         .eq('id', id)
         .eq('scuola_id', sede)
         .maybeSingle()
+      // Un guasto non è «giudizio non trovato».
+      if (errPrev) return rispostaGuastoDb('admin/primaria/giudizi:POST', 'db:giudizi_sintetici_scala', errPrev)
       if (!prev) return NextResponse.json({ error: 'Giudizio non trovato' }, { status: 404 })
 
       const { data, error } = await supabase

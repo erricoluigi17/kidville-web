@@ -97,7 +97,7 @@ export function LockerTodayCard({ studentId, classeSezione }: Props) {
       .then((d) => {
         if (active && Array.isArray(d)) setItems(d)
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-home-scorte-non-lette: ${nomeErrore(err)}`, route: '/parent' }))
       .finally(() => {
         if (active) setLoaded(true)
       })

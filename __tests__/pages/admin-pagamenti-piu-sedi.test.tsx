@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C } from '../fixtures/sedi';
 import { SedeProvider, useSediAttive } from '@/lib/context/sede-context';
@@ -209,7 +209,9 @@ describe('/admin/pagamenti — più sedi selezionate', () => {
     expect(screen.queryByTestId('pannello-scadenzario')).toBeNull();
     // …e poi il pannello arriva: la PRESENZA chiude il test, non un'assenza.
     await screen.findByTestId('pannello-scadenzario');
-    expect(h.montaggi.scadenzario).toBe(1);
+    // Il contatore scatta in un EFFETTO, dopo il render: `findBy` trova il pannello prima che
+    // l'effetto giri, e sotto carico (suite intera, 19/10) il conteggio era ancora `undefined`.
+    await waitFor(() => expect(h.montaggi.scadenzario).toBe(1));
   });
 
   it('elenco sedi non arrivato: dice il guasto invece di aprire i pannelli su uno scope ignoto', async () => {
@@ -245,12 +247,12 @@ describe('/admin/pagamenti — più sedi selezionate', () => {
     // ricaricare da sola quando cambia lo scope, anche se `scuolaId` non cambia.
     renderPagina(<TogliSede id={SEDE_C} />);
     await screen.findByTestId('pannello-scadenzario');
-    expect(h.montaggi.scadenzario).toBe(1);
+    await waitFor(() => expect(h.montaggi.scadenzario).toBe(1));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'togli-sede' }));
     });
     const dopo = await screen.findByTestId('pannello-scadenzario');
     expect(dopo.getAttribute('data-scuola')).toBe('null');
-    expect(h.montaggi.scadenzario).toBe(2);
+    await waitFor(() => expect(h.montaggi.scadenzario).toBe(2));
   });
 });

@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   presenzePrima: [] as Array<Record<string, unknown>>,
   inserts: [] as Array<Record<string, unknown>>,
   deletes: [] as Array<Record<string, unknown>>,
+  /** Guasto sulla sola lettura dei NOMI degli assenti (`select('id, nome')` su `alunni`). */
+  nomiInGuasto: false,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -22,18 +24,25 @@ vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(as
 
 function chain(table: string) {
   const filtri: Record<string, unknown> = {}
+  let colonne = ''
   const risolvi = () => {
     if (table === 'presenze') return { data: h.presenzePrima, error: null }
     if (table === 'sections') return { data: { scuola_id: 's1' }, error: null }
     if (table === 'admin_settings') return { data: { notifiche_config: { toggles: {} } }, error: null }
+    if (table === 'alunni' && h.nomiInGuasto && colonne === 'id, nome') {
+      return { data: null, error: { code: '08006', message: 'connection failure' } }
+    }
     if (table === 'alunni') return { data: [{ id: 'a1', nome: 'Sofia' }], error: null }
     // `alunno_id` presente: i genitori si risolvono ora sull'unione
     // runtime+anagrafica, che mappa alunno → genitori.
-    if (table === 'legame_genitori_alunni') return { data: [{ alunno_id: 'a1', genitore_id: 'p1' }], error: null }
+    if (table === 'legame_genitori_alunni') {
+      return { data: [{ alunno_id: 'a1', genitore_id: 'p1' }, ...(h.nomiInGuasto ? [{ alunno_id: A1, genitore_id: 'p1' }] : [])], error: null }
+    }
     return { data: [], error: null }
   }
   const b: Record<string, unknown> = {}
-  for (const m of ['select', 'eq', 'in', 'order', 'limit']) b[m] = () => b
+  for (const m of ['eq', 'in', 'order', 'limit']) b[m] = () => b
+  b.select = (c?: string) => { colonne = c ?? ''; return b }
   b.upsert = () => ({ select: async () => ({ data: [], error: null }) })
   b.insert = async (rows: Record<string, unknown>[]) => { h.inserts.push(...rows); return { error: null } }
   b.delete = () => {
@@ -67,6 +76,7 @@ beforeEach(() => {
   h.presenzePrima = []
   h.inserts = []
   h.deletes = []
+  h.nomiInGuasto = false
   invalidateNotificheConfigCache()
 })
 
@@ -91,6 +101,19 @@ describe('POST /api/primaria/appello — trigger assenza', () => {
     h.presenzePrima = [{ alunno_id: A1, stato: 'assente' }]
     await POST(req([{ alunnoId: A1, stato: 'assente' }]))
     expect(h.inserts.filter((r) => r.tipo === 'assenza_non_comunicata')).toHaveLength(0)
+  })
+
+  // Fase 11 (errori non ignorati): prima un guasto sulla lettura dei NOMI
+  // (`{ data: null }`) faceva saltare in silenzio TUTTI gli avvisi di assenza
+  // non comunicata — il ciclo girava su `anagrafiche ?? []`. Il nome serve solo
+  // al testo: l'avviso parte lo stesso, col ripiego «Tuo figlio».
+  it('i nomi non letti (guasto) NON fermano l’avviso: parte per l’assente, col ripiego', async () => {
+    h.nomiInGuasto = true
+    const res = await POST(req([{ alunnoId: A1, stato: 'assente' }]))
+    expect(res.status).toBe(200)
+    const notifica = h.inserts.find((r) => r.tipo === 'assenza_non_comunicata')
+    expect(notifica).toMatchObject({ utente_id: 'p1', entita_tipo: 'presenza', entita_id: A1 })
+    expect(String(notifica?.corpo)).toContain('Tuo figlio')
   })
 
   it('correzione assente → presente: revoca le notifiche pending', async () => {

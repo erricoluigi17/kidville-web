@@ -413,6 +413,10 @@ describe('lock — pagine legali', () => {
         // giorni e una mensile dodici mesi. Due trattamenti che allungano la vita di un
         // dato cancellato, e che il documento non diceva. La '2026-09-12' resta dov'è.
         '2026-10-09': 'd9e596ad0b262768e8b1c27f53e0b074fe0162834815d7253eef07d8e92e65bf',
+        // 2026-10-20 — la voce «copie tecniche» dice anche delle MODIFICHE: la versione di prima
+        // di una frequenza, di una valutazione o di un pagamento resta novanta giorni (fase 12,
+        // `scatola_nera.modifiche`). La '2026-10-09' resta dov'è.
+        '2026-10-20': 'f832e6645efa39876f852af8e78b3525ce486d9b917d951187ab4a543c4ffc96',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

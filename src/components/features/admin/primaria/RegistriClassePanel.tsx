@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3, GraduationCap, FolderLock } from 'lucide-react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Section { id: string; name: string; school_type: string; scholastic_year?: string | null }
 
@@ -37,7 +38,7 @@ export function RegistriClassePanel({ scuolaId, userId }: { scuolaId: string; us
         setSezioni(list);
         if (list.length) setSezioneId((p) => p || list[0].id);
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-registri-sezioni-non-caricate: ${nomeErrore(err)}` }));
   }, [scuolaId]);
 
   return (

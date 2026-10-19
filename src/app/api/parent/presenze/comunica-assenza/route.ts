@@ -601,9 +601,13 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     // user agent di A. Al modulo servono `id` e `data`.
     const COLONNE_ESITO = 'id, data'
 
-    /** UPDATE con la condizione nella WHERE: ritorna le righe DAVVERO colpite. */
-    const aggiornaSeNonRegistrata = async () =>
-      await supabase
+    /**
+     * UPDATE con la condizione nella WHERE: ritorna le righe DAVVERO colpite.
+     * Restituisce la richiesta, non il suo esito: chi la chiama la attende e ne
+     * guarda `error` (le due chiamate qui sotto rispondono 500 se c'è).
+     */
+    const aggiornaSeNonRegistrata = () =>
+      supabase
         .from('presenze')
         .update(rigaAggiornamento)
         .eq('alunno_id', studentId)

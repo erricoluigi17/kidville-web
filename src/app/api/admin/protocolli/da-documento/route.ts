@@ -15,6 +15,7 @@ import {
 } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoSecondario, rispostaGuastoDb } from '@/lib/db/guasto'
 
 // «Protocolla» sui documenti già prodotti dall'app (decisione #21):
 // certificati competenze → USCITA; moduli firmati (modulistica) → INGRESSO.
@@ -31,17 +32,23 @@ const postBodySchema = z.object({
 
 type Alunno = { nome: string; cognome: string } | null
 
+/**
+ * Il nome dell'alunno finisce nell'OGGETTO di un protocollo numerato, che non si riscrive:
+ * un guasto non deve diventare «alunno/a» senza nome. Per questo l'esito distingue il guasto
+ * dal «nessun alunno» (`alunno: null`), e chi chiama si ferma sul primo.
+ */
 async function caricaAlunno(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   alunnoId: string | null
-): Promise<Alunno> {
-  if (!alunnoId) return null
-  const { data } = await supabase
+): Promise<{ ok: true; alunno: Alunno } | { ok: false; error: unknown }> {
+  if (!alunnoId) return { ok: true, alunno: null }
+  const { data, error } = await supabase
     .from('alunni')
     .select('nome, cognome')
     .eq('id', alunnoId)
     .maybeSingle()
-  return (data as Alunno) ?? null
+  if (error) return { ok: false, error }
+  return { ok: true, alunno: (data as Alunno) ?? null }
 }
 
 export const POST = withRoute('admin/protocolli/da-documento:POST', async (request: NextRequest) => {
@@ -87,7 +94,9 @@ export const POST = withRoute('admin/protocolli/da-documento:POST', async (reque
             { status: 400 }
           )
         }
-        const alunno = await caricaAlunno(supabase, cert.alunno_id)
+        const letto = await caricaAlunno(supabase, cert.alunno_id)
+        if (!letto.ok) return rispostaGuastoDb('admin/protocolli/da-documento:POST', 'db:alunni', letto.error)
+        const alunno = letto.alunno
         const intestato = alunno ? `${alunno.cognome} ${alunno.nome}` : 'alunno/a'
         scuolaId = cert.scuola_id
         bytes = await scaricaDaBucket(supabase, BUCKET_CERTIFICATI, cert.file_url)
@@ -117,16 +126,20 @@ export const POST = withRoute('admin/protocolli/da-documento:POST', async (reque
             { status: 400 }
           )
         }
-        const { data: form } = await supabase
+        const { data: form, error: errForm } = await supabase
           .from('forms_templates')
           .select('title, scuola_id')
           .eq('id', sub.form_id)
           .maybeSingle()
+        // Un guasto non è «modulo non trovato».
+        if (errForm) return rispostaGuastoDb('admin/protocolli/da-documento:POST', 'db:forms_templates', errForm)
         const f = form as { title: string | null; scuola_id: string | null } | null
         if (!f?.scuola_id || !sedi.includes(f.scuola_id)) {
           return NextResponse.json({ error: 'Modulo non trovato' }, { status: 404 })
         }
-        const alunno = await caricaAlunno(supabase, sub.student_id)
+        const letto = await caricaAlunno(supabase, sub.student_id)
+        if (!letto.ok) return rispostaGuastoDb('admin/protocolli/da-documento:POST', 'db:alunni', letto.error)
+        const alunno = letto.alunno
         const intestato = alunno ? ` — ${alunno.cognome} ${alunno.nome}` : ''
         scuolaId = f.scuola_id
         bytes = await scaricaDaBucket(supabase, BUCKET_MODULI, sub.pdf_path)
@@ -158,8 +171,13 @@ export const POST = withRoute('admin/protocolli/da-documento:POST', async (reque
       })
 
       const nomeDownload = `Prot-${String(esito.numero).padStart(7, '0')}-${esito.anno}.pdf`
+      // Il protocollo è GIÀ registrato: un link non firmato si rigenera dall'elenco, e la
+      // risposta esce senza. Ma lo si dice, invece di inghiottirlo.
       const downloadTimbrato = await firmaDownload(supabase, esito.pathTimbrato, nomeDownload).catch(
-        () => null
+        (err: unknown) => {
+          guastoSecondario('protocolli', 'admin/protocolli/da-documento:POST', 'link-timbrato-non-firmato', err)
+          return null
+        }
       )
 
       return NextResponse.json(

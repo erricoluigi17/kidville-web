@@ -15,6 +15,9 @@ const h = vi.hoisted(() => ({
   parentsById: null as Record<string, unknown> | null, // riga `parents` .eq('id', …)
   parentsByAuth: null as Record<string, unknown> | null, // riga `parents` .eq('auth_user_id', …)
   dbQueries: 0, // contatore round-trip DB (from() = 1 query in questa route)
+  // Guasti finti, per tabella: un `{ error }` di PostgREST, che non lancia.
+  erroreUtenti: null as { code: string; message: string } | null,
+  erroreParents: null as { code: string; message: string } | null,
   getUserCalls: 0, // contatore chiamate auth.getUser
 }))
 
@@ -30,6 +33,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
           return b
         },
         maybeSingle: async () => {
+          if (table === 'utenti' && h.erroreUtenti) return { data: null, error: h.erroreUtenti }
+          if (table === 'parents' && h.erroreParents) return { data: null, error: h.erroreParents }
           if (table === 'utenti') return { data: h.utenti, error: null }
           if (table === 'parents') {
             return { data: col === 'auth_user_id' ? h.parentsByAuth : h.parentsById, error: null }
@@ -68,6 +73,8 @@ beforeEach(() => {
   h.parentsByAuth = null
   h.dbQueries = 0
   h.getUserCalls = 0
+  h.erroreUtenti = null
+  h.erroreParents = null
 })
 
 describe('GET /api/me', () => {
@@ -162,5 +169,32 @@ describe('GET /api/me', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+})
+
+describe('GET /api/me — un guasto del database non è «utente non trovato»', () => {
+  // Prima un `{ error }` diventava `null` e un utente AUTENTICATO riceveva 401 «Utente non
+  // trovato», che la pagina di accesso tratta come accesso non completato.
+  it('la riga utenti non si legge: 500 con codice, mai 401', async () => {
+    h.erroreUtenti = { code: '08006', message: 'connessione persa' }
+    const res = await GET(new Request('http://localhost/api/me'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+  })
+
+  it('il ponte parents non si legge ma lo staff è vivo: la schermata si apre col solo profilo da staff', async () => {
+    h.erroreParents = { code: '08006', message: 'connessione persa' }
+    const res = await GET(new Request('http://localhost/api/me'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.role).toBe('educator')
+    expect(body.profili).toEqual([{ ruolo: 'educator', area: 'teacher' }])
+  })
+
+  it('il ponte parents non si legge e non c\'è staff: è l\'unica identità possibile, 500', async () => {
+    h.utenti = null
+    h.erroreParents = { code: '08006', message: 'connessione persa' }
+    const res = await GET(new Request('http://localhost/api/me'))
+    expect(res.status).toBe(500)
   })
 })

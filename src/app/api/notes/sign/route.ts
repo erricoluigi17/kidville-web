@@ -8,6 +8,9 @@ import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria, guastoSecondario, rispostaGuastoDb } from '@/lib/db/guasto';
+
+const OP = 'notes/sign:POST';
 
 const postBodySchema = z.object({
     notaId: zUuid,
@@ -29,11 +32,14 @@ export const POST = withRoute('notes/sign:POST', async (request: Request) => {
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        const { data: nota } = await supabase
+        // Un guasto qui NON è «nota non trovata»: il genitore leggerebbe che la nota non
+        // esiste più, e la firma (che ha valore legale) non verrebbe mai riprovata.
+        const { data: nota, error: errNota } = await supabase
             .from('note_disciplinari')
             .select('id, alunno_id')
             .eq('id', notaId)
             .maybeSingle();
+        if (errNota) return rispostaGuastoDb(OP, 'db:note_disciplinari', errNota);
         if (!nota) {
             return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 });
         }
@@ -69,18 +75,22 @@ export const POST = withRoute('notes/sign:POST', async (request: Request) => {
 
         // Notifica al docente autore: firma ricevuta (best-effort).
         try {
-            const { data: notaFull } = await supabase
+            const { data: notaFull, error: errAutore } = await supabase
                 .from('note_disciplinari')
                 .select('maestra_id')
                 .eq('id', notaId)
                 .maybeSingle();
+            // La firma è già scritta: senza l'autore la notifica non parte, e la riga lo dice.
+            if (errAutore) guastoSecondario('notifica', OP, 'autore-nota-non-letto', errAutore);
             const maestraId = notaFull?.maestra_id as string | undefined;
             if (maestraId && maestraId !== userId) {
-                const { data: alunno } = await supabase
+                const { data: alunno, error: errAlunno } = await supabase
                     .from('alunni')
                     .select('nome, cognome, scuola_id')
                     .eq('id', nota.alunno_id)
                     .maybeSingle();
+                // Serve solo al testo della notifica: si prosegue con «un alunno».
+                if (errAlunno) guastoLetturaAccessoria('notifica', OP, 'alunno-notifica-non-letto', errAlunno);
                 const firmatario = await nomeUtente(supabase, userId);
                 await notificaEvento(supabase, {
                     tipo: 'firma_ricevuta',

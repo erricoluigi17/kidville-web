@@ -24,6 +24,7 @@ import {
 } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoSecondario, rispostaGuastoDb } from '@/lib/db/guasto'
 
 // «Genera documento» su richiesta (decisione #22): certificato di
 // frequenza/iscrizione, nulla osta o testo libero su carta intestata, generato
@@ -79,11 +80,14 @@ export const POST = withRoute('admin/protocolli/genera-documento:POST', async (r
 
       // Carta intestata: anagrafica reale della sede (scuole.config.anagrafica),
       // con fallback su schools per nome/città/indirizzo. Righe mai inventate.
-      const { data: sedeRow } = await supabase
+      // Un guasto qui produrrebbe un documento protocollato (numerato, non riscrivibile) senza
+      // intestazione o col ripiego sbagliato: si ferma prima di registrare.
+      const { data: sedeRow, error: errSede } = await supabase
         .from('scuole')
         .select('nome, citta, indirizzo, config')
         .eq('id', scuolaId)
         .maybeSingle()
+      if (errSede) return rispostaGuastoDb('admin/protocolli/genera-documento:POST', 'db:scuole', errSede)
       let sede = sedeRow as {
         nome: string | null
         citta: string | null
@@ -91,11 +95,12 @@ export const POST = withRoute('admin/protocolli/genera-documento:POST', async (r
         config: unknown
       } | null
       if (!sede) {
-        const { data: schoolRow } = await supabase
+        const { data: schoolRow, error: errSchool } = await supabase
           .from('schools')
           .select('nome, citta, indirizzo')
           .eq('id', scuolaId)
           .maybeSingle()
+        if (errSchool) return rispostaGuastoDb('admin/protocolli/genera-documento:POST', 'db:schools', errSchool)
         const s = schoolRow as { nome: string | null; citta: string | null; indirizzo: string | null } | null
         sede = s ? { ...s, config: null } : null
       }
@@ -165,8 +170,13 @@ export const POST = withRoute('admin/protocolli/genera-documento:POST', async (r
       })
 
       const nomeDownload = `Prot-${String(esito.numero).padStart(7, '0')}-${esito.anno}.pdf`
+      // Il protocollo è GIÀ registrato: un link non firmato si rigenera dall'elenco, e la
+      // risposta esce senza. Ma lo si dice, invece di inghiottirlo.
       const downloadTimbrato = await firmaDownload(supabase, esito.pathTimbrato, nomeDownload).catch(
-        () => null
+        (err: unknown) => {
+          guastoSecondario('protocolli', 'admin/protocolli/genera-documento:POST', 'link-timbrato-non-firmato', err)
+          return null
+        }
       )
 
       return NextResponse.json(

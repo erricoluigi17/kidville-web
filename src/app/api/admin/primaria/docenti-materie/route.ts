@@ -7,6 +7,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ============================================================
 // Assegnazione DOCENTE × CLASSE × MATERIA (contitolarità + isolamento materia).
@@ -101,9 +102,12 @@ export const POST = withRoute('admin/primaria/docenti-materie:POST', async (requ
     if (fuoriScopeSez) return fuoriScopeSez
 
     // Garantisce anche il legame docente↔sezione (utenti_sezioni canonico).
-    await supabase
+    // Senza quel legame la docente avrebbe la materia ma non vedrebbe la classe: si ferma qui,
+    // prima di scrivere l'assegnazione, invece di rispondere 201 a metà.
+    const { error: errLegame } = await supabase
       .from('utenti_sezioni')
       .upsert({ utente_id: utenteId, section_id: sectionId }, { onConflict: 'utente_id,section_id', ignoreDuplicates: true })
+    if (errLegame) return rispostaGuastoDb('admin/primaria/docenti-materie:POST', 'db:utenti_sezioni', errLegame, 'scrittura')
 
     const { data, error } = await supabase
       .from('utenti_sezioni_materie')
@@ -136,8 +140,10 @@ export const DELETE = withRoute('admin/primaria/docenti-materie:DELETE', async (
 
     // La riga da cancellare porta con sé la sezione: si risale e si verifica il
     // plesso prima di toccarla.
-    const { data: riga } = await supabase
+    const { data: riga, error: errRiga } = await supabase
       .from('utenti_sezioni_materie').select('id, section_id').eq('id', id).maybeSingle()
+    // Un guasto non è «assegnazione non trovata».
+    if (errRiga) return rispostaGuastoDb('admin/primaria/docenti-materie:DELETE', 'db:utenti_sezioni_materie', errRiga)
     if (!riga) return NextResponse.json({ error: 'Assegnazione non trovata' }, { status: 404 })
     const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, riga.section_id as string)
     if (fuoriScopeSez) return fuoriScopeSez

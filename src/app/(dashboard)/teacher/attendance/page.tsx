@@ -9,6 +9,7 @@ import { MonthlyAttendanceTable } from '@/components/features/teacher/attendance
 // il cockpit della segreteria, che di questa shell mobile non ha niente.
 import { AppelloGiornaliero } from '@/components/features/teacher/attendance/AppelloGiornaliero';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
 import { COLONNA_DOCENTE, COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
@@ -60,7 +61,7 @@ function TeacherAttendanceContent() {
                 setAvailableSections(secs);
                 if (secs.length > 0) setSezione((prev) => prev || secs[0].name);
             })
-            .catch(() => {})
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `presenze-sezioni-docente-non-caricate: ${nomeErrore(err)}`, route: '/teacher/attendance' }))
             .finally(() => setSectionsLoaded(true));
     }, [teacherId]);
 

@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { dataCivile } from '@/i18n/config';
 import { etichetteAllergie, useAllergeneLabel } from '@/lib/mensa/allergeni';
 import { COLONNA_DOCENTE } from '@/lib/ui/larghezza-pagina';
@@ -37,7 +38,7 @@ export default function ClasseOverviewPage() {
           setMaterie(d.data.materie ?? []);
         }
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-classe-non-caricata: ${nomeErrore(err)}` }));
   }, [sectionId, userId]);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export default function ClasseOverviewPage() {
     fetch(`/api/primaria/appello?sectionId=${sectionId}&data=${today}&userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (d.success && Array.isArray(d.data)) setPresenze(d.data); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-appello-non-caricato: ${nomeErrore(err)}` }));
   }, [sectionId, today, userId]);
 
   const presenti = presenze.filter((p) => p.stato === 'presente').length;

@@ -24,6 +24,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -110,14 +111,25 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
       const fuoriScope = await assertAlunnoInScope(supabase, auth.user, aid)
       if (fuoriScope) return fuoriScope
     }
-    const { data: cat } = await supabase
-      .from('payment_categories').select('id').eq('slug', 'gita').is('scuola_id', null).single()
+    // `maybeSingle` e non `single`: una categoria «gita» che non c'è non è un guasto
+    // (con `single` lo diventava, PGRST116). Senza categoria non ci sono pagamenti di
+    // gita, e la query dei pagamenti non parte (prima partiva lo stesso, filtrata su
+    // `categoria_id = undefined`).
+    const { data: cat, error: errCat } = await supabase
+      .from('payment_categories').select('id').eq('slug', 'gita').is('scuola_id', null).maybeSingle()
+    // `quota_ok` è metà della risposta: un guasto non è «quota non pagata».
+    if (errCat) return rispostaGuastoDb('teacher/uscite:GET', 'db:payment_categories', errCat)
 
     // pagamenti gita rilevanti (NON selezioniamo l'importo)
-    let pagQuery = supabase.from('pagamenti').select('alunno_id, stato').eq('categoria_id', cat?.id)
-    if (gruppo) pagQuery = pagQuery.eq('gruppo', gruppo)
-    if (alunnoIds.length > 0) pagQuery = pagQuery.in('alunno_id', alunnoIds)
-    const { data: pagamenti } = await pagQuery
+    let pagamenti: { alunno_id: string; stato: string }[] = []
+    if (cat?.id) {
+      let pagQuery = supabase.from('pagamenti').select('alunno_id, stato').eq('categoria_id', cat.id)
+      if (gruppo) pagQuery = pagQuery.eq('gruppo', gruppo)
+      if (alunnoIds.length > 0) pagQuery = pagQuery.in('alunno_id', alunnoIds)
+      const { data: righePagamenti, error: errPagamenti } = await pagQuery
+      if (errPagamenti) return rispostaGuastoDb('teacher/uscite:GET', 'db:pagamenti', errPagamenti)
+      pagamenti = (righePagamenti ?? []) as { alunno_id: string; stato: string }[]
+    }
 
     // quota_ok = esiste un pagamento gita 'pagato' per quell'alunno
     const quotaOk = new Map<string, boolean>()
@@ -291,7 +303,18 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
         .from('form_submissions').select('user_id, signed_at').in('user_id', [...allGenitori]).not('signed_at', 'is', null)
       // Autorizzazione PER-GITA: se indicato, conta solo la firma di QUEL modulo.
       if (formModelId) subsQuery = subsQuery.eq('model_id', formModelId)
-      const { data: subs } = await subsQuery
+      const { data: subs, error: erroreSubs } = await subsQuery
+      if (erroreSubs) {
+        // Come i due rami qui sopra: un guasto non è «nessuno ha firmato», e
+        // l'insegnante lascerebbe a scuola dei bambini autorizzati.
+        logEvento('modulistica', 'error', {
+          operazione: 'teacher/uscite:GET', esito: 'firme-uscita-non-lette',
+        }, erroreSubs)
+        return NextResponse.json(
+          { error: 'Verifica delle autorizzazioni non riuscita', codice: 'AUTORIZZAZIONI_USCITA_NON_LETTE' },
+          { status: 500 }
+        )
+      }
       for (const sub of subs || []) firmatari.add(sub.user_id)
     }
 

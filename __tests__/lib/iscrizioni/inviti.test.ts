@@ -25,7 +25,15 @@ const h = vi.hoisted(() => ({
   sospesi: [] as Record<string, unknown>[],
   /** Quante righe restituisce il claim: `[]` = il posto era già preso. */
   claim: [{ auth_user_id: 'acc-1' }] as unknown[],
+  /** Guasto sulla DELETE del registro (ritiro della riga). */
+  erroreDelete: null as { code: string; message: string } | null,
+  logEvento: vi.fn(),
 }))
+
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento }
+})
 
 vi.mock('@/lib/auth/parent-identity', () => ({
   ensureParentIdentity: h.ensureParentIdentity,
@@ -67,7 +75,7 @@ const supabase = {
     }
     b.delete = () => {
       h.scritture.push({ tipo: `delete:${table}` })
-      return { eq: async () => ({ data: null, error: null }) }
+      return { eq: async () => ({ data: null, error: h.erroreDelete }) }
     }
     return b
   },
@@ -89,6 +97,7 @@ beforeEach(() => {
   h.scritture = []
   h.sospesi = []
   h.claim = [{ auth_user_id: 'acc-1' }]
+  h.erroreDelete = null
   h.ensureParentIdentity.mockResolvedValue(identitaOk)
   h.sincronizzaLegamiRuntime.mockResolvedValue({ creati: 1 })
   h.rigeneraPasswordPerInvito.mockResolvedValue({ ok: true, password: 'nuova' })
@@ -173,6 +182,18 @@ describe('inviti — un account, un invito, e nessun genitore lasciato fuori', (
       const esito = await invitaGenitore(supabase, GENITORE, 'ritira')
       expect(esito.tipo).toBe('rinviata')
       expect(registro().some((s) => s.tipo === 'delete:iscrizioni_inviti_credenziali')).toBe(true)
+    })
+
+    it('se la riga non si ritira lo si DICE: domani partirebbero credenziali per nessun figlio', async () => {
+      h.erroreDelete = { code: '57014', message: 'timeout' }
+      const esito = await invitaGenitore(supabase, GENITORE, 'ritira')
+      expect(esito.tipo).toBe('rinviata')
+      expect(h.logEvento).toHaveBeenCalledWith(
+        'iscrizione',
+        'error',
+        expect.objectContaining({ esito: 'registro-inviti-non-ritirato' }),
+        expect.objectContaining({ code: '57014' }),
+      )
     })
   })
 

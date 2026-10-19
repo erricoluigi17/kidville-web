@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 const getQuerySchema = z.object({
   scrutinioId: zUuid,
@@ -40,20 +41,26 @@ export const GET = withRoute('primaria/pagella:GET', async (request: NextRequest
       if (scopeErr) return scopeErr
       // Lo scrutinio deve essere quello della classe dell'alunno: blocca scrutinioId
       // di altre sezioni/plessi (leak dati nel PDF, persist incoerente).
-      const { data: scr } = await supabase.from('scrutini').select('section_id').eq('id', scrutinioId).maybeSingle()
+      const { data: scr, error: errScr } = await supabase.from('scrutini').select('section_id').eq('id', scrutinioId).maybeSingle()
+      // Un guasto non è «scrutinio non trovato».
+      if (errScr) return rispostaGuastoDb('primaria/pagella:GET', 'db:scrutini', errScr)
       if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
       const coerenzaErr = await assertAlunniInSezione(supabase, [alunnoId], scr.section_id as string)
       if (coerenzaErr) return coerenzaErr
     } else {
-      const { data: scr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).maybeSingle()
+      // Un guasto NON è «non pubblicata» né «firma richiesta»: il genitore che ha già
+      // firmato si vedrebbe chiedere di nuovo la firma, o negare una pagella pubblicata.
+      const { data: scr, error: errScr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).maybeSingle()
+      if (errScr) return rispostaGuastoDb('primaria/pagella:GET', 'db:scrutini', errScr)
       if (!scr?.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
-      const { data: firma } = await supabase
+      const { data: firma, error: errFirma } = await supabase
         .from('pagella_ricezioni')
         .select('id')
         .eq('scrutinio_id', scrutinioId)
         .eq('alunno_id', alunnoId)
         .eq('genitore_id', userId)
         .maybeSingle()
+      if (errFirma) return rispostaGuastoDb('primaria/pagella:GET', 'db:pagella_ricezioni', errFirma)
       if (!firma) return NextResponse.json({ error: 'Firma di ricezione richiesta' }, { status: 403 })
     }
 

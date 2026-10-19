@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { GraduationCap, Check, Lock, Download, Upload, FileDown, FileText, Send } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { EliminaPagella, RiapriScrutinio, puoEliminarePagella, puoRiaprireScrutinio } from '@/components/features/primaria/AzioniScrutinio';
 import { scaricaDocumento, type RisultatoScaricoNativo } from '@/lib/native/scarica';
 import { avvisoDocumento } from '@/lib/native/documento-genitore';
@@ -93,7 +94,7 @@ export default function ScrutinioPage() {
           setRuolo(typeof d.data.ruolo === 'string' ? d.data.ruolo : null);
         }
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `scrutinio-profilo-non-caricato: ${nomeErrore(err)}` }));
   }, [userId]);
 
   useEffect(() => {
@@ -105,7 +106,7 @@ export default function ScrutinioPage() {
           if (d.data.periodi.length && !periodoId) setPeriodoId(d.data.periodi[0].id);
         }
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `scrutinio-periodi-non-caricati: ${nomeErrore(err)}` }));
   }, [sectionId, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadScrutinio = useCallback(async () => {

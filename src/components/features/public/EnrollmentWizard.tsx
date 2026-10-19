@@ -138,7 +138,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         setChildFields(child)
         setAdultFields(adult)
       })
-      .catch(() => {})
+      // La domanda resta compilabile coi campi predefiniti (`CHILD_FIELDS`/`ADULT_FIELDS`): ma
+      // senza il modello della scuola le modifiche della segreteria non ci sono, e va saputo.
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `iscrizione-modello-non-caricato: ${nomeErrore(err)}` }))
   }, [])
 
   useEffect(() => {

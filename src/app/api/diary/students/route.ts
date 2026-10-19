@@ -12,6 +12,7 @@ import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria } from '@/lib/db/guasto';
 import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { appartenenzeNelGiorno } from '@/lib/storici/alunni-giorno';
 import { rispostaErroreStorico } from '@/lib/storici/http';
@@ -94,10 +95,15 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
 
         let parents: { id: string; nome: string; cognome: string; email: string }[] = [];
         if (parentIds.length > 0) {
-            const { data: utenti } = await supabase
+            const { data: utenti, error: errGenitori } = await supabase
                 .from('utenti')
                 .select('id, nome, cognome, email')
                 .in('id', parentIds);
+            // I contatti dei genitori arricchiscono la scheda, non la decidono: col ripiego la
+            // scheda dell'alunno esce senza contatti, e la riga dice perché.
+            if (errGenitori) {
+                guastoLetturaAccessoria('diary', 'diary/students:GET', 'contatti-genitori-non-letti', errGenitori);
+            }
             parents = utenti ?? [];
         }
 
@@ -200,10 +206,14 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     const parentsMap: Record<string, { id: string; nome: string; cognome: string; email: string }[]> = {};
     const parentIds = [...new Set([...genitoriPerAlunno.values()].flat())];
     if (parentIds.length > 0) {
-        const { data: utenti } = await supabase
+        const { data: utenti, error: errGenitori } = await supabase
             .from('utenti')
             .select('id, nome, cognome, email')
             .in('id', parentIds);
+        // Come sopra: la classe esce comunque, senza i contatti dei genitori.
+        if (errGenitori) {
+            guastoLetturaAccessoria('diary', 'diary/students:GET', 'contatti-genitori-non-letti', errGenitori);
+        }
 
         if (utenti) {
             const utentiMap = new Map(utenti.map(u => [u.id, u]));

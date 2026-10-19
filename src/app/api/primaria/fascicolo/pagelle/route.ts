@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { rispostaGuastoAccesso } from '@/lib/primaria/fascicolo-gestione'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -29,6 +30,8 @@ export const GET = withRoute('primaria/fascicolo/pagelle:GET', async (request: N
 
     // Controllo RBAC fascicolo
     const access = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const guastoGate = rispostaGuastoAccesso(access)
+    if (guastoGate) return guastoGate
     if (!access.consentito) return NextResponse.json({ error: 'Accesso al fascicolo non autorizzato' }, { status: 403 })
 
     // Recupera scrutini pubblicati che contengono l'alunno, con il periodo

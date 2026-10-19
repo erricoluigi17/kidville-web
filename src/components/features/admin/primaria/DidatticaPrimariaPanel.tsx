@@ -9,6 +9,7 @@ import { DocentiMaterieManager } from '@/components/features/admin/primaria/Doce
 import { ObiettiviManager } from '@/components/features/admin/primaria/ObiettiviManager';
 import { ClassificazioneDocenti } from '@/components/features/admin/primaria/ClassificazioneDocenti';
 import { ImpostazioniManager } from '@/components/features/admin/primaria/ImpostazioniManager';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 type Tab = 'materie' | 'docenti' | 'obiettivi' | 'classificazione' | 'vincoli';
 
@@ -32,7 +33,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
         setSezioni(list);
         if (list.length) setSezioneId((prev) => prev || list[0].id);
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-didattica-sezioni-non-caricate: ${nomeErrore(err)}` }))
       .finally(() => setLoaded(true));
   }, [scuolaId]);
 

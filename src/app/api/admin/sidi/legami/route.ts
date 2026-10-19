@@ -8,6 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso (userId è consumato dal gate)
@@ -34,11 +35,13 @@ export const GET = withRoute('admin/sidi/legami:GET', async (request: NextReques
       // FISCALE dei genitori. `!inner` perché il filtro sull'alunno embedded
       // scarti davvero la riga di legame.
       const plessi = await resolveScuoleAttive(request, supabase, auth.user)
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('student_parents')
         .select('student_id, parent_id, relation_type, is_primary, validato_sidi, alunni!inner(nome, cognome, scuola_id), parents(first_name, last_name, fiscal_code)')
         .in('alunni.scuola_id', plessi)
         .order('student_id', { ascending: true })
+      // È l'elenco da confermare prima della Piattaforma Unica: un guasto non è «nessun legame».
+      if (error) return rispostaGuastoDb('admin/sidi/legami:GET', 'db:student_parents', error)
       return NextResponse.json({ success: true, data: data ?? [] })
     } catch (err) {
       logErrore({ operazione: 'admin/sidi/legami:GET', stato: 500 }, err)

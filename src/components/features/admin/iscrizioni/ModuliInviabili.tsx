@@ -19,6 +19,7 @@ import {
   opzioniSedeInviabili,
   type ModelloInviabile,
 } from '@/components/features/admin/iscrizioni/filtri-inviabili'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 // "Moduli inviabili": moduli del form-builder + Modulo d'iscrizione standard,
 // da inviare ai genitori tramite link. Estratto da /admin/iscrizioni.
@@ -34,6 +35,11 @@ export function ModuliInviabili() {
   const { sedi } = useSediAttive()
   const [models, setModels] = useState<FormModel[]>([])
   const [loading, setLoading] = useState(true)
+  /**
+   * La lettura dei modelli non è riuscita. Senza, un guasto finiva in «Nessun modulo»: lo
+   * stato vuoto che dice il falso, cioè «non c'è niente» al posto di «non ho potuto guardare».
+   */
+  const [erroreLettura, setErroreLettura] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [resetting, setResetting] = useState(false)
@@ -50,12 +56,21 @@ export function ModuliInviabili() {
    */
   const load = () => {
     // Assicura l'esistenza del modello standard editabile (seed idempotente).
-    fetch('/api/iscrizione/model').catch(() => {})
+    fetch('/api/iscrizione/model')
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `modello-iscrizione-standard-non-assicurato: ${nomeErrore(err)}` }))
     fetch('/api/admin/forms/models')
-      .then((r) => r.json())
-      // Il modulo standard ha la sua card dedicata: escludilo dalla lista generica.
-      .then((d) => { if (Array.isArray(d)) setModels(d.filter((m: FormModel) => m.id !== STANDARD_ENROLLMENT_MODEL_ID)) })
-      .catch(() => {})
+      .then(async (r) => {
+        // Il 5xx lo registra già il patch di `fetch`: qui serve che lo schermo lo dica.
+        if (!r.ok) { setErroreLettura(true); return }
+        const d: unknown = await r.json()
+        // Il modulo standard ha la sua card dedicata: escludilo dalla lista generica.
+        if (Array.isArray(d)) setModels(d.filter((m: FormModel) => m.id !== STANDARD_ENROLLMENT_MODEL_ID))
+        setErroreLettura(false)
+      })
+      .catch((err) => {
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `moduli-inviabili-non-caricati: ${nomeErrore(err)}` })
+        setErroreLettura(true)
+      })
       .finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [])
@@ -72,7 +87,7 @@ export function ModuliInviabili() {
   const visibili = filtri.filtra(models)
   const statoElenco = decidiStatoElenco({
     caricamento: loading,
-    errore: false,
+    errore: erroreLettura,
     totale: models.length,
     mostrati: visibili.length,
   })
@@ -255,6 +270,7 @@ export function ModuliInviabili() {
             }}
             attivi={filtri.attivi}
             onPulisci={filtri.pulisci}
+            onRiprova={() => { setLoading(true); load() }}
           />
         </div>
       ) : visibili.map((m) => {

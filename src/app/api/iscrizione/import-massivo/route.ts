@@ -237,6 +237,37 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
 
     const supabase = await createAdminClient()
 
+    /**
+     * LO STATO DI UNA DOMANDA CHE OGGI NON SI ISCRIVE — doppione, da controllare, rinviata.
+     *
+     * Fino al 2026-10-19 il risultato di `iscrizioni_sospendi` si buttava: se la scrittura
+     * falliva, il riepilogo contava comunque la domanda fra «da controllare» (o fra i doppioni, o
+     * fra le rinviate) e la segreteria la cercava in un elenco dove non c'era, senza il motivo
+     * scritto. Ora `false` dice che lo stato NON è stato scritto: chi chiama la conta fra le non
+     * riuscite — ed è vero, perché la domanda resta `in_lavorazione`, il prestito di trenta
+     * minuti la libera e il giro successivo la riprova.
+     *
+     * Sta DENTRO l'handler, non nel modulo: il `submission_id` viene dal lotto della sede del
+     * ciclo, ed è la ragione per cui il lock d'isolamento ammette questa RPC senza sede
+     * (`isolamento-sede-coverage`, voce `iscrizione/import-massivo:POST`).
+     */
+    const sospendi = async (
+      scuolaId: string,
+      argomenti: { p_submission_id: string; p_stato: string; p_motivo: string; p_duplicata_di?: string },
+    ): Promise<boolean> => {
+      const { error } = await supabase.rpc('iscrizioni_sospendi', argomenti)
+      if (!error) return true
+      // Solo uuid e stato: il motivo nomina il bambino.
+      logEvento('iscrizione', 'error', {
+        operazione: JOB,
+        esito: 'sospensione-non-scritta',
+        entita_id: argomenti.p_submission_id,
+        sede_id: scuolaId,
+        stato: argomenti.p_stato,
+      }, error)
+      return false
+    }
+
     // ── 0. LA RIPRESA, PRIMA DI TUTTO ─────────────────────────────────────
     // Chi aspetta da ieri viene prima di chi arriva oggi: sono i secondi
     // genitori il cui invito non è partito, e senza questo passo la loro
@@ -352,12 +383,21 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
       // si prende in carico niente — un dry-run che lascia il segno non è a vuoto.
       let ids: string[] = []
       if (dryRun) {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('enrollment_submissions')
           .select('id')
           .eq('scuola_id', scuolaId)
           .eq('status', 'pending')
           .order('created_at', { ascending: true })
+        // Una prova a vuoto che legge «nessuna domanda» per un guasto direbbe che domani non
+        // partirebbe niente: si ferma come il ramo vero qui sotto.
+        if (error) {
+          logEvento('cron', 'error', { operazione: JOB, esito: 'query-fallita', sede_id: scuolaId, msg: `${JOB}: domande in attesa non lette (prova a vuoto)` }, error)
+          return NextResponse.json(
+            { error: 'Il giro delle iscrizioni non è stato eseguito', codice: 'IMPORT_ISCRIZIONI_NON_ESEGUITO' },
+            { status: 500 },
+          )
+        }
         ids = (data ?? []).map((r) => (r as { id: string }).id)
       } else {
         const { data, error } = await supabase.rpc('iscrizioni_prendi_in_carico', {
@@ -377,10 +417,21 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
 
       // Le famiglie si costruiscono su TUTTE le domande della sede, non sul solo
       // lotto: il fratello che risolve una retta può stare fuori dal lotto.
-      const { data: tutteRighe } = await supabase
+      const { data: tutteRighe, error: erroreTutte } = await supabase
         .from('enrollment_submissions')
         .select('id, scuola_id, created_at, data')
         .eq('scuola_id', scuolaId)
+      // Senza queste righe ogni domanda del lotto risulterebbe «sconosciuta» e verrebbe saltata
+      // in silenzio, e fratelli e doppioni si cercherebbero nel vuoto. Si ferma il giro come per
+      // l'elenco e le decisioni (che qui sotto lanciano): il lotto già preso si libera da solo
+      // allo scadere del prestito.
+      if (erroreTutte) {
+        logEvento('cron', 'error', { operazione: JOB, esito: 'query-fallita', sede_id: scuolaId, msg: `${JOB}: domande della sede non lette` }, erroreTutte)
+        return NextResponse.json(
+          { error: 'Il giro delle iscrizioni non è stato eseguito', codice: 'IMPORT_ISCRIZIONI_NON_ESEGUITO' },
+          { status: 500 },
+        )
+      }
       const tutte = (tutteRighe ?? []).map((r) => domandaDaRiga(r as never))
       const perId = new Map(tutte.map((d) => [d.id, d]))
       const grezzoPerId = new Map(
@@ -417,29 +468,35 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
         )
 
         if (decisione.tipo === 'duplicata') {
+          if (!dryRun && !(await sospendi(scuolaId, {
+            p_submission_id: id,
+            p_stato: 'duplicata',
+            p_motivo: decisione.motivo,
+            p_duplicata_di: decisione.di,
+          }))) {
+            fallite++
+            perSede(scuolaId).fallite++
+            bloccate.push(id)
+            continue
+          }
           duplicate++
           perSede(scuolaId).duplicate++
-          if (!dryRun) {
-            await supabase.rpc('iscrizioni_sospendi', {
-              p_submission_id: id,
-              p_stato: 'duplicata',
-              p_motivo: decisione.motivo,
-              p_duplicata_di: decisione.di,
-            })
-          }
           continue
         }
 
         if (decisione.tipo === 'da_controllare') {
+          if (!dryRun && !(await sospendi(scuolaId, {
+            p_submission_id: id,
+            p_stato: 'da_controllare',
+            p_motivo: decisione.motivo,
+          }))) {
+            fallite++
+            perSede(scuolaId).fallite++
+            bloccate.push(id)
+            continue
+          }
           daControllare++
           perSede(scuolaId).daControllare++
-          if (!dryRun) {
-            await supabase.rpc('iscrizioni_sospendi', {
-              p_submission_id: id,
-              p_stato: 'da_controllare',
-              p_motivo: decisione.motivo,
-            })
-          }
           continue
         }
 
@@ -466,8 +523,6 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
             (a) => !nomiSezioni.has(normalizzaNomeSezione(a.classe)),
           )
           if (fuori.length > 0) {
-            daControllare++
-            perSede(scuolaId).daControllare++
             // Nel log solo conteggi e sede: il nome della classe a Cesa è il nome
             // di battesimo di un'insegnante, e il nome del bambino è di un minore.
             logEvento('iscrizione', 'error', {
@@ -477,15 +532,20 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
               sede_id: scuolaId,
               quantita: fuori.length,
             })
-            if (!dryRun) {
-              await supabase.rpc('iscrizioni_sospendi', {
-                p_submission_id: id,
-                p_stato: 'da_controllare',
-                p_motivo: fuori.length === 1
-                  ? `La classe «${fuori[0].classe}» non è fra le sezioni di questa sede: l'iscrizione si fermerebbe qui e il bambino resterebbe fuori da ogni appello. Va creata la sezione con questo nome esatto, oppure corretto il nome nell'elenco.`
-                  : `${fuori.length} bambini di questa domanda sono assegnati a classi che non sono fra le sezioni di questa sede (${[...new Set(fuori.map((a) => a.classe))].join(', ')}): resterebbero fuori da ogni appello.`,
-              })
+            if (!dryRun && !(await sospendi(scuolaId, {
+              p_submission_id: id,
+              p_stato: 'da_controllare',
+              p_motivo: fuori.length === 1
+                ? `La classe «${fuori[0].classe}» non è fra le sezioni di questa sede: l'iscrizione si fermerebbe qui e il bambino resterebbe fuori da ogni appello. Va creata la sezione con questo nome esatto, oppure corretto il nome nell'elenco.`
+                : `${fuori.length} bambini di questa domanda sono assegnati a classi che non sono fra le sezioni di questa sede (${[...new Set(fuori.map((a) => a.classe))].join(', ')}): resterebbero fuori da ogni appello.`,
+            }))) {
+              fallite++
+              perSede(scuolaId).fallite++
+              bloccate.push(id)
+              continue
             }
+            daControllare++
+            perSede(scuolaId).daControllare++
             continue
           }
         }
@@ -521,8 +581,6 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           { operazione: JOB, domandaId: id },
         )
         if (gemello) {
-          daControllare++
-          perSede(scuolaId).daControllare++
           const n = gemello.schede.length
           // Solo uuid, indice e conteggio: il nome e il codice con cui si è cercato
           // sono di un minore. Il nome sta nel MOTIVO, che legge la segreteria.
@@ -540,14 +598,22 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           if (!dryRun) {
             const b = domanda.bambini[gemello.indice]
             const chi = `${b?.cognome ?? ''} ${b?.nome ?? ''}`.trim() || `Il bambino ${gemello.indice + 1}`
-            await supabase.rpc('iscrizioni_sospendi', {
+            const scritta = await sospendi(scuolaId, {
               p_submission_id: id,
               p_stato: 'da_controllare',
               p_motivo: n === 1
                 ? `${chi}: in questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso. Se la famiglia ha inviato la domanda due volte, questa va rifiutata; se è lo stesso bambino, va importata a mano scegliendo di usare la scheda esistente.`
                 : `${chi}: in questa sede esistono già ${n} bambini con lo stesso nome e la stessa data di nascita, ma con codici fiscali diversi: potrebbero essere già dei doppioni. Prima di importare vanno controllate quelle schede; se la famiglia ha inviato la domanda due volte, questa va rifiutata.`,
             })
+            if (!scritta) {
+              fallite++
+              perSede(scuolaId).fallite++
+              bloccate.push(id)
+              continue
+            }
           }
+          daControllare++
+          perSede(scuolaId).daControllare++
           continue
         }
 
@@ -601,15 +667,18 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
          */
         const troppoGrandePerQualunqueGiorno = previste > tetto && emailQuestoGiro === 0
         if (previste > 0 && sfonda && !troppoGrandePerQualunqueGiorno) {
+          if (!dryRun && !(await sospendi(scuolaId, {
+            p_submission_id: id,
+            p_stato: 'in_attesa',
+            p_motivo: `Rinviata a domani: sarebbero servite ${previste} email e oggi il tetto di ${tetto} era già stato raggiunto.`,
+          }))) {
+            fallite++
+            perSede(scuolaId).fallite++
+            bloccate.push(id)
+            continue
+          }
           restano++
           perSede(scuolaId).restano++
-          if (!dryRun) {
-            await supabase.rpc('iscrizioni_sospendi', {
-              p_submission_id: id,
-              p_stato: 'in_attesa',
-              p_motivo: `Rinviata a domani: sarebbero servite ${previste} email e oggi il tetto di ${tetto} era già stato raggiunto.`,
-            })
-          }
           continue
         }
 

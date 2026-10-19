@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({
   scritture: [] as { tabella: string; metodo: string }[],
   letture: [] as string[],
   schema: null as unknown,
+  errore: null as unknown,
 }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -53,7 +54,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.scritture.push({ tabella, metodo: 'update' })
         return b
       }
-      b.maybeSingle = async () => ({ data: h.schema, error: null })
+      b.maybeSingle = async () => ({ data: h.schema, error: h.errore })
       b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: h.schema, error: null }).then(res)
       return b
     },
@@ -82,6 +83,7 @@ beforeEach(() => {
   h.scritture = []
   h.letture = []
   h.schema = { schema: { pages: [] } }
+  h.errore = null
 })
 
 describe('GET /api/iscrizione/model — pubblica, quindi legge e basta (V5)', () => {
@@ -113,6 +115,27 @@ describe('GET /api/iscrizione/model — pubblica, quindi legge e basta (V5)', ()
     const res = await chiama()
     const body = await res.json()
     expect(body.schema.pages[0].id).toBe('pagina-della-segreteria')
+  })
+
+  // Fase 12: la CDN tiene lo schema della segreteria per cinque minuti. Il ripiego sullo schema
+  // di default — modello assente o guasto del database — non si conserva: resterebbe in cache
+  // anche dopo, e le famiglie compilerebbero il modulo sbagliato.
+  it('cache: lo schema letto davvero va in CDN (public, s-maxage) per chi non ha sessione', async () => {
+    h.schema = { schema: { pages: [{ id: 'pagina-della-segreteria', fields: [] }] } }
+    const res = await chiama()
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=300, s-maxage=300, stale-while-revalidate=600')
+    expect(res.headers.get('Vary')).toBe('Cookie')
+  })
+
+  it('cache: il ripiego (modello assente o guasto del database) NON si conserva', async () => {
+    h.schema = null
+    const assente = await chiama()
+    expect(assente.status).toBe(200)
+    expect(assente.headers.get('Cache-Control') ?? '').not.toMatch(/public|s-maxage/)
+    h.errore = { code: '57014', message: 'timeout' }
+    const guasto = await chiama('203.0.113.10')
+    expect(guasto.status).toBe(200)
+    expect(guasto.headers.get('Cache-Control') ?? '').not.toMatch(/public|s-maxage/)
   })
 
   it('ha un tetto per IP, come le altre porte pubbliche', async () => {

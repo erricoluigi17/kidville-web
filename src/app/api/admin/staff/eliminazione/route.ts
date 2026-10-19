@@ -8,6 +8,8 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { puoEliminareStaff } from '@/lib/personale/permessi-eliminazione'
 import { cancellaFascicoloPersonale } from '@/lib/personale/cancella-fascicolo'
@@ -129,11 +131,24 @@ export const GET = withRoute('admin/staff/eliminazione:GET', async (request: Nex
 
     // Che cosa c'è attaccato: servono al pannello per dire «sparisce anche il
     // fascicolo» prima che sparisca.
-    const { data: anagrafica } = await supabase
+    // Un guasto qui direbbe «nessun fascicolo» e il pannello NON avviserebbe che sparisce
+    // anche quello: l'anteprima di un'azione irreversibile non esce con un buco. Solo la
+    // TABELLA assente (DB non migrato) vale «nessun fascicolo», e la riga lo dice.
+    const { data: anagrafica, error: errAnagrafica } = await supabase
       .from('anagrafica_personale')
       .select('utente_id, origine_pratica_id')
       .eq('utente_id', q.data.id)
       .maybeSingle()
+    if (errAnagrafica && !tabellaMancante(errAnagrafica)) {
+      logErrore({ operazione: OPERAZIONE_GET, stato: 503, evento: 'db:anagrafica_personale' }, errAnagrafica)
+      return NextResponse.json(
+        { error: 'Non è stato possibile leggere questa persona', codice: 'STAFF_ELIMINAZIONE_NON_LETTA' },
+        { status: 503 },
+      )
+    }
+    if (errAnagrafica) {
+      guastoLetturaAccessoria('anagrafica', OPERAZIONE_GET, 'fascicolo-personale-assente-dallo-schema', errAnagrafica)
+    }
     const a = anagrafica as { origine_pratica_id?: string | null } | null
 
     return NextResponse.json({

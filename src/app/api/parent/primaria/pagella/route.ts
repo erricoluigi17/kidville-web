@@ -5,6 +5,9 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'parent/primaria/pagella:GET'
 
 // Id lasco (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `alunni` fa comunque da gate con 404).
@@ -27,34 +30,41 @@ export const GET = withRoute('parent/primaria/pagella:GET', async (request: Next
 
     const supabase = await createAdminClient()
 
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
       .maybeSingle()
+    if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     if (!alunno.section_id) return NextResponse.json({ success: true, data: [] })
 
     // Scrutini PUBBLICATI della sezione del figlio + periodo (la chiusura non
     // basta: i voti sono visibili solo dopo l'OK/pubblicazione del dirigente).
-    const { data: scrutini } = await supabase
+    // Un guasto NON è «nessuna pagella pubblicata»: è la lettura che decide cosa la famiglia
+    // vede, e un elenco vuoto lo direbbe falso.
+    const { data: scrutini, error: errScrutini } = await supabase
       .from('scrutini')
       .select('id, periodo_id, chiuso_il, stato, pubblicato, scrutinio_periodi(nome, anno_scolastico, ordine)')
       .eq('section_id', alunno.section_id)
       .eq('stato', 'chiuso')
       .eq('pubblicato', true)
       .order('chiuso_il', { ascending: false })
+    if (errScrutini) return rispostaGuastoDb(OP, 'db:scrutini', errScrutini)
 
     // Firme di ricezione del genitore per questo figlio (per il flag `firmato`).
     const scrutinioIds = (scrutini ?? []).map((s) => s.id)
     const firmati = new Set<string>()
     if (scrutinioIds.length) {
-      const { data: firme } = await supabase
+      // Un guasto NON è «nessuna firma»: ogni pagella risulterebbe da firmare, e il genitore
+      // rifirmerebbe una ricezione che c'è già.
+      const { data: firme, error: errFirme } = await supabase
         .from('pagella_ricezioni')
         .select('scrutinio_id')
         .eq('alunno_id', studentId)
         .eq('genitore_id', userId)
         .in('scrutinio_id', scrutinioIds)
+      if (errFirme) return rispostaGuastoDb(OP, 'db:pagella_ricezioni', errFirme)
       for (const f of firme ?? []) firmati.add(f.scrutinio_id as string)
     }
 

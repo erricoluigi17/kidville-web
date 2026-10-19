@@ -405,6 +405,34 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
         expect(scritto()).toContain('esito=redirect-login');
     });
 
+    it('5-ter. l’`error` di getClaims non si butta: il suo NOME sta sulla riga del redirect', async () => {
+        // ROSSO SE: si torna a leggere il solo `data` (fase 11, «errori non ignorati»). Un GoTrue
+        // che rifiuta la sessione e un utente che non l'ha mai avuta finivano sulla stessa riga,
+        // identica: il «perché sono stato buttato fuori» non si poteva leggere. E nessuna riga in
+        // più: il nome va sulla riga che c'è già (vedi il test 4, niente `KV_ERR` su un 401).
+        spia(async () => risposta({ code: 401, msg: 'invalid claim' }, 401));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta(cookieDiSessione('https://progetto.supabase.co', +3_600)));
+
+        expect(res.status).toBe(307);
+        expect(campo('esito')).toBe('redirect-login');
+        expect(campo('motivo')).toMatch(/^Auth[A-Za-z]*Error$/);
+        expect(scritto()).not.toContain('KV_ERR');
+        // Solo il nome della classe: il messaggio di GoTrue non esce dal middleware.
+        expect(scritto()).not.toContain('invalid claim');
+    });
+
+    it('5-quater. senza nessuna sessione il motivo lo dice: `nessuna`, non un errore', async () => {
+        spia(async () => risposta({}, 200));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta());
+
+        expect(res.status).toBe(307);
+        expect(campo('motivo')).toBe('nessuna');
+    });
+
     it('5-bis. una route API non viene reindirizzata nemmeno quando GoTrue tace', async () => {
         // L'autorizzazione delle API sta nei gate, non qui: un redirect su `/api/**` darebbe al
         // chiamante un 307 verso una pagina HTML al posto del 401 JSON che si aspetta.

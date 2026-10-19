@@ -7,6 +7,8 @@
   "nessunAlunnoAiuto": "Contact the school office to link your child and use the canteen.",
   "allergiaTitolo": "Allergens in today’s menu",
   "allergiaCorpo": "Today’s menu contains: <strong>{elenco}</strong>. Check with the school before booking.",
+  "allergiaNonVerificataTitolo": "Allergens not checked",
+  "allergiaNonVerificataCorpo": "We couldn’t check today’s menu for allergens. If your child has allergies, check with the school before booking.",
   "ticket": "tickets",
   "aggiornaSaldo": "Refresh balance",
   "cutoffNota": "Book or cancel by <strong>{ora}</strong> on the same day.",

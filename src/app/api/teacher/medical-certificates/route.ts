@@ -9,6 +9,7 @@ import { periodoValido } from '@/lib/certificati/stato'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Filtri opzionali senza vincoli aggiuntivi: `stato` oggi è passato com'è alla
@@ -113,8 +114,10 @@ export const PATCH = withRoute('teacher/medical-certificates:PATCH', async (requ
 
     // Scope: il docente valida solo certificati di alunni nel proprio ambito
     // (educator = proprie sezioni; staff = proprio plesso).
-    const { data: certScope } = await supabase
+    // Un guasto non è «certificato non trovato».
+    const { data: certScope, error: errCert } = await supabase
       .from('certificati_medici').select('alunno_id').eq('id', id).maybeSingle()
+    if (errCert) return rispostaGuastoDb('teacher/medical-certificates:PATCH', 'db:certificati_medici', errCert)
     if (!certScope) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
     const scopeErr = await assertAlunnoInScope(supabase, auth.user, certScope.alunno_id as string)
     if (scopeErr) return scopeErr

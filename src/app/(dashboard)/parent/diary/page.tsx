@@ -25,6 +25,7 @@ import { oraDiRoma } from '@/lib/presenze/orario';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { ascoltaNotificaAperta } from '@/lib/notifiche/pagina-aperta-da-notifica';
 import { segnalaDiarioNonLetto } from '@/lib/diary/lettura-genitore';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /**
  * Dopo un ritorno nell'app andato a vuoto (rete non ancora pronta, o solo la copia salvata) si
@@ -635,7 +636,8 @@ function ParentDiaryContent() {
                 if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim());
                 if (d?.classe_sezione) setClasse(d.classe_sezione);
             })
-            .catch(() => {});
+            // Accessoria: il diario si legge lo stesso, manca solo il nome in testata.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `diario-nome-alunno-non-caricato: ${nomeErrore(err)}` }));
     }, [alunnoId]);
 
     const initials = studentName

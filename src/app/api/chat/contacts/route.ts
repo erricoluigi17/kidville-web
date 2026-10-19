@@ -11,6 +11,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria } from '@/lib/db/guasto';
 
 // Gap auth chiuso in M9: il legacy `?userId=` in query resta ACCETTATO dallo
 // schema per compatibilità coi client ma viene IGNORATO — l'identità è quella
@@ -132,10 +133,15 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
         // nessun nome letto per una persona che poi non compare in elenco.
         const daNominare = [...new Set(contacts.map((c) => c.user_id))];
         if (daNominare.length > 0) {
-            const { data: persone } = await supabase
+            const { data: persone, error: errorePersone } = await supabase
                 .from('utenti')
                 .select('id, nome, cognome, first_name, last_name')
                 .in('id', daNominare);
+            // I nomi si mostrano soltanto (la rubrica l'ha già decisa `rubrica`): col ripiego
+            // le voci escono senza nome, con l'alunno e la sezione.
+            if (errorePersone) {
+                guastoLetturaAccessoria('chat', 'chat/contacts:GET', 'nomi-contatti-non-letti', errorePersone);
+            }
             const perId = new Map(((persone ?? []) as Array<{ id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null }>).map((p) => [p.id, p]));
             for (const c of contacts) {
                 const p = perId.get(c.user_id);

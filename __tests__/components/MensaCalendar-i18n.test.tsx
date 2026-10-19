@@ -28,6 +28,7 @@ const CHIAVI_RICHIESTE = [
   'nessunGiorno', 'mensaChiusa', 'menuNonPubblicato', 'prenotato', 'disdici',
   'prenotaPranzo', 'inseritoSegreteria', 'pranzoPrenotato', 'prenotazioneDisdetta',
   'operazioneNonRiuscita', 'errore', 'oltreCutoffOggi',
+  'allergiaNonVerificataTitolo', 'allergiaNonVerificataCorpo',
 ];
 
 describe('i18n — namespace mensa (it/en)', () => {

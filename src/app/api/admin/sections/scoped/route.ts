@@ -7,6 +7,7 @@ import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `grado`: csv di school_type ammessi (es. 'nido,infanzia'); assente = tutti.
@@ -61,7 +62,10 @@ export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRe
       visibili = visibili.filter((s) => mie.includes(s.id))
     }
 
-    const { data: schools } = await supabase.from('schools').select('id, nome').in('id', plessi)
+    // Il nome della sede è un'etichetta del gruppo, non decide quali sezioni si vedono: col
+    // guasto esce il ripiego di sempre (stringa vuota), e la riga di log dice perché.
+    const { data: schools, error: errSedi } = await supabase.from('schools').select('id, nome').in('id', plessi)
+    if (errSedi) guastoLetturaAccessoria('db', 'admin/sections/scoped:GET', 'nomi-sede-non-letti', errSedi)
     const nomi = new Map((schools ?? []).map((s: { id: string; nome: string | null }) => [s.id, s.nome ?? '']))
 
     // Gruppi anche vuoti: chi consuma decide se mostrarli (es. creare la prima

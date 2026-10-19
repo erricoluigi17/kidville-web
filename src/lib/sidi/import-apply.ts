@@ -85,16 +85,26 @@ export async function applySidiRecords(
       }
       if (byCf) {
         studentId = byCf.id
-        aggiornati++
-        await supabase.from('alunni').update({ numero_domanda_sidi: rec.numero_domanda }).eq('id', studentId)
-        await logScrittura(supabase, {
-          attore,
-          entitaTipo: 'alunni',
-          entitaId: studentId,
-          azione: 'update',
-          scuolaId,
-          valoreDopo: { numero_domanda_sidi: rec.numero_domanda },
-        })
+        const { error: errNumDom } = await supabase
+          .from('alunni')
+          .update({ numero_domanda_sidi: rec.numero_domanda })
+          .eq('id', studentId)
+        if (errNumDom) {
+          // L'alunno c'è e i genitori si agganciano lo stesso; ma il numero domanda non è stato
+          // scritto, e senza la riga la prossima importazione non lo troverebbe al ramo ①.
+          logEvento('sidi', 'error', { operazione: 'applySidiRecords', tipo: 'import', esito: 'numero-domanda-non-scritto' }, errNumDom)
+          warnings.push(`Domanda ${rec.numero_domanda}: numero domanda non registrato sull'alunno già presente`)
+        } else {
+          aggiornati++
+          await logScrittura(supabase, {
+            attore,
+            entitaTipo: 'alunni',
+            entitaId: studentId,
+            azione: 'update',
+            scuolaId,
+            valoreDopo: { numero_domanda_sidi: rec.numero_domanda },
+          })
+        }
       }
     }
 
@@ -133,7 +143,13 @@ export async function applySidiRecords(
     for (const g of rec.genitori) {
       let parentId: string | null = null
       if (g.codice_fiscale) {
-        const { data: ex } = await supabase.from('parents').select('id').eq('fiscal_code', g.codice_fiscale).maybeSingle()
+        const { data: ex, error: errEx } = await supabase.from('parents').select('id').eq('fiscal_code', g.codice_fiscale).maybeSingle()
+        // Un guasto non è «genitore nuovo»: proseguire creerebbe un DOPPIONE della stessa persona.
+        if (errEx) {
+          logEvento('sidi', 'error', { operazione: 'applySidiRecords', tipo: 'import', esito: 'match-cf-genitore-fallito' }, errEx)
+          warnings.push(`Domanda ${rec.numero_domanda}: verifica del genitore non riuscita, genitore non applicato`)
+          continue
+        }
         if (ex) parentId = ex.id
       }
       if (!parentId) {
@@ -159,10 +175,15 @@ export async function applySidiRecords(
           valoreDopo: parentRecord,
         })
       }
-      await supabase.from('student_parents').upsert(
+      const { error: errLegame } = await supabase.from('student_parents').upsert(
         { student_id: studentId, parent_id: parentId, relation_type: g.relazione || 'genitore', is_primary: false },
         { onConflict: 'student_id,parent_id', ignoreDuplicates: false }
       )
+      if (errLegame) {
+        logEvento('sidi', 'error', { operazione: 'applySidiRecords', tipo: 'import', esito: 'legame-genitore-non-scritto' }, errLegame)
+        warnings.push(`Domanda ${rec.numero_domanda}: genitore non collegato all'alunno`)
+        continue
+      }
       await logScrittura(supabase, {
         attore,
         entitaTipo: 'legame',

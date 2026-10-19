@@ -11,6 +11,7 @@ import { formatEuro } from '@/lib/format/valuta';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SelettoreAlunni } from '@/components/ui/SelettoreAlunni';
 import { SELEZIONE_TUTTI, parametriSelezione, alunniBersaglio, type SelezioneAlunni } from '@/lib/pagamenti/selezione-alunni';
 import { type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
@@ -55,6 +56,9 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Una STRINGA e non `t` fra le dipendenze del caricamento: si confronta per valore, quindi
+    // non rilancia le letture a ogni render (una funzione nuova a ogni render sì).
+    const erroreRete = t('gencErrRete');
     // Anteprima OBBLIGATORIA: si genera solo sui candidati mostrati; qualunque
     // modifica ai campi la invalida e riparte dall'anteprima.
     const [anteprima, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number } | null>(null);
@@ -78,14 +82,21 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     setCategorie(cats);
                     if (cats[0]) applyCategoria(cats[0]);
                 }
-            }).catch(() => {});
+            }).catch((err) => {
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `generatore-categorie-non-caricate: ${nomeErrore(err)}` });
+                setError(erroreRete);
+            });
         fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=${LIMITE_ELENCO_ALUNNI}`, { headers: hdr(userId) })
             .then((r) => r.json())
             .then((d) => {
                 const lista: Alunno[] = Array.isArray(d) ? d : (d.data || []);
                 setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
-            }).catch(() => {});
-    }, [userId, scuolaId, applyCategoria]);
+            }).catch((err) => {
+                // Senza alunni il «tutti» non colpirebbe nessuno: lo si dice prima che si generi.
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `generatore-alunni-non-caricati: ${nomeErrore(err)}` });
+                setError(erroreRete);
+            });
+    }, [userId, scuolaId, applyCategoria, erroreRete]);
 
 
     /**

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { X, Plus, Minus, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /** Il modale mostra solo icona e nome: delle otto colonne di `locker_config` gliene
  *  bastano quattro. Il ripiego resta però la lista condivisa, non una sua copia. */
@@ -69,7 +70,8 @@ export function LoadStockModal({
                     setSelectedMateriale(prev => prev || data[0].nome);
                 }
             })
-            .catch(() => {/* usa fallback */});
+            // Restano i materiali predefiniti (`MATERIALI_DEFAULT`): il carico si registra lo stesso.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-materiali-non-caricati: ${nomeErrore(err)}` }));
     }, [isOpen, classeSezione]);
 
     if (!isOpen) return null;

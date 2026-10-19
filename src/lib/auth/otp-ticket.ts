@@ -117,8 +117,21 @@ export async function consumeTicket(
   return { ok: true }
 }
 
+/**
+ * L'email dell'utente, o `null`. Un guasto del database resta `null` per il chiamante — che
+ * rifiuta la verifica: fail-CLOSED, nessuna firma passa senza l'indirizzo — ma lascia la sua riga
+ * `error`: senza, «email non trovata» e «database che non risponde» si leggevano uguali.
+ */
 export async function getUserEmail(supabase: SupabaseClient, userId: string): Promise<string | null> {
-  const { data } = await supabase.from('utenti').select('email').eq('id', userId).maybeSingle()
+  const { data, error } = await supabase.from('utenti').select('email').eq('id', userId).maybeSingle()
+  if (error) {
+    logEvento('otp', 'error', {
+      operazione: 'auth/otp-ticket:getUserEmail',
+      esito: 'email-utente-non-letta',
+      entita_id: userId,
+    }, error)
+    return null
+  }
   return data?.email ?? null
 }
 
@@ -135,7 +148,17 @@ async function emailESede(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<{ email: string | null; scuolaId: string | null }> {
-  const { data } = await supabase.from('utenti').select('email, scuola_id').eq('id', userId).maybeSingle()
+  const { data, error } = await supabase.from('utenti').select('email, scuola_id').eq('id', userId).maybeSingle()
+  // Come in `getUserEmail`: il chiamante risponde «email non trovata» (nessun codice parte), ma
+  // il guasto si dichiara.
+  if (error) {
+    logEvento('otp', 'error', {
+      operazione: 'auth/otp-ticket:emailESede',
+      esito: 'email-utente-non-letta',
+      entita_id: userId,
+    }, error)
+    return { email: null, scuolaId: null }
+  }
   const r = data as { email?: string | null; scuola_id?: string | null } | null
   return { email: r?.email ?? null, scuolaId: r?.scuola_id ?? null }
 }

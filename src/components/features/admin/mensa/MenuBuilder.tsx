@@ -12,6 +12,7 @@ import { ALLERGENI } from '@/lib/mensa/allergeni';
 // `await res.json()` (serve `j.success`), e uno stream si consuma una volta sola.
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Props { userId: string; scuolaId: string }
 interface MenuConfig { id: string; nome: string; ordine: number }
@@ -133,7 +134,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
           .map(a => a.classe))];
         setAssegnaSezioni(names);
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `mensa-assegnazioni-menu-non-caricate: ${nomeErrore(err)}` }));
     return () => { cancelled = true; };
   }, [selectedMenuId, scuolaId, userId]);
 

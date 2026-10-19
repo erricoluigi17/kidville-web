@@ -233,7 +233,22 @@ export function posterioriCheContengono(
 // sola nel registro (226 migrazioni), pubblicazione `supabase_realtime` a 0 tabelle; fotografie
 // rigenerate dalla produzione — cambia davvero solo quella delle migrazioni, le altre sei solo
 // l'istante dello scatto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-19 · FASE 12 «storico delle modifiche» e «registri, permessi, vincoli», nella PR delle
+// fasi 11-12. `20261019215733_scatola_nera_modifiche.sql` crea `scatola_nera.modifiche` (PRIMARY
+// KEY, RLS senza policy) e un trigger AFTER UPDATE su 13 tabelle di `public`: le guardie degli
+// indici unici e della RLS la vedono per `primary key` e `row level security`, ma la tabella vive
+// nello schema `scatola_nera` e nessun indice o policy di `public` cambia.
+// `20261019220315_registri_worm_permessi_vincoli_bucket.sql` aggiunge due CHECK su `pagamenti`
+// con `ADD CONSTRAINT`, e la guardia delle FK verso `utenti` la vede per quelle parole: nessuna
+// FK cambia. Cambierà davvero solo la fotografia delle migrazioni (e quella delle tabelle per i
+// due CHECK, se li guarda). Si tolgono con la PR-B dopo il merge, rigenerando dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261019215733_scatola_nera_modifiche.sql':
+        'fase 12: schema scatola_nera (tabella modifiche con PK e RLS senza policy) e trigger AFTER UPDATE su 13 tabelle; la applica l\'integrazione al merge della PR delle fasi 11-12, la voce si toglie con la PR-B rigenerando le fotografie dalla produzione',
+    '20261019220315_registri_worm_permessi_vincoli_bucket.sql':
+        'fase 12: due CHECK su pagamenti con ADD CONSTRAINT (nessuna FK), trigger WORM sui registri, REVOKE e tipi dei bucket; la applica l\'integrazione al merge della PR delle fasi 11-12, la voce si toglie con la PR-B rigenerando le fotografie dalla produzione',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

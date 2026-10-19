@@ -65,7 +65,8 @@ function TeacherNewsContent() {
       .then((d) => {
         if (attivo && d && typeof d.scuola_id === 'string') setScuolaId(d.scuola_id);
       })
-      .catch(() => {});
+      // Accessoria: la sede è un suggerimento per l'editor, il server la ri-valida comunque.
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `news-sede-docente-non-caricata: ${nomeErrore(err)}`, route: '/teacher/news' }));
     return () => {
       attivo = false;
     };

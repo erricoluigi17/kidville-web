@@ -14,6 +14,9 @@ import { parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'primaria/classe/[sectionId]:GET'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `sectionId` (param dinamico) è usato come UUID nelle query (sections.id,
@@ -69,11 +72,15 @@ export const GET = withRoute('primaria/classe/[sectionId]:GET', async (
       }
     }
 
-    const [{ data: section }, { data: alunni }] = await Promise.all([
+    const [{ data: section, error: errSection }, { data: alunni, error: errAlunni }] = await Promise.all([
       supabase.from('sections').select('id, name, school_type, scuola_id').eq('id', sectionId).maybeSingle(),
       // Alunni attivi della sezione (fonte unica: alunni.section_id, sincronizzato dal trigger).
       supabase.from('alunni').select('id, nome, cognome, allergies, allergeni').eq('section_id', sectionId).eq('stato', 'iscritto').order('cognome'),
     ])
+    // Un guasto non è «sezione non trovata» né «classe senza alunni» (con le loro allergie):
+    // la docente vedrebbe una classe vuota e farebbe l'appello su niente.
+    if (errSection) return rispostaGuastoDb(OP, 'db:sections', errSection)
+    if (errAlunni) return rispostaGuastoDb(OP, 'db:alunni', errAlunni)
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     // Materie: il docente vede SOLO le proprie (contitolarità/isolamento disciplina);
@@ -87,21 +94,24 @@ export const GET = withRoute('primaria/classe/[sectionId]:GET', async (
     if (haRuolo(user, 'educator')) {
       const materieIds = await materieDiDocenteInSezione(supabase, user.id, sectionId)
       if (materieIds.length) {
-        const { data } = await supabase
+        const { data, error: errMaterie } = await supabase
           .from('materie')
           .select('id, nome, codice, e_civica, turno_mensa')
           .in('id', materieIds)
           .eq('attiva', true)
           .order('ordine')
+        // Un guasto non è «nessuna materia»: la docente non potrebbe firmare né valutare.
+        if (errMaterie) return rispostaGuastoDb(OP, 'db:materie', errMaterie)
         materie = data ?? []
       }
     } else {
-      const { data } = await supabase
+      const { data, error: errMaterie } = await supabase
         .from('materie')
         .select('id, nome, codice, e_civica, turno_mensa')
         .eq('section_id', sectionId)
         .eq('attiva', true)
         .order('ordine')
+      if (errMaterie) return rispostaGuastoDb(OP, 'db:materie', errMaterie)
       materie = data ?? []
     }
 

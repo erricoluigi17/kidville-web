@@ -40,6 +40,7 @@ import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseMultipart, parseData, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, guastoSecondario } from '@/lib/db/guasto'
 import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 import { leggiElenco, type Anomalia } from '@/lib/iscrizioni/import/elenco'
 import { anomalieClassiSenzaSezione } from '@/lib/iscrizioni/import/sezioni'
@@ -319,7 +320,9 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       // peggio di nessun elenco — il giro di domani assegnerebbe le classi che
       // conosce e manderebbe alla segreteria tutto il resto, senza che il
       // motivo vero (un INSERT caduto) compaia da nessuna parte.
-      await supabase.from('iscrizioni_elenco_caricamenti').delete().eq('id', caricamentoId)
+      const { error: erroreDisfa } = await supabase.from('iscrizioni_elenco_caricamenti').delete().eq('id', caricamentoId)
+      // Se non si disfa, l'elenco a metà resta ATTIVO: la riga lo dice con il suo id.
+      if (erroreDisfa) guastoSecondario('iscrizione', OPERAZIONE_POST, 'elenco-parziale-non-rimosso', erroreDisfa)
       await ritira()
       logEvento('db', 'error', {
         operazione: OPERAZIONE_POST,
@@ -396,10 +399,15 @@ export const GET = withRoute('admin/iscrizioni/elenco:GET', async (request: Next
         id: string; scuola_id: string; nome_file: string
         righe_totali: number; anomalie: Anomalia[] | null; caricato_il: string
       }
-      const { data: perClasse } = await supabase
+      // Il conteggio per classe arricchisce la riga dell'elenco, non la decide: col guasto
+      // esce vuoto, e la riga di log dice quale caricamento non è stato contato.
+      const { data: perClasse, error: errorePerClasse } = await supabase
         .from('iscrizioni_elenco_righe')
         .select('classe')
         .eq('caricamento_id', riga.id)
+      if (errorePerClasse) {
+        guastoLetturaAccessoria('iscrizione', OPERAZIONE_GET, 'conteggio-per-classe-non-letto', errorePerClasse)
+      }
       const conteggio = new Map<string, number>()
       for (const c of (perClasse ?? []) as { classe: string }[]) {
         conteggio.set(c.classe, (conteggio.get(c.classe) ?? 0) + 1)

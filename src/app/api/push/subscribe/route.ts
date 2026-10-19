@@ -7,6 +7,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // L'eventuale `userId` nel body/header e' ignorato: si usa sempre l'utente autenticato.
 // Due varianti: Web Push (subscription VAPID) oppure token NATIVO (Capacitor iOS/Android).
@@ -227,7 +228,10 @@ export const DELETE = withRoute('push/subscribe:DELETE', async (request: Request
     const { endpoint } = q.data
 
     const supabase = await createAdminClient()
-    await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint).eq('utente_id', auth.user.id)
+    // La cancellazione È l'operazione: un guasto non può rispondere «fatto», o il
+    // dispositivo che ha chiesto di non ricevere più avvisi continuerebbe a riceverli.
+    const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint).eq('utente_id', auth.user.id)
+    if (error) return rispostaGuastoDb('push/subscribe:DELETE', 'db:push_subscriptions', error, 'scrittura')
     return NextResponse.json({ success: true })
   } catch (err) {
     logErrore({ operazione: 'push/subscribe:DELETE', stato: 500 }, err)

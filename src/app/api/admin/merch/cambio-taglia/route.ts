@@ -8,7 +8,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // POST /api/admin/merch/cambio-taglia — cambia la taglia di una riga: crea una
 // NUOVA riga (nuova taglia, stessa quantità, prezzo 0 = nessun addebito
@@ -24,6 +25,8 @@ const bodySchema = z.object({
   nuova_taglia: z.string().trim().max(40),
   reso_a_stock: z.boolean().optional(),
 })
+
+const OP = 'admin/merch/cambio-taglia:POST'
 
 export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: Request) => {
   try {
@@ -48,6 +51,8 @@ export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: 
     if (error && SCHEMA_MANCANTE.has(error.code ?? '')) {
       return NextResponse.json({ error: 'Funzione non disponibile su questo ambiente' }, { status: 503 })
     }
+    // Un guasto non è «riga non trovata».
+    if (error) return rispostaGuastoDb(OP, 'db:divise_ordini_righe', error)
     const riga = rigaRaw as unknown as R | null
     if (!riga) return NextResponse.json({ error: 'Riga non trovata' }, { status: 404 })
     const scuolaId = uno(riga.ordine)?.scuola_id
@@ -59,7 +64,9 @@ export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: 
 
     // Valida la nuova taglia contro il catalogo (se l'articolo ha taglie).
     if (riga.articolo_id) {
-      const { data: art } = await supabase.from('divise_articoli').select('taglie').eq('id', riga.articolo_id).maybeSingle()
+      const { data: art, error: errArticolo } = await supabase.from('divise_articoli').select('taglie').eq('id', riga.articolo_id).maybeSingle()
+      // Senza il catalogo letto la taglia non è validata: si ferma, non si accetta qualunque taglia.
+      if (errArticolo) return rispostaGuastoDb(OP, 'db:divise_articoli', errArticolo)
       const taglie = (art?.taglie as string[] | undefined) ?? []
       if (taglie.length > 0 && !taglie.includes(nuova_taglia)) {
         return NextResponse.json({ error: `Taglia "${nuova_taglia || '—'}" non valida per l'articolo` }, { status: 400 })
@@ -96,10 +103,23 @@ export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: 
     //    reso_a_stock il capo fisico restituito rientra a magazzino (+qty).
     const consegnato = riga.stato === 'consegnato'
     let resoApplicato = false
+    // Il secondo passo è parte del cambio quanto il primo: se fallisce, la riga nuova appena
+    // creata si TOGLIE, e la risposta è 500. Senza, l'annullo mancato lascerebbe due righe
+    // attive (un capo ordinato due volte) e il reso mancato un capo che non rientra a
+    // magazzino — e la segreteria, rilanciando, ne creerebbe una terza.
+    const nuovaRigaId = ins.data.id as string
+    const disfaENega = async (evento: string, errore: unknown) => {
+      const { error: errDisfa } = await supabase.from('divise_ordini_righe').delete().eq('id', nuovaRigaId)
+      if (errDisfa) {
+        logEvento('db', 'error', { operazione: OP, esito: 'riga-nuova-non-rimossa', entita_id: nuovaRigaId }, errDisfa)
+      }
+      return rispostaGuastoDb(OP, evento, errore, 'scrittura')
+    }
     if (!consegnato) {
-      await supabase.from('divise_ordini_righe').update({ stato: 'annullato' }).eq('id', riga_id)
+      const { error: errAnnullo } = await supabase.from('divise_ordini_righe').update({ stato: 'annullato' }).eq('id', riga_id)
+      if (errAnnullo) return disfaENega('db:divise_ordini_righe', errAnnullo)
     } else if (reso_a_stock) {
-      await supabase.from('merch_rettifiche').insert({
+      const { error: errReso } = await supabase.from('merch_rettifiche').insert({
         scuola_id: scuolaId,
         articolo_id: riga.articolo_id,
         articolo_nome: riga.articolo_nome,
@@ -109,6 +129,7 @@ export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: 
         nota: `Cambio taglia ${riga.taglia || '—'} → ${nuova_taglia}`,
         creato_da: auth.user.id,
       })
+      if (errReso) return disfaENega('db:merch_rettifiche', errReso)
       resoApplicato = true
     }
 

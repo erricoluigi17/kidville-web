@@ -6,6 +6,7 @@ import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 const getQuerySchema = z.object({}) // nessun parametro: aggrega tutto il "da ordinare" dei plessi
 
@@ -66,7 +67,12 @@ export const GET = withRoute('admin/merch/da-ordinare:GET', async (request: Requ
     const fornitoreIds = [...new Set(righe.map((r) => uno(r.articolo)?.fornitore_id).filter(Boolean) as string[])]
     const nomiFornitore = new Map<string, string>()
     if (fornitoreIds.length > 0) {
-      const { data: forn } = await supabase.from('merch_fornitori').select('id, nome').in('id', fornitoreIds)
+      // Il nome del fornitore si MOSTRA e basta: col guasto il gruppo esce come «Fornitore»
+      // (il ripiego di sempre), con l'id giusto, e la riga di log dice perché.
+      const { data: forn, error: errFornitori } = await supabase.from('merch_fornitori').select('id, nome').in('id', fornitoreIds)
+      if (errFornitori) {
+        guastoLetturaAccessoria('db', 'admin/merch/da-ordinare:GET', 'nomi-fornitore-non-letti', errFornitori)
+      }
       for (const f of forn ?? []) nomiFornitore.set(f.id as string, f.nome as string)
     }
 

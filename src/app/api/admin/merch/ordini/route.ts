@@ -10,7 +10,8 @@ import { zUuid } from '@/lib/validation/common'
 import { derivaStatoTestata } from '@/lib/merch/stati'
 import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // Ordini Merchandise lato staff (Fase B) — creazione SOLO segreteria (il genitore
 // vede l'addebito in /parent/pagamenti). Prezzi/snapshot SERVER-SIDE; parent_id
@@ -131,16 +132,20 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
       )
     }
 
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    const { data: al, error: errAlunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    // Un guasto non è «alunno senza plesso».
+    if (errAlunno) return rispostaGuastoDb('admin/merch/ordini:POST', 'db:alunni', errAlunno)
     const scuolaId = (al?.scuola_id as string) ?? null
     if (!scuolaId) return NextResponse.json({ error: 'Alunno senza plesso' }, { status: 400 })
 
     // Articoli richiesti: caricati dal DB, validati (attivi, stessa scuola).
     const articoloIds = [...new Set(righe.map((r) => r.articolo_id))]
-    const { data: articoli } = await supabase
+    const { data: articoli, error: errArticoli } = await supabase
       .from('divise_articoli')
       .select('id, nome, prezzo, taglie, attivo, scuola_id')
       .in('id', articoloIds)
+    // Un guasto non è «articolo non disponibile»: prezzi e taglie vengono da qui.
+    if (errArticoli) return rispostaGuastoDb('admin/merch/ordini:POST', 'db:divise_articoli', errArticoli)
     const byId = new Map((articoli ?? []).map((a) => [a.id as string, a]))
 
     const righeOrdine: { articolo_id: string; articolo_nome: string; taglia: string; quantita: number; prezzo_unitario: number }[] = []
@@ -167,6 +172,31 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
     }
     totale = Math.round(totale * 100) / 100
 
+    // Categoria 'divisa' dell'addebito (preferisci quella della scuola, altrimenti globale).
+    // Si legge PRIMA di scrivere qualunque cosa: è un valore che finisce nell'addebito, e un
+    // guasto qui avrebbe prodotto un pagamento senza categoria. Letta prima, il guasto ferma
+    // la richiesta senza niente da disfare.
+    const { data: cats, error: errCategorie } = await supabase
+      .from('payment_categories')
+      .select('id, scuola_id')
+      .eq('slug', 'divisa')
+      .or(`scuola_id.is.null,scuola_id.eq.${scuolaId}`)
+    if (errCategorie) return rispostaGuastoDb('admin/merch/ordini:POST', 'db:payment_categories', errCategorie)
+    const cat = (cats ?? []).find((c) => c.scuola_id === scuolaId) ?? (cats ?? []).find((c) => c.scuola_id === null)
+
+    // Il ritorno indietro di una creazione a metà. Ogni passo che non riesce si DICE: un
+    // ordine o un addebito orfano rimasto in tabella va trovato con il suo id, non per caso.
+    const disfa = async (ordineId: string, pagamentoId: string | null) => {
+      if (pagamentoId) {
+        const { error: e } = await supabase.from('pagamenti').delete().eq('id', pagamentoId)
+        if (e) logEvento('db', 'error', { operazione: 'admin/merch/ordini:POST', esito: 'addebito-orfano-non-rimosso', entita_id: pagamentoId }, e)
+      }
+      const { error: eRighe } = await supabase.from('divise_ordini_righe').delete().eq('ordine_id', ordineId)
+      if (eRighe) logEvento('db', 'error', { operazione: 'admin/merch/ordini:POST', esito: 'righe-orfane-non-rimosse', entita_id: ordineId }, eRighe)
+      const { error: eOrdine } = await supabase.from('divise_ordini').delete().eq('id', ordineId)
+      if (eOrdine) logEvento('db', 'error', { operazione: 'admin/merch/ordini:POST', esito: 'ordine-orfano-non-rimosso', entita_id: ordineId }, eOrdine)
+    }
+
     // 1) ordine (testata legacy: tutte le righe da_ordinare → 'inviato').
     // Idempotenza: la stessa idempotency_key (doppio click/retry) NON crea un
     // secondo ordine+addebito → si ritorna quello già creato.
@@ -181,11 +211,14 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
     }
     // retry/doppio invio con la stessa chiave → ritorna l'ordine già creato
     if (ordRes.error?.code === '23505' && idempotencyKey) {
-      const { data: gia } = await supabase
+      const { data: gia, error: errGia } = await supabase
         .from('divise_ordini')
         .select('id, pagamento_id, totale')
         .eq('idempotency_key', idempotencyKey)
         .maybeSingle()
+      // Il 23505 dice che l'ordine C'È: un guasto nel rileggerlo non deve diventare un 500
+      // generico che inviti a crearne un altro — si dice che la lettura non è riuscita.
+      if (errGia) return rispostaGuastoDb('admin/merch/ordini:POST', 'db:divise_ordini', errGia)
       if (gia) {
         return NextResponse.json(
           { success: true, data: { ordine_id: gia.id, pagamento_id: gia.pagamento_id, totale: gia.totale, idempotente: true } },
@@ -210,17 +243,9 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
       righeErr = (await supabase.from('divise_ordini_righe').insert(legacy)).error
     }
     if (righeErr) {
-      await supabase.from('divise_ordini').delete().eq('id', ordine.id) // rollback best-effort
+      await disfa(ordine.id, null) // rollback best-effort, ma che dice quando non riesce
       return NextResponse.json({ error: righeErr.message }, { status: 500 })
     }
-
-    // 3) categoria 'divisa' (preferisci quella della scuola, altrimenti globale)
-    const { data: cats } = await supabase
-      .from('payment_categories')
-      .select('id, scuola_id')
-      .eq('slug', 'divisa')
-      .or(`scuola_id.is.null,scuola_id.eq.${scuolaId}`)
-    const cat = (cats ?? []).find((c) => c.scuola_id === scuolaId) ?? (cats ?? []).find((c) => c.scuola_id === null)
 
     // 4) pagamento da saldare (offline), descrizione "Merchandise: …"
     const descrizione = 'Merchandise: ' + righeOrdine.map((r) => `${r.quantita}× ${r.articolo_nome}${r.taglia ? ` (${r.taglia})` : ''}`).join(', ')
@@ -243,13 +268,18 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
       .single()
     if (pagErr || !pagamento) {
       // rollback best-effort: senza addebito l'ordine non deve restare orfano
-      await supabase.from('divise_ordini_righe').delete().eq('ordine_id', ordine.id)
-      await supabase.from('divise_ordini').delete().eq('id', ordine.id)
+      await disfa(ordine.id, null)
       return NextResponse.json({ error: pagErr?.message ?? 'Addebito non creato' }, { status: 500 })
     }
 
-    // 5) collega il pagamento all'ordine
-    await supabase.from('divise_ordini').update({ pagamento_id: pagamento.id }).eq('id', ordine.id)
+    // 5) collega il pagamento all'ordine. È parte della creazione: senza il collegamento
+    // l'ordine non sa del suo addebito e la famiglia vedrebbe un addebito senza ordine. Se non
+    // riesce si disfa tutto (addebito compreso, appena nato e senza incassi) e si dice 500.
+    const { error: errCollega } = await supabase.from('divise_ordini').update({ pagamento_id: pagamento.id }).eq('id', ordine.id)
+    if (errCollega) {
+      await disfa(ordine.id, pagamento.id as string)
+      return rispostaGuastoDb('admin/merch/ordini:POST', 'db:divise_ordini', errCollega, 'scrittura')
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -282,11 +312,13 @@ export const PATCH = withRoute('admin/merch/ordini:PATCH', async (request: Reque
 
     const supabase: SupabaseClient = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: existing } = await supabase
+    const { data: existing, error: errEsistente } = await supabase
       .from('divise_ordini')
       .select('id, scuola_id, stato')
       .eq('id', id)
       .maybeSingle()
+    // Un guasto non è «ordine non trovato».
+    if (errEsistente) return rispostaGuastoDb('admin/merch/ordini:PATCH', 'db:divise_ordini', errEsistente)
     if (!existing) return NextResponse.json({ error: 'Ordine non trovato' }, { status: 404 })
     if (!plessi.includes(existing.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: ordine fuori dal tuo plesso' }, { status: 403 })

@@ -1,3 +1,20 @@
+## 🔎 Changelog — Analisi di robustezza, seconda misura: fotografia, 14 sessioni proposte, confronto col 05/10 — 2026-10-20 (branch `docs/analisi-robustezza-2026-10-20`)
+
+**Stato:** 📝 solo documenti, **nessuna sessione avviata**. Nessun codice in `src/`, nessuna migrazione, niente da applicare al merge. Il rapporto è `docs/analisi-robustezza-2026-10-20.md`.
+
+- **Come è stata fatta.** Stesso metodo e stesse query del 05/10, in sola lettura (`SELECT`, log, advisor, API in `GET`), senza aprire chiavi di servizio. Domande d'iscrizione contate alle 12:32:54 UTC: **733**. Le Parti 1–3 sono state scritte **senza** aprire `docs/roadmap-robustezza.md`; il confronto sta solo nella Parte 4, scritta dopo.
+- **Cosa dice la fotografia (20/10, martedì).** Funzioni a `dub1`; server→DB p50 **10 ms** (era 103), p95 127 ms (era 129); `/api/health` `ok` con p50 346 ms (era 1,06 s); timeout Supabase 2 in 7 giorni (erano 230); «Failed to fetch» 41–90 al giorno feriale (erano 1.100–1.500); Realtime fermo. DB 348 → **491 MB**, Storage 14 → **20 GB** in 15 giorni.
+- **I problemi di oggi.** 12 sul server (S1–S12) e 12 sul database (D1–D12). In cima:
+  - i cron «riusciti» che non lo sono: 27 richieste senza risposta in 6 ore in `net._http_response`;
+  - i solleciti registrati `ok: true` anche se nessuna email parte;
+  - `exec_sql` ancora raggiungibile da `service_role`;
+  - nessun ripristino al minuto;
+  - **13,2 GB** di galleria e video originali senza copia (erano 6,9 il 05/10);
+  - 24 tabelle figlie di `utenti`/`alunni` cancellate in cascata senza scatola nera.
+- **La roadmap proposta.** **14 sessioni** in serie e **12 decisioni** del titolare (§3 del rapporto). La prima ha una scadenza: il giro `iscrizioni-retention` dell'1/11 alle 04:41 UTC.
+- **Una correzione fatta durante l'analisi.** La cache di `/api/iscrizione/sedi` non manca di `s-maxage`: il codice lo manda (`cache-pubblica.ts:33`) e Vercel lo consuma. La CDN però risponde MISS: 23/23 e poi 2/2, più di 4 ore dopo il deploy. La causa non è dimostrata.
+- **Logging.** Nessun codice toccato.
+
 ## 🛡️ Changelog — Robustezza: roadmap completata (fasi 2 e 3 chiuse) — 2026-10-20
 
 **Stato:** ✅ chiusa il 2026-10-20 con la PR [#252](https://github.com/erricoluigi17/kidville-web/pull/252) (documenti e fotografie; nessuna migrazione, nessun codice in `src/`, quindi niente da applicare al merge). La roadmap `docs/roadmap-robustezza.md` è chiusa al 100%: le sessioni 0–12, con 9a e 9b, sono tutte ✅.

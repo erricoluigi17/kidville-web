@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-19",
-  "generato_alle": "2026-10-19T21:17:10Z",
-  "sha256": "af2313b084d1e9e8aa903a37484cb66b052ddd8730a1f1be2b0c313fb3fcbda4",
+  "generato_il": "2026-10-20",
+  "generato_alle": "2026-10-20T07:57:14Z",
+  "sha256": "6a75eddf776c1606f0ee821f043b07339ae38a3a215730dbf16005df9754ee42",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -907,6 +907,26 @@
     {
       "version": "20261019202225",
       "name": "realtime_pubblicazione_potata"
+    },
+    {
+      "version": "20261019211807",
+      "name": "conservazione_grazia_ritiro_e_interruttore"
+    },
+    {
+      "version": "20261019211808",
+      "name": "scrutinio_periodi_archiviazione"
+    },
+    {
+      "version": "20261019215733",
+      "name": "scatola_nera_modifiche"
+    },
+    {
+      "version": "20261019220315",
+      "name": "registri_worm_permessi_vincoli_bucket"
+    },
+    {
+      "version": "20261019223123",
+      "name": "battiti_app_log_che_contano"
     }
   ]
 }

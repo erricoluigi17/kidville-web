@@ -526,6 +526,32 @@ describe('GET /api/teacher/uscite — il semaforo legge la firma della gita', ()
     expect(res.status).toBe(500)
     expect(rigaLog('firme-uscita-non-lette')?.[1]).toBe('error')
   })
+
+  // Fase 11 (errori non ignorati): il ramo SENZA `form_id` né `uscita_id` leggeva
+  // le firme dei genitori col solo `data`. Un guasto era «nessuno ha firmato»,
+  // cioè un 200 con tutti i bambini non autorizzati — lo stesso difetto che i due
+  // rami gemelli avevano già chiuso.
+  it('ramo per genitore: lettura delle firme fallita ⇒ 500, non «nessuno ha firmato»', async () => {
+    h.db.legame_genitori_alunni = [{ alunno_id: ALUNNO, genitore_id: 'gen-1' }]
+    h.db.student_parents = []
+    h.db.form_submissions = []
+    h.erroriTabella['form_submissions'] = { code: '08006', message: 'connection failure' }
+
+    const res = await GET(getReq(`alunno_ids=${ALUNNO}`))
+
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ codice: 'AUTORIZZAZIONI_USCITA_NON_LETTE' })
+    expect(rigaLog('firme-uscita-non-lette')?.[1]).toBe('error')
+  })
+
+  it('pagamenti della gita non letti ⇒ 500, non «quota non pagata»', async () => {
+    h.erroriTabella['pagamenti'] = { code: '08006', message: 'connection failure' }
+
+    const res = await GET(getReq(`alunno_ids=${ALUNNO}&form_id=mod-gita`))
+
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+  })
 })
 
 describe('GET /api/teacher/uscite — il semaforo delle gite NUOVE legge il fascicolo', () => {

@@ -11,6 +11,7 @@ import { buildOrdineFornitorePdf } from '@/lib/merch/pdf'
 import { applicaCartaIntestata } from '@/lib/carta'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { formattaIstante } from '@/i18n/config'
 
 // GET /api/admin/merch/ordini-fornitore/pdf?id= — PDF (ristampabile) del PO al
@@ -28,22 +29,28 @@ export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (requ
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: po } = await supabase
+    const { data: po, error: errPo } = await supabase
       .from('merch_ordini_fornitore')
       .select('id, scuola_id, fornitore_id, fornitore_nome, numero, note, creato_il')
       .eq('id', id)
       .maybeSingle()
+    // Un guasto non è «PO non trovato».
+    if (errPo) return rispostaGuastoDb('admin/merch/ordini-fornitore/pdf:GET', 'db:merch_ordini_fornitore', errPo)
     if (!po) return NextResponse.json({ error: 'PO non trovato' }, { status: 404 })
     if (!plessi.includes(po.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: PO fuori dal tuo plesso' }, { status: 403 })
     }
 
-    const [{ data: forn }, { data: righe }] = await Promise.all([
+    const [{ data: forn, error: errForn }, { data: righe, error: errRighe }] = await Promise.all([
       po.fornitore_id
         ? supabase.from('merch_fornitori').select('nome, referente, email, telefono, indirizzo, piva').eq('id', po.fornitore_id).maybeSingle()
-        : Promise.resolve({ data: null }),
+        : Promise.resolve({ data: null, error: null }),
       supabase.from('divise_ordini_righe').select('articolo_nome, taglia, quantita, stato').eq('ordine_fornitore_id', id),
     ])
+    // Il PDF esce verso un TERZO: con le righe non lette partirebbe un ordine vuoto, con il
+    // fornitore non letto un foglio senza recapiti. È ristampabile: meglio un 500 che un falso.
+    if (errRighe) return rispostaGuastoDb('admin/merch/ordini-fornitore/pdf:GET', 'db:divise_ordini_righe', errRighe)
+    if (errForn) return rispostaGuastoDb('admin/merch/ordini-fornitore/pdf:GET', 'db:merch_fornitori', errForn)
 
     const fiscale = (await getModuleConfig(supabase, 'fiscale_config', po.scuola_id as string)) as FiscaleConfig
     const aruba = (await getModuleConfig(supabase, 'aruba_config', po.scuola_id as string)) as ArubaFiscalConfig

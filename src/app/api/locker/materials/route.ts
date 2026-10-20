@@ -55,10 +55,18 @@ async function sezioniConNome(
     admin: Awaited<ReturnType<typeof createAdminClient>>,
     user: Parameters<typeof assertClasseNomeInScope>[1],
     nome: string,
+    operazione: string,
 ): Promise<string[]> {
     const plessi = await scuoleDiUtente(admin, user);
     if (plessi.length === 0) return [];
-    const { data } = await admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    const { data, error } = await admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    if (error) {
+        // Un guasto NON è «nessuna sezione»: in GET diventerebbe un elenco vuoto, in POST un
+        // materiale scritto con `section_id` nullo, cioè senza sede. Si lancia, e lo prende il
+        // `catch` di chi chiama. Il messaggio è neutro: quello di PostgREST resta nel log.
+        logEvento('db', 'error', { operazione, esito: 'sezioni-della-classe-non-lette' }, error);
+        throw new Error('Sezioni della classe non leggibili');
+    }
     return (data ?? []).map((s) => s.id as string);
 }
 
@@ -86,7 +94,7 @@ export const GET = withRoute('locker/materials:GET', async (request: NextRequest
         // `locker_config_per_sezione` la riga punta alla sezione vera: si filtra
         // su quella, risolta dentro i propri plessi.
         if (classeSezione) {
-            const sezioni = await sezioniConNome(admin, auth.user, classeSezione);
+            const sezioni = await sezioniConNome(admin, auth.user, classeSezione, 'locker/materials:GET');
             if (sezioni.length === 0) return NextResponse.json([]);
             q = q.in('section_id', sezioni);
         }
@@ -168,7 +176,7 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
             // Anche qui la sezione vera, non solo il nome: la riga deve sapere a
             // quale plesso appartiene.
             const rows = await Promise.all(uniche.map(async (classe) => {
-                const sez = await sezioniConNome(admin, auth.user, classe);
+                const sez = await sezioniConNome(admin, auth.user, classe, 'locker/materials:POST');
                 return { ...base, classe_sezione: classe, section_id: sez[0] ?? null };
             }));
             const { data, error } = await admin.from('locker_config').insert(rows).select();
@@ -189,7 +197,7 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
         // Si valorizza ANCHE `section_id`: `classe_sezione` resta per
         // compatibilità col DB E2E non migrato, ma la chiave vera è la sezione.
         const sezioniPost = body.classe_sezione
-            ? await sezioniConNome(admin, auth.user, body.classe_sezione)
+            ? await sezioniConNome(admin, auth.user, body.classe_sezione, 'locker/materials:POST')
             : [];
         const payload = {
             ...base,

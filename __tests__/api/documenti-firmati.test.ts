@@ -397,4 +397,14 @@ describe('GET /api/documenti-firmati/dettaglio', () => {
     const res = await DETTAGLIO(reqDettaglio(`?fonte=modulo_firmato&id=${DOC}`))
     expect(res.status).toBe(404)
   })
+
+  it('un guasto del database è 500, non «documento non trovato»', async () => {
+    // Prima `error || !data` dava 404: un documento che c'è, detto inesistente perché il
+    // database non aveva risposto.
+    comeStaff()
+    h.state.queues['certificati_medici'] = [{ data: null, error: { code: '08006', message: 'connessione persa' } }]
+    const res = await DETTAGLIO(reqDettaglio(`?fonte=certificato_medico&id=${DOC}`))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+  })
 })

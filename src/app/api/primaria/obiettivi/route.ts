@@ -8,6 +8,9 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'primaria/obiettivi:GET'
 
 // ─── Schema di validazione input (M3) ────────────────────────────────────────
 // '' su sectionId equivale ad assente (nessun filtro livello, nessun check 403).
@@ -28,11 +31,13 @@ export const GET = withRoute('primaria/obiettivi:GET', async (request: NextReque
     const { materiaId, sectionId } = q.data
 
     const supabase = await createAdminClient()
-    const { data: materia } = await supabase
+    const { data: materia, error: errMateria } = await supabase
       .from('materie')
       .select('codice, scuola_id, section_id')
       .eq('id', materiaId)
       .maybeSingle()
+    // Un guasto non è «materia non trovata».
+    if (errMateria) return rispostaGuastoDb(OP, 'db:materie', errMateria)
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
 
     // Scope sulla sezione della materia (tenant + assegnazione educator): protegge
@@ -45,7 +50,7 @@ export const GET = withRoute('primaria/obiettivi:GET', async (request: NextReque
 
     // Obiettivi disponibili: stesso filtro (materia, livello) usato dall'enforcement
     // "≥1 obiettivo" nella POST valutazioni (sorgente unica: obiettiviDisponibili).
-    const [obiettivi, { data: scala }] = await Promise.all([
+    const [obiettivi, { data: scala, error: errScala }] = await Promise.all([
       obiettiviDisponibili(supabase, { codice: materia.codice, scuola_id: materia.scuola_id }, sectionId),
       supabase
         .from('giudizi_sintetici_scala')
@@ -54,6 +59,8 @@ export const GET = withRoute('primaria/obiettivi:GET', async (request: NextReque
         .eq('attivo', true)
         .order('ordine'),
     ])
+    // Un guasto non è «scala vuota»: la docente non avrebbe giudizi fra cui scegliere.
+    if (errScala) return rispostaGuastoDb(OP, 'db:giudizi_sintetici_scala', errScala)
 
     return NextResponse.json({
       success: true,

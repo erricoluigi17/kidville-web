@@ -62,6 +62,7 @@ import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { inizioGiornoRomaISO } from '@/lib/format/fiscal-date'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 import { normalizzaEmailModulo } from '@/lib/iscrizioni/email-genitori'
 import { pausaFraEmail } from '@/lib/email/ritmo'
 
@@ -367,9 +368,7 @@ async function spedisci(supabase: SupabaseClient, s: Spedizione): Promise<EsitoI
   // della domanda. La riga resta `da_inviare` e domani la ripresa la ritrova —
   // a meno che chi ha chiamato stia per disfare tutto, e allora la ritira.
   if (invio.rinviabile) {
-    if (s.alFallimento === 'ritira') {
-      await supabase.from('iscrizioni_inviti_credenziali').delete().eq('auth_user_id', s.authUserId)
-    }
+    if (s.alFallimento === 'ritira') await ritiraRiga(supabase, s)
     logEvento('iscrizione', 'warn', {
       operazione: OPERAZIONE,
       esito: 'invito-rinviato-quota',
@@ -383,6 +382,23 @@ async function spedisci(supabase: SupabaseClient, s: Spedizione): Promise<EsitoI
   return registraFallimento(supabase, s, invio.error ?? 'motivo sconosciuto')
 }
 
+/**
+ * Ritira la riga del registro perché il chiamante sta per disfare la domanda. Se la DELETE non
+ * riesce la riga resta `da_inviare`, e la ripresa di domani manderebbe le credenziali a un
+ * genitore senza più nessun figlio collegato: non si può rimediare da qui, ma si deve dire.
+ */
+async function ritiraRiga(supabase: SupabaseClient, s: Spedizione): Promise<void> {
+  const { error } = await supabase.from('iscrizioni_inviti_credenziali').delete().eq('auth_user_id', s.authUserId)
+  if (error) {
+    logEvento('iscrizione', 'error', {
+      operazione: OPERAZIONE,
+      esito: 'registro-inviti-non-ritirato',
+      entita_id: s.authUserId,
+      sede_id: s.scuolaId ?? undefined,
+    }, error)
+  }
+}
+
 /** Segna il fallimento sul registro — o ritira la riga, se si sta disfacendo tutto. */
 async function registraFallimento(
   supabase: SupabaseClient,
@@ -390,7 +406,7 @@ async function registraFallimento(
   motivo: string,
 ): Promise<EsitoInvito> {
   if (s.alFallimento === 'ritira') {
-    await supabase.from('iscrizioni_inviti_credenziali').delete().eq('auth_user_id', s.authUserId)
+    await ritiraRiga(supabase, s)
   } else {
     const { error } = await supabase
       .from('iscrizioni_inviti_credenziali')
@@ -479,11 +495,13 @@ export async function riprendiInvitiSospesi(
     let nome: string | null = null
     let scuolaId: string | null = null
     if (riga.parent_id) {
-      const { data: p } = await supabase
+      const { data: p, error: errNome } = await supabase
         .from('parents')
         .select('first_name')
         .eq('id', riga.parent_id)
         .maybeSingle()
+      // Accessoria: l'email parte senza il nome, che è il ripiego già previsto.
+      if (errNome) guastoLetturaAccessoria('iscrizione', OPERAZIONE, 'nome-genitore-non-letto', errNome)
       nome = (p as { first_name?: string | null } | null)?.first_name ?? null
       scuolaId = (await sedeDelGenitore(supabase, riga.parent_id)).scuolaId
     }

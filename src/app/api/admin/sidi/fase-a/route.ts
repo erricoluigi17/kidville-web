@@ -10,6 +10,7 @@ import { sidiTransmit } from '@/lib/sidi/client'
 import { persistFaseStato } from '@/lib/sidi/sync-store'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // scuola_id opzionale: la sede su cui operare (preferita per resolveScuolaScrittura).
@@ -30,10 +31,18 @@ export const POST = withRoute('admin/sidi/fase-a:POST', async (request: NextRequ
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId!
 
-      const { data: scuola } = await supabase.from('schools').select('id, nome').eq('id', scuolaId).maybeSingle()
-      const { data: sezioni } = await supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)
-      const { data: tempo } = await supabase.from('tempo_scuola').select('section_id, modello, giorni_settimana, attivo')
-      const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+      // Quattro letture che DECIDONO il flusso verso il Ministero: con una sola fallita
+      // partirebbe un allineamento strutturale senza sede, senza sezioni o senza tempo scuola
+      // — cioè una dichiarazione falsa, non un invio parziale. Ognuna si ferma col suo nome.
+      const OP = 'admin/sidi/fase-a:POST'
+      const { data: scuola, error: errScuola } = await supabase.from('schools').select('id, nome').eq('id', scuolaId).maybeSingle()
+      if (errScuola) return rispostaGuastoDb(OP, 'db:schools', errScuola)
+      const { data: sezioni, error: errSezioni } = await supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)
+      if (errSezioni) return rispostaGuastoDb(OP, 'db:sections', errSezioni)
+      const { data: tempo, error: errTempo } = await supabase.from('tempo_scuola').select('section_id, modello, giorni_settimana, attivo')
+      if (errTempo) return rispostaGuastoDb(OP, 'db:tempo_scuola', errTempo)
+      const { data: settings, error: errSettings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+      if (errSettings) return rispostaGuastoDb(OP, 'db:admin_settings', errSettings)
 
       const flusso = buildFaseAReconcile({
         sedi: scuola ? [{ id: scuola.id, nome: scuola.nome }] : [],

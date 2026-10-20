@@ -8,6 +8,7 @@ import { OrarioManager } from '@/components/features/admin/primaria/OrarioManage
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 
 type Tab = 'registri' | 'orario' | 'fascicoli';
@@ -38,7 +39,7 @@ function PrimariaAdminInner() {
         // Update funzionale: nessuna dipendenza da sezioneId, deps pulite.
         if (list.length) setSezioneId((cur) => cur || list[0].id);
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-sezioni-non-caricate: ${nomeErrore(err)}` }));
   }, [sedeCorrente]);
 
   return (

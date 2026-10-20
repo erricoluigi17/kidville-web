@@ -12,6 +12,7 @@ import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
 import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria } from '@/lib/db/guasto';
 import { etichetteAllergie } from '@/lib/mensa/allergeni';
 import { leggiVive } from '@/lib/gallery/cestino';
 
@@ -191,12 +192,16 @@ async function lookupPerson(
 ): Promise<PersonInfo | null> {
     if (!id) return null;
 
+    // Nomi da mostrare sulla scheda: lettura accessoria. Un guasto esce senza nome
+    // come prima, ma la riga dice che è un guasto e non una persona sconosciuta.
+    // (Unico chiamante: `enrichTask`, cioè `tasks:GET`.)
     // Try utenti first (most likely source)
-    const { data: u } = await supabase
+    const { data: u, error: errUtente } = await supabase
         .from('utenti')
         .select('nome, cognome, ruolo, first_name, last_name, role')
         .eq('id', id)
         .maybeSingle();
+    if (errUtente) guastoLetturaAccessoria('db', 'tasks:GET', 'persona-utenti-non-letta', errUtente);
     if (u) {
         const rawRole = u.role || u.ruolo || '';
         let roleStr = 'educator';
@@ -210,11 +215,12 @@ async function lookupPerson(
     }
 
     // Try parents
-    const { data: p } = await supabase
+    const { data: p, error: errGenitore } = await supabase
         .from('parents')
         .select('first_name, last_name, citizenship')
         .eq('id', id)
         .maybeSingle();
+    if (errGenitore) guastoLetturaAccessoria('db', 'tasks:GET', 'persona-parents-non-letta', errGenitore);
     if (p) return { first_name: p.first_name, last_name: p.last_name, role: p.citizenship };
 
     return null;
@@ -272,11 +278,14 @@ async function enrichTask(
         // testo, «nichel» sparirebbe dalle chiavi (`normalizzaAllergeni` scarta in
         // silenzio ciò che non riconosce). Esce solo la negazione. Il contratto
         // `allergie: string[]` non cambia, quindi `TaskCard` non cambia.
-        const { data: stud } = await supabase
+        // Accessoria come i nomi: la scheda esce senza il riquadro del bambino, e la
+        // riga lo dice (non è «bambino inesistente»).
+        const { data: stud, error: errStud } = await supabase
             .from('alunni')
             .select('nome, cognome, classe_sezione, allergeni, allergies')
             .eq('id', decoded.student_id)
             .maybeSingle();
+        if (errStud) guastoLetturaAccessoria('db', 'tasks:GET', 'alunno-scheda-non-letto', errStud);
         if (stud) {
             student = {
                 nome: stud.nome,
@@ -465,11 +474,15 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
                 // classe fra le sezioni del docente, e da lì gli mostrava i task
                 // della classe OMONIMA della propria sede — che non è la sua.
                 // Stesso presidio già in `educator-sections` e in `chat/contacts`.
-                const { data: students } = await supabase
+                // Stesso degrado dei media qui sopra: la richiesta non si
+                // interrompe, ma «nessuna classe dai tag» detto da un guasto
+                // lascia una riga.
+                const { data: students, error: errStudents } = await supabase
                     .from('alunni')
                     .select('classe_sezione')
                     .in('id', myTaggedIds)
                     .in('scuola_id', plessi);
+                if (errStudents) guastoLetturaAccessoria('db', 'tasks:GET', 'classi-dei-taggati-non-lette', errStudents);
                 sectionNames = [...new Set(
                     (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
                 )];

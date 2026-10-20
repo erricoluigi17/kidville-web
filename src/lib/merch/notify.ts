@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 // Notifiche Merchandise ai genitori (arrivo/consegna). Best-effort: gli errori
 // non bloccano il flusso logistico. Destinatari = tutori dell'alunno, risolti
@@ -48,7 +49,9 @@ async function notifica(
     const genitori = await genitoriDiAlunno(supabase, alunnoId)
     if (genitori.length === 0) return
     // Scuola dell'alunno per il gate dei toggle notifiche (best-effort).
-    const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    // Accessoria: senza la sede la notifica parte lo stesso (gate dei toggle col ripiego `null`).
+    const { data: alunno, error: errAlunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    if (errAlunno) guastoLetturaAccessoria('notifica', 'merch/notify', 'sede-alunno-non-letta', errAlunno)
     await enqueueNotifiche(supabase, {
       utenteIds: genitori,
       destinatario: 'genitore',

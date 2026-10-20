@@ -28,6 +28,7 @@ import {
 } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 
 // RETTIFICA (decisioni #25-26 dello spec): potere riservato all'ADMIN.
 // Sostituisce il documento (originale rimpiazzato, timbrato RIGENERATO con lo
@@ -209,14 +210,17 @@ export const POST = withRoute('admin/protocolli/rettifica:POST', async (request:
       if (eRettifica) return rispostaErroreProtocollo(eRettifica)
 
       // Pulizia best-effort: vecchio originale con estensione diversa + staging.
+      // La rettifica è GIÀ registrata: un file vecchio rimasto nel bucket non la disfa, ma è un
+      // documento orfano (con dati di persona) che va trovato — si dice, invece di inghiottirlo.
       if (vecchioOriginale) {
-        await supabase.storage
+        const errPulizia = await supabase.storage
           .from(PROTOCOLLO_BUCKET)
           .remove([vecchioOriginale])
           .then(
-            () => undefined,
-            () => undefined
+            (r) => r.error,
+            (err: unknown) => err
           )
+        if (errPulizia) guastoSecondario('protocolli', 'admin/protocolli/rettifica:POST', 'vecchio-originale-non-rimosso', errPulizia)
       }
       if (body.stagingPath) await eliminaStagingBestEffort(supabase, [body.stagingPath])
 
@@ -225,7 +229,11 @@ export const POST = withRoute('admin/protocolli/rettifica:POST', async (request:
             supabase,
             (aggiornata as { file_timbrato: string }).file_timbrato,
             `Prot-${String(record.numero).padStart(7, '0')}-${record.anno}.pdf`
-          ).catch(() => null)
+          ).catch((err: unknown) => {
+            // Il link si rigenera dall'elenco: la rettifica è riuscita, la risposta esce senza.
+            guastoSecondario('protocolli', 'admin/protocolli/rettifica:POST', 'link-timbrato-non-firmato', err)
+            return null
+          })
         : undefined
 
       // Decisione #26: nessuna traccia (niente logScrittura).

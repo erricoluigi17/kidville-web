@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // Catalogo Merchandise (Fase B, move da /api/admin/divise/articoli) — CRUD staff.
 // Service-role + scoping per plesso (scuoleDiUtente) + audit. Le colonne nuove
@@ -183,11 +184,13 @@ export const PATCH = withRoute('admin/merch/articoli:PATCH', async (request: Req
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: existing } = await supabase
+    const { data: existing, error: errEsistente } = await supabase
       .from('divise_articoli')
       .select('id, scuola_id')
       .eq('id', id)
       .maybeSingle()
+    // Un guasto non è «articolo non trovato».
+    if (errEsistente) return rispostaGuastoDb('admin/merch/articoli:PATCH', 'db:divise_articoli', errEsistente)
     if (!existing) return NextResponse.json({ error: 'Articolo non trovato' }, { status: 404 })
     if (!plessi.includes(existing.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: articolo fuori dal tuo plesso' }, { status: 403 })
@@ -237,11 +240,13 @@ export const DELETE = withRoute('admin/merch/articoli:DELETE', async (request: R
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: existing } = await supabase
+    const { data: existing, error: errEsistente } = await supabase
       .from('divise_articoli')
       .select('id, scuola_id')
       .eq('id', id)
       .maybeSingle()
+    // Un guasto non è «articolo non trovato».
+    if (errEsistente) return rispostaGuastoDb('admin/merch/articoli:DELETE', 'db:divise_articoli', errEsistente)
     if (!existing) return NextResponse.json({ error: 'Articolo non trovato' }, { status: 404 })
     if (!plessi.includes(existing.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: articolo fuori dal tuo plesso' }, { status: 403 })

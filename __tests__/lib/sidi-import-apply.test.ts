@@ -15,6 +15,8 @@ interface Opts {
   // realtà non esiste.
   alunniByCF?: Record<string, { id: string; scuola_id: string }>
   parentsByCF?: Record<string, { id: string }>
+  /** Guasti PostgREST per «tabella:operazione» (`parents:select`, `alunni:update`, `student_parents:upsert`). */
+  errori?: Record<string, { code: string; message: string }>
 }
 function makeSupabase(opts: Opts) {
   const captures = { inserts: [] as { table: string; row: Record<string, unknown> }[], updates: [] as { table: string; payload: Record<string, unknown> }[], upserts: [] as { table: string; payload: Record<string, unknown> }[] }
@@ -25,6 +27,8 @@ function makeSupabase(opts: Opts) {
       q.select = () => q
       q.eq = (col: string, val: unknown) => { filters.push([col, val]); return q }
       q.maybeSingle = async () => {
+        const errSelect = opts.errori?.[`${table}:select`]
+        if (errSelect) return { data: null, error: errSelect }
         if (table === 'alunni') {
           const num = filters.find((f) => f[0] === 'numero_domanda_sidi')?.[1] as string | undefined
           if (num !== undefined) return { data: opts.alunniByNumero?.[num] ?? null, error: null }
@@ -39,8 +43,8 @@ function makeSupabase(opts: Opts) {
         return { data: null, error: null }
       }
       q.insert = (row: Record<string, unknown>) => { captures.inserts.push({ table, row }); return { select: () => ({ single: async () => ({ data: { id: `${table}-new` }, error: null }) }) } }
-      q.update = (payload: Record<string, unknown>) => { captures.updates.push({ table, payload }); return { eq: async () => ({ data: null, error: null }) } }
-      q.upsert = async (payload: Record<string, unknown>) => { captures.upserts.push({ table, payload }); return { data: null, error: null } }
+      q.update = (payload: Record<string, unknown>) => { captures.updates.push({ table, payload }); return { eq: async () => ({ data: null, error: opts.errori?.[`${table}:update`] ?? null }) } }
+      q.upsert = async (payload: Record<string, unknown>) => { captures.upserts.push({ table, payload }); return { data: null, error: opts.errori?.[`${table}:upsert`] ?? null } }
       return q
     },
   }
@@ -106,6 +110,37 @@ describe('applySidiRecords', () => {
     expect(captures.inserts.filter((i) => i.table === 'parents')).toHaveLength(0)
     const link = captures.upserts.find((u) => u.table === 'student_parents')
     expect(link?.payload.parent_id).toBe('par-1')
+  })
+
+  describe('un guasto non è un valore (fase 11)', () => {
+    const GUASTO = { code: '57014', message: 'timeout' }
+    const conGenitore = () => rec({ genitori: [{ codice_fiscale: 'PCF1', nome: 'Luigi', relazione: 'padre' }] })
+
+    it('verifica del genitore per CF non riuscita: NESSUN genitore nuovo (sarebbe un doppione)', async () => {
+      const { client, captures } = makeSupabase({ alunniByNumero: { '123': { id: 'al-x' } }, errori: { 'parents:select': GUASTO } })
+      const res = await applySidiRecords(client, [conGenitore()], 'sc1', attore)
+      expect(captures.inserts.filter((i) => i.table === 'parents')).toHaveLength(0)
+      expect(captures.upserts.filter((u) => u.table === 'student_parents')).toHaveLength(0)
+      expect(res.warnings.join(' ')).toMatch(/verifica del genitore non riuscita/)
+    })
+
+    it('legame non scritto: lo dice, e non registra in audit un legame che non c’è', async () => {
+      const { client } = makeSupabase({
+        alunniByNumero: { '123': { id: 'al-x' } },
+        parentsByCF: { PCF1: { id: 'par-1' } },
+        errori: { 'student_parents:upsert': GUASTO },
+      })
+      const res = await applySidiRecords(client, [conGenitore()], 'sc1', attore)
+      expect(res.warnings.join(' ')).toMatch(/non collegato/)
+      expect(h.logScrittura.mock.calls.some((c) => (c[1] as { entitaTipo: string }).entitaTipo === 'legame')).toBe(false)
+    })
+
+    it('numero domanda non scritto sull’alunno trovato per CF: non conta fra gli aggiornati', async () => {
+      const { client } = makeSupabase({ alunniByCF: { CFAL1: { id: 'al-cf', scuola_id: 'sc1' } }, errori: { 'alunni:update': GUASTO } })
+      const res = await applySidiRecords(client, [rec()], 'sc1', attore)
+      expect(res.aggiornati).toBe(0)
+      expect(res.warnings.join(' ')).toMatch(/numero domanda non registrato/)
+    })
   })
 
   it('idempotente: ri-applicare lo stesso batch non crea duplicati', async () => {

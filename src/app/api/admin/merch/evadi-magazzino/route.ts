@@ -12,7 +12,8 @@ import { sincronizzaTestata } from '@/lib/merch/stati'
 import { caricaGiacenze, disponibileDi } from '@/lib/merch/giacenze'
 import { notificaMerchArrivato } from '@/lib/merch/notify'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // POST /api/admin/merch/evadi-magazzino — evade una riga da_ordinare dallo STOCK:
 // da_ordinare → arrivato con origine='magazzino'. Scala subito la disponibilità
@@ -45,6 +46,8 @@ export const POST = withRoute('admin/merch/evadi-magazzino:POST', async (request
     if (error && SCHEMA_MANCANTE.has(error.code ?? '')) {
       return NextResponse.json({ error: 'Magazzino non disponibile su questo ambiente' }, { status: 503 })
     }
+    // Un guasto non è «riga non trovata».
+    if (error) return rispostaGuastoDb('admin/merch/evadi-magazzino:POST', 'db:divise_ordini_righe', error)
     const riga = rigaRaw as unknown as R | null
     if (!riga) return NextResponse.json({ error: 'Riga non trovata' }, { status: 404 })
     const sc = uno(riga.ordine)?.scuola_id
@@ -84,10 +87,17 @@ export const POST = withRoute('admin/merch/evadi-magazzino:POST', async (request
     // negativa (race con un'altra evasione), fai rollback e rifiuta.
     const dispPost = disponibileDi(await caricaGiacenze(supabase, plessi), riga.articolo_id, riga.taglia ?? '')
     if (dispPost < 0) {
-      await supabase
+      const { error: errRollback } = await supabase
         .from('divise_ordini_righe')
         .update({ stato: 'da_ordinare', origine: 'fornitore', arrivato_il: null })
         .eq('id', riga_id)
+      // Se il ritorno indietro non riesce, la riga RESTA evasa con lo stock sotto zero: un 409
+      // «esaurita» direbbe il falso (che non è successo niente). Si risponde 500 e la riga dice
+      // quale riga è rimasta allocata.
+      if (errRollback) {
+        logEvento('db', 'error', { operazione: 'admin/merch/evadi-magazzino:POST', esito: 'over-allocazione-non-annullata', entita_id: riga_id }, errRollback)
+        return rispostaGuastoDb('admin/merch/evadi-magazzino:POST', 'db:divise_ordini_righe', errRollback, 'scrittura')
+      }
       return NextResponse.json(
         { error: 'Disponibilità esaurita da un’altra evasione concorrente', disponibile: dispPost + riga.quantita },
         { status: 409 }

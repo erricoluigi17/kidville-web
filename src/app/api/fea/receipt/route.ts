@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http'
 import type { ReceiptPayload, SignatureLog } from '@/lib/fea/types'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // GET /api/fea/receipt?entita=pagella|giustifica|forms&id=<entitaId>&userId=
 // Ricevuta di firma inattaccabile on-demand (FEA in-house, DL-001). Servita solo
@@ -30,13 +31,29 @@ interface Resolved {
   title: string
 }
 
+const OP = 'fea/receipt:GET'
+
+/**
+ * Il dato letto, `null` se la riga non c'è. Un GUASTO del database lancia: «firma non trovata»
+ * detto a chi ha firmato, per un database che non ha risposto, è una ricevuta negata con una
+ * bugia. Unica eccezione, `22P02` — l'id non è un uuid: è il 404 documentato sopra per un id
+ * malformato (lo schema accetta qualunque stringa), e non un guasto. Non ha una riga sua: il 404
+ * lo registra già `withRoute`, e il `22P02` la fetch strumentata del client.
+ */
+function letto<T>(data: T | null, error: { code?: string } | null): T | null {
+  if (!error) return data
+  if (error.code === '22P02') return null
+  throw error
+}
+
 async function resolveEntita(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   entita: Entita,
   id: string
 ): Promise<Resolved | null> {
   if (entita === 'pagella') {
-    const { data } = await supabase.from('pagella_ricezioni').select('*').eq('id', id).maybeSingle()
+    const { data: riga, error } = await supabase.from('pagella_ricezioni').select('*').eq('id', id).maybeSingle()
+    const data = letto(riga, error)
     if (!data) return null
     return {
       signerId: data.genitore_id ?? null,
@@ -46,7 +63,8 @@ async function resolveEntita(
     }
   }
   if (entita === 'giustifica') {
-    const { data } = await supabase.from('presenze').select('*').eq('id', id).maybeSingle()
+    const { data: riga, error } = await supabase.from('presenze').select('*').eq('id', id).maybeSingle()
+    const data = letto(riga, error)
     if (!data) return null
     return {
       signerId: data.giustificata_da ?? null,
@@ -56,7 +74,8 @@ async function resolveEntita(
     }
   }
   // forms
-  const { data } = await supabase.from('forms_submissions').select('*').eq('id', id).maybeSingle()
+  const { data: riga, error } = await supabase.from('forms_submissions').select('*').eq('id', id).maybeSingle()
+  const data = letto(riga, error)
   if (!data) return null
   return {
     signerId: data.parent_id ?? null,
@@ -80,7 +99,12 @@ export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => 
     const { entita, id } = q.data
 
     const supabase = await createAdminClient()
-    const resolved = await resolveEntita(supabase, entita, id)
+    let resolved: Resolved | null
+    try {
+      resolved = await resolveEntita(supabase, entita, id)
+    } catch (err) {
+      return rispostaGuastoDb(OP, `db:${entita}`, err)
+    }
     if (!resolved || !resolved.signature) {
       return NextResponse.json({ error: 'Firma non trovata' }, { status: 404 })
     }

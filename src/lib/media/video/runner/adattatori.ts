@@ -52,6 +52,14 @@ import type {
  * LA CODA — le RPC
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/*
+ * Ogni RPC qui sotto si legge PRIMA in `risposta` e poi passa al traduttore, invece di stare
+ * dentro la sua chiamata: il risultato era già guardato (da `corpoDellaRisposta`, che logga ogni
+ * `{ error }`), ma un `await supabase.rpc(…)` a inizio riga è la forma che il lock
+ * `errori-postgrest-guardati` riconosce come «risultato buttato», e un lock con eccezioni a
+ * occhio smette di essere un lock. Nessun comportamento cambia.
+ */
+
 /**
  * ⚠️ POSTGREST NON LANCIA: RITORNA `{ error }` (AGENTS, regola 7). Un `try/catch`
  * attorno a una `rpc()` non scatta mai, e il valore di ritorno va guardato sempre —
@@ -154,113 +162,93 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
     },
 
     async prossimo(leaseOwner, leaseSeconds, tetto) {
-      return esitoRpc(
-        'prossimo',
-        await supabase.rpc('video_job_prossimo', {
-          p_lease_owner: leaseOwner,
-          p_lease_seconds: leaseSeconds,
-          p_tetto: tetto,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_prossimo', {
+        p_lease_owner: leaseOwner,
+        p_lease_seconds: leaseSeconds,
+        p_tetto: tetto,
+      })
+      return esitoRpc('prossimo', risposta)
     },
 
     async prendi(jobId, leaseOwner, leaseSeconds, tetto) {
-      return esitoRpc(
-        'prendi',
-        await supabase.rpc('video_job_prendi', {
-          p_job_id: jobId,
-          p_lease_owner: leaseOwner,
-          p_lease_seconds: leaseSeconds,
-          p_tetto: tetto,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_prendi', {
+        p_job_id: jobId,
+        p_lease_owner: leaseOwner,
+        p_lease_seconds: leaseSeconds,
+        p_tetto: tetto,
+      })
+      return esitoRpc('prendi', risposta)
     },
 
     async sorveglianzaPrendi(jobId, invocazione, secondi) {
-      return esitoSemplice(
-        'sorveglianza-prendi',
-        await supabase.rpc('video_job_sorveglianza_prendi', {
-          p_job_id: jobId,
-          p_invocazione: invocazione,
-          p_secondi: secondi,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_sorveglianza_prendi', {
+        p_job_id: jobId,
+        p_invocazione: invocazione,
+        p_secondi: secondi,
+      })
+      return esitoSemplice('sorveglianza-prendi', risposta)
     },
 
     async sorveglianzaRilascia(jobId, invocazione) {
-      return esitoSemplice(
-        'sorveglianza-rilascia',
-        await supabase.rpc('video_job_sorveglianza_rilascia', {
-          p_job_id: jobId,
-          p_invocazione: invocazione,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_sorveglianza_rilascia', {
+        p_job_id: jobId,
+        p_invocazione: invocazione,
+      })
+      return esitoSemplice('sorveglianza-rilascia', risposta)
     },
 
     async arriviRecupera(limite) {
-      return esitoConteggi(
-        'arrivi-recupera',
-        await supabase.rpc('video_arrivi_recupera', { p_limite: limite }),
-      )
+      const risposta = await supabase.rpc('video_arrivi_recupera', { p_limite: limite })
+      return esitoConteggi('arrivi-recupera', risposta)
     },
 
     async ventaglio(tetto, escludi) {
-      return esitoConteggi(
-        'ventaglio',
-        await supabase.rpc('video_runner_ventaglio', { p_tetto: tetto, p_escludi: escludi }),
-      )
+      const risposta = await supabase.rpc('video_runner_ventaglio', { p_tetto: tetto, p_escludi: escludi })
+      return esitoConteggi('ventaglio', risposta)
     },
 
     async battito(jobId, fenceEpoch, leaseOwner) {
-      return esitoRpc(
-        'heartbeat',
-        await supabase.rpc('video_job_heartbeat', {
-          p_job_id: jobId,
-          p_fence_epoch: fenceEpoch,
-          p_lease_owner: leaseOwner,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_heartbeat', {
+        p_job_id: jobId,
+        p_fence_epoch: fenceEpoch,
+        p_lease_owner: leaseOwner,
+      })
+      return esitoRpc('heartbeat', risposta)
     },
 
     async pronto(p) {
-      return esitoRpc(
-        'ready',
-        await supabase.rpc('video_job_ready', {
-          p_job_id: p.jobId,
-          p_fence_epoch: p.fenceEpoch,
-          p_lease_owner: p.leaseOwner,
-          p_output_path: p.percorsoUscita,
-          p_output_size: p.byteUscita,
-          p_probe_json: p.probe,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_ready', {
+        p_job_id: p.jobId,
+        p_fence_epoch: p.fenceEpoch,
+        p_lease_owner: p.leaseOwner,
+        p_output_path: p.percorsoUscita,
+        p_output_size: p.byteUscita,
+        p_probe_json: p.probe,
+      })
+      return esitoRpc('ready', risposta)
     },
 
     async fallito(p) {
-      return esitoRpc(
-        'fail',
-        await supabase.rpc('video_job_fail', {
-          p_job_id: p.jobId,
-          p_fence_epoch: p.fenceEpoch,
-          p_lease_owner: p.leaseOwner,
-          p_error_code: p.codice,
-          p_rejected: p.rifiutato,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_fail', {
+        p_job_id: p.jobId,
+        p_fence_epoch: p.fenceEpoch,
+        p_lease_owner: p.leaseOwner,
+        p_error_code: p.codice,
+        p_rejected: p.rifiutato,
+      })
+      return esitoRpc('fail', risposta)
     },
 
     async diagnosi(p) {
       // Come la sorveglianza, la RPC risponde `{ok:true}` SENZA un job: passata da `esitoRpc` ogni
       // scrittura riuscita si leggerebbe «RPC_ERROR». `esitoSemplice` esiste per questo.
-      return esitoSemplice(
-        'diagnosi',
-        await supabase.rpc('video_job_diagnosi', {
-          p_job_id: p.jobId,
-          p_fence_epoch: p.fenceEpoch,
-          p_lease_owner: p.leaseOwner,
-          p_diagnosi: p.diagnosi,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_diagnosi', {
+        p_job_id: p.jobId,
+        p_fence_epoch: p.fenceEpoch,
+        p_lease_owner: p.leaseOwner,
+        p_diagnosi: p.diagnosi,
+      })
+      return esitoSemplice('diagnosi', risposta)
     },
 
     async riprova(p) {
@@ -268,17 +256,15 @@ export function codaSupabase(supabase: SupabaseClient): CodaVideo {
       // risponde «funzione non trovata»: `esitoRpc` lo traduce in `RPC_ERROR`, che è
       // ESATTAMENTE il codice con cui il runner sa di dover ripiegare su `video_job_fail`
       // (vedi `riprova` in `esegui.ts`). Un verdetto del database ha invece un codice suo.
-      return esitoRpc(
-        'retry',
-        await supabase.rpc('video_job_retry', {
-          p_job_id: p.jobId,
-          p_fence_epoch: p.fenceEpoch,
-          p_lease_owner: p.leaseOwner,
-          p_error_code: p.codice,
-          p_tentativi_massimi: p.tentativiMassimi,
-          p_attesa_secondi: p.attesaSecondi,
-        }),
-      )
+      const risposta = await supabase.rpc('video_job_retry', {
+        p_job_id: p.jobId,
+        p_fence_epoch: p.fenceEpoch,
+        p_lease_owner: p.leaseOwner,
+        p_error_code: p.codice,
+        p_tentativi_massimi: p.tentativiMassimi,
+        p_attesa_secondi: p.attesaSecondi,
+      })
+      return esitoRpc('retry', risposta)
     },
   }
 }

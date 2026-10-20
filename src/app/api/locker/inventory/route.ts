@@ -11,6 +11,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -259,7 +260,7 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
         }
 
         // Cerca record esistente per (alunno, materiale, data, portato=true)
-        const { data: existing } = await supabase
+        const { data: existing, error: existingErr } = await supabase
             .from('armadietto')
             .select('nome_oggetto, quantita')
             .eq('alunno_id', alunno_id)
@@ -267,6 +268,9 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
             .eq('date', targetDate)
             .eq('portato', true)
             .maybeSingle();
+        // La quantità letta qui si SOMMA e si riscrive: letta «nessuna riga» per un guasto,
+        // il carico ripartirebbe da zero (o duplicherebbe la riga del giorno).
+        if (existingErr) return rispostaGuastoDb('locker/inventory:POST', 'db:armadietto', existingErr);
 
         let result;
         if (existing) {

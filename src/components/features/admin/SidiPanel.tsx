@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { UploadCloud, RefreshCw, CheckCircle2, AlertTriangle, ArrowRight } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 interface SyncState {
   fase_a_stato: string
@@ -71,7 +72,7 @@ export function SidiPanel({ userId, scuolaId }: { userId: string; scuolaId: stri
     fetch(`/api/admin/sidi/sync-state?userId=${userId}&scuola_id=${encodeURIComponent(scuolaId)}`, { headers: hdr() })
       .then((r) => r.json())
       .then((d) => { if (d.success) setSync(d.data) })
-      .catch(() => { /* no-op */ })
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `sidi-stato-sync-non-caricato: ${nomeErrore(err)}` }))
   }, [userId, scuolaId, hdr])
 
   // Gating SIDI visibile (M2.4): badge quando l'integrazione non è configurata.
@@ -79,7 +80,8 @@ export function SidiPanel({ userId, scuolaId }: { userId: string; scuolaId: stri
     fetch(`/api/admin/settings/sidi?userId=${userId}`, { headers: hdr() })
       .then((r) => r.json())
       .then((d) => { if (d.success) setSidiGated(!d.data?.abilitato) })
-      .catch(() => { /* no-op */ })
+      // Accessoria: senza questa lettura manca solo il badge «non configurata».
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `sidi-configurazione-non-letta: ${nomeErrore(err)}` }))
   }, [userId, hdr])
 
   async function upload() {

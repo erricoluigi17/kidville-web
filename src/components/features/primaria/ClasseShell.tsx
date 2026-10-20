@@ -21,6 +21,7 @@ import { useTranslations } from 'next-intl';
 import { useTeacherIdentity } from '@/lib/auth/use-teacher-identity';
 import { isoToIt, itToIso } from '@/lib/format/data';
 import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 /**
  * Il giorno scritto nell'URL (`?data=yyyy-mm-dd`), ma SOLO se è un giorno vero.
@@ -162,7 +163,8 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
       .then((d) => {
         if (d.success && d.data.section) setNomeClasse(d.data.section.name);
       })
-      .catch(() => {});
+      // Accessoria: manca solo il nome della classe in testata.
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-nome-classe-non-caricato: ${nomeErrore(err)}` }));
   }, [sectionId, q, pronta]);
 
   useEffect(() => {
@@ -170,7 +172,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
     fetch(`/api/primaria/me${q}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `primaria-ruolo-non-caricato: ${nomeErrore(err)}` }));
   }, [q, pronta]);
 
   // Staff = opera per conto del docente titolare (admin/coordinator/segreteria).

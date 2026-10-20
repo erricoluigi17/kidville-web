@@ -40,21 +40,33 @@ export const ENROLLMENT_DEFAULT_SCHEMA: FormSchemaConfig = buildEnrollmentDefaul
  * Crea la riga `form_models` del modulo standard se non esiste ancora.
  * NON sovrascrive lo schema se il modello è già presente (preserva le modifiche
  * fatte dalla segreteria). Il ripristino esplicito passa da POST /form-models/reset.
+ *
+ * Un guasto del database LANCIA (errore con `cause`: il `logErrore` del chiamante lo registra
+ * col codice Postgres). Prima un guasto in lettura diventava «non c'è» e un insert fallito
+ * passava muto: il reset che segue aggiornava ZERO righe e rispondeva `success: true`.
  */
 export async function ensureStandardEnrollmentModel(supabase: SupabaseClient): Promise<void> {
-  const { data } = await supabase
+  const { data, error: erroreLettura } = await supabase
     .from('form_models')
     .select('id')
     .eq('id', STANDARD_ENROLLMENT_MODEL_ID)
     .maybeSingle();
+  if (erroreLettura) {
+    throw new Error("Lettura del modulo d'iscrizione standard non riuscita", { cause: erroreLettura });
+  }
   if (data) return;
-  await supabase.from('form_models').insert({
+  const { error: erroreInsert } = await supabase.from('form_models').insert({
     id: STANDARD_ENROLLMENT_MODEL_ID,
     title: STANDARD_ENROLLMENT_TITLE,
     schema: ENROLLMENT_DEFAULT_SCHEMA,
     is_active: true,
     is_enrollment_form: true,
   });
+  // `23505`: un'altra richiesta l'ha creato fra la lettura e l'insert — il modello c'è, che è
+  // ciò che questa funzione promette.
+  if (erroreInsert && erroreInsert.code !== '23505') {
+    throw new Error("Creazione del modulo d'iscrizione standard non riuscita", { cause: erroreInsert });
+  }
 }
 
 /** Estrae i template child/adult dallo schema di un modello d'iscrizione. */

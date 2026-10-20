@@ -213,7 +213,16 @@ export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async 
         // Copiata da `regenerate-credentials`, che quella lezione l'ha già pagata:
         // un'email che coincide con un account di staff non deve poter essere
         // resettata da questa strada.
-        const { data: profilo } = await admin.from('utenti').select('ruolo').eq('id', authUserId).maybeSingle()
+        const { data: profilo, error: erroreProfilo } = await admin.from('utenti').select('ruolo').eq('id', authUserId).maybeSingle()
+        if (erroreProfilo) {
+            // Un guasto non è «non è un genitore»: senza ruolo letto non si tocca niente, e si
+            // conta fra i falliti — non fra i saltati, che direbbero il falso sul perché.
+            logEvento('iscrizione', 'error', {
+                operazione: OPERAZIONE, esito: 'ruolo-non-letto', entita_id: authUserId,
+            }, erroreProfilo)
+            esito.falliti++
+            continue
+        }
         if (!profilo || String(profilo.ruolo) !== 'genitore') {
             esito.saltatiNonGenitore++
             continue
@@ -273,10 +282,16 @@ export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async 
             logEvento('iscrizione', 'error', {
                 operazione: OPERAZIONE, esito: 'rinvio-non-spedito', entita_id: authUserId,
             })
-            await admin
+            const { error: erroreUltimo } = await admin
                 .from('iscrizioni_inviti_credenziali')
                 .update({ ultimo_errore: invio.error ?? 'invio non riuscito' })
                 .eq('auth_user_id', authUserId)
+            if (erroreUltimo) {
+                // Passo accessorio: la password va comunque consegnata a mano (sotto).
+                logEvento('iscrizione', 'error', {
+                    operazione: OPERAZIONE, esito: 'ultimo-errore-non-registrato', entita_id: authUserId,
+                }, erroreUltimo)
+            }
             esito.falliti++
             esito.daConsegnareAMano.push({ email, password: nuova.password })
             await pausaFraEmail()

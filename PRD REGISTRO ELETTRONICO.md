@@ -1,6 +1,78 @@
+## 🛡️ Changelog — Robustezza, fase 12: lo storico delle modifiche, registri che non si riscrivono, permessi e vincoli — 2026-10-19
+
+**Stato:** 🟡 in PR, insieme alla fase 11. Due migrazioni, che applicherà l'integrazione al merge (dichiarate in `MIGRAZIONI_ATTESE_AL_MERGE`; le fotografie si rigenerano con la PR-B).
+
+- **Storico delle modifiche** (migrazione `20261019215733_scatola_nera_modifiche.sql`). La scatola nera della fase 4 teneva per 90 giorni solo le righe **cancellate**. Una modifica sbagliata — un voto sovrascritto, un pagamento cambiato — non lasciava traccia di com'era prima. Ora un trigger `AFTER UPDATE … FOR EACH STATEMENT` su **13 tabelle** (valutazioni e obiettivi, presenze e giustifiche didattiche, pagamenti, quote e incassi, scrutini e i loro giudizi, pagelle, periodi) copia in `scatola_nera.modifiche` la riga **com'era**, con le colonne cambiate, i soggetti (gli uuid), il ruolo e l'origine. Non copia un UPDATE che non cambia niente o tocca solo `updated_at`/`aggiornato_il`. Non copia nemmeno la retention notturna delle giustificazioni, che svuota testi per legge: copiarli li terrebbe in vita. Il job resta lo stesso e cambia solo il comando, con `cron.alter_job`, verso un involucro che spegne lo storico per quel giro. La tabella si scrive solo in aggiunta, scade a 90 giorni nello stesso giro delle eliminazioni, e l'oblio (`scatola_nera_dimentica`) la svuota. Due funzioni di ripristino, `ripristina_modifiche` e `ripristina_modifiche_transazione`, solo per il proprietario. Runbook: scenario **A0-bis**. Privacy: la voce «copie tecniche di sicurezza» ora dice anche delle modifiche, e l'informativa passa alla versione **2026-10-20** (`VERSIONE_PRIVACY`; impronta nuova in `pagine-legali`, la 2026-10-09 resta). Non serve riaccettare: i consensi già raccolti valgono. È testo legale, e il titolare lo rilegge.
+- **Registri che non si riscrivono** (migrazione `20261019220315_registri_worm_permessi_vincoli_bucket.sql`). `registro_modifiche` e `audit_scritture_docente` si potevano aggiornare e cancellare come qualunque tabella. Ora un trigger rifiuta ogni DELETE e TRUNCATE, e ogni UPDATE che non sia «togliere il contenuto». Restano ammessi solo l'azzeramento di `valore_prima`/`valore_dopo`/`section_id` (audit docenti) e di `vecchio_valore`/`nuovo_valore`/`indirizzo_ip` (registro). Così continuano a funzionare le tre strade che oggi li toccano: la retention a 12 mesi, l'oblio di `gdpr/esegui.ts` e la FK `ON DELETE SET NULL` sulle sezioni. Una cancellazione voluta si fa da proprietario con `SET LOCAL registri.manutenzione = 'on'`.
+- **Permessi tolti.** Revocato ad `anon` e `authenticated` ogni privilegio su `enrollment_submissions`, sui due registri, sulle due tabelle di backup e sulla sequenza di `registro_modifiche`. La RLS senza policy li teneva già fuori dalle righe, ma non da TRUNCATE. Nel codice nessuna di queste tabelle si usa con un client di sessione: tutto passa dal ruolo di servizio, che non cambia.
+- **Vincoli sui pagamenti.** `pagamenti_stato_ammesso` (`da_pagare`, `parziale`, `pagato`, `scaduto`) e `pagamenti_importo_pagato_non_negativo`, NOT VALID e poi VALIDATE. In produzione il 19/10 c'erano 0 stati fuori lista, 0 NULL e 0 importi negativi.
+- **Tipi nei bucket.** `credenziali` e `fatture` ammettono solo PDF (tutto quello che c'è dentro lo è). `storici-stampe` ammette JSON, PDF e XLSX (quello che scrive `storici/generazioni.ts`). `certificati-medici` ammette PDF e qualunque immagine. Per quest'ultimo la route `parent/medical-certificates` ricava il tipo dall'estensione quando il telefono non lo manda (`src/lib/certificati/tipo-file.ts`, nuovo; HEIC compreso). Un tipo diverso si ferma con un **415** `ALLEGATO_PDF_O_IMMAGINE`, invece di finire in un 500 dello Storage. I bucket dei video restano senza lista di proposito.
+- **Cache CDN sul modulo d'iscrizione** (`src/lib/security/cache-pubblica.ts`, nuovo). `GET /api/iscrizione/sedi` resta in CDN 10 minuti, `GET /api/iscrizione/model` 5. Sono `public` solo senza cookie di sessione (con il cookie sono `private`, come i comuni), con `Vary: Cookie`, e mai su un 429, un 500 o il ripiego sullo schema di default dopo un guasto.
+- **Decisioni misurate, senza codice.**
+  - `app_log` (188 MB: 65 di dati e 123 di indici) resta com'è. Si svuota a 30 giorni ed è già escluso dal dump notturno. I suoi 590 mila UPDATE sono quasi tutti non-HOT perché quattro indici composti contengono `visto_l_ultima`: se ne riparla se il DB si avvicina al limite del piano.
+  - `cron.job_run_details` (17 MB, ~92 mila righe dal 06/07): nessuna pulizia.
+  - Istanza: resta **Small**.
+  - File temporanei: `log_temp_files` acceso a 10 MB. Nessuna query dell'app ne scrive dal 06/08 (`pg_stat_statements`: job cron, `pg_net` e PostgREST a 0 blocchi), e nelle 24 ore lette non ce n'è nessuno da 10 MB in su. Il contatore sale di circa 2 file al minuto da ~5 MB (≈13 GB al giorno, ~0,15 MB/s, cancellati a fine query). Origine **probabile, non dimostrata**: chi legge `pg_stat_statements` ordinando ~5.000 testi lunghi, perché le mie letture di diagnosi scrivono esattamente 4,8 MB l'una. Nessun intervento: è una frazione piccola della banda disco di Small.
+  - Home aggregata del genitore: non ora, perché dopo la fase 1 una lettura server→DB costa 10-17 ms.
+  - Le due **tabelle di backup** con dati personali non le ho eliminate: è una cancellazione definitiva, e la esegue il titolare (istruzione pronta nella roadmap).
+- **Prove.** Entrambe le migrazioni sono state provate sulla copia temporanea, in una transazione annullata alla fine, e la seconda due volte di fila per l'idempotenza.
+  - Storico: 13 trigger; UPDATE vuoto 0 copie; UPDATE vero 1 copia con la colonna giusta; ripristino uguale a prima; retention senza copie; WORM della scatola rifiutato.
+  - Registri: retention e oblio passano; `azione` riscritta, contenuto riempito, DELETE e TRUNCATE rifiutati (`P0001`); DELETE in manutenzione passa.
+  - Permessi a `false`, il ruolo di servizio ancora `true`; `stato = 'boh'` e `importo_pagato = -1` rifiutati (`23514`).
+  - Test: `certificati-medici` (+3), `iscrizione-sedi` (+2), `iscrizione-model-anonima` (+2), tutti provati rompendo il codice di proposito.
+- **Logging.** Il battito di `scatola_nera.scadenza` aggiunge `n_modifiche` e `n_modifiche_presenti`. La route dei certificati risponde con un codice d'errore dichiarato. Nessuna chiave nuova nella lista bianca della redazione.
+
+## 🛡️ Changelog — Robustezza, fase 11: un guasto del database non diventa più un valore — 2026-10-19
+
+**Stato:** 🟡 in PR, insieme alla fase 12 (voce qui sopra). Una migrazione, trovata alla fine (`20261019223123_battiti_app_log_che_contano.sql`, ultimo punto qui sotto); il resto è codice, lock e test.
+
+PostgREST non lancia: un guasto torna come `{ data: null, error }`. La ricognizione del 19/10 contava in `src/` **327 punti** in cui quell'`error` non veniva guardato (208 letture col solo `data`, 57 scritture col risultato buttato, 62 `.then`/`.catch` muti), in 156 file. Il `null` diventava un valore: «Nessun modulo», «Configura prima un periodo», un 404 «non trovato», un elenco vuoto, una scrittura vista come salvata. Nessuno di quei casi lasciava una riga nei log.
+
+- **Il lucchetto** (`__tests__/architecture/errori-postgrest-guardati.test.ts`, nuovo). È il lock dei pagamenti della fase 5, esteso a tutto `src/` con tolleranza zero. Vieta quattro forme: `const { data } = await …` senza `error`, `await <client>.from(…)` / `.rpc(…)` col risultato buttato, `.then(() => {}, () => {})` e `.catch(() => {})`. Restano fuori il logger (fail-open per regola) e lo Storage. Ha un meccanismo «in attesa», oggi vuoto, e verifica di leggere più di mille file.
+- **Tre aiuti** (`src/lib/db/guasto.ts`, nuovo):
+  - `rispostaGuastoDb`: il dato serviva → 500 con `LETTURA_FALLITA` o `SCRITTURA_FALLITA`, e una riga `error` col codice Postgres;
+  - `guastoSecondario`: la scrittura principale è riuscita e cade un passo accessorio → riga `error`, la risposta resta;
+  - `guastoLetturaAccessoria`: un contatore, un nome da mostrare → si usa il ripiego. La riga è `info` se allo schema manca la colonna o la tabella (il database della CI non è migrato), `error` altrove.
+- **Correzioni, 327 punti in 158 file**, divise in cinque gruppi:
+  - **segreteria**: 41 file;
+  - **API**: 21 + 28 file;
+  - **`src/lib`**: 27 file;
+  - **interfaccia**: 39 file.
+- **Casi che cambiano comportamento, e vanno saputi:**
+  - `parent/primaria` risponde 500 invece di un elenco vuoto;
+  - il modulo pubblico d'iscrizione dice il guasto invece di «modulo non trovato»;
+  - la mensa (`src/lib/mensa/server.ts`) lancia e la route risponde 500 invece di dati vuoti; sul database della CI degrada;
+  - l'import delle iscrizioni ferma la riga se non riesce a scrivere il legame genitore-alunno (`student_parents`);
+  - il ritorno indietro di un ordine merch cancella il pagamento appena creato;
+  - `admin/wipe` risponde `SCRITTURA_FALLITA` con l'elenco delle tabelle non pulite;
+  - il middleware scrive sulla riga del ritorno al login il **perché** (`motivo=`: `nessuna`, `AuthApiError`, …), senza una riga nuova per ogni sessione scaduta;
+  - gate di accesso (`require-staff`, `profili`, `otp-ticket`, identità del genitore): un guasto resta un diniego, ma ora scrive la sua riga (`error` per rete e 5xx, `info` per i 4xx di GoTrue);
+  - la pagella, il certificato delle competenze, il valutatore e il giudizio rispondono 500. Un «nessuna riga» vero resta 404.
+- **Fascicolo** (`rispostaGuastoAccesso` in `src/lib/primaria/fascicolo-gestione.ts`). Il gate ha un motivo nuovo, `errore`. In 11 punti un guasto risponde 500 `LETTURA_FALLITA` invece del 403 «accesso non consentito», che diceva a una maestra titolare che il fascicolo non era suo. L'accesso resta negato in ogni caso (fail-closed).
+- **Mensa del genitore.** Se il controllo degli allergeni non risponde, compare «Allergeni non verificati — verifica con la scuola prima di prenotare». Prima la pagina era identica a quella di un menù sicuro. Due chiavi nuove in `messages/*/mensa.json`.
+- **Tetto ai tentativi di postgrest** (S6; `src/lib/supabase/attesa-ritentativi.ts`, nuovo; `src/lib/logging/supabase-fetch.ts`; `browser-client.ts`). postgrest-js ritenta una GET su 503/520 fino a tre volte, e fra un tentativo e l'altro dorme quanto dice `Retry-After`, senza tetto: un `Retry-After: 120` teneva appesa una query sei minuti. Ora l'header si accorcia a 2 secondi, sul server e nel browser, solo sulle risposte che verranno ritentate. Provato sul pacchetto vero con orologio finto: tre 503 e un 200 finiscono entro 6 secondi; senza il tetto la query era ancora appesa.
+- **`catch` muti.** L'allowlist scende da 39 a **2** file e da 60 a **4** occorrenze: restano le due voci di `offline/`, la pagina che si mostra proprio quando la rete non c'è. I blocchi con soli commenti scendono da 52 a **49**, e i file che li contengono da 40 a **37**.
+- **Ricevuta di firma** (`fea/receipt`): tolto un log `info` che duplicava il 404 di un id non uuid, già registrato da `withRoute`.
+- **Test.** Nuovi:
+  - `errori-postgrest-guardati` (4);
+  - `postgrest-attesa-limitata` (7);
+  - `errori-postgrest-lib` (22);
+  - `guasto-db-non-diventa-voto-o-firma` (13);
+  - `admin-guasti-db-non-diventano-valori` (15);
+  - `errori-non-ignorati-interfaccia` (5);
+  - `StudentEconomicSection-intestatario-salvataggio` (3);
+  - `modulo-pubblico-guasto-db` (2);
+  - `parent-mensa-allergeni-non-verificati` (3).
+
+  Casi di guasto aggiunti in 24 test esistenti (fra gli altri appello, uscite, firma OTP, chat, mensa, galleria, fascicolo, credenziali, middleware). Ogni area è stata provata rompendo il codice di proposito: i test diventano rossi.
+
+  Corretto anche un test della pagina pagamenti che cadeva sotto carico: contava i montaggi prima che girasse l'effetto, la stessa trappola dell'11/10.
+- **Logging.** È tutto questo intervento: ogni punto corretto scrive una riga con `operazione` ed `esito` in kebab-case, nessun dato personale (solo uuid e codici). Nessuna chiave nuova nella lista bianca della redazione.
+- **Lo stesso difetto, nel database.** Leggendo i log di Postgres per la fase 12 è comparso «galleria: logging accodamento non riuscito [23505]», 156 volte il 19/10. Sei funzioni SQL scrivevano il loro evento in `app_log` con un'impronta fissa e senza `ON CONFLICT (fingerprint, giorno)`: `notifiche_galleria_accoda`, `notifiche_galleria_ritira`, `storici_oblio_alunno`, `storici_scade_account`, `storici_traccia_classe` e `storici_tick`. Dal secondo evento del giorno l'INSERT falliva sull'indice unico, e il `begin … exception` lo inghiottiva. Il battito della galleria registrava un accodamento in un giorno in cui la funzione era girata 157 volte. La migrazione `20261019223123_battiti_app_log_che_contano.sql` le ridefinisce dai corpi **vivi** della produzione, con la sola clausola che conta le occorrenze; i permessi restano quelli di prima. È stata provata sulla copia: 6 funzioni corrette, nessuna rimasta senza; due eventi uguali fanno una riga con `occorrenze` 2, mentre senza la clausola il secondo cade con 23505. Lock nuovo `app-log-battiti-con-conflitto`, che guarda l'ultima definizione di ogni funzione, istruzione per istruzione. È stato lui a trovare la sesta: la query sul catalogo la dava per buona, perché aveva un `on conflict` su un'altra tabella. Provato al contrario: senza la clausola diventa rosso.
+
 ## 🛡️ Changelog — Robustezza, fase 4 chiusa: pulizie che non cancellano troppo, periodi di scrutinio archiviati — 2026-10-19
 
-**Stato:** 🟡 in PR. Due migrazioni, applicate dall'integrazione al merge.
+**Stato:** ✅ in produzione dal 19/10 (#248, `ee952764`). Le due migrazioni le ha applicate l'integrazione al merge, una riga ciascuna con la version del file (228 nel registro); colonne `alunni.stato_cambiato_il` e `scrutinio_periodi.archiviato_il` e trigger `alunni_traccia_cambio_stato` presenti; advisor di sicurezza a 0 ERROR.
 
 La fase 4 della roadmap di robustezza aveva ancora aperti tre casi di D6 («pulizie che possono cancellare troppo») e l'archiviazione dei periodi di scrutinio (D3-C).
 

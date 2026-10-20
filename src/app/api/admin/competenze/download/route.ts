@@ -7,6 +7,7 @@ import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // certificatoId permissivo (stringa non vuota, niente zUuid): oggi nessun
@@ -26,11 +27,13 @@ export const GET = withRoute('admin/competenze/download:GET', async (request: Ne
     const { certificatoId } = q.data
 
     const supabase = await createAdminClient()
-    const { data: cert } = await supabase
+    const { data: cert, error: errCert } = await supabase
       .from('certificati_competenze')
       .select('file_url, section_id')
       .eq('id', certificatoId)
       .maybeSingle()
+    // Un guasto non è «certificato non ancora generato».
+    if (errCert) return rispostaGuastoDb('admin/competenze/download:GET', 'db:certificati_competenze', errCert)
     if (!cert?.file_url) return NextResponse.json({ error: 'Certificato non ancora generato' }, { status: 404 })
 
     // Isolamento per sede, PRIMA di firmare l'URL: il certificato delle

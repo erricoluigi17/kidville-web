@@ -102,6 +102,18 @@ export function eGestoreFascicolo(accesso: AccessoFascicolo): boolean {
 }
 
 /**
+ * Il «no» del gate per un GUASTO (`motivo: 'errore'`, fase 11) diventa un 500 con codice, non il
+ * 403 che direbbe a un docente titolare che il fascicolo non è suo. `null` per un diniego vero:
+ * ogni route lo risponde col suo testo. La riga `error` l'ha già scritta il gate
+ * (`negatoPerGuasto` in `fascicolo-rbac.ts`). Sta qui e non nel gate perché i test fingono il
+ * modulo del gate per intero.
+ */
+export function rispostaGuastoAccesso(accesso: AccessoFascicolo): NextResponse | null {
+  if (accesso.motivo !== 'errore') return null
+  return NextResponse.json({ error: 'Lettura dal database non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 })
+}
+
+/**
  * Il GATE di gestione, uguale per modifica, eliminazione, sostituzione e ripristino.
  * `null` = consentito. Altrimenti la risposta da restituire così com'è:
  *  · 403 `DOCUMENTO_SANITARIO_NEGATO` se il fascicolo non è accessibile (altra sede,
@@ -121,6 +133,8 @@ export function rispostaGestioneNegata(
   utenteId: string,
   operazione: string,
 ): NextResponse | null {
+  const guasto = rispostaGuastoAccesso(accesso)
+  if (guasto) return guasto
   if (!accesso.consentito) {
     return NextResponse.json({ error: 'Accesso al fascicolo non consentito', codice: 'DOCUMENTO_SANITARIO_NEGATO' }, { status: 403 })
   }

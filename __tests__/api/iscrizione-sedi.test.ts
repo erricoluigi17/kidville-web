@@ -115,6 +115,33 @@ describe('GET /api/iscrizione/sedi', () => {
     expect(res.headers.get('Retry-After')).toBe('30')
   })
 
+  // Fase 12: la CDN tiene la risposta buona per dieci minuti, ma SOLO senza sessione (con il
+  // cookie il middleware può attaccare un Set-Cookie, che una cache condivisa riservirebbe a
+  // tutti) e MAI su un errore, che resterebbe in cache a guasto finito.
+  it('cache: anonimo → public con s-maxage; con il cookie di sessione → private, senza s-maxage', async () => {
+    h.schools = { data: [ALFA], error: null }
+    const anonimo = await GET(req())
+    expect(anonimo.headers.get('Cache-Control')).toBe('public, max-age=600, s-maxage=600, stale-while-revalidate=3600')
+    expect(anonimo.headers.get('Vary')).toBe('Cookie')
+    const conSessione = await GET(
+      new Request('http://localhost/api/iscrizione/sedi', {
+        headers: { cookie: 'sb-progetto-auth-token=valore-finto' },
+      }) as unknown as import('next/server').NextRequest,
+    )
+    expect(conSessione.headers.get('Cache-Control')).toBe('private, max-age=600, stale-while-revalidate=3600')
+  })
+
+  it('cache: né il 500 né il 429 portano intestazioni che una CDN conserverebbe', async () => {
+    h.schools = { data: null, error: { code: '57014', message: 'timeout' } }
+    const guasto = await GET(req())
+    expect(guasto.status).toBe(500)
+    expect(guasto.headers.get('Cache-Control') ?? '').not.toMatch(/public|s-maxage/)
+    h.rl = { ok: false, remaining: 0, retryAfterMs: 30_000 }
+    const tetto = await GET(req())
+    expect(tetto.status).toBe(429)
+    expect(tetto.headers.get('Cache-Control') ?? '').not.toMatch(/public|s-maxage/)
+  })
+
   it('query param inatteso → non manda in 500 (schema zod vuoto e permissivo)', async () => {
     h.schools = { data: [GAMMA], error: null }
     const res = await GET(req('http://localhost/api/iscrizione/sedi?foo=bar'))

@@ -180,8 +180,14 @@ const ESENTE = 'src/lib/logging/';
 // dall'allowlist. Il suo `.catch(() => {})` stava sulla DELETE della voce originale dopo la
 // rateizzazione: se falliva, la voce restava ACCANTO al piano rateale nuovo (debito doppio) senza
 // traccia. Ora logga (`rateizza-originale-non-eliminato`), anche sul ramo `!res.ok`.
-const MAX_FILE = 39;
-const MAX_OCCORRENZE = 60;
+// 🔻 39 → 2 e 60 → 4 il 2026-10-19 (fase 11 della robustezza, «errori non ignorati»): escono 37
+// file — 36 pagine e componenti dell'interfaccia più `src/lib/context/admin-identity.tsx`. Il lock
+// `errori-postgrest-guardati` ha vietato `.catch(() => {})` in tutto `src/`, e ognuno di quei
+// handler ora passa da `logClient` (o dalla gestione d'errore che la pagina aveva già): un 500 non
+// diventa più «Nessun modulo» o «Configura prima un periodo». Restano le due voci di `offline/`,
+// la pagina che si mostra proprio quando la rete non c'è.
+const MAX_FILE = 2;
+const MAX_OCCORRENZE = 4;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un
@@ -380,9 +386,13 @@ function soloCommenti(rel: string): { riga: number; testo: string }[] {
  * prima erano quindi 55 in 41 (i 3 catch di quell'unico file), contro un tetto di 59 / 44 —
  * qualcuno aveva bonificato senza abbassare. Il tetto scende alla misura vera, non alla sola
  * parte di questo intervento.
+ *
+ * 🔻 52 → 49 e 40 → 37 il 2026-10-19 (fase 11): il tetto scende alla misura vera presa dopo la
+ * bonifica di «errori non ignorati». Nessun blocco nuovo con soli commenti è entrato con quel
+ * lavoro (controllato sui diff dei file toccati); i 49 rimasti sono tutti anteriori.
  */
-const MAX_SOLO_COMMENTI = 52;
-const MAX_FILE_SOLO_COMMENTI = 40;
+const MAX_SOLO_COMMENTI = 49;
+const MAX_FILE_SOLO_COMMENTI = 37;
 
 type Voce = { path: string; n: number };
 type Allowlist = { totale_occorrenze: number; file: Voce[] };

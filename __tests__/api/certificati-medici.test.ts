@@ -34,11 +34,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/parent/medical-certificates/route'
+import { tipoCertificato } from '@/lib/certificati/tipo-file'
 import { PATCH } from '@/app/api/teacher/medical-certificates/route'
 
-function uploadReq(fields: Record<string, string>, withFile = true) {
+function uploadReq(fields: Record<string, string>, withFile = true, file?: File) {
   const fd = new FormData()
-  if (withFile) fd.append('file', new File([Buffer.from('PDFDATA')], 'cert.pdf', { type: 'application/pdf' }))
+  if (withFile) fd.append('file', file ?? new File([Buffer.from('PDFDATA')], 'cert.pdf', { type: 'application/pdf' }))
   for (const [k, v] of Object.entries(fields)) fd.append(k, v)
   return new Request('http://localhost/api/parent/medical-certificates', { method: 'POST', body: fd })
 }
@@ -82,6 +83,41 @@ describe('POST /api/parent/medical-certificates (upload)', () => {
     expect(h.inserts[0].stato).toBe('in_validazione')
     expect(h.inserts[0].caricato_da).toBe('gen-1')
     expect(h.inserts[0].data_inizio).toBe('2026-03-01')
+  })
+
+  // Fase 12: il bucket ammette solo PDF e immagini. Il tipo lo decide la route, non lo Storage.
+  const CAMPI = { student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data_inizio: '2026-03-01', data_fine: '2026-03-05' }
+
+  it('foto dell’iPhone arrivata SENZA tipo: prende quello dell’estensione, non octet-stream', async () => {
+    const res = await POST(uploadReq(CAMPI, true, new File([Buffer.from('HEIC')], 'Certificato.HEIC', { type: '' })))
+    expect(res.status).toBe(201)
+    expect(h.uploadCalls).toHaveLength(1)
+    const [, , opzioni] = h.uploadCalls[0] as [string, Buffer, { contentType: string }]
+    expect(opzioni.contentType).toBe('image/heic')
+  })
+
+  it('un documento Word: 415 ALLEGATO_PDF_O_IMMAGINE, e lo Storage non viene chiamato', async () => {
+    const docx = new File([Buffer.from('DOCX')], 'certificato.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    const res = await POST(uploadReq(CAMPI, true, docx))
+    expect(res.status).toBe(415)
+    expect((await res.json()).codice).toBe('ALLEGATO_PDF_O_IMMAGINE')
+    expect(h.uploadCalls).toHaveLength(0)
+    expect(h.inserts).toHaveLength(0)
+  })
+})
+
+describe('tipoCertificato', () => {
+  it('PDF e immagini passano col loro tipo; senza tipo decide l’estensione; il resto no', () => {
+    expect(tipoCertificato('application/pdf', 'pdf')).toBe('application/pdf')
+    expect(tipoCertificato('image/jpeg', 'jpg')).toBe('image/jpeg')
+    expect(tipoCertificato('IMAGE/PNG', 'png')).toBe('image/png')
+    expect(tipoCertificato('', 'pdf')).toBe('application/pdf')
+    expect(tipoCertificato('application/octet-stream', 'jpeg')).toBe('image/jpeg')
+    expect(tipoCertificato('', 'exe')).toBeNull()
+    expect(tipoCertificato('text/html', 'pdf')).toBeNull()
+    expect(tipoCertificato('application/zip', 'zip')).toBeNull()
   })
 })
 

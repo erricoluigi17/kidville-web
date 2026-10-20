@@ -26,7 +26,7 @@ import {
   zStagingPath,
 } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Registro protocolli (spec docs/superpowers/specs/2026-07-12-registro-protocolli-design.md).
 // Gate: SOLO admin + segreteria (decisione utente); DELETE solo admin, senza
@@ -446,14 +446,25 @@ export const DELETE = withRoute('admin/protocolli:DELETE', async (request: NextR
       if (eElimina) return rispostaErroreProtocollo(eElimina)
 
       const daRimuovere = Array.isArray(paths) ? (paths as string[]).filter(Boolean) : []
+      // «Eliminazione totale»: se i file restano nel bucket, l'eliminazione NON è totale, e
+      // inghiottirlo lo nasconderebbe proprio a chi l'ha decisa. La riga non porta l'id della
+      // registrazione né i percorsi (decisione #6: nessuna traccia di COSA è stato eliminato),
+      // solo quanti file sono rimasti e l'errore dello storage.
       if (daRimuovere.length > 0) {
-        await supabase.storage
+        const errPulizia = await supabase.storage
           .from(PROTOCOLLO_BUCKET)
           .remove(daRimuovere)
           .then(
-            () => undefined,
-            () => undefined
+            (r) => r.error,
+            (err: unknown) => err
           )
+        if (errPulizia) {
+          logEvento('protocolli', 'error', {
+            operazione: 'admin/protocolli:DELETE',
+            esito: 'file-eliminati-rimasti-nel-bucket',
+            n: daRimuovere.length,
+          }, errPulizia)
+        }
       }
 
       // Decisione #6: nessun logScrittura, nessuna traccia tecnica.

@@ -23,6 +23,9 @@ const h = vi.hoisted(() => ({
   // Se impostato, la RPC transazionale ritorna questo errore. { code: 'PGRST202' }
   // simula la RPC ASSENTE (DB E2E CI non migrato) → il route degrada al fallback.
   rpcError: null as { code: string } | null,
+  // Guasti finti di PostgREST (che non lancia): la lettura del saldo, e la disdetta del fallback.
+  erroreSaldo: null as { code: string; message: string } | null,
+  erroreDisdetta: null as { code: string; message: string } | null,
   // catture delle scritture per verificare la catena
   saldoWrites: [] as number[],
   prenUpserts: [] as Record<string, unknown>[],
@@ -103,6 +106,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // .order() è terminale nel route (GET: lista prenotazioni del range)
       b.order = async () => ({ data: h.prenotazioniList, error: null })
       b.maybeSingle = async () => {
+        if (table === 'ticket_mensa' && h.erroreSaldo) return { data: null, error: h.erroreSaldo }
         if (table === 'ticket_mensa') return { data: { saldo_ticket: h.saldo }, error: null }
         if (table === 'alunni') return { data: h.alunno, error: null }
         if (table === 'mensa_prenotazioni') return { data: h.existingPren, error: null }
@@ -121,6 +125,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return { error: null }
       }
       b.update = (row: Record<string, unknown>) => {
+        if (table === 'mensa_prenotazioni' && h.erroreDisdetta) return { eq: async () => ({ error: h.erroreDisdetta }) }
         if (table === 'mensa_prenotazioni') h.prenUpdates.push(row)
         return { eq: async () => ({ error: null }) }
       }
@@ -151,6 +156,8 @@ beforeEach(() => {
   h.prenotazioniList = []
   h.menu = { attivo: true, chiuso: false }
   h.rpcError = null
+  h.erroreSaldo = null
+  h.erroreDisdetta = null
   h.alunno = { id: ALUNNO, scuola_id: 'sc-1', nome: 'Mia', cognome: 'Rossi', classe_sezione: '1A', section_id: null, allergies: null, allergeni: null }
   h.saldoWrites = []; h.prenUpserts = []; h.prenUpdates = []; h.ledger = []
   h.cutoffPerSede = {}; h.sedeConfigLetta = []; h.intervallo = []
@@ -567,5 +574,29 @@ describe('saldo mensa e competenza retroattiva', () => {
     expect(res.status).toBe(201)
     expect(h.ledger).toHaveLength(0)
     expect(h.notificaSaldoBasso).not.toHaveBeenCalled()
+  })
+})
+
+describe('mensa/prenotazioni — un guasto del database non diventa un saldo o una disdetta', () => {
+  it('GET: il saldo non si legge ⇒ 500, non «saldo 0»', async () => {
+    // Prima il `{ error }` si buttava e il genitore leggeva «0 ticket».
+    h.erroreSaldo = { code: '08006', message: 'connessione persa' }
+    const res = await GET(getReq(`alunno_id=${ALUNNO}`))
+    expect(res.status).toBe(500)
+  })
+
+  it('DELETE (ripiego senza RPC): la disdetta non si scrive ⇒ 500 e saldo rimesso com\'era', async () => {
+    // Prima: ticket riaccreditato, pasto ancora «prenotato» e risposta 200 — un pasto gratis.
+    h.rpcError = { code: 'PGRST202' }
+    h.erroreDisdetta = { code: '08006', message: 'connessione persa' }
+    h.saldo = 5
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-20`))
+    expect(res.status).toBe(500)
+    // Riaccredito (6) e poi ripristino (5): il saldo finale è quello di partenza.
+    expect(h.saldoWrites).toEqual([6, 5])
+    expect(h.prenUpdates).toHaveLength(0)
+    expect(h.ledger).toHaveLength(0)
   })
 })

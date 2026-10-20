@@ -8,6 +8,7 @@ import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 
 // Nessun parametro in ingresso: schema vuoto (rispetta il lock zod-coverage admin).
 const getQuerySchema = z.object({});
@@ -73,11 +74,13 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
     const genitoreIds = [...new Set([...perAlunno.values()].flat())];
     if (genitoreIds.length === 0) return NextResponse.json({ success: true, data: [] });
 
-    const { data: utenti } = await supabase
+    // Decide CHI compare (solo i genitori con login): un guasto non è «nessun contatto».
+    const { data: utenti, error: errUtenti } = await supabase
       .from('utenti')
       .select('id, nome, cognome')
       .in('id', genitoreIds)
       .eq('ruolo', 'genitore');
+    if (errUtenti) return rispostaGuastoDb('admin/chat/contacts:GET', 'db:utenti', errUtenti);
     const uMap = new Map((utenti ?? []).map((u) => [u.id, u]));
 
     /**

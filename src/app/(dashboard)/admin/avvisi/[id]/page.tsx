@@ -9,6 +9,7 @@ import { CockpitPage } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoDetailsContent } from '@/components/features/avvisi/AvvisoDetailsContent';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
 import { scadenzaLeggibile } from '@/components/features/avvisi/dettaglio/scadenza-leggibile';
 import { formattaIstante } from '@/i18n/config';
@@ -87,7 +88,8 @@ function AdminAvvisoDetailInner() {
         fetch(`/api/admin/sections/scoped?userId=${userId}`)
             .then(r => (r.ok ? r.json() : null))
             .then(d => { if (active && d?.success) setScuole(d.data ?? []); })
-            .catch(() => {});
+            // Accessoria: servono solo le etichette dei destinatari, l'avviso si mostra lo stesso.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `avviso-dettaglio-sezioni-non-caricate: ${nomeErrore(err)}` }));
         return () => { active = false; };
     }, [userId]);
 

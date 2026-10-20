@@ -387,12 +387,23 @@ export async function middleware(request: NextRequest) {
    * ramo, quel caso diventerebbe un 500 su tutto il sito. Qui degrada come tutto il resto del
    * file: nessuna sessione, e il redirect sotto se ne occupa. **Fail-closed**, come il test
    * 7-quinquies verifica.
+   *
+   * L'`error` restituito NON si butta (fase 11, «errori non ignorati»), ma non si scrive nemmeno
+   * su una riga sua: un refresh token scaduto è la risposta CORRETTA a una sessione vecchia e
+   * capita a ogni richiesta di ogni utente con una sessione morta (vedi `fetchConBudget`). Il suo
+   * NOME va sulla riga del redirect, che c'è già: «buttato fuori al login» con il perché accanto
+   * — `nessuna` (nessuna sessione: `getClaims` torna `{ data: null, error: null }`) contro
+   * `AuthApiError` / `AuthInvalidJwtError` / `AuthRetryableFetchError`. Il guasto di trasporto
+   * ha in più la sua riga `KV_ERR`, scritta da `fetchConBudget`.
    */
   let haSessione = false;
+  let motivoSenzaSessione = 'nessuna';
   try {
-    const { data } = await supabase.auth.getClaims(undefined, chiavi ? { jwks: chiavi } : undefined);
-    haSessione = !!data?.claims;
-  } catch {
+    const { data, error } = await supabase.auth.getClaims(undefined, chiavi ? { jwks: chiavi } : undefined);
+    if (error) motivoSenzaSessione = nomeErroreSicuro(error);
+    haSessione = !error && !!data?.claims;
+  } catch (err) {
+    motivoSenzaSessione = nomeErroreSicuro(err);
     haSessione = false;
   }
 
@@ -427,7 +438,8 @@ export async function middleware(request: NextRequest) {
     // logger (marker + logfmt) così che sia cercabile su Vercel come tutte le altre:
     // `KV_EVT` come marker, `rid`/`evt` come chiavi. Il path è ridotto a pattern.
     console.log(
-      `KV_EVT rid=${requestId} evt=auth esito=redirect-login path=${redigiPathSicuro(pathname)}`
+      `KV_EVT rid=${requestId} evt=auth esito=redirect-login motivo=${motivoSenzaSessione}`
+      + ` path=${redigiPathSicuro(pathname)}`
     );
 
     // `NextResponse.redirect` non accetta `request: { headers }`: a valle non va più nulla.

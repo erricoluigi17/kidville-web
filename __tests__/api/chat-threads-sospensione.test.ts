@@ -20,10 +20,17 @@ const h = vi.hoisted(() => ({
   sospensioni: [] as Record<string, unknown>[],
   sospIn: null as string[] | null,
   sospFromCount: 0,
+  // Guasto finto sulle letture di ARRICCHIMENTO (nome dell'interlocutore, conteggio non letti).
+  guastoArricchimento: false,
+  guastoLetturaAccessoria: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/chat/delivered', () => ({ marcaConsegnati: h.marcaConsegnati }))
+vi.mock('@/lib/db/guasto', async (originale) => ({
+  ...(await originale<typeof import('@/lib/db/guasto')>()),
+  guastoLetturaAccessoria: h.guastoLetturaAccessoria,
+}))
 
 const adminClient = {
   from(table: string) {
@@ -43,6 +50,7 @@ const adminClient = {
     }
     b.maybeSingle = async () => {
       if (table === 'chat_messages') return { data: null, error: null } // last message
+      if (table === 'utenti' && h.guastoArricchimento) return { data: null, error: { code: '08006', message: 'connessione persa' } }
       if (table === 'utenti') return { data: { first_name: 'X', last_name: 'Y', role: 'educator' }, error: null }
       if (table === 'alunni') return { data: { nome: 'N', cognome: 'C', classe_sezione: 'S' }, error: null }
       return { data: null, error: null }
@@ -53,6 +61,7 @@ const adminClient = {
       let result: unknown
       if (table === 'chat_threads') result = { data: h.threads, error: null }
       else if (table === 'conversazioni_sospensioni') result = { data: h.sospensioni, error: null }
+      else if (table === 'chat_messages' && h.guastoArricchimento) result = { count: null, error: { code: '08006', message: 'connessione persa' } }
       else if (table === 'chat_messages') result = { count: 0, error: null }
       else result = { data: null, error: null }
       return Promise.resolve(result).then(onF, onR)
@@ -72,6 +81,7 @@ beforeEach(() => {
   h.marcaConsegnati.mockResolvedValue(undefined)
   h.sospIn = null
   h.sospFromCount = 0
+  h.guastoArricchimento = false
   h.threads = [
     { id: THREAD_A, teacher_id: TEACHER_A, parent_id: PARENT, student_id: 's-a', last_message_at: '2026-07-27T10:00:00Z' },
     { id: THREAD_B, teacher_id: TEACHER_B, parent_id: PARENT, student_id: 's-b', last_message_at: '2026-07-27T09:00:00Z' },
@@ -113,5 +123,30 @@ describe('GET /api/chat/threads — arricchimento sospensione (batched)', () => 
     const res = await GET(req())
     const body = (await res.json()) as { id: string; sospensione: { motivo: string | null } | null }[]
     expect(body[0].sospensione?.motivo).toBe('MOTIVO_RISERVATO')
+  })
+})
+
+describe('GET /api/chat/threads — una lettura di arricchimento fallita degrada, non svuota la lista', () => {
+  // Questa rotta si chiama a ogni apertura della chat: il nome dell'interlocutore e il conteggio
+  // dei non letti arricchiscono la lista, non la decidono. Prima il guasto diventava «?» e 0 in
+  // silenzio; ora resta il ripiego, ma la riga c'è — UNA per tipo di lettura, non per thread.
+  it('200 con i thread e il ripiego, e una riga sola per tipo di lettura fallita', async () => {
+    h.guastoArricchimento = true
+    const res = await GET(req())
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { id: string; other_user: { first_name: string }; unread_count: number }[]
+    expect(body.map((t) => t.id)).toEqual([THREAD_A, THREAD_B])
+    expect(body[0].other_user.first_name).toBe('?')
+    expect(body[0].unread_count).toBe(0)
+    const esiti = h.guastoLetturaAccessoria.mock.calls.map((c) => c[2]).sort()
+    expect(esiti).toEqual(['interlocutore-non-letto', 'non-letti-non-contati'])
+    expect(h.guastoLetturaAccessoria.mock.calls[0][0]).toBe('chat')
+    expect(h.guastoLetturaAccessoria.mock.calls[0][1]).toBe('chat/threads:GET')
+  })
+
+  it('senza guasti nessuna riga di ripiego', async () => {
+    const res = await GET(req())
+    expect(res.status).toBe(200)
+    expect(h.guastoLetturaAccessoria).not.toHaveBeenCalled()
   })
 })

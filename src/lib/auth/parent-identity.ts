@@ -233,7 +233,16 @@ export async function resolveScuolaId(
   preferred: string | null | undefined
 ): Promise<string | null> {
   if (preferred) return preferred;
-  const { data } = await admin.from('schools').select('id').limit(2);
+  const { data, error } = await admin.from('schools').select('id').limit(2);
+  // Il chiamante tratta `null` come «sede non risolvibile» e si ferma: il comportamento resta,
+  // ma un guasto non si confonde più con «più sedi configurate».
+  if (error) {
+    logEvento('auth', 'error', {
+      operazione: 'resolveScuolaId',
+      esito: 'sedi-non-lette',
+    }, error);
+    return null;
+  }
   return data && data.length === 1 ? (data[0].id as string) : null;
 }
 

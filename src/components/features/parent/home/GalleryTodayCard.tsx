@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl'
 import { Image as ImageIcon, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 interface Props {
   studentId: string
@@ -33,7 +34,7 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
       .then((j) => {
         if (active && typeof j?.total === 'number') setTotal(j.total)
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `galleria-home-conteggio-non-letto: ${nomeErrore(err)}`, route: '/parent' }))
       .finally(() => {
         if (active) setLoaded(true)
       })

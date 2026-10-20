@@ -12,6 +12,9 @@ import { parseBody } from '@/lib/validation/http'
 import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, guastoSecondario, rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'parent/primaria/note/firma:POST'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // L'identità viene dalla SESSIONE (`requireUser` → `resolveIdentity`), mai dalla
@@ -67,11 +70,14 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
       return NextResponse.json({ error: check.error }, { status: 400 })
     }
 
-    const { data: nota } = await supabase
+    // Un guasto NON è «nota non trovata»: il genitore leggerebbe che la nota non esiste, e
+    // la presa visione (valore legale) resterebbe non apposta senza che nessuno lo sappia.
+    const { data: nota, error: errNota } = await supabase
       .from('note_disciplinari')
       .select('id, alunno_id, richiede_firma')
       .eq('id', notaId)
       .maybeSingle()
+    if (errNota) return rispostaGuastoDb(OP, 'db:note_disciplinari', errNota)
     if (!nota) return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 })
 
     // Solo un genitore COLLEGATO all'alunno della nota può firmarne la presa
@@ -102,10 +108,13 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     // Retro-compat con la GET genitore (badge "Firmata"): timestamp + firmatario sulla nota.
-    await supabase
+    // La firma che fa fede è GIÀ in `nota_ricezioni`: un guasto qui non la annulla (un 500
+    // inviterebbe a rifirmare), ma il badge resterebbe «da firmare», e la riga lo dice.
+    const { error: errBadge } = await supabase
       .from('note_disciplinari')
       .update({ firmata_il: new Date().toISOString(), firmata_da: userId })
       .eq('id', notaId)
+    if (errBadge) guastoSecondario('fea', OP, 'badge-firmata-non-aggiornato', errBadge)
 
     // Ledger slot firmatari + audit immutabile (additivi, best-effort).
     if (data?.id) {
@@ -129,18 +138,22 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
 
     // Notifica al docente autore della nota: firma ricevuta (best-effort).
     try {
-      const { data: notaAutore } = await supabase
+      const { data: notaAutore, error: errAutore } = await supabase
         .from('note_disciplinari')
         .select('maestra_id')
         .eq('id', notaId)
         .maybeSingle()
+      // La firma è già scritta: senza l'autore la notifica non parte, e la riga lo dice.
+      if (errAutore) guastoSecondario('notifica', OP, 'autore-nota-non-letto', errAutore)
       const maestraId = notaAutore?.maestra_id as string | undefined
       if (maestraId && maestraId !== userId) {
-        const { data: alunno } = await supabase
+        const { data: alunno, error: errAlunno } = await supabase
           .from('alunni')
           .select('nome, cognome, scuola_id')
           .eq('id', nota.alunno_id)
           .maybeSingle()
+        // Serve solo al testo della notifica: si prosegue con «un alunno».
+        if (errAlunno) guastoLetturaAccessoria('notifica', OP, 'alunno-notifica-non-letto', errAlunno)
         const firmatario = await nomeUtente(supabase, userId)
         await notificaEvento(supabase, {
           tipo: 'firma_ricevuta',

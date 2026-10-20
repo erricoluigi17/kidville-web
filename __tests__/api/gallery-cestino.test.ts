@@ -83,6 +83,8 @@ const h = vi.hoisted(() => ({
     erroreCestino: null as string | null,
     /** Codice PostgREST per le query che filtrano per `scuola_id`. */
     erroreSede: null as string | null,
+    /** Codice PostgREST per la lettura di UNA riga di `utenti` (il ruolo di chi opera). */
+    erroreRuolo: null as string | null,
 }))
 
 // I gate: le identità si iniettano, il resto della route è reale.
@@ -325,6 +327,7 @@ const adminClient = {
             return { data: (r.data ?? []).slice(da, a + 1), count: r.count, error: null }
         }
         b.maybeSingle = async () => {
+            if (h.erroreRuolo && s.tabella === 'utenti') return { data: null, error: { code: h.erroreRuolo } }
             const r = esegui(s)
             return { data: r.error ? null : (r.data ?? [])[0] ?? null, error: r.error }
         }
@@ -381,6 +384,7 @@ beforeEach(() => {
     h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore', scuola_id: null } })
     h.erroreCestino = null
     h.erroreSede = null
+    h.erroreRuolo = null
     h.scritture = []
     h.schools = [{ id: SEDE_A }, { id: SEDE_B }]
     h.utentiScuole = []
@@ -447,6 +451,16 @@ beforeEach(() => {
  * (A) «ELIMINA» NON CANCELLA PIÙ — la prova sul registro delle operazioni
  * ──────────────────────────────────────────────────────────────────────────── */
 describe('(A) DELETE: archivia, non distrugge', () => {
+    it('il ruolo di chi opera non si legge: 500, non «non sei autorizzato», e la foto resta com\'è', async () => {
+        // Prima il `{ error }` si buttava: ruolo `undefined` ⇒ nessun permesso ⇒ 403 detto alla
+        // segreteria, che di permessi ne ha. Un guasto non è un rifiuto.
+        h.erroreRuolo = '08006'
+        const res = await DELETE(delReq(`id=${FOTO_A}`))
+        expect(res.status).toBe(500)
+        expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+        expect(scrittureSu('galleria_media_v2')).toEqual([])
+    })
+
     it('NON esegue nessun `.delete()` su galleria_media_v2', async () => {
         const res = await DELETE(delReq(`id=${FOTO_A}`))
         expect(res.status).toBe(200)

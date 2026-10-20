@@ -18,6 +18,7 @@
  */
 
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface AdminIdentityValue {
   userId: string | null;
@@ -54,7 +55,12 @@ export function AdminIdentityProvider({ children }: { children: React.ReactNode 
     fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
-      .catch(() => {});
+      // Il ripiego resta `''` — nessun ruolo, quindi i comandi riservati restano NASCOSTI (vedi
+      // `useRuoloCockpit`), e il gate vero è sul server. Ma un cockpit che non sa chi guarda
+      // va detto: senza questa riga «bottone assente» e «ruolo mai arrivato» si leggono uguali.
+      .catch((err) => {
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `cockpit-ruolo-non-risolto: ${nomeErrore(err)}` });
+      });
   }, [userId]);
 
   const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);

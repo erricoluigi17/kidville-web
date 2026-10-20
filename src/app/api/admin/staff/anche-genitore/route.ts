@@ -8,6 +8,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { puoEliminareStaff } from '@/lib/personale/permessi-eliminazione'
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents'
@@ -125,11 +127,22 @@ export const POST = withRoute('admin/staff/anche-genitore:POST', async (request:
     // cosa sola: far ritrovare a `linkOrCreateParent` la scheda d'anagrafica che
     // questa persona potrebbe già avere come genitore. Senza, si creerebbe un
     // DOPPIONE — ed è il difetto che questo repo ha già pagato sui bambini.
-    const { data: fascicolo } = await supabase
+    //
+    // Per questo un guasto qui FERMA (come la lettura del ponte qui sopra): letto «nessun
+    // fascicolo», il codice fiscale mancherebbe e nascerebbe proprio quel doppione. Solo la
+    // TABELLA assente (DB non migrato) vale «nessun fascicolo», e la riga lo dice.
+    const { data: fascicolo, error: errFascicolo } = await supabase
       .from('anagrafica_personale')
       .select('utente_id, fiscal_code')
       .eq('utente_id', utenteId)
       .maybeSingle()
+    if (errFascicolo && !tabellaMancante(errFascicolo)) {
+      logErrore({ operazione: OPERAZIONE, evento: 'lettura_fascicolo' }, errFascicolo)
+      return risposta503()
+    }
+    if (errFascicolo) {
+      guastoLetturaAccessoria('anagrafica', OPERAZIONE, 'fascicolo-personale-assente-dallo-schema', errFascicolo)
+    }
     const cf = (fascicolo as { fiscal_code?: string | null } | null)?.fiscal_code ?? null
 
     const esito = await linkOrCreateParent(supabase, auth.user, {

@@ -13,6 +13,7 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { abbinamentoConsentito } from '@/lib/chat/rubrica';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto';
 import { marcaConsegnati } from '@/lib/chat/delivered';
 import { schemaAssente } from '@/lib/news/schema-assente';
 
@@ -98,39 +99,53 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             }
         }
 
+        // Le quattro letture per thread ARRICCHISCONO la lista, non la decidono: la lista è
+        // `threads`, già letta e già controllata. Questa rotta si chiama a ogni apertura della
+        // chat, e un dettaglio mancante non deve svuotare la schermata: si degrada al ripiego
+        // («?», 0, nessun ultimo messaggio) e lo si DICE. Una riga per tipo di lettura, non per
+        // thread: a database giù, quaranta thread farebbero centosessanta righe uguali.
+        const guastiArricchimento = new Map<string, unknown>();
+        const annotaGuasto = (esito: string, err: unknown) => {
+            if (err && !guastiArricchimento.has(esito)) guastiArricchimento.set(esito, err);
+        };
+
         // Arricchisci con nomi degli interlocutori e conteggio non letti
         const enrichedThreads = await Promise.all(
             (threads ?? []).map(async (thread) => {
                 // Prendi l'ultimo messaggio
-                const { data: lastMsg } = await supabase
+                const { data: lastMsg, error: errUltimo } = await supabase
                     .from('chat_messages')
                     .select('content, sender_id, created_at')
                     .eq('thread_id', thread.id)
                     .order('created_at', { ascending: false })
                     .limit(1)
                     .maybeSingle();
+                annotaGuasto('ultimo-messaggio-non-letto', errUltimo);
 
                 // Conta messaggi non letti (inviati dall'altro)
-                const { count: unreadCount } = await supabase
+                const { count: unreadCount, error: errNonLetti } = await supabase
                     .from('chat_messages')
                     .select('*', { count: 'exact', head: true })
                     .eq('thread_id', thread.id)
                     .neq('sender_id', userId)
                     .is('read_at', null);
+                annotaGuasto('non-letti-non-contati', errNonLetti);
 
                 // Prendi i nomi dalla tabella utenti
                 const otherUserId = thread.teacher_id === userId ? thread.parent_id : thread.teacher_id;
-                const { data: otherUser } = await supabase
+                const { data: otherUser, error: errInterlocutore } = await supabase
                     .from('utenti')
                     .select('nome, cognome, ruolo, first_name, last_name, role')
                     .eq('id', otherUserId)
                     .maybeSingle();
+                annotaGuasto('interlocutore-non-letto', errInterlocutore);
 
-                const { data: student } = await supabase
+                const { data: student, error: errAlunno } = await supabase
                     .from('alunni')
                     .select('nome, cognome, classe_sezione')
                     .eq('id', thread.student_id)
                     .maybeSingle();
+                annotaGuasto('alunno-non-letto', errAlunno);
 
                 return {
                     ...thread,
@@ -148,6 +163,10 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
                 };
             })
         );
+
+        for (const [esito, err] of guastiArricchimento) {
+            guastoLetturaAccessoria('chat', 'chat/threads:GET', esito, err);
+        }
 
         return NextResponse.json(enrichedThreads);
     } catch (error) {
@@ -256,13 +275,14 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
         }
 
         // Cerca se esiste già un thread per questa combinazione
-        const { data: existing } = await supabase
+        const { data: existing, error: erroreEsistente } = await supabase
             .from('chat_threads')
             .select('id')
             .eq('teacher_id', teacher_id)
             .eq('parent_id', parent_id)
             .eq('student_id', student_id)
             .maybeSingle();
+        if (erroreEsistente) return rispostaGuastoDb('chat/threads:POST', 'db:chat_threads', erroreEsistente);
 
         if (existing) {
             return NextResponse.json(existing);
@@ -281,13 +301,14 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
             // student_id)`. Visto 4 volte in `app_log`. Non è un guasto: il thread
             // c'è, ed è quello che il chiamante voleva. Si rilegge e si restituisce.
             if ((error as { code?: string }).code === '23505') {
-                const { data: gia } = await supabase
+                const { data: gia, error: erroreRilettura } = await supabase
                     .from('chat_threads')
                     .select('id')
                     .eq('teacher_id', teacher_id)
                     .eq('parent_id', parent_id)
                     .eq('student_id', student_id)
                     .maybeSingle();
+                if (erroreRilettura) return rispostaGuastoDb('chat/threads:POST', 'db:chat_threads', erroreRilettura);
                 if (gia) return NextResponse.json(gia);
             }
             logErrore({ operazione: 'chat/threads:POST', stato: 500, evento: 'db' }, error);

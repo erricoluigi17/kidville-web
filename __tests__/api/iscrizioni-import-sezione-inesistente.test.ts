@@ -51,6 +51,9 @@ const db = vi.hoisted(() => {
     /** Le sezioni della sede, come le vede PostgREST. */
     sezioni: [] as Array<Record<string, unknown>>,
     sezioniError: null as unknown,
+    /** Guasti finti: la lettura delle domande della sede, e la scrittura dello stato. */
+    domandeError: null as unknown,
+    sospendiError: null as unknown,
     rpc: [] as Array<{ nome: string; args: Record<string, unknown> }>,
   }
   function client(): unknown {
@@ -62,7 +65,9 @@ const db = vi.hoisted(() => {
         }
         const risolvi = (): { data: unknown; error: unknown } => {
           if (table === 'iscrizioni_elenco_caricamenti') return { data: state.elenchi, error: null }
-          if (table === 'enrollment_submissions') return { data: state.domande, error: null }
+          if (table === 'enrollment_submissions') {
+            return state.domandeError ? { data: null, error: state.domandeError } : { data: state.domande, error: null }
+          }
           if (table === 'sections') return { data: state.sezioni, error: state.sezioniError }
           return { data: [], error: null }
         }
@@ -75,7 +80,9 @@ const db = vi.hoisted(() => {
         state.rpc.push({ nome, args })
         const esito = nome === 'iscrizioni_prendi_in_carico'
           ? { data: state.lotto, error: null }
-          : { data: null, error: null }
+          : nome === 'iscrizioni_sospendi' && state.sospendiError
+            ? { data: null, error: state.sospendiError }
+            : { data: null, error: null }
         return { then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(esito).then(ok, ko) }
       },
     }
@@ -166,6 +173,8 @@ beforeEach(() => {
   db.state.lotto = ['d-1']
   db.state.sezioni = [{ name: 'SEZIONE ESISTENTE' }, { name: '4 ANNI M.ROSARIA' }]
   db.state.sezioniError = null
+  db.state.domandeError = null
+  db.state.sospendiError = null
   db.state.rpc = []
   analisi.classe = 'SEZIONE ESISTENTE'
 })
@@ -261,5 +270,45 @@ describe('import massivo · la classe assegnata deve esistere nella sede', () =>
     expect(body.daControllare).toBe(1)
     expect(sospensioni()).toHaveLength(0)
     expect(esegui.eseguiDomanda).not.toHaveBeenCalled()
+  })
+})
+
+describe('import massivo · uno stato non scritto non si conta come scritto', () => {
+  // Fino al 2026-10-19 il risultato di `iscrizioni_sospendi` si buttava: la domanda finiva nel
+  // riepilogo fra «da controllare» anche quando lo stato non era stato scritto, e la segreteria
+  // la cercava in un elenco dove non c'era.
+  it('la sospensione fallisce ⇒ la domanda è fra le NON riuscite, e il log lo dice senza nomi', async () => {
+    analisi.classe = 'RETTE'
+    db.state.sospendiError = { code: '08006', message: 'connessione persa' }
+
+    const res = await POST(req({}))
+    const body = (await res.json()) as { daControllare?: number; fallite?: number; bloccate?: number }
+
+    expect(res.status).toBe(200)
+    expect(body.daControllare).toBe(0)
+    expect(body.fallite).toBe(1)
+    expect(body.bloccate).toBe(1)
+    expect(esegui.eseguiDomanda).not.toHaveBeenCalled()
+
+    const riga = log.logEvento.mock.calls.find(
+      (c) => (c[2] as Record<string, unknown> | undefined)?.esito === 'sospensione-non-scritta',
+    )
+    expect(riga?.[1]).toBe('error')
+    const campi = (riga?.[2] ?? {}) as Record<string, unknown>
+    expect(campi.entita_id).toBe('d-1')
+    expect(campi.stato).toBe('da_controllare')
+    expect(JSON.stringify(campi)).not.toContain('RETTE')
+  })
+
+  it('le domande della sede non si leggono ⇒ il giro si ferma (500), non salta la sede in silenzio', async () => {
+    db.state.domandeError = { code: '08006', message: 'connessione persa' }
+
+    const res = await POST(req({}))
+    const body = (await res.json()) as { codice?: string }
+
+    expect(res.status).toBe(500)
+    expect(body.codice).toBe('IMPORT_ISCRIZIONI_NON_ESEGUITO')
+    expect(esegui.eseguiDomanda).not.toHaveBeenCalled()
+    expect(sospensioni()).toHaveLength(0)
   })
 })

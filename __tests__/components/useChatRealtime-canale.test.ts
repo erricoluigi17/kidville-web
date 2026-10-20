@@ -63,6 +63,11 @@ const sb = vi.hoisted(() => ({
     /** `setAuth()` può fallire (token scaduto, rete): il canale non deve nascere muto e zitto. */
     setAuthFallisce: false,
     /**
+     * `getSession()` NON lancia: restituisce `{ data: { session: null }, error }`. Ignorare `error`
+     * faceva passare un guasto per «nessuna sessione» (fase 11, «errori non ignorati»).
+     */
+    sessioneGuasta: null as Error | null,
+    /**
      * Il `removeChannel` vero emette CLOSED: subito se il socket non è connesso (leave di phoenix
      * senza ack), dopo l'ack se lo è. Qui subito, che è il caso in cui il flag dello smontaggio
      * deve già essere alzato.
@@ -75,6 +80,7 @@ vi.mock('@/lib/supabase/browser-client', () => ({
         auth: {
             getSession: () => {
                 sb.ordine.push('getSession');
+                if (sb.sessioneGuasta) return Promise.resolve({ data: { session: null }, error: sb.sessioneGuasta });
                 return Promise.resolve({ data: { session: sb.sessione }, error: null });
             },
         },
@@ -193,6 +199,7 @@ beforeEach(() => {
     sb.ordine.length = 0;
     sb.sessione = { user: { id: 'auth-1' } };
     sb.setAuthFallisce = false;
+    sb.sessioneGuasta = null;
     sb.closedAllaRimozione = true;
     logClient.mockClear();
 });
@@ -243,6 +250,19 @@ describe('useChatRealtime — S4-B: canale PRIVATO per destinatario, niente post
         const evento = logClient.mock.calls.map((c) => c[0] as { livello: string; messaggio: string }).at(-1);
         expect(evento?.messaggio).toBe('chat-realtime-identita-fallita: TypeError');
         expect(evento?.livello).toBe('warn');
+    });
+
+    it('una sessione ILLEGGIBILE non si traveste da «nessuna sessione»: il log dice il guasto', async () => {
+        const guasto = new Error('lettura sessione non riuscita');
+        guasto.name = 'AuthRetryableFetchError';
+        sb.sessioneGuasta = guasto;
+        await monta({ userId: 'u-1', threads: [A], aperto: null });
+        expect(sb.creati).toHaveLength(0);
+        const messaggi = logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio);
+        expect(messaggi).toContain('chat-realtime-identita-fallita: AuthRetryableFetchError');
+        expect(messaggi).not.toContain('chat-realtime-senza-identita');
+        // Il `.message` dell'errore di auth può contenere l'URL con l'apikey: non esce.
+        expect(JSON.stringify(logClient.mock.calls)).not.toContain('lettura sessione');
     });
 
     it('nessun log porta il topic: dentro c’è l’uuid dell’utente', async () => {

@@ -1,8 +1,45 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildPagellaPdf, type PagellaData } from '@/lib/primaria/pagella-pdf'
 import { logEvento } from '@/lib/logging/logger'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 export const PAGELLE_BUCKET = 'pagelle'
+
+/**
+ * UN GUASTO NON È UNA PAGELLA PIÙ CORTA (fase 11, «errori non ignorati»).
+ *
+ * PostgREST non lancia. Qui un `{ data: null, error }` diventava «Scrutinio non trovato» (404),
+ * discipline senza giudizio («—»), descrittivi assenti, «Istituto» al posto del nome della
+ * scuola, una firma del dirigente vuota — su un documento ufficiale che si archivia e che la
+ * famiglia firma per ricevuta. Il contratto resta `{ error, status }`: un guasto è `status: 500`
+ * con la sua riga `error`.
+ *
+ * `PGRST116` è il «nessuna riga» di `.single()`: resta il 404 (o il ripiego) di prima.
+ * Le tre letture di TESTI DI CORREDO (scala dei descrittivi, descrittivi di scrutinio, obiettivi)
+ * degradano come prima solo se allo schema manca la tabella o la colonna (il DB E2E della CI non
+ * è migrato), con una riga `info`; ogni altro guasto ferma la pagella.
+ */
+const OPERAZIONE_LOAD = 'primaria/pagella-store:loadPagellaData'
+const NESSUNA_RIGA = 'PGRST116'
+
+function codiceDi(error: unknown): string | undefined {
+  return (error as { code?: string } | null)?.code
+}
+
+function guastoDb(esito: string, error: unknown): { error: string; status: number } {
+  logEvento('pagella', 'error', { operazione: OPERAZIONE_LOAD, esito }, error)
+  return { error: 'Lettura dal database non riuscita', status: 500 }
+}
+
+/** `true` = si prosegue col ripiego (schema indietro, riga `info`); `false` = guasto vero. */
+function corredoDegradabile(esito: string, error: unknown): boolean {
+  const e = error as { code?: string } | null
+  if (!colonnaNuovaAssente(e) && !tabellaMancante(e)) return false
+  guastoLetturaAccessoria('pagella', OPERAZIONE_LOAD, esito, error)
+  return true
+}
 
 interface LoadResult {
   data?: PagellaData
@@ -20,15 +57,24 @@ export async function loadPagellaData(
   scrutinioId: string,
   alunnoId: string
 ): Promise<LoadResult> {
-  const { data: scrutinio } = await supabase
+  const { data: scrutinio, error: errScrutinio } = await supabase
     .from('scrutini')
     .select('id, section_id, periodo_id, stato, chiuso_da, chiuso_il')
     .eq('id', scrutinioId)
     .single()
+  if (errScrutinio && codiceDi(errScrutinio) !== NESSUNA_RIGA) return guastoDb('scrutinio-non-letto', errScrutinio)
   if (!scrutinio) return { error: 'Scrutinio non trovato', status: 404 }
   if (scrutinio.stato !== 'chiuso') return { error: 'Pagella disponibile solo a scrutinio chiuso', status: 409 }
 
-  const [{ data: sezione }, { data: periodo }, { data: alunno }, { data: materie }, { data: giudizi }, { data: comp }, { data: obAssoc }] =
+  const [
+    { data: sezione, error: errSezione },
+    { data: periodo, error: errPeriodo },
+    { data: alunno, error: errAlunno },
+    { data: materie, error: errMaterie },
+    { data: giudizi, error: errGiudizi },
+    { data: comp, error: errComp },
+    { data: obAssoc, error: errObAssoc },
+  ] =
     await Promise.all([
       supabase.from('sections').select('id, name, scuola_id').eq('id', scrutinio.section_id).single(),
       supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).single(),
@@ -39,16 +85,27 @@ export async function loadPagellaData(
       supabase.from('sezione_materia_obiettivo').select('materia_id, obiettivi_apprendimento(codice, descrizione)').eq('section_id', scrutinio.section_id),
     ])
 
+  if (errSezione && codiceDi(errSezione) !== NESSUNA_RIGA) return guastoDb('sezione-non-letta', errSezione)
+  if (errPeriodo && codiceDi(errPeriodo) !== NESSUNA_RIGA) return guastoDb('periodo-non-letto', errPeriodo)
+  if (errAlunno && codiceDi(errAlunno) !== NESSUNA_RIGA) return guastoDb('alunno-non-letto', errAlunno)
+  if (errMaterie) return guastoDb('materie-non-lette', errMaterie)
+  if (errGiudizi) return guastoDb('giudizi-non-letti', errGiudizi)
+  if (errComp) return guastoDb('comportamento-non-letto', errComp)
+  if (errObAssoc && !corredoDegradabile('obiettivi-non-letti', errObAssoc)) return guastoDb('obiettivi-non-letti', errObAssoc)
+
   if (!alunno) return { error: 'Alunno non trovato', status: 404 }
 
   // Mappa giudizio_descrittivo per etichetta dalla scala della scuola (fallback
   // generico, usato quando manca il testo specifico di scrutinio).
   const scalaDescr = new Map<string, string>()
   if (sezione?.scuola_id) {
-    const { data: scala } = await supabase
+    const { data: scala, error: errScala } = await supabase
       .from('giudizi_sintetici_scala')
       .select('etichetta, giudizio_descrittivo')
       .eq('scuola_id', sezione.scuola_id)
+    if (errScala && !corredoDegradabile('scala-descrittivi-non-letta', errScala)) {
+      return guastoDb('scala-descrittivi-non-letta', errScala)
+    }
     for (const s of scala ?? []) {
       if (s.giudizio_descrittivo) scalaDescr.set(s.etichetta, s.giudizio_descrittivo)
     }
@@ -60,12 +117,15 @@ export async function loadPagellaData(
   const scrutDescr = new Map<string, string>()
   const livello = Number(sezione?.name?.match(/[1-5]/)?.[0] ?? 0)
   if (sezione?.scuola_id && livello) {
-    const { data: descr } = await supabase
+    const { data: descr, error: errDescr } = await supabase
       .from('scrutinio_giudizio_descrittivo')
       .select('materia_codice, etichetta_voto, giudizio_descrittivo')
       .eq('scuola_id', sezione.scuola_id)
       .eq('livello', livello)
       .eq('periodo_id', scrutinio.periodo_id)
+    if (errDescr && !corredoDegradabile('descrittivi-scrutinio-non-letti', errDescr)) {
+      return guastoDb('descrittivi-scrutinio-non-letti', errDescr)
+    }
     for (const d of descr ?? []) {
       scrutDescr.set(`${d.materia_codice}|${d.etichetta_voto}`, d.giudizio_descrittivo)
     }
@@ -95,13 +155,17 @@ export async function loadPagellaData(
 
   let scuola: { nome?: string | null } | null = null
   if (sezione?.scuola_id) {
-    const { data: s } = await supabase.from('schools').select('nome').eq('id', sezione.scuola_id).maybeSingle()
+    // Il nome della scuola è nell'intestazione: «Istituto» è il ripiego di una sede senza nome.
+    const { data: s, error: errScuola } = await supabase.from('schools').select('nome').eq('id', sezione.scuola_id).maybeSingle()
+    if (errScuola) return guastoDb('scuola-non-letta', errScuola)
     scuola = { nome: (s as { nome?: string } | null)?.nome ?? null }
   }
 
   let dirigente: { nome?: string | null; cognome?: string | null } | null = null
   if (scrutinio.chiuso_da) {
-    const { data: u } = await supabase.from('utenti').select('nome, cognome').eq('id', scrutinio.chiuso_da).maybeSingle()
+    // Il nome del dirigente è la firma applicativa della pagella: non può uscire vuoto per un guasto.
+    const { data: u, error: errDirigente } = await supabase.from('utenti').select('nome, cognome').eq('id', scrutinio.chiuso_da).maybeSingle()
+    if (errDirigente) return guastoDb('dirigente-non-letto', errDirigente)
     dirigente = u ?? null
   }
 
@@ -136,8 +200,13 @@ export async function persistPagella(
     await supabase.storage.createBucket(PAGELLE_BUCKET, { public: false, allowedMimeTypes: ['application/pdf'], fileSizeLimit: 10 * 1024 * 1024 })
   }
   const path = `${scrutinioId}/${alunnoId}.pdf`
-  await supabase.storage.from(PAGELLE_BUCKET).upload(path, pdf, { contentType: 'application/pdf', upsert: true })
-  await supabase.from('pagelle').upsert(
+  const { error: errUpload } = await supabase.storage
+    .from(PAGELLE_BUCKET)
+    .upload(path, pdf, { contentType: 'application/pdf', upsert: true })
+  // Senza il file, la riga `pagelle` prometterebbe una copia archiviata che non c'è. Si lancia:
+  // `generaPagella` lo registra come `pagella-non-archiviata`.
+  if (errUpload) throw new Error('Caricamento del PDF della pagella non riuscito', { cause: errUpload })
+  const { error: errRiga } = await supabase.from('pagelle').upsert(
     {
       scrutinio_id: scrutinioId,
       alunno_id: alunnoId,
@@ -147,6 +216,7 @@ export async function persistPagella(
     },
     { onConflict: 'scrutinio_id,alunno_id' }
   )
+  if (errRiga) throw new Error('Registrazione della pagella archiviata non riuscita', { cause: errRiga })
 }
 
 // Genera + archivia la pagella di un alunno, ritorna il PDF.

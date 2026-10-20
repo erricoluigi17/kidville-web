@@ -182,6 +182,47 @@ describe('resolveIdentity (session-authoritative shim)', () => {
     expect(JSON.stringify(campi)).not.toContain('3f2504e0');
     expect(campi).not.toHaveProperty('path');
   });
+
+  /*
+   * Fase 11 («errori non ignorati»): GoTrue non lancia, l'errore di `getUser()` torna nel
+   * valore e prima nessuno lo guardava. Il comportamento resta (senza sessione verificata si è
+   * anonimi, mai un accesso concesso), ma un GoTrue che non risponde ora ha la sua riga.
+   */
+  it('GoTrue che non risponde: si resta anonimi, e la riga è `error`', async () => {
+    vi.stubEnv('ALLOW_HEADER_IDENTITY', 'false');
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: { name: 'AuthRetryableFetchError', status: 503, message: 'upstream' },
+    });
+    const res = await resolveIdentity(new Request('http://localhost'));
+    expect(res).toEqual({ userId: null, source: null });
+    expect(logEvento).toHaveBeenCalledWith(
+      'auth',
+      'error',
+      { operazione: 'resolveIdentity', esito: 'sessione-non-verificata' },
+      expect.objectContaining({ status: 503 }),
+    );
+  });
+
+  it('«nessuna sessione» è la richiesta anonima normale: nessuna riga', async () => {
+    vi.stubEnv('ALLOW_HEADER_IDENTITY', 'false');
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: { name: 'AuthSessionMissingError', status: 400, message: 'Auth session missing!' },
+    });
+    await resolveIdentity(new Request('http://localhost'));
+    expect(logEvento).not.toHaveBeenCalled();
+  });
+
+  it('token scaduto (4xx di GoTrue): anonimo, riga `info` e non `error`', async () => {
+    vi.stubEnv('ALLOW_HEADER_IDENTITY', 'false');
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: { name: 'AuthApiError', status: 403, message: 'invalid JWT' },
+    });
+    await resolveIdentity(new Request('http://localhost'));
+    expect(vi.mocked(logEvento).mock.calls.map((c) => c[1])).toEqual(['info']);
+  });
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

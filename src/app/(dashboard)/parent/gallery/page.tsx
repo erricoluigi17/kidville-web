@@ -8,6 +8,7 @@ import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { colonneGalleria } from '@/lib/ui/larghezza-pagina';
 import { useFormatoGuscio } from '@/lib/ui/use-formato-guscio';
 
@@ -73,7 +74,8 @@ function ParentGalleryContent() {
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim()); })
-            .catch(() => {});
+            // Accessoria: la galleria si vede lo stesso, manca solo il nome in testata.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `galleria-nome-alunno-non-caricato: ${nomeErrore(err)}` }));
     }, [studentId]);
 
     return (

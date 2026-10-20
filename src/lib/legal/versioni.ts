@@ -249,8 +249,20 @@
 //
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// 2026-10-20 — SOLO l'informativa privacy. La voce «copie tecniche di sicurezza» dice anche
+// delle MODIFICHE: dalla fase 12 della roadmap di robustezza la versione precedente di una
+// frequenza, di una valutazione o di un pagamento modificati resta novanta giorni in
+// `scatola_nera.modifiche`, per rimediare a una modifica sbagliata, e l'oblio la toglie subito.
+// Sostanziale per la stessa ragione del 09/10: un trattamento che allunga la vita di un dato
+// (la sua versione di prima), e che il documento non diceva.
+//
+// ⚠️ Niente «automaticamente», come il 09/10: la migrazione la applica l'integrazione al merge.
+// Alzarla NON invalida i consensi già raccolti e non forza nessuno a riaccettare. La '2026-10-09'
+// resta nell'elenco delle impronte. È testo legale: il titolare lo rilegge.
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-10-09'
+export const VERSIONE_PRIVACY = '2026-10-20'

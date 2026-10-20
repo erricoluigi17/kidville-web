@@ -15,7 +15,7 @@ import {
   scadenzaCestino,
   sogliaPurgaCestinoRegistro,
 } from '@/lib/primaria/cestino-registro'
-import { eGestoreFascicolo, rispostaGestioneNegata } from '@/lib/primaria/fascicolo-gestione'
+import { eGestoreFascicolo, rispostaGestioneNegata, rispostaGuastoAccesso } from '@/lib/primaria/fascicolo-gestione'
 
 /**
  * IL CESTINO DEL FASCICOLO (spec 2026-09-24, F1).
@@ -75,6 +75,8 @@ export const GET = withRoute('primaria/fascicolo/cestino:GET', async (request: N
 
     const supabase = await createAdminClient()
     const accesso = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const guastoGate = rispostaGuastoAccesso(accesso)
+    if (guastoGate) return guastoGate
     if (!accesso.consentito) {
       return NextResponse.json({ error: 'Accesso al fascicolo non consentito', codice: 'DOCUMENTO_SANITARIO_NEGATO' }, { status: 403 })
     }

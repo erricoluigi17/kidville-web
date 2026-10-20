@@ -835,12 +835,16 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 ⚠️ Niente «automaticamente» in questa voce: il lock
                 `informativa-conservazione-dichiarata` lega quella parola a un automa la cui
                 migrazione è già applicata, e al 09/10 quella della scatola nera non lo è.
+                Dal 19/10 (fase 12) anche la versione di PRIMA di una modifica alle stesse
+                tabelle resta 90 giorni in `scatola_nera.modifiche`, con lo stesso oblio.
               */}
               <li>
                 <strong>copie tecniche di sicurezza</strong>: una registrazione cancellata
                 dall&rsquo;archivio della scuola (anagrafica, frequenza, valutazioni, pagamenti)
                 resta in una copia tecnica protetta per <strong>novanta giorni</strong>, al solo
-                scopo di rimediare a una cancellazione sbagliata, e scaduti quelli è distrutta;
+                scopo di rimediare a una cancellazione sbagliata, e scaduti quelli è distrutta.
+                Lo stesso vale per la versione precedente di una frequenza, di una valutazione o
+                di un pagamento modificati, per rimediare a una modifica sbagliata;
                 una richiesta di cancellazione (diritto all&rsquo;oblio) la toglie subito anche da
                 lì. L&rsquo;intero archivio è inoltre copiato ogni notte, cifrato, su server
                 nell&rsquo;Unione europea: le copie giornaliere si conservano{' '}

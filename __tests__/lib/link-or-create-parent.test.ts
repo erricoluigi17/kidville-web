@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   upserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   existing: null as Record<string, unknown> | null,
+  erroreCf: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
@@ -20,7 +21,8 @@ function makeClient() {
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
-      b.maybeSingle = async () => ({ data: h.existing, error: null })
+      b.maybeSingle = async () =>
+        h.erroreCf ? { data: null, error: h.erroreCf } : { data: h.existing, error: null }
       b.insert = (row: Record<string, unknown>) => {
         h.inserts.push({ table, row })
         return { select: () => ({ single: async () => ({ data: { id: `${table}-new` }, error: null }) }) }
@@ -43,7 +45,7 @@ import { linkOrCreateParent } from '@/lib/anagrafiche/parents'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.inserts = []; h.upserts = []; h.existing = null
+  h.inserts = []; h.upserts = []; h.existing = null; h.erroreCf = null
 })
 
 describe('linkOrCreateParent', () => {
@@ -91,6 +93,15 @@ describe('linkOrCreateParent', () => {
     })
     expect(out.created).toBe(false)
     expect(out.parentId).toBe('p-esistente')
+    expect(h.inserts.find(i => i.table === 'parents')).toBeUndefined()
+  })
+
+  it('guasto sulla ricerca per CF: si ferma, non crea un doppione', async () => {
+    h.erroreCf = { code: '57014', message: 'canceling statement due to statement timeout' }
+    await expect(linkOrCreateParent(client(), actor, {
+      studentId: 's1',
+      payload: { first_name: 'A', last_name: 'B', role: 'mother', fiscal_code: 'RSSMRA80A01H501Z' },
+    })).rejects.toThrow('Ricerca del genitore per codice fiscale non riuscita')
     expect(h.inserts.find(i => i.table === 'parents')).toBeUndefined()
   })
 })

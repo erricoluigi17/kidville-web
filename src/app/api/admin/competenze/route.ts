@@ -9,6 +9,7 @@ import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Sede dell'OGGETTO, non dell'operatore ───────────────────────────────────
 // L'audit di questa route registrava `auth.user.scuola_id`: per l'unico admin
@@ -82,11 +83,13 @@ export const GET = withRoute('admin/competenze:GET', async (request: NextRequest
     const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
 
-    const { data: certs } = await supabase
+    const { data: certs, error: errCerts } = await supabase
       .from('certificati_competenze')
       .select('id, alunno_id, anno_scolastico, stato, generato_il, alunni(nome, cognome), certificato_competenza_livelli(competenza_codice, livello, note, ordine)')
       .eq('section_id', sectionId)
       .order('created_at', { ascending: false })
+    // Un guasto non è «nessun certificato».
+    if (errCerts) return rispostaGuastoDb('admin/competenze:GET', 'db:certificati_competenze', errCerts)
     return NextResponse.json({ success: true, data: certs ?? [] })
   } catch (err) {
     logErrore({ operazione: 'admin/competenze:GET', stato: 500 }, err)
@@ -116,7 +119,9 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     let alunniIds: string[] = []
     if (body.alunnoId) alunniIds = [body.alunnoId]
     else {
-      const { data: alunni } = await supabase.from('alunni').select('id').eq('section_id', body.sectionId)
+      // Un guasto qui darebbe «0 creati su 0» con esito positivo: la classe resterebbe senza bozze.
+      const { data: alunni, error: errAlunni } = await supabase.from('alunni').select('id').eq('section_id', body.sectionId)
+      if (errAlunni) return rispostaGuastoDb('admin/competenze:POST', 'db:alunni', errAlunni)
       alunniIds = ((alunni ?? []) as { id: string }[]).map((a) => a.id)
     }
 

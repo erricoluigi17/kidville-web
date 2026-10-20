@@ -1,6 +1,34 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { resolveMenuGiorno, type ResolveOptions, type RotazioneRow, type OverrideRow } from './resolveMenu'
 import { oggiRoma, entroCutoff as entroCutoffRoma } from './cutoff'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
+import { tabellaMancante } from '@/lib/db/tolleranza-schema'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
+
+/**
+ * UN GUASTO NON È «NESSUNA IMPOSTAZIONE» (fase 11, «errori non ignorati»).
+ *
+ * Queste letture DECIDONO: il cutoff dice se una prenotazione si accetta, la rotazione e gli
+ * override dicono quale menu c'è — e quindi quali allergeni — e l'assegnazione dice quale menu
+ * vale per la classe. Prima un `{ data: null, error }` diventava il default (cutoff 09:30), un
+ * menu vuoto (zero conflitti, zero alert allergie, e il cron chiudeva «ok»), o il menu legacy
+ * al posto di quello della classe. Ora un guasto LANCIA (errore con `cause`: il `catch` della
+ * route, o `withRoute`, lo registra col codice Postgres e risponde 500).
+ *
+ * Unica eccezione, ed è quella di prima: uno schema che non ha ancora la colonna o la tabella
+ * (il DB E2E della CI non è migrato) degrada al ripiego di sempre, con una riga `info` che lo dice.
+ */
+function schemaIndietro(error: { code?: string } | null): boolean {
+  return colonnaNuovaAssente(error) || tabellaMancante(error)
+}
+
+function lettura<T>(operazione: string, esito: string, error: { code?: string } | null, ripiego: T): T {
+  if (schemaIndietro(error)) {
+    guastoLetturaAccessoria('mensa', operazione, esito, error)
+    return ripiego
+  }
+  throw new Error(`Lettura mensa non riuscita (${esito})`, { cause: error })
+}
 
 export interface MensaConfig {
   cutoffOra: string            // 'HH:MM' o 'HH:MM:SS'
@@ -18,11 +46,12 @@ const DEFAULT_CONFIG: MensaConfig = {
 
 // Carica le impostazioni mensa dalla riga admin_settings della scuola.
 export async function loadMensaConfig(supabase: SupabaseClient, scuolaId: string): Promise<MensaConfig> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('admin_settings')
     .select('mensa_cutoff_ora, mensa_giorni_attivi, mensa_settimane_rotazione, mensa_soglia_saldo_basso')
     .eq('scuola_id', scuolaId)
     .maybeSingle()
+  if (error) return lettura('mensa/server:loadMensaConfig', 'impostazioni-non-lette', error, DEFAULT_CONFIG)
   if (!data) return DEFAULT_CONFIG
   return {
     cutoffOra: (data.mensa_cutoff_ora as string) ?? DEFAULT_CONFIG.cutoffOra,
@@ -60,12 +89,18 @@ export async function loadResolveOptions(
     ovrQ = ovrQ.is('menu_config_id', null)
   }
 
-  const [{ data: rot }, { data: ovr }] = await Promise.all([rotQ, ovrQ])
+  const [{ data: rot, error: errRot }, { data: ovr, error: errOvr }] = await Promise.all([rotQ, ovrQ])
+  const rotazione = errRot
+    ? lettura('mensa/server:loadResolveOptions', 'rotazione-non-letta', errRot, [] as RotazioneRow[])
+    : ((rot ?? []) as RotazioneRow[])
+  const override = errOvr
+    ? lettura('mensa/server:loadResolveOptions', 'override-non-letti', errOvr, [] as OverrideRow[])
+    : ((ovr ?? []) as OverrideRow[])
   return {
     giorniAttivi: cfg.giorniAttivi,
     settimaneRotazione: cfg.settimaneRotazione,
-    rotazione: (rot ?? []) as RotazioneRow[],
-    override: (ovr ?? []) as OverrideRow[],
+    rotazione,
+    override,
   }
 }
 
@@ -80,7 +115,7 @@ export async function resolveMenuConfigId(
   data: string
 ): Promise<string | null> {
   if (!classeSezione) return null
-  const { data: row } = await supabase
+  const { data: row, error } = await supabase
     .from('mensa_class_menu_assignment')
     .select('menu_config_id')
     .eq('scuola_id', scuolaId)
@@ -89,6 +124,7 @@ export async function resolveMenuConfigId(
     .order('attivo_dal', { ascending: false })
     .limit(1)
     .maybeSingle()
+  if (error) return lettura<string | null>('mensa/server:resolveMenuConfigId', 'assegnazione-menu-non-letta', error, null)
   return (row?.menu_config_id as string | null) ?? null
 }
 

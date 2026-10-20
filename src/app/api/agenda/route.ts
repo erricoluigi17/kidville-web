@@ -21,6 +21,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
@@ -168,11 +169,13 @@ export const GET = withRoute('agenda:GET', async (request: NextRequest) => {
       if (!collegato) {
         return NextResponse.json({ error: 'Accesso negato: alunno non associato' }, { status: 403 })
       }
-      const { data: alunno } = await supabase
+      const { data: alunno, error: errAlunno } = await supabase
         .from('alunni')
         .select('id, section_id, scuola_id')
         .eq('id', alunnoId)
         .maybeSingle()
+      // Un guasto non è «alunno non trovato»: il 404 direbbe alla famiglia che il figlio non c'è.
+      if (errAlunno) return rispostaGuastoDb('agenda:GET', 'db:alunni', errAlunno)
       if (!alunno?.scuola_id) {
         return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
       }
@@ -308,11 +311,13 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
     if (sectionId) {
       const scopeErr = await assertSezioneInScope(supabase, user, sectionId)
       if (scopeErr) return scopeErr
-      const { data: section } = await supabase
+      const { data: section, error: errSezione } = await supabase
         .from('sections')
         .select('id, scuola_id')
         .eq('id', sectionId)
         .maybeSingle()
+      // La sede dell'evento viene da qui: un guasto non è «nessun plesso associato» (400).
+      if (errSezione) return rispostaGuastoDb('agenda:POST', 'db:sections', errSezione)
       scuolaId = (section?.scuola_id as string) ?? null
     } else {
       // Evento di plesso: riservato a direzione/segreteria/coordinator.
@@ -451,11 +456,12 @@ export const DELETE = withRoute('agenda:DELETE', async (request: Request) => {
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const { data: evento } = await supabase
+    const { data: evento, error: errEvento } = await supabase
       .from('eventi_agenda')
       .select('id, scuola_id, creato_da')
       .eq('id', q.data.id)
       .maybeSingle()
+    if (errEvento) return rispostaGuastoDb('agenda:DELETE', 'db:eventi_agenda', errEvento)
     if (!evento) {
       return NextResponse.json({ error: 'Evento non trovato' }, { status: 404 })
     }

@@ -8,6 +8,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 const BUCKET = 'certificati-medici'
 
@@ -29,11 +30,13 @@ export const GET = withRoute('parent/medical-certificates/file:GET', async (requ
     const { id } = q.data
 
     const supabase = await createAdminClient()
-    const { data: cert } = await supabase
+    const { data: cert, error: errCert } = await supabase
       .from('certificati_medici')
       .select('id, alunno_id, file_path')
       .eq('id', id)
       .maybeSingle()
+    // Un guasto non è «certificato non trovato».
+    if (errCert) return rispostaGuastoDb('parent/medical-certificates/file:GET', 'db:certificati_medici', errCert)
     if (!cert) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria' || user.role === 'educator'

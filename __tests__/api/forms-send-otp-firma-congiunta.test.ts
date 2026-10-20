@@ -11,6 +11,8 @@ const h = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
   upserts: [] as Record<string, unknown>[],
+  /** Guasto finto sulla lettura della modalità di firma (`form_models.signature_mode`). */
+  erroreModalita: null as { code: string; message: string } | null,
   TITOLARE: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa11',
 }))
 
@@ -18,7 +20,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       const b: Record<string, unknown> = {}
-      b.select = () => b
+      let colonne = ''
+      b.select = (c?: string) => { colonne = c ?? ''; return b }
       b.eq = () => b
       b.in = () => b
       // Letture di INSIEME (senza `.single()`): sono i legami di famiglia da cui
@@ -36,7 +39,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
           error: null,
         }).then(res, rej)
       b.order = async () => ({ data: table === 'fea_signatures' ? h.slots : null, error: null })
-      b.maybeSingle = async () => ({
+      b.maybeSingle = async () => table === 'form_models' && colonne.includes('signature_mode') && h.erroreModalita
+        ? { data: null, error: h.erroreModalita }
+        : ({
         data:
           table === 'form_submissions' ? h.submission
           : table === 'form_models' ? h.model
@@ -79,6 +84,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.submission = null; h.model = null; h.slots = []; h.email = 'g@x.it'
   h.inserts = []; h.updates = []; h.upserts = []
+  h.erroreModalita = null
 })
 
 describe('POST send-otp — reinvio / 2° firmatario', () => {
@@ -128,6 +134,20 @@ describe('PATCH send-otp — completamento per policy', () => {
     expect(fsUpd.some(u => u.status === 'completed')).toBe(true)
     // il 2° slot registrato ha slot_index 1
     expect(h.upserts.some(u => u.table === 'fea_signatures' && u.slot_index === 1)).toBe(true)
+  })
+
+  it('la modalità di firma non si legge: 500, il modulo NON risulta completo e il codice non è consumato', async () => {
+    // Prima il guasto diventava `single`: un modulo a firma CONGIUNTA si chiudeva con una firma.
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '444444'), status: 'pending_signature', user_id: h.TITOLARE, model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
+    h.model = { signature_mode: 'joint' }
+    h.erroreModalita = { code: '08006', message: 'connessione persa' }
+    h.slots = []
+    const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '444444' }, 'PATCH'))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    // Nessuna scrittura sulla submission: né `completed`, né l'`otp_secret` azzerato.
+    expect(h.updates.filter(u => u.table === 'form_submissions')).toHaveLength(0)
+    expect(h.upserts.some(u => u.table === 'fea_signatures')).toBe(false)
   })
 
   it('single (default): completa al 1° codice', async () => {

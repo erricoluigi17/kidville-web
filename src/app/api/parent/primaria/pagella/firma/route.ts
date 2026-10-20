@@ -12,6 +12,9 @@ import { parseBody } from '@/lib/validation/http'
 import { limitaVerificaOtp } from '@/lib/security/otp-rate-limit'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoSecondario, rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'parent/primaria/pagella/firma:POST'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `scrutini` fa da gate con 404). I campi OTP restano
@@ -60,11 +63,14 @@ export const POST = withRoute('parent/primaria/pagella/firma:POST', async (reque
     }
 
     // La pagella deve essere pubblicata.
-    const { data: scr } = await supabase
+    // Un guasto NON è «scrutinio non trovato»: la firma di ricezione (valore legale) non
+    // verrebbe apposta, e il genitore leggerebbe che la pagella non esiste.
+    const { data: scr, error: errScr } = await supabase
       .from('scrutini')
       .select('id, pubblicato')
       .eq('id', scrutinioId)
       .maybeSingle()
+    if (errScr) return rispostaGuastoDb(OP, 'db:scrutini', errScr)
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (!scr.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
 
@@ -108,12 +114,17 @@ export const POST = withRoute('parent/primaria/pagella/firma:POST', async (reque
 
     // Notifica ai docenti della sezione: pagella firmata (best-effort).
     try {
-      const { data: alunno } = await supabase
+      const { data: alunno, error: errAlunno } = await supabase
         .from('alunni')
         .select('nome, cognome, section_id, scuola_id')
         .eq('id', studentId)
         .maybeSingle()
-      const docenti = (await docentiDiSezione(supabase, alunno?.section_id as string)).filter((id) => id !== userId)
+      // La firma è già scritta: senza la sezione non si sa chi avvisare, e la notifica non
+      // parte. Lo dice la riga, invece di cercare i docenti di una sezione `undefined`.
+      if (errAlunno) guastoSecondario('notifica', OP, 'alunno-notifica-non-letto', errAlunno)
+      const docenti = errAlunno
+        ? []
+        : (await docentiDiSezione(supabase, alunno?.section_id as string)).filter((id) => id !== userId)
       if (docenti.length > 0) {
         const firmatario = await nomeUtente(supabase, userId)
         await notificaEvento(supabase, {

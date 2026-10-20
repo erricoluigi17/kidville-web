@@ -7,6 +7,7 @@ import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 
 // GET /api/admin/students/[id]
 // Restituisce il singolo alunno + i suoi genitori + i fratelli (alunni che condividono almeno un genitore)
@@ -66,8 +67,10 @@ export const GET = withRoute('admin/students/[id]:GET', async (
             .eq('id', studentId)
             .maybeSingle();
 
-        if (studentError || !student) {
-            return NextResponse.json({ error: studentError?.message || 'Alunno non trovato' }, { status: 404 });
+        // Un guasto non è «alunno non trovato».
+        if (studentError) return rispostaGuastoDb('admin/students/[id]:GET', 'db:alunni', studentError);
+        if (!student) {
+            return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
         }
 
         // 2. Trova i fratelli: altri alunni che condividono almeno uno dei genitori
@@ -100,7 +103,7 @@ export const GET = withRoute('admin/students/[id]:GET', async (
 
         if (parentIds.length > 0) {
             // Query: trova tutti gli alunni che hanno almeno uno di questi genitori, escludendo l'alunno corrente
-            const { data: siblingsData } = await supabaseAdmin
+            const { data: siblingsData, error: siblingsError } = await supabaseAdmin
                 .from('student_parents')
                 .select(`
                     student_id,
@@ -117,6 +120,9 @@ export const GET = withRoute('admin/students/[id]:GET', async (
                 `)
                 .in('parent_id', parentIds)
                 .neq('student_id', studentId);
+            // I fratelli DECIDONO la tendina «la paga il fratello» e mostrano chi paga per chi:
+            // letti vuoti per un guasto, la scheda nasconderebbe proprio un legame rovesciato.
+            if (siblingsError) return rispostaGuastoDb('admin/students/[id]:GET', 'db:student_parents', siblingsError);
 
             // Deduplication: un alunno potrebbe apparire due volte se condivide entrambi i genitori
             if (siblingsData) {

@@ -209,7 +209,7 @@ function MessaggiInner() {
     fetch('/api/admin/chat/contacts')
       .then(r => r.json())
       .then(j => { if (j.success) setContatti(j.data); })
-      .catch(() => {})
+      .catch((e) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-contatti-non-caricati: ${nomeErrore(e)}`, route: '/admin/messaggi' }))
       .finally(() => setLoadingContatti(false));
   }, [tab]);
 
@@ -238,9 +238,8 @@ function MessaggiInner() {
    * una campanella che resta gonfia per un minuto. Chi un giorno volesse renderla condizionale deve
    * portare `unread_count` fin qui, non indovinarlo dalle righe.
    *
-   * L'annuncio parte solo su `res.ok`: una lettura non registrata non ha spento niente. Il `.catch`
-   * muto resta com'era — è nel debito dichiarato di `docs/superpowers/catch-muti-allowlist.json` per
-   * questo file, e non lo si allarga.
+   * L'annuncio parte solo su `res.ok`: una lettura non registrata non ha spento niente. Il guasto
+   * (rete giù, corpo illeggibile) finisce nel log del client: lo schermo resta quello di prima.
    */
   const loadChatMessages = useCallback((threadId: string, uid: string, annunciaLettura = false) => {
     fetch(`/api/chat/messages?threadId=${threadId}&markRead=${uid}`)
@@ -249,7 +248,7 @@ function MessaggiInner() {
         setChatMsgs(corpo.messages ?? []);
         if (ok && annunciaLettura) segnalaChatLetta();
       })
-      .catch(() => {});
+      .catch((e) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-messaggi-non-caricati: ${nomeErrore(e)}`, route: '/admin/messaggi' }));
   }, []);
 
   const openContatto = async (c: Contatto) => {
@@ -267,7 +266,9 @@ function MessaggiInner() {
       // `true`: è QUESTO il gesto che legge la conversazione, e quindi il solo che annuncia la
       // lettura alla campanella. Dopo un invio no — vedi `loadChatMessages`.
       if (thread?.id) { setChatThreadId(thread.id); loadChatMessages(thread.id, userId, true); }
-    } catch { /* no-op */ }
+    } catch (e) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-conversazione-non-aperta: ${nomeErrore(e)}`, route: '/admin/messaggi' });
+    }
   };
 
   /**

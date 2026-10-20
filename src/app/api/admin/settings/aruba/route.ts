@@ -7,6 +7,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -108,7 +109,10 @@ export const GET = withRoute('admin/settings/aruba:GET', async (request: NextReq
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId
 
-      const { data } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      // Un guasto non è «configurazione vuota»: mostrata vuota, al prossimo salvataggio
+      // diventerebbe vera.
+      const { data, error } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      if (error) return rispostaGuastoDb('admin/settings/aruba:GET', 'db:admin_settings', error)
       return NextResponse.json({ success: true, data: sanitizeAruba((data?.aruba_config as Record<string, unknown>) ?? null) })
     } catch (err) {
       logErrore({ operazione: 'admin/settings/aruba:GET', stato: 500 }, err)
@@ -134,7 +138,10 @@ export const PATCH = withRoute('admin/settings/aruba:PATCH', async (request: Nex
       if (sw.response) return sw.response
       const scuolaId = sw.scuolaId
 
-      const { data: cur } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      // ⚠️ Il salvataggio è un MERGE su quello che c'è: con la lettura fallita si fonderebbe su
+      // `{}` e l'upsert cancellerebbe utente, riferimento della password e dati fiscali.
+      const { data: cur, error: errCur } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      if (errCur) return rispostaGuastoDb('admin/settings/aruba:PATCH', 'db:admin_settings', errCur)
       const existing = (cur?.aruba_config as Record<string, unknown>) ?? {}
 
       const next: Record<string, unknown> = { ...existing }

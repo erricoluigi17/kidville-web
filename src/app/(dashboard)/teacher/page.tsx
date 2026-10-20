@@ -9,6 +9,7 @@ import {
 import { useTranslations, useLocale } from 'next-intl';
 import { dataCivile, intlDateTime } from '@/i18n/config';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
@@ -128,8 +129,8 @@ function TeacherDashboardInner() {
   const greeting = useClientValue(greetingByHour, '');
 
   // me (gradi/funzioni) + sezioni + avvisi: 3 fetch indipendenti in UN solo
-  // effect con Promise.all. Esiti gestiti per-fetch (catch silenziosi
-  // indipendenti, come i 3 effect originali): un avviso che fallisce non
+  // effect con Promise.all. Esiti gestiti per-fetch (ogni catch logga per conto
+  // suo e RISOLVE, come i 3 effect originali): un avviso che fallisce non
   // blocca me/sezioni né lascia lo skeleton acceso. Zero cambio visivo.
   useEffect(() => {
     if (!userId) return; // identità non risolta: lo skeleton (loading=true) resta attivo
@@ -137,7 +138,7 @@ function TeacherDashboardInner() {
     const meReq = fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (active && d?.success) setMe(d.data); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-profilo-non-caricato: ${nomeErrore(err)}`, route: '/teacher' }));
     const sectionsReq = fetch(`/api/educator-sections?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => {
@@ -151,11 +152,11 @@ function TeacherDashboardInner() {
         setSections(lista);
         setActiveSectionId((cur) => cur || lista[0]?.id || '');
       })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-sezioni-non-caricate: ${nomeErrore(err)}`, route: '/teacher' }));
     const avvisiReq = fetch(`/api/avvisi?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setAvvisi(d); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-avvisi-non-caricati: ${nomeErrore(err)}`, route: '/teacher' }));
     Promise.all([meReq, sectionsReq, avvisiReq]).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [userId]);
@@ -196,11 +197,11 @@ function TeacherDashboardInner() {
     fetch(`/api/attendance/daily?data=${today}&${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setPresenze(d); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-presenze-non-caricate: ${nomeErrore(err)}`, route: '/teacher' }));
     fetch(`/api/diary/students?${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setStudents(d); })
-      .catch(() => {});
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-alunni-non-caricati: ${nomeErrore(err)}`, route: '/teacher' }));
     return () => { active = false; };
   }, [activeSection, today, userId]);
 

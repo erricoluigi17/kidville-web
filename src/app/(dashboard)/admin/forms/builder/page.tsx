@@ -271,7 +271,12 @@ function FormBuilderInner() {
             .map((s: { id: string; nome?: string; name?: string }) => ({ id: s.id, nome: s.nome ?? s.name ?? s.id })),
         )
       })
-      .catch(() => {})
+      .catch((err) => logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `form-model-sedi-non-caricate: ${nomeErrore(err)}`,
+        route: '/admin/forms/builder',
+      }))
   }, [])
 
   // Carica il modello esistente (modifica): schema + titolo + stato pubblicazione.
@@ -293,7 +298,14 @@ function FormBuilderInner() {
           setPub({ token: m.public_token, url: publicFormUrl(m.public_token), access_mode: m.access_mode })
         }
       })
-      .catch(() => {})
+      // `error` e non `warn`: senza il modello il costruttore resta vuoto, e un salvataggio da
+      // lì creerebbe un modello NUOVO invece di modificare quello aperto.
+      .catch((err) => logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `form-model-caricamento-fallito: ${nomeErrore(err)}`,
+        route: '/admin/forms/builder',
+      }))
     // `t` è stabile (memoizzato da next-intl su locale/messaggi): incluso solo
     // per soddisfare exhaustive-deps, non provoca refetch spuri.
   }, [editIdParam, t])

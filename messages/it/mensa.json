@@ -7,6 +7,8 @@
   "nessunAlunnoAiuto": "Contatta la segreteria per collegare tuo figlio e usare la mensa.",
   "allergiaTitolo": "Allergeni nel menù di oggi",
   "allergiaCorpo": "Il menù di oggi contiene: <strong>{elenco}</strong>. Verifica con la scuola prima di prenotare.",
+  "allergiaNonVerificataTitolo": "Allergeni non verificati",
+  "allergiaNonVerificataCorpo": "Non è stato possibile controllare gli allergeni del menù di oggi. Se tuo figlio ha allergie, verifica con la scuola prima di prenotare.",
   "ticket": "ticket",
   "aggiornaSaldo": "Aggiorna saldo",
   "cutoffNota": "Prenota o disdici entro le <strong>{ora}</strong> del giorno stesso.",

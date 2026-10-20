@@ -17,6 +17,7 @@ import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
 import { formattaIstante } from '@/i18n/config';
 
@@ -98,11 +99,13 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   let indirizzoSpostato: string | null = null;
 
   if (targetKind === 'parent') {
-    const { data } = await admin
+    const { data, error: erroreGenitore } = await admin
       .from('parents')
       .select('id, auth_user_id, emails, first_name, last_name')
       .eq('id', targetId)
       .maybeSingle();
+    // Un guasto non è «genitore non trovato».
+    if (erroreGenitore) return rispostaGuastoDb('admin/regenerate-credentials:POST', 'db:parents', erroreGenitore);
     if (!data) return NextResponse.json({ error: 'Genitore non trovato' }, { status: 404 });
     const row = data as {
       id: string;
@@ -199,7 +202,12 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     // cambierebbe la password di QUEL login — admin compreso (es. anagrafica di
     // prova con l'email del titolare in sandbox Resend). Le credenziali staff
     // si gestiscono dal pannello Staff.
-    const { data: profilo } = await admin.from('utenti').select('ruolo').eq('id', authId).maybeSingle();
+    //
+    // ⚠️ Un guasto qui NON è «nessun profilo»: con il ruolo non letto la guardia lascerebbe
+    // passare il reset — e la password cambiata potrebbe essere quella di un account staff.
+    // Si ferma PRIMA di `randomPassword()`, quindi la password precedente resta valida.
+    const { data: profilo, error: erroreProfilo } = await admin.from('utenti').select('ruolo').eq('id', authId).maybeSingle();
+    if (erroreProfilo) return rispostaGuastoDb('admin/regenerate-credentials:POST', 'db:utenti', erroreProfilo);
     const ruoloAccount = (profilo as { ruolo?: string } | null)?.ruolo ?? null;
     if (ruoloAccount && ruoloAccount !== 'genitore') {
       return NextResponse.json(

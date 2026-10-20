@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { inviaCopiaAllaSede } from '@/lib/candidature/copia-alla-sede'
 import { INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS } from '@/lib/forms/insegnanti-template'
 import { formattaIstante } from '@/i18n/config'
@@ -185,7 +186,10 @@ export const POST = withRoute('admin/candidature-insegnanti/inoltro-arretrato:PO
 
   // I nomi dei plessi, una volta sola: la copia li nomina in chiaro perché la
   // legge una persona, e un uuid in una casella di posta non dice niente.
-  const { data: sedi } = await supabase.from('scuole').select('id, nome')
+  // Un guasto qui ferma l'invio: la copia partirebbe con gli uuid al posto dei plessi, e
+  // `copia_inviata_il` la segnerebbe come fatta — non si rimanda più.
+  const { data: sedi, error: errSedi } = await supabase.from('scuole').select('id, nome')
+  if (errSedi) return rispostaGuastoDb(OPERAZIONE, 'db:scuole', errSedi)
   const nomeDi = new Map(((sedi ?? []) as { id: string; nome: string }[]).map((s) => [s.id, s.nome]))
 
   if (prova) {

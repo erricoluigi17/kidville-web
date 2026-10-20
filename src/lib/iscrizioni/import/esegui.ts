@@ -190,12 +190,30 @@ export async function parentDiRiferimento(
   if (error || !data) return { errore: `genitore non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id
-  await supabase.rpc('iscrizioni_segna_creato', {
+  const { error: errSegna } = await supabase.rpc('iscrizioni_segna_creato', {
     p_submission_id: submissionId,
     p_tipo: 'parent',
     p_id: id,
   })
+  // Passo accessorio dopo la scrittura vera: il genitore c'è. Ma se la domanda poi si disfa,
+  // `iscrizioni_annulla` non saprà che QUESTO giro l'ha creato, e la scheda resterà orfana.
+  if (errSegna) segnaCreatoNonRiuscito(submissionId, 'parent', id, errSegna)
   return { id, creato: true }
+}
+
+/**
+ * `iscrizioni_segna_creato` non riuscito: la riga che dirà, a un eventuale annullamento, che
+ * questa scheda va tolta perché l'ha creata questo giro. Non si ferma niente — la scrittura vera
+ * è avvenuta — ma senza questa riga un orfano in anagrafica non avrebbe spiegazione.
+ */
+function segnaCreatoNonRiuscito(submissionId: string, tipo: 'parent' | 'alunno', id: string, error: unknown): void {
+  logEvento('iscrizione', 'error', {
+    operazione: OPERAZIONE,
+    esito: 'creazione-non-registrata',
+    tipo,
+    entita_id: submissionId,
+    creato_id: id,
+  }, error)
 }
 
 /**
@@ -387,11 +405,12 @@ export async function alunnoDiRiferimento(
   if (error || !data) return { errore: `alunno non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id
-  await supabase.rpc('iscrizioni_segna_creato', {
+  const { error: errSegna } = await supabase.rpc('iscrizioni_segna_creato', {
     p_submission_id: submissionId,
     p_tipo: 'alunno',
     p_id: id,
   })
+  if (errSegna) segnaCreatoNonRiuscito(submissionId, 'alunno', id, errSegna)
   return { id }
 }
 
@@ -410,10 +429,20 @@ export async function eseguiDomanda(
   const adultiGrezzi = Array.isArray(dati.adults) ? dati.adults : []
 
   const fallisci = async (errore: string): Promise<EsitoEsecuzione> => {
-    const { data } = await supabase.rpc('iscrizioni_annulla', {
+    const { data, error: errAnnulla } = await supabase.rpc('iscrizioni_annulla', {
       p_submission_id: domanda.id,
       p_errore: errore,
     })
+    // L'annullamento NON avvenuto è un'altra notizia dall'errore che l'ha chiesto: la domanda
+    // resta a metà (anagrafica scritta, nessun invito), e la riga sotto da sola direbbe «annullata».
+    if (errAnnulla) {
+      logEvento('iscrizione', 'error', {
+        operazione: OPERAZIONE,
+        esito: 'annullamento-non-riuscito',
+        entita_id: domanda.id,
+        sede_id: scuolaId,
+      }, errAnnulla)
+    }
     logEvento(
       'iscrizione',
       'error',
@@ -438,10 +467,18 @@ export async function eseguiDomanda(
    * evitare. `iscrizioni_rinvia` disfa le stesse cose e lascia il contatore dov'è.
    */
   const rinvia = async (motivo: string): Promise<EsitoEsecuzione> => {
-    await supabase.rpc('iscrizioni_rinvia', {
+    const { error: errRinvia } = await supabase.rpc('iscrizioni_rinvia', {
       p_submission_id: domanda.id,
       p_motivo: motivo,
     })
+    if (errRinvia) {
+      logEvento('iscrizione', 'error', {
+        operazione: OPERAZIONE,
+        esito: 'rinvio-non-riuscito',
+        entita_id: domanda.id,
+        sede_id: scuolaId,
+      }, errRinvia)
+    }
     logEvento('iscrizione', 'warn', {
       operazione: OPERAZIONE,
       esito: 'domanda-rinviata',
@@ -492,7 +529,9 @@ export async function eseguiDomanda(
     if (!ass.aCaricoDi) continue
     const mio = alunnoPerNome.get(normalizzaNome(`${ass.cognome} ${ass.nome}`))
     if (!mio) continue
-    const fratelloId = await trovaFratelloPagante(supabase, ass.aCaricoDi, scuolaId, alunnoPerNome)
+    const pagante = await trovaFratelloPagante(supabase, ass.aCaricoDi, scuolaId, alunnoPerNome)
+    if ('errore' in pagante) return fallisci(pagante.errore)
+    const fratelloId = pagante.id
     // Se il fratello non è ancora in anagrafica la colonna resta NULL, e con
     // `importo_retta_mensile = 0` l'alunno prenderebbe la retta di default:
     // meglio fermarsi che generargli 150 € al mese.
@@ -590,10 +629,20 @@ async function chiudi(
 ): Promise<void> {
   const assegnate: Record<string, string> = {}
   for (const a of assegnazioni) assegnate[String(a.indice)] = a.classe
-  await supabase.rpc('iscrizioni_chiudi', {
+  const { error } = await supabase.rpc('iscrizioni_chiudi', {
     p_submission_id: submissionId,
     p_assegnazioni: assegnate,
   })
+  // Non si disfa: a questo punto il referente ha già le credenziali in casella (o le aveva già).
+  // La domanda resta non `approved` e il lotto la ripescherà — il registro degli inviti impedisce
+  // un secondo invio —, ma la riga deve dire perché è ancora lì.
+  if (error) {
+    logEvento('iscrizione', 'error', {
+      operazione: OPERAZIONE,
+      esito: 'domanda-non-chiusa',
+      entita_id: submissionId,
+    }, error)
+  }
 }
 
 /**
@@ -755,29 +804,35 @@ async function intestaAlReferente(
   })
 }
 
-/** L'alunno che paga per il fratello: prima fra quelli appena creati, poi in anagrafica. */
+/**
+ * L'alunno che paga per il fratello: prima fra quelli appena creati, poi in anagrafica.
+ * `id: null` = non c'è; `errore` = l'anagrafica non si è letta, che non è la stessa cosa (il
+ * messaggio «non risulta ancora in anagrafica» sarebbe falso, e manderebbe a cercare un fratello
+ * che c'è).
+ */
 async function trovaFratelloPagante(
   supabase: SupabaseClient,
   nomeFratello: string,
   scuolaId: string,
   appenaCreati: Map<string, string>,
-): Promise<string | null> {
+): Promise<{ id: string | null } | { errore: string }> {
   const chiave = normalizzaNome(nomeFratello)
   const fraQuestiIds = appenaCreati.get(chiave)
-  if (fraQuestiIds) return fraQuestiIds
+  if (fraQuestiIds) return { id: fraQuestiIds }
 
   // Solo chi è ISCRITTO: la retta di un bambino non può essere a carico di un
   // fratello ritirato, e un elenco di sede senza filtro di stato è precisamente
   // ciò che il lock `elenchi-operativi-solo-iscritti` esiste per impedire.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('alunni')
     .select('id, nome, cognome')
     .eq('scuola_id', scuolaId)
     .eq('stato', STATO_ISCRITTO)
     .is('archiviato_il', null)
+  if (error) return { errore: `lettura degli alunni della sede non riuscita: ${error.message}` }
   for (const r of data ?? []) {
     const o = r as { id: string; nome: string; cognome: string }
-    if (normalizzaNome(`${o.cognome} ${o.nome}`) === chiave) return o.id
+    if (normalizzaNome(`${o.cognome} ${o.nome}`) === chiave) return { id: o.id }
   }
-  return null
+  return { id: null }
 }

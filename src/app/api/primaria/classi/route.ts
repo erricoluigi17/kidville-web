@@ -8,6 +8,9 @@ import { sezioniDiUtentePerGrado, type SezioneInfo } from '@/lib/sezioni/docenti
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'primaria/classi:GET'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireDocente), non dall'handler.
@@ -39,12 +42,14 @@ export const GET = withRoute('primaria/classi:GET', async (request: NextRequest)
       // Staff/segreteria: tutte le sezioni primaria dei plessi consentiti (no cross-tenant).
       const plessi = await scuoleDiUtente(supabase, user)
       if (plessi.length) {
-        const { data } = await supabase
+        const { data, error: errSezioni } = await supabase
           .from('sections')
           .select('id, name, school_type')
           .eq('school_type', 'primaria')
           .in('scuola_id', plessi)
           .order('name')
+        // Un guasto non è «nessuna classe primaria nel plesso».
+        if (errSezioni) return rispostaGuastoDb(OP, 'db:sections', errSezioni)
         sezioni = (data ?? []) as SezioneInfo[]
       }
     }
@@ -52,10 +57,12 @@ export const GET = withRoute('primaria/classi:GET', async (request: NextRequest)
     // Conteggio alunni per sezione (canonico: alunni.section_id).
     const data = await Promise.all(
       sezioni.map(async (s) => {
-        const { count } = await supabase
+        // Contatore della scheda: su un guasto esce 0 come prima, ma la riga lo dice.
+        const { count, error: errConteggio } = await supabase
           .from('alunni')
           .select('id', { count: 'exact', head: true })
           .eq('section_id', s.id)
+        if (errConteggio) guastoLetturaAccessoria('registro', OP, 'conteggio-alunni-non-letto', errConteggio)
         return { ...s, numAlunni: count ?? 0 }
       })
     )

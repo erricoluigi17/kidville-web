@@ -10,6 +10,7 @@ import {
     validaCessionario,
     type ErroriCessionario,
 } from '@/lib/fatturazione/cessionario';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Identità app-level (M4, session-only): userId da query param, poi sessione
 // persistita da useSessionIdentity (kv_user_id). Nessun fallback demo:
@@ -149,6 +150,8 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
     // per tutti i figli, salvo l'eccezione per-figlio (intestatario_fatture) che vince.
     const [defaultParentId, setDefaultParentId] = useState<string | null>(null);
     const [savingDefault, setSavingDefault] = useState(false);
+    /** Sale quando un salvataggio dell'intestatario non riesce: rilegge dal server la scelta vera. */
+    const [riletturaDefault, setRiletturaDefault] = useState(0);
 
     const parentOptions: ParentOption[] = (parents || [])
         .filter((p) => p.parents)
@@ -168,7 +171,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
         })
             .then((r) => r.json())
             .then((d) => { if (d?.success) setTutori(d.data); })
-            .catch(() => {});
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `quote-tutori-non-caricati: ${nomeErrore(err)}` }));
     }, [separati, alunnoId]);
 
     // Carica quale genitore è l'intestatario di famiglia predefinito (parents.*).
@@ -184,13 +187,16 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
                 const def = d.find((p: { id: string; intestatario_default?: boolean }) => p.intestatario_default === true);
                 setDefaultParentId(def?.id ?? null);
             })
-            .catch(() => { /* colonna assente / errore: nessun default mostrato */ });
+            // Nessun default mostrato, come prima: ma il guasto ora resta scritto.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `intestatario-famiglia-non-letto: ${nomeErrore(err)}` }));
         return () => { active = false; };
-    }, [alunnoId]);
+    }, [alunnoId, riletturaDefault]);
 
     // Scegliere un intestatario di famiglia AZZERA l'altro tutore (uno solo per
     // famiglia). Scritture best-effort: se la colonna non c'è (PGRST204/42703) il
-    // PATCH la scarta e il flusso non si rompe.
+    // PATCH la scarta e il flusso non si rompe. Se però anche UNA scrittura non
+    // riesce, la scelta a schermo non è più quella del server: si logga e si
+    // rilegge, invece di lasciare mostrata come salvata una scelta che non lo è.
     const setIntestatarioFamiglia = useCallback(async (parentId: string | null) => {
         const uid = currentUserId();
         if (!uid) return;
@@ -200,15 +206,24 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
         try {
             const ids = new Set<string>(parentOptions.map((p) => p.id));
             if (precedente) ids.add(precedente);
-            await Promise.all(
+            const esiti = await Promise.all(
                 [...ids].map((id) =>
                     fetch('/api/admin/parents', {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
                         body: JSON.stringify({ id, intestatario_default: id === parentId }),
-                    }).catch(() => { /* best-effort per singolo tutore */ }),
+                    })
+                        .then((r) => {
+                            if (!r.ok) logClient({ livello: 'error', evento: 'fetch', messaggio: 'intestatario-famiglia-non-salvato', stato: r.status });
+                            return r.ok;
+                        })
+                        .catch((err) => {
+                            logClient({ livello: 'error', evento: 'fetch', messaggio: `intestatario-famiglia-non-salvato: ${nomeErrore(err)}` });
+                            return false;
+                        }),
                 ),
             );
+            if (esiti.some((ok) => !ok)) setRiletturaDefault((n) => n + 1);
         } finally {
             setSavingDefault(false);
         }

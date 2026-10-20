@@ -5,6 +5,9 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'parent/primaria/orario:GET'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
@@ -26,23 +29,28 @@ export const GET = withRoute('parent/primaria/orario:GET', async (request: NextR
     if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
       .maybeSingle()
+    // Un guasto non è «alunno non trovato».
+    if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     if (!alunno.section_id) {
       return NextResponse.json({ success: true, data: { campanelle: [], orario: [] } })
     }
 
-    const [{ data: campanelle }, { data: orario }] = await Promise.all([
+    const [{ data: campanelle, error: errCampanelle }, { data: orario, error: errOrario }] = await Promise.all([
       supabase.from('campanelle').select('*').eq('section_id', alunno.section_id).order('giorno_settimana').order('ordine'),
       supabase
         .from('orario_settimanale')
         .select('id, giorno_settimana, campanella_id, materia_id, docente_id, note, materie(nome, codice), utenti(nome, cognome)')
         .eq('section_id', alunno.section_id),
     ])
+    // Un guasto non è «orario vuoto»: la famiglia leggerebbe una settimana senza lezioni.
+    if (errCampanelle) return rispostaGuastoDb(OP, 'db:campanelle', errCampanelle)
+    if (errOrario) return rispostaGuastoDb(OP, 'db:orario_settimanale', errOrario)
 
     return NextResponse.json({ success: true, data: { campanelle: campanelle ?? [], orario: orario ?? [] } })
   } catch (err) {

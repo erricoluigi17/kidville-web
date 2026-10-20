@@ -218,3 +218,25 @@ describe('isTitolareSezione / titolareDiMateria — il fixture filtra davvero', 
     expect(await titolareDiMateria(s, ALTRA_SEZIONE, ITALIANO)).toBeNull()
   })
 })
+
+describe('un guasto del database non è un «no» (fase 11, errori non ignorati)', () => {
+  const GUASTO = { code: '57014', message: 'canceling statement due to statement timeout' }
+
+  it('titolarità non letta ⇒ 500 con codice, non il 422 che accusa il docente scelto', async () => {
+    const s = creaFintoSupabase(db(), [], { errori: { utenti_sezioni: GUASTO } })
+    const r = await risolviValutatore(s, { id: SEGRETERIA, role: 'segreteria' }, SEZIONE, {
+      docenteId: TITOLARE_ITALIANO,
+    })
+    expect(r.valutatoreId).toBeUndefined()
+    expect(r.response?.status).toBe(500)
+    const corpo = (await r.response?.json()) as { codice: string }
+    expect(corpo.codice).toBe('LETTURA_FALLITA')
+  })
+
+  it('`isTitolareSezione` e `titolareDiMateria` lanciano invece di rispondere false / null', async () => {
+    const s = creaFintoSupabase(db(), [], { errori: { utenti_sezioni_materie: GUASTO, utenti_sezioni: GUASTO } })
+    await expect(isTitolareSezione(s, TITOLARE_ITALIANO, SEZIONE)).rejects.toThrow(/titolarità/)
+    await expect(isTitolareSezione(s, TITOLARE_ITALIANO, SEZIONE, ITALIANO)).rejects.toThrow(/titolarità/)
+    await expect(titolareDiMateria(s, SEZIONE, ITALIANO)).rejects.toThrow(/titolare della materia/)
+  })
+})

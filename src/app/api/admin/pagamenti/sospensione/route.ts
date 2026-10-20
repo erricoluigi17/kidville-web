@@ -12,6 +12,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 
 // Comportamento storico preservato: `sospeso` conta solo se strettamente === true,
 // `motivo` è usato solo se stringa — qualunque altro valore è tollerato (→ false/null).
@@ -141,8 +142,13 @@ export const POST = withRoute('admin/pagamenti/sospensione:POST', async (request
     // Notifica formale al genitore (best-effort). Testo NEUTRO in push
     // (privacy: il dettaglio si legge in-app); anche la riattivazione avvisa.
     try {
-      const { data: alunno } = await supabase
+      const { data: alunno, error: errSede } = await supabase
         .from('alunni').select('scuola_id').eq('id', applicati[0]).maybeSingle()
+      // La sospensione è già scritta: la sede serve solo a instradare l'avviso, che parte col
+      // ripiego di sempre (la sede dell'operatore). La riga dice che il ripiego è stato usato.
+      if (errSede) {
+        guastoSecondario('notifica', 'admin/pagamenti/sospensione:POST', 'sede-avviso-non-letta', errSede)
+      }
       await notificaEvento(supabase, {
         tipo: 'sospensione_morosita',
         scuolaId: (alunno?.scuola_id as string | undefined) ?? auth.user.scuola_id ?? null,

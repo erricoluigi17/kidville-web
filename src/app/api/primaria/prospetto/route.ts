@@ -8,6 +8,9 @@ import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'primaria/prospetto:GET'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -43,15 +46,21 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
     if (scopeErr) return scopeErr
 
     // Recupera scala giudizi una sola volta (serve sia per materia singola sia per panoramica).
-    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
+    //
+    // Tre letture che DECIDONO la media: su un guasto la scala restava vuota e ogni
+    // media usciva nulla («nessuna media») senza una riga di log. Ci si ferma.
+    const { data: alunno, error: errAlunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
+    if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
     let scala: ScalaVoce[] = []
     if (alunno?.section_id) {
-      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).maybeSingle()
+      const { data: sez, error: errSez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).maybeSingle()
+      if (errSez) return rispostaGuastoDb(OP, 'db:sections', errSez)
       if (sez?.scuola_id) {
-        const { data: s } = await supabase
+        const { data: s, error: errScala } = await supabase
           .from('giudizi_sintetici_scala')
           .select('etichetta, valore_numerico')
           .eq('scuola_id', sez.scuola_id)
+        if (errScala) return rispostaGuastoDb(OP, 'db:giudizi_sintetici_scala', errScala)
         scala = (s ?? []) as ScalaVoce[]
       }
     }
@@ -61,7 +70,7 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
       const sectionId = alunno?.section_id
       if (!sectionId) return NextResponse.json({ error: 'Sezione non trovata per questo alunno' }, { status: 400 })
 
-      const [{ data: materie }, { data: valutazioni }] = await Promise.all([
+      const [{ data: materie, error: errMaterie }, { data: valutazioni, error: errValutazioni }] = await Promise.all([
         supabase.from('materie').select('id, nome').eq('section_id', sectionId).eq('attiva', true).order('ordine'),
         supabase
           .from('valutazioni')
@@ -71,6 +80,9 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
           .in('modalita', [...MODALITA_CON_GIUDIZIO])
           .not('giudizio_sintetico', 'is', null),
       ])
+      // Un guasto non è «nessuna materia» né «nessuna valutazione» (media nulla ovunque).
+      if (errMaterie) return rispostaGuastoDb(OP, 'db:materie', errMaterie)
+      if (errValutazioni) return rispostaGuastoDb(OP, 'db:valutazioni', errValutazioni)
 
       const perMateria = new Map<string, string[]>()
       for (const v of valutazioni ?? []) {

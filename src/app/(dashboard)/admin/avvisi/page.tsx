@@ -164,7 +164,7 @@ function AdminAvvisiInner() {
         fetch(`/api/admin/sections/scoped?userId=${userId}`)
             .then(r => (r.ok ? r.json() : null))
             .then(d => { if (active && d?.success) setScuole(d.data ?? []); })
-            .catch(() => {});
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `avvisi-sezioni-non-caricate: ${nomeErrore(err)}`, route: '/admin/avvisi' }));
         return () => { active = false; };
     }, [userId]);
 

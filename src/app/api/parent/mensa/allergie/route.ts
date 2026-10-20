@@ -8,6 +8,7 @@ import { loadResolveOptions } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, allergeneLabel } from '@/lib/mensa/allergeni'
 import { withRoute } from '@/lib/logging/with-route'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -27,11 +28,14 @@ export const GET = withRoute('parent/mensa/allergie:GET', async (request: Reques
   if (auth.response) return auth.response
 
   const supabase = await createAdminClient()
-  const { data: al } = await supabase
+  const { data: al, error: errAlunno } = await supabase
     .from('alunni')
     .select('id, nome, scuola_id, allergies, allergeni')
     .eq('id', alunnoId)
     .maybeSingle()
+  // Un guasto NON è «nessun pericolo»: la risposta sotto direbbe al genitore che il menu
+  // del giorno non contiene allergeni del figlio senza averli letti.
+  if (errAlunno) return rispostaGuastoDb('parent/mensa/allergie:GET', 'db:alunni', errAlunno)
 
   if (!al) return NextResponse.json({ conflitti: [], pericolo: false, allergeni: [] })
 

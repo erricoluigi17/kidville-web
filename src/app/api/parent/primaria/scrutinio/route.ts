@@ -5,6 +5,9 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+
+const OP = 'parent/primaria/scrutinio:GET'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `scrutini` fa da gate con 404; uno studentId inesistente
@@ -31,34 +34,48 @@ export const GET = withRoute('parent/primaria/scrutinio:GET', async (request: Ne
 
     const supabase = await createAdminClient()
 
-    const { data: scrutinio } = await supabase
+    const { data: scrutinio, error: errScrutinio } = await supabase
       .from('scrutini')
       .select('id, section_id, periodo_id, stato, pubblicato')
       .eq('id', scrutinioId)
       .maybeSingle()
+    if (errScrutinio) return rispostaGuastoDb(OP, 'db:scrutini', errScrutinio)
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso' || !scrutinio.pubblicato) {
       return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
     }
 
     // Gate firma: serve la presa visione del genitore (una volta per pagella).
-    const { data: firma } = await supabase
+    // Un guasto NON è «non firmato»: la UI riproporrebbe la firma OTP a chi ha già firmato.
+    const { data: firma, error: errFirma } = await supabase
       .from('pagella_ricezioni')
       .select('id, firmato_il')
       .eq('scrutinio_id', scrutinioId)
       .eq('alunno_id', studentId)
       .eq('genitore_id', userId)
       .maybeSingle()
+    if (errFirma) return rispostaGuastoDb(OP, 'db:pagella_ricezioni', errFirma)
     if (!firma) {
       return NextResponse.json({ success: true, data: { firmato: false } })
     }
 
-    const [{ data: periodo }, { data: materie }, { data: giudizi }, { data: comp }] = await Promise.all([
+    const [
+      { data: periodo, error: errPeriodo },
+      { data: materie, error: errMaterie },
+      { data: giudizi, error: errGiudizi },
+      { data: comp, error: errComp },
+    ] = await Promise.all([
       supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).maybeSingle(),
       supabase.from('materie').select('id, nome, ordine').eq('section_id', scrutinio.section_id).eq('attiva', true).order('ordine'),
       supabase.from('scrutinio_giudizi').select('materia_id, giudizio_sintetico').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId),
       supabase.from('scrutinio_comportamento').select('giudizio_testo, giudizio_globale').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId).maybeSingle(),
     ])
+    // La pagella a schermo: un guasto NON è «nessun giudizio» (ogni materia uscirebbe «—») né
+    // «nessun comportamento». Il nome del periodo è solo un'etichetta: quello degrada.
+    if (errMaterie) return rispostaGuastoDb(OP, 'db:materie', errMaterie)
+    if (errGiudizi) return rispostaGuastoDb(OP, 'db:scrutinio_giudizi', errGiudizi)
+    if (errComp) return rispostaGuastoDb(OP, 'db:scrutinio_comportamento', errComp)
+    if (errPeriodo) guastoLetturaAccessoria('pagella', OP, 'periodo-non-letto', errPeriodo)
 
     const giudMap = new Map((giudizi ?? []).map((g) => [g.materia_id, g.giudizio_sintetico]))
     const discipline = (materie ?? []).map((m) => ({ materia: m.nome, giudizio: giudMap.get(m.id) ?? '—' }))

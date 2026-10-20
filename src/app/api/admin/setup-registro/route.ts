@@ -4,7 +4,7 @@ import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
@@ -24,6 +24,17 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
 
         const steps: string[] = [];
         const errors: string[] = [];
+        // Le RLS (passi 4-7) erano segnate «✅» qualunque cosa rispondesse il database: il
+        // risultato veniva buttato. Ora un passo fallito va fra gli `errors` come i primi tre, e
+        // lascia una riga — è proprio la riga che dice se le policy ci sono davvero.
+        const passo = (error: { message?: string } | null, nome: string, esito: string) => {
+            if (error) {
+                errors.push(`${nome}: ${error.message ?? 'errore sconosciuto'}`);
+                logEvento('db', 'error', { operazione: 'admin/setup-registro:GET', esito: `${esito}-non-applicata` }, error);
+            } else {
+                steps.push(`✅ ${nome}`);
+            }
+        };
 
         // ⚠️ QUESTO SQL È STORIA, NON LO SCHEMA DI OGGI (2026-09-06), E SBAGLIA DUE VOLTE.
         // Il `CONSTRAINT unique_registro_orario UNIQUE (classe_sezione, data, ora_lezione)` scritto
@@ -103,7 +114,7 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
         }
 
         // 4. RLS e policy registro_orario
-        await supabase.rpc('exec_sql', {
+        const rlsRegistroOrario = await supabase.rpc('exec_sql', {
             sql: `
                 ALTER TABLE public.registro_orario ENABLE ROW LEVEL SECURITY;
                 DO $$ BEGIN
@@ -113,10 +124,10 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
                 END $$;
             `
         });
-        steps.push('✅ RLS registro_orario');
+        passo(rlsRegistroOrario.error, 'RLS registro_orario', 'rls-registro-orario');
 
         // 5. RLS firme_docenti
-        await supabase.rpc('exec_sql', {
+        const rlsFirmeDocenti = await supabase.rpc('exec_sql', {
             sql: `
                 ALTER TABLE public.firme_docenti ENABLE ROW LEVEL SECURITY;
                 DO $$ BEGIN
@@ -126,10 +137,10 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
                 END $$;
             `
         });
-        steps.push('✅ RLS firme_docenti');
+        passo(rlsFirmeDocenti.error, 'RLS firme_docenti', 'rls-firme-docenti');
 
         // 6. RLS note_disciplinari
-        await supabase.rpc('exec_sql', {
+        const rlsNoteDisciplinari = await supabase.rpc('exec_sql', {
             sql: `
                 ALTER TABLE public.note_disciplinari ENABLE ROW LEVEL SECURITY;
                 DO $$ BEGIN
@@ -139,10 +150,10 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
                 END $$;
             `
         });
-        steps.push('✅ RLS note_disciplinari');
+        passo(rlsNoteDisciplinari.error, 'RLS note_disciplinari', 'rls-note-disciplinari');
 
         // 7. RLS valutazioni
-        await supabase.rpc('exec_sql', {
+        const rlsValutazioni = await supabase.rpc('exec_sql', {
             sql: `
                 ALTER TABLE public.valutazioni ENABLE ROW LEVEL SECURITY;
                 DO $$ BEGIN
@@ -152,7 +163,7 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
                 END $$;
             `
         });
-        steps.push('✅ RLS valutazioni');
+        passo(rlsValutazioni.error, 'RLS valutazioni', 'rls-valutazioni');
 
         return NextResponse.json({
             success: errors.length === 0,

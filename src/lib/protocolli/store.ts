@@ -25,6 +25,9 @@ import {
   type TipoProtocollo,
 } from '@/lib/protocolli/segnatura'
 import { applicaSegnatura } from '@/lib/protocolli/timbro'
+import { logEvento } from '@/lib/logging/logger'
+
+const OPERAZIONE_REGISTRA = 'protocolli/store:registraProtocollo'
 
 export const PROTOCOLLO_BUCKET = 'protocollo'
 export const PROTOCOLLO_MAX_MB = 25
@@ -301,17 +304,28 @@ export async function registraProtocollo(
   } catch (errore) {
     // Rollback best-effort: la riga (se creata) si rimuove SOLO via funzione
     // dedicata (trigger WORM); i file caricati si eliminano dal bucket.
+    //
+    // Il rollback non lancia: l'errore che conta, e che si rilancia, è quello della
+    // registrazione. Ma un rollback fallito NON è muto (AGENTS regola 6): una riga rimasta
+    // è un numero di protocollo che risulta registrato senza il suo documento, e va saputo.
     if (idInserito) {
-      await supabase.rpc('protocollo_elimina', { p_id: idInserito }).then(
-        () => undefined,
-        () => undefined
-      )
+      const campi = { operazione: OPERAZIONE_REGISTRA, esito: 'rollback-riga-non-riuscito', entita_id: idInserito }
+      try {
+        const { error: erroreRollback } = await supabase.rpc('protocollo_elimina', { p_id: idInserito })
+        if (erroreRollback) logEvento('protocolli', 'error', campi, erroreRollback)
+      } catch (err) {
+        logEvento('protocolli', 'error', campi, err)
+      }
     }
     if (caricati.length > 0) {
-      await storage.remove(caricati).then(
-        () => undefined,
-        () => undefined
-      )
+      // File rimasti nel bucket senza riga: spazio occupato, nessun documento visibile.
+      const campi = { operazione: OPERAZIONE_REGISTRA, esito: 'rollback-file-non-riuscito', n: caricati.length }
+      try {
+        const { error: erroreRimozione } = await storage.remove(caricati)
+        if (erroreRimozione) logEvento('protocolli', 'warn', campi, erroreRimozione)
+      } catch (err) {
+        logEvento('protocolli', 'warn', campi, err)
+      }
     }
     throw errore
   }

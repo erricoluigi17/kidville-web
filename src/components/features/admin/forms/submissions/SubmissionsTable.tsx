@@ -14,6 +14,7 @@ import {
 } from './SubmissionDetailSidebar'
 import { formattaIstante } from '@/i18n/config'
 import { scaricaCompilazionePdf, scaricaCompilazioniXlsx } from './scarica-compilazioni'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 const STATUS_LABEL_KEYS: Record<FormSubmissionStatus, string> = {
   draft: 'statusBozza',
@@ -102,7 +103,7 @@ export function SubmissionsTable() {
       .then((data: { id: string; title: string }[]) => {
         if (Array.isArray(data)) setFormModels(data)
       })
-      .catch(() => {})
+      .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `compilazioni-modelli-non-caricati: ${nomeErrore(err)}` }))
   }, [userId])
 
   useEffect(() => {

@@ -100,11 +100,23 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
 export async function getSessionProfili(): Promise<{ authUid: string; profili: Profilo[] } | null> {
   try {
     const supabase = await createClient()
-    const { data } = await supabase.auth.getUser()
+    const { data, error } = await supabase.auth.getUser()
+    // GoTrue non lancia: l'errore torna nel valore. Stessa scala di `resolveIdentity`
+    // (`require-staff.ts`, `livelloErroreSessione`), scritta qui perché quel modulo i test lo
+    // sostituiscono per intero: «nessuna sessione» non si dice, un token scaduto è `info`, GoTrue
+    // che non risponde è `error`. Il risultato resta `null` = anonimo (fail-closed).
+    if (error && error.name !== 'AuthSessionMissingError') {
+      const status = typeof error.status === 'number' ? error.status : 0
+      const guasto = error.name === 'AuthRetryableFetchError' || status === 0 || status >= 500
+      logEvento('auth', guasto ? 'error' : 'info', { operazione: 'getSessionProfili', esito: 'sessione-non-verificata' }, error)
+    }
     const authUid = data?.user?.id ?? null
     if (!authUid) return null
     return { authUid, profili: await getProfiliForAuthUid(authUid) }
-  } catch {
+  } catch (err) {
+    // `cookies()` lancia fuori da un contesto di richiesta (unit test): il ramo giusto è
+    // «anonimo». Si dice a `info` invece di tacere, come in `resolveIdentity` (AGENTS regola 6).
+    logEvento('auth', 'info', { operazione: 'getSessionProfili', esito: 'sessione-non-leggibile' }, err)
     return null
   }
 }

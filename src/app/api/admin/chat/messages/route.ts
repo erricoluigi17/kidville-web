@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { firmaAllegatiChat } from '@/lib/chat/allegati';
 import { registraAccessoVigilanza } from '@/lib/chat/vigilanza-audit';
 
@@ -32,11 +33,13 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
     // anche il filtro — il thread è identificato da un uuid, non da un nome, e
     // l'omonimia non c'entra: verificato l'alunno del thread, la query per
     // `thread_id` non può portare dentro nient'altro.
-    const { data: thread } = await supabase
+    const { data: thread, error: errThread } = await supabase
       .from('chat_threads')
       .select('student_id')
       .eq('id', q.data.thread_id)
       .maybeSingle();
+    // Un guasto non è «conversazione non trovata».
+    if (errThread) return rispostaGuastoDb('admin/chat/messages:GET', 'db:chat_threads', errThread);
     if (!thread) return NextResponse.json({ error: 'Conversazione non trovata' }, { status: 404 });
     const alunnoId = thread.student_id as string;
 
@@ -61,11 +64,14 @@ export const GET = withRoute('admin/chat/messages:GET', async (request: NextRequ
     // stata letta. `assertAlunnoInScope` l'ha già letta ma non la restituisce,
     // e una seconda lettura puntuale su chiave primaria costa meno che allargare
     // la firma di un guard usato da mezzo progetto.
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('scuola_id')
       .eq('id', alunnoId)
       .maybeSingle();
+    // Il registro scriverebbe «sede sconosciuta» al posto della sede vera: la riga di vigilanza
+    // è l'unico contrappeso alla lettura, e non si scrive con un buco travestito da valore.
+    if (errAlunno) return rispostaGuastoDb('admin/chat/messages:GET', 'db:alunni', errAlunno);
 
     const colonneOriginali = 'id, sender_id, content, attachment_url, attachment_type, created_at';
     const leggi = (colonne: string) => supabase.from('chat_messages').select(colonne)

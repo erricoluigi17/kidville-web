@@ -18,6 +18,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 import {
   chiaveVoce,
   dataEventoDaIstante,
@@ -394,11 +395,14 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     const maestraId = vr.valutatoreId
 
     // Materia (nome per il campo NOT NULL legacy) + scuola + codice (per obiettivi).
-    const { data: materia } = await supabase
+    // Un guasto non è «materia non trovata»: il voto non verrebbe salvato e la docente
+    // leggerebbe che la materia non esiste.
+    const { data: materia, error: errMateria } = await supabase
       .from('materie')
       .select('nome, codice, scuola_id, section_id')
       .eq('id', materiaId)
       .maybeSingle()
+    if (errMateria) return rispostaGuastoDb('primaria/valutazioni:POST', 'db:materie', errMateria)
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
     // La materia deve essere del catalogo della sezione asserita: il suo scuola_id
     // pilota timelock, template giudizio e audit — mai da un tenant estraneo.
@@ -504,11 +508,13 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     // Notifica valutazione con buffer (default 10 min). Best-effort: la
     // valutazione è salvata, un guasto qui non la disfa — ma si dice.
     try {
-      const { data: settings } = await supabase
+      // Accessoria: senza l'impostazione vale il buffer predefinito (10 minuti).
+      const { data: settings, error: errSettings } = await supabase
         .from('admin_settings')
         .select('notif_buffer_valutazioni_min')
         .eq('scuola_id', materia.scuola_id)
         .maybeSingle()
+      if (errSettings) guastoLetturaAccessoria('notifica', 'primaria/valutazioni:POST', 'buffer-valutazioni-non-letto', errSettings)
       // Il FIGLIO, nel link e nel titolo: con due figli il tocco apriva i voti
       // di quello selezionato l'ultima volta (vedi `notifica-voti-genitore`).
       const nome = await nomeAlunnoPerNotifica(supabase, alunnoId, 'primaria/valutazioni:POST')

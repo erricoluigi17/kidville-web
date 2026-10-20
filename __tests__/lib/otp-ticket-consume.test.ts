@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest'
-import { ticketJti, consumeTicket, makeTicket } from '@/lib/auth/otp-ticket'
+import { describe, it, expect, vi } from 'vitest'
+
+const h = vi.hoisted(() => ({ logEvento: vi.fn() }))
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento }
+})
+
+import { ticketJti, consumeTicket, makeTicket, getUserEmail } from '@/lib/auth/otp-ticket'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // M5 — consumo uso-singolo del ticket OTP (anti-replay Sistema B).
@@ -56,5 +63,29 @@ describe('consumeTicket', () => {
     const supabase = clientInsert({ error: { code: 'XX000' } })
     const r = await consumeTicket(supabase, 'ticket-xyz', 'test:op')
     expect(r).toEqual({ ok: true })
+  })
+})
+
+describe('getUserEmail — un guasto non è «email non trovata» (fase 11)', () => {
+  function clientLettura(result: { data: unknown; error: unknown }): SupabaseClient {
+    return {
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve(result) }) }) }),
+    } as unknown as SupabaseClient
+  }
+
+  it('lettura riuscita → l’email', async () => {
+    expect(await getUserEmail(clientLettura({ data: { email: 'p@x.it' }, error: null }), 'u-1')).toBe('p@x.it')
+  })
+
+  it('guasto → null (la verifica resta chiusa) ma con la riga `error`', async () => {
+    h.logEvento.mockClear()
+    const r = await getUserEmail(clientLettura({ data: null, error: { code: '57014', message: 'timeout' } }), 'u-1')
+    expect(r).toBeNull()
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'otp',
+      'error',
+      expect.objectContaining({ esito: 'email-utente-non-letta' }),
+      expect.objectContaining({ code: '57014' }),
+    )
   })
 })

@@ -16,6 +16,7 @@ import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
 import { GraduationCap, Users, LayoutGrid, FileText, SearchX } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface SearchItem {
   id: string;
@@ -64,7 +65,7 @@ export function AdminSearchPanel({ query, userId, onNavigate }: Props) {
         .then((j) => {
           if (active && j?.success) setGroups(j.data);
         })
-        .catch(() => {});
+        .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ricerca-segreteria-fallita: ${nomeErrore(err)}` }));
     }, 300);
     return () => {
       active = false;

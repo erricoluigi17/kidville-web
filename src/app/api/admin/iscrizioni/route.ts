@@ -19,6 +19,7 @@ import { orIlike, termineOr } from '@/lib/db/ricerca-postgrest'
 import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
 import {
@@ -897,9 +898,14 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         const adulti = ((data as { data?: EnrollmentSubmissionData })?.data?.adults ?? []) as EnrollmentAdult[]
         const emails = adulti.map((a) => a.email).filter((e): e is string => Boolean(e))
         if (emails.length > 0) {
-          const { data: utenti } = await supabase.from('utenti').select('id').in('email', emails)
+          const { data: utenti, error: errDestinatari } = await supabase.from('utenti').select('id').in('email', emails)
+          // Il rifiuto è GIÀ scritto: un guasto qui toglie solo la notifica, e la riga lo dice
+          // (lo stesso `esito` del `catch` sotto, perché il genitore non saprà niente in entrambi).
+          if (errDestinatari) {
+            guastoSecondario('notifica', 'admin/iscrizioni:PATCH', 'notifica-rifiuto-non-inviata', errDestinatari)
+          }
           const destinatari = (utenti ?? []).map((u) => u.id as string)
-          await notificaEvento(supabase, {
+          if (!errDestinatari) await notificaEvento(supabase, {
             tipo: 'iscrizione_esito',
             scuolaId: ((data as { scuola_id?: string })?.scuola_id as string | undefined) ?? null,
             utenteIds: destinatari,
@@ -1894,7 +1900,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
 
       // Collega tutti gli adulti a questo figlio
       for (const link of parentLinks) {
-        await supabase.from('student_parents').upsert(
+        const { error: errLegameAnagrafico } = await supabase.from('student_parents').upsert(
           {
             student_id: studentId,
             parent_id: link.parentId,
@@ -1903,6 +1909,21 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           },
           { onConflict: 'student_id,parent_id', ignoreDuplicates: false }
         )
+        if (errLegameAnagrafico) {
+          // BLOCCANTE come un figlio non creato: senza il legame anagrafico il bambino resta
+          // in scheda senza famiglia, e l'invio non deve passare ad «approved». Il re-import
+          // è idempotente (upsert sulla coppia), quindi l'operatore può riprovare.
+          const d = descriviErroreDb(errLegameAnagrafico)
+          errors.push({ dove: `Bambino ${ci + 1}`, messaggio: d.messaggio })
+          logEvento('db', 'error', {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'legame-anagrafico-non-scritto',
+            entita_tipo: 'student_parents',
+            indice: ci + 1,
+            error_code: d.codice,
+          }, errLegameAnagrafico)
+          continue
+        }
         await logScrittura(supabase, {
           attore: auth.user,
           entitaTipo: 'legame',

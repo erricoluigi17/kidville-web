@@ -239,7 +239,8 @@ function LockerInner() {
                 if (d?.nome) setChildName(d.nome);
                 if (typeof d?.classe_sezione === 'string') setClasseSezione(d.classe_sezione);
             })
-            .catch(() => {});
+            // Senza la sezione le soglie non si chiedono (nessun semaforo): lo si dice, la pagina resta.
+            .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `armadietto-alunno-non-caricato: ${nomeErrore(err)}`, route: '/parent/locker' }));
     }, [studentId]);
 
     const [activeTab, setActiveTab] = useState<'overview' | 'monthly'>('overview');

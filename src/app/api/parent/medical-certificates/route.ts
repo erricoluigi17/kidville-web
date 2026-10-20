@@ -5,10 +5,12 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio, getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { periodoValido } from '@/lib/certificati/stato'
+import { tipoCertificato } from '@/lib/certificati/tipo-file'
 import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 const BUCKET = 'certificati-medici'
 
@@ -61,11 +63,17 @@ export const POST = withRoute('parent/medical-certificates:POST', async (request
     if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
 
     const ext = (file.name.split('.').pop() || 'pdf').toLowerCase()
+    // Il bucket ammette solo PDF e immagini (fase 12): un altro tipo lo respingerebbe con un 500
+    // dello Storage. Un file senza tipo prende quello della sua estensione (`tipo-file.ts`).
+    const contentType = tipoCertificato(file.type, ext)
+    if (!contentType) {
+      return NextResponse.json({ error: 'Sono ammessi solo PDF e immagini', codice: 'ALLEGATO_PDF_O_IMMAGINE' }, { status: 415 })
+    }
     const path = `${studentId}/${randomUUID()}.${ext}`
     const buf = Buffer.from(await file.arrayBuffer())
     const { error: upErr } = await supabase.storage
       .from(BUCKET)
-      .upload(path, buf, { contentType: file.type || 'application/octet-stream', upsert: false })
+      .upload(path, buf, { contentType, upsert: false })
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
     const { data, error } = await supabase
@@ -106,11 +114,14 @@ export const GET = withRoute('parent/medical-certificates:GET', async (request: 
     const alunnoIds = await getFigliDiGenitore(supabase, user.id)
     if (alunnoIds.length === 0) return NextResponse.json({ success: true, data: [] })
 
-    const { data } = await supabase
+    // Un guasto non è «nessun certificato caricato»: il genitore lo ricaricherebbe, o
+    // crederebbe il figlio senza copertura per la mensa.
+    const { data, error } = await supabase
       .from('certificati_medici')
       .select('id, alunno_id, data_inizio, data_fine, stato, note, nota_validazione, creato_il, file_path, alunno:alunni(nome, cognome)')
       .in('alunno_id', alunnoIds)
       .order('creato_il', { ascending: false })
+    if (error) return rispostaGuastoDb('parent/medical-certificates:GET', 'db:certificati_medici', error)
 
     const out = ((data ?? []) as Record<string, unknown>[]).map((c) => ({
       ...c,

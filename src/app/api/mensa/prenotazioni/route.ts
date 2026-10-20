@@ -16,6 +16,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 import { RUOLI_GESTIONE_MENSA } from '@/lib/mensa/gestione-staff'
 
 // Ruoli che possono FORZARE prenotazione/disdetta della mensa anche fuori orario
@@ -53,8 +54,14 @@ async function genitoreDiAlunno(supabase: Awaited<ReturnType<typeof createAdminC
   return genitoreHasFiglio(supabase, genitoreId, alunnoId)
 }
 
+/**
+ * Il saldo ticket dell'alunno; 0 se non ha ancora una riga. Un GUASTO lancia (lo prende il
+ * `catch` della route, 500): letto 0 per un database che non risponde, il saldo verrebbe poi
+ * SCRITTO sopra quello vero dal percorso di ripiego, e il genitore si vedrebbe «saldo esaurito».
+ */
 async function saldoCorrente(supabase: Awaited<ReturnType<typeof createAdminClient>>, alunnoId: string): Promise<number> {
-  const { data } = await supabase.from('ticket_mensa').select('saldo_ticket').eq('alunno_id', alunnoId).maybeSingle()
+  const { data, error } = await supabase.from('ticket_mensa').select('saldo_ticket').eq('alunno_id', alunnoId).maybeSingle()
+  if (error) throw error
   return Number(data?.saldo_ticket ?? 0)
 }
 
@@ -102,7 +109,9 @@ async function scalaTicketPrenotaFallback(supabase: SupabaseAdmin, opts: OptsSca
     { onConflict: 'alunno_id,data' }
   ).select('id').single()
   if (pErr) {
-    await setSaldo(supabase, opts.alunnoId, opts.saldoPrima) // ripristina il saldo
+    const { error: rErr } = await setSaldo(supabase, opts.alunnoId, opts.saldoPrima) // ripristina il saldo
+    // Il ticket resta scalato senza pasto: è la divergenza che la RPC elimina, e va vista.
+    if (rErr) logEvento('db', 'error', { operazione: 'mensa/prenotazioni:POST', esito: 'saldo-non-ripristinato' }, rErr)
     return { ok: false, saldo: opts.saldoPrima, motivo: 'Errore prenotazione', fallback: true }
   }
 
@@ -135,11 +144,21 @@ async function riaccreditaTicketDisdiciAtomico(supabase: SupabaseAdmin, opts: Op
 }
 
 async function riaccreditaTicketDisdiciFallback(supabase: SupabaseAdmin, opts: OptsDisdetta): Promise<EsitoDisdetta> {
-  const saldo = (await saldoCorrente(supabase, opts.alunnoId)) + opts.ticket
-  await setSaldo(supabase, opts.alunnoId, saldo)
-  await supabase.from('mensa_prenotazioni')
+  const saldoPrima = await saldoCorrente(supabase, opts.alunnoId)
+  const saldo = saldoPrima + opts.ticket
+  const { error: sErr } = await setSaldo(supabase, opts.alunnoId, saldo)
+  if (sErr) return { ok: false, saldo: 0, fallback: true, error: sErr }
+  // La disdetta è la scrittura PRINCIPALE: buttarne il risultato dava «disdetto» a un pasto
+  // ancora prenotato, col ticket già riaccreditato (pasto gratis). Fallita, si rimette il saldo
+  // com'era — come fa il POST — e si risponde 500.
+  const { error: uErr } = await supabase.from('mensa_prenotazioni')
     .update({ stato: 'disdetto', prenotato_da: opts.utenteId })
     .eq('id', opts.prenId)
+  if (uErr) {
+    const { error: rErr } = await setSaldo(supabase, opts.alunnoId, saldoPrima)
+    if (rErr) logEvento('db', 'error', { operazione: 'mensa/prenotazioni:DELETE', esito: 'saldo-non-ripristinato' }, rErr)
+    return { ok: false, saldo: 0, fallback: true, error: uErr }
+  }
 
   const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
     alunno_id: opts.alunnoId, scuola_id: opts.scuolaId, tipo: 'disdetta', delta: opts.ticket,
@@ -186,7 +205,7 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
     const from = q.data.from ?? today
     const to = q.data.to ?? today
 
-    const [{ data: pren }, saldo, { data: al }] = await Promise.all([
+    const [{ data: pren, error: errPren }, saldo, { data: al, error: errAlunno }] = await Promise.all([
       supabase
         .from('mensa_prenotazioni')
         .select('data, stato, origine')
@@ -196,6 +215,10 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
       saldoCorrente(supabase, alunnoId),
       supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle(),
     ])
+    // Le prenotazioni sono la risposta: un elenco vuoto per un guasto direbbe «nessun pasto».
+    if (errPren) return rispostaGuastoDb('mensa/prenotazioni:GET', 'db:mensa_prenotazioni', errPren)
+    // La sede serve solo a mostrare l'orario limite: col ripiego esce `null`.
+    if (errAlunno) guastoLetturaAccessoria('mensa', 'mensa/prenotazioni:GET', 'orario-limite-non-letto', errAlunno)
 
     // Orario limite (cutoff) per prenotare/disdire "oggi": mostrato in UI così
     // il genitore lo conosce prima di provare (config per scuola, default 09:30).
@@ -251,7 +274,8 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     }
 
     // scuola dell'alunno + nome (per notifiche)
-    const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).maybeSingle()
+    const { data: al, error: errAlunno } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).maybeSingle()
+    if (errAlunno) return rispostaGuastoDb('mensa/prenotazioni:POST', 'db:alunni', errAlunno)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
@@ -292,8 +316,15 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
         esiti.push({ data, ok: false, motivo: 'Oltre l\'orario limite (cutoff)', codice: CODICE_OLTRE_CUTOFF }); continue
       }
       // già prenotato attivo?
-      const { data: existing } = await supabase
+      const { data: existing, error: errEsistente } = await supabase
         .from('mensa_prenotazioni').select('id, stato').eq('alunno_id', alunnoId).eq('data', data).maybeSingle()
+      // Non si sa se il pasto c'è già: scalare un ticket «al buio» potrebbe farlo pagare due
+      // volte. La DATA fallisce (come per un errore della RPC), le altre proseguono — un 500
+      // inviterebbe a ripetere anche quelle già prenotate.
+      if (errEsistente) {
+        logEvento('db', 'error', { operazione: 'mensa/prenotazioni:POST', esito: 'prenotazione-esistente-non-letta', data }, errEsistente)
+        esiti.push({ data, ok: false, motivo: 'Errore prenotazione' }); continue
+      }
       if (existing?.stato === 'prenotato') {
         esiti.push({ data, ok: true, motivo: 'Già prenotato' }); continue
       }
@@ -406,7 +437,8 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    const { data: al, error: errAlunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    if (errAlunno) return rispostaGuastoDb('mensa/prenotazioni:DELETE', 'db:alunni', errAlunno)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
@@ -427,8 +459,10 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       )
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: errEsistente } = await supabase
       .from('mensa_prenotazioni').select('id, stato, ticket_scalato').eq('alunno_id', alunnoId).eq('data', data).maybeSingle()
+    // Un guasto non è «nessuna prenotazione attiva» (404): il genitore crederebbe di non doverla disdire.
+    if (errEsistente) return rispostaGuastoDb('mensa/prenotazioni:DELETE', 'db:mensa_prenotazioni', errEsistente)
     if (!existing || existing.stato !== 'prenotato') {
       return NextResponse.json({ error: 'Nessuna prenotazione attiva per questa data' }, { status: 404 })
     }

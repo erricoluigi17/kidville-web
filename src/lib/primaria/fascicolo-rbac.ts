@@ -19,7 +19,19 @@ import { logEvento } from '@/lib/logging/logger'
 export interface AccessoFascicolo {
   consentito: boolean
   ruolo: string | null
-  motivo: 'staff' | 'contitolare' | 'negato' | 'no-section' | 'cross-tenant'
+  /**
+   * `errore` (fase 11): il database non ha risposto. L'accesso resta NEGATO — fail-closed, mai
+   * un fascicolo sanitario aperto per un guasto — ma il motivo non si confonde più con
+   * «non è tuo», e la riga `error` dice quale lettura è caduta. Chi chiama può rispondere 500
+   * invece del 403 che direbbe a un docente titolare che il fascicolo non è suo.
+   */
+  motivo: 'staff' | 'contitolare' | 'negato' | 'no-section' | 'cross-tenant' | 'errore'
+}
+
+/** Un guasto del gate: negato, con la riga che lo distingue da un diniego vero. */
+function negatoPerGuasto(esito: string, ruolo: string | null, error: unknown): AccessoFascicolo {
+  logEvento('fascicolo', 'error', { operazione: 'primaria/fascicolo-rbac:puoAccedereFascicolo', esito }, error)
+  return { consentito: false, ruolo, motivo: 'errore' }
 }
 
 export async function puoAccedereFascicolo(
@@ -28,20 +40,22 @@ export async function puoAccedereFascicolo(
   alunnoId: string
 ): Promise<AccessoFascicolo> {
   // Ruolo + plesso dell'utente.
-  const { data: u } = await supabase
+  const { data: u, error: errUtente } = await supabase
     .from('utenti')
     .select('id, ruolo, role, scuola_id')
     .eq('id', utenteId)
     .maybeSingle()
+  if (errUtente) return negatoPerGuasto('utente-non-letto', null, errUtente)
   const ruolo = (u?.role || u?.ruolo) as string | null
   if (!u) return { consentito: false, ruolo: null, motivo: 'negato' }
 
   // Sezione + plesso dell'alunno.
-  const { data: alunno } = await supabase
+  const { data: alunno, error: errAlunno } = await supabase
     .from('alunni')
     .select('section_id, scuola_id')
     .eq('id', alunnoId)
     .maybeSingle()
+  if (errAlunno) return negatoPerGuasto('alunno-non-letto', ruolo, errAlunno)
 
   // Dirigenza / Segreteria: ammessa solo entro il proprio/i plesso/i (no cross-tenant).
   if (ruolo === 'admin' || ruolo === 'coordinator' || ruolo === 'segreteria') {
@@ -59,13 +73,16 @@ export async function puoAccedereFascicolo(
   if (!sectionId) return { consentito: false, ruolo, motivo: 'no-section' }
 
   // Contitolare: assegnazione alla sezione (per materia o diretta).
-  const [{ data: usm }, { data: us }] = await Promise.all([
+  const [{ data: usm, error: errUsm }, { data: us, error: errUs }] = await Promise.all([
     supabase.from('utenti_sezioni_materie').select('utente_id').eq('utente_id', utenteId).eq('section_id', sectionId).limit(1),
     supabase.from('utenti_sezioni').select('utente_id').eq('utente_id', utenteId).eq('section_id', sectionId).limit(1),
   ])
+  // Basta una delle due assegnazioni per essere contitolare: un guasto conta solo se l'altra
+  // non ha già risposto di sì.
   if ((usm && usm.length > 0) || (us && us.length > 0)) {
     return { consentito: true, ruolo, motivo: 'contitolare' }
   }
+  if (errUsm || errUs) return negatoPerGuasto('contitolarita-non-letta', ruolo, errUsm ?? errUs)
 
   return { consentito: false, ruolo, motivo: 'negato' }
 }
@@ -92,10 +109,18 @@ export async function sezioniContitolari(
   supabase: SupabaseClient,
   utenteId: string,
 ): Promise<string[]> {
-  const [{ data: perMateria }, { data: dirette }] = await Promise.all([
+  const [{ data: perMateria, error: errPerMateria }, { data: dirette, error: errDirette }] = await Promise.all([
     supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
     supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId),
   ])
+  // Il contratto resta (un elenco, al peggio più corto: fail-closed), ma «nessuna sezione» e
+  // «non ho letto» non si leggono più uguali.
+  if (errPerMateria || errDirette) {
+    logEvento('fascicolo', 'error', {
+      operazione: 'primaria/fascicolo-rbac:sezioniContitolari',
+      esito: 'contitolarita-non-letta',
+    }, errPerMateria ?? errDirette)
+  }
   const sezioni = new Set<string>()
   for (const riga of [...(perMateria ?? []), ...(dirette ?? [])]) {
     const id = (riga as { section_id?: string | null }).section_id

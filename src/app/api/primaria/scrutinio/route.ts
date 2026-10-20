@@ -10,6 +10,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 /**
  * Il guasto del DATABASE di questa route, distinto dai suoi rifiuti.
@@ -190,45 +191,58 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
     if (scopeErr) return scopeErr
 
     // Sezione + scuola (per la scala giudizi).
-    const { data: sezione } = await supabase
+    //
+    // OGNI LETTURA DEL GET GUARDA `error` (fase 11 della robustezza). La sede
+    // decide i periodi e il controllo sul periodo: letta `null` per un guasto
+    // diventava «nessun periodo» o un 403 «periodo non valido»; i giudizi e il
+    // comportamento letti `null` diventavano una pagina dello scrutinio VUOTA,
+    // cioè «nessun voto», su cui la docente avrebbe riscritto.
+    const OP_GET = 'primaria/scrutinio:GET'
+    const { data: sezione, error: errSezione } = await supabase
       .from('sections')
       .select('id, name, school_type, scuola_id')
       .eq('id', sectionId)
       .maybeSingle()
+    if (errSezione) return rispostaGuastoDb(OP_GET, 'db:sections', errSezione)
     const scuolaId = sezione?.scuola_id ?? null
 
     // Senza periodoId: restituisci la lista dei periodi configurati (per il selettore).
     if (!periodoId) {
-      const { data: periodi } = scuolaId
+      const { data: periodi, error: errPeriodi } = scuolaId
         ? await supabase
             .from('scrutinio_periodi')
             .select('id, nome, anno_scolastico, ordine, attivo')
             .eq('scuola_id', scuolaId)
             .eq('attivo', true)
             .order('ordine')
-        : { data: [] as { id: string; nome: string }[] }
+        : { data: [] as { id: string; nome: string }[], error: null }
+      if (errPeriodi) return rispostaGuastoDb(OP_GET, 'db:scrutinio_periodi', errPeriodi)
       return NextResponse.json({ success: true, data: { periodi: periodi ?? [] } })
     }
 
     // Il periodo deve appartenere alla scuola della sezione asserita: il GET crea
     // la riga scrutini(section, periodo), mai con un periodo di un altro tenant.
-    const { data: periodo } = await supabase
+    const { data: periodo, error: errPeriodo } = await supabase
       .from('scrutinio_periodi')
       .select('id')
       .eq('id', periodoId)
       .eq('scuola_id', scuolaId)
       .maybeSingle()
+    if (errPeriodo) return rispostaGuastoDb(OP_GET, 'db:scrutinio_periodi', errPeriodo)
     if (!periodo) {
       return NextResponse.json({ error: 'Periodo non valido per questa scuola' }, { status: 403 })
     }
 
     // Scrutinio: crea se non esiste (idempotente via UNIQUE section+periodo).
-    let { data: scrutinio } = await supabase
+    // Un guasto qui non è «scrutinio da creare»: si tenterebbe un INSERT alla cieca.
+    const { data: trovato, error: errScrutinio } = await supabase
       .from('scrutini')
       .select('*')
       .eq('section_id', sectionId)
       .eq('periodo_id', periodoId)
       .maybeSingle()
+    if (errScrutinio) return rispostaGuastoDb(OP_GET, 'db:scrutini', errScrutinio)
+    let scrutinio = trovato
     if (!scrutinio) {
       const { data: created, error: cErr } = await supabase
         .from('scrutini')
@@ -236,9 +250,10 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
         .select()
         .single()
       if (cErr) {
-        // Race: rileggi.
-        const { data: again } = await supabase
+        // Race: rileggi. Se anche la rilettura cade, il guasto è quello: 500 col codice.
+        const { data: again, error: errAgain } = await supabase
           .from('scrutini').select('*').eq('section_id', sectionId).eq('periodo_id', periodoId).maybeSingle()
+        if (errAgain) return rispostaGuastoDb(OP_GET, 'db:scrutini', errAgain)
         scrutinio = again
       } else {
         scrutinio = created
@@ -247,12 +262,12 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
     if (!scrutinio) return NextResponse.json({ error: 'Impossibile aprire lo scrutinio' }, { status: 500 })
 
     const [
-      { data: alunni },
-      { data: materie },
-      { data: mieMaterie },
-      { data: giudizi },
-      { data: comportamento },
-      { data: scala },
+      { data: alunni, error: errAlunni },
+      { data: materie, error: errMaterie },
+      { data: mieMaterie, error: errMieMaterie },
+      { data: giudizi, error: errGiudizi },
+      { data: comportamento, error: errComportamento },
+      { data: scala, error: errScala },
       { data: pagelle, error: errPagelle },
     ] =
       await Promise.all([
@@ -263,11 +278,20 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
         supabase.from('scrutinio_comportamento').select('*').eq('scrutinio_id', scrutinio.id),
         scuolaId
           ? supabase.from('giudizi_sintetici_scala').select('etichetta, ordine').eq('scuola_id', scuolaId).eq('attivo', true).order('ordine')
-          : Promise.resolve({ data: [] as { etichetta: string; ordine: number }[] }),
+          : Promise.resolve({ data: [] as { etichetta: string; ordine: number }[], error: null }),
         // Quali alunni hanno DAVVERO un PDF archiviato (spec 2026-09-24, S3):
         // la pagina mostra «Elimina pagella» solo su queste, non su ogni alunno.
         supabase.from('pagelle').select('alunno_id').eq('scrutinio_id', scrutinio.id),
       ])
+    // Il contenuto dello scrutinio: un guasto non è una classe senza alunni, senza
+    // materie, senza giudizi o senza comportamento. Le materie del docente decidono
+    // cosa può modificare; la scala, fra cosa può scegliere.
+    if (errAlunni) return rispostaGuastoDb(OP_GET, 'db:alunni', errAlunni)
+    if (errMaterie) return rispostaGuastoDb(OP_GET, 'db:materie', errMaterie)
+    if (errMieMaterie) return rispostaGuastoDb(OP_GET, 'db:utenti_sezioni_materie', errMieMaterie)
+    if (errGiudizi) return rispostaGuastoDb(OP_GET, 'db:scrutinio_giudizi', errGiudizi)
+    if (errComportamento) return rispostaGuastoDb(OP_GET, 'db:scrutinio_comportamento', errComportamento)
+    if (errScala) return rispostaGuastoDb(OP_GET, 'db:giudizi_sintetici_scala', errScala)
 
     // Degrado DICHIARATO, non un 500: senza questo elenco la pagina dello
     // scrutinio (giudizi, comportamento, PDF) resta utilizzabile, e l'unica cosa
@@ -323,7 +347,9 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     const supabase = await createAdminClient()
 
     // Scrutinio + sezione (per scope + risoluzione titolare).
-    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
+    // Un guasto non è «scrutinio non trovato».
+    const { data: scr, error: errScr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
+    if (errScr) return rispostaGuastoDb('primaria/scrutinio:POST', 'db:scrutini', errScr)
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 
@@ -451,7 +477,9 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
     const { scrutinioId, comportamento } = b.data
 
     const supabase = await createAdminClient()
-    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
+    // Un guasto non è «scrutinio non trovato».
+    const { data: scr, error: errScr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
+    if (errScr) return rispostaGuastoDb('primaria/scrutinio:PATCH', 'db:scrutini', errScr)
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 

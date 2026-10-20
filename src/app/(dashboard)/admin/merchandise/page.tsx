@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/cockpit';
 import { SaveCheck, SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { apriDocumento } from '@/lib/native/scarica';
 import { avvisoDocumento, esportaDocumento, type AvvisoDocumento } from '@/lib/ui/documento-segreteria';
@@ -303,7 +304,8 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
     if (alunno || term.length < 2) return; // niente setState sincrono: il dropdown è gated in render
     const t = setTimeout(() => {
       fetch(`/api/admin/search?q=${encodeURIComponent(term)}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`)
-        .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.success) { setRisultati(d.data.alunni ?? []); setRisultatiPer(term); } }).catch(() => {});
+        .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.success) { setRisultati(d.data.alunni ?? []); setRisultatiPer(term); } })
+        .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `merch-ricerca-alunno-fallita: ${nomeErrore(err)}` }));
     }, 300);
     return () => clearTimeout(t);
   }, [q, userId, alunno]);

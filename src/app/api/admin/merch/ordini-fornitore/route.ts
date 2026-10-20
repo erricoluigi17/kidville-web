@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { dataCivile } from '@/i18n/config'
 
 // Ordini d'acquisto (PO) al fornitore — un PO per fornitore.
@@ -105,7 +106,9 @@ export const POST = withRoute('admin/merch/ordini-fornitore:POST', async (reques
     // PO numerato (solo se fornitore indicato).
     let po: { id: string; numero: string } | null = null
     if (fornitore_id) {
-      const { data: forn } = await supabase.from('merch_fornitori').select('id, nome, scuola_id').eq('id', fornitore_id).maybeSingle()
+      const { data: forn, error: errForn } = await supabase.from('merch_fornitori').select('id, nome, scuola_id').eq('id', fornitore_id).maybeSingle()
+      // Un guasto non è «fornitore non valido».
+      if (errForn) return rispostaGuastoDb('admin/merch/ordini-fornitore:POST', 'db:merch_fornitori', errForn)
       if (!forn || forn.scuola_id !== scuolaId) {
         return NextResponse.json({ error: 'Fornitore non valido per il plesso' }, { status: 400 })
       }
@@ -169,27 +172,38 @@ export const PATCH = withRoute('admin/merch/ordini-fornitore:PATCH', async (requ
 
     const supabase = await createAdminClient()
     const plessi = await scuoleDiUtente(supabase, auth.user)
-    const { data: po } = await supabase.from('merch_ordini_fornitore').select('id, scuola_id, stato').eq('id', id).maybeSingle()
+    const { data: po, error: errPo } = await supabase.from('merch_ordini_fornitore').select('id, scuola_id, stato').eq('id', id).maybeSingle()
+    // Un guasto non è «PO non trovato».
+    if (errPo) return rispostaGuastoDb('admin/merch/ordini-fornitore:PATCH', 'db:merch_ordini_fornitore', errPo)
     if (!po) return NextResponse.json({ error: 'PO non trovato' }, { status: 404 })
     if (!plessi.includes(po.scuola_id as string)) {
       return NextResponse.json({ error: 'Accesso negato: PO fuori dal tuo plesso' }, { status: 403 })
     }
 
     // Righe ancora 'ordinato' collegate al PO → tornano da_ordinare.
-    const { data: righe } = await supabase
+    // Si legge PRIMA di scrivere: un guasto qui ferma tutto senza niente da disfare, invece di
+    // lasciare le testate degli ordini non risincronizzate.
+    const { data: righe, error: errRighe } = await supabase
       .from('divise_ordini_righe')
       .select('id, ordine_id')
       .eq('ordine_fornitore_id', id)
       .eq('stato', 'ordinato')
+    if (errRighe) return rispostaGuastoDb('admin/merch/ordini-fornitore:PATCH', 'db:divise_ordini_righe', errRighe)
     const ordineIds = (righe ?? []).map((r) => r.ordine_id as string)
-    await supabase
+    const { error: errRiapri } = await supabase
       .from('divise_ordini_righe')
       .update({ stato: 'da_ordinare', ordine_fornitore_id: null, ordinato_il: null })
       .eq('ordine_fornitore_id', id)
       .eq('stato', 'ordinato')
+    // Le righe che non tornano «da ordinare» lascerebbero un PO annullato con capi ancora
+    // «ordinati»: si ferma qui, prima di annullare il PO.
+    if (errRiapri) return rispostaGuastoDb('admin/merch/ordini-fornitore:PATCH', 'db:divise_ordini_righe', errRiapri, 'scrittura')
 
-    await supabase.from('merch_ordini_fornitore').update({ stato: 'annullato', chiuso_il: new Date().toISOString() }).eq('id', id)
+    const { error: errAnnulla } = await supabase.from('merch_ordini_fornitore').update({ stato: 'annullato', chiuso_il: new Date().toISOString() }).eq('id', id)
     await syncTestate(supabase, ordineIds)
+    // Le righe sono già tornate «da ordinare» (e le testate risincronizzate): il PO resta
+    // aperto e vuoto, e ripetere l'annullo è sicuro — si dice 500, non «annullato».
+    if (errAnnulla) return rispostaGuastoDb('admin/merch/ordini-fornitore:PATCH', 'db:merch_ordini_fornitore', errAnnulla, 'scrittura')
 
     await logScrittura(supabase, {
       attore: auth.user,

@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 import { PRESA_VISIONE_AZZERATA, puoAnnullarePresaVisione } from '@/lib/presenze/presa-visione'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -32,11 +33,13 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
 
     const supabase = await createAdminClient()
     // Risolve la presenza → section_id e ne verifica lo scope prima dell'update.
-    const { data: presenza } = await supabase
+    // Un guasto non è «presenza non trovata».
+    const { data: presenza, error: errPresenza } = await supabase
       .from('presenze')
       .select('id, section_id')
       .eq('id', presenzaId)
       .maybeSingle()
+    if (errPresenza) return rispostaGuastoDb('primaria/presenze/giust-vista:POST', 'db:presenze', errPresenza)
     if (!presenza) return NextResponse.json({ error: 'Presenza non trovata' }, { status: 404 })
     const scopeErr = await assertSezioneInScope(supabase, auth.user, presenza.section_id as string)
     if (scopeErr) return scopeErr
@@ -64,11 +67,13 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
       const genitoreId = (updated as { giustificata_da?: string | null }).giustificata_da
       const alunnoId = (updated as { alunno_id?: string | null }).alunno_id
       if (genitoreId && genitoreId !== userId) {
-        const { data: alunno } = await supabase
+        // Serve solo al testo dell'avviso: su un guasto l'avviso parte senza il nome.
+        const { data: alunno, error: errAlunno } = await supabase
           .from('alunni')
           .select('nome, scuola_id')
           .eq('id', alunnoId)
           .maybeSingle()
+        if (errAlunno) guastoLetturaAccessoria('notifica', 'primaria/presenze/giust-vista:POST', 'alunno-notifica-non-letto', errAlunno)
         await notificaEvento(supabase, {
           tipo: 'giustifica_vista',
           destinatario: 'genitore',

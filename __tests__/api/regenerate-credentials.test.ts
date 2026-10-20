@@ -277,6 +277,18 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     expect(h.sendEmail).not.toHaveBeenCalled();
   });
 
+  it("guard anti-lockout con il ruolo NON letto (guasto) → 500, nessun reset: un guasto non è «nessun profilo»", async () => {
+    // Fase 11: prima il `{ error }` non si guardava, `profilo` era null e la guardia lasciava
+    // passare il reset — sulla password di un account che poteva essere staff.
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-admin', emails: ['admin@x.it'], first_name: 'Luigi', last_name: null }, error: null };
+    h.utentiRuolo = { data: null, error: { code: 'XX000', message: 'guasto' } };
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA');
+    expect(h.updates).toHaveLength(0);
+    expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+
   it('staff: usa utenti.id come auth id (nessuna riparazione identità)', async () => {
     // Le credenziali staff sono operazione di Direzione (T3): caller = admin.
     h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 's1' } });

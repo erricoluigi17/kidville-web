@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { logEvento } from '@/lib/logging/logger'
+import { guastoSecondario } from '@/lib/db/guasto'
 
 // =============================================================================
 // Macchina a stati logistici del Merchandise (enforced server-side).
@@ -60,6 +62,7 @@ export function derivaStatoTestata(statiRiga: StatoRiga[]): StatoTestata {
 }
 
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
+const OPERAZIONE = 'merch/stati:sincronizzaTestata'
 
 /**
  * Ricalcola e sincronizza lo stato della testata `divise_ordini.stato` dagli
@@ -77,15 +80,30 @@ export async function sincronizzaTestata(
       .select('stato')
       .eq('ordine_id', ordineId)
     if (error) {
-      if (SCHEMA_MANCANTE.has(error.code ?? '')) return null
+      // Il DB E2E della CI non è migrato: è il caso previsto, e la riga è `info`.
+      if (SCHEMA_MANCANTE.has(error.code ?? '')) {
+        logEvento('db', 'info', { operazione: OPERAZIONE, esito: 'righe-schema-assente', entita_id: ordineId, ripiego: true }, error)
+        return null
+      }
+      // Altrove è un guasto: la testata resta con lo stato di prima, e senza questa riga
+      // nessuno saprebbe perché un ordine consegnato risulta ancora «confermato».
+      guastoSecondario('db', OPERAZIONE, 'righe-non-lette', error)
       return null
     }
     const stati = (data ?? []).map((r) => String(r.stato) as StatoRiga)
     if (stati.length === 0) return null
     const derivato = derivaStatoTestata(stati)
-    await supabase.from('divise_ordini').update({ stato: derivato }).eq('id', ordineId)
+    const { error: errTestata } = await supabase.from('divise_ordini').update({ stato: derivato }).eq('id', ordineId)
+    // Passo accessorio dopo la scrittura vera (lo stato della riga): non si risponde 500 a
+    // un'operazione riuscita, ma la testata NON è stata allineata e il chiamante non deve
+    // crederlo — `null` = «non applicato».
+    if (errTestata) {
+      guastoSecondario('db', OPERAZIONE, 'testata-non-sincronizzata', errTestata)
+      return null
+    }
     return derivato
-  } catch {
+  } catch (err) {
+    guastoSecondario('db', OPERAZIONE, 'sincronizzazione-fallita', err)
     return null
   }
 }

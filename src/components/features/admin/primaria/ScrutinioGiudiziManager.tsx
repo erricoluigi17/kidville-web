@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { GraduationCap } from 'lucide-react';
 import { creaMuta } from '@/lib/ui/muta';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Section { id: string; name: string; school_type: string }
 interface Periodo { id: string; nome: string; anno_scolastico: string }
@@ -28,22 +29,31 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
   // testi[materia_codice][etichetta_voto] = testo
   const [testi, setTesti] = useState<Record<string, Record<string, string>>>({});
   const [msg, setMsg] = useState('');
+  // Una lettura di base fallita lascerebbe a schermo «Configura prima un periodo / la scala»,
+  // cioè un consiglio falso: l'avviso dice invece che non si è potuto leggere. È una STRINGA
+  // fra le dipendenze, non `tShared`: si confronta per valore e non rilancia le letture.
+  const tShared = useTranslations('shared');
+  const letturaFallita = tShared('filtriErroreTitolo');
 
   // Carica periodi, scala e sezioni una volta.
   useEffect(() => {
+    const fallita = (cosa: string) => (err: unknown) => {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `scrutinio-giudizi-${cosa}-non-caricati: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+      setMsg(letturaFallita);
+    };
     fetch(`/api/admin/primaria/scrutinio-periodi?userId=${userId}`, { headers: { 'x-user-id': userId } })
       .then((r) => r.json())
       .then((d) => { if (d.success) { setPeriodi(d.data); if (d.data.length) setPeriodoId((p) => p || d.data[0].id); } })
-      .catch(() => {});
+      .catch(fallita('periodi'));
     fetch(`/api/admin/primaria/giudizi?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } })
       .then((r) => r.json())
       .then((d) => { if (d.success) setScala(d.data.scala ?? []); })
-      .catch(() => {});
+      .catch(fallita('scala'));
     fetch(`/api/admin/sections?scuola_id=${scuolaId}`)
       .then((r) => r.json())
       .then((d) => { setSezioni(Array.isArray(d) ? d.filter((s: Section) => s.school_type === 'primaria') : []); })
-      .catch(() => {});
-  }, [scuolaId, userId]);
+      .catch(fallita('sezioni'));
+  }, [scuolaId, userId, letturaFallita]);
 
   // Materie del livello: usa una sezione rappresentativa di quel livello.
   useEffect(() => {

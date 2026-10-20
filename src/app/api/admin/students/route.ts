@@ -16,6 +16,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { HEADER_TOTALE } from '@/lib/api/paginazione';
 import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 
@@ -850,7 +851,10 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 if (scopeErr) return scopeErr;
 
                 // Stato precedente per l'audit (valore prima/dopo).
-                const { data: prima } = await supabase.from('alunni').select('*').eq('id', id).maybeSingle();
+                // Decide le guardie qui sotto (ritorno dall'archivio, cambio di sede): un guasto
+                // non è «alunno non trovato», e nemmeno un via libera.
+                const { data: prima, error: errPrima } = await supabase.from('alunni').select('*').eq('id', id).maybeSingle();
+                if (errPrima) return rispostaGuastoDb('admin/students:PATCH', 'db:alunni', errPrima);
                 if (!prima) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
 
                 /**

@@ -15,6 +15,7 @@ import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid, zOraHHMM } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { annullaAppelloAlunno } from '@/lib/presenze/annulla-appello'
 import { puoAnnullarePresaVisione } from '@/lib/presenze/presa-visione'
@@ -524,8 +525,15 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
         })
         .map((r) => r.alunnoId)
       if (nuoviAssenti.length > 0) {
-        const { data: anagrafiche } = await supabase.from('alunni').select('id, nome').in('id', nuoviAssenti)
-        for (const a of (anagrafiche ?? []) as Array<{ id: string; nome?: string | null }>) {
+        // Il nome serve solo al testo dell'avviso. Su un guasto l'avviso parte LO
+        // STESSO, per ogni assente, con «Tuo figlio»: prima un `null` qui faceva
+        // saltare in silenzio tutti gli avvisi di assenza non comunicata.
+        const { data: anagrafiche, error: errAnagrafiche } = await supabase.from('alunni').select('id, nome').in('id', nuoviAssenti)
+        if (errAnagrafiche) guastoLetturaAccessoria('notifica', 'primaria/appello:POST', 'nomi-assenti-non-letti', errAnagrafiche)
+        const destinatari: Array<{ id: string; nome?: string | null }> = errAnagrafiche
+          ? nuoviAssenti.map((id) => ({ id, nome: null }))
+          : ((anagrafiche ?? []) as Array<{ id: string; nome?: string | null }>)
+        for (const a of destinatari) {
           await notificaEvento(supabase, {
             tipo: 'assenza_non_comunicata',
             operazione: politica,

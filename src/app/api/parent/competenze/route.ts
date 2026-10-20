@@ -6,6 +6,7 @@ import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non qui.
@@ -29,12 +30,15 @@ export const GET = withRoute('parent/competenze:GET', async (request: NextReques
 
     const supabase = await createAdminClient()
 
-    const { data: certs } = await supabase
+    // Un guasto non è «nessun certificato»: il genitore leggerebbe che il documento non
+    // esiste ancora.
+    const { data: certs, error: errCerts } = await supabase
       .from('certificati_competenze')
       .select('id, stato, anno_scolastico, file_url')
       .eq('alunno_id', studentId)
       .in('stato', ['generato', 'firmato'])
       .order('created_at', { ascending: false })
+    if (errCerts) return rispostaGuastoDb('parent/competenze:GET', 'db:certificati_competenze', errCerts)
 
     const out = []
     for (const c of (certs ?? []) as { id: string; stato: string; anno_scolastico: string; file_url: string | null }[]) {

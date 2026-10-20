@@ -77,4 +77,14 @@ describe('getSlots', () => {
     expect(eq1).toHaveBeenCalledWith('entita_tipo', 'pagella')
     expect(eq2).toHaveBeenCalledWith('entita_id', 'e-1')
   })
+
+  it('un guasto LANCIA invece di rispondere «nessuno ha firmato» (fase 11)', async () => {
+    const order = vi.fn().mockResolvedValue({ data: null, error: { code: '57014', message: 'timeout' } })
+    const eq2 = vi.fn().mockReturnValue({ order })
+    const eq1 = vi.fn().mockReturnValue({ eq: eq2 })
+    const select = vi.fn().mockReturnValue({ eq: eq1 })
+    const supabase = { from: vi.fn().mockReturnValue({ select }) } as never
+
+    await expect(getSlots(supabase, 'forms', 'e-1')).rejects.toThrow('Lettura degli slot di firma non riuscita')
+  })
 })

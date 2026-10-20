@@ -11,6 +11,7 @@ import { allineaIndirizzoAccesso } from '@/lib/auth/indirizzo-accesso';
 import { firstEmail } from '@/lib/auth/parent-identity';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { selectResiliente } from '@/lib/supabase/select-resiliente';
 
 // ============================================================
@@ -230,7 +231,11 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
         if (fuoriScope) return fuoriScope;
 
         // Stato precedente per l'audit.
-        const { data: prima } = await supabase.from('parents').select('*').eq('id', id).maybeSingle();
+        // Serve all'audit E all'allineamento dell'indirizzo di accesso (`auth_user_id`, sotto):
+        // un guasto qui salverebbe l'anagrafica saltando in silenzio proprio quell'allineamento.
+        // Si legge prima di scrivere, quindi fermarsi non lascia niente a metà.
+        const { data: prima, error: errPrima } = await supabase.from('parents').select('*').eq('id', id).maybeSingle();
+        if (errPrima) return rispostaGuastoDb('admin/parents:PATCH', 'db:parents', errPrima);
 
         const updates: Record<string, unknown> = { ...dataToUpdate };
         let { data, error } = await supabase.from('parents').update(updates).eq('id', id).select();

@@ -9,6 +9,7 @@ import { parseBody, parseData, parseMultipart, parseQuery } from '@/lib/validati
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 import { scadenzaCestino } from '@/lib/primaria/cestino-registro'
 import {
@@ -19,6 +20,7 @@ import {
   rispostaGestioneNegata,
   rispostaNonDelFascicolo,
   togliFileFascicoloCaricato,
+  rispostaGuastoAccesso,
 } from '@/lib/primaria/fascicolo-gestione'
 
 // Il letterale resta QUI (vedi `fascicolo-gestione.ts`): le guardie dell'oblio lo cercano
@@ -87,6 +89,8 @@ export const GET = withRoute('primaria/fascicolo:GET', async (request: NextReque
 
     const supabase = await createAdminClient()
     const access = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const guastoGate = rispostaGuastoAccesso(access)
+    if (guastoGate) return guastoGate
     if (!access.consentito) {
       return NextResponse.json({ error: 'Accesso al fascicolo non consentito' }, { status: 403 })
     }
@@ -155,12 +159,17 @@ export const POST = withRoute('primaria/fascicolo:POST', async (request: NextReq
 
     const supabase = await createAdminClient()
     const access = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const guastoGate = rispostaGuastoAccesso(access)
+    if (guastoGate) return guastoGate
     if (!access.consentito) {
       return NextResponse.json({ error: 'Caricamento nel fascicolo non consentito' }, { status: 403 })
     }
 
     // Sezione corrente dell'alunno (per RBAC contitolari futuri).
-    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
+    // È un valore che si SCRIVE sul documento: su un guasto il documento nascerebbe con
+    // `section_id` nullo e fuori dal perimetro della classe. Ci si ferma prima dell'upload.
+    const { data: alunno, error: errAlunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
+    if (errAlunno) return rispostaGuastoDb('primaria/fascicolo:POST', 'db:alunni', errAlunno)
 
     // Bucket privato (no URL pubblico). Lo crea se assente.
     try {

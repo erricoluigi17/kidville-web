@@ -436,11 +436,19 @@ async function verificaAccesso(
   }
 
   if (tipo === 'voce_diario') {
-    const { data: voce } = await supabase
+    const { data: voce, error: errVoce } = await supabase
       .from('eventi_diario')
       .select('alunno_id')
       .eq('id', oggettoId!)
       .maybeSingle()
+    // Come per il messaggio e il media qui sopra: un guasto di lettura non si
+    // traveste in silenzio da «voce inesistente», cioè da tentativo illecito.
+    if (errVoce) {
+      logEvento('segnalazione', 'error', {
+        operazione: 'segnalazioni:POST', esito: 'voce-diario-non-letta', tipo,
+      }, errVoce)
+      return { ok: false }
+    }
     if (!voce?.alunno_id) return { ok: false }
     // `eventi_diario` non ha `scuola_id`: la sede è dell'ALUNNO. Si risolve qui,
     // con il filtro nella stessa query — e serve a due cose insieme: negare la

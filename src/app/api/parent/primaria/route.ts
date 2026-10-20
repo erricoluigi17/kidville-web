@@ -9,6 +9,7 @@ import { zDataYMD, zOpzionale } from '@/lib/validation/common'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
 import { firmaPercorsi, percorsoNelBucket } from '@/lib/allegati/storage'
 import { allegatiRegistroViviDalJoin } from '@/lib/primaria/cestino-allegati-registro'
 
@@ -136,6 +137,8 @@ const GIORNI_REGISTRO_MASSIMI = 365
  */
 const RIGHE_REGISTRO_MASSIME = 500
 
+const OP = 'parent/primaria:GET'
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
 // query su `alunni` — stesso criterio di parent/competenze.
@@ -231,17 +234,25 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
 
     const supabase = await createAdminClient()
 
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('id, nome, cognome, section_id, scuola_id')
       .eq('id', studentId)
       .maybeSingle()
+    if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Tipo scuola della sezione (per la vista adattiva lato client).
+    //
+    // Un guasto qui NON è «nessun grado»: il ramo sotto risponderebbe 200 con
+    // `schoolType: null`, e `use-child-school-type` lo prenderebbe per una
+    // risposta DETERMINATA e la scriverebbe in cache sul telefono — un bambino
+    // della primaria smistato nella home 0-6 da un blip del database. Il 500 lo
+    // stesso hook lo sa leggere: non tocca la cache.
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
+      const { data: sez, error: errSez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
+      if (errSez) return rispostaGuastoDb(OP, 'db:sections', errSez)
       schoolType = sez?.school_type ?? null
     }
 
@@ -261,11 +272,14 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
     }
 
     // Buffer notifica (per la visibilità delle valutazioni).
-    const { data: settings } = await supabase
+    // Accessoria: senza l'impostazione vale il buffer predefinito (10 minuti), che è
+    // lo stesso ripiego di una sede che non l'ha mai configurata.
+    const { data: settings, error: errSettings } = await supabase
       .from('admin_settings')
       .select('notif_buffer_valutazioni_min')
       .eq('scuola_id', alunno.scuola_id)
       .maybeSingle()
+    if (errSettings) guastoLetturaAccessoria('registro', OP, 'buffer-valutazioni-non-letto', errSettings)
     const bufferMin = settings?.notif_buffer_valutazioni_min ?? 10
     const sogliaVal = new Date(Date.now() - bufferMin * 60_000).toISOString()
 
@@ -281,24 +295,29 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
     // fuso in cui la scuola sta.
     const da = dataDa ?? addGiorni(oggiFiscaleISO(), -GIORNI_REGISTRO_PREDEFINITI)
 
-    // ⚠️ SI DESTRUTTURA IL SOLO `{ data }`, E QUESTO È UN DIFETTO NOTO —
-    //    preesistente, identico su `main`, NON introdotto da `dataDa`.
+    // ─── OGNI `error` SI GUARDA (fase 11 della robustezza, 2026-10-19) ───────
     //
-    // PostgREST non lancia: ritorna `{ data: null, error }`. Un guasto sulla
-    // lettura di `registro_orario` (rete, RLS, colonna rinominata) arriva qui
-    // come `registro = null`, diventa `registro ?? []` poco più sotto ed esce
-    // come una risposta 200 con zero lezioni — cioè ESATTAMENTE il sintomo che
-    // questa finestra esiste per curare, «Nessun compito assegnato di recente»,
-    // senza errore per il genitore e senza log applicativo. Vale allo stesso
-    // modo per le altre quattro letture.
+    // Fino a qui si destrutturava il solo `{ data }`. PostgREST non lancia:
+    // ritorna `{ data: null, error }`, e un guasto sulla lettura di
+    // `registro_orario` arrivava come `registro = null`, diventava
+    // `registro ?? []` ed usciva come un 200 con zero lezioni — ESATTAMENTE il
+    // sintomo che questa finestra esiste per curare, «Nessun compito assegnato
+    // di recente», senza errore per il genitore e senza log. Lo stesso valeva
+    // per valutazioni (zero voti), note disciplinari e assenze.
     //
-    // Non si corregge QUI: gestire l'`error` cambia ciò che vedono i TRE
-    // consumatori di questa route (`/parent/compiti`, `/parent/lezioni` e l'hook
-    // `use-child-school-type` — elencati con file e riga sulla costante
-    // `RIGHE_REGISTRO_MASSIME`), ed è un intervento suo — con i suoi test e la
-    // sua voce di PRD — non un effetto collaterale di un filtro nuovo. Chi passa
-    // di qui e ha quel mandato: parte da questa riga.
-    const [{ data: registro, count: totaleRegistro }, { data: valutazioni }, { data: note }, { data: assenze }, { data: materie }] = await Promise.all([
+    // Ora quelle quattro rispondono 500 col codice. I tre consumatori
+    // (`/parent/compiti`, `/parent/lezioni`, `use-child-school-type`, elencati
+    // sulla costante `RIGHE_REGISTRO_MASSIME`) trattano già una risposta
+    // non-ok come «il server non ha risposto», non come «non c'è niente». Le
+    // materie servono al solo selettore della giustifica didattica: degradano
+    // a elenco vuoto, con la riga che lo dice.
+    const [
+      { data: registro, count: totaleRegistro, error: errRegistro },
+      { data: valutazioni, error: errValutazioni },
+      { data: note, error: errNote },
+      { data: assenze, error: errAssenze },
+      { data: materie, error: errMaterie },
+    ] = await Promise.all([
       supabase
         .from('registro_orario')
         .select(
@@ -362,6 +381,11 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
         .eq('attiva', true)
         .order('ordine'),
     ])
+    if (errRegistro) return rispostaGuastoDb(OP, 'db:registro_orario', errRegistro)
+    if (errValutazioni) return rispostaGuastoDb(OP, 'db:valutazioni', errValutazioni)
+    if (errNote) return rispostaGuastoDb(OP, 'db:note_disciplinari', errNote)
+    if (errAssenze) return rispostaGuastoDb(OP, 'db:presenze', errAssenze)
+    if (errMaterie) guastoLetturaAccessoria('registro', OP, 'materie-sezione-non-lette', errMaterie)
 
     // ─── L'ALLEGATO USCIVA COME PERCORSO, CIOÈ COME LINK MORTO ───────────────
     //

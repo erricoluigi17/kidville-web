@@ -11,6 +11,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
 
 // Ruoli di plesso avvisati oltre ai docenti della sezione (come panic-alert).
 const STAFF_LOCKER = new Set(['segreteria', 'admin', 'coordinator'])
@@ -50,11 +51,13 @@ export const POST = withRoute('locker/notify:POST', async (request: Request) => 
     const collegato = await genitoreHasFiglio(supabase, user.id, alunnoId)
     if (!collegato) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
 
-    const { data: alunno } = await supabase
+    const { data: alunno, error: errAlunno } = await supabase
       .from('alunni')
       .select('id, nome, scuola_id, section_id')
       .eq('id', alunnoId)
       .maybeSingle()
+    // Un guasto non è «alunno non trovato»: il genitore leggerebbe che suo figlio non c'è.
+    if (errAlunno) return rispostaGuastoDb('locker/notify:POST', 'db:alunni', errAlunno)
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Destinatari: staff del plesso + docenti della sezione (utenti_sezioni;

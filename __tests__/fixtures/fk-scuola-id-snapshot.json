@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-19",
-  "generato_alle": "2026-10-19T21:17:10Z",
+  "generato_il": "2026-10-20",
+  "generato_alle": "2026-10-20T07:57:18Z",
   "sha256": "efa447610a826ddec4437fcecc21626aeb64e3175e5c385b3e09916dd3222567",
   "tabelle": [
     {

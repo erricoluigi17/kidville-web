@@ -243,12 +243,12 @@ export function posterioriCheContengono(
 // con `ADD CONSTRAINT`, e la guardia delle FK verso `utenti` la vede per quelle parole: nessuna
 // FK cambia. Cambierà davvero solo la fotografia delle migrazioni (e quella delle tabelle per i
 // due CHECK, se li guarda). Si tolgono con la PR-B dopo il merge, rigenerando dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261019215733_scatola_nera_modifiche.sql':
-        'fase 12: schema scatola_nera (tabella modifiche con PK e RLS senza policy) e trigger AFTER UPDATE su 13 tabelle; la applica l\'integrazione al merge della PR delle fasi 11-12, la voce si toglie con la PR-B rigenerando le fotografie dalla produzione',
-    '20261019220315_registri_worm_permessi_vincoli_bucket.sql':
-        'fase 12: due CHECK su pagamenti con ADD CONSTRAINT (nessuna FK), trigger WORM sui registri, REVOKE e tipi dei bucket; la applica l\'integrazione al merge della PR delle fasi 11-12, la voce si toglie con la PR-B rigenerando le fotografie dalla produzione',
-}
+// SVUOTATA il 20/10 (PR-B dopo il merge di #250, `bff14d4e`): le tre migrazioni delle fasi 11-12
+// sono applicate dall'integrazione, una riga ciascuna con la version del file (231 migrazioni);
+// fotografie rigenerate dalla produzione — cambia davvero solo quella delle migrazioni. Le altre
+// sette cambiano solo l'istante dello scatto: la fotografia delle tabelle non guarda i CHECK, e
+// quella dei bucket guarda nome e visibilità, non i tipi ammessi.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

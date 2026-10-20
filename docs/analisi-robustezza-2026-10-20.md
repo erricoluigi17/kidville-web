@@ -16,7 +16,7 @@
 > l'osservato ma che non è stata dimostrata.
 
 **Indice.** §1 Cosa dice davvero `/api/health` · §2 Problemi e soluzioni (Server S1–S12, Database
-D1–D12) · §3 La roadmap in sessioni · §4 Fotografia di oggi · §5 Fonti · **Parte 4 — Confronto con
+D1–D12) · §3 La roadmap (rimando alla specifica) · §4 Fotografia di oggi · §5 Fonti · **Parte 4 — Confronto con
 il 05/10**
 
 ---
@@ -33,11 +33,11 @@ il 05/10**
   - non c'è il ripristino al minuto (D2), 13,2 GB di foto e video non hanno nessuna copia (D3),
     cancellare un utente o un alunno trascina via decine di tabelle senza copia (D4);
   - la produzione è l'unico database, e agenti autonomi ci lavorano senza conferma (D1).
-- La roadmap proposta (§3) ha **14 sessioni**, da fare una alla volta. Le prime tre costano poco
-  e chiudono i rischi di perdita già nel codice: documenti delle iscrizioni (con scadenza al
-  **31/10**), `exec_sql`, cascate senza copia. Le due protezioni più grandi però **non sono
-  sessioni ma decisioni** del titolare: il ripristino al minuto (T1, ~100 $/mese) e la copia della
-  galleria (T2, ~0,2 $/mese). In tutto le decisioni sono **12** (§3.4).
+- La roadmap (§3, ora una specifica con 14 piani) ha **14 sessioni**, da fare una alla volta. La
+  prima ha una scadenza al **31/10** (documenti delle iscrizioni); seguono `exec_sql` con un freno
+  sulle istruzioni distruttive, le cascate senza copia, il backup notturno e la prova di ripristino.
+  Le 12 decisioni del titolare sono state prese il 20/10: niente ripristino al minuto (T1) e niente
+  copia della galleria (T2) per ora, come rischi accettati con una soglia per ridecidere.
 - Una correzione fatta durante la scrittura: la cache di `/api/iscrizione/sedi` non manca di
   `s-maxage` come pensavo all'inizio. Il codice lo manda, ma la CDN di Vercel non tiene la risposta
   per un motivo non ancora dimostrato (S8).
@@ -632,7 +632,7 @@ codice fra parentesi quadre, es. **[S1a]**, rimanda alla riga della §5).
 
 **Soluzioni**
 - **A ✅** `CHECK … NOT VALID` + `VALIDATE`; un job che tiene 14 giorni di `job_run_details`
-  (dopo che l'esito di ogni job è conservato altrove: sessione 5 della §3);
+  (dopo che l'esito di ogni job è conservato altrove: sessione 6 della specifica);
   `idle_in_transaction_session_timeout` a 60 s con `ALTER ROLE` sui ruoli dell'API (`ALTER
   DATABASE` qui dà 42501). *Costo:* basso. **[D11a]**
 - **I 2 WARN di sicurezza e i 137 indici si lasciano**, con il motivo scritto: `pg_net` ha i suoi
@@ -659,357 +659,24 @@ codice fra parentesi quadre, es. **[S1a]**, rimanda alla riga della §5).
 
 ## 3. La roadmap in sessioni
 
-Quattordici sessioni, **una alla volta**. Ognuna segue lo stesso giro: ramo `robustezza2/sNN-…` da
-`main` → PR → CI verde (tutti i job) → **merge a mano del titolare** → deploy → una `SELECT` che
-conferma che l'integrazione ha applicato la migrazione. Il ramo dopo nasce solo quando quello prima è
-rilasciato e pulito (`AGENTS.md`, punto 1).
+> **Riscritta il 20/10 come specifica.** Dopo il confronto della Parte 4 e le dodici decisioni del
+> titolare, la roadmap è passata nel formato superpowers:
+> `docs/superpowers/specs/2026-10-20-robustezza-seconda-serie-design.md` (decisioni, ordine, regole
+> comuni, dettaglio di ogni sessione, «Cosa NON fare», tabella di stato) e un piano per sessione in
+> `docs/superpowers/plans/2026-10-20-robustezza2-sNN-<nome>.md`. **Lo stato si segue lì, non qui.**
 
-### 3.1 Tabella di stato
+**Ordine.** 1 iscrizioni (entro il 31/10) · 2 `exec_sql` e freno sulle istruzioni distruttive ·
+3 scatola nera · 4 backup e allarme · 5 prova di ripristino · 6 esiti dei cron · 7 salute completa ·
+8 cron e igiene · 9 email e fornitori · 10 operazioni a più passi (entro metà dicembre) · 11 letture a
+blocchi · 12 chat leggera · 13 bordo pubblico · 14 identità, solo sopra una soglia misurata.
 
-| # | Sessione | Problemi | Dipende da | Stato | PR | Note |
-|---|---|---|---|---|---|---|
-| 1 | Iscrizioni: nessun documento perso, stati vincolati | D9, D11 (CHECK, audit docente) | — | da fare | — | **scadenza 31/10**: il giro `iscrizioni-retention` parte l'1/11 alle 04:41 UTC. Decisione T6 |
-| 2 | Chiudere la via all'SQL arbitrario | D1-A, D10 (istruzioni) | — | da fare | — | migrazione `DROP FUNCTION`; decisione T3 la completa |
-| 3 | Scatola nera sulle cascate e sulle anagrafiche | D4-A, D7 (ricevute delle note), D6 se T4 | 2 | da fare | — | crescita del DB da misurare prima |
-| 4 | Backup alle 02:23, secondo canale d'allarme, bucket e Vault nel repo | S4, D3, D5 (in parte), D8 (in parte) | — | da fare | — | decisioni T2, T5, T12 |
-| 5 | Registro degli esiti dei cron: si osserva, non si cambia | S1 (osservazione) | 2 | da fare | — | base di confronto per la 7 |
-| 6 | La salute vede tutto, senza falsi «giù» | S1 (sorveglianza), S5, D10 (allarme) | 5 | da fare | — | due RPC di sola lettura |
-| 7 | Correggere i cron e l'igiene del database | S1 (comportamento), D11 (igiene), D12, S12 (`app_log`) | 5, 6 | da fare | — | decisione T7 |
-| 8 | Email e fornitori senza successi finti | S2, S9 | 6 | da fare | — | solo codice |
-| 9 | Operazioni a più passi senza perdite | D7 | 3 | da fare | — | **entro metà dicembre** (riapertura degli scrutini a gennaio) |
-| 10 | Letture che non si troncano | S6 | — | da fare | — | anticipare se un elenco tocca già 1000 righe (vedi sotto) |
-| 11 | Identità a costo ridotto | S3 | 6, T10 | da fare | — | serve prima la decisione T10 |
-| 12 | Chat leggera | S7 | 11 | da fare | — | dopo la 11, per misurarle separate |
-| 13 | Bordo pubblico: cache, firewall, errori, login, build | S8, S10, S11, S12 (build) | — | da fare | — | decisioni T8, T9 |
-| 14 | Ripristino completo, provato dall'inizio alla fine | D5, D2 (ricetta), D8 (verifica) | 4, T1, T11 | da fare | — | mezza giornata del titolare |
+**Decisioni (T1–T12).** Niente ripristino al minuto e niente galleria nel backup per ora, come rischi
+accettati con una soglia per ridecidere; freno sulle istruzioni distruttive degli agenti; copia
+silenziosa del protocollo; firewall prima in «log»; CAPTCHA rinviato. Le opzioni e i costi
+presentati al titolare restano nella storia del ramo (commit `e85253c0`).
 
-**Perché quest'ordine.**
-- **1 prima di tutto** perché è l'unica con una data: il giro mensile della conservazione delle
-  iscrizioni. Oggi il caso è latente (0 domande importate in `pending`/`rejected`), ma il rifiuto non
-  controlla lo stato precedente, quindi basta un clic per renderlo vero. Se la sessione non è in
-  produzione il 31/10, la guardia è una lettura da rifare quel giorno: `select count(*) from
-  enrollment_submissions where imported_at is not null and status in ('pending','rejected');` deve
-  dare 0 (oggi dà 0).
-- **2 → 3.** La 3 insegna alla scatola nera a rispettare l'interruttore `scatola_nera.senza_storico`
-  (serve alle pulizie in blocco). È sicuro solo quando nessun ruolo dell'app può più accenderlo con
-  `exec_sql`.
-- **5 → 6 → 7: prima si guarda, poi si tocca.** La 5 registra gli esiti veri senza cambiare il
-  comportamento e dà il «prima»; la 6 li porta in `/api/health`; solo la 7 cambia timeout, pulizie e
-  `storici_tick`, quando un peggioramento ha già un allarme e un prima/dopo misurabile.
-  `cron.job_run_details` si svuota solo nella 7: prima, i job mensili ci perderebbero l'unica traccia.
-- **6 → 8.** Un'email che fallisce deve arrivare a un allarme, non solo a un log.
-- **6 → 11.** Il controllo `auth` della salute misura le regressioni del cambio d'identità.
-- **3 → 9.** Le righe sono già al sicuro nella scatola nera; nella 9 si mettono al sicuro i file.
-- **4 → 14.** Bucket dichiarati, ricetta del Vault ed eventuale galleria servono al ripristino.
-- **La 10 si anticipa** se `select count(*) from student_parents` supera già 1000: in quel caso
-  l'elenco genitori dell'amministrazione è già troncato oggi.
-
-### 3.2 Regole comuni
-
-- **Codice che regge il momento del merge.** Migrazione e deploy partono insieme al merge, e il DB
-  della CI non è migrato: il codice che chiama una RPC nuova deve reggere `PGRST202` e `42703`, con il
-  modello `CODICI_NON_INSTALLATO` già usato in `src/lib/health/controlli.ts`.
-- **Fotografie delle migrazioni.** Dopo una sessione con migrazione, la sessione dopo apre con la
-  rigenerazione di `__tests__/fixtures/migrazioni-applicate-snapshot.json` (pratica «PR-B»).
-- **Corpi delle funzioni presi dalla produzione.** Chi ridefinisce una funzione parte da
-  `pg_get_functiondef` della produzione, non dal file del repo: altrimenti riporta in vita versioni
-  vecchie.
-- **Come si torna indietro.** Codice: Instant Rollback di Vercel subito, poi una PR di revert.
-  Migrazioni: la sezione «ROLLBACK» nell'intestazione (come in
-  `20261019223123_battiti_app_log_che_contano.sql`), che diventa una migrazione nuova **solo** dentro
-  una PR di revert, mai applicata a mano.
-- **Log e PRD.** Ogni sessione porta i suoi `logEvento` con `esito`, le scritture in `app_log` delle
-  migrazioni con `ON CONFLICT`, e una voce di changelog nel PRD.
-
-### 3.3 Le sessioni una per una
-
-#### Sessione 1 — Iscrizioni: nessun documento perso, stati vincolati
-- **Obiettivo:** la conservazione non può togliere un documento ancora citato da un'anagrafica; una
-  domanda già approvata non si può respingere.
-- **Cosa si tocca:** `src/app/api/gdpr/retention-iscrizioni/route.ts:161-344` legge prima i percorsi
-  citati da anagrafiche e fascicolo: un percorso citato finisce fra gli «incerti» e non si toglie; se
-  la lettura fallisce non si toglie niente. `src/app/api/admin/iscrizioni/route.ts:879-883` aggiunge
-  `.eq('status','pending')`: zero righe → `409` con `codice`. Migrazione con `CHECK … NOT VALID` e poi
-  `VALIDATE` su `enrollment_submissions.status` e `alunni.stato`, con i valori misurati prima e
-  coerenti col lock `stati-alunno-anche-in-sql`. Audit docente (`src/lib/audit/scrittura.ts:109-134`)
-  secondo T6.
-- **Rischio:** un valore imprevisto fa fallire la `VALIDATE` al merge e ferma l'integrazione: per
-  questo si misura prima e si separa `NOT VALID`.
-- **Indietro:** `DROP CONSTRAINT` in una migrazione inversa; revert.
-- **Prova:** due vincoli convalidati in `pg_constraint`; test con una domanda importata
-  `pending`/`rejected` che cita un documento → il documento resta; il giro dell'1/11 batte `ok` in
-  `app_log` con il conteggio dei citati saltati; rifiutare una domanda approvata → `409`.
-
-#### Sessione 2 — Chiudere la via all'SQL arbitrario
-- **Obiettivo:** nessun ruolo dell'app può più eseguire SQL qualsiasi né accendere
-  `registri.manutenzione`, `scatola_nera.manutenzione`, `scatola_nera.senza_storico`.
-- **Misura prima:** le chiamate di `exec_sql` in `pg_stat_user_functions`.
-- **Cosa si tocca:** migrazione `DROP FUNCTION IF EXISTS public.exec_sql(text)` (definita solo nel
-  baseline, nessun cron la usa). Si eliminano le 6 route sigillate che la chiamano — una,
-  `apply-enrollment-migration`, la **ricrea** (`route.ts:46-61`) — con le loro voci in
-  `src/lib/security/seal.ts`, e i 5 script `scripts/apply_*` / `backfill_presenze_scuola.mjs`. Un
-  lock nuovo vieta `rpc('exec_sql'` in `src/` e `scripts/` e le funzioni `SECURITY DEFINER` con un
-  argomento `sql text`. Si allineano i 6 test che la citano. `.claude/commands/ship-cycle.md:344-350`
-  diventa «la applica l'integrazione al merge; il merge lo fa il titolare».
-- **Rischio:** uno script del titolare fuori dal repo smette di funzionare (`PGRST202`): è l'effetto
-  voluto. Resta l'accesso come `postgres` da MCP e pannello: lo copre la decisione T3.
-- **Indietro:** revert; la migrazione inversa ricrea la definizione del baseline, solo su richiesta.
-- **Prova:** `select to_regprocedure('public.exec_sql(text)')` → `NULL`; `POST /rest/v1/rpc/exec_sql`
-  → `404 PGRST202`; advisor ancora a 0 ERROR.
-
-#### Sessione 3 — Scatola nera sulle cascate e sulle anagrafiche
-- **Obiettivo:** ogni riga portata via in cascata da `utenti`, `alunni`, `avvisi` e ogni modifica di
-  un'anagrafica resta recuperabile per 90 giorni.
-- **Misura prima:** l'elenco esatto delle figlie in cascata (`pg_constraint`, `confdeltype='c'`) e
-  `n_tup_del`/`n_tup_upd` con le dimensioni in `pg_stat_user_tables`, per stimare la crescita sui 491 MB.
-- **Cosa si tocca:** una migrazione riusa il ciclo di
-  `20261009171012_scatola_nera_registro_eliminazioni.sql:199-231` sulle figlie che contano
-  (`chat_messages`, `chat_threads`, `avvisi` e risposte dei genitori, `nota_ricezioni`,
-  `alunni_classi_storico`, `storici_*`, `fascicolo_accessi_audit`); le tabelle effimere (es.
-  `notifiche`) restano fuori, con il motivo scritto. Il ciclo di `20261019215733_scatola_nera_modifiche.sql:148`
-  si allarga ad `alunni`, `parents`, `utenti`, `note_disciplinari`, `certificati_medici`.
-  `scatola_nera.registra()` impara a rispettare `scatola_nera.senza_storico` come già fa la funzione
-  delle modifiche, e le pulizie in blocco lo accendono nella propria transazione. La cancellazione di
-  un avviso (`src/app/api/avvisi/[id]/route.ts:793-832`) registra quante risposte porta via.
-  L'informativa (`src/app/privacy/page.tsx`) lo dice. L'oblio (`src/lib/gdpr/scatola-nera.ts`) toglie
-  anche le copie nuove: `scatola_nera.soggetti_di` legge solo `id` e `*_id`, quindi una figlia che
-  nomina la persona solo per `thread_id` va trattata a parte.
-- **Rischio:** crescita del DB; un `INSERT` in più per ogni `DELETE` sulle tabelle calde; oblio
-  incompleto.
-- **Indietro:** migrazione inversa con `DROP TRIGGER IF EXISTS`; nessun dato si perde.
-- **Prova:** i trigger delle eliminazioni crescono di N, quelli delle modifiche da 13 a 18; entro una
-  settimana `select tabella, count(*) from scatola_nera.eliminazioni group by 1` mostra le tabelle
-  nuove; la dimensione del DB resta nella stima.
-
-#### Sessione 4 — Backup alle 02:23, secondo canale d'allarme, bucket e Vault nel repo
-- **Obiettivo:** il backup parte di notte; se salta, l'allarme arriva anche quando GitHub tace; quello
-  che serve al ripristino è versionato.
-- **Cosa si tocca:** `monitor-esterno/wrangler.toml` riceve un secondo cron `23 2 * * *`;
-  `monitor-esterno/worker.mjs` (riga 65, `suonaCampanello`; riga 97, `giro`) lancia
-  `backup-notturno.yml` con `origine=cloudflare`; se il lancio fallisce, oltre a `console.error`
-  (riga 110) manda un'email con Resend direttamente dal Worker; se GitHub risponde «workflow
-  disabled» lo riattiva (`PUT …/actions/workflows/{id}/enable`) e riprova. `backup-notturno.yml`
-  riceve l'input `origine`, un `run-name` e una guardia «completo già riuscito nelle ultime 20 h →
-  esci», così lo `schedule` di GitHub che arriva tardi non fa un secondo giro. `ESCLUDI_BUCKET`
-  (riga 87) cambia solo se T2 = sì. `scripts/campanello/valuta.mjs:103-125` conta anche i giri «(da
-  Cloudflare)». Una migrazione idempotente dichiara i bucket che oggi esistono solo in produzione
-  (fra cui `registro-allegati`; oggi le migrazioni ne dichiarano 6), con le impostazioni lette dalla
-  produzione. `docs/runbook-ripristino.md:210-247`: il passo 6 diventa `vault.create_secret` con
-  l'elenco dei **nomi** delle chiavi, al posto di `ALTER DATABASE SET` (42501).
-- **Rischio:** due giri nella stessa notte; con la galleria il primo specchio copia 13 GB e va
-  provato prima con un giro di prova dentro i `timeout-minutes: 180`; un segreto in più da custodire.
-- **Indietro:** `npx wrangler@4.148.0 deploy` della versione precedente; revert.
-- **Prova:** per 3 notti `gh run list -w backup-notturno.yml` mostra partenze fra 02:23 e 02:35 UTC
-  «(da Cloudflare)»; il p95 server→DB in punta (07:55–08:05) rimisurato contro i **232 / 315 ms** di
-  oggi e lunedì; un lancio volutamente fallito fa arrivare l'email di prova; se T2 = sì, il manifest
-  conta gli oggetti di `gallery`.
-
-#### Sessione 5 — Registro degli esiti dei cron (si osserva, non si cambia)
-- **Obiettivo:** l'esito vero di ognuno dei 30 job, HTTP o SQL, a comportamento invariato.
-- **Cosa si tocca:** due tabelle, `cron_chiamate` (job, numero della richiesta, codice HTTP, timeout,
-  errore) e `cron_ultimo_esito` (una riga per job, che non scade e quindi copre anche i mensili). Una
-  funzione involucro `cron_http_post(job, percorso, timeout)` che conserva il numero della richiesta
-  di `net.http_post`: è la forma che il lock `cron-http-esito-osservato` oggi pretende solo da
-  `iscrizioni_retention_http`, generalizzata. Le 16 funzioni che chiamano il server (15 nel repo, una
-  solo in produzione: l'elenco si prende da `pg_proc`) passano dall'involucro **con lo stesso timeout
-  di oggi** (5000 ms). Un job `cron-esiti` ogni 10 minuti legge `net._http_response` (che dura ~6 h) e
-  `cron.job_run_details` (che copre anche i job solo SQL) e scrive in `app_log` un `error`
-  `cron-http:<job>` per 4xx/5xx/rete, un `info` a parte per i timeout del client pg_net, che non
-  fermano la route.
-- **Rischio:** un corpo copiato dal repo invece che dalla produzione.
-- **Indietro:** migrazione inversa che rimette le definizioni; `cron-esiti` spento.
-- **Prova:** dopo 24 h `cron_chiamate` copre tutti i job e attribuisce i ~27 timeout ogni 6 ore a un
-  job per nome; `cron_ultimo_esito` ha 30 righe.
-
-#### Sessione 6 — La salute vede tutto, senza falsi «giù»
-- **Obiettivo:** `/api/health` sorveglia ogni job, Storage, email, push e allineamento delle
-  migrazioni, e non risponde più `503` per lentezza.
-- **Cosa si tocca:** in `src/lib/health/controlli.ts` il controllo dello schema (righe 677-702) passa
-  da un ciclo in serie con `count:'exact'` a `Promise.all` senza conteggio; un controllo `cron-esiti`
-  legge una RPC di sola lettura (nomi e date); `JOB_CRON` assorbe quasi tutto
-  `JOB_CRON_NON_SORVEGLIATI`, ogni voce solo dopo il suo primo esito `ok` (regola già scritta).
-  Controlli nuovi, tutti al massimo `degradato`, mai `giu`: `storage` (una `list` con limite 1),
-  `email` (ultimi esiti di Resend letti da `app_log`, senza chiamare Resend), `push` (configurazione
-  + battito), `migrazioni` (ultima versione del repo, fissata alla build, contro `max(version)` letto
-  da una RPC). `controlloConfig` guarda tutte le variabili critiche. `src/lib/health/porta.ts:53,79`:
-  il tetto per IP torna in memoria, così la salute non scrive più sul DB che misura. Il Realtime non
-  ha una sonda (costerebbe un socket): lo misura la 12.
-- **Rischio:** un allarme che suona da solo.
-- **Indietro:** Instant Rollback e revert; le RPC lasciate in piedi sono innocue.
-- **Prova:** 30 richieste con p95 ≤ **434 ms** (oggi) e 0 risposte `503` in 7 giorni; 30 job nel
-  corpo; per ogni controllo nuovo un test con numeri letterali che lo costringe a dire «no».
-
-#### Sessione 7 — Correggere i cron e l'igiene del database
-- **Obiettivo:** niente timeout finti, niente chiamate a vuoto ogni minuto, tabelle di servizio con un
-  tetto.
-- **Cosa si tocca:** il timeout passato all'involucro diventa il `maxDuration` della route (lock
-  `cron-max-duration`). `storici_tick` non chiama il server se `storici_generazioni` non ha lavoro, e
-  il suo `exception when others then raise warning` scrive in `app_log`. Un job tiene 14 giorni di
-  `cron.job_run_details`. `ALTER ROLE service_role, authenticated, anon SET
-  idle_in_transaction_session_timeout = '60s'` (non `ALTER DATABASE`, che dà 42501; non su `postgres`
-  né sul ruolo del backup), dopo aver misurato la durata massima di `idle in transaction`.
-  `app_log_purge` tiene gli errori 90 giorni, se T7 lo sceglie. Promemoria
-  (`src/app/api/notifiche/promemoria/route.ts`): indice unico e `on conflict do nothing`. Sync fatture
-  (`src/app/api/pagamenti/fattura/sync/route.ts`): presa con scadenza sul modello di
-  `20261010230945_code_robuste_prese_con_scadenza.sql`.
-- **Rischio:** i 60 s interrompono una transazione legittima; timeout lunghi tengono aperte più
-  richieste pg_net (col filtro di `storici_tick` il problema scompare).
-- **Indietro:** migrazione inversa (timeout a 5000, `ALTER ROLE … RESET`, job nuovi tolti).
-- **Prova:** timeout in `cron_chiamate` da ~108 al giorno a 0; chiamate a `/api/admin/storici/cron`
-  da ~1.440 al giorno a qualche decina; `cron.job_run_details` da 93.577 righe a ~30.000 stabili;
-  `show idle_in_transaction_session_timeout` come `service_role` → `60s`.
-
-#### Sessione 8 — Email e fornitori senza successi finti
-- **Obiettivo:** un sollecito conta come inviato solo se un'email è partita; un fallimento lascia la
-  voce al giro dopo.
-- **Cosa si tocca:** `src/lib/pagamenti/solleciti-invio.ts:401-406`: se nessun destinatario è stato
-  raggiunto, la presa si annulla (`update … set ultimo_sollecito_il = <precedente> where … and
-  ultimo_sollecito_il = <presa>`), esito `ok:false`, log `error`; riga 485: esito con i conteggi
-  inviate/tentate; il registro dei solleciti si scrive anche quando l'invio fallisce.
-  `src/lib/email/send.ts:242-273`: al massimo 3 tentativi, solo su 429/5xx/rete, rispettando
-  `Retry-After`, con la **stessa** `Idempotency-Key`. Il giro **non** si parallelizza.
-  `src/app/api/pagamenti/solleciti/run/route.ts:212`: il battito riporta inviate/fallite/rinviate.
-  `src/lib/translate/claude.ts:38-45`: `timeout` esplicito e `fetch` da `externalFetch`.
-  `src/app/api/news/cron/run/route.ts:294`: `segretoCronValido`. `maxDuration` sulle 17 route lunghe,
-  col lock `cron-max-duration` allargato.
-- **Rischio:** l'annullamento della presa potrebbe far rispedire un'email partita la cui ricevuta si
-  è persa: per questo si annulla solo quando **nessun** invio è riuscito. I ritentativi stanno dentro
-  il tetto del giro (240 s).
-- **Indietro:** revert; solo codice.
-- **Prova:** in produzione 0 voci con la cadenza avanzata e tutti i destinatari non raggiunti; test
-  con un Resend finto che risponde 429, 500 o cade la rete.
-
-#### Sessione 9 — Operazioni a più passi senza perdite
-- **Obiettivo:** nessun passo irreversibile (file cancellati) prima dei passi che possono fallire.
-- **Cosa si tocca:** eliminazione del personale (`src/app/api/admin/staff/eliminazione/route.ts:440-468`
-  e `src/lib/personale/cancella-fascicolo.ts`): prima permessi e account, poi i file in un prefisso di
-  cestino, che il giro `cestino-registro-retention` già esistente distrugge. Riapertura dello
-  scrutinio (`src/app/api/primaria/scrutinio/riapri/route.ts:185-194`): le pagelle consegnate vanno
-  in `ritirate/<scrutinio>/` e la riga si marca ritirata (colonna nuova, ripiego `42703` in CI).
-  Modifica di una nota (`src/app/api/primaria/note/route.ts:636,704-730`): la presa visione si toglie
-  solo se cambia il testo, dentro una RPC transazionale. Compensazioni di merchandise e sedi: test o
-  rinvio motivato nel PRD.
-- **Rischio:** cambia il comportamento della riapertura a ridosso del primo quadrimestre.
-- **Indietro:** revert; la colonna nuova resta inerte.
-- **Prova:** test col secondo o terzo passo che fallisce → nessun file cancellato; oggetti in
-  `ritirate/` dopo la prima riapertura vera.
-
-#### Sessione 10 — Letture che non si troncano
-- **Obiettivo:** nessun elenco restituisce in silenzio solo le prime 1000 righe.
-- **Cosa si tocca:** `src/lib/logging/supabase-fetch.ts`: una `GET` con `Content-Range` che finisce a
-  999 ha toccato `max_rows` (`supabase/config.toml:18`) → `warn` `max-rows-raggiunto` con la route.
-  `leggiABlocchi` esce dai pagamenti verso `src/lib/db/` accanto ad `aBlocchi`. Si sistemano
-  `src/app/api/admin/parents/route.ts:115-153`, `src/app/api/admin/presenze/realtime/route.ts:49-53`,
-  il controllo del testo di classe in `controlli.ts`, tasks e avvisi. Lock sui file toccati.
-- **Rischio:** più richieste per pagina; con un ordine non stabile righe doppie o mancanti.
-- **Indietro:** revert.
-- **Prova:** nei 7 giorni dopo, `max-rows-raggiunto` va a 0; il totale dell'elenco genitori coincide
-  col `count(distinct …)` SQL delle stesse sedi.
-
-#### Sessione 11 — Identità a costo ridotto
-- **Obiettivo:** abbassare il 42 % (oggi **146.787** chiamate al giorno a `/auth/v1/user` e
-  **396.694** letture di `utenti` + `parents`).
-- **Prerequisito T10:** chiavi di firma asimmetriche. Senza, `getClaims()` ripiega su `getUser()`
-  (`src/middleware.ts:229-232`) e non si guadagna niente.
-- **Cosa si tocca:** `src/lib/auth/require-staff.ts:272,337,706` e `src/lib/auth/profili.ts:103`
-  passano a `getClaims()`; la cache delle chiavi oggi dentro `src/middleware.ts:218-382` esce in un
-  modulo condiviso. `risolviDaAuthUid` (righe 207-211) si ricorda per la durata della richiesta nel
-  contesto di `src/lib/logging/context.ts` (aperto da `withRoute`): **non** con `cache()` di React,
-  che nelle route non ricorda niente. Cache di processo da 30–60 s su `authUid → identità`, svuotata
-  dalle route che cambiano ruoli o stato. `getUser()` resta per le operazioni distruttive e per
-  `src/app/api/me/route.ts:41`.
-- **Rischio:** un account disattivato resta valido fino alla scadenza del token e, per i ruoli,
-  fino a 60 s; regressioni di autorizzazione, coperte dai test delle API e dall'E2E in CI.
-- **Indietro:** Instant Rollback e revert.
-- **Prova:** `/auth/v1/user` sotto 30.000 al giorno; `utenti` + `parents` sotto 150.000; p95 in punta
-  contro i numeri di oggi.
-
-#### Sessione 12 — Chat leggera
-- **Obiettivo:** l'elenco delle conversazioni costa poche query, non ~4 per conversazione ogni 30 s.
-- **Cosa si tocca:** `src/app/api/chat/threads/route.ts:55-148`: una RPC di riepilogo con ripiego
-  sul percorso attuale se manca (`PGRST202`); l'`UPDATE` esce dalla `GET` e diventa una richiesta
-  esplicita. `src/components/features/chat/useConversazioneChat.ts:242-247,674`: un poller solo.
-  `src/app/api/chat/messages/route.ts:47-110`: un solo dispatch programmato per finestra di 30 s.
-  `src/components/features/chat/useChatRealtime.ts:301-306`: un `1006` seguito da riconnessione
-  riuscita scende a `info`.
-- **Rischio:** contatori dei non letti sbagliati; notifiche della chat in ritardo.
-- **Indietro:** revert; la RPC è innocua.
-- **Prova:** richieste al DB per una `GET` da ~150 (con 37 conversazioni) a ≤ 5; gli errori realtime
-  (288–378 al giorno feriale) separati fra interruzioni vere e riconnessioni.
-
-#### Sessione 13 — Bordo pubblico: cache, firewall, errori, login, build
-- **Cosa si tocca:** la cache di `/api/iscrizione/sedi` (S8-A: capire su un'anteprima perché la CDN
-  non la tiene, poi correggere; misurare se i «Failed to fetch»/«Load failed» coincidono con le
-  sfide `403`). Regole firewall (T8) scritte in `docs/cicd.md`, prima in modalità «log». Una funzione
-  che risponde al client solo con un `codice` e registra l'errore intero, sulle 3 route pubbliche
-  subito, con un lock che vieta `error.message` nelle route anonime; le altre ~181 righe si sistemano
-  quando una sessione tocca il loro file. Il catch muto di `src/app/api/notes/route.ts:146-155` e le 8
-  letture dello Storage senza `error`. Turnstile al login (T9). `build` in `package.json` con
-  `NODE_OPTIONS=--max-old-space-size=6144`, come in CI.
-- **Rischio:** una regola firewall che blocca l'app nativa: per questo prima in «log».
-- **Indietro:** revert; regole disattivabili dal pannello.
-- **Prova:** `x-vercel-cache: HIT` dalla seconda richiesta; sfide al giorno nel registro del firewall;
-  il lock diventa rosso su una regressione.
-
-#### Sessione 14 — Ripristino completo, provato
-- **Obiettivo:** misurare quanto serve a rimettere in piedi DB + file + app partendo da R2, e scrivere
-  la ricetta che funziona.
-- **Cosa si tocca:** `scripts/backup/ripristina-prova.sh` diventa una prova completa, in quest'ordine:
-  pg_cron spento **per primo**; schema e dati; `auth` e `storage`; Vault e bucket; `rclone sync` dei
-  file. Un deploy di anteprima puntato al progetto temporaneo. Le impostazioni di Auth e Storage,
-  senza segreti, esportate in `docs/`. `docs/runbook-ripristino.md` con i tempi misurati.
-- **Rischio:** un progetto temporaneo con i cron accesi chiamerebbe la produzione; i dati veri
-  finiscono in un secondo progetto, da cancellare a fine prova.
-- **Indietro:** non serve: la produzione non si tocca.
-- **Prova:** conteggi per tabella uguali al manifest; stesso numero di oggetti per bucket; un login
-  di prova sull'anteprima; il tempo di ripristino misurato.
-
-### 3.4 Decisioni che spettano al titolare
-
-Cifre di listino pubblico (§5), da verificare nei pannelli prima di decidere.
-
-| Codice | Decisione | Opzioni e costo indicativo | Cosa sblocca |
-|---|---|---|---|
-| T1 | Ripristino al minuto (D2) | **7 giorni ~100 $/mese** · 14 giorni ~200 · 28 giorni ~400 · oppure restare a «fino a 24 h», attenuato dalla scatola nera della sessione 3. Consiglio: almeno 7 giorni durante l'anno scolastico | la parte PITR della 14 |
-| T2 | Galleria nel backup (D3) | (a) `gallery` + `video_originals`, 13,2 GB su R2 ≈ **0,2 $/mese** oltre i 10 GB gratuiti · (b) solo i video originali · (c) restare così (solo il cestino di 30 giorni) | una riga della 4 |
-| T3 | Dove lavorano agenti e server `:3100` (D1) | (a) progetto Supabase di sviluppo, ~10 $/mese · (b) gratis: MCP di produzione in sola lettura più un hook versionato che ferma le scritture e le migrazioni (è una modifica ai permessi: la decide il titolare) · (c) restare così | completa la 2 |
-| T4 | Registro di protocollo (D6) | mantenere le decisioni #6 e #26 («nessuna traccia») oppure scatola nera + file versionato invece di sovrascritto. Conviene chiedere al consulente se il registro ricade nell'art. 54 del DPR 445/2000 | aggiunta facoltativa alla 3 |
-| T5 | Chiavi (D8) | spostare `KIDVILLE-CHIAVI-BACKUP/` fuori dalla cartella dell'app (oggi è esclusa solo da `.gitignore:46`: un `git clean -x` la cancellerebbe) · confermare nel pannello la revoca della vecchia `sb_secret_` · chiave S3 del backup: tenerla o restringerla | la 4 e la verifica della 14 |
-| T6 | Audit docente bloccante (D11) | (a) non bloccante, con allarme (consigliato: la scatola nera copre già voti, presenze e scrutini) · (b) bloccante | una riga della 1 |
-| T7 | Conservazione dei log (S12) | (a) drain di Vercel, a consumo più la destinazione · (b) gratis: errori in `app_log` per 90 giorni · (c) restare così | parte della 7 |
-| T8 | Regole firewall di Vercel (S8) | limite di frequenza su `/api/iscrizione/*`, `/api/forms/*`, `/api/health*`, con eccezione per il Worker; regole incluse nel Pro, limite a consumo | parte della 13 |
-| T9 | CAPTCHA al login (S11) | Turnstile (gratis) acceso in Supabase Auth; un passaggio in più, quasi sempre invisibile | parte della 13 |
-| T10 | Chiavi di firma asimmetriche e durata del token (S3) | attivarle o verificarle (gratis, con la procedura di rotazione); eventualmente accorciare la durata del token | la 11 |
-| T11 | Prova di ripristino (D5) | mezza giornata del titolare con la chiave `age` offline; progetto temporaneo, pochi dollari | la 14 |
-| T12 | Chiave di Resend nel Worker (S4) | incollarla a mano con `wrangler secret put` (su Vercel è *Sensitive* e non si rilegge) | il secondo canale della 4 |
-
-### 3.5 Cosa NON fare
-
-1. **Non alzare l'istanza.** Il DB lavora all'1,5 % di un core; in calma il p95 è 33 ms. Il p95 sale
-   solo in punta, quando il backup si sovrappone (sessione 4), e per il carico d'identità (sessione 11).
-2. **Non ottimizzare la lettura del WAL del Realtime.** Il 79,9 % è un cumulato dal 06/08; oggi fa
-   0 chiamate.
-3. **Non allargare il pool di Auth né `TETTO_CONTROLLO_MS`.** Le cause sono il numero di chiamate e
-   il ciclo in serie, non i limiti.
-4. **Non riapplicare migrazioni a mano.** Oggi 231 = 231; manca solo l'allarme (sessione 6).
-5. **Non eliminare i 137 indici «mai usati»** (D11): molti servono alle cascate e ai freni `RESTRICT`.
-6. **Non togliere `current_parent_student_ids` ad `authenticated`** (D11): spegnerebbe l'app dei
-   genitori.
-7. **Non fondere le 5 policy permissive e non aggiungere policy alle 68 tabelle senza.** Con la CPU
-   all'1,5 % il guadagno è nullo, e «negato a tutti» è la scelta voluta.
-8. **Non spostare `pg_net` fuori da `public`** (D11).
-9. **Non alzare `max_rows` sopra 1000** per risolvere S6: il muro si sposta e resta silenzioso.
-10. **Non parallelizzare il giro dei solleciti e non costruire una coda email generale.** 238 voci in
-    104 s sono già vicine al limite d'invio di Resend; ritentativi e annullamento della presa bastano
-    (S2-B resta un'opzione per dopo).
-11. **Non svuotare `cron.job_run_details` e non allungare i timeout di pg_net prima della sessione 5.**
-12. **Non portare il login su una route del server** (S11-C).
-13. **Non spegnere la protezione automatica di Vercel** per la sfida vista durante la misura: era un
-    client di prova. Prima la cache, poi la misura delle sfide vere.
-14. **Non usare `ALTER DATABASE SET`** (42501): `ALTER ROLE` per i timeout, il Vault per la
-    configurazione dei cron.
-15. **Non usare `cache()` di React per l'identità nelle route API**: fuori dai componenti server non
-    ricorda niente **[S3b]**.
+**Numeri vecchi.** La §2 e la Parte 4 citano le sessioni con la numerazione della prima stesura:
+5 → 6, 6 → 7, 7 → 8, 8 → 9, 9 → 10, 10 → 11, 11 → 14, 14 → 5; le altre non cambiano.
 
 ---
 
@@ -1133,7 +800,8 @@ Ogni riga è stata aperta e letta; dove la documentazione **non** conferma, è s
 Scritta **dopo** le Parti 1–3. Fonte del 05/10: `docs/roadmap-robustezza.md`, sezioni «Fotografia di
 partenza» e «Problemi e soluzioni», più la tabella «Stato delle sessioni» per sapere che cosa è stato
 fatto nel frattempo. La Parte 3 non è stata ritoccata dopo questa lettura: quello che il confronto
-corregge sta nel §P4.5.
+corregge sta nel §P4.5. Più tardi, il 20/10, la Parte 3 è stata sostituita dalla specifica della
+seconda serie, che assorbe il §P4.5 (vedi §3).
 
 ### P4.1 Le due fotografie
 
@@ -1223,8 +891,11 @@ corregge sta nel §P4.5.
 
 ### P4.5 Cosa questo confronto corregge della Parte 3 di oggi
 
-La Parte 3 è rimasta com'era scritta alla cieca. Queste sono le correzioni da tenere presenti
-leggendola:
+> **Assorbito nella specifica** (`docs/superpowers/specs/2026-10-20-robustezza-seconda-serie-design.md`):
+> ogni punto qui sotto è già dentro la sessione corrispondente. I numeri di sessione sono quelli della
+> prima stesura (corrispondenze nella §3).
+
+Queste sono le correzioni che il confronto ha portato alla Parte 3 scritta alla cieca:
 
 - **S3, pool di Auth:** non è più «fisso a 10». Il 19/10 il titolare l'ha portato al 15 % (13
   connessioni su Small), e l'advisor `auth_db_connections_absolute` oggi non compare. Il commento a
@@ -1248,4 +919,4 @@ leggendola:
 2. Il **database** ha ora una copia esterna, una scatola nera e i freni dove serve: dei cinque 🔴 del 05/10, uno è risolto e tre molto migliorati.
 3. Il rischio più grande che resta è la **perdita di dati**, non la lentezza: niente PITR per scelta, 13,2 GB di foto e video senza copia (raddoppiati in 15 giorni), `exec_sql` aperto, 24 tabelle figlie senza copia.
 4. Il secondo è il **falso verde**: cron «riusciti» senza esito, solleciti «inviati» senza email, una cache scritta ma non attiva. La prima roadmap ha insegnato a misurare; questa deve insegnare a leggere gli esiti.
-5. La nuova roadmap è più piccola nei rischi e più lunga nel numero (14 sessioni); le due mosse che valgono di più non sono codice ma due decisioni del titolare, T1 e T2.
+5. La nuova roadmap è più piccola nei rischi e più lunga nel numero (14 sessioni); le due mosse che valgono di più non sono codice ma due decisioni del titolare, T1 e T2. Il titolare le ha rinviate entrambe il 20/10, con una soglia per ridecidere (§4 della specifica).

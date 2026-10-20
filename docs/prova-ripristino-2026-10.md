@@ -37,7 +37,7 @@ corretti con un test visto prima rosso:
 3. `ripristina-prova.sh`: su macOS un postmaster senza una locale valida muore con «postmaster became multithreaded during
    startup»; lo script ora imposta `LC_ALL` (`en_US.UTF-8` se non c'è).
 
-## Prova 2 — «Restore to a new project» di Supabase · ✅ riuscita il 06/10/2026 (progetto temporaneo da cancellare)
+## Prova 2 — «Restore to a new project» di Supabase · ✅ riuscita il 06/10/2026 (progetto temporaneo cancellato il 20/10/2026)
 
 Verifica il **paracadute di Supabase** (i suoi backup fisici), non il nostro. Dal pannello (Database → Backups → «Restore to
 new project») si è ripristinato il backup più recente (06/10, 00:59 UTC) in un progetto nuovo: stessa organizzazione e
@@ -92,7 +92,7 @@ all'ora: **va cancellato appena possibile** (Settings → General → Delete pro
 
 | | |
 |---|---|
-| Progetto temporaneo cancellato il | — (da compilare) |
+| Progetto temporaneo cancellato il | **20/10/2026**, dal titolare (Settings → General → Delete project); riletto con l'API di gestione di Supabase: il progetto `jqaojcoszlcglnzrotas` non c'è più, `kidville-web-prod` è attivo |
 
 ## Per mettere la ✅ sulla fase 2
 

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
   "generato_il": "2026-10-20",
-  "generato_alle": "2026-10-20T07:57:17Z",
-  "sha256": "ca3ff531b3243e19e6ed2b8abec2122ec50510cff584ac7ce059abff16ea511a",
+  "generato_alle": "2026-10-20T10:54:12Z",
+  "sha256": "c10245c3f602ef8920c67b82fd7ac6744f4e0ff12fd211fca34f6f8bb5f49a9b",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -576,8 +576,6 @@
     "audit_scritture_docente",
     "avvisi",
     "avvisi_risposte",
-    "backup_diario_vuote_20260908",
-    "backup_pulizia_note_20260905",
     "campanelle",
     "candidature_insegnanti",
     "candidature_sedi",

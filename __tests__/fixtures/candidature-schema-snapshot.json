@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/candidature-schema-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json",
   "generato_il": "2026-10-20",
-  "generato_alle": "2026-10-20T07:57:15Z",
+  "generato_alle": "2026-10-20T10:54:11Z",
   "sha256": "50844a9335569ba1e3395ddd822afff913bc61ea9f89b33ebdfd59e64a022873",
   "tabella": "candidature_insegnanti",
   "colonne": [

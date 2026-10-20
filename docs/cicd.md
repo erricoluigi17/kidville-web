@@ -273,6 +273,17 @@ token GitHub **a grana fine** limitato a `erricoluigi17/kidville-web` e al solo 
 Scade: la data è scritta qui sotto e in `00 CONTESTO/04_scadenze.md` del brain. Alla scadenza si genera un token nuovo
 con gli stessi limiti e lo si rimette con `pbpaste | npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`.
 
+- **Acceso il 20/10/2026**: primo battito «Campanello (da Cloudflare)» alle 11:00:13 UTC, riuscito.
+- **Token in uso**: «campanello cloudflare», creato il **20/10/2026**, **scade il 20/10/2027**. GitHub gli aggiunge da
+  solo *Metadata: read-only*, obbligatorio per ogni token a grana fine. Il primo segnale della scadenza è
+  `monitor-esterno-muto`, con `401 Bad credentials` nei log del Worker.
+- **Il sottodominio `workers.dev`** (`kidville`, creato il 20/10/2026). Il cron di Cloudflare lo pretende sull'account
+  anche se il Worker non lo usa (`workers_dev = false`): senza, `wrangler deploy` carica lo script e poi fallisce sui
+  cron con l'errore **10063**. Aprire la pagina «Workers & Pages» della dashboard, come suggerisce il messaggio, non
+  l'aveva creato. Si crea una volta per account con l'API
+  (`PUT /accounts/<id>/workers/subdomain`, corpo `{"subdomain":"kidville"}`, con l'accesso di `wrangler login`).
+  Il Worker resta comunque senza indirizzo pubblico.
+
 | Cosa | Comando (dalla cartella `monitor-esterno/`) |
 |---|---|
 | pubblicare / aggiornare | `npx wrangler@4.148.0 deploy` |

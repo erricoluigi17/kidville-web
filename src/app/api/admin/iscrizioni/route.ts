@@ -3,6 +3,7 @@ import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATI_DOMANDA } from '@/lib/iscrizioni/stati'
 import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
@@ -356,9 +357,6 @@ const interoClampato = (def: number, min: number, max: number) =>
     if (!Number.isFinite(n)) return def
     return Math.min(Math.max(Math.trunc(n), min), max)
   }, z.number())
-
-/** I tre stati di una domanda, come stanno in `enrollment_submissions.status`. */
-const STATI_DOMANDA = ['pending', 'approved', 'rejected'] as const
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗

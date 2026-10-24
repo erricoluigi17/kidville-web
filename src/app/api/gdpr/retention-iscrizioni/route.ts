@@ -4,6 +4,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
+import { percorsiCitati } from '@/lib/iscrizioni/percorsi-citati'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { parseQuery } from '@/lib/validation/http'
 import { z } from 'zod'
@@ -298,7 +299,40 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
         // La domanda resta legata ai SUOI allegati fino alla fine: è ciò che permette
         // di trattenere una riga sola invece dell'intero lotto.
         const perDomanda = righe.map((r) => ({ id: r.id, percorsi: percorsiAllegati(r) }))
-        const tuttiIPercorsi = [...new Set(perDomanda.flatMap((d) => d.percorsi))]
+        const percorsiDelleDomande = [...new Set(perDomanda.flatMap((d) => d.percorsi))]
+
+        // ── I DOCUMENTI CHE QUALCUN ALTRO NOMINA ANCORA ── (robustezza 2, sessione 1 — D9)
+        // L'import copia il percorso del documento d'identità dalla domanda all'anagrafica
+        // (`alunni.documento_path`, `parents.documento_path`): è LO STESSO file. Una domanda
+        // importata e poi respinta, o rimasta in attesa, uscirebbe di qui portandosi via il
+        // documento di un bambino iscritto. Un percorso citato NON si toglie dal bucket; la riga
+        // della domanda si chiude lo stesso, perché quel file ora appartiene all'anagrafica e
+        // segue la conservazione di lei. Non va fra gli «incerti»: lì tratterrebbe la domanda per
+        // sempre, e il giro risponderebbe 500 ogni mese.
+        // Se le citazioni non si leggono, non si tocca niente: né file né righe.
+        const citazioni = await percorsiCitati(supabase, percorsiDelleDomande, JOB)
+        if (!citazioni.verificato) {
+            logEvento('cron', 'error', {
+                operazione: JOB,
+                esito: 'citazioni-non-lette',
+                canale,
+                n_domande: righe.length,
+                n_file: percorsiDelleDomande.length,
+                ms: Date.now() - t0,
+                msg: `${JOB}: non si è potuto sapere se gli allegati sono citati da un'anagrafica o dal fascicolo: nessun file e nessuna riga toccati`,
+            })
+            return NextResponse.json(
+                {
+                    ok: false,
+                    motivo: 'citazioni-non-lette',
+                    domande: 0,
+                    domande_trattenute: righe.length,
+                    file: 0,
+                },
+                { status: 500 },
+            )
+        }
+        const tuttiIPercorsi = percorsiDelleDomande.filter((p) => !citazioni.citati.has(p))
 
         // ── PRIMA I FILE ──
         let esito = NIENTE_DA_TOGLIERE
@@ -372,11 +406,14 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             n_file: esito.rimossi.length,
             n_file_gia_assenti: esito.giaAssenti.length,
             n_file_bloccanti: daNonToccare.size,
+            n_file_citati: citazioni.citati.size,
             mesi: MESI_CONSERVAZIONE,
             forzata,
             lotto_pieno: forzata && lette.length >= TETTO_LOTTO,
             ms: Date.now() - t0,
-            msg: `${JOB}: ${domandeCancellate} domande e ${esito.rimossi.length} allegati oltre i ${MESI_CONSERVAZIONE} mesi`,
+            msg:
+                `${JOB}: ${domandeCancellate} domande e ${esito.rimossi.length} allegati oltre i ${MESI_CONSERVAZIONE} mesi; ` +
+                `${citazioni.citati.size} allegati lasciati perché citati da un'anagrafica o dal fascicolo`,
         })
 
         if (trattenute > 0) {
@@ -417,6 +454,7 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
             domande: domandeCancellate,
             file: esito.rimossi.length,
             file_gia_assenti: esito.giaAssenti.length,
+            file_citati: citazioni.citati.size,
             mesi: MESI_CONSERVAZIONE,
         })
     } catch (error) {

@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
     errori: {} as Record<string, { code: string; message: string }>,
     /** I percorsi che la route ha chiesto di togliere dal bucket, chiamata per chiamata. */
     rimossi: [] as string[][],
+    /** I percorsi che lo Storage finto dichiara «non verificabili»: trattengono la loro domanda. */
+    incerti: [] as string[],
     eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
 }))
 
@@ -50,7 +52,13 @@ vi.mock('@/lib/storage/rimozione-verificata', async (orig) => {
         ...m,
         rimuoviEVerifica: async (_s: unknown, _bucket: string, percorsi: string[]) => {
             h.rimossi.push([...percorsi])
-            return { rimossi: [...percorsi], giaAssenti: [], ancoraPresenti: [], incerti: [], erroreRimozione: false }
+            return {
+                rimossi: percorsi.filter((p) => !h.incerti.includes(p)),
+                giaAssenti: [],
+                ancoraPresenti: [],
+                incerti: percorsi.filter((p) => h.incerti.includes(p)),
+                erroreRimozione: false,
+            }
         },
     }
 })
@@ -99,6 +107,7 @@ beforeEach(() => {
     h.db = dbIniziale()
     h.errori = {}
     h.rimossi = []
+    h.incerti = []
     h.eventi = []
     process.env.CRON_SECRET = CRON_SECRET
 })
@@ -157,6 +166,92 @@ describe("retention iscrizioni · un allegato citato da un'anagrafica non esce",
         expect(await res.json()).toMatchObject({ ok: true, domande: 1, file: 0, file_citati: 2 })
         expect(h.rimossi).toEqual([])
         expect(h.db.enrollment_submissions).toEqual([])
+    })
+})
+
+/** Un percorso inventato nella forma dell'upload, riconoscibile dal numero. */
+const docN = (n: number) => `iscrizioni/prova-finta/${String(n).padStart(8, '0')}-0000-4000-8000-000000000000-documento.pdf`
+
+/** Una domanda scaduta con i SUOI documenti: un minore e, se c'è, un adulto. */
+function domandaCon(id: string, minore: string, adulto?: string) {
+    return {
+        ...domanda(id, 'rejected'),
+        data: { children: [{ documento_path: minore }], adults: adulto ? [{ documento_path: adulto }] : [] },
+    }
+}
+
+const idRimasti = () => h.db.enrollment_submissions.map((r) => r.id).sort()
+
+/**
+ * IL LOTTO HA PIÙ DI UNA DOMANDA. I casi qui sopra ne hanno una sola, e una route che chiedesse le
+ * citazioni dei soli allegati della PRIMA domanda passerebbe tutti quei casi.
+ */
+describe('retention iscrizioni · un lotto di più domande', () => {
+    it('due domande scadute: il documento citato della SECONDA resta', async () => {
+        h.db.enrollment_submissions = [
+            domandaCon('domanda-finta-1', docN(1), docN(2)),
+            domandaCon('domanda-finta-2', docN(3), docN(4)),
+        ]
+        h.db.alunni = [{ id: 'alunno-finto-2', documento_path: docN(3) }]
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(await res.json()).toMatchObject({ ok: true, domande: 2, file: 3, file_citati: 1 })
+        expect(tuttiRimossi(), "il documento copiato nell'alunno della seconda domanda").not.toContain(docN(3))
+        expect(tuttiRimossi().sort()).toEqual([docN(1), docN(2), docN(4)].sort())
+        expect(h.db.enrollment_submissions).toEqual([])
+    })
+
+    it('un documento CONDIVISO da due domande e citato resta; le due domande si chiudono', async () => {
+        // Lo stesso genitore in due domande (due figli): il suo documento è uno, e l'anagrafica lo nomina.
+        h.db.enrollment_submissions = [
+            domandaCon('domanda-finta-1', docN(1), docN(9)),
+            domandaCon('domanda-finta-2', docN(2), docN(9)),
+        ]
+        h.db.parents = [{ id: 'genitore-finto-1', documento_path: docN(9) }]
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect(await res.json()).toMatchObject({ ok: true, domande: 2, file: 2, file_citati: 1 })
+        expect(tuttiRimossi()).not.toContain(docN(9))
+        expect(tuttiRimossi().sort()).toEqual([docN(1), docN(2)].sort())
+        expect(h.db.enrollment_submissions).toEqual([])
+        expect(battito()?.campi).toMatchObject({ n_domande: 2, n_domande_trattenute: 0, n_file_citati: 1 })
+    })
+
+    it('lotto misto: i citati restano, la domanda con un file non verificabile resta, le altre si chiudono', async () => {
+        h.db.enrollment_submissions = [
+            // A: un documento citato dall'alunno, l'altro esce ⇒ si chiude.
+            domandaCon('domanda-finta-a', docN(11), docN(12)),
+            // B: un file che lo Storage non sa verificare, l'altro citato dal genitore ⇒ trattenuta.
+            domandaCon('domanda-finta-b', docN(21), docN(22)),
+            // C: nessuno lo cita ⇒ si chiude.
+            domandaCon('domanda-finta-c', docN(31)),
+        ]
+        h.db.alunni = [{ id: 'alunno-finto-a', documento_path: docN(11) }]
+        h.db.parents = [{ id: 'genitore-finto-b', documento_path: docN(22) }]
+        h.incerti = [docN(21)]
+
+        const res = await chiama()
+        expect(res.status, 'una domanda trattenuta è un giro non finito').toBe(500)
+        expect(await res.json()).toMatchObject({
+            ok: false,
+            motivo: 'verifica-non-riuscita',
+            domande: 2,
+            domande_trattenute: 1,
+            file: 2,
+            file_bloccanti: 1,
+        })
+        const chiesti = tuttiRimossi()
+        expect(chiesti).not.toContain(docN(11))
+        expect(chiesti).not.toContain(docN(22))
+        expect(chiesti.sort()).toEqual([docN(12), docN(21), docN(31)].sort())
+        expect(idRimasti(), 'resta SOLO la domanda trattenuta').toEqual(['domanda-finta-b'])
+        expect(battito()?.campi).toMatchObject({
+            n_domande: 2,
+            n_domande_trattenute: 1,
+            n_file: 2,
+            n_file_bloccanti: 1,
+            n_file_citati: 2,
+        })
     })
 })
 

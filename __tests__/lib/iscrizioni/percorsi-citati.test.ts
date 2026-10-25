@@ -4,16 +4,28 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { creaFintoSupabase, type DBFinto, type ErrorePostgrest } from '../../fixtures/finto-supabase'
 
 const h = vi.hoisted(() => ({
-    eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
+    /** TUTTI gli argomenti di `logEvento`, compreso il quarto: è lì che finisce l'errore di PostgREST. */
+    eventi: [] as { evento: string; livello: string; campi: Record<string, unknown>; errore?: unknown }[],
 }))
 
 vi.mock('@/lib/logging/logger', () => ({
-    logEvento: (evento: string, livello: string, campi: Record<string, unknown>) => {
-        h.eventi.push({ evento, livello, campi })
+    logEvento: (evento: string, livello: string, campi: Record<string, unknown>, errore?: unknown) => {
+        h.eventi.push({ evento, livello, campi, errore })
     },
     logErrore: () => {},
     logOk: () => {},
 }))
+
+/**
+ * Quello che il logger riceverebbe, messo per iscritto. `JSON.stringify` di un `Error` dà `{}`
+ * (messaggio e stack non sono enumerabili): senza questa espansione un percorso dentro il
+ * messaggio di un errore passerebbe inosservato.
+ */
+function scrittoNeiLog(): string {
+    return JSON.stringify(h.eventi, (_k, v: unknown) =>
+        v instanceof Error ? { ...v, name: v.name, message: v.message, stack: v.stack } : v,
+    )
+}
 
 import { percorsiCitati, PERCORSI_PER_QUERY } from '@/lib/iscrizioni/percorsi-citati'
 
@@ -124,7 +136,7 @@ describe('percorsiCitati — «non lo so» non è «nessuno»', () => {
  * risponderebbe PostgREST quando la lettura va male. Le righe che il resto del giro legge
  * restano quelle del finto: così un guasto tardivo si prova CON citazioni già trovate prima.
  */
-type Guasto = 'errore' | 'senza-righe'
+type Guasto = 'errore' | 'senza-righe' | { errore: Record<string, unknown> }
 
 function conGuastoAllaChiamata(d: DBFinto, numero: number, guasto: Guasto) {
     const chiamate: string[] = []
@@ -132,7 +144,9 @@ function conGuastoAllaChiamata(d: DBFinto, numero: number, guasto: Guasto) {
     const risposta =
         guasto === 'errore'
             ? { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }
-            : { data: null, error: null }
+            : guasto === 'senza-righe'
+              ? { data: null, error: null }
+              : { data: null, error: guasto.errore }
     const client = {
         from: (tabella: string) => {
             chiamate.push(tabella)
@@ -201,7 +215,123 @@ describe('percorsiCitati — un guasto in QUALUNQUE punto del giro vale «non lo
         const errori = h.eventi.filter((e) => e.livello === 'error')
         expect(errori).toHaveLength(1)
         expect(errori[0].campi).toMatchObject({ n_file: 2, entita_tipo: 'parents' })
-        expect(JSON.stringify(h.eventi)).not.toContain('documento-finto')
-        expect(JSON.stringify(h.eventi)).not.toContain('prova-finta')
+        expect(scrittoNeiLog()).not.toContain('documento-finto')
+        expect(scrittoNeiLog()).not.toContain('prova-finta')
+    })
+})
+
+/**
+ * IL MESSAGGIO DI POSTGREST PUÒ RIPETERE IL FILTRO. Un errore di parsing dice, per esempio,
+ * `"failed to parse filter (in.(…))"`: dentro le parentesi ci sono i 25 percorsi del blocco, cioè
+ * i documenti di altre famiglie, e il nome di un file caricato può essere il nome di un bambino.
+ * `sanificaMessaggio` toglie email e codici fiscali, non i nomi. Al logger va solo il CODICE.
+ */
+describe('percorsiCitati — il log di un guasto porta il codice di PostgREST, mai il suo testo', () => {
+    it('messaggio, dettagli e suggerimento che ripetono i percorsi non arrivano al logger', async () => {
+        await chiedi(dbVuoto(), [doc(1), doc(2)], {
+            'alunni:select': {
+                code: 'PGRST100',
+                message: `"failed to parse filter (in.(${doc(1)},${doc(2)}))" (line 1, column 12)`,
+                details: `unexpected end of input expecting "," near ${doc(1)}`,
+                hint: doc(2),
+            },
+        })
+        const errore = h.eventi.find((e) => e.livello === 'error')
+        expect(errore?.campi).toMatchObject({ esito: 'citazioni-non-lette', entita_tipo: 'alunni', n_file: 2 })
+        expect(errore?.errore).toBeInstanceOf(Error)
+        expect((errore?.errore as Error).message).toBe('postgrest:PGRST100')
+        expect(errore?.errore).toMatchObject({ code: 'PGRST100' })
+        expect(scrittoNeiLog()).not.toContain('prova-finta')
+        expect(scrittoNeiLog()).not.toContain('documento-finto')
+    })
+
+    it("lo status, se c'è, viaggia col codice; un codice che non ha la forma di un codice non passa", async () => {
+        const { client } = conGuastoAllaChiamata(dbVuoto(), 1, {
+            errore: { code: doc(7), status: 400, message: `failed to parse filter (in.(${doc(7)}))` },
+        })
+        const esito = await percorsiCitati(client, [doc(7)], OP)
+        expect(esito).toEqual({ verificato: false })
+        const errore = h.eventi.find((e) => e.livello === 'error')
+        expect((errore?.errore as Error).message).toBe('postgrest:senza-codice:400')
+        expect(errore?.errore).toMatchObject({ status: 400 })
+        expect(scrittoNeiLog()).not.toContain('prova-finta')
+    })
+})
+
+/**
+ * UN PERCORSO CHE IL FILTRO `in.(…)` NON SA PORTARE INTATTO.
+ *
+ * postgrest-js (`in()` in `node_modules/@supabase/postgrest-js`) mette fra virgolette solo i
+ * valori con `,` `(` `)` e NON fa l'escape di `"` e `\`. PostgREST, dentro un valore fra
+ * virgolette, legge `\` come escape del carattere dopo e `"` come fine del valore: `x")` rompe il
+ * filtro (errore di parsing, e il giro mensile resterebbe a 500 per sempre), `x\(1)` diventa
+ * `x(1)` e non trova più il file (che allora sembrerebbe di nessuno). Un `NUL` lo rifiuta Postgres;
+ * gli altri caratteri di controllo si tengono fuori per prudenza.
+ *
+ * Questo client inoltra al finto vero e annota ogni valore passato a `.in()`. Se ne arriva uno
+ * con quei caratteri risponde come PostgREST davanti a un filtro che non sa leggere.
+ */
+function illeggibileDaPostgrest(v: string): boolean {
+    return [...v].some((c) => c === '"' || c === '\\' || c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)
+}
+
+function conSpiaSullIn(d: DBFinto) {
+    const inviati: string[] = []
+    const vero = creaFintoSupabase(d)
+    const client = {
+        from: (tabella: string) => ({
+            select: (colonne: string) => ({
+                in: (colonna: string, valori: string[]) => {
+                    inviati.push(...valori)
+                    if (valori.some(illeggibileDaPostgrest)) {
+                        return Promise.resolve({ data: null, error: { code: 'PGRST100', message: 'failed to parse filter' } })
+                    }
+                    return vero.from(tabella).select(colonne).in(colonna, valori)
+                },
+            }),
+        }),
+    }
+    return { client: client as unknown as SupabaseClient, inviati }
+}
+
+describe('percorsiCitati — un percorso con " \\ o un carattere di controllo non va alla query', () => {
+    const conVirgolette = 'iscrizioni/prova-finta/00000001-documento")-finto.pdf'
+    const conBarra = 'iscrizioni/prova-finta/00000002-documento\\(1)-finto.pdf'
+    const conControllo = 'iscrizioni/prova-finta/00000003-documento\t-finto.pdf'
+    /** Parentesi, virgola, spazi e quadre: postgrest-js li porta fra virgolette, e arrivano intatti. */
+    const legittimo = 'iscrizioni/prova-finta/00000004-documento (copia, 2) [a].pdf'
+
+    it('resta fuori dalla query, si tiene come citato, e il giro resta verificato', async () => {
+        const d = dbVuoto()
+        d.alunni = [{ id: 'alunno-finto-1', documento_path: legittimo }]
+        const { client, inviati } = conSpiaSullIn(d)
+        const esito = await percorsiCitati(client, [conVirgolette, conBarra, conControllo, legittimo, doc(5)], OP)
+
+        expect(esito.verificato, 'un percorso illeggibile non può rendere «non lo so» tutto il giro').toBe(true)
+        expect(citati(esito)).toEqual([conVirgolette, conBarra, conControllo, legittimo].sort())
+        expect(inviati.filter(illeggibileDaPostgrest)).toEqual([])
+        // Quello legittimo, e il percorso comune accanto, arrivano a tutte e quattro le sorgenti.
+        expect(inviati.filter((v) => v === legittimo)).toHaveLength(4)
+        expect(inviati.filter((v) => v === doc(5))).toHaveLength(4)
+
+        expect(h.eventi.filter((e) => e.livello === 'error')).toEqual([])
+        const info = h.eventi.filter((e) => e.livello === 'info')
+        expect(info).toHaveLength(1)
+        expect(info[0].campi).toMatchObject({ operazione: OP, esito: 'percorsi-non-interrogabili', n_file: 3 })
+        expect(scrittoNeiLog(), 'nel log il NUMERO, mai i percorsi').not.toContain('prova-finta')
+    })
+
+    it('se sono tutti illeggibili non parte nessuna query, e restano tutti', async () => {
+        const { client, inviati } = conSpiaSullIn(dbVuoto())
+        const esito = await percorsiCitati(client, [conVirgolette, conBarra], OP)
+        expect(citati(esito)).toEqual([conVirgolette, conBarra].sort())
+        expect(inviati).toEqual([])
+    })
+
+    it('CONTROLLO: senza percorsi illeggibili nessun info, e nessun percorso tenuto «per prudenza»', async () => {
+        const { client } = conSpiaSullIn(dbVuoto())
+        const esito = await percorsiCitati(client, [legittimo, doc(5)], OP)
+        expect(citati(esito)).toEqual([])
+        expect(h.eventi).toEqual([])
     })
 })

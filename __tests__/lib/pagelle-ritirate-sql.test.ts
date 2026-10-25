@@ -66,7 +66,7 @@ describe('migrazione pagelle ritirate', () => {
     expect(rows[0]).toEqual({ ritirata_il: null, file_ritirati: [] })
   })
 
-  it('ritirata e poi rigenerata: la riga torna in vigore e lo storico resta', async () => {
+  it('ritirata e poi rigenerata: la riga torna in vigore SOLO se l\'upsert passa ritirata_il NULL', async () => {
     await db.exec(`INSERT INTO public.pagelle (scrutinio_id, alunno_id, file_url) VALUES ('${SCRUTINIO}', '${ALUNNO}', '${SCRUTINIO}/${ALUNNO}.pdf')`)
     // `::text` esplicito: con un letterale senza tipo Postgres sceglie `text[] || text[]` e
     // risponde «malformed array literal» (misurato su PGlite e su Postgres 17).
@@ -76,7 +76,18 @@ describe('migrazione pagelle ritirate', () => {
              file_url = 'ritirate/${SCRUTINIO}/${ALUNNO}-1.pdf',
              file_ritirati = file_ritirati || 'ritirate/${SCRUTINIO}/${ALUNNO}-1.pdf'::text
        WHERE scrutinio_id = '${SCRUTINIO}' AND alunno_id = '${ALUNNO}' AND ritirata_il IS NULL`)
-    // È l'upsert di `persistPagella`: stesse colonne, stessa coppia del vincolo di unicità.
+    // Il database da solo NON la rimette in vigore: un upsert che non nomina `ritirata_il`
+    // (come quello di prima del Compito 10) aggiorna il file e la lascia ritirata.
+    await db.exec(`
+      INSERT INTO public.pagelle (scrutinio_id, alunno_id, file_url)
+      VALUES ('${SCRUTINIO}', '${ALUNNO}', '${SCRUTINIO}/${ALUNNO}.pdf')
+      ON CONFLICT (scrutinio_id, alunno_id)
+      DO UPDATE SET file_url = EXCLUDED.file_url`)
+    const ancoraRitirata = await db.query<{ ritirata: boolean }>(
+      `SELECT ritirata_il IS NOT NULL AS ritirata FROM public.pagelle WHERE scrutinio_id = '${SCRUTINIO}' AND alunno_id = '${ALUNNO}'`,
+    )
+    expect(ancoraRitirata.rows).toEqual([{ ritirata: true }])
+    // È l'upsert di `persistPagella`: `ritirata_il: null` ESPLICITO, stessa coppia del vincolo.
     await db.exec(`
       INSERT INTO public.pagelle (scrutinio_id, alunno_id, file_url, ritirata_il)
       VALUES ('${SCRUTINIO}', '${ALUNNO}', '${SCRUTINIO}/${ALUNNO}.pdf', NULL)

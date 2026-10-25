@@ -12,7 +12,9 @@
 -- Due colonne e non una. Su `pagelle` c'è un vincolo di unicità su (scrutinio_id,
 -- alunno_id): l'alunno ha UNA riga per scrutinio, e la generazione successiva fa l'upsert
 -- proprio su quella coppia. La riga ritirata quindi non resta accanto alla nuova: è la
--- stessa riga, che la generazione rimette in vigore (`ritirata_il` torna NULL). Le copie si
+-- stessa riga, che la generazione rimette in vigore. Non lo fa il database: un upsert che
+-- non nomina `ritirata_il` la lascia ritirata. La rimette a NULL l'upsert dell'app, che la
+-- passa esplicitamente (`persistPagella`, `src/lib/primaria/pagella-store.ts`). Le copie si
 -- accumulano in `file_ritirati`, che la generazione non tocca: è lo storico delle versioni
 -- consegnate.
 --   · `ritirata_il`   — quando la pagella in vigore è stata ritirata; NULL = in vigore.
@@ -28,7 +30,8 @@
 --   → due righe. Nel repo: `__tests__/lib/pagelle-ritirate-sql.test.ts`.
 --
 -- ─── ROLLBACK ────────────────────────────────────────────────────────────────
---   Nessuno da applicare: le colonne restano inerti, il codice di prima non le legge.
+--   Nessuno da applicare: le colonne restano inerti, il codice di prima non le legge
+--   (al più `NOTIFY pgrst, 'reload schema';` se si volesse ricaricare la schema cache).
 --   Toglierle cancellerebbe lo storico delle pagelle ritirate e i soli riferimenti alle copie
 --   in `ritirate/`: solo con una decisione scritta del titolare, in una migrazione sua.
 -- =============================================================================
@@ -44,8 +47,11 @@ BEGIN
 
   COMMENT ON COLUMN public.pagelle.ritirata_il IS
     'Quando la pagella in vigore è stata ritirata da una riapertura dello scrutinio. NULL = in '
-    'vigore. La generazione successiva la rimette a NULL (upsert sulla coppia scrutinio-alunno).';
+    'vigore. Il database non la azzera da solo: la rimette a NULL l''upsert della generazione '
+    'successiva, che la passa esplicitamente (persistPagella).';
   COMMENT ON COLUMN public.pagelle.file_ritirati IS
     'Percorsi nel bucket pagelle delle copie ritirate (ritirate/<scrutinio>/<alunno>-<istante>.pdf), '
     'in ordine. La generazione non lo tocca: è lo storico delle versioni consegnate.';
 END $$;
+
+NOTIFY pgrst, 'reload schema';

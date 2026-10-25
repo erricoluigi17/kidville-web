@@ -45,6 +45,11 @@ key.properties
 # i file ignorati: per questo la cartella esiste ANCHE altrove finché non ci sono le copie offline.
 /KIDVILLE-CHIAVI-BACKUP/
 
+# Il Worker del monitor esterno (`monitor-esterno/`): `.dev.vars` contiene i segreti della prova in
+# locale (`wrangler dev`), `.wrangler/` la sua cache. MAI nel repository, che è pubblico.
+.dev.vars*
+.wrangler/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

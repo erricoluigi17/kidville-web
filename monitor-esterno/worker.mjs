@@ -17,12 +17,22 @@
 // COSA NON FA MAI: non ha un indirizzo pubblico (`workers_dev = false`), non legge dati delle famiglie
 // (il vivo dice solo «DB e login rispondono»), non scrive nel log il token.
 //
-// IL SEGRETO è uno solo, `GITHUB_TOKEN_CAMPANELLO`: un token GitHub a grana fine, limitato a QUESTO
-// repository e al solo permesso «Actions: read and write». Scade: la data sta in `docs/cicd.md`, e se
-// scade il battito si ferma e il campanello lo dice da solo.
+// IL BACKUP NOTTURNO (robustezza, seconda serie, sessione 4). Alle 02:23 UTC un secondo cron fa partire
+// `backup-notturno.yml` con `modalita=completo` e `origine=cloudflare`: lo `schedule` di GitHub
+// arrivava fra le 07:04 e le 09:35, sopra la punta delle scuole. Se il lancio non riesce, il Worker
+// manda un'email (Resend). È il SECONDO CANALE: quando è GitHub a rifiutare, l'allarme del campanello
+// non può partire. Vale anche quando il sito è giù e il campanello non parte.
+//
+// I SEGRETI sono tre, nei segreti del Worker e mai in `wrangler.toml` (il repository è pubblico):
+//   · `GITHUB_TOKEN_CAMPANELLO`: token GitHub a grana fine, limitato a QUESTO repository e al solo
+//     permesso «Actions: read and write». Scade (la data sta in `docs/cicd.md`): se scade, il battito
+//     si ferma (il campanello lo dice da solo) e il backup delle 02:23 non parte (lo dice l'email);
+//   · `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`: gli stessi del campanello. Se mancano, il Worker lo
+//     scrive in `console.error` e va avanti: il lancio del backup non dipende dall'email.
 //
 // Si prova con `__tests__/lib/monitor-esterno.test.ts` (numeri letterali, fetch finto). Si pubblica
 // con `npx wrangler@4.148.0 deploy` da questa cartella; si spegne con `npx wrangler@4.148.0 delete`.
+// Importa `scripts/campanello/allarme.mjs` (la stessa email del campanello): `wrangler` lo impacchetta.
 
 import { escapeHtml, mandaEmail } from '../scripts/campanello/allarme.mjs'
 
@@ -295,9 +305,21 @@ function attendi(ms) {
     return new Promise((r) => setTimeout(r, ms))
 }
 
+/** Quale lavoro fa un cron di Cloudflare: il backup alle 02:23, il monitor tutti gli altri. */
+export function lavoroDelCron(cron) {
+    return cron === CRON_BACKUP ? 'backup' : 'monitor'
+}
+
 const worker = {
     async scheduled(controller, env, ctx) {
-        ctx.waitUntil(giro({ quando: new Date(controller.scheduledTime), token: env.GITHUB_TOKEN_CAMPANELLO }))
+        const quando = new Date(controller.scheduledTime)
+        const token = env.GITHUB_TOKEN_CAMPANELLO
+        const segreti = { chiaveResend: env.RESEND_API_KEY, destinatari: env.SENTINELLA_DESTINATARI }
+        if (lavoroDelCron(controller.cron) === 'backup') {
+            ctx.waitUntil(giroBackup({ quando, token, segreti }))
+        } else {
+            ctx.waitUntil(giro({ quando, token, segreti }))
+        }
     },
 }
 

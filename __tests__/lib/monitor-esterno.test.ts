@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import {
+import worker, {
+    CRON_BACKUP,
     LINK_GIRI_BACKUP,
     MINUTI_BATTITO,
     ORIGINE,
@@ -12,6 +14,7 @@ import {
     chiaveIdempotenza,
     giro,
     giroBackup,
+    lavoroDelCron,
     leggiVivo,
     suonaCampanello,
 } from '../../monitor-esterno/worker.mjs'
@@ -209,10 +212,109 @@ describe('leggiVivo', () => {
 describe('wrangler.toml', () => {
     const toml = readFileSync(join(process.cwd(), 'monitor-esterno/wrangler.toml'), 'utf8')
 
-    it('ogni 5 minuti, nessun indirizzo pubblico, nessun segreto nel file', () => {
-        expect(toml).toMatch(/^crons\s*=\s*\["\*\/5 \* \* \* \*"\]\s*$/m)
+    it('due cron (ogni 5 minuti; alle 02:23 il backup), nessun indirizzo pubblico, nessun segreto nel file', () => {
+        expect(toml).toMatch(/^crons\s*=\s*\["\*\/5 \* \* \* \*", "23 2 \* \* \*"\]\s*$/m)
+        expect(toml).toContain(`"${CRON_BACKUP}"`)
         expect(toml).toMatch(/^workers_dev\s*=\s*false\s*$/m)
-        expect(toml).not.toMatch(/github_pat_|ghp_|\[vars\]/)
+        expect(toml).not.toMatch(/github_pat_|ghp_|re_[A-Za-z0-9]{6,}|\[vars\]|RESEND_API_KEY\s*=|SENTINELLA_DESTINATARI\s*=/)
+    })
+
+    it('il Worker lancia il backup alla stessa ora dello schedule di riserva', () => {
+        const yml = readFileSync(join(process.cwd(), '.github/workflows/backup-notturno.yml'), 'utf8')
+        expect(yml).toContain(`- cron: '${CRON_BACKUP}'`)
+    })
+})
+
+describe('scheduled: ogni cron fa il suo lavoro', () => {
+    async function scatta(
+        cron: string,
+        scheduledTime: number,
+        f: ReturnType<typeof fetchFinto>,
+        env: Record<string, string> = { GITHUB_TOKEN_CAMPANELLO: TOKEN },
+    ) {
+        const promesse: Promise<unknown>[] = []
+        vi.stubGlobal('fetch', f.impl)
+        const silenzio = vi.spyOn(console, 'log').mockImplementation(() => {})
+        const errore = vi.spyOn(console, 'error').mockImplementation(() => {})
+        try {
+            await worker.scheduled(
+                { cron, scheduledTime },
+                env,
+                { waitUntil: (p: Promise<unknown>) => promesse.push(p) },
+            )
+            await Promise.all(promesse)
+        } finally {
+            vi.unstubAllGlobals()
+            silenzio.mockRestore()
+            errore.mockRestore()
+        }
+        return promesse.length
+    }
+
+    it('lavoroDelCron: «23 2 * * *» è il backup, tutto il resto è il monitor', () => {
+        expect(CRON_BACKUP).toBe('23 2 * * *')
+        expect(lavoroDelCron(CRON_BACKUP)).toBe('backup')
+        expect(lavoroDelCron('*/5 * * * *')).toBe('monitor')
+        expect(lavoroDelCron('')).toBe('monitor')
+    })
+
+    it('il cron delle 02:23 lancia il backup e non legge il vivo', async () => {
+        const f = fetchFinto({ [DISPATCH_BACKUP]: [PARTITO] })
+
+        expect(await scatta(CRON_BACKUP, Date.parse('2026-10-21T02:23:00Z'), f)).toBe(1)
+
+        expect(f.a(DISPATCH_BACKUP)).toHaveLength(1)
+        expect(f.a(URL_VIVO)).toHaveLength(0)
+    })
+
+    it('il cron dei 5 minuti legge il vivo e non lancia il backup', async () => {
+        const f = fetchFinto({ [URL_VIVO]: [OK] })
+
+        expect(await scatta('*/5 * * * *', FUORI_BATTITO.getTime(), f)).toBe(1)
+
+        expect(f.a(URL_VIVO)).toHaveLength(1)
+        expect(f.a(DISPATCH_BACKUP)).toHaveLength(0)
+    })
+
+    it('backup rifiutato alle 02:23 e sito giù alle 02:25: un cron non ferma l\'altro, e i segreti del Worker arrivano alle due email', async () => {
+        const env = { GITHUB_TOKEN_CAMPANELLO: TOKEN, RESEND_API_KEY: 're_prova', SENTINELLA_DESTINATARI: 'a@esempio.test' }
+        const f = fetchFinto({
+            [DISPATCH_BACKUP]: [CREDENZIALI],
+            [WF_BACKUP]: [CREDENZIALI],
+            [URL_VIVO]: [GIU],
+            [DISPATCH]: [CREDENZIALI],
+            [RESEND]: [ACCETTATA],
+        })
+
+        expect(await scatta(CRON_BACKUP, Date.parse('2026-10-21T02:23:00Z'), f, env)).toBe(1)
+        // Il giro dei 5 minuti aspetta 20 s veri fra i due tentativi del vivo: si fa scorrere l'orologio.
+        vi.useFakeTimers({ toFake: ['setTimeout'] })
+        try {
+            const giroDopo = scatta('*/5 * * * *', Date.parse('2026-10-21T02:25:00Z'), f, env)
+            await vi.advanceTimersByTimeAsync(20_000)
+            expect(await giroDopo).toBe(1)
+        } finally {
+            vi.useRealTimers()
+        }
+
+        expect(f.a(URL_VIVO)).toHaveLength(2)
+        expect(f.a(RESEND).map((c) => c.idem)).toEqual(['kidville-backup-non-partito-2026-10-21', 'kidville-vivo-giu-2026-10-21T02'])
+        expect(f.a(RESEND).map((c) => c.auth)).toEqual(['Bearer re_prova', 'Bearer re_prova'])
+        expect(f.a(RESEND).map((c) => JSON.parse(c.corpo!).to)).toEqual([['a@esempio.test'], ['a@esempio.test']])
+    })
+})
+
+describe('i segreti della prova in locale non vanno online', () => {
+    it('git ignora `.dev.vars` e `.wrangler/` del Worker', () => {
+        for (const f of ['monitor-esterno/.dev.vars', 'monitor-esterno/.wrangler/tmp/prova.js']) {
+            let ignorato = true
+            try {
+                execFileSync('git', ['check-ignore', '-q', f], { cwd: process.cwd() })
+            } catch {
+                ignorato = false
+            }
+            expect(ignorato, `${f} NON è ignorato da git`).toBe(true)
+        }
     })
 })
 

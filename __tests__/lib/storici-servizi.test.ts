@@ -523,6 +523,38 @@ describe('adattatori dei servizi storici', () => {
     expect(letture.filter(l => l.tabella === 'divise_ordini_righe').map(l => l.range)).toEqual([[0, 499], [500, 999], [1000, 1499]])
   })
 
+  it('solleciti: la colonna «Recapitato» dice se almeno una email è partita, senza mostrare indirizzi', async () => {
+    const base = { alunno_id: A, scuola_id: SCUOLA, livello: 1, canale: 'email', oggetto: 'Promemoria', corpo: 'Testo di prova', automatico: true }
+    const { ctx, letture } = contesto({ solleciti: [
+      { ...base, id: 's-1', inviato_il: '2026-01-12T10:00:00Z', destinatari: [{ id: 'g-1', email: 'genitore.uno@example.test', inviata: true }] },
+      { ...base, id: 's-2', inviato_il: '2026-01-13T10:00:00Z', destinatari: [{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true }] },
+      { ...base, id: 's-3', inviato_il: '2026-01-14T10:00:00Z', destinatari: [{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false }] },
+    ] })
+    const s = await raccogliServizio(ctx, 'contabilita_solleciti')
+    expect(s?.colonne.map(c => c.titolo)).toContain('Recapitato')
+    expect(s?.righe.map(r => r.recapitato)).toEqual(['Sì', 'Incerto', 'No'])
+    expect(letture.find(l => l.tabella === 'solleciti')?.colonne).toContain('destinatari')
+    expect(JSON.stringify(s)).not.toContain('example.test')
+  })
+
+  // Aggiunto in esecuzione (mutation testing): con un destinatario per riga `some` ed `every`
+  // coincidono, e anche l'ordine fra «Sì» e «Incerto». Ma un sollecito con più genitori in cui
+  // uno l'ha ricevuto è PARTITO (il motore tiene la presa), anche se l'altro è incerto o
+  // rifiutato: lo storico non può dire «No» né «Incerto». Senza elenco: «Non registrato».
+  it('solleciti: più destinatari, uno partito ⇒ «Sì»; registro senza elenco ⇒ «Non registrato»', async () => {
+    const base = { alunno_id: A, scuola_id: SCUOLA, livello: 1, canale: 'email', oggetto: 'Promemoria', corpo: 'Testo di prova', automatico: true }
+    const { ctx } = contesto({ solleciti: [
+      { ...base, id: 's-4', inviato_il: '2026-01-15T10:00:00Z', destinatari: [
+        { id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true },
+        { id: 'g-2', email: 'genitore.due@example.test', inviata: true },
+      ] },
+      { ...base, id: 's-5', inviato_il: '2026-01-16T10:00:00Z', destinatari: null },
+    ] })
+    const s = await raccogliServizio(ctx, 'contabilita_solleciti')
+    expect(s?.righe.map(r => r.recapitato)).toEqual(['Sì', 'Non registrato'])
+    expect(JSON.stringify(s)).not.toContain('example.test')
+  })
+
   it.each<CategoriaStorico>(['servizi_armadietto', 'servizi_ordini', 'comunicazioni_news', 'mensa_menu', 'contabilita_fatture', 'contabilita_solleciti'])('fornisce colonne leggibili per %s anche senza dati', async categoria => {
     const { ctx } = contesto()
     const s = await raccogliServizio(ctx, categoria)

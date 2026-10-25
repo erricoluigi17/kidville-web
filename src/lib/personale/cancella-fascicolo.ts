@@ -57,7 +57,23 @@ type RigaFascicolo = {
   documento_retro_path?: string | null
 }
 
-type Conteggi = { pratiche_cancellate?: number; anagrafiche_cancellate?: number; profili_cancellati?: number }
+type Conteggi = {
+  pratiche_cancellate?: number
+  anagrafiche_cancellate?: number
+  profili_cancellati?: number
+  percorsi_staccati?: unknown
+}
+
+/**
+ * I percorsi delle righe di `caricamenti_personale` che `personale_elimina_dipendente` ha
+ * STACCATO invece di lasciarle cancellare in cascata: la route li sposta nel cestino insieme a
+ * quelli letti prima. Solo stringhe non vuote; un campo assente (la funzione di prima, che non
+ * stacca) è un elenco vuoto.
+ */
+function percorsiStaccatiDa(c: Conteggi): string[] {
+  if (!Array.isArray(c.percorsi_staccati)) return []
+  return c.percorsi_staccati.filter((p): p is string => typeof p === 'string' && p.trim() !== '')
+}
 
 /**
  * `personale_elimina_dipendente` NON C'È ANCORA in questo database — i soli due codici con cui
@@ -121,7 +137,14 @@ export async function leggiFascicoloPersonale(
 }
 
 export type EsitoRigheDipendente =
-  | { esito: 'ok'; praticheCancellate: number; anagraficheCancellate: number; profiloEliminato: boolean }
+  | {
+      esito: 'ok'
+      praticheCancellate: number
+      anagraficheCancellate: number
+      profiloEliminato: boolean
+      /** Righe del registro staccate dalla funzione: i loro file vanno nel cestino anche loro. */
+      percorsiStaccati: string[]
+    }
   | { esito: 'rifiutata' }
   | { esito: 'guasto' }
 
@@ -129,7 +152,8 @@ export type EsitoRigheDipendente =
  * Pratica, fascicolo e profilo in UNA transazione. `rifiutata` = una chiave senza
  * cascata trattiene il profilo (23503): niente è stato cancellato, si archivia.
  * Dove la funzione non c'è (DB della CI) ripiega sulla sola cancellazione del
- * fascicolo, e il profilo resta da togliere all'account (`profiloEliminato: false`).
+ * fascicolo, e il profilo resta da togliere all'account (`profiloEliminato: false`);
+ * la funzione di prima non stacca il registro (`percorsiStaccati: []`).
  */
 export async function eliminaRigheDipendente(
   supabase: SupabaseClient,
@@ -145,6 +169,7 @@ export async function eliminaRigheDipendente(
       praticheCancellate: c.pratiche_cancellate ?? 0,
       anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
       profiloEliminato: (c.profili_cancellati ?? 0) > 0,
+      percorsiStaccati: percorsiStaccatiDa(c),
     }
   }
   if (r.error.code === '23503') {
@@ -166,6 +191,7 @@ export async function eliminaRigheDipendente(
       praticheCancellate: c.pratiche_cancellate ?? 0,
       anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
       profiloEliminato: false,
+      percorsiStaccati: [],
     }
   }
   logEvento('gdpr', 'error', { operazione: op, esito: 'righe-dipendente-non-cancellate', entita_id: utenteId }, r.error)

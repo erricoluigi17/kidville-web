@@ -19,8 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *   poteri → righe in UNA transazione → account → file nel CESTINO.
  * I file per ULTIMI: un passo che fallisce dopo di loro li avrebbe persi. Nel
  * cestino e non cancellati: finché il giro notturno non li distrugge, un errore si
- * rimedia. I percorsi si leggono per primi, perché la cascata sulla pratica porta
- * via `caricamenti_personale`.
+ * rimedia. I percorsi si leggono per primi, e la funzione aggiunge quelli delle righe
+ * di `caricamenti_personale` che ha staccato invece di lasciarle sparire in cascata.
  *
  * ─── PROVA PER ROTTURA (Compito 8, Passo 7 del piano della sessione 10) ───────
  *   • `spostaScansioniNelCestino` spostato PRIMA di `eliminaRigheDipendente`
@@ -328,6 +328,35 @@ describe('POST — cancella', () => {
       praticheCancellate: 1,
       accountAccessoRimosso: true,
     })
+  })
+
+  it('nel cestino vanno anche i percorsi che la funzione ha staccato dal registro, una volta sola', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = {
+      data: {
+        pratiche_cancellate: 1,
+        anagrafiche_cancellate: 1,
+        profili_cancellati: 1,
+        percorsi_staccati: ['p/fronte.jpg', 'documenti/x/registro.pdf'],
+      },
+      error: null,
+    }
+    const res = await conferma()
+    expect(h.spostati).toEqual([['p/fronte.jpg', 'p/retro.jpg', 'documenti/x/registro.pdf']])
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', fileNelCestino: 3 })
+    // L'ordine non cambia: il cestino resta l'ultimo passo.
+    expect(h.ordine.indexOf('auth.deleteUser')).toBeLessThan(h.ordine.indexOf('storage.cestino'))
+  })
+
+  it.each([
+    ['elementi che non sono percorsi', [42, '', '  ', null, 'documenti/y.pdf'], ['p/fronte.jpg', 'p/retro.jpg', 'documenti/y.pdf']],
+    ['una stringa invece di un elenco', 'documenti/z.pdf', ['p/fronte.jpg', 'p/retro.jpg']],
+  ])('percorsi_staccati con %s: nel cestino solo percorsi veri', async (_caso, staccati, attesi) => {
+    h.rpcRisposte.personale_elimina_dipendente = {
+      data: { pratiche_cancellate: 1, anagrafiche_cancellate: 1, profili_cancellati: 1, percorsi_staccati: staccati },
+      error: null,
+    }
+    await conferma()
+    expect(h.spostati).toEqual([attesi])
   })
 
   it('23503 dal database: si ARCHIVIA, nessun file toccato, nessun account cancellato', async () => {

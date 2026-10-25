@@ -447,8 +447,8 @@ function fascicoloNonCancellato(): NextResponse {
  *
  * I file per ULTIMI, e non cancellati: spostati nel cestino dello stesso bucket, da
  * cui li distrugge il giro notturno `cestino-registro-retention`. I percorsi si
- * leggono PRIMA di tutto, perché la cascata sulla pratica porta via i caricamenti
- * che li nominano.
+ * leggono PRIMA di tutto, e la funzione aggiunge quelli delle righe del registro che
+ * ha staccato invece di lasciarle sparire in cascata (`percorsiStaccati`).
  */
 async function cancella(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -481,7 +481,11 @@ async function cancella(
 
   // 5. I file nel cestino: SEMPRE, a questo punto, perché le righe che li nominavano
   //    non ci sono più — anche quando l'account è stato rifiutato.
-  const file = await spostaScansioniNelCestino(supabase, fascicolo.percorsi, OPERAZIONE_POST)
+  const file = await spostaScansioniNelCestino(
+    supabase,
+    [...new Set([...fascicolo.percorsi, ...righe.percorsiStaccati])],
+    OPERAZIONE_POST,
+  )
 
   let accountAccessoRimosso = true
   if (errAccount) {

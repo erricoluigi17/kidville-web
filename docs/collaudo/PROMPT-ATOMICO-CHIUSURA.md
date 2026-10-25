@@ -121,10 +121,14 @@ l'errore arriva dal server in italiano), `T13-F1` (l'E2E copre il 23% delle pagi
 
 - **`.env.local` punta al database di PRODUZIONE.** `npm run e2e` e `npm run e2e:seed` in
   locale sono vietati: il seed scriverebbe su produzione. L'E2E si verifica **in CI**.
-- Sul DB di produzione, in questa fase, fai **solo `SELECT`**. Le migrazioni si applicano
-  con lo strumento MCP `apply_migration` + `get_advisors` (0 ERROR), e **si mostrano
-  all'utente prima di applicarle** — «mostrare non è chiedere», ma è l'unica cosa rimasta
-  fra un errore e 152 minori.
+- Sul DB di produzione, via MCP, fai **solo letture** (`SELECT`). Una migrazione si scrive
+  come **file in `supabase/migrations/`** dentro la PR, con la version del file (presa da
+  `date -u +%Y%m%d%H%M%S`): la applica l'**integrazione GitHub di Supabase al merge**, e il
+  merge lo fa il titolare. Dal 25/10/2026 il freno `.claude/hooks/supabase_sql_freno.py`
+  nega ogni `apply_migration` via MCP (applicarla anche a mano lascerebbe due righe nello
+  storico). Dopo il merge si controlla con `get_advisors` (0 ERROR). La migrazione **si
+  mostra all'utente** nella PR, prima del merge — «mostrare non è chiedere», ma è l'unica
+  cosa rimasta fra un errore e i minori dietro quelle righe.
 - **Il repository è pubblico**: mai segreti, mai PII reali in codice, test, PRD o commit.
 - Si lavora su un **branch secondario**, mai su `main`. Ogni modifica aggiorna il
   **PRD** (`PRD REGISTRO ELETTRONICO.md`, voce di changelog datata) e porta i propri **log**

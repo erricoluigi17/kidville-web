@@ -108,12 +108,15 @@ e **il merge lo fa il titolare**. L'hook `PreToolUse` `.claude/hooks/supabase_sq
 `execute_sql`, a `DELETE`, `DROP`, `TRUNCATE`, `UPDATE` senza `WHERE`, `ALTER … DROP`, agli
 interruttori della scatola nera, dei registri e dei trigger (`registri.manutenzione`,
 `scatola_nera.manutenzione`, `scatola_nera.senza_storico`, `session_replication_role`,
-`DISABLE TRIGGER`, `UPDATE pg_settings`) e a ciò che non sa leggere (in dubbio si ferma). Le stesse
+`DISABLE TRIGGER`, `UPDATE pg_settings`), alla sicurezza a livello di riga spenta
+(`ALTER TABLE … DISABLE ROW LEVEL SECURITY` e `… NO FORCE ROW LEVEL SECURITY`; `ENABLE` e `FORCE`
+passano) e a ciò che non sa leggere (in dubbio si ferma). Le stesse
 categorie le cerca anche nelle stringhe che il database poi **esegue** — `EXECUTE` e `format()`,
 `cron.schedule`/`alter_job`, `dblink_exec`, il corpo di un `DO` o di una funzione — e in
 `MERGE … THEN DELETE`. **Passano ancora**: una funzione già nel database che scrive
 (`SELECT public.f()`), le parole spezzate apposta (`'DEL' || 'ETE …'`), `REVOKE`, `ALTER … RENAME`,
-`ALTER … DISABLE ROW LEVEL SECURITY`, `CREATE OR REPLACE` di una funzione esistente, `COPY`: il freno
+le altre vie per scavalcare la RLS (una policy con `USING (true)`, `ALTER ROLE … BYPASSRLS`),
+`CREATE OR REPLACE` di una funzione esistente, `COPY`: il freno
 ferma gli sbagli, non chi lo vuole aggirare. Fermato vuol dire **mostrare l'istruzione al titolare**,
 che la esegue dall'editor SQL, non cercare un'altra via: SQL da `Bash` (`psql`, `supabase db query`,
 `DATABASE_URL`) il freno non lo vede. Via di fuga: `KIDVILLE_FRENO_SQL_SPENTO=1`.

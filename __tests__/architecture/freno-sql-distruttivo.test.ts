@@ -4,8 +4,9 @@
  *
  * Robustezza, seconda serie, sessione 2 (decisione T3 del titolare, 20/10/2026). Il freno è un
  * hook `PreToolUse` sugli strumenti SQL di Supabase: risponde `deny` a ogni `apply_migration` e,
- * su `execute_sql`, a `DELETE`, `DROP`, `TRUNCATE`, `UPDATE` senza `WHERE`, `ALTER … DROP` e agli
- * interruttori della scatola nera; lascia passare letture, `INSERT`, `UPDATE … WHERE`, `CREATE`.
+ * su `execute_sql`, a `DELETE`, `DROP`, `TRUNCATE`, `UPDATE` senza `WHERE`, `ALTER … DROP`, agli
+ * interruttori della scatola nera e (dal ritocco del 25/10) a `DISABLE`/`NO FORCE ROW LEVEL
+ * SECURITY`; lascia passare letture, `INSERT`, `UPDATE … WHERE`, `CREATE`.
  *
  * Si prova lo SCRIPT VERO, con l'input che Claude Code gli passa su stdin, un caso per riga. Le
  * due metà contano uguale: un caso fermato che passa è un buco; un caso lasciato passare che viene
@@ -324,6 +325,55 @@ describe('freno SQL — forme di aggiramento oltre il piano', () => {
     const e = freno(sql(dentro(dentro(dentro(dentro('BEGIN PERFORM 1; END'))))))
     expect(e.decisione).toBe('deny')
     expect(e.motivo).toContain('In dubbio si ferma')
+  })
+})
+
+/**
+ * RITOCCO DALLA REVISIONE (25/10/2026): la sicurezza a livello di riga spenta. Fino a questo
+ * ritocco `ALTER TABLE … DISABLE ROW LEVEL SECURITY` passava, ed era scritto fra i limiti noti:
+ * su `enrollment_submissions` vuol dire aprire le domande d'iscrizione (codici fiscali, allergie
+ * dei minori) a chi le policy tenevano fuori. `NO FORCE` è la stessa cosa per il proprietario
+ * della tabella. `ENABLE` e `FORCE` sono il verso sicuro, e le letture del catalogo restano letture.
+ */
+const RLS = 'ROW LEVEL SECURITY'
+const FERMATE_RLS: ReadonlyArray<readonly [string, string, string]> = [
+  ['DISABLE ROW LEVEL SECURITY', 'ALTER TABLE public.enrollment_submissions DISABLE ROW LEVEL SECURITY', RLS],
+  ['minuscolo', 'alter table public.alunni disable row level security', RLS],
+  ['maiuscole a caso', 'Alter Table public.alunni DiSaBlE Row Level SeCuRiTy', RLS],
+  ['NO FORCE ROW LEVEL SECURITY', 'ALTER TABLE public.alunni NO FORCE ROW LEVEL SECURITY', RLS],
+  ['IF EXISTS ONLY, schema e tabella fra virgolette', 'ALTER TABLE IF EXISTS ONLY "public"."enrollment_submissions" DISABLE ROW LEVEL SECURITY', RLS],
+  ['senza schema, su più righe, con un commento in mezzo', 'ALTER TABLE alunni\n  DISABLE /* solo un attimo */ ROW\n\tLEVEL SECURITY', RLS],
+  ['dopo un ENABLE nella stessa stringa', 'ALTER TABLE public.a ENABLE ROW LEVEL SECURITY; ALTER TABLE public.b DISABLE ROW LEVEL SECURITY', RLS],
+  ['dentro un blocco DO', 'DO $$ BEGIN ALTER TABLE public.alunni DISABLE ROW LEVEL SECURITY; END $$', RLS],
+  ['EXECUTE format(…) in un ciclo, come nei piani del repo', "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['alunni', 'parents'] LOOP EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY', t); END LOOP; END $$", RLS],
+  ['EXECUTE di stringhe concatenate che spezzano le parole', "DO $$ BEGIN EXECUTE 'ALTER TABLE public.alunni ' || 'NO FORCE ' || 'row level security'; END $$", RLS],
+  ['nel corpo di una funzione', 'CREATE FUNCTION public.f() RETURNS void LANGUAGE sql AS $$ ALTER TABLE public.alunni DISABLE ROW LEVEL SECURITY $$', RLS],
+]
+
+const PASSANO_RLS: ReadonlyArray<readonly [string, string]> = [
+  ['ENABLE ROW LEVEL SECURITY', 'ALTER TABLE public.enrollment_submissions ENABLE ROW LEVEL SECURITY'],
+  ['FORCE ROW LEVEL SECURITY, minuscolo', 'alter table only public.alunni force row level security'],
+  ['ENABLE e FORCE con EXECUTE format in un DO', "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['alunni'] LOOP EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t); EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t); END LOOP; END $$"],
+  ['il catalogo letto: quali tabelle hanno la RLS spenta', "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnamespace = 'public'::regnamespace AND NOT relrowsecurity"],
+  ['pg_tables letto', "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public' AND rowsecurity = false"],
+  ['colonne che cominciano come le parole', 'SELECT disabled_at, forced FROM public.prova_freno'],
+]
+
+describe('freno SQL — la sicurezza a livello di riga spenta (ritocco dalla revisione)', () => {
+  it.each(FERMATE_RLS)('ferma: %s', (perche, query, categoria) => {
+    const e = freno(sql(query))
+    expect(e.decisione, perche).toBe('deny')
+    expect(e.motivo, perche).toContain(categoria)
+    expect(e.motivo).toContain('titolare')
+    expect(e.uscita).toBe(0)
+    expect(e.stderr).toBe('')
+  })
+
+  it.each(PASSANO_RLS)('lascia passare: %s', (perche, query) => {
+    const e = freno(sql(query))
+    expect(e.decisione, `${perche} → ${e.motivo}`).toBeNull()
+    expect(e.uscita).toBe(0)
+    expect(e.stderr).toBe('')
   })
 })
 

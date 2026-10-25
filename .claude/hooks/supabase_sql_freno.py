@@ -15,17 +15,24 @@ COSA FERMA (risposta ``deny``):
   · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
   · oltre il piano (25/10/2026): le stesse categorie dentro una stringa che viene ESEGUITA
     (``EXECUTE`` di PL/pgSQL anche con ``format()`` o ``||``, ``cron.schedule``/``alter_job``,
-    ``dblink_exec``, il corpo fra apici di un ``DO`` o di una funzione) e ``MERGE … THEN DELETE``.
+    ``dblink_exec``, il corpo fra apici di un ``DO`` o di una funzione) e ``MERGE … THEN DELETE``;
+  · ritocco dalla revisione (25/10/2026): ``ALTER TABLE … DISABLE ROW LEVEL SECURITY`` e
+    ``ALTER TABLE … NO FORCE ROW LEVEL SECURITY``, che aprono una tabella coi dati dei minori a chi
+    le policy tenevano fuori (anche con schema, ``ONLY``, ``IF EXISTS``, in minuscolo, dentro un
+    ``DO`` o un ``EXECUTE``). ``ENABLE`` e ``FORCE`` sono il verso sicuro e passano.
 
 LIMITI NOTI (passano): una funzione già nel database che scrive (``SELECT public.f()``); parole
 spezzate apposta (``'DEL' || 'ETE FROM …'``, il nome di un interruttore costruito con ``||``);
-``REVOKE``, ``ALTER … RENAME``, ``ALTER … DISABLE ROW LEVEL SECURITY``, ``CREATE OR REPLACE`` di
-una funzione esistente, ``COPY``. Il freno ferma gli sbagli, non chi lo vuole aggirare: per
-quello c'è comunque ``Bash``, fuori perimetro.
+``REVOKE``, ``ALTER … RENAME``, le altre vie per scavalcare la RLS (una policy riscritta con
+``USING (true)``, ``ALTER ROLE … BYPASSRLS``), ``CREATE OR REPLACE`` di una funzione esistente,
+``COPY``. Il freno ferma gli sbagli, non chi lo vuole aggirare: per quello c'è comunque ``Bash``,
+fuori perimetro.
 
 COSA LASCIA PASSARE (nessun output: decide la modalità di permesso, come senza freno):
-  ``SELECT``, ``INSERT`` (anche ``ON CONFLICT … DO UPDATE``), ``UPDATE … WHERE``, ``CREATE``,
-  ``EXPLAIN`` di una lettura, ``GRANT``. Il freno non approva mai niente: nega, oppure tace.
+  ``SELECT`` (anche su ``pg_class.relrowsecurity``), ``INSERT`` (anche ``ON CONFLICT … DO UPDATE``),
+  ``UPDATE … WHERE``, ``CREATE``, ``EXPLAIN`` di una lettura, ``GRANT``,
+  ``ENABLE ROW LEVEL SECURITY`` e ``FORCE ROW LEVEL SECURITY``. Il freno non approva mai niente:
+  nega, oppure tace.
 
 PERCHÉ ``deny`` E NON ``ask``: un ``ask`` diventa una richiesta di permesso, e la richiesta di
 permesso la approva da solo ``auto_allow_permission.py`` (evento ``PermissionRequest``). Un
@@ -92,6 +99,13 @@ INTERRUTTORI = re.compile(
     r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"
     r"|\bDISABLE\s+TRIGGER\b"
 )
+
+# La sicurezza a livello di riga SPENTA su una tabella (ritocco dalla revisione, 25/10/2026). Si
+# cerca nel ``testo`` come gli interruttori: maiuscole già uniformate, commenti già spazi, schema,
+# ``ONLY`` e ``IF EXISTS`` irrilevanti (la regola guarda la coda dell'istruzione), e anche dentro
+# una stringa — in dubbio si ferma. ``ENABLE`` e ``FORCE`` sono il verso sicuro e non c'entrano;
+# ``NO FORCE`` sì: tolto il FORCE, il proprietario della tabella torna a scavalcare le policy.
+RLS_SPENTA = re.compile(r"\b(?:DISABLE|NO\s+FORCE)\s+ROW\s+LEVEL\s+SECURITY\b")
 
 # SQL che sta in una STRINGA ma viene eseguito (oltre il piano). Le funzioni si riconoscono dal
 # nome seguito da «(», con o senza schema: pg_cron, dblink, query_to_xml.
@@ -347,6 +361,8 @@ def classifica(sql: str, livello: int = 0) -> list[str]:
     trovate: list[str] = []
     if INTERRUTTORI.search(testo):
         trovate.append("interruttore della scatola nera, dei registri o dei trigger")
+    if RLS_SPENTA.search(testo):
+        trovate.append("sicurezza a livello di riga spenta (DISABLE o NO FORCE ROW LEVEL SECURITY)")
     prossima = 0
     for tok in istruzioni(codice):
         c = categoria(tok)

@@ -471,6 +471,19 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'per consensi-retention, audit-docente-retention e app-log-bonifica-pii. Li sorveglia ' +
             'tutti `cron-esiti` (cron_ultimo_esito) con la finestra della loro cadenza.',
     },
+    // `cron-storico-purge` (`41 3 * * *`, funzione SQL `cron_storico_purge`, sessione 8 della
+    // seconda serie): tiene 14 giorni di `cron.job_run_details`. È giornaliero e il suo battito ha la
+    // forma che `controlloBattitoCron` legge (`BATTITI_DA_LEGGERE`): il suo posto è `JOB_CRON`, con
+    // `finestraMs: 26 * ORA`. Sta qui per un vincolo di SEQUENZA: la migrazione la applica
+    // l'integrazione al merge, e fino ad allora `cron-sorvegliato-e-applicato` vieta di sorvegliarla.
+    {
+        nome: 'cron-storico-purge',
+        perche:
+            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
+            'Supabase al merge della PR della sessione 8 della seconda serie. Dopo il primo battito ' +
+            '`ok` in app_log (impronta `cron:cron-storico-purge`) e la fotografia delle migrazioni ' +
+            'rigenerata, passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
+    },
 ]
 
 /** La finestra più larga: quanto indietro serve leggere `app_log` per coprirle tutte. */

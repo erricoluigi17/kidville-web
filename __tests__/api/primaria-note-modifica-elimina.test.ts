@@ -54,6 +54,9 @@ const h = vi.hoisted(() => ({
   db: {} as Record<string, Record<string, unknown>[]>,
   scritture: [] as Scrittura[],
   errori: undefined as Record<string, { code: string; message?: string }> | undefined,
+  /** Le RPC del finto client: `note_modifica` per difetto (sessione 10), vedi `beforeEach`. */
+  rpc: {} as Record<string, (args: Riga) => { data: unknown; error: unknown }>,
+  rpcChiamate: [] as Array<{ nome: string; args: Riga }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', async (originale) => ({
@@ -63,11 +66,29 @@ vi.mock('@/lib/auth/require-staff', async (originale) => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   return {
-    createAdminClient: async () => creaFintoSupabase(h.db, [], { scritture: h.scritture, errori: h.errori }),
+    createAdminClient: async () =>
+      creaFintoSupabase(h.db, [], {
+        scritture: h.scritture,
+        errori: h.errori,
+        rpc: Object.fromEntries(
+          Object.entries(h.rpc).map(([nome, f]) => [
+            nome,
+            (args: Riga) => {
+              h.rpcChiamate.push({ nome, args })
+              return f(args)
+            },
+          ]),
+        ),
+      }),
   }
+})
+vi.mock('@/lib/logging/logger', async (originale) => {
+  const vero = await originale<typeof import('@/lib/logging/logger')>()
+  return { ...vero, logEvento: vi.fn(vero.logEvento) }
 })
 
 import { GET, POST, PATCH, DELETE } from '@/app/api/primaria/note/route'
+import { logEvento } from '@/lib/logging/logger'
 
 const utenti = {
   maestra: { id: MAESTRA, role: 'educator', ruolo: 'educator', scuola_id: SEDE_A },
@@ -168,6 +189,46 @@ const dbBase = (): DBFinto => ({
   audit_scritture_docente: [],
 })
 
+/**
+ * `note_modifica` come la scrive la migrazione della sessione 10: tutto o niente, la presa
+ * visione tolta solo alle note il cui testo (quello nel DB al momento della chiamata, rifilato)
+ * è diverso da `p_testo` — `p_ids_azzera` non decide —, i parametri NULL lasciano il campo com'è.
+ * La funzione SQL vera la prova `__tests__/lib/note-modifica-sql.test.ts` su PGlite.
+ */
+function noteModificaFinta(args: Riga): { data: unknown; error: unknown } {
+  const ids = new Set(args.p_ids as string[])
+  const bersagli = (h.db.note_disciplinari as Riga[]).filter(
+    (n) => ids.has(String(n.id)) && n.section_id === args.p_section_id,
+  )
+  const nuovo = args.p_testo == null ? null : String(args.p_testo).trim()
+  const togliere = new Set(
+    bersagli.filter((n) => nuovo != null && String(n.testo ?? '').trim() !== nuovo).map((n) => n.id),
+  )
+  const prima = (h.db.nota_ricezioni as Riga[]).length
+  h.db.nota_ricezioni = (h.db.nota_ricezioni as Riga[]).filter((r) => !togliere.has(r.nota_id))
+  const campi: Array<[string, string]> = [
+    ['categoria', 'p_categoria'],
+    ['testo', 'p_testo'],
+    ['richiede_firma', 'p_richiede_firma'],
+    ['data_evento', 'p_data_evento'],
+    ['nota_gruppo_id', 'p_nuovo_gruppo'],
+  ]
+  for (const n of bersagli) {
+    for (const [colonna, parametro] of campi) if (args[parametro] != null) n[colonna] = args[parametro]
+    if (togliere.has(n.id)) {
+      n.firmata_il = null
+      n.firmata_da = null
+    }
+  }
+  return {
+    data: {
+      ricezioni_cancellate: prima - (h.db.nota_ricezioni as Riga[]).length,
+      note: bersagli.map((n) => ({ ...n })),
+    },
+    error: null,
+  }
+}
+
 function richiesta(metodo: string, url: string, body?: unknown): NextRequest {
   return {
     url,
@@ -195,6 +256,8 @@ beforeEach(() => {
   h.db = dbBase()
   h.scritture = []
   h.errori = undefined
+  h.rpc = { note_modifica: noteModificaFinta }
+  h.rpcChiamate = []
   come('maestra')
 })
 afterEach(() => {
@@ -221,17 +284,19 @@ describe('PATCH — firma azzerata e ambito', () => {
     expect(a[0]).toMatchObject({ entita_tipo: 'nota', entita_id: NOTA_1, azione: 'update', section_id: SEZ, scuola_id: SEDE_A })
   })
 
-  it('«tutti» modifica OGNI nota del gruppo e nessun\'altra', async () => {
+  it('«tutti» modifica OGNI nota del gruppo e nessun\'altra; il testo non cambia, quindi le prese visione restano', async () => {
     const res = await patch({ id: NOTA_2, categoria: 'didattica', richiedeFirma: false, ambito: 'gruppo' })
     expect(res.status).toBe(200)
     expect((await res.json()).modificate).toBe(4)
 
     for (const id of [NOTA_1, NOTA_2, NOTA_3, NOTA_4]) {
-      expect(notaDb(id)).toMatchObject({ categoria: 'didattica', richiede_firma: false, firmata_il: null })
+      expect(notaDb(id)).toMatchObject({ categoria: 'didattica', richiede_firma: false })
     }
+    // Sessione 10: la presa visione riguarda il TESTO letto dal genitore, che qui non cambia.
+    expect(notaDb(NOTA_1)?.firmata_il).toBe('2026-09-09T12:00:00Z')
     expect(notaDb(NOTA_ALTRO_GRUPPO)?.categoria).toBe('disciplinare')
     expect(notaDb(NOTA_ALTRO_GRUPPO)?.firmata_il).toBe('2026-09-09T12:00:00Z')
-    expect(ricezioni()).toEqual([NOTA_ALTRO_GRUPPO])
+    expect(ricezioni()).toEqual([NOTA_1, NOTA_ALTRO_GRUPPO])
     expect(audit()[0]).toMatchObject({ entita_id: GRUPPO, azione: 'update' })
   })
 
@@ -324,7 +389,13 @@ describe('PATCH — l\'avviso ancora in coda si allinea alla nota modificata', (
   })
 })
 
-describe('PATCH — ordine: prima le firme, poi la nota', () => {
+describe('PATCH — senza la funzione (DB della CI): prima le firme, poi la nota', () => {
+  beforeEach(() => {
+    h.rpc = {
+      note_modifica: () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.note_modifica' } }),
+    }
+  })
+
   it('se la cancellazione delle prese visione fallisce: 500, e nota + firma restano intatte e coerenti', async () => {
     h.errori = { 'nota_ricezioni:delete': { code: '57014', message: 'canceling statement' } }
     const res = await patch({ id: NOTA_1, testo: 'Testo corretto', ambito: 'alunno' })
@@ -580,7 +651,10 @@ describe('spostamento della competenza della nota', () => {
     expect(res.status).toBe(200)
     expect(notaDb(NOTA_1)?.data_evento).toBe('2020-04-02')
     expect(notaDb(NOTA_1)?.nota_gruppo_id).not.toBe(GRUPPO)
-    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({ entita_id: NOTA_1, contenuto: { tabella: 'note_disciplinari', riga: expect.objectContaining({ nota_gruppo_id: GRUPPO, testo: 'Testo originale' }) } }), expect.objectContaining({ contenuto: { tabella: 'nota_ricezioni', riga: expect.objectContaining({ nota_id: NOTA_1 }) } })]))
+    expect(h.db.storici_revisioni).toEqual(expect.arrayContaining([expect.objectContaining({ entita_id: NOTA_1, contenuto: { tabella: 'note_disciplinari', riga: expect.objectContaining({ nota_gruppo_id: GRUPPO, testo: 'Testo originale' }) } })]))
+    // Sessione 10: cambia la data, non il testo: la presa visione del genitore resta.
+    expect(notaDb(NOTA_1)).toMatchObject({ firmata_il: '2026-09-09T12:00:00Z', firmata_da: GENITORE_1 })
+    expect(ricezioni()).toContain(NOTA_1)
     expect(notificheIds()).toContain('5') // altro gruppo, stesso genitore
     expect(notificheIds()).toContain('2') // nota di un altro bambino rimasta nel giorno originale
   })
@@ -624,4 +698,105 @@ it.each([false,true])('revisione legacy: correzione nota ieri ritira solo giorno
  expect(ids).not.toContain('legacy-ieri');expect(ids).not.toContain('nuova-meta-ieri');expect(ids).not.toContain('claim-ieri')
  expect(ids).toContain('finalizzata-ieri')
  expect(ids).toEqual(expect.arrayContaining(['legacy-altro-giorno','legacy-oggi','inviata-ieri','altra-entita']))
+})
+
+describe('PATCH — una sola transazione, e la firma si toglie solo se cambia il testo (sessione 10)', () => {
+  const scrittureNote = () =>
+    h.scritture.filter((s) => s.tabella === 'nota_ricezioni' || s.tabella === 'note_disciplinari')
+
+  it('testo cambiato: UNA chiamata a note_modifica, nessuna scrittura separata su note o prese visione', async () => {
+    const res = await patch({ id: NOTA_1, testo: 'Testo corretto', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(h.rpcChiamate).toHaveLength(1)
+    expect(h.rpcChiamate[0]).toMatchObject({
+      nome: 'note_modifica',
+      args: {
+        p_ids: [NOTA_1],
+        p_section_id: SEZ,
+        p_ids_azzera: [NOTA_1],
+        p_testo: 'Testo corretto',
+        p_categoria: null,
+        p_nuovo_gruppo: null,
+      },
+    })
+    expect(scrittureNote()).toEqual([])
+  })
+
+  it('la funzione fallisce (57014) → 500, e nota e presa visione restano come prima', async () => {
+    h.rpc = { note_modifica: () => ({ data: null, error: { code: '57014', message: 'canceling statement' } }) }
+    const res = await patch({ id: NOTA_1, testo: 'Testo corretto', ambito: 'alunno' })
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('NOTA_OPERAZIONE_NON_RIUSCITA')
+    expect(notaDb(NOTA_1)).toMatchObject({ testo: 'Testo originale', firmata_il: '2026-09-09T12:00:00Z' })
+    expect(ricezioni()).toContain(NOTA_1)
+    expect(audit()).toHaveLength(0)
+  })
+
+  it('cambia solo la categoria di una nota firmata: la presa visione del genitore RESTA', async () => {
+    const res = await patch({ id: NOTA_1, categoria: 'didattica', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ modificate: 1, firme_azzerate: 0 })
+    expect(notaDb(NOTA_1)).toMatchObject({ categoria: 'didattica', firmata_il: '2026-09-09T12:00:00Z', firmata_da: GENITORE_1 })
+    expect(ricezioni()).toContain(NOTA_1)
+    expect(h.rpcChiamate[0].args.p_ids_azzera).toEqual([])
+  })
+
+  it('nel frattempo un\'altra modifica ha cambiato il testo: la route manda comunque p_testo, e decide la funzione', async () => {
+    // La route legge «Testo originale» e crede invariato il testo che rimanda; nel DB, al
+    // momento della chiamata, c'è già un altro testo firmato.
+    h.rpc = {
+      note_modifica: (args: Riga) => {
+        const n = notaDb(NOTA_1)
+        if (n) n.testo = 'Testo cambiato da un altro'
+        return noteModificaFinta(args)
+      },
+    }
+    const res = await patch({ id: NOTA_1, testo: 'Testo originale', categoria: 'didattica', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(h.rpcChiamate[0].args).toMatchObject({ p_ids: [NOTA_1], p_ids_azzera: [], p_testo: 'Testo originale' })
+    expect(notaDb(NOTA_1)).toMatchObject({ testo: 'Testo originale', firmata_il: null })
+    expect(ricezioni()).not.toContain(NOTA_1)
+  })
+
+  it('il log del successo conta le prese visione che la funzione ha tolto davvero', async () => {
+    const res = await patch({ id: NOTA_1, testo: 'Testo corretto', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'nota-modificata', firme_azzerate: 1, ricezioni_cancellate: 1 }),
+    )
+  })
+
+  it('cambio di data sulla via della funzione: la nota esce dal gruppo (gruppo nuovo) e tiene la presa visione', async () => {
+    const res = await patch({ id: NOTA_1, data: '2026-09-10', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(h.rpcChiamate).toHaveLength(1)
+    const nuovo = h.rpcChiamate[0].args.p_nuovo_gruppo
+    expect(nuovo).toEqual(expect.any(String))
+    expect(nuovo).not.toBe(GRUPPO)
+    expect(notaDb(NOTA_1)).toMatchObject({ data_evento: '2026-09-10', nota_gruppo_id: nuovo, firmata_il: '2026-09-09T12:00:00Z' })
+    expect(notaDb(NOTA_2)?.nota_gruppo_id).toBe(GRUPPO)
+    expect(ricezioni()).toContain(NOTA_1)
+  })
+
+  it.each(['PGRST202', '42883'])('funzione assente (DB della CI, %s): le due richieste di prima, e lo dice a livello info', async (code) => {
+    h.rpc = {
+      note_modifica: () => ({ data: null, error: { code, message: 'Could not find the function public.note_modifica' } }),
+    }
+    const res = await patch({ id: NOTA_1, testo: 'Testo corretto', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(notaDb(NOTA_1)).toMatchObject({ testo: 'Testo corretto', firmata_il: null })
+    expect(ricezioni()).not.toContain(NOTA_1)
+    expect(scrittureNote().map((s) => `${s.tabella}:${s.operazione}`)).toEqual([
+      'nota_ricezioni:delete',
+      'note_disciplinari:update',
+    ])
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'rpc-note-modifica-assente' }),
+      expect.objectContaining({ code }),
+    )
+  })
 })

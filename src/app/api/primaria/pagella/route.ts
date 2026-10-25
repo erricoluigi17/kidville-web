@@ -10,6 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
 
 const getQuerySchema = z.object({
   scrutinioId: zUuid,
@@ -107,6 +108,10 @@ type PagellaArchiviata = {
   file_url: string | null
   generata_il: string | null
   generata_da: string | null
+  /** Sessione 10: valorizzata quando una riapertura ha ritirato la pagella. Assente nel DB della CI. */
+  ritirata_il?: string | null
+  /** Sessione 10: le copie in `ritirate/` delle versioni consegnate, dalla più vecchia. */
+  file_ritirati?: string[] | null
 }
 
 /**
@@ -136,6 +141,12 @@ function eliminazioneNonRiuscita(esito: string, error: unknown, area: 'db' | 'st
  * rimozione di un percorso assente non è un errore). Il percorso del file si
  * ricava sempre da scrutinio e alunno, così anche un PDF rimasto senza riga
  * (upsert fallito in `persistPagella`) si elimina.
+ *
+ * Le versioni RITIRATE (sessione 10). Una riapertura copia la pagella consegnata in
+ * `ritirate/<scrutinio>/…` e ne tiene il percorso in `file_ritirati`, che è l'unico indice di
+ * quelle copie. Se la pagella in vigore ha versioni ritirate alle spalle, la riga NON si
+ * cancella: si ritira (`ritirata_il`) e torna a nominare l'ultima versione consegnata. Una riga
+ * già ritirata non è «la pagella» di questa richiesta: si tratta come assente.
  */
 export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextRequest) => {
   try {
@@ -170,19 +181,36 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
     const sez = Array.isArray(scrutinio.sections) ? scrutinio.sections[0] : scrutinio.sections
     const scuolaId = sez?.scuola_id ?? null
 
-    const { data: rigaLetta, error: errRiga } = await supabase
+    // Prima con le colonne del ritiro; senza (DB della CI, 42703) come prima, e lo si dice.
+    const conRitiro = await supabase
       .from('pagelle')
-      .select('id, file_url, generata_il, generata_da')
+      .select('id, file_url, generata_il, generata_da, ritirata_il, file_ritirati')
       .eq('scrutinio_id', scrutinioId)
       .eq('alunno_id', alunnoId)
       .maybeSingle()
-    if (errRiga) return eliminazioneNonRiuscita('pagella-non-letta', errRiga)
-    const riga = (rigaLetta ?? null) as PagellaArchiviata | null
+    const ripiegoSchema = !!conRitiro.error && colonnaNuovaAssente(conRitiro.error)
+    if (ripiegoSchema) {
+      logEvento('db', 'info', { operazione: OP_DELETE, esito: 'colonna-ritiro-assente', scrutinio_id: scrutinioId })
+    }
+    const lettura = ripiegoSchema
+      ? await supabase
+          .from('pagelle')
+          .select('id, file_url, generata_il, generata_da')
+          .eq('scrutinio_id', scrutinioId)
+          .eq('alunno_id', alunnoId)
+          .maybeSingle()
+      : conRitiro
+    if (lettura.error) return eliminazioneNonRiuscita('pagella-non-letta', lettura.error)
+    const letta = (lettura.data ?? null) as PagellaArchiviata | null
+    // Una riga già ritirata non è in vigore: per questa richiesta è come se non ci fosse.
+    const riga = letta && !letta.ritirata_il ? letta : null
+    const storico = riga && Array.isArray(riga.file_ritirati) ? riga.file_ritirati : []
+    const ultima = storico.length > 0 ? storico[storico.length - 1] : null
 
     // Percorsi: quello canonico di `persistPagella` più quello scritto nella
     // riga, ma SOLO se è un file di questo alunno nella cartella di questo
     // scrutinio — un `file_url` che puntasse altrove (o al PDF di un compagno)
-    // non si cancella da qui.
+    // non si cancella da qui. Le copie in `ritirate/` sono fuori dalla cartella.
     const cartella = `${scrutinioId}/`
     const percorsi = new Set<string>([`${cartella}${alunnoId}.pdf`])
     const fileDellaRiga = riga?.file_url ?? null
@@ -201,7 +229,22 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
     const fileEliminati = ((rimossi ?? []) as unknown[]).length
 
     let rigaEliminata = false
-    if (riga) {
+    let rigaConservata = false
+    const adesso = new Date().toISOString()
+    if (riga && ultima) {
+      // Versioni ritirate alle spalle: la riga resta, ritirata, e torna a nominare l'ultima
+      // versione consegnata. Il PDF in vigore è già fuori dall'archivio (sopra).
+      const { data: ritirate, error: errRitira } = await supabase
+        .from('pagelle')
+        .update({ ritirata_il: adesso, file_url: ultima })
+        .eq('id', riga.id)
+        .eq('scrutinio_id', scrutinioId)
+        .eq('alunno_id', alunnoId)
+        .is('ritirata_il', null)
+        .select('id')
+      if (errRitira) return eliminazioneNonRiuscita('riga-pagella-non-ritirata', errRitira)
+      rigaConservata = ((ritirate ?? []) as unknown[]).length > 0
+    } else if (riga) {
       const { data: cancellate, error: errCancella } = await supabase
         .from('pagelle')
         .delete()
@@ -214,7 +257,7 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
     }
 
     // Niente riga e niente file: non c'era nessuna pagella da eliminare.
-    if (!rigaEliminata && fileEliminati === 0) {
+    if (!rigaEliminata && !rigaConservata && fileEliminati === 0) {
       return NextResponse.json(
         { error: 'Pagella inesistente', codice: 'PAGELLA_ELIMINAZIONE_NON_TROVATA' },
         { status: 404 },
@@ -225,7 +268,7 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
       attore: auth.user,
       entitaTipo: 'pagella',
       entitaId: riga?.id ?? null,
-      azione: 'delete',
+      azione: rigaConservata ? 'update' : 'delete',
       scuolaId,
       sectionId: scrutinio.section_id,
       valorePrima: {
@@ -235,14 +278,14 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
         generata_il: riga?.generata_il ?? null,
         generata_da: riga?.generata_da ?? null,
       },
-      valoreDopo: null,
+      valoreDopo: rigaConservata ? { ritirata_il: adesso, file_url: ultima } : null,
     })
 
     // Il SUCCESSO si logga: si toglie un documento già consegnabile alla
     // famiglia. Solo uuid, numeri e booleani.
     logEvento('registro', 'info', {
       operazione: OP_DELETE,
-      esito: 'pagella-eliminata',
+      esito: rigaConservata ? 'pagella-eliminata-storico-conservato' : 'pagella-eliminata',
       scrutinio_id: scrutinioId,
       alunno_id: alunnoId,
       section_id: scrutinio.section_id,
@@ -250,9 +293,15 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
       attore_id: auth.user.id,
       riga_eliminata: rigaEliminata,
       file_eliminati: fileEliminati,
+      ...(rigaConservata ? { riga_conservata: true } : {}),
     }, undefined, { distingui: ['scrutinio_id', 'alunno_id'] })
 
-    return NextResponse.json({ success: true, rigaEliminata, fileEliminati })
+    return NextResponse.json({
+      success: true,
+      rigaEliminata,
+      fileEliminati,
+      ...(rigaConservata ? { rigaConservata: true } : {}),
+    })
   } catch (err) {
     logErrore({ operazione: OP_DELETE, stato: 500 }, err)
     return NextResponse.json(

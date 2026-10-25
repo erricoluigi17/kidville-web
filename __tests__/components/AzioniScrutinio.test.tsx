@@ -8,7 +8,7 @@ import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testi
 //  · si mostrano SOLO a Segreteria e Direzione (admin/coordinator/segreteria),
 //    gli stessi ruoli dei gate di `scrutinio/riapri:POST` e `pagella:DELETE`;
 //  · la conferma della riapertura SPIEGA le conseguenze: pubblicazione ritirata
-//    (solo se c'era), pagelle PDF cancellate, firme di ricezione conservate;
+//    (solo se c'era), pagelle PDF ritirate, firme di ricezione conservate;
 //  · senza conferma non parte nessuna richiesta;
 //  · la richiesta è ESATTAMENTE quella che la route accetta (metodo, URL, corpo);
 //  · un rifiuto del server si legge a schermo dal CODICE (catalogo), si logga
@@ -168,7 +168,7 @@ describe('«Riapri scrutinio»', () => {
     const { dialogo } = monta(true)
     const conseguenze = within(dialogo).getByTestId('riapri-conseguenze')
     expect(conseguenze.textContent).toContain('La pubblicazione ai genitori viene ritirata')
-    expect(conseguenze.textContent).toContain('Le pagelle PDF già generate vengono cancellate')
+    expect(conseguenze.textContent).toContain('Le pagelle PDF già consegnate vengono ritirate e conservate in archivio')
     expect(conseguenze.textContent).toContain('Le firme di ricezione dei genitori restano registrate')
 
     fireEvent.click(within(dialogo).getByRole('button', { name: 'Annulla' }))
@@ -183,15 +183,15 @@ describe('«Riapri scrutinio»', () => {
     expect(conseguenze.textContent).toContain('Le firme di ricezione dei genitori restano registrate')
   })
 
-  it('conferma → POST /riapri con il solo scrutinioId, poi il messaggio col numero di pagelle cancellate', async () => {
+  it('conferma → POST /riapri con il solo scrutinioId, poi il messaggio col numero di pagelle ritirate', async () => {
     fetchMock.mockImplementation(() =>
-      risposta(200, { success: true, pagelleEliminate: 3, fileEliminati: 3, avvisiRitirati: 1 }),
+      risposta(200, { success: true, pagelleRitirate: 3, pagelleEliminate: 0, fileConservati: 3, fileEliminati: 3, avvisiRitirati: 1 }),
     )
     const { onRiaperto, dialogo } = monta(true, 'admin')
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e cancella le pagelle' }))
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
 
     await waitFor(() => expect(onRiaperto).toHaveBeenCalledTimes(1))
-    expect(onRiaperto).toHaveBeenCalledWith('Scrutinio riaperto, 3 pagelle PDF cancellate ✓')
+    expect(onRiaperto).toHaveBeenCalledWith('Scrutinio riaperto, 3 pagelle PDF ritirate ✓')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe(`/api/primaria/scrutinio/riapri?userId=${OPERATORE}`)
@@ -200,11 +200,18 @@ describe('«Riapri scrutinio»', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('senza pagelle da cancellare il messaggio non parla di PDF', async () => {
-    fetchMock.mockImplementation(() => risposta(200, { success: true, pagelleEliminate: 0 }))
+  it('senza pagelle da ritirare il messaggio non parla di PDF', async () => {
+    fetchMock.mockImplementation(() => risposta(200, { success: true, pagelleRitirate: 0, pagelleEliminate: 0 }))
     const { onRiaperto, dialogo } = monta(false, 'coordinator')
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e cancella le pagelle' }))
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
     await waitFor(() => expect(onRiaperto).toHaveBeenCalledWith('Scrutinio riaperto ✓'))
+  })
+
+  it('DB senza le colonne del ritiro (CI): le pagelle cancellate col percorso di prima si contano lo stesso', async () => {
+    fetchMock.mockImplementation(() => risposta(200, { success: true, pagelleRitirate: 0, pagelleEliminate: 2 }))
+    const { onRiaperto, dialogo } = monta(false, 'coordinator')
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
+    await waitFor(() => expect(onRiaperto).toHaveBeenCalledWith('Scrutinio riaperto, 2 pagelle PDF ritirate ✓'))
   })
 
   it('409 «non chiuso»: il testo viene dal CODICE, il log ha lo stato, la callback non parte', async () => {
@@ -212,7 +219,7 @@ describe('«Riapri scrutinio»', () => {
       risposta(409, { error: 'Lo scrutinio non è chiuso', codice: 'SCRUTINIO_RIAPERTURA_NON_CHIUSO' }),
     )
     const { onRiaperto, dialogo } = monta()
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e cancella le pagelle' }))
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
 
     const avviso = await within(dialogo).findByRole('alert')
     expect(avviso.textContent).toBe('Lo scrutinio è già aperto: non c’è niente da riaprire. Ricarica la pagina.')
@@ -227,7 +234,7 @@ describe('«Riapri scrutinio»', () => {
   it('rete assente: avviso tradotto e log, niente successo', async () => {
     fetchMock.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')))
     const { onRiaperto, dialogo } = monta()
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e cancella le pagelle' }))
+    fireEvent.click(within(dialogo).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
 
     const avviso = await within(dialogo).findByRole('alert')
     expect(avviso.textContent).toBe('Connessione assente: riprova quando sei online.')
@@ -362,7 +369,7 @@ describe('la pagina dello scrutinio monta i comandi', () => {
       if (u.pathname === '/api/primaria/scrutinio/riapri' && init?.method === 'POST') {
         stato.chiuso = false
         stato.trattieniDopoRiapri = true
-        return risposta(200, { success: true, pagelleEliminate: 2, fileEliminati: 2, avvisiRitirati: 0 })
+        return risposta(200, { success: true, pagelleRitirate: 2, pagelleEliminate: 0, fileConservati: 2, fileEliminati: 2, avvisiRitirati: 0 })
       }
       if (u.pathname === '/api/primaria/scrutinio' && !u.searchParams.get('periodoId')) {
         return risposta(200, {
@@ -427,9 +434,9 @@ describe('la pagina dello scrutinio monta i comandi', () => {
     expect(getScrutinioDopo(0)).toHaveLength(1)
 
     fireEvent.click(riapri)
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Riapri e cancella le pagelle' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Riapri e ritira le pagelle' }))
 
-    expect(await screen.findByText('Scrutinio riaperto, 2 pagelle PDF cancellate ✓')).toBeTruthy()
+    expect(await screen.findByText('Scrutinio riaperto, 2 pagelle PDF ritirate ✓')).toBeTruthy()
     // Dopo la POST parte UNA GET dello scrutinio, del periodo corrente: è la
     // ricarica di `onRiaperto`. Senza di lei non partirebbe niente.
     const iPost = indiceDi('/api/primaria/scrutinio/riapri', 'POST')

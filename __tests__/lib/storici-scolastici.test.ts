@@ -446,6 +446,29 @@ describe('adattatori scolastici degli storici', () => {
     expect(JSON.stringify(s)).not.toContain('NON ESPORTARE')
   })
 
+  it('una pagella ritirata da una riapertura porta tutte le versioni consegnate, ciascuna riconoscibile', async () => {
+    const r1 = `ritirate/scrutinio/${A}-20261001090000000.pdf`
+    const r2 = `ritirate/scrutinio/${A}-20261103100000123.pdf`
+    const d = database({ sections: [classe], scrutinio_periodi: [periodo], scrutini: [scrutinio], pagelle: [{ id: 'p1', scrutinio_id: 'scrutinio', alunno_id: A,
+      generata_il: '2026-09-01T12:00:00Z', file_url: r2, ritirata_il: '2026-11-03T10:00:00Z', file_ritirati: [r1, r2] }] })
+    const ctx = contesto(d.db); ctx.richiesta.dal = '2026-06-01'; ctx.richiesta.al = '2026-06-30'
+    const s = await raccogliScolastico(ctx, 'primaria_pagelle')
+    expect(s?.allegati.map(a => a.percorso)).toEqual([r2, r1])
+    expect(s?.allegati[0].nome).toMatch(/\(ritirata\)\.pdf$/)
+    expect(s?.allegati[1].nome).toMatch(/\(ritirata 1\)\.pdf$/)
+  })
+
+  it('una pagella di nuovo in vigore: l’originale col suo nome, la versione ritirata accanto', async () => {
+    const r1 = `ritirate/scrutinio/${A}-20261001090000000.pdf`
+    const d = database({ sections: [classe], scrutinio_periodi: [periodo], scrutini: [scrutinio], pagelle: [{ id: 'p1', scrutinio_id: 'scrutinio', alunno_id: A,
+      generata_il: '2026-09-01T12:00:00Z', file_url: `scrutinio/${A}.pdf`, ritirata_il: null, file_ritirati: [r1] }] })
+    const ctx = contesto(d.db); ctx.richiesta.dal = '2026-06-01'; ctx.richiesta.al = '2026-06-30'
+    const s = await raccogliScolastico(ctx, 'primaria_pagelle')
+    expect(s?.allegati.map(a => a.percorso)).toEqual([`scrutinio/${A}.pdf`, r1])
+    expect(s?.allegati[0].nome).not.toMatch(/ritirata/)
+    expect(s?.allegati[1].nome).toMatch(/\(ritirata 1\)\.pdf$/)
+  })
+
   it('blocca il fascicolo prima di leggerne i documenti quando il gate è negato', async () => {
     vi.mocked(puoAccedereFascicolo).mockResolvedValue({ consentito: false, ruolo: 'admin', motivo: 'cross-tenant' })
     const d = database({ student_documents: [{ id: 'sensibile', student_id: A }] })

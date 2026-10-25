@@ -1633,6 +1633,16 @@ const AMMESSE: Record<string, string> = {
     // ── Registro e diario: lo scope è la SEZIONE, verificata a monte ─────────
     'primaria/appello:POST': 'appello: la sezione è verificata; la lettura dei nomi serve alle notifiche degli assenti appena registrati',
     'primaria/classe/[sectionId]:GET': 'materie della sezione verificata (`materieDiDocenteInSezione`)',
+    // Entrata il 2026-10-25 (sessione 10, compito 14): segnalata per `rpc-senza-sede` su
+    // `rpc:note_modifica`. Lo scope c'è: `caricaBersagli` legge la nota per id e passa da
+    // `assertSezioneInScope` sulla sua classe, e la RPC riceve come `p_section_id` PROPRIO quella
+    // classe (`t.sectionId`) e filtra `section_id = p_section_id` in ogni istruzione (blocco,
+    // DELETE delle prese visione, UPDATE). Il lock vede come identità verificata solo `id`
+    // (l'argomento del gate) e non sa seguire `t.sectionId`, che è il RISULTATO del gate: una
+    // chiamata in meno SORVEGLIATA da qui, non una in meno protetta. Il 403 fuori sede lo prova
+    // `__tests__/api/primaria-note-modifica-elimina.test.ts` sulla rotta vera. Decisione
+    // dell'assistente in assenza del titolare: da confermare.
+    'primaria/note:PATCH': "note della classe verificata da `caricaBersagli`: la RPC `note_modifica` riceve quella classe (`p_section_id`) e non tocca note di altre classi",
     'primaria/prospetto:GET': "materie della sezione dell'alunno verificato",
     'primaria/registro:GET': 'nomi dei docenti che hanno firmato le righe già lette per sezione',
     // ⚠️ RISCRITTA il 2026-09-19, e la vecchia frase va detta perché era MEZZA
@@ -3212,7 +3222,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // lock tolto: è l'UPDATE uscito da `chat/threads:GET` (già esentata, stesso scope) per
             // diventare una richiesta a sé. Decisione 1 del piano della sessione 12, presa
             // dall'assistente in assenza del titolare: da confermare.
-            handlerEsentati: 108,
+            // 108 → 109 il 2026-10-25 (sessione 10, compito 14): ENTRA `primaria/note:PATCH`. La
+            // modifica di una nota passa da due richieste a UNA RPC (`note_modifica`), che riceve
+            // la classe verificata da `caricaBersagli` come `p_section_id`; il lock non sa seguire
+            // il risultato di un gate di file fino agli argomenti di una RPC. È un pezzo di
+            // sorveglianza tolto, non di protezione: il motivo per esteso sta accanto alla voce.
+            // Decisione dell'assistente in assenza del titolare: da confermare.
+            handlerEsentati: 109,
         })
     })
 })

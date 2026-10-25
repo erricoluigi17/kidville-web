@@ -18,6 +18,8 @@ const h = vi.hoisted(() => {
   type Esito = { data: unknown; error: unknown }
   const state = {
     esiti: {} as Record<string, Esito>,
+    /** Esiti da consumare in ordine PRIMA di `esiti` (per il ripiego, che legge due volte). */
+    coda: {} as Record<string, Esito[]>,
     filtri: [] as Array<{ tabella: string; colonna: string; valore: unknown }>,
     select: [] as Array<{ tabella: string; colonne: string }>,
   }
@@ -27,8 +29,9 @@ const h = vi.hoisted(() => {
         const qb: Record<string, unknown> = {}
         qb.select = (colonne: string) => { state.select.push({ tabella, colonne }); return qb }
         qb.eq = (colonna: string, valore: unknown) => { state.filtri.push({ tabella, colonna, valore }); return qb }
+        qb.is = (colonna: string, valore: unknown) => { state.filtri.push({ tabella, colonna, valore }); return qb }
         for (const m of ['order', 'limit', 'in', 'insert']) qb[m] = () => qb
-        const esito = () => Promise.resolve(state.esiti[tabella] ?? { data: [], error: null })
+        const esito = () => Promise.resolve(state.coda[tabella]?.shift() ?? state.esiti[tabella] ?? { data: [], error: null })
         qb.single = esito
         qb.maybeSingle = esito
         qb.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => esito().then(res, rej)
@@ -75,6 +78,7 @@ function richiesta() {
 beforeEach(() => {
   h.state.filtri = []
   h.state.select = []
+  h.state.coda = {}
   h.logEvento.mockReset()
   h.logErrore.mockReset()
   h.state.esiti = {
@@ -102,11 +106,12 @@ describe('GET /api/primaria/scrutinio → pagelleArchiviate', () => {
     expect(corpo.data.pagelleArchiviate).toEqual([ALUNNO_A])
     expect(corpo.data.pagelleArchiviateNonLette).toBe(false)
 
-    // La query: colonna sola `alunno_id` (niente file_url, niente dati in più)
-    // e filtro sullo scrutinio restituito, UNICO filtro della lettura.
+    // La query: colonna sola `alunno_id` (niente file_url, niente dati in più), filtro sullo
+    // scrutinio restituito e sulle sole pagelle IN VIGORE (una riapertura le ritira, non le cancella).
     expect(h.state.select.filter((s) => s.tabella === 'pagelle')).toEqual([{ tabella: 'pagelle', colonne: 'alunno_id' }])
     expect(h.state.filtri.filter((f) => f.tabella === 'pagelle')).toEqual([
       { tabella: 'pagelle', colonna: 'scrutinio_id', valore: SCRUTINIO },
+      { tabella: 'pagelle', colonna: 'ritirata_il', valore: null },
     ])
     expect(h.logEvento).not.toHaveBeenCalled()
   })
@@ -139,5 +144,14 @@ describe('GET /api/primaria/scrutinio → pagelleArchiviate', () => {
       { operazione: 'primaria/scrutinio:GET', esito: 'pagelle-archiviate-non-lette' },
       guasto,
     )
+  })
+
+  it('colonna del ritiro assente (DB della CI): rilegge senza filtro, e lo dice a livello info', async () => {
+    h.state.coda.pagelle = [{ data: null, error: { code: '42703', message: 'column pagelle.ritirata_il does not exist' } }]
+    h.state.esiti.pagelle = { data: [{ alunno_id: ALUNNO_A }], error: null }
+    const corpo = await (await GET(richiesta())).json()
+    expect(corpo.data.pagelleArchiviate).toEqual([ALUNNO_A])
+    expect(corpo.data.pagelleArchiviateNonLette).toBe(false)
+    expect(h.logEvento).toHaveBeenCalledWith('db', 'info', expect.objectContaining({ esito: 'colonna-ritiro-assente' }))
   })
 })

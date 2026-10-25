@@ -188,8 +188,18 @@ export async function pagelle(ctx: ContestoStorico, categoria: CategoriaStorico)
     const data = dataScrutinio(sessione, sc.periodi, r.generata_il), id = testo(r.alunno_id)
     if (!ammesso(ctx, id, data, testo(sessione.section_id))) continue
     const p = sc.periodi.find(p => p.id === sessione.periodo_id)
-    const originale = allegato('pagelle', r.file_url, `Pagella ${nome(ctx, id)} ${testo(p?.nome)}.pdf`, id, 'application/pdf')
+    // Sessione 10: una pagella ritirata da una riapertura punta alla sua copia in `ritirate/`, e
+    // `file_ritirati` porta tutte le versioni consegnate. Lo storico le esporta tutte, col nome
+    // che le distingue dalla pagella in vigore.
+    const ritirata = Boolean(r.ritirata_il)
+    const base = `Pagella ${nome(ctx, id)} ${testo(p?.nome)}`
+    const originale = allegato('pagelle', r.file_url, `${base}${ritirata ? ' (ritirata)' : ''}.pdf`, id, 'application/pdf')
     aggiungiAllegato(s, originale)
+    const versioni = Array.isArray(r.file_ritirati) ? (r.file_ritirati as unknown[]) : []
+    versioni.forEach((v, i) => {
+      if (testo(v) === testo(r.file_url)) return
+      aggiungiAllegato(s, allegato('pagelle', v, `${base} (ritirata ${i + 1}).pdf`, id, 'application/pdf'))
+    })
     s.righe.push({ _alunno_id: id, data, alunno: nome(ctx, id), anno: testo(p?.anno_scolastico), periodo: testo(p?.nome),
       stato: testo(sessione.stato), generataIl: testo(r.generata_il), originale: Boolean(originale) })
     if (!originale) s.avvisi.push('Una pagella del periodo non dispone di un originale archiviato leggibile; il riepilogo non ne ricostruisce la firma.')

@@ -3,14 +3,15 @@ import { NextRequest, NextResponse } from 'next/server'
 
 /**
  * POST /api/primaria/scrutinio/riapri — riapertura dello scrutinio chiuso (S1,
- * spec 2026-09-24 «sei interventi»).
+ * spec 2026-09-24 «sei interventi»; sessione 10 della seconda serie di robustezza).
  *
  * Il finto qui sotto REGISTRA ogni catena PostgREST (tabella, operazione, filtri,
  * payload) e ogni chiamata allo Storage, e risponde da una coda per
- * `tabella:operazione`. I test non guardano lo status e basta: guardano QUALI
- * scritture partono, con QUALI filtri e in QUALE ordine — ritiro della
- * pubblicazione, cancellazione dei PDF (file + righe), riapertura — e che
- * `pagella_ricezioni` non venga mai toccata.
+ * `tabella:operazione`. I test guardano QUALI scritture partono, con QUALI filtri e
+ * in QUALE ordine — ritiro della pubblicazione, ritiro delle pagelle (copia in
+ * `ritirate/`, marcatura della riga, poi i PDF fuori dalla cartella), riapertura —
+ * e che `pagella_ricezioni` non venga mai toccata. `passi` mette in un'unica fila
+ * scritture e Storage: è lì che si vede «prima la copia, poi tutto il resto».
  */
 
 type Chiamata = {
@@ -26,9 +27,13 @@ const h = vi.hoisted(() => {
   const state = {
     code: {} as Record<string, Esito[]>,
     chiamate: [] as Chiamata[],
-    storage: [] as Array<{ bucket: string; op: 'list' | 'remove'; arg: unknown }>,
+    storage: [] as Array<{ bucket: string; op: 'list' | 'remove' | 'copy'; arg: unknown }>,
+    /** Scritture PostgREST e operazioni dello Storage, in un'unica fila. */
+    passi: [] as string[],
     listEsito: { data: [], error: null } as Esito,
     removeEsito: null as Esito | null,
+    /** Esiti di `copy`, in ordine; finita la coda la copia riesce. */
+    copyEsiti: [] as Esito[],
   }
   function prendi(c: Chiamata): Esito {
     const coda = state.code[`${c.table}:${c.op}`] ?? []
@@ -45,6 +50,7 @@ const h = vi.hoisted(() => {
           c.op = op
           c.payload = payload
           opFissata = true
+          state.passi.push(`${table}:${op}`)
           return qb
         }
         qb.update = scrive('update')
@@ -72,10 +78,17 @@ const h = vi.hoisted(() => {
           return {
             list: (cartella: string, opts: unknown) => {
               state.storage.push({ bucket, op: 'list', arg: { cartella, opts } })
+              state.passi.push('storage:list')
               return Promise.resolve(state.listEsito)
+            },
+            copy: (da: string, a: string) => {
+              state.storage.push({ bucket, op: 'copy', arg: { da, a } })
+              state.passi.push('storage:copy')
+              return Promise.resolve(state.copyEsiti.shift() ?? { data: { path: a }, error: null })
             },
             remove: (percorsi: string[]) => {
               state.storage.push({ bucket, op: 'remove', arg: percorsi })
+              state.passi.push('storage:remove')
               return Promise.resolve(
                 state.removeEsito ?? { data: percorsi.map((name) => ({ name })), error: null },
               )
@@ -145,12 +158,14 @@ function scrutinioLetto(extra: Record<string, unknown> = {}): Esito {
   }
 }
 
+const ID = (n: number) => `f1000000-0000-4000-8000-00000000000${n}`
+
 const righePagelle: Esito = {
   data: [
-    { id: 'f1000000-0000-4000-8000-000000000001', alunno_id: ALUNNO_1, file_url: `${SCRUTINIO}/${ALUNNO_1}.pdf` },
-    { id: 'f1000000-0000-4000-8000-000000000002', alunno_id: ALUNNO_2, file_url: `${SCRUTINIO}/${ALUNNO_2}.pdf` },
-    // Un file_url fuori dalla cartella dello scrutinio NON si cancella da qui.
-    { id: 'f1000000-0000-4000-8000-000000000003', alunno_id: ALUNNO_ORFANO, file_url: `altro/${ALUNNO_ORFANO}.pdf` },
+    { id: ID(1), alunno_id: ALUNNO_1, file_url: `${SCRUTINIO}/${ALUNNO_1}.pdf`, file_ritirati: [] },
+    { id: ID(2), alunno_id: ALUNNO_2, file_url: `${SCRUTINIO}/${ALUNNO_2}.pdf`, file_ritirati: [] },
+    // Un file_url fuori dalla cartella dello scrutinio NON si copia e NON si cancella da qui.
+    { id: ID(3), alunno_id: ALUNNO_ORFANO, file_url: `altro/${ALUNNO_ORFANO}.pdf`, file_ritirati: [] },
   ],
   error: null,
 }
@@ -164,6 +179,9 @@ function preparaPercorsoFelice(scrutinio: Esito = scrutinioLetto()) {
     ],
     'notifiche:delete': [{ data: [{ id: 'n1' }, { id: 'n2' }], error: null }],
     'pagelle:select': [righePagelle],
+    // Una marcatura per riga: ciascuna ritrova la SUA riga ancora in vigore.
+    'pagelle:update': [1, 2, 3].map((n) => ({ data: [{ id: ID(n) }], error: null })),
+    // Solo il ripiego senza colonne cancella le righe.
     'pagelle:delete': [{ data: [{ id: 1 }, { id: 2 }, { id: 3 }], error: null }],
   }
   // Nella cartella c'è anche un PDF SENZA riga (upsert fallito a suo tempo).
@@ -172,6 +190,9 @@ function preparaPercorsoFelice(scrutinio: Esito = scrutinioLetto()) {
     error: null,
   }
 }
+
+const copie = () => h.state.storage.filter((s) => s.op === 'copy').map((s) => s.arg as { da: string; a: string })
+const rimozioni = () => h.state.storage.filter((s) => s.op === 'remove').map((s) => s.arg as string[])
 
 const scritture = () => h.state.chiamate.filter((c) => c.op !== 'select')
 const filtro = (c: Chiamata, m: string, col: string) => c.filtri.find(([mm, cc]) => mm === m && cc === col)?.[2]
@@ -183,6 +204,8 @@ beforeEach(() => {
   h.state.storage = []
   h.state.listEsito = { data: [], error: null }
   h.state.removeEsito = null
+  h.state.passi = []
+  h.state.copyEsiti = []
   authMock.requireStaff.mockResolvedValue({
     user: { id: UTENTE, role: 'segreteria', scuola_id: SCUOLA },
     response: null,
@@ -233,21 +256,35 @@ describe('POST /api/primaria/scrutinio/riapri — chi può', () => {
 })
 
 describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
-  it('ritira la pubblicazione, cancella file e righe delle pagelle, riapre, e non tocca pagella_ricezioni', async () => {
+  it('ritira la pubblicazione, COPIA e marca le pagelle, poi toglie i PDF dalla cartella, riapre, e non tocca pagella_ricezioni', async () => {
     preparaPercorsoFelice()
     const res = await POST(req({ scrutinioId: SCRUTINIO }))
     expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body).toMatchObject({ success: true, pagelleEliminate: 3, avvisiRitirati: 2 })
+    expect(await res.json()).toMatchObject({
+      success: true,
+      pagelleRitirate: 3,
+      pagelleEliminate: 0,
+      fileConservati: 2,
+      fileEliminati: 3,
+      avvisiRitirati: 2,
+    })
 
-    const w = scritture()
-    expect(w.map((c) => `${c.table}:${c.op}`)).toEqual([
+    // L'ordine è la sostanza: nessuna scrittura sulle pagelle prima delle copie,
+    // nessun PDF fuori dalla cartella prima delle marcature.
+    expect(h.state.passi).toEqual([
       'scrutini:update', // 1. ritiro pubblicazione
       'notifiche:delete', //    avviso «Pagella disponibile» in coda
-      'pagelle:delete', // 2. righe delle pagelle (dopo i file)
+      'storage:list', // 2. la cartella dello scrutinio
+      'storage:copy', // 2a. copia di A1
+      'storage:copy', //     copia di A2 (A3 punta fuori dalla cartella: niente copia)
+      'pagelle:update', // 2b. marcature, una per riga
+      'pagelle:update',
+      'pagelle:update',
+      'storage:remove', // 2c. solo adesso i PDF escono dalla cartella
       'scrutini:update', // 3. riapertura
     ])
 
+    const w = scritture()
     // 1. Ritiro: solo la pubblicazione, a scrutinio ancora chiuso.
     expect(w[0].payload).toEqual({ pubblicato: false, pubblicato_da: null, pubblicato_il: null })
     expect(filtro(w[0], 'eq', 'id')).toBe(SCRUTINIO)
@@ -257,24 +294,40 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
     expect(filtro(w[1], 'eq', 'tipo')).toBe('pagella')
     expect(filtro(w[1], 'eq', 'entita_tipo')).toBe('scrutinio')
     expect(filtro(w[1], 'eq', 'entita_id')).toBe(SCRUTINIO)
-    expect(filtro(w[1], 'is', 'push_inviata_il')).toBeNull()
     expect(w[1].filtri.some(([m, col]) => m === 'is' && col === 'push_inviata_il')).toBe(true)
 
-    // 2. File: righe + cartella, deduplicati, e MAI fuori dalla cartella.
-    const list = h.state.storage.find((s) => s.op === 'list')!
-    expect(list.bucket).toBe('pagelle')
-    expect((list.arg as { cartella: string }).cartella).toBe(SCRUTINIO)
-    const remove = h.state.storage.find((s) => s.op === 'remove')!
-    expect(remove.bucket).toBe('pagelle')
-    expect([...(remove.arg as string[])].sort()).toEqual(
+    // 2. Si leggono solo le pagelle IN VIGORE.
+    const lettura = h.state.chiamate.find((c) => c.table === 'pagelle' && c.op === 'select')!
+    expect(filtro(lettura, 'eq', 'scrutinio_id')).toBe(SCRUTINIO)
+    expect(lettura.filtri.some(([m, col, v]) => m === 'is' && col === 'ritirata_il' && v === null)).toBe(true)
+
+    // 2a. Le copie: dai file della cartella a ritirate/<scrutinio>/<alunno>-<istante>.pdf.
+    expect(copie().map((c) => c.da)).toEqual([`${SCRUTINIO}/${ALUNNO_1}.pdf`, `${SCRUTINIO}/${ALUNNO_2}.pdf`])
+    copie().forEach((c, i) =>
+      expect(c.a).toMatch(new RegExp(`^ritirate/${SCRUTINIO}/${[ALUNNO_1, ALUNNO_2][i]}-\\d{17}\\.pdf$`)),
+    )
+
+    // 2b. Le marcature: CAS sulla riga ancora in vigore, la copia diventa il file della riga.
+    const marche = w.filter((c) => c.table === 'pagelle' && c.op === 'update')
+    marche.forEach((m, i) => {
+      expect(filtro(m, 'eq', 'id')).toBe(ID(i + 1))
+      expect(filtro(m, 'eq', 'scrutinio_id')).toBe(SCRUTINIO)
+      expect(m.filtri.some(([mm, col, v]) => mm === 'is' && col === 'ritirata_il' && v === null)).toBe(true)
+    })
+    expect(marche[0].payload).toEqual({ ritirata_il: expect.any(String), file_url: copie()[0].a, file_ritirati: [copie()[0].a] })
+    expect(marche[2].payload).toEqual({ ritirata_il: expect.any(String), file_url: `altro/${ALUNNO_ORFANO}.pdf`, file_ritirati: [] })
+
+    // 2c. File: righe + cartella, deduplicati, e MAI fuori dalla cartella; le copie restano.
+    expect(rimozioni()).toHaveLength(1)
+    expect([...rimozioni()[0]].sort()).toEqual(
       [`${SCRUTINIO}/${ALUNNO_1}.pdf`, `${SCRUTINIO}/${ALUNNO_2}.pdf`, `${SCRUTINIO}/${ALUNNO_ORFANO}.pdf`].sort(),
     )
-    expect(remove.arg as string[]).not.toContain(`altro/${ALUNNO_ORFANO}.pdf`)
-    // Righe: tutte quelle dello scrutinio.
-    expect(filtro(w[2], 'eq', 'scrutinio_id')).toBe(SCRUTINIO)
+    expect(rimozioni()[0]).not.toContain(`altro/${ALUNNO_ORFANO}.pdf`)
+    expect(scritture().some((c) => c.table === 'pagelle' && c.op === 'delete')).toBe(false)
 
     // 3. Riapertura condizionata allo stato chiuso.
-    expect(w[3].payload).toEqual({
+    const ultima = w[w.length - 1]
+    expect(ultima.payload).toEqual({
       stato: 'aperto',
       chiuso_da: null,
       chiuso_il: null,
@@ -282,8 +335,7 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
       pubblicato_da: null,
       pubblicato_il: null,
     })
-    expect(filtro(w[3], 'eq', 'id')).toBe(SCRUTINIO)
-    expect(filtro(w[3], 'eq', 'stato')).toBe('chiuso')
+    expect(filtro(ultima, 'eq', 'stato')).toBe('chiuso')
 
     // Le firme di ricezione sono storico: nessuna operazione su quella tabella.
     expect(h.state.chiamate.some((c) => c.table === 'pagella_ricezioni')).toBe(false)
@@ -302,7 +354,14 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
       scuolaId: SCUOLA,
       sectionId: SEZIONE,
       valorePrima: { stato: 'chiuso', pubblicato: true },
-      valoreDopo: { stato: 'aperto', pubblicato: false, pagelle_eliminate: 3, file_eliminati: 3 },
+      valoreDopo: {
+        stato: 'aperto',
+        pubblicato: false,
+        pagelle_ritirate: 3,
+        pagelle_eliminate: 0,
+        file_conservati: 2,
+        file_eliminati: 3,
+      },
     })
     expect(audit.valorePrima.pagelle).toHaveLength(3)
 
@@ -315,13 +374,16 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
       section_id: SEZIONE,
       scuola_id: SCUOLA,
       era_pubblicato: true,
-      pagelle_eliminate: 3,
+      pagelle_ritirate: 3,
+      pagelle_eliminate: 0,
+      file_conservati: 2,
       file_eliminati: 3,
       avvisi_ritirati: 2,
+      ripiego_schema: false,
     })
   })
 
-  it('scrutinio chiuso ma NON pubblicato: niente ritiro della pubblicazione, ma avvisi in coda ritirati, pagelle cancellate e riapertura', async () => {
+  it('scrutinio chiuso ma NON pubblicato: niente ritiro della pubblicazione, ma avvisi in coda ritirati, pagelle ritirate e riapertura', async () => {
     preparaPercorsoFelice(scrutinioLetto({ pubblicato: false, pubblicato_il: null }))
     // Con una sola update in coda, la prima è la riapertura.
     h.state.code['scrutini:update'] = [
@@ -331,10 +393,12 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
     expect(res.status).toBe(200)
     expect(scritture().map((c) => `${c.table}:${c.op}`)).toEqual([
       'notifiche:delete',
-      'pagelle:delete',
+      'pagelle:update',
+      'pagelle:update',
+      'pagelle:update',
       'scrutini:update',
     ])
-    expect((scritture()[2].payload as { stato: string }).stato).toBe('aperto')
+    expect((scritture()[4].payload as { stato: string }).stato).toBe('aperto')
   })
 
   it('non pubblicato ma con un avviso «Pagella disponibile» ancora in coda (tentativo precedente a metà, o pubblicazione ritirata a parte): l’avviso si ritira lo stesso', async () => {
@@ -370,6 +434,7 @@ describe('POST /api/primaria/scrutinio/riapri — il percorso completo', () => {
     const res = await POST(req({ scrutinioId: SCRUTINIO }))
     expect(res.status).toBe(200)
     expect(h.state.storage.some((s) => s.op === 'remove')).toBe(false)
+    expect(h.state.storage.some((s) => s.op === 'copy')).toBe(false)
     expect(scritture().map((c) => `${c.table}:${c.op}`)).toEqual(['notifiche:delete', 'scrutini:update'])
   })
 })
@@ -400,7 +465,7 @@ describe('POST /api/primaria/scrutinio/riapri — rifiuti e guasti', () => {
     expect(scritture()).toEqual([])
   })
 
-  it('rimozione dei file fallita → 500: le righe restano e lo scrutinio RESTA CHIUSO (si può ripetere)', async () => {
+  it('rimozione dei file fallita → 500: righe già ritirate con la copia, scrutinio RESTA CHIUSO (si può ripetere)', async () => {
     preparaPercorsoFelice()
     h.state.removeEsito = { data: null, error: { message: 'storage down', statusCode: '500' } }
     const res = await POST(req({ scrutinioId: SCRUTINIO }))
@@ -419,6 +484,9 @@ describe('POST /api/primaria/scrutinio/riapri — rifiuti e guasti', () => {
     expect(logStorage, 'manca il log del guasto dello storage').toBeTruthy()
     expect(logStorage![0]).toBe('storage')
     expect(logStorage![1]).toBe('error')
+    // Le copie in ritirate/ non si toccano: la sola rimozione tentata è quella della cartella.
+    expect(rimozioni()).toHaveLength(1)
+    expect(rimozioni()[0].every((p) => p.startsWith(`${SCRUTINIO}/`))).toBe(true)
   })
 
   it('lettura della cartella fallita → 500 prima di cancellare qualunque cosa', async () => {
@@ -427,6 +495,7 @@ describe('POST /api/primaria/scrutinio/riapri — rifiuti e guasti', () => {
     const res = await POST(req({ scrutinioId: SCRUTINIO }))
     expect(res.status).toBe(500)
     expect(h.state.storage.some((s) => s.op === 'remove')).toBe(false)
+    expect(h.state.storage.some((s) => s.op === 'copy')).toBe(false)
     expect(scritture().some((c) => c.table === 'pagelle')).toBe(false)
     expect(
       logMock.logEvento.mock.calls.some(
@@ -435,12 +504,17 @@ describe('POST /api/primaria/scrutinio/riapri — rifiuti e guasti', () => {
     ).toBe(true)
   })
 
-  it('cancellazione delle righe fallita → 500 e lo scrutinio resta chiuso', async () => {
+  it('marcatura fallita → 500: si tolgono le sole copie create, gli originali restano, lo scrutinio resta chiuso', async () => {
     preparaPercorsoFelice()
-    h.state.code['pagelle:delete'] = [{ data: null, error: GUASTO }]
+    h.state.code['pagelle:update'] = [{ data: null, error: GUASTO }]
     const res = await POST(req({ scrutinioId: SCRUTINIO }))
     expect(res.status).toBe(500)
+    expect(rimozioni()).toHaveLength(1)
+    expect([...rimozioni()[0]].sort()).toEqual(copie().map((c) => c.a).sort())
     expect(scritture().some((c) => (c.payload as { stato?: string })?.stato === 'aperto')).toBe(false)
+    expect(
+      logMock.logEvento.mock.calls.some((c) => c[0] === 'db' && c[1] === 'error' && c[2]?.esito === 'pagelle-non-marcate'),
+    ).toBe(true)
   })
 
   it('ritiro dell’avviso fallito: NON blocca la riapertura, ma si logga come errore', async () => {
@@ -522,5 +596,127 @@ describe('POST /api/primaria/scrutinio/riapri — rifiuti e guasti', () => {
     expect((await res.json()).codice).toBe('SCRUTINIO_RIAPERTURA_NON_CHIUSO')
     expect(auditMock.logScrittura).not.toHaveBeenCalled()
     expect(logMock.logEvento.mock.calls.some((c) => c[2]?.esito === 'scrutinio-riaperto')).toBe(false)
+  })
+})
+
+describe('POST /api/primaria/scrutinio/riapri — il ritiro: prima la copia (sessione 10)', () => {
+  it('una copia fallita → 500 prima di qualunque scrittura sulle pagelle, e la copia riuscita si toglie', async () => {
+    preparaPercorsoFelice()
+    h.state.copyEsiti = [
+      { data: { path: 'x' }, error: null },
+      { data: null, error: { message: 'internal error', statusCode: '500' } },
+    ]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(500)
+    expect(scritture().some((c) => c.table === 'pagelle')).toBe(false)
+    expect(rimozioni()).toEqual([[copie()[0].a]])
+    expect(
+      logMock.logEvento.mock.calls.some((c) => c[0] === 'storage' && c[1] === 'error' && c[2]?.esito === 'pagelle-non-ritirate'),
+    ).toBe(true)
+  })
+
+  it('la seconda marcatura fallisce: si toglie la sola copia di A2, la riga di A1 resta ritirata con la sua', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:update'] = [{ data: [{ id: ID(1) }], error: null }, { data: null, error: GUASTO }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(500)
+    expect(rimozioni()).toEqual([[copie()[1].a]])
+  })
+
+  it('un PDF che non c’è più (404): la riga si ritira lo stesso, senza copia', async () => {
+    preparaPercorsoFelice()
+    h.state.copyEsiti = [{ data: null, error: { message: 'Object not found', statusCode: '404' } }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(200)
+    expect((await res.json()).fileConservati).toBe(1)
+    const prima = scritture().find((c) => c.table === 'pagelle' && c.op === 'update')!
+    expect(prima.payload).toEqual({ ritirata_il: expect.any(String), file_url: `${SCRUTINIO}/${ALUNNO_1}.pdf`, file_ritirati: [] })
+  })
+
+  it('riga già ritirata da un’altra riapertura (zero righe aggiornate): la sua copia si toglie', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:update'] = [{ data: [], error: null }, { data: [{ id: ID(2) }], error: null }, { data: [{ id: ID(3) }], error: null }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(200)
+    expect((await res.json()).pagelleRitirate).toBe(2)
+    expect(rimozioni()[0]).toEqual([copie()[0].a])
+  })
+
+  it('colonne del ritiro assenti (DB della CI, 42703): il comportamento di prima, e lo si dice', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:select'] = [
+      { data: null, error: { code: '42703', message: 'column pagelle.ritirata_il does not exist' } },
+      righePagelle,
+    ]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ pagelleRitirate: 0, pagelleEliminate: 3, fileConservati: 0 })
+    expect(h.state.storage.some((s) => s.op === 'copy')).toBe(false)
+    expect(scritture().map((c) => `${c.table}:${c.op}`)).toEqual([
+      'scrutini:update',
+      'notifiche:delete',
+      'pagelle:delete',
+      'scrutini:update',
+    ])
+    const seconda = h.state.chiamate.filter((c) => c.table === 'pagelle' && c.op === 'select')[1]
+    expect(seconda.colonne).toBe('id, alunno_id, file_url')
+    expect(logMock.logEvento).toHaveBeenCalledWith('db', 'info', expect.objectContaining({ esito: 'colonna-ritiro-assente' }))
+  })
+
+  // Tre casi aggiunti dal mutation testing (non nel piano): lo storico si allunga e non si
+  // azzera, `file_ritirati` (NOT NULL) si scrive sempre come array, e una copia orfana che non
+  // si riesce a togliere si DICE.
+  it('una pagella già ritirata in passato: la copia nuova si accoda allo storico, che non si azzera', async () => {
+    preparaPercorsoFelice()
+    const vecchia = `ritirate/${SCRUTINIO}/${ALUNNO_1}-20260101000000000.pdf`
+    h.state.code['pagelle:select'] = [{
+      data: [{ id: ID(1), alunno_id: ALUNNO_1, file_url: `${SCRUTINIO}/${ALUNNO_1}.pdf`, file_ritirati: [vecchia] }],
+      error: null,
+    }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(200)
+    const marca = scritture().find((c) => c.table === 'pagelle' && c.op === 'update')!
+    expect((marca.payload as { file_ritirati: string[] }).file_ritirati).toEqual([vecchia, copie()[0].a])
+  })
+
+  it('file_ritirati letto nullo o assente: si scrive sempre un array, mai NULL (la colonna è NOT NULL)', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:select'] = [{
+      data: [
+        { id: ID(1), alunno_id: ALUNNO_1, file_url: `${SCRUTINIO}/${ALUNNO_1}.pdf`, file_ritirati: null },
+        { id: ID(2), alunno_id: ALUNNO_ORFANO, file_url: `altro/${ALUNNO_ORFANO}.pdf` },
+      ],
+      error: null,
+    }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(200)
+    const marche = scritture().filter((c) => c.table === 'pagelle' && c.op === 'update')
+    expect(marche.map((m) => (m.payload as { file_ritirati: unknown }).file_ritirati)).toEqual([[copie()[0].a], []])
+  })
+
+  it('copia fallita e copie create che non si riescono a togliere: 500, e le orfane si dicono nei log', async () => {
+    preparaPercorsoFelice()
+    h.state.copyEsiti = [
+      { data: { path: 'x' }, error: null },
+      { data: null, error: { message: 'internal error', statusCode: '500' } },
+    ]
+    h.state.removeEsito = { data: null, error: { message: 'storage down', statusCode: '500' } }
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(500)
+    expect(scritture().some((c) => c.table === 'pagelle')).toBe(false)
+    expect(rimozioni()).toEqual([[copie()[0].a]])
+    const orfane = logMock.logEvento.mock.calls.find((c) => c[2]?.esito === 'copie-ritirate-orfane')
+    expect(orfane, 'manca il log delle copie orfane').toBeTruthy()
+    expect(orfane!.slice(0, 2)).toEqual(['storage', 'error'])
+    expect(orfane![2]).toMatchObject({ n_file: 1 })
+  })
+
+  it('ripiego con la cancellazione delle righe fallita → 500, scrutinio chiuso', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:select'] = [{ data: null, error: { code: '42703', message: 'x' } }, righePagelle]
+    h.state.code['pagelle:delete'] = [{ data: null, error: GUASTO }]
+    const res = await POST(req({ scrutinioId: SCRUTINIO }))
+    expect(res.status).toBe(500)
+    expect(scritture().some((c) => (c.payload as { stato?: string })?.stato === 'aperto')).toBe(false)
   })
 })

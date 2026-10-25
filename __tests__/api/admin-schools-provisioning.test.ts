@@ -202,6 +202,26 @@ describe('POST /api/admin/schools — provisioning', () => {
     expect(h.deletes[0]?.id).toBe(h.inserts[0]?.row.id)
   })
 
+  it('degrade: insert scuole fallito E pulizia fallita → 500, e la sede orfana è nel log col suo id', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'not found' } })
+    h.scuoleInsertError = { message: 'boom', code: '23505' }
+    h.schoolsDeleteError = { message: 'canceling statement', code: '57014' }
+    const res = await POST(reqBody({ nome: 'Sede Rotta' }, 'POST'))
+    expect(res.status).toBe(500)
+    const orfana = h.inserts[0]?.row.id
+    expect(h.deletes).toEqual([{ table: 'schools', id: orfana }])
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'db',
+      'error',
+      expect.objectContaining({ operazione: 'admin/schools:POST', esito: 'sede-orfana-non-rimossa', entita_id: orfana }),
+      expect.objectContaining({ code: '57014' }),
+    )
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ evento: 'db-fallback-scuole-cleanup-ko' }),
+      expect.objectContaining({ code: '23505' }),
+    )
+  })
+
   it('403 senza Direzione', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await POST(reqBody({ nome: 'X' }, 'POST'))).status).toBe(403)

@@ -8,7 +8,7 @@ import {
     type RispostaRpc,
     type Riga,
 } from '../../fixtures/finto-supabase'
-import { controlloCronEsiti, TETTO_CONTROLLO_MS } from '@/lib/health/controlli'
+import { controlloCronEsiti, controlloStorage, TETTO_CONTROLLO_MS } from '@/lib/health/controlli'
 import { logEvento } from '@/lib/logging/logger'
 
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
@@ -164,5 +164,81 @@ describe('cron-esiti', () => {
         } finally {
             vi.useRealTimers()
         }
+    })
+})
+
+describe('storage', () => {
+    function fintoStorage(list: ReturnType<typeof vi.fn>) {
+        const from = vi.fn(() => ({ list }))
+        return { from, list, storage: { from } }
+    }
+
+    it('il bucket privato risponde: ok, e la sonda non chiede nomi di file', async () => {
+        const s = fintoStorage(vi.fn().mockResolvedValue({ data: [], error: null }))
+
+        expect(await controlloStorage(client({ storage: s.storage }))).toMatchObject({
+            nome: 'storage',
+            esito: 'ok',
+            dettaglio: 'bucket fatture leggibile',
+        })
+        expect(s.from).toHaveBeenCalledWith('fatture')
+        expect(s.list).toHaveBeenCalledWith('salute-sonda-inesistente', { limit: 1 })
+    })
+
+    it.each([
+        ['un 503', Object.assign(new Error('x'), { name: 'StorageApiError', status: 503 }), 'storage fatture: 503 StorageApiError'],
+        [
+            'un bucket sparito',
+            Object.assign(new Error('x'), { name: 'StorageApiError', status: 400, code: 'NoSuchBucket' }),
+            'storage fatture: 400 NoSuchBucket',
+        ],
+        [
+            'un errore senza stato',
+            Object.assign(new Error('x'), { name: 'StorageUnknownError' }),
+            'storage fatture: senza-stato StorageUnknownError',
+        ],
+    ])('%s: degradato, con stato e codice e senza il messaggio', async (_caso, error, dettaglio) => {
+        const s = fintoStorage(vi.fn().mockResolvedValue({ data: null, error }))
+
+        expect(await controlloStorage(client({ storage: s.storage }))).toMatchObject({ esito: 'degradato', dettaglio })
+    })
+
+    it('una list che lancia: degradato, con il nome dell’eccezione', async () => {
+        const s = fintoStorage(vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+
+        expect(await controlloStorage(client({ storage: s.storage }))).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'eccezione TypeError',
+        })
+    })
+
+    // Fuori dal piano, aggiunti al mutation testing: la sonda è una LETTURA (una `list`), non scrive
+    // nessun oggetto e quindi non ha niente da ripulire; il finto storage espone SOLO `list`, così un
+    // `upload`/`remove` aggiunto per sbaglio lancerebbe e il caso sano qui sopra diventerebbe rosso.
+    // Questi due fissano il resto: il tetto di tempo e il «mai giu».
+    it('una list appesa: allo scadere del tetto di 2 s degradato, mai giu', async () => {
+        vi.useFakeTimers()
+        try {
+            const s = fintoStorage(vi.fn(() => new Promise(() => {})))
+            const p = controlloStorage(client({ storage: s.storage }))
+            await vi.advanceTimersByTimeAsync(TETTO_CONTROLLO_MS)
+
+            expect(await p).toMatchObject({ esito: 'degradato', dettaglio: `oltre il tetto di ${TETTO_CONTROLLO_MS} ms` })
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('il messaggio dello Storage non esce mai nel dettaglio (può citare un percorso)', async () => {
+        const error = Object.assign(new Error('fatture/2026/percorso-da-non-rilanciare.pdf'), {
+            name: 'StorageApiError',
+            status: 404,
+        })
+        const s = fintoStorage(vi.fn().mockResolvedValue({ data: null, error }))
+
+        const r = await controlloStorage(client({ storage: s.storage }))
+
+        expect(r).toMatchObject({ esito: 'degradato', dettaglio: 'storage fatture: 404 StorageApiError' })
+        expect(JSON.stringify(r)).not.toContain('percorso-da-non-rilanciare')
     })
 })

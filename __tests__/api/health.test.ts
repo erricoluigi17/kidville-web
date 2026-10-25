@@ -199,6 +199,7 @@ describe('GET /api/health', () => {
             'db-lettura',
             'regione',
             'schema-atteso',
+            'storage',
             'tasso-errore',
         ])
         for (const c of corpo.controlli) expect([c.nome, c.esito]).toEqual([c.nome, 'ok'])
@@ -228,6 +229,36 @@ describe('GET /api/health', () => {
             esito: 'degradato',
             dettaglio: '2 job attivi; senza un esito buono entro la finestra: notifiche-retention',
         })
+    })
+
+    it('storage: un 503 dello Storage porta a degraded, mai a down, e il messaggio del fornitore non esce', async () => {
+        storage.list.mockResolvedValue({
+            data: null,
+            error: Object.assign(new Error('messaggio-del-fornitore-da-non-rilanciare'), {
+                name: 'StorageApiError',
+                status: 503,
+            }),
+        })
+
+        const { stato, corpo, grezzo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'storage')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'storage fatture: 503 StorageApiError',
+        })
+        expect(grezzo).not.toContain('messaggio-del-fornitore-da-non-rilanciare')
+        expect(storage.from).toHaveBeenCalledWith('fatture')
+        expect(storage.list).toHaveBeenCalledWith('salute-sonda-inesistente', { limit: 1 })
+        // La porta scrive il guasto in `app_log` (evento `config`, livello `warn` per `/api/health`).
+        expect(log.logEvento).toHaveBeenCalledWith(
+            'config',
+            'warn',
+            expect.objectContaining({
+                msg: expect.stringContaining('storage(degradato): storage fatture: 503 StorageApiError'),
+            }),
+        )
     })
 
     it("UNA traccia d'audit persa porta la salute a degraded con `audit-docente`, e `tasso-errore` resta ok", async () => {

@@ -1574,6 +1574,35 @@ export async function controlloCronEsiti(supabase: SupabaseClient, adesso: numbe
     })
 }
 
+/**
+ * Il bucket e il prefisso della sonda di `storage`. Un bucket PRIVATO (le fatture) e un prefisso che
+ * non esiste: la `list` prova che l'API dello Storage risponde, che arriva al suo database e che il
+ * bucket c'è, e non restituisce il nome di nessun file. Scelti al Passo 0.8 del piano della sessione
+ * 7: se il bucket cambia, si cambia qui e nei due test.
+ */
+export const BUCKET_SONDA_STORAGE = 'fatture'
+export const PREFISSO_SONDA_STORAGE = 'salute-sonda-inesistente'
+
+/**
+ * `storage` — lo Storage di Supabase risponde. È un servizio a parte dal database dell'app: può
+ * cadere con `db-lettura` verde, e allora le foto della galleria, i documenti e le fatture non si
+ * aprono più senza che nessun controllo lo veda. Escono lo stato HTTP e il codice dello Storage, mai
+ * il messaggio (può citare un percorso). Una `list` che lancia (rete) la prende `misura`.
+ */
+export async function controlloStorage(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('storage', 'degradato', async () => {
+        const { error } = await supabase.storage.from(BUCKET_SONDA_STORAGE).list(PREFISSO_SONDA_STORAGE, { limit: 1 })
+        if (error) {
+            const stato = (error as { status?: unknown }).status
+            return {
+                esito: 'degradato',
+                dettaglio: `storage ${BUCKET_SONDA_STORAGE}: ${typeof stato === 'number' ? stato : 'senza-stato'} ${codiceDi(error)}`,
+            }
+        }
+        return { esito: 'ok', dettaglio: `bucket ${BUCKET_SONDA_STORAGE} leggibile` }
+    })
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1646,6 +1675,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloAuditDocente(supabase, adesso, opzioni.ambiente),
         Promise.resolve(controlloRegione()),
         controlloCronEsiti(supabase, adesso),
+        controlloStorage(supabase),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

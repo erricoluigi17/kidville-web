@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import { senzaCommenti } from './soglia-fotografia'
 
 const RADICE = path.resolve(__dirname, '..', '..')
 
@@ -92,5 +93,81 @@ describe('niente SQL arbitrario — il codice', () => {
     expect(script.length, 'il lock non legge più scripts/').toBeGreaterThan(50)
     expect(radice.length, 'il lock non legge più la radice').toBeGreaterThan(5)
     expect(colpevoli([...script, ...radice]), PERCHE).toEqual([])
+  })
+})
+
+const MIGRAZIONI = path.join(RADICE, 'supabase', 'migrations')
+const BASELINE = '20260704120000_baseline.sql'
+
+/** Un argomento che porta SQL da eseguire: `sql text`, `query text`, `istruzione text`. */
+const ARGOMENTO_SQL = /(?:^|,)\s*(?:IN\s+)?"?(?:sql|query|istruzione)"?\s+text\b/i
+
+/** I nomi delle funzioni SECURITY DEFINER che prendono un argomento SQL. Commenti esclusi. */
+function funzioniSqlArbitrario(sql: string): string[] {
+  const pulito = senzaCommenti(sql)
+  const teste = [...pulito.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+)\s*\(([^)]*)\)/gi)]
+  return teste.flatMap((m, i) => {
+    const inizio = m.index ?? 0
+    const fine = i + 1 < teste.length ? (teste[i + 1].index ?? pulito.length) : pulito.length
+    const blocco = pulito.slice(inizio, fine)
+    return /\bSECURITY\s+DEFINER\b/i.test(blocco) && ARGOMENTO_SQL.test(m[2]) ? [m[1].replace(/"/g, '')] : []
+  })
+}
+
+const DROP_EXEC_SQL = /DROP\s+FUNCTION\s+IF\s+EXISTS\s+public\.exec_sql\s*\(\s*text\s*\)\s*;/gi
+
+describe('niente SQL arbitrario — le migrazioni', () => {
+  const file = fs.readdirSync(MIGRAZIONI).filter((f) => /^\d{14}_.+\.sql$/.test(f)).sort()
+  const dopoIlBaseline = file.filter((f) => f !== BASELINE)
+  const leggi = (f: string) => fs.readFileSync(path.join(MIGRAZIONI, f), 'utf8')
+
+  it('il rilevatore trova exec_sql nel baseline (controllo positivo su SQL vero)', () => {
+    expect(funzioniSqlArbitrario(leggi(BASELINE))).toEqual(['public.exec_sql'])
+  })
+
+  it('il rilevatore: opzioni prima o dopo il corpo, commenti, INVOKER, nomi innocenti', () => {
+    expect(funzioniSqlArbitrario(
+      'CREATE OR REPLACE FUNCTION public.esegui(sql text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN EXECUTE sql; END $$;',
+    )).toEqual(['public.esegui'])
+    expect(funzioniSqlArbitrario(
+      'CREATE FUNCTION public.x(query text) RETURNS void AS $$ BEGIN EXECUTE query; END $$ LANGUAGE plpgsql SECURITY DEFINER;',
+    )).toEqual(['public.x'])
+    expect(funzioniSqlArbitrario(
+      '-- CREATE FUNCTION public.exec_sql(sql text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN EXECUTE sql; END $$;',
+    )).toEqual([])
+    expect(funzioniSqlArbitrario(
+      'CREATE FUNCTION public.y(sql text) RETURNS void LANGUAGE plpgsql SECURITY INVOKER AS $$ BEGIN EXECUTE sql; END $$;',
+    )).toEqual([])
+    expect(funzioniSqlArbitrario(
+      'CREATE FUNCTION public.z(p_testo text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN NULL; END $$;',
+    )).toEqual([])
+  })
+
+  it('dopo il baseline nessuna funzione SECURITY DEFINER prende SQL da eseguire', () => {
+    expect(dopoIlBaseline.length, 'il lock non legge più le migrazioni').toBeGreaterThan(200)
+    const trovate = dopoIlBaseline.flatMap((f) => funzioniSqlArbitrario(leggi(f)).map((n) => `${f} → ${n}`))
+    expect(trovate, PERCHE).toEqual([])
+  })
+
+  it('una migrazione toglie exec_sql, e nessun’altra la nomina fuori dal suo DROP', () => {
+    const conDrop = dopoIlBaseline.filter((f) => (senzaCommenti(leggi(f)).match(DROP_EXEC_SQL) ?? []).length > 0)
+    expect(conDrop, 'manca la migrazione che toglie public.exec_sql(text)').toHaveLength(1)
+    const altriNomi = dopoIlBaseline.filter((f) => /\bexec_sql\b/i.test(senzaCommenti(leggi(f)).replace(DROP_EXEC_SQL, '')))
+    expect(altriNomi, 'exec_sql nominata fuori dal suo DROP: la si sta ricreando o ridando a qualcuno').toEqual([])
+  })
+
+  it('il ROLLBACK scritto nella migrazione la richiude ad anon e authenticated', () => {
+    // Qui si legge il COMMENTO, di proposito. In produzione i privilegi di default di `postgres`
+    // su `public` danno EXECUTE ad anon e authenticated a ogni funzione nuova, e le righe del
+    // baseline revocano solo FROM PUBLIC: un revert che rieseguisse soltanto quelle ridarebbe
+    // `exec_sql` a chi ha la chiave pubblicabile (provato su un Postgres locale il 2026-10-25).
+    const [conDrop] = dopoIlBaseline.filter((f) => (senzaCommenti(leggi(f)).match(DROP_EXEC_SQL) ?? []).length > 0)
+    expect(conDrop, 'manca la migrazione che toglie public.exec_sql(text)').toBeDefined()
+    const testo = leggi(conDrop)
+    const rollback = testo.slice(Math.max(0, testo.indexOf('-- ─── ROLLBACK')))
+    expect(rollback, 'la migrazione non ha più il suo blocco ROLLBACK').toMatch(/^-- ─── ROLLBACK/)
+    expect(rollback, 'il ROLLBACK non revoca più EXECUTE ad anon e authenticated').toMatch(
+      /^--\s+REVOKE ALL ON FUNCTION public\.exec_sql\(text\) FROM PUBLIC, anon, authenticated;$/m,
+    )
   })
 })

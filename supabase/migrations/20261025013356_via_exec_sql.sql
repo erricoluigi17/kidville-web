@@ -1,0 +1,50 @@
+-- =============================================================================
+-- VIA `exec_sql`: NESSUN RUOLO DELL'APP FA PIÙ ESEGUIRE SQL QUALSIASI — 2026-10-25
+--
+-- Robustezza, seconda serie, sessione 2 (problema D1 del rapporto del 20/10/2026; specifica
+-- `docs/superpowers/specs/2026-10-20-robustezza-seconda-serie-design.md`, §7).
+--
+-- `public.exec_sql(sql text)` era SECURITY DEFINER con proprietario `postgres` ed eseguiva
+-- qualunque stringa per chi aveva la chiave di servizio (`POST /rest/v1/rpc/exec_sql`): anche
+-- accendere `registri.manutenzione`, `scatola_nera.manutenzione` e `scatola_nera.senza_storico`,
+-- cioè spegnere i registri in sola aggiunta e la scatola nera. È definita solo nel baseline.
+-- Misurato al passo 0 del piano
+-- `docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md`: nessun cron,
+-- nessuna funzione e nessuna vista la nomina. Nella stessa PR escono dal repo le sei route
+-- sigillate e i sei file che la chiamavano o la ricreavano.
+--
+-- Effetto voluto: chi la chiama ancora riceve `404 PGRST202`. Il lock
+-- `__tests__/architecture/niente-sql-arbitrario.test.ts` impedisce che torni, anche sotto un
+-- altro nome, come funzione SECURITY DEFINER con un argomento `sql`/`query`/`istruzione` text.
+--
+-- Nessuna scrittura in `app_log`: la prova è una lettura del catalogo. Guardie per la CI:
+-- nessuna serve. `IF EXISTS` regge il DB E2E della CI, che non è migrato, e nessun codice
+-- dell'app la chiama.
+--
+-- ─── COME SI VERIFICA ────────────────────────────────────────────────────────
+--   select to_regprocedure('public.exec_sql(text)');                   → NULL
+--   select count(*) from supabase_migrations.schema_migrations
+--    where version = '20261025013356';                                → 1
+--   POST /rest/v1/rpc/exec_sql con la chiave pubblicabile              → 404, PGRST202
+--   get_advisors (security)                                            → 0 ERROR
+--
+-- ─── ROLLBACK ────────────────────────────────────────────────────────────────
+--   Solo su richiesta del titolare, e solo come migrazione NUOVA dentro una PR di revert, con
+--   la version presa da `date -u +%Y%m%d%H%M%S` — mai applicata a mano. Riapre il problema D1.
+--   Rieseguire la definizione di `20260704120000_baseline.sql`: righe 272-282 (funzione e
+--   proprietario) e 7808-7809 (permessi), poi:
+--     REVOKE ALL ON FUNCTION public.exec_sql(text) FROM PUBLIC, anon, authenticated;
+--     NOTIFY pgrst, 'reload schema';
+--   Quella REVOKE non è facoltativa. In produzione i privilegi di default di `postgres` sullo
+--   schema `public` (`pg_default_acl`, letti il 2026-10-25) danno EXECUTE a PUBLIC, anon,
+--   authenticated e service_role a ogni funzione nuova, e le righe del baseline revocano solo
+--   FROM PUBLIC: senza, la funzione rinasce eseguibile da `anon` con la chiave pubblicabile.
+--   Provato il 2026-10-25 su un Postgres locale con gli stessi privilegi di default: le sole righe
+--   del baseline danno l'ACL {postgres,anon,authenticated,service_role}; con la REVOKE l'ACL è
+--   {postgres=X/postgres,service_role=X/postgres} e la definizione (`pg_get_functiondef`, md5)
+--   è identica a quella letta in produzione lo stesso giorno.
+-- =============================================================================
+
+DROP FUNCTION IF EXISTS public.exec_sql(text);
+
+NOTIFY pgrst, 'reload schema';

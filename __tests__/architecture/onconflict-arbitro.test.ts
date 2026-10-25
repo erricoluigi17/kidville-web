@@ -73,7 +73,9 @@ const COSTANTI: Record<string, string> = {
  * Chiavi che in produzione NON trovano un arbitro, e per cui va bene così — ognuna col suo
  * `perche`, che finisce nel messaggio d'errore il giorno in cui la voce smette di essere vera.
  *
- * ⚠️ LE DUE VOCI NON SONO LA STESSA COSA, e la lista sarebbe fuorviante se lo lasciasse credere:
+ * ⚠️ LE VOCI NON SONO LA STESSA COSA, e la lista sarebbe fuorviante se lo lasciasse credere
+ * (`notifiche`/`chiave_dedup`, sessione 8 della seconda serie, è un arbitro voluto con i NULL
+ * distinti: la sua ragione sta nel suo `perche`):
  *
  *  · `registro_orario` è un ripiego **voluto e funzionante**. La sua voce è una sentinella: serve
  *    a far cadere il lock se un giorno quella chiave un arbitro lo trovasse.
@@ -122,6 +124,23 @@ const SENZA_ARBITRO_ATTESO: { tabella: string; chiave: string; perche: string }[
       'Non c’è niente da collaudare: non c’è niente che gira. Resta fuori dallo scopo della ' +
       'correzione della mensa, quindi è scritto qui invece che fatto. ' +
       'QUESTA VOCE SI TOGLIE QUANDO QUEL CODICE MORTO SPARISCE, non quando la tabella viene creata.',
+  },
+  {
+    tabella: 'notifiche',
+    chiave: 'chiave_dedup',
+    perche:
+      'Arbitro VOLUTO con i NULL distinti, non un difetto (sessione 8 della seconda serie di ' +
+      'robustezza, D12). L’indice `notifiche_chiave_dedup_key` è UNICO e NON PARZIALE (PostgREST non ' +
+      'sa usare un indice parziale come arbitro: 42P10) su una colonna che resta NULL per tutte le ' +
+      'notifiche senza deduplica; per questo NON è `NULLS NOT DISTINCT`, che farebbe fallire con ' +
+      '23505 la seconda notifica senza chiave. Il lock lo legge come «indice che tratta i NULL come ' +
+      'distinti», ma il ramo dei duplicati silenziosi qui non esiste: `enqueueNotifiche` scrive con ' +
+      '`onConflict: chiave_dedup` SOLO quando ogni riga porta la chiave (`chiaveDedup(uid)` è sempre ' +
+      'un testo non vuoto), e le righe senza chiave passano dall’insert. Fino alla migrazione ' +
+      '`*_promemoria_e_sync_senza_doppioni.sql` (la applica l’integrazione al merge) l’indice non ' +
+      'c’è proprio, e `enqueueNotifiche` ripiega sull’insert dicendolo con `chiave-dedup-assente`. ' +
+      'La voce si toglie solo se l’upsert su `chiave_dedup` sparisce da `src/`, o se la colonna ' +
+      'diventa NOT NULL.',
   },
 ]
 

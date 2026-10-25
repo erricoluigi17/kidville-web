@@ -27,7 +27,8 @@
 --    segna la nota quando un genitore firma la presa visione, e copierebbe ogni volta il
 --    testo intero della nota. Su un database senza `scatola_nera.modifiche` (fase 4 senza
 --    fase 12: la CI non migrata può esserlo) questi trigger non si accendono, perché lì
---    farebbero fallire ogni UPDATE delle anagrafiche.
+--    farebbero fallire ogni UPDATE delle anagrafiche, e l'oblio salta le sue DELETE sulle
+--    modifiche, perché lì farebbe fallire ogni oblio (42P01).
 --  · Le due bonifiche che cancellano copie storiche PER PROTEGGERE un dato
 --    (`storici_bonifica_chat`, `storici_oblio_alunno`) accendono l'interruttore per le sole
 --    proprie DELETE e lo rimettono com'era: una copia di 90 giorni disferebbe la bonifica.
@@ -36,7 +37,14 @@
 --    `thread_id`), le revisioni di quei messaggi (per `entita_id`) e le sospensioni di quelle
 --    conversazioni, con le conversazioni cancellate (in scatola) o ancora vive; e le
 --    sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da`.
---    `soggetti_di` legge solo `id` e `*_id`.
+--    `soggetti_di` legge solo `id` e `*_id`, di primo livello.
+--  · L'oblio toglie anche le copie di un alunno (cancellato o com'era prima di un UPDATE)
+--    che nominano la persona come adulto dentro un JSON: `intestatario_fatture.adult_id` e
+--    `retta_split_config.quote[].adult_id` (un parents.id, accanto al nome). Se la segreteria
+--    cambia l'intestatario da A a B, la riga viva nomina B e la copia è l'unico posto dove
+--    restano i dati di A (revisione indipendente del 25/10). Un adulto SENZA uuid
+--    (`invoice_holder_details`, l'intestatario di tipo «altro») resta: limite dichiarato nel
+--    runbook, scenario A0-bis.
 --  · Anonimizzare un'anagrafica è un UPDATE: lascia in `scatola_nera.modifiche` la riga
 --    com'era, dati personali compresi, finché l'oblio dell'app non chiama
 --    `scatola_nera_dimentica`, che la toglie perché nomina l'`id`. Per questo l'app la
@@ -65,6 +73,19 @@
 -- file 20261009171012, 20261019215733, 20261015183000, 20261019223123. Cambia solo ciò che
 -- è scritto sopra.
 --
+-- ─── PREREQUISITO: LA FASE 4 ─────────────────────────────────────────────────
+-- Serve la scatola delle eliminazioni (20261009171012_scatola_nera_registro_eliminazioni.sql):
+-- lo schema `scatola_nera` con `eliminazioni`, `oblii`, `soggetti_di(jsonb)` e `vieta_truncate()`.
+-- Su un database che non ce l'ha (la CI si migra a mano, un file alla volta) questa migrazione
+-- si FERMA al primo `CREATE FUNCTION scatola_nera.registra()` con 3F000 («schema does not
+-- exist»); applicata come fa `migrate-ci.yml` (`psql --single-transaction`, ON_ERROR_STOP) non
+-- lascia niente a metà, e i file dopo non si toccano. Si applica prima 20261009171012.
+-- Non la tollera come fa `*_scatola_nera_protocollo.sql` perché qui si ridefiniscono funzioni
+-- DENTRO lo schema: per saltarle servirebbero `DO` + `EXECUTE` del loro corpo, e il corpo di
+-- `scatola_nera_dimentica` contiene DELETE che il lock `migrazioni-distruttive-approvate`
+-- conterebbe come eseguite alla migrazione. La fase 12 (`scatola_nera.modifiche`) invece NON
+-- serve: senza, i suoi trigger non si accendono e l'oblio salta le modifiche.
+--
 -- ─── FAIL-CLOSED ─────────────────────────────────────────────────────────────
 -- Invariato: se la copia non si scrive, fallisce la DELETE o l'UPDATE.
 --
@@ -76,6 +97,8 @@
 --    where oid = 'scatola_nera.registra()'::regprocedure;                            -- true
 --   select prosrc ~ 'v_collegati' from pg_proc
 --    where oid = 'public.scatola_nera_dimentica(uuid[],text,text)'::regprocedure;    -- true
+--   select prosrc ~ 'intestatario_fatture' and prosrc ~ 'to_regclass..scatola_nera.modifiche'
+--     from pg_proc where oid = 'public.scatola_nera_dimentica(uuid[],text,text)'::regprocedure; -- true
 --
 -- ─── ROLLBACK ────────────────────────────────────────────────────────────────
 --   do $$ declare t text; begin
@@ -88,13 +111,20 @@
 --     foreach t in array array['alunni','parents','utenti','note_disciplinari','certificati_medici'] loop
 --       execute format('drop trigger if exists scatola_nera_modifiche on public.%I', t);
 --     end loop; end $$;
---   Rieseguire le definizioni di prima: scatola_nera.registra() da
---   20261009171012_scatola_nera_registro_eliminazioni.sql; scatola_nera.registra_modifica() e
---   public.scatola_nera_dimentica da 20261019215733_scatola_nera_modifiche.sql;
---   public.storici_bonifica_chat da 20261015183000_storici_stampe_rettifiche.sql;
---   public.storici_oblio_alunno da 20261019223123_battiti_app_log_che_contano.sql (oppure i
---   corpi di produzione salvati nel Passo 0). Le righe già copiate restano finché non
---   scadono: sono la copia.
+--   Poi si riesegue SOLO IL CORPO di ciascuna funzione (il suo `CREATE OR REPLACE FUNCTION`
+--   fino al `$$;`, più i suoi REVOKE/GRANT), MAI il file intero: i file contengono altro che
+--   tornerebbe indietro (rieseguire per intero 20261009171012 riporterebbe anche
+--   `scatola_nera.scadenza()` e `scatola_nera_dimentica` alla fase 4, che non conosce
+--   `scatola_nera.modifiche`; gli altri ricreano trigger che esistono già e si fermano). I
+--   corpi di partenza coincidono con quelli di produzione letti nel Passo 0, quindi il
+--   ritorno funzione per funzione è esatto:
+--     scatola_nera.registra()            20261009171012_scatola_nera_registro_eliminazioni.sql:160-184 (REVOKE :397)
+--     scatola_nera.registra_modifica()   20261019215733_scatola_nera_modifiche.sql:107-142 (REVOKE :353)
+--     public.scatola_nera_dimentica      20261019215733_scatola_nera_modifiche.sql:248-280 (REVOKE/GRANT :358-359, COMMENT :361-362)
+--     public.storici_bonifica_chat       20261015183000_storici_stampe_rettifiche.sql:437-446 (REVOKE/GRANT :447-448)
+--     public.storici_oblio_alunno        20261019223123_battiti_app_log_che_contano.sql:157-176 (REVOKE/GRANT :177-178)
+--   (oppure i corpi di produzione salvati nel Passo 0). Le righe già copiate restano finché
+--   non scadono: sono la copia.
 -- =============================================================================
 
 -- ── 1. L'interruttore anche sulle eliminazioni ────────────────────────────────
@@ -294,6 +324,16 @@ GRANT EXECUTE ON FUNCTION public.storici_oblio_alunno() TO service_role;
 -- e le persone in `sospesa_da`, `sospesa_verso` e `riaperta_da` (la Direzione che riapre
 -- non è nella conversazione), che `soggetti_di` non legge; il suo `motivo` è testo libero.
 -- Le stesse colonne che l'oblio dell'app bonifica sulla riga viva (`src/lib/gdpr/esegui.ts`).
+-- La copia di un alunno (cancellato, o com'era prima di un UPDATE) contiene l'adulto che
+-- intesta le fatture (`intestatario_fatture.adult_id`, con il nome) e gli adulti di una retta
+-- divisa (`retta_split_config.quote[].adult_id`, con il nome): un genitore che `soggetti_di`
+-- non vede, perché sta dentro un JSON. Si toglie anche quella: se la segreteria cambia
+-- l'intestatario da A a B, la riga viva nomina B e la copia è l'unico posto dove resta A
+-- (revisione indipendente del 25/10). Un adulto senza uuid (`invoice_holder_details`,
+-- l'intestatario di tipo «altro» con i suoi `dati`) non si può cercare per uuid: limite
+-- dichiarato nel runbook (scenario A0-bis), come per la riga viva, che l'oblio dell'app non
+-- pulisce già oggi.
+-- Senza `scatola_nera.modifiche` (fase 4 senza fase 12) le DELETE sulle modifiche si saltano.
 CREATE OR REPLACE FUNCTION public.scatola_nera_dimentica(p_soggetti uuid[], p_tipo text, p_canale text DEFAULT NULL)
 RETURNS int
 LANGUAGE plpgsql
@@ -342,18 +382,36 @@ BEGIN
   v_collegati := v_thread || v_messaggi;
 
   PERFORM set_config('scatola_nera.manutenzione', 'on', true);
-  -- Le persone di una sospensione si confrontano come TESTO: nessun cast che possa fallire
-  -- su una riga di un'altra tabella, e un `riaperta_da` NULL non è uguale a niente.
+  -- Le persone di una sospensione e gli adulti di un alunno si confrontano come TESTO: nessun
+  -- cast che possa fallire su una riga di un'altra tabella, e un `riaperta_da` o un `adult_id`
+  -- NULL (o assente, o in un JSON di forma storta) non è uguale a niente.
   DELETE FROM scatola_nera.eliminazioni
    WHERE soggetti && p_soggetti
       OR (tabella IN ('chat_messages', 'storici_revisioni', 'conversazioni_sospensioni')
           AND soggetti && v_collegati)
       OR (tabella = 'conversazioni_sospensioni'
           AND ARRAY[riga ->> 'sospesa_da', riga ->> 'sospesa_verso', riga ->> 'riaperta_da']
-              && p_soggetti::text[]);
+              && p_soggetti::text[])
+      OR (tabella = 'alunni'
+          AND (ARRAY[riga -> 'intestatario_fatture' ->> 'adult_id'] && p_soggetti::text[]
+               OR jsonb_path_query_array(riga, 'lax $.retta_split_config.quote[*].adult_id')
+                  ?| p_soggetti::text[]));
   GET DIAGNOSTICS v_righe = ROW_COUNT;
-  DELETE FROM scatola_nera.modifiche WHERE soggetti && p_soggetti;
-  GET DIAGNOSTICS v_modifiche = ROW_COUNT;
+  -- Senza la fase 12 (la CI non migrata può esserne priva) `scatola_nera.modifiche` non c'è:
+  -- l'oblio toglie le sole eliminazioni invece di fallire con 42P01. Il ramo non eseguito non
+  -- viene nemmeno preparato, quindi la tabella assente non dà errore.
+  IF to_regclass('scatola_nera.modifiche') IS NOT NULL THEN
+    -- La copia di un UPDATE su `alunni` è la riga com'era (`prima`; la versione dopo sta nella
+    -- riga viva o nella `prima` della copia successiva): l'adulto che intestava le fatture, o
+    -- una quota della retta, la nomina solo dentro il JSON, per `adult_id` (un parents.id).
+    DELETE FROM scatola_nera.modifiche
+     WHERE soggetti && p_soggetti
+        OR (tabella = 'alunni'
+            AND (ARRAY[prima -> 'intestatario_fatture' ->> 'adult_id'] && p_soggetti::text[]
+                 OR jsonb_path_query_array(prima, 'lax $.retta_split_config.quote[*].adult_id')
+                    ?| p_soggetti::text[]));
+    GET DIAGNOSTICS v_modifiche = ROW_COUNT;
+  END IF;
   PERFORM set_config('scatola_nera.manutenzione', 'off', true);
 
   FOREACH v_s IN ARRAY p_soggetti LOOP
@@ -368,6 +426,6 @@ REVOKE ALL ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) FROM PU
 GRANT EXECUTE ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) TO service_role;
 
 COMMENT ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) IS
-  'Oblio nella scatola nera: toglie da scatola_nera.eliminazioni e da scatola_nera.modifiche le righe che nominano uno di questi uuid (in id o in una colonna *_id), più i messaggi, le revisioni di messaggi e le sospensioni delle conversazioni che lo nominano e le sospensioni che lo nominano in sospesa_da, sospesa_verso o riaperta_da, e scrive un oblio per uuid in scatola_nera.oblii (mai dati). Restituisce le righe tolte. Solo service_role.';
+  'Oblio nella scatola nera: toglie da scatola_nera.eliminazioni e da scatola_nera.modifiche le righe che nominano uno di questi uuid (in id o in una colonna *_id), più i messaggi, le revisioni di messaggi e le sospensioni delle conversazioni che lo nominano, le sospensioni che lo nominano in sospesa_da, sospesa_verso o riaperta_da, e le copie di alunni che lo nominano come adulto in intestatario_fatture.adult_id o in retta_split_config.quote[].adult_id; senza scatola_nera.modifiche (fase 12 assente) toglie le sole eliminazioni. Scrive un oblio per uuid in scatola_nera.oblii (mai dati). Restituisce le righe tolte. Un adulto senza uuid (invoice_holder_details, intestatario di tipo altro) non si raggiunge: runbook, scenario A0-bis. Solo service_role.';
 
 NOTIFY pgrst, 'reload schema';

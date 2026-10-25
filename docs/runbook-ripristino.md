@@ -188,8 +188,31 @@ percorso dal pannello dello Storage. Misurato il 25/10/2026 (10:41 UTC): 0 orfan
 scadenza dei 90 giorni**: nessuno la ritenta da solo; l'oblio risulta parziale (`letture_fallite` > 0; nel log `gdpr`
 una riga `error` `scatola-nera-non-dimenticata` e, dalle route dell'oblio, `oblio-parziale`). Si rimedia dal SQL editor, dopo averla
 mostrata: `SELECT public.scatola_nera_dimentica(ARRAY['<uuid>']::uuid[], '<alunno|genitore|personale|altro>', 'runbook');`
-La funzione toglie anche i messaggi, le revisioni dei messaggi e le sospensioni delle conversazioni della persona, e le
-sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da`.
+La funzione toglie anche i messaggi, le revisioni dei messaggi e le sospensioni delle conversazioni della persona, le
+sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da`, e le copie di un alunno (cancellato o
+com'era prima di un UPDATE) che la nominano come adulto in `intestatario_fatture.adult_id` o in
+`retta_split_config.quote[].adult_id`: se la segreteria cambia l'intestatario da A a B, la riga viva nomina B e la copia è
+l'unico posto dove resta A. Queste copie **non** hanno A in `soggetti`: la query del passo 1 qui sotto non le trova.
+
+**Limiti noti dell'oblio nella scatola nera** (revisione indipendente del 25/10/2026; si estendono se il titolare lo chiede):
+- **Uuid di persona fuori da `id`/`*_id`.** `soggetti_di` non legge `chat_messages.rettifica_staff_da`, `creato_da` (in
+  `alunni_classi_storico` e `storici_collegamenti`) e, nello storico delle modifiche, `note_disciplinari.firmata_da`,
+  `certificati_medici.caricato_da`, `alunni.retta_a_carico_di`: l'oblio non toglie una copia che nomina la persona solo
+  lì. Restano solo uuid, senza altri dati. Si estende aggiungendo la colonna a `scatola_nera.soggetti_di`.
+- **`fascicolo_accessi_audit`.** `ip` e `user_agent` si azzerano a 12 mesi (`fascicolo_audit_ip_retention_tick`), ma la
+  copia di una riga cancellata a 11,9 mesi li conserva fino a 90 giorni in più.
+- **L'adulto senza uuid.** `alunni.invoice_holder_details` (nome, cognome, codice fiscale dell'adulto che intesta le
+  fatture: 47 righe il 25/10) e l'intestatario di tipo «altro», con i suoi `dati` (28 righe), non hanno un uuid che li
+  leghi a una persona: l'oblio del genitore non li pulisce né sulla riga viva (difetto che c'era già,
+  `src/lib/gdpr/esegui.ts`) né nelle copie. L'oblio dell'**alunno** li azzera sulla riga viva, e la copia che quell'UPDATE
+  lascia se ne va perché nomina l'alunno.
+- **Le DELETE dell'oblio scorrono le tabelle.** Su `scatola_nera.eliminazioni` (quattro rami `OR`) e su
+  `scatola_nera.modifiche` (due) l'indice GIN di `soggetti` non serve: si legge tutta la tabella. Va bene con le 139 e 797
+  righe del 25/10; se crescono, si spezza ogni DELETE in una per ramo.
+- **La rettifica del protocollo a metà.** Se, dopo aver sovrascritto l'originale (stessa estensione), falliscono il
+  caricamento del timbrato o la rpc, impronta e tipo nel database non corrispondono più al file. La copia in
+  `<numero a 7 cifre>-versioni/` permette di recuperarlo (paragrafo «Il protocollo» qui sopra), ma nessuno lo ripristina da
+  solo e nessun log lo segnala (difetto che c'era già; 0 casi su 325 registrazioni il 25/10).
 
 Sempre dal **SQL editor** (ruolo `postgres`), leggendo prima e mostrando poi.
 

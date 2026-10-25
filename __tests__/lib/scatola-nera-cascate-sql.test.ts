@@ -43,6 +43,10 @@ const MSG_ALTRO = '50000000-0000-4000-8000-000000000003'
 const AVVISO = '60000000-0000-4000-8000-000000000001'
 const NOTA = '70000000-0000-4000-8000-000000000001'
 const CERTIFICATO = '80000000-0000-4000-8000-000000000001'
+/** Adulti che intestano le fatture: in nessun'altra tabella, così ogni copia tolta è per l'intestatario. */
+const INTESTATARIA_A = '2000000a-0000-4000-8000-00000000000a'
+const INTESTATARIO_B = '2000000b-0000-4000-8000-00000000000b'
+const ADULTO_QUOTA = '2000000c-0000-4000-8000-00000000000c'
 
 /** Le tabelle da svuotare fra un caso e l'altro (con i trigger spenti). */
 const TABELLE = [
@@ -128,9 +132,12 @@ const SCHEMA = `
     CREATE TABLE public.schools (id uuid PRIMARY KEY, nome text);
     CREATE TABLE public.utenti (id uuid PRIMARY KEY, nome text, cognome text, updated_at timestamptz);
     CREATE TABLE public.parents (id uuid PRIMARY KEY, nome text, updated_at timestamptz);
+    -- L'intestatario delle fatture e le quote della retta nominano un ADULTO dentro un JSON
+    -- (\`adult_id\` = un parents.id), dove soggetti_di non guarda: forma letta in produzione il 25/10.
     CREATE TABLE public.alunni (
       id uuid PRIMARY KEY, scuola_id uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
-      nome text, anonimizzato_il timestamptz, updated_at timestamptz
+      nome text, anonimizzato_il timestamptz, updated_at timestamptz,
+      intestatario_fatture jsonb, invoice_holder_details jsonb, retta_split_config jsonb
     );
     CREATE TABLE public.chat_threads (
       id uuid PRIMARY KEY,
@@ -383,6 +390,29 @@ describe('un database con la fase 4 ma senza lo storico delle modifiche (la CI n
       `SELECT count(*)::int AS n FROM scatola_nera.eliminazioni WHERE tabella = 'alunni'`)
     expect(copie.rows[0].n).toBe(1)
   })
+
+  // L'oblio della sessione 3 sostituisce quello della fase 4 anche qui: senza la guardia su
+  // `scatola_nera.modifiche` OGNI oblio fallirebbe con 42P01, e l'app direbbe «oblio incompleto».
+  it('l’oblio non fallisce: toglie le copie delle eliminazioni e scrive l’oblio', async () => {
+    await solo4.exec(`
+      INSERT INTO public.schools VALUES ('${SEDE}', 'Sede di prova') ON CONFLICT DO NOTHING;
+      INSERT INTO public.alunni (id, scuola_id, nome, intestatario_fatture) VALUES
+        ('${ALTRO_ALUNNO}', '${SEDE}', 'Altro',
+         '{"tipo": "adult", "adult_id": "${INTESTATARIA_A}", "nome": "Adulta di prova"}');
+      DELETE FROM public.alunni WHERE id = '${ALTRO_ALUNNO}';
+    `)
+    const prima = await solo4.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM scatola_nera.eliminazioni WHERE riga ->> 'id' = '${ALTRO_ALUNNO}'`)
+    expect(prima.rows[0].n).toBe(1)
+
+    const { rows } = await solo4.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${ALTRO_ALUNNO}']::uuid[], 'alunno', 'prova') AS n`)
+    expect(rows[0].n).toBe(1)
+    const dopo = await solo4.query<{ copie: number; oblii: number }>(`
+      SELECT (SELECT count(*) FROM scatola_nera.eliminazioni WHERE riga ->> 'id' = '${ALTRO_ALUNNO}')::int AS copie,
+             (SELECT count(*) FROM scatola_nera.oblii WHERE soggetto = '${ALTRO_ALUNNO}')::int AS oblii`)
+    expect(dopo.rows[0]).toEqual({ copie: 0, oblii: 1 })
+  })
 })
 
 describe('le bonifiche accendono l’interruttore nella propria transazione', () => {
@@ -549,5 +579,142 @@ describe('l’oblio segue le conversazioni: chi nomina la persona solo per threa
              has_function_privilege('anon', 'public.scatola_nera_dimentica(uuid[], text, text)', 'EXECUTE') AS anon,
              has_function_privilege('service_role', 'public.scatola_nera_dimentica(uuid[], text, text)', 'EXECUTE') AS servizio`)
     expect(rows[0]).toEqual({ auth: false, anon: false, servizio: true })
+  })
+})
+
+/** L'intestatario delle fatture come lo scrive l'app: un adulto registrato, per `adult_id`. */
+function intestatario(adulto: string): string {
+  return `'{"tipo": "adult", "adult_id": "${adulto}", "nome": "Adulto di prova"}'::jsonb`
+}
+
+/** Cambia una colonna di ALUNNO SENZA lasciare copia: lo stato di partenza del caso. */
+async function partenza(colonna: string, valore: string): Promise<void> {
+  await db.exec(`
+    BEGIN;
+    SELECT set_config('scatola_nera.senza_storico', 'on', true);
+    UPDATE public.alunni SET ${colonna} = ${valore} WHERE id = '${ALUNNO}';
+    COMMIT;
+  `)
+}
+
+async function dimentica(soggetto: string): Promise<number> {
+  const { rows } = await db.query<{ n: number }>(
+    `SELECT public.scatola_nera_dimentica(ARRAY['${soggetto}']::uuid[], 'genitore', 'prova') AS n`)
+  return rows[0].n
+}
+
+// La copia di un UPDATE su `alunni` contiene l'intestatario delle fatture, che è un GENITORE
+// (in produzione 343 righe su 343 con `adult_id`, 25/10). `soggetti_di` legge solo le chiavi di
+// primo livello: la copia nomina solo il bambino. Se la segreteria cambia l'intestatario da A a
+// B, la riga viva nomina B e la copia è l'UNICO posto dove restano i dati di A.
+describe('l’oblio di chi intesta le fatture di un bambino ancora iscritto', () => {
+  it('le copie con A intestataria (una modifica qualunque, poi il cambio da A a B) se ne vanno con l’oblio di A', async () => {
+    await partenza('intestatario_fatture', intestatario(INTESTATARIA_A))
+    await db.exec(`UPDATE public.alunni SET nome = 'Bimbo corretto' WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = ${intestatario(INTESTATARIO_B)} WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche
+      WHERE tabella = 'alunni' AND prima -> 'intestatario_fatture' ->> 'adult_id' = '${INTESTATARIA_A}'`)).toBe(2)
+    // Il difetto: per la regola dei soli `id` e `*_id` le due copie non nominano A.
+    expect(await numero(
+      `SELECT count(*) FROM scatola_nera.modifiche WHERE soggetti && ARRAY['${INTESTATARIA_A}']::uuid[]`)).toBe(0)
+
+    expect(await dimentica(INTESTATARIA_A)).toBe(2)
+    expect(await numero('SELECT count(*) FROM scatola_nera.modifiche')).toBe(0)
+    // Controllo positivo: la riga viva, che nomina B, non è affare dell'oblio della scatola.
+    expect(await numero(`SELECT count(*) FROM public.alunni
+      WHERE id = '${ALUNNO}' AND intestatario_fatture ->> 'adult_id' = '${INTESTATARIO_B}'`)).toBe(1)
+  })
+
+  // La tabella non ha una colonna `dopo`: la versione dopo sta nella riga viva o nella `prima`
+  // della modifica successiva. I dati di B compaiono in una copia solo quando B viene sostituito.
+  it('l’oblio di B toglie la copia in cui B compare, e lascia quella che contiene solo A', async () => {
+    await partenza('intestatario_fatture', intestatario(INTESTATARIA_A))
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = ${intestatario(INTESTATARIO_B)} WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = NULL WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'alunni'`)).toBe(2)
+
+    expect(await dimentica(INTESTATARIO_B)).toBe(1)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche
+      WHERE prima -> 'intestatario_fatture' ->> 'adult_id' = '${INTESTATARIA_A}'`)).toBe(1)
+    expect(await dimentica(INTESTATARIA_A)).toBe(1)
+    expect(await numero('SELECT count(*) FROM scatola_nera.modifiche')).toBe(0)
+  })
+
+  it('nessun falso positivo: altre copie dello stesso bambino, senza A o senza `adult_id`, restano', async () => {
+    await partenza('intestatario_fatture', intestatario(INTESTATARIO_B))
+    await db.exec(`UPDATE public.alunni SET nome = 'uno' WHERE id = '${ALUNNO}'`)
+    // L'adulto non registrato (tipo «altro»): niente `adult_id`. Poi un `adult_id` nullo, poi
+    // nessun intestatario, poi forme storte delle quote: nessun cast che possa fallire.
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = '{"tipo": "altro", "dati": {"nome": "x"}}' WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = '{"tipo": "adult", "adult_id": null}' WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET intestatario_fatture = NULL, retta_split_config = '{"quote": "testo"}' WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET retta_split_config = '{"quote": [1, null, "x", {"importo": 3}]}' WHERE id = '${ALUNNO}'`)
+    await db.exec(`UPDATE public.alunni SET nome = 'due' WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'alunni'`)).toBe(6)
+
+    expect(await dimentica(INTESTATARIA_A)).toBe(0)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'alunni'`)).toBe(6)
+    // Controllo positivo: B è nella `prima` delle prime due copie (il nome cambiato, poi il
+    // passaggio all'adulto non registrato), e se ne va da quelle sole.
+    expect(await dimentica(INTESTATARIO_B)).toBe(2)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'alunni'`)).toBe(4)
+  })
+
+  it('le quote della retta divisa nominano gli adulti allo stesso modo: l’oblio li segue', async () => {
+    await partenza('retta_split_config', `'{"quote": [
+      {"adult_id": "${INTESTATARIO_B}", "importo": 100, "nome": "Adulto di prova"},
+      {"adult_id": "${ADULTO_QUOTA}", "importo": 50, "nome": "Altro adulto di prova"}]}'::jsonb`)
+    await db.exec(`UPDATE public.alunni SET nome = 'Bimbo corretto' WHERE id = '${ALUNNO}'`)
+    expect(await dimentica(INTESTATARIA_A)).toBe(0)
+    expect(await dimentica(ADULTO_QUOTA)).toBe(1)
+    expect(await numero('SELECT count(*) FROM scatola_nera.modifiche')).toBe(0)
+  })
+
+  it('la regola legge solo le copie di `alunni`: in un’altra tabella lo stesso percorso non è un intestatario', async () => {
+    await db.exec(`
+      INSERT INTO scatola_nera.modifiche (tabella, riga_id, prima, cambiate, soggetti, ruolo)
+      VALUES ('pagamenti', '${CERTIFICATO}',
+              '{"id": "${CERTIFICATO}", "intestatario_fatture": {"adult_id": "${INTESTATARIA_A}"},
+                "retta_split_config": {"quote": [{"adult_id": "${INTESTATARIA_A}"}]}}',
+              ARRAY['importo'], ARRAY['${CERTIFICATO}']::uuid[], 'prova');
+      INSERT INTO scatola_nera.eliminazioni (tabella, riga, soggetti, ruolo)
+      VALUES ('pagamenti',
+              '{"id": "${CERTIFICATO}", "intestatario_fatture": {"adult_id": "${INTESTATARIA_A}"},
+                "retta_split_config": {"quote": [{"adult_id": "${INTESTATARIA_A}"}]}}',
+              ARRAY['${CERTIFICATO}']::uuid[], 'prova');
+    `)
+    expect(await dimentica(INTESTATARIA_A)).toBe(0)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'pagamenti'`)).toBe(1)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni WHERE tabella = 'pagamenti'`)).toBe(1)
+  })
+
+  it('anche la copia di un bambino CANCELLATO (scatola delle eliminazioni) se ne va con l’oblio di A', async () => {
+    await db.exec(`
+      BEGIN;
+      SELECT set_config('scatola_nera.senza_storico', 'on', true);
+      UPDATE public.alunni SET intestatario_fatture = ${intestatario(INTESTATARIA_A)} WHERE id = '${ALTRO_ALUNNO}';
+      COMMIT;
+      DELETE FROM public.alunni WHERE id = '${ALTRO_ALUNNO}';
+    `)
+    const prima = await perTabella()
+    expect(prima.alunni).toBe(1)
+
+    expect(await dimentica(INTESTATARIA_A)).toBe(1)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni WHERE tabella = 'alunni'`)).toBe(0)
+    // Controllo positivo: le copie in cascata (conversazione, messaggio, risposta) non nominano A e restano.
+    const restanti = Object.fromEntries(Object.entries(prima).filter(([t]) => t !== 'alunni'))
+    expect(restanti).toEqual({ chat_messages: 1, chat_threads: 1 })
+    expect(await perTabella()).toEqual(restanti)
+
+    // Le quote della retta, nella copia di un bambino cancellato: stesso percorso, stessa regola.
+    const terzo = '10000000-0000-4000-8000-000000000003'
+    await db.exec(`
+      INSERT INTO public.alunni (id, scuola_id, nome, retta_split_config) VALUES ('${terzo}', '${SEDE}', 'Terzo',
+        '{"quote": [{"adult_id": "${ADULTO_QUOTA}", "importo": 10, "nome": "Adulto di prova"}]}');
+      DELETE FROM public.alunni WHERE id = '${terzo}';
+    `)
+    expect(await dimentica(INTESTATARIA_A)).toBe(0)
+    expect(await dimentica(ADULTO_QUOTA)).toBe(1)
+    expect(await perTabella()).toEqual(restanti)
   })
 })

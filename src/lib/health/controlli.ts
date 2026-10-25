@@ -8,6 +8,7 @@ import {
     valutaFornitore,
     type RigaEsitoFornitore,
 } from '@/lib/health/fornitori'
+import { leggiStatoMigrazioniDb, valutaMigrazioni, type StatoMigrazioni } from '@/lib/health/migrazioni'
 import { inAttesaDellIntegrazione, type Valutazione } from '@/lib/health/valutazione'
 import { logEvento } from '@/lib/logging/logger'
 import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
@@ -1692,6 +1693,43 @@ export async function controlloPush(supabase: SupabaseClient, adesso: number, am
     })
 }
 
+/**
+ * La versione del repo fissata alla build da `next.config.ts`; `null` fuori da una build o se la
+ * cartella non si è letta. Accesso STATICO a `process.env.KV_…`: la chiave `env` di Next sostituisce
+ * solo questa forma (lock `__tests__/architecture/migrazioni-versione-in-build.test.ts`).
+ */
+function migrazioniDellaBuild(): StatoMigrazioni | null {
+    const ultima = process.env.KV_MIGRAZIONE_REPO
+    const numero = Number(process.env.KV_MIGRAZIONI_REPO_NUMERO)
+    if (!ultima || !/^\d{14}$/.test(ultima) || !Number.isInteger(numero) || numero <= 0) return null
+    return { ultima, numero }
+}
+
+/**
+ * `migrazioni` — il database ha applicato le migrazioni del repo. In locale senza build (`next dev`
+ * le ha, un test no) non c'è niente da confrontare ed è `ok`; altrove una build senza versione è un
+ * guasto della build. La decisione sta in `@/lib/health/migrazioni`.
+ */
+export async function controlloMigrazioni(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('migrazioni', 'degradato', async () => {
+        const repo = migrazioniDellaBuild()
+        if (repo === null) {
+            return ambiente === 'locale'
+                ? { esito: 'ok', dettaglio: 'versione del repo non fissata (fuori dalla build)' }
+                : { esito: 'degradato', dettaglio: 'versione del repo non fissata alla build' }
+        }
+        const { data, error } = await supabase.rpc('salute_migrazioni')
+        if (error) {
+            const codice = codiceDi(error)
+            if (RPC_SALUTE_ASSENTE.has(codice)) return rpcNonInstallata('salute_migrazioni', codice, adesso)
+            return { esito: 'degradato', dettaglio: `lettura delle migrazioni ${codice}` }
+        }
+        const db = leggiStatoMigrazioniDb(data)
+        if (db === null) return { esito: 'degradato', dettaglio: 'risposta di salute_migrazioni illeggibile' }
+        return valutaMigrazioni(repo, db, buildIlMs(), adesso)
+    })
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1767,6 +1805,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloStorage(supabase),
         controlloEmail(supabase, adesso, opzioni.ambiente),
         controlloPush(supabase, adesso, opzioni.ambiente),
+        controlloMigrazioni(supabase, adesso, opzioni.ambiente),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

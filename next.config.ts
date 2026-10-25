@@ -1,5 +1,8 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { statoMigrazioniRepo } from "./src/lib/health/migrazioni";
 import { shaNormalizzato } from "./src/lib/versione/deploy";
 
 /**
@@ -24,6 +27,33 @@ import { shaNormalizzato } from "./src/lib/versione/deploy";
  * `VERSIONE_BUNDLE` vale `null` e il controllo non parte affatto.
  */
 const VERSIONE_BUNDLE = shaNormalizzato(process.env.VERCEL_GIT_COMMIT_SHA) ?? "";
+
+/**
+ * ─── LE MIGRAZIONI DEL REPO E L'ISTANTE DELLA BUILD, COTTI IN BUILD ──────────
+ *
+ * Il controllo `migrazioni` di `/api/health` (sessione 7 della seconda serie di robustezza)
+ * confronta l'ultima migrazione del repo con quella del database. A runtime su Vercel la cartella
+ * `supabase/migrations` non c'è: la si legge QUI, alla build, e la chiave `env` la sostituisce nel
+ * codice del server come `VERSIONE_BUNDLE`. `KV_BUILD_IL` è l'istante della build: per 30 minuti
+ * da lì una migrazione non ancora applicata è attesa (l'integrazione Supabase la applica al merge,
+ * mentre il deploy parte), dopo è un guasto.
+ *
+ * Una cartella illeggibile non ferma la build: il controllo lo dirà (`degradato`, «versione del
+ * repo non fissata alla build») e qui resta una riga d'errore nel log della build. Il lock è
+ * `__tests__/architecture/migrazioni-versione-in-build.test.ts`.
+ */
+function migrazioniDelRepo(): ReturnType<typeof statoMigrazioniRepo> {
+  try {
+    return statoMigrazioniRepo(readdirSync(join(process.cwd(), "supabase", "migrations")));
+  } catch (err) {
+    console.error(
+      "[next.config] supabase/migrations illeggibile: il controllo `migrazioni` di /api/health resterà senza versione del repo",
+      err,
+    );
+    return null;
+  }
+}
+const MIGRAZIONI_REPO = migrazioniDelRepo();
 
 /**
  * ─── HEADER DI SICUREZZA ─────────────────────────────────────────────────────
@@ -112,7 +142,12 @@ const nextConfig: NextConfig = {
   /* config options here */
 
   // La versione del rilascio dentro il bundle del browser (vedi `VERSIONE_BUNDLE` qui sopra).
-  env: { NEXT_PUBLIC_VERSIONE_BUNDLE: VERSIONE_BUNDLE },
+  env: {
+    NEXT_PUBLIC_VERSIONE_BUNDLE: VERSIONE_BUNDLE,
+    KV_MIGRAZIONE_REPO: MIGRAZIONI_REPO?.ultima ?? "",
+    KV_MIGRAZIONI_REPO_NUMERO: MIGRAZIONI_REPO ? String(MIGRAZIONI_REPO.numero) : "",
+    KV_BUILD_IL: new Date().toISOString(),
+  },
 
   async headers() {
     return [{ source: '/:path*', headers: HEADER_SICUREZZA }];

@@ -8,7 +8,14 @@ import {
     type RispostaRpc,
     type Riga,
 } from '../../fixtures/finto-supabase'
-import { controlloCronEsiti, controlloEmail, controlloPush, controlloStorage, TETTO_CONTROLLO_MS } from '@/lib/health/controlli'
+import {
+    controlloCronEsiti,
+    controlloEmail,
+    controlloMigrazioni,
+    controlloPush,
+    controlloStorage,
+    TETTO_CONTROLLO_MS,
+} from '@/lib/health/controlli'
 import { fcmConfigured } from '@/lib/push/native-push'
 import { vapidConfigured } from '@/lib/push/web-push'
 import { logEvento } from '@/lib/logging/logger'
@@ -415,5 +422,112 @@ describe('push', () => {
         expect(vapidConfigured()).toBe(vapid)
         expect(dettaglio?.includes('fcm non configurato')).toBe(!fcm)
         expect(dettaglio?.includes('web-push non configurato')).toBe(!vapid)
+    })
+})
+
+describe('migrazioni', () => {
+    function fissaBuild(ultima: string, numero: string, buildFaMs: number): void {
+        vi.stubEnv('KV_MIGRAZIONE_REPO', ultima)
+        vi.stubEnv('KV_MIGRAZIONI_REPO_NUMERO', numero)
+        vi.stubEnv('KV_BUILD_IL', fa(buildFaMs))
+    }
+
+    it('in locale, fuori da una build: ok, e non chiede niente al database', async () => {
+        vi.stubEnv('KV_MIGRAZIONE_REPO', '')
+        vi.stubEnv('KV_MIGRAZIONI_REPO_NUMERO', '')
+        const salute_migrazioni = vi.fn()
+
+        expect(await controlloMigrazioni(client({ rpc: { salute_migrazioni } }), ADESSO, 'locale')).toMatchObject({
+            nome: 'migrazioni',
+            esito: 'ok',
+            dettaglio: 'versione del repo non fissata (fuori dalla build)',
+        })
+        expect(salute_migrazioni).not.toHaveBeenCalled()
+    })
+
+    it('in produzione senza la versione della build: degradato', async () => {
+        vi.stubEnv('KV_MIGRAZIONE_REPO', '')
+        vi.stubEnv('KV_MIGRAZIONI_REPO_NUMERO', '')
+
+        expect(await controlloMigrazioni(client(), ADESSO, 'production')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'versione del repo non fissata alla build',
+        })
+    })
+
+    it('uguali: ok', async () => {
+        fissaBuild('20261020091500', '233', 120 * MIN)
+        const c = client({ rpc: { salute_migrazioni: () => ({ data: [{ ultima: '20261020091500', numero: 233 }], error: null }) } })
+
+        expect(await controlloMigrazioni(c, ADESSO, 'production')).toMatchObject({
+            esito: 'ok',
+            dettaglio: '233 migrazioni, ultima 20261020091500',
+        })
+    })
+
+    it('la RPC non ancora installata 10 minuti dopo la build: ok; 31 minuti dopo: degradato', async () => {
+        const c = client({ rpc: { salute_migrazioni: () => ({ data: null, error: { code: 'PGRST202', message: 'x' } }) } })
+
+        fissaBuild('20261020091500', '233', 10 * MIN)
+        expect(await controlloMigrazioni(c, ADESSO, 'production')).toMatchObject({
+            esito: 'ok',
+            dettaglio: 'salute_migrazioni non ancora installata (PGRST202)',
+        })
+
+        fissaBuild('20261020091500', '233', 31 * MIN)
+        expect(await controlloMigrazioni(c, ADESSO, 'production')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'salute_migrazioni assente da oltre 30 min dalla build (PGRST202)',
+        })
+    })
+
+    it('il repo avanti 31 minuti dopo la build: degradato', async () => {
+        fissaBuild('20261020091500', '233', 31 * MIN)
+        const c = client({ rpc: { salute_migrazioni: () => ({ data: [{ ultima: '20261019223123', numero: 232 }], error: null }) } })
+
+        expect(await controlloMigrazioni(c, ADESSO, 'production')).toMatchObject({
+            esito: 'degradato',
+            dettaglio:
+                'migrazioni del repo non applicate da oltre 30 min dalla build: repo 20261020091500 (233), database 20261019223123 (232)',
+        })
+    })
+
+    it('un altro errore della RPC, o una risposta illeggibile: degradato', async () => {
+        fissaBuild('20261020091500', '233', MIN)
+
+        expect(
+            await controlloMigrazioni(
+                client({ rpc: { salute_migrazioni: () => ({ data: null, error: { code: 'XX000', message: 'x' } }) } }),
+                ADESSO,
+                'production',
+            ),
+        ).toMatchObject({ esito: 'degradato', dettaglio: 'lettura delle migrazioni XX000' })
+
+        expect(
+            await controlloMigrazioni(
+                client({ rpc: { salute_migrazioni: () => ({ data: [{ ultima: null, numero: 0 }], error: null }) } }),
+                ADESSO,
+                'production',
+            ),
+        ).toMatchObject({ esito: 'degradato', dettaglio: 'risposta di salute_migrazioni illeggibile' })
+    })
+
+    // Fuori dal piano, aggiunto al mutation testing: senza, un `misura('migrazioni', 'giu', …)`
+    // restava verde qui (il lock «mai giu» arriva al Compito 11).
+    it('una RPC che lancia (rete): degradato con il nome dell’eccezione, mai giu', async () => {
+        fissaBuild('20261020091500', '233', MIN)
+        const c = client({
+            rpc: {
+                salute_migrazioni: () => {
+                    throw new TypeError('fetch failed')
+                },
+            },
+        })
+
+        expect(await controlloMigrazioni(c, ADESSO, 'production')).toMatchObject({
+            nome: 'migrazioni',
+            esito: 'degradato',
+            dettaglio: 'eccezione TypeError',
+        })
     })
 })

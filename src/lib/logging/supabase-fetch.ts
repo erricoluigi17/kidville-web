@@ -639,7 +639,15 @@ function contaLenta(): number | undefined {
  * conteggio. In questo repo ha già morso tre volte (export delle rette, statistiche degli avvisi,
  * routine del diario), sempre scoperto per caso.
  *
- * LA REGOLA. Una `GET` di PostgREST (area `db` o `rpc`) ha toccato il tetto quando:
+ * CHI LEGGE. Una `GET` di PostgREST (area `db` o `rpc`), oppure una `POST` a una FUNZIONE
+ * (`/rest/v1/rpc/…`, area `rpc`): `rpc()` di postgrest-js chiama in `POST` salvo `{ get: true }`
+ * (`node_modules/@supabase/postgrest-js/dist/index.cjs`, `rpc(fn, args, …)`), quindi fino al
+ * ritocco del 25/10/2026 il ramo `rpc` di questa regola non scattava mai su una chiamata vera.
+ * Una `POST` a una TABELLA è un INSERT, e `PATCH`/`PUT`/`DELETE` scrivono: non scattano. Che
+ * PostgREST mandi `Content-Range` anche sulla `POST` a una funzione non è verificato su questo
+ * progetto: se l'intestazione manca, la regola non scatta, e non c'è nessun danno.
+ *
+ * LA REGOLA. Una lettura di PostgREST (vedi sopra) ha toccato il tetto quando:
  *  · `Content-Range` dichiara ALMENO `RIGHE_MASSIME_POSTGREST` righe (`0-999/*`, `1000-1999/*`);
  *  · il totale è ignoto (`*`) o più grande dell'ultima riga arrivata (`0-999/1500`): con
  *    `count: 'exact'` e `0-999/1000` è arrivato tutto, e non è un taglio;
@@ -661,8 +669,10 @@ export function maxRowsRaggiunto(r: {
     contentRange: string | null | undefined;
 }): { righe: number; limite: number | undefined } | null {
     try {
-        if (r.verbo !== 'GET') return null;
-        if (r.area !== 'db' && r.area !== 'rpc') return null;
+        const legge = r.verbo === 'GET'
+            ? r.area === 'db' || r.area === 'rpc'
+            : r.verbo === 'POST' && r.area === 'rpc';
+        if (!legge) return null;
         const m = /^\s*(\d+)-(\d+)\/(\d+|\*)\s*$/.exec(r.contentRange ?? '');
         if (!m) return null;
         const fine = Number(m[2]);

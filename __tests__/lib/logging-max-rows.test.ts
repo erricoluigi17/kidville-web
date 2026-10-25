@@ -82,9 +82,40 @@ describe('maxRowsRaggiunto — la regola, con intestazioni finte', () => {
     expect(maxRowsRaggiunto({ ...base, url, contentRange }), motivo).toBeNull()
   })
 
-  it('POST e HEAD non scattano, nemmeno con 0-999/*', () => {
-    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'rpc', url: RPC, contentRange: '0-999/*' })).toBeNull()
-    expect(maxRowsRaggiunto({ ...base, verbo: 'HEAD', contentRange: '0-999/*' })).toBeNull()
+  // Fino al 25/10 qui si fissava il contrario («POST non scatta»), e il ramo `rpc` della regola
+  // era morto: `rpc()` di postgrest-js chiama in POST salvo `{ get: true }`.
+  it('una funzione chiamata in POST (`rpc()` di postgrest-js) che riceve 0-999/* scatta, come in GET', () => {
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'rpc', url: RPC, contentRange: '0-999/*' })).toEqual({
+      righe: 1000,
+      limite: undefined,
+    })
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'rpc', url: `${RPC}?limit=5000`, contentRange: '0-999/1500' })).toEqual({
+      righe: 1000,
+      limite: 5000,
+    })
+  })
+
+  it.each([
+    ['0-998/*', RPC, 'meno di max_rows'],
+    ['0-999/1000', RPC, 'il totale dice che è arrivato tutto'],
+    ['0-999/*', `${RPC}?offset=0&limit=1000`, 'la pagina di leggiABlocchi su una funzione'],
+    [null, RPC, 'intestazione assente (PostgREST potrebbe non mandarla su una POST)'],
+  ])('POST rpc con %s su %s → non scatta (%s)', (contentRange, url, motivo) => {
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'rpc', url, contentRange }), motivo).toBeNull()
+  })
+
+  it('una POST a una TABELLA è un INSERT: non scatta, nemmeno con 0-999/*', () => {
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'db', contentRange: '0-999/*' })).toBeNull()
+  })
+
+  it.each(['PATCH', 'PUT', 'DELETE', 'HEAD'])('%s non scatta, né su una tabella né su una funzione, nemmeno con 0-999/*', (verbo) => {
+    expect(maxRowsRaggiunto({ ...base, verbo, contentRange: '0-999/*' })).toBeNull()
+    expect(maxRowsRaggiunto({ ...base, verbo, area: 'rpc', url: RPC, contentRange: '0-999/*' })).toBeNull()
+  })
+
+  it('una POST verso storage o auth non scatta', () => {
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'storage', contentRange: '0-999/*' })).toBeNull()
+    expect(maxRowsRaggiunto({ ...base, verbo: 'POST', area: 'auth', contentRange: '0-999/*' })).toBeNull()
   })
 
   it('storage e auth non scattano: max_rows è di PostgREST', () => {
@@ -151,10 +182,35 @@ describe('supabase-fetch — la riga `max-rows-raggiunto`', () => {
     expect(appLog).not.toHaveBeenCalled()
   })
 
-  it('una POST (rpc) con 0-999/* non scrive niente', async () => {
+  it('una POST a una funzione (rpc) con 0-999/*: un warn persistito, col nome della funzione e solo numeri', async () => {
+    const { creaFetchStrumentato, conContesto, appLog, percorsi } = await carica()
+    const f = creaFetchStrumentato(async () => ok('0-999/*'))
+    const res = await conContesto({ requestId: 'r2', path: '/api/admin/dashboard' }, () =>
+      f(RPC, { method: 'POST', body: '{"p_scuola_id":"a"}' }),
+    )
+    expect(res.status).toBe(200)
+    expect(res.bodyUsed).toBe(false)
+    expect(appLog).toHaveBeenCalledTimes(1)
+    const riga = appLog.mock.calls[0][0]
+    expect(riga).toMatchObject({ livello: 'warn', evento: 'rpc', messaggio: 'max-rows-raggiunto', statoHttp: 200 })
+    expect(riga.contestoExtra?.campi).toMatchObject({ operazione: 'conta_cose', righe: 1000, esito: 'max-rows-raggiunto' })
+    expect(riga.bersaglio).toBe('operazione=conta_cose')
+    expect(percorsi).toEqual(['/api/admin/dashboard'])
+    // Il corpo della richiesta (gli argomenti della funzione) non entra nella riga.
+    expect(JSON.stringify(riga)).not.toContain('p_scuola_id')
+  })
+
+  it('una POST a una funzione con meno di 1000 righe (0-998/*) non scrive niente', async () => {
+    const { creaFetchStrumentato, appLog } = await carica()
+    const f = creaFetchStrumentato(async () => ok('0-998/*'))
+    await f(RPC, { method: 'POST', body: '{}' })
+    expect(appLog).not.toHaveBeenCalled()
+  })
+
+  it('una POST a una tabella (INSERT) con 0-999/* non scrive niente', async () => {
     const { creaFetchStrumentato, appLog } = await carica()
     const f = creaFetchStrumentato(async () => ok('0-999/*'))
-    await f(RPC, { method: 'POST', body: '{}' })
+    await f(TABELLA, { method: 'POST', body: '[]' })
     expect(appLog).not.toHaveBeenCalled()
   })
 

@@ -25,6 +25,15 @@ import { RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
  * un `.limit(…)` o un `import` dentro un commento non contano, e una parentesi dentro una stringa
  * non sbilancia niente. I metodi della catena (scrittura, una riga, per id) si guardano solo al
  * livello più esterno: un `.delete(` dentro un argomento non trasforma una lettura in scrittura.
+ *
+ * LE OPZIONI `blocco` E `maxBlocchi` SONO DEI TEST (ritocco del 25/10/2026, revisione della
+ * sessione 11). In produzione valgono le costanti di `@/lib/db/leggi-a-blocchi`: con
+ * `blocco: 5000` la prima pagina arriva tagliata a 1000 (`max_rows`), 1000 è meno di 5000, e
+ * l'helper la prende per l'ultima e risponde `ok: true` su un elenco troncato — il difetto che
+ * la sessione ha tolto, rimesso da un'opzione. Nei cinque file nessuna delle due compare come
+ * chiave di un oggetto (anche abbreviata, `{ blocco }`, o fra apici) dentro gli argomenti di una
+ * chiamata a `leggiABlocchi`; commenti e stringhe non contano. Il limite, detto: un oggetto
+ * d'opzioni costruito altrove e passato per nome non si vede.
  */
 
 type Forma = 'a-blocchi' | 'per-id' | 'una-riga' | 'altro'
@@ -168,6 +177,57 @@ function limitiOltre(src: string): string[] {
     .map((m) => `riga ${riga(src, m.index)}: ${m[0]}`)
 }
 
+const OPZIONE_VIETATA = /[{,]\s*(blocco|maxBlocchi)\s*(?::|(?=[,}]))/g
+const OPZIONE_VIETATA_FRA_APICI = /[{,]\s*(['"`])(blocco|maxBlocchi)\1\s*:/g
+
+/**
+ * La parentesi aperta più vicina che racchiude `pos`, cercando all'indietro fino a `da` (sul testo
+ * `struttura`, dove nessuna parentesi vive in una stringa o in un commento).
+ */
+function apertaAttorno(struttura: string, da: number, pos: number): string | null {
+  let profondita = 0
+  for (let i = pos - 1; i >= da; i--) {
+    const c = struttura[i]
+    if (c === ')' || c === ']' || c === '}') profondita++
+    else if (c === '(' || c === '[' || c === '{') {
+      if (profondita === 0) return c
+      profondita--
+    }
+  }
+  return null
+}
+
+/**
+ * Ogni `blocco` / `maxBlocchi` usato come chiave di un oggetto dentro gli argomenti di una
+ * chiamata a `leggiABlocchi`, con la riga. Le chiavi senza apici si cercano su `struttura` (né
+ * commenti né stringhe), quelle fra apici su `senzaCommenti` nello stesso intervallo (i due testi
+ * sono lunghi uguale). Conta solo ciò che sta direttamente dentro una graffa: un parametro
+ * `(r, blocco: number) =>` o l'argomento `.in('student_id', blocco)` non sono opzioni.
+ */
+function opzioniDiProva(src: string): string[] {
+  const { senzaCommenti, struttura } = mascheraSorgente(src)
+  const out: { indice: number; testo: string }[] = []
+  for (const m of struttura.matchAll(CHIAMATA_A_BLOCCHI)) {
+    const apertura = m.index + m[0].length - 1
+    const chiusa = fineParentesi(struttura, apertura)
+    const trovate: [RegExp, string, number][] = [
+      [OPZIONE_VIETATA, struttura, 1],
+      [OPZIONE_VIETATA_FRA_APICI, senzaCommenti, 2],
+    ]
+    for (const [re, testo, gruppo] of trovate) {
+      const pezzo = testo.slice(apertura + 1, chiusa)
+      for (const o of pezzo.matchAll(re)) {
+        // `inizio` è la `{` o la `,` che precede la chiave: da lì si guarda chi la racchiude.
+        const inizio = apertura + 1 + o.index
+        if (apertaAttorno(struttura, apertura, inizio + 1) !== '{') continue
+        const indice = inizio + o[0].indexOf(o[gruppo])
+        out.push({ indice, testo: `riga ${riga(src, indice)}: ${o[gruppo]}` })
+      }
+    }
+  }
+  return out.sort((a, b) => a.indice - b.indice).map((o) => o.testo)
+}
+
 /** Da quali moduli il sorgente importa `leggiABlocchi` (solo `import` veri: né commenti né stringhe). */
 function originiDiLeggiABlocchi(src: string): string[] {
   const { senzaCommenti, struttura } = mascheraSorgente(src)
@@ -193,6 +253,10 @@ describe('letture a blocchi — i file della sessione 11 non tornano a leggere �
 
       it('`leggiABlocchi` viene da `@/lib/db/leggi-a-blocchi`, e da nessun altro modulo', () => {
         expect(originiDiLeggiABlocchi(leggi(file))).toEqual([MODULO])
+      })
+
+      it('nessuna opzione `blocco` o `maxBlocchi` passata a `leggiABlocchi`: sono dei test, e `blocco: 5000` tronca in silenzio', () => {
+        expect(opzioniDiProva(leggi(file))).toEqual([])
       })
     })
   }
@@ -277,5 +341,34 @@ describe('il lock non è cieco', () => {
     ].join('\n')
     expect(originiDiLeggiABlocchi(src)).toEqual(['@/lib/pagamenti/leggi-a-blocchi'])
     expect(originiDiLeggiABlocchi("import { type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'")).toEqual([])
+  })
+
+  it('vede `blocco` e `maxBlocchi` passati a `leggiABlocchi` (anche abbreviati o fra apici), non nei commenti, nelle stringhe o fuori dalla chiamata', () => {
+    const src = [
+      "const a = await leggiABlocchi(() => supabase.from('x').select('id'), { blocco: 5000 })",
+      "const b = await leggiABlocchi<{ id: string }>(() => q(), { chiave: ['id'], maxBlocchi: 2 })",
+      'const c = await leggiABlocchi(() => q(), { blocco })',
+      "const d = await leggiABlocchi(() => q(), { 'maxBlocchi': 3 })",
+      "const e = await leggiABlocchi(() => supabase.from('x').select('a').in('student_id', blocco), { chiave: ['a', 'b'] })",
+      '// const f = await leggiABlocchi(() => q(), { blocco: 5000 })',
+      'const g = "leggiABlocchi(() => q(), { blocco: 5000 })"',
+      'const h = await leggiABlocchi(() => q() /* , { blocco: 5000 } */)',
+      "const i = await leggiABlocchi(() => q().eq('nota', '{ blocco: 5000 }'))",
+      'const j = await leggiABlocchi(() => xs.map((r, blocco: number) => r))',
+      'const k = { blocco: 5000, maxBlocchi: 2 }',
+      'const l = await leggiABlocchi(() => q(), {',
+      '  chiave: [\'id\'],',
+      '  blocco: 5000,',
+      '})',
+      // Una stringa dentro una graffa: la chiave che contiene non è una chiave.
+      "const m = await leggiABlocchi(() => q().match({ nota: ', blocco: 5000' }))",
+    ].join('\n')
+    expect(opzioniDiProva(src)).toEqual([
+      'riga 1: blocco',
+      'riga 2: maxBlocchi',
+      'riga 3: blocco',
+      'riga 4: maxBlocchi',
+      'riga 14: blocco',
+    ])
   })
 })

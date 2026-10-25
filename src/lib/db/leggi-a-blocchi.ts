@@ -30,6 +30,16 @@
  * tabella senza `id` passa la sua con l'opzione `chiave` — `student_parents` ha come chiave
  * primaria la coppia `(student_id, parent_id)`, e ordinarla per `id` sarebbe un `42703`.
  *
+ * I DOPPIONI FRA DUE PAGINE (ritocco del 25/10/2026, revisione della sessione 11). L'ordine
+ * stabile non basta da solo: la paginazione è per OFFSET, e una riga inserita fra la pagina N e
+ * la N+1 (con una chiave d'ordine che cade prima del punto già letto) sposta tutto avanti di
+ * uno, così l'ultima riga della pagina N torna in testa alla N+1. Per questo la stessa chiave
+ * unica serve anche a togliere i doppioni: si tiene la PRIMA occorrenza, nell'ordine d'arrivo.
+ * Una riga che non porta il valore di una colonna della chiave (il `select` del chiamante non
+ * la include, o vale `null`) passa così com'è: senza la chiave non si sa se è un doppione, e
+ * scartarla vorrebbe dire perdere una riga vera. Il caso opposto, una riga CANCELLATA fra due
+ * pagine, ne fa saltare una e qui non si vede: è il limite di ogni paginazione per offset.
+ *
  * Tutto-o-niente: un blocco che fallisce (`motivo: 'errore'`) o il tetto toccato
  * (`motivo: 'tetto'`) fanno fallire la lettura. Una tabella a cui manca un pezzo, presentata
  * come intera, è il difetto che questo modulo toglie.
@@ -101,13 +111,30 @@ export interface OpzioniABlocchi {
   maxBlocchi?: number
   /**
    * Le colonne della chiave UNICA che chiudono l'ordine di ogni blocco (vedi «L'ORDINE
-   * STABILE»). Assente o vuota vale `['id']`: il comportamento di sempre.
+   * STABILE»). Assente o vuota vale `['id']`: il comportamento di sempre. Deve essere UNICA
+   * davvero: è anche quella con cui si tolgono i doppioni fra due pagine («I DOPPIONI FRA DUE
+   * PAGINE»), e una chiave che non lo è scarterebbe righe vere.
    */
   chiave?: readonly string[]
 }
 
 /** La chiave unica di quasi ogni tabella del progetto. */
 const CHIAVE_PREDEFINITA: readonly string[] = ['id']
+
+/**
+ * Il valore della chiave di una riga, in una stringa confrontabile; `null` se la riga non porta
+ * il valore di una delle colonne (vedi «I DOPPIONI FRA DUE PAGINE»): quella riga non si confronta.
+ */
+function improntaDi(riga: unknown, chiave: readonly string[]): string | null {
+  if (typeof riga !== 'object' || riga === null) return null
+  const valori: unknown[] = []
+  for (const colonna of chiave) {
+    const v = (riga as Record<string, unknown>)[colonna]
+    if (v === undefined || v === null) return null
+    valori.push(v)
+  }
+  return JSON.stringify(valori)
+}
 
 /**
  * Legge tutte le righe della query che `costruisci` produce — una query NUOVA per ogni blocco,
@@ -124,6 +151,7 @@ export async function leggiABlocchi<T>(costruisci: () => QueryABlocchi, o: Opzio
   }
 
   const righe: T[] = []
+  const viste = new Set<string>()
   let blocchi = 0
   for (;;) {
     if (blocchi === maxBlocchi) {
@@ -142,7 +170,16 @@ export async function leggiABlocchi<T>(costruisci: () => QueryABlocchi, o: Opzio
     blocchi++
     if (error) return { ok: false, motivo: 'errore', error, blocchi }
     const arrivate = (data ?? []) as T[]
-    righe.push(...arrivate)
+    for (const r of arrivate) {
+      const impronta = improntaDi(r, chiave)
+      if (impronta !== null) {
+        if (viste.has(impronta)) continue
+        viste.add(impronta)
+      }
+      righe.push(r)
+    }
+    // Il blocco corto si misura su ciò che è ARRIVATO, non su ciò che resta dopo i doppioni: una
+    // pagina piena con un doppione dentro è ancora piena, e dopo di lei può esserci altro.
     if (arrivate.length < blocco) return { ok: true, righe, blocchi }
   }
 }

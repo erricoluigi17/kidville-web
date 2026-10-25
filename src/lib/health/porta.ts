@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { ambienteCorrente } from '@/lib/logging/ambiente'
-import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { rateLimitLocale, clientIp } from '@/lib/security/rate-limit'
 import type { Salute, StatoSalute } from '@/lib/health/controlli'
 
 /**
@@ -23,9 +23,10 @@ import type { Salute, StatoSalute } from '@/lib/health/controlli'
  *     codici d'errore, numeri, la regione e lo sha del deploy. Mai il `message` di PostgREST (può
  *     contenere il valore che ha violato un vincolo, cioè su questo database il codice fiscale di
  *     un minore), mai il valore di una variabile d'ambiente, mai un conteggio di alunni;
- *  2. c'è un TETTO PER IP, distinto per endpoint. Non è formalità: ogni chiamata fa da una a
- *     otto query. Senza tetto sarebbe un amplificatore di carico verso il database puntabile da
- *     chiunque — un endpoint di salute che diventa la causa del guasto.
+ *  2. c'è un TETTO PER IP, distinto per endpoint. Non è formalità: ogni chiamata fa una lettura
+ *     per controllo, e alcuni controlli più d'una. Senza tetto sarebbe un amplificatore di carico
+ *     verso il database puntabile da chiunque — un endpoint di salute che diventa la causa del
+ *     guasto.
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * I TRE CASI, E PERCHÉ `degraded` RISPONDE 200
@@ -47,9 +48,25 @@ import type { Salute, StatoSalute } from '@/lib/health/controlli'
  * un 200 fossile che continuerebbe a dire «tutto bene» a servizio spento.
  */
 
-/** Un monitor serio interroga ogni 30-60 secondi (2 al minuto): il tetto è quindici volte il
- *  bisogno legittimo, e non inciampa mai un uso reale nemmeno con quattro monitor sullo stesso
- *  URL. Il contatore è per istanza (vedi `@/lib/security/rate-limit`): il tetto effettivo è N × 30. */
+/**
+ * IL TETTO PER IP STA IN MEMORIA, UN CONTATORE PER ISTANZA (sessione 7 della seconda serie di
+ * robustezza, 2026-10-25).
+ *
+ * Un monitor serio interroga ogni 30-60 secondi (2 al minuto): 30 al minuto è quindici volte il
+ * bisogno legittimo, e non inciampa mai un uso reale nemmeno con quattro monitor sullo stesso URL.
+ *
+ * Fino al 2026-10-25 il contatore era quello condiviso di `rateLimit`, cioè una SCRITTURA su Postgres
+ * (`rpc('tetto_frequenza_consuma')`) a ogni richiesta: l'endpoint che deve dire se il database sta
+ * bene scriveva sul database prima di misurarlo, e un database in affanno rallentava anche la
+ * risposta che doveva dirlo. Ora `rateLimitLocale` conta in memoria e la salute non scrive niente.
+ *
+ * Cosa si perde, detto e non nascosto: su Vercel la funzione gira su più istanze (Fluid Compute)
+ * e ognuna ha il suo contatore, quindi il tetto vero è N × 30 al minuto per IP; un avvio a freddo
+ * riparte da zero. Va bene QUI perché ciò che il tetto protegge è leggero — letture brevi, server →
+ * database p50 10 ms il 20/10 — e N × 30 letture al minuto restano lontane da ciò che il database
+ * regge. Le rotte che SCRIVONO tengono il contatore condiviso: per loro N × il tetto sarebbe
+ * un'altra cosa.
+ */
 const TETTO_PER_IP = { limit: 30, windowMs: 60_000 }
 
 export interface OpzioniPorta {
@@ -76,7 +93,7 @@ export async function rispondiConSalute(request: Request, opz: OpzioniPorta): Pr
     const t0 = Date.now()
     try {
         const ip = clientIp(request)
-        const tetto = await rateLimit(`${opz.nome}:${ip}`, TETTO_PER_IP)
+        const tetto = rateLimitLocale(`${opz.nome}:${ip}`, TETTO_PER_IP)
         if (!tetto.ok) {
             // Non si logga: `withRoute` registra già i 429 a livello `warn` (e li persiste). Una riga
             // in più qui vorrebbe dire che chiunque può riempire `app_log` bussando — cioè

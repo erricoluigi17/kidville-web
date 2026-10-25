@@ -29,6 +29,10 @@ vi.mock('@/lib/supabase/server-client', () => supa)
 // GoTrue, visto dal controllo `auth`: `auth.admin.getUserById(<uuid nullo>)`.
 const auth = vi.hoisted(() => ({ getUserById: vi.fn() }))
 
+// Le RPC che la salute chiama (e quella del tetto condiviso, che NON deve chiamare) e lo Storage.
+const rpc = vi.hoisted(() => ({ tetto: vi.fn(), cronEsiti: vi.fn(), migrazioni: vi.fn() }))
+const storage = vi.hoisted(() => ({ from: vi.fn(), list: vi.fn() }))
+
 import { GET } from '@/app/api/health/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 import {
@@ -107,9 +111,21 @@ function authVivo() {
 }
 
 function montaDb(db: DBFinto, errori: Record<string, ErrorePostgrest> = {}): void {
-    const finto = creaFintoSupabase(db, [], { errori })
+    const finto = creaFintoSupabase(db, [], {
+        errori,
+        rpc: {
+            // Il contatore CONDIVISO del tetto: dal Compito 2 della sessione 7 la salute non lo
+            // chiama più. È qui perché, se tornasse a chiamarlo, il test lo vedrebbe.
+            tetto_frequenza_consuma: rpc.tetto,
+            salute_cron_esiti: rpc.cronEsiti,
+            salute_migrazioni: rpc.migrazioni,
+        },
+    })
     supa.createAdminClient.mockResolvedValue(
-        Object.assign(finto, { auth: { admin: { getUserById: auth.getUserById } } }),
+        Object.assign(finto, {
+            auth: { admin: { getUserById: auth.getUserById } },
+            storage: { from: storage.from },
+        }),
     )
 }
 
@@ -141,6 +157,18 @@ beforeEach(() => {
     vi.stubEnv('VERCEL_ENV', 'production')
     for (const nome of VARIABILI_CRITICHE) vi.stubEnv(nome, 'valore-di-prova')
     montaDb(dbSano())
+    rpc.tetto.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'funzione finta assente' } })
+    rpc.cronEsiti.mockResolvedValue({
+        data: [{ job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', visto_il: fa(MIN), vivo_il: fa(MIN) }],
+        error: null,
+    })
+    rpc.migrazioni.mockResolvedValue({ data: [{ ultima: '20261020000000', numero: 232 }], error: null })
+    storage.from.mockReturnValue({ list: storage.list })
+    storage.list.mockResolvedValue({ data: [], error: null })
+    // Le tre chiavi che `next.config.ts` fissa alla build (Compito 10): in un test non c'è build.
+    vi.stubEnv('KV_MIGRAZIONE_REPO', '20261020000000')
+    vi.stubEnv('KV_MIGRAZIONI_REPO_NUMERO', '232')
+    vi.stubEnv('KV_BUILD_IL', new Date().toISOString())
 })
 
 afterEach(() => {
@@ -1071,6 +1099,17 @@ describe('GET /api/health', () => {
 
         expect((await GET(con('203.0.113.1'))).status).toBe(429)
         expect((await GET(con('198.51.100.7'))).status).toBe(200)
+    })
+
+    it('il tetto per IP sta in memoria: la salute non scrive sul database che misura', async () => {
+        const req = () =>
+            new Request('https://app.kidville.it/api/health', { headers: { 'x-forwarded-for': '203.0.113.20' } })
+        for (let i = 0; i < 30; i++) expect((await GET(req())).status).toBe(200)
+        expect((await GET(req())).status).toBe(429)
+
+        // Fino alla sessione 7 ogni richiesta faceva `rpc('tetto_frequenza_consuma')`, cioè una
+        // SCRITTURA su Postgres prima di misurarlo.
+        expect(rpc.tetto).not.toHaveBeenCalled()
     })
 
     /* ═══════════════════════════════════════════════════════════════════════

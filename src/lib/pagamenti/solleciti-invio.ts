@@ -7,6 +7,7 @@ import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { ambienteCorrente } from '@/lib/logging/ambiente'
 import { sanificaMessaggio } from '@/lib/logging/serialize'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
@@ -34,7 +35,8 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    "maturo" (giorni di ritardo ≥ soglia) e il 3° resta SOLO manuale;
 //  • destinatari: titolari quota (split) oppure tutori del bambino;
 //  • ogni invio reale → riga in `solleciti` (testo effettivo = audit) + push.
-// Il registro può mancare (DB e2e CI): si degrada senza bloccare.
+// Il registro può mancare (DB e2e CI): si degrada senza bloccare — ma SOLO fuori produzione
+// (`registroAssenteDelDbDellaCi`): in produzione un registro «assente» è un guasto.
 //
 // FASE 8 DELLA ROADMAP DI ROBUSTEZZA (2026-10-11) — il giro può morire a metà:
 //  • le letture vanno a BLOCCHI di `ID_PER_QUERY`. Con 500 voci un solo `.in()`
@@ -115,6 +117,24 @@ const MS_GIORNO = 86_400_000
 
 /** Il registro `solleciti` assente (DB E2E della CI non migrato): Postgres e PostgREST. */
 const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
+
+/**
+ * «Il registro manca perché questo è il DB della CI, non migrato» (seconda revisione del lotto 4).
+ *
+ * Vero solo FUORI produzione. In produzione il registro c'è sempre: un `PGRST205` («tabella non
+ * trovata nella cache dello schema») lì vuol dire la cache di PostgREST non ricaricata dopo una
+ * migrazione, o una migrazione persa — un GUASTO. Fino ad allora era il ripiego anche lì: il ciclo
+ * dei blocchi usciva e TUTTE le voci ripartivano dal livello 1, cioè il 1° sollecito a chi aveva
+ * già ricevuto il 2°, lo stesso difetto che la prima revisione aveva tolto per gli altri codici.
+ *
+ * La produzione la dice `ambienteCorrente()` (`@/lib/logging/ambiente`), cioè solo `VERCEL_ENV`:
+ * è il precedente del repo, scelto perché `NODE_ENV` vale `production` in ogni `next build`, anche
+ * sul portatile e nella CI, dove il DB non migrato è proprio quello che il ripiego serve. Preview e
+ * CI restano col ripiego (il DB E2E non è migrato, e lì non deve fermare niente), detto a `info`.
+ */
+function registroAssenteDelDbDellaCi(codice: string | undefined): boolean {
+    return REGISTRO_ASSENTE.has(codice ?? '') && ambienteCorrente() !== 'production'
+}
 
 /**
  * Il filtro dei livelli (sessione 9): solo le righe del registro con ALMENO un destinatario
@@ -240,9 +260,12 @@ export async function sollecitaPagamenti(
     // Il `catch` qui aveva soltanto un commento, e non scattava nemmeno: PostgREST non
     // lancia, l'errore torna in `{ error }` e `data` resta `null` — cioè «nessuno storico»,
     // in silenzio. Due casi, due regole:
-    //  · registro ASSENTE (DB della CI non migrato): si riparte da 1, con un `info`;
-    //  · GUASTO vero (revisione del lotto 4): le voci del blocco sono «livelli non letti» e
-    //    SALTANO il giro come guasto, con una riga `error`. Fino ad allora si proseguiva con
+    //  · registro ASSENTE del DB della CI non migrato (`registroAssenteDelDbDellaCi`: solo FUORI
+    //    produzione): si riparte da 1, con un `info` che conta TUTTE le voci che ripartono;
+    //  · GUASTO vero (revisione del lotto 4), e da questa seconda revisione anche il registro
+    //    «assente» in PRODUZIONE (`PGRST205`: la cache dello schema): le voci del blocco sono
+    //    «livelli non letti» e SALTANO il giro come guasto, con una riga `error`, blocco per
+    //    blocco (nessun blocco resta non letto e non detto). Fino ad allora si proseguiva con
     //    `giaInviato = 0`, cioè si rimandava il 1° sollecito a chi aveva già ricevuto il 2°.
     //
     // A BLOCCHI (fase 8): tre livelli per voce, e un `.in()` di 500 voci poteva tornare
@@ -250,7 +273,8 @@ export async function sollecitaPagamenti(
     // dentro il blocco: un rigetto (rete, client) toglie le voci di QUEL blocco, non le altre.
     const maxLivello = new Map<string, number>()
     const livelliNonLetti = new Set<string>()
-    for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
+    const blocchiLivelli = aBlocchi(pagamentoIds, ID_PER_QUERY)
+    for (const [indice, blocco] of blocchiLivelli.entries()) {
         let righe: { pagamento_id: string; livello: number }[] = []
         let guastoLivelli: { errore: unknown } | null = null
         try {
@@ -261,15 +285,24 @@ export async function sollecitaPagamenti(
             guastoLivelli = { errore: err }
         }
         if (guastoLivelli) {
-            const assente = REGISTRO_ASSENTE.has((guastoLivelli.errore as { code?: string } | null)?.code ?? '')
-            logEvento('pagamento', assente ? 'info' : 'error', {
+            const codice = (guastoLivelli.errore as { code?: string } | null)?.code
+            if (registroAssenteDelDbDellaCi(codice)) {
+                // Il registro assente lo è per tutti i blocchi: una riga sola, ma che conta TUTTE
+                // le voci che da qui ripartono dal livello 1, non solo quelle di questo blocco.
+                const daQui = blocchiLivelli.slice(indice).reduce((n, b) => n + b.length, 0)
+                logEvento('pagamento', 'info', {
+                    operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: daQui,
+                }, guastoLivelli.errore)
+                break
+            }
+            logEvento('pagamento', 'error', {
                 operazione: 'solleciti:livelli',
-                esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
+                esito: 'livelli-non-letti',
                 n: blocco.length,
-                ...(assente ? {} : { msg: `livelli dei solleciti non letti: ${blocco.length} voci saltano il giro come guasto` }),
+                msg: REGISTRO_ASSENTE.has(codice ?? '')
+                    ? `registro dei solleciti non trovato in produzione (cache dello schema non ricaricata?): ${blocco.length} voci saltano il giro come guasto`
+                    : `livelli dei solleciti non letti: ${blocco.length} voci saltano il giro come guasto`,
             }, guastoLivelli.errore)
-            // Il registro assente lo è per tutti i blocchi: una riga sola basta.
-            if (assente) break
             for (const id of blocco) livelliNonLetti.add(id)
             continue
         }
@@ -362,7 +395,11 @@ export async function sollecitaPagamenti(
 
         // Il livello raggiunto non si è letto (revisione del lotto 4): senza, il prossimo livello
         // sarebbe un'invenzione. La voce salta come GUASTO, e il giro automatico non chiude «ok».
-        if (livelliNonLetti.has(id)) {
+        // TRANNE quando il livello l'ha scelto chi chiama (`opts.livello`, il bottone della
+        // segreteria; seconda revisione del lotto 4): lì il livello letto non serve, e far saltare
+        // la voce fermerebbe un sollecito deciso a mano per un dato che non si usa. La lettura
+        // fallita resta detta, una volta, dalla riga `error` del ciclo dei blocchi.
+        if (livelliNonLetti.has(id) && opts.livello === undefined) {
             esiti.push({ pagamento_id: id, ok: false, motivo: 'livelli dei solleciti non letti: sollecito non inviato', guasto: true }); continue
         }
 
@@ -707,14 +744,15 @@ async function annullaPresa(
 /**
  * Il registro è l'AUDIT di ciò che si è tentato (e la fonte dei livelli). Se non si scrive il
  * sollecito resta quello che è, ma il prossimo ripartirebbe dallo stesso livello: si dice, `info`
- * se il registro non esiste (DB della CI), `error` altrimenti. PostgREST non lancia: si legge
- * `{ error }`. Mai oggetto né corpo nella riga di log.
+ * se il registro non esiste perché è il DB della CI (`registroAssenteDelDbDellaCi`), `error`
+ * altrimenti — in produzione anche un `PGRST205` (seconda revisione del lotto 4). PostgREST non
+ * lancia: si legge `{ error }`. Mai oggetto né corpo nella riga di log.
  */
 async function registraSollecito(supabase: SupabaseClient, riga: RigaRegistro): Promise<void> {
     try {
         const { error: errRegistro } = await supabase.from('solleciti').insert({ ...riga, canale: 'email' })
         if (errRegistro) {
-            const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
+            const assente = registroAssenteDelDbDellaCi((errRegistro as { code?: string }).code)
             logEvento('pagamento', assente ? 'info' : 'error', {
                 operazione: 'solleciti:registro',
                 esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',

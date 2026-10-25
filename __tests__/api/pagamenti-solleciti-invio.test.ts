@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
@@ -690,6 +690,111 @@ describe('chiaveIdempotenzaSollecito — contenuto diverso, chiave diversa', () 
 
   it('i confini dei campi contano: spostare un carattere fra due campi cambia la chiave', async () => {
     expect(await chiave({ ...base, oggetto: 'AB', testo: 'C' })).not.toBe(await chiave({ ...base, oggetto: 'A', testo: 'BC' }))
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — `PGRST205` in produzione è un guasto, non «il DB della CI».
+//
+// `PGRST205` («tabella non trovata nella cache dello schema») era trattato come il registro
+// assente del DB E2E non migrato: si usciva dal ciclo dei blocchi e TUTTE le voci ripartivano
+// dal livello 1 — il 1° sollecito a chi aveva già ricevuto il 2°, lo stesso difetto che la prima
+// revisione aveva tolto per gli altri codici. In produzione il registro c'è sempre: se non si
+// legge, le voci saltano come guasto. Fuori produzione (CI, locale, preview) il ripiego resta,
+// detto a `info`, e la riga conta TUTTE le voci che ripartono da 1, non solo il primo blocco.
+// La produzione la dice `ambienteCorrente()` (`@/lib/logging/ambiente`): solo `VERCEL_ENV`.
+// =============================================================================
+describe('solleciti — il registro «assente» in produzione è un guasto', () => {
+  afterEach(() => { vi.unstubAllEnvs() })
+  const eventi = (esito: string) =>
+    h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  const PGRST205 = { code: 'PGRST205', message: "Could not find the table 'public.solleciti' in the schema cache" }
+  const centocinquanta = () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    h.pagamenti = ids.map((id) => ({ ...h.pagamenti[0], id }))
+    return ids
+  }
+
+  it('🔴 produzione, `PGRST205` sui livelli ⇒ la voce salta come GUASTO: niente presa, niente email, riga `error` col codice', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreLivelli = PGRST205
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect((await res.json()).data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, guasto: true, motivo: 'livelli dei solleciti non letti: sollecito non inviato',
+    })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.sequenza).toEqual([])
+    expect(eventi('registro-solleciti-assente')).toHaveLength(0)
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toMatchObject({ code: 'PGRST205' })
+  })
+
+  it('🔴 produzione, `PGRST205` su tutti i blocchi ⇒ OGNI blocco è letto (o provato) e segnato: 150 voci guaste, due righe `error`', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreLivelli = PGRST205
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const esiti = await sollecitaPagamenti(await createAdminClient(), centocinquanta(), { anteprima: true })
+    expect(esiti.every((e) => e.ok === false && e.guasto === true)).toBe(true)
+    expect(h.ins.filter((i) => i.table === 'solleciti').map((i) => i.n)).toEqual([100, 50])
+    expect(eventi('livelli-non-letti').map((c) => (c[2] as { n: number }).n)).toEqual([100, 50])
+  })
+
+  it('fuori produzione (DB della CI), `PGRST205` ⇒ il ripiego resta: livello 1, una riga `info` che conta TUTTE le voci', async () => {
+    vi.stubEnv('VERCEL_ENV', '')
+    h.erroreLivelli = PGRST205
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const esiti = await sollecitaPagamenti(await createAdminClient(), centocinquanta(), { anteprima: true })
+    expect(esiti.every((e) => e.ok === true && e.livello === 1)).toBe(true)
+    const log = eventi('registro-solleciti-assente').filter((c) => (c[2] as { operazione?: string }).operazione === 'solleciti:livelli')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: 150 })
+    expect(eventi('livelli-non-letti')).toHaveLength(0)
+  })
+
+  it('preview: anche lì il ripiego resta (il guasto si dichiara solo in produzione)', async () => {
+    vi.stubEnv('VERCEL_ENV', 'preview')
+    h.erroreLivelli = PGRST205
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect((await res.json()).data[0]).toMatchObject({ ok: true, livello: 1 })
+  })
+
+  it('🔴 produzione, il registro «assente» all’insert ⇒ riga `error` (il livello non salirà), non `info`', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreRegistro = PGRST205
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(eventi('registro-solleciti-assente')).toHaveLength(0)
+    const log = eventi('registro-sollecito-non-scritto')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toMatchObject({ code: 'PGRST205' })
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — il livello scelto a mano non ha bisogno del livello letto.
+// =============================================================================
+describe('solleciti — il bottone con un livello scelto a mano', () => {
+  it('🔴 livelli non letti (57014) ma `livello: 2` scelto dalla segreteria ⇒ il sollecito parte al livello 2', async () => {
+    h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(post({ pagamento_ids: [PID], livello: 2 }))
+    const j = await res.json()
+    expect(j.data[0]).toMatchObject({ pagamento_id: PID, ok: true, livello: 2 })
+    expect(j.data[0].guasto).toBeUndefined()
+    expect(h.sequenza).toEqual(['presa', 'email'])
+    // La lettura fallita si dice lo stesso: è un guasto del registro, anche se qui non è servita.
+    expect(h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string }).esito === 'livelli-non-letti')).toHaveLength(1)
+  })
+
+  it('livelli non letti e NESSUN livello scelto ⇒ resta il guasto (il livello sarebbe un’invenzione)', async () => {
+    h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+    expect(j.data[0]).toMatchObject({ ok: false, guasto: true })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
   })
 })
 

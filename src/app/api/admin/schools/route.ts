@@ -347,7 +347,9 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
           scuoleErr,
         )
         if (cleanupErr) {
-          logErrore({ operazione: 'admin/schools:POST', stato: 500, evento: 'db-fallback-cleanup' }, cleanupErr)
+          // La riga `schools` è rimasta senza la sua `scuole`: una sede orfana da bonificare. L'id
+          // va nel log, con un `esito` cercabile (sessione 10 della seconda serie).
+          logEvento('db', 'error', { operazione: 'admin/schools:POST', esito: 'sede-orfana-non-rimossa', entita_id: newId }, cleanupErr)
         }
         return NextResponse.json({ error: scuoleErr.message }, { status: 500 })
       }

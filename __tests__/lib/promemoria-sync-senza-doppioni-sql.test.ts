@@ -37,6 +37,11 @@ beforeAll(async () => {
     CREATE ROLE anon NOLOGIN;
     CREATE ROLE authenticated NOLOGIN;
     CREATE ROLE service_role NOLOGIN BYPASSRLS;
+    -- Come in Supabase: una tabella o una funzione nuova di postgres in public nasce con ALL ai tre
+    -- ruoli. La revoca della migrazione si prova contro questi default, non contro un banco vuoto.
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
     CREATE TABLE public.notifiche (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       utente_id uuid NOT NULL,
@@ -132,5 +137,58 @@ describe('sincronizzazione: presa con scadenza per giro', () => {
              has_table_privilege('authenticated', 'public.cron_prese', 'SELECT') AS auth_legge,
              (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.cron_prese'::regclass) AS rls`)
     expect(rows[0]).toEqual({ auth_prendi: false, anon_rilascia: false, sr_prendi: true, auth_legge: false, rls: true })
+  })
+
+  it('cron_prese come cron_chiamate: service_role legge e basta, anche contro i privilegi predefiniti', async () => {
+    // service_role ha BYPASSRLS: con un grant di scrittura potrebbe prendere o liberare una presa
+    // senza passare dalle due funzioni. Scrivono solo loro (SECURITY DEFINER, del proprietario).
+    const { rows } = await db.query<{ ruolo: string; privilegio: string }>(`
+      SELECT r AS ruolo, p AS privilegio
+        FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) AS r,
+             unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p
+       WHERE has_table_privilege(r, 'public.cron_prese', p)
+       ORDER BY 1, 2`)
+    expect(rows).toEqual([{ ruolo: 'service_role', privilegio: 'SELECT' }])
+  })
+
+  it('le due funzioni: niente ad anon e authenticated anche contro i privilegi predefiniti', async () => {
+    const { rows } = await db.query<{ ruolo: string; funzione: string }>(`
+      SELECT r AS ruolo, f AS funzione
+        FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) AS r,
+             unnest(ARRAY['public.cron_presa_prendi(text, integer)', 'public.cron_presa_rilascia(text, uuid)']) AS f
+       WHERE has_function_privilege(r, f, 'EXECUTE')
+       ORDER BY 1, 2`)
+    expect(rows).toEqual([
+      { ruolo: 'service_role', funzione: 'public.cron_presa_prendi(text, integer)' },
+      { ruolo: 'service_role', funzione: 'public.cron_presa_rilascia(text, uuid)' },
+    ])
+  })
+})
+
+describe('la migrazione non ferma notifiche dietro una transazione aperta', () => {
+  // L'ADD COLUMN vuole un ACCESS EXCLUSIVE su notifiche: aspetta ogni transazione aperta sulla
+  // tabella, e intanto ogni lettura e scrittura nuova si accoda dietro di lui. Con lock_timeout la
+  // migrazione fallisce forte (55P03) dopo 15 secondi invece di tenere ferma la tabella. Due
+  // connessioni non si provano in PGlite: qui la forma e la portata; la coda vera è provata su un
+  // Postgres 17 locale (rapporto della sessione 8).
+  const istruzioni = NUOVA.split('\n').filter((l) => !/^\s*--/.test(l) && l.trim() !== '')
+
+  it('SET LOCAL lock_timeout = 15s è la prima istruzione, prima di ogni ALTER e CREATE', () => {
+    expect(istruzioni[0]).toBe("SET LOCAL lock_timeout = '15s';")
+    const primaAlter = istruzioni.findIndex((l) => /^\s*(ALTER|CREATE)\b/i.test(l))
+    expect(primaAlter).toBeGreaterThan(0)
+    // Sulle istruzioni, non sul file: il commento della migrazione spiega perché CONCURRENTLY no.
+    expect(istruzioni.join('\n')).not.toMatch(/CONCURRENTLY/i)
+  })
+
+  it('vale dentro la transazione della migrazione e non ne esce', async () => {
+    const b = new PGlite()
+    await b.exec(`CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
+                  CREATE TABLE public.notifiche (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), utente_id uuid NOT NULL, tipo text NOT NULL);`)
+    await b.exec(`BEGIN; ${NUOVA}`)
+    expect((await b.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout).toBe('15s')
+    await b.exec('COMMIT')
+    expect((await b.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout).toBe('0')
+    await b.close()
   })
 })

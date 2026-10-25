@@ -95,7 +95,21 @@ export function pathDefinitivi(scuolaId: string, anno: number, numero: number) {
     originale: (ext: string) => `${base}-originale.${ext}`,
     timbrato: `${base}-timbrato.pdf`,
     allegato: (ordine: number, nome: string) => `${base}-allegati/${ordine}-${slugNomeFile(nome)}`,
+    /**
+     * T4 (robustezza, seconda serie, sessione 3): il documento sostituito da una rettifica non
+     * si sovrascrive senza copia. Resta qui, accanto alla registrazione, e se ne va con lei:
+     * `protocollo_elimina` restituisce anche gli oggetti sotto questo prefisso, ricavato in SQL
+     * allo stesso modo (scuola/anno/numero a 7 cifre + `-versioni/`).
+     */
+    prefissoVersioni: `${base}-versioni/`,
+    versione: (istante: string, percorsoAttuale: string) =>
+      `${base}-versioni/${istante}-${percorsoAttuale.slice(percorsoAttuale.lastIndexOf('/') + 1)}`,
   }
+}
+
+/** L'istante di una versione, in UTC al millesimo: `YYYYMMDDHHMMSSmmm` (17 cifre, ordinabile). */
+export function istanteVersione(quando: Date): string {
+  return quando.toISOString().replace(/[-:.TZ]/g, '')
 }
 
 /** Crea il bucket privato se manca (pattern fascicolo). Non lancia mai. */

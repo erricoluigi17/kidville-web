@@ -5,6 +5,46 @@ import { getSupabase } from '@/lib/supabase/browser-client';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { leggiSegnale, motivoErroreCanale, type SegnaleChat } from '@/lib/chat/stato-conversazione';
 import type { ChatThread } from './ChatThreadList';
+import { ATTESA_ESITO_1006_MS, MOTIVO_1006, decidiLogErroreCanale, decidiScadenza1006 } from '@/lib/chat/esito-1006';
+
+type RifTimer = { current: ReturnType<typeof setTimeout> | null };
+type RifInterruzione = { current: { da: number; errori: number } | null };
+
+/** Spegne il log rimandato di un 1006, se c'è. Funzione di modulo: nessuno stato React. */
+function annullaRinvio(rinvio: RifTimer): void {
+    if (rinvio.current !== null) {
+        clearTimeout(rinvio.current);
+        rinvio.current = null;
+    }
+}
+
+/**
+ * Arma il log rimandato di un 1006 (S7, `@/lib/chat/esito-1006`): parte solo se, allo scadere,
+ * l'interruzione è ancora aperta e la pagina si vede. A pagina nascosta si riarma. Il SUBSCRIBED che
+ * chiude l'interruzione, il cambio di utente e lo smontaggio lo annullano.
+ */
+function armaRinvio1006(rinvio: RifTimer, interruzione: RifInterruzione, rotta: () => string): void {
+    annullaRinvio(rinvio);
+    rinvio.current = setTimeout(() => {
+        rinvio.current = null;
+        const decisione = decidiScadenza1006({
+            interruzioneAperta: interruzione.current !== null,
+            paginaVisibile: typeof document === 'undefined' || document.visibilityState !== 'hidden',
+        });
+        if (decisione === 'riarma') {
+            armaRinvio1006(rinvio, interruzione, rotta);
+            return;
+        }
+        if (decisione === 'nulla') return;
+        logClient({
+            livello: 'warn',
+            evento: 'react',
+            messaggio: `chat-realtime-errore: ${MOTIVO_1006}`,
+            route: rotta(),
+            campi: { errori: interruzione.current?.errori ?? 1 },
+        });
+    }, ATTESA_ESITO_1006_MS);
+}
 
 interface UseChatRealtimeOptions {
     /** ID APPLICATIVO dell'utente corrente. Non è il nome del canale: vedi `PREFISSO_TOPIC`. */
@@ -137,6 +177,13 @@ type MessaggioBroadcast = { payload?: unknown };
  *    volte di fila, poi un log e resta il polling. Il CLOSED del nostro smontaggio — che può
  *    arrivare subito o dopo l'ack del leave — si ignora con un flag per esecuzione dell'effect.
  *
+ * ─── IL 1006 CHE RIENTRA (S7, robustezza 2 sessione 12, 2026-10-20) ──────────
+ *
+ * Un'interruzione aperta da `socket-chiuso-1006` non si logga subito: si aspetta un minuto. Se il
+ * canale rientra prima, resta la riga di rientro di `useConversazioneChat` (è una riconnessione); se
+ * no, il `warn` di sempre (è un'interruzione vera). Il perché e le regole stanno in
+ * `@/lib/chat/esito-1006`. Gli altri motivi si loggano subito, come sopra.
+ *
  * Il polling (30 s, fermo a pagina nascosta) resta come rete quando il Realtime non c'è.
  */
 export function useChatRealtime({
@@ -175,6 +222,13 @@ export function useChatRealtime({
     const ricreazioniRef = useRef(0);
     const abbandonatoRef = useRef(false);
     const timerRicreaRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    /**
+     * Il log rimandato di un 1006 (S7). Vive fuori dall'effect, come l'interruzione che racconta: la
+     * ricreazione del canale non lo deve spegnere. Lo spengono il rientro, il cambio di utente e lo
+     * smontaggio.
+     */
+    const rinvio1006Ref = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => annullaRinvio(rinvio1006Ref), []);
     const utenteRef = useRef(userId);
 
     const threadsRef = useRef(threads);
@@ -225,6 +279,7 @@ export function useChatRealtime({
             interruzioneRef.current = null;
             ricreazioniRef.current = 0;
             abbandonatoRef.current = false;
+            annullaRinvio(rinvio1006Ref);
         }
         // L'identità di un altro utente non apre niente: quella di questo sta arrivando.
         if (!identita || identita.perUtente !== userId) return;
@@ -293,6 +348,7 @@ export function useChatRealtime({
                     // decide cosa recuperare, con l'esito della decisione.
                     if (!interruzione) return;
                     interruzioneRef.current = null;
+                    annullaRinvio(rinvio1006Ref);
                     const ora = Date.now();
                     cb.onRiconnesso?.({ riconnessoAt: ora, ms: Math.max(0, ora - interruzione.da), errori: interruzione.errori });
                     return;
@@ -300,12 +356,18 @@ export function useChatRealtime({
 
                 if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                     if (!segnaInterruzione()) return;
-                    logClient({
-                        livello: 'warn',
-                        evento: 'react',
-                        messaggio: status === 'CHANNEL_ERROR' ? `chat-realtime-errore: ${motivoErroreCanale(err)}` : 'chat-realtime-timeout',
-                        route: cb.rotta,
-                    });
+                    if (status === 'TIMED_OUT') {
+                        logClient({ livello: 'warn', evento: 'react', messaggio: 'chat-realtime-timeout', route: cb.rotta });
+                        return;
+                    }
+                    const motivo = motivoErroreCanale(err);
+                    if (decidiLogErroreCanale(motivo) === 'aspetta-esito') {
+                        // S7: un 1006 che rientra entro il minuto è una riconnessione, e la conta già
+                        // `chat-realtime-rientrato`. Si scrive l'errore solo se allo scadere è ancora giù.
+                        armaRinvio1006(rinvio1006Ref, interruzioneRef, () => callback.current.rotta);
+                        return;
+                    }
+                    logClient({ livello: 'warn', evento: 'react', messaggio: `chat-realtime-errore: ${motivo}`, route: cb.rotta });
                     return;
                 }
 

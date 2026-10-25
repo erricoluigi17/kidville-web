@@ -26,6 +26,7 @@ const TEACHER = 'aaaaaaaa-0000-4000-8000-000000000021'
 const PARENT = 'bbbbbbbb-0000-4000-8000-000000000022'
 const ALUNNO = 'cccccccc-0000-4000-8000-000000000023'
 const THREAD = 'dddddddd-0000-4000-8000-000000000024'
+const ALTRO_THREAD = 'dddddddd-0000-4000-8000-000000000026'
 const SEDE = 'eeeeeeee-0000-4000-8000-000000000025'
 
 const h = vi.hoisted(() => ({
@@ -96,6 +97,7 @@ const adminClient = {
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => adminClient }))
 
 import { POST } from '@/app/api/chat/messages/route'
+import { azzeraFinestreDispatch } from '@/lib/chat/finestra-dispatch'
 
 const postReq = (body: unknown) =>
   new Request('http://localhost/api/chat/messages', {
@@ -134,6 +136,7 @@ async function eseguiProgrammato(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  azzeraFinestreDispatch()
   h.programmati.length = 0
   h.inCoda = () => 1
   h.erroreCoda = null
@@ -276,22 +279,32 @@ describe('POST /api/chat/messages — la push parte 30 s dopo il messaggio', () 
     expect(righe('notifica-controparte-non-accodata')).toHaveLength(1)
   })
 
-  it('una raffica di tre messaggi programma tre giri, tutti con origine «chat» (i doppioni li ferma la presa atomica)', async () => {
-    for (const content of ['uno', 'due', 'tre']) {
+  it('S7: due messaggi nella stessa finestra programmano UN giro; il secondo lo dice a `info`', async () => {
+    for (const content of ['uno', 'due']) {
       const res = await POST(postReq({ thread_id: THREAD, content }))
       expect(res.status).toBe(201)
     }
-    expect(h.programmati).toHaveLength(3)
+    // Entrambe le notifiche sono accodate: il giro unico spedisce quella che resta.
+    expect(h.notificaEvento).toHaveBeenCalledTimes(2)
+    expect(h.after).toHaveBeenCalledTimes(1)
+    const [gia] = righe('dispatch-anticipato-gia-programmato')
+    expect(gia?.[0]).toBe('push')
+    expect(gia?.[1]).toBe('info')
+    expect(gia?.[2]).toMatchObject({ operazione: 'chat/messages:POST', threadId: THREAD })
+
     vi.useFakeTimers()
-    const corse = h.programmati.map((cb) => cb())
-    await vi.advanceTimersByTimeAsync(30_000)
-    await Promise.all(corse)
-    expect(h.eseguiDispatch).toHaveBeenCalledTimes(3)
-    for (const c of h.eseguiDispatch.mock.calls) expect(c[0]).toEqual({ origine: 'chat' })
+    await eseguiProgrammato()
+    expect(h.eseguiDispatch).toHaveBeenCalledTimes(1)
+    expect(h.eseguiDispatch).toHaveBeenCalledWith({ origine: 'chat' })
   })
 
   it('🔴 fase 8: la raffica fa UN giro solo — dopo il primo la notifica della conversazione non è più in coda', async () => {
-    for (const content of ['uno', 'due', 'tre']) await POST(postReq({ thread_id: THREAD, content }))
+    // Tre istanze diverse della funzione: ognuna ha la sua finestra (S7), e il «superfluo» della
+    // fase 8 resta la difesa fra istanze.
+    for (const content of ['uno', 'due', 'tre']) {
+      await POST(postReq({ thread_id: THREAD, content }))
+      azzeraFinestreDispatch()
+    }
     // la notifica (una sola, per il debounce) resta in coda finché un giro non la prende
     let presa = false
     h.inCoda = () => (presa ? 0 : 1)
@@ -328,6 +341,104 @@ describe('POST /api/chat/messages — la push parte 30 s dopo il messaggio', () 
     const tutto = JSON.stringify(h.logEvento.mock.calls)
     expect(tutto).not.toContain('varicella')
     expect(tutto).not.toContain(ALUNNO)
+  })
+
+  it('S7: dopo il giro la finestra si riapre — il messaggio successivo programma il suo', async () => {
+    await POST(postReq({ thread_id: THREAD, content: 'uno' }))
+    vi.useFakeTimers()
+    await eseguiProgrammato()
+    vi.useRealTimers()
+    await POST(postReq({ thread_id: THREAD, content: 'due' }))
+    expect(h.after).toHaveBeenCalledTimes(2)
+    expect(h.programmati).toHaveLength(2)
+    expect(righe('dispatch-anticipato-gia-programmato')).toHaveLength(0)
+  })
+
+  it('S7: `after()` che lancia non lascia la finestra aperta — il messaggio dopo programma il suo giro', async () => {
+    h.after.mockImplementationOnce(() => {
+      throw new Error('`after` was called outside a request scope')
+    })
+    await POST(postReq({ thread_id: THREAD, content: 'uno' }))
+    expect(righe('dispatch-anticipato-non-programmato')).toHaveLength(1)
+    await POST(postReq({ thread_id: THREAD, content: 'due' }))
+    expect(h.after).toHaveBeenCalledTimes(2)
+    expect(h.programmati).toHaveLength(1)
+    expect(righe('dispatch-anticipato-gia-programmato')).toHaveLength(0)
+  })
+
+  it('S7: la finestra è per conversazione — un altro thread nello stesso istante programma il suo giro', async () => {
+    await POST(postReq({ thread_id: THREAD, content: 'uno' }))
+    await POST(postReq({ thread_id: ALTRO_THREAD, content: 'due' }))
+    expect(h.after).toHaveBeenCalledTimes(2)
+    expect(righe('dispatch-anticipato-gia-programmato')).toHaveLength(0)
+  })
+
+  it('🔴 S7: nessuna notifica resta senza giro — quella del messaggio nella finestra la spedisce il giro in attesa, quella arrivata a giro avviato ne programma un altro', async () => {
+    // Una coda finta che fa, come quella vera, le due cose che contano qui: il `debounce` di
+    // `notificaEvento` sostituisce la notifica NON PRESA della conversazione (`push_inviata_il`
+    // null), e il giro prende — la presa atomica — TUTTE quelle in coda nel momento in cui legge,
+    // poi le spedisce (`eseguiDispatch`: `push_inviata_il is null` e `invio_programmato_il <= adesso`,
+    // e la chat accoda con `bufferMin: 0`). Con un `eseguiDispatch` finto e piatto questo test
+    // resterebbe verde anche con una finestra che inghiotte un messaggio.
+    type Notifica = { n: number; presa: boolean; inviata: boolean }
+    const coda: Notifica[] = []
+    let progressivo = 0
+    h.notificaEvento.mockImplementation(async () => {
+      for (let i = coda.length - 1; i >= 0; i--) if (!coda[i].presa) coda.splice(i, 1)
+      coda.push({ n: ++progressivo, presa: false, inviata: false })
+    })
+    h.inCoda = () => coda.filter((x) => !x.presa).length
+    let segnalaArrivo: () => void = () => {}
+    const arrivato = new Promise<void>((fatto) => { segnalaArrivo = fatto })
+    let rilascia: () => void = () => {}
+    const cancello = new Promise<void>((fatto) => { rilascia = fatto })
+    let giri = 0
+    h.eseguiDispatch.mockImplementation(async () => {
+      giri++
+      const prese = coda.filter((x) => !x.presa)
+      for (const x of prese) x.presa = true
+      if (giri === 1) {
+        // Il primo giro resta a metà, dopo la presa: è qui che arriva il terzo messaggio.
+        segnalaArrivo()
+        await cancello
+      }
+      for (const x of prese) x.inviata = true
+      return { stato: 200, data: DATI_OK }
+    })
+
+    // «uno» apre la finestra; «due», dentro la finestra, non programma niente.
+    await POST(postReq({ thread_id: THREAD, content: 'uno' }))
+    await POST(postReq({ thread_id: THREAD, content: 'due' }))
+    expect(h.programmati).toHaveLength(1)
+    expect(righe('dispatch-anticipato-gia-programmato')).toHaveLength(1)
+
+    // Il giro di «uno» parte dopo 30 s e prende la notifica di «due»: quella di «uno» l'ha
+    // sostituita il debounce, ed è una sola per conversazione.
+    vi.useFakeTimers()
+    const primo = h.programmati[0]()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await arrivato
+    expect(coda.filter((x) => x.presa).map((x) => x.n), 'il giro in attesa non ha preso la notifica del messaggio nella finestra').toEqual([2])
+
+    // «tre» arriva col giro già avviato (orologio vero: pochi millisecondi dopo «uno», dentro i 45 s
+    // della scadenza): la finestra deve essere già chiusa, e «tre» deve programmare il suo giro.
+    vi.useRealTimers()
+    await POST(postReq({ thread_id: THREAD, content: 'tre' }))
+    expect(h.programmati, 'il messaggio arrivato a giro avviato è rimasto senza giro: la sua push aspetterebbe il cron').toHaveLength(2)
+    rilascia()
+    await primo
+
+    vi.useFakeTimers()
+    const secondo = h.programmati[1]()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await secondo
+
+    // Nessuna notifica resta in coda non spedita.
+    expect(coda.map((x) => ({ n: x.n, inviata: x.inviata }))).toEqual([
+      { n: 2, inviata: true },
+      { n: 3, inviata: true },
+    ])
+    expect(h.eseguiDispatch).toHaveBeenCalledTimes(2)
   })
 })
 

@@ -25,6 +25,7 @@ import { firmaAllegatiChat, normalizzaAllegatoChat } from '@/lib/chat/allegati';
 import { linkConversazione } from '@/lib/chat/link-conversazione';
 import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi';
 import { eseguiDispatch } from '@/lib/push/dispatch';
+import { apriFinestraDispatch, chiudiFinestraDispatch } from '@/lib/chat/finestra-dispatch';
 
 /**
  * LA DURATA DELLA FUNZIONE, per la push della chat inviata SUBITO (PS3, spec «sei interventi»
@@ -50,9 +51,11 @@ export const maxDuration = 300
  * Quanto aspetta la push della chat prima di partire. Non subito: le raffiche restano raggruppate.
  * La notifica di una conversazione è UNA (il `debounce` di `notificaEvento` la sostituisce a ogni
  * messaggio), quindi chi scrive tre messaggi in dieci secondi produce una push sola, quella
- * dell'ultimo. I giri programmati dai messaggi successivi trovano la notifica già presa e non
- * spediscono niente: la presa atomica di `eseguiDispatch` impedisce il doppione, anche col cron
- * ogni 5 minuti che parte nello stesso secondo.
+ * dell'ultimo. Dalla sessione 12 di robustezza 2 i messaggi successivi della stessa conversazione,
+ * dentro la finestra, non programmano un altro giro (`@/lib/chat/finestra-dispatch`): la loro
+ * notifica la spedisce quello già in attesa. Fra istanze diverse resta la presa atomica di
+ * `eseguiDispatch`, che impedisce il doppione anche col cron ogni 5 minuti che parte nello stesso
+ * secondo.
  */
 const ATTESA_DISPATCH_CHAT_MS = 30_000;
 
@@ -109,9 +112,24 @@ async function notificaDelThreadInCoda(threadId: string, operazione: string): Pr
  */
 function programmaDispatchChat(threadId: string): void {
     const operazione = 'chat/messages:POST';
+    // S7: UN giro per conversazione per finestra. Il messaggio che trova la finestra aperta non
+    // programma niente: la sua notifica la spedisce il giro già in attesa.
+    const gettone = apriFinestraDispatch(threadId, ATTESA_DISPATCH_CHAT_MS);
+    if (gettone === null) {
+        logEvento('push', 'info', {
+            operazione,
+            esito: 'dispatch-anticipato-gia-programmato',
+            threadId,
+            msg: `${operazione}: un giro anticipato per questa conversazione è già in attesa, la notifica parte con quello`,
+        });
+        return;
+    }
     const giro = async (): Promise<void> => {
         try {
             await new Promise<void>((fatto) => setTimeout(fatto, ATTESA_DISPATCH_CHAT_MS));
+            // La finestra si chiude QUI, prima di leggere la coda: un messaggio che arriva da adesso
+            // in poi programma il suo giro, perché questo ha già cominciato a guardare.
+            chiudiFinestraDispatch(threadId, gettone);
             if (!(await notificaDelThreadInCoda(threadId, operazione))) {
                 logEvento('push', 'info', {
                     operazione,
@@ -176,6 +194,7 @@ function programmaDispatchChat(threadId: string): void {
                 msg: `${operazione}: dispatch anticipato della chat concluso`,
             });
         } catch (err) {
+            chiudiFinestraDispatch(threadId, gettone);
             // `eseguiDispatch` non lancia: qui arriva solo l'imprevisto (il timer, il logger).
             logEvento('push', 'error', {
                 operazione,
@@ -188,6 +207,7 @@ function programmaDispatchChat(threadId: string): void {
     try {
         after(giro);
     } catch (err) {
+        chiudiFinestraDispatch(threadId, gettone);
         logEvento('push', 'warn', {
             operazione,
             esito: 'dispatch-anticipato-non-programmato',

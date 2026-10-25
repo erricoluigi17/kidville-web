@@ -354,7 +354,8 @@ describe('useChatRealtime — D4: il canale che cade dice perché, una volta, e 
         const stato = ultimo().stato!;
         act(() => stato('SUBSCRIBED'));
 
-        const err = new Error('socket closed: 1006 (riservato-zeta)', { cause: { code: 1006, reason: 'riservato-zeta' } });
+        // Un motivo che si logga SUBITO (il 1006 aspetta il suo esito: vedi il describe S7 più sotto).
+        const err = new Error('channel error: connection lost (riservato-zeta)', { cause: { code: 1006, reason: 'riservato-zeta' } });
         act(() => stato('CHANNEL_ERROR', err));
         vi.setSystemTime(new Date('2026-09-14T10:00:05.000Z'));
         act(() => stato('CHANNEL_ERROR', err));
@@ -363,7 +364,7 @@ describe('useChatRealtime — D4: il canale che cade dice perché, una volta, e 
         const evento = logClient.mock.calls[0][0] as { messaggio: string; campi?: Record<string, unknown> };
         // Il gettone sta nel MESSAGGIO: i campi non entrano nell'impronta di app_log né nel
         // throttle del client, quindi un motivo scritto lì si vedrebbe solo la prima volta al giorno.
-        expect(evento).toMatchObject({ livello: 'warn', evento: 'react', messaggio: 'chat-realtime-errore: socket-chiuso-1006', route: '/parent/chat' });
+        expect(evento).toMatchObject({ livello: 'warn', evento: 'react', messaggio: 'chat-realtime-errore: connessione-persa', route: '/parent/chat' });
         expect(JSON.stringify(evento)).not.toContain('riservato-zeta');
         for (const valore of Object.values(evento.campi ?? {})) expect(typeof valore).toBe('number');
 
@@ -381,9 +382,9 @@ describe('useChatRealtime — D4: il canale che cade dice perché, una volta, e 
         expect(cb.onRiconnesso).toHaveBeenCalledTimes(1);
 
         // Una nuova interruzione si logga di nuovo.
-        act(() => stato('CHANNEL_ERROR', new Error('channel error: connection lost')));
+        act(() => stato('CHANNEL_ERROR', new Error('channel error: transport failure')));
         expect(logClient).toHaveBeenCalledTimes(2);
-        expect((logClient.mock.calls[1][0] as { messaggio: string }).messaggio).toBe('chat-realtime-errore: connessione-persa');
+        expect((logClient.mock.calls[1][0] as { messaggio: string }).messaggio).toBe('chat-realtime-errore: trasporto');
     });
 
     it('TIMED_OUT apre un’interruzione con il suo gettone', async () => {
@@ -460,5 +461,145 @@ describe('useChatRealtime — D4: il canale che cade dice perché, una volta, e 
         });
         expect(sb.creati).toHaveLength(2);
         expect(sb.ordine.filter((o) => o === 'getSession')).toHaveLength(sessioniPrima);
+    });
+});
+
+describe('useChatRealtime — S7: un 1006 che rientra è una riconnessione, non un guasto', () => {
+    afterEach(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+
+    const errore1006 = () => new Error('socket closed: 1006 (riservato-zeta)', { cause: { code: 1006, reason: 'riservato-zeta' } });
+
+    it('1006 e SUBSCRIBED entro 10 s: nessun log d’errore, e il rientro arriva a chi ascolta', async () => {
+        vi.useFakeTimers();
+        const { cb } = await monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('SUBSCRIBED'));
+        act(() => stato('CHANNEL_ERROR', errore1006()));
+        act(() => {
+            vi.advanceTimersByTime(10_000);
+        });
+        act(() => stato('SUBSCRIBED'));
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        expect(logClient).not.toHaveBeenCalled();
+        expect(cb.onRiconnesso).toHaveBeenCalledWith(expect.objectContaining({ errori: 1 }));
+    });
+
+    it('1006 senza rientro: niente prima del minuto, poi UN log col gettone e gli errori contati', async () => {
+        vi.useFakeTimers();
+        await monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('SUBSCRIBED'));
+        act(() => stato('CHANNEL_ERROR', errore1006()));
+        act(() => stato('CHANNEL_ERROR', errore1006()));
+        act(() => {
+            vi.advanceTimersByTime(59_999);
+        });
+        expect(logClient).not.toHaveBeenCalled();
+        act(() => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(logClient).toHaveBeenCalledTimes(1);
+        const evento = logClient.mock.calls[0][0];
+        expect(evento).toMatchObject({
+            livello: 'warn',
+            evento: 'react',
+            messaggio: 'chat-realtime-errore: socket-chiuso-1006',
+            route: '/parent/chat',
+            campi: { errori: 2 },
+        });
+        expect(JSON.stringify(evento)).not.toContain('riservato-zeta');
+    });
+
+    it('a pagina nascosta il log aspetta che la pagina torni visibile', async () => {
+        vi.useFakeTimers();
+        await monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('SUBSCRIBED'));
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        act(() => stato('CHANNEL_ERROR', errore1006()));
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        expect(logClient).not.toHaveBeenCalled();
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+        act(() => {
+            vi.advanceTimersByTime(60_000);
+        });
+        expect(logClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('smontato prima del minuto: nessun log', async () => {
+        vi.useFakeTimers();
+        const { unmount } = await monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        act(() => ultimo().stato?.('CHANNEL_ERROR', errore1006()));
+        unmount();
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        expect(logClient).not.toHaveBeenCalled();
+    });
+
+    it('un 1006 rientrato e poi un’interruzione vera: si logga solo quella vera', async () => {
+        vi.useFakeTimers();
+        await monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('SUBSCRIBED'));
+        act(() => stato('CHANNEL_ERROR', errore1006()));
+        act(() => {
+            vi.advanceTimersByTime(5_000);
+        });
+        act(() => stato('SUBSCRIBED'));
+        act(() => stato('CHANNEL_ERROR', new Error('channel error: transport failure')));
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        const messaggi = logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio);
+        expect(messaggi).toEqual(['chat-realtime-errore: trasporto']);
+    });
+
+    // Oltre il piano: il cleanup dell'effect NON spegne il rinvio. Un CLOSED inatteso ricrea il canale,
+    // e l'interruzione aperta dal 1006 resta da raccontare se il canale nuovo non rientra.
+    it('la ricreazione del canale dopo un CLOSED inatteso non spegne il rinvio: senza rientro il 1006 si scrive', async () => {
+        vi.useFakeTimers();
+        await monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        act(() => ultimo().stato?.('CHANNEL_ERROR', errore1006()));
+        act(() => ultimo().stato?.('CLOSED'));
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+        expect(sb.creati, 'il canale non è stato ricreato').toHaveLength(2);
+        act(() => {
+            vi.advanceTimersByTime(50_000);
+        });
+        const eventi = logClient.mock.calls.map((c) => c[0] as { messaggio: string; campi?: Record<string, unknown> });
+        expect(eventi.map((e) => e.messaggio)).toEqual(['chat-realtime-chiuso-inatteso', 'chat-realtime-errore: socket-chiuso-1006']);
+        expect(eventi[1].campi).toEqual({ errori: 2 });
+    });
+
+    // Oltre il piano (punto (d) del Passo 4): il rinvio dell'utente di prima non deve scrivere un
+    // 1006 sull'interruzione di quello dopo.
+    it('cambiare utente spegne il rinvio del precedente: si logga solo l’interruzione del nuovo', async () => {
+        vi.useFakeTimers();
+        const { rerender } = await monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        act(() => ultimo().stato?.('CHANNEL_ERROR', errore1006()));
+
+        sb.sessione = { user: { id: 'auth-2' } };
+        rerender({ userId: 'u-2', threads: [A], aperto: null });
+        await act(async () => {});
+        expect(ultimo().topic).toBe('chat:auth-2');
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        act(() => ultimo().stato?.('CHANNEL_ERROR', new Error('channel error: transport failure')));
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        const messaggi = logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio);
+        expect(messaggi).toEqual(['chat-realtime-errore: trasporto']);
     });
 });

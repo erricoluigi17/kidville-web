@@ -4,24 +4,38 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   model: null as Record<string, unknown> | null,
   inserts: [] as Record<string, unknown>[],
+  modelError: null as unknown,
+  insertError: null as unknown,
+  adminLancia: false,
+  logErrore: vi.fn(),
 }))
+
+// «Il messaggio solo nel log» va VERIFICATO: senza questa spia il test restava verde anche togliendo
+// il `logErrore` dal `catch` (mutazione provata il 25/10).
+vi.mock('@/lib/logging/logger', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
+  return { ...vero, logErrore: (...a: unknown[]) => h.logErrore(...a) }
+})
 
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 9, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('ip'),
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
-    from: () => {
-      const b: Record<string, unknown> = {}
-      b.select = () => b
-      b.eq = () => b
-      b.maybeSingle = async () => ({ data: h.model, error: null })
-      b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
-      b.single = async () => ({ data: { id: 'sub-pub' }, error: null })
-      return b
-    },
-  }),
+  createAdminClient: async () => {
+    if (h.adminLancia) throw new Error('chiave di servizio assente: dettaglio interno')
+    return {
+      from: () => {
+        const b: Record<string, unknown> = {}
+        b.select = () => b
+        b.eq = () => b
+        b.maybeSingle = async () => ({ data: h.model, error: h.modelError })
+        b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
+        b.single = async () => ({ data: h.insertError ? null : { id: 'sub-pub' }, error: h.insertError })
+        return b
+      },
+    }
+  },
 }))
 
 import { POST } from '@/app/api/public/forms/[token]/submit/route'
@@ -54,6 +68,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.model = pubModel
   h.inserts = []
+  h.modelError = null
+  h.insertError = null
+  h.adminLancia = false
 })
 
 describe('POST /api/public/forms/[token]/submit', () => {
@@ -88,5 +105,36 @@ describe('POST /api/public/forms/[token]/submit', () => {
     expect(row.user_id).toBeNull()
     expect(row.scuola_id).toBe('sc-1')
     expect((row.consents_log as Array<Record<string, unknown>>)[0]).toMatchObject({ field_id: 'privacy', accepted: true })
+  })
+
+  it('lettura del modello fallita → 500 LETTURA_FALLITA, senza il testo di Postgres', async () => {
+    h.modelError = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(req({ data: { privacy: true } }), ctx(TOKEN))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('LETTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('statement timeout')
+  })
+
+  it('invio non registrato → 500 SCRITTURA_FALLITA', async () => {
+    h.insertError = { code: '23505', message: 'duplicate key value violates unique constraint "form_submissions_pkey"' }
+    const res = await POST(req({ data: { privacy: true } }), ctx(TOKEN))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('SCRITTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('duplicate key')
+  })
+
+  it('eccezione → 500 ERRORE_INTERNO, il messaggio solo nel log', async () => {
+    h.adminLancia = true
+    const res = await POST(req({ data: { privacy: true } }), ctx(TOKEN))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('ERRORE_INTERNO')
+    expect(JSON.stringify(json)).not.toContain('dettaglio interno')
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'public/forms/[token]/submit:POST', stato: 500 }),
+      expect.any(Error),
+    )
   })
 })

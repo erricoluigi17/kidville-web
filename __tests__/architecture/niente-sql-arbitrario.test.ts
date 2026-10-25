@@ -82,4 +82,15 @@ describe('niente SQL arbitrario — il codice', () => {
     expect(file.length, 'il lock non legge più src/').toBeGreaterThan(1000)
     expect(colpevoli(file), PERCHE).toEqual([])
   })
+
+  it('in scripts/ e nei file della radice nessuno chiama né ricrea exec_sql', () => {
+    const script = sorgentiSotto(path.join(RADICE, 'scripts'))
+    const radice = fs
+      .readdirSync(RADICE, { withFileTypes: true })
+      .filter((v) => v.isFile() && ESTENSIONI.test(v.name))
+      .map((v) => path.join(RADICE, v.name))
+    expect(script.length, 'il lock non legge più scripts/').toBeGreaterThan(50)
+    expect(radice.length, 'il lock non legge più la radice').toBeGreaterThan(5)
+    expect(colpevoli([...script, ...radice]), PERCHE).toEqual([])
+  })
 })

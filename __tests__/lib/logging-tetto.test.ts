@@ -275,7 +275,9 @@ const PRIMITIVE_DI_TETTO: ReadonlyArray<readonly [string, Primitiva]> = [
  * ⚠️ ESSERE IN QUESTA LISTA NON È UN CONDONO: è una decisione scritta, che il lock rilegge. Le
  * dieci voci di browser ci stanno perché la loro `fetch` è una chiamata a una nostra route
  * relativa — lì il tetto vive dall'altra parte, dentro la route, e il browser ha già i suoi
- * annullamenti (l'utente chiude la pagina). La prima voce è invece debito vero.
+ * annullamenti (l'utente chiude la pagina). L'unica voce di debito vero,
+ * `admin/apply-enrollment-migration`, è uscita il 2026-10-25 insieme alla route (robustezza,
+ * seconda serie, sessione 2).
  */
 const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/gallery/carica-media.ts',
@@ -290,14 +292,6 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         + 'successo lascia due tracce server (`gallery/upload-url:POST` + `gallery:POST`), sicché '
         + 'una PUT appesa per sempre è una firma senza il record che la segue. Senza tetto e senza '
         + 'quelle tracce si tornerebbe alla rotellina che gira all\'infinito.'],
-    ['src/app/api/admin/apply-enrollment-migration/route.ts',
-        'DEBITO DICHIARATO, non un falso positivo: sei `fetch` a mano verso `/rest/v1/rpc/exec_sql` '
-        + 'e `/pg/query` con la service-role key negli header — nessun tetto, nessuna riga. La '
-        + 'ragione per cui non è stata ricondotta al factory sta già scritta per esteso in '
-        + '`__tests__/architecture/supabase-client-strumentato.test.ts` (voce `FETCH_VERSO_SUPABASE`): '
-        + '`/pg/query` non ha equivalente in supabase-js, e la route è `sealDangerous`, cioè 404 in '
-        + 'produzione. Il rischio residuo è sviluppo e preview, dove appende chi la invoca. Va '
-        + 'rimossa o ricondotta, non condonata.'],
     ['src/lib/auth/logout.ts',
         'BROWSER: `POST /api/auth/logout`, una nostra route. E il suo esito non conta — il logout '
         + 'prosegue comunque con `signOut()` locale.'],

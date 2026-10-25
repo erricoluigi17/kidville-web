@@ -212,8 +212,15 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 🔻 271 → 270 il 2026-10-09, branch `feat/elimina-non-iscritti` (Task 7, revisione). La voce
  * `admin/gdpr/candidates/route.ts` è arrivata a ZERO ed è uscita dall'elenco: vedi il paragrafo
  * gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 270 → 264 il 2026-10-25, branch `robustezza2/s01-s02-s04-s11-lotto1` (robustezza, seconda
+ * serie, sessione 2). Escono SEI voci insieme ai loro file: le route sigillate che chiamavano
+ * `exec_sql` (`admin/apply-enrollment-migration`, `admin/apply-fase4-migration`,
+ * `admin/apply-forms-migration`, `admin/apply-mensa-multi-menu-migration`, `admin/apply-migration`,
+ * `admin/setup-registro`). Debito CANCELLATO col codice, non convertito: vedi il paragrafo gemello
+ * su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 270;
+const MAX_FILE = 264;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -407,8 +414,12 @@ const MAX_FILE = 270;
  * messaggio grezzo di PostgREST e nessun codice; ora porta `GDPR_CANDIDATI_NON_LETTI`, lo stesso
  * del 500 sul registro della primaria della stessa route, e il corpo dell'errore resta nel log. La
  * voce scende da 1 a 0 ed esce dall'elenco; `MAX_FILE` scende di uno insieme a lei.
+ *
+ * 🔻 1361 → 1350 il 2026-10-25, stesso branch. Le sei route di `exec_sql` portavano 11 risposte
+ * senza codice (2 + 2 + 2 + 2 + 2 + 1): escono con i loro file. Nessuna risposta è stata
+ * convertita, e nessuna è stata spostata altrove.
  */
-const MAX_OCCORRENZE = 1361;
+const MAX_OCCORRENZE = 1350;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

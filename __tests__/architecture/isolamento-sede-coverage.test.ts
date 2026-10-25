@@ -1116,12 +1116,10 @@ const AMMESSE: Record<string, string> = {
     'admin/wipe:POST': 'sealDangerous: 404 in produzione',
     'admin/check-schema:GET': 'sealDangerous',
     'admin/test-relations:GET': 'sealDangerous',
-    'admin/setup-registro:GET': 'sealDangerous (rpc exec_sql: DDL, non dati)',
     'admin/debug-mensa-auth:GET': 'sealDangerous',
-    'admin/apply-migration:<modulo>': 'sealDangerous (rpc exec_sql: DDL, non dati)',
-    'admin/apply-fase4-migration:<modulo>': 'sealDangerous (rpc exec_sql: DDL, non dati)',
-    'admin/apply-forms-migration:<modulo>': 'sealDangerous (rpc exec_sql: DDL, non dati)',
-    'admin/apply-mensa-multi-menu-migration:<modulo>': 'sealDangerous (rpc exec_sql: DDL, non dati)',
+    // Fino al 2026-10-25 qui stavano anche `admin/setup-registro:GET` e le quattro
+    // `admin/apply-*-migration:<modulo>` (rpc exec_sql): route cancellate insieme alla
+    // funzione (robustezza, seconda serie, sessione 2).
     'debug/scrutini:GET': 'sealDangerous',
 
     // ── Flussi pubblici: il gate è un token, non una sessione ────────────────
@@ -2527,7 +2525,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 353 → 363 il 2026-10-15: otto route admin/storici, la rettifica staff
             // della chat e attendance/justification. Le nuove letture/scritture sono
             // controllate; nessuna voce aggiunta ad AMMESSE.
-            routeConServiceRole: 363,
+            // 363 → 357 il 2026-10-25 (robustezza, seconda serie, sessione 2): escono le sei
+            // route sigillate che chiamavano `exec_sql` (`admin/apply-*` e
+            // `admin/setup-registro`). Non è un presidio tolto: sono file che non esistono più.
+            routeConServiceRole: 357,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2822,7 +2823,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 551 → 552 il 2026-10-15: il GET del dettaglio cassa resta controllato.
             // 552 → 566 il 2026-10-15: quattordici handler delle dieci route
             // dichiarate sopra; handlerEsentati resta 112.
-            handlerControllati: 566,
+            // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
+            handlerControllati: 555,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -3197,7 +3199,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // guardie della DELETE stanno in `controllaVoceEliminabile` (il racconto accanto alla
             // voce tolta, in AMMESSE). È un debito SPOSTATO, non pagato: coperto dal test della
             // funzione, non da questo lock.
-            handlerEsentati: 112,
+            // 112 → 107 il 2026-10-25: escono le cinque voci `sealDangerous (rpc exec_sql …)`
+            // insieme alle loro route. Il numero scende perché il codice non c'è più, non
+            // perché un'esenzione sia stata allargata.
+            handlerEsentati: 107,
         })
     })
 })

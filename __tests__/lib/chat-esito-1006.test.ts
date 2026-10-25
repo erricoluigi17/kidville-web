@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ATTESA_ESITO_1006_MS, MOTIVO_1006, decidiLogErroreCanale, decidiScadenza1006 } from '@/lib/chat/esito-1006'
+import { FINESTRA_RIENTRO_1006_MS, MOTIVO_1006, decidiLogErroreCanale, decidiScadenza1006 } from '@/lib/chat/esito-1006'
 
 describe('il 1006 aspetta il suo esito; ogni altro motivo si logga subito', () => {
   it('socket-chiuso-1006 → aspetta-esito', () => {
@@ -22,6 +22,6 @@ describe('il 1006 aspetta il suo esito; ogni altro motivo si logga subito', () =
   })
 
   it('l’attesa è un minuto: oltre i rientri di realtime-js (1, 2, 5, 10 s, poi ogni 10 s)', () => {
-    expect(ATTESA_ESITO_1006_MS).toBe(60_000)
+    expect(FINESTRA_RIENTRO_1006_MS).toBe(60_000)
   })
 })

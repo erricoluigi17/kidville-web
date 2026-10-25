@@ -5,7 +5,7 @@ import { getSupabase } from '@/lib/supabase/browser-client';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { leggiSegnale, motivoErroreCanale, type SegnaleChat } from '@/lib/chat/stato-conversazione';
 import type { ChatThread } from './ChatThreadList';
-import { ATTESA_ESITO_1006_MS, MOTIVO_1006, decidiLogErroreCanale, decidiScadenza1006 } from '@/lib/chat/esito-1006';
+import { FINESTRA_RIENTRO_1006_MS, MOTIVO_1006, decidiLogErroreCanale, decidiScadenza1006 } from '@/lib/chat/esito-1006';
 
 type RifTimer = { current: ReturnType<typeof setTimeout> | null };
 type RifInterruzione = { current: { da: number; errori: number } | null };
@@ -43,7 +43,7 @@ function armaRinvio1006(rinvio: RifTimer, interruzione: RifInterruzione, rotta: 
             route: rotta(),
             campi: { errori: interruzione.current?.errori ?? 1 },
         });
-    }, ATTESA_ESITO_1006_MS);
+    }, FINESTRA_RIENTRO_1006_MS);
 }
 
 interface UseChatRealtimeOptions {

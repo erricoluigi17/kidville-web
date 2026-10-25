@@ -504,7 +504,7 @@ describe('le due funzioni', () => {
 })
 
 describe('dopo la sessione 8: storici-stampe chiama il server solo con la coda piena, e la salute lo sa', () => {
-    // Con 20261025151929_storici_tick_solo_con_lavoro.sql `storici_tick` chiama
+    // Con 20261025161719_storici_tick_solo_con_lavoro.sql `storici_tick` chiama
     // /api/admin/storici/cron solo quando `storici_generazioni` ha lavoro: a coda vuota l'ultima
     // chiamata chiusa invecchia per ore, il giro SQL riesce ogni minuto, e per la RPC della sessione 7
     // il job sarebbe «senza un esito buono» (salute `degradato` dopo 31 minuti di coda vuota). La

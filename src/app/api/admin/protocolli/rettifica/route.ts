@@ -11,6 +11,7 @@ import {
   PROTOCOLLO_MAX_BYTES,
   PROTOCOLLO_MAX_MB,
   estensioneDaMime,
+  istanteVersione,
   pathDefinitivi,
   sha256Impronta,
 } from '@/lib/protocolli/store'
@@ -176,6 +177,27 @@ export const POST = withRoute('admin/protocolli/rettifica:POST', async (request:
         const percorsi = pathDefinitivi(record.scuola_id, record.anno, record.numero)
         const nuovoOriginale = percorsi.originale(estensioneDaMime(mime))
         const storage = supabase.storage.from(PROTOCOLLO_BUCKET)
+        // T4 (robustezza, seconda serie, sessione 3 — «copia silenziosa»): il documento di PRIMA
+        // non si sovrascrive senza copia. Si copia accanto alla registrazione (`-versioni/`) PRIMA
+        // di caricare il nuovo, e se ne va con lei (`protocollo_elimina`). Se la copia non riesce,
+        // la rettifica non parte e niente è cambiato. Nessuna riga di log nuova e nessun
+        // logScrittura sul successo: le decisioni #6 e #26 restano. Il fallimento esce dal `catch`
+        // che c'era già, con un messaggio fisso: né percorsi né numeri della registrazione.
+        // Il timbrato non si copia: si rigenera dall'originale con la stessa segnatura.
+        if (record.file_originale) {
+          const copia = await storage.copy(
+            record.file_originale,
+            percorsi.versione(istanteVersione(new Date()), record.file_originale)
+          )
+          if (copia.error) {
+            throw Object.assign(
+              new Error('Conservazione della versione precedente non riuscita: la rettifica non è stata applicata', {
+                cause: copia.error,
+              }),
+              { status: 500 }
+            )
+          }
+        }
         const upOrig = await storage.upload(nuovoOriginale, bytes, { contentType: mime, upsert: true })
         if (upOrig.error) {
           return NextResponse.json(

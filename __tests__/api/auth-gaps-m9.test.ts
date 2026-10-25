@@ -80,8 +80,14 @@ vi.mock('@/lib/supabase/server-client', () => {
       resolve({ data: h.lists[table] ?? [], error: null, count: 0 })
     return b
   }
+  // S7: la GET della chat chiama prima il riepilogo. Qui risponde «non installato» (PGRST202), e si
+  // registra la chiamata per provare che riceve l'id del gate.
+  const rpcNonInstallata = async (nome: string, argomenti: unknown) => {
+    h.calls.push(['rpc', nome, argomenti])
+    return { data: null, error: { code: 'PGRST202', message: 'funzione assente' } }
+  }
   return {
-    createAdminClient: async () => ({ from: builder }),
+    createAdminClient: async () => ({ from: builder, rpc: rpcNonInstallata }),
     createClient: async () => ({ from: builder, auth: { getUser: async () => ({ data: { user: null } }) } }),
   }
 })
@@ -199,6 +205,9 @@ describe('M9 — identità dal gate, ?userId= legacy ignorato (anti-spoof)', () 
     const orCall = h.calls.find(([t, m]) => t === 'chat_threads' && m === 'or')
     expect(String(orCall?.[2])).toContain(UUID_A)
     expect(String(orCall?.[2])).not.toContain(UUID_B)
+    const rpcCall = h.calls.find(([t]) => t === 'rpc')
+    expect(JSON.stringify(rpcCall)).toContain(UUID_A)
+    expect(JSON.stringify(rpcCall)).not.toContain(UUID_B)
   })
 })
 

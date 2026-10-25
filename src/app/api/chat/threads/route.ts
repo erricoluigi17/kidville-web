@@ -14,8 +14,8 @@ import { withRoute } from '@/lib/logging/with-route';
 import { abbinamentoConsentito } from '@/lib/chat/rubrica';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto';
-import { marcaConsegnati } from '@/lib/chat/delivered';
 import { schemaAssente } from '@/lib/news/schema-assente';
+import { esitoRiepilogo } from '@/lib/chat/riepilogo-conversazioni';
 
 /** Sospensione attiva di una conversazione, esposta al partecipante. Il `motivo`
  *  (testo libero) torna SOLO a chi ha sospeso, mai all'altra parte. */
@@ -40,6 +40,11 @@ const postBodySchema = z.object({
 
 // GET /api/chat/threads
 // Lista thread per l'utente autenticato (insegnante o genitore)
+//
+// S7 (robustezza 2, sessione 12): la lista arriva da `chat_riepilogo_conversazioni` in UNA chiamata,
+// invece di quattro letture per conversazione (151 richieste con 37 conversazioni). Se la funzione
+// manca o si guasta, il percorso di prima, con la sua riga di log (`esitoRiepilogo`). In nessuno
+// dei due la GET scrive: la consegna è `POST /api/chat/threads/consegnati`.
 export const GET = withRoute('chat/threads:GET', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -51,6 +56,54 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
     try {
         const supabase = await createAdminClient();
 
+        /**
+         * Sospensioni ATTIVE (C5) in UNA sola query batched `thread_id IN (...)` — MAI una query
+         * per-thread (sarebbe un N+1). Degrada pulito sul DB E2E CI non migrato (tabella assente →
+         * nessuna sospensione).
+         *
+         * È una chiusura DENTRO l'handler, non una funzione di modulo: il lock d'isolamento attribuisce
+         * ogni accesso al suo handler, e uno scritto fuori finirebbe nello span `<modulo>`.
+         */
+        const sospensioniAttive = async (threadIds: string[]): Promise<Map<string, SospensioneThread>> => {
+            const mappa = new Map<string, SospensioneThread>();
+            if (threadIds.length === 0) return mappa;
+            const { data: sosp, error: sospErr } = await supabase
+                .from('conversazioni_sospensioni')
+                .select('thread_id, sospesa_da, sospesa_verso, motivo, sospesa_il')
+                .in('thread_id', threadIds)
+                .is('riaperta_il', null);
+            if (sospErr) {
+                // Tabella assente = nessuna sospensione. Un errore vero si logga (senza PII)
+                // ma NON fa fallire la lista chat: la sospensione degrada a "nessuna".
+                if (!schemaAssente(sospErr)) {
+                    logEvento('chat', 'error', { operazione: 'chat/threads:GET', esito: 'sospensioni-lettura-fallita' }, sospErr);
+                }
+                return mappa;
+            }
+            for (const s of sosp ?? []) {
+                const sospesaDa = s.sospesa_da as string;
+                mappa.set(s.thread_id as string, {
+                    sospesaDa,
+                    sospesaVerso: s.sospesa_verso as string,
+                    // PRIVACY: il motivo (testo libero) torna solo all'autore della sospensione.
+                    motivo: userId === sospesaDa ? ((s.motivo as string | null) ?? null) : null,
+                    sospesaIl: s.sospesa_il as string,
+                });
+            }
+            return mappa;
+        };
+
+        // ── Il riepilogo: una chiamata. `p_utente` è l'identità del GATE, mai `?userId=`. ──
+        const { data: righeRiepilogo, error: erroreRiepilogo } = await supabase.rpc('chat_riepilogo_conversazioni', {
+            p_utente: userId,
+        });
+        const riepilogo = esitoRiepilogo({ data: righeRiepilogo, error: erroreRiepilogo }, 'chat/threads:GET');
+        if (riepilogo.esito === 'ok') {
+            const sospensioni = await sospensioniAttive(riepilogo.threads.map((t) => t.id));
+            return NextResponse.json(riepilogo.threads.map((t) => ({ ...t, sospensione: sospensioni.get(t.id) ?? null })));
+        }
+
+        // ── Il RIPIEGO: il percorso di prima, per il DB della CI e per un riepilogo guasto. ──
         // Cerca thread dove l'utente è teacher o parent
         const { data: threads, error } = await supabase
             .from('chat_threads')
@@ -63,47 +116,14 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        // Aprire la lista consegna TUTTI i messaggi ricevuti nei propri thread (delivered_at).
-        // I thread sono già filtrati per teacher_id/parent_id: nessun rischio cross-account.
-        // UPDATE separato e best-effort (degrada da solo se la colonna non c'è sul DB E2E).
         const threadIds = (threads ?? []).map((t) => t.id as string);
-        await marcaConsegnati(supabase, { userId, threadIds });
-
-        // Sospensioni ATTIVE (C5) in UNA sola query batched `thread_id IN (...)` —
-        // MAI una query per-thread dentro il Promise.all (sarebbe un N+1). Degrada
-        // pulito sul DB E2E CI non migrato (tabella assente → nessuna sospensione).
-        const sospensioniMap = new Map<string, SospensioneThread>();
-        if (threadIds.length > 0) {
-            const { data: sosp, error: sospErr } = await supabase
-                .from('conversazioni_sospensioni')
-                .select('thread_id, sospesa_da, sospesa_verso, motivo, sospesa_il')
-                .in('thread_id', threadIds)
-                .is('riaperta_il', null);
-            if (sospErr) {
-                // Tabella assente = nessuna sospensione. Un errore vero si logga (senza PII)
-                // ma NON fa fallire la lista chat: la sospensione degrada a "nessuna".
-                if (!schemaAssente(sospErr)) {
-                    logEvento('chat', 'error', { operazione: 'chat/threads:GET', esito: 'sospensioni-lettura-fallita' }, sospErr);
-                }
-            } else {
-                for (const s of sosp ?? []) {
-                    const sospesaDa = s.sospesa_da as string;
-                    sospensioniMap.set(s.thread_id as string, {
-                        sospesaDa,
-                        sospesaVerso: s.sospesa_verso as string,
-                        // PRIVACY: il motivo (testo libero) torna solo all'autore della sospensione.
-                        motivo: userId === sospesaDa ? ((s.motivo as string | null) ?? null) : null,
-                        sospesaIl: s.sospesa_il as string,
-                    });
-                }
-            }
-        }
+        const sospensioniMap = await sospensioniAttive(threadIds);
 
         // Le quattro letture per thread ARRICCHISCONO la lista, non la decidono: la lista è
-        // `threads`, già letta e già controllata. Questa rotta si chiama a ogni apertura della
-        // chat, e un dettaglio mancante non deve svuotare la schermata: si degrada al ripiego
-        // («?», 0, nessun ultimo messaggio) e lo si DICE. Una riga per tipo di lettura, non per
-        // thread: a database giù, quaranta thread farebbero centosessanta righe uguali.
+        // `threads`, già letta e già controllata. Un dettaglio mancante non deve svuotare la
+        // schermata: si degrada al ripiego («?», 0, nessun ultimo messaggio) e lo si DICE. Una riga
+        // per tipo di lettura, non per thread: a database giù, quaranta thread farebbero centosessanta
+        // righe uguali.
         const guastiArricchimento = new Map<string, unknown>();
         const annotaGuasto = (esito: string, err: unknown) => {
             if (err && !guastiArricchimento.has(esito)) guastiArricchimento.set(esito, err);

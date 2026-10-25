@@ -9,7 +9,9 @@ import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
 import { tokenPubblico, rispostaModuloNonTrovato } from '@/lib/forms/token-pubblico'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore, logEvento } from '@/lib/logging/logger'
+import { logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
+import { rispostaErroreInterno } from '@/lib/api/errore-interno'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // Submission ANONIMA di un modello pubblicato (DL-030). Token-scoped, service-role.
@@ -87,7 +89,7 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
       logEvento('modulistica', 'error', {
         operazione: 'public/forms/[token]/submit:POST', esito: 'modello-non-letto',
       }, modelRes.error)
-      return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
+      return rispostaGuastoGiaRegistrato()
     }
     const model = modelRes.data
 
@@ -157,7 +159,7 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
       logEvento('modulistica', 'error', {
         operazione: 'public/forms/[token]/submit:POST', esito: 'compilazione-non-registrata',
       }, error)
-      return NextResponse.json({ error: 'Invio fallito' }, { status: 500 })
+      return rispostaGuastoGiaRegistrato('scrittura')
     }
     // Successo loggato: il modulo pubblico è l'unico canale in cui nessuno,
     // dall'altra parte, si accorge che una compilazione non è mai arrivata.
@@ -167,10 +169,6 @@ export const POST = withRoute('public/forms/[token]/submit:POST', async (
     })
     return NextResponse.json({ id: submission.id }, { status: 201 })
   } catch (err) {
-    logErrore({ operazione: 'public/forms/[token]/submit:POST', stato: 500 }, err)
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Errore interno' },
-      { status: 500 }
-    )
+    return rispostaErroreInterno('public/forms/[token]/submit:POST', err)
   }
 })

@@ -195,8 +195,16 @@ export async function persistPagella(
   userId: string,
   data: PagellaData
 ): Promise<void> {
-  const { data: buckets } = await supabase.storage.listBuckets()
-  if (!buckets?.some((b) => b.name === PAGELLE_BUCKET)) {
+  const { data: buckets, error: erroreElenco } = await supabase.storage.listBuckets()
+  if (erroreElenco) {
+    // Senza l'elenco non si crea alla cieca: l'upload qui sotto ha il suo errore.
+    logEvento('storage', 'warn', {
+      operazione: 'persistPagella',
+      bucket: PAGELLE_BUCKET,
+      esito: 'bucket_non_verificato',
+      entita_id: scrutinioId,
+    }, erroreElenco)
+  } else if (!buckets?.some((b) => b.name === PAGELLE_BUCKET)) {
     await supabase.storage.createBucket(PAGELLE_BUCKET, { public: false, allowedMimeTypes: ['application/pdf'], fileSizeLimit: 10 * 1024 * 1024 })
   }
   const path = `${scrutinioId}/${alunnoId}.pdf`

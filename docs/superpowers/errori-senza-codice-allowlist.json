@@ -17,7 +17,7 @@
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
   "aggiornato": "2026-10-25",
-  "totale_occorrenze": 1350,
+  "totale_occorrenze": 1331,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
@@ -45,7 +45,7 @@
     },
     {
       "path": "src/app/api/admin/competenze/download/route.ts",
-      "n": 3
+      "n": 1
     },
     {
       "path": "src/app/api/admin/competenze/genera/route.ts",
@@ -462,7 +462,7 @@
     },
     {
       "path": "src/app/api/forms/submit/route.ts",
-      "n": 7
+      "n": 3
     },
     {
       "path": "src/app/api/forms/upload/route.ts",
@@ -482,11 +482,11 @@
     },
     {
       "path": "src/app/api/iscrizione/route.ts",
-      "n": 7
+      "n": 4
     },
     {
       "path": "src/app/api/iscrizione/sedi/route.ts",
-      "n": 2
+      "n": 1
     },
     {
       "path": "src/app/api/iscrizione/upload/route.ts",
@@ -599,10 +599,6 @@
     {
       "path": "src/app/api/news/upload/route.ts",
       "n": 2
-    },
-    {
-      "path": "src/app/api/notes/route.ts",
-      "n": 4
     },
     {
       "path": "src/app/api/notes/sign/route.ts",
@@ -779,10 +775,6 @@
     {
       "path": "src/app/api/parent/account/richiesta-cancellazione/route.ts",
       "n": 15
-    },
-    {
-      "path": "src/app/api/parent/competenze/route.ts",
-      "n": 1
     },
     {
       "path": "src/app/api/parent/forms/otp/route.ts",
@@ -964,7 +956,7 @@
     },
     {
       "path": "src/app/api/public/forms/[token]/submit/route.ts",
-      "n": 8
+      "n": 4
     },
     {
       "path": "src/app/api/public/forms/[token]/upload/route.ts",

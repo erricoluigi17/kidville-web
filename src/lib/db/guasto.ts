@@ -26,6 +26,8 @@ import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
  *     Su una colonna o una tabella che questo database non ha ancora (il DB della CI non è
  *     migrato) la riga è `info`, altrove `error`: in produzione lo schema c'è, e un guasto lì va
  *     visto.
+ *   · `rispostaGuastoGiaRegistrato` — la risposta di `rispostaGuastoDb` senza la riga, quando l'ha già scritta
+ *     chi chiama (sessione 13).
  *
  * Il corpo dell'errore non va nella risposta: può contenere `Key (…)=(…)` con dati personali.
  * Va nel log, dove passa dalla redazione.
@@ -44,6 +46,16 @@ export function rispostaGuastoDb(
   tipo: TipoGuasto = 'lettura',
 ): NextResponse {
   logErrore({ operazione, stato: 500, evento }, error)
+  return rispostaGuastoGiaRegistrato(tipo)
+}
+
+/**
+ * La stessa risposta di `rispostaGuastoDb`, per quando la riga di log c'è GIÀ: `sediReali` che logga da sé, un
+ * `logEvento('modulistica', 'error', …)` scritto una riga sopra con un `esito` più preciso. Una seconda riga per
+ * lo stesso guasto raddoppierebbe i conteggi. (Sessione 13 della seconda serie: le porte anonime non mandano più
+ * il testo di PostgREST.)
+ */
+export function rispostaGuastoGiaRegistrato(tipo: TipoGuasto = 'lettura'): NextResponse {
   // Due letterali e non una mappa: il lock `errori-con-codice` verifica solo i codici che sa
   // leggere nel sorgente.
   if (tipo === 'scrittura') {

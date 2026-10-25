@@ -837,16 +837,40 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 migrazione è già applicata, e al 09/10 quella della scatola nera non lo è.
                 Dal 19/10 (fase 12) anche la versione di PRIMA di una modifica alle stesse
                 tabelle resta 90 giorni in `scatola_nera.modifiche`, con lo stesso oblio.
+                Dalla sessione 3 della seconda serie di robustezza la stessa copia tiene anche ciò
+                che una cancellazione porta via in cascata (messaggi della chat, risposte agli
+                avvisi, prese visione delle note, storico delle classi, copie storiche, registro
+                degli accessi al fascicolo) e il registro di protocollo; lo storico delle modifiche
+                copre anche anagrafiche, note disciplinari, certificati medici e protocollo. Il
+                documento di protocollo sostituito da una rettifica resta accanto alla
+                registrazione. Il protocollo non si dimentica: è un registro tenuto per legge.
+                Due cose dette apposta, decise dall'assistente il 25/10 in assenza del titolare e
+                da confermare: (1) le sospensioni delle conversazioni (`conversazioni_sospensioni`,
+                la prova di moderazione) sono nella copia; (2) i messaggi che «libera spazio» toglie
+                a un bambino ritirato restano anche loro novanta giorni nella copia, e per questo
+                la voce dice «anche per le cancellazioni fatte apposta per liberare spazio».
+                «Subito», per l'oblio, è vero quando l'ultima chiamata dell'oblio dell'app
+                (`scatola_nera_dimentica`) riesce; se fallisce, le copie che nominano la persona
+                restano fino alla scadenza dei novanta giorni e la richiesta risulta parziale
+                (`letture_fallite`, log `oblio-parziale`): lo dicono il runbook e il PRD.
               */}
               <li>
                 <strong>copie tecniche di sicurezza</strong>: una registrazione cancellata
-                dall&rsquo;archivio della scuola (anagrafica, frequenza, valutazioni, pagamenti)
-                resta in una copia tecnica protetta per <strong>novanta giorni</strong>, al solo
-                scopo di rimediare a una cancellazione sbagliata, e scaduti quelli è distrutta.
-                Lo stesso vale per la versione precedente di una frequenza, di una valutazione o
-                di un pagamento modificati, per rimediare a una modifica sbagliata;
+                dall&rsquo;archivio della scuola (anagrafica, frequenza, valutazioni, pagamenti,
+                messaggi della chat e sospensioni delle conversazioni, risposte agli avvisi, prese
+                visione delle note, storico delle classi, registro degli accessi al fascicolo,
+                registro di protocollo) resta in una copia tecnica protetta per{' '}
+                <strong>novanta giorni</strong>, al solo scopo di rimediare a una cancellazione
+                sbagliata, e scaduti quelli è distrutta. Vale anche per le cancellazioni fatte
+                apposta per liberare spazio, come i messaggi della chat di un bambino ritirato.
+                Lo stesso vale per la versione precedente di una frequenza, di una valutazione, di
+                un pagamento, di un&rsquo;anagrafica, di una nota disciplinare, di un certificato
+                medico o di una registrazione di protocollo modificati, per rimediare a una
+                modifica sbagliata. Il documento di protocollo sostituito con una rettifica resta
+                conservato insieme alla registrazione, e se ne va con lei;
                 una richiesta di cancellazione (diritto all&rsquo;oblio) la toglie subito anche da
-                lì. L&rsquo;intero archivio è inoltre copiato ogni notte, cifrato, su server
+                lì, salvo il registro di protocollo, che la scuola conserva per obbligo di legge.
+                L&rsquo;intero archivio è inoltre copiato ogni notte, cifrato, su server
                 nell&rsquo;Unione europea: le copie giornaliere si conservano{' '}
                 <strong>trenta giorni</strong> e una copia al mese <strong>dodici mesi</strong>. Se
                 una copia dovesse servire, le cancellazioni chieste dopo la sua data vengono

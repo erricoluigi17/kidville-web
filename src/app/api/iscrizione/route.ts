@@ -7,7 +7,9 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore, logEvento } from '@/lib/logging/logger'
+import { logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { rispostaErroreInterno } from '@/lib/api/errore-interno'
 import { CONSENSI_FIELDS } from '@/lib/forms/enrollment-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
@@ -387,7 +389,7 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
           .select('id')
           .single()
         if (retry.error) {
-          return NextResponse.json({ error: retry.error.message }, { status: 500 })
+          return rispostaGuastoDb(OPERAZIONE, 'db:enrollment_submissions', retry.error, 'scrittura')
         }
         // La ricevuta parte ANCHE su questa strada. È il ramo che gira sul DB
         // non migrato della CI, ed è esattamente il tipo di posto dove una
@@ -396,7 +398,9 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
       }
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      // Una domanda che non entra è il guasto più grave di questa porta: fino al 20/10 non lasciava
+      // nemmeno una riga di log, e alla famiglia arrivava il testo di Postgres.
+      return rispostaGuastoDb(OPERAZIONE, 'db:enrollment_submissions', error, 'scrittura')
     }
 
     // Notifica alla segreteria: nuova domanda dal form pubblico (best-effort).
@@ -427,8 +431,6 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {
-    logErrore({ operazione: 'iscrizione:POST', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg || 'Errore interno' }, { status: 500 })
+    return rispostaErroreInterno(OPERAZIONE, err)
   }
 })

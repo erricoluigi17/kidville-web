@@ -6,8 +6,9 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { rispostaErroreInterno, rispostaErroreInternoGiaRegistrato } from '@/lib/api/errore-interno'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // certificatoId permissivo (stringa non vuota, niente zUuid): oggi nessun
@@ -42,12 +43,17 @@ export const GET = withRoute('admin/competenze/download:GET', async (request: Ne
     const fuoriScopeCert = await assertSezioneInScope(supabase, auth.user, cert.section_id as string)
     if (fuoriScopeCert) return fuoriScopeCert
 
-    const { data: signed } = await supabase.storage.from(CERTIFICATI_BUCKET).createSignedUrl(cert.file_url, 600)
-    if (!signed?.signedUrl) return NextResponse.json({ error: 'URL non disponibile' }, { status: 500 })
+    const { data: signed, error: erroreFirma } = await supabase.storage.from(CERTIFICATI_BUCKET).createSignedUrl(cert.file_url, 600)
+    if (erroreFirma || !signed?.signedUrl) {
+      logEvento('storage', 'error', {
+        operazione: 'admin/competenze/download:GET',
+        esito: 'url-firmato-non-creato',
+        entita_id: certificatoId,
+      }, erroreFirma)
+      return rispostaErroreInternoGiaRegistrato()
+    }
     return NextResponse.json({ success: true, url: signed.signedUrl })
   } catch (err) {
-    logErrore({ operazione: 'admin/competenze/download:GET', stato: 500 }, err)
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return rispostaErroreInterno('admin/competenze/download:GET', err)
   }
 })

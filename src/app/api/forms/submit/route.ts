@@ -12,7 +12,9 @@ import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore, logEvento } from '@/lib/logging/logger'
+import { logEvento } from '@/lib/logging/logger'
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
+import { rispostaErroreInterno } from '@/lib/api/errore-interno'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -80,7 +82,7 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
       logEvento('modulistica', 'error', {
         operazione: 'forms/submit:POST', esito: 'modello-non-letto',
       }, modelRes.error)
-      return NextResponse.json({ error: modelRes.error.message }, { status: 500 })
+      return rispostaGuastoGiaRegistrato()
     }
     const model = modelRes.data
     const pages = ((model?.schema as FormSchemaConfig | undefined)?.pages) ?? []
@@ -113,7 +115,7 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
         logEvento('modulistica', 'error', {
           operazione: 'forms/submit:POST', esito: 'utente-non-letto',
         }, erroreUtente)
-        return NextResponse.json({ error: erroreUtente.message }, { status: 500 })
+        return rispostaGuastoGiaRegistrato()
       }
       sedeUtente = (u?.scuola_id as string | undefined) ?? null
     }
@@ -155,10 +157,7 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
       logEvento('modulistica', 'error', {
         operazione: 'forms/submit:POST', esito: 'compilazione-non-registrata',
       }, insertErr)
-      return NextResponse.json(
-        { error: insertErr instanceof Error ? insertErr.message : 'Creazione submission fallita' },
-        { status: 500 }
-      )
+      return rispostaGuastoGiaRegistrato('scrittura')
     }
 
     // Successo loggato: una compilazione è un documento di una famiglia, e
@@ -199,10 +198,6 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
 
     return NextResponse.json({ id: submission.id }, { status: 201 })
   } catch (err) {
-    logErrore({ operazione: 'forms/submit:POST', stato: 500 }, err)
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Errore interno' },
-      { status: 500 }
-    )
+    return rispostaErroreInterno('forms/submit:POST', err)
   }
 })

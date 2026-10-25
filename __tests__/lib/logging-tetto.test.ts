@@ -295,6 +295,15 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/auth/logout.ts',
         'BROWSER: `POST /api/auth/logout`, una nostra route. E il suo esito non conta — il logout '
         + 'prosegue comunque con `signOut()` locale.'],
+    ['src/lib/chat/consegna-conversazioni.ts',
+        'BROWSER: `POST /api/chat/threads/consegnati`, una nostra route (sessione 12 della seconda serie). '
+        + 'Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante. Il suo esito non '
+        + 'blocca niente — la spunta di consegna si ritenta quando la lista cambia — e un guasto lascia '
+        + 'una riga in `app_log` dal lato della route.'],
+    ['src/lib/chat/lista-conversazioni.ts',
+        'BROWSER: `GET /api/chat/threads`, una nostra route, chiesta ogni 30 s a pagina visibile (5 minuti '
+        + 'se nascosta). Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante; una '
+        + 'risposta che non arriva lascia la lista com\'era e il giro dopo riprova.'],
     ['src/lib/auth/use-child-school-type.ts',
         'BROWSER: hook React su `/api/parent/primaria`, una nostra route — il tetto vive dall\'altra '
         + 'parte, dentro la route, dove passa dal client Supabase strumentato.'],

@@ -261,8 +261,30 @@
 // resta nell'elenco delle impronte. È testo legale: il titolare lo rilegge.
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// Sessione 3 della seconda serie di robustezza — SOLO l'informativa privacy. La voce «copie
+// tecniche di sicurezza» dice di più perché la copia tiene di più: le righe portate via IN CASCATA
+// (messaggi della chat, risposte agli avvisi, prese visione delle note, storico delle classi, copie
+// storiche, registro degli accessi al fascicolo) e il registro di protocollo restano novanta giorni
+// in `scatola_nera.eliminazioni`; la versione di prima di anagrafiche, note disciplinari,
+// certificati medici e protocollo resta novanta giorni in `scatola_nera.modifiche`; il documento
+// di protocollo sostituito da una rettifica resta accanto alla registrazione. Sostanziale per la
+// stessa ragione del 09/10: trattamenti che allungano la vita di un dato, e che il documento non
+// diceva.
+//
+// ⚠️ Il protocollo NON si dimentica, e la voce lo dice: è un registro tenuto per legge, e l'oblio
+// non tocca né la registrazione viva né la sua copia. È testo legale: il titolare lo rilegge.
+// ⚠️ Niente «automaticamente», come il 09/10 e il 20/10: la migrazione la applica l'integrazione
+// al merge. Le versioni precedenti restano nell'elenco delle impronte.
+// ⚠️ Oltre il testo del piano, due frasi decise dall'assistente il 25/10 in assenza del titolare,
+// da confermare: le «sospensioni delle conversazioni» (la decima figlia in cascata,
+// `conversazioni_sospensioni`) e «vale anche per le cancellazioni fatte apposta per liberare
+// spazio» (i messaggi che «libera spazio» toglie restano novanta giorni nella copia: decisione
+// «accetta»). «Subito», per l'oblio, presuppone che `scatola_nera_dimentica` riesca: se fallisce,
+// la copia resta fino alla scadenza e la richiesta risulta parziale (`letture_fallite`).
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-10-20'
+export const VERSIONE_PRIVACY = '2026-10-25'

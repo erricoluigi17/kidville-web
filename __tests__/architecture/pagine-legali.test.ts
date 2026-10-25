@@ -417,6 +417,11 @@ describe('lock — pagine legali', () => {
         // di una frequenza, di una valutazione o di un pagamento resta novanta giorni (fase 12,
         // `scatola_nera.modifiche`). La '2026-10-09' resta dov'è.
         '2026-10-20': 'f832e6645efa39876f852af8e78b3525ce486d9b917d951187ab4a543c4ffc96',
+        // Sessione 3 della seconda serie di robustezza — la voce «copie tecniche» dice anche delle
+        // CASCATE (chat, risposte agli avvisi, prese visione, storico classi, registro accessi), del
+        // registro di protocollo e delle modifiche ad anagrafiche, note e certificati. Le voci
+        // precedenti restano dove sono.
+        '2026-10-25': '1eef4edfa8c910329955cbaf173fb35cf3904ccc945e6d04d96aba738eb3ce1a',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

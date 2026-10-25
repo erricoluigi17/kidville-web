@@ -3385,6 +3385,11 @@ export const CODICI_ERRORE = {
      * frase non promette che non sia stato registrato niente.
      */
     SCRITTURA_FALLITA: 'erroreScritturaFallita',
+    /**
+     * 500 — un'eccezione in una route (`src/lib/api/errore-interno.ts`, sessione 13 della seconda serie di
+     * robustezza). Il testo dell'eccezione resta nel log; al client arriva solo questo codice.
+     */
+    ERRORE_INTERNO: 'erroreInterno',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

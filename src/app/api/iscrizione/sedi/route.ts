@@ -6,6 +6,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { sediReali } from '@/lib/scuole/reali'
 import { intestazioniCachePubblica } from '@/lib/security/cache-pubblica'
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
 
 /**
  * Dieci minuti in CDN (fase 12): una sede nuova o disattivata compare nel modulo entro dieci
@@ -52,7 +53,7 @@ export const GET = withRoute('iscrizione/sedi:GET', async (request: NextRequest)
   if (error) {
     // 500 e non un elenco vuoto: un elenco vuoto direbbe al wizard "una sola sede,
     // vai avanti così" — e l'iscrizione finirebbe nel posto sbagliato o in un 400 muto.
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return rispostaGuastoGiaRegistrato()
   }
 
   return NextResponse.json(

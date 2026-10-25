@@ -19,6 +19,9 @@ import {
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
 import { useChatRealtime } from './useChatRealtime';
 import { useUnreadNotifications } from './useUnreadNotifications';
+import { scaricaListaConversazioni, type EsitoListaConversazioni } from '@/lib/chat/lista-conversazioni';
+import { annunciaNonLetti } from '@/lib/chat/annuncio-non-letti';
+import { fotografiaNonLetti, inviaConsegna, serveConsegna } from '@/lib/chat/consegna-conversazioni';
 import { segnalaChatLetta, variaChatNonLetti } from './contatore-non-letti';
 
 /**
@@ -52,6 +55,13 @@ export type RottaChat = '/parent/chat' | '/teacher/chat';
 
 /** La finestra dello strozzatore della ricarica della lista: vedi `chiediRicaricaLista`. */
 const FINESTRA_RICARICA_LISTA_MS = 2_000;
+
+/**
+ * Il ritmo della lista a pagina NASCOSTA: 5 minuti, non fermo. È da nascosta che parte la notifica
+ * del browser (`annunciaNonLetti` non la manda a pagina a fuoco); fermarlo la spegnerebbe. Era il
+ * ritmo dell'orologio di `useUnreadNotifications`, che dalla sessione 12 non c'è più.
+ */
+const RITMO_LISTA_NASCOSTA_MS = 300_000;
 
 /** Lo stato della lista delle conversazioni. */
 export type StatoThreads = 'caricamento' | 'pronto' | 'errore';
@@ -223,81 +233,118 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     }, [onThreadsCaricati]);
 
     /**
-     * ⚠️ QUESTO TOTALE RESTA DENTRO LA PAGINA CHAT, e NON va nello store della barra in basso.
+     * ⚠️ IL TOTALE DELLA PAGINA CHAT RESTA DENTRO LA PAGINA CHAT, e NON va nello store della barra in basso.
      *
-     * La tentazione c'era, perché il numero è lo stesso: `useUnreadNotifications` somma
-     * `unread_count` di tutte le conversazioni di `chat/threads:GET`, con lo stesso `or` e lo stesso
-     * «messaggi altrui con `read_at` nullo» di `@/lib/chat/non-letti`. Ma quella route trasforma
-     * l'errore del conteggio di UN thread in uno zero (`unread_count: unreadCount ?? 0`): un guasto
-     * parziale non si distingue da «quella conversazione è tutta letta», e finirebbe nello store come
-     * un totale sbagliato PER DIFETTO — cioè come la bugia «hai letto tutto», che è esattamente ciò
-     * che questo lavoro esiste per togliere di mezzo.
+     * Dalla sessione 12 di robustezza 2 (S7) il totale lo calcola `annunciaNonLetti` sulla lista che
+     * questo hook ha appena applicato: un orologio solo, non più due GET identiche ogni 30 s (questa e
+     * quella di `useUnreadNotifications`, che oggi chiede soltanto il permesso delle notifiche).
+     *
+     * La tentazione di portarlo nello store resta, e resta sbagliata: se la RPC di riepilogo manca, la
+     * route torna al percorso di prima, che trasforma l'errore del conteggio di UN thread in uno zero
+     * (`unread_count: unreadCount ?? 0`). Un guasto parziale non si distingue da «quella conversazione è
+     * tutta letta», e finirebbe nello store come un totale sbagliato PER DIFETTO — la bugia «hai letto
+     * tutto».
      *
      * La fonte di verità dal server è quindi UNA: `chat_non_letti` di `GET /api/notifiche`, che su
-     * qualunque errore risponde `null` («non lo so») invece di un numero incompleto. Fra un giro e
-     * l'altro della campanella il contatore si muove con le VARIAZIONI locali — la PATCH dei letti
-     * qui sotto, il `+1` del realtime — e con l'evento che fa ricaricare la campanella.
+     * qualunque errore risponde `null`. Fra un giro e l'altro della campanella il contatore si muove con
+     * le VARIAZIONI locali — la PATCH dei letti, il `+1` del realtime — e con l'evento che fa ricaricare
+     * la campanella.
      */
-    // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
-    useUnreadNotifications({
-        userId: userId ?? '', // il hook ignora gli id falsy
-        enabled: true,
-        onUnreadChange: setNonLetti,
-        pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
-    });
+    useUnreadNotifications({ enabled: true });
+
+    /** L'impronta dei non letti dell'ultima lista applicata: decide se serve una consegna. */
+    const nonLettiServerRef = useRef<Map<string, string> | null>(null);
+    /** Il totale dell'ultima lista applicata: la notifica del browser parte solo se sale. */
+    const totaleAnnunciatoRef = useRef(0);
+    /** La consegna esplicita: una POST in volo alla volta, e al più UNA in coda. */
+    const consegnaRef = useRef<{ inVolo: boolean; ancora: boolean }>({ inVolo: false, ancora: false });
+
+    /**
+     * LA CONSEGNA ESPLICITA (S7). Fino al 2026-10-20 la faceva la GET della lista a ogni giro: una
+     * lettura che scriveva `delivered_at` su tutti i thread anche senza niente da consegnare. Adesso
+     * parte solo quando la lista mostra non letti nuovi (`serveConsegna`), con `POST
+     * /api/chat/threads/consegnati`. Mai due insieme: se ne serve un'altra mentre una è in volo, la si
+     * segna e parte UNA volta alla fine. `inviaConsegna` non rifiuta mai.
+     */
+    const chiediConsegna = useCallback(() => {
+        const stato = consegnaRef.current;
+        if (stato.inVolo) {
+            stato.ancora = true;
+            return;
+        }
+        stato.inVolo = true;
+        const giro = (): void => {
+            stato.ancora = false;
+            void inviaConsegna(rotta).then(() => {
+                if (stato.ancora) {
+                    giro();
+                    return;
+                }
+                stato.inVolo = false;
+            });
+        };
+        giro();
+    }, [rotta]);
 
     /** Lo stato della lista specchiato: il log del guasto parte solo alla TRANSIZIONE verso 'errore'. */
     const statoThreadsRef = useRef<StatoThreads>('caricamento');
 
-    /** Una GET della lista, e l'applicazione della sua risposta. La chiama solo `caricaThreads`. */
-    const scaricaThreads = useCallback(
-        async (partitaAt: number): Promise<ChatThread[] | null> => {
+    /**
+     * L'applicazione di una risposta della lista. Non ha `try`: l'esito arriva già deciso da
+     * `scaricaListaConversazioni`, che non rifiuta mai. Con un `try/finally` il compilatore di React
+     * rinuncia al hook intero, e la regola `set-state-in-effect` smette di guardarlo.
+     */
+    const applicaLista = useCallback(
+        (partitaAt: number, esito: EsitoListaConversazioni<ChatThread>): ChatThread[] | null => {
             let lista: ChatThread[] | null = null;
-            /** Il perché del guasto, come gettone: `http-<stato>` o la classe dell'errore. Mai il `.message`. */
-            let guasto = 'sconosciuto';
-            try {
-                const res = await fetch(`/api/chat/threads?userId=${userId}`).catch((err: unknown) => {
-                    guasto = nomeErrore(err);
-                    return null;
-                });
-                if (res && !res.ok) guasto = `http-${res.status}`;
-                const data = res?.ok
-                    ? ((await res.json().catch((err: unknown) => {
-                          guasto = nomeErrore(err);
-                          return null;
-                      })) as ChatThread[] | null)
-                    : null;
-                if (data) {
-                    // Una risposta PARTITA prima di quella già applicata è più vecchia: non la sovrascrive.
-                    if (listaDaRef.current === null || partitaAt >= listaDaRef.current) {
-                        listaDaRef.current = partitaAt;
-                        impostaThreads(data);
-                        onThreadsCaricatiRef.current?.(data);
-                    }
-                    listaCaricataRef.current = true;
-                    lista = threadsRef.current;
+            if ('lista' in esito) {
+                // Una risposta PARTITA prima di quella già applicata è più vecchia: non la sovrascrive.
+                if (listaDaRef.current === null || partitaAt >= listaDaRef.current) {
+                    listaDaRef.current = partitaAt;
+                    impostaThreads(esito.lista);
+                    onThreadsCaricatiRef.current?.(esito.lista);
+                    // S7: consegna, totale, titolo e notifica sulla lista appena applicata.
+                    const serve = serveConsegna(nonLettiServerRef.current, esito.lista);
+                    nonLettiServerRef.current = fotografiaNonLetti(esito.lista);
+                    const totale = annunciaNonLetti(esito.lista, totaleAnnunciatoRef.current);
+                    totaleAnnunciatoRef.current = totale;
+                    setNonLetti(totale);
+                    if (serve) chiediConsegna();
                 }
-            } finally {
-                /**
-                 * D6 — «pronto» solo se una lista è arrivata, adesso o prima. Fino al 2026-09-14 un
-                 * primo caricamento fallito finiva comunque in «caricato», e la pagina diceva «Nessuna
-                 * chat»: un guasto di rete travestito da «non hai conversazioni». Con una lista già in
-                 * mano, un polling fallito non la svuota e non cambia niente a schermo.
-                 */
-                if (listaCaricataRef.current) {
-                    statoThreadsRef.current = 'pronto';
-                    setStatoThreads('pronto');
-                } else {
-                    if (statoThreadsRef.current !== 'errore') {
-                        logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-conversazioni-non-caricate: ${guasto}`, route: rotta });
-                    }
-                    statoThreadsRef.current = 'errore';
-                    setStatoThreads('errore');
+                listaCaricataRef.current = true;
+                lista = threadsRef.current;
+            } else if (listaCaricataRef.current && esito.http === null) {
+                // La lista in mano resta, ma il conteggio di questo giro non c'è: lo si dice, col solo
+                // gettone. Un `http-<stato>` no: lo registra già il `fetch` strumentato, col suo livello.
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-non-letti-conteggio-fallito: ${esito.guasto}`, route: rotta });
+            }
+            /**
+             * D6 — «pronto» solo se una lista è arrivata, adesso o prima. Fino al 2026-09-14 un primo
+             * caricamento fallito finiva comunque in «caricato», e la pagina diceva «Nessuna chat»: un
+             * guasto di rete travestito da «non hai conversazioni». Con una lista già in mano, un
+             * polling fallito non la svuota e non cambia niente a schermo.
+             */
+            if (listaCaricataRef.current) {
+                statoThreadsRef.current = 'pronto';
+                setStatoThreads('pronto');
+            } else {
+                if (statoThreadsRef.current !== 'errore') {
+                    const guasto = 'guasto' in esito ? esito.guasto : 'sconosciuto';
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-conversazioni-non-caricate: ${guasto}`, route: rotta });
                 }
+                statoThreadsRef.current = 'errore';
+                setStatoThreads('errore');
             }
             return lista;
         },
-        [userId, rotta, impostaThreads],
+        [rotta, impostaThreads, chiediConsegna],
+    );
+
+    /** Una GET della lista, e l'applicazione della sua risposta. La chiama solo `caricaThreads`. */
+    const scaricaThreads = useCallback(
+        (partitaAt: number): Promise<ChatThread[] | null> =>
+            scaricaListaConversazioni<ChatThread>(userId ?? '').then((esito) => applicaLista(partitaAt, esito)),
+        [userId, applicaLista],
     );
 
     /**
@@ -363,14 +410,12 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         [],
     );
 
-    /** «Riprova» della lista che non si era caricata. */
-    const riprovaThreads = useCallback(async () => {
+    /** «Riprova» della lista che non si era caricata. Senza `try`: `caricaThreads` non rifiuta per la rete. */
+    const riprovaThreads = useCallback((): Promise<void> => {
         setRiprovando(true);
-        try {
-            await caricaThreads();
-        } finally {
-            setRiprovando(false);
-        }
+        return caricaThreads()
+            .then(() => undefined)
+            .finally(() => setRiprovando(false));
     }, [caricaThreads]);
 
     useEffect(() => {
@@ -667,13 +712,19 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         onThreadSconosciuto: handleThreadSconosciuto,
     });
 
-    // ── I badge si aggiornano solo mentre qualcuno guarda ───────────────
-    // 30 secondi, e fermo a pagina nascosta. Il 7/9/2026 un genitore fermo sulla
-    // chat faceva ~11 richieste al minuto senza toccare niente, e continuava col
-    // telefono in tasca. Vedi `usePollingVisibile`.
-    usePollingVisibile(() => {
-        void caricaThreads();
-    }, 30_000);
+    // ── La lista: UN orologio (S7, robustezza 2 sessione 12) ───────────
+    // 30 secondi a pagina visibile. A pagina nascosta 5 minuti, non fermo: la notifica del browser
+    // (`annunciaNonLetti`) parte proprio quando la pagina non è a fuoco. Fino al 2026-10-20 gli
+    // orologi della lista erano due, questo e quello di `useUnreadNotifications`, con due GET
+    // identiche. Il 7/9/2026 un genitore fermo sulla chat faceva ~11 richieste al minuto: vedi
+    // `usePollingVisibile`.
+    usePollingVisibile(
+        () => {
+            void caricaThreads();
+        },
+        30_000,
+        { intervalloNascostoMs: RITMO_LISTA_NASCOSTA_MS },
+    );
 
     // ── Polling di backup sui messaggi (solo fallback) ──────────
     /**

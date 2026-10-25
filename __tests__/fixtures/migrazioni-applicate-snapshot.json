@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-20",
-  "generato_alle": "2026-10-20T10:54:09Z",
-  "sha256": "6a75eddf776c1606f0ee821f043b07339ae38a3a215730dbf16005df9754ee42",
+  "generato_il": "2026-10-25",
+  "generato_alle": "2026-10-25T09:29:14Z",
+  "sha256": "1d66cab08f51b48952c9c909ac0e3be0ba6543f1bc1b841c191b79d1c2dfd485",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -927,6 +927,18 @@
     {
       "version": "20261019223123",
       "name": "battiti_app_log_che_contano"
+    },
+    {
+      "version": "20261024235116",
+      "name": "iscrizioni_stati_vincolati"
+    },
+    {
+      "version": "20261025013356",
+      "name": "via_exec_sql"
+    },
+    {
+      "version": "20261025021715",
+      "name": "bucket_dichiarati_dalla_produzione"
     }
   ]
 }

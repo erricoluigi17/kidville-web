@@ -11,12 +11,15 @@ import { join, relative } from 'node:path'
  * col risultato buttato e 62 `.then`/`.catch` muti, in 156 file. PostgREST non lancia: il `null`
  * di un guasto diventava un elenco vuoto, un «non trovato», una scrittura data per fatta.
  *
- * Quattro forme vietate:
+ * Cinque forme vietate:
  *   1. `const { data } = await …`, `const { data: x } = await …`, `const { count } = await …`
  *      (anche `let`, anche `{ data, count }`) — il risultato senza `error`;
  *   2. `await <client>.from(…)…` / `await <client>.rpc(…)` come istruzione — il risultato buttato;
  *   3. `.then(() => {}, () => {})` e `.then(() => undefined, () => undefined)` — l'errore inghiottito;
  *   4. `.catch(() => {})` — idem.
+ *   5. `const { data } = await <client>.storage…` — lo Storage col solo `data` (sessione 13 della seconda serie:
+ *      il 20/10 erano 8, due URL firmati e sei `listBuckets()`). Lo Storage non è PostgREST, ma non lancia
+ *      nemmeno lui: risponde `{ data: null, error }`.
  *
  * Come si ripara: `src/lib/db/guasto.ts` (`rispostaGuastoDb`, `guastoSecondario`,
  * `guastoLetturaAccessoria`), o nei componenti la gestione già usata dalla pagina. Un errore
@@ -28,7 +31,8 @@ import { join, relative } from 'node:path'
  * FUORI, e perché:
  *   · `src/lib/logging/**` — il logger è fail-open per regola (AGENTS.md, regola 9): lì un
  *     `.catch(() => {})` è la difesa, non il difetto;
- *   · lo Storage (`<client>.storage.from(…)`) — non è PostgREST, e ha la sua gestione.
+ *   · il risultato BUTTATO di una chiamata dello Storage (`await s.storage.createBucket(…)` come istruzione): la
+ *     forma 2 guarda solo `from`/`rpc`. Lo Storage col solo `data` è invece la forma 5.
  */
 
 const RADICE = process.cwd()
@@ -53,6 +57,10 @@ const FORME: Array<{ nome: string; re: RegExp }> = [
     re: /\.then\(\s*\(\)\s*=>\s*(?:\{\s*\}|undefined)\s*,\s*\(\)\s*=>\s*(?:\{\s*\}|undefined)\s*\)/g,
   },
   { nome: 'catch-muto', re: /\.catch\(\s*\(\)\s*=>\s*\{\s*\}\s*\)/g },
+  {
+    nome: 'storage-senza-error',
+    re: /(?:const|let)\s*\{\s*(?:data|count)(?:\s*:\s*\w+)?(?:\s*,\s*(?:data|count)(?:\s*:\s*\w+)?)?\s*\}\s*=\s*await\s+\w+\s*\.\s*storage\b/g,
+  },
 ]
 
 function senzaCommenti(src: string): string {
@@ -91,7 +99,7 @@ describe('lock — ogni { error } di PostgREST si guarda, in tutto src/', () => 
     expect(FILE.some((f) => f.endsWith('.tsx'))).toBe(true)
   })
 
-  it('riconosce ognuna delle quattro forme, e lascia passare quelle corrette', () => {
+  it('riconosce ognuna delle cinque forme, e lascia passare quelle corrette', () => {
     const rotto = [
       "const { data } = await supabase.from('alunni').select('id')",
       "const { data: righe } = await admin.from('x').select('id')",
@@ -102,6 +110,7 @@ describe('lock — ogni { error } di PostgREST si guarda, in tutto src/', () => 
       'p.then(() => {}, () => {})',
       'p.then(() => undefined, () => undefined)',
       'p.catch(() => {})',
+      "const { data } = await supabase.storage.from('b').download('p')",
     ].join('\n')
     expect(violazioni(rotto).map((v) => v.forma)).toEqual([
       'data-senza-error',
@@ -113,10 +122,12 @@ describe('lock — ogni { error } di PostgREST si guarda, in tutto src/', () => 
       'then-muto',
       'then-muto',
       'catch-muto',
+      'storage-senza-error',
     ])
     const giusto = [
       "const { data, error } = await supabase.from('alunni').select('id')",
-      "const { data } = await supabase.storage.from('b').download('p')",
+      "const { data, error } = await supabase.storage.from('b').download('p')",
+      "const { data: buckets, error: erroreElenco } = await supabase.storage.listBuckets()",
       "const { error } = await supabase.from('x').update({ a: 1 })",
       "// const { data } = await supabase.from('x') — un commento non conta",
       "p.catch((err) => logErrore({ operazione: 'x' }, err))",

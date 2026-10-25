@@ -390,9 +390,14 @@ function soloCommenti(rel: string): { riga: number; testo: string }[] {
  * 🔻 52 → 49 e 40 → 37 il 2026-10-19 (fase 11): il tetto scende alla misura vera presa dopo la
  * bonifica di «errori non ignorati». Nessun blocco nuovo con soli commenti è entrato con quel
  * lavoro (controllato sui diff dei file toccati); i 49 rimasti sono tutti anteriori.
+ *
+ * 🔻 49 → 47 e 37 → 35 il 2026-10-25 (sessione 13 della seconda serie, «bordo pubblico»): escono
+ * `src/app/api/notes/route.ts` (la notifica ai genitori non accodata, `catch { /* non bloccare *\/ }`)
+ * e `src/lib/protocolli/store.ts` (`ensureBucket`). Ora loggano: `notifica-genitori-non-accodata` a
+ * `error`, `creazione-saltata` a `info`.
  */
-const MAX_SOLO_COMMENTI = 49;
-const MAX_FILE_SOLO_COMMENTI = 37;
+const MAX_SOLO_COMMENTI = 47;
+const MAX_FILE_SOLO_COMMENTI = 35;
 
 type Voce = { path: string; n: number };
 type Allowlist = { totale_occorrenze: number; file: Voce[] };

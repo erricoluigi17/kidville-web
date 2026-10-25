@@ -68,6 +68,9 @@ const h = vi.hoisted(() => ({
     erroreDeleteAvviso: null as { code: string; message: string } | null,
     erroreDeleteNotifiche: null as { code: string; message: string } | null,
     erroreRemove: null as { message: string } | null,
+    /** Risposte dei genitori che la cancellazione porta via in CASCADE (il conteggio del log). */
+    risposte: 4 as number,
+    erroreContaRisposte: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: (...a: unknown[]) => h.requireDocente(...a) }))
@@ -135,6 +138,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
                         ? { data: null, error: h.erroreRicercaAltri }
                         : { data: h.altriRiferimenti, error: null }
                 }
+                // Il CONTEGGIO delle risposte, prima della cancellazione: `head: true` → solo `count`.
+                // Filtrato su `sel === 'id'`: la lettura del PUT (`numero_partecipanti, …`) resta com'era.
+                if (tabella === 'avvisi_risposte' && q.sel === 'id') {
+                    return h.erroreContaRisposte
+                        ? { data: null, count: null, error: h.erroreContaRisposte }
+                        : { data: null, count: h.risposte, error: null }
+                }
                 if (tabella === 'utenti') return { data: { first_name: 'A', last_name: 'B', role: 'educator' }, error: null }
                 return { data: null, error: null }
             }
@@ -196,6 +206,8 @@ beforeEach(() => {
     h.erroreDeleteAvviso = null
     h.erroreDeleteNotifiche = null
     h.erroreRemove = null
+    h.risposte = 4
+    h.erroreContaRisposte = null
     h.requireDocente.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE_MIA } })
     h.scuoleDiUtente.mockResolvedValue([SEDE_MIA])
     h.verificaTargetAvvisoDocente.mockResolvedValue(null)
@@ -262,6 +274,49 @@ describe('DELETE /api/avvisi/[id] — le notifiche non restano orfane', () => {
         expect(riga!.campi).toMatchObject({ operazione: 'avvisi/[id]:DELETE', n_notifiche_rimosse: 3 })
         // Solo conteggi e uuid: mai il titolo dell'avviso, mai un destinatario.
         expect(JSON.stringify(riga!.campi)).not.toContain('seg-1')
+    })
+
+    it('le risposte dei genitori si CONTANO prima di cancellare, e il successo dice quante ne sono andate via', async () => {
+        h.risposte = 5
+        const res = await AVVISO_DELETE(req(), ctx())
+
+        expect(res.status).toBe(200)
+        const conta = h.operazioni.findIndex((o) => o.tabella === 'avvisi_risposte' && o.tipo === 'select')
+        const cancella = h.operazioni.findIndex((o) => o.tabella === 'avvisi' && o.tipo === 'delete')
+        expect(conta).toBeGreaterThanOrEqual(0)
+        expect(conta).toBeLessThan(cancella)
+        expect(h.operazioni[conta].filtri).toEqual({ avviso_id: AVVISO_ID })
+        const riga = h.eventi.find((e) => e.campi.esito === 'cancellato')
+        expect(riga!.campi).toMatchObject({ n_risposte_portate_via: 5 })
+    })
+
+    it('conteggio delle risposte fallito → 200, riga error col codice, e il successo dice «non contate» (null), non zero', async () => {
+        h.erroreContaRisposte = { code: '57014', message: 'canceling statement due to statement timeout' }
+        const res = await AVVISO_DELETE(req(), ctx())
+
+        // Una lettura che non decide niente: l'avviso si cancella lo stesso.
+        expect(res.status).toBe(200)
+        expect(deleteSu('avvisi')).toHaveLength(1)
+        const guasto = h.eventi.find((e) => e.campi.esito === 'risposte-non-contate')
+        expect(guasto).toBeDefined()
+        expect(guasto!.livello).toBe('error')
+        expect(JSON.stringify(guasto!.err)).toContain('57014')
+        const riga = h.eventi.find((e) => e.campi.esito === 'cancellato')
+        expect(riga!.campi.n_risposte_portate_via).toBeNull()
+    })
+
+    it('database senza la tabella (PGRST205, il caso della CI non migrata) → 200 come prima, riga info e non error, null', async () => {
+        h.erroreContaRisposte = { code: 'PGRST205', message: "Could not find the table 'public.avvisi_risposte' in the schema cache" }
+        const res = await AVVISO_DELETE(req(), ctx())
+
+        // Il conteggio è un di più del log: senza la tabella la cancellazione va come prima.
+        expect(res.status).toBe(200)
+        expect(deleteSu('avvisi')).toHaveLength(1)
+        expect(deleteSu('notifiche')).toHaveLength(1)
+        const guasto = h.eventi.find((e) => e.campi.esito === 'risposte-non-contate')
+        expect(guasto!.livello).toBe('info')
+        const riga = h.eventi.find((e) => e.campi.esito === 'cancellato')
+        expect(riga!.campi.n_risposte_portate_via).toBeNull()
     })
 })
 

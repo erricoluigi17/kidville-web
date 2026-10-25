@@ -19,7 +19,17 @@ export const CASSA_MAX_BYTES = CASSA_MAX_MB * 1024 * 1024
 /** Crea il bucket PRIVATO se manca. Non lancia mai (corsa fra richieste parallele ok). */
 export async function ensureCassaBucket(supabase: SupabaseClient): Promise<void> {
   try {
-    const { data } = await supabase.storage.listBuckets()
+    const { data, error: erroreElenco } = await supabase.storage.listBuckets()
+    if (erroreElenco) {
+      // Senza l'elenco non si crea alla cieca. Se il bucket manca davvero, a valle
+      // `createSignedUploadUrl` fallisce col suo errore, e questa riga dice da dove partire.
+      logEvento('storage', 'warn', {
+        operazione: 'ensureCassaBucket',
+        bucket: CASSA_BUCKET,
+        esito: 'bucket_non_verificato',
+      }, erroreElenco)
+      return
+    }
     if (data?.some((b) => b.name === CASSA_BUCKET)) return
     await supabase.storage.createBucket(CASSA_BUCKET, {
       public: false,

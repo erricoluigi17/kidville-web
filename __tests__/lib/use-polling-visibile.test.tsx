@@ -185,8 +185,7 @@ describe('usePollingVisibile', () => {
     });
 
     it('5. `intervalloNascostoMs` RALLENTA invece di fermare', () => {
-        // È il caso di `useUnreadNotifications`, che quando la pagina non è a fuoco è l'unico a
-        // mandare la notifica del browser: spegnerlo spegnerebbe la funzione che vive lì.
+        // È il caso della lista della chat (`useConversazioneChat`): da nascosta `annunciaNonLetti` manda la notifica del browser, e spegnere l'orologio la spegnerebbe.
         const tic = vi.fn();
         renderHook(() => usePollingVisibile(tic, 30_000, { intervalloNascostoMs: 300_000 }));
 

@@ -7,7 +7,9 @@ import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logEvento } from '@/lib/logging/logger';
+import { rispostaGuastoDb } from '@/lib/db/guasto';
+import { rispostaErroreInterno } from '@/lib/api/errore-interno';
 
 // '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
 const getQuerySchema = z.object({
@@ -72,16 +74,13 @@ export const GET = withRoute('notes:GET', async (request: NextRequest) => {
 
         const { data, error } = await query;
 
-        if (error) {
-            logErrore({ operazione: 'notes:GET', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: 'Errore nel recupero delle note', details: error.message }, { status: 500 });
-        }
+        // Il testo di PostgREST resta nel log: nella risposta c'era come `details`.
+        if (error) return rispostaGuastoDb('notes:GET', 'db:note_disciplinari', error);
 
         return NextResponse.json({ success: true, data });
 
     } catch (error) {
-        logErrore({ operazione: 'notes:GET', stato: 500 }, error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return rispostaErroreInterno('notes:GET', error);
     }
 });
 
@@ -136,10 +135,7 @@ export const POST = withRoute('notes:POST', async (request: NextRequest) => {
                 alunni ( nome, cognome, classe_sezione )
             `);
 
-        if (dbError) {
-            logErrore({ operazione: 'notes:POST', stato: 500, evento: 'db' }, dbError);
-            return NextResponse.json({ error: 'Errore nel salvataggio della nota', details: dbError.message }, { status: 500 });
-        }
+        if (dbError) return rispostaGuastoDb('notes:POST', 'db:note_disciplinari', dbError, 'scrittura');
 
         // Notifica ai genitori (best-effort) — allineata al registro primaria:
         // stesso tipo/toggle (nota / nota_firma) e stesso buffer 10'.
@@ -152,12 +148,18 @@ export const POST = withRoute('notes:POST', async (request: NextRequest) => {
                 link: '/parent/diary',
                 entitaTipo: 'nota',
             });
-        } catch { /* non bloccare */ }
+        } catch (e) {
+            // La nota è scritta: rispondere 500 inviterebbe a scriverla due volte. Ma i genitori non la
+            // vedranno arrivare, e fino al 20/10 nessuno lo sapeva: il catch era muto.
+            logEvento('notifica', 'error', {
+                operazione: 'notes:POST',
+                esito: 'notifica-genitori-non-accodata',
+            }, e);
+        }
 
         return NextResponse.json({ success: true, data, count: data?.length ?? 0 });
 
     } catch (error) {
-        logErrore({ operazione: 'notes:POST', stato: 500 }, error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return rispostaErroreInterno('notes:POST', error);
     }
 });

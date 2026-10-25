@@ -95,21 +95,64 @@ export function pathDefinitivi(scuolaId: string, anno: number, numero: number) {
     originale: (ext: string) => `${base}-originale.${ext}`,
     timbrato: `${base}-timbrato.pdf`,
     allegato: (ordine: number, nome: string) => `${base}-allegati/${ordine}-${slugNomeFile(nome)}`,
+    /**
+     * T4 (robustezza, seconda serie, sessione 3): il documento sostituito da una rettifica non
+     * si sovrascrive senza copia. Resta qui, accanto alla registrazione, e se ne va con lei:
+     * `protocollo_elimina` restituisce anche gli oggetti sotto questo prefisso, ricavato in SQL
+     * allo stesso modo (scuola/anno/numero a 7 cifre + `-versioni/`).
+     */
+    prefissoVersioni: `${base}-versioni/`,
+    versione: (istante: string, percorsoAttuale: string) =>
+      `${base}-versioni/${istante}-${percorsoAttuale.slice(percorsoAttuale.lastIndexOf('/') + 1)}`,
   }
+}
+
+/** L'istante di una versione, in UTC al millesimo: `YYYYMMDDHHMMSSmmm` (17 cifre, ordinabile). */
+export function istanteVersione(quando: Date): string {
+  return quando.toISOString().replace(/[-:.TZ]/g, '')
 }
 
 /** Crea il bucket privato se manca (pattern fascicolo). Non lancia mai. */
 export async function ensureBucket(supabase: SupabaseClient): Promise<void> {
   try {
-    const { data } = await supabase.storage.listBuckets()
+    const { data, error: erroreElenco } = await supabase.storage.listBuckets()
+    if (erroreElenco) {
+      logEvento('storage', 'warn', {
+        operazione: 'protocolli/store:ensureBucket',
+        bucket: PROTOCOLLO_BUCKET,
+        esito: 'bucket_non_verificato',
+      }, erroreElenco)
+      return
+    }
     if (data?.some((b) => b.name === PROTOCOLLO_BUCKET)) return
-    await supabase.storage.createBucket(PROTOCOLLO_BUCKET, {
+    const { error: erroreCreazione } = await supabase.storage.createBucket(PROTOCOLLO_BUCKET, {
       public: false,
       allowedMimeTypes: [...MIME_AMMESSI],
       fileSizeLimit: PROTOCOLLO_MAX_BYTES,
     })
-  } catch {
-    // corsa fra richieste parallele o bucket già esistente: ignorato
+    if (erroreCreazione) {
+      // `createBucket` NON lancia: risponde `{ error }`, e il `catch` qui sotto non lo vede mai.
+      // Un fallimento vero (permessi, quota) restava muto, e a valle il caricamento diceva solo
+      // «bucket mancante». Anche la corsa fra richieste parallele arriva qui
+      // (`ResourceAlreadyExists`): il codice la distingue. Solo bucket e codice, mai un percorso.
+      const { code, statusCode, status } = erroreCreazione as {
+        code?: unknown; statusCode?: unknown; status?: unknown
+      }
+      logEvento('storage', 'warn', {
+        operazione: 'protocolli/store:ensureBucket',
+        bucket: PROTOCOLLO_BUCKET,
+        esito: 'creazione-non-riuscita',
+        error_code: String(code ?? statusCode ?? status ?? 'sconosciuto'),
+      }, erroreCreazione)
+    }
+  } catch (e) {
+    // Solo ciò che LANCIA (rete, eccezione del client): `info`, non `error`, come prima. Il rifiuto
+    // di `createBucket` arriva come valore ed è loggato sopra, a livello `warn`.
+    logEvento('storage', 'info', {
+      operazione: 'protocolli/store:ensureBucket',
+      bucket: PROTOCOLLO_BUCKET,
+      esito: 'creazione-saltata',
+    }, e)
   }
 }
 

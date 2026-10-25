@@ -236,8 +236,17 @@ export async function persistCertificato(
   userId: string,
   data: CertificatoData
 ): Promise<void> {
-  const { data: buckets } = await supabase.storage.listBuckets()
-  if (!buckets?.some((b: { name: string }) => b.name === CERTIFICATI_BUCKET)) {
+  const { data: buckets, error: erroreElenco } = await supabase.storage.listBuckets()
+  if (erroreElenco) {
+    // Senza l'elenco non si crea alla cieca: l'upload qui sotto ha il suo errore, e se il bucket manca
+    // davvero è lui a fermare l'archiviazione.
+    logEvento('storage', 'warn', {
+      operazione: 'persistCertificato',
+      bucket: CERTIFICATI_BUCKET,
+      esito: 'bucket_non_verificato',
+      entita_id: certificatoId,
+    }, erroreElenco)
+  } else if (!buckets?.some((b: { name: string }) => b.name === CERTIFICATI_BUCKET)) {
     await supabase.storage.createBucket(CERTIFICATI_BUCKET, {
       public: false,
       allowedMimeTypes: ['application/pdf'],

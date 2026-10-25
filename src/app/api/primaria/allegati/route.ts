@@ -184,7 +184,7 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
 
     // Assicura il bucket.
     try {
-      const { data: buckets } = await supabase.storage.listBuckets()
+      const { data: buckets, error: erroreElenco } = await supabase.storage.listBuckets()
       // Bucket PRIVATO. Era `public: true` e il percorso veniva salvato come
       // `getPublicUrl`: un allegato del registro — compiti, verifiche, foto di
       // lavagne con nomi di bambini — era leggibile da CHIUNQUE avesse (o
@@ -195,7 +195,15 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
         allowedMimeTypes: ['application/pdf', ...IMG_TYPES_ALLEGATO],
         fileSizeLimit: MAX_PDF_ALLEGATO,
       }
-      if (!buckets?.some((b) => b.name === BUCKET_ALLEGATI_REGISTRO)) {
+      if (erroreElenco) {
+        // Senza l'elenco non si sa se il bucket c'è: crearlo alla cieca, o saltare il passaggio che lo
+        // rende privato, sarebbe decidere su un vuoto. L'upload qui sotto ha il suo errore.
+        logEvento('storage', 'warn', {
+          operazione,
+          bucket: BUCKET_ALLEGATI_REGISTRO,
+          esito: 'bucket_non_verificato',
+        }, erroreElenco)
+      } else if (!buckets?.some((b) => b.name === BUCKET_ALLEGATI_REGISTRO)) {
         await supabase.storage.createBucket(BUCKET_ALLEGATI_REGISTRO, opts)
       } else {
         // Se esiste già ed era pubblico, `createBucket` non lo cambierebbe.

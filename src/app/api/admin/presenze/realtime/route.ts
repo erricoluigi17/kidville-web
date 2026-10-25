@@ -4,10 +4,11 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
-import { aggregaPresenze, TOTALE_VUOTO } from '@/lib/presenze/aggregate'
+import { aggregaPresenze, TOTALE_VUOTO, type AlunnoRow, type PresenzaRow } from '@/lib/presenze/aggregate'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
 
 /**
  * GET /api/admin/presenze/realtime — aggregato presenze di OGGI per il
@@ -19,6 +20,17 @@ import { logEvento } from '@/lib/logging/logger'
  */
 
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
+/**
+ * L'esito di `leggiABlocchi` nella forma `{ data, error }` che il ciclo di log della route già
+ * conosce. Il tetto diventa un errore che lo dice (`descriviTetto`): il cruscotto degrada come per
+ * un guasto, e la riga `cockpit-lettura-parziale` porta i conteggi invece di un numero sbagliato.
+ */
+function comeRisposta<T>(esito: EsitoABlocchi<T>, tipo: string): { data: T[] | null; error: unknown } {
+  if (esito.ok) return { data: esito.righe, error: null }
+  if (esito.motivo === 'tetto') return { data: null, error: new Error(descriviTetto(tipo, esito)) }
+  return { data: null, error: esito.error }
+}
 
 export const GET = withRoute('admin/presenze/realtime:GET', async (request: Request) => {
   const auth = await requireStaff(request)
@@ -45,23 +57,33 @@ export const GET = withRoute('admin/presenze/realtime:GET', async (request: Requ
   // proprio con `oggiFiscaleISO()`.
   const today = oggiFiscaleISO()
 
-  const [alunniRes, presenzeRes, sectionsRes, schoolsRes] = await Promise.all([
-    supabase
-      .from('alunni')
-      .select('id, section_id, scuola_id')
-      .in('scuola_id', plessi)
-      .eq('stato', 'iscritto'),
+  // ── A BLOCCHI (robustezza 2, sessione 11) ───────────────────────────────────
+  // Con «Tutte le sedi» gli iscritti e le presenze di un giorno si avvicinano a 1000: oltre,
+  // PostgREST consegnava le prime 1000 righe in silenzio, e il cruscotto contava meno presenti e
+  // più «appelli mancanti» del vero. `.limit(5000)` non serviva a niente: `max_rows` vince su
+  // qualunque `limit`. Sezioni e sedi dei plessi restano letture semplici (decine di righe).
+  const [alunniLetti, presenzeLette, sectionsRes, schoolsRes] = await Promise.all([
+    leggiABlocchi<AlunnoRow>(() =>
+      supabase
+        .from('alunni')
+        .select('id, section_id, scuola_id')
+        .in('scuola_id', plessi)
+        .eq('stato', 'iscritto'),
+    ),
     // Scope in query via join sull'alunno; l'aggregazione ignora comunque
     // le righe di alunni fuori elenco (doppia cintura).
-    supabase
-      .from('presenze')
-      .select('alunno_id, stato, alunni!inner ( scuola_id )')
-      .eq('data', today)
-      .in('alunni.scuola_id', plessi)
-      .limit(5000),
+    leggiABlocchi<PresenzaRow>(() =>
+      supabase
+        .from('presenze')
+        .select('alunno_id, stato, alunni!inner ( scuola_id )')
+        .eq('data', today)
+        .in('alunni.scuola_id', plessi),
+    ),
     supabase.from('sections').select('id, name, scuola_id').in('scuola_id', plessi),
     supabase.from('schools').select('id, nome').in('id', plessi),
   ])
+  const alunniRes = comeRisposta(alunniLetti, 'presenze-realtime-alunni')
+  const presenzeRes = comeRisposta(presenzeLette, 'presenze-realtime-presenze')
 
   // PostgREST non lancia: un guasto qui usciva come «zero iscritti, zero
   // presenti, tutti gli appelli mancanti» dentro un 200 — cioè il cruscotto del

@@ -52,7 +52,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn(async () => ({
     from(tabella: string) {
       const qb: Record<string, unknown> = {}
-      for (const m of ['select', 'order', 'not', 'is'] as const) qb[m] = () => qb
+      // `range` chiude la catena di `leggiABlocchi` (cruscotto realtime, sessione 11): restituisce
+      // il costruttore stesso, che è «thenable», e le righe arrivano dal `then` qui sotto.
+      for (const m of ['select', 'order', 'not', 'is', 'range'] as const) qb[m] = () => qb
       for (const m of ['eq', 'lte', 'gte', 'in', 'limit'] as const) {
         qb[m] = (colonna: unknown, valore?: unknown) => {
           h.filtri.push({ tabella, metodo: m, colonna: String(colonna), valore })
@@ -167,7 +169,9 @@ describe('T26 — `attendance/monthly`: il calendario mostra, il conteggio no', 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('T27 — `admin/presenze/realtime`: il giorno è quello ITALIANO', () => {
   it('interroga `presenze` sul giorno civile italiano, non su quello UTC', async () => {
-    await Realtime(new NextRequest('http://localhost/api/admin/presenze/realtime'))
+    const res = await Realtime(new NextRequest('http://localhost/api/admin/presenze/realtime'))
+    // Un'asserzione che passa su un 500 non misura niente (la testata di questo finto lo dice).
+    expect(res.status).toBe(200)
     const giorno = h.filtri.find((f) => f.tabella === 'presenze' && f.metodo === 'eq' && f.colonna === 'data')?.valore
     expect(
       giorno,

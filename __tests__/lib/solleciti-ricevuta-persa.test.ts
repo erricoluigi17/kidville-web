@@ -82,9 +82,12 @@ function client(): SupabaseClient {
  * richiesta non arriva affatto.
  */
 type Guasto = 'nessuno' | '504-dopo-consegna' | 'reset-dopo-consegna' | '502-sempre-dopo-consegna' | 'dns-una-volta'
+  | 'tls-una-volta' | '422-registrato'
 let guasto: Guasto
 let consegne: string[]
 let chiavi: Map<string, { corpo: string; id: string }>
+/** Tutte le chiavi che hanno raggiunto Resend, rifiuti compresi, nell'ordine. */
+let chiaviViste: string[]
 
 function installaResend(): void {
   vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -93,8 +96,21 @@ function installaResend(): void {
       guasto = 'nessuno'
       throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } })
     }
+    // L'handshake TLS fallisce (certificato scaduto): la richiesta HTTP non parte affatto.
+    if (guasto === 'tls-una-volta') {
+      guasto = 'nessuno'
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'CERT_HAS_EXPIRED' } })
+    }
     const chiave = (init?.headers as Record<string, string>)['Idempotency-Key']
     const corpo = String(init?.body)
+    chiaviViste.push(chiave)
+    // Un rifiuto CERTO che Resend REGISTRA sulla chiave (seconda revisione del lotto 4): da lì,
+    // stessa chiave + stesso corpo = di nuovo il 422; stessa chiave + corpo diverso = il 409.
+    if (guasto === '422-registrato') {
+      guasto = 'nessuno'
+      chiavi.set(chiave, { corpo, id: 'RIFIUTO' })
+      return new Response(JSON.stringify({ name: 'validation_error', message: 'Invalid `to` field' }), { status: 422 })
+    }
     if (guasto === '502-sempre-dopo-consegna' && consegne.length > 0) {
       return new Response('<html>502 Bad Gateway</html>', { status: 502 })
     }
@@ -103,6 +119,7 @@ function installaResend(): void {
       if (vista.corpo !== corpo) {
         return new Response(JSON.stringify({ name: 'invalid_idempotent_request', message: 'Same idempotency key used with a different request payload.' }), { status: 409 })
       }
+      if (vista.id === 'RIFIUTO') return new Response(JSON.stringify({ name: 'validation_error', message: 'Invalid `to` field' }), { status: 422 })
       return new Response(JSON.stringify({ id: vista.id }), { status: 200 })
     }
     const id = `msg-finto-${consegne.length + 1}`
@@ -139,6 +156,7 @@ beforeEach(() => {
   guasto = 'nessuno'
   consegne = []
   chiavi = new Map()
+  chiaviViste = []
   installaResend()
   db = {
     pagamenti: [{
@@ -202,9 +220,16 @@ describe('solleciti + Resend — la ricevuta persa non diventa un doppio invio',
   })
 
   it('🔴 la chiave di oggi è già arrivata a Resend con un altro corpo (409 invalid_idempotent_request) ⇒ incerto, la presa resta', async () => {
-    // Come se un giro di stamattina avesse spedito questo sollecito con un testo diverso (un
-    // pagamento parziale in mezzo cambia il residuo) e la sua presa fosse poi tornata indietro.
-    chiavi.set(`sollecito:${PID}:L1:${GID}:2026-10-26`, { corpo: 'il corpo di stamattina', id: 'msg-di-stamattina' })
+    // Dalla seconda revisione del lotto 4 la chiave porta l'impronta del contenuto: un testo
+    // diverso (un pagamento parziale in mezzo cambia il residuo) fa una chiave diversa, e il 409
+    // non nasce più da un contenuto nostro cambiato. Resta la difesa se mai arrivasse: la chiave
+    // è QUELLA che il motore produce oggi per questo sollecito, presa da un primo giro.
+    await bottone()
+    const chiaveDiOggi = consegne[0]
+    db.pagamenti[0].ultimo_sollecito_il = null
+    db.solleciti = []
+    consegne = []
+    chiavi = new Map([[chiaveDiOggi, { corpo: 'il corpo di stamattina', id: 'msg-di-stamattina' }]])
     const [esito] = await bottone()
     expect(esito).toMatchObject({ ok: false, inviate: 0, motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza' })
     expect(cadenza()).toBe('2026-10-26T07:00:00.000Z')
@@ -221,5 +246,49 @@ describe('solleciti + Resend — la ricevuta persa non diventa un doppio invio',
     const [giorno2] = await bottone()
     expect(giorno2).toMatchObject({ ok: true, inviate: 1 })
     expect(consegneL1()).toBe(1)
+  })
+
+  // ─── Seconda revisione del lotto 4 ───────────────────────────────────────────────────────────
+  it('🔴 certificato scaduto (`CERT_HAS_EXPIRED`: l’handshake fallisce, la richiesta non parte) ⇒ esito certo come il DNS: la presa si annulla, il giorno dopo parte', async () => {
+    guasto = 'tls-una-volta'
+    const [giorno1] = await bottone()
+    expect(giorno1).toMatchObject({ ok: false, inviate: 0, motivo: 'nessuna email partita: il sollecito resta per il giro successivo' })
+    expect(cadenza()).toBeNull()
+    expect(registro()[0].destinatari[0]).toMatchObject({ inviata: false })
+    expect(registro()[0].destinatari[0].incerta).toBeUndefined()
+
+    vi.setSystemTime(new Date('2026-10-27T07:00:00.000Z'))
+    const [giorno2] = await bottone()
+    expect(giorno2).toMatchObject({ ok: true, inviate: 1 })
+    expect(consegneL1()).toBe(1)
+  })
+
+  it('🔴 rifiuto CERTO che Resend registra sulla chiave (422), poi l’indirizzo corretto lo stesso giorno ⇒ chiave nuova, niente 409, il sollecito parte', async () => {
+    guasto = '422-registrato'
+    const [mattina] = await bottone()
+    expect(mattina).toMatchObject({ ok: false, inviate: 0, motivo: 'nessuna email partita: il sollecito resta per il giro successivo' })
+    expect(cadenza()).toBeNull()
+
+    // La segreteria corregge l'indirizzo e ripreme il bottone alle 10: prima il contenuto era
+    // diverso con la STESSA chiave ⇒ 409 ⇒ «esito incerto» ⇒ voce ferma 7 giorni, zero consegne.
+    db.utenti[0].email = 'genitore.corretto@example.test'
+    vi.setSystemTime(new Date('2026-10-26T10:00:00.000Z'))
+    const [ore10] = await bottone()
+    expect(ore10).toMatchObject({ ok: true, inviate: 1 })
+    expect(consegneL1()).toBe(1)
+    expect(chiaviViste).toHaveLength(2)
+    expect(chiaviViste[1]).not.toBe(chiaviViste[0])
+  })
+
+  it('stesso sollecito, STESSO contenuto, stesso giorno ⇒ la STESSA chiave: l’idempotenza resta (Resend ripete il suo esito)', async () => {
+    guasto = '422-registrato'
+    await bottone()
+    vi.setSystemTime(new Date('2026-10-26T10:00:00.000Z'))
+    const [ore10] = await bottone()
+    expect(chiaviViste).toHaveLength(2)
+    expect(chiaviViste[1]).toBe(chiaviViste[0])
+    // Resend ha riconosciuto la chiave e ha ripetuto il rifiuto: nessuna consegna nuova.
+    expect(ore10).toMatchObject({ ok: false, inviate: 0 })
+    expect(consegne).toHaveLength(0)
   })
 })

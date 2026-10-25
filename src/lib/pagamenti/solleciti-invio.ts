@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
@@ -47,7 +48,8 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    della segreteria) non spediscono due volte: il secondo trova la data cambiata e
 //    salta. Il prezzo, scelto: se il giro muore fra la presa e l'email, quel sollecito
 //    slitta di una cadenza invece di partire due volte;
-//  • ogni email porta una chiave d'idempotenza (voce, livello, destinatario, giorno):
+//  • ogni email porta una chiave d'idempotenza (voce, livello, destinatario, giorno e, dalla
+//    seconda revisione del lotto 4, l'impronta del contenuto: `chiaveIdempotenzaSollecito`):
 //    un ritentativo nello stesso giorno Resend non lo rispedisce;
 //  • un tetto di tempo (`scadenza`): oltre, le voci restanti escono `rinviato per
 //    tempo` e le riprende il giro dopo, invece di morire col muro della Function.
@@ -123,6 +125,48 @@ const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
  * `cs.[{"inviata":true}]`, cioè `destinatari @> '[{"inviata":true}]'`.
  */
 const FILTRO_RECAPITATO = '[{"inviata":true}]'
+
+/**
+ * La chiave d'idempotenza di UNA email di sollecito: voce + livello + destinatario + giorno +
+ * l'IMPRONTA del contenuto (seconda revisione del lotto 4).
+ *
+ * Senza l'impronta la chiave non cambiava quando cambiava il contenuto, e Resend risponde `409
+ * invalid_idempotent_request` a una chiave già vista con un messaggio diverso. Il caso vero: al
+ * mattino un 422 certo (indirizzo sbagliato) — se Resend registra la chiave anche sui rifiuti — la
+ * presa si annulla; alle 10 la segreteria corregge l'indirizzo e ripreme il bottone: stessa chiave,
+ * contenuto diverso ⇒ 409 ⇒ «esito incerto» ⇒ voce ferma una cadenza, con zero consegne e un
+ * motivo falso. Lo stesso per un residuo cambiato da un pagamento parziale in mezzo.
+ *
+ * Ora: contenuto diverso (indirizzo, oggetto, testo, HTML) ⇒ chiave diversa; STESSO contenuto ⇒
+ * STESSA chiave, quindi l'idempotenza resta intera — i ritentativi dentro un giro mandano lo stesso
+ * messaggio, e due giri dello stesso giorno sulla stessa voce invariata anche (il contenuto non
+ * dipende dall'orologio dentro il giorno). Il mittente non entra: lo decide `send.ts` da una
+ * variabile d'ambiente che dentro un giorno non cambia.
+ *
+ * Solo codici, come vuole `SendEmailParams.chiaveIdempotenza`: l'impronta è uno sha256 troncato a
+ * 16 cifre esadecimali (64 bit: per distinguere due versioni dello stesso sollecito bastano), e
+ * l'indirizzo non compare MAI in chiaro. Non si usa `hashCorrelabile`: senza `LOG_HASH_SALT`
+ * restituisce `[redatto]`, cioè la stessa impronta per ogni contenuto (e con le parentesi, fuori
+ * dalla forma ammessa). I campi passano da un elenco JSON perché il confine fra due campi conti
+ * («AB»+«C» non è «A»+«BC»). Lunghezza: ~117 caratteri, sotto i 256 di Resend.
+ */
+export function chiaveIdempotenzaSollecito(p: {
+    pagamentoId: string
+    livello: number
+    destinatarioId: string
+    /** `AAAA-MM-GG` (UTC) della presa. */
+    giorno: string
+    email: string
+    oggetto: string
+    testo: string
+    html: string
+}): string {
+    const impronta = createHash('sha256')
+        .update(JSON.stringify([p.email, p.oggetto, p.testo, p.html]))
+        .digest('hex')
+        .slice(0, 16)
+    return `sollecito:${p.pagamentoId}:L${p.livello}:${p.destinatarioId}:${p.giorno}:${impronta}`
+}
 
 /** Un destinatario nel registro: l'esito del suo invio. */
 interface DestinatarioRegistrato {
@@ -512,9 +556,14 @@ export async function sollecitaPagamenti(
             tentate++
             const invio = await sendEmailDetailed({
                 to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
-                // voce + livello + destinatario + giorno: lo stesso sollecito ritentato
-                // lo stesso giorno Resend non lo rispedisce. Solo uuid e una data.
-                chiaveIdempotenza: `sollecito:${id}:L${livello}:${d.id}:${giorno}`,
+                // voce + livello + destinatario + giorno + impronta del contenuto: lo stesso
+                // sollecito ritentato lo stesso giorno Resend non lo rispedisce, e uno con un
+                // contenuto diverso (indirizzo corretto, residuo cambiato) non trova un 409. Solo
+                // uuid, una data e un'impronta.
+                chiaveIdempotenza: chiaveIdempotenzaSollecito({
+                    pagamentoId: id, livello, destinatarioId: d.id, giorno,
+                    email: d.email, oggetto, testo: corpo, html: messaggio.html,
+                }),
                 // Sessione 9: i ritentativi (429, 5xx, rete) solo nel giro AUTOMATICO e dentro il
                 // suo tetto di tempo. Dal bottone la segreteria aspetta davanti allo schermo: un
                 // fallimento lo vede subito, e decide lei.

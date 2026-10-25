@@ -642,11 +642,54 @@ describe('solleciti — la presa sulla cadenza, PRIMA dell’email (fase 8)', ()
     expect(h.sequenza).toEqual([])
   })
 
-  it('ogni email porta la chiave d’idempotenza voce + livello + destinatario + giorno (solo uuid e data)', async () => {
+  it('ogni email porta la chiave d’idempotenza voce + livello + destinatario + giorno + impronta del contenuto (solo codici)', async () => {
     await POST(post({ pagamento_ids: [PID] }))
     const chiave = (h.sendEmailDetailed.mock.calls[0][0] as { chiaveIdempotenza?: string }).chiaveIdempotenza
-    expect(chiave).toMatch(new RegExp(`^sollecito:${PID}:L1:g-1:\\d{4}-\\d{2}-\\d{2}$`))
+    expect(chiave).toMatch(new RegExp(`^sollecito:${PID}:L1:g-1:\\d{4}-\\d{2}-\\d{2}:[0-9a-f]{16}$`))
     expect(chiave).not.toContain('@')
+    expect(chiave).not.toContain('genitore')
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — l'impronta del contenuto nella chiave d'idempotenza.
+//
+// La chiave era voce + livello + destinatario + giorno. Se Resend la registra anche su un rifiuto
+// certo (422), la segreteria che corregge l'indirizzo e ripreme il bottone lo stesso giorno manda
+// la STESSA chiave con un contenuto DIVERSO: `409 invalid_idempotent_request`, «esito incerto»,
+// voce ferma una cadenza con zero consegne. Ora la chiave porta un'impronta (sha256 troncato) di
+// destinatario, oggetto e corpo: contenuto diverso ⇒ chiave diversa, stesso contenuto ⇒ stessa.
+// =============================================================================
+describe('chiaveIdempotenzaSollecito — contenuto diverso, chiave diversa', () => {
+  const base = {
+    pagamentoId: PID, livello: 1, destinatarioId: 'g-1', giorno: '2026-10-26',
+    email: 'genitore.uno@example.test', oggetto: 'Promemoria pagamento', testo: 'Testo', html: '<p>Testo</p>',
+  }
+  const chiave = async (p: typeof base) => (await import('@/lib/pagamenti/solleciti-invio')).chiaveIdempotenzaSollecito(p)
+
+  it('stesso contenuto ⇒ la STESSA chiave (l’idempotenza dei ritentativi resta)', async () => {
+    expect(await chiave({ ...base })).toBe(await chiave({ ...base }))
+  })
+
+  it.each([
+    ['l’indirizzo corretto', { email: 'genitore.corretto@example.test' }],
+    ['un oggetto diverso', { oggetto: 'Secondo sollecito' }],
+    ['un residuo diverso nel testo', { testo: 'Testo con un altro residuo' }],
+    ['un HTML diverso', { html: '<p>Altro</p>' }],
+  ])('%s ⇒ una chiave diversa', async (_nome, cambio) => {
+    expect(await chiave({ ...base, ...cambio })).not.toBe(await chiave(base))
+  })
+
+  it('forma ammessa da Resend, nessun indirizzo in chiaro, sotto i 256 caratteri', async () => {
+    const k = await chiave(base)
+    expect(k).toMatch(/^[A-Za-z0-9:_.-]{1,256}$/)
+    expect(k.startsWith(`sollecito:${PID}:L1:g-1:2026-10-26:`)).toBe(true)
+    expect(k).not.toContain('@')
+    expect(k).not.toContain('example')
+  })
+
+  it('i confini dei campi contano: spostare un carattere fra due campi cambia la chiave', async () => {
+    expect(await chiave({ ...base, oggetto: 'AB', testo: 'C' })).not.toBe(await chiave({ ...base, oggetto: 'A', testo: 'BC' }))
   })
 })
 

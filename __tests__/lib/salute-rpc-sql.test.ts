@@ -502,3 +502,163 @@ describe('le due funzioni', () => {
         await mezzo.close()
     })
 })
+
+describe('dopo la sessione 8: storici-stampe chiama il server solo con la coda piena, e la salute lo sa', () => {
+    // Con 20261025151929_storici_tick_solo_con_lavoro.sql `storici_tick` chiama
+    // /api/admin/storici/cron solo quando `storici_generazioni` ha lavoro: a coda vuota l'ultima
+    // chiamata chiusa invecchia per ore, il giro SQL riesce ogni minuto, e per la RPC della sessione 7
+    // il job sarebbe «senza un esito buono» (salute `degradato` dopo 31 minuti di coda vuota). La
+    // stessa migrazione riscrive salute_cron_esiti con un elenco dichiarato dei job «a coda vuota»
+    // (oggi solo `storici-stampe`), per i quali l'esecuzione SQL riuscita torna a valere. Qui la
+    // migrazione della 7 e poi quella della 8, due volte; gli istanti sono relativi a now(), perché
+    // il limite dei 30 minuti sulla chiamata aperta si misura da now() e va provato davvero.
+    const DOPO_LA_8 = migrazione('_storici_tick_solo_con_lavoro.sql')
+
+    interface Riga {
+        job: string
+        stato: 'succeeded' | 'failed'
+        /** L'ultima chiamata chiusa, a quanti minuti fa (120 = coda vuota da 2 ore), e il suo esito. */
+        chiamataMinutiFa?: number
+        esito: 'ok' | 'errore-http' | 'errore-rete' | 'timeout' | 'esito-ignoto'
+        /** Una chiamata ancora aperta, inviata a quanti minuti fa. */
+        apertaMinutiFa?: number
+    }
+
+    async function bancoDopoLa8(righe: Riga[]): Promise<PGlite> {
+        const b = await nuovoDb()
+        await b.exec(DOPO_LA_8)
+        await b.exec(DOPO_LA_8) // idempotenza
+        await b.exec(`INSERT INTO cron.job (schedule, command, jobname, active)
+                      VALUES ('4,14,24,34,44,54 * * * *', 'select 1', 'cron-esiti', true)`)
+        await b.exec(`INSERT INTO public.cron_ultimo_esito
+                        (job, http, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
+                      VALUES ('cron-esiti', false, now() - interval '6 minutes', 'succeeded', now() - interval '6 minutes')`)
+        for (const r of righe) {
+            const chiamata = r.chiamataMinutiFa ?? 120
+            await b.query(`INSERT INTO cron.job (schedule, command, jobname, active) VALUES ('* * * * *', 'select 1', $1, true)`, [r.job])
+            // Come scrive la sessione 6: con l'ultima chiamata 'ok' l'ultimo ok è quella chiamata,
+            // altrimenti uno più vecchio (qui 3 ore fa).
+            await b.query(
+                `INSERT INTO public.cron_ultimo_esito
+                   (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
+                 VALUES ($1, true, now() - make_interval(mins => $2::int), $3, now() - interval '1 minute', $4,
+                         now() - make_interval(mins => CASE WHEN $3 = 'ok' THEN $2::int ELSE 180 END))`,
+                [r.job, chiamata, r.esito, r.stato],
+            )
+            if (r.apertaMinutiFa !== undefined) {
+                await b.query(
+                    `INSERT INTO public.cron_chiamate (job, richiesta_id, percorso, timeout_ms, inviata_il)
+                     VALUES ($1, 7, '/api/x', 300000, now() - make_interval(mins => $2::int))`,
+                    [r.job, r.apertaMinutiFa],
+                )
+            }
+        }
+        return b
+    }
+
+    /** Minuti da `vivo_il` per job (null = mai vivo). */
+    async function vivoMinutiFa(b: PGlite): Promise<Record<string, number | null>> {
+        const { rows } = await b.query<{ job: string; minuti: number | null }>(`
+          SELECT job, round(extract(epoch FROM now() - vivo_il) / 60)::int AS minuti
+            FROM public.salute_cron_esiti() WHERE job <> 'cron-esiti'`)
+        return Object.fromEntries(rows.map((r) => [r.job, r.minuti]))
+    }
+
+    it('(a) coda vuota da 2 ore, ultima chiamata ok 2 ore fa, giro SQL riuscito 1 minuto fa: vivo, e la salute dice ok', async () => {
+        const b = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'succeeded', esito: 'ok' }])
+        expect(await vivoMinutiFa(b)).toEqual({ 'storici-stampe': 1 })
+        expect(await decisione(b, Date.now())).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
+        await b.close()
+    })
+
+    it('(b) controllo negativo: un job HTTP fuori dall’elenco, nella stessa situazione, resta senza esito buono', async () => {
+        const b = await bancoDopoLa8([
+            { job: 'storici-stampe', stato: 'succeeded', esito: 'ok' },
+            { job: 'altro-http', stato: 'succeeded', esito: 'ok' },
+        ])
+        expect(await vivoMinutiFa(b)).toEqual({ 'altro-http': 120, 'storici-stampe': 1 })
+        expect(await decisione(b, Date.now())).toEqual({
+            esito: 'degradato',
+            dettaglio: '3 job attivi; senza un esito buono entro la finestra: altro-http',
+        })
+        await b.close()
+    })
+
+    it('(c) un giro SQL FALLITO di storici-stampe non lo rende vivo', async () => {
+        const b = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'failed', esito: 'ok' }])
+        expect(await vivoMinutiFa(b)).toEqual({ 'storici-stampe': 120 })
+        expect(await decisione(b, Date.now())).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    it('(d) una chiamata aperta da più di 30 minuti (pg_net fermo) non lo rende vivo; una aperta da 10 sì', async () => {
+        const ferma = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'succeeded', esito: 'ok', apertaMinutiFa: 45 }])
+        expect(await vivoMinutiFa(ferma)).toEqual({ 'storici-stampe': 120 })
+        expect((await decisione(ferma, Date.now())).esito).toBe('degradato')
+        await ferma.close()
+
+        const inVolo = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'succeeded', esito: 'ok', apertaMinutiFa: 10 }])
+        expect(await vivoMinutiFa(inVolo)).toEqual({ 'storici-stampe': 1 })
+        expect((await decisione(inVolo, Date.now())).esito).toBe('ok')
+        await inVolo.close()
+    })
+
+    it('(e) la coda ha lavoro e il server respinge ogni chiamata: il giro SQL che accoda e basta non copre il rifiuto', async () => {
+        // Con lavoro in coda storici_tick chiama a ogni minuto; se la route risponde 500 la riga
+        // resta da prendere e il giro dopo richiama. Il giro SQL riesce sempre (cron_http_post accoda
+        // e torna): se valesse, la salute direbbe ok per sempre, con «ultimo esito fallito» che non
+        // esce mai dalla finestra. Lo stesso per una risposta mai letta (esito-ignoto, «mai vivo»
+        // per la sessione 7). Il timeout del client invece è vivo (la route può aver finito).
+        const b = await bancoDopoLa8([
+            { job: 'storici-stampe', stato: 'succeeded', esito: 'errore-http', chiamataMinutiFa: 5 },
+        ])
+        expect(await vivoMinutiFa(b)).toEqual({ 'storici-stampe': 180 })
+        expect(await decisione(b, Date.now())).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+
+        for (const esito of ['errore-rete', 'esito-ignoto'] as const) {
+            const c = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'succeeded', esito }])
+            expect(await vivoMinutiFa(c), esito).toEqual({ 'storici-stampe': 180 })
+            await c.close()
+        }
+        const t = await bancoDopoLa8([{ job: 'storici-stampe', stato: 'succeeded', esito: 'timeout' }])
+        expect(await vivoMinutiFa(t)).toEqual({ 'storici-stampe': 1 })
+        await t.close()
+    })
+
+    it('la riscrittura tiene firma, SECURITY DEFINER, STABLE, search_path vuoto e permessi della sessione 7', async () => {
+        const b = await bancoDopoLa8([])
+        const { rows } = await b.query<{ n: number; prosecdef: boolean; provolatile: string; proconfig: string[] | null; risultato: string }>(`
+          SELECT count(*) OVER () AS n, prosecdef, provolatile, proconfig, pg_get_function_result(oid) AS risultato
+            FROM pg_proc WHERE proname = 'salute_cron_esiti'`)
+        expect(rows).toHaveLength(1)
+        expect([Number(rows[0].n), rows[0].prosecdef, rows[0].provolatile]).toEqual([1, true, 's'])
+        expect(rows[0].proconfig?.[0]).toMatch(/^search_path=(""|)$/)
+        expect(rows[0].risultato).toBe(
+            'TABLE(job text, cadenza text, esito text, visto_il timestamp with time zone, vivo_il timestamp with time zone)',
+        )
+        const permessi = await b.query(`
+          SELECT r AS ruolo, has_function_privilege(r, 'public.salute_cron_esiti()', 'EXECUTE') AS esegue
+            FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) AS r ORDER BY r`)
+        expect(permessi.rows).toEqual([
+            { ruolo: 'anon', esegue: false },
+            { ruolo: 'authenticated', esegue: false },
+            { ruolo: 'service_role', esegue: true },
+        ])
+        expect(await codiceErrore(b, `SET ROLE anon; SELECT * FROM public.salute_cron_esiti()`)).toBe('42501')
+        await b.close()
+    })
+
+    it('senza le tabelle di pg_cron (il DB della CI) la migrazione della 8 si applica e la chiamata alza ancora P0001', async () => {
+        const vuoto = await nuovoDb({ cron: false, esiti: false, chiamate: false })
+        await vuoto.exec(DOPO_LA_8)
+        expect(await codiceErrore(vuoto, 'SELECT * FROM public.salute_cron_esiti()')).toBe('P0001')
+        await vuoto.close()
+    })
+})

@@ -33,6 +33,13 @@
 --   funzioni restano, innocui. Toglierli è una scelta del titolare e richiede la riga
 --   «-- distruttiva approvata:» (lock `migrazioni-distruttive-approvate`).
 
+-- Un tetto all'attesa dei lock, per questa transazione soltanto. L'ADD COLUMN aspetta ogni
+-- transazione aperta su notifiche e tutte le letture/scritture si accodano dietro; meglio una
+-- migrazione che fallisce forte che una tabella ferma. Se scatta, l'errore è 55P03
+-- (lock_not_available) e la migrazione si riapplica a un'ora quieta. Niente CONCURRENTLY (non
+-- gira in una transazione) e niente indice parziale (PostgREST non lo usa come arbitro: 42P10).
+SET LOCAL lock_timeout = '15s';
+
 -- ── Promemoria ───────────────────────────────────────────────────────────────────────────────────
 ALTER TABLE public.notifiche ADD COLUMN IF NOT EXISTS chiave_dedup text;
 COMMENT ON COLUMN public.notifiche.chiave_dedup IS
@@ -47,7 +54,10 @@ CREATE TABLE IF NOT EXISTS public.cron_prese (
   presa_token    uuid
 );
 ALTER TABLE public.cron_prese ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.cron_prese FROM PUBLIC, anon, authenticated;
+-- Come cron_chiamate: i privilegi predefiniti di Supabase darebbero ALL anche a service_role, che ha
+-- BYPASSRLS e potrebbe prendere o liberare una presa senza le due funzioni. Scrivono solo loro
+-- (SECURITY DEFINER, del proprietario, che non ha bisogno di grant); service_role legge e basta.
+REVOKE ALL ON TABLE public.cron_prese FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON TABLE public.cron_prese TO service_role;
 INSERT INTO public.cron_prese (job) VALUES ('fattura-sync') ON CONFLICT (job) DO NOTHING;
 

@@ -12,7 +12,11 @@ import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { puoEliminareStaff } from '@/lib/personale/permessi-eliminazione'
-import { cancellaFascicoloPersonale } from '@/lib/personale/cancella-fascicolo'
+import {
+  eliminaRigheDipendente,
+  leggiFascicoloPersonale,
+  spostaScansioniNelCestino,
+} from '@/lib/personale/cancella-fascicolo'
 import {
   ARCHIVIAZIONE_MANTIENE,
   TRACCE_DOCENTE,
@@ -421,13 +425,30 @@ async function archivia(
   })
 }
 
+/** Il 503 di un fascicolo che non si è potuto leggere o cancellare: nessun file è stato toccato. */
+function fascicoloNonCancellato(): NextResponse {
+  return NextResponse.json(
+    {
+      error: 'Non è stato possibile togliere i documenti dall’archivio: nessun dato è stato cancellato',
+      codice: 'FASCICOLO_NON_CANCELLATO',
+    },
+    { status: 503 },
+  )
+}
+
 /**
- * La cancellazione vera: fascicolo → poteri → account.
+ * La cancellazione vera: poteri → righe (in una transazione) → account → file nel cestino.
  *
  * ⚠️ IL RAMO DI RIPIEGO È IL PUNTO DI QUESTA FUNZIONE. Postgres può rifiutare la
- * DELETE per una FK che il registro non copriva (una tabella nuova, una riga
- * arrivata fra l'anteprima e adesso): in quel caso si ARCHIVIA e la risposta lo
- * dice. Mai «cancellato» su una cancellazione che non c'è stata.
+ * cancellazione del profilo per una chiave senza cascata che il registro non copriva
+ * (una tabella nuova, una riga arrivata fra l'anteprima e adesso):
+ * `personale_elimina_dipendente` risponde 23503 e annulla TUTTO, e qui si ARCHIVIA
+ * senza aver toccato un file. Mai «cancellato» su una cancellazione che non c'è stata.
+ *
+ * I file per ULTIMI, e non cancellati: spostati nel cestino dello stesso bucket, da
+ * cui li distrugge il giro notturno `cestino-registro-retention`. I percorsi si
+ * leggono PRIMA di tutto, perché la cascata sulla pratica porta via i caricamenti
+ * che li nominano.
  */
 async function cancella(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -436,17 +457,9 @@ async function cancella(
   bersaglio: Bersaglio,
   plessi: string[],
 ): Promise<NextResponse> {
-  // 1. Il fascicolo e la pratica, file per primi.
-  const fascicolo = await cancellaFascicoloPersonale(supabase, utenteId, OPERAZIONE_POST)
-  if (!fascicolo.ok) {
-    return NextResponse.json(
-      {
-        error: 'Non è stato possibile togliere i documenti dall’archivio: nessun dato è stato cancellato',
-        codice: 'FASCICOLO_NON_CANCELLATO',
-      },
-      { status: 503 },
-    )
-  }
+  // 1. Che cosa c'è da cancellare, letto prima di toccare qualunque cosa.
+  const fascicolo = await leggiFascicoloPersonale(supabase, utenteId, OPERAZIONE_POST)
+  if (!fascicolo.ok) return fascicoloNonCancellato()
 
   // 2. I poteri.
   if (!(await sganciaPoteri(supabase, utenteId, plessi, OPERAZIONE_POST))) {
@@ -456,18 +469,45 @@ async function cancella(
     )
   }
 
-  // 3. L'account. `utenti` va via per `utenti_id_fkey … ON DELETE CASCADE`.
-  const { error } = await supabase.auth.admin.deleteUser(utenteId)
-  if (error) {
-    logEvento(
-      'gdpr',
-      'warn',
-      { operazione: OPERAZIONE_POST, esito: 'eliminazione-rifiutata-si-archivia', entita_id: utenteId },
-      error,
-    )
+  // 3. Le righe: pratica, fascicolo e profilo insieme, o nessuna.
+  const righe = await eliminaRigheDipendente(supabase, utenteId, fascicolo.praticaId, OPERAZIONE_POST)
+  if (righe.esito === 'rifiutata') {
     return await archivia(supabase, attore, utenteId, bersaglio, plessi, 0, 'cancellazione-rifiutata')
   }
+  if (righe.esito === 'guasto') return fascicoloNonCancellato()
 
+  // 4. L'account di accesso.
+  const { error: errAccount } = await supabase.auth.admin.deleteUser(utenteId)
+
+  // 5. I file nel cestino: SEMPRE, a questo punto, perché le righe che li nominavano
+  //    non ci sono più — anche quando l'account è stato rifiutato.
+  const file = await spostaScansioniNelCestino(supabase, fascicolo.percorsi, OPERAZIONE_POST)
+
+  let accountAccessoRimosso = true
+  if (errAccount) {
+    if (!righe.profiloEliminato) {
+      // Ripiego (la funzione nuova non c'è): il profilo lo doveva togliere la cascata
+      // dell'account, e l'account è stato rifiutato. Il dipendente esiste: si archivia.
+      logEvento(
+        'gdpr',
+        'warn',
+        { operazione: OPERAZIONE_POST, esito: 'eliminazione-rifiutata-si-archivia', entita_id: utenteId },
+        errAccount,
+      )
+      return await archivia(supabase, attore, utenteId, bersaglio, plessi, 0, 'cancellazione-rifiutata')
+    }
+    // Il profilo non c'è più: senza profilo nessun gate lo fa entrare, ma l'account di
+    // accesso è rimasto, e va tolto a mano. Si grida, con l'uuid per trovarlo.
+    accountAccessoRimosso = false
+    logEvento(
+      'gdpr',
+      'error',
+      { operazione: OPERAZIONE_POST, esito: 'account-accesso-non-rimosso', entita_id: utenteId },
+      errAccount,
+    )
+  }
+
+  const fileRimossi = file.nelCestino + file.rimossiSenzaCestino
   await logScrittura(supabase, {
     attore,
     entitaTipo: 'utente_staff',
@@ -476,8 +516,9 @@ async function cancella(
     scuolaId: bersaglio.scuolaId,
     valorePrima: {
       ruolo: bersaglio.ruolo,
-      n_file_rimossi: fascicolo.fileRimossi,
-      pratiche_cancellate: fascicolo.praticheCancellate,
+      n_file_nel_cestino: file.nelCestino,
+      n_file_rimossi: fileRimossi,
+      pratiche_cancellate: righe.praticheCancellate,
     },
   })
   logEvento('gdpr', 'warn', {
@@ -485,16 +526,21 @@ async function cancella(
     esito: 'staff-cancellato',
     entita_id: utenteId,
     sede_id: bersaglio.scuolaId,
-    n_file_rimossi: fascicolo.fileRimossi,
-    n_file_gia_assenti: fascicolo.fileGiaAssenti,
+    n_file_rimossi: fileRimossi,
+    n_file_nel_cestino: file.nelCestino,
+    n_file_gia_assenti: file.giaAssenti,
+    n_file_orfani: file.orfani,
+    account_accesso_rimosso: accountAccessoRimosso,
   })
 
   return NextResponse.json({
     success: true,
     data: {
       esito: 'cancellato',
-      fileRimossi: fascicolo.fileRimossi,
-      praticheCancellate: fascicolo.praticheCancellate,
+      fileNelCestino: file.nelCestino,
+      fileRimossi,
+      praticheCancellate: righe.praticheCancellate,
+      accountAccessoRimosso,
     },
   })
 }

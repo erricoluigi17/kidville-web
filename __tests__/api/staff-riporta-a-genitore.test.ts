@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
   } as Record<string, unknown>,
   ordine: [] as string[],
   rpcChiamate: [] as { nome: string; args: unknown }[],
+  /** Se impostato, la RPC del fascicolo risponde con questo errore. */
+  rpcErrore: null as unknown,
   /** Simula la corsa: qualcuno cambia il ruolo fra la lettura e la scrittura. */
   corsaSulRuolo: false,
 }))
@@ -45,12 +47,11 @@ vi.mock('@/lib/auth/scope', () => ({
 }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn(async () => {}) }))
-vi.mock('@/lib/storage/rimozione-verificata', () => ({
-  rimuoviEVerifica: vi.fn(async (_s: unknown, _b: string, percorsi: string[]) => {
-    h.ordine.push('storage.remove')
-    return { rimossi: percorsi, giaAssenti: [], ancoraPresenti: [], incerti: [], erroreRimozione: false }
+vi.mock('@/lib/storage/cestino-file', () => ({
+  spostaNelCestino: vi.fn(async (_s: unknown, _b: string, percorsi: string[]) => {
+    h.ordine.push('storage.cestino')
+    return { nelCestino: percorsi.length, giaAssenti: 0, rimossiSenzaCestino: 0, orfani: 0 }
   }),
-  bloccanti: () => [],
 }))
 
 import { creaFintoSupabaseConProiezione } from '../fixtures/proiezione'
@@ -130,6 +131,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
     ;(client as unknown as Record<string, unknown>).rpc = async (nome: string, args: unknown) => {
       h.ordine.push(`rpc.${nome}`)
       h.rpcChiamate.push({ nome, args })
+      if (h.rpcErrore) return { data: null, error: h.rpcErrore }
       return { data: { pratiche_cancellate: 1, anagrafiche_cancellate: 1 }, error: null }
     }
     return client
@@ -155,6 +157,7 @@ beforeEach(() => {
   h.ordine = []
   h.rpcChiamate = []
   h.corsaSulRuolo = false
+  h.rpcErrore = null
   h.attore = { id: 'a0000000-0000-4000-8000-00000000000a', role: 'admin', ruoli: ['admin'], scuola_id: SEDE }
 })
 
@@ -175,19 +178,27 @@ describe('il caso vero: una mamma entrata dalla porta sbagliata', () => {
     expect(db.parents[0].auth_user_id).toBe(BERSAGLIO)
   })
 
-  it('cancella fascicolo e pratica, con i file fuori per primi', async () => {
+  it('cancella fascicolo e pratica, POI sposta i file nel cestino', async () => {
     const res = await POST(richiesta(corpoValido) as never)
     const { data } = await res.json()
     expect(data.fascicoloCancellato).toBe(true)
+    expect(data.fileRimossi).toBe(2)
     expect(h.rpcChiamate[0]).toMatchObject({ args: { p_utente_id: BERSAGLIO, p_pratica_id: PRATICA } })
-    expect(h.ordine.indexOf('storage.remove')).toBeLessThan(
-      h.ordine.indexOf('rpc.personale_cancella_fascicolo'),
-    )
+    expect(h.ordine.indexOf('rpc.personale_cancella_fascicolo')).toBeGreaterThanOrEqual(0)
+    expect(h.ordine.indexOf('rpc.personale_cancella_fascicolo')).toBeLessThan(h.ordine.indexOf('storage.cestino'))
   })
 
   it('IL RUOLO PRIMA DEL FASCICOLO: il verso reversibile del guasto', async () => {
     await POST(richiesta(corpoValido) as never)
-    expect(h.ordine.indexOf('utenti.update')).toBeLessThan(h.ordine.indexOf('storage.remove'))
+    expect(h.ordine.indexOf('utenti.update')).toBeLessThan(h.ordine.indexOf('rpc.personale_cancella_fascicolo'))
+  })
+
+  it('se le righe del fascicolo non si cancellano, i file restano dove sono', async () => {
+    h.rpcErrore = { code: '57014', message: 'timeout' }
+    const res = await POST(richiesta(corpoValido) as never)
+    expect(res.status).toBe(200)
+    expect((await res.json()).data.fascicoloCancellato).toBe(false)
+    expect(h.ordine).not.toContain('storage.cestino')
   })
 })
 

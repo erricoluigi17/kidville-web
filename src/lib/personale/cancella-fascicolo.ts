@@ -1,11 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { bloccanti, rimuoviEVerifica } from '@/lib/storage/rimozione-verificata'
+import { spostaNelCestino, type EsitoCestino } from '@/lib/storage/cestino-file'
+import { BUCKET_DOCUMENTI_PERSONALE } from './caricamenti'
 import { percorsiDelDocumento, type ConDocumento } from './documento-righe'
 
 /**
- * CANCELLARE UN FASCICOLO DEL PERSONALE RACCOLTO PER ERRORE — nell'ordine
- * **file → pratica → anagrafica**, e l'ordine è tutta la correttezza.
+ * CANCELLARE IL FASCICOLO DI UN MEMBRO DEL PERSONALE — nell'ordine
+ * **lettura dei percorsi → righe (in una transazione) → file nel cestino**.
  *
  * ─── DA DOVE NASCE ────────────────────────────────────────────────────────────
  *
@@ -16,55 +17,38 @@ import { percorsiDelDocumento, type ConDocumento } from './documento-righe'
  * residenza, estremi del documento e due SCANSIONI della carta d'identità. Su
  * una persona che non è un dipendente, quei dati non hanno base giuridica.
  *
- * ─── PERCHÉ I FILE PER PRIMI ──────────────────────────────────────────────────
+ * ─── PERCHÉ I FILE PER ULTIMI, E NEL CESTINO ──────────────────────────────────
  *
- * Perché la DELETE della pratica cascata su `caricamenti_personale`
- * (`20260812194501`, FK `pratica_id` → `ON DELETE CASCADE`), cioè sull'UNICA riga
- * di registro che nomina quei file. Cancellando le righe per prime, l'oggetto
- * resterebbe nel bucket senza che nessuna riga al mondo possa più nominarlo:
- * invisibile, non cancellato, e non eliminabile nemmeno su richiesta
- * dell'interessata. `spazzaCaricamentiSospesi` non lo troverebbe, perché cerca
- * righe con `pratica_id is null` — non righe inesistenti.
+ * Fino alla sessione 10 della seconda serie di robustezza i file uscivano per
+ * PRIMI: la DELETE della pratica cascata su `caricamenti_personale`, l'unica riga
+ * che li nomina, e con le righe cancellate prima un file rimasto nel bucket non
+ * l'avrebbe più nominato nessuno. Ma l'ordine aveva il difetto opposto: se dopo i
+ * file falliva un passo (la RPC, o l'account rifiutato da una chiave senza
+ * cascata) il dipendente restava, archiviato, senza i suoi documenti.
  *
- * E se la rimozione fallisce, non è uscito niente e non c'è niente da
- * verificare: toccare le righe adesso renderebbe le scansioni IRRAGGIUNGIBILI
- * invece che cancellate. È la stessa regola, con le stesse parole, di
- * `gdpr/retention-personale:POST`.
+ * Ora i percorsi si LEGGONO per primi e restano in memoria; poi le righe, in una
+ * transazione; poi i file si SPOSTANO in `cestino/<giorno>/` dello stesso bucket,
+ * da cui li toglie il giro notturno `cestino-registro-retention`. Un guasto sulle
+ * righe non ha toccato un file; uno spostamento che non riesce ripiega sulla
+ * cancellazione di prima; un file che non si riesce né a spostare né a cancellare
+ * si grida (`file-orfani-fuori-cestino`, in `cestino-file.ts`).
  *
- * ⚠️ IL PRECEDENTE OPPOSTO — `protocollo_elimina`, che cancella la riga e poi fa
- * rimuovere i file — NON va seguito qui. Là la riga è un protocollo
- * amministrativo; qui è l'unico puntatore alla fotografia di un documento
- * d'identità.
- *
- * ─── PERCHÉ UNA RPC PER LE DUE RIGHE ──────────────────────────────────────────
+ * ─── PERCHÉ UNA RPC PER LE RIGHE ──────────────────────────────────────────────
  *
  * PostgREST non rende atomiche due `.delete()`, e i due esiti parziali non si
  * somigliano: cancellata la sola anagrafica resta una pratica `approvata` e
- * slegata, che `retention-personale` non tocca MAI — le approvate le raggiunge
- * solo passando per `origine_pratica_id`, che non esiste più. Un codice fiscale
- * immortale. La compensazione non è un'alternativa: per ricreare la pratica
- * servirebbero i 32 campi appena cancellati.
+ * slegata, che `retention-personale` non tocca MAI. Per l'eliminazione del
+ * dipendente la transazione comprende anche il profilo (`personale_elimina_
+ * dipendente`): una chiave senza cascata risponde 23503 e annulla tutto.
  *
  * ─── IDEMPOTENTE ──────────────────────────────────────────────────────────────
  *
- * Al secondo giro i file risultano `giaAssenti` — esito raggiunto, non guasto — e
- * la RPC trova zero righe e lo dice. Lo stato intermedio possibile è UNO SOLO e
- * benigno: file fuori, righe ancora lì. Visibile a log `error`, riprovabile con
- * lo stesso comando, e senza oggetti orfani.
+ * Al secondo giro non c'è più il fascicolo: zero righe, zero file, e lo si dice.
  */
 
-/** Il bucket delle scansioni. Lo stesso di `retention-personale`. */
-const BUCKET_DOCUMENTI = 'documenti_personale'
-
-export type EsitoFascicolo =
-  | {
-      ok: true
-      fileRimossi: number
-      fileGiaAssenti: number
-      praticheCancellate: number
-      anagraficheCancellate: number
-    }
-  | { ok: false; motivo: 'lettura-fallita' | 'file-non-rimossi' | 'righe-non-cancellate' }
+export type FascicoloLetto =
+  | { ok: true; trovato: boolean; praticaId: string | null; percorsi: string[] }
+  | { ok: false }
 
 type RigaFascicolo = {
   utente_id: string
@@ -73,12 +57,29 @@ type RigaFascicolo = {
   documento_retro_path?: string | null
 }
 
-export async function cancellaFascicoloPersonale(
+type Conteggi = { pratiche_cancellate?: number; anagrafiche_cancellate?: number; profili_cancellati?: number }
+
+/**
+ * `personale_elimina_dipendente` NON C'È ANCORA in questo database — i soli due codici con cui
+ * succede: `PGRST202` (PostgREST non la trova nella schema cache: è il DB E2E della CI, che non è
+ * migrato) e `42883` (Postgres: «undefined function»). Solo su QUESTA chiamata si ripiega sulla
+ * funzione di prima, e lo si dice a livello `info` (specifica della seconda serie, §5; modello:
+ * `RPC_ASSENTE` in `src/app/api/avvisi/[id]/risposte/route.ts`). Un insieme locale e non un
+ * modulo comune, di proposito: nessun'altra chiamata deve poter ripiegare per contagio.
+ *
+ * Mai per gli altri codici: `42P01`/`42703` vogliono dire che la funzione c'è ma legge qualcosa
+ * che manca (schema a metà, un guasto); `23503` (una chiave senza cascata) e `57014` (tempo
+ * scaduto) sono risposte vere, e ripiegare su quelle rifarebbe a pezzi ciò che la funzione ha
+ * appena rifiutato di fare tutto insieme. Si guarda il CODICE, mai il messaggio.
+ */
+const PERSONALE_ELIMINA_ASSENTE = new Set(['PGRST202', '42883'])
+
+/** Il fascicolo, la pratica d'origine e i percorsi delle scansioni. Non scrive niente. */
+export async function leggiFascicoloPersonale(
   supabase: SupabaseClient,
   utenteId: string,
   op: string,
-): Promise<EsitoFascicolo> {
-  // 1. Il fascicolo, con il legame alla pratica e i percorsi.
+): Promise<FascicoloLetto> {
   const { data: anagrafica, error: errAnagrafica } = await supabase
     .from('anagrafica_personale')
     .select('utente_id, origine_pratica_id, documento_fronte_path, documento_retro_path')
@@ -86,20 +87,17 @@ export async function cancellaFascicoloPersonale(
     .maybeSingle()
   if (errAnagrafica) {
     logErrore({ operazione: op, evento: 'fascicolo_lettura_anagrafica' }, errAnagrafica)
-    return { ok: false, motivo: 'lettura-fallita' }
+    return { ok: false }
   }
   // Nessun fascicolo: non c'è niente da cancellare, e non è un errore. È il caso
-  // dei 13 docenti che al 2026-09-20 non hanno anagrafica, e del secondo giro.
-  if (!anagrafica) {
-    return { ok: true, fileRimossi: 0, fileGiaAssenti: 0, praticheCancellate: 0, anagraficheCancellate: 0 }
-  }
+  // dei docenti senza anagrafica, e del secondo giro.
+  if (!anagrafica) return { ok: true, trovato: false, praticaId: null, percorsi: [] }
+
   const riga = anagrafica as RigaFascicolo
   const praticaId = riga.origine_pratica_id ?? null
 
-  // 2. La pratica, per i SUOI percorsi. All'approvazione le due colonne vengono
-  //    svuotate e il fascicolo punta agli stessi oggetti («un oggetto, un
-  //    proprietario»), ma se quel travaso era degradato la pratica può averli
-  //    ancora — e sono gli stessi file.
+  // La pratica, per i SUOI percorsi: se il travaso all'approvazione era degradato
+  // può averli ancora, e sono gli stessi file.
   let percorsiPratica: string[] = []
   if (praticaId) {
     const { data: pratica, error: errPratica } = await supabase
@@ -109,58 +107,134 @@ export async function cancellaFascicoloPersonale(
       .maybeSingle()
     if (errPratica) {
       logErrore({ operazione: op, evento: 'fascicolo_lettura_pratica' }, errPratica)
-      return { ok: false, motivo: 'lettura-fallita' }
+      return { ok: false }
     }
-    // ⚠️ `ConDocumento` e non `RigaFascicolo`: la pratica ha `id`, non
-    // `utente_id`. Forzarla nel tipo del fascicolo compilava solo con un doppio
-    // cast, che è il modo di far tacere il controllo invece di ascoltarlo.
     if (pratica) percorsiPratica = percorsiDelDocumento(pratica as ConDocumento)
   }
 
-  const percorsi = [...new Set([...percorsiDelDocumento(riga), ...percorsiPratica])]
-
-  // 3. I FILE PER PRIMI. Mai i percorsi nei log: contengono l'uuid di chi ha
-  //    caricato e il nome del file, che quasi sempre è il nome di una persona.
-  let fileRimossi = 0
-  let fileGiaAssenti = 0
-  if (percorsi.length > 0) {
-    const esito = await rimuoviEVerifica(supabase, BUCKET_DOCUMENTI, percorsi, op)
-    const restano = bloccanti(esito)
-    if (esito.erroreRimozione || restano.length > 0) {
-      logEvento('gdpr', 'error', {
-        operazione: op,
-        esito: 'scansioni-non-rimosse',
-        n_bloccanti: restano.length,
-        errore_rimozione: esito.erroreRimozione,
-      })
-      return { ok: false, motivo: 'file-non-rimossi' }
-    }
-    fileRimossi = esito.rimossi.length
-    fileGiaAssenti = esito.giaAssenti.length
-  }
-
-  // 4. Le due righe, in una transazione sola.
-  const { data: conteggi, error: errRpc } = await supabase.rpc('personale_cancella_fascicolo', {
-    p_utente_id: utenteId,
-    p_pratica_id: praticaId,
-  })
-  if (errRpc) {
-    // ⚠️ I FILE SONO GIÀ USCITI, e va detto: è lo stato che il giro dopo
-    // troverà, e senza questa riga sembrerebbe che non sia successo niente.
-    logEvento(
-      'gdpr',
-      'error',
-      { operazione: op, esito: 'file-rimossi-righe-no', n_file_rimossi: fileRimossi },
-      errRpc,
-    )
-    return { ok: false, motivo: 'righe-non-cancellate' }
-  }
-
-  const c = (conteggi ?? {}) as { pratiche_cancellate?: number; anagrafiche_cancellate?: number }
   return {
     ok: true,
-    fileRimossi,
-    fileGiaAssenti,
+    trovato: true,
+    praticaId,
+    percorsi: [...new Set([...percorsiDelDocumento(riga), ...percorsiPratica])],
+  }
+}
+
+export type EsitoRigheDipendente =
+  | { esito: 'ok'; praticheCancellate: number; anagraficheCancellate: number; profiloEliminato: boolean }
+  | { esito: 'rifiutata' }
+  | { esito: 'guasto' }
+
+/**
+ * Pratica, fascicolo e profilo in UNA transazione. `rifiutata` = una chiave senza
+ * cascata trattiene il profilo (23503): niente è stato cancellato, si archivia.
+ * Dove la funzione non c'è (DB della CI) ripiega sulla sola cancellazione del
+ * fascicolo, e il profilo resta da togliere all'account (`profiloEliminato: false`).
+ */
+export async function eliminaRigheDipendente(
+  supabase: SupabaseClient,
+  utenteId: string,
+  praticaId: string | null,
+  op: string,
+): Promise<EsitoRigheDipendente> {
+  const r = await supabase.rpc('personale_elimina_dipendente', { p_utente_id: utenteId, p_pratica_id: praticaId })
+  if (!r.error) {
+    const c = (r.data ?? {}) as Conteggi
+    return {
+      esito: 'ok',
+      praticheCancellate: c.pratiche_cancellate ?? 0,
+      anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
+      profiloEliminato: (c.profili_cancellati ?? 0) > 0,
+    }
+  }
+  if (r.error.code === '23503') {
+    logEvento('gdpr', 'warn', { operazione: op, esito: 'eliminazione-rifiutata-si-archivia', entita_id: utenteId }, r.error)
+    return { esito: 'rifiutata' }
+  }
+  if (PERSONALE_ELIMINA_ASSENTE.has(r.error.code)) {
+    // `info` (specifica §5): nel DB della CI la funzione non c'è ancora, ed è previsto. In
+    // produzione questa riga non deve comparire mai (la cerca la misura «dopo»).
+    logEvento('gdpr', 'info', { operazione: op, esito: 'rpc-eliminazione-assente-ripiego', entita_id: utenteId }, r.error)
+    const vecchia = await supabase.rpc('personale_cancella_fascicolo', { p_utente_id: utenteId, p_pratica_id: praticaId })
+    if (vecchia.error) {
+      logEvento('gdpr', 'error', { operazione: op, esito: 'righe-fascicolo-non-cancellate', entita_id: utenteId }, vecchia.error)
+      return { esito: 'guasto' }
+    }
+    const c = (vecchia.data ?? {}) as Conteggi
+    return {
+      esito: 'ok',
+      praticheCancellate: c.pratiche_cancellate ?? 0,
+      anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
+      profiloEliminato: false,
+    }
+  }
+  logEvento('gdpr', 'error', { operazione: op, esito: 'righe-dipendente-non-cancellate', entita_id: utenteId }, r.error)
+  return { esito: 'guasto' }
+}
+
+const CESTINO_VUOTO: EsitoCestino = { nelCestino: 0, giaAssenti: 0, rimossiSenzaCestino: 0, orfani: 0 }
+
+/** Le scansioni nel cestino del bucket del personale. Mai i percorsi nei log. */
+export async function spostaScansioniNelCestino(
+  supabase: SupabaseClient,
+  percorsi: string[],
+  op: string,
+): Promise<EsitoCestino> {
+  if (percorsi.length === 0) return { ...CESTINO_VUOTO }
+  return spostaNelCestino(supabase, BUCKET_DOCUMENTI_PERSONALE, percorsi, op)
+}
+
+export type EsitoFascicolo =
+  | {
+      ok: true
+      /** Spostati nel cestino: recuperabili finché il giro notturno non li distrugge. */
+      fileNelCestino: number
+      /** Usciti dal loro posto: nel cestino più quelli cancellati subito. */
+      fileRimossi: number
+      fileGiaAssenti: number
+      fileOrfani: number
+      praticheCancellate: number
+      anagraficheCancellate: number
+    }
+  | { ok: false; motivo: 'lettura-fallita' | 'righe-non-cancellate' }
+
+/** Il solo fascicolo (il profilo resta): è il percorso di `riporta-a-genitore`. */
+export async function cancellaFascicoloPersonale(
+  supabase: SupabaseClient,
+  utenteId: string,
+  op: string,
+): Promise<EsitoFascicolo> {
+  const letto = await leggiFascicoloPersonale(supabase, utenteId, op)
+  if (!letto.ok) return { ok: false, motivo: 'lettura-fallita' }
+  if (!letto.trovato) {
+    return {
+      ok: true,
+      fileNelCestino: 0,
+      fileRimossi: 0,
+      fileGiaAssenti: 0,
+      fileOrfani: 0,
+      praticheCancellate: 0,
+      anagraficheCancellate: 0,
+    }
+  }
+
+  const r = await supabase.rpc('personale_cancella_fascicolo', {
+    p_utente_id: utenteId,
+    p_pratica_id: letto.praticaId,
+  })
+  if (r.error) {
+    // Nessun file è stato toccato: lo stato è quello di prima, e si può riprovare.
+    logEvento('gdpr', 'error', { operazione: op, esito: 'righe-fascicolo-non-cancellate', entita_id: utenteId }, r.error)
+    return { ok: false, motivo: 'righe-non-cancellate' }
+  }
+  const c = (r.data ?? {}) as Conteggi
+  const file = await spostaScansioniNelCestino(supabase, letto.percorsi, op)
+  return {
+    ok: true,
+    fileNelCestino: file.nelCestino,
+    fileRimossi: file.nelCestino + file.rimossiSenzaCestino,
+    fileGiaAssenti: file.giaAssenti,
+    fileOrfani: file.orfani,
     praticheCancellate: c.pratiche_cancellate ?? 0,
     anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
   }

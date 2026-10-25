@@ -5,30 +5,28 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *
  * ⚠️ IL FINTO NON EMULA LE CHIAVI ESTERNE, e va detto a lettere: accetta la
  * DELETE che Postgres rifiuterebbe. La domanda «questo docente è davvero
- * cancellabile?» NON è verificabile qui, e il codice non ci poggia sopra —
- * poggia sul RAMO DI RIPIEGO. Ciò che questi test provano è che quel ripiego
- * esista, che si attivi quando `deleteUser` rifiuta, e che la risposta non dica
- * mai «cancellato» su una cancellazione che non c'è stata.
+ * cancellabile?» la fa `personale_elimina_dipendente`, provata su PGlite in
+ * `__tests__/lib/personale-elimina-dipendente-sql.test.ts`. Qui si prova che la
+ * route ASCOLTA la risposta: 23503 → si archivia senza aver toccato un file, e mai
+ * «cancellato» su una cancellazione che non c'è stata.
  *
  * ⚠️ LA PROIEZIONE È OBBLIGATORIA. Senza `creaFintoSupabaseConProiezione` il file
  * resterebbe verde anche se la route smettesse di CHIEDERE `ruolo` nella select
  * del bersaglio: la riga finta lo porterebbe comunque, e `puoEliminareStaff`
  * deciderebbe su un valore che in produzione sarebbe `undefined`.
  *
- * ─── PROVA PER ROTTURA — eseguita il 2026-09-20 ───────────────────────────────
- *   • tolto il confronto `verdetto.decisione !== body.decisioneAttesa` → 1 rosso
- *   • tolto `.is('archiviato_il', null)` dalla CAS dell'archiviazione → 1 rosso
- *   • fatto rispondere «cancellato» al ramo di ripiego                → 1 rosso
- *   • spostato `sganciaPoteri` PRIMA di `cancellaFascicolo`           → 0 rossi
+ * ─── L'ORDINE (sessione 10 della seconda serie di robustezza) ──────────────────
+ *   poteri → righe in UNA transazione → account → file nel CESTINO.
+ * I file per ULTIMI: un passo che fallisce dopo di loro li avrebbe persi. Nel
+ * cestino e non cancellati: finché il giro notturno non li distrugge, un errore si
+ * rimedia. I percorsi si leggono per primi, perché la cascata sulla pratica porta
+ * via `caricamenti_personale`.
  *
- * ⚠️ L'ULTIMA RIGA È LA PIÙ UTILE, e si scrive invece di nasconderla. Quella
- * mutazione lascia la suite verde perché NON È UN DIFETTO: l'invariante che
- * conta è «i file escono prima delle righe che li nominano», e sganciare le
- * sezioni non tocca né `anagrafica_personale` né `caricamenti_personale`. Un
- * test scritto apposta per coglierla inchioderebbe un ordine che non ha ragioni,
- * e il prossimo che lo trovasse rosso lo cambierebbe senza capire perché —
- * cioè avremmo speso un lock per difendere una preferenza. L'ordine ASSERITO è
- * quello che il commento della route motiva: storage → rpc → account.
+ * ─── PROVA PER ROTTURA (Compito 8, Passo 7 del piano della sessione 10) ───────
+ *   • `spostaScansioniNelCestino` spostato PRIMA di `eliminaRigheDipendente`
+ *       → rossi «l'ordine» e «23503 … nessun file toccato»
+ *   • tolto il ramo `rifiutata` (cade nel 503)                       → 1 rosso
+ *   • fatto rispondere «cancellato» al ramo di ripiego dell'account  → 1 rosso
  * ═══════════════════════════════════════════════════════════════════════════════ */
 
 const h = vi.hoisted(() => ({
@@ -40,8 +38,9 @@ const h = vi.hoisted(() => ({
   } as Record<string, unknown>,
   deleteUserError: null as unknown,
   rpcChiamate: [] as { nome: string; args: unknown }[],
-  rimozioni: [] as string[][],
-  esitoRimozione: 'ok' as 'ok' | 'bloccato',
+  /** Risposta per nome di funzione; una funzione assente risponde PGRST202, come il DB della CI. */
+  rpcRisposte: {} as Record<string, { data: unknown; error: unknown }>,
+  spostati: [] as string[][],
   ordine: [] as string[],
 }))
 
@@ -62,16 +61,15 @@ vi.mock('@/lib/logging/logger', () => ({
 
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn(async () => {}) }))
 
-vi.mock('@/lib/storage/rimozione-verificata', () => ({
-  rimuoviEVerifica: vi.fn(async (_s: unknown, _b: string, percorsi: string[]) => {
-    h.ordine.push('storage.remove')
-    h.rimozioni.push(percorsi)
-    return h.esitoRimozione === 'ok'
-      ? { rimossi: percorsi, giaAssenti: [], ancoraPresenti: [], incerti: [], erroreRimozione: false }
-      : { rimossi: [], giaAssenti: [], ancoraPresenti: percorsi, incerti: [], erroreRimozione: false }
+vi.mock('@/lib/storage/cestino-file', () => ({
+  spostaNelCestino: vi.fn(async (_s: unknown, _b: string, percorsi: string[]) => {
+    h.ordine.push('storage.cestino')
+    h.spostati.push(percorsi)
+    return { nelCestino: percorsi.length, giaAssenti: 0, rimossiSenzaCestino: 0, orfani: 0 }
   }),
-  bloccanti: (e: { ancoraPresenti: string[]; incerti: string[] }) => [...e.ancoraPresenti, ...e.incerti],
 }))
+
+import { logEvento } from '@/lib/logging/logger'
 
 import { creaFintoSupabaseConProiezione } from '../fixtures/proiezione'
 import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
@@ -121,7 +119,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
     ;(client as unknown as Record<string, unknown>).rpc = async (nome: string, args: unknown) => {
       h.ordine.push(`rpc.${nome}`)
       h.rpcChiamate.push({ nome, args })
-      return { data: { pratiche_cancellate: 1, anagrafiche_cancellate: 1 }, error: null }
+      return h.rpcRisposte[nome] ?? { data: null, error: { code: 'PGRST202', message: 'funzione assente' } }
     }
     ;(client as unknown as Record<string, unknown>).auth = {
       admin: {
@@ -154,8 +152,14 @@ beforeEach(() => {
   proiezioni = []
   h.deleteUserError = null
   h.rpcChiamate = []
-  h.rimozioni = []
-  h.esitoRimozione = 'ok'
+  h.spostati = []
+  h.rpcRisposte = {
+    personale_elimina_dipendente: {
+      data: { pratiche_cancellate: 1, anagrafiche_cancellate: 1, profili_cancellati: 1 },
+      error: null,
+    },
+    personale_cancella_fascicolo: { data: { pratiche_cancellate: 1, anagrafiche_cancellate: 1 }, error: null },
+  }
   h.ordine = []
   h.attore = {
     id: 'a0000000-0000-4000-8000-00000000000a',
@@ -294,43 +298,105 @@ describe('POST — cancella', () => {
     ]
   })
 
-  it('i FILE escono prima di qualunque riga, e prima della RPC', async () => {
-    // Se le righe sparissero per prime, la cascata su `caricamenti_personale`
-    // porterebbe via l'unica riga che nomina quei file: resterebbero nel bucket
-    // senza che nessuno possa più nominarli.
-    await POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
-    const iFile = h.ordine.indexOf('storage.remove')
-    expect(iFile).toBeGreaterThanOrEqual(0)
-    expect(iFile).toBeLessThan(h.ordine.indexOf('rpc.personale_cancella_fascicolo'))
-    expect(iFile).toBeLessThan(h.ordine.indexOf('auth.deleteUser'))
-    expect(h.rimozioni[0]).toEqual(['p/fronte.jpg', 'p/retro.jpg'])
+  const conferma = () => POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
+
+  it("l'ordine: poteri → righe in transazione → account → file nel CESTINO, per ultimi", async () => {
+    await conferma()
+    const i = (passo: string) => h.ordine.indexOf(passo)
+    expect(i('utenti_sezioni.delete')).toBeGreaterThanOrEqual(0)
+    expect(i('utenti_sezioni.delete')).toBeLessThan(i('rpc.personale_elimina_dipendente'))
+    expect(i('rpc.personale_elimina_dipendente')).toBeLessThan(i('auth.deleteUser'))
+    expect(i('auth.deleteUser')).toBeLessThan(i('storage.cestino'))
+    expect(h.spostati).toEqual([['p/fronte.jpg', 'p/retro.jpg']])
   })
 
-  it('la RPC riceve anche la pratica d’origine', async () => {
-    await POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
+  it('la funzione riceve anche la pratica d’origine', async () => {
+    await conferma()
     expect(h.rpcChiamate[0]).toMatchObject({
-      nome: 'personale_cancella_fascicolo',
+      nome: 'personale_elimina_dipendente',
       args: { p_utente_id: BERSAGLIO, p_pratica_id: PRATICA },
     })
   })
 
-  it('se le scansioni NON escono: 503, e nessuna riga toccata', async () => {
-    h.esitoRimozione = 'bloccato'
-    const res = await POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
-    expect(res.status).toBe(503)
-    expect((await res.json()).codice).toBe('FASCICOLO_NON_CANCELLATO')
-    expect(h.rpcChiamate).toEqual([])
+  it('la risposta dice quanti file sono nel cestino', async () => {
+    const res = await conferma()
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toEqual({
+      esito: 'cancellato',
+      fileNelCestino: 2,
+      fileRimossi: 2,
+      praticheCancellate: 1,
+      accountAccessoRimosso: true,
+    })
+  })
+
+  it('23503 dal database: si ARCHIVIA, nessun file toccato, nessun account cancellato', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = {
+      data: null,
+      error: { code: '23503', message: 'violates foreign key constraint' },
+    }
+    const res = await conferma()
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toMatchObject({ esito: 'archiviato', motivo: 'cancellazione-rifiutata' })
+    expect(db.utenti[0].archiviato_il).toBeTruthy()
+    expect(h.spostati).toEqual([])
     expect(h.ordine).not.toContain('auth.deleteUser')
   })
 
-  it('se Postgres rifiuta la DELETE si ARCHIVIA, e la risposta lo dice', async () => {
-    // Il ramo che il finto non può provare da sé: qui si prova che ESISTE.
+  it('un guasto della funzione (57014): 503, nessun file toccato, nessun account cancellato', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: { code: '57014', message: 'timeout' } }
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('FASCICOLO_NON_CANCELLATO')
+    expect(h.spostati).toEqual([])
+    expect(h.ordine).not.toContain('auth.deleteUser')
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'error',
+      expect.objectContaining({ esito: 'righe-dipendente-non-cancellate', entita_id: BERSAGLIO }),
+      expect.objectContaining({ code: '57014' }),
+    )
+  })
+
+  it.each(['PGRST202', '42883'])('funzione assente (%s, DB della CI): ripiega su personale_cancella_fascicolo e lo dice', async (code) => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: { code, message: 'funzione assente' } }
+    const res = await conferma()
+    expect((await res.json()).data.esito).toBe('cancellato')
+    expect(h.rpcChiamate.map((c) => c.nome)).toEqual(['personale_elimina_dipendente', 'personale_cancella_fascicolo'])
+    expect(h.rpcChiamate[1]).toMatchObject({ args: { p_utente_id: BERSAGLIO, p_pratica_id: PRATICA } })
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'info',
+      expect.objectContaining({ esito: 'rpc-eliminazione-assente-ripiego' }),
+      expect.objectContaining({ code }),
+    )
+  })
+
+  it.each(['42P01', '42703', 'PGRST205'])('%s dentro la funzione è schema a metà: niente ripiego, 503, nessun file toccato', async (code) => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: { code, message: 'manca qualcosa' } }
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect(h.rpcChiamate.map((c) => c.nome)).toEqual(['personale_elimina_dipendente'])
+    expect(h.spostati).toEqual([])
+    expect(h.ordine).not.toContain('auth.deleteUser')
+  })
+
+  it('ripiego e account rifiutato: i file vanno nel cestino PRIMA di archiviare, perché le righe non ci sono più', async () => {
+    delete h.rpcRisposte.personale_elimina_dipendente
     h.deleteUserError = { code: '23503', message: 'violates foreign key constraint' }
-    const res = await POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
-    expect(res.status).toBe(200)
-    const { data } = await res.json()
-    expect(data.esito).toBe('archiviato')
-    expect(data.motivo).toBe('cancellazione-rifiutata')
-    expect(db.utenti[0].archiviato_il).toBeTruthy()
+    const res = await conferma()
+    expect((await res.json()).data).toMatchObject({ esito: 'archiviato', motivo: 'cancellazione-rifiutata' })
+    expect(h.ordine.indexOf('storage.cestino')).toBeGreaterThanOrEqual(0)
+    expect(h.ordine.indexOf('storage.cestino')).toBeLessThan(h.ordine.indexOf('utenti.update'))
+  })
+
+  it('profilo cancellato ma account di accesso rifiutato: «cancellato», e lo si grida', async () => {
+    h.deleteUserError = { status: 500, message: 'Database error deleting user' }
+    const res = await conferma()
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', accountAccessoRimosso: false, fileNelCestino: 2 })
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'error',
+      expect.objectContaining({ esito: 'account-accesso-non-rimosso', entita_id: BERSAGLIO }),
+      h.deleteUserError,
+    )
+    expect(db.utenti[0].archiviato_il).toBeFalsy()
   })
 })

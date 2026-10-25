@@ -10,10 +10,17 @@
 -- ─── COSA FA ─────────────────────────────────────────────────────────────────
 --  · `scatola_nera.registra()` rispetta `scatola_nera.senza_storico`, come fa già
 --    `registra_modifica()`: una pulizia in blocco DICHIARATA non lascia copie.
---  · Nove figlie in cascata entrano nella scatola delle eliminazioni, con lo stesso
+--  · Dieci figlie in cascata entrano nella scatola delle eliminazioni, con lo stesso
 --    trigger e lo stesso divieto di TRUNCATE della fase 4: chat_messages, chat_threads,
---    avvisi, avvisi_risposte, nota_ricezioni, alunni_classi_storico,
---    storici_collegamenti, storici_revisioni, fascicolo_accessi_audit.
+--    conversazioni_sospensioni, avvisi, avvisi_risposte, nota_ricezioni,
+--    alunni_classi_storico, storici_collegamenti, storici_revisioni,
+--    fascicolo_accessi_audit. `conversazioni_sospensioni` (figlia in CASCADE di
+--    chat_threads, che gli elenchi del piano non nominavano: l'ha trovata la misura del
+--    Passo 0, 25/10) è la prova che una conversazione è stata moderata, che la policy UGC
+--    chiede di conservare (`src/lib/alunni/libera-spazio.ts`): entra per decisione
+--    dell'assistente in assenza del titolare (25/10), da confermare. Chi sospende e chi è
+--    sospeso stanno in `sospesa_da` e `sospesa_verso`, che `soggetti_di` non legge (non
+--    finiscono in `_id`): la copia nomina la persona solo per `thread_id`.
 --  · Lo storico delle modifiche si allarga ad alunni, parents, utenti,
 --    note_disciplinari, certificati_medici. Un UPDATE che cambia SOLO `storico_versione`
 --    non si copia, come già `updated_at`: è il «tocco» con cui storici_versione_aggregato
@@ -38,11 +45,9 @@
 --    task_interni: operative; il valore contabile sta in tabelle già coperte;
 --  · storici_generazioni: lavori di stampa che scadono da soli;
 --  · registro_destinatari: figlia di alunni non elencata nella specifica (§7); la misura
---    del Passo 0 è nel PRD e la decisione è del titolare;
---  · conversazioni_sospensioni: figlia in CASCADE di chat_threads che gli elenchi del piano
---    non nominano, trovata dalla misura del Passo 0 (25/10). È la prova che una
---    conversazione è stata moderata (policy UGC, `src/lib/alunni/libera-spazio.ts`): se
---    entra lo decide il titolare, e fino ad allora resta fuori, come registro_destinatari;
+--    del Passo 0 (0,09 MB in 90 giorni) è nel PRD. Resta fuori come dice il piano finché
+--    il titolare non chiede che entri: decisione dell'assistente in assenza del titolare
+--    (25/10), da confermare;
 --  · il registro di protocollo ha la sua migrazione (`*_scatola_nera_protocollo.sql`).
 --
 -- ─── CORPI DI PARTENZA ───────────────────────────────────────────────────────
@@ -56,7 +61,8 @@
 -- Invariato: se la copia non si scrive, fallisce la DELETE o l'UPDATE.
 --
 -- ─── COME SI VERIFICA ────────────────────────────────────────────────────────
---   select count(*) from pg_trigger where tgname = 'scatola_nera_eliminazioni';   -- 42 + 9 = 51
+--   select count(*) from pg_trigger where tgname = 'scatola_nera_eliminazioni';   -- 42 + 10 = 52
+--   select count(*) from pg_trigger where tgname = 'scatola_nera_no_truncate';    -- 42 + 10 = 52
 --   select count(*) from pg_trigger where tgname = 'scatola_nera_modifiche';      -- 13 + 5 = 18
 --   select prosrc ~ 'senza_storico' from pg_proc
 --    where oid = 'scatola_nera.registra()'::regprocedure;                            -- true
@@ -65,9 +71,9 @@
 --
 -- ─── ROLLBACK ────────────────────────────────────────────────────────────────
 --   do $$ declare t text; begin
---     foreach t in array array['chat_messages','chat_threads','avvisi','avvisi_risposte',
---         'nota_ricezioni','alunni_classi_storico','storici_collegamenti','storici_revisioni',
---         'fascicolo_accessi_audit'] loop
+--     foreach t in array array['chat_messages','chat_threads','conversazioni_sospensioni',
+--         'avvisi','avvisi_risposte','nota_ricezioni','alunni_classi_storico',
+--         'storici_collegamenti','storici_revisioni','fascicolo_accessi_audit'] loop
 --       execute format('drop trigger if exists scatola_nera_eliminazioni on public.%I', t);
 --       execute format('drop trigger if exists scatola_nera_no_truncate on public.%I', t);
 --     end loop;
@@ -113,3 +119,37 @@ BEGIN
   RETURN NULL;
 END $$;
 REVOKE ALL ON FUNCTION scatola_nera.registra() FROM PUBLIC, anon, authenticated;
+
+-- ── 2. Le figlie in cascata ───────────────────────────────────────────────────
+-- Lo stesso ciclo della fase 4 (20261009171012_scatola_nera_registro_eliminazioni.sql:200-232),
+-- sulle figlie che contano. Il motivo di chi resta fuori è nell'intestazione.
+-- `conversazioni_sospensioni` è la decima: decisione dell'assistente in assenza del titolare
+-- (25/10), da confermare.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    -- figlie-in-cascata:inizio
+    'chat_messages', 'chat_threads', 'conversazioni_sospensioni',
+    'avvisi', 'avvisi_risposte',
+    'nota_ricezioni',
+    'alunni_classi_storico',
+    'storici_collegamenti', 'storici_revisioni',
+    'fascicolo_accessi_audit'
+    -- figlie-in-cascata:fine
+  ] LOOP
+    IF to_regclass(format('public.%I', t)) IS NULL THEN
+      RAISE NOTICE 'scatola nera, cascate: public.% assente, saltata', t;
+      CONTINUE;
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS scatola_nera_eliminazioni ON public.%I', t);
+    EXECUTE format(
+      'CREATE TRIGGER scatola_nera_eliminazioni AFTER DELETE ON public.%I '
+      'REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra()', t);
+    EXECUTE format('DROP TRIGGER IF EXISTS scatola_nera_no_truncate ON public.%I', t);
+    EXECUTE format(
+      'CREATE TRIGGER scatola_nera_no_truncate BEFORE TRUNCATE ON public.%I '
+      'FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.vieta_truncate()', t);
+  END LOOP;
+END $$;

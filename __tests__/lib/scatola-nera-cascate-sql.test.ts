@@ -13,7 +13,8 @@ import { PGlite } from '@electric-sql/pglite'
  * (fase 4), le modifiche (fase 12) e quella di questa sessione, DUE volte (idempotenza). Lo schema
  * è un MINIMO con i nomi veri e le FK in CASCADE che contano: utenti → conversazioni e avvisi,
  * alunni → conversazioni, storico classi, copie storiche, registro accessi, note → prese visione,
- * avvisi → risposte. Un finto client direbbe «sì» a tutto. Solo dati finti.
+ * avvisi → risposte, conversazioni → sospensioni. Un finto client direbbe «sì» a tutto. Solo dati
+ * finti.
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
@@ -45,8 +46,8 @@ const CERTIFICATO = '80000000-0000-4000-8000-000000000001'
 const TABELLE = [
   'notifiche', 'fascicolo_accessi_audit', 'alunni_classi_storico', 'storici_collegamenti',
   'storici_revisioni', 'storici_generazioni', 'nota_ricezioni', 'note_disciplinari',
-  'certificati_medici', 'avvisi_risposte', 'avvisi', 'chat_messages', 'chat_threads',
-  'alunni', 'parents', 'utenti', 'schools', 'app_log',
+  'certificati_medici', 'avvisi_risposte', 'avvisi', 'conversazioni_sospensioni', 'chat_messages',
+  'chat_threads', 'alunni', 'parents', 'utenti', 'schools', 'app_log',
 ]
 
 let db: PGlite
@@ -54,6 +55,15 @@ let db: PGlite
 async function numero(sql: string): Promise<number> {
   const { rows } = await db.query<{ n: number }>(`SELECT (${sql})::int AS n`)
   return rows[0].n
+}
+
+async function codiceErrore(sql: string): Promise<string | null> {
+  try {
+    await db.exec(sql)
+    return null
+  } catch (e) {
+    return (e as { code?: string }).code ?? 'errore'
+  }
 }
 
 /** Le copie nella scatola delle eliminazioni, contate per tabella. */
@@ -77,6 +87,8 @@ async function semina(): Promise<void> {
       ('${MSG_GENITORE}', '${THREAD}', '${GENITORE}', 'testo di prova'),
       ('${MSG_DOCENTE}', '${THREAD}', '${DOCENTE}', 'risposta di prova'),
       ('${MSG_ALTRO}', '${ALTRO_THREAD}', '${DOCENTE}', 'altro testo di prova');
+    INSERT INTO public.conversazioni_sospensioni (thread_id, sospesa_da, sospesa_verso, motivo) VALUES
+      ('${THREAD}', '${DOCENTE}', '${GENITORE}', 'motivo di prova');
     INSERT INTO public.storici_revisioni (alunno_id, modulo, entita_id) VALUES
       (NULL, 'chat', '${MSG_DOCENTE}'), ('${ALUNNO}', 'registro', '${NOTA}');
     INSERT INTO public.storici_collegamenti (alunno_id) VALUES ('${ALUNNO}');
@@ -131,6 +143,13 @@ beforeAll(async () => {
       sender_id uuid NOT NULL, content text NOT NULL,
       rettifica_staff text, rettifica_staff_il timestamptz, rettifica_staff_da uuid,
       rettifica_versione int NOT NULL DEFAULT 0
+    );
+    -- La prova che una conversazione è stata moderata (policy UGC): chi sospende e chi è sospeso
+    -- stanno in colonne SENZA il suffisso _id, che soggetti_di non vede.
+    CREATE TABLE public.conversazioni_sospensioni (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      thread_id uuid NOT NULL REFERENCES public.chat_threads(id) ON DELETE CASCADE,
+      sospesa_da uuid NOT NULL, sospesa_verso uuid NOT NULL, motivo text
     );
     CREATE TABLE public.avvisi (
       id uuid PRIMARY KEY, author_id uuid REFERENCES public.utenti(id) ON DELETE CASCADE, titolo text
@@ -226,5 +245,63 @@ describe('registra() — l’interruttore `scatola_nera.senza_storico`', () => {
     `)
     await db.exec(`DELETE FROM public.parents WHERE id = '${ALTRO_GENITORE}'`)
     expect(await perTabella()).toEqual({ parents: 1 })
+  })
+})
+
+describe('le figlie in cascata entrano nella scatola delle eliminazioni', () => {
+  it('cancellare un alunno: conversazioni e messaggi, sospensioni, prese visione, storico classi, copie storiche, registro accessi — nella stessa transazione', async () => {
+    await db.exec(`DELETE FROM public.alunni WHERE id = '${ALUNNO}'`)
+    expect(await perTabella()).toEqual({
+      alunni: 1,
+      alunni_classi_storico: 1,
+      certificati_medici: 1,
+      chat_messages: 2,
+      chat_threads: 1,
+      conversazioni_sospensioni: 1,
+      fascicolo_accessi_audit: 1,
+      nota_ricezioni: 1,
+      note_disciplinari: 1,
+      storici_collegamenti: 1,
+      storici_revisioni: 1,
+    })
+    expect(await numero('SELECT count(DISTINCT transazione) FROM scatola_nera.eliminazioni')).toBe(1)
+    // Controllo positivo: la conversazione dell'altro alunno è viva e non è in scatola.
+    expect(await numero(`SELECT count(*) FROM public.chat_threads WHERE id = '${ALTRO_THREAD}'`)).toBe(1)
+  })
+
+  it('cancellare un avviso porta via le risposte dei genitori: tutte in scatola', async () => {
+    await db.exec(`DELETE FROM public.avvisi WHERE id = '${AVVISO}'`)
+    expect(await perTabella()).toEqual({ avvisi: 1, avvisi_risposte: 3 })
+  })
+
+  it('cancellare una docente: avvisi, risposte, conversazioni, sospensioni e messaggi in scatola; le notifiche no (effimere)', async () => {
+    await db.exec(`DELETE FROM public.utenti WHERE id = '${DOCENTE}'`)
+    expect(await perTabella()).toEqual({
+      avvisi: 1, avvisi_risposte: 3, chat_messages: 3, chat_threads: 2, conversazioni_sospensioni: 1, utenti: 1,
+    })
+    // Controllo positivo: la notifica è stata cancellata davvero, solo senza copia.
+    expect(await numero('SELECT count(*) FROM public.notifiche')).toBe(0)
+  })
+
+  it('cancellare una conversazione moderata: la sospensione resta in scatola, intera, con la conversazione', async () => {
+    await db.exec(`DELETE FROM public.chat_threads WHERE id = '${THREAD}'`)
+    expect(await perTabella()).toEqual({ chat_messages: 2, chat_threads: 1, conversazioni_sospensioni: 1 })
+    // La prova della moderazione si ripristina com'era: conversazione, chi ha sospeso, chi, perché.
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni
+      WHERE tabella = 'conversazioni_sospensioni' AND riga ->> 'thread_id' = '${THREAD}'
+        AND riga ->> 'sospesa_verso' = '${GENITORE}' AND riga ->> 'motivo' = 'motivo di prova'`)).toBe(1)
+  })
+
+  it('i trigger: eliminazioni e TRUNCATE vietato sulle dieci figlie', async () => {
+    const dieci = `ARRAY['chat_messages','chat_threads','conversazioni_sospensioni','avvisi','avvisi_risposte',
+      'nota_ricezioni','alunni_classi_storico','storici_collegamenti','storici_revisioni','fascicolo_accessi_audit']`
+    expect(await numero(`SELECT count(*) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
+      WHERE g.tgname = 'scatola_nera_eliminazioni' AND c.relname = ANY(${dieci})`)).toBe(10)
+    expect(await numero(`SELECT count(*) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
+      WHERE g.tgname = 'scatola_nera_no_truncate' AND c.relname = ANY(${dieci})`)).toBe(10)
+    expect(await codiceErrore('TRUNCATE public.chat_messages')).toBe('P0001')
+    expect(await numero('SELECT count(*) FROM public.chat_messages')).toBe(3)
+    expect(await codiceErrore('TRUNCATE public.conversazioni_sospensioni')).toBe('P0001')
+    expect(await numero('SELECT count(*) FROM public.conversazioni_sospensioni')).toBe(1)
   })
 })

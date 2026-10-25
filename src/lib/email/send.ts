@@ -107,7 +107,9 @@ export interface SendEmailParams {
    * 1 a 256 caratteri fra lettere, cifre e `: _ - .`. Una chiave fuori forma NON ferma l'invio:
    * si spedisce senza, con una riga `error`, perché un'email persa vale più di un doppione
    * evitato. Stessa chiave con un messaggio DIVERSO è un errore del chiamante: Resend risponde
-   * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo, detto a livello `error`.
+   * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo (non si ritenta, non si
+   * rinvia), detto a livello `error` — ma INCERTO, perché la richiesta di prima con quella chiave
+   * è arrivata a Resend e può essere partita.
    */
   chiaveIdempotenza?: string
   /**
@@ -169,7 +171,9 @@ export interface SendEmailResult {
   /**
    * «Forse è partita». Vero quando il provider potrebbe aver preso in carico l'email senza che
    * lo sappiamo:
-   *  · un `409 concurrent_idempotent_requests` (la stessa chiave è ancora in corso);
+   *  · uno dei due `409` dell'idempotenza: `concurrent_idempotent_requests` (la stessa chiave è
+   *    ancora in corso) o `invalid_idempotent_request` (la chiave è già arrivata a Resend con un
+   *    altro messaggio: QUESTA richiesta non è partita, quella di prima forse sì);
    *  · una chiamata scaduta senza risposta (il nostro tetto), con o senza chiave;
    *  · con la chiave d'idempotenza INVIATA (revisione del lotto 4): un `5xx` — 502 e 504 di un
    *    gateway compresi, che possono rispondere dopo che Resend ha preso il messaggio — e uno
@@ -199,11 +203,14 @@ const QUOTA_ESAURITA = 429
 const FORMA_CHIAVE_IDEMPOTENZA = /^[A-Za-z0-9:_.-]{1,256}$/
 
 /**
- * I due 409 dell'idempotenza di Resend, per nome (il campo `name` del corpo):
+ * I due 409 dell'idempotenza di Resend, per nome (il campo `name` del corpo). Tutti e due dicono
+ * che una richiesta con QUELLA chiave è arrivata a Resend, quindi tutti e due sono INCERTI:
  *  · `concurrent_idempotent_requests` — la richiesta con quella chiave è ANCORA in corso: si
  *    riprova più tardi, quindi è rinviabile come il 429;
- *  · `invalid_idempotent_request` — la chiave è già stata usata per un messaggio diverso: un
- *    errore del chiamante, definitivo.
+ *  · `invalid_idempotent_request` — la chiave è già stata usata per un messaggio diverso: questa
+ *    richiesta non parte (errore del chiamante, definitivo, non rinviabile), ma quella di prima
+ *    con la stessa chiave può essere partita (revisione del lotto 4).
+ * Un 409 senza uno di questi due nomi resta un rifiuto definitivo e certo, come prima.
  */
 const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
 const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
@@ -427,8 +434,11 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
         operazione: 'sendEmail',
         esito: 'idempotenza-chiave-riusata',
         stato: esito.stato,
-        msg: 'chiave d\'idempotenza già usata per un messaggio diverso: email NON spedita, il chiamante va corretto',
+        msg: 'chiave d\'idempotenza già usata per un messaggio diverso: QUESTA email non è partita, ma una richiesta con la stessa chiave è arrivata al provider e può essere partita (esito incerto). Il chiamante va corretto',
       })
+      // Definitivo (niente ritentativo, niente rinvio) ma INCERTO (revisione del lotto 4): la
+      // richiesta di prima con questa chiave è arrivata a Resend. Chi tiene una presa non la annulla.
+      return { ok: false, incerto: true, error: `rifiutato dal provider email (409)${dettaglio ? `: ${dettaglio}` : ''}`, ...conto }
     }
   }
 

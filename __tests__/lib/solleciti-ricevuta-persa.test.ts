@@ -201,6 +201,16 @@ describe('solleciti + Resend — la ricevuta persa non diventa un doppio invio',
     expect(log.logEvento.mock.calls.some((c) => (c[2] as { esito?: string }).esito === 'sollecito-esito-incerto')).toBe(true)
   })
 
+  it('🔴 la chiave di oggi è già arrivata a Resend con un altro corpo (409 invalid_idempotent_request) ⇒ incerto, la presa resta', async () => {
+    // Come se un giro di stamattina avesse spedito questo sollecito con un testo diverso (un
+    // pagamento parziale in mezzo cambia il residuo) e la sua presa fosse poi tornata indietro.
+    chiavi.set(`sollecito:${PID}:L1:${GID}:2026-10-26`, { corpo: 'il corpo di stamattina', id: 'msg-di-stamattina' })
+    const [esito] = await bottone()
+    expect(esito).toMatchObject({ ok: false, inviate: 0, motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza' })
+    expect(cadenza()).toBe('2026-10-26T07:00:00.000Z')
+    expect(consegne).toHaveLength(0)
+  })
+
   it('DNS giù (la richiesta non è mai partita) ⇒ esito certo, la presa si annulla e il giorno dopo il sollecito parte', async () => {
     guasto = 'dns-una-volta'
     const [giorno1] = await bottone()

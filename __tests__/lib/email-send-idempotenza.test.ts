@@ -79,26 +79,31 @@ describe('sendEmailDetailed — Idempotency-Key', () => {
     expect(righe('error', 'chiave-idempotenza-non-valida')).toHaveLength(1)
   })
 
-  it('409 concurrent_idempotent_requests → rinviabile (l\'invio è ancora in corso), riga `warn`', async () => {
+  it('409 concurrent_idempotent_requests → rinviabile (l\'invio è ancora in corso) e incerto, riga `warn`', async () => {
     rispondiCon(409, JSON.stringify({ statusCode: 409, name: 'concurrent_idempotent_requests', message: 'Same idempotency key used while original request is still in progress.' }))
     const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
-    expect(r).toMatchObject({ ok: false, rinviabile: true })
+    expect(r).toMatchObject({ ok: false, rinviabile: true, incerto: true })
     expect(righe('warn', 'idempotenza-concorrente')).toHaveLength(1)
   })
 
-  it('🔴 409 invalid_idempotent_request → definitivo (NON rinviabile), riga `error`: il chiamante ha riusato la chiave', async () => {
+  // Revisione del lotto 4: la chiave è già arrivata a Resend con un altro messaggio. QUESTA
+  // richiesta non parte, ma quella di prima con la stessa chiave può essere partita: chi tiene
+  // una presa (i solleciti) non deve annullarla e rispedire il giorno dopo con una chiave nuova.
+  it('🔴 409 invalid_idempotent_request → definitivo (NON rinviabile) ma INCERTO, riga `error`: il chiamante ha riusato la chiave', async () => {
     rispondiCon(409, JSON.stringify({ statusCode: 409, name: 'invalid_idempotent_request', message: 'Same idempotency key used with a different request payload.' }))
     const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
     expect(r.ok).toBe(false)
     expect(r.rinviabile).toBeUndefined()
+    expect(r.incerto).toBe(true)
     expect(r.error).toContain('different request payload')
     expect(righe('error', 'idempotenza-chiave-riusata')).toHaveLength(1)
   })
 
-  it('un 409 qualunque, senza nome dell\'idempotenza, resta un rifiuto definitivo come prima', async () => {
+  it('un 409 qualunque, senza nome dell\'idempotenza, resta un rifiuto definitivo e CERTO come prima', async () => {
     rispondiCon(409, 'conflict')
     const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
     expect(r).toMatchObject({ ok: false })
     expect(r.rinviabile).toBeUndefined()
+    expect(r.incerto).toBeUndefined()
   })
 })

@@ -8,6 +8,9 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): genera e firma un certificato delle competenze per ogni id ricevuto.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Id permissivi (niente zUuid: nei test/dati seed circolano id non-UUID).
 // Entrambi opzionali: la guardia truthy "almeno uno dei due" resta

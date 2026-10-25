@@ -213,30 +213,43 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
     const inviati = esiti.filter((e) => e.ok).length
     const guasti = esiti.filter((e) => e.guasto).length
     const rinviati = esiti.filter((e) => e.rinviato).length
+    // Sessione 9: una voce «fallita» è una voce in cui si è TENTATA almeno un'email e nessuna è
+    // partita (o l'esito è incerto). Le voci saltate per regola (cadenza, saldo, livello non
+    // maturo, nessun indirizzo) non tentano niente e non contano.
+    const fallite = esiti.filter((e) => !e.ok && (e.tentate ?? 0) > 0).length
+    const emailInviate = esiti.reduce((n, e) => n + (e.inviate ?? 0), 0)
+    const emailTentate = esiti.reduce((n, e) => n + (e.tentate ?? 0), 0)
     if (guasti > 0) {
       // Voci non lette o cadenze non scritte: il giro NON è andato bene, e il battito
       // «ok» lo direbbe. Le righe col codice PostgREST le ha già scritte il motore.
       logEvento('cron', 'error', {
         operazione: JOB, esito: 'solleciti-con-guasti', ms: Date.now() - t0,
-        guasti, inviati, rinviati, esaminati: ids.length,
+        guasti, inviati, fallite, rinviati, email_inviate: emailInviate, email_tentate: emailTentate,
+        esaminati: ids.length,
         msg: `${JOB}: ${guasti} voci non sollecitate per un guasto`,
       })
       return erroreInterno()
     }
-    // `esaminati` e `inviati` insieme: se divergono di molto, i solleciti partono ma non
-    // arrivano — ed è esattamente il guasto (silenzioso) che è già costato mesi di email
-    // di credenziali mai consegnate.
-    logEvento('cron', 'info', {
+    // `esaminati`, `inviati`, `fallite` ed `email_tentate` insieme: se divergono, i solleciti
+    // partono ma non arrivano — il guasto silenzioso che è già costato mesi di email di
+    // credenziali mai consegnate. Una voce fallita fa `ok-parziale` a `warn`: è un battito (la
+    // salute lo legge, `ESITI_BATTITO`), ma in tabella non sembra una notte normale.
+    const parziale = fallite > 0
+    const esito = parziale ? 'ok-parziale' : 'ok'
+    logEvento('cron', parziale ? 'warn' : 'info', {
       operazione: JOB,
-      esito: 'ok',
+      esito,
       ms: Date.now() - t0,
       scuole_attive: abilitate.length,
       inviati,
+      fallite,
       rinviati,
+      email_inviate: emailInviate,
+      email_tentate: emailTentate,
       esaminati: ids.length,
-      msg: `${JOB}: ok`,
+      msg: `${JOB}: ${esito}`,
     })
-    return NextResponse.json({ success: true, inviati, esaminati: ids.length, rinviati })
+    return NextResponse.json({ success: true, inviati, fallite, esaminati: ids.length, rinviati })
   } catch (err) {
     // `evento: 'cron'`: il fallimento totale del job resta nello stesso flusso dei battiti
     // (`where evento = 'cron'`). `logErrore` emette anche l'Error nativo con lo stack VERO.

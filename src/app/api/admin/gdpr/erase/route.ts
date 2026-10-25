@@ -16,6 +16,9 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): file nello Storage e molte tabelle, genitore per genitore.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `alunno_id`: contratto storico permissivo (qualunque stringa non vuota; id
 // inesistente → 404 a valle, niente vincolo uuid). `mode`: stessi valori del

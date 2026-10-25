@@ -1631,5 +1631,7 @@
   "cassaStampaDal": "Dal {data}",
   "cassaStampaFinoAl": "Fino al {data}",
   "cassaFiltroMovCassa": "Cassa di provenienza",
-  "cassaFiltroMovGenerale": "Cassa generale"
+  "cassaFiltroMovGenerale": "Cassa generale",
+  "soll_non_inviati": "{n, plural, one {# sollecito non inviato:} other {# solleciti non inviati:}}",
+  "soll_motivo_altro_giro": "un altro giro ha appena preso in carico questa voce: riprova più tardi"
 }

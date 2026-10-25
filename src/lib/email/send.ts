@@ -1,6 +1,8 @@
-import { externalFetch } from '@/lib/logging/external'
-import { logEvento } from '@/lib/logging/logger'
+import { externalFetch, tettoMs, type EsitoEsterno } from '@/lib/logging/external'
+import { logEvento, type Livello, type Valore } from '@/lib/logging/logger'
 import { hashCorrelabile } from '@/lib/logging/redact'
+import { sanificaMessaggio } from '@/lib/logging/serialize'
+import { msDaRetryAfter } from '@/lib/rete/retry-after'
 
 /**
  * Util email condiviso.
@@ -105,9 +107,30 @@ export interface SendEmailParams {
    * 1 a 256 caratteri fra lettere, cifre e `: _ - .`. Una chiave fuori forma NON ferma l'invio:
    * si spedisce senza, con una riga `error`, perché un'email persa vale più di un doppione
    * evitato. Stessa chiave con un messaggio DIVERSO è un errore del chiamante: Resend risponde
-   * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo, detto a livello `error`.
+   * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo (non si ritenta, non si
+   * rinvia), detto a livello `error` — ma INCERTO, perché la richiesta di prima con quella chiave
+   * è arrivata a Resend e può essere partita.
    */
   chiaveIdempotenza?: string
+  /**
+   * I RITENTATIVI (sessione 9 della seconda serie di robustezza). Assente = una chiamata sola,
+   * come prima, e l'esito non porta `tentativi`. La forma dell'esito però non è identica per
+   * tutti: `incerto: true` compare per QUALUNQUE chiamante quando la richiesta può essere arrivata
+   * a Resend (vedi `SendEmailResult.incerto`). È innocuo: chi non lo legge si comporta come prima.
+   *
+   * Presente = fino a `TENTATIVI_EMAIL_MAX` chiamate, aspettando 1 s e poi 3 s (o il
+   * `Retry-After` del provider, se è più lungo e non supera `ATTESA_MAX_EMAIL_MS`), e SOLO:
+   *  · sul `429`, sempre: il provider non ha preso in carico niente;
+   *  · su `5xx` o senza risposta (`stato: 0`: rete giù, DNS, scadenza), SOLO con una
+   *    `chiaveIdempotenza` valida: la richiesta potrebbe essere arrivata, e senza la chiave il
+   *    ritentativo sarebbe un doppione alla famiglia.
+   * Ogni ritentativo usa la STESSA chiave.
+   *
+   * `scadenza` (epoch ms): un ritentativo parte solo se attesa + tetto della chiamata finiscono
+   * prima di lì. Il giro dei solleciti passa il suo tetto (240 s), così i ritentativi non
+   * mangiano il margine fra il tetto e la vita della Function.
+   */
+  ritentativi?: { scadenza?: number }
 }
 
 export interface SendEmailResult {
@@ -143,6 +166,30 @@ export interface SendEmailResult {
    * Chi non guarda questo campo si comporta esattamente come prima.
    */
   rinviabile?: boolean
+  /** Quante chiamate sono state fatte. Solo quando la richiesta porta `ritentativi`. */
+  tentativi?: number
+  /**
+   * «Forse è partita». Vero quando il provider potrebbe aver preso in carico l'email senza che
+   * lo sappiamo:
+   *  · uno dei due `409` dell'idempotenza: `concurrent_idempotent_requests` (la stessa chiave è
+   *    ancora in corso) o `invalid_idempotent_request` (la chiave è già arrivata a Resend con un
+   *    altro messaggio: QUESTA richiesta non è partita, quella di prima forse sì);
+   *  · una chiamata scaduta senza risposta (il nostro tetto), con o senza chiave;
+   *  · con la chiave d'idempotenza INVIATA (revisione del lotto 4): un `5xx` — 502 e 504 di un
+   *    gateway compresi, che possono rispondere dopo che Resend ha preso il messaggio — e uno
+   *    `stato: 0` che non sia un errore PRIMA della connessione (`ECONNRESET`, un socket chiuso a
+   *    metà, un errore senza codice). Restano certi DNS, porta chiusa, rete o host irraggiungibili,
+   *    connessione mai stabilita e handshake TLS fallito (`primaDellaRichiesta`): lì la richiesta
+   *    non è mai partita.
+   * Lo smentiscono solo un successo o un rifiuto 4xx definitivo DI RESEND (con il `name` dei suoi
+   * errori) a un tentativo successivo (stessa chiave ⇒ stesso esito); un `429`, un 4xx di un
+   * intermediario (il 403 HTML di un WAF, un 408) o un errore prima della connessione non dicono
+   * niente.
+   *
+   * Chi tiene una presa (i solleciti) NON la annulla su un esito incerto: il sollecito slitta di
+   * una cadenza. È il prezzo accettato: durante un guasto di Resend i solleciti slittano.
+   */
+  incerto?: boolean
 }
 
 /**
@@ -159,14 +206,66 @@ const QUOTA_ESAURITA = 429
 const FORMA_CHIAVE_IDEMPOTENZA = /^[A-Za-z0-9:_.-]{1,256}$/
 
 /**
- * I due 409 dell'idempotenza di Resend, per nome (il campo `name` del corpo):
+ * I due 409 dell'idempotenza di Resend, per nome (il campo `name` del corpo). Tutti e due dicono
+ * che una richiesta con QUELLA chiave è arrivata a Resend, quindi tutti e due sono INCERTI:
  *  · `concurrent_idempotent_requests` — la richiesta con quella chiave è ANCORA in corso: si
  *    riprova più tardi, quindi è rinviabile come il 429;
- *  · `invalid_idempotent_request` — la chiave è già stata usata per un messaggio diverso: un
- *    errore del chiamante, definitivo.
+ *  · `invalid_idempotent_request` — la chiave è già stata usata per un messaggio diverso: questa
+ *    richiesta non parte (errore del chiamante, definitivo, non rinviabile), ma quella di prima
+ *    con la stessa chiave può essere partita (revisione del lotto 4).
+ * Un 409 senza uno di questi due nomi resta un rifiuto definitivo e certo, come prima.
  */
 const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
 const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
+
+/**
+ * Gli errori di rete che arrivano PRIMA che la richiesta HTTP parta (revisione del lotto 4): DNS
+ * (`ENOTFOUND`, `EAI_AGAIN`), porta chiusa (`ECONNREFUSED`), rete o host irraggiungibili
+ * (`ENETUNREACH`, `EHOSTUNREACH`), connessione mai stabilita entro il tetto di undici
+ * (`UND_ERR_CONNECT_TIMEOUT`). Lì la richiesta non è mai partita e l'esito è certo. Ogni altro
+ * `stato: 0` può arrivare DOPO l'invio, ed è incerto (vedi `forseArrivata`).
+ *
+ * Più gli errori dell'HANDSHAKE TLS (seconda revisione del lotto 4: un `CERT_HAS_EXPIRED` usciva
+ * incerto, e il sollecito slittava di una cadenza invece di riprovare il giorno dopo), che si
+ * riconoscono per FAMIGLIA e non uno per uno — vedi `primaDellaRichiesta`.
+ */
+const ERRORI_PRIMA_DELLA_CONNESSIONE: ReadonlySet<string> = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+  // Le verifiche del certificato che OpenSSL non chiama `CERT_…`: le più comuni davanti a un
+  // proxy o a una catena incompleta. Anche queste fermano l'handshake, quindi la richiesta.
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+])
+
+/**
+ * Le famiglie dell'handshake TLS: `CERT_…` (le verifiche X.509 di OpenSSL: scaduto, non ancora
+ * valido, revocato…) e `ERR_TLS_…` di Node (nome che non torna, handshake scaduto…). Ancorate
+ * all'INIZIO del codice. L'handshake si chiude prima che un solo byte della richiesta HTTP parta.
+ */
+const FAMIGLIE_TLS_PRIMA_DELLA_RICHIESTA = /^(?:CERT_|ERR_TLS_)/
+
+/**
+ * Le due eccezioni della famiglia `ERR_TLS_`: una RINEGOZIAZIONE può arrivare a connessione già
+ * aperta, cioè DOPO che la richiesta è partita. Restano incerte, come ogni errore a metà strada.
+ */
+const ERRORI_TLS_A_CONNESSIONE_APERTA: ReadonlySet<string> = new Set(['ERR_TLS_RENEGOTIATION_DISABLED', 'ERR_TLS_SESSION_ATTACK'])
+
+/** Il codice di rete dice che la richiesta HTTP NON è mai partita? (esito certo) */
+function primaDellaRichiesta(codice: string | undefined): boolean {
+  if (codice === undefined) return false
+  if (ERRORI_PRIMA_DELLA_CONNESSIONE.has(codice)) return true
+  return FAMIGLIE_TLS_PRIMA_DELLA_RICHIESTA.test(codice) && !ERRORI_TLS_A_CONNESSIONE_APERTA.has(codice)
+}
+
+/** Quante chiamate al massimo, ritentativi compresi (sessione 9). */
+export const TENTATIVI_EMAIL_MAX = 3
+/** Le attese prima del 2° e del 3° tentativo: 1 s, poi 3 s (lo stesso passo di `native-push`). */
+export const ATTESE_RITENTATIVO_EMAIL_MS: readonly number[] = [1_000, 3_000]
+/** Oltre questa attesa chiesta dal provider non si aspetta: l'esito resta quello del tentativo. */
+export const ATTESA_MAX_EMAIL_MS = 10_000
+
+/** Perché i ritentativi si sono fermati prima di un successo: è l'`esito` della riga di chiusura. */
+type MotivoFermata = 'ritentativi-esauriti' | 'retry-after-oltre-il-tetto' | 'ritentativo-oltre-la-scadenza'
 
 /**
  * Il campo `to` nella forma che Resend accetta: **sempre un elenco**.
@@ -211,7 +310,7 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
  * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
  * indirizzo") non deve mai ridursi a un generico "non inviata".
  */
-export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo, chiaveIdempotenza }: SendEmailParams): Promise<SendEmailResult> {
+export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo, chiaveIdempotenza, ritentativi }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
@@ -239,52 +338,53 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     chiave = undefined
   }
 
-  const esito = await externalFetch(
-    'resend',
-    'https://api.resend.com/emails',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...(chiave ? { 'Idempotency-Key': chiave } : {}),
-      },
-      body: JSON.stringify({
-        from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
-        to: destinatariPerIlProvider(to),
-        subject,
-        text,
-        ...(html ? { html } : {}),
-        // `?.length` e non la sola presenza: un elenco VUOTO significa «non ho
-        // allegati», e mandare `attachments: []` a Resend è dire una cosa diversa
-        // dal non dirla. Le due forme si equivalgono oggi; il contratto di un
-        // provider esterno non è una cosa su cui si scommette.
-        ...(attachments?.length
-          ? {
-              attachments: attachments.map((a) => ({
-                filename: a.filename,
-                content: a.content,
-                ...(a.contentType ? { content_type: a.contentType } : {}),
-              })),
-            }
-          : {}),
-        ...(replyTo ? { reply_to: replyTo } : {}),
-      }),
+  const init: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...(chiave ? { 'Idempotency-Key': chiave } : {}),
     },
-    {
-      // Il battito (successo E rifiuto) lo emette `externalFetch`: una riga sola, con il corpo
-      // del provider nella colonna `messaggio`. Non se ne aggiunge una seconda qui.
-      evento: 'email',
-      campi: {
-        operazione: 'sendEmail',
-        // Hash, mai l'indirizzo. `destinatario` NON è in lista bianca, quindi in `app_log`
-        // resta `[redatto:str/9]`: l'hash si legge solo su Vercel. È il prezzo accettato —
-        // l'alternativa sarebbe allargare la lista bianca di `redact` a un campo che porta
-        // identità, e quella lista difende dati di minori (AGENTS, regola 8).
-        destinatario: hashCorrelabile(to),
-      },
-    }
-  )
+    body: JSON.stringify({
+      from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
+      to: destinatariPerIlProvider(to),
+      subject,
+      text,
+      ...(html ? { html } : {}),
+      // `?.length` e non la sola presenza: un elenco VUOTO significa «non ho
+      // allegati», e mandare `attachments: []` a Resend è dire una cosa diversa
+      // dal non dirla. Le due forme si equivalgono oggi; il contratto di un
+      // provider esterno non è una cosa su cui si scommette.
+      ...(attachments?.length
+        ? {
+            attachments: attachments.map((a) => ({
+              filename: a.filename,
+              content: a.content,
+              ...(a.contentType ? { content_type: a.contentType } : {}),
+            })),
+          }
+        : {}),
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    }),
+  }
+  const campi: Record<string, Valore> = {
+    operazione: 'sendEmail',
+    // Hash, mai l'indirizzo. `destinatario` NON è in lista bianca, quindi in `app_log`
+    // resta `[redatto:str/9]`: l'hash si legge solo su Vercel. È il prezzo accettato —
+    // l'alternativa sarebbe allargare la lista bianca di `redact` a un campo che porta
+    // identità, e quella lista difende dati di minori (AGENTS, regola 8).
+    destinatario: hashCorrelabile(to),
+  }
+  // Il battito (successo E rifiuto) lo emette `externalFetch`, una riga per chiamata, con il corpo
+  // del provider nella colonna `messaggio`. Con i ritentativi le righe sono una per tentativo e
+  // portano `tentativo`; sopra, al massimo una riga di chiusura (vedi `chiamaResend`).
+  const { esito, tentativi, fermata, incerto } = await chiamaResend(init, campi, chiave, ritentativi)
+  // Le chiavi nuove dell'esito compaiono SOLO quando servono: `tentativi` solo per chi passa
+  // `ritentativi`; `incerto` solo quando la richiesta può essere arrivata (per qualunque
+  // chiamante). Nel caso comune l'esito è quello di sempre, chiave per chiave (i test esistenti
+  // lo confrontano con `toEqual`).
+  const conto = ritentativi === undefined ? {} : { tentativi }
+  const dubbio = incerto ? { incerto: true } : {}
 
   if (esito.ok) {
     // `externalFetch` restituisce la Response col corpo INTATTO proprio perché
@@ -312,12 +412,14 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
         err,
       )
     }
-    return { ok: true, error: null, messageId }
+    return { ok: true, error: null, messageId, ...conto }
   }
 
   // `stato: 0` = una risposta non c'è stata affatto (rete giù, DNS, TLS).
   if (esito.stato === 0) {
-    return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}` }
+    // `incerto` se la richiesta può essere arrivata: la scadenza del tetto e, con la chiave, ogni
+    // errore che non sia di PRIMA della connessione (vedi `forseArrivata`).
+    return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}`, ...conto, ...dubbio }
   }
 
   // Il motivo del rifiuto arriva fino a chi ha chiesto l'invio (audit, avviso in UI): un 403
@@ -328,16 +430,22 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     // Livello `warn` e non `error`: non è un guasto, è il tetto del piano che si
     // è fatto sentire. Ma resta scritto — il giorno in cui il giro delle
     // iscrizioni finisce prima del previsto, questa riga è l'unica che lo spiega.
-    logEvento('email', 'warn', {
-      operazione: 'sendEmail',
-      esito: 'quota-esaurita',
-      stato: esito.stato,
-      msg: `quota del provider email esaurita (429): l'invio va rinviato, non registrato come fallito`,
-    })
+    // Se i ritentativi si sono fermati su un 429, la loro riga di chiusura l'ha già detto, a
+    // `error` (sessione 9): resta `warn` solo il 429 di chi non chiede ritentativi (il bottone).
+    if (fermata === null) {
+      logEvento('email', 'warn', {
+        operazione: 'sendEmail',
+        esito: 'quota-esaurita',
+        stato: esito.stato,
+        msg: `quota del provider email esaurita (429): l'invio va rinviato, non registrato come fallito`,
+      })
+    }
     return {
       ok: false,
       rinviabile: true,
       error: `quota del provider email esaurita (429)${dettaglio ? `: ${dettaglio}` : ''}`,
+      ...conto,
+      ...dubbio,
     }
   }
 
@@ -352,21 +460,27 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
         stato: esito.stato,
         msg: 'stessa chiave d\'idempotenza ancora in corso presso il provider: invio rinviato',
       })
-      return { ok: false, rinviabile: true, error: `invio già in corso presso il provider (409)${dettaglio ? `: ${dettaglio}` : ''}` }
+      // Incerto per definizione: l'altra richiesta con questa chiave può andare a buon fine.
+      return { ok: false, rinviabile: true, incerto: true, error: `invio già in corso presso il provider (409)${dettaglio ? `: ${dettaglio}` : ''}`, ...conto }
     }
     if (nome === IDEMPOTENZA_CHIAVE_RIUSATA) {
       logEvento('email', 'error', {
         operazione: 'sendEmail',
         esito: 'idempotenza-chiave-riusata',
         stato: esito.stato,
-        msg: 'chiave d\'idempotenza già usata per un messaggio diverso: email NON spedita, il chiamante va corretto',
+        msg: 'chiave d\'idempotenza già usata per un messaggio diverso: QUESTA email non è partita, ma una richiesta con la stessa chiave è arrivata al provider e può essere partita (esito incerto). Il chiamante va corretto',
       })
+      // Definitivo (niente ritentativo, niente rinvio) ma INCERTO (revisione del lotto 4): la
+      // richiesta di prima con questa chiave è arrivata a Resend. Chi tiene una presa non la annulla.
+      return { ok: false, incerto: true, error: `rifiutato dal provider email (409)${dettaglio ? `: ${dettaglio}` : ''}`, ...conto }
     }
   }
 
   return {
     ok: false,
     error: `rifiutato dal provider email (${esito.stato})${dettaglio ? `: ${dettaglio}` : ''}`,
+    ...conto,
+    ...dubbio,
   }
 }
 
@@ -391,6 +505,165 @@ function corpoJson(corpo: string): Record<string, unknown> | null {
     // Non era JSON: è già il testo del provider, e chi chiama usa il corpo grezzo.
   }
   return null
+}
+
+/**
+ * La chiamata a Resend, con i ritentativi quando la richiesta li chiede (sessione 9).
+ *
+ * Una riga per TENTATIVO la scrive `externalFetch` (con `tentativo` fra i campi, quando i
+ * ritentativi ci sono): a `warn` se il rifiuto è ritentabile, a `error` se è definitivo. Sopra,
+ * al massimo una riga di chiusura: `riuscita-dopo-ritentativo` (`info`) oppure il motivo per cui
+ * ci si è fermati, SEMPRE a `error` (429 compreso), con lo status come `code` e il corpo del
+ * provider sanificato nell'Error. I tentativi intermedi restano `warn`: dicono «riprovo», la
+ * chiusura dice «questa email in questo giro non parte». È la riga che la salute conta
+ * (`contaEsitiFornitore` in `src/lib/health/fornitori.ts` conta come rifiuti le sole `error`):
+ * con la chiusura a `warn` una quota esaurita tutto il giorno non arriverebbe mai a un allarme.
+ *
+ * Le attese sono in serie, una email alla volta: il giro dei solleciti non si parallelizza.
+ */
+async function chiamaResend(
+  init: RequestInit,
+  campi: Record<string, Valore>,
+  chiave: string | undefined,
+  ritentativi: SendEmailParams['ritentativi'],
+): Promise<{ esito: EsitoEsterno; tentativi: number; fermata: MotivoFermata | null; incerto: boolean }> {
+  let tentativi = 0
+  // «Una chiamata può essere arrivata a Resend senza che sappiamo com'è andata» (`forseArrivata`).
+  // Lo smentisce solo un successo o un rifiuto 4xx definitivo DI RESEND a un tentativo dopo
+  // (`smentisceIlDubbio`: stessa chiave ⇒ stesso esito); un 429, un 4xx di un intermediario o un
+  // errore PRIMA della connessione non dicono niente sui tentativi di prima, e il «forse» resta.
+  let incerto = false
+  for (;;) {
+    tentativi++
+    const esito = await externalFetch('resend', 'https://api.resend.com/emails', init, {
+      evento: 'email',
+      campi: ritentativi === undefined ? campi : { ...campi, tentativo: tentativi },
+      ...(ritentativi === undefined
+        ? {}
+        : { gravita: (stato: number): Livello => (eRitentabile(stato, chiave) ? 'warn' : 'error') }),
+    })
+    if (smentisceIlDubbio(esito)) incerto = false
+    else if (forseArrivata(esito, chiave)) incerto = true
+
+    if (esito.ok) {
+      if (tentativi > 1) {
+        logEvento('email', 'info', {
+          operazione: 'sendEmail',
+          provider: 'resend',
+          esito: 'riuscita-dopo-ritentativo',
+          tentativi,
+          msg: `email accettata dal provider al tentativo ${tentativi}`,
+        })
+      }
+      return { esito, tentativi, fermata: null, incerto }
+    }
+    if (ritentativi === undefined || !eRitentabile(esito.stato, chiave)) {
+      return { esito, tentativi, fermata: null, incerto }
+    }
+
+    const attesa = attesaPrimaDelRitentativo(esito.retryAfter, tentativi)
+    const fermata = motivoPerFermarsi(tentativi, attesa, ritentativi.scadenza)
+    if (fermata !== null) {
+      // `error` qualunque sia la causa, 429 compreso: i tentativi sono finiti e l'email in questo
+      // giro non parte. Il `code` (lo status, o il codice di rete) dice se era la quota.
+      logEvento(
+        'email',
+        'error',
+        {
+          operazione: 'sendEmail',
+          provider: 'resend',
+          esito: fermata,
+          ...(esito.stato > 0 ? { stato: esito.stato } : {}),
+          tentativi,
+          ...(fermata === 'ritentativi-esauriti' ? {} : { attesa_ms: attesa }),
+        },
+        erroreResend(esito.stato, esito.corpo, esito.codice),
+      )
+      return { esito, tentativi, fermata, incerto }
+    }
+    await attendi(attesa)
+  }
+}
+
+/**
+ * «La richiesta può essere arrivata a Resend, e la risposta non dice com'è andata» (revisione del
+ * lotto 4). Fino ad allora valeva solo per la scadenza del tetto: un 504 del gateway o un
+ * `ECONNRESET` arrivati DOPO che Resend aveva preso il messaggio uscivano «certi», i solleciti
+ * annullavano la presa, il giorno dopo la chiave cambiava (porta la data) e l'email partiva due
+ * volte. Ora:
+ *  · la scadenza del nostro tetto (`codice: 'timeout'`): sempre, con o senza chiave, come prima;
+ *  · con la chiave d'idempotenza INVIATA: ogni `5xx` (502 e 504 compresi) e ogni `stato: 0` che
+ *    non sia un errore di prima della richiesta (`primaDellaRichiesta`: DNS, porta chiusa, rete
+ *    irraggiungibile, handshake TLS fallito) — un errore senza codice compreso, nel dubbio.
+ * Senza chiave un 5xx o una connessione caduta restano l'esito di sempre: chi non passa la chiave
+ * non tiene una presa da proteggere, e non ritenta.
+ */
+function forseArrivata(esito: EsitoEsterno, chiave: string | undefined): boolean {
+  if (esito.ok) return false
+  if (esito.stato === 0 && esito.codice === 'timeout') return true
+  if (chiave === undefined) return false
+  if (esito.stato >= 500 && esito.stato <= 599) return true
+  return esito.stato === 0 && !primaDellaRichiesta(esito.codice)
+}
+
+/**
+ * «Questa risposta smentisce un dubbio di prima» (seconda revisione del lotto 4). Stessa chiave ⇒
+ * stesso esito: se Resend ora risponde con un rifiuto definitivo, la chiamata di prima non era
+ * partita. Ma lo può dire solo RESEND: un rifiuto 4xx (≠ 429) con il `name` dei suoi errori
+ * strutturati (`{ statusCode, name, message }`). Un 403 HTML di un WAF, un 408 di un proxy, un 409
+ * senza `name` vengono da un intermediario che non sa niente della chiamata di prima: il dubbio
+ * resta. Fino ad allora qualunque 4xx smentiva, e la presa si annullava su un esito forse partito.
+ */
+function smentisceIlDubbio(esito: EsitoEsterno): boolean {
+  if (esito.ok) return true
+  if (esito.stato < 400 || esito.stato >= 500 || esito.stato === QUOTA_ESAURITA) return false
+  return nomeDelProvider(esito.corpo) !== null
+}
+
+/**
+ * Ritentabile: il `429` sempre (il provider dice «non ho preso niente, riprova»); `5xx` e nessuna
+ * risposta (`stato: 0`: rete giù, DNS, scadenza del tetto) solo con una chiave d'idempotenza,
+ * perché lì la richiesta potrebbe essere arrivata e solo la chiave rende il ritentativo innocuo.
+ */
+function eRitentabile(stato: number, chiave: string | undefined): boolean {
+  if (stato === QUOTA_ESAURITA) return true
+  return chiave !== undefined && (stato === 0 || (stato >= 500 && stato <= 599))
+}
+
+/** L'attesa prima del prossimo tentativo: la scaletta, o il `Retry-After` se è più lungo. */
+function attesaPrimaDelRitentativo(retryAfter: string | undefined, fatti: number): number {
+  const scaletta = ATTESE_RITENTATIVO_EMAIL_MS[Math.min(fatti, ATTESE_RITENTATIVO_EMAIL_MS.length) - 1]
+  const chiesta = msDaRetryAfter(retryAfter)
+  return chiesta === undefined ? scaletta : Math.max(scaletta, chiesta)
+}
+
+/**
+ * `null` = si ritenta. Il terzo motivo è il tetto del giro: un ritentativo parte solo se l'attesa
+ * e il tetto della chiamata (`tettoMs('resend')`) finiscono prima della scadenza.
+ */
+function motivoPerFermarsi(fatti: number, attesa: number, scadenza: number | undefined): MotivoFermata | null {
+  if (fatti >= TENTATIVI_EMAIL_MAX) return 'ritentativi-esauriti'
+  if (attesa > ATTESA_MAX_EMAIL_MS) return 'retry-after-oltre-il-tetto'
+  if (scadenza !== undefined && Date.now() + attesa + tettoMs('resend') > scadenza) return 'ritentativo-oltre-la-scadenza'
+  return null
+}
+
+function attendi(ms: number): Promise<void> {
+  return new Promise((risolvi) => setTimeout(risolvi, ms))
+}
+
+/**
+ * L'ultimo rifiuto come Error VERO, per la riga che chiude i ritentativi: il corpo del provider
+ * diventa il messaggio, SANIFICATO (un indirizzo dentro il corpo esce come `[email]`), lo status
+ * il `code`. Senza risposta il codice è quello che `externalFetch` ha scritto sulla riga del
+ * tentativo (`'timeout'`, `ECONNRESET`…), altrimenti `'nessuna-risposta'`: mai `'0'`, che in
+ * `app_log.codice` sembrerebbe uno status. Stesso schema di `erroreFcm` in `native-push.ts`.
+ */
+function erroreResend(stato: number, corpo: string, codiceRete: string | undefined): Error {
+  const err = new Error(sanificaMessaggio(corpo === '' ? `Resend ${stato === 0 ? 'nessuna risposta' : `HTTP ${stato}`}` : corpo))
+  err.name = 'ResendRitentativiFermati'
+  Object.assign(err, { code: stato === 0 ? (codiceRete ?? 'nessuna-risposta') : String(stato) })
+  return err
 }
 
 /** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */

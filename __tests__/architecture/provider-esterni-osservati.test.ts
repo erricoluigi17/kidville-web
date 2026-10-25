@@ -107,6 +107,14 @@ const PROVIDER_ESTERNI = new Map<string, Provider>([
         ],
         nome: 'instagram',
     }],
+    ['anthropic (traduzione della chat)', {
+        // Nessun host letterale: l'URL lo costruisce lo SDK (`@anthropic-ai/sdk`), che chiama il
+        // `fetch` che gli si passa. Dalla sessione 9 quel `fetch` è `fetchOsservato`, cioè
+        // `externalFetch('anthropic', …)`: il file è un chiamante come gli altri.
+        host: [],
+        chiamanti: ['src/lib/translate/claude.ts'],
+        nome: 'anthropic',
+    }],
     ['sidi (Ministero dell\'Istruzione)', {
         host: ['sidi.pubblica.istruzione.it', 'demo-sidi.pubblica.istruzione.it'],
         chiamanti: [],

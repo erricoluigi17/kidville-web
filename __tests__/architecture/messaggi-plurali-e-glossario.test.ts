@@ -376,6 +376,11 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // guardato cosa. Il RICONOSCITORE DI FORMA in fondo a questo file l'ha
     // trovata piatta al primo giro — è servito, ed è la ragione per cui esiste.
     { ns: 'adminComunicazioni', chiave: 'registroQuantiConteggiati', variabile: 'n' },
+    // ── 2026-10-25 · I SOLLECITI NON PARTITI (revisione del lotto 4) ─────────
+    // Nata ICU, quindi invisibile al RICONOSCITORE DI FORMA. È l'intestazione che dice alla
+    // segreteria quanti solleciti dell'ultimo invio NON sono partiti: con un solo sollecito,
+    // «1 solleciti non inviati» sarebbe il refuso proprio nella riga che deve farla intervenire.
+    { ns: 'adminContabilita', chiave: 'soll_non_inviati', variabile: 'n' },
 ]
 
 /**

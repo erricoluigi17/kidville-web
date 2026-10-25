@@ -10,6 +10,9 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { formattaIstante } from '@/i18n/config'
 
+// Vita massima dichiarata (sessione 9): foglio xlsx con gli ordini di divise e merchandising.
+export const maxDuration = 300
+
 // GET /api/admin/merch/export — XLSX flat delle righe Merchandise (una riga per
 // riga d'ordine) per segreteria/magazzino. Degrada a foglio vuoto su DB non migrato.
 

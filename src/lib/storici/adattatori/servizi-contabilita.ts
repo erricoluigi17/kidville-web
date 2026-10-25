@@ -16,6 +16,19 @@ export async function incassi(ctx: ContestoStorico): Promise<Riga[]> {
   return righe.filter(r => { const p = relazione(r.pagamenti); return p.tipo !== 'padre' && p.scuola_id === ctx.richiesta.scuolaId && ammessa(ctx, p.alunno_id, r.data_incasso) })
 }
 
+/**
+ * Sessione 9: il registro dei solleciti scrive anche i tentativi falliti. «Sì» = almeno una email
+ * partita; «Incerto» = nessuna confermata, ma il provider potrebbe averne presa una; «No» =
+ * nessuna partita. Gli indirizzi non escono mai dallo storico: si legge solo l'esito.
+ */
+function recapito(v: unknown): string {
+  if (!Array.isArray(v)) return 'Non registrato'
+  const d = v.filter((x): x is Record<string, unknown> => x !== null && typeof x === 'object')
+  if (d.some(x => x.inviata === true)) return 'Sì'
+  if (d.some(x => x.incerta === true)) return 'Incerto'
+  return 'No'
+}
+
 async function menu(ctx: ContestoStorico): Promise<SezioneStorico> {
   const s = sezione('mensa_menu', [['alunno', 'Alunno'], ['data', 'Data'], ['classe', 'Classe documentata'], ['stato', 'Servizio'], ['primo', 'Primo'], ['secondo', 'Secondo'], ['contorno', 'Contorno'], ['frutta', 'Frutta'], ['ingredienti', 'Ingredienti'], ['allergeni', 'Allergeni'], ['note', 'Note']])
   s.avvisi.push('Menù ricostruito dalla configurazione disponibile oggi, dalle assegnazioni datate e dalle alternative salvate: non certifica il menù effettivamente servito in passato.')
@@ -131,8 +144,8 @@ export async function raccogliContabilita(ctx: ContestoStorico, categoria: Categ
     return s
   }
   if (categoria === 'contabilita_solleciti') {
-    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Inviato il'], ['livello', 'Livello'], ['canale', 'Canale'], ['oggetto', 'Oggetto'], ['corpo', 'Testo inviato'], ['automatico', 'Automatico']])
-    s.righe = (await perAlunni(ctx, 'solleciti', 'id,alunno_id,scuola_id,inviato_il,livello,canale,oggetto,corpo,automatico', 'inviato_il', true)).map(r => ({ _alunno_id: testo(r.alunno_id), alunno: nome(ctx, r.alunno_id), data: testo(r.inviato_il), livello: numero(r.livello), canale: testo(r.canale), oggetto: testo(r.oggetto), corpo: testo(r.corpo), automatico: r.automatico === true }))
+    const s = sezione(categoria, [['alunno', 'Alunno'], ['data', 'Inviato il'], ['recapitato', 'Recapitato'], ['livello', 'Livello'], ['canale', 'Canale'], ['oggetto', 'Oggetto'], ['corpo', 'Testo inviato'], ['automatico', 'Automatico']])
+    s.righe = (await perAlunni(ctx, 'solleciti', 'id,alunno_id,scuola_id,inviato_il,livello,canale,oggetto,corpo,automatico,destinatari', 'inviato_il', true)).map(r => ({ _alunno_id: testo(r.alunno_id), alunno: nome(ctx, r.alunno_id), data: testo(r.inviato_il), recapitato: recapito(r.destinatari), livello: numero(r.livello), canale: testo(r.canale), oggetto: testo(r.oggetto), corpo: testo(r.corpo), automatico: r.automatico === true }))
     return s
   }
   return null

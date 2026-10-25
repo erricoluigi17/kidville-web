@@ -132,6 +132,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.gte = () => b
       b.lte = () => b
       b.neq = () => b
+      // Sessione 9: i livelli si leggono con `.contains('destinatari', …)`.
+      b.contains = () => b
       b.order = () => b
       b.limit = () => b
       // La GET dei pagamenti legge a blocchi (`range`, K1): un blocco solo qui.

@@ -83,13 +83,12 @@ describe('lock — nessuna route confronta CRON_SECRET a mano', () => {
     }
 
     /**
-     * DEBITO DICHIARATO. `news/cron/run` è in lavorazione da un altro intervento
-     * nello stesso ciclo (il ricontrollo del consenso fotografico sui post
-     * pubblicati): toccarlo qui avrebbe sovrascritto quel lavoro. Va portato alla
-     * funzione condivisa appena quel lavoro è dentro. Questa mappa può solo
-     * accorciarsi.
+     * DEBITO DICHIARATO. Era `news/cron/run`, rimasto fuori perché un altro intervento
+     * dello stesso ciclo ci stava lavorando; portato a `segretoCronValido` nella sessione 9
+     * della seconda serie di robustezza. Vuota: questa mappa può solo accorciarsi, e ora
+     * qualunque route che confronta il segreto a mano fa rosso.
      */
-    const DEBITO = new Set(['src/app/api/news/cron/run/route.ts'])
+    const DEBITO = new Set<string>([])
 
     it('il confronto vive in un posto solo (`lib/security/segreto-cron`)', () => {
         const aMano: string[] = []

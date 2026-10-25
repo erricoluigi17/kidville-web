@@ -351,6 +351,10 @@ const BATTITI_DA_LEGGERE: { job: string; funzione: string }[] = [
   { job: 'presenze-giustificazioni-retention', funzione: 'presenze_giustificazioni_retention_tick' },
   { job: 'notifiche-retention', funzione: 'notifiche_retention_tick' },
   { job: 'fascicolo-audit-ip-retention', funzione: 'fascicolo_audit_ip_retention_tick' },
+  // Sessione 8 della seconda serie: due lavori di sola SQL che da qui battono nella forma che
+  // `controlloBattitoCron` sa leggere.
+  { job: 'app-log-purge', funzione: 'app_log_purge' },
+  { job: 'cron-storico-purge', funzione: 'cron_storico_purge' },
 ]
 
 /** L'ULTIMA migrazione che (ri)definisce una funzione: è quella che vale. */

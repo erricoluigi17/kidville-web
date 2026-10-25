@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
@@ -6,6 +7,8 @@ import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { ambienteCorrente } from '@/lib/logging/ambiente'
+import { sanificaMessaggio } from '@/lib/logging/serialize'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
@@ -32,7 +35,8 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    "maturo" (giorni di ritardo ≥ soglia) e il 3° resta SOLO manuale;
 //  • destinatari: titolari quota (split) oppure tutori del bambino;
 //  • ogni invio reale → riga in `solleciti` (testo effettivo = audit) + push.
-// Il registro può mancare (DB e2e CI): si degrada senza bloccare.
+// Il registro può mancare (DB e2e CI): si degrada senza bloccare — ma SOLO fuori produzione
+// (`registroAssenteDelDbDellaCi`): in produzione un registro «assente» è un guasto.
 //
 // FASE 8 DELLA ROADMAP DI ROBUSTEZZA (2026-10-11) — il giro può morire a metà:
 //  • le letture vanno a BLOCCHI di `ID_PER_QUERY`. Con 500 voci un solo `.in()`
@@ -46,10 +50,31 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    della segreteria) non spediscono due volte: il secondo trova la data cambiata e
 //    salta. Il prezzo, scelto: se il giro muore fra la presa e l'email, quel sollecito
 //    slitta di una cadenza invece di partire due volte;
-//  • ogni email porta una chiave d'idempotenza (voce, livello, destinatario, giorno):
+//  • ogni email porta una chiave d'idempotenza (voce, livello, destinatario, giorno e, dalla
+//    seconda revisione del lotto 4, l'impronta del contenuto: `chiaveIdempotenzaSollecito`):
 //    un ritentativo nello stesso giorno Resend non lo rispedisce;
 //  • un tetto di tempo (`scadenza`): oltre, le voci restanti escono `rinviato per
 //    tempo` e le riprende il giro dopo, invece di morire col muro della Function.
+//
+// SESSIONE 9 DELLA SECONDA SERIE (email e fornitori senza successi finti):
+//  • un sollecito è «inviato» solo se ALMENO UNA email è partita. Se non ne parte nessuna, la
+//    presa si annulla con un UPDATE condizionato sulla presa stessa (se un altro giro l'ha già
+//    ripresa, resta la sua), l'esito è `ok: false` e il giro dopo la riprende;
+//  • se l'esito è INCERTO (scadenza senza risposta, 5xx o connessione caduta dopo l'invio, uno
+//    dei due 409 dell'idempotenza: vedi `SendEmailResult.incerto`) la presa resta, e prima della
+//    cadenza non riparte niente. Senza, il giro del giorno dopo spedirebbe con una chiave nuova
+//    (porta la data) e Resend non potrebbe riconoscere il doppione.
+//    ⚠️ IL LIMITE RESIDUO, ACCETTATO (revisione del lotto 4): una riga `incerta` non conta per il
+//    livello (`FILTRO_RECAPITATO`), quindi alla cadenza dopo riparte lo STESSO livello con una
+//    chiave nuova. Se l'email incerta era arrivata, la famiglia la riceve due volte, a una
+//    cadenza di distanza (7 giorni di default). È il prezzo di non far salire il livello su
+//    un'email forse mai partita: il 2° sollecito a chi non ha mai ricevuto il 1° sarebbe peggio.
+//    La presa toglie il doppione dello stesso giorno, non quello della cadenza dopo;
+//  • il registro si scrive anche quando l'invio fallisce, con l'esito per destinatario; i
+//    livelli contano solo le righe con almeno un `inviata: true` (`FILTRO_RECAPITATO`);
+//  • niente push se nessuna email è partita: la push accompagna il sollecito, non lo sostituisce;
+//  • nessun destinatario con un indirizzo ⇒ niente presa e niente registro, un `warn`;
+//  • nel giro automatico l'email ritenta (429, 5xx, rete) dentro il tetto del giro.
 
 export interface EsitoSollecito {
     pagamento_id: string
@@ -58,12 +83,24 @@ export interface EsitoSollecito {
     oggetto?: string
     corpo?: string
     destinatari?: { id: string; email?: string | null }[]
+    /** Il perché, in PROSA italiana: nasce sul server, dove la lingua dell'interfaccia non c'è. */
     motivo?: string
+    /**
+     * Il CODICE del motivo, quando il pannello lo sa tradurre (seconda revisione del lotto 4):
+     * `SollecitiPanel` mostra la sua frase di catalogo nella lingua di chi guarda, e ricade su
+     * `motivo` per ogni codice che non conosce. Stessa regola di `messaggioDaCorpo` per gli errori
+     * (codice dichiarato ⇒ catalogo, altrimenti la prosa). Oggi uno solo; gli altri motivi restano
+     * in prosa, ed è un limite dichiarato.
+     */
+    motivoCodice?: 'altro_giro'
     /** `true` = non inviato per un GUASTO (lettura fallita, presa non scritta), non per una
      *  regola: il giro automatico non lo può chiudere con il battito «ok». */
     guasto?: boolean
     /** `true` = non tentato perché il giro ha raggiunto il suo tetto di tempo. */
     rinviato?: boolean
+    /** Sessione 9: le email partite e quelle tentate (i destinatari con un indirizzo). */
+    inviate?: number
+    tentate?: number
 }
 
 interface PagRow {
@@ -89,6 +126,99 @@ const MS_GIORNO = 86_400_000
 
 /** Il registro `solleciti` assente (DB E2E della CI non migrato): Postgres e PostgREST. */
 const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
+
+/**
+ * «Il registro manca perché questo è il DB della CI, non migrato» (seconda revisione del lotto 4).
+ *
+ * Vero solo FUORI produzione. In produzione il registro c'è sempre: un `PGRST205` («tabella non
+ * trovata nella cache dello schema») lì vuol dire la cache di PostgREST non ricaricata dopo una
+ * migrazione, o una migrazione persa — un GUASTO. Fino ad allora era il ripiego anche lì: il ciclo
+ * dei blocchi usciva e TUTTE le voci ripartivano dal livello 1, cioè il 1° sollecito a chi aveva
+ * già ricevuto il 2°, lo stesso difetto che la prima revisione aveva tolto per gli altri codici.
+ *
+ * La produzione la dice `ambienteCorrente()` (`@/lib/logging/ambiente`), cioè solo `VERCEL_ENV`:
+ * è il precedente del repo, scelto perché `NODE_ENV` vale `production` in ogni `next build`, anche
+ * sul portatile e nella CI, dove il DB non migrato è proprio quello che il ripiego serve. Preview e
+ * CI restano col ripiego (il DB E2E non è migrato, e lì non deve fermare niente), detto a `info`.
+ */
+function registroAssenteDelDbDellaCi(codice: string | undefined): boolean {
+    return REGISTRO_ASSENTE.has(codice ?? '') && ambienteCorrente() !== 'production'
+}
+
+/**
+ * Il filtro dei livelli (sessione 9): solo le righe del registro con ALMENO un destinatario
+ * raggiunto. Da questa sessione il registro scrive anche i tentativi falliti; senza il filtro
+ * una riga non recapitata farebbe salire il livello, e alla famiglia arriverebbe il 3° sollecito
+ * senza aver mai ricevuto il 2°. Stringa JSON e non array: postgrest-js tradurrebbe un array JS
+ * nel letterale Postgres `cs.{…}`, che su una colonna jsonb non vale; con la stringa esce
+ * `cs.[{"inviata":true}]`, cioè `destinatari @> '[{"inviata":true}]'`.
+ */
+const FILTRO_RECAPITATO = '[{"inviata":true}]'
+
+/**
+ * La chiave d'idempotenza di UNA email di sollecito: voce + livello + destinatario + giorno +
+ * l'IMPRONTA del contenuto (seconda revisione del lotto 4).
+ *
+ * Senza l'impronta la chiave non cambiava quando cambiava il contenuto, e Resend risponde `409
+ * invalid_idempotent_request` a una chiave già vista con un messaggio diverso. Il caso vero: al
+ * mattino un 422 certo (indirizzo sbagliato) — se Resend registra la chiave anche sui rifiuti — la
+ * presa si annulla; alle 10 la segreteria corregge l'indirizzo e ripreme il bottone: stessa chiave,
+ * contenuto diverso ⇒ 409 ⇒ «esito incerto» ⇒ voce ferma una cadenza, con zero consegne e un
+ * motivo falso. Lo stesso per un residuo cambiato da un pagamento parziale in mezzo.
+ *
+ * Ora: contenuto diverso (indirizzo, oggetto, testo, HTML) ⇒ chiave diversa; STESSO contenuto ⇒
+ * STESSA chiave, quindi l'idempotenza resta intera — i ritentativi dentro un giro mandano lo stesso
+ * messaggio, e due giri dello stesso giorno sulla stessa voce invariata anche (il contenuto non
+ * dipende dall'orologio dentro il giorno). Il mittente non entra: lo decide `send.ts` da una
+ * variabile d'ambiente che dentro un giorno non cambia.
+ *
+ * Solo codici, come vuole `SendEmailParams.chiaveIdempotenza`: l'impronta è uno sha256 troncato a
+ * 16 cifre esadecimali (64 bit: per distinguere due versioni dello stesso sollecito bastano), e
+ * l'indirizzo non compare MAI in chiaro. Non si usa `hashCorrelabile`: senza `LOG_HASH_SALT`
+ * restituisce `[redatto]`, cioè la stessa impronta per ogni contenuto (e con le parentesi, fuori
+ * dalla forma ammessa). I campi passano da un elenco JSON perché il confine fra due campi conti
+ * («AB»+«C» non è «A»+«BC»). Lunghezza: ~117 caratteri, sotto i 256 di Resend.
+ */
+export function chiaveIdempotenzaSollecito(p: {
+    pagamentoId: string
+    livello: number
+    destinatarioId: string
+    /** `AAAA-MM-GG` (UTC) della presa. */
+    giorno: string
+    email: string
+    oggetto: string
+    testo: string
+    html: string
+}): string {
+    const impronta = createHash('sha256')
+        .update(JSON.stringify([p.email, p.oggetto, p.testo, p.html]))
+        .digest('hex')
+        .slice(0, 16)
+    return `sollecito:${p.pagamentoId}:L${p.livello}:${p.destinatarioId}:${p.giorno}:${impronta}`
+}
+
+/** Un destinatario nel registro: l'esito del suo invio. */
+interface DestinatarioRegistrato {
+    id: string
+    email?: string | null
+    inviata: boolean
+    /** Il provider potrebbe averla presa (vedi `SendEmailResult.incerto`). NON fa salire il
+     *  livello: vedi il limite residuo in testa al file. */
+    incerta?: true
+}
+
+/** La riga del registro `solleciti`, senza il canale (lo aggiunge `registraSollecito`). */
+interface RigaRegistro {
+    pagamento_id: string
+    scuola_id: string
+    alunno_id: string
+    livello: number
+    destinatari: DestinatarioRegistrato[]
+    oggetto: string
+    corpo: string
+    automatico: boolean
+    inviato_da: string | null
+}
 
 export async function sollecitaPagamenti(
     supabase: SupabaseClient,
@@ -134,42 +264,60 @@ export async function sollecitaPagamenti(
         pags.push(...((pagRows || []) as unknown as PagRow[]))
     }
 
-    // livello già raggiunto (registro; degrade → si riparte da 1)
+    // livello già raggiunto (registro)
     //
-    // Il degrado resta quello di sempre, ma ora SI DICE. Il `catch` qui sotto aveva
-    // soltanto un commento, e non scattava nemmeno: PostgREST non lancia, l'errore
-    // torna in `{ error }` e `data` resta `null` — cioè «nessuno storico», in silenzio.
-    // Per il registro assente (DB della CI non migrato) è giusto ripartire da 1, e
-    // basta un `info`; per un guasto vero è un `error`, perché vuol dire rimandare il
-    // 1° sollecito a chi ha già ricevuto il 2°.
+    // Il `catch` qui aveva soltanto un commento, e non scattava nemmeno: PostgREST non
+    // lancia, l'errore torna in `{ error }` e `data` resta `null` — cioè «nessuno storico»,
+    // in silenzio. Due casi, due regole:
+    //  · registro ASSENTE del DB della CI non migrato (`registroAssenteDelDbDellaCi`: solo FUORI
+    //    produzione): si riparte da 1, con un `info` che conta TUTTE le voci che ripartono;
+    //  · GUASTO vero (revisione del lotto 4), e da questa seconda revisione anche il registro
+    //    «assente» in PRODUZIONE (`PGRST205`: la cache dello schema): le voci del blocco sono
+    //    «livelli non letti» e SALTANO il giro come guasto, con una riga `error`, blocco per
+    //    blocco (nessun blocco resta non letto e non detto). Fino ad allora si proseguiva con
+    //    `giaInviato = 0`, cioè si rimandava il 1° sollecito a chi aveva già ricevuto il 2°.
     //
     // A BLOCCHI (fase 8): tre livelli per voce, e un `.in()` di 500 voci poteva tornare
-    // più delle 1.000 righe che PostgREST restituisce — troncate senza dirlo.
+    // più delle 1.000 righe che PostgREST restituisce — troncate senza dirlo. Il `try` sta
+    // dentro il blocco: un rigetto (rete, client) toglie le voci di QUEL blocco, non le altre.
     const maxLivello = new Map<string, number>()
-    try {
-        for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
-            const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco)
-            if (errLivelli) {
-                const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
-                logEvento('pagamento', assente ? 'info' : 'error', {
-                    operazione: 'solleciti:livelli',
-                    esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
-                    n: blocco.length,
-                }, errLivelli)
-                // Il registro assente lo è per tutti i blocchi: una riga sola basta.
-                if (assente) break
-                continue
-            }
-            for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
-                maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
-            }
+    const livelliNonLetti = new Set<string>()
+    const blocchiLivelli = aBlocchi(pagamentoIds, ID_PER_QUERY)
+    for (const [indice, blocco] of blocchiLivelli.entries()) {
+        let righe: { pagamento_id: string; livello: number }[] = []
+        let guastoLivelli: { errore: unknown } | null = null
+        try {
+            const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco).contains('destinatari', FILTRO_RECAPITATO)
+            if (errLivelli) guastoLivelli = { errore: errLivelli }
+            else righe = (data || []) as { pagamento_id: string; livello: number }[]
+        } catch (err) {
+            guastoLivelli = { errore: err }
         }
-    } catch (err) {
-        logEvento('pagamento', 'error', {
-            operazione: 'solleciti:livelli',
-            esito: 'livelli-non-letti',
-            n: pagamentoIds.length,
-        }, err)
+        if (guastoLivelli) {
+            const codice = (guastoLivelli.errore as { code?: string } | null)?.code
+            if (registroAssenteDelDbDellaCi(codice)) {
+                // Il registro assente lo è per tutti i blocchi: una riga sola, ma che conta TUTTE
+                // le voci che da qui ripartono dal livello 1, non solo quelle di questo blocco.
+                const daQui = blocchiLivelli.slice(indice).reduce((n, b) => n + b.length, 0)
+                logEvento('pagamento', 'info', {
+                    operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: daQui,
+                }, guastoLivelli.errore)
+                break
+            }
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti:livelli',
+                esito: 'livelli-non-letti',
+                n: blocco.length,
+                msg: REGISTRO_ASSENTE.has(codice ?? '')
+                    ? `registro dei solleciti non trovato in produzione (cache dello schema non ricaricata?): ${blocco.length} voci saltano il giro come guasto`
+                    : `livelli dei solleciti non letti: ${blocco.length} voci saltano il giro come guasto`,
+            }, guastoLivelli.errore)
+            for (const id of blocco) livelliNonLetti.add(id)
+            continue
+        }
+        for (const s of righe) {
+            maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
+        }
     }
 
     const cfgCache = new Map<string, {
@@ -252,6 +400,16 @@ export async function sollecitaPagamenti(
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
             esiti.push({ pagamento_id: id, ok: false, motivo: `cadenza minima di ${cadenza}gg non ancora trascorsa` })
             continue
+        }
+
+        // Il livello raggiunto non si è letto (revisione del lotto 4): senza, il prossimo livello
+        // sarebbe un'invenzione. La voce salta come GUASTO, e il giro automatico non chiude «ok».
+        // TRANNE quando il livello l'ha scelto chi chiama (`opts.livello`, il bottone della
+        // segreteria; seconda revisione del lotto 4): lì il livello letto non serve, e far saltare
+        // la voce fermerebbe un sollecito deciso a mano per un dato che non si usa. La lettura
+        // fallita resta detta, una volta, dalla riga `error` del ciclo dei blocchi.
+        if (livelliNonLetti.has(id) && opts.livello === undefined) {
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'livelli dei solleciti non letti: sollecito non inviato', guasto: true }); continue
         }
 
         const giorniRitardo = pag.scadenza ? Math.max(0, Math.floor((adesso - Date.parse(pag.scadenza)) / MS_GIORNO)) : 0
@@ -356,6 +514,19 @@ export async function sollecitaPagamenti(
             destinatari = (data || []) as { id: string; email?: string | null }[]
         }
         if (destinatari.length === 0) { esiti.push({ pagamento_id: id, ok: false, motivo: 'nessun destinatario collegato' }); continue }
+        if (!destinatari.some((d) => !!d.email)) {
+            // Sessione 9: nessuno dei destinatari ha un indirizzo. Prima si prendeva la cadenza,
+            // si mandava la sola push e si registrava un sollecito senza nessuna email partita: la
+            // voce risultava «sollecitata» e il livello saliva. Ora si dice, e la voce resta com'è.
+            if (!opts.anteprima) {
+                logEvento('pagamento', 'warn', {
+                    operazione: 'solleciti-invio', esito: 'nessun-indirizzo-email', pagamento_id: id,
+                    n_destinatari: destinatari.length,
+                    msg: 'sollecito non inviato: nessun destinatario collegato ha un indirizzo email',
+                })
+            }
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'nessun destinatario con un indirizzo email' }); continue
+        }
 
         if (opts.anteprima) {
             esiti.push({ pagamento_id: id, ok: true, livello, oggetto, corpo, destinatari })
@@ -410,25 +581,106 @@ export async function sollecitaPagamenti(
             esiti.push({ pagamento_id: id, ok: false, motivo: 'cadenza non scritta: sollecito non inviato', guasto: true }); continue
         }
         if ((presa ?? []).length === 0) {
+            // Che cosa si sa davvero: un altro giro ha preso la voce dopo la nostra lettura. NON che
+            // l'abbia sollecitata (seconda revisione del lotto 4): da questa sessione quel giro può
+            // anche aver annullato la presa senza nessuna email partita. Il motivo dice il certo, e
+            // porta un codice che il pannello traduce.
             logEvento('pagamento', 'info', {
                 operazione: 'solleciti-invio', esito: 'sollecito-gia-in-corso', pagamento_id: id,
-                msg: 'la cadenza della voce è cambiata dopo la lettura: un altro giro l’ha appena sollecitata',
+                msg: 'la cadenza della voce è cambiata dopo la lettura: un altro giro l’ha appena presa in carico (in corso, concluso o annullato)',
             })
-            esiti.push({ pagamento_id: id, ok: false, motivo: 'sollecito già inviato da un altro giro' }); continue
+            esiti.push({
+                pagamento_id: id, ok: false, motivoCodice: 'altro_giro',
+                motivo: 'un altro giro ha appena preso in carico questa voce: riprova più tardi',
+            }); continue
         }
 
         const giorno = presaIl.slice(0, 10)
-        const esitiInvio: { id: string; email?: string | null; inviata: boolean }[] = []
+        const registrati: DestinatarioRegistrato[] = []
+        let inviate = 0
+        let tentate = 0
+        let incerte = 0
+        let ultimoErrore: string | null = null
         for (const d of destinatari) {
-            const inviata = d.email
-                ? (await sendEmailDetailed({
-                    to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
-                    // voce + livello + destinatario + giorno: lo stesso sollecito ritentato
-                    // lo stesso giorno Resend non lo rispedisce. Solo uuid e una data.
-                    chiaveIdempotenza: `sollecito:${id}:L${livello}:${d.id}:${giorno}`,
-                })).ok
+            if (!d.email) {
+                registrati.push({ id: d.id, email: d.email, inviata: false })
+                continue
+            }
+            tentate++
+            const invio = await sendEmailDetailed({
+                to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
+                // voce + livello + destinatario + giorno + impronta del contenuto: lo stesso
+                // sollecito ritentato lo stesso giorno Resend non lo rispedisce, e uno con un
+                // contenuto diverso (indirizzo corretto, residuo cambiato) non trova un 409. Solo
+                // uuid, una data e un'impronta.
+                chiaveIdempotenza: chiaveIdempotenzaSollecito({
+                    pagamentoId: id, livello, destinatarioId: d.id, giorno,
+                    email: d.email, oggetto, testo: corpo, html: messaggio.html,
+                }),
+                // Sessione 9: i ritentativi (429, 5xx, rete) solo nel giro AUTOMATICO e dentro il
+                // suo tetto di tempo. Dal bottone la segreteria aspetta davanti allo schermo: un
+                // fallimento lo vede subito, e decide lei.
+                ...(opts.automatico ? { ritentativi: opts.scadenza !== undefined ? { scadenza: opts.scadenza } : {} } : {}),
+            })
+            if (invio.ok) {
+                inviate++
+            } else {
+                ultimoErrore = invio.error
+                if (invio.incerto) incerte++
+            }
+            registrati.push({ id: d.id, email: d.email, inviata: invio.ok, ...(invio.incerto ? { incerta: true as const } : {}) })
+        }
+        // Il registro è l'AUDIT di ciò che si è TENTATO, con l'esito per destinatario, e la fonte
+        // dei livelli qui sopra (che però contano solo le righe recapitate: `FILTRO_RECAPITATO`).
+        const riga: RigaRegistro = {
+            pagamento_id: id,
+            scuola_id: pag.scuola_id,
+            alunno_id: pag.alunno_id,
+            livello,
+            destinatari: registrati,
+            oggetto,
+            corpo,
+            automatico: !!opts.automatico,
+            inviato_da: opts.attoreId ?? null,
+        }
+        if (inviate === 0) {
+            // NESSUNA EMAIL È PARTITA (sessione 9). Prima: presa scritta, push mandata, registro
+            // scritto ed esito `ok: true` — la voce risultava sollecitata e la famiglia non aveva
+            // ricevuto niente. Ora:
+            //  · esito certo ⇒ la presa si annulla, e il giro dopo riprende la voce;
+            //  · esito incerto ⇒ la presa resta: niente nuovo invio prima della cadenza, quindi
+            //    niente doppione il giorno dopo con una chiave nuova. Alla cadenza dopo riparte lo
+            //    STESSO livello (la riga `incerta` non lo fa salire): se l'email incerta era
+            //    arrivata, la famiglia la riceve due volte a una cadenza di distanza. È il limite
+            //    residuo, accettato, scritto in testa al file.
+            // In entrambi i casi niente push, e il registro dice com'è andata.
+            const presaAnnullata = incerte === 0
+                ? await annullaPresa(supabase, id, presaIl, pag.ultimo_sollecito_il)
                 : false
-            esitiInvio.push({ id: d.id, email: d.email, inviata })
+            await registraSollecito(supabase, riga)
+            if (incerte > 0) {
+                logEvento('pagamento', 'warn', {
+                    operazione: 'solleciti-invio', esito: 'sollecito-esito-incerto', pagamento_id: id,
+                    livello_sollecito: livello, tentate, incerte,
+                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita (scadenza, 5xx o connessione caduta dopo l’invio, 409 d’idempotenza): la cadenza resta, e alla prossima riparte lo stesso livello',
+                })
+                esiti.push({
+                    pagamento_id: id, ok: false, livello, inviate: 0, tentate,
+                    motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+                })
+                continue
+            }
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti-invio', esito: 'sollecito-non-recapitato', pagamento_id: id,
+                livello_sollecito: livello, tentate, presa_annullata: presaAnnullata,
+            }, erroreNonRecapitato(ultimoErrore))
+            esiti.push({
+                pagamento_id: id, ok: false, livello, inviate: 0, tentate,
+                motivo: presaAnnullata
+                    ? 'nessuna email partita: il sollecito resta per il giro successivo'
+                    : 'nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+            })
+            continue
         }
         try {
             await enqueueNotifiche(supabase, {
@@ -449,40 +701,9 @@ export async function sollecitaPagamenti(
                 pagamento_id: id,
             }, err)
         }
-        // Il registro è l'AUDIT di ciò che è partito (e la fonte dei livelli qui sopra).
-        // Se non si scrive il sollecito resta valido — l'email è partita — ma il prossimo
-        // ripartirebbe dallo stesso livello: si dice, `info` se il registro non esiste
-        // (DB della CI), `error` altrimenti. PostgREST non lancia: si legge `{ error }`.
-        try {
-            const { error: errRegistro } = await supabase.from('solleciti').insert({
-                pagamento_id: id,
-                scuola_id: pag.scuola_id,
-                alunno_id: pag.alunno_id,
-                livello,
-                canale: 'email',
-                destinatari: esitiInvio,
-                oggetto,
-                corpo,
-                automatico: !!opts.automatico,
-                inviato_da: opts.attoreId ?? null,
-            })
-            if (errRegistro) {
-                const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
-                logEvento('pagamento', assente ? 'info' : 'error', {
-                    operazione: 'solleciti:registro',
-                    esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
-                    pagamento_id: id,
-                }, errRegistro)
-            }
-        } catch (err) {
-            logEvento('pagamento', 'error', {
-                operazione: 'solleciti:registro',
-                esito: 'registro-sollecito-non-scritto',
-                pagamento_id: id,
-            }, err)
-        }
+        await registraSollecito(supabase, riga)
         // La cadenza è già scritta: è la presa, qui sopra, prima dell'email.
-        esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })
+        esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari, inviate, tentate })
     }
     if (rinviati > 0) {
         logEvento('pagamento', 'warn', {
@@ -491,4 +712,85 @@ export async function sollecitaPagamenti(
         })
     }
     return esiti
+}
+
+/**
+ * Riporta la cadenza al valore di prima, SOLO se è ancora la nostra presa (sessione 9).
+ *
+ * È lo stesso UPDATE condizionato della presa, al contrario: `… where ultimo_sollecito_il =
+ * <presa>`. Zero righe = un altro giro (il cron, o la segreteria dal bottone) ha ripreso la voce
+ * dopo di noi: la cadenza è sua, e non si tocca. `true` solo se la cadenza è tornata indietro.
+ */
+async function annullaPresa(
+    supabase: SupabaseClient,
+    id: string,
+    presaIl: string,
+    precedente: string | null,
+): Promise<boolean> {
+    try {
+        const { data, error } = await supabase
+            .from('pagamenti')
+            .update({ ultimo_sollecito_il: precedente })
+            .eq('id', id)
+            .eq('ultimo_sollecito_il', presaIl)
+            .select('id')
+        if (error) {
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti-invio', esito: 'presa-non-annullata', pagamento_id: id,
+                msg: 'nessuna email partita e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+            }, error)
+            return false
+        }
+        if ((data ?? []).length === 0) {
+            logEvento('pagamento', 'info', {
+                operazione: 'solleciti-invio', esito: 'presa-gia-ripresa', pagamento_id: id,
+                msg: 'la cadenza è cambiata dopo la presa: un altro giro ha ripreso la voce, e resta la sua',
+            })
+            return false
+        }
+        return true
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti-invio', esito: 'presa-non-annullata', pagamento_id: id,
+        }, err)
+        return false
+    }
+}
+
+/**
+ * Il registro è l'AUDIT di ciò che si è tentato (e la fonte dei livelli). Se non si scrive il
+ * sollecito resta quello che è, ma il prossimo ripartirebbe dallo stesso livello: si dice, `info`
+ * se il registro non esiste perché è il DB della CI (`registroAssenteDelDbDellaCi`), `error`
+ * altrimenti — in produzione anche un `PGRST205` (seconda revisione del lotto 4). PostgREST non
+ * lancia: si legge `{ error }`. Mai oggetto né corpo nella riga di log.
+ */
+async function registraSollecito(supabase: SupabaseClient, riga: RigaRegistro): Promise<void> {
+    try {
+        const { error: errRegistro } = await supabase.from('solleciti').insert({ ...riga, canale: 'email' })
+        if (errRegistro) {
+            const assente = registroAssenteDelDbDellaCi((errRegistro as { code?: string }).code)
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'solleciti:registro',
+                esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
+                pagamento_id: riga.pagamento_id,
+            }, errRegistro)
+        }
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti:registro',
+            esito: 'registro-sollecito-non-scritto',
+            pagamento_id: riga.pagamento_id,
+        }, err)
+    }
+}
+
+/**
+ * L'ultimo motivo del provider come Error VERO, per la riga `sollecito-non-recapitato`: il
+ * messaggio arriva sanificato (un indirizzo dentro il rifiuto esce come `[email]`), così la
+ * colonna `app_log.messaggio` dice PERCHÉ senza dire A CHI.
+ */
+function erroreNonRecapitato(motivo: string | null): Error {
+    const err = new Error(sanificaMessaggio(motivo ?? 'nessun esito dal provider email'))
+    err.name = 'SollecitoNonRecapitato'
+    return err
 }

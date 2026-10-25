@@ -283,8 +283,19 @@
 // la copia resta fino alla scadenza e la richiesta risulta parziale (`letture_fallite`).
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// Sessione 8 della seconda serie di robustezza — SOLO l'informativa privacy. La voce «log tecnici di
+// accesso e di utilizzo» dice che le righe che registrano un ERRORE restano novanta giorni (decisione
+// T7 del titolare, 20/10); le altre restano trenta, come prima. Sostanziale: un trattamento che
+// allunga la vita di un dato, e che il documento non diceva. I log sono redatti a lista bianca
+// (nomi, email e codici fiscali come hash correlabile; testo libero e dati sanitari tolti).
+// «Automaticamente» c'era già e resta vero: lo fa `app-log-purge`, applicato dal 2026-07-13.
+// Scritta il 25/10 per entrare in vigore col merge del lotto 4, dopo la mezzanotte UTC: la '2026-10-25'
+// è già in uso (sessione 3) e una versione già citata nei consensi non si riscrive.
+// È testo legale: il titolare lo rilegge.
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-10-25'
+export const VERSIONE_PRIVACY = '2026-10-26'

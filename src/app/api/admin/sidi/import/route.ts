@@ -10,6 +10,9 @@ import { applySidiBatch } from '@/lib/sidi/import-apply'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): riceve, decomprime e importa lo zip del SIDI.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso (userId è consumato dal gate)
 

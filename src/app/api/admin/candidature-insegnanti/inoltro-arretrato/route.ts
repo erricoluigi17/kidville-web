@@ -9,6 +9,9 @@ import { inviaCopiaAllaSede } from '@/lib/candidature/copia-alla-sede'
 import { INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS } from '@/lib/forms/insegnanti-template'
 import { formattaIstante } from '@/i18n/config'
 
+// Vita massima dichiarata (sessione 9): fino a 60 inoltri con il curriculum allegato, in fila, con il tetto di 10 s di Resend per ciascuno.
+export const maxDuration = 300
+
 // =============================================================================
 // L'INOLTRO DELL'ARRETRATO ALLE CASELLE DEI PLESSI.
 //

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
@@ -7,7 +7,10 @@ const h = vi.hoisted(() => ({
   // Dal 2026-08-15 il sollecito manda anche l'HTML, quindi passa da
   // `sendEmailDetailed`. Il mock DEVE esporre entrambe: `vi.mock` sostituisce
   // il modulo INTERO, e una funzione dimenticata qui diventa un 500 opaco.
-  sendEmailDetailed: vi.fn(async (opts: { to: string; subject: string; text: string; html?: string }) => ({ ok: Boolean(opts), error: null })),
+  sendEmailDetailed: vi.fn(async (opts: {
+    to: string; subject: string; text: string; html?: string
+    chiaveIdempotenza?: string; ritentativi?: { scadenza?: number }
+  }): Promise<{ ok: boolean; error: string | null; incerto?: boolean }> => ({ ok: Boolean(opts), error: null })),
   enqueueNotifiche: vi.fn(async () => {}),
   pagamenti: [] as Record<string, unknown>[],
   sollecitiEsistenti: [] as Record<string, unknown>[],
@@ -22,6 +25,9 @@ const h = vi.hoisted(() => ({
   // oppure un RIGETTO (rete, client), sulla lettura dei livelli e sull'insert.
   erroreLivelli: null as null | { code: string; message: string },
   livelliLancia: false,
+  // Revisione del lotto 4: il guasto su UN blocco dei livelli (l'n-esima lettura del registro).
+  livelliErroreBlocco: null as null | number,
+  lettureLivelli: 0,
   erroreRegistro: null as null | { code: string; message: string },
   registroLancia: false,
   // Fase 8: la presa sulla cadenza, le letture a blocchi, l'ordine fra presa ed email.
@@ -31,6 +37,13 @@ const h = vi.hoisted(() => ({
   ins: [] as { table: string; col: string; n: number }[],
   ordini: [] as { table: string; col: string }[],
   sequenza: [] as string[],
+  // Sessione 9: la cadenza come la vede il database, l'ultima presa scritta, gli annullamenti
+  // (il valore rimesso), il guasto dell'annullamento e i filtri di contenimento sul registro.
+  cadenzaInDb: null as string | null,
+  ultimaPresa: null as string | null,
+  annullamenti: [] as (string | null)[],
+  erroreAnnullamento: null as null | { code: string; message: string },
+  contenimenti: [] as { table: string; col: string; val: string }[],
   logEvento: vi.fn(),
 }))
 
@@ -51,60 +64,99 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail, sendEmailDetailed: h.sendEmailDetailed }))
 vi.mock('@/lib/push/enqueue', () => ({ enqueueNotifiche: h.enqueueNotifiche }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: vi.fn(async () => ['sc-1']) }))
-vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
-    from: (table: string) => {
-      const b: Record<string, unknown> = {}
-      let aggiornamento: Record<string, unknown> | null = null
-      b.select = () => b
-      b.eq = () => b
-      b.in = (col: string, vals: unknown[]) => { h.ins.push({ table, col, n: vals.length }); return b }
-      b.is = () => b
-      b.lt = () => b
-      b.neq = () => b
-      b.order = (col: string) => { h.ordini.push({ table, col }); return b }
-      b.limit = () => b
-      b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
-      b.insert = (row: Record<string, unknown>) => {
-        h.inserts.push({ table, row })
-        if (table === 'solleciti' && h.registroLancia) {
-          return { then: (_r: unknown, ko: (e: unknown) => unknown) => ko(new TypeError('fetch failed')) }
+vi.mock('@/lib/supabase/server-client', () => {
+  // Il contenimento jsonb di PostgREST (`cs`), ridotto a ciò che il motore usa (sessione 9): il
+  // filtro è un elenco di oggetti, e ognuno deve avere nel valore un elemento con le stesse
+  // chiavi e gli stessi valori. Una riga senza `destinatari` non contiene niente, come in Postgres.
+  const contiene = (valore: unknown, filtro: string): boolean => {
+    const attesi = JSON.parse(filtro) as Record<string, unknown>[]
+    return Array.isArray(valore) && attesi.every((a) =>
+      valore.some((v: unknown) => v !== null && typeof v === 'object'
+        && Object.entries(a).every(([k, x]) => (v as Record<string, unknown>)[k] === x)))
+  }
+  return {
+    createAdminClient: async () => ({
+      from: (table: string) => {
+        const b: Record<string, unknown> = {}
+        let aggiornamento: Record<string, unknown> | null = null
+        // Sessione 9: il filtro sulla cadenza (`.eq`/`.is` su `ultimo_sollecito_il`) distingue la
+        // PRESA dall'ANNULLAMENTO; il contenimento filtra davvero le righe del registro.
+        let filtroCadenza: { val: unknown } | null = null
+        let contenimento: { col: string; val: string } | null = null
+        b.select = () => b
+        b.eq = (col: string, val: unknown) => { if (col === 'ultimo_sollecito_il') filtroCadenza = { val }; return b }
+        b.in = (col: string, vals: unknown[]) => { h.ins.push({ table, col, n: vals.length }); return b }
+        b.is = (col: string, val: unknown) => { if (col === 'ultimo_sollecito_il') filtroCadenza = { val }; return b }
+        b.lt = () => b
+        b.neq = () => b
+        b.contains = (col: string, val: string) => {
+          h.contenimenti.push({ table, col, val })
+          contenimento = { col, val }
+          return b
         }
-        const errore = table === 'solleciti' ? h.erroreRegistro : null
-        return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
-      }
-      b.update = (row: Record<string, unknown>) => {
-        h.updates.push({ table, row })
-        aggiornamento = row
-        if (table === 'pagamenti' && row.ultimo_sollecito_il) h.sequenza.push('presa')
+        b.order = (col: string) => { h.ordini.push({ table, col }); return b }
+        b.limit = () => b
+        b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
+        b.insert = (row: Record<string, unknown>) => {
+          h.inserts.push({ table, row })
+          if (table === 'solleciti' && h.registroLancia) {
+            return { then: (_r: unknown, ko: (e: unknown) => unknown) => ko(new TypeError('fetch failed')) }
+          }
+          const errore = table === 'solleciti' ? h.erroreRegistro : null
+          return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
+        }
+        b.update = (row: Record<string, unknown>) => {
+          h.updates.push({ table, row })
+          aggiornamento = row
+          return b
+        }
+        b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+          if (table === 'pagamenti' && aggiornamento && 'ultimo_sollecito_il' in aggiornamento) {
+            const valore = (aggiornamento.ultimo_sollecito_il ?? null) as string | null
+            // L'ANNULLAMENTO: condizionato sulla presa che questo giro ha appena scritto.
+            if (h.ultimaPresa !== null && filtroCadenza?.val === h.ultimaPresa) {
+              h.sequenza.push('annullamento')
+              h.annullamenti.push(valore)
+              if (h.erroreAnnullamento) return resolve({ data: null, error: h.erroreAnnullamento })
+              // Un altro giro ha già ripreso la voce: l'UPDATE condizionato tocca zero righe.
+              if (h.cadenzaInDb !== h.ultimaPresa) return resolve({ data: [], error: null })
+              h.cadenzaInDb = valore
+              return resolve({ data: [{ id: 'x' }], error: null })
+            }
+            // LA PRESA.
+            h.sequenza.push('presa')
+            if (h.errorePresa) return resolve({ data: null, error: h.errorePresa })
+            if (h.presaVuota) return resolve({ data: [], error: null })
+            h.ultimaPresa = valore
+            h.cadenzaInDb = valore
+            return resolve({ data: [{ id: 'x' }], error: null })
+          }
+          if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
+            return resolve({ data: null, error: h.erroreLetturaPagamenti })
+          }
+          if (table === 'solleciti' && ++h.lettureLivelli === h.livelliErroreBlocco) {
+            return resolve({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } })
+          }
+          if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
+          if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
+          const c = contenimento
+          return resolve({
+            data:
+              table === 'pagamenti' ? h.pagamenti
+              : table === 'solleciti' ? (c ? h.sollecitiEsistenti.filter((r) => contiene(r[c.col], c.val)) : h.sollecitiEsistenti)
+              : table === 'admin_settings' ? h.settingsRows
+              : table === 'legame_genitori_alunni' ? h.legami
+              : table === 'utenti' ? h.utenti
+              : table === 'pagamenti_quote' ? h.quote
+              : [],
+            error: null,
+          })
+        }
         return b
-      }
-      b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
-        if (table === 'pagamenti' && aggiornamento?.ultimo_sollecito_il) {
-          if (h.errorePresa) return resolve({ data: null, error: h.errorePresa })
-          return resolve({ data: h.presaVuota ? [] : [{ id: 'x' }], error: null })
-        }
-        if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
-          return resolve({ data: null, error: h.erroreLetturaPagamenti })
-        }
-        if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
-        if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
-        return resolve({
-          data:
-            table === 'pagamenti' ? h.pagamenti
-            : table === 'solleciti' ? h.sollecitiEsistenti
-            : table === 'admin_settings' ? h.settingsRows
-            : table === 'legame_genitori_alunni' ? h.legami
-            : table === 'utenti' ? h.utenti
-            : table === 'pagamenti_quote' ? h.quote
-            : [],
-          error: null,
-        })
-      }
-      return b
-    },
-  }),
-}))
+      },
+    }),
+  }
+})
 
 import { POST } from '@/app/api/pagamenti/solleciti/route'
 import { POST as RUN } from '@/app/api/pagamenti/solleciti/run/route'
@@ -130,6 +182,8 @@ beforeEach(() => {
   h.updates = []
   h.erroreLivelli = null
   h.livelliLancia = false
+  h.livelliErroreBlocco = null
+  h.lettureLivelli = 0
   h.erroreRegistro = null
   h.registroLancia = false
   h.presaVuota = false
@@ -138,6 +192,11 @@ beforeEach(() => {
   h.ins = []
   h.ordini = []
   h.sequenza = []
+  h.cadenzaInDb = null
+  h.ultimaPresa = null
+  h.annullamenti = []
+  h.erroreAnnullamento = null
+  h.contenimenti = []
   h.sendEmailDetailed.mockImplementation(async (opts) => {
     h.sequenza.push('email')
     return { ok: Boolean(opts), error: null }
@@ -418,8 +477,10 @@ describe('POST /api/pagamenti/solleciti — le coordinate del bonifico', () => {
  * inviati, l'accodamento della push e la scrittura del registro `solleciti` avevano un
  * `catch { /* commento *\/ }` — e due di loro stavano attorno a `await supabase.from(…)`,
  * che NON lancia: l'errore di PostgREST torna in `{ error }`, e il `catch` non scattava
- * mai. Il comportamento resta quello di prima (il sollecito parte lo stesso), ma ora il
- * guasto si DICE: `info` se è il registro assente del DB non migrato, `error` altrimenti.
+ * mai. Ora il guasto si DICE: `info` se è il registro assente del DB non migrato (e il
+ * sollecito parte dal livello 1), `error` altrimenti. Per i LIVELLI il comportamento è cambiato
+ * con la revisione del lotto 4: un guasto vero non lascia più partire il sollecito (sarebbe il 1°
+ * a chi ha già ricevuto il 2°), la voce salta come guasto. Push e registro restano secondari.
  */
 describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
   const eventi = (esito: string) =>
@@ -448,22 +509,51 @@ describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
     expect(log[0][2]).toEqual({ operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: 1 })
   })
 
-  it('livelli non letti per un altro motivo: il sollecito parte, e una riga `error` col codice', async () => {
+  // Revisione del lotto 4: fino a qui un guasto sui livelli lasciava partire il sollecito con
+  // `giaInviato = 0`, cioè il 1° a chi aveva già ricevuto il 2°. Ora la voce è «non letta»: salta
+  // come GUASTO, senza presa, senza email, senza push, senza registro.
+  const saltatoPerGuasto = async (res: Response) => {
+    expect(res.status).toBe(200)
+    expect((await res.json()).data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, guasto: true, motivo: 'livelli dei solleciti non letti: sollecito non inviato',
+    })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.sequenza).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(h.inserts.filter((i) => i.table === 'solleciti')).toEqual([])
+  }
+
+  it('🔴 livelli non letti per un altro motivo (57014): la voce salta come guasto, e una riga `error` col codice', async () => {
     h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
-    await partito(await POST(post({ pagamento_ids: [PID] })))
+    await saltatoPerGuasto(await POST(post({ pagamento_ids: [PID] })))
     const log = eventi('livelli-non-letti')
     expect(log).toHaveLength(1)
     expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toMatchObject({ operazione: 'solleciti:livelli', n: 1 })
     expect(log[0][3]).toMatchObject({ code: '57014' })
   })
 
-  it('lettura dei livelli che RIGETTA: il sollecito parte, e il rigetto si logga', async () => {
+  it('🔴 lettura dei livelli che RIGETTA: la voce salta come guasto, e il rigetto si logga', async () => {
     h.livelliLancia = true
-    await partito(await POST(post({ pagamento_ids: [PID] })))
+    await saltatoPerGuasto(await POST(post({ pagamento_ids: [PID] })))
     const log = eventi('livelli-non-letti')
     expect(log).toHaveLength(1)
     expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
     expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+
+  it('🔴 il guasto su UN blocco dei livelli salta solo le voci di quel blocco: le altre proseguono', async () => {
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const ids = Array.from({ length: 150 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    h.pagamenti = ids.map((id) => ({ ...h.pagamenti[0], id }))
+    h.livelliErroreBlocco = 1 // il primo blocco: le prime 100 voci
+    const esiti = await sollecitaPagamenti(await createAdminClient(), ids, { anteprima: true })
+    expect(esiti.slice(0, 100).every((e) => e.ok === false && e.guasto === true)).toBe(true)
+    expect(esiti.slice(100).every((e) => e.ok === true && e.livello === 1)).toBe(true)
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0][2]).toMatchObject({ n: 100 })
   })
 
   it('push che non si accoda: l’email è partita, il registro si scrive lo stesso, e la push persa si dice', async () => {
@@ -532,7 +622,13 @@ describe('solleciti — la presa sulla cadenza, PRIMA dell’email (fase 8)', ()
     expect(h.sendEmailDetailed).not.toHaveBeenCalled()
     expect(h.enqueueNotifiche).not.toHaveBeenCalled()
     expect(h.inserts.filter((i) => i.table === 'solleciti')).toEqual([])
-    expect(j.data[0]).toMatchObject({ ok: false, motivo: 'sollecito già inviato da un altro giro' })
+    // Seconda revisione del lotto 4: il motivo era «sollecito già inviato da un altro giro», ma
+    // l'altro giro può anche aver annullato la presa (nessuna email partita). Ora il testo dice
+    // solo ciò che è certo, e porta un codice che il pannello traduce.
+    expect(j.data[0]).toMatchObject({
+      ok: false, motivo: 'un altro giro ha appena preso in carico questa voce: riprova più tardi', motivoCodice: 'altro_giro',
+    })
+    expect(j.data[0].motivo).not.toContain('inviato')
     expect(h.logEvento.mock.calls.some((c) => c[1] === 'info' && (c[2] as { esito?: string }).esito === 'sollecito-gia-in-corso')).toBe(true)
   })
 
@@ -552,11 +648,159 @@ describe('solleciti — la presa sulla cadenza, PRIMA dell’email (fase 8)', ()
     expect(h.sequenza).toEqual([])
   })
 
-  it('ogni email porta la chiave d’idempotenza voce + livello + destinatario + giorno (solo uuid e data)', async () => {
+  it('ogni email porta la chiave d’idempotenza voce + livello + destinatario + giorno + impronta del contenuto (solo codici)', async () => {
     await POST(post({ pagamento_ids: [PID] }))
     const chiave = (h.sendEmailDetailed.mock.calls[0][0] as { chiaveIdempotenza?: string }).chiaveIdempotenza
-    expect(chiave).toMatch(new RegExp(`^sollecito:${PID}:L1:g-1:\\d{4}-\\d{2}-\\d{2}$`))
+    expect(chiave).toMatch(new RegExp(`^sollecito:${PID}:L1:g-1:\\d{4}-\\d{2}-\\d{2}:[0-9a-f]{16}$`))
     expect(chiave).not.toContain('@')
+    expect(chiave).not.toContain('genitore')
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — l'impronta del contenuto nella chiave d'idempotenza.
+//
+// La chiave era voce + livello + destinatario + giorno. Se Resend la registra anche su un rifiuto
+// certo (422), la segreteria che corregge l'indirizzo e ripreme il bottone lo stesso giorno manda
+// la STESSA chiave con un contenuto DIVERSO: `409 invalid_idempotent_request`, «esito incerto»,
+// voce ferma una cadenza con zero consegne. Ora la chiave porta un'impronta (sha256 troncato) di
+// destinatario, oggetto e corpo: contenuto diverso ⇒ chiave diversa, stesso contenuto ⇒ stessa.
+// =============================================================================
+describe('chiaveIdempotenzaSollecito — contenuto diverso, chiave diversa', () => {
+  const base = {
+    pagamentoId: PID, livello: 1, destinatarioId: 'g-1', giorno: '2026-10-26',
+    email: 'genitore.uno@example.test', oggetto: 'Promemoria pagamento', testo: 'Testo', html: '<p>Testo</p>',
+  }
+  const chiave = async (p: typeof base) => (await import('@/lib/pagamenti/solleciti-invio')).chiaveIdempotenzaSollecito(p)
+
+  it('stesso contenuto ⇒ la STESSA chiave (l’idempotenza dei ritentativi resta)', async () => {
+    expect(await chiave({ ...base })).toBe(await chiave({ ...base }))
+  })
+
+  it.each([
+    ['l’indirizzo corretto', { email: 'genitore.corretto@example.test' }],
+    ['un oggetto diverso', { oggetto: 'Secondo sollecito' }],
+    ['un residuo diverso nel testo', { testo: 'Testo con un altro residuo' }],
+    ['un HTML diverso', { html: '<p>Altro</p>' }],
+  ])('%s ⇒ una chiave diversa', async (_nome, cambio) => {
+    expect(await chiave({ ...base, ...cambio })).not.toBe(await chiave(base))
+  })
+
+  it('forma ammessa da Resend, nessun indirizzo in chiaro, sotto i 256 caratteri', async () => {
+    const k = await chiave(base)
+    expect(k).toMatch(/^[A-Za-z0-9:_.-]{1,256}$/)
+    expect(k.startsWith(`sollecito:${PID}:L1:g-1:2026-10-26:`)).toBe(true)
+    expect(k).not.toContain('@')
+    expect(k).not.toContain('example')
+  })
+
+  it('i confini dei campi contano: spostare un carattere fra due campi cambia la chiave', async () => {
+    expect(await chiave({ ...base, oggetto: 'AB', testo: 'C' })).not.toBe(await chiave({ ...base, oggetto: 'A', testo: 'BC' }))
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — `PGRST205` in produzione è un guasto, non «il DB della CI».
+//
+// `PGRST205` («tabella non trovata nella cache dello schema») era trattato come il registro
+// assente del DB E2E non migrato: si usciva dal ciclo dei blocchi e TUTTE le voci ripartivano
+// dal livello 1 — il 1° sollecito a chi aveva già ricevuto il 2°, lo stesso difetto che la prima
+// revisione aveva tolto per gli altri codici. In produzione il registro c'è sempre: se non si
+// legge, le voci saltano come guasto. Fuori produzione (CI, locale, preview) il ripiego resta,
+// detto a `info`, e la riga conta TUTTE le voci che ripartono da 1, non solo il primo blocco.
+// La produzione la dice `ambienteCorrente()` (`@/lib/logging/ambiente`): solo `VERCEL_ENV`.
+// =============================================================================
+describe('solleciti — il registro «assente» in produzione è un guasto', () => {
+  afterEach(() => { vi.unstubAllEnvs() })
+  const eventi = (esito: string) =>
+    h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  const PGRST205 = { code: 'PGRST205', message: "Could not find the table 'public.solleciti' in the schema cache" }
+  const centocinquanta = () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    h.pagamenti = ids.map((id) => ({ ...h.pagamenti[0], id }))
+    return ids
+  }
+
+  it('🔴 produzione, `PGRST205` sui livelli ⇒ la voce salta come GUASTO: niente presa, niente email, riga `error` col codice', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreLivelli = PGRST205
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect((await res.json()).data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, guasto: true, motivo: 'livelli dei solleciti non letti: sollecito non inviato',
+    })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.sequenza).toEqual([])
+    expect(eventi('registro-solleciti-assente')).toHaveLength(0)
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toMatchObject({ code: 'PGRST205' })
+  })
+
+  it('🔴 produzione, `PGRST205` su tutti i blocchi ⇒ OGNI blocco è letto (o provato) e segnato: 150 voci guaste, due righe `error`', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreLivelli = PGRST205
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const esiti = await sollecitaPagamenti(await createAdminClient(), centocinquanta(), { anteprima: true })
+    expect(esiti.every((e) => e.ok === false && e.guasto === true)).toBe(true)
+    expect(h.ins.filter((i) => i.table === 'solleciti').map((i) => i.n)).toEqual([100, 50])
+    expect(eventi('livelli-non-letti').map((c) => (c[2] as { n: number }).n)).toEqual([100, 50])
+  })
+
+  it('fuori produzione (DB della CI), `PGRST205` ⇒ il ripiego resta: livello 1, una riga `info` che conta TUTTE le voci', async () => {
+    vi.stubEnv('VERCEL_ENV', '')
+    h.erroreLivelli = PGRST205
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const esiti = await sollecitaPagamenti(await createAdminClient(), centocinquanta(), { anteprima: true })
+    expect(esiti.every((e) => e.ok === true && e.livello === 1)).toBe(true)
+    const log = eventi('registro-solleciti-assente').filter((c) => (c[2] as { operazione?: string }).operazione === 'solleciti:livelli')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'info'])
+    expect(log[0][2]).toEqual({ operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: 150 })
+    expect(eventi('livelli-non-letti')).toHaveLength(0)
+  })
+
+  it('preview: anche lì il ripiego resta (il guasto si dichiara solo in produzione)', async () => {
+    vi.stubEnv('VERCEL_ENV', 'preview')
+    h.erroreLivelli = PGRST205
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect((await res.json()).data[0]).toMatchObject({ ok: true, livello: 1 })
+  })
+
+  it('🔴 produzione, il registro «assente» all’insert ⇒ riga `error` (il livello non salirà), non `info`', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    h.erroreRegistro = PGRST205
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(eventi('registro-solleciti-assente')).toHaveLength(0)
+    const log = eventi('registro-sollecito-non-scritto')
+    expect(log).toHaveLength(1)
+    expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][3]).toMatchObject({ code: 'PGRST205' })
+  })
+})
+
+// =============================================================================
+// SECONDA REVISIONE DEL LOTTO 4 — il livello scelto a mano non ha bisogno del livello letto.
+// =============================================================================
+describe('solleciti — il bottone con un livello scelto a mano', () => {
+  it('🔴 livelli non letti (57014) ma `livello: 2` scelto dalla segreteria ⇒ il sollecito parte al livello 2', async () => {
+    h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(post({ pagamento_ids: [PID], livello: 2 }))
+    const j = await res.json()
+    expect(j.data[0]).toMatchObject({ pagamento_id: PID, ok: true, livello: 2 })
+    expect(j.data[0].guasto).toBeUndefined()
+    expect(h.sequenza).toEqual(['presa', 'email'])
+    // La lettura fallita si dice lo stesso: è un guasto del registro, anche se qui non è servita.
+    expect(h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string }).esito === 'livelli-non-letti')).toHaveLength(1)
+  })
+
+  it('livelli non letti e NESSUN livello scelto ⇒ resta il guasto (il livello sarebbe un’invenzione)', async () => {
+    h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+    expect(j.data[0]).toMatchObject({ ok: false, guasto: true })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
   })
 })
 
@@ -625,5 +869,231 @@ describe('POST /api/pagamenti/solleciti/run — fase 8', () => {
     expect(res.status).toBe(500)
     expect(h.logEvento.mock.calls.some((c) => c[0] === 'cron' && c[1] === 'error' && (c[2] as { esito?: string }).esito === 'solleciti-con-guasti')).toBe(true)
     expect(battitoOk()).toBe(false)
+  })
+})
+
+// =============================================================================
+// SESSIONE 9 — un sollecito conta come inviato solo se un'email è partita.
+// Indirizzi solo su `example.test`.
+// =============================================================================
+describe('solleciti — il livello conta solo i solleciti RECAPITATI (sessione 9)', () => {
+  it('L1 recapitato, L2 registrato senza nessuna email partita ⇒ il prossimo è di nuovo il 2', async () => {
+    h.sollecitiEsistenti = [
+      { pagamento_id: PID, livello: 1, destinatari: [{ id: 'g-1', inviata: true }] },
+      { pagamento_id: PID, livello: 2, destinatari: [{ id: 'g-1', inviata: false }] },
+    ]
+    const res = await POST(post({ pagamento_ids: [PID], anteprima: true }))
+    const j = await res.json()
+    expect(j.data[0]).toMatchObject({ pagamento_id: PID, ok: true, livello: 2 })
+    expect(h.contenimenti).toContainEqual({ table: 'solleciti', col: 'destinatari', val: '[{"inviata":true}]' })
+  })
+})
+
+describe('solleciti — nessuna email partita, nessun sollecito (sessione 9)', () => {
+  const righe = (esito: string) =>
+    h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  const registro = () => h.inserts.filter((i) => i.table === 'solleciti')
+  const fallisce = (error: string, incerto?: boolean) =>
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      return incerto ? { ok: false, error, incerto: true } : { ok: false, error }
+    })
+
+  beforeEach(() => {
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }]
+  })
+
+  it('🔴 nessuna email partita ⇒ la presa si annulla, niente push, registro con l’esito, riga `error`', async () => {
+    fallisce('rifiutato dal provider email (403): dominio non verificato per genitore.uno@example.test')
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'annullamento'])
+    expect(h.annullamenti).toEqual([null])
+    expect(h.cadenzaInDb).toBeNull()
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()).toHaveLength(1)
+    expect(registro()[0].row.destinatari).toEqual([{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false }])
+    expect(j.data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, livello: 1, inviate: 0, tentate: 1,
+      motivo: 'nessuna email partita: il sollecito resta per il giro successivo',
+    })
+    const riga = righe('sollecito-non-recapitato')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('error')
+    expect(riga[0][2]).toMatchObject({ operazione: 'solleciti-invio', pagamento_id: PID, livello_sollecito: 1, tentate: 1, presa_annullata: true })
+    const err = riga[0][3] as Error
+    expect(err.name).toBe('SollecitoNonRecapitato')
+    expect(err.message).toContain('[email]')
+    expect(err.message).not.toContain('example.test')
+  })
+
+  it('l’annullamento rimette la cadenza di PRIMA, non `null`', async () => {
+    const PRIMA = '2026-05-01T06:00:00.000Z'
+    h.pagamenti = [{ ...h.pagamenti[0], ultimo_sollecito_il: PRIMA }]
+    h.cadenzaInDb = PRIMA
+    fallisce('rifiutato dal provider email (500): errore finto')
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(h.annullamenti).toEqual([PRIMA])
+    expect(h.cadenzaInDb).toBe(PRIMA)
+  })
+
+  it('🔴 un altro giro ha ripreso la voce mentre l’email falliva: l’annullamento non tocca la sua cadenza', async () => {
+    const ESTRANEA = '2026-10-21T06:00:09.000Z'
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      h.cadenzaInDb = ESTRANEA // il bottone della segreteria, nello stesso istante
+      return { ok: false, error: 'rifiutato dal provider email (500): errore finto' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'annullamento'])
+    expect(h.cadenzaInDb).toBe(ESTRANEA)
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 1,
+      motivo: 'nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+    })
+    const ripresa = righe('presa-gia-ripresa')
+    expect(ripresa).toHaveLength(1)
+    expect(ripresa[0][1]).toBe('info')
+    expect(righe('sollecito-non-recapitato')[0][2]).toMatchObject({ presa_annullata: false })
+  })
+
+  it('🔴 un destinatario sì e uno no ⇒ il sollecito è partito: la presa resta, push e registro con i due esiti', async () => {
+    h.legami = [{ alunno_id: 'al-1', genitore_id: 'g-1' }, { alunno_id: 'al-1', genitore_id: 'g-2' }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }, { id: 'g-2', email: 'genitore.due@example.test' }]
+    h.sendEmailDetailed.mockImplementation(async (opts) => {
+      h.sequenza.push('email')
+      return opts.to === 'genitore.uno@example.test'
+        ? { ok: true, error: null }
+        : { ok: false, error: 'rifiutato dal provider email (422): indirizzo non valido' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).toHaveBeenCalledTimes(1)
+    expect((registro()[0].row.destinatari as { inviata: boolean }[]).map((d) => d.inviata)).toEqual([true, false])
+    expect(j.data[0]).toMatchObject({ ok: true, inviate: 1, tentate: 2 })
+    expect(righe('sollecito-non-recapitato')).toHaveLength(0)
+  })
+
+  it('nessun destinatario con un indirizzo ⇒ niente presa, niente email, niente push, niente registro; una riga `warn`', async () => {
+    h.utenti = [{ id: 'g-1', email: null }]
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual([])
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()).toEqual([])
+    expect(j.data[0]).toMatchObject({ ok: false, motivo: 'nessun destinatario con un indirizzo email' })
+    const riga = righe('nessun-indirizzo-email')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('warn')
+    expect(riga[0][2]).toMatchObject({ pagamento_id: PID, n_destinatari: 1 })
+  })
+
+  it('esito INCERTO ⇒ la presa resta, niente push, registro con `incerta`, riga `warn`', async () => {
+    fallisce('errore di rete verso il provider email: scaduto', true)
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()[0].row.destinatari).toEqual([{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true }])
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 1,
+      motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+    })
+    const riga = righe('sollecito-esito-incerto')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('warn')
+    expect(riga[0][2]).toMatchObject({ pagamento_id: PID, tentate: 1, incerte: 1 })
+  })
+
+  // Aggiunto in esecuzione (mutation testing): con un solo destinatario «incerta» e «nessuna
+  // certa» coincidono, e una regola che annullasse la presa appena UNA email ha esito certo
+  // restava verde. Con un'email forse partita la presa resta, anche se l'altra è rifiutata:
+  // annullarla vorrebbe dire rispedire il sollecito a chi potrebbe averlo già ricevuto.
+  it('🔴 un destinatario INCERTO e uno rifiutato ⇒ la presa resta (nessun doppio invio), niente push', async () => {
+    h.legami = [{ alunno_id: 'al-1', genitore_id: 'g-1' }, { alunno_id: 'al-1', genitore_id: 'g-2' }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }, { id: 'g-2', email: 'genitore.due@example.test' }]
+    h.sendEmailDetailed.mockImplementation(async (opts) => {
+      h.sequenza.push('email')
+      return opts.to === 'genitore.uno@example.test'
+        ? { ok: false, error: 'errore di rete verso il provider email: scaduto', incerto: true }
+        : { ok: false, error: 'rifiutato dal provider email (422): indirizzo non valido' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()[0].row.destinatari).toEqual([
+      { id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true },
+      { id: 'g-2', email: 'genitore.due@example.test', inviata: false },
+    ])
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 2,
+      motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+    })
+    expect(righe('sollecito-esito-incerto')[0][2]).toMatchObject({ tentate: 2, incerte: 1 })
+    expect(righe('sollecito-non-recapitato')).toHaveLength(0)
+  })
+
+  it('l’annullamento che fallisce (57014) ⇒ riga `error` col codice, e il sollecito slitta', async () => {
+    h.erroreAnnullamento = { code: '57014', message: 'canceling statement due to statement timeout' }
+    fallisce('rifiutato dal provider email (500): errore finto')
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    const riga = righe('presa-non-annullata')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('error')
+    expect((riga[0][3] as { code?: string }).code).toBe('57014')
+    expect(righe('sollecito-non-recapitato')[0][2]).toMatchObject({ presa_annullata: false })
+    expect(j.data[0].motivo).toBe('nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza')
+  })
+})
+
+describe('POST /api/pagamenti/solleciti/run — il battito dice com’è andata (sessione 9)', () => {
+  beforeEach(() => {
+    vi.stubEnv('CRON_SECRET', 'test-secret')
+    h.settingsRows = [{ scuola_id: 'sc-1', solleciti_config: { enabled: true } }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }]
+  })
+  const battiti = () => h.logEvento.mock.calls.filter((c) =>
+    c[0] === 'cron' && ['ok', 'ok-parziale'].includes((c[2] as { esito?: string }).esito ?? ''))
+
+  it('nessuna email partita ⇒ battito `ok-parziale` a `warn`, con le voci fallite e le email tentate', async () => {
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      return { ok: false, error: 'rifiutato dal provider email (500): errore finto' }
+    })
+    const res = await RUN(runReq())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ success: true, inviati: 0, fallite: 1, esaminati: 1, rinviati: 0 })
+    const b = battiti()
+    expect(b).toHaveLength(1)
+    expect(b[0][1]).toBe('warn')
+    expect(b[0][2]).toMatchObject({
+      operazione: 'pagamenti-solleciti', esito: 'ok-parziale', inviati: 0, fallite: 1,
+      email_inviate: 0, email_tentate: 1, msg: 'pagamenti-solleciti: ok-parziale',
+    })
+  })
+
+  it('tutto partito ⇒ battito `ok` a `info`, con le email inviate', async () => {
+    const res = await RUN(runReq())
+    expect(await res.json()).toMatchObject({ success: true, inviati: 1, fallite: 0 })
+    const b = battiti()
+    expect(b).toHaveLength(1)
+    expect(b[0][1]).toBe('info')
+    expect(b[0][2]).toMatchObject({ esito: 'ok', fallite: 0, email_inviate: 1, email_tentate: 1 })
+  })
+
+  it('il giro automatico chiede i ritentativi con la scadenza del giro; il bottone no', async () => {
+    await RUN(runReq())
+    expect(typeof h.sendEmailDetailed.mock.calls[0][0].ritentativi?.scadenza).toBe('number')
+    h.sendEmailDetailed.mockClear()
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(h.sendEmailDetailed.mock.calls[0][0].ritentativi).toBeUndefined()
   })
 })

@@ -43,6 +43,8 @@ export interface NotificaEventoParams {
   debounce?: boolean
   operazione?: ContestoNotificaOperazione
   destinatario?: 'genitore' | 'personale'
+  /** Chiave di deduplica per destinatario: vedi `EnqueueNotificheParams.chiaveDedup`. */
+  chiaveDedup?: (utenteId: string) => string
 }
 
 export async function notificaEvento(supabase: SupabaseClient, params: NotificaEventoParams): Promise<void> {
@@ -210,6 +212,7 @@ export async function notificaEvento(supabase: SupabaseClient, params: NotificaE
       scuolaId: params.scuolaId ?? null,
       operazione: params.operazione,
       destinatario: params.destinatario,
+      chiaveDedup: params.chiaveDedup,
     })
   } catch (err) {
     // Qui è saltata la PREPARAZIONE della notifica (toggle, lookup dei destinatari, enqueue):

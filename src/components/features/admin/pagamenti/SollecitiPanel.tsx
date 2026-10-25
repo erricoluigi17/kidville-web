@@ -32,8 +32,22 @@ interface EsitoSollecito {
     livello?: number;
     oggetto?: string;
     corpo?: string;
+    /** Prosa italiana del server. */
     motivo?: string;
+    /** Il codice del motivo, quando la route ne dichiara uno: vedi `MOTIVI_TRADOTTI`. */
+    motivoCodice?: string;
 }
+
+/**
+ * I motivi che la route dichiara con un CODICE, e la chiave di catalogo che li dice nella lingua
+ * dell'interfaccia (seconda revisione del lotto 4). Il `motivo` arriva in italiano — nasce sul
+ * server, dove il locale non c'è — e il pannello lo mostrava così anche in inglese. Regola, la
+ * stessa di `messaggioDaCorpo` per gli errori: codice dichiarato ⇒ catalogo, altrimenti la prosa
+ * del server (mai il nome di una chiave). Oggi un codice solo; gli altri motivi restano in prosa.
+ */
+const MOTIVI_TRADOTTI: Readonly<Record<string, 'soll_motivo_altro_giro'>> = {
+    altro_giro: 'soll_motivo_altro_giro',
+};
 
 /**
  * `scuolaId` è null quando le sedi selezionate sono più di una: la GET allora
@@ -58,6 +72,9 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
     const [anteprime, setAnteprime] = useState<EsitoSollecito[] | null>(null);
     const [busy, setBusy] = useState(false);
     const [inviati, setInviati] = useState<number | null>(null);
+    // Le voci NON partite all'ultimo invio, col motivo della route (revisione del lotto 4): fino
+    // ad allora il pannello diceva solo «N inviati», con la spunta verde anche su zero.
+    const [nonInviati, setNonInviati] = useState<{ id: string; etichetta: string; motivo: string }[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     const oggi = new Date().toISOString().slice(0, 10);
@@ -93,11 +110,26 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
         setSelected(next);
         setAnteprime(null);
         setInviati(null);
+        setNonInviati([]);
     };
     const toggleTutti = () => {
         setSelected(tuttiSelezionati ? new Set() : new Set(rows.map((r) => r.id)));
         setAnteprime(null);
         setInviati(null);
+        setNonInviati([]);
+    };
+    // Il motivo nella lingua di chi guarda quando la route ne dichiara il codice (`MOTIVI_TRADOTTI`),
+    // altrimenti la prosa del server. Un posto solo per l'anteprima e per l'esito dell'invio.
+    const motivoDi = (e: EsitoSollecito) => {
+        const chiave = e.motivoCodice !== undefined && Object.hasOwn(MOTIVI_TRADOTTI, e.motivoCodice)
+            ? MOTIVI_TRADOTTI[e.motivoCodice]
+            : undefined;
+        return chiave ? t(chiave) : (e.motivo ?? '—');
+    };
+    // La voce come la mostra l'elenco: chi legge il motivo deve sapere di QUALE sollecito si parla.
+    const etichettaDi = (id: string) => {
+        const p = rows.find((r) => r.id === id);
+        return p ? `${[p.alunni?.nome, p.alunni?.cognome].filter(Boolean).join(' ')} · ${p.descrizione}` : '—';
     };
 
     const giorniRitardo = (p: Pagamento) =>
@@ -117,9 +149,16 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
             if (anteprima) {
                 setAnteprime(j.data as EsitoSollecito[]);
             } else {
+                const esiti = j.data as EsitoSollecito[];
                 setAnteprime(null);
                 setSelected(new Set());
-                setInviati((j.data as EsitoSollecito[]).filter((e) => e.ok).length);
+                setInviati(esiti.filter((e) => e.ok).length);
+                // Le etichette si prendono PRIMA di ricaricare l'elenco: dopo, una voce può non esserci più.
+                setNonInviati(esiti.filter((e) => !e.ok).map((e) => ({
+                    id: e.pagamento_id,
+                    etichetta: etichettaDi(e.pagamento_id),
+                    motivo: motivoDi(e),
+                })));
                 await load();
             }
         } catch {
@@ -141,9 +180,22 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 } />
 
             {inviati != null && (
-                <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success">
-                    <SaveCheck size={16} /> {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
+                // La spunta verde solo se qualcosa è partito davvero: su «0 inviati» sarebbe un successo finto.
+                <p className={inviati > 0
+                    ? 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success'
+                    : 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-sm font-bold text-kidville-sub'}>
+                    {inviati > 0 && <SaveCheck size={16} />} {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
                 </p>
+            )}
+            {inviati != null && nonInviati.length > 0 && (
+                <div className="mb-3 rounded-xl border-[1.5px] border-kidville-line px-3 py-2">
+                    <p className="font-maven text-xs font-bold text-kidville-warn">{t('soll_non_inviati', { n: nonInviati.length })}</p>
+                    <ul className="mt-1 space-y-0.5">
+                        {nonInviati.map((e) => (
+                            <li key={e.id} className="font-maven text-[11px] text-kidville-ink">{e.etichetta} — {e.motivo}</li>
+                        ))}
+                    </ul>
+                </div>
             )}
             {error && <p className="mb-3 font-maven text-xs text-kidville-error">{error}</p>}
 
@@ -215,7 +267,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                             <pre className="mt-1 whitespace-pre-wrap font-maven text-[11px] leading-snug text-kidville-ink">{e.corpo}</pre>
                                         </>
                                     ) : (
-                                        <p className="font-maven text-xs text-kidville-warn">{t('soll_saltato')} {e.motivo}</p>
+                                        <p className="font-maven text-xs text-kidville-warn">{t('soll_saltato')} {motivoDi(e)}</p>
                                     )}
                                 </div>
                             ))}

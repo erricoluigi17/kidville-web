@@ -11,6 +11,9 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
 
+// Vita massima dichiarata (sessione 9): delibera in jsPDF con la lista completa delle adesioni.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
   modelId: zUuid,

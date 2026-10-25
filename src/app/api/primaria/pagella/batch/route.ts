@@ -9,6 +9,9 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): una pagella PDF per alunno, in sequenza, per tutta la classe.
+export const maxDuration = 300
+
 // Il nome della route, per i log. `withRoute` lo riceve come LETTERALE e non da
 // qui: `__tests__/architecture/logging-coverage.test.ts` lo legge dal sorgente e
 // verifica che corrisponda al percorso del file — con una costante non potrebbe.

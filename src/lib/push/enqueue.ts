@@ -38,6 +38,23 @@ export interface EnqueueNotificheParams {
   /** Contesto calcolato dal server per l'operazione originale. */
   operazione?: ContestoNotificaOperazione
   destinatario?: 'genitore' | 'personale'
+  /**
+   * Chiave di deduplica per destinatario (sessione 8 della seconda serie di robustezza, D12). Con la
+   * chiave, al massimo UNA riga per chiave: l'indice unico `notifiche_chiave_dedup_key` fa da arbitro
+   * e un secondo giro concorrente non scrive niente. Solo tipo, uuid e date: mai nomi.
+   */
+  chiaveDedup?: (utenteId: string) => string
+}
+
+/**
+ * Lo schema della chiave di deduplica (sessione 8) non è installato: l'errore NOMINA la colonna
+ * `chiave_dedup` (PGRST204 dallo schema cache di PostgREST, 42703 da Postgres), oppure è il 42P10 di
+ * un ON CONFLICT senza un indice che faccia da arbitro (si scrive con `onConflict` solo con la chiave).
+ * Un'altra colonna assente NON è questo caso: resta l'errore che è.
+ */
+function chiaveDedupNonInstallata(error: { code?: string; message?: string; details?: string | null }): boolean {
+  if (error.code === '42P10') return true
+  return colonnaNuovaAssente(error) && /\bchiave_dedup\b/.test(`${error.message ?? ''} ${error.details ?? ''}`)
 }
 
 /** True solo quando le righe sono state accodate; false per esclusioni o scrittura fallita. */
@@ -84,6 +101,7 @@ export async function enqueueNotifiche(
     entita_tipo: params.entitaTipo ?? null,
     entita_id: params.entitaId ?? null,
     invio_programmato_il: programmato,
+    ...(params.chiaveDedup ? { chiave_dedup: params.chiaveDedup(uid) } : {}),
   }))
   let rows: Record<string, unknown>[] = params.operazione ? righeBase.map(r => ({ ...r, giorno_competenza: params.operazione!.giornoCompetenza, politica_operazione: params.operazione })) : righeBase
 
@@ -95,10 +113,38 @@ export async function enqueueNotifiche(
   // domanda era stata respinta, che il servizio mensa era sospeso. È il guasto silenzioso
   // esattamente nella forma in cui questo repo l'ha già pagato con le email. Il valore di
   // ritorno SI CONTROLLA.
+  // LA CHIAVE DI DEDUPLICA. Chi la passa chiede «al massimo una riga per chiave»: si scrive con
+  // ON CONFLICT (chiave_dedup) DO NOTHING (`ignoreDuplicates`), e due giri concorrenti dello stesso
+  // promemoria lasciano UNA notifica. Senza chiave, l'insert di sempre.
+  const scrivi = (righe: Record<string, unknown>[]) =>
+    'chiave_dedup' in righe[0]
+      ? supabase.from('notifiche').upsert(righe, { onConflict: 'chiave_dedup', ignoreDuplicates: true })
+      : supabase.from('notifiche').insert(righe)
+
   try {
-    let { error } = await supabase.from('notifiche').insert(rows)
-    for (let n = 0; error && params.operazione && n < 2
-      && (deveNotificareGenitori(params.operazione) || params.destinatario === 'personale'); n++) {
+    let { error } = await scrivi(rows)
+    // DUE RIPIEGHI, nell'ordine in cui il database li chiede: PostgREST nomina UNA colonna assente
+    // per volta, quindi la chiave e i metadati storici possono arrivare in qualunque ordine. Al più
+    // tre giri: la chiave si toglie una volta, i due metadati una volta ciascuno.
+    for (let n = 0; error && n < 3; n++) {
+      // Il DB della CI non è migrato: lì mancano la colonna (PGRST204/42703) o l'indice che fa da
+      // arbitro (42P10). Si ripiega sull'insert senza chiave e lo si DICE, a livello `info` come vuole
+      // la §5 della specifica per uno schema nuovo non ancora installato. In produzione questa riga
+      // vorrebbe dire che la migrazione della sessione 8 non è applicata: lo segnala il controllo
+      // `migrazioni` di /api/health (sessione 7), non questo log.
+      // ⚠️ SOLO se l'errore nomina `chiave_dedup` (o è il 42P10 dell'arbitro): una colonna assente
+      // qualsiasi non basta. Con la chiave installata e, per esempio, `giorno_competenza` assente,
+      // buttare la chiave perderebbe la deduplica e la riga direbbe il falso.
+      if ('chiave_dedup' in rows[0] && chiaveDedupNonInstallata(error)) {
+        logEvento('notifica', 'info', {
+          operazione: 'enqueueNotifiche', esito: 'chiave-dedup-assente', tipo: params.tipo, n: rows.length,
+        }, error)
+        rows = rows.map((r) => { const senza = { ...r }; delete senza.chiave_dedup; return senza })
+        error = (await scrivi(rows)).error
+        continue
+      }
+      if (!params.operazione
+        || !(deveNotificareGenitori(params.operazione) || params.destinatario === 'personale')) break
       if (!colonnaNuovaAssente(error)) break
       const assente = /\b(politica_operazione|giorno_competenza)\b/.exec(error.message ?? '')?.[1]
       if (!assente || !(assente in rows[0])) break
@@ -110,7 +156,7 @@ export async function enqueueNotifiche(
         operazione: 'enqueueNotifiche', esito: 'metadati-storici-assenti', tipo: params.tipo, n: rows.length,
       }, error)
       rows = rows.map(r => { const precedente = { ...r }; delete precedente[assente]; return precedente })
-      const precedente = await supabase.from('notifiche').insert(rows)
+      const precedente = await scrivi(rows)
       error = precedente.error
     }
     if (error) {

@@ -1631,5 +1631,7 @@
   "cassaStampaDal": "From {data}",
   "cassaStampaFinoAl": "Until {data}",
   "cassaFiltroMovCassa": "Source cash fund",
-  "cassaFiltroMovGenerale": "General cash fund"
+  "cassaFiltroMovGenerale": "General cash fund",
+  "soll_non_inviati": "{n, plural, one {# reminder not sent:} other {# reminders not sent:}}",
+  "soll_motivo_altro_giro": "another run has just taken charge of this item: try again later"
 }

@@ -49,6 +49,9 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
 
+// Vita massima dichiarata (sessione 9): modello, Storage, PDF, protocollo e caricamento nel fascicolo, in sequenza.
+export const maxDuration = 300
+
 /**
  * POST /api/prestampati/genera — il foglio esce dallo sportello.
  *

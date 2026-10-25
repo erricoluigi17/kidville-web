@@ -1285,7 +1285,11 @@ const AMMESSE: Record<string, string> = {
     'pagamenti/genera:GET': 'anteprima generazione rette: gli alunni arrivano già filtrati per sede, la lettura dei pagamenti serve solo a escludere i doppioni per `gruppo`',
     'pagamenti/genera:POST': 'generazione rette: idem, e ogni riga creata prende la `scuola_id` DELL ALUNNO',
     'pagamenti/genera-rette:GET': 'anteprima annuale: esclude i periodi già generati per gli alunni già filtrati per sede',
-    'pagamenti/fattura/sync:POST': 'sincronizzazione SDI: interroga il provider sulle fatture in volo, che sono di tutte le sedi; ogni aggiornamento è per `id` della fattura',
+    // Era `pagamenti/fattura/sync:POST` fino alla sessione 8 della seconda serie (25/10): il giro è
+    // passato, IDENTICO, nella funzione di modulo `giroSync`, che il POST avvolge con la presa con
+    // scadenza. Stessa decisione, stesse cinque query: è cambiato solo il nome dello span. Il POST
+    // nuovo non tocca tabelle (prende e rilascia la presa con due RPC senza sede, `cron_prese`).
+    'pagamenti/fattura/sync:<modulo>': 'sincronizzazione SDI: interroga il provider sulle fatture in volo, che sono di tutte le sedi; ogni aggiornamento è per `id` della fattura',
     // ── La coda fatture Aruba (2026-09-23, nucleo) — due esenzioni, misurate ──
     // L'utenza Aruba è UNA per tutte e tre le sedi e il tetto orario è condiviso
     // (decisione 6 del titolare): la coda è una sola, e si legge da tutte le sedi.

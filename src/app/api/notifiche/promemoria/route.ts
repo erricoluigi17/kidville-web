@@ -249,6 +249,10 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
           entitaTipo: 'avviso',
           entitaId: avviso.id,
           bufferMin: 0,
+          // La lettura qui sopra resta la deduplica «negli ultimi N giorni»; la chiave chiude la
+          // corsa fra due giri dello STESSO giorno (sessione 8, D12): l'indice unico lascia passare
+          // il primo e scarta il secondo.
+          chiaveDedup: (uid) => `modulo_promemoria:${avviso.id}:${uid}:${oggi}`,
         })
         esiti.moduli += destinatari.length
       }
@@ -382,6 +386,8 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
             entitaTipo: 'documento',
             entitaId: doc.id,
             bufferMin: 0,
+            // Un avviso per documento e per persona, una volta sola (sessione 8, D12).
+            chiaveDedup: (uid) => `documenti_scadenza:${doc.id}:${uid}`,
           })
           esiti.documenti += 1
         }

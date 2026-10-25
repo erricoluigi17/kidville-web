@@ -11,6 +11,9 @@ import { parseFamilyRow } from '@/lib/import/template';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
+// Vita massima dichiarata (sessione 9): fino a 2.000 righe di anagrafiche, con la deduplica sul codice fiscale.
+export const maxDuration = 300;
+
 // POST /api/admin/import/anagrafiche
 // Body: { rows: [{ <intestazione italiana>: valore, ... }], scuola_id? }
 // Il client parsa il foglio (xlsx/csv) → righe JSON; il server mappa, deduplica su

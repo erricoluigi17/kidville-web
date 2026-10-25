@@ -139,6 +139,11 @@ vi.mock('@/lib/aruba/client', () => aruba)
 
 const notifiche = vi.hoisted(() => ({ notificaEvento: vi.fn() }))
 vi.mock('@/lib/notifiche/triggers', () => notifiche)
+// La presa con scadenza di `fattura/sync` (sessione 8) ha i suoi test: qui il giro la ottiene sempre.
+vi.mock('@/lib/cron/presa', () => ({
+  prendiPresaCron: async () => ({ esito: 'presa', token: null }),
+  rilasciaPresaCron: async () => undefined,
+}))
 const destinatari = vi.hoisted(() => ({
     genitoriDiAlunni: vi.fn(async () => [] as string[]),
     genitoriDiClassi: vi.fn(async () => [] as string[]),

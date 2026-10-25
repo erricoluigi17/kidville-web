@@ -18,6 +18,9 @@ import {
 } from '@/lib/pagamenti/metodi-ammessi'
 import { zMetodiAmmessi } from '@/lib/pagamenti/metodi-ammessi-zod'
 
+// Vita massima dichiarata (sessione 9): voci e rate per ogni alunno di una classe o di un elenco.
+export const maxDuration = 300
+
 // Genera pagamenti una tantum per una categoria, su una classe o un elenco di alunni.
 // Riusa il filtro alunni di genera-rette e la logica di creazione di pagamenti/rate.
 

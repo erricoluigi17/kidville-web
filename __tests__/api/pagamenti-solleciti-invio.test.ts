@@ -860,3 +860,47 @@ describe('solleciti — nessuna email partita, nessun sollecito (sessione 9)', (
     expect(j.data[0].motivo).toBe('nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza')
   })
 })
+
+describe('POST /api/pagamenti/solleciti/run — il battito dice com’è andata (sessione 9)', () => {
+  beforeEach(() => {
+    vi.stubEnv('CRON_SECRET', 'test-secret')
+    h.settingsRows = [{ scuola_id: 'sc-1', solleciti_config: { enabled: true } }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }]
+  })
+  const battiti = () => h.logEvento.mock.calls.filter((c) =>
+    c[0] === 'cron' && ['ok', 'ok-parziale'].includes((c[2] as { esito?: string }).esito ?? ''))
+
+  it('nessuna email partita ⇒ battito `ok-parziale` a `warn`, con le voci fallite e le email tentate', async () => {
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      return { ok: false, error: 'rifiutato dal provider email (500): errore finto' }
+    })
+    const res = await RUN(runReq())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ success: true, inviati: 0, fallite: 1, esaminati: 1, rinviati: 0 })
+    const b = battiti()
+    expect(b).toHaveLength(1)
+    expect(b[0][1]).toBe('warn')
+    expect(b[0][2]).toMatchObject({
+      operazione: 'pagamenti-solleciti', esito: 'ok-parziale', inviati: 0, fallite: 1,
+      email_inviate: 0, email_tentate: 1, msg: 'pagamenti-solleciti: ok-parziale',
+    })
+  })
+
+  it('tutto partito ⇒ battito `ok` a `info`, con le email inviate', async () => {
+    const res = await RUN(runReq())
+    expect(await res.json()).toMatchObject({ success: true, inviati: 1, fallite: 0 })
+    const b = battiti()
+    expect(b).toHaveLength(1)
+    expect(b[0][1]).toBe('info')
+    expect(b[0][2]).toMatchObject({ esito: 'ok', fallite: 0, email_inviate: 1, email_tentate: 1 })
+  })
+
+  it('il giro automatico chiede i ritentativi con la scadenza del giro; il bottone no', async () => {
+    await RUN(runReq())
+    expect(typeof h.sendEmailDetailed.mock.calls[0][0].ritentativi?.scadenza).toBe('number')
+    h.sendEmailDetailed.mockClear()
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(h.sendEmailDetailed.mock.calls[0][0].ritentativi).toBeUndefined()
+  })
+})

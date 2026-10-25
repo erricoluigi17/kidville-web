@@ -90,6 +90,16 @@ const MS_GIORNO = 86_400_000
 /** Il registro `solleciti` assente (DB E2E della CI non migrato): Postgres e PostgREST. */
 const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
 
+/**
+ * Il filtro dei livelli (sessione 9): solo le righe del registro con ALMENO un destinatario
+ * raggiunto. Da questa sessione il registro scrive anche i tentativi falliti; senza il filtro
+ * una riga non recapitata farebbe salire il livello, e alla famiglia arriverebbe il 3° sollecito
+ * senza aver mai ricevuto il 2°. Stringa JSON e non array: postgrest-js tradurrebbe un array JS
+ * nel letterale Postgres `cs.{…}`, che su una colonna jsonb non vale; con la stringa esce
+ * `cs.[{"inviata":true}]`, cioè `destinatari @> '[{"inviata":true}]'`.
+ */
+const FILTRO_RECAPITATO = '[{"inviata":true}]'
+
 export async function sollecitaPagamenti(
     supabase: SupabaseClient,
     pagamentoIds: string[],
@@ -148,7 +158,7 @@ export async function sollecitaPagamenti(
     const maxLivello = new Map<string, number>()
     try {
         for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
-            const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco)
+            const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco).contains('destinatari', FILTRO_RECAPITATO)
             if (errLivelli) {
                 const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
                 logEvento('pagamento', assente ? 'info' : 'error', {

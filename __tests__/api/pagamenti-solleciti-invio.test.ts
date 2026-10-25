@@ -7,7 +7,10 @@ const h = vi.hoisted(() => ({
   // Dal 2026-08-15 il sollecito manda anche l'HTML, quindi passa da
   // `sendEmailDetailed`. Il mock DEVE esporre entrambe: `vi.mock` sostituisce
   // il modulo INTERO, e una funzione dimenticata qui diventa un 500 opaco.
-  sendEmailDetailed: vi.fn(async (opts: { to: string; subject: string; text: string; html?: string }) => ({ ok: Boolean(opts), error: null })),
+  sendEmailDetailed: vi.fn(async (opts: {
+    to: string; subject: string; text: string; html?: string
+    chiaveIdempotenza?: string; ritentativi?: { scadenza?: number }
+  }): Promise<{ ok: boolean; error: string | null; incerto?: boolean }> => ({ ok: Boolean(opts), error: null })),
   enqueueNotifiche: vi.fn(async () => {}),
   pagamenti: [] as Record<string, unknown>[],
   sollecitiEsistenti: [] as Record<string, unknown>[],
@@ -31,6 +34,13 @@ const h = vi.hoisted(() => ({
   ins: [] as { table: string; col: string; n: number }[],
   ordini: [] as { table: string; col: string }[],
   sequenza: [] as string[],
+  // Sessione 9: la cadenza come la vede il database, l'ultima presa scritta, gli annullamenti
+  // (il valore rimesso), il guasto dell'annullamento e i filtri di contenimento sul registro.
+  cadenzaInDb: null as string | null,
+  ultimaPresa: null as string | null,
+  annullamenti: [] as (string | null)[],
+  erroreAnnullamento: null as null | { code: string; message: string },
+  contenimenti: [] as { table: string; col: string; val: string }[],
   logEvento: vi.fn(),
 }))
 
@@ -51,60 +61,96 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: h.sendEmail, sendEmailDetailed: h.sendEmailDetailed }))
 vi.mock('@/lib/push/enqueue', () => ({ enqueueNotifiche: h.enqueueNotifiche }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: vi.fn(async () => ['sc-1']) }))
-vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
-    from: (table: string) => {
-      const b: Record<string, unknown> = {}
-      let aggiornamento: Record<string, unknown> | null = null
-      b.select = () => b
-      b.eq = () => b
-      b.in = (col: string, vals: unknown[]) => { h.ins.push({ table, col, n: vals.length }); return b }
-      b.is = () => b
-      b.lt = () => b
-      b.neq = () => b
-      b.order = (col: string) => { h.ordini.push({ table, col }); return b }
-      b.limit = () => b
-      b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
-      b.insert = (row: Record<string, unknown>) => {
-        h.inserts.push({ table, row })
-        if (table === 'solleciti' && h.registroLancia) {
-          return { then: (_r: unknown, ko: (e: unknown) => unknown) => ko(new TypeError('fetch failed')) }
+vi.mock('@/lib/supabase/server-client', () => {
+  // Il contenimento jsonb di PostgREST (`cs`), ridotto a ciò che il motore usa (sessione 9): il
+  // filtro è un elenco di oggetti, e ognuno deve avere nel valore un elemento con le stesse
+  // chiavi e gli stessi valori. Una riga senza `destinatari` non contiene niente, come in Postgres.
+  const contiene = (valore: unknown, filtro: string): boolean => {
+    const attesi = JSON.parse(filtro) as Record<string, unknown>[]
+    return Array.isArray(valore) && attesi.every((a) =>
+      valore.some((v: unknown) => v !== null && typeof v === 'object'
+        && Object.entries(a).every(([k, x]) => (v as Record<string, unknown>)[k] === x)))
+  }
+  return {
+    createAdminClient: async () => ({
+      from: (table: string) => {
+        const b: Record<string, unknown> = {}
+        let aggiornamento: Record<string, unknown> | null = null
+        // Sessione 9: il filtro sulla cadenza (`.eq`/`.is` su `ultimo_sollecito_il`) distingue la
+        // PRESA dall'ANNULLAMENTO; il contenimento filtra davvero le righe del registro.
+        let filtroCadenza: { val: unknown } | null = null
+        let contenimento: { col: string; val: string } | null = null
+        b.select = () => b
+        b.eq = (col: string, val: unknown) => { if (col === 'ultimo_sollecito_il') filtroCadenza = { val }; return b }
+        b.in = (col: string, vals: unknown[]) => { h.ins.push({ table, col, n: vals.length }); return b }
+        b.is = (col: string, val: unknown) => { if (col === 'ultimo_sollecito_il') filtroCadenza = { val }; return b }
+        b.lt = () => b
+        b.neq = () => b
+        b.contains = (col: string, val: string) => {
+          h.contenimenti.push({ table, col, val })
+          contenimento = { col, val }
+          return b
         }
-        const errore = table === 'solleciti' ? h.erroreRegistro : null
-        return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
-      }
-      b.update = (row: Record<string, unknown>) => {
-        h.updates.push({ table, row })
-        aggiornamento = row
-        if (table === 'pagamenti' && row.ultimo_sollecito_il) h.sequenza.push('presa')
+        b.order = (col: string) => { h.ordini.push({ table, col }); return b }
+        b.limit = () => b
+        b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
+        b.insert = (row: Record<string, unknown>) => {
+          h.inserts.push({ table, row })
+          if (table === 'solleciti' && h.registroLancia) {
+            return { then: (_r: unknown, ko: (e: unknown) => unknown) => ko(new TypeError('fetch failed')) }
+          }
+          const errore = table === 'solleciti' ? h.erroreRegistro : null
+          return { then: (r: (v: unknown) => unknown) => r({ data: null, error: errore }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
+        }
+        b.update = (row: Record<string, unknown>) => {
+          h.updates.push({ table, row })
+          aggiornamento = row
+          return b
+        }
+        b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+          if (table === 'pagamenti' && aggiornamento && 'ultimo_sollecito_il' in aggiornamento) {
+            const valore = (aggiornamento.ultimo_sollecito_il ?? null) as string | null
+            // L'ANNULLAMENTO: condizionato sulla presa che questo giro ha appena scritto.
+            if (h.ultimaPresa !== null && filtroCadenza?.val === h.ultimaPresa) {
+              h.sequenza.push('annullamento')
+              h.annullamenti.push(valore)
+              if (h.erroreAnnullamento) return resolve({ data: null, error: h.erroreAnnullamento })
+              // Un altro giro ha già ripreso la voce: l'UPDATE condizionato tocca zero righe.
+              if (h.cadenzaInDb !== h.ultimaPresa) return resolve({ data: [], error: null })
+              h.cadenzaInDb = valore
+              return resolve({ data: [{ id: 'x' }], error: null })
+            }
+            // LA PRESA.
+            h.sequenza.push('presa')
+            if (h.errorePresa) return resolve({ data: null, error: h.errorePresa })
+            if (h.presaVuota) return resolve({ data: [], error: null })
+            h.ultimaPresa = valore
+            h.cadenzaInDb = valore
+            return resolve({ data: [{ id: 'x' }], error: null })
+          }
+          if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
+            return resolve({ data: null, error: h.erroreLetturaPagamenti })
+          }
+          if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
+          if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
+          const c = contenimento
+          return resolve({
+            data:
+              table === 'pagamenti' ? h.pagamenti
+              : table === 'solleciti' ? (c ? h.sollecitiEsistenti.filter((r) => contiene(r[c.col], c.val)) : h.sollecitiEsistenti)
+              : table === 'admin_settings' ? h.settingsRows
+              : table === 'legame_genitori_alunni' ? h.legami
+              : table === 'utenti' ? h.utenti
+              : table === 'pagamenti_quote' ? h.quote
+              : [],
+            error: null,
+          })
+        }
         return b
-      }
-      b.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
-        if (table === 'pagamenti' && aggiornamento?.ultimo_sollecito_il) {
-          if (h.errorePresa) return resolve({ data: null, error: h.errorePresa })
-          return resolve({ data: h.presaVuota ? [] : [{ id: 'x' }], error: null })
-        }
-        if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
-          return resolve({ data: null, error: h.erroreLetturaPagamenti })
-        }
-        if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
-        if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
-        return resolve({
-          data:
-            table === 'pagamenti' ? h.pagamenti
-            : table === 'solleciti' ? h.sollecitiEsistenti
-            : table === 'admin_settings' ? h.settingsRows
-            : table === 'legame_genitori_alunni' ? h.legami
-            : table === 'utenti' ? h.utenti
-            : table === 'pagamenti_quote' ? h.quote
-            : [],
-          error: null,
-        })
-      }
-      return b
-    },
-  }),
-}))
+      },
+    }),
+  }
+})
 
 import { POST } from '@/app/api/pagamenti/solleciti/route'
 import { POST as RUN } from '@/app/api/pagamenti/solleciti/run/route'
@@ -138,6 +184,11 @@ beforeEach(() => {
   h.ins = []
   h.ordini = []
   h.sequenza = []
+  h.cadenzaInDb = null
+  h.ultimaPresa = null
+  h.annullamenti = []
+  h.erroreAnnullamento = null
+  h.contenimenti = []
   h.sendEmailDetailed.mockImplementation(async (opts) => {
     h.sequenza.push('email')
     return { ok: Boolean(opts), error: null }
@@ -625,5 +676,22 @@ describe('POST /api/pagamenti/solleciti/run — fase 8', () => {
     expect(res.status).toBe(500)
     expect(h.logEvento.mock.calls.some((c) => c[0] === 'cron' && c[1] === 'error' && (c[2] as { esito?: string }).esito === 'solleciti-con-guasti')).toBe(true)
     expect(battitoOk()).toBe(false)
+  })
+})
+
+// =============================================================================
+// SESSIONE 9 — un sollecito conta come inviato solo se un'email è partita.
+// Indirizzi solo su `example.test`.
+// =============================================================================
+describe('solleciti — il livello conta solo i solleciti RECAPITATI (sessione 9)', () => {
+  it('L1 recapitato, L2 registrato senza nessuna email partita ⇒ il prossimo è di nuovo il 2', async () => {
+    h.sollecitiEsistenti = [
+      { pagamento_id: PID, livello: 1, destinatari: [{ id: 'g-1', inviata: true }] },
+      { pagamento_id: PID, livello: 2, destinatari: [{ id: 'g-1', inviata: false }] },
+    ]
+    const res = await POST(post({ pagamento_ids: [PID], anteprima: true }))
+    const j = await res.json()
+    expect(j.data[0]).toMatchObject({ pagamento_id: PID, ok: true, livello: 2 })
+    expect(h.contenimenti).toContainEqual({ table: 'solleciti', col: 'destinatari', val: '[{"inviata":true}]' })
   })
 })

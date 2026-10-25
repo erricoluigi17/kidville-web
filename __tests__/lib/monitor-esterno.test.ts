@@ -79,11 +79,11 @@ async function unGiroBackup(f: ReturnType<typeof fetchFinto>, token = TOKEN, seg
     return { esito, righe: log.mock.calls.map((c) => String(c[0])), righeErrore }
 }
 
-async function unGiro(f: ReturnType<typeof fetchFinto>, quando: Date, token = 'tok') {
+async function unGiro(f: ReturnType<typeof fetchFinto>, quando: Date, token = 'tok', segreti: Segreti = {}) {
     const dormi = vi.fn(async () => {})
     const log = vi.fn()
     const errore = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const esito = await giro({ quando, token, fetchImpl: f.impl, dormi, log })
+    const esito = await giro({ quando, token, segreti, fetchImpl: f.impl, dormi, log })
     const righeErrore = errore.mock.calls.map((c) => String(c[0]))
     errore.mockRestore()
     return { esito, dormi, log, righeErrore }
@@ -449,5 +449,55 @@ describe('chiaveIdempotenza', () => {
         for (const k of [chiaveIdempotenza('backup', NOTTE), chiaveIdempotenza('vivo', NOTTE)]) {
             expect(k).toMatch(/^[A-Za-z0-9:_.-]{1,256}$/)
         }
+    })
+})
+
+describe('il secondo canale quando il sito è giù', () => {
+    it('sito giù E campanello rifiutato: parte l\'email, con la chiave dell\'ora', async () => {
+        const f = fetchFinto({ [URL_VIVO]: [GIU], [DISPATCH]: [CREDENZIALI], [RESEND]: [ACCETTATA] })
+
+        const { esito, log } = await unGiro(f, FUORI_BATTITO, 'tok', SEGRETI)
+
+        expect(esito.suonato).toBe(false)
+        expect(f.a(RESEND)).toHaveLength(1)
+        expect(f.a(RESEND)[0].idem).toBe('kidville-vivo-giu-2026-10-19T10')
+        expect(JSON.parse(f.a(RESEND)[0].corpo!).subject).toBe('Sito giù e campanello NON partito')
+        expect(esito.email?.ok).toBe(true)
+        expect(log.mock.calls.map((c) => String(c[0])).join(' ')).toContain('monitor-email: esito=accettata')
+    })
+
+    it('dentro la stessa ora il testo non cambia anche se cambia il guasto (stessa chiave, messaggio diverso = 409)', async () => {
+        const f = fetchFinto({
+            [URL_VIVO]: [GIU, GIU, { status: 502, testo: 'Bad gateway' }],
+            [DISPATCH]: [CREDENZIALI],
+            [RESEND]: [ACCETTATA],
+        })
+
+        await unGiro(f, FUORI_BATTITO, 'tok', SEGRETI)
+        await unGiro(f, new Date('2026-10-19T10:40:00Z'), 'tok', SEGRETI)
+
+        const [prima, seconda] = f.a(RESEND)
+        expect(seconda.idem).toBe(prima.idem)
+        expect(seconda.corpo).toBe(prima.corpo)
+    })
+
+    it('battito rifiutato col sito sano: nessuna email (lo vede `monitor-esterno-muto`)', async () => {
+        const f = fetchFinto({ [URL_VIVO]: [OK], [DISPATCH]: [CREDENZIALI] })
+
+        const { esito } = await unGiro(f, SUL_BATTITO, 'tok', SEGRETI)
+
+        expect(esito.suonato).toBe(false)
+        expect(esito.email).toBeNull()
+        expect(f.a(RESEND)).toHaveLength(0)
+    })
+
+    it('sito giù e campanello partito: nessuna email dal Worker (l\'allarme lo manda il campanello)', async () => {
+        const f = fetchFinto({ [URL_VIVO]: [GIU], [DISPATCH]: [PARTITO] })
+
+        const { esito } = await unGiro(f, FUORI_BATTITO, 'tok', SEGRETI)
+
+        expect(esito.suonato).toBe(true)
+        expect(esito.email).toBeNull()
+        expect(f.a(RESEND)).toHaveLength(0)
     })
 })

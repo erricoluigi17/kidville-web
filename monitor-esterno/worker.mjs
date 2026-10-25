@@ -106,24 +106,45 @@ export async function suonaCampanello({ token, fetchImpl = fetch }) {
 /**
  * Un giro. `quando` = l'ora PROGRAMMATA del cron (non quella effettiva): il battito cade sui quarti
  * d'ora anche se Cloudflare parte con qualche secondo di ritardo.
- * Restituisce `{ vivo, battito, suonato, esito }` e scrive UNA riga di log.
+ * Restituisce `{ vivo, battito, suonato, esito, email }` e scrive UNA riga di log (due se parte
+ * l'email del secondo canale).
  */
-export async function giro({ quando, token, fetchImpl = fetch, dormi = attendi, log = (r) => console.log(r) }) {
+export async function giro({ quando, token, segreti = {}, fetchImpl = fetch, dormi = attendi, log = (r) => console.log(r) }) {
     const vivo = await leggiVivo({ fetchImpl, dormi })
     const battito = quando.getUTCMinutes() % MINUTI_BATTITO === 0
     if (vivo.ok && !battito) {
         log(`monitor: vivo ok, nessun giro del campanello`)
-        return { vivo, battito, suonato: false, esito: null }
+        return { vivo, battito, suonato: false, esito: null, email: null }
     }
     const esito = await suonaCampanello({ token, fetchImpl })
     const perche = vivo.ok ? 'battito' : `vivo NON ok (HTTP ${vivo.http ?? 'nessuna risposta'}: ${vivo.motivo})`
     if (esito.ok) {
         log(`monitor: ${perche} → campanello partito`)
-    } else {
-        // Il corpo del rifiuto va nel log intero (senza il token, che non è nel corpo): è il «perché».
-        console.error(`monitor: ${perche} → campanello NON partito: HTTP ${esito.http ?? '-'} ${esito.corpo}`)
+        return { vivo, battito, suonato: true, esito, email: null }
     }
-    return { vivo, battito, suonato: esito.ok, esito }
+    // Il corpo del rifiuto va nel log intero (senza il token, che non è nel corpo): è il «perché».
+    console.error(`monitor: ${perche} → campanello NON partito: HTTP ${esito.http ?? '-'} ${esito.corpo}`)
+    // Un battito rifiutato col sito sano NON manda email: lo vede il campanello stesso
+    // (`monitor-esterno-muto`), e un token scaduto lo dice comunque l'email del backup delle 02:23.
+    if (vivo.ok) return { vivo, battito, suonato: false, esito, email: null }
+    // IL SECONDO CANALE (T12): sito giù E campanello fermo = l'allarme normale non arriverà.
+    // Un'email per ora (la chiave di Resend), con un testo che dentro l'ora NON cambia: a una stessa
+    // chiave con un messaggio diverso Resend risponde 409. Il guasto preciso è nella riga qui sopra.
+    const iso = quando.toISOString()
+    const email = await avvisaPerEmail({
+        segreti,
+        chiave: chiaveIdempotenza('vivo', quando),
+        oggetto: 'Sito giù e campanello NON partito',
+        introHtml:
+            'Il monitor esterno vede il sito giù e non riesce a far partire il campanello di GitHub: la ' +
+            'segnalazione e l’email normali NON arriveranno. Il motivo esatto è nei log del Worker ' +
+            '<code>kidville-monitor-esterno</code> (pannello Cloudflare → Workers → Logs).',
+        link: LINK_GIRI_CAMPANELLO,
+        quando: `dalle ${iso.slice(11, 13)}:00 UTC del ${iso.slice(0, 10)}`,
+        fetchImpl,
+        log,
+    })
+    return { vivo, battito, suonato: false, esito, email }
 }
 
 /**

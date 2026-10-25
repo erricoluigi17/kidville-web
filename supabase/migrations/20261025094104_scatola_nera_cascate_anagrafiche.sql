@@ -25,7 +25,9 @@
 --    note_disciplinari, certificati_medici. Un UPDATE che cambia SOLO `storico_versione`
 --    non si copia, come già `updated_at`: è il «tocco» con cui storici_versione_aggregato
 --    segna la nota quando un genitore firma la presa visione, e copierebbe ogni volta il
---    testo intero della nota.
+--    testo intero della nota. Su un database senza `scatola_nera.modifiche` (fase 4 senza
+--    fase 12: la CI non migrata può esserlo) questi trigger non si accendono, perché lì
+--    farebbero fallire ogni UPDATE delle anagrafiche.
 --  · Le due bonifiche che cancellano copie storiche PER PROTEGGERE un dato
 --    (`storici_bonifica_chat`, `storici_oblio_alunno`) accendono l'interruttore per le sole
 --    proprie DELETE e lo rimettono com'era: una copia di 90 giorni disferebbe la bonifica.
@@ -151,5 +153,75 @@ BEGIN
     EXECUTE format(
       'CREATE TRIGGER scatola_nera_no_truncate BEFORE TRUNCATE ON public.%I '
       'FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.vieta_truncate()', t);
+  END LOOP;
+END $$;
+
+-- ── 3. Le anagrafiche nello storico delle modifiche ───────────────────────────
+-- Corpo di 20261019215733_scatola_nera_modifiche.sql:107-142 con UNA sola differenza:
+-- `storico_versione` entra fra le colonne che da sole non fanno una modifica.
+CREATE OR REPLACE FUNCTION scatola_nera.registra_modifica()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_ruolo   text := COALESCE(NULLIF(current_setting('role', true), 'none'), session_user::text);
+  v_utente  uuid;
+  v_origine text;
+BEGIN
+  IF current_setting('scatola_nera.senza_storico', true) = 'on' THEN
+    RETURN NULL; -- retention, o una riscrittura in blocco dichiarata: nessuna copia, di proposito
+  END IF;
+  BEGIN
+    v_utente := NULLIF(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid;
+  EXCEPTION WHEN OTHERS THEN
+    v_utente := NULL; -- claims assenti o non JSON (pg_cron, pannello): nessun utente, non un errore
+  END;
+  v_origine := left(COALESCE(NULLIF(current_setting('request.path', true), ''),
+                             NULLIF(current_setting('application_name', true), ''),
+                             'sconosciuta'), 200);
+
+  INSERT INTO scatola_nera.modifiche (tabella, riga_id, prima, cambiate, soggetti, ruolo, utente, origine)
+  SELECT TG_TABLE_NAME, o.r ->> 'id', o.r, d.cambiate, scatola_nera.soggetti_di(o.r), v_ruolo, v_utente, v_origine
+    FROM (SELECT to_jsonb(v) AS r FROM vecchie v) o
+    JOIN (SELECT to_jsonb(n) AS r FROM nuove n) nn ON nn.r -> 'id' = o.r -> 'id'
+    CROSS JOIN LATERAL (
+      SELECT array_agg(k ORDER BY k) AS cambiate
+        FROM jsonb_object_keys(o.r || nn.r) AS k
+       WHERE (o.r -> k) IS DISTINCT FROM (nn.r -> k)
+    ) d
+   WHERE d.cambiate IS NOT NULL
+     AND NOT (d.cambiate <@ ARRAY['storico_versione', 'updated_at', 'aggiornato_il']::text[]);
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION scatola_nera.registra_modifica() FROM PUBLIC, anon, authenticated;
+
+-- Un database con la fase 4 ma senza la fase 12 (quello della CI, che non è migrato, può
+-- esserlo) non ha `scatola_nera.modifiche`: un trigger acceso lì farebbe fallire OGNI UPDATE
+-- delle anagrafiche con 42P01. Lì non si accende niente, e lo si dice.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  IF to_regclass('scatola_nera.modifiche') IS NULL THEN
+    RAISE NOTICE 'scatola nera, storico: scatola_nera.modifiche assente (fase 12 non applicata), anagrafiche saltate';
+    RETURN;
+  END IF;
+  FOREACH t IN ARRAY ARRAY[
+    -- anagrafiche-storico:inizio
+    'alunni', 'parents', 'utenti',
+    'note_disciplinari', 'certificati_medici'
+    -- anagrafiche-storico:fine
+  ] LOOP
+    IF to_regclass(format('public.%I', t)) IS NULL THEN
+      RAISE NOTICE 'scatola nera, storico: public.% assente, saltata', t;
+      CONTINUE;
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS scatola_nera_modifiche ON public.%I', t);
+    EXECUTE format(
+      'CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.%I '
+      'REFERENCING OLD TABLE AS vecchie NEW TABLE AS nuove '
+      'FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica()', t);
   END LOOP;
 END $$;

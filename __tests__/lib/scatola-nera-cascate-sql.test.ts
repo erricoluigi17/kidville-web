@@ -107,9 +107,8 @@ async function semina(): Promise<void> {
   `)
 }
 
-beforeAll(async () => {
-  db = new PGlite()
-  await db.exec(`
+/** Lo schema minimo, ruoli compresi: lo usano il database principale e quello con la sola fase 4. */
+const SCHEMA = `
     CREATE ROLE anon NOLOGIN;
     CREATE ROLE authenticated NOLOGIN;
     CREATE ROLE service_role NOLOGIN BYPASSRLS;
@@ -199,7 +198,11 @@ beforeAll(async () => {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       utente_id uuid REFERENCES public.utenti(id) ON DELETE CASCADE
     );
-  `)
+`
+
+beforeAll(async () => {
+  db = new PGlite()
+  await db.exec(SCHEMA)
   await db.exec(ELIMINAZIONI)
   await db.exec(MODIFICHE)
   await db.exec(CASCATE)
@@ -303,5 +306,79 @@ describe('le figlie in cascata entrano nella scatola delle eliminazioni', () => 
     expect(await numero('SELECT count(*) FROM public.chat_messages')).toBe(3)
     expect(await codiceErrore('TRUNCATE public.conversazioni_sospensioni')).toBe('P0001')
     expect(await numero('SELECT count(*) FROM public.conversazioni_sospensioni')).toBe(1)
+  })
+})
+
+describe('lo storico delle modifiche copre anagrafiche, note e certificati', () => {
+  it('ogni anagrafica modificata lascia la riga com’era', async () => {
+    await db.exec(`
+      UPDATE public.alunni SET nome = 'Bimbo corretto' WHERE id = '${ALUNNO}';
+      UPDATE public.parents SET nome = 'Adulta corretta' WHERE id = '${GENITORE}';
+      UPDATE public.utenti SET cognome = 'Corretto' WHERE id = '${DOCENTE}';
+      UPDATE public.note_disciplinari SET testo = 'nota corretta' WHERE id = '${NOTA}';
+      UPDATE public.certificati_medici SET stato = 'scaduto' WHERE id = '${CERTIFICATO}';
+    `)
+    const { rows } = await db.query<{ tabella: string; riga_id: string; cambiate: string[] }>(
+      'SELECT tabella, riga_id, cambiate FROM scatola_nera.modifiche ORDER BY tabella')
+    expect(rows).toEqual([
+      { tabella: 'alunni', riga_id: ALUNNO, cambiate: ['nome'] },
+      { tabella: 'certificati_medici', riga_id: CERTIFICATO, cambiate: ['stato'] },
+      { tabella: 'note_disciplinari', riga_id: NOTA, cambiate: ['testo'] },
+      { tabella: 'parents', riga_id: GENITORE, cambiate: ['nome'] },
+      { tabella: 'utenti', riga_id: DOCENTE, cambiate: ['cognome'] },
+    ])
+    // La versione di prima, intera: è quella che il ripristino rimette.
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE prima ->> 'nome' = 'Bimbo'`)).toBe(1)
+  })
+
+  it('il «tocco» che cambia solo storico_versione non si copia; una modifica vera sì', async () => {
+    await db.exec(`UPDATE public.note_disciplinari SET storico_versione = storico_versione + 1 WHERE id = '${NOTA}'`)
+    expect(await numero('SELECT count(*) FROM scatola_nera.modifiche')).toBe(0)
+    await db.exec(`UPDATE public.note_disciplinari
+                      SET testo = 'nota corretta', storico_versione = storico_versione + 1
+                    WHERE id = '${NOTA}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE tabella = 'note_disciplinari'`)).toBe(1)
+  })
+
+  it('i trigger delle modifiche sulle cinque tabelle nuove', async () => {
+    expect(await numero(`SELECT count(*) FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
+      WHERE g.tgname = 'scatola_nera_modifiche'
+        AND c.relname = ANY(ARRAY['alunni','parents','utenti','note_disciplinari','certificati_medici'])`)).toBe(5)
+  })
+})
+
+describe('un database con la fase 4 ma senza lo storico delle modifiche (la CI non migrata)', () => {
+  // Senza `scatola_nera.modifiche` un trigger delle modifiche farebbe fallire OGNI UPDATE delle
+  // anagrafiche (42P01): la migrazione non lo accende, e la scatola delle eliminazioni lavora.
+  let solo4: PGlite
+
+  beforeAll(async () => {
+    solo4 = new PGlite()
+    await solo4.exec(SCHEMA)
+    await solo4.exec(ELIMINAZIONI)
+    await solo4.exec(CASCATE)
+    await solo4.exec(CASCATE)
+  })
+
+  afterAll(async () => {
+    await solo4.close()
+  })
+
+  it('nessun trigger delle modifiche, gli UPDATE delle anagrafiche passano, le eliminazioni si copiano', async () => {
+    const trigger = await solo4.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'scatola_nera_modifiche'`)
+    expect(trigger.rows[0].n).toBe(0)
+    await solo4.exec(`
+      INSERT INTO public.schools VALUES ('${SEDE}', 'Sede di prova');
+      INSERT INTO public.alunni (id, scuola_id, nome) VALUES ('${ALUNNO}', '${SEDE}', 'Bimbo');
+      UPDATE public.alunni SET nome = 'Bimbo corretto' WHERE id = '${ALUNNO}';
+    `)
+    const viva = await solo4.query<{ nome: string }>(`SELECT nome FROM public.alunni WHERE id = '${ALUNNO}'`)
+    expect(viva.rows).toEqual([{ nome: 'Bimbo corretto' }])
+    // Controllo positivo: la scatola delle eliminazioni c'è e copia.
+    await solo4.exec(`DELETE FROM public.alunni WHERE id = '${ALUNNO}'`)
+    const copie = await solo4.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM scatola_nera.eliminazioni WHERE tabella = 'alunni'`)
+    expect(copie.rows[0].n).toBe(1)
   })
 })

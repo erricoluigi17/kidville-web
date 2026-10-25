@@ -169,8 +169,9 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
   contano le righe di ogni tabella. Il flusso passa per `age` (chiave pubblica) e **non tocca mai il disco in
   chiaro**. Accanto al dump, un `manifest.jsonl.age` cifrato (versioni, estensioni, conteggi per tabella, impronta).
   Dati esclusi (la struttura c'è sempre): `public.app_log`, `cron.job_run_details` e i token di sessione di
-  `auth`. Le impostazioni **del database** (`app.cron_secret` e simili) non sono nel dump: i loro nomi sono nel
-  manifest, i valori vanno rimessi a mano dopo un ripristino.
+  `auth`. I segreti dei cron (`app.cron_secret` e i cinque URL) stanno nel **Vault**, che il dump non copia: dopo un
+  ripristino si rimettono con `vault.create_secret`, un nome alla volta (vedi «Cron di produzione» e lo scenario E del
+  runbook).
 - **I file.** `rclone sync` incrementale da Supabase Storage (protocollo S3) verso un remote `crypt`: contenuti e
   nomi dei file cifrati; nomi di cartella in chiaro (sono solo uuid e parole fisse) perché i lock lavorano per
   prefisso. Ciò che sparisce dalla sorgente finisce nel **cestino** del giorno, mai nel nulla.
@@ -196,14 +197,18 @@ cifrate, che l'app non legge mai. Il workflow è `.github/workflows/backup-nottu
 - **Come si lancia.** `gh workflow run backup-notturno.yml -f modalita=prova` (dump vero su `prove/`, specchio su
   tre file sintetici: prova anche il cestino e la cifratura) e poi `-f modalita=completo`.
   `-f simula_guasto=true` fa fallire apposta il giro per vedere arrivare l'allarme (segnalazione + email).
-  Lo `schedule` è armato dal 06/10 (PR #193): **ogni notte alle 02:23 UTC**, in modalità `completo`, dopo che
-  un giro `prova`, uno `completo`, le regole di lock su R2 e la prova dell'allarme erano riusciti da `main`.
-  Per fermarlo: `gh workflow disable backup-notturno.yml`.
+  **Ogni notte alle 02:23 UTC** lo lancia il **monitor esterno** (Worker di Cloudflare, cron puntuale) con
+  `modalita=completo` e `origine=cloudflare`: il giro si chiama «Backup notturno completo (da Cloudflare)». Lo
+  `schedule` di GitHub (stessa ora, ma arriva fra le 07:00 e le 09:35) resta come **riserva**: il job `guardia` lo
+  annulla da sé se un backup completo è riuscito nelle ultime 20 ore, e il giro risulta «cancelled».
+  Per fermarlo: `gh workflow disable backup-notturno.yml`. Il Worker legge lo stato `disabled_manually` e **non** lo
+  riaccende; riattiva soltanto `disabled_inactivity`, lo spegnimento automatico di GitHub dopo 60 giorni senza attività.
 - **Se fallisce** il job `avviso` apre una segnalazione nel repository (etichetta `backup-notturno`, corpo
-  pubblico: solo il link al giro) e manda un'email ai `SENTINELLA_DESTINATARI`. Se il workflow non parte affatto non
-  c'è nessun allarme: lo copre la fase 3 (heartbeat esterno).
-- **Come si ripristina** e cosa serve (chiave age, password crypt, token di lettura, impostazioni del database da
-  rimettere): `docs/runbook-ripristino.md`.
+  pubblico: solo il link al giro) e manda un'email ai `SENTINELLA_DESTINATARI`.
+  Se il workflow **non parte**, il Worker manda subito l'email «Backup notturno NON partito» (il secondo canale:
+  Resend, senza passare da GitHub); dopo 30 ore senza un giro automatico riuscito il campanello apre `[backup-vecchio]`.
+- **Come si ripristina** e cosa serve (chiave age, password crypt, token di lettura, segreti dei cron da
+  rimettere nel Vault): `docs/runbook-ripristino.md`.
 - **GDPR.** Cloudflare (R2) e GitHub (il runner che esegue il dump, che lo cifra appena esce da `pg_dump`) sono
   responsabili del trattamento da dichiarare nel registro dei trattamenti. Le copie scadono da sole: 30 giorni
   (giornaliere e cestino) e 12 mesi (mensili). Un oblio si compie al più tardi alla scadenza; dopo un
@@ -261,6 +266,9 @@ stesso di R2). Un Worker, `kidville-monitor-esterno`, gira con il **cron di Clou
    `origine=cloudflare`), che ricontrolla con i suoi tre tentativi, apre la segnalazione e manda l'email;
 3. ogni quarto d'ora (:00, :15, :30, :45) lo fa partire **comunque**: è il **battito** che dà al campanello il ritmo che
    il suo `cron` non rispetta.
+4. alle **02:23 UTC** (secondo cron) fa partire `backup-notturno.yml`; se GitHub rifiuta, manda l'email «Backup
+   notturno NON partito». Se il sito è giù **e** il campanello non parte, manda l'email «Sito giù e campanello NON
+   partito», una per ora. È il **secondo canale**: quando è GitHub a rifiutare, l'allarme del campanello non parte.
 
 Il Worker non duplica l'allarme (segnalazione, email, chiusura da sola restano del campanello): lo fa **suonare in
 tempo**. Non ha un indirizzo pubblico (`workers_dev = false`) e non legge dati delle famiglie.
@@ -270,10 +278,13 @@ del campanello che **non** parte da lì (il `cron` di GitHub, un giro a mano) gu
 oltre **90 minuti** (sei battiti mancati) apre `monitor-esterno-muto`. Il Worker spento, il token scaduto o Cloudflare
 fermo diventano un allarme, non un silenzio.
 
-**Il segreto** è uno solo, nei segreti del Worker (mai nel repository, che è pubblico): `GITHUB_TOKEN_CAMPANELLO`, un
-token GitHub **a grana fine** limitato a `erricoluigi17/kidville-web` e al solo permesso **Actions: read and write**.
-Scade: la data è scritta qui sotto e in `00 CONTESTO/04_scadenze.md` del brain. Alla scadenza si genera un token nuovo
-con gli stessi limiti e lo si rimette con `pbpaste | npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`.
+**I segreti** sono tre, nei segreti del Worker (mai nel repository, che è pubblico): `GITHUB_TOKEN_CAMPANELLO`, un
+token GitHub **a grana fine** limitato a `kidville-web` e al solo permesso **Actions: read and write**, più
+`RESEND_API_KEY` e `SENTINELLA_DESTINATARI`, gli stessi del campanello. Li mette il titolare:
+`pbpaste | npx wrangler@4.148.0 secret put <NOME>`. Se mancano quelli di Resend, il Worker lo scrive in
+`console.error` e va avanti. Il token scade: la data è scritta qui sotto e in `00 CONTESTO/04_scadenze.md` del brain.
+Alla scadenza si genera un token nuovo con gli stessi limiti e lo si rimette con
+`pbpaste | npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`.
 
 - **Acceso il 20/10/2026**: primo battito «Campanello (da Cloudflare)» alle 11:00:13 UTC, riuscito.
 - **Token in uso**: «campanello cloudflare», creato il **20/10/2026**, **scade il 20/10/2027**. GitHub gli aggiunge da
@@ -291,9 +302,26 @@ con gli stessi limiti e lo si rimette con `pbpaste | npx wrangler@4.148.0 secret
 | pubblicare / aggiornare | `npx wrangler@4.148.0 deploy` |
 | leggere i giri | `npx wrangler@4.148.0 tail` (oppure il pannello: Workers → `kidville-monitor-esterno` → Logs) |
 | spegnere | `npx wrangler@4.148.0 delete` (poi il campanello aprirà `monitor-esterno-muto`, ed è giusto) |
+| mettere i segreti dell'email (lo fa il titolare) | `pbpaste \| npx wrangler@4.148.0 secret put RESEND_API_KEY`, poi lo stesso per `SENTINELLA_DESTINATARI` |
+| provare l'email del secondo canale | in locale, vedi «Prova del secondo canale» qui sotto |
 
-Si prova con `__tests__/lib/monitor-esterno.test.ts` (fetch finto, numeri letterali). Il monitor non vede il backup:
-quello lo guarda `campanello.yml`.
+Si prova con `__tests__/lib/monitor-esterno.test.ts` (fetch finto, numeri letterali). Il monitor lancia il backup ma
+non ne guarda l'esito: l'età dell'ultimo giro riuscito la guarda `campanello.yml`.
+
+**Prova del secondo canale (in locale, la fa il titolare).** Dopo le 03:00 UTC, perché la chiave d'idempotenza è
+una per giorno UTC e la prova non deve consumare quella della notte. Nella cartella `monitor-esterno/` il titolare
+crea `.dev.vars` (ignorato da git) con tre righe: `GITHUB_TOKEN_CAMPANELLO=finto-per-la-prova`, `RESEND_API_KEY=` e
+`SENTINELLA_DESTINATARI=` con i valori del campanello. Poi:
+```bash
+git check-ignore -q .dev.vars && echo "ignorato: ok"
+npx wrangler@4.148.0 dev --test-scheduled
+# in un secondo terminale:
+curl -s "http://localhost:8787/__scheduled?cron=23+2+*+*+*"
+# dopo: Ctrl-C su wrangler dev, poi
+rm .dev.vars
+```
+Atteso nei log di `wrangler dev`: `monitor-backup: esito=fallito … HTTP 401 {"message":"Bad credentials"…}` e
+`monitor-email: esito=accettata chiave=kidville-backup-non-partito-<oggi> HTTP 200`; l'email arriva ai destinatari.
 
 ### `campanello.yml` — ogni ~15 minuti (il battito di Cloudflare), con il `cron` di GitHub come rinforzo
 
@@ -307,9 +335,10 @@ Guarda quattro cose; se una non va **apre una segnalazione** nel repository (eti
 - **Il backup**: l'ultimo giro **automatico** riuscito di `backup-notturno.yml`; oltre **30 ore** (o nessuno) →
   `backup-vecchio`. È l'unico modo di accorgersi che il backup **non è partito**: GitHub avvisa solo di un giro che
   parte e fallisce. Perché 30 e non 26: il primo giro programmato (06/10) è partito alle 09:08 UTC invece che alle
-  02:23, **6 ore e 45 minuti di ritardo**; con 26 ore sarebbe suonato per un ritardo di due ore. Perché solo
-  `schedule`: un giro lanciato a mano può essere in modalità `prova` (scrive sotto `prove/` e non è un backup) e
-  dall'API dei giri non si distingue da `completo`. Perché da GitHub e non dall'app: GitHub è l'unico che sa la
+  02:23, **6 ore e 45 minuti di ritardo**; con 26 ore sarebbe suonato per un ritardo di due ore.
+  Quali giri contano: lo `schedule` e il lancio delle 02:23 del monitor esterno («Backup notturno completo (da
+  Cloudflare)»). Un giro lanciato a mano no, nemmeno se completo: la copia che conta è quella che parte da sola.
+  Perché da GitHub e non dall'app: GitHub è l'unico che sa la
   verità, ha già un token, e chiederlo da Vercel (indirizzi condivisi) sarebbe a 60 richieste l'ora.
 - **Il monitor esterno**: un giro partito da Cloudflare è la prova che il monitor è vivo; gli altri guardano l'ultimo
   battito, e oltre **90 minuti** (o nessuno) → `monitor-esterno-muto`. Vedi la sezione qui sopra.
@@ -336,7 +365,7 @@ dell'allarme del backup): `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`.
 | `[salute:coda-fatture]` | voci ferme da oltre 24 ore o coda sospesa | pagina della coda fatture; log dei giri `fatture-coda-tick` |
 | `[salute:regione]` | la funzione gira fuori da `dub1` | `vercel.json` (`regions`) e il deploy: Instant Rollback se è nuovo |
 | `[salute:schema-atteso]` / `[salute:auth]` | una tabella manca / Auth non risponde | migrazione non applicata (integrazione Supabase) / stato di Auth |
-| `[backup-vecchio]` | l'ultimo giro **automatico** del backup è più vecchio di 30 ore, o non c'è | i giri di `backup-notturno.yml` (`gh run list --workflow backup-notturno.yml`) e `docs/runbook-ripristino.md`. Un giro **manuale** `completo` fa il backup ma non spegne l'allarme: aspetta il primo giro automatico |
+| `[backup-vecchio]` | l'ultimo giro **automatico** riuscito del backup (lo `schedule` o «Backup notturno completo (da Cloudflare)») è più vecchio di 30 ore, o non c'è | i giri di `backup-notturno.yml` (`gh run list --workflow backup-notturno.yml`) e `docs/runbook-ripristino.md`. Un giro **manuale** `completo` fa il backup ma non spegne l'allarme: aspetta il primo giro automatico |
 | `[monitor-esterno-muto]` | da oltre 90 minuti non arriva un giro del campanello partito da Cloudflare | il Worker `kidville-monitor-esterno` nel pannello di Cloudflare (Logs): un `401 Bad credentials` vuol dire token GitHub scaduto (vedi «Monitor esterno»); un Worker sparito si ripubblica con `npx wrangler@4.148.0 deploy` |
 | `[deploy:<sha>]` | il rilascio non passa la verifica (versione, vivo, regione, salute `down`) | il testo dice cosa; Instant Rollback se il sito è rotto |
 | `[prova]` | è la prova dell'allarme (`simula_guasto`): non è successo niente | si chiude da sola al giro successivo |
@@ -361,15 +390,19 @@ codice, i segreti fuori da `NOME: ${{ secrets.X }}` e ogni `${{ … }}` dentro u
 
 ## Cron di produzione (pg_cron, dentro Supabase)
 
-Le schedulazioni **non** usano Vercel Cron: girano in Postgres (`pg_cron` + `pg_net`) e
-chiamano gli endpoint applicativi via `net.http_post`. Per attivarle in produzione,
-imposta una tantum i GUC sul DB prod (ruolo con privilegi):
+Le schedulazioni **non** usano Vercel Cron: girano in Postgres (`pg_cron` + `pg_net`) e chiamano gli endpoint
+applicativi via `net.http_post`. Indirizzi e segreto li leggono con `public.cron_config('<nome>')`, che guarda
+**prima il Vault** di Supabase e poi le impostazioni del database. In produzione stanno nel **Vault**:
+`ALTER DATABASE … SET` su Supabase è negato (`42501`), e la vecchia ricetta con i GUC non funziona più.
+
+Su un progetto nuovo si rimettono dal SQL editor, una riga per nome, con il valore scritto solo lì:
 
 ```sql
-ALTER DATABASE postgres SET app.push_dispatch_url   = 'https://<dominio-prod>/api/push/dispatch';
-ALTER DATABASE postgres SET app.mensa_allergie_url  = 'https://<dominio-prod>/api/mensa/allergie-check';
-ALTER DATABASE postgres SET app.cron_secret         = '<CRON_SECRET, uguale a quello su Vercel>';
+select vault.create_secret('<valore>', '<nome>');
 ```
+
+L'elenco dei sei nomi e dei loro valori è nello scenario E di `docs/runbook-ripristino.md` (passo 6). Si controlla
+senza leggere i valori con `select name from vault.secrets order by name;`.
 
 e assicurati che le migrazioni `*_cron.sql` siano applicate in prod (idempotenti):
 `notifiche-dispatch` (5'), `mensa-check-allergie` (07:00), `genera-rette-mensili` (1° del mese 06:00),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -516,11 +516,14 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
 
 describe('LOCK · le chiavi del backup non vanno online', () => {
     /**
-     * Il titolare tiene la cartella delle chiavi (`KIDVILLE-CHIAVI-BACKUP/`: chiave privata age e
-     * password di cifratura dei file) dentro la cartella dell'app, per averla a portata di mano.
-     * Il repository è PUBBLICO: una riga di `.gitignore` è l'unica cosa che separa quella cartella
-     * da internet, e basta una riga cancellata per sbaglio. Qui la riga è sorvegliata, e git stesso
-     * conferma che i file dentro sono ignorati (anche quando la cartella non esiste, come in CI).
+     * La cartella delle chiavi (`KIDVILLE-CHIAVI-BACKUP/`: chiave privata age e password di cifratura dei
+     * file) NON deve stare dentro la cartella dell'app: dalla sessione 4 della seconda serie il suo posto
+     * è fuori da ogni checkout (percorso e procedura nel runbook; lo spostamento lo fa il titolare, a
+     * mano), perché un `git clean -x` l'avrebbe cancellata e ogni worktree ne era una copia possibile.
+     * La regola di `.gitignore` e questo lock RESTANO come rete: se la cartella venisse ricopiata dentro
+     * l'app, resterebbe comunque fuori da git. Il repository è PUBBLICO, e basterebbe una riga
+     * cancellata per sbaglio. git stesso conferma che i file dentro sono ignorati (anche quando la
+     * cartella non esiste, come in CI).
      */
     const CARTELLA = 'KIDVILLE-CHIAVI-BACKUP'
     const FILE_SENSIBILI = ['chiave-age-PRIVATA.txt', 'password-cifratura-file.txt']
@@ -561,5 +564,35 @@ describe('LOCK · le chiavi del backup non vanno online', () => {
         const solo = GITIGNORE.replace(`\n/${CARTELLA}/`, `\n# /${CARTELLA}/`)
         expect(solo).not.toBe(GITIGNORE)
         expect(cartellaChiusa(solo)).toBe(false)
+    })
+})
+
+describe('LOCK · il runbook sa rimettere i segreti del Vault che i cron leggono', () => {
+    /**
+     * I cron leggono indirizzi e segreto con `cron_config('<nome>')`, che guarda il Vault. Il dump non
+     * porta il Vault, e `ALTER DATABASE … SET` è negato (42501): su un progetto nuovo (scenario E) i nomi
+     * li deve dare il runbook. Un nome nuovo in una migrazione che il runbook non elenca è un cron che,
+     * dopo un disastro, resta muto senza dirlo.
+     */
+    const MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
+    const RUNBOOK = readFileSync(join(RADICE, 'docs', 'runbook-ripristino.md'), 'utf8')
+    const nomi = new Set<string>()
+    for (const f of readdirSync(MIGRAZIONI).filter((x) => x.endsWith('.sql'))) {
+        for (const m of readFileSync(join(MIGRAZIONI, f), 'utf8').matchAll(/cron_config\(\s*'([a-z0-9_.]+)'\s*\)/gi)) {
+            nomi.add(m[1])
+        }
+    }
+
+    it('i nomi letti dalle migrazioni sono plausibili (sanity)', () => {
+        expect(nomi.size).toBeGreaterThanOrEqual(6)
+        expect(nomi.has('app.cron_secret')).toBe(true)
+    })
+
+    it('ogni nome è nel runbook, con la ricetta del Vault; la ricetta ALTER DATABASE non c\'è più', () => {
+        const mancanti = [...nomi].filter((n) => !RUNBOOK.includes('`' + n + '`'))
+        expect(mancanti, 'nomi letti dai cron ma assenti da docs/runbook-ripristino.md').toEqual([])
+        expect(RUNBOOK).toContain('vault.create_secret')
+        expect(RUNBOOK).not.toMatch(/ALTER DATABASE[^\n]*SET app\./i)
+        expect(DOC).not.toMatch(/ALTER DATABASE[^\n]*SET app\./i)
     })
 })

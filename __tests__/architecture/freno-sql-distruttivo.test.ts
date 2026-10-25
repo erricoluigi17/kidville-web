@@ -44,7 +44,8 @@ function freno(ingresso: unknown, ambiente: Record<string, string> = {}): Esito 
   const esito = spawnSync('python3', [FRENO], {
     input: typeof ingresso === 'string' ? ingresso : JSON.stringify(ingresso),
     encoding: 'utf8',
-    env: { PATH: process.env.PATH ?? '', CLAUDE_PROJECT_DIR: progetto, ...ambiente },
+    // NODE_ENV serve ai tipi (`ProcessEnv` lo vuole); il freno non lo legge.
+    env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '', CLAUDE_PROJECT_DIR: progetto, ...ambiente },
     timeout: 10_000,
   })
   const testo = (esito.stdout ?? '').trim()

@@ -32,8 +32,22 @@ interface EsitoSollecito {
     livello?: number;
     oggetto?: string;
     corpo?: string;
+    /** Prosa italiana del server. */
     motivo?: string;
+    /** Il codice del motivo, quando la route ne dichiara uno: vedi `MOTIVI_TRADOTTI`. */
+    motivoCodice?: string;
 }
+
+/**
+ * I motivi che la route dichiara con un CODICE, e la chiave di catalogo che li dice nella lingua
+ * dell'interfaccia (seconda revisione del lotto 4). Il `motivo` arriva in italiano — nasce sul
+ * server, dove il locale non c'è — e il pannello lo mostrava così anche in inglese. Regola, la
+ * stessa di `messaggioDaCorpo` per gli errori: codice dichiarato ⇒ catalogo, altrimenti la prosa
+ * del server (mai il nome di una chiave). Oggi un codice solo; gli altri motivi restano in prosa.
+ */
+const MOTIVI_TRADOTTI: Readonly<Record<string, 'soll_motivo_altro_giro'>> = {
+    altro_giro: 'soll_motivo_altro_giro',
+};
 
 /**
  * `scuolaId` è null quando le sedi selezionate sono più di una: la GET allora
@@ -104,6 +118,14 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
         setInviati(null);
         setNonInviati([]);
     };
+    // Il motivo nella lingua di chi guarda quando la route ne dichiara il codice (`MOTIVI_TRADOTTI`),
+    // altrimenti la prosa del server. Un posto solo per l'anteprima e per l'esito dell'invio.
+    const motivoDi = (e: EsitoSollecito) => {
+        const chiave = e.motivoCodice !== undefined && Object.hasOwn(MOTIVI_TRADOTTI, e.motivoCodice)
+            ? MOTIVI_TRADOTTI[e.motivoCodice]
+            : undefined;
+        return chiave ? t(chiave) : (e.motivo ?? '—');
+    };
     // La voce come la mostra l'elenco: chi legge il motivo deve sapere di QUALE sollecito si parla.
     const etichettaDi = (id: string) => {
         const p = rows.find((r) => r.id === id);
@@ -135,7 +157,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 setNonInviati(esiti.filter((e) => !e.ok).map((e) => ({
                     id: e.pagamento_id,
                     etichetta: etichettaDi(e.pagamento_id),
-                    motivo: e.motivo ?? '—',
+                    motivo: motivoDi(e),
                 })));
                 await load();
             }
@@ -245,7 +267,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                             <pre className="mt-1 whitespace-pre-wrap font-maven text-[11px] leading-snug text-kidville-ink">{e.corpo}</pre>
                                         </>
                                     ) : (
-                                        <p className="font-maven text-xs text-kidville-warn">{t('soll_saltato')} {e.motivo}</p>
+                                        <p className="font-maven text-xs text-kidville-warn">{t('soll_saltato')} {motivoDi(e)}</p>
                                     )}
                                 </div>
                             ))}

@@ -622,7 +622,13 @@ describe('solleciti — la presa sulla cadenza, PRIMA dell’email (fase 8)', ()
     expect(h.sendEmailDetailed).not.toHaveBeenCalled()
     expect(h.enqueueNotifiche).not.toHaveBeenCalled()
     expect(h.inserts.filter((i) => i.table === 'solleciti')).toEqual([])
-    expect(j.data[0]).toMatchObject({ ok: false, motivo: 'sollecito già inviato da un altro giro' })
+    // Seconda revisione del lotto 4: il motivo era «sollecito già inviato da un altro giro», ma
+    // l'altro giro può anche aver annullato la presa (nessuna email partita). Ora il testo dice
+    // solo ciò che è certo, e porta un codice che il pannello traduce.
+    expect(j.data[0]).toMatchObject({
+      ok: false, motivo: 'un altro giro ha appena preso in carico questa voce: riprova più tardi', motivoCodice: 'altro_giro',
+    })
+    expect(j.data[0].motivo).not.toContain('inviato')
     expect(h.logEvento.mock.calls.some((c) => c[1] === 'info' && (c[2] as { esito?: string }).esito === 'sollecito-gia-in-corso')).toBe(true)
   })
 

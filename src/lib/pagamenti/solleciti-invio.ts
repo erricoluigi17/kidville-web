@@ -83,7 +83,16 @@ export interface EsitoSollecito {
     oggetto?: string
     corpo?: string
     destinatari?: { id: string; email?: string | null }[]
+    /** Il perché, in PROSA italiana: nasce sul server, dove la lingua dell'interfaccia non c'è. */
     motivo?: string
+    /**
+     * Il CODICE del motivo, quando il pannello lo sa tradurre (seconda revisione del lotto 4):
+     * `SollecitiPanel` mostra la sua frase di catalogo nella lingua di chi guarda, e ricade su
+     * `motivo` per ogni codice che non conosce. Stessa regola di `messaggioDaCorpo` per gli errori
+     * (codice dichiarato ⇒ catalogo, altrimenti la prosa). Oggi uno solo; gli altri motivi restano
+     * in prosa, ed è un limite dichiarato.
+     */
+    motivoCodice?: 'altro_giro'
     /** `true` = non inviato per un GUASTO (lettura fallita, presa non scritta), non per una
      *  regola: il giro automatico non lo può chiudere con il battito «ok». */
     guasto?: boolean
@@ -572,11 +581,18 @@ export async function sollecitaPagamenti(
             esiti.push({ pagamento_id: id, ok: false, motivo: 'cadenza non scritta: sollecito non inviato', guasto: true }); continue
         }
         if ((presa ?? []).length === 0) {
+            // Che cosa si sa davvero: un altro giro ha preso la voce dopo la nostra lettura. NON che
+            // l'abbia sollecitata (seconda revisione del lotto 4): da questa sessione quel giro può
+            // anche aver annullato la presa senza nessuna email partita. Il motivo dice il certo, e
+            // porta un codice che il pannello traduce.
             logEvento('pagamento', 'info', {
                 operazione: 'solleciti-invio', esito: 'sollecito-gia-in-corso', pagamento_id: id,
-                msg: 'la cadenza della voce è cambiata dopo la lettura: un altro giro l’ha appena sollecitata',
+                msg: 'la cadenza della voce è cambiata dopo la lettura: un altro giro l’ha appena presa in carico (in corso, concluso o annullato)',
             })
-            esiti.push({ pagamento_id: id, ok: false, motivo: 'sollecito già inviato da un altro giro' }); continue
+            esiti.push({
+                pagamento_id: id, ok: false, motivoCodice: 'altro_giro',
+                motivo: 'un altro giro ha appena preso in carico questa voce: riprova più tardi',
+            }); continue
         }
 
         const giorno = presaIl.slice(0, 10)

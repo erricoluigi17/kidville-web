@@ -1631,5 +1631,6 @@
   "cassaStampaDal": "From {data}",
   "cassaStampaFinoAl": "Until {data}",
   "cassaFiltroMovCassa": "Source cash fund",
-  "cassaFiltroMovGenerale": "General cash fund"
+  "cassaFiltroMovGenerale": "General cash fund",
+  "soll_non_inviati": "{n, plural, one {# reminder not sent:} other {# reminders not sent:}}"
 }

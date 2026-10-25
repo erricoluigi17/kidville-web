@@ -58,6 +58,9 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
     const [anteprime, setAnteprime] = useState<EsitoSollecito[] | null>(null);
     const [busy, setBusy] = useState(false);
     const [inviati, setInviati] = useState<number | null>(null);
+    // Le voci NON partite all'ultimo invio, col motivo della route (revisione del lotto 4): fino
+    // ad allora il pannello diceva solo «N inviati», con la spunta verde anche su zero.
+    const [nonInviati, setNonInviati] = useState<{ id: string; etichetta: string; motivo: string }[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     const oggi = new Date().toISOString().slice(0, 10);
@@ -93,11 +96,18 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
         setSelected(next);
         setAnteprime(null);
         setInviati(null);
+        setNonInviati([]);
     };
     const toggleTutti = () => {
         setSelected(tuttiSelezionati ? new Set() : new Set(rows.map((r) => r.id)));
         setAnteprime(null);
         setInviati(null);
+        setNonInviati([]);
+    };
+    // La voce come la mostra l'elenco: chi legge il motivo deve sapere di QUALE sollecito si parla.
+    const etichettaDi = (id: string) => {
+        const p = rows.find((r) => r.id === id);
+        return p ? `${[p.alunni?.nome, p.alunni?.cognome].filter(Boolean).join(' ')} · ${p.descrizione}` : '—';
     };
 
     const giorniRitardo = (p: Pagamento) =>
@@ -117,9 +127,16 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
             if (anteprima) {
                 setAnteprime(j.data as EsitoSollecito[]);
             } else {
+                const esiti = j.data as EsitoSollecito[];
                 setAnteprime(null);
                 setSelected(new Set());
-                setInviati((j.data as EsitoSollecito[]).filter((e) => e.ok).length);
+                setInviati(esiti.filter((e) => e.ok).length);
+                // Le etichette si prendono PRIMA di ricaricare l'elenco: dopo, una voce può non esserci più.
+                setNonInviati(esiti.filter((e) => !e.ok).map((e) => ({
+                    id: e.pagamento_id,
+                    etichetta: etichettaDi(e.pagamento_id),
+                    motivo: e.motivo ?? '—',
+                })));
                 await load();
             }
         } catch {
@@ -141,9 +158,22 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 } />
 
             {inviati != null && (
-                <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success">
-                    <SaveCheck size={16} /> {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
+                // La spunta verde solo se qualcosa è partito davvero: su «0 inviati» sarebbe un successo finto.
+                <p className={inviati > 0
+                    ? 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success'
+                    : 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-sm font-bold text-kidville-muted'}>
+                    {inviati > 0 && <SaveCheck size={16} />} {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
                 </p>
+            )}
+            {inviati != null && nonInviati.length > 0 && (
+                <div className="mb-3 rounded-xl border-[1.5px] border-kidville-line px-3 py-2">
+                    <p className="font-maven text-xs font-bold text-kidville-warn">{t('soll_non_inviati', { n: nonInviati.length })}</p>
+                    <ul className="mt-1 space-y-0.5">
+                        {nonInviati.map((e) => (
+                            <li key={e.id} className="font-maven text-[11px] text-kidville-ink">{e.etichetta} — {e.motivo}</li>
+                        ))}
+                    </ul>
+                </div>
             )}
             {error && <p className="mb-3 font-maven text-xs text-kidville-error">{error}</p>}
 

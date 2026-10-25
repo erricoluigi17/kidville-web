@@ -238,13 +238,13 @@ Scrivi `ISCRIZIONI=` col numero letto e `ISCRIZIONI_ALLE=` con l'output di `date
 `app_log` tiene 30 giorni, non 90: questa è la finestra dei log; il Passo 3 dà i 90 giorni.
 
 ```sql
-SELECT contesto->>'esito' AS esito,
+SELECT contesto->'campi'->>'esito' AS esito,
        sum(occorrenze)    AS n,
        count(DISTINCT giorno) AS giorni,
        min(giorno)        AS dal
   FROM app_log
  WHERE giorno >= (now() AT TIME ZONE 'UTC')::date - 30
-   AND contesto->>'esito' IN ('staff-cancellato', 'staff-archiviato', 'eliminazione-rifiutata-si-archivia',
+   AND contesto->'campi'->>'esito' IN ('staff-cancellato', 'staff-archiviato', 'eliminazione-rifiutata-si-archivia',
                               'scansioni-non-rimosse', 'file-rimossi-righe-no', 'fascicolo-non-cancellato',
                               'scrutinio-riaperto', 'pagella-eliminata', 'nota-modificata', 'nota-invariata',
                               'addebito-orfano-non-rimosso')
@@ -371,9 +371,9 @@ Atteso: i trigger della scatola nera (`scatola_nera_eliminazioni`, `scatola_nera
 
 ```sql
 SELECT jobname, schedule, active FROM cron.job WHERE jobname LIKE '%cestino%' ORDER BY 1;
-SELECT giorno, occorrenze, contesto->>'esito' AS esito
+SELECT giorno, occorrenze, contesto->'campi'->>'esito' AS esito
   FROM app_log
- WHERE evento = 'cron' AND contesto->>'operazione' = 'cestino-registro-retention'
+ WHERE evento = 'cron' AND contesto->'campi'->>'operazione' = 'cestino-registro-retention'
  ORDER BY giorno DESC LIMIT 7;
 ```
 
@@ -5515,20 +5515,20 @@ Atteso: tre righe con le version dei file; `true, true, false, false, true`; `fi
 La misura «dopo» la esegue e la scrive la **sessione che apre dopo**, nella sua chiusura della precedente: le `SELECT` qui sotto sono ripetute, identiche, nella sezione «Per la sessione dopo» in fondo a questo piano, con il giorno da cui maturano (24 ore dopo il deploy di produzione). Se questa sessione è ancora aperta a 24 ore dal deploy, può eseguirle per controllo, in sola lettura, e riferire i numeri al titolare; non le scrive né nella specifica né nel PRD (la riga di stato è «in revisione» fino alla sessione dopo).
 
 ```sql
-SELECT contesto->>'esito' AS esito, sum(occorrenze) AS n
+SELECT contesto->'campi'->>'esito' AS esito, sum(occorrenze) AS n
   FROM app_log
  WHERE giorno >= DATE '<giorno del merge>'
-   AND contesto->>'esito' IN ('colonna-ritiro-assente', 'rpc-eliminazione-assente-ripiego', 'rpc-note-modifica-assente',
+   AND contesto->'campi'->>'esito' IN ('colonna-ritiro-assente', 'rpc-eliminazione-assente-ripiego', 'rpc-note-modifica-assente',
                               'copie-non-riuscite', 'pagelle-non-ritirate', 'pagelle-non-marcate', 'copie-ritirate-orfane',
                               'cestino-non-raggiunto', 'file-orfani-fuori-cestino', 'account-accesso-non-rimosso',
                               'righe-dipendente-non-cancellate', 'pagelle-ritirate-trattenute', 'sede-orfana-non-rimossa',
                               'scrutinio-riaperto', 'staff-cancellato', 'nota-modificata', 'file-nel-cestino')
  GROUP BY 1 ORDER BY 1;
 
-SELECT giorno, contesto->>'esito' AS esito, contesto->>'cestino_personale_ok' AS cestino_personale_ok,
-       contesto->>'n_cestino_personale_file' AS file_distrutti
+SELECT giorno, contesto->'campi'->>'esito' AS esito, contesto->'campi'->>'cestino_personale_ok' AS cestino_personale_ok,
+       contesto->'campi'->>'n_cestino_personale_file' AS file_distrutti
   FROM app_log
- WHERE evento = 'cron' AND contesto->>'operazione' = 'cestino-registro-retention' AND giorno >= DATE '<giorno del merge>'
+ WHERE evento = 'cron' AND contesto->'campi'->>'operazione' = 'cestino-registro-retention' AND giorno >= DATE '<giorno del merge>'
  ORDER BY giorno DESC LIMIT 3;
 
 SELECT bucket_id,
@@ -5539,7 +5539,7 @@ SELECT bucket_id,
  GROUP BY 1 ORDER BY 1;
 ```
 
-Atteso: nessuna riga per i tre esiti di ripiego e per gli esiti `error`; il battito notturno `ok` con `cestino_personale_ok = true`; `ritirate` e `cestino` a 0 finché non c'è una riapertura o un'eliminazione vera. La prova della specifica («oggetti in `ritirate/` dopo la prima riapertura vera») matura più tardi, alla prima riapertura vera (gennaio 2027): anche questa sta nella sezione «Per la sessione dopo».
+Atteso: nessuna riga per i tre esiti di ripiego e per gli esiti `error`; il battito notturno `ok` con `cestino_personale_ok = true`; `ritirate` e `cestino` a 0 finché non c'è una riapertura o un'eliminazione vera. (I campi stanno sotto `contesto.campi`, e `colonna-ritiro-assente`, un `info` di `db`, non arriva mai in `app_log`: vedi la nota nella sezione «Per la sessione dopo», punto 3.) La prova della specifica («oggetti in `ritirate/` dopo la prima riapertura vera») matura più tardi, alla prima riapertura vera (gennaio 2027): anche questa sta nella sezione «Per la sessione dopo».
 
 Tutto quello che la sessione dopo deve fare per chiudere questa (fotografia delle migrazioni, riga di stato a «in produzione» col commit di `main`, misura «dopo», Stato della voce nel PRD) è scritto nella sezione «Per la sessione dopo», in fondo a questo piano: niente rami di soli documenti e niente PR separate dopo il rilascio.
 
@@ -5658,20 +5658,20 @@ gh pr list --repo erricoluigi17/kidville-web --state merged --search "head:robus
 Poi, in sola lettura, con quel giorno al posto di `<giorno del merge>` (formato `AAAA-MM-GG`):
 
 ```sql
-SELECT contesto->>'esito' AS esito, sum(occorrenze) AS n
+SELECT contesto->'campi'->>'esito' AS esito, sum(occorrenze) AS n
   FROM app_log
  WHERE giorno >= DATE '<giorno del merge>'
-   AND contesto->>'esito' IN ('colonna-ritiro-assente', 'rpc-eliminazione-assente-ripiego', 'rpc-note-modifica-assente',
+   AND contesto->'campi'->>'esito' IN ('colonna-ritiro-assente', 'rpc-eliminazione-assente-ripiego', 'rpc-note-modifica-assente',
                               'copie-non-riuscite', 'pagelle-non-ritirate', 'pagelle-non-marcate', 'copie-ritirate-orfane',
                               'cestino-non-raggiunto', 'file-orfani-fuori-cestino', 'account-accesso-non-rimosso',
                               'righe-dipendente-non-cancellate', 'pagelle-ritirate-trattenute', 'sede-orfana-non-rimossa',
                               'scrutinio-riaperto', 'staff-cancellato', 'nota-modificata', 'file-nel-cestino')
  GROUP BY 1 ORDER BY 1;
 
-SELECT giorno, contesto->>'esito' AS esito, contesto->>'cestino_personale_ok' AS cestino_personale_ok,
-       contesto->>'n_cestino_personale_file' AS file_distrutti
+SELECT giorno, contesto->'campi'->>'esito' AS esito, contesto->'campi'->>'cestino_personale_ok' AS cestino_personale_ok,
+       contesto->'campi'->>'n_cestino_personale_file' AS file_distrutti
   FROM app_log
- WHERE evento = 'cron' AND contesto->>'operazione' = 'cestino-registro-retention' AND giorno >= DATE '<giorno del merge>'
+ WHERE evento = 'cron' AND contesto->'campi'->>'operazione' = 'cestino-registro-retention' AND giorno >= DATE '<giorno del merge>'
  ORDER BY giorno DESC LIMIT 3;
 
 SELECT bucket_id,
@@ -5682,7 +5682,9 @@ SELECT bucket_id,
  GROUP BY 1 ORDER BY 1;
 ```
 
-Atteso: nessuna riga per i tre esiti di ripiego (`colonna-ritiro-assente`, `rpc-eliminazione-assente-ripiego`, `rpc-note-modifica-assente`) e per gli esiti `error`; il battito notturno con esito `ok` e `cestino_personale_ok = true`; `ritirate` e `cestino` a 0 finché non c'è una riapertura o un'eliminazione vera. Si scrivono i numeri osservati, con giorno e ora UTC (`date -u '+%Y-%m-%d %H:%M'`) e la finestra (dal giorno del merge a oggi). **Condizionali:** un esito di ripiego presente in produzione vuol dire una migrazione che manca → non si applica a mano: lo si scrive nelle «Note» e si avvisa il titolare. Nessun battito `ok`, o `cestino_personale_ok` falso → il cestino del personale non si svuota: lo si scrive nelle «Note» e si avvisa il titolare.
+**Dove stanno i campi (corretto il 25/10, Compito 16).** `logEvento` scrive i campi del chiamante sotto `contesto.campi` (`rigaEvento` in `src/lib/logging/logger.ts`): il percorso è `contesto->'campi'->>'esito'`, non `contesto->>'esito'`, che in produzione è sempre vuoto e farebbe passare la misura con zero righe qualunque cosa sia successo. Le `SELECT` qui sopra sono già corrette. **Un esito di ripiego che `app_log` non vede comunque:** `colonna-ritiro-assente` è `logEvento('db', 'info', …)`, e `db` non sta in `EVENTI_PERSISTITI`: un `info` di `db` non arriva mai in tabella, quindi la sua assenza non prova niente. Che le colonne del ritiro ci siano lo dice la fotografia del punto 1 (`pagelle_ritirate` fra le tre righe), non questa query.
+
+Atteso: nessuna riga per i tre esiti di ripiego (`colonna-ritiro-assente`, `rpc-eliminazione-assente-ripiego`, `rpc-note-modifica-assente`; il primo, come detto, non comparirebbe in ogni caso) e per gli esiti `error`; il battito notturno con esito `ok` e `cestino_personale_ok = true`; `ritirate` e `cestino` a 0 finché non c'è una riapertura o un'eliminazione vera. Si scrivono i numeri osservati, con giorno e ora UTC (`date -u '+%Y-%m-%d %H:%M'`) e la finestra (dal giorno del merge a oggi). **Condizionali:** un esito di ripiego presente in produzione vuol dire una migrazione che manca → non si applica a mano: lo si scrive nelle «Note» e si avvisa il titolare. Nessun battito `ok`, o `cestino_personale_ok` falso → il cestino del personale non si svuota: lo si scrive nelle «Note» e si avvisa il titolare.
 
 **4. La misura che matura più tardi: la prima riapertura vera.** La prova della specifica («oggetti in `ritirate/` dopo la prima riapertura vera») matura **dal giorno della prima riapertura di uno scrutinio dopo il merge** (attesa a gennaio 2027, con gli scrutini del primo quadrimestre). Il giorno si legge così:
 

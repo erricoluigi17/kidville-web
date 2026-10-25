@@ -162,7 +162,9 @@ export function valutaCronEsiti(righe: readonly RigaCronEsito[], adesso: number)
             senzaCadenza.push(r.job)
             continue
         }
-        if (r.vivoIl === null && r.esito === null) {
+        // «In attesa» solo se il job non è MAI stato visto girare: uno già visto, senza esito buono
+        // (esito ignoto, esecuzioni fallite) è un allarme, non un'attesa che non finisce.
+        if (r.vivoIl === null && r.esito === null && r.vistoIl === null) {
             inAttesa.push(r.job)
             continue
         }

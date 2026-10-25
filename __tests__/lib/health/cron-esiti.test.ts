@@ -139,6 +139,22 @@ describe('valutaCronEsiti — la regola', () => {
         })
     })
 
+    it('un job già visto girare, senza esito e mai vivo (esito ignoto, esecuzioni fallite), non è «in attesa»: allarme', () => {
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('ignoto', '*/10 * * * *', null, 3, null)], ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: ignoto',
+        })
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('ignoto', '0 6 * * *', null, 20 * 60, null)], ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: ignoto',
+        })
+        // Riga incoerente (un esito senza l'istante del giro): un esito c'è, quindi non è un'attesa.
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('incoerente', '*/10 * * * *', 'fallito', null, null)], ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: incoerente',
+        })
+    })
+
     it('un job partito e MAI riuscito è un allarme subito', () => {
         expect(valutaCronEsiti([OGNI_MINUTO, riga('mai-ok', '*/10 * * * *', 'fallito', 3, null)], ADESSO)).toEqual({
             esito: 'degradato',

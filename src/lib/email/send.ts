@@ -112,8 +112,9 @@ export interface SendEmailParams {
   chiaveIdempotenza?: string
   /**
    * I RITENTATIVI (sessione 9 della seconda serie di robustezza). Assente = una chiamata sola,
-   * esattamente come prima: chi non lo passa non vede cambiare niente, nemmeno la forma
-   * dell'esito.
+   * come prima, e l'esito non porta `tentativi`. La forma dell'esito però non è identica per
+   * tutti: `incerto: true` compare per QUALUNQUE chiamante quando la richiesta può essere arrivata
+   * a Resend (vedi `SendEmailResult.incerto`). È innocuo: chi non lo legge si comporta come prima.
    *
    * Presente = fino a `TENTATIVI_EMAIL_MAX` chiamate, aspettando 1 s e poi 3 s (o il
    * `Retry-After` del provider, se è più lungo e non supera `ATTESA_MAX_EMAIL_MS`), e SOLO:
@@ -167,10 +168,19 @@ export interface SendEmailResult {
   tentativi?: number
   /**
    * «Forse è partita». Vero quando il provider potrebbe aver preso in carico l'email senza che
-   * lo sappiamo: un `409 concurrent_idempotent_requests` (la stessa chiave è ancora in corso) o
-   * una chiamata scaduta senza risposta che nessun rifiuto definitivo successivo ha smentito.
-   * Chi tiene una presa (i solleciti) NON la annulla su un esito incerto: meglio slittare di una
-   * cadenza che partire due volte.
+   * lo sappiamo:
+   *  · un `409 concurrent_idempotent_requests` (la stessa chiave è ancora in corso);
+   *  · una chiamata scaduta senza risposta (il nostro tetto), con o senza chiave;
+   *  · con la chiave d'idempotenza INVIATA (revisione del lotto 4): un `5xx` — 502 e 504 di un
+   *    gateway compresi, che possono rispondere dopo che Resend ha preso il messaggio — e uno
+   *    `stato: 0` che non sia un errore PRIMA della connessione (`ECONNRESET`, un socket chiuso a
+   *    metà, un errore senza codice). Restano certi `ENOTFOUND`, `EAI_AGAIN`, `ECONNREFUSED` e
+   *    `UND_ERR_CONNECT_TIMEOUT`: lì la richiesta non è mai partita.
+   * Lo smentiscono solo un successo o un rifiuto 4xx definitivo a un tentativo successivo (stessa
+   * chiave ⇒ stesso esito); un `429` o un errore prima della connessione non dicono niente.
+   *
+   * Chi tiene una presa (i solleciti) NON la annulla su un esito incerto: il sollecito slitta di
+   * una cadenza. È il prezzo accettato: durante un guasto di Resend i solleciti slittano.
    */
   incerto?: boolean
 }
@@ -197,6 +207,14 @@ const FORMA_CHIAVE_IDEMPOTENZA = /^[A-Za-z0-9:_.-]{1,256}$/
  */
 const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
 const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
+
+/**
+ * Gli errori di rete che arrivano PRIMA che la connessione esista (revisione del lotto 4): DNS
+ * (`ENOTFOUND`, `EAI_AGAIN`), porta chiusa (`ECONNREFUSED`), connessione mai stabilita entro il
+ * tetto di undici (`UND_ERR_CONNECT_TIMEOUT`). Lì la richiesta non è mai partita e l'esito è
+ * certo. Ogni altro `stato: 0` può arrivare DOPO l'invio, ed è incerto (vedi `forseArrivata`).
+ */
+const ERRORI_PRIMA_DELLA_CONNESSIONE: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT'])
 
 /** Quante chiamate al massimo, ritentativi compresi (sessione 9). */
 export const TENTATIVI_EMAIL_MAX = 3
@@ -319,11 +337,13 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
   // Il battito (successo E rifiuto) lo emette `externalFetch`, una riga per chiamata, con il corpo
   // del provider nella colonna `messaggio`. Con i ritentativi le righe sono una per tentativo e
   // portano `tentativo`; sopra, al massimo una riga di chiusura (vedi `chiamaResend`).
-  const { esito, tentativi, fermata, scaduto } = await chiamaResend(init, campi, chiave, ritentativi)
-  // Le chiavi nuove dell'esito compaiono SOLO quando servono: chi non passa `ritentativi` riceve
-  // l'esito di sempre, chiave per chiave (i test esistenti lo confrontano con `toEqual`).
+  const { esito, tentativi, fermata, incerto } = await chiamaResend(init, campi, chiave, ritentativi)
+  // Le chiavi nuove dell'esito compaiono SOLO quando servono: `tentativi` solo per chi passa
+  // `ritentativi`; `incerto` solo quando la richiesta può essere arrivata (per qualunque
+  // chiamante). Nel caso comune l'esito è quello di sempre, chiave per chiave (i test esistenti
+  // lo confrontano con `toEqual`).
   const conto = ritentativi === undefined ? {} : { tentativi }
-  const dubbio = scaduto ? { incerto: true } : {}
+  const dubbio = incerto ? { incerto: true } : {}
 
   if (esito.ok) {
     // `externalFetch` restituisce la Response col corpo INTATTO proprio perché
@@ -356,7 +376,8 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
 
   // `stato: 0` = una risposta non c'è stata affatto (rete giù, DNS, TLS).
   if (esito.stato === 0) {
-    // `incerto` se la chiamata è SCADUTA: la richiesta può essere arrivata e l'email partita.
+    // `incerto` se la richiesta può essere arrivata: la scadenza del tetto e, con la chiave, ogni
+    // errore che non sia di PRIMA della connessione (vedi `forseArrivata`).
     return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}`, ...conto, ...dubbio }
   }
 
@@ -461,12 +482,13 @@ async function chiamaResend(
   campi: Record<string, Valore>,
   chiave: string | undefined,
   ritentativi: SendEmailParams['ritentativi'],
-): Promise<{ esito: EsitoEsterno; tentativi: number; fermata: MotivoFermata | null; scaduto: boolean }> {
+): Promise<{ esito: EsitoEsterno; tentativi: number; fermata: MotivoFermata | null; incerto: boolean }> {
   let tentativi = 0
-  // «Una chiamata è scaduta senza risposta»: il provider potrebbe averla presa. Lo smentisce
-  // solo un successo o un rifiuto 4xx definitivo (stessa chiave ⇒ stesso esito); un 429 o un
-  // 5xx successivo non dicono niente sulla chiamata scaduta.
-  let scaduto = false
+  // «Una chiamata può essere arrivata a Resend senza che sappiamo com'è andata» (`forseArrivata`).
+  // Lo smentisce solo un successo o un rifiuto 4xx definitivo a un tentativo dopo (stessa chiave
+  // ⇒ stesso esito); un 429 o un errore PRIMA della connessione non dicono niente sui tentativi
+  // di prima, e il «forse» resta com'era.
+  let incerto = false
   for (;;) {
     tentativi++
     const esito = await externalFetch('resend', 'https://api.resend.com/emails', init, {
@@ -476,8 +498,8 @@ async function chiamaResend(
         ? {}
         : { gravita: (stato: number): Livello => (eRitentabile(stato, chiave) ? 'warn' : 'error') }),
     })
-    if (esito.ok || (esito.stato >= 400 && esito.stato < 500 && esito.stato !== QUOTA_ESAURITA)) scaduto = false
-    if (!esito.ok && esito.stato === 0 && esito.codice === 'timeout') scaduto = true
+    if (esito.ok || (esito.stato >= 400 && esito.stato < 500 && esito.stato !== QUOTA_ESAURITA)) incerto = false
+    else if (forseArrivata(esito, chiave)) incerto = true
 
     if (esito.ok) {
       if (tentativi > 1) {
@@ -489,10 +511,10 @@ async function chiamaResend(
           msg: `email accettata dal provider al tentativo ${tentativi}`,
         })
       }
-      return { esito, tentativi, fermata: null, scaduto }
+      return { esito, tentativi, fermata: null, incerto }
     }
     if (ritentativi === undefined || !eRitentabile(esito.stato, chiave)) {
-      return { esito, tentativi, fermata: null, scaduto }
+      return { esito, tentativi, fermata: null, incerto }
     }
 
     const attesa = attesaPrimaDelRitentativo(esito.retryAfter, tentativi)
@@ -513,10 +535,30 @@ async function chiamaResend(
         },
         erroreResend(esito.stato, esito.corpo, esito.codice),
       )
-      return { esito, tentativi, fermata, scaduto }
+      return { esito, tentativi, fermata, incerto }
     }
     await attendi(attesa)
   }
+}
+
+/**
+ * «La richiesta può essere arrivata a Resend, e la risposta non dice com'è andata» (revisione del
+ * lotto 4). Fino ad allora valeva solo per la scadenza del tetto: un 504 del gateway o un
+ * `ECONNRESET` arrivati DOPO che Resend aveva preso il messaggio uscivano «certi», i solleciti
+ * annullavano la presa, il giorno dopo la chiave cambiava (porta la data) e l'email partiva due
+ * volte. Ora:
+ *  · la scadenza del nostro tetto (`codice: 'timeout'`): sempre, con o senza chiave, come prima;
+ *  · con la chiave d'idempotenza INVIATA: ogni `5xx` (502 e 504 compresi) e ogni `stato: 0` che
+ *    non sia in `ERRORI_PRIMA_DELLA_CONNESSIONE` — un errore senza codice compreso, nel dubbio.
+ * Senza chiave un 5xx o una connessione caduta restano l'esito di sempre: chi non passa la chiave
+ * non tiene una presa da proteggere, e non ritenta.
+ */
+function forseArrivata(esito: EsitoEsterno, chiave: string | undefined): boolean {
+  if (esito.ok) return false
+  if (esito.stato === 0 && esito.codice === 'timeout') return true
+  if (chiave === undefined) return false
+  if (esito.stato >= 500 && esito.stato <= 599) return true
+  return esito.stato === 0 && !ERRORI_PRIMA_DELLA_CONNESSIONE.has(esito.codice ?? '')
 }
 
 /**

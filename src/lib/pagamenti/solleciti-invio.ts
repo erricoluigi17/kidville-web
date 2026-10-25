@@ -536,7 +536,7 @@ export async function sollecitaPagamenti(
                 logEvento('pagamento', 'warn', {
                     operazione: 'solleciti-invio', esito: 'sollecito-esito-incerto', pagamento_id: id,
                     livello_sollecito: livello, tentate, incerte,
-                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita: la cadenza resta e il sollecito slitta di una cadenza',
+                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita (scadenza, 5xx o connessione caduta dopo l’invio, 409 d’idempotenza): la cadenza resta e il sollecito slitta di una cadenza',
                 })
                 esiti.push({
                     pagamento_id: id, ok: false, livello, inviate: 0, tentate,

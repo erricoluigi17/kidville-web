@@ -22,7 +22,8 @@ vi.mock('@/lib/logging/logger', () => log)
 
 import { sendEmailDetailed } from '@/lib/email/send'
 
-type Risposta = Response | 'rete-giu' | 'scaduto'
+/** `{ rete }`: l'errore di undici (`TypeError('fetch failed')`) con quel `code` sulla causa, o senza. */
+type Risposta = Response | 'rete-giu' | 'scaduto' | { rete: string | null }
 
 /** Resend finto: risponde in ordine con `risposte` (l'ultima si ripete) e annota le chiavi. */
 function resendFinto(risposte: Array<() => Risposta>): (string | undefined)[] {
@@ -34,6 +35,9 @@ function resendFinto(risposte: Array<() => Risposta>): (string | undefined)[] {
       const r = (risposte[chiavi.length - 1] ?? risposte[risposte.length - 1])()
       if (r === 'rete-giu') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } })
       if (r === 'scaduto') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      if (!(r instanceof Response)) {
+        throw r.rete === null ? new TypeError('fetch failed') : Object.assign(new TypeError('fetch failed'), { cause: { code: r.rete } })
+      }
       return r
     }),
   )
@@ -45,6 +49,7 @@ const rifiuto = (status: number, corpo: Record<string, unknown>, headers?: Recor
   new Response(JSON.stringify(corpo), { status, headers })
 const reteGiu = (): Risposta => 'rete-giu'
 const scaduto = (): Risposta => 'scaduto'
+const rete = (codice: string | null) => (): Risposta => ({ rete: codice })
 
 async function finché(cond: () => boolean): Promise<void> {
   for (let i = 0; i < 500; i++) {
@@ -79,11 +84,13 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-describe('sendEmailDetailed — senza `ritentativi` niente cambia', () => {
-  it('503: una chiamata, l’esito di sempre (nessuna chiave nuova), riga `error` senza `tentativo`', async () => {
+describe('sendEmailDetailed — senza `ritentativi` una chiamata sola', () => {
+  // Revisione del lotto 4: con la chiave partita, un 503 è INCERTO (la richiesta può essere
+  // arrivata). Il resto resta com'era: una chiamata, niente `tentativi`, niente `tentativo`.
+  it('503 con la chiave: una chiamata, niente `tentativi`, `incerto`, riga `error` senza `tentativo`', async () => {
     const chiavi = resendFinto([rifiuto(503, { name: 'application_error', message: 'Servizio non disponibile' })])
     const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
-    expect(r).toEqual({ ok: false, error: 'rifiutato dal provider email (503): Servizio non disponibile' })
+    expect(r).toEqual({ ok: false, error: 'rifiutato dal provider email (503): Servizio non disponibile', incerto: true })
     expect(chiavi).toHaveLength(1)
     const riga = log.logEvento.mock.calls.filter((c) => c[0] === 'email' && (c[2] as { provider?: string }).provider === 'resend')
     expect(riga).toHaveLength(1)
@@ -145,8 +152,8 @@ describe('sendEmailDetailed — con `ritentativi`', () => {
     await finché(() => chiavi.length === 3)
 
     const r = await p
-    expect(r).toMatchObject({ ok: false, tentativi: 3 })
-    expect(r.incerto).toBeUndefined()
+    // Tre 500 con la chiave: nessuno dice che l'email NON è partita (revisione del lotto 4).
+    expect(r).toMatchObject({ ok: false, tentativi: 3, incerto: true })
     expect(chiavi).toEqual([CHIAVE, CHIAVE, CHIAVE])
     expect(tentativi()).toEqual([['warn', 1], ['warn', 2], ['warn', 3]])
     const fine = righe('ritentativi-esauriti')
@@ -287,5 +294,76 @@ describe('sendEmailDetailed — con `ritentativi`', () => {
     await finché(() => chiavi.length === 3)
     const r = await p
     expect(r).toMatchObject({ ok: false, rinviabile: true, incerto: true, tentativi: 3 })
+  })
+})
+
+/**
+ * REVISIONE DEL LOTTO 4 — la ricevuta persa su un 5xx o su una connessione caduta.
+ *
+ * Fino a qui `incerto` valeva solo per la scadenza del tetto e per il 409 concorrente. Un 504 del
+ * gateway o un `ECONNRESET` arrivati DOPO che Resend aveva preso il messaggio uscivano «certi»: i
+ * solleciti annullavano la presa, il giorno dopo la chiave cambiava (la data) e l'email partiva
+ * due volte. Ora, con la chiave inviata, li smentiscono solo un `ok` o un 4xx definitivo; gli
+ * errori PRIMA della connessione restano certi, perché lì la richiesta non è mai partita.
+ */
+describe('sendEmailDetailed — esito incerto quando la richiesta può essere arrivata', () => {
+  it('504 del gateway, con la chiave e senza ritentativi: incerto', async () => {
+    resendFinto([() => new Response('<html>504 Gateway Time-out</html>', { status: 504 })])
+    const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+    expect(r).toMatchObject({ ok: false, incerto: true })
+    expect(r.rinviabile).toBeUndefined()
+  })
+
+  it('connessione caduta (`ECONNRESET`), con la chiave: incerto', async () => {
+    resendFinto([reteGiu])
+    const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+    expect(r).toMatchObject({ ok: false, incerto: true })
+  })
+
+  it('errore di rete SENZA codice, con la chiave: incerto (nel dubbio la richiesta può essere partita)', async () => {
+    resendFinto([rete(null)])
+    const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+    expect(r).toMatchObject({ ok: false, incerto: true })
+  })
+
+  it.each(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT'])(
+    'errore PRIMA della connessione (%s), con la chiave: esito certo, la richiesta non è mai partita',
+    async (codice) => {
+      resendFinto([rete(codice)])
+      const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain('errore di rete')
+      expect(r.incerto).toBeUndefined()
+    },
+  )
+
+  it('SENZA chiave, 503 e `ECONNRESET` restano l’esito di sempre: niente `incerto`', async () => {
+    resendFinto([rifiuto(503, { name: 'application_error', message: 'Servizio non disponibile' })])
+    expect(await sendEmailDetailed(params)).toEqual({ ok: false, error: 'rifiutato dal provider email (503): Servizio non disponibile' })
+    resendFinto([reteGiu])
+    expect((await sendEmailDetailed(params)).incerto).toBeUndefined()
+  })
+
+  it('500 poi 422, con i ritentativi: il 4xx definitivo SMENTISCE il 500, esito certo', async () => {
+    const chiavi = resendFinto([rifiuto(500, { message: 'errore' }), rifiuto(422, { name: 'validation_error', message: 'Invalid `to` field' })])
+    const p = sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE, ritentativi: {} })
+    await finché(() => chiavi.length === 1 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await finché(() => chiavi.length === 2)
+    const r = await p
+    expect(r).toMatchObject({ ok: false, tentativi: 2 })
+    expect(r.incerto).toBeUndefined()
+  })
+
+  it('500 poi due `ENOTFOUND`, con i ritentativi: l’errore prima della connessione NON smentisce il 500, resta incerto', async () => {
+    const chiavi = resendFinto([rifiuto(500, { message: 'errore' }), rete('ENOTFOUND')])
+    const p = sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE, ritentativi: {} })
+    await finché(() => chiavi.length === 1 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await finché(() => chiavi.length === 2 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await finché(() => chiavi.length === 3)
+    const r = await p
+    expect(r).toMatchObject({ ok: false, tentativi: 3, incerto: true })
   })
 })

@@ -877,8 +877,9 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 riapplicate;
               </li>
               <li>
-                <strong>log tecnici di accesso e di utilizzo</strong>: <strong>30 giorni</strong>,
-                dopodiché sono cancellati automaticamente;
+                <strong>log tecnici di accesso e di utilizzo</strong>: <strong>30 giorni</strong>;
+                le righe che registrano un errore <strong>90 giorni</strong>, per riconoscere un
+                guasto che si ripresenta. Dopodiché sono cancellati automaticamente;
               </li>
               <li>
                 <strong>copia locale dei dati sul dispositivo</strong> (funzionamento senza

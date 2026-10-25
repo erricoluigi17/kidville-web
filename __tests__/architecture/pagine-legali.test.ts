@@ -422,6 +422,9 @@ describe('lock — pagine legali', () => {
         // registro di protocollo e delle modifiche ad anagrafiche, note e certificati. Le voci
         // precedenti restano dove sono.
         '2026-10-25': '1eef4edfa8c910329955cbaf173fb35cf3904ccc945e6d04d96aba738eb3ce1a',
+        // 2026-10-26 — sessione 8 della seconda serie: i «log tecnici» tengono le righe di ERRORE
+        // novanta giorni (T7); le altre restano trenta. La '2026-10-25' resta dov'è.
+        '2026-10-26': '1717c55311789b413349206e9e0ad777639cf184dfad949870d155042c138826',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

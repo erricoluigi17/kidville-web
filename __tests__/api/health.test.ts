@@ -264,6 +264,43 @@ describe('GET /api/health', () => {
         )
     })
 
+    it('i cinque controlli nuovi rotti tutti insieme: 200 e degraded, mai 503', async () => {
+        for (const nome of ['FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY', 'NEXT_PUBLIC_VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY']) {
+            vi.stubEnv(nome, 'valore-di-prova')
+        }
+        const rifiuti = (evento: string, provider: string) => ({
+            id: `rifiuto-${evento}-${provider}`,
+            evento,
+            livello: 'error',
+            sorgente: 'server',
+            ambiente: 'production',
+            stato_http: 403,
+            occorrenze: 5,
+            creato_il: fa(10 * MIN),
+            visto_l_ultima: fa(10 * MIN),
+            operazione: 'invio',
+            contesto: { campi: { provider, operazione: 'invio' } },
+        })
+        const sano = dbSano()
+        montaDb({
+            ...sano,
+            app_log: [...sano.app_log, rifiuti('email', 'resend'), rifiuti('push', 'fcm'), rifiuti('push', 'web-push')],
+        })
+        rpc.cronEsiti.mockResolvedValue({ data: null, error: { code: 'P0001', message: 'x' } })
+        rpc.migrazioni.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'x' } })
+        storage.list.mockRejectedValue(new TypeError('fetch failed'))
+
+        const { stato, header, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(header).toBe('degraded')
+        expect(corpo.stato).toBe('degraded')
+        for (const nome of ['cron-esiti', 'storage', 'email', 'push', 'migrazioni']) {
+            expect(controllo(corpo, nome).esito, nome).toBe('degradato')
+        }
+        expect(corpo.controlli.filter((c) => c.esito === 'giu')).toEqual([])
+    })
+
     it("UNA traccia d'audit persa porta la salute a degraded con `audit-docente`, e `tasso-errore` resta ok", async () => {
         const db = dbSano()
         db.app_log.push({

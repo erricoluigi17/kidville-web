@@ -53,6 +53,21 @@ import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
  *                      È QUALITÀ DEI DATI, non salute: sta nel suo livello (vedi sotto).
  * 10. `audit-docente` — nessuna traccia d'audit persa nelle ultime 24 ore (`audit-non-registrato`
  *                      di scritture, fascicolo e firma; robustezza 2, sessione 1).
+ * 11. `cron-esiti`   — ogni job ATTIVO di `pg_cron`, mensili e sola SQL compresi, ha avuto un
+ *                      esito buono dentro la finestra della sua cadenza (2026-10-25).
+ * 12. `storage`      — l'API dello Storage risponde e il bucket privato della sonda c'è.
+ * 13. `email`        — Resend non respinge più di quanto consegna (da `app_log`, mai chiamato).
+ * 14. `push`         — lo stesso per FCM e web-push, per ogni canale configurato.
+ * 15. `migrazioni`   — il database ha applicato le migrazioni del repo fissate alla build.
+ *
+ * Le misure 11-15 (sessione 7 della seconda serie di robustezza) dicono al più `degradato`, MAI
+ * `giu`: il `503` resta di `db-lettura`, `auth` e `schema-atteso`, e per lo schema solo quando una
+ * tabella manca o non si legge, non quando è lenta. `db-lettura` e `auth` restano `giu` anche
+ * oltre il tetto di 2 s, per scelta: sono i controlli di `eseguiVivo` (`/api/health/vivo`, 200 su
+ * `degradato`), e un loro timeout a `degradato` lascerebbe muto il Worker `monitor-esterno` davanti
+ * a un database appeso. Lock:
+ * `__tests__/architecture/salute-controlli-nuovi-mai-giu.test.ts`. Il Realtime NON ha una sonda:
+ * aprire un socket a ogni lettura costerebbe più di ciò che misura; lo misura la sessione 12.
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * I TRE LIVELLI (roadmap di robustezza, fase 3 — 2026-10-06)
@@ -64,7 +79,8 @@ import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
  *
  *   `eseguiVivo`    → `/api/health/vivo`     DB + Auth, 200 o 503. È ciò che sorveglia un
  *                                            campanello esterno: «il sito serve i genitori?»
- *   `eseguiSalute`  → `/api/health`          vivo + schema, cron, errori, config, coda, regione.
+ *   `eseguiSalute`  → `/api/health`          vivo + schema, cron (battito ed esiti), errori, config,
+ *                                            coda, regione, storage, email, push, migrazioni.
  *                                            `degraded` (200) = qualcosa che nessuno vedrebbe è
  *                                            rotto; `down` (503) = come il vivo.
  *   `eseguiQualita` → `/api/health/qualita`  la qualità dei dati. Risponde SEMPRE 200: non
@@ -699,8 +715,10 @@ async function controlloDbLettura(supabase: SupabaseClient): Promise<Controllo> 
 
 /**
  * IL PUNTO CIECO CHE QUESTO CONTROLLO CHIUDE. Il login passa da GoTrue, che ha il suo pool di
- * connessioni (fisso a 10: advisor `auth_db_connections_absolute`) e può cadere con il database
- * dell'app perfettamente sano: `db-lettura` sarebbe verde e nessun genitore riuscirebbe a entrare.
+ * connessioni e può cadere con il database dell'app perfettamente sano: `db-lettura` sarebbe verde
+ * e nessun genitore riuscirebbe a entrare. Dal 2026-10-19 il pool è una PERCENTUALE, il 15 % delle
+ * connessioni del database (13 su un'istanza Small); fino ad allora era fisso a 10, e l'advisor
+ * `auth_db_connections_absolute` lo segnalava. Riletto il 2026-10-25: l'advisor non c'è più.
  *
  * Si chiede a GoTrue di cercare un utente CHE NON ESISTE (`UUID_NULLO`). Un `404 user_not_found` è
  * la risposta di un Auth VIVO che ha consultato il suo database: è l'esito `ok`. Qualunque altro
@@ -1784,8 +1802,10 @@ export async function eseguiVivo(supabase: SupabaseClient): Promise<Salute> {
 
 /**
  * LA SALUTE — il vivo più tutto ciò che si rompe senza che nessun genitore lo veda subito: schema,
- * cron, errori del server, configurazione, coda delle fatture, code che non si svuotano, tracce
- * d'audit perse, regione. NON include la qualità dei dati: vedi `eseguiQualita`.
+ * cron (battito ed esiti), errori del server, configurazione, coda delle fatture, code che non si
+ * svuotano, tracce d'audit perse, regione, Storage, email, push e migrazioni. NON include la
+ * qualità dei dati: vedi `eseguiQualita`. I cinque controlli della sessione 7 dicono al più
+ * `degradato`.
  */
 export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSalute): Promise<Salute> {
     const t0 = Date.now()

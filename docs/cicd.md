@@ -388,6 +388,233 @@ codice, i segreti fuori da `NOME: ${{ secrets.X }}` e ogni `${{ … }}` dentro u
 
 ---
 
+## Bordo pubblico: cache della CDN, firewall, errori, login, build (sessione 13)
+
+Le porte anonime dell'app sono le voci di `PUBBLICHE` in `__tests__/architecture/gate-coverage.test.ts` (23 il
+20/10, 23 il 25/10). Sono il modulo d'iscrizione (`/api/iscrizione/*`), i moduli pubblici (`/api/public/*`,
+`/api/forms/submit`), la salute (`/api/health*`) e poche altre. Qui sotto:
+- come si legge la cache della CDN;
+- le regole del firewall di Vercel (da creare dopo il merge: **non sono attive**);
+- cosa risponde una porta anonima quando qualcosa si rompe;
+- come si contano i login falliti, e i limiti di Auth;
+- la build.
+
+Le misure del 25/10/2026 sono quelle del Passo 0 del piano
+(`docs/superpowers/plans/2026-10-20-robustezza2-s13-bordo-pubblico.md`), prese in sola lettura. Mai un IP, mai un
+JA4, mai un nome: solo conteggi, codici, percorsi e famiglie di user agent.
+
+### Cache della CDN (S8)
+
+- **Chi la chiede.** `src/lib/security/cache-pubblica.ts` (`intestazioniCachePubblica`), usata da:
+  - `/api/iscrizione/sedi`: 10 minuti (più 1 ora servita stantia mentre si rinnova);
+  - `/api/iscrizione/model`: 5 minuti (più 10 minuti);
+  - `/api/anagrafiche/comuni`: 24 ore (più 7 giorni).
+
+  Solo sulla risposta buona, e solo senza il cookie di sessione `sb-*-auth-token` (anche spezzato in `.0`, `.1`, …).
+  Con il cookie la risposta è `private`. Il cookie della protezione delle anteprime (`_vercel_jwt`) non è una sessione.
+- **Cosa manda** (dalla prova 1, commit `9a8b5426`, che entra con la PR della sessione 13).
+  - Senza sessione: `Cache-Control: public, max-age=N, s-maxage=N, stale-while-revalidate=M`,
+    `Vercel-CDN-Cache-Control: max-age=N, stale-while-revalidate=M` e `Vary: Cookie`.
+  - Con sessione: `Cache-Control: private, max-age=N, stale-while-revalidate=M` e `Vary: Cookie`, e nessuna
+    intestazione per una CDN.
+- **Chi controlla la strada con sessione.** Solo `__tests__/lib/cache-pubblica.test.ts`. I test delle tre route
+  restano verdi se sulla strada con sessione compare `Vercel-CDN-Cache-Control`, `CDN-Cache-Control` o
+  `Surrogate-Control` (tre mutazioni provate il 25/10: rosso solo quel file). Chi cambia la funzione lancia quel test.
+- **Come si legge.** Due richieste di fila, e `x-vercel-cache` della seconda. `s-maxage` non arriva al client
+  (lo consuma la CDN): che manchi non prova niente.
+  ```bash
+  for i in 1 2; do
+    curl -s -o /dev/null -A 'kidville-misura' -D - https://app.kidville.it/api/iscrizione/sedi \
+      | grep -iE '^(x-vercel-cache|cache-control|vary|age):'
+    sleep 2
+  done
+  ```
+  - Atteso: `x-vercel-cache: HIT`, con `age` > 0, alla seconda.
+  - Mai più di qualche richiesta: il 20/10 la 24ª di fila di un client di prova ha preso una sfida `403`.
+  - Mai `vercel curl`: crea da solo un token di bypass della protezione.
+  - La cache è per regione e per deployment: dopo ogni deploy la prima richiesta è un `MISS`.
+- **Prima:** il 20/10, `MISS` 23 su 23 alle 12:34 UTC e 2 su 2 alle 13:19. Il 25/10/2026 alle 10:43:02–10:43:07 UTC
+  (Passo 0.2, 2 richieste, senza la prova 1): `MISS` e `MISS`, `age: 0`, con `cache-control: public, max-age=600` e
+  `vary: Cookie`. S8 non si era risolto da sé.
+- **Ramo R.** L'anteprima non si poteva misurare: il link di condivisione lo crea solo il titolare, assente il 25/10
+  (le variabili del database nell'ambiente Preview ci sono). Scelta dell'assistente in assenza del titolare, da
+  confermare: nessun link chiesto. Entra la sola prova 1 (`Vercel-CDN-Cache-Control`); la misura si fa in produzione su
+  `/api/iscrizione/sedi`, con 2 richieste, dopo il merge. Se la prova 1 non basta, S8 resta aperto e la prova 2 (piano,
+  Compito 14, ramo B) la decide il titolare, col motivo dei Runtime Logs davanti. Esito: da completare con la misura di
+  produzione dopo il merge.
+- **Dopo il deploy:** in attesa. Le righe `x-vercel-cache` di `/api/iscrizione/sedi` (nel ramo R l'unica rotta
+  misurata), con data e ora UTC, le scrive la chiusura della sessione 13.
+
+### Firewall di Vercel (T8)
+
+**Non attive.** Cinque regole da creare dopo il merge della sessione 13, tutte in modalità «log», e solo con
+l'approvazione esplicita del titolare, in chat. Il 25/10/2026 non ne esiste nessuna: le pubblica il titolare dal
+pannello, oppure una sessione col suo sì. In «log» la regola conta e non blocca niente. Chiave del limite: l'IP.
+Finestra: 60 secondi.
+
+| Nome | Condizione | Azione | Soglia |
+|---|---|---|---|
+| `s13-salute-monitor` | percorso che inizia con `/api/health` **e** user agent `kidville-monitor-esterno`, **oppure** percorso che inizia con `/api/health` **e** user agent `kidville-campanello` | bypass, **prima** di tutte | nessuna |
+| `s13-iscrizione-limite` | percorso che inizia con `/api/iscrizione` | limite di frequenza, «log» | 60 / 60 s |
+| `s13-forms-limite` | percorso che inizia con `/api/forms` | limite di frequenza, «log» | 120 / 60 s |
+| `s13-public-limite` | percorso che inizia con `/api/public` | limite di frequenza, «log» | 60 / 60 s |
+| `s13-salute-limite` | percorso che inizia con `/api/health` | limite di frequenza, «log» | 30 / 60 s |
+
+- **Perché le soglie sono queste.**
+  - `/api/health` ha già un tetto per istanza di 30/60 s per IP (`TETTO_PER_IP` in `src/lib/health/porta.ts`).
+  - `/api/forms` serve anche la segreteria, che da un ufficio esce con un solo IP.
+  - Il volume delle 24 ore dal 24/10 10:00 al 25/10 11:00 UTC (Passo 0.6; 45.788 richieste lasciate passare in
+    tutto):
+    - `/api/iscrizione/sedi` 147, l'unico percorso del prefisso `/api/iscrizione` fra le prime 100 voci;
+    - `/api/health*` 512;
+    - `/api/forms*` e `/api/public*`: nessun loro percorso fra le prime 100 voci, e la 100ª ne ha 60. Quindi ogni
+      percorso sotto quei prefissi ha al più 60 richieste in 24 ore; la somma per prefisso non è stata letta.
+- **L'eccezione del monitor.**
+  - Copre il Worker `monitor-esterno` (user agent `kidville-monitor-esterno`, `monitor-esterno/worker.mjs`) e il
+    campanello (`kidville-campanello`, `scripts/campanello/lettura.mjs`), che leggono `/api/health/vivo` e
+    `/api/health`.
+  - Il 25/10 (24 ore, Passo 0.5): `/api/health` 108 richieste, tutte del campanello; `/api/health/vivo` 404, di cui
+    290 del monitor esterno e 110 del campanello; `/api/health/qualita` nessuna. Nessun altro chiamante automatico
+    sopra una richiesta al minuto.
+  - Un user agent si può falsificare: l'eccezione vale solo sui percorsi `/api/health*`, che hanno comunque il
+    tetto per istanza.
+- **L'app nativa non ha un user agent suo.** `capacitor.config.ts` non usa `appendUserAgent`. In una WebView Android
+  l'user agent contiene `; wv)`; in iOS manca `Safari/`. È così che la si riconosce nel registro.
+- **Prima:** nelle 24 ore fino al 25/10 11:00 UTC (Passo 0.3), 1 sfida (`challenge`), sul percorso `/`, famiglia
+  «Chrome su Windows»; 1 `deny`.
+- **Come si creano** (dopo il merge; si preparano senza pubblicare, poi si pubblicano solo dopo un sì esplicito del
+  titolare). La CLI è fissata a `npx vercel@64.7.0`: quella installata non ha `firewall traffic`. Un'opzione che la
+  CLI rifiuta si sostituisce con quella del suo aiuto (`firewall rules add --help`). Lo stesso si può fare dal pannello
+  (Firewall → Rules).
+  ```bash
+  V='npx vercel@64.7.0 --cwd /Users/lerri/kidville-web'
+  eval "$V firewall rules add 's13-salute-monitor' \
+    --condition '{\"type\":\"path\",\"op\":\"pre\",\"value\":\"/api/health\"}' \
+    --condition '{\"type\":\"user_agent\",\"op\":\"eq\",\"value\":\"kidville-monitor-esterno\"}' \
+    --or \
+    --condition '{\"type\":\"path\",\"op\":\"pre\",\"value\":\"/api/health\"}' \
+    --condition '{\"type\":\"user_agent\",\"op\":\"eq\",\"value\":\"kidville-campanello\"}' \
+    --action bypass --description 'Sessione 13: monitor esterno e campanello fuori dai limiti di /api/health' --yes"
+  for coppia in 'iscrizione:/api/iscrizione:60' 'forms:/api/forms:120' 'public:/api/public:60' 'salute:/api/health:30'; do
+    nome="${coppia%%:*}"; resto="${coppia#*:}"; percorso="${resto%%:*}"; soglia="${resto##*:}"
+    eval "$V firewall rules add 's13-$nome-limite' \
+      --condition '{\"type\":\"path\",\"op\":\"pre\",\"value\":\"$percorso\"}' \
+      --action rate_limit --rate-limit-window 60 --rate-limit-requests $soglia \
+      --rate-limit-keys ip --rate-limit-action log \
+      --description 'Sessione 13: limite in log per 7 giorni' --yes"
+  done
+  eval "$V firewall rules reorder 's13-salute-monitor' --first --yes"
+  eval "$V firewall diff"
+  ```
+  - Atteso: `firewall diff` mostra 5 regole nuove, `s13-salute-monitor` in cima, tutte le `-limite` con azione `log`.
+  - Al titolare si mostrano l'uscita di `firewall diff` e la tabella qui sopra. Solo dopo il suo sì, in chat:
+    `npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall publish --yes`, poi `… firewall rules list --expand`
+    (si annotano gli id e l'ora UTC: da lì partono i 7 giorni).
+  - Senza un sì: `npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall discard --yes`, e niente issue delle
+    letture.
+- **Come si leggono.** Il registro sul piano Pro tiene solo le ultime 24 ore, quindi si legge ogni giorno:
+  ```bash
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall rules list --json
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall traffic inspect rule <id della regola> --since 24h --group-by user-agent
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall traffic inspect rule <id della regola> --since 24h --group-by asn
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall traffic list --since 24h --action challenge --dimension path
+  ```
+  Si scrivono conteggi, famiglie di user agent e nomi di ASN. Mai un IP, mai un JA4. `traffic list` mostra al più
+  100 voci (`--top` arriva a 100).
+- **Quando si passa dal «log» al blocco.** Mai prima di 7 letture, e solo su decisione del titolare con i numeri
+  davanti (specifica, §8, punto 17). Per ogni regola:
+  - 0 eventi in 7 giorni: resta in «log», non c'è niente da fermare;
+  - eventi solo da client non-browser o da reti di datacenter, nessuno con l'user agent dell'app nativa: si
+    propone il passaggio a 429 (`rate_limit`), non a `deny`;
+  - anche un solo evento dall'app nativa o da un browser mobile: si alza la soglia e si fanno altri 7 giorni
+    di «log».
+- **Letture:** in attesa. Le regole, se il titolare dice sì, si pubblicano dopo il merge, e da lì partono 7 letture
+  giornaliere in un'issue: numero dell'issue, giorni, tabella e decisione li scrive la chiusura della sessione 13.
+- **Come si spengono.** Dal pannello (Firewall → Rules → l'interruttore della regola), oppure:
+  ```bash
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall rules disable "<nome>" --yes
+  npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall publish --yes
+  ```
+  Se `disable` non compare nell'aiuto, si usa `rules edit … --disabled`. Una regola passata a 429 che ferma l'app
+  nativa si riporta a «log» nello stesso modo, subito, prima di capire perché.
+
+### Errori sulle porte anonime (S10)
+
+- Una porta anonima non risponde mai con il testo di un errore. Le risposte possibili:
+  - un guasto del database: `rispostaGuastoDb` / `rispostaGuastoGiaRegistrato` (`src/lib/db/guasto.ts`),
+    `LETTURA_FALLITA` o `SCRITTURA_FALLITA`;
+  - un'eccezione: `rispostaErroreInterno` / `rispostaErroreInternoGiaRegistrato`
+    (`src/lib/api/errore-interno.ts`), 500 `ERRORE_INTERNO`.
+
+  L'errore intero sta nel log, sotto la sua `operazione`: per esempio `iscrizione:POST` o `forms/submit:POST`. Le
+  varianti «già registrato» danno la stessa risposta senza una seconda riga, quando l'ha già scritta chi chiama con
+  un `esito` più preciso. I codici sono in `CODICI_ERRORE` (`src/lib/ui/esito-fetch.ts`), tradotti in
+  `messages/it/shared.json` e `messages/en/shared.json`.
+- Il lock `__tests__/architecture/porte-anonime-senza-errori-interni.test.ts` legge le porte da `PUBBLICHE` e vieta
+  `.message` nelle loro risposte. Non vede una destrutturazione (`const { message } = err`), un `message` passato da
+  una funzione definita fuori dal handler, un oggetto d'errore intero nel corpo.
+- Il 20/10 le risposte con `.message` sulle porte anonime erano 9, in 4 handler; dopo la sessione 13 sono 0.
+- Le route autenticate non sono coperte. Con lo stesso lettore, contate il 25/10: 319 risposte con `.message` sul
+  `main` del 20/10 (`4c6df438`, 210 handler), 317 alla base del lotto 2, **313** dopo la sessione 13 (206 handler in
+  135 file), che toglie quelle di `notes` (GET e POST), `parent/competenze:GET` e `admin/competenze/download:GET`.
+  Si sistemano quando una sessione tocca il loro file.
+
+### Login falliti (T9) e limiti di Auth (S11a)
+
+- Il login chiama Auth dal browser (`signInWithPassword` in `src/app/auth/login/page.tsx`). Niente Turnstile
+  (specifica, §8, punto 17), e il login non si sposta sul server (punto 12).
+- Questa è la ricetta per contare i tentativi falliti a ogni misura. Strumento: `query_logs` di Supabase (o il
+  Logs Explorer). Finestra: 24 ore di un giorno feriale; per più giorni si ripete un giorno alla volta.
+  1. Le chiavi esistono? Una volta per fonte (`edge_logs`, poi `auth_logs`):
+     ```sql
+     select distinct arrayJoin(mapKeys(log_attributes)) as chiave
+     from logs where source = 'edge_logs' order by chiave limit 300
+     ```
+  2. I login con password, per esito:
+     ```sql
+     select toString(log_attributes['response.status_code']) as stato, count(*) as n,
+            uniq(toString(log_attributes['request.headers.cf_connecting_ip'])) as ip_distinti
+     from logs where source = 'edge_logs'
+       and toString(log_attributes['request.path']) = '/auth/v1/token'
+       and toString(log_attributes['request.search']) like '%grant_type=password%'
+     group by stato order by n desc
+     ```
+     - `200` sono i riusciti, `400` le credenziali sbagliate, `429` il limite di Auth scattato.
+     - `ip_distinti` è un conteggio: gli indirizzi non escono dalla query.
+  3. Il riscontro sui log di Auth:
+     ```sql
+     select toString(log_attributes['error_code']) as codice, count(*) as n
+     from logs where source = 'auth_logs' and toString(log_attributes['path']) = '/token'
+     group by codice order by n desc
+     ```
+- Se una chiave ha un altro nome, si usa quello che esiste. Passo 0.7 della sessione 13, 25/10/2026: nessuna
+  differenza. In `edge_logs` ci sono `request.path`, `request.search`, `response.status_code`,
+  `request.headers.cf_connecting_ip`, `request.headers.x_client_info`, `response.origin_time`, `request.cf.colo`; in
+  `auth_logs` ci sono `path` ed `error_code`.
+- **I limiti di Auth in produzione.** Non sono nel repository: `supabase/config.toml` vale solo per il Supabase
+  locale. Li legge il titolare in Supabase → Authentication → Rate Limits. Il 25/10/2026 non sono stati letti (il
+  titolare era assente): la colonna «Produzione» resta n.d. finché non li scrive lui.
+
+  | Limite | Finestra | Locale (`config.toml`) | Produzione |
+  |---|---|---|---|
+  | `email_sent` | 1 h | 2 | n.d. — li legge il titolare |
+  | `sms_sent` | 1 h | 30 | n.d. — li legge il titolare |
+  | `anonymous_users` | 1 h per IP | 30 | n.d. — li legge il titolare |
+  | `token_refresh` | 5 min per IP | 150 | n.d. — li legge il titolare |
+  | `sign_in_sign_ups` | 5 min per IP | 30 | n.d. — li legge il titolare |
+  | `token_verifications` | 5 min per IP | 30 | n.d. — li legge il titolare |
+
+  Si rileggono a ogni misura di controllo. Un valore letto o cambiato si scrive qui, con la data.
+
+### Build (S12)
+
+- `npm run build` passa a Node `--max-old-space-size=6144`, lo stesso valore di `.github/workflows/ci.yml`.
+- Chi ha bisogno di più memoria lancia `NODE_OPTIONS=--max-old-space-size=8192 npm run build`: l'opzione di chi
+  lancia viene dopo, e vince.
+- Il lock `__tests__/architecture/build-heap-come-in-ci.test.ts` tiene allineati i due valori.
+
+---
+
 ## Cron di produzione (pg_cron, dentro Supabase)
 
 Le schedulazioni **non** usano Vercel Cron: girano in Postgres (`pg_cron` + `pg_net`) e chiamano gli endpoint

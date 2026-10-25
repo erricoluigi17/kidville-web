@@ -254,11 +254,10 @@ export function posterioriCheContengono(
 // `alunni.stato`) con `ADD CONSTRAINT`, e la guardia delle FK verso `utenti` la vede per quelle
 // parole: nessuna FK, nessuna policy, nessun indice unico cambia. Si toglie con la PR-B, cioè il
 // primo commit della sessione che apre dopo il rilascio, rigenerando le fotografie dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261024235116_iscrizioni_stati_vincolati.sql':
-        'due CHECK con ADD CONSTRAINT sugli stati di enrollment_submissions e alunni, nessuna FK verso utenti: ' +
-        'la applica l’integrazione al merge; la toglie la PR-B (primo commit della sessione dopo).',
-}
+// SVUOTATA il 25/10/2026 (PR-B, primo commit della sessione dopo il merge di #266, `cdcb5347`):
+// applicata dall'integrazione, una riga sola nel registro; fotografie delle migrazioni e delle FK verso
+// `utenti` rigenerate dalla produzione — cambia davvero solo quella delle migrazioni.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

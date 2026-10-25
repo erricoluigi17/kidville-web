@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
 import { versioneDeploy } from '@/lib/versione/deploy'
+import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
 
 /**
  * I CONTROLLI DI SALUTE — la parte che MISURA. La route (`/api/health`) fa solo da porta.
@@ -551,6 +552,11 @@ function codiceDi(err: unknown): string {
     return 'sconosciuto'
 }
 
+/** Il codice di una lettura a blocchi fallita: `tetto`, oppure il solo `code` di PostgREST. */
+function motivoDi(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>): string {
+    return esito.motivo === 'tetto' ? 'tetto' : codiceDi(esito.error)
+}
+
 /**
  * Esegue una misura con il suo tetto di tempo.
  *
@@ -1045,24 +1051,27 @@ async function controlloConfig(): Promise<Controllo> {
  */
 async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo> {
     return misura('sezione-testo-allineato', 'degradato', async () => {
-        const { data: sezioni, error: errSez } = await supabase
-            .from('sections')
-            .select('id, name')
+        // A BLOCCHI (robustezza 2, sessione 11): sopra 1000 righe PostgREST taglia in silenzio, e
+        // qui un taglio è un VERDE FALSO — gli iscritti (o le sezioni) oltre il millesimo non
+        // verrebbero confrontati. Il tetto di `leggiABlocchi` diventa `degradato`, col solo codice.
+        const sezioni = await leggiABlocchi<{ id: string; name: string }>(() =>
+            supabase.from('sections').select('id, name'),
+        )
         // PostgREST non lancia: senza questo ramo una lettura caduta darebbe
         // «zero divergenze», cioè un verde che non ha misurato niente.
-        if (errSez) return { esito: 'degradato', dettaglio: `sections:${codiceDi(errSez)}` }
+        if (!sezioni.ok) return { esito: 'degradato', dettaglio: `sections:${motivoDi(sezioni)}` }
 
-        const { data: alunni, error: errAl } = await supabase
-            .from('alunni')
-            .select('section_id, classe_sezione')
-            .eq('stato', 'iscritto')
-        if (errAl) return { esito: 'degradato', dettaglio: `alunni:${codiceDi(errAl)}` }
-
-        const nomePerSezione = new Map(
-            (sezioni ?? []).map((s) => [s.id as string, s.name as string]),
+        const alunni = await leggiABlocchi<{ section_id: string | null; classe_sezione: string | null }>(() =>
+            supabase
+                .from('alunni')
+                .select('section_id, classe_sezione')
+                .eq('stato', 'iscritto'),
         )
-        const divergenti = (alunni ?? []).filter((a) => {
-            const sid = a.section_id as string | null
+        if (!alunni.ok) return { esito: 'degradato', dettaglio: `alunni:${motivoDi(alunni)}` }
+
+        const nomePerSezione = new Map(sezioni.righe.map((s) => [s.id, s.name]))
+        const divergenti = alunni.righe.filter((a) => {
+            const sid = a.section_id
             if (!sid) return false // gli orfani sono un'altra misura, non questa
             const nome = nomePerSezione.get(sid)
             return nome !== undefined && a.classe_sezione !== nome
@@ -1074,7 +1083,7 @@ async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo
         if (divergenti > 0) {
             return { esito: 'degradato', dettaglio: `${divergenti} alunni col testo classe divergente` }
         }
-        return { esito: 'ok', dettaglio: `${(alunni ?? []).length} iscritti allineati` }
+        return { esito: 'ok', dettaglio: `${alunni.righe.length} iscritti allineati` }
     })
 }
 

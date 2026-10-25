@@ -1,6 +1,8 @@
-import { externalFetch } from '@/lib/logging/external'
-import { logEvento } from '@/lib/logging/logger'
+import { externalFetch, tettoMs, type EsitoEsterno } from '@/lib/logging/external'
+import { logEvento, type Livello, type Valore } from '@/lib/logging/logger'
 import { hashCorrelabile } from '@/lib/logging/redact'
+import { sanificaMessaggio } from '@/lib/logging/serialize'
+import { msDaRetryAfter } from '@/lib/rete/retry-after'
 
 /**
  * Util email condiviso.
@@ -108,6 +110,24 @@ export interface SendEmailParams {
    * `409 invalid_idempotent_request` e qui diventa un rifiuto definitivo, detto a livello `error`.
    */
   chiaveIdempotenza?: string
+  /**
+   * I RITENTATIVI (sessione 9 della seconda serie di robustezza). Assente = una chiamata sola,
+   * esattamente come prima: chi non lo passa non vede cambiare niente, nemmeno la forma
+   * dell'esito.
+   *
+   * Presente = fino a `TENTATIVI_EMAIL_MAX` chiamate, aspettando 1 s e poi 3 s (o il
+   * `Retry-After` del provider, se è più lungo e non supera `ATTESA_MAX_EMAIL_MS`), e SOLO:
+   *  · sul `429`, sempre: il provider non ha preso in carico niente;
+   *  · su `5xx` o senza risposta (`stato: 0`: rete giù, DNS, scadenza), SOLO con una
+   *    `chiaveIdempotenza` valida: la richiesta potrebbe essere arrivata, e senza la chiave il
+   *    ritentativo sarebbe un doppione alla famiglia.
+   * Ogni ritentativo usa la STESSA chiave.
+   *
+   * `scadenza` (epoch ms): un ritentativo parte solo se attesa + tetto della chiamata finiscono
+   * prima di lì. Il giro dei solleciti passa il suo tetto (240 s), così i ritentativi non
+   * mangiano il margine fra il tetto e la vita della Function.
+   */
+  ritentativi?: { scadenza?: number }
 }
 
 export interface SendEmailResult {
@@ -143,6 +163,16 @@ export interface SendEmailResult {
    * Chi non guarda questo campo si comporta esattamente come prima.
    */
   rinviabile?: boolean
+  /** Quante chiamate sono state fatte. Solo quando la richiesta porta `ritentativi`. */
+  tentativi?: number
+  /**
+   * «Forse è partita». Vero quando il provider potrebbe aver preso in carico l'email senza che
+   * lo sappiamo: un `409 concurrent_idempotent_requests` (la stessa chiave è ancora in corso) o
+   * una chiamata scaduta senza risposta che nessun rifiuto definitivo successivo ha smentito.
+   * Chi tiene una presa (i solleciti) NON la annulla su un esito incerto: meglio slittare di una
+   * cadenza che partire due volte.
+   */
+  incerto?: boolean
 }
 
 /**
@@ -167,6 +197,16 @@ const FORMA_CHIAVE_IDEMPOTENZA = /^[A-Za-z0-9:_.-]{1,256}$/
  */
 const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
 const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
+
+/** Quante chiamate al massimo, ritentativi compresi (sessione 9). */
+export const TENTATIVI_EMAIL_MAX = 3
+/** Le attese prima del 2° e del 3° tentativo: 1 s, poi 3 s (lo stesso passo di `native-push`). */
+export const ATTESE_RITENTATIVO_EMAIL_MS: readonly number[] = [1_000, 3_000]
+/** Oltre questa attesa chiesta dal provider non si aspetta: l'esito resta quello del tentativo. */
+export const ATTESA_MAX_EMAIL_MS = 10_000
+
+/** Perché i ritentativi si sono fermati prima di un successo: è l'`esito` della riga di chiusura. */
+type MotivoFermata = 'ritentativi-esauriti' | 'retry-after-oltre-il-tetto' | 'ritentativo-oltre-la-scadenza'
 
 /**
  * Il campo `to` nella forma che Resend accetta: **sempre un elenco**.
@@ -211,7 +251,7 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
  * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
  * indirizzo") non deve mai ridursi a un generico "non inviata".
  */
-export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo, chiaveIdempotenza }: SendEmailParams): Promise<SendEmailResult> {
+export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo, chiaveIdempotenza, ritentativi }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
@@ -239,52 +279,51 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     chiave = undefined
   }
 
-  const esito = await externalFetch(
-    'resend',
-    'https://api.resend.com/emails',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...(chiave ? { 'Idempotency-Key': chiave } : {}),
-      },
-      body: JSON.stringify({
-        from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
-        to: destinatariPerIlProvider(to),
-        subject,
-        text,
-        ...(html ? { html } : {}),
-        // `?.length` e non la sola presenza: un elenco VUOTO significa «non ho
-        // allegati», e mandare `attachments: []` a Resend è dire una cosa diversa
-        // dal non dirla. Le due forme si equivalgono oggi; il contratto di un
-        // provider esterno non è una cosa su cui si scommette.
-        ...(attachments?.length
-          ? {
-              attachments: attachments.map((a) => ({
-                filename: a.filename,
-                content: a.content,
-                ...(a.contentType ? { content_type: a.contentType } : {}),
-              })),
-            }
-          : {}),
-        ...(replyTo ? { reply_to: replyTo } : {}),
-      }),
+  const init: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      ...(chiave ? { 'Idempotency-Key': chiave } : {}),
     },
-    {
-      // Il battito (successo E rifiuto) lo emette `externalFetch`: una riga sola, con il corpo
-      // del provider nella colonna `messaggio`. Non se ne aggiunge una seconda qui.
-      evento: 'email',
-      campi: {
-        operazione: 'sendEmail',
-        // Hash, mai l'indirizzo. `destinatario` NON è in lista bianca, quindi in `app_log`
-        // resta `[redatto:str/9]`: l'hash si legge solo su Vercel. È il prezzo accettato —
-        // l'alternativa sarebbe allargare la lista bianca di `redact` a un campo che porta
-        // identità, e quella lista difende dati di minori (AGENTS, regola 8).
-        destinatario: hashCorrelabile(to),
-      },
-    }
-  )
+    body: JSON.stringify({
+      from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
+      to: destinatariPerIlProvider(to),
+      subject,
+      text,
+      ...(html ? { html } : {}),
+      // `?.length` e non la sola presenza: un elenco VUOTO significa «non ho
+      // allegati», e mandare `attachments: []` a Resend è dire una cosa diversa
+      // dal non dirla. Le due forme si equivalgono oggi; il contratto di un
+      // provider esterno non è una cosa su cui si scommette.
+      ...(attachments?.length
+        ? {
+            attachments: attachments.map((a) => ({
+              filename: a.filename,
+              content: a.content,
+              ...(a.contentType ? { content_type: a.contentType } : {}),
+            })),
+          }
+        : {}),
+      ...(replyTo ? { reply_to: replyTo } : {}),
+    }),
+  }
+  const campi: Record<string, Valore> = {
+    operazione: 'sendEmail',
+    // Hash, mai l'indirizzo. `destinatario` NON è in lista bianca, quindi in `app_log`
+    // resta `[redatto:str/9]`: l'hash si legge solo su Vercel. È il prezzo accettato —
+    // l'alternativa sarebbe allargare la lista bianca di `redact` a un campo che porta
+    // identità, e quella lista difende dati di minori (AGENTS, regola 8).
+    destinatario: hashCorrelabile(to),
+  }
+  // Il battito (successo E rifiuto) lo emette `externalFetch`, una riga per chiamata, con il corpo
+  // del provider nella colonna `messaggio`. Con i ritentativi le righe sono una per tentativo e
+  // portano `tentativo`; sopra, al massimo una riga di chiusura (vedi `chiamaResend`).
+  const { esito, tentativi, fermata, scaduto } = await chiamaResend(init, campi, chiave, ritentativi)
+  // Le chiavi nuove dell'esito compaiono SOLO quando servono: chi non passa `ritentativi` riceve
+  // l'esito di sempre, chiave per chiave (i test esistenti lo confrontano con `toEqual`).
+  const conto = ritentativi === undefined ? {} : { tentativi }
+  const dubbio = scaduto ? { incerto: true } : {}
 
   if (esito.ok) {
     // `externalFetch` restituisce la Response col corpo INTATTO proprio perché
@@ -312,12 +351,13 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
         err,
       )
     }
-    return { ok: true, error: null, messageId }
+    return { ok: true, error: null, messageId, ...conto }
   }
 
   // `stato: 0` = una risposta non c'è stata affatto (rete giù, DNS, TLS).
   if (esito.stato === 0) {
-    return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}` }
+    // `incerto` se la chiamata è SCADUTA: la richiesta può essere arrivata e l'email partita.
+    return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}`, ...conto, ...dubbio }
   }
 
   // Il motivo del rifiuto arriva fino a chi ha chiesto l'invio (audit, avviso in UI): un 403
@@ -328,16 +368,22 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
     // Livello `warn` e non `error`: non è un guasto, è il tetto del piano che si
     // è fatto sentire. Ma resta scritto — il giorno in cui il giro delle
     // iscrizioni finisce prima del previsto, questa riga è l'unica che lo spiega.
-    logEvento('email', 'warn', {
-      operazione: 'sendEmail',
-      esito: 'quota-esaurita',
-      stato: esito.stato,
-      msg: `quota del provider email esaurita (429): l'invio va rinviato, non registrato come fallito`,
-    })
+    // Se i ritentativi si sono fermati su un 429, la loro riga di chiusura l'ha già detto, a
+    // `error` (sessione 9): resta `warn` solo il 429 di chi non chiede ritentativi (il bottone).
+    if (fermata === null) {
+      logEvento('email', 'warn', {
+        operazione: 'sendEmail',
+        esito: 'quota-esaurita',
+        stato: esito.stato,
+        msg: `quota del provider email esaurita (429): l'invio va rinviato, non registrato come fallito`,
+      })
+    }
     return {
       ok: false,
       rinviabile: true,
       error: `quota del provider email esaurita (429)${dettaglio ? `: ${dettaglio}` : ''}`,
+      ...conto,
+      ...dubbio,
     }
   }
 
@@ -352,7 +398,8 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
         stato: esito.stato,
         msg: 'stessa chiave d\'idempotenza ancora in corso presso il provider: invio rinviato',
       })
-      return { ok: false, rinviabile: true, error: `invio già in corso presso il provider (409)${dettaglio ? `: ${dettaglio}` : ''}` }
+      // Incerto per definizione: l'altra richiesta con questa chiave può andare a buon fine.
+      return { ok: false, rinviabile: true, incerto: true, error: `invio già in corso presso il provider (409)${dettaglio ? `: ${dettaglio}` : ''}`, ...conto }
     }
     if (nome === IDEMPOTENZA_CHIAVE_RIUSATA) {
       logEvento('email', 'error', {
@@ -367,6 +414,8 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
   return {
     ok: false,
     error: `rifiutato dal provider email (${esito.stato})${dettaglio ? `: ${dettaglio}` : ''}`,
+    ...conto,
+    ...dubbio,
   }
 }
 
@@ -391,6 +440,129 @@ function corpoJson(corpo: string): Record<string, unknown> | null {
     // Non era JSON: è già il testo del provider, e chi chiama usa il corpo grezzo.
   }
   return null
+}
+
+/**
+ * La chiamata a Resend, con i ritentativi quando la richiesta li chiede (sessione 9).
+ *
+ * Una riga per TENTATIVO la scrive `externalFetch` (con `tentativo` fra i campi, quando i
+ * ritentativi ci sono): a `warn` se il rifiuto è ritentabile, a `error` se è definitivo. Sopra,
+ * al massimo una riga di chiusura: `riuscita-dopo-ritentativo` (`info`) oppure il motivo per cui
+ * ci si è fermati, SEMPRE a `error` (429 compreso), con lo status come `code` e il corpo del
+ * provider sanificato nell'Error. I tentativi intermedi restano `warn`: dicono «riprovo», la
+ * chiusura dice «questa email in questo giro non parte». È la riga che la salute conta
+ * (`contaEsitiFornitore` in `src/lib/health/fornitori.ts` conta come rifiuti le sole `error`):
+ * con la chiusura a `warn` una quota esaurita tutto il giorno non arriverebbe mai a un allarme.
+ *
+ * Le attese sono in serie, una email alla volta: il giro dei solleciti non si parallelizza.
+ */
+async function chiamaResend(
+  init: RequestInit,
+  campi: Record<string, Valore>,
+  chiave: string | undefined,
+  ritentativi: SendEmailParams['ritentativi'],
+): Promise<{ esito: EsitoEsterno; tentativi: number; fermata: MotivoFermata | null; scaduto: boolean }> {
+  let tentativi = 0
+  // «Una chiamata è scaduta senza risposta»: il provider potrebbe averla presa. Lo smentisce
+  // solo un successo o un rifiuto 4xx definitivo (stessa chiave ⇒ stesso esito); un 429 o un
+  // 5xx successivo non dicono niente sulla chiamata scaduta.
+  let scaduto = false
+  for (;;) {
+    tentativi++
+    const esito = await externalFetch('resend', 'https://api.resend.com/emails', init, {
+      evento: 'email',
+      campi: ritentativi === undefined ? campi : { ...campi, tentativo: tentativi },
+      ...(ritentativi === undefined
+        ? {}
+        : { gravita: (stato: number): Livello => (eRitentabile(stato, chiave) ? 'warn' : 'error') }),
+    })
+    if (esito.ok || (esito.stato >= 400 && esito.stato < 500 && esito.stato !== QUOTA_ESAURITA)) scaduto = false
+    if (!esito.ok && esito.stato === 0 && esito.codice === 'timeout') scaduto = true
+
+    if (esito.ok) {
+      if (tentativi > 1) {
+        logEvento('email', 'info', {
+          operazione: 'sendEmail',
+          provider: 'resend',
+          esito: 'riuscita-dopo-ritentativo',
+          tentativi,
+          msg: `email accettata dal provider al tentativo ${tentativi}`,
+        })
+      }
+      return { esito, tentativi, fermata: null, scaduto }
+    }
+    if (ritentativi === undefined || !eRitentabile(esito.stato, chiave)) {
+      return { esito, tentativi, fermata: null, scaduto }
+    }
+
+    const attesa = attesaPrimaDelRitentativo(esito.retryAfter, tentativi)
+    const fermata = motivoPerFermarsi(tentativi, attesa, ritentativi.scadenza)
+    if (fermata !== null) {
+      // `error` qualunque sia la causa, 429 compreso: i tentativi sono finiti e l'email in questo
+      // giro non parte. Il `code` (lo status, o il codice di rete) dice se era la quota.
+      logEvento(
+        'email',
+        'error',
+        {
+          operazione: 'sendEmail',
+          provider: 'resend',
+          esito: fermata,
+          ...(esito.stato > 0 ? { stato: esito.stato } : {}),
+          tentativi,
+          ...(fermata === 'ritentativi-esauriti' ? {} : { attesa_ms: attesa }),
+        },
+        erroreResend(esito.stato, esito.corpo, esito.codice),
+      )
+      return { esito, tentativi, fermata, scaduto }
+    }
+    await attendi(attesa)
+  }
+}
+
+/**
+ * Ritentabile: il `429` sempre (il provider dice «non ho preso niente, riprova»); `5xx` e nessuna
+ * risposta (`stato: 0`: rete giù, DNS, scadenza del tetto) solo con una chiave d'idempotenza,
+ * perché lì la richiesta potrebbe essere arrivata e solo la chiave rende il ritentativo innocuo.
+ */
+function eRitentabile(stato: number, chiave: string | undefined): boolean {
+  if (stato === QUOTA_ESAURITA) return true
+  return chiave !== undefined && (stato === 0 || (stato >= 500 && stato <= 599))
+}
+
+/** L'attesa prima del prossimo tentativo: la scaletta, o il `Retry-After` se è più lungo. */
+function attesaPrimaDelRitentativo(retryAfter: string | undefined, fatti: number): number {
+  const scaletta = ATTESE_RITENTATIVO_EMAIL_MS[Math.min(fatti, ATTESE_RITENTATIVO_EMAIL_MS.length) - 1]
+  const chiesta = msDaRetryAfter(retryAfter)
+  return chiesta === undefined ? scaletta : Math.max(scaletta, chiesta)
+}
+
+/**
+ * `null` = si ritenta. Il terzo motivo è il tetto del giro: un ritentativo parte solo se l'attesa
+ * e il tetto della chiamata (`tettoMs('resend')`) finiscono prima della scadenza.
+ */
+function motivoPerFermarsi(fatti: number, attesa: number, scadenza: number | undefined): MotivoFermata | null {
+  if (fatti >= TENTATIVI_EMAIL_MAX) return 'ritentativi-esauriti'
+  if (attesa > ATTESA_MAX_EMAIL_MS) return 'retry-after-oltre-il-tetto'
+  if (scadenza !== undefined && Date.now() + attesa + tettoMs('resend') > scadenza) return 'ritentativo-oltre-la-scadenza'
+  return null
+}
+
+function attendi(ms: number): Promise<void> {
+  return new Promise((risolvi) => setTimeout(risolvi, ms))
+}
+
+/**
+ * L'ultimo rifiuto come Error VERO, per la riga che chiude i ritentativi: il corpo del provider
+ * diventa il messaggio, SANIFICATO (un indirizzo dentro il corpo esce come `[email]`), lo status
+ * il `code`. Senza risposta il codice è quello che `externalFetch` ha scritto sulla riga del
+ * tentativo (`'timeout'`, `ECONNRESET`…), altrimenti `'nessuna-risposta'`: mai `'0'`, che in
+ * `app_log.codice` sembrerebbe uno status. Stesso schema di `erroreFcm` in `native-push.ts`.
+ */
+function erroreResend(stato: number, corpo: string, codiceRete: string | undefined): Error {
+  const err = new Error(sanificaMessaggio(corpo === '' ? `Resend ${stato === 0 ? 'nessuna risposta' : `HTTP ${stato}`}` : corpo))
+  err.name = 'ResendRitentativiFermati'
+  Object.assign(err, { code: stato === 0 ? (codiceRete ?? 'nessuna-risposta') : String(stato) })
+  return err
 }
 
 /** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */

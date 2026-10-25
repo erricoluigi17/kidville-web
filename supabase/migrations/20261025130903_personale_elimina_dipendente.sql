@@ -22,11 +22,21 @@
 -- Qui le righe del registro della pratica e del fascicolo si STACCANO (proprietari a NULL)
 -- nella stessa transazione, e i loro percorsi tornano nella risposta (`percorsi_staccati`):
 -- la route sposta nel cestino quelli e quelli letti prima. Una riga staccata resta «in
--- sospeso»: se la route non riesce a spostare il file, lo toglie la spazzata
--- (`spazzaCaricamentiSospesi`, righe senza proprietario più vecchie di 24 ore), che tratta un
--- file già assente come esito raggiunto e chiude la riga. Pratica e fascicolo si bloccano
--- PRIMA di staccare: un caricamento reclamato in quel momento aspetta il COMMIT e trova la
--- pratica sparita (23503), invece di attaccarsi dopo il distacco e sparire in cascata.
+-- sospeso» (nessun proprietario) e continua a nominare il file. ⚠️ NON C'È UNA SCADENZA: la
+-- spazzata (`spazzaCaricamentiSospesi`, che tratta un file già assente come esito raggiunto e
+-- chiude la riga) gira SOLO dopo un caricamento dal modulo pubblico
+-- (`iscrizione/personale/upload`), su righe più vecchie di 24 ore e al più 25 per giro, senza
+-- un giro notturno. Se la route non sposta il file (o la risposta si perde dopo il COMMIT), il
+-- file resta nel bucket, nominato dalla riga, fino al primo caricamento pubblico dopo.
+--
+-- Pratica e fascicolo si bloccano PRIMA di staccare: un caricamento reclamato in quel momento
+-- aspetta il COMMIT e trova la pratica sparita (23503), invece di attaccarsi dopo il distacco
+-- e sparire in cascata. ⚠️ LIMITE NOTO sull'ordine dei blocchi: qui fascicolo → pratica;
+-- `personale_cancella_fascicolo` (via `riporta-a-genitore`) blocca la pratica e poi il
+-- fascicolo, attraverso il SET NULL in cascata. Due chiamate sulla stessa persona nello stesso
+-- istante possono darsi 40P01 (provato con una pausa emulata; la finestra reale è di
+-- microsecondi): una delle due è annullata per intero e la route risponde 503 senza aver
+-- toccato niente. L'ordine non si cambia.
 --
 -- La pratica si cancella solo se è del dipendente: sua (`utente_id`) o quella da cui è nato il
 -- suo fascicolo (`origine_pratica_id`). Un id di un'altra pratica non tocca niente

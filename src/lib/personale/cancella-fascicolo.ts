@@ -90,6 +90,17 @@ function percorsiStaccatiDa(c: Conteggi): string[] {
  */
 const PERSONALE_ELIMINA_ASSENTE = new Set(['PGRST202', '42883'])
 
+/**
+ * Un codice che viene dal database (SQLSTATE: cinque caratteri, cifre e maiuscole) o da
+ * PostgREST (`PGRST…`). Con uno di questi la risposta è arrivata, e dice com'è andata: un
+ * errore di Postgres annulla la transazione. Senza (postgrest-js consegna `code: ''` quando il
+ * fetch cade o scade, `src/lib/logging/supabase-fetch.ts`) l'esito NON si conosce.
+ */
+function codiceDalDatabase(errore: unknown): boolean {
+  const codice = (errore as { code?: unknown } | null | undefined)?.code
+  return typeof codice === 'string' && (/^[0-9A-Z]{5}$/.test(codice) || codice.startsWith('PGRST'))
+}
+
 /** Il fascicolo, la pratica d'origine e i percorsi delle scansioni. Non scrive niente. */
 export async function leggiFascicoloPersonale(
   supabase: SupabaseClient,
@@ -144,9 +155,21 @@ export type EsitoRigheDipendente =
       profiloEliminato: boolean
       /** Righe del registro staccate dalla funzione: i loro file vanno nel cestino anche loro. */
       percorsiStaccati: string[]
+      /**
+       * `true` = la funzione nuova non c'è e si è usata quella di prima: il profilo lo toglie
+       * la cascata dell'account. `false` con `profiloEliminato: false` vuol dire invece che il
+       * profilo era GIÀ sparito (un secondo POST che ha aspettato il primo): non è un ripiego.
+       */
+      ripiego: boolean
     }
   | { esito: 'rifiutata' }
   | { esito: 'guasto' }
+  /**
+   * Un errore senza codice di Postgres né di PostgREST (rete caduta, tempo scaduto sul client,
+   * un 5xx del gateway): la transazione può essere andata a buon fine e la risposta essersi
+   * persa. Chi chiama RILEGGE il profilo prima di dire «niente è stato cancellato».
+   */
+  | { esito: 'incerto' }
 
 /**
  * Pratica, fascicolo e profilo in UNA transazione. `rifiutata` = una chiave senza
@@ -170,6 +193,7 @@ export async function eliminaRigheDipendente(
       anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
       profiloEliminato: (c.profili_cancellati ?? 0) > 0,
       percorsiStaccati: percorsiStaccatiDa(c),
+      ripiego: false,
     }
   }
   if (r.error.code === '23503') {
@@ -192,7 +216,14 @@ export async function eliminaRigheDipendente(
       anagraficheCancellate: c.anagrafiche_cancellate ?? 0,
       profiloEliminato: false,
       percorsiStaccati: [],
+      ripiego: true,
     }
+  }
+  if (!codiceDalDatabase(r.error)) {
+    // `warn` e non `error`: chi chiama rilegge il profilo e scrive lui l'esito vero
+    // (`risposta-persa-dopo-commit` o `righe-dipendente-non-cancellate`).
+    logEvento('gdpr', 'warn', { operazione: op, esito: 'righe-dipendente-esito-incerto', entita_id: utenteId }, r.error)
+    return { esito: 'incerto' }
   }
   logEvento('gdpr', 'error', { operazione: op, esito: 'righe-dipendente-non-cancellate', entita_id: utenteId }, r.error)
   return { esito: 'guasto' }

@@ -16,7 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  * deciderebbe su un valore che in produzione sarebbe `undefined`.
  *
  * ─── L'ORDINE (sessione 10 della seconda serie di robustezza) ──────────────────
- *   poteri → righe in UNA transazione → account → file nel CESTINO.
+ *   righe in UNA transazione → account → file nel CESTINO. I poteri (classi, sedi,
+ * push, orario, compiti) non si sganciano prima: li toglie la DELETE del profilo nella
+ * stessa transazione (cascata e SET NULL della baseline), così una funzione che fallisce
+ * non lascia un dipendente attivo e senza classi.
  * I file per ULTIMI: un passo che fallisce dopo di loro li avrebbe persi. Nel
  * cestino e non cancellati: finché il giro notturno non li distrugge, un errore si
  * rimedia. I percorsi si leggono per primi, e la funzione aggiunge quelli delle righe
@@ -38,8 +41,14 @@ const h = vi.hoisted(() => ({
   } as Record<string, unknown>,
   deleteUserError: null as unknown,
   rpcChiamate: [] as { nome: string; args: unknown }[],
-  /** Risposta per nome di funzione; una funzione assente risponde PGRST202, come il DB della CI. */
-  rpcRisposte: {} as Record<string, { data: unknown; error: unknown }>,
+  /**
+   * Risposta per nome di funzione; una funzione assente risponde PGRST202, come il DB della CI.
+   * Una funzione al posto della risposta può cambiare il finto database (la transazione che va
+   * a buon fine e la cui risposta si perde).
+   */
+  rpcRisposte: {} as Record<string, { data: unknown; error: unknown } | (() => { data: unknown; error: unknown })>,
+  /** Dopo la prima RPC, `utenti` non si legge più (la rete che cade anche sulla rilettura). */
+  utentiNonLeggibiliDopoRpc: false,
   spostati: [] as string[][],
   ordine: [] as string[],
 }))
@@ -70,6 +79,7 @@ vi.mock('@/lib/storage/cestino-file', () => ({
 }))
 
 import { logEvento } from '@/lib/logging/logger'
+import { logScrittura } from '@/lib/audit/scrittura'
 
 import { creaFintoSupabaseConProiezione } from '../fixtures/proiezione'
 import type { DBFinto, Scrittura } from '../fixtures/finto-supabase'
@@ -106,6 +116,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
     const client = creaFintoSupabaseConProiezione(db, [], { scritture }, proiezioni)
     const from = (client as unknown as { from: (t: string) => Record<string, unknown> }).from.bind(client)
     ;(client as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (t === 'utenti' && h.utentiNonLeggibiliDopoRpc && h.rpcChiamate.length > 0) {
+        const fallita = { data: null, error: { code: '', message: 'TypeError: fetch failed' } }
+        const catena: Record<string, unknown> = {}
+        for (const m of ['select', 'eq', 'in', 'is']) catena[m] = () => catena
+        catena.maybeSingle = async () => fallita
+        return catena
+      }
       const b = from(t)
       for (const op of ['delete', 'update'] as const) {
         const orig = (b[op] as (...a: unknown[]) => unknown).bind(b)
@@ -119,7 +136,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
     ;(client as unknown as Record<string, unknown>).rpc = async (nome: string, args: unknown) => {
       h.ordine.push(`rpc.${nome}`)
       h.rpcChiamate.push({ nome, args })
-      return h.rpcRisposte[nome] ?? { data: null, error: { code: 'PGRST202', message: 'funzione assente' } }
+      const r = h.rpcRisposte[nome]
+      if (typeof r === 'function') return r()
+      return r ?? { data: null, error: { code: 'PGRST202', message: 'funzione assente' } }
     }
     ;(client as unknown as Record<string, unknown>).auth = {
       admin: {
@@ -151,6 +170,7 @@ beforeEach(() => {
   scritture = []
   proiezioni = []
   h.deleteUserError = null
+  h.utentiNonLeggibiliDopoRpc = false
   h.rpcChiamate = []
   h.spostati = []
   h.rpcRisposte = {
@@ -300,13 +320,19 @@ describe('POST — cancella', () => {
 
   const conferma = () => POST(richiestaPost({ id: BERSAGLIO, decisioneAttesa: 'cancella', conferma: true }) as never)
 
-  it("l'ordine: poteri → righe in transazione → account → file nel CESTINO, per ultimi", async () => {
+  // I passi che `sganciaPoteri` faceva PRIMA della funzione: ora li fa la DELETE del profilo.
+  const SGANCIO = [
+    'utenti_sezioni.delete',
+    'utenti_sezioni_materie.delete',
+    'utenti_scuole.delete',
+    'push_subscriptions.delete',
+    'orario_settimanale.update',
+    'task_interni.update',
+  ]
+
+  it("l'ordine: righe in transazione (con i poteri) → account → file nel CESTINO, per ultimi", async () => {
     await conferma()
-    const i = (passo: string) => h.ordine.indexOf(passo)
-    expect(i('utenti_sezioni.delete')).toBeGreaterThanOrEqual(0)
-    expect(i('utenti_sezioni.delete')).toBeLessThan(i('rpc.personale_elimina_dipendente'))
-    expect(i('rpc.personale_elimina_dipendente')).toBeLessThan(i('auth.deleteUser'))
-    expect(i('auth.deleteUser')).toBeLessThan(i('storage.cestino'))
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente', 'auth.deleteUser', 'storage.cestino'])
     expect(h.spostati).toEqual([['p/fronte.jpg', 'p/retro.jpg']])
   })
 
@@ -370,19 +396,22 @@ describe('POST — cancella', () => {
     expect(db.utenti[0].archiviato_il).toBeTruthy()
     expect(h.spostati).toEqual([])
     expect(h.ordine).not.toContain('auth.deleteUser')
+    // Archiviare SGANCIA, per conto suo, e solo dopo che la funzione ha rifiutato.
+    for (const passo of SGANCIO) expect(h.ordine.indexOf(passo)).toBeGreaterThan(0)
   })
 
-  it('un guasto della funzione (57014): 503, nessun file toccato, nessun account cancellato', async () => {
-    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: { code: '57014', message: 'timeout' } }
+  it.each(['57014', '40P01'])('un guasto della funzione (%s): 503, e NIENTE è stato toccato, nemmeno classi e sedi', async (code) => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: { code, message: 'annullata' } }
     const res = await conferma()
     expect(res.status).toBe(503)
     expect((await res.json()).codice).toBe('FASCICOLO_NON_CANCELLATO')
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente'])
     expect(h.spostati).toEqual([])
     expect(h.ordine).not.toContain('auth.deleteUser')
     expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
       'gdpr', 'error',
       expect.objectContaining({ esito: 'righe-dipendente-non-cancellate', entita_id: BERSAGLIO }),
-      expect.objectContaining({ code: '57014' }),
+      expect.objectContaining({ code }),
     )
   })
 
@@ -406,6 +435,12 @@ describe('POST — cancella', () => {
     expect(h.rpcChiamate.map((c) => c.nome)).toEqual(['personale_elimina_dipendente'])
     expect(h.spostati).toEqual([])
     expect(h.ordine).not.toContain('auth.deleteUser')
+    // Un codice di PostgREST è una risposta arrivata: guasto vero, mai «esito incerto».
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'error',
+      expect.objectContaining({ esito: 'righe-dipendente-non-cancellate' }),
+      expect.objectContaining({ code }),
+    )
   })
 
   it('ripiego e account rifiutato: i file vanno nel cestino PRIMA di archiviare, perché le righe non ci sono più', async () => {
@@ -428,4 +463,104 @@ describe('POST — cancella', () => {
     )
     expect(db.utenti[0].archiviato_il).toBeFalsy()
   })
+
+  // ─── Il secondo POST e l'account già tolto (seconda revisione, punto 4) ───────────
+  it('secondo POST: la funzione nuova trova zero profili e l\'account è già tolto → «cancellato», niente archivio né allarmi', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = {
+      data: { pratiche_cancellate: 0, anagrafiche_cancellate: 0, profili_cancellati: 0, percorsi_staccati: [] },
+      error: null,
+    }
+    h.deleteUserError = { status: 404, code: 'user_not_found', message: 'User not found' }
+    const res = await conferma()
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', giaEliminato: true, accountAccessoRimosso: true })
+    expect(h.ordine).not.toContain('utenti.update')
+    expect(db.utenti[0].archiviato_il).toBeFalsy()
+    expect(vi.mocked(logScrittura)).not.toHaveBeenCalled()
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith('gdpr', 'info', expect.objectContaining({ esito: 'staff-gia-cancellato', entita_id: BERSAGLIO }))
+    expect(vi.mocked(logEvento)).not.toHaveBeenCalledWith('gdpr', 'error', expect.anything(), expect.anything())
+    expect(vi.mocked(logEvento)).not.toHaveBeenCalledWith('gdpr', 'warn', expect.objectContaining({ esito: 'eliminazione-rifiutata-si-archivia' }), expect.anything())
+  })
+
+  it('primo POST: l\'account l\'ha già tolto l\'altra richiesta (404) → tolto, a livello info e non error', async () => {
+    h.deleteUserError = { status: 404, code: 'user_not_found', message: 'User not found' }
+    const res = await conferma()
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', accountAccessoRimosso: true })
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'info',
+      expect.objectContaining({ esito: 'account-accesso-gia-assente', entita_id: BERSAGLIO }),
+      h.deleteUserError,
+    )
+    expect(vi.mocked(logEvento)).not.toHaveBeenCalledWith('gdpr', 'error', expect.objectContaining({ esito: 'account-accesso-non-rimosso' }), expect.anything())
+    expect(vi.mocked(logScrittura)).toHaveBeenCalledTimes(1)
+  })
+
+  it('ripiego e account già tolto (404): con l\'account è sparito anche il profilo → «cancellato», non archiviato', async () => {
+    delete h.rpcRisposte.personale_elimina_dipendente
+    h.deleteUserError = { status: 404, code: 'user_not_found', message: 'User not found' }
+    const res = await conferma()
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', accountAccessoRimosso: true })
+    expect(h.ordine).not.toContain('utenti.update')
+  })
+
+  // ─── La risposta persa dopo il COMMIT (seconda revisione, punto 5) ────────────────
+  const reteCaduta = { code: '', message: 'TypeError: fetch failed' }
+
+  it('risposta persa e profilo sparito: si va avanti come dopo un successo (account, file letti prima), e lo si dice', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = () => {
+      db.utenti = []
+      return { data: null, error: reteCaduta }
+    }
+    const res = await conferma()
+    expect(res.status).toBe(200)
+    expect((await res.json()).data).toMatchObject({ esito: 'cancellato', praticheCancellate: null, accountAccessoRimosso: true })
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente', 'auth.deleteUser', 'storage.cestino'])
+    expect(h.spostati).toEqual([['p/fronte.jpg', 'p/retro.jpg']])
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith('gdpr', 'warn', expect.objectContaining({ esito: 'risposta-persa-dopo-commit', entita_id: BERSAGLIO }))
+    expect(vi.mocked(logEvento)).not.toHaveBeenCalledWith('gdpr', 'error', expect.objectContaining({ esito: 'righe-dipendente-non-cancellate' }))
+  })
+
+  it('esito incerto ma il profilo c\'è ancora: 503 «nessun dato cancellato», e davvero niente toccato', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: reteCaduta }
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('FASCICOLO_NON_CANCELLATO')
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente'])
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith('gdpr', 'error', expect.objectContaining({ esito: 'righe-dipendente-non-cancellate', entita_id: BERSAGLIO }))
+  })
+
+  it('esito incerto e il profilo c\'è ancora ma in un\'altra sede: conta come «c\'è», mai come cancellato', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = () => {
+      db.utenti[0].scuola_id = 'e0000000-0000-4000-8000-0000000000e2'
+      return { data: null, error: reteCaduta }
+    }
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente'])
+  })
+
+  it('esito incerto e il profilo non si rilegge: 503 senza promettere che niente è cancellato', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = { data: null, error: reteCaduta }
+    h.utentiNonLeggibiliDopoRpc = true
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('STAFF_ELIMINAZIONE_NON_DECISA')
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente'])
+    expect(vi.mocked(logEvento)).toHaveBeenCalledWith(
+      'gdpr', 'error',
+      expect.objectContaining({ esito: 'esito-eliminazione-non-verificato', entita_id: BERSAGLIO }),
+      expect.objectContaining({ code: '' }),
+    )
+  })
+
+  it('un codice di Postgres non è mai «incerto»: 23505 è un guasto vero, senza rilettura', async () => {
+    h.rpcRisposte.personale_elimina_dipendente = () => {
+      db.utenti = []
+      return { data: null, error: { code: '23505', message: 'duplicate key' } }
+    }
+    const res = await conferma()
+    expect(res.status).toBe(503)
+    expect(h.ordine).toEqual(['rpc.personale_elimina_dipendente'])
+  })
+
 })

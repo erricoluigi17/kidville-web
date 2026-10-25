@@ -437,13 +437,46 @@ function fascicoloNonCancellato(): NextResponse {
 }
 
 /**
- * La cancellazione vera: poteri → righe (in una transazione) → account → file nel cestino.
+ * L'account di accesso non c'è già più: lo ha tolto un'altra richiesta (un secondo POST), o una
+ * prova precedente la cui risposta è andata persa. È l'esito voluto, non un guasto.
+ */
+function accountGiaAssente(errore: unknown): boolean {
+  const e = errore as { status?: unknown; code?: unknown } | null | undefined
+  return e?.status === 404 || e?.code === 'user_not_found'
+}
+
+/**
+ * Dopo un esito INCERTO della funzione (nessun codice dal database: rete, tempo scaduto) il
+ * profilo si rilegge per id, SENZA il filtro di sede: un profilo che c'è ancora ma è passato a
+ * un altro plesso deve contare come «c'è», mai come «cancellato».
+ */
+async function profiloAncoraPresente(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  utenteId: string,
+): Promise<'presente' | 'assente' | 'non-letto'> {
+  const { data, error } = await supabase.from('utenti').select('id').eq('id', utenteId).maybeSingle()
+  if (error) {
+    logEvento('gdpr', 'error', { operazione: OPERAZIONE_POST, esito: 'esito-eliminazione-non-verificato', entita_id: utenteId }, error)
+    return 'non-letto'
+  }
+  return data ? 'presente' : 'assente'
+}
+
+/**
+ * La cancellazione vera: righe (in una transazione) → account → file nel cestino.
  *
  * ⚠️ IL RAMO DI RIPIEGO È IL PUNTO DI QUESTA FUNZIONE. Postgres può rifiutare la
  * cancellazione del profilo per una chiave senza cascata che il registro non copriva
  * (una tabella nuova, una riga arrivata fra l'anteprima e adesso):
  * `personale_elimina_dipendente` risponde 23503 e annulla TUTTO, e qui si ARCHIVIA
  * senza aver toccato un file. Mai «cancellato» su una cancellazione che non c'è stata.
+ *
+ * I POTERI NON SI SGANCIANO PRIMA, a mano: lo fa la DELETE del profilo, nella stessa
+ * transazione delle righe (`utenti_sezioni`, `utenti_sezioni_materie`, `utenti_scuole` e
+ * `push_subscriptions` in cascata; `orario_settimanale.docente_id` e `task_interni.assigned_to`
+ * a NULL: chiavi della baseline, verificate sul catalogo il 25/10/2026). Sganciarli prima
+ * lasciava, se la funzione falliva, un dipendente attivo e senza classi. Se la cancellazione è
+ * rifiutata, `archivia` sgancia per conto suo.
  *
  * I file per ULTIMI, e non cancellati: spostati nel cestino dello stesso bucket, da
  * cui li distrugge il giro notturno `cestino-registro-retention`. I percorsi si
@@ -461,25 +494,56 @@ async function cancella(
   const fascicolo = await leggiFascicoloPersonale(supabase, utenteId, OPERAZIONE_POST)
   if (!fascicolo.ok) return fascicoloNonCancellato()
 
-  // 2. I poteri.
-  if (!(await sganciaPoteri(supabase, utenteId, plessi, OPERAZIONE_POST))) {
-    return NextResponse.json(
-      { error: 'Non è stato possibile completare l’operazione', codice: 'STAFF_ELIMINAZIONE_NON_DECISA' },
-      { status: 503 },
-    )
-  }
-
-  // 3. Le righe: pratica, fascicolo e profilo insieme, o nessuna.
-  const righe = await eliminaRigheDipendente(supabase, utenteId, fascicolo.praticaId, OPERAZIONE_POST)
-  if (righe.esito === 'rifiutata') {
+  // 2. Le righe: pratica, fascicolo, profilo (e con lui i poteri) insieme, o nessuna.
+  const esito = await eliminaRigheDipendente(supabase, utenteId, fascicolo.praticaId, OPERAZIONE_POST)
+  if (esito.esito === 'rifiutata') {
     return await archivia(supabase, attore, utenteId, bersaglio, plessi, 0, 'cancellazione-rifiutata')
   }
-  if (righe.esito === 'guasto') return fascicoloNonCancellato()
+  if (esito.esito === 'guasto') return fascicoloNonCancellato()
 
-  // 4. L'account di accesso.
+  let rispostaPersa = false
+  let righe: Extract<typeof esito, { esito: 'ok' }>
+  if (esito.esito === 'incerto') {
+    // La transazione può essere andata a buon fine e la risposta essersi persa. Dire «niente è
+    // stato cancellato» senza guardare lascerebbe, al secondo tentativo, un account senza
+    // profilo che nessuno toglie più (il gate di sede non trova la persona e risponde 404).
+    const presenza = await profiloAncoraPresente(supabase, utenteId)
+    if (presenza === 'non-letto') {
+      return NextResponse.json(
+        { error: 'Non è stato possibile completare l’operazione', codice: 'STAFF_ELIMINAZIONE_NON_DECISA' },
+        { status: 503 },
+      )
+    }
+    if (presenza === 'presente') {
+      logEvento('gdpr', 'error', { operazione: OPERAZIONE_POST, esito: 'righe-dipendente-non-cancellate', entita_id: utenteId })
+      return fascicoloNonCancellato()
+    }
+    // Il profilo non c'è più: le righe sono state cancellate. I percorsi staccati non si
+    // conoscono (erano nella risposta persa): le loro righe restano nel registro senza
+    // proprietario e le chiude la spazzata dei caricamenti in sospeso. Quelli letti prima si
+    // spostano come sempre.
+    rispostaPersa = true
+    logEvento('gdpr', 'warn', { operazione: OPERAZIONE_POST, esito: 'risposta-persa-dopo-commit', entita_id: utenteId })
+    righe = {
+      esito: 'ok',
+      praticheCancellate: 0,
+      anagraficheCancellate: 0,
+      profiloEliminato: true,
+      percorsiStaccati: [],
+      ripiego: false,
+    }
+  } else {
+    righe = esito
+  }
+
+  // Funzione nuova e zero profili: un'altra richiesta (un secondo POST, che ha aspettato il
+  // primo dietro i blocchi) lo aveva già cancellato. Non è il ripiego e non è un guasto.
+  const giaEliminato = !righe.ripiego && !righe.profiloEliminato
+
+  // 3. L'account di accesso.
   const { error: errAccount } = await supabase.auth.admin.deleteUser(utenteId)
 
-  // 5. I file nel cestino: SEMPRE, a questo punto, perché le righe che li nominavano
+  // 4. I file nel cestino: SEMPRE, a questo punto, perché le righe che li nominavano
   //    non ci sono più — anche quando l'account è stato rifiutato.
   const file = await spostaScansioniNelCestino(
     supabase,
@@ -489,7 +553,16 @@ async function cancella(
 
   let accountAccessoRimosso = true
   if (errAccount) {
-    if (!righe.profiloEliminato) {
+    if (accountGiaAssente(errAccount)) {
+      // Già tolto (dall'altra richiesta, o da un tentativo la cui risposta si è persa). Con
+      // l'account sparisce anche il profilo (`utenti.id` → `auth.users` in cascata).
+      logEvento(
+        'gdpr',
+        'info',
+        { operazione: OPERAZIONE_POST, esito: 'account-accesso-gia-assente', entita_id: utenteId },
+        errAccount,
+      )
+    } else if (righe.ripiego) {
       // Ripiego (la funzione nuova non c'è): il profilo lo doveva togliere la cascata
       // dell'account, e l'account è stato rifiutato. Il dipendente esiste: si archivia.
       logEvento(
@@ -499,19 +572,47 @@ async function cancella(
         errAccount,
       )
       return await archivia(supabase, attore, utenteId, bersaglio, plessi, 0, 'cancellazione-rifiutata')
+    } else {
+      // Il profilo non c'è più: senza profilo nessun gate lo fa entrare, ma l'account di
+      // accesso è rimasto, e va tolto a mano. Si grida, con l'uuid per trovarlo.
+      accountAccessoRimosso = false
+      logEvento(
+        'gdpr',
+        'error',
+        { operazione: OPERAZIONE_POST, esito: 'account-accesso-non-rimosso', entita_id: utenteId },
+        errAccount,
+      )
     }
-    // Il profilo non c'è più: senza profilo nessun gate lo fa entrare, ma l'account di
-    // accesso è rimasto, e va tolto a mano. Si grida, con l'uuid per trovarlo.
-    accountAccessoRimosso = false
-    logEvento(
-      'gdpr',
-      'error',
-      { operazione: OPERAZIONE_POST, esito: 'account-accesso-non-rimosso', entita_id: utenteId },
-      errAccount,
-    )
   }
 
   const fileRimossi = file.nelCestino + file.rimossiSenzaCestino
+  // `null` e non 0 quando non si sa: la risposta della funzione è andata persa.
+  const praticheCancellate = rispostaPersa ? null : righe.praticheCancellate
+
+  if (giaEliminato) {
+    // La cancellazione l'ha fatta (e registrata) l'altra richiesta: qui niente seconda riga
+    // d'audit, e un `info` invece del `warn` di `staff-cancellato`.
+    logEvento('gdpr', 'info', {
+      operazione: OPERAZIONE_POST,
+      esito: 'staff-gia-cancellato',
+      entita_id: utenteId,
+      n_file_nel_cestino: file.nelCestino,
+      n_file_gia_assenti: file.giaAssenti,
+      account_accesso_rimosso: accountAccessoRimosso,
+    })
+    return NextResponse.json({
+      success: true,
+      data: {
+        esito: 'cancellato',
+        giaEliminato: true,
+        fileNelCestino: file.nelCestino,
+        fileRimossi,
+        praticheCancellate,
+        accountAccessoRimosso,
+      },
+    })
+  }
+
   await logScrittura(supabase, {
     attore,
     entitaTipo: 'utente_staff',
@@ -522,7 +623,7 @@ async function cancella(
       ruolo: bersaglio.ruolo,
       n_file_nel_cestino: file.nelCestino,
       n_file_rimossi: fileRimossi,
-      pratiche_cancellate: righe.praticheCancellate,
+      pratiche_cancellate: praticheCancellate,
     },
   })
   logEvento('gdpr', 'warn', {
@@ -535,6 +636,7 @@ async function cancella(
     n_file_gia_assenti: file.giaAssenti,
     n_file_orfani: file.orfani,
     account_accesso_rimosso: accountAccessoRimosso,
+    risposta_persa: rispostaPersa || undefined,
   })
 
   return NextResponse.json({
@@ -543,7 +645,7 @@ async function cancella(
       esito: 'cancellato',
       fileNelCestino: file.nelCestino,
       fileRimossi,
-      praticheCancellate: righe.praticheCancellate,
+      praticheCancellate,
       accountAccessoRimosso,
     },
   })

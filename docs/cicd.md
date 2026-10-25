@@ -33,7 +33,9 @@ Fatto a luglio 2026 (la prima version del registro è `20260704120000_baseline`)
 ricetta se un giorno si dovesse rifare.
 
 Lo storico era **disallineato**: i primi ~50 file di `supabase/migrations/` sono stati
-applicati a mano (script `apply_*.mjs`, via `exec_sql`) e **non** sono nella tabella
+applicati a mano (script `apply_*.mjs`, via `exec_sql`: funzione e script sono stati rimossi il
+2026-10-25, e da allora le migrazioni le applica solo l'integrazione GitHub di Supabase al merge, con la
+version del file) e **non** sono nella tabella
 di tracking `supabase_migrations.schema_migrations`; i più recenti sì, ma con versioni
 non corrispondenti ai nomi dei file locali. Senza baseline, `supabase db push`
 ri-applicherebbe i vecchi file → errori `already exists`.

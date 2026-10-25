@@ -25,6 +25,8 @@ import { staffScuola } from '@/lib/notifiche/destinatari'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { prendiPresaCron, rilasciaPresaCron } from '@/lib/cron/presa'
+import { rispostaErroreInternoGiaRegistrato } from '@/lib/api/errore-interno'
 
 // POST /api/pagamenti/fattura/sync — polling stato SDI delle fatture in volo.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret` (pattern push/dispatch).
@@ -254,7 +256,15 @@ function queryFallita(azione: string, error: unknown, t0: number, scuolaId?: str
   return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
 }
 
-export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Request) => {
+/**
+ * IL GIRO, com'era fino alla sessione 8. Il POST qui sotto lo avvolge con la presa con scadenza;
+ * `clientGiaCreato` è il client con cui il POST ha preso la presa, riusato invece di crearne un
+ * secondo. Chiamato senza (segreto mancante o sbagliato) risponde 401 con i suoi log di sempre.
+ */
+async function giroSync(
+  request: Request,
+  clientGiaCreato?: Awaited<ReturnType<typeof createAdminClient>>,
+): Promise<Response> {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -283,7 +293,7 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
     const q = parseQuery(request, postQuerySchema)
     if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
+    const supabase = clientGiaCreato ?? (await createAdminClient())
     const { data: pendenti, error: errPendenti } = await supabase
       .from('fatture_emesse')
       .select('id, pagamento_id, scuola_id, numero, aruba_filename, sdi_stato')
@@ -1113,5 +1123,45 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
     // (`where evento = 'cron'`). `logErrore` emette anche l'Error nativo con lo stack VERO.
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+/**
+ * UN GIRO ALLA VOLTA (sessione 8 della seconda serie di robustezza, D12). Due giri insieme
+ * leggerebbero le stesse fatture «in volo» e manderebbero due volte la stessa notifica di scarto.
+ * La presa `fattura-sync` scade da sola dopo `DURATA_PRESA_CRON_S` (più di `maxDuration`): un giro
+ * tagliato da Vercel non blocca il successivo.
+ */
+export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Request) => {
+  // Il segreto si guarda PRIMA della presa: un POST anonimo non deve poter occupare il giro.
+  // `giroSync` lo riguarda e risponde 401 con i suoi log, invariati.
+  if (!segretoCronValido(request.headers.get('x-cron-secret'))) return giroSync(request)
+  const t0 = Date.now()
+  let db: Awaited<ReturnType<typeof createAdminClient>>
+  try {
+    db = await createAdminClient()
+  } catch (err) {
+    // Stessa riga del `catch` di `giroSync`: il fallimento totale resta un battito «cron»
+    // (DIFETTO 3 di `__tests__/api/cron-battito.test.ts`), non un «unhandled». La risposta porta
+    // un codice: le due risposte nuove di questo POST non allargano il debito congelato da
+    // `errori-con-codice` (le tre senza codice restano quelle di `giroSync`).
+    logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
+    return rispostaErroreInternoGiaRegistrato()
+  }
+  const presa = await prendiPresaCron(db, JOB)
+  if (presa.esito === 'altrui') {
+    return NextResponse.json({ success: true, data: { saltato: 'presa-altrui' } })
+  }
+  if (presa.esito === 'guasto') {
+    // La riga `error` l'ha già scritta `prendiPresaCron`, con l'errore intero.
+    return NextResponse.json(
+      { error: 'Giro non avviato: non si è potuto sapere se un altro è in corso', codice: 'CRON_PRESA_NON_VERIFICATA' },
+      { status: 503 },
+    )
+  }
+  try {
+    return await giroSync(request, db)
+  } finally {
+    await rilasciaPresaCron(db, JOB, presa.token)
   }
 })

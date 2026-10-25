@@ -11,6 +11,7 @@ import { parseInstagramUrl, buildEmbedUrl, esitoHealthCheck } from '@/lib/news/i
 import { notificaNewsPubblicata, type PostDaNotificare } from '@/lib/news/notifiche'
 import { generaEInviaDigest, riprendiDigestInterrotti, TETTO_GIRO_DIGEST_MS } from '@/lib/news/digest'
 import { verificaPermanenzaConsenso } from '@/lib/news/permanenza-consenso'
+import { segretoCronValido } from '@/lib/security/segreto-cron'
 
 // =============================================================================
 // POST /api/news/cron/run — motore cron della sezione News (pattern solleciti/run).
@@ -291,7 +292,9 @@ export const POST = withRoute('news/cron/run:POST', async (request: Request) => 
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
-    if (!secret || secret !== process.env.CRON_SECRET) {
+    // Confronto a tempo costante e fail-closed senza `CRON_SECRET` (sessione 9): lo stesso di
+    // tutte le altre route del cron.
+    if (!segretoCronValido(secret)) {
       // Si grida SOLO se l'header c'è ma non torna (cron con la chiave sbagliata):
       // sul POST anonimo si tace (route pubblica, un `curl` non deve fabbricare rumore).
       if (secret) {

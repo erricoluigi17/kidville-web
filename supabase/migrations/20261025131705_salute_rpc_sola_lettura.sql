@@ -6,13 +6,16 @@
 --
 --   · salute_cron_esiti() — per ogni job ATTIVO di cron.job: il nome (coalesce(jobname,
 --     'jobid-' || jobid), la stessa chiave della sessione 6), la cadenza, l'esito dell'ultimo giro
---     ('ok', 'fallito', 'timeout' o NULL), l'istante dell'ultimo giro e l'ultimo istante in cui il
---     job era VIVO (ultimo successo; per un job HTTP anche l'ultimo timeout del client, perché la
---     route può aver finito lo stesso, e l'ultima esecuzione SQL riuscita, perché un job che chiama
---     solo quando ha lavoro può non chiamare per ore — ma quest'ultima SOLO se l'ultima chiamata
---     chiusa è 'ok', 'timeout' o non c'è, E il job non ha chiamate aperte da più di 30 minuti:
---     con pg_net fermo le chiamate restano in coda, le funzioni SQL riescono lo stesso, e senza
---     questa guardia il job sembrerebbe vivo proprio durante il guasto che la sessione 6 cerca).
+--     ('ok', 'fallito', 'timeout', 'ignoto' o NULL; 'ignoto' = l'ultima chiamata chiusa di un job
+--     HTTP ha esito-ignoto: nessuna risposta letta entro 6 ore, il lettore fermo attorno al giro),
+--     l'istante dell'ultimo giro e l'ultimo istante in cui il job era VIVO: l'ultimo successo; per
+--     un job HTTP anche l'ultimo timeout del client, perché la route può aver finito lo stesso; e,
+--     SOLO per un job HTTP che non ha ancora NESSUNA chiamata chiusa, l'ultima esecuzione SQL
+--     riuscita, purché nessuna sua chiamata sia aperta da più di 30 minuti (con pg_net fermo le
+--     chiamate restano in coda e le funzioni SQL riescono lo stesso). Da quando un job HTTP ha una
+--     chiamata chiusa, le sue esecuzioni SQL non lo tengono più vivo: un giro che riesce senza
+--     chiamare (URL del Vault assente e RETURN, un'eccezione di net.http_post inghiottita da
+--     EXCEPTION WHEN OTHERS) non dice che il server ha risposto.
 --     Legge public.cron_ultimo_esito, scritta ogni 10 minuti dalla funzione cron_esiti() della
 --     sessione 6 (per un job HTTP l'esito è quello della chiamata al server, per uno SQL il giro),
 --     e le chiamate ancora aperte di public.cron_chiamate (verificata_il nullo).
@@ -65,6 +68,8 @@ BEGIN
             WHEN u.http AND u.ultima_chiamata_esito = 'timeout' THEN 'timeout'
             WHEN u.http AND u.ultima_chiamata_esito IN ('errore-http', 'errore-rete') THEN 'fallito'
             WHEN u.http AND u.ultima_chiamata_esito = 'ok' THEN 'ok'
+            -- Mai vivo, e con un nome suo: la salute dice perché il job è senza esito buono.
+            WHEN u.http AND u.ultima_chiamata_esito = 'esito-ignoto' THEN 'ignoto'
             WHEN NOT u.http AND u.ultima_esecuzione_stato = 'failed' THEN 'fallito'
             WHEN NOT u.http AND u.ultima_esecuzione_stato = 'succeeded' THEN 'ok'
             ELSE NULL
@@ -74,17 +79,21 @@ BEGIN
          -- girare non è «in attesa del primo esito».
          CASE WHEN u.http THEN coalesce(u.ultima_chiamata_il, u.ultima_esecuzione_il) ELSE u.ultima_esecuzione_il END,
          -- Vivo: l'ultimo successo; per un job HTTP anche l'ultimo timeout del client (la route può
-         -- aver finito lo stesso) e l'ultima esecuzione SQL riuscita: dopo la sessione 8
-         -- `storici_tick` chiama il server solo se c'è lavoro, e per la sessione 6 `ultimo_ok_il` di
-         -- un job HTTP cambia solo con le chiamate. L'esecuzione SQL vale solo se l'ultima chiamata
-         -- chiusa è 'ok', 'timeout' o non c'è ('errore-http', 'errore-rete' ed 'esito-ignoto' no) e
-         -- se nessuna chiamata del job è aperta da più di 30 minuti (pg_net fermo: la funzione SQL
-         -- riesce, la richiesta resta in coda). 30 minuti: il timeout più lungo dei job (5 minuti)
-         -- più un giro di cron_esiti() (10 minuti), con margine.
+         -- aver finito lo stesso). L'ultima esecuzione SQL riuscita vale SOLO per un job HTTP senza
+         -- nessuna chiamata chiusa (`http` vero alla prima chiamata APERTA, la stessa riga che
+         -- `visto_il` legge dall'esecuzione), e solo se nessuna sua chiamata è aperta da più di 30
+         -- minuti (pg_net fermo: la funzione SQL riesce, la richiesta resta in coda). 30 minuti: il
+         -- timeout più lungo dei job (5 minuti) più un giro di cron_esiti() (10 minuti), con margine.
+         -- Con almeno una chiamata chiusa un giro SQL riuscito non vale più: per la sessione 6
+         -- `ultimo_ok_il` di un job HTTP cambia solo con le chiamate, e un giro che non ha chiamato
+         -- (URL assente e RETURN, net.http_post fallita dentro EXCEPTION WHEN OTHERS) riesce lo stesso.
+         -- La sessione 8 aggiunge qui un elenco dichiarato dei job «a coda vuota», che chiamano il
+         -- server solo quando hanno lavoro e per i quali l'esecuzione SQL riuscita tornerà a valere
+         -- anche dopo la prima chiamata chiusa. Oggi nessun job è così: `storici_tick` chiama a ogni giro.
          GREATEST(u.ultimo_ok_il,
                   CASE WHEN u.http AND u.ultima_chiamata_esito = 'timeout' THEN u.ultima_chiamata_il END,
-                  CASE WHEN u.http AND u.ultima_esecuzione_stato = 'succeeded'
-                            AND coalesce(u.ultima_chiamata_esito, 'ok') IN ('ok', 'timeout')
+                  CASE WHEN u.http AND u.ultima_chiamata_il IS NULL
+                            AND u.ultima_esecuzione_stato = 'succeeded'
                             AND (a.aperta_dal IS NULL OR a.aperta_dal > now() - interval '30 minutes')
                        THEN u.ultima_esecuzione_il END)
     FROM cron.job AS j

@@ -13,10 +13,14 @@ import type { Valutazione } from './valutazione'
  * LA REGOLA. Un job è un allarme quando non ha avuto un esito BUONO dentro la finestra della sua
  * cadenza. Un fallimento solo, con un esito buono recente, si dice e non suona: un allarme che
  * suona per un giro andato storto viene spento. Un timeout del client di pg_net vale come vivo (la
- * route può aver finito lo stesso: è la riga `cron-http-timeout:<job>` della sessione 6). Un job HTTP
- * che chiama il server solo quando ha lavoro (dopo la sessione 8, `storici-stampe`) è vivo anche
- * quando la sua funzione SQL riesce senza chiamare, purché l'ultima chiamata non sia stata respinta:
- * lo decide la RPC, che lo mette in `vivo_il`. Un job
+ * route può aver finito lo stesso: è la riga `cron-http-timeout:<job>` della sessione 6). Per un job
+ * HTTP vive la CHIAMATA: la sua esecuzione SQL riuscita conta solo finché il job non ha nessuna
+ * chiamata chiusa, e solo se nessuna sua chiamata è aperta da più di 30 minuti (pg_net fermo). Dopo
+ * la prima chiamata chiusa un giro SQL riuscito non vale più (un giro che non ha chiamato riesce lo
+ * stesso), e non sono mai vive le chiamate respinte (errore-http, errore-rete) né quelle a esito
+ * ignoto. Lo decide la RPC, che lo mette in `vivo_il`; la sessione 8 aggiungerà lì l'elenco dei
+ * job che chiamano solo quando hanno lavoro. Un'ultima chiamata a esito ignoto fuori finestra si dice
+ * a parte: vuol dire che il lettore è rimasto fermo oltre 6 ore attorno al giro. Un job
  * che non è mai partito è «in attesa»: `cron.job` non dice quando un job è nato, quindi non si può
  * distinguere un job di ieri da uno che non parte da un mese — si scrive, non si indovina.
  *
@@ -31,17 +35,20 @@ const MIN = 60_000
 const ORA = 60 * MIN
 const GIORNO = 24 * ORA
 
-export type EsitoCron = 'ok' | 'fallito' | 'timeout'
+/** `ignoto`: l'ultima chiamata chiusa di un job HTTP ha esito ignoto (nessuna risposta letta entro
+ *  6 ore). */
+export type EsitoCron = 'ok' | 'fallito' | 'timeout' | 'ignoto'
 
 export interface RigaCronEsito {
     job: string
     cadenza: string
-    /** L'esito dell'ultimo giro; `null` = nessun giro registrato, o chiamata ancora in attesa. */
+    /** L'esito dell'ultimo giro; `null` = nessun giro registrato, o nessuna chiamata ancora chiusa. */
     esito: EsitoCron | null
     /** Quando è avvenuto l'ultimo giro (ms). */
     vistoIl: number | null
     /** L'ultima volta che il job era VIVO (ms): ultimo successo; per un job HTTP anche l'ultimo timeout
-     *  del client e l'ultima esecuzione SQL riuscita, se l'ultima chiamata non è stata respinta. */
+     *  del client e, solo finché non ha nessuna chiamata chiusa, l'ultima esecuzione SQL riuscita, se
+     *  nessuna chiamata è aperta da più di 30 minuti. Mai una chiamata respinta o a esito ignoto. */
     vivoIl: number | null
 }
 
@@ -50,7 +57,7 @@ export interface RigaCronEsito {
  *  nessuno aggiorna più `cron_ultimo_esito`. */
 export const MINUTI_CRON_ESITI_FERMO = 30
 
-const ESITI_CRON: ReadonlySet<string> = new Set(['ok', 'fallito', 'timeout'])
+const ESITI_CRON: ReadonlySet<string> = new Set(['ok', 'fallito', 'timeout', 'ignoto'])
 const RE_PARTE = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/
 
 /** La finestra di un job che gira ogni `minuti`: la cadenza più il triplo, margine fra 30 e 120. */
@@ -152,6 +159,7 @@ export function valutaCronEsiti(righe: readonly RigaCronEsito[], adesso: number)
     }
 
     const senzaEsitoBuono: string[] = []
+    const ignoti: string[] = []
     const falliti: string[] = []
     const timeout: string[] = []
     const inAttesa: string[] = []
@@ -170,6 +178,8 @@ export function valutaCronEsiti(righe: readonly RigaCronEsito[], adesso: number)
         }
         if (r.vivoIl === null || adesso - r.vivoIl > finestra) {
             senzaEsitoBuono.push(r.job)
+            // Il perché, quando lo si sa: la risposta non è stata letta. Dentro la finestra non si dice.
+            if (r.esito === 'ignoto') ignoti.push(r.job)
             continue
         }
         if (r.esito === 'fallito') falliti.push(r.job)
@@ -178,6 +188,9 @@ export function valutaCronEsiti(righe: readonly RigaCronEsito[], adesso: number)
 
     const parti = [`${n} job attivi`]
     if (senzaEsitoBuono.length > 0) parti.push(`senza un esito buono entro la finestra: ${senzaEsitoBuono.join(',')}`)
+    if (ignoti.length > 0) {
+        parti.push(`di questi, ultima chiamata a esito ignoto (lettore fermo oltre 6 ore attorno al giro): ${ignoti.join(',')}`)
+    }
     if (falliti.length > 0) parti.push(`ultimo esito fallito, ancora nella finestra: ${falliti.join(',')}`)
     if (timeout.length > 0) parti.push(`timeout del client, vivi: ${timeout.join(',')}`)
     if (inAttesa.length > 0) parti.push(`in attesa del primo esito: ${inAttesa.join(',')}`)

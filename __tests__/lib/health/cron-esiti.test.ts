@@ -139,19 +139,39 @@ describe('valutaCronEsiti — la regola', () => {
         })
     })
 
-    it('un job già visto girare, senza esito e mai vivo (esito ignoto, esecuzioni fallite), non è «in attesa»: allarme', () => {
-        expect(valutaCronEsiti([OGNI_MINUTO, riga('ignoto', '*/10 * * * *', null, 3, null)], ADESSO)).toEqual({
+    it('un job già visto girare, senza esito e mai vivo (pg_net fermo prima della prima risposta), non è «in attesa»: allarme', () => {
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('senza-risposta', '*/10 * * * *', null, 3, null)], ADESSO)).toEqual({
             esito: 'degradato',
-            dettaglio: '2 job attivi; senza un esito buono entro la finestra: ignoto',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: senza-risposta',
         })
-        expect(valutaCronEsiti([OGNI_MINUTO, riga('ignoto', '0 6 * * *', null, 20 * 60, null)], ADESSO)).toEqual({
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('senza-risposta', '0 6 * * *', null, 20 * 60, null)], ADESSO)).toEqual({
             esito: 'degradato',
-            dettaglio: '2 job attivi; senza un esito buono entro la finestra: ignoto',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: senza-risposta',
         })
         // Riga incoerente (un esito senza l'istante del giro): un esito c'è, quindi non è un'attesa.
         expect(valutaCronEsiti([OGNI_MINUTO, riga('incoerente', '*/10 * * * *', 'fallito', null, null)], ADESSO)).toEqual({
             esito: 'degradato',
             dettaglio: '2 job attivi; senza un esito buono entro la finestra: incoerente',
+        })
+    })
+
+    it('l’ultima chiamata a esito ignoto, fuori finestra: il dettaglio dice perché; dentro la finestra non compare', () => {
+        const ignoto = 'di questi, ultima chiamata a esito ignoto (lettore fermo oltre 6 ore attorno al giro)'
+        // Mensile: la chiamata del giorno 1 è ignota, l'ultimo ok è del mese prima (31 giorni e 3 ore).
+        const mensile = riga('iscrizioni-retention', '41 4 1 * *', 'ignoto', 8 * 60, 31 * 24 * 60 + 3 * 60)
+        expect(valutaCronEsiti([OGNI_MINUTO, mensile, riga('mai-ok', '*/10 * * * *', 'fallito', 3, null)], ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: `3 job attivi; senza un esito buono entro la finestra: iscrizioni-retention,mai-ok; ${ignoto}: iscrizioni-retention`,
+        })
+        // Mai un ok: vivo nullo, il perché si dice lo stesso.
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('giornaliero', '0 6 * * *', 'ignoto', 7 * 60, null)], ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: `2 job attivi; senza un esito buono entro la finestra: giornaliero; ${ignoto}: giornaliero`,
+        })
+        // Dentro la finestra (vivo 20 ore fa, finestra 26 ore): nessun allarme e nessuna parola.
+        expect(valutaCronEsiti([OGNI_MINUTO, riga('giornaliero', '0 6 * * *', 'ignoto', 7 * 60, 20 * 60)], ADESSO)).toEqual({
+            esito: 'ok',
+            dettaglio: '2 job attivi',
         })
     })
 
@@ -175,6 +195,7 @@ describe('valutaCronEsiti — la regola', () => {
                 [
                     OGNI_MINUTO,
                     riga('notifiche-promemoria', '0 6 * * *', 'fallito', 240, 27 * 60),
+                    riga('iscrizioni-retention', '41 4 1 * *', 'ignoto', 8 * 60, 32 * 24 * 60),
                     riga('fattura-sync', '*/30 * * * *', 'fallito', 5, 50),
                     riga('push-dispatch', '*/5 * * * *', 'timeout', 2, 2),
                     riga('nuovo', '0 6 * * *', null, null, null),
@@ -185,7 +206,8 @@ describe('valutaCronEsiti — la regola', () => {
         ).toEqual({
             esito: 'degradato',
             dettaglio:
-                '6 job attivi; senza un esito buono entro la finestra: notifiche-promemoria; ' +
+                '7 job attivi; senza un esito buono entro la finestra: notifiche-promemoria,iscrizioni-retention; ' +
+                'di questi, ultima chiamata a esito ignoto (lettore fermo oltre 6 ore attorno al giro): iscrizioni-retention; ' +
                 'ultimo esito fallito, ancora nella finestra: fattura-sync; timeout del client, vivi: push-dispatch; ' +
                 'in attesa del primo esito: nuovo; cadenza non letta: strano',
         })
@@ -198,10 +220,12 @@ describe('leggiRigheCronEsiti — la risposta della RPC', () => {
             leggiRigheCronEsiti([
                 { job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', visto_il: '2026-10-20T09:59:00+00:00', vivo_il: '2026-10-20T09:59:00+00:00' },
                 { job: 'nuovo', cadenza: '0 6 * * *', esito: null, visto_il: null, vivo_il: null },
+                { job: 'iscrizioni-retention', cadenza: '41 4 1 * *', esito: 'ignoto', visto_il: '2026-10-20T09:59:00+00:00', vivo_il: null },
             ]),
         ).toEqual([
             { job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', vistoIl: ADESSO - MIN, vivoIl: ADESSO - MIN },
             { job: 'nuovo', cadenza: '0 6 * * *', esito: null, vistoIl: null, vivoIl: null },
+            { job: 'iscrizioni-retention', cadenza: '41 4 1 * *', esito: 'ignoto', vistoIl: ADESSO - MIN, vivoIl: null },
         ])
     })
 
@@ -209,6 +233,7 @@ describe('leggiRigheCronEsiti — la risposta della RPC', () => {
         ['non un elenco', { job: 'x' }],
         ['un job vuoto', [{ job: '', cadenza: '* * * * *', esito: 'ok', visto_il: null, vivo_il: null }]],
         ['un esito sconosciuto', [{ job: 'x', cadenza: '* * * * *', esito: 'succeeded', visto_il: null, vivo_il: null }]],
+        ['l’esito grezzo della sessione 6, non tradotto', [{ job: 'x', cadenza: '* * * * *', esito: 'esito-ignoto', visto_il: null, vivo_il: null }]],
         ['una data illeggibile', [{ job: 'x', cadenza: '* * * * *', esito: 'ok', visto_il: 'ieri', vivo_il: null }]],
         ['una cadenza che non è testo', [{ job: 'x', cadenza: 5, esito: 'ok', visto_il: null, vivo_il: null }]],
         ['una riga nulla', [null]],

@@ -127,7 +127,7 @@ beforeAll(async () => {
         (2, '*/10 * * * *', 'select 1', 'job-500', true),
         (3, '*/10 * * * *', 'select 1', 'job-rete', true),
         (4, '*/10 * * * *', 'select 1', 'job-timeout', true),
-        (5, '*/10 * * * *', 'select 1', 'job-ignoto', true),
+        (5, '0 4 * * *', 'select 1', 'job-ignoto', true),
         (6, '0 6 * * *', 'select 1', 'job-sql-ok', true),
         (7, '0 6 * * *', 'select 1', 'job-sql-ko', true),
         (8, '0 6 * * *', 'select 1', 'job-nuovo', true),
@@ -143,20 +143,21 @@ beforeAll(async () => {
         ('job-500',            true,  '2026-10-20 09:57+00', 'errore-http',  '2026-10-20 09:57+00', 'succeeded', '2026-10-20 09:20+00'),
         ('job-rete',           true,  '2026-10-20 09:56+00', 'errore-rete',  '2026-10-20 09:56+00', 'succeeded', NULL),
         ('job-timeout',        true,  '2026-10-20 09:58+00', 'timeout',      '2026-10-20 09:58+00', 'succeeded', '2026-10-20 08:20+00'),
-        ('job-ignoto',         true,  '2026-10-20 09:59+00', 'esito-ignoto', '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:49+00'),
+        ('job-ignoto',         true,  '2026-10-20 04:00+00', 'esito-ignoto', '2026-10-20 04:00+00', 'succeeded', '2026-10-19 04:00+00'),
         ('job-sql-ok',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
         ('job-sql-ko',         false, NULL, NULL, '2026-10-20 06:00+00', 'failed',    '2026-10-19 06:00+00'),
         ('job-spento',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
         ('job-http-nullo',     true,  NULL, NULL, '2026-10-20 09:59+00', 'succeeded', NULL),
-        ('job-pgnet-fermo',    true,  '2026-10-20 07:00+00', 'ok',           '2026-10-20 09:59+00', 'succeeded', '2026-10-20 07:00+00'),
-        ('job-aperta-recente', true,  '2026-10-20 09:50+00', 'ok',           '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:50+00'),
+        -- Due job HTTP senza NESSUNA chiamata chiusa, gli unici per cui l'esecuzione SQL riuscita può
+        -- valere: lì decide la guardia delle chiamate aperte.
+        ('job-pgnet-fermo',    true,  NULL, NULL, '2026-10-20 09:59+00', 'succeeded', NULL),
+        ('job-aperta-recente', true,  NULL, NULL, '2026-10-20 09:59+00', 'succeeded', NULL),
         ('jobid-99',           false, NULL, NULL, '2026-10-01 04:35+00', 'succeeded', '2026-10-01 04:35+00');
-      -- Le chiamate di cron_chiamate. Aperta = verificata_il nullo. Le età sono rispetto a now(): la
+      -- Le chiamate aperte di cron_chiamate (verificata_il nullo). Le età sono rispetto a now(): la
       -- guardia della RPC le misura così, e i 30 minuti stanno fra 20 e 40.
       INSERT INTO public.cron_chiamate (job, richiesta_id, percorso, timeout_ms, inviata_il, esito, verificata_il) VALUES
         ('job-pgnet-fermo',    11, '/api/x', 5000, now() - interval '40 minutes', 'in-attesa', NULL),
         ('job-pgnet-fermo',    12, '/api/x', 5000, now() - interval '20 minutes', 'in-attesa', NULL),
-        ('job-aperta-recente', 20, '/api/y', 5000, '2026-10-20 09:50+00',         'ok',        '2026-10-20 09:54+00'),
         ('job-aperta-recente', 21, '/api/y', 5000, now() - interval '20 minutes', 'in-attesa', NULL);
     `)
 })
@@ -169,17 +170,19 @@ describe('salute_cron_esiti', () => {
     it('un job attivo per riga, con la chiave della sessione 6; per un job HTTP conta la chiamata, per uno SQL il giro', async () => {
         expect(await righeLeggibili(db)).toEqual([
             { job: 'job-500', cadenza: '*/10 * * * *', esito: 'fallito', visto: '10-20 09:57', vivo: '10-20 09:20' },
-            // Una chiamata aperta da 20 minuti è ancora normale: l'esecuzione SQL riuscita delle 09:59 conta.
-            { job: 'job-aperta-recente', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 09:50', vivo: '10-20 09:59' },
+            // Nessuna chiamata chiusa e una aperta da 20 minuti, ancora normale: l'esecuzione SQL
+            // riuscita delle 09:59 conta.
+            { job: 'job-aperta-recente', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
             // `http` vero ma nessuna chiamata chiusa: il giro visto è l'esecuzione SQL, ed è viva.
             { job: 'job-http-nullo', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
-            // Esito ignoto (pg_net ha dimenticato la risposta): l'esecuzione SQL riuscita NON la copre.
-            { job: 'job-ignoto', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:49' },
+            // Esito ignoto (nessuna risposta letta entro 6 ore): un esito suo, e mai vivo; vivo resta
+            // l'ultimo ok, del giorno prima.
+            { job: 'job-ignoto', cadenza: '0 4 * * *', esito: 'ignoto', visto: '10-20 04:00', vivo: '10-19 04:00' },
             { job: 'job-nuovo', cadenza: '0 6 * * *', esito: null, visto: null, vivo: null },
             { job: 'job-ok-http', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 09:55', vivo: '10-20 09:55' },
-            // pg_net fermo: una chiamata aperta da 40 minuti, l'ultima chiusa ok alle 07:00. Le esecuzioni
-            // SQL riuscite non contano: vivo resta l'ultimo ok.
-            { job: 'job-pgnet-fermo', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 07:00', vivo: '10-20 07:00' },
+            // pg_net fermo prima della prima risposta: nessuna chiamata chiusa, una aperta da 40 minuti.
+            // L'esecuzione SQL riuscita non conta: visto girare, mai vivo.
+            { job: 'job-pgnet-fermo', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: null },
             { job: 'job-rete', cadenza: '*/10 * * * *', esito: 'fallito', visto: '10-20 09:56', vivo: null },
             { job: 'job-sql-ko', cadenza: '0 6 * * *', esito: 'fallito', visto: '10-20 06:00', vivo: '10-19 06:00' },
             { job: 'job-sql-ok', cadenza: '0 6 * * *', esito: 'ok', visto: '10-20 06:00', vivo: '10-20 06:00' },
@@ -188,7 +191,7 @@ describe('salute_cron_esiti', () => {
         ])
     })
 
-    it('il timeout del client è vivo anche quando il giro SQL dopo è fallito (nel banco sopra lo copre l’esecuzione riuscita)', async () => {
+    it('il timeout del client è vivo anche quando il giro SQL dopo è fallito', async () => {
         const b = await nuovoDb()
         await b.exec(`
           INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES (1, '*/10 * * * *', 'select 1', 'job-timeout', true);
@@ -203,13 +206,14 @@ describe('salute_cron_esiti', () => {
     })
 })
 
-describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
-    // Dopo la sessione 8 `storici_tick` (job `storici-stampe`, ogni minuto) chiama
-    // /api/admin/storici/cron solo se c'è una stampa in coda: con la coda vuota la funzione SQL gira
-    // e riesce, e nessuna chiamata parte. Per la sessione 6 `ultimo_ok_il` di un job HTTP cambia solo
-    // con le chiamate, e `http` non torna mai false: senza l'ultima esecuzione SQL riuscita in
-    // `vivo_il`, due ore di coda vuota sarebbero un allarme. `cron-esiti` (sola SQL, 09:54) è il
-    // testimone della freschezza: senza, la salute direbbe «cron-esiti fermo» per la ragione sbagliata.
+describe('vivo_il di un job HTTP: l’esecuzione SQL riuscita conta solo prima della prima chiamata chiusa', () => {
+    // `storici_tick` (job `storici-stampe`, ogni minuto) chiama /api/admin/storici/cron a ogni giro,
+    // dentro un `exception when others` che inghiotte un fallimento di net.http_post. Per la
+    // sessione 6 `ultimo_ok_il` di un job HTTP cambia solo con le chiamate, e `http` non torna mai
+    // false. Un giro SQL riuscito non dice che il server ha risposto: dopo la prima chiamata chiusa
+    // vive solo la chiamata. Quando la sessione 8 farà chiamare `storici_tick` solo con la coda piena,
+    // dichiarerà il job «a coda vuota» nella RPC. `cron-esiti` (sola SQL, 09:54) è il testimone della
+    // freschezza: senza, la salute direbbe «cron-esiti fermo» per la ragione sbagliata.
     const ADESSO = Date.parse('2026-10-20T10:00:00Z')
 
     interface Storici {
@@ -228,18 +232,16 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
             (1, '* * * * *', 'select 1', 'storici-stampe', true),
             (2, '4,14,24,34,44,54 * * * *', 'select 1', 'cron-esiti', true);
         `)
+        const chiamataIl = s.chiamataIl === undefined ? '2026-10-20 07:58+00' : s.chiamataIl
+        // Come scrive la sessione 6: con l'ultima chiamata 'ok', l'ultimo ok è quella chiamata.
+        const ultimoOk = s.ultimoOk !== undefined ? s.ultimoOk : s.esito === 'ok' ? chiamataIl : '2026-10-20 07:50+00'
         await b.query(
             `INSERT INTO public.cron_ultimo_esito
                (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
              VALUES
                ('storici-stampe', true, $1, $2, '2026-10-20 09:59+00', $3, $4),
                ('cron-esiti', false, NULL, NULL, '2026-10-20 09:54+00', 'succeeded', '2026-10-20 09:54+00')`,
-            [
-                s.chiamataIl === undefined ? '2026-10-20 07:58+00' : s.chiamataIl,
-                s.esito,
-                s.stato ?? 'succeeded',
-                s.ultimoOk === undefined ? '2026-10-20 07:50+00' : s.ultimoOk,
-            ],
+            [chiamataIl, s.esito, s.stato ?? 'succeeded', ultimoOk],
         )
         if (s.apertaDal) {
             await b.query(
@@ -260,10 +262,13 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
         return rows
     }
 
-    it('coda vuota da due ore, la funzione SQL riesce ogni minuto: vivo all’ultima esecuzione, e la salute dice ok', async () => {
+    it('chiamate chiuse, l’ultima ok alle 07:58 e fuori finestra; la funzione SQL riesce ogni minuto senza chiamare: vivo resta alla chiamata, e la salute dice degradato', async () => {
         const b = await banco({ esito: 'ok' })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 09:59' }])
-        expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 07:58' }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
         await b.close()
     })
 
@@ -277,16 +282,9 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
         await b.close()
     })
 
-    it('un timeout del client resta vivo, come vuole la regola del modulo: le esecuzioni SQL riuscite dopo lo coprono', async () => {
+    it('un timeout del client è vivo all’istante della chiamata, non alle esecuzioni SQL dopo: fuori finestra, degradato', async () => {
         const b = await banco({ esito: 'timeout' })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'timeout', visto: '10-20 07:58', vivo: '10-20 09:59' }])
-        expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi; timeout del client, vivi: storici-stampe' })
-        await b.close()
-    })
-
-    it('pg_net fermo: una chiamata aperta dalle 08:00, l’ultima chiusa ok alle 07:58; le esecuzioni SQL riuscite non lo coprono', async () => {
-        const b = await banco({ esito: 'ok', apertaDal: '2026-10-20 08:00+00' })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 07:50' }])
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'timeout', visto: '10-20 07:58', vivo: '10-20 07:58' }])
         expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
             dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
@@ -294,22 +292,45 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
         await b.close()
     })
 
-    it('esito ignoto (pg_net ha dimenticato la risposta): le esecuzioni SQL riuscite non lo coprono', async () => {
-        const b = await banco({ esito: 'esito-ignoto' })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: '10-20 07:50' }])
+    it('pg_net fermo dopo una chiamata ok: una aperta dalle 08:00, l’ultima chiusa ok alle 07:58; le esecuzioni SQL riuscite non lo coprono', async () => {
+        const b = await banco({ esito: 'ok', apertaDal: '2026-10-20 08:00+00' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 07:58' }])
         expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
             dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    it('pg_net fermo prima della prima risposta: nessuna chiamata chiusa, una aperta dalle 08:00; l’esecuzione SQL riuscita non conta', async () => {
+        const b = await banco({ chiamataIl: null, esito: null, ultimoOk: null, apertaDal: '2026-10-20 08:00+00' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 09:59', vivo: null }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    // Un esito ignoto la sessione 6 lo scrive solo a 6 ore dall'invio: la chiamata è delle 03:58.
+    const IGNOTO = 'di questi, ultima chiamata a esito ignoto (lettore fermo oltre 6 ore attorno al giro): storici-stampe'
+
+    it('esito ignoto (la risposta non è stata letta entro 6 ore): le esecuzioni SQL riuscite non lo coprono, e il dettaglio lo dice', async () => {
+        const b = await banco({ chiamataIl: '2026-10-20 03:58+00', esito: 'esito-ignoto', ultimoOk: '2026-10-20 03:50+00' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ignoto', visto: '10-20 03:58', vivo: '10-20 03:50' }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: `2 job attivi; senza un esito buono entro la finestra: storici-stampe; ${IGNOTO}`,
         })
         await b.close()
     })
 
     it('esito ignoto, esecuzioni SQL fallite e mai un esito buono: visto girare, quindi allarme e non «in attesa»', async () => {
-        const b = await banco({ esito: 'esito-ignoto', stato: 'failed', ultimoOk: null })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: null }])
+        const b = await banco({ chiamataIl: '2026-10-20 03:58+00', esito: 'esito-ignoto', stato: 'failed', ultimoOk: null })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ignoto', visto: '10-20 03:58', vivo: null }])
         expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
-            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+            dettaglio: `2 job attivi; senza un esito buono entro la finestra: storici-stampe; ${IGNOTO}`,
         })
         await b.close()
     })
@@ -318,6 +339,61 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
         const b = await banco({ chiamataIl: null, esito: null, ultimoOk: null })
         expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' }])
         expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
+        await b.close()
+    })
+})
+
+describe('un job HTTP che smette di chiamare il server mentre la sua funzione SQL riesce', () => {
+    // Le due forme del falso «ok» trovate dalla seconda revisione: con la regola di prima l'ultima
+    // esecuzione SQL riuscita teneva vivo il job, e la salute diceva ok per giorni.
+
+    it('mensile, l’URL del Vault sparito: ultima chiamata ok 39 giorni fa, l’ultimo giro SQL (9 giorni fa) è uscito con RETURN senza chiamare: degradato', async () => {
+        // `iscrizioni_retention_http` con l'URL assente scrive `url-assente` in app_log e fa RETURN:
+        // per pg_cron il giro è 'succeeded', e nessuna riga nasce in cron_chiamate.
+        const b = await nuovoDb()
+        await b.exec(`
+          INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES
+            (1, '41 4 1 * *', 'select 1', 'iscrizioni-retention', true),
+            (2, '4,14,24,34,44,54 * * * *', 'select 1', 'cron-esiti', true);
+          INSERT INTO public.cron_ultimo_esito
+            (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
+          VALUES
+            ('iscrizioni-retention', true, '2026-09-01 04:41+00', 'ok', '2026-10-01 04:41+00', 'succeeded', '2026-09-01 04:41+00'),
+            ('cron-esiti', false, NULL, NULL, '2026-10-10 11:54+00', 'succeeded', '2026-10-10 11:54+00');
+        `)
+        const { rows } = await b.query(`
+          SELECT esito, to_char(vivo_il AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS vivo
+            FROM public.salute_cron_esiti() WHERE job = 'iscrizioni-retention'`)
+        expect(rows).toEqual([{ esito: 'ok', vivo: '09-01 04:41' }])
+        expect(await decisione(b, Date.parse('2026-10-10T12:00:00Z'))).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: iscrizioni-retention',
+        })
+        await b.close()
+    })
+
+    it('ogni minuto, net.http_post fallita e inghiottita da EXCEPTION WHEN OTHERS: ultima chiamata ok 3 ore fa, ultimo giro SQL riuscito 1 minuto fa: degradato', async () => {
+        // L'accodamento fallisce prima di cron_chiamate: nessuna chiamata aperta, la guardia dei 30
+        // minuti non vede niente. Vive solo la chiamata delle 07:00.
+        const b = await nuovoDb()
+        await b.exec(`
+          INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES
+            (1, '* * * * *', 'select 1', 'storici-stampe', true),
+            (2, '4,14,24,34,44,54 * * * *', 'select 1', 'cron-esiti', true);
+          INSERT INTO public.cron_ultimo_esito
+            (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
+          VALUES
+            ('storici-stampe', true, '2026-10-20 07:00+00', 'ok', '2026-10-20 09:59+00', 'succeeded', '2026-10-20 07:00+00'),
+            ('cron-esiti', false, NULL, NULL, '2026-10-20 09:54+00', 'succeeded', '2026-10-20 09:54+00');
+        `)
+        const { rows } = await b.query(`
+          SELECT esito, to_char(vivo_il AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS vivo
+            FROM public.salute_cron_esiti() WHERE job = 'storici-stampe'`)
+        expect(rows).toEqual([{ esito: 'ok', vivo: '10-20 07:00' }])
+        expect(await decisione(b, Date.parse('2026-10-20T10:00:00Z'))).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
         await b.close()
     })
 })

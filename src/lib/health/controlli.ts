@@ -550,6 +550,34 @@ export const VARIABILI_CRITICHE = [
     // cambiato con lei: altrimenti sorveglierebbe una variabile che nessuno legge più —
     // cioè suonerebbe l'allarme sbagliato, che è peggio del silenzio.
     'ARUBA_PASSWORD',
+    // Dal 2026-10-25 (sessione 7 della seconda serie di robustezza) i canali push e il link
+    // dell'app. Senza le tre FCM nessuna notifica arriva ai telefoni (`fcmConfigured()` in
+    // `src/lib/push/native-push.ts`), senza le due VAPID nessuna ai browser (`vapidConfigured()`
+    // in `src/lib/push/web-push.ts`): il dispatcher le rimanda in silenzio, e `code-arretrate` lo
+    // vede solo dopo 30 minuti. Senza `NEXT_PUBLIC_APP_URL` il link di accesso nelle email delle
+    // credenziali diventa relativo (`/auth/login`), cioè inutilizzabile fuori dall'app.
+    // Sono qui perché il 2026-10-25 erano definite in Production E in Preview (`vercel env ls`, solo i
+    // nomi): una variabile assente per scelta accenderebbe un allarme che suona da solo.
+    //
+    // FUORI, e perché — stesso criterio: la loro assenza non è un guasto silenzioso.
+    //  · `ANTHROPIC_API_KEY`: il 2026-10-25 non era definita su Vercel, né in Production né in
+    //    Preview. Senza, la traduzione della chat si spegne (`src/lib/translate/claude.ts`) e il
+    //    pulsante si nasconde: è lo stato di oggi, non un guasto. Dentro, accenderebbe un allarme
+    //    permanente. Entra qui, e nel preflight, il giorno in cui la chiave c'è nei due ambienti.
+    //  · `NEXT_PUBLIC_SUPABASE_ANON_KEY`: se manca l'app esplode al primo clic (`instrumentation.ts`).
+    //  · `OTP_TICKET_SECRET`: ripiega su `SUPABASE_SERVICE_ROLE_KEY` (`src/lib/auth/otp-ticket.ts:21`,
+    //    `src/lib/allegati/sigillo.ts:59`), che è già qui.
+    //  · `VAPID_SUBJECT`: ha un ripiego scritto (`src/lib/push/web-push.ts:50`).
+    //  · `SIDI_*`: come `ARUBA_USERNAME`, la configurazione sta prima in banca dati
+    //    (`src/lib/sidi/client.ts:50`); il SIDI la salute non lo sorveglia.
+    //  · `ALLOW_HEADER_IDENTITY`, `PARENT_READS_USE_SESSION`, `KV_LOG_LEVEL`,
+    //    `NEXT_PUBLIC_CARICAMENTI_NATIVI`: interruttori, la loro assenza è un valore.
+    'FCM_PROJECT_ID',
+    'FCM_CLIENT_EMAIL',
+    'FCM_PRIVATE_KEY',
+    'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
+    'VAPID_PRIVATE_KEY',
+    'NEXT_PUBLIC_APP_URL',
 ] as const
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -1032,6 +1060,13 @@ function valoriCritici(): Record<(typeof VARIABILI_CRITICHE)[number], string | u
         CRON_SECRET: process.env.CRON_SECRET,
         LOG_HASH_SALT: process.env.LOG_HASH_SALT,
         ARUBA_PASSWORD: process.env.ARUBA_PASSWORD,
+        // Accesso STATICO, uno per uno: le `NEXT_PUBLIC_*` il bundler le sostituisce solo così.
+        FCM_PROJECT_ID: process.env.FCM_PROJECT_ID,
+        FCM_CLIENT_EMAIL: process.env.FCM_CLIENT_EMAIL,
+        FCM_PRIVATE_KEY: process.env.FCM_PRIVATE_KEY,
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     }
 }
 

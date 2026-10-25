@@ -61,6 +61,9 @@ import { descriviErrore, sanificaMessaggio } from '@/lib/logging/serialize';
  *    `[redatto]`. I log continuano a scriversi, sembrano sani, ma la correlazione
  *    "è sempre lo stesso genitore" è persa — cioè si perde in silenzio proprio la cosa
  *    per cui quell'hash esiste.
+ *  · FCM_* (tre) e le due VAPID → le notifiche non arrivano, e il dispatcher le rimanda in
+ *    silenzio;
+ *  · NEXT_PUBLIC_APP_URL        → il link nelle email delle credenziali diventa relativo.
  *
  * Lettura con accesso STATICO (`process.env.NOME`), non `process.env[nome]`: le
  * `NEXT_PUBLIC_*` vengono sostituite dal bundler solo sull'accesso statico, e con la forma
@@ -80,6 +83,15 @@ function variabiliCritiche(): ReadonlyArray<readonly [string, string | undefined
         // `aruba_config.password_ref`: se cambia lì, cambia anche qui.
         // La ragione completa sta accanto alla copia in `src/lib/health/controlli.ts`.
         ['ARUBA_PASSWORD', process.env.ARUBA_PASSWORD],
+        // Dal 2026-10-25 (sessione 7 della seconda serie): canali push e link dell'app.
+        // La ragione di ciascuna, e di chi resta fuori (anche `ANTHROPIC_API_KEY`), sta accanto
+        // alla copia in `src/lib/health/controlli.ts` (`VARIABILI_CRITICHE`).
+        ['FCM_PROJECT_ID', process.env.FCM_PROJECT_ID],
+        ['FCM_CLIENT_EMAIL', process.env.FCM_CLIENT_EMAIL],
+        ['FCM_PRIVATE_KEY', process.env.FCM_PRIVATE_KEY],
+        ['NEXT_PUBLIC_VAPID_PUBLIC_KEY', process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY],
+        ['VAPID_PRIVATE_KEY', process.env.VAPID_PRIVATE_KEY],
+        ['NEXT_PUBLIC_APP_URL', process.env.NEXT_PUBLIC_APP_URL],
     ];
 }
 

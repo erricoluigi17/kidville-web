@@ -1018,6 +1018,39 @@ describe('GET /api/health', () => {
         expect(controllo(corpo, 'config').dettaglio).toContain('CRON_SECRET')
     })
 
+    it('config guarda anche i canali push e il link dell’app; gli interruttori no', () => {
+        // Sessione 7 della seconda serie: «controlloConfig guarda tutte le variabili critiche».
+        // Critiche = la loro assenza è un guasto SILENZIOSO (vedi la testata di VARIABILI_CRITICHE).
+        for (const nome of [
+            'FCM_PROJECT_ID',
+            'FCM_CLIENT_EMAIL',
+            'FCM_PRIVATE_KEY',
+            'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
+            'VAPID_PRIVATE_KEY',
+            'NEXT_PUBLIC_APP_URL',
+        ]) {
+            expect(VARIABILI_CRITICHE, `${nome} manca dalle variabili critiche`).toContain(nome)
+        }
+        // Fuori, ciascuna con la sua ragione scritta accanto all'elenco.
+        for (const nome of [
+            // Il 25/10/2026 non era definita su Vercel, né in Production né in Preview: dentro,
+            // accenderebbe un allarme che suona da solo.
+            'ANTHROPIC_API_KEY',
+            'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+            'OTP_TICKET_SECRET',
+            'VAPID_SUBJECT',
+            'ARUBA_USERNAME',
+            'SIDI_USERNAME',
+            'SIDI_PASSWORD',
+            'ALLOW_HEADER_IDENTITY',
+            'PARENT_READS_USE_SESSION',
+            'KV_LOG_LEVEL',
+            'NEXT_PUBLIC_CARICAMENTI_NATIVI',
+        ]) {
+            expect(VARIABILI_CRITICHE, `${nome} non è una variabile critica: vedi il commento`).not.toContain(nome)
+        }
+    })
+
     /* ═══════════════════════════════════════════════════════════════════════
      * (e) LA CODA DELLE FATTURE — i casi di confine stanno in
      *     __tests__/lib/health/coda-fatture.test.ts; qui si prova che il controllo

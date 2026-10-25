@@ -56,8 +56,16 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //  • un sollecito è «inviato» solo se ALMENO UNA email è partita. Se non ne parte nessuna, la
 //    presa si annulla con un UPDATE condizionato sulla presa stessa (se un altro giro l'ha già
 //    ripresa, resta la sua), l'esito è `ok: false` e il giro dopo la riprende;
-//  • se l'esito è INCERTO (scadenza senza risposta, 409 concorrente) la presa resta: il
-//    sollecito slitta di una cadenza invece di partire due volte;
+//  • se l'esito è INCERTO (scadenza senza risposta, 5xx o connessione caduta dopo l'invio, uno
+//    dei due 409 dell'idempotenza: vedi `SendEmailResult.incerto`) la presa resta, e prima della
+//    cadenza non riparte niente. Senza, il giro del giorno dopo spedirebbe con una chiave nuova
+//    (porta la data) e Resend non potrebbe riconoscere il doppione.
+//    ⚠️ IL LIMITE RESIDUO, ACCETTATO (revisione del lotto 4): una riga `incerta` non conta per il
+//    livello (`FILTRO_RECAPITATO`), quindi alla cadenza dopo riparte lo STESSO livello con una
+//    chiave nuova. Se l'email incerta era arrivata, la famiglia la riceve due volte, a una
+//    cadenza di distanza (7 giorni di default). È il prezzo di non far salire il livello su
+//    un'email forse mai partita: il 2° sollecito a chi non ha mai ricevuto il 1° sarebbe peggio.
+//    La presa toglie il doppione dello stesso giorno, non quello della cadenza dopo;
 //  • il registro si scrive anche quando l'invio fallisce, con l'esito per destinatario; i
 //    livelli contano solo le righe con almeno un `inviata: true` (`FILTRO_RECAPITATO`);
 //  • niente push se nessuna email è partita: la push accompagna il sollecito, non lo sostituisce;
@@ -121,7 +129,8 @@ interface DestinatarioRegistrato {
     id: string
     email?: string | null
     inviata: boolean
-    /** Il provider potrebbe averla presa (vedi `SendEmailResult.incerto`). */
+    /** Il provider potrebbe averla presa (vedi `SendEmailResult.incerto`). NON fa salire il
+     *  livello: vedi il limite residuo in testa al file. */
     incerta?: true
 }
 
@@ -537,7 +546,11 @@ export async function sollecitaPagamenti(
             // scritto ed esito `ok: true` — la voce risultava sollecitata e la famiglia non aveva
             // ricevuto niente. Ora:
             //  · esito certo ⇒ la presa si annulla, e il giro dopo riprende la voce;
-            //  · esito incerto ⇒ la presa resta: meglio slittare di una cadenza che partire due volte.
+            //  · esito incerto ⇒ la presa resta: niente nuovo invio prima della cadenza, quindi
+            //    niente doppione il giorno dopo con una chiave nuova. Alla cadenza dopo riparte lo
+            //    STESSO livello (la riga `incerta` non lo fa salire): se l'email incerta era
+            //    arrivata, la famiglia la riceve due volte a una cadenza di distanza. È il limite
+            //    residuo, accettato, scritto in testa al file.
             // In entrambi i casi niente push, e il registro dice com'è andata.
             const presaAnnullata = incerte === 0
                 ? await annullaPresa(supabase, id, presaIl, pag.ultimo_sollecito_il)
@@ -547,7 +560,7 @@ export async function sollecitaPagamenti(
                 logEvento('pagamento', 'warn', {
                     operazione: 'solleciti-invio', esito: 'sollecito-esito-incerto', pagamento_id: id,
                     livello_sollecito: livello, tentate, incerte,
-                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita (scadenza, 5xx o connessione caduta dopo l’invio, 409 d’idempotenza): la cadenza resta e il sollecito slitta di una cadenza',
+                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita (scadenza, 5xx o connessione caduta dopo l’invio, 409 d’idempotenza): la cadenza resta, e alla prossima riparte lo stesso livello',
                 })
                 esiti.push({
                     pagamento_id: id, ok: false, livello, inviate: 0, tentate,

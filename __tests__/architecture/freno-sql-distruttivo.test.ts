@@ -369,3 +369,38 @@ describe('freno SQL — è registrato, e copre ciò che è in allow', () => {
     expect(fs.existsSync(path.join(RADICE, '.claude', 'hooks', 'supabase_sql_gate.sh'))).toBe(false)
   })
 })
+
+describe('freno SQL — le istruzioni degli agenti non lo aggirano', () => {
+  const CARTELLE = ['commands', 'agents', 'rules', 'agenti-ship-cycle'].map((c) => path.join(RADICE, '.claude', c))
+  const righe = CARTELLE.filter((c) => fs.existsSync(c)).flatMap((c) =>
+    fs
+      .readdirSync(c)
+      .filter((f) => f.endsWith('.md'))
+      .flatMap((f) =>
+        fs
+          .readFileSync(path.join(c, f), 'utf8')
+          .split('\n')
+          .map((testo, i) => ({ dove: `${path.relative(RADICE, path.join(c, f))}:${i + 1}`, testo })),
+      ),
+  )
+
+  it('legge davvero i file degli agenti', () => {
+    expect(righe.length).toBeGreaterThan(1000)
+  })
+
+  it('nessuna istruzione dice all’agente di fare il merge: lo fa il titolare', () => {
+    expect(righe.filter((r) => /gh\s+pr\s+merge/.test(r.testo)).map((r) => r.dove)).toEqual([])
+  })
+
+  it('ogni riga che nomina apply_migration dice che lo nega il freno', () => {
+    expect(
+      righe.filter((r) => r.testo.includes('apply_migration') && !/freno/i.test(r.testo)).map((r) => r.dove),
+    ).toEqual([])
+  })
+
+  it('supabase db query si nomina solo per leggere', () => {
+    expect(
+      righe.filter((r) => /supabase db query/.test(r.testo) && !/sola lettura/i.test(r.testo)).map((r) => r.dove),
+    ).toEqual([])
+  })
+})

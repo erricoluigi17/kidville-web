@@ -8,14 +8,15 @@ paths:
 
 Nome: `YYYYMMDDHHMMSS_descrizione_in_snake_case.sql` — timestamp UTC, sempre crescente.
 
-Si applicano con lo strumento MCP **`apply_migration`**, seguito da **`get_advisors`**, che deve
-tornare **0 ERROR**. `migrate.yml` resta in attesa del baseline dello storico.
+Le applica l'**integrazione GitHub di Supabase al merge** della PR, con la version del file; il merge
+lo fa il titolare. **`apply_migration` lo nega il freno** (`.claude/hooks/supabase_sql_freno.py`). Dopo
+il merge: una `SELECT` che la ritrova, poi **`get_advisors`**, che deve tornare **0 ERROR**.
 
 ## 🔴 Una migrazione dentro una PR la applica l'INTEGRAZIONE al merge
 
 E la applica **con la version del FILE**. Se l'hai già applicata a mano con un timestamp diverso, al
-merge ne nascono **due righe** nello storico, e da lì in poi lo stato divergente si trascina. Decidi
-*prima*: o a mano, o dalla PR — mai tutte e due.
+merge ne nascono **due righe** nello storico, e da lì in poi lo stato divergente si trascina. Per
+questo, dal 2026-10-25, si applica **solo** dalla PR.
 
 ## 🔴 Il database E2E della CI è un progetto separato e NON è migrato
 
@@ -41,7 +42,8 @@ Una route che non li prevede fa fallire l'E2E con un errore che sembra un bug de
   come indice parziale non lo trovi e concludi che non esiste: si guarda **`pg_indexes`**.
 - **`ON CONFLICT` su un indice parziale dà `42P10`** se non ripeti la stessa clausola `WHERE`
   dell'indice nella `ON CONFLICT`.
-- Senza strumento MCP disponibile: `supabase db query --linked`, eseguito dalla radice del repo.
+- Senza strumento MCP, e **solo in sola lettura**: `supabase db query --linked` dalla radice del repo.
+  È `Bash`, il freno non lo vede: una scrittura da lì non si lancia, si mostra al titolare.
 
 ## 🔴 Prima di scrivere in produzione
 

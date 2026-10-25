@@ -168,8 +168,8 @@ return esiti.filter(Boolean)
 
 Ogni esecutore, oltre al codice, deve consegnare:
 - **i test** che il TDD gli ha fatto scrivere (prima del codice, dove è pratico);
-- **le migrazioni** al DB dove servono (`supabase/migrations/`, applicate con lo strumento MCP
-  `apply_migration`, verificate con `get_advisors` → **0 ERROR**);
+- **le migrazioni** al DB dove servono, come file in `supabase/migrations/` dentro la PR: le applica
+  l'integrazione al merge, mai `apply_migration` (lo nega il freno); dopo il merge `get_advisors` → **0 ERROR**;
 - **le variabili d'ambiente** dove il codice le richiede — **solo nomi e riferimenti**,
   dichiarati in `docs/env.md`. **Mai un valore segreto in un file.** I valori da impostare
   finiscono nel resoconto finale;
@@ -319,7 +319,10 @@ Tutti gli 11 tester in `PASS`, gate formale verde (`eslint` · `tsc` · `vitest`
 
 🔻 **Procedi senza chiedere conferma** — decisione del titolare del **2026-08-03**, alla domanda
 esplicita su cosa dovesse passare in automatico: *«proprio tutto, migrazioni e merge compresi»*.
-Merge, deploy, migrazioni e `execute_sql` sono in `allow`; `defaultMode` è `acceptEdits`.
+🟥 **Due eccezioni dal 2026-10-25** (specifica della seconda serie di robustezza, approvata dal titolare
+il 20/10, decisione T3): **il merge lo fa il titolare** e **la migrazione la applica l'integrazione al
+merge**. `apply_migration` e le istruzioni distruttive su `execute_sql` le nega il freno
+(`.claude/hooks/supabase_sql_freno.py`); il resto della decisione del 2026-08-03 resta.
 
 Questa autorizzazione ha una storia che va letta prima di usarla. Fino al 2026-07-31 qui stava
 scritto *«senza conferma, siamo pre-lancio, nessun dato reale»*. **Era falso da due settimane**: in
@@ -344,10 +347,13 @@ I passi sono:
 2. **PR + CI** — `gh pr create` → `gh pr checks --watch`. La branch protection pretende
    `quality` ed `e2e` verdi. **L'E2E gira qui, in CI**: in locale è vietato
    (`.env.local` punta a **produzione**, il seed ci scriverebbe dentro — è in `deny`).
-3. **Merge** — `gh pr merge --squash --delete-branch`.
-4. **Migrazioni** — applicale al DB di **produzione** con lo strumento MCP `apply_migration`,
-   poi `get_advisors` → **0 ERROR**. (È il percorso reale di questo progetto: `migrate.yml`
-   resta in attesa del baseline dello storico.)
+3. **Merge — lo fa il titolare.** Con la CI verde su **tutti** i job, fermati e chiedigli il merge
+   mostrandogli la PR (`gh pr view <n> --web`). Mai il merge da qui, mai l'auto-merge.
+4. **Migrazioni — le applica l'integrazione GitHub di Supabase al merge**, con la version del file.
+   A mano no: `apply_migration` lo nega il freno (`.claude/hooks/supabase_sql_freno.py`), e una
+   migrazione applicata due volte lascia due righe nello storico. Dopo il merge: una `SELECT` che
+   trova la version del file in `supabase_migrations.schema_migrations` e l'oggetto che crea o
+   toglie, poi `get_advisors` → **0 ERROR**.
    ⚠️ Il **DB E2E della CI è un progetto separato e non è migrato**: non hai le sue credenziali.
    Non fingere di averlo fatto — mettilo nel resoconto tra le cose che restano.
 5. **Deploy** — il merge su `main` fa partire il deploy Vercel in produzione. **Verificalo**

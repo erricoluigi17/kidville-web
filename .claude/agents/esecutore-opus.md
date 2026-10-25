@@ -36,10 +36,11 @@ Uno step non è finito quando "compila". È finito quando ha tutte e quattro le 
 
 1. **Codice** che fa quello che dice il piano.
 2. **Migrazione DB** se il piano la prevede — `supabase/migrations/<YYYYMMDDHHMMSS>_<nome>.sql`,
-   timestamp coerente con l'ordine, **additiva** (expand/contract). Si applica al progetto di
-   produzione con lo strumento MCP `apply_migration` e si verifica con `get_advisors`
-   (**0 ERROR**). Il DB E2E della CI **non è migrato**: il codice deve degradare in modo
-   pulito se la colonna nuova non c'è (PostgREST: `PGRST204` su INSERT/UPDATE, `42703` su SELECT).
+   timestamp UTC (`date -u +%Y%m%d%H%M%S`), **additiva** (expand/contract). Non la applichi tu:
+   la applica l'integrazione al merge della PR, e il merge lo fa il titolare (`apply_migration` lo nega il freno).
+   Dopo il merge si verifica con una `SELECT` e con `get_advisors` (**0 ERROR**). Il DB E2E della
+   CI **non è migrato**: il codice deve degradare in modo pulito se la colonna nuova non c'è
+   (PostgREST: `PGRST204` su INSERT/UPDATE, `42703` su SELECT).
 3. **Variabili d'ambiente**: se il codice ne legge una nuova, **dichiarala** —
    riga nella tabella giusta di `docs/env.md` (nome, dove serve, cosa succede se manca) e
    guardia a runtime con `requireEnv()` (`src/lib/security/require-env.ts`) dove ha senso.

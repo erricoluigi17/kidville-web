@@ -257,7 +257,17 @@ export function posterioriCheContengono(
 // SVUOTATA il 25/10/2026 (PR-B, primo commit della sessione dopo il merge di #266, `cdcb5347`):
 // applicata dall'integrazione, una riga sola nel registro; fotografie delle migrazioni e delle FK verso
 // `utenti` rigenerate dalla produzione — cambia davvero solo quella delle migrazioni.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// Sessione 6 della seconda serie (2026-10-25): la migrazione degli esiti dei cron crea due tabelle con
+// PRIMARY KEY e RLS accesa. La applica l'integrazione al merge; la voce la toglie la sessione dopo,
+// nella chiusura della precedente (piano della sessione 6, «Per la sessione dopo»).
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261025095807_cron_esiti_osservati.sql':
+        'Sessione 6 della seconda serie: crea `cron_chiamate` e `cron_ultimo_esito` (PRIMARY KEY, RLS accesa ' +
+        'senza policy) e ridefinisce le funzioni che chiamano il server. La applica l’integrazione Supabase ' +
+        'al merge; la voce la toglie la PR-B, cioè il primo commit della sessione dopo, rigenerando ' +
+        'dalla produzione le fotografie delle migrazioni, degli indici unici e delle policy.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

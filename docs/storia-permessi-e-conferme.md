@@ -427,9 +427,10 @@ tabella del Compito 1, passo 5 del piano `docs/superpowers/plans/2026-10-20-robu
 cui il freno non parte (`python3` assente, timeout): Claude Code lo tratta come errore non bloccante e
 la chiamata passa. Dentro l'SQL passano ancora una funzione già nel database che scrive
 (`SELECT public.f()`), le parole spezzate apposta (`'DEL' || 'ETE FROM …'`, il nome di un interruttore
-costruito con `||`), `REVOKE`, `ALTER … RENAME`, `ALTER … DISABLE ROW LEVEL SECURITY`,
-`CREATE OR REPLACE` di una funzione esistente e `COPY`. Il freno ferma gli sbagli, non chi lo vuole
-aggirare.
+costruito con `||`), `REVOKE`, `ALTER … RENAME`, `CREATE OR REPLACE` di una funzione esistente,
+`COPY`, una policy con `USING (true)` e `ALTER ROLE … BYPASSRLS`. (`ALTER … DISABLE ROW LEVEL SECURITY`
+e `NO FORCE ROW LEVEL SECURITY` li ferma dal ritocco del 25/10/2026, commit del freno.) Il freno ferma
+gli sbagli, non chi lo vuole aggirare.
 
 **Cosa può rompere la migrazione.** Al passo 0 del piano, in `pg_stat_statements`, `public.exec_sql`
 risulta chiamata **35 volte** da `service_role` (un minimo: la finestra parte dal 06/08/2026). Nel repo

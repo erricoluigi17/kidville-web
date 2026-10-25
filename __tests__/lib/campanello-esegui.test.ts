@@ -58,7 +58,7 @@ function ghFinto(opzioni: { giri?: unknown[] | Error; daFuori?: unknown[] | Erro
         },
         async giriBackupRiusciti() {
             if (opzioni.giri instanceof Error) throw opzioni.giri
-            return opzioni.giri ?? [{ conclusion: 'success', updated_at: new Date(ADESSO - 5 * ORA).toISOString() }]
+            return opzioni.giri ?? [{ event: 'schedule', conclusion: 'success', updated_at: new Date(ADESSO - 5 * ORA).toISOString() }]
         },
         async giriDaFuori() {
             if (opzioni.daFuori instanceof Error) throw opzioni.daFuori
@@ -407,9 +407,9 @@ describe('creaGitHub (le chiamate vere all\'API)', () => {
         expect((await gh.elencaAperte()).map((s: { numero: number }) => s.numero)).toEqual([1])
     })
 
-    it('legge SOLO i giri automatici e riusciti del backup', async () => {
+    it('legge i giri RIUSCITI del backup, automatici e no: quali contano lo decide valutaBackup', async () => {
         const f = fetchFinto({
-            'https://api.github.com/repos/o/r/actions/workflows/backup-notturno.yml/runs?event=schedule&status=success&per_page=5': [
+            'https://api.github.com/repos/o/r/actions/workflows/backup-notturno.yml/runs?status=success&per_page=30': [
                 { status: 200, corpo: { workflow_runs: [{ conclusion: 'success', updated_at: 'x' }] } },
             ],
         })

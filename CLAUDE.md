@@ -101,6 +101,34 @@ radice, home, **la cartella di lavoro e i suoi genitori**. Vie di fuga per una s
 `KIDVILLE_PIANO_A_MANO=1` (riporta a mano l'approvazione del piano) ·
 `KIDVILLE_AUTO_PERMESSI_ANCHE_RM=1` (toglie anche quell'ultimo prompt).
 
+🟥 **Il freno sulle istruzioni distruttive — dal 2026-10-25** (robustezza, seconda serie, sessione 2;
+decisione T3). Due eccezioni all'autonomia piena: **la migrazione la applica l'integrazione al merge**
+e **il merge lo fa il titolare**. L'hook `PreToolUse` `.claude/hooks/supabase_sql_freno.py` risponde
+`deny` — mai `ask`, che `auto_allow_permission.py` approverebbe — a ogni `apply_migration` e, su
+`execute_sql`, a `DELETE`, `DROP`, `TRUNCATE`, `UPDATE` senza `WHERE`, `ALTER … DROP`, agli
+interruttori della scatola nera, dei registri e dei trigger (`registri.manutenzione`,
+`scatola_nera.manutenzione`, `scatola_nera.senza_storico`, `session_replication_role`,
+`DISABLE TRIGGER`, `UPDATE pg_settings`), alla sicurezza a livello di riga spenta
+(`ALTER TABLE … DISABLE ROW LEVEL SECURITY` e `… NO FORCE ROW LEVEL SECURITY`; `ENABLE` e `FORCE`
+passano) e a ciò che non sa leggere (in dubbio si ferma). Le stesse
+categorie le cerca anche nelle stringhe che il database poi **esegue** — `EXECUTE` e `format()`,
+`cron.schedule`/`alter_job`, `dblink_exec`, il corpo di un `DO` o di una funzione — e in
+`MERGE … THEN DELETE`. **Passano ancora**: una funzione già nel database che scrive
+(`SELECT public.f()`), le parole spezzate apposta (`'DEL' || 'ETE …'`), `REVOKE`, `ALTER … RENAME`,
+le altre vie per scavalcare la RLS (una policy con `USING (true)`, `ALTER ROLE … BYPASSRLS`),
+`CREATE OR REPLACE` di una funzione esistente, `COPY`: il freno
+ferma gli sbagli, non chi lo vuole aggirare. Fermato vuol dire **mostrare l'istruzione al titolare**,
+che la esegue dall'editor SQL, non cercare un'altra via: SQL da `Bash` (`psql`, `supabase db query`,
+`DATABASE_URL`) il freno non lo vede. Via di fuga: `KIDVILLE_FRENO_SQL_SPENTO=1`.
+
+🟥 **Le quattro aggiunte alla decisione T3 non le ha confermate il titolare.** A (interruttori di
+registri e scatola nera), B (`session_replication_role`), C (`DISABLE TRIGGER`), D (in dubbio si
+ferma): le ha decise l'assistente il 25/10/2026 **in assenza del titolare**, che aveva chiesto di non
+essere interpellato. Sono quattro «sì» — la scelta più severa — e si possono togliere una per una
+(tabella del Compito 1, passo 5 del piano `docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md`).
+**Da confermare.** Prova del freno in una sessione nuova dopo il merge: **da fare** (la scrive la
+sessione dopo, nel suo primo commit).
+
 ⚠️ Il blocco `autoMode` va in **`~/.claude/settings.json`**, mai in `.claude/settings.json`: ha scope
 «User or managed», e da un file di progetto viene ignorato **in silenzio**. È stato nel posto
 sbagliato per sedici giorni senza avere alcun effetto. Si verifica con `claude auto-mode config`,

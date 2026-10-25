@@ -110,7 +110,6 @@ import { POST as creaOrdine } from '@/app/api/admin/merch/ordini/route'
 import { PATCH as salvaAruba } from '@/app/api/admin/settings/aruba/route'
 import { POST as faseA } from '@/app/api/admin/sidi/fase-a/route'
 import { POST as wipe } from '@/app/api/admin/wipe/route'
-import { GET as setupRegistro } from '@/app/api/admin/setup-registro/route'
 import { GET as messaggiChat } from '@/app/api/admin/chat/messages/route'
 import { POST as daDocumento } from '@/app/api/admin/protocolli/da-documento/route'
 import { GET as schedaAlunno } from '@/app/api/admin/students/[id]/route'
@@ -238,15 +237,6 @@ describe('manutenzione — anche qui un risultato non si butta', () => {
     const res = await wipe(json('http://localhost/api/admin/wipe', 'POST'))
     expect(res.status).toBe(200)
     expect(h.logEvento.mock.calls.some((c) => c[0] === 'db' && c[1] === 'info' && (c[2] as { esito?: string }).esito === 'tabella-saltata')).toBe(true)
-  })
-
-  it('setup registro: le RLS fallite vanno fra gli errori, non fra i «✅»', async () => {
-    h.rpc.exec_sql = { error: { code: '42501', message: 'permesso negato' } }
-    const res = await setupRegistro(json('http://localhost/api/admin/setup-registro', 'GET'))
-    const corpo = await res.json()
-    expect(corpo.success).toBe(false)
-    expect(corpo.steps).not.toContain('✅ RLS valutazioni')
-    expect(corpo.errors.some((e: string) => e.startsWith('RLS valutazioni:'))).toBe(true)
   })
 })
 

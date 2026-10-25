@@ -94,30 +94,50 @@ const LIMITE_SCANSIONE = 2000;
  * 150 uuid ≈ 6 KB di URL: sta sotto la soglia con margine, e i lotti si sommano
  * (14 richieste al massimo per arrivare a `LIMITE_SCANSIONE`).
  *
- * ⚠️ Lo stesso difetto è ancora aperto in `admin/parents:GET`
- * (`src/app/api/admin/parents/route.ts`), e lì è PEGGIORE — non «la metà»:
- * quella route risale dagli alunni dei plessi ai loro genitori con tre `.in(…)`
- * in fila (`scuola_id`, poi `student_id`, poi `id`) e **non ha nessun tetto di
- * lettura**: né lotti, né `.limit(…)`, né `.range(…)`. Si verifica in due righe,
- * che non invecchiano come invecchierebbe un numero scritto qui:
+ * `admin/parents:GET` (`src/app/api/admin/parents/route.ts`) risale anche lei
+ * dagli alunni dei plessi ai loro genitori, e fino alla sessione 11 della seconda
+ * serie di robustezza (commit f42a6817, ottobre 2026) aveva lo stesso difetto,
+ * peggiore: tre `.in(…)` in fila, senza lotti e senza nessun tetto di lettura.
+ * Oggi legge così: gli alunni con `leggiABlocchi` (pagine di 1000 righe ordinate
+ * per `id`); i legami per blocchi di `ID_PER_QUERY` (100) alunni, ognuno letto
+ * con `leggiABlocchi` sulla chiave `(student_id, parent_id)`; i genitori per
+ * blocchi di 100 id. I blocchi dei legami, e poi quelli dei genitori, vanno in
+ * parallelo; un blocco caduto o il tetto di 50.000 righe di una lettura fanno
+ * rispondere 500 all'elenco intero (log
+ * `lettura-troncata` o `db`): là non esce mai un elenco a metà.
  *
- *     grep -c '\.limit(\|\.range(' src/app/api/admin/parents/route.ts   # → 0
- *     grep -n  '\.in('            src/app/api/admin/parents/route.ts   # → i tre filtri
+ * Perché questa route non legge allo stesso modo — e la ragione regge: sono due
+ * contratti diversi. Là c'è un'anagrafica, che esce INTERA o non esce; qui c'è
+ * un pannello di cose da fare con un tetto di scansione voluto
+ * (`LIMITE_SCANSIONE`), che quando morde risponde con meno righe e lo DICHIARA
+ * (`troncato`), contando i legami lotto per lotto. Anche le colonne sono altre:
+ * qui servono sesso, data e luogo di nascita per confrontare il codice, là basta
+ * la proiezione minima della lista. I lotti di 150 uuid di qui e i blocchi di 100
+ * di là stanno entrambi sotto la soglia dell'URL.
  *
- * Conseguenza: là il punto di rottura dell'URL **non ha soffitto sopra di sé**.
- * Qui `LIMITE_SCANSIONE` almeno garantisce che gli uuid da impacchettare siano
- * un numero noto, e quando morde la risposta lo DICHIARA (`troncato`); là non
- * c'è niente da dichiarare perché non c'è niente che tagli, e il giorno in cui
- * i legami in scope superano il migliaio la route smette di rispondere invece di
- * rispondere meno. Non si tocca perché è un'altra corsia e la conversione va
- * fatta col suo collaudo accanto.
+ * ⚠️ Che quelle letture restino a blocchi NON si verifica con un `grep` di
+ * `.range(` o `.limit(` su quel file: `.range` sta dentro `leggiABlocchi`, e il
+ * conteggio darebbe 0 anche con ogni lettura paginata. Lo tiene fermo il lock
+ * `__tests__/architecture/letture-a-blocchi.test.ts`, che dichiara la forma di
+ * ogni lettura di quel file e fa rosso se una torna nuda.
  *
- * ⚠️ Questo capoverso, nella sua prima stesura, attribuiva a quel file «un tetto
- * 1000». Non è mai esistito: `1000` non compare in quel file, né nell'albero di
- * lavoro né a `HEAD`. Era un inventario inventato scritto due schermate sotto la
- * riparazione che di quella stessa classe d'errore si vantava — cioè esattamente
- * ciò che CLAUDE.md chiama «un commento che descrive una protezione che il codice
- * non ha», e che è peggio di nessun commento perché SOTTOSTIMAVA il rischio.
+ * ⚠️ E QUI un buco della stessa famiglia resta aperto, detto invece che taciuto:
+ * gli alunni si leggono con `.limit(LIMITE_SCANSIONE)`, cioè 2000, sopra
+ * `max_rows` (1000). PostgREST ne consegna al più 1000, quindi con più di 1000
+ * alunni in scope `troncatoAlunni` non diventa mai `true` (chiede 2000 righe
+ * lette) e il pannello ne scansiona meno senza dirlo. Oggi è latente (778 alunni
+ * nelle tre sedi, contati il 24/10/2026); se morde, lo segnala il `warn`
+ * `max-rows-raggiunto` del `fetch` strumentato. Questo ritocco tocca solo il
+ * commento: la correzione è un lavoro a parte.
+ *
+ * ⚠️ Questo capoverso ha già sbagliato due volte, in due versi opposti. La prima
+ * stesura (agosto 2026) attribuiva a quel file «un tetto 1000» che allora non
+ * esisteva: un commento che descrive una protezione che il codice non ha, peggio
+ * di nessun commento perché SOTTOSTIMAVA il rischio. La seconda, dopo la sessione
+ * 11, descriveva ancora come aperto il difetto che quella sessione aveva chiuso,
+ * con una «verifica in due righe» per `grep` che continuava a dare l'esito atteso
+ * per la ragione sbagliata. Per questo qui non c'è più un inventario da rifare a
+ * mano: c'è il lock.
  */
 const UUID_PER_LOTTO = 150;
 

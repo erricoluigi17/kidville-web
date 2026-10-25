@@ -40,10 +40,16 @@ key.properties
 *.pepk
 
 # chiavi del BACKUP esterno (chiave privata age, password di cifratura dei file): MAI nel repository,
-# che è PUBBLICO. Roadmap di robustezza, fase 2. Il lock `backup-notturno-sicuro` verifica che questa
-# regola esista e che nessun file tracciato contenga una chiave age privata. ⚠️ `git clean -x` cancella
-# i file ignorati: per questo la cartella esiste ANCHE altrove finché non ci sono le copie offline.
+# che è PUBBLICO. Dalla sessione 4 della seconda serie di robustezza il posto della cartella è FUORI
+# dall'app (percorso e procedura nel runbook; lo spostamento lo fa il titolare, a mano): questa riga
+# resta come rete, se mai venisse ricopiata qui o in un worktree. Il lock `backup-notturno-sicuro`
+# verifica che esista e che nessun file tracciato contenga una chiave age privata.
 /KIDVILLE-CHIAVI-BACKUP/
+
+# Il Worker del monitor esterno (`monitor-esterno/`): `.dev.vars` contiene i segreti della prova in
+# locale (`wrangler dev`), `.wrangler/` la sua cache. MAI nel repository, che è pubblico.
+.dev.vars*
+.wrangler/
 
 # debug
 npm-debug.log*

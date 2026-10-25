@@ -285,6 +285,10 @@ const COPERTE_ATTESE: Record<string, number> = {
   // togliere · `fascicoloAncheNelCestino` sui percorsi ancora citati da una riga VIVA o
   // nel cestino (un file condiviso non si cancella) · `fascicoloNelCestino` sul DELETE.
   'src/app/api/gdpr/retention-cestino-registro/route.ts': 3,
+  // `fascicoloAncheNelCestino` (robustezza 2, sessione 1): la conservazione delle domande
+  // d'iscrizione chiede se un documento del fascicolo, vivo o nel cestino, nomina ancora un
+  // allegato prima di toglierlo dal bucket. Un letterale solo, chiamato per due colonne.
+  'src/lib/iscrizioni/percorsi-citati.ts': 1,
 }
 
 /**
@@ -295,8 +299,10 @@ const COPERTE_ATTESE: Record<string, number> = {
  * finché la purga mancava da `COPERTE_ATTESE`: alzata, non abbassata. Se scende, prima
  * si stabilisce se è il riconoscitore a essersi rotto; solo dopo, e scrivendo QUI cosa
  * è cambiato, si abbassa.
+ * 2026-10 · 29: la lettura dichiarata di `src/lib/iscrizioni/percorsi-citati.ts` (robustezza 2,
+ * sessione 1). Alzata, non abbassata.
  */
-const SOGLIA_VISTE = 28
+const SOGLIA_VISTE = 29
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Le funzioni edge (Deno): il filtro del cestino scritto a mano

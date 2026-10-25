@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { DIMENSIONE_MAX_ALLEGATO_BYTE, MIME_ALLEGATI_AMMESSI } from '@/lib/allegati/mime'
+import { MIME_ALLEGATO_PUBBLICO } from '@/lib/upload/allegati-pubblici'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOCK · un bucket si dichiara in migrazione, e dice le stesse cose del codice
@@ -61,10 +63,10 @@ import { join } from 'node:path'
 // Restano `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/webm` —
 // tutti riproducibili su tutt'e due i sistemi.
 //
-// PERCHÉ LA VISIBILITÀ SI GUARDA IN DUE POSTI. Otto bucket su dodici non sono
-// dichiarati in nessuna migrazione: sono nati dalla console di Supabase. Per loro il
-// repo non ha niente da leggere, e un bucket riaperto da quella console non lascerebbe
-// traccia in nessun file. Quindi:
+// PERCHÉ LA VISIBILITÀ SI GUARDA IN DUE POSTI. Fino alla sessione 4 della seconda serie quattro bucket
+// su ventuno non erano CREATI da nessuna migrazione (tre nati dalla console, uno da una route); ora lo
+// sono tutti, e la prova «ogni bucket della produzione è CREATO da una migrazione» lo pretende. Resta
+// vero che un bucket riaperto dalla console non lascia traccia in nessun file. Quindi:
 //   · sulle MIGRAZIONI si verifica che nessun file del repo li riapra (è la difesa che
 //     scatta PRIMA, in revisione, mentre la modifica è ancora una proposta);
 //   · sul DATABASE si verifica lo stato reale, attraverso la fotografia versionata
@@ -283,13 +285,11 @@ const RISERVATI = [
   // immagini che l'insegnante aggancia a una lezione, come argomento o come compito.
   // Li vedono i genitori della classe attraverso un indirizzo firmato a scadenza
   // breve (`parent/primaria`, `primaria/compiti`), e dentro può esserci il quaderno
-  // di un bambino col suo nome: non è materia pubblica. ⚠️ NATO DA UNA ROUTE, NON DA
-  // UNA MIGRAZIONE: lo ha creato la `createBucket` di `src/app/api/primaria/allegati/route.ts`
-  // al primo caricamento (in produzione `created_at` = 2026-09-23 08:15 UTC, privato).
-  // È rimasto fuori da questo elenco per due giorni perché la fotografia dello Storage
-  // non era stata rigenerata: la prova «nessun bucket sfugge alla classificazione»
-  // sarebbe stata rossa, e nessuno la stava guardando. Il suo limite vive nella route
-  // e non in una migrazione, ed è dichiarato in `IN_ATTESA_DI_UN_LIMITE`.
+  // di un bambino col suo nome: non è materia pubblica.
+  // Nato il 2026-09-23 da una `createBucket` della route `src/app/api/primaria/allegati/route.ts`
+  // (privato). Per due giorni è rimasto fuori da questo elenco perché la fotografia dello Storage non
+  // era stata rigenerata. Dalla sessione 4 della seconda serie lo CREA anche una migrazione
+  // (`*_bucket_dichiarati_dalla_produzione.sql`), con le impostazioni lette dalla produzione.
   'registro-allegati',
   'task_allegati',
 ] as const
@@ -326,9 +326,12 @@ function senzaWhere(sql: string): string {
  *    due, uno per ramo: se uno dei due apre il bucket, lo statement lo apre. La
  *    lettura prudente è l'unica che va bene in un lock di sicurezza.
  */
-function visibilitaDichiarata(bucket: string): { pubblico: boolean; file: string } | null {
+function visibilitaDichiarata(
+  bucket: string,
+  statement: { file: string; sql: string }[] = statementDelBucket(bucket),
+): { pubblico: boolean; file: string } | null {
   let ultima: { pubblico: boolean; file: string } | null = null
-  for (const s of statementDelBucket(bucket)) {
+  for (const s of statement) {
     const valori: boolean[] = []
     const inserito = valoriInsert(s.sql)?.public?.trim()
     if (inserito && /^(true|false)$/i.test(inserito)) valori.push(/^true$/i.test(inserito))
@@ -338,6 +341,22 @@ function visibilitaDichiarata(bucket: string): { pubblico: boolean; file: string
     if (valori.length) ultima = { pubblico: valori.some(Boolean), file: s.file }
   }
   return ultima
+}
+
+/**
+ * Gli id dei bucket che una migrazione CREA: `insert into storage.buckets (…) values (…), (…)`.
+ * Tutte le tuple, non solo la prima (`20260916190000_video_jobs.sql` ne crea due in un'istruzione).
+ * Un `update` non crea niente: su un database nuovo non trova la riga e non fa nulla. È il motivo per
+ * cui `avvisi_allegati`, `task_allegati` e `form_attachments` erano «dichiarati» ma non ricostruibili.
+ */
+function bucketCreatiInMigrazione(statement: { file: string; sql: string }[] = STATEMENT): Set<string> {
+  const creati = new Set<string>()
+  for (const s of statement) {
+    const m = s.sql.match(/insert\s+into\s+storage\.buckets\s*\([^)]*\)\s*values([\s\S]*?)(?:\bon\s+conflict\b|$)/i)
+    if (!m) continue
+    for (const t of m[1].matchAll(/\(\s*'([a-z0-9_-]+)'/gi)) creati.add(t[1])
+  }
+  return creati
 }
 
 // ─── la fotografia della produzione (il test gira OFFLINE) ────────────────────
@@ -553,21 +572,11 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
  * Un'esenzione che sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.
  */
 const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {
-  // ─── RIAPERTA IL 2026-09-25, con una voce sola ──────────────────────────────
-  // La mappa era vuota dal 18/09 (vedi sopra) e lo sarebbe rimasta, se lo Storage
-  // non avesse avuto nel frattempo un bucket in più: `registro-allegati`, nato il
-  // 2026-09-23 da una `createBucket` e non da una migrazione. È il caso per cui il
-  // meccanismo era stato lasciato in piedi: il tetto esiste ed è dichiarato nel repo,
-  // ma nel posto sbagliato. La voce muore da sola il giorno in cui una migrazione lo
-  // pinna (prova «non contiene voci morte»).
-  'registro-allegati':
-    'Misurato in produzione il 2026-09-25 (select id, file_size_limit from storage.buckets ' +
-    "where id = 'registro-allegati'): 10485760 byte. È `MAX_PDF_ALLEGATO` di " +
-    '`src/lib/primaria/allegati-registro.ts`, che la `createBucket` di ' +
-    '`src/app/api/primaria/allegati/route.ts` spedisce come `fileSizeLimit`: da lì è nato il ' +
-    'bucket, al primo caricamento (2026-09-23), e quindi il numero del database è quello del ' +
-    'codice. Nessuna migrazione lo dichiara ancora: pinnarlo è un compito a sé, perché una ' +
-    'migrazione dentro una PR la applica l’integrazione al merge.',
+  // ─── VUOTA DALLA SESSIONE 4 DELLA SECONDA SERIE ─────────────────────────────
+  // L'unica voce, `registro-allegati` (riaperta il 2026-09-25: il tetto viveva solo nella
+  // `createBucket` della route), è morta come doveva: la migrazione
+  // `*_bucket_dichiarati_dalla_produzione.sql` crea il bucket con 10485760 byte, letti dalla
+  // produzione. Il meccanismo resta per il prossimo bucket nato fuori da una migrazione.
 }
 
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
@@ -1088,8 +1097,12 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       // — cioè esattamente il difetto che questa parte del lock esiste per impedire.
       // E come effetto voluto: cancellare `20260731192108_allegati_avvisi_task_bucket_privati.sql`
       // da qui diventa rosso.
+      // Dalla sessione 4 della seconda serie i due bucket sono anche CREATI (privati) da un INSERT più
+      // recente: senza il filtro sul file, questa prova leggerebbe quello e smetterebbe di collaudare il
+      // ramo UPDATE del parser, che è la ragione per cui esiste.
+      const CHIUSURA = '20260731192108_allegati_avvisi_task_bucket_privati.sql'
       for (const bucket of ['avvisi_allegati', 'task_allegati']) {
-        const dichiarata = visibilitaDichiarata(bucket)
+        const dichiarata = visibilitaDichiarata(bucket, statementDelBucket(bucket).filter((s) => s.file === CHIUSURA))
         expect(
           dichiarata,
           `Nessuna migrazione dichiara la visibilità di \`${bucket}\`: la migrazione che il ` +
@@ -1217,6 +1230,33 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       ).toEqual([])
     })
 
+    it('ogni bucket della produzione è CREATO da una migrazione (si ricostruisce da zero)', () => {
+      // Scenario E del runbook: progetto perso, schema rifatto dai file. Un bucket che esiste solo in
+      // produzione, su un progetto nuovo non c'è, e i suoi file ricaricati dallo specchio non hanno
+      // dove andare. Fino alla sessione 4 della seconda serie erano quattro.
+      const creati = bucketCreatiInMigrazione()
+      const mancanti = foto.bucket.map((b) => b.id).filter((id) => !creati.has(id))
+      expect(
+        mancanti,
+        `Questi bucket esistono in produzione ma nessuna migrazione li CREA (un \`update\` non basta):\n` +
+          `  ${mancanti.join('\n  ')}\n` +
+          'Scrivi una migrazione `insert into storage.buckets (…) values (…) on conflict (id) do nothing`, ' +
+          'un bucket per istruzione, con le impostazioni lette dalla produzione.',
+      ).toEqual([])
+    })
+
+    it('il lettore dei bucket creati legge tutte le tuple e non scambia un update per una creazione (sanity)', () => {
+      const creati = bucketCreatiInMigrazione()
+      expect(creati.has('video_processing'), 'seconda tupla di un INSERT a due').toBe(true)
+      expect(creati.has('storici-stampe'), '`values(` senza spazio').toBe(true)
+      expect(creati.size).toBeGreaterThan(15)
+      const finte = [
+        { file: 'a.sql', sql: "update storage.buckets set public = false where id = 'avvisi_allegati'" },
+        { file: 'b.sql', sql: "insert into storage.buckets (id, name) values ('uno', 'uno'), ('due', 'due') on conflict (id) do nothing" },
+      ]
+      expect([...bucketCreatiInMigrazione(finte)].sort()).toEqual(['due', 'uno'])
+    })
+
     it('il generatore della fotografia non legge i file del repo', () => {
       // Se la fotografia si ricavasse dalle migrazioni o dal sorgente, questo blocco
       // confronterebbe il repo con se stesso: verde per costruzione, cioè nessun
@@ -1238,6 +1278,122 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
         codice.includes('storage.buckets'),
         'Il generatore non nomina `storage.buckets`: da dove verrebbe la fotografia?',
       ).toBe(true)
+    })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // I QUATTRO BUCKET NATI FUORI DALLE MIGRAZIONI (seconda serie, sessione 4)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  describe('la migrazione che crea i quattro bucket nati fuori dalle migrazioni', () => {
+    /**
+     * `*_bucket_dichiarati_dalla_produzione.sql` esiste per un database NUOVO: in produzione non
+     * cambia nessuna riga. Proprio per questo nessuno la vedrà mai sbagliare. Un limite copiato male,
+     * un tipo in meno, un `public` invertito resterebbero lì fino al giorno del disastro, e quel
+     * giorno il progetto ricostruito accetterebbe file diversi dalla produzione (o li servirebbe a
+     * chiunque). Il resto di questo file non lo vede: `form_attachments` e `registro-allegati` sono
+     * confrontati col codice solo nella forma `=` di un `update`, o per niente. Qui ogni valore della
+     * creazione si lega a quello che il codice fa rispettare, e la forma dell'istruzione deve essere
+     * quella che in produzione non tocca niente (`on conflict (id) do nothing`, una tupla).
+     */
+    const FILE_DICHIARATI = readdirSync(MIGRAZIONI).filter((f) =>
+      /^\d{14}_bucket_dichiarati_dalla_produzione\.sql$/.test(f),
+    )
+    const DEL_FILE = STATEMENT.filter((s) => FILE_DICHIARATI.includes(s.file))
+    const creazioni = DEL_FILE.filter((s) => /insert\s+into\s+storage\.buckets/i.test(s.sql))
+    const idDi = (sql: string) => valoriInsert(sql)?.id?.replace(/^'|'$/g, '')
+    const mimeInOrdine = (valore: string | undefined) =>
+      [...(valore ?? '').matchAll(/'([a-z]+\/[a-z0-9.+-]+)'/gi)].map((m) => m[1])
+
+    // `registro-allegati`: il codice che lo crea è la `createBucket` della route, con le costanti di
+    // `src/lib/primaria/allegati-registro.ts`. Si leggono dal TESTO (il modulo porta con sé i gate di
+    // ruolo e il client di Supabase, che un lock offline non deve caricare).
+    const REGISTRO_LIB = senzaCommenti(sorgente('src/lib/primaria/allegati-registro.ts'))
+    const REGISTRO_ROUTE = senzaCommenti(sorgente('src/app/api/primaria/allegati/route.ts'))
+    const espressione = REGISTRO_LIB.match(/MAX_PDF_ALLEGATO\s*=\s*([\d_\s*]+)/)?.[1] ?? ''
+    const MAX_PDF_ALLEGATO = espressione.trim()
+      ? espressione.split('*').reduce((p, f) => p * Number(f.trim().replaceAll('_', '')), 1)
+      : null
+    const IMG_TYPES_ALLEGATO = mimeInOrdine(REGISTRO_LIB.match(/IMG_TYPES_ALLEGATO[^=]*=\s*\[([\s\S]*?)\]/)?.[1])
+
+    // `form_attachments`: la produzione ha avuto il limite dalla forma `=` di questa migrazione (la sola
+    // che lo dichiara), e la creazione deve dire lo stesso numero.
+    const FILE_FORM = '20260802191025_form_attachments_tipi_e_limite.sql'
+    const limiteFormAssegnato = (() => {
+      const s = statementDelBucket('form_attachments').find((x) => x.file === FILE_FORM)
+      const m = s?.sql.match(/file_size_limit\s*=\s*(\d+)/i)
+      return m ? Number(m[1]) : null
+    })()
+
+    const ATTESI: Record<string, { limite: number | null; mime: readonly string[]; fonte: string }> = {
+      avvisi_allegati: {
+        limite: DIMENSIONE_MAX_ALLEGATO_BYTE,
+        mime: MIME_ALLEGATI_AMMESSI,
+        fonte: '`DIMENSIONE_MAX_ALLEGATO_BYTE` e `MIME_ALLEGATI_AMMESSI` (src/lib/allegati/mime.ts)',
+      },
+      task_allegati: {
+        limite: DIMENSIONE_MAX_ALLEGATO_BYTE,
+        mime: MIME_ALLEGATI_AMMESSI,
+        fonte: '`DIMENSIONE_MAX_ALLEGATO_BYTE` e `MIME_ALLEGATI_AMMESSI` (src/lib/allegati/mime.ts)',
+      },
+      form_attachments: {
+        limite: limiteFormAssegnato,
+        mime: MIME_ALLEGATO_PUBBLICO,
+        fonte: `\`file_size_limit =\` di ${FILE_FORM} e \`MIME_ALLEGATO_PUBBLICO\` (src/lib/upload/allegati-pubblici.ts)`,
+      },
+      'registro-allegati': {
+        limite: MAX_PDF_ALLEGATO,
+        mime: ['application/pdf', ...IMG_TYPES_ALLEGATO],
+        fonte: '`MAX_PDF_ALLEGATO` e `[\'application/pdf\', ...IMG_TYPES_ALLEGATO]` (src/lib/primaria/allegati-registro.ts)',
+      },
+    }
+
+    it('le fonti del codice si leggono davvero (sanity)', () => {
+      // Un'espressione non letta renderebbe `null` il valore atteso, e la prova qui sotto rossa per
+      // il motivo sbagliato; un elenco vuoto la renderebbe verde su una creazione senza tipi.
+      expect(MAX_PDF_ALLEGATO).toBe(10 * 1024 * 1024)
+      expect(IMG_TYPES_ALLEGATO.length).toBeGreaterThan(3)
+      expect(limiteFormAssegnato).toBeGreaterThan(0)
+      // E la route crea davvero il bucket con QUELLE costanti: se le cambiasse, il bucket di un ambiente
+      // nuovo nato dalla route e quello nato dalla migrazione direbbero cose diverse.
+      expect(REGISTRO_ROUTE).toMatch(/public:\s*false/)
+      expect(REGISTRO_ROUTE).toMatch(/allowedMimeTypes:\s*\[\s*'application\/pdf',\s*\.\.\.IMG_TYPES_ALLEGATO\s*\]/)
+      expect(REGISTRO_ROUTE).toMatch(/fileSizeLimit:\s*MAX_PDF_ALLEGATO\b/)
+    })
+
+    it('è una sola, e crea i quattro bucket con un INSERT a tupla singola che non tocca la produzione', () => {
+      expect(FILE_DICHIARATI, 'deve esserci UN file `<version>_bucket_dichiarati_dalla_produzione.sql`').toHaveLength(1)
+      expect(creazioni.map((s) => idDi(s.sql)).sort()).toEqual(Object.keys(ATTESI).sort())
+      for (const s of creazioni) {
+        expect(
+          bucketCreatiInMigrazione([s]).size,
+          `\`${idDi(s.sql)}\`: un bucket per istruzione (il lock legge la PRIMA tupla di ogni INSERT).`,
+        ).toBe(1)
+        expect(
+          /\bon\s+conflict\s*\(\s*id\s*\)\s*do\s+nothing\s*$/i.test(s.sql.trim()),
+          `\`${idDi(s.sql)}\`: senza \`on conflict (id) do nothing\` la migrazione fallisce in produzione ` +
+            '(il bucket c’è già); con `do update` un errore di lettura delle impostazioni finirebbe lì.',
+        ).toBe(true)
+      }
+      const cambia = DEL_FILE.filter(
+        (s) => /storage\.buckets/i.test(s.sql) && /\b(update|delete|truncate)\b/i.test(s.sql),
+      )
+      expect(cambia.map((s) => s.sql.trim().slice(0, 80)), 'nessuna istruzione del file cambia un bucket esistente').toEqual([])
+    })
+
+    it.each(Object.keys(ATTESI))('`%s` nasce privato, col limite e coi tipi che il codice fa rispettare', (bucket) => {
+      const s = creazioni.find((x) => idDi(x.sql) === bucket)
+      expect(s, `nessun INSERT crea \`${bucket}\``).toBeDefined()
+      const v = valoriInsert(s?.sql ?? '')
+      const atteso = ATTESI[bucket]
+      expect(v?.name, 'il nome coincide con l’id').toBe(`'${bucket}'`)
+      expect(v?.public?.trim().toLowerCase(), `\`${bucket}\` è in RISERVATI: nasce privato`).toBe('false')
+      expect(atteso.limite, `il limite atteso non si legge da ${atteso.fonte}`).not.toBeNull()
+      expect(Number(v?.file_size_limit), `il limite deve essere quello di ${atteso.fonte}`).toBe(atteso.limite)
+      expect(
+        mimeInOrdine(v?.allowed_mime_types),
+        `i tipi, nello stesso ordine della produzione, devono essere quelli di ${atteso.fonte}`,
+      ).toEqual([...atteso.mime])
     })
   })
 })

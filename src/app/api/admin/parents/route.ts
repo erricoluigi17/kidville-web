@@ -13,6 +13,8 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { selectResiliente } from '@/lib/supabase/select-resiliente';
+import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
+import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -70,6 +72,30 @@ const COLONNE_ELENCO = ['id', 'first_name', 'last_name', 'emails', 'phone_number
 // l'intestatario di famiglia predefinito. Legge `id` e `intestatario_default`.
 const COLONNE_PER_ALUNNO = ['id', 'intestatario_default'];
 
+/**
+ * Un blocco caduto, o il tetto di `leggiABlocchi`: l'elenco non esce a metà. Una riga sola con
+ * `stato: 500` (vedi «CHI LOGGA COSA» in `@/lib/db/leggi-a-blocchi`), e `logErrore` alza la marca
+ * anti-doppione di `withRoute`. Sull'errore il corpo resta quello di prima (`{ error: message }`):
+ * le risposte con il `message` di PostgREST si sistemano solo nelle sessioni dopo la 13 (specifica
+ * della seconda serie, §7 «Sessione 13»), e questa non ne aggiunge di nuove.
+ */
+function guastoElenco(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>, tipo: string): NextResponse {
+    if (esito.motivo === 'tetto') {
+        // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
+        logErrore(
+            { operazione: 'admin/parents:GET', stato: 500, evento: 'lettura-troncata' },
+            new Error(`${descriviTetto(tipo, esito)}, rifiutata per intero`),
+        );
+        return NextResponse.json({ error: "L'elenco non si è potuto leggere per intero." }, { status: 500 });
+    }
+    logErrore({ operazione: 'admin/parents:GET', stato: 500, evento: 'db' }, esito.error);
+    const messaggio = (esito.error as { message?: unknown } | null)?.message;
+    return NextResponse.json(
+        { error: typeof messaggio === 'string' ? messaggio : 'Lettura non riuscita' },
+        { status: 500 },
+    );
+}
+
 // `selectResiliente` viveva qui fino al 2026-08-10, ed è stato ESTRATTO in
 // `@/lib/supabase/select-resiliente`: il pannello dei codici fiscali ne è
 // diventato il terzo chiamante, e la terza copia è quella che diverge.
@@ -112,23 +138,38 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
         // forma che i test possono verificare davvero, e non dipende da come
         // PostgREST annida i filtri.
         const plessi = await resolveScuoleAttive(request, supabase, auth.user);
-        const { data: alunniScope, error: errAlunni } = await supabase
-            .from('alunni')
-            .select('id, scuola_id')
-            .in('scuola_id', plessi);
-        if (errAlunni) return NextResponse.json({ error: errAlunni.message }, { status: 500 });
-        const sedePerAlunno = new Map(
-            (alunniScope ?? []).map((a) => [a.id as string, (a.scuola_id as string | null) ?? null]),
+
+        // ── A BLOCCHI: `max_rows` TAGLIA IN SILENZIO (robustezza 2, sessione 11) ──────────
+        // Ognuna delle tre letture qui sotto restituiva al massimo 1000 righe, senza un errore.
+        // Gli alunni sono di TUTTI gli stati (è un'anagrafica: vedi il lock
+        // `elenchi-operativi-solo-iscritti`), e i legami genitore-figlio sono più degli alunni:
+        // con «Tutte le sedi» l'elenco usciva corto e nessuno se ne accorgeva. Gli alunni si
+        // leggono con `leggiABlocchi`; legami e genitori per blocchi di `ID_PER_QUERY` id
+        // (l'`.in()` viaggia nell'URL), in parallelo per non sommare le attese. Un blocco
+        // fallito fa fallire l'elenco intero.
+        const alunniLetti = await leggiABlocchi<{ id: string; scuola_id: string | null }>(() =>
+            supabase.from('alunni').select('id, scuola_id').in('scuola_id', plessi),
         );
+        if (!alunniLetti.ok) return guastoElenco(alunniLetti, 'admin-parents-alunni');
+        const sedePerAlunno = new Map(alunniLetti.righe.map((a) => [a.id, a.scuola_id ?? null]));
         const alunniIds = [...sedePerAlunno.keys()];
         if (alunniIds.length === 0) return NextResponse.json([]);
 
-        const { data: legami, error: errLegami } = await supabase
-            .from('student_parents')
-            .select('parent_id, student_id')
-            .in('student_id', alunniIds);
-        if (errLegami) return NextResponse.json({ error: errLegami.message }, { status: 500 });
-        const parentIds = [...new Set((legami ?? []).map((l) => l.parent_id as string))];
+        const legamiLetti = await Promise.all(
+            aBlocchi(alunniIds, ID_PER_QUERY).map((blocco) =>
+                leggiABlocchi<{ parent_id: string; student_id: string }>(
+                    () => supabase.from('student_parents').select('parent_id, student_id').in('student_id', blocco),
+                    // `student_parents` non ha `id`: la chiave primaria è la coppia.
+                    { chiave: ['student_id', 'parent_id'] },
+                ),
+            ),
+        );
+        const legami: { parent_id: string; student_id: string }[] = [];
+        for (const esito of legamiLetti) {
+            if (!esito.ok) return guastoElenco(esito, 'admin-parents-legami');
+            legami.push(...esito.righe);
+        }
+        const parentIds = [...new Set(legami.map((l) => l.parent_id))];
         if (parentIds.length === 0) return NextResponse.json([]);
 
         // Sede del genitore = sedi dei suoi FIGLI. `parents` non ha (e non deve
@@ -136,27 +177,37 @@ export const GET = withRoute('admin/parents:GET', async (request: NextRequest) =
         // Senza questa derivazione la tab «Genitori» dell'anagrafica resta l'unica
         // lista di persone che non sa dire di quale scuola sta parlando (R72).
         const sediPerGenitore = new Map<string, Set<string>>();
-        for (const l of legami ?? []) {
-            const sede = sedePerAlunno.get(l.student_id as string);
+        for (const l of legami) {
+            const sede = sedePerAlunno.get(l.student_id);
             if (!sede) continue;
-            const chiave = l.parent_id as string;
-            const insieme = sediPerGenitore.get(chiave) ?? new Set<string>();
+            const insieme = sediPerGenitore.get(l.parent_id) ?? new Set<string>();
             insieme.add(sede);
-            sediPerGenitore.set(chiave, insieme);
+            sediPerGenitore.set(l.parent_id, insieme);
         }
 
-        const { data, error } = await selectResiliente(
-            COLONNE_ELENCO,
-            (cols) => supabase.from('parents').select(cols.join(', ')).in('id', parentIds),
-            'admin/parents:GET',
+        // Per chiave primaria, al massimo `ID_PER_QUERY` righe per blocco: nessun tetto da toccare.
+        const genitoriLetti = await Promise.all(
+            aBlocchi(parentIds, ID_PER_QUERY).map((blocco) =>
+                selectResiliente(
+                    COLONNE_ELENCO,
+                    (cols) => supabase.from('parents').select(cols.join(', ')).in('id', blocco),
+                    'admin/parents:GET',
+                ),
+            ),
         );
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        const genitori: Record<string, unknown>[] = [];
+        for (const { data, error } of genitoriLetti) {
+            if (error) {
+                logErrore({ operazione: 'admin/parents:GET', stato: 500, evento: 'db' }, error);
+                return NextResponse.json({ error: error.message }, { status: 500 });
+            }
+            // `as unknown as` e non un cast diretto: `selectResiliente` è generica e
+            // conserva il tipo vero di PostgREST (che su una select dinamica include
+            // `GenericStringError[]`). Il tipo è più preciso, il cast deve dirlo.
+            genitori.push(...((data ?? []) as unknown as Record<string, unknown>[]));
+        }
 
-        // `as unknown as` e non un cast diretto: `selectResiliente` è generica e
-        // conserva il tipo vero di PostgREST (che su una select dinamica include
-        // `GenericStringError[]`), invece di appiattirlo a `unknown` come faceva
-        // la copia locale. Il tipo è più preciso, il cast deve dirlo.
-        const conSede = ((data ?? []) as unknown as Record<string, unknown>[]).map((p) => ({
+        const conSede = genitori.map((p) => ({
             ...p,
             scuole_ids: [...(sediPerGenitore.get(p.id as string) ?? [])],
         }));

@@ -89,11 +89,15 @@ export function creaGitHub({ repo, token, fetchImpl = fetch }) {
             await chiama('PATCH', `/repos/${repo}/issues/${numero}`, { state: 'closed', state_reason: 'completed' })
         },
 
-        /** I giri RIUSCITI e AUTOMATICI del backup, dal più recente. Vedi `ORE_ALLARME_BACKUP`. */
+        /**
+         * I giri RIUSCITI del backup, dal più recente: lo `schedule`, il lancio delle 02:23 del monitor
+         * esterno e quelli a mano. Quali contano lo decide `eGiroBackupAutomatico` (valuta.mjs): qui non si
+         * filtra per evento, perché il lancio del Worker è un `workflow_dispatch` come quelli a mano.
+         */
         async giriBackupRiusciti() {
             const r = await chiama(
                 'GET',
-                `/repos/${repo}/actions/workflows/backup-notturno.yml/runs?event=schedule&status=success&per_page=5`,
+                `/repos/${repo}/actions/workflows/backup-notturno.yml/runs?status=success&per_page=30`,
             )
             return r?.workflow_runs ?? []
         },
@@ -122,8 +126,12 @@ export function creaGitHub({ repo, token, fetchImpl = fetch }) {
  * L'email di allarme via Resend. NON lancia sul rifiuto del provider: restituisce `{ ok, stato, corpo }`
  * perché chi chiama deve poter far fallire il giro DOPO aver aperto la segnalazione, non prima.
  * Configurazione mancante = `ok: false` con la ragione (mai una nota a piè di pagina).
+ * `chiaveIdempotenza` (facoltativa): l'intestazione `Idempotency-Key`. Per 24 ore la stessa chiave non
+ * rispedisce, e Resend risponde come la prima volta, con lo stesso id. SOLO codici e date, mai un indirizzo.
+ * Dentro una chiave il messaggio non deve cambiare: a una stessa chiave con un testo diverso Resend
+ * risponde 409 `invalid_idempotent_request`.
  */
-export async function mandaEmail({ chiaveResend, destinatari, oggetto, introHtml, link, quando, fetchImpl = fetch }) {
+export async function mandaEmail({ chiaveResend, destinatari, oggetto, introHtml, link, quando, chiaveIdempotenza = '', fetchImpl = fetch }) {
     if (!chiaveResend || !destinatari) {
         return { ok: false, stato: 0, corpo: 'mancano RESEND_API_KEY o SENTINELLA_DESTINATARI: l\'email di allarme NON parte' }
     }
@@ -138,7 +146,11 @@ export async function mandaEmail({ chiaveResend, destinatari, oggetto, introHtml
     try {
         const res = await fetchImpl('https://api.resend.com/emails', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${chiaveResend}`, 'Content-Type': 'application/json' },
+            headers: {
+                Authorization: `Bearer ${chiaveResend}`,
+                'Content-Type': 'application/json',
+                ...(chiaveIdempotenza ? { 'Idempotency-Key': chiaveIdempotenza } : {}),
+            },
             body: JSON.stringify({ from: MITTENTE, to: a, subject: oggetto, html }),
             signal: AbortSignal.timeout(TEMPO_MAX_MS),
         })

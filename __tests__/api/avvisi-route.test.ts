@@ -110,10 +110,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.not = (c: string) => { st.notNull = c; return b }
       b.limit = () => b
       // Le statistiche degli avvisi si leggono in BLOCCO e paginate (T11-F2):
-      // `.range()` è la chiamata che chiude la catena, non più `.then()`.
-      b.range = async () => (table === 'avvisi_risposte'
-        ? { data: h.risposte, count: h.risposte.length, error: null }
-        : { data: [], count: 0, error: null })
+      // `.range()` è la chiamata che chiude la catena, non più `.then()`. Dalla
+      // sessione 11 di robustezza 2 la chiude anche l'archivio dello staff
+      // (`leggiABlocchi`): per `avvisi`, la pagina chiesta delle righe vere.
+      b.range = async (da: number, a: number) => {
+        if (table === 'avvisi_risposte') return { data: h.risposte, count: h.risposte.length, error: null }
+        if (table === 'avvisi') {
+          const righe = (result() as { data: unknown[] }).data
+          return { data: righe.slice(da, a + 1), count: null, error: null }
+        }
+        return { data: [], count: 0, error: null }
+      }
       b.insert = (rec: Record<string, unknown>) => { h.lastInsert = rec; st.inserted = rec; return b }
       b.single = async () => (table === 'avvisi' && st.inserted ? { data: { id: 'new-av', ...st.inserted }, error: null } : result())
       // `result()` parla la lingua di PostgREST (elenchi); `maybeSingle` è la

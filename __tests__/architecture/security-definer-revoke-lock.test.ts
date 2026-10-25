@@ -52,9 +52,12 @@ const AMMESSE = new Map<string, readonly string[]>([
   // era mai stato dato, non perché qualcuno l'avesse tolto.
   // ✅ `fatture_sdi_sync_tick` è stata sanata il 2026-09-11 da
   // `20260911113000_fattura_sync_timeout_pg_net.sql`, che la ridefiniva per un'altra ragione e ne
-  // ha approfittato — esattamente come questo commento prescrive. Ne restano DUE. Su un progetto Supabase ricostruito da zero
-  // con `ALTER DEFAULT PRIVILEGES … GRANT EXECUTE … TO anon, authenticated` attive, nascerebbero
-  // aperte. Va sanato con una migrazione dedicata, non allargando questa lista.
+  // ha approfittato — esattamente come questo commento prescrive.
+  // ✅ `exec_sql` è stata tolta il 2026-10-25 da `20261025013356_via_exec_sql.sql` (robustezza, seconda
+  // serie, sessione 2): resta nella lista qui sotto solo perché il baseline la crea ancora, e la
+  // migrazione dopo la toglie. Ne resta UNA, `prossimo_numero_fattura`: su un progetto Supabase
+  // ricostruito da zero con `ALTER DEFAULT PRIVILEGES … GRANT EXECUTE … TO anon, authenticated`
+  // attive, nascerebbe aperta. Va sanata con una migrazione dedicata, non allargando questa lista.
   [
     '20260704120000_baseline.sql',
     [

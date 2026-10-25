@@ -75,14 +75,11 @@ import { join, relative } from 'node:path'
  *
  * ─── IL CONFINE DI QUESTO LOCK, DETTO INVECE CHE SOTTINTESO ─────────────────────
  *
- * Sotto `src/` restano **13 `CREATE TABLE`** in altre cinque route `apply-*-migration`, e
- * questo lock NON le vieta. Non è una svista: le sei tabelle che nominano (`forms_templates`,
- * `forms_submissions`, `certificati_medici`, `registro_orario`, `mensa_menu_config`,
- * `enrollment_submissions`) **esistono davvero in produzione** — misurato lo stesso giorno,
- * `to_regclass` non-null per tutte e sei. Il loro `CREATE TABLE IF NOT EXISTS` è ridondante,
- * non è una resurrezione. Che quelle route esistano ancora resta un debito, ed è scritto qui
- * perché un confine taciuto è il modo in cui un lock ricomincia a promettere più di quanto
- * misura.
+ * Fino al 2026-10-25 sotto `src/` restavano **13 `CREATE TABLE`** in altre cinque route
+ * `apply-*-migration`, che questo lock non vietava: le sei tabelle che nominavano esistono davvero
+ * in produzione, e il loro `CREATE TABLE IF NOT EXISTS` era ridondante, non una resurrezione.
+ * Quelle route non ci sono più (robustezza, seconda serie, sessione 2: chiamavano `exec_sql`, che
+ * è stata tolta), e con loro il debito che questo paragrafo dichiarava.
  *
  * ─── COME SI RIMISURA A MANO (e deve dare la STESSA risposta) ───────────────────
  *

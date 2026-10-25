@@ -15,6 +15,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 import { guastoLetturaAccessoria } from '@/lib/db/guasto';
 import { etichetteAllergie } from '@/lib/mensa/allergeni';
 import { leggiVive } from '@/lib/gallery/cestino';
+import { descriviTetto, leggiABlocchi } from '@/lib/db/leggi-a-blocchi';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
@@ -490,24 +491,40 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         }
 
         // Fetch rows (all tasks — filtering happens in JS since author/assignee are in JSON)
-        const { data: rows, error: rowsErr } = await supabase
-            .from('task_interni')
-            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
-            .in('scuola_id', plessi)
-            .order('created_at', { ascending: false });
+        //
+        // ── A BLOCCHI (robustezza 2, sessione 11) ────────────────────────────
+        // La bacheca non ha filtro di data e cresce per sempre: oltre 1000 promemoria in una
+        // sede PostgREST consegnava i primi 1000 in silenzio. `leggiABlocchi` chiude l'ordine
+        // con `id` dopo `created_at`, così i pari restano stabili da un blocco all'altro.
+        const letti = await leggiABlocchi<Record<string, unknown>>(() =>
+            supabase
+                .from('task_interni')
+                .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
+                .in('scuola_id', plessi)
+                .order('created_at', { ascending: false }),
+        );
 
-        if (rowsErr) {
-            // Il testo di PostgREST (nomi di colonna, di vincolo, di host) resta
-            // nel log — con `codice`, che è il dato più utile che ha — e non
-            // torna più al client: non gli dice niente di azionabile e descrive
-            // lo schema a chi non deve conoscerlo.
-            logErrore({ operazione: 'tasks:GET', stato: 500, evento: 'db' }, rowsErr);
+        if (!letti.ok) {
+            if (letti.motivo === 'tetto') {
+                // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
+                logErrore(
+                    { operazione: 'tasks:GET', stato: 500, evento: 'lettura-troncata' },
+                    new Error(`${descriviTetto('tasks-bacheca', letti)}, rifiutata per intero`),
+                );
+            } else {
+                // Il testo di PostgREST (nomi di colonna, di vincolo, di host) resta
+                // nel log — con `codice`, che è il dato più utile che ha — e non
+                // torna più al client: non gli dice niente di azionabile e descrive
+                // lo schema a chi non deve conoscerlo.
+                logErrore({ operazione: 'tasks:GET', stato: 500, evento: 'db' }, letti.error);
+            }
             return NextResponse.json({ error: 'Lettura dei promemoria non riuscita' }, { status: 500 });
         }
+        const rows = letti.righe;
 
         // Special filter for studentId (used in StudentDetailPanel)
         if (studentId) {
-            const visible = (rows ?? [])
+            const visible = rows
                 .map(row => decodeRow(row as Record<string, unknown>))
                 .filter(task => task.student_id === studentId);
             const enriched = await Promise.all(visible.map(t => enrichTask(supabase, t)));
@@ -519,7 +536,7 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         // Decode and filter in JS
         const statusFilter = statusParam ? statusParam.split(',') : null;
 
-        const visible = (rows ?? [])
+        const visible = rows
             .map(row => decodeRow(row as Record<string, unknown>))
             .filter(task => {
                 // 1. Status filter

@@ -27,7 +27,7 @@
 import { pathToFileURL } from 'node:url'
 import { allarma, creaGitHub } from './allarme.mjs'
 import { leggi, leggiConTentativi } from './lettura.mjs'
-import { riconcilia, valutaBackup, valutaMonitorEsterno, valutaSalute, valutaVivo } from './valuta.mjs'
+import { eGiroBackupAutomatico, riconcilia, valutaBackup, valutaMonitorEsterno, valutaSalute, valutaVivo } from './valuta.mjs'
 
 const ATTESA_TRA_TENTATIVI_VIVO_MS = 15_000
 const ATTESA_TRA_LETTURE_SALUTE_MS = 45_000
@@ -94,7 +94,7 @@ export async function esegui({
         try {
             const giri = await gh.giriBackupRiusciti()
             const incBackup = valutaBackup({ giri, adesso: adesso() })
-            log(`backup: ${giri.length} giri automatici riusciti letti → ${incBackup ? 'INCIDENTE' : 'ok'}`)
+            log(`backup: ${giri.length} giri riusciti letti, ${giri.filter(eGiroBackupAutomatico).length} automatici → ${incBackup ? 'INCIDENTE' : 'ok'}`)
             verificate.add('backup-vecchio')
             if (incBackup) incidenti.push(incBackup)
         } catch (err) {

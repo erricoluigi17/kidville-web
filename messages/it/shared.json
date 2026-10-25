@@ -751,5 +751,6 @@
   "apiConteggioSediNonDisponibili": "Impossibile identificare le sedi del conteggio. Riprova.",
   "erroreCassaCategoriaNonValida": "La cassa o la categoria scelta non è più disponibile per questa sede. Aggiorna la selezione.",
   "erroreArchiviazioneNonDisponibile": "L’archiviazione dei periodi non è ancora disponibile su questo ambiente.",
-  "erroreScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova."
+  "erroreScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova.",
+  "erroreDomandaGiaEsaminata": "Questa domanda è già stata esaminata: aggiorna l’elenco per vedere il suo stato."
 }

@@ -36,16 +36,16 @@
 
 **Cosa NON c'è nel dump** (e va rifatto a mano dopo un ripristino su un progetto nuovo):
 - i **dati** di `public.app_log`, `cron.job_run_details` e dei token di sessione di `auth` (la struttura sì; gli utenti rifanno il login);
-- le **impostazioni del database** (`app.cron_secret`, gli URL dei cron…): i loro **nomi** stanno nel manifest, i valori in Vercel (`CRON_SECRET`) e nel passaggio «Cron di produzione» di `docs/cicd.md`;
-- le **password dei ruoli** (anche `backup_lettura`) e lo schema `vault`;
+- i **segreti dei cron** (`app.cron_secret` e i cinque URL): stanno nel **Vault** di Supabase, che il dump non copia. Si rimettono con `vault.create_secret`, un nome alla volta (scenario E, passo 6). Il manifest **non** li elenca: legge `pg_db_role_setting`, dove da quando i segreti sono nel Vault non ce n'è nessuno (misurato il 24/10: 10 righe, una sola `app.*`, `app.settings.jwt_exp`, che è di piattaforma Supabase e non nostra);
+- le **password dei ruoli** (anche `backup_lettura`);
 - le **chiavi API** del nuovo progetto (vanno rimesse in Vercel) e le impostazioni di Auth.
 
 ## Cosa serve per ripristinare, e dove sta
 
 | Serve | Dove sta | Se è perso |
 |---|---|---|
-| **Chiave privata age** | offline, 2 supporti (titolare). Copia di lavoro nella cartella `KIDVILLE-CHIAVI-BACKUP/` dell'app: **ignorata da git** (un lock lo verifica) ma **non è una copia offline** | i dump non si aprono più, per nessuno |
-| **Password e salt di rclone crypt** | offline, 2 supporti (titolare); in GitHub solo per il backup; copia di lavoro in `KIDVILLE-CHIAVI-BACKUP/` (ignorata da git) | i file dello specchio non si aprono più |
+| **Chiave privata age** | offline, 2 supporti (titolare). Copia di lavoro in `~/KIDVILLE-CHIAVI-BACKUP/`, **fuori** dalla cartella dell'app e da ogni checkout git (vedi sotto: lo spostamento lo fa il titolare) | i dump non si aprono più, per nessuno |
+| **Password e salt di rclone crypt** | offline, 2 supporti (titolare); in GitHub solo per il backup; copia di lavoro in `~/KIDVILLE-CHIAVI-BACKUP/` | i file dello specchio non si aprono più |
 | **Token R2 di lettura** (`backup-lettura`) | pannello Cloudflare → R2 → Manage API tokens (si ricrea) | si ricrea; non serve la chiave per cambiarlo |
 | Accesso al pannello Supabase, Vercel, GitHub | titolare | — |
 | Strumenti sul computer | `age`, `rclone`, `jq`, Postgres 17 (`pg_restore`, `psql`, `initdb`) | `brew install age rclone jq postgresql@17` |
@@ -53,6 +53,32 @@
 > ⚠️ **La chiave privata `age` e la password di cifratura non vanno MAI in GitHub, in chat, in un
 > documento o in un file del repository.** Per una prova si mette la chiave in un file temporaneo e lo
 > si cancella subito dopo.
+
+### Dove sta la copia di lavoro delle chiavi
+
+Dalla sessione 4 della seconda serie di robustezza il posto della copia di lavoro (chiave privata `age`, password e
+salt di `rclone crypt`) è `~/KIDVILLE-CHIAVI-BACKUP/`, nella cartella personale del titolare, fuori da ogni checkout
+git. Dentro l'app la proteggeva solo `.gitignore`: un `git clean -x` l'avrebbe cancellata, e ogni worktree nuovo ne
+era una copia possibile. La regola di `.gitignore` e il suo lock restano, come rete. Le copie **offline** restano due,
+su due supporti. Questo documento non contiene e non conterrà mai le chiavi.
+
+🔴 **Lo spostamento è un'azione del titolare, a mano.** Nessuna sessione di Claude apre, copia o sposta quella
+cartella. Finché la prima casella qui sotto non è spuntata, la copia di lavoro sta **ancora** dentro l'app.
+
+Procedura (Terminale del Mac, dalla cartella dell'app, cioè il checkout principale):
+1. `ls -d ~/KIDVILLE-CHIAVI-BACKUP` → deve rispondere «No such file or directory» (non si sovrascrive niente).
+2. `mv KIDVILLE-CHIAVI-BACKUP ~/KIDVILLE-CHIAVI-BACKUP` (sullo stesso disco è un cambio di nome: non resta una copia
+   dietro). **Non** dentro Scrivania, Documenti o iCloud Drive, che si sincronizzano online.
+3. `chmod 700 ~/KIDVILLE-CHIAVI-BACKUP` (la legge solo il titolare).
+4. Controllo, senza aprire i file: `ls KIDVILLE-CHIAVI-BACKUP` nella cartella dell'app → «No such file or directory»;
+   `ls ~/KIDVILLE-CHIAVI-BACKUP` → i due file ci sono.
+5. `git worktree list`, e in ogni worktree elencato `ls KIDVILLE-CHIAVI-BACKUP` → «No such file or directory».
+6. Spunta la casella qui sotto con la data.
+
+- [ ] Cartella spostata fuori dall'app dal titolare, il gg/mm. Nella cartella dell'app
+      `ls KIDVILLE-CHIAVI-BACKUP` risponde «No such file or directory».
+- [ ] Revoca della vecchia `sb_secret_` (finita nella storia git di un clone dell'app, rapporto del 20/10, D8)
+      confermata dal titolare nel pannello di Supabase (Project Settings → API Keys), il gg/mm.
 
 ## Collegarsi a R2 (sul Mac, con il token di LETTURA)
 
@@ -176,7 +202,15 @@ Non è un'emergenza la prima notte: l'ultima copia buona è quella di ieri. **Lo
    - **errore di connessione / permessi** su `BACKUP_DB_URL`: password del ruolo `backup_lettura` cambiata, o il pooler. Si rimette con `ALTER ROLE backup_lettura WITH LOGIN PASSWORD '…'` (nel SQL editor, a mano) e si aggiorna il segreto.
    - **errore 403 su R2**: token R2 scaduto o revocato → si ricrea in Cloudflare e si aggiorna `BACKUP_R2_KEY_*`.
 2. Rilancia: `gh workflow run backup-notturno.yml -f modalita=completo`.
-3. Se il workflow **non parte proprio** (nessuna email, nessun giro): lo vede il campanello (`campanello.yml`, fase 3), che apre `[backup-vecchio]` quando l'ultimo giro automatico riuscito ha più di 30 ore. Si guarda anche a mano con `gh run list --workflow backup-notturno.yml --event schedule`.
+3. Se il workflow **non parte proprio**: alle 02:23 UTC lo lancia il monitor esterno (Worker di Cloudflare), che in
+   quel caso manda subito l'email «Backup notturno NON partito» con la risposta di GitHub. I casi noti:
+   - `401 Bad credentials`: il token `GITHUB_TOKEN_CAMPANELLO` è scaduto o revocato → `docs/cicd.md`, «Monitor esterno»;
+   - nessuna email e nessun giro: il Worker non è partito (pannello Cloudflare → Workers → `kidville-monitor-esterno` → Logs);
+   - `esito=spento-a-mano` nei log del Worker: qualcuno ha spento il workflow; si riaccende con
+     `gh workflow enable backup-notturno.yml`.
+   Dopo 30 ore senza un giro automatico riuscito il campanello apre `[backup-vecchio]`. A mano:
+   `gh run list --workflow backup-notturno.yml --limit 14`. I giri automatici sono «Backup notturno completo (da
+   Cloudflare)» e quelli dello `schedule`; uno `schedule` «cancelled» è la guardia delle 20 ore, non un guasto.
 
 ## Scenario C — «Un file è stato cancellato per errore» (modulo, documento, allegato)
 
@@ -226,7 +260,23 @@ prima di riaprire l'app (oggi l'elenco degli oblii è nei log: la fase 4 della r
    dal pannello del **nuovo** progetto, Database → Extensions → `pg_cron` → off (cancella i job), oppure un job alla volta con
    `SELECT cron.alter_job(job_id := N, active := false);`. Controlla il nome del progetto nel titolo della scheda
    **prima** di cliccare: spegnerli in produzione sarebbe un incidente.
-6. Rimetti le **impostazioni del database** (i nomi sono nel manifest) e le **password dei ruoli**.
+6. Rimetti i **segreti dei cron nel Vault** e le **password dei ruoli**. Il dump non porta lo schema `vault`, e
+   `ALTER DATABASE … SET` è negato (`42501`). Dal SQL editor del **nuovo** progetto, una riga per nome, con il
+   valore scritto solo lì (mai in un file, in una chat o nel repository):
+   ```sql
+   select vault.create_secret('<valore>', '<nome>');
+   ```
+   | Nome | Valore |
+   |---|---|
+   | `app.cron_secret` | lo stesso di `CRON_SECRET` su Vercel |
+   | `app.push_dispatch_url` | `https://<dominio-prod>/api/push/dispatch` (molti cron ne usano solo l'origine) |
+   | `app.notifiche_promemoria_url` | `https://<dominio-prod>/api/notifiche/promemoria` |
+   | `app.retention_iscrizioni_url` | `https://<dominio-prod>/api/gdpr/retention-iscrizioni` |
+   | `app.fattura_sync_url` | `https://<dominio-prod>/api/pagamenti/fattura/sync` |
+   | `app.mensa_allergie_url` | `https://<dominio-prod>/api/mensa/allergie-check` |
+
+   Controllo, senza leggere i valori: `select name from vault.secrets order by name;` → sei righe. L'elenco è
+   sorvegliato dal lock `backup-notturno-sicuro`: ogni `cron_config('<nome>')` delle migrazioni deve stare qui.
 7. Ricarica i **file** dallo specchio nel nuovo Storage (`rclone sync CRIPTO:corrente SB_NUOVO:`), con il remote cifrato.
 8. In **Vercel** cambia le variabili del nuovo progetto (`NEXT_PUBLIC_SUPABASE_URL`, chiavi `anon` e `service_role`, URL del DB), poi rilancia il deploy.
 9. Riapplica gli **oblii** avvenuti dopo la data della copia. Riaccendi i cron uno alla volta. Verifica i conteggi.
@@ -235,7 +285,7 @@ prima di riaprire l'app (oggi l'elenco degli oblii è nei log: la fase 4 della r
 
 - [ ] `pg_cron` spento finché non è tutto a posto (e riacceso con cura).
 - [ ] Conteggi per tabella confrontati con il manifest (`ripristina-prova.sh` lo fa).
-- [ ] Impostazioni del database e password dei ruoli rimesse.
+- [ ] I sei segreti dei cron rimessi nel Vault (`select name from vault.secrets order by name;` → sei righe) e le password dei ruoli rimesse.
 - [ ] Oblii GDPR avvenuti dopo la data della copia **riapplicati**.
 - [ ] Il ruolo `backup_lettura` ha di nuovo login e password, e il segreto `BACKUP_DB_URL` è aggiornato.
 - [ ] Un giro `modalita=prova` del backup notturno è verde.

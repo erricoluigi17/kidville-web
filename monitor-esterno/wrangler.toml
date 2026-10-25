@@ -1,6 +1,7 @@
 # Il monitor esterno su Cloudflare: vedi `worker.mjs` (cosa fa) e `docs/cicd.md` (come si gestisce).
-# Nessun indirizzo pubblico: il Worker ha solo il cron. Il token sta nei segreti del Worker
-# (`npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`), MAI in questo file: il repository è pubblico.
+# Nessun indirizzo pubblico: il Worker ha solo i cron. I segreti stanno nei segreti del Worker
+# (`npx wrangler@4.148.0 secret put GITHUB_TOKEN_CAMPANELLO`, e lo stesso per RESEND_API_KEY e
+# SENTINELLA_DESTINATARI), MAI in questo file: il repository è pubblico.
 name = "kidville-monitor-esterno"
 main = "worker.mjs"
 compatibility_date = "2026-10-01"
@@ -8,7 +9,9 @@ workers_dev = false
 preview_urls = false
 
 [triggers]
-crons = ["*/5 * * * *"]
+# Ogni 5 minuti: il vivo e il battito del campanello. Alle 02:23 UTC: il backup notturno.
+# Il secondo deve restare IDENTICO a `CRON_BACKUP` in worker.mjs: è così che `scheduled` li distingue.
+crons = ["*/5 * * * *", "23 2 * * *"]
 
 [observability]
 enabled = true

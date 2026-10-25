@@ -4,6 +4,7 @@ import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
 import { limitaRetryAfter, METODI_RITENTABILI, STATI_RITENTABILI } from '@/lib/supabase/attesa-ritentativi';
+import { RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi';
 
 /**
  * Il `fetch` strumentato dei client Supabase.
@@ -375,8 +376,11 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
                 await registraFallimento(b, res, ms);
             } else if (esito === 'illeggibile') {
                 registraIlleggibile(b, res, ms);
-            } else if (ms > LENTA_MS) {
-                registraLenta(b, res, ms);
+            } else {
+                // Una risposta OK può essere TRONCATA (`max_rows`): si guarda prima della lentezza,
+                // e `registraMaxRows` ha il suo `try`, così un guasto lì non spegne la riga della lenta.
+                registraMaxRows(b, input, res);
+                if (ms > LENTA_MS) registraLenta(b, res, ms);
             }
         } catch {
             // L'osservabilità non può rompere la risposta che sta osservando: si perde il log.
@@ -622,6 +626,112 @@ function contaLenta(): number | undefined {
     } catch {
         // Il tetto è un'ottimizzazione dell'osservabilità: se salta, si emette come prima.
         return undefined;
+    }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * `max_rows`: la risposta piena che non lo dice (robustezza 2, sessione 11).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * PostgREST taglia OGNI risposta a `max_rows` righe (1000, `supabase/config.toml:18`) e non lo
+ * dice: nessun errore, nessuno status diverso, e postgrest-js legge `Content-Range` solo per il
+ * conteggio. In questo repo ha già morso tre volte (export delle rette, statistiche degli avvisi,
+ * routine del diario), sempre scoperto per caso.
+ *
+ * CHI LEGGE. Una `GET` di PostgREST (area `db` o `rpc`), oppure una `POST` a una FUNZIONE
+ * (`/rest/v1/rpc/…`, area `rpc`): `rpc()` di postgrest-js chiama in `POST` salvo `{ get: true }`
+ * (`node_modules/@supabase/postgrest-js/dist/index.cjs`, `rpc(fn, args, …)`), quindi fino al
+ * ritocco del 25/10/2026 il ramo `rpc` di questa regola non scattava mai su una chiamata vera.
+ * Una `POST` a una TABELLA è un INSERT, e `PATCH`/`PUT`/`DELETE` scrivono: non scattano. Che
+ * PostgREST mandi `Content-Range` anche sulla `POST` a una funzione non è verificato su questo
+ * progetto: se l'intestazione manca, la regola non scatta, e non c'è nessun danno.
+ *
+ * LA REGOLA. Una lettura di PostgREST (vedi sopra) ha toccato il tetto quando:
+ *  · `Content-Range` dichiara ALMENO `RIGHE_MASSIME_POSTGREST` righe (`0-999/*`, `1000-1999/*`);
+ *  · il totale è ignoto (`*`) o più grande dell'ultima riga arrivata (`0-999/1500`): con
+ *    `count: 'exact'` e `0-999/1000` è arrivato tutto, e non è un taglio;
+ *  · il parametro `limit` dell'indirizzo manca, oppure chiede PIÙ righe di quante ne sono
+ *    arrivate. È ciò che distingue un taglio da una pagina: postgrest-js traduce `.range(da, a)`
+ *    in `limit = a - da + 1`, quindi le pagine di `leggiABlocchi` (`limit=1000`, `0-999/*`) sono
+ *    piene per scelta. `.limit(5000)` che riceve 1000 righe, invece, è stato tagliato.
+ *
+ * NON è «un `Content-Range` che finisce a 999»: quella regola scatterebbe su ogni prima pagina di
+ * `leggiABlocchi` e mancherebbe tutte le successive. `>=` e non `===`: `RIGHE_MASSIME_POSTGREST`
+ * è una SOGLIA DI SOSPETTO (vedi la sua testata in `@/lib/db/blocchi`).
+ *
+ * Pura e senza eccezioni: la prova sta in `__tests__/lib/logging-max-rows.test.ts`.
+ */
+export function maxRowsRaggiunto(r: {
+    verbo: string;
+    area: Bersaglio['area'];
+    url: string;
+    contentRange: string | null | undefined;
+}): { righe: number; limite: number | undefined } | null {
+    try {
+        const legge = r.verbo === 'GET'
+            ? r.area === 'db' || r.area === 'rpc'
+            : r.verbo === 'POST' && r.area === 'rpc';
+        if (!legge) return null;
+        const m = /^\s*(\d+)-(\d+)\/(\d+|\*)\s*$/.exec(r.contentRange ?? '');
+        if (!m) return null;
+        const fine = Number(m[2]);
+        const righe = fine - Number(m[1]) + 1;
+        if (!Number.isSafeInteger(righe) || righe < RIGHE_MASSIME_POSTGREST) return null;
+        if (m[3] !== '*' && fine + 1 >= Number(m[3])) return null;
+        const limite = limiteChiesto(r.url);
+        if (limite !== undefined && limite <= righe) return null;
+        return { righe, limite };
+    } catch {
+        return null;
+    }
+}
+
+/** Il parametro `limit` dell'indirizzo di PostgREST, se c'è ed è un numero. Non lancia. */
+function limiteChiesto(indirizzo: string): number | undefined {
+    try {
+        const v = new URL(indirizzo).searchParams.get('limit');
+        if (v === null) return undefined;
+        const n = Number(v);
+        return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * `warn` persistito: la riga in `app_log` porta la tabella (o la funzione) in `operazione`, le
+ * righe arrivate e il `limit` chiesto, e la route nella colonna `route` (dal contesto della
+ * richiesta, come ogni riga). `distingui: ['operazione']`: due letture troncate sulla stessa
+ * route restano due righe, una per tabella. Una riga al giorno per impronta, con `occorrenze`:
+ * il costo in volume è una riga per tabella troncata, non una per richiesta.
+ *
+ * Il verbo è `b.metodo`, letto da `descrivi` con la regola di sempre (`init.method`, poi quello
+ * di una `Request`, altrimenti `GET`). Dall'indirizzo si legge solo il parametro `limit`: i
+ * filtri della query string, dove stanno i valori, non entrano nella riga.
+ *
+ * Fail-open (AGENTS.md, regola 9): qualunque eccezione qui dentro si perde, e la risposta arriva
+ * al chiamante intatta. Il corpo non si tocca: basta l'intestazione.
+ */
+function registraMaxRows(b: Descrizione, input: unknown, res: Response): void {
+    try {
+        const visto = maxRowsRaggiunto({
+            verbo: b.metodo,
+            area: b.area,
+            url: url(input),
+            contentRange: res.headers.get('content-range'),
+        });
+        if (!visto) return;
+        const s = stato(res);
+        logEvento(
+            b.area,
+            'warn',
+            campiDi(b, { stato: s, righe: visto.righe, limite: visto.limite, esito: 'max-rows-raggiunto' }),
+            undefined,
+            { persisti: daPersistere('warn', b.area, s ?? 0), distingui: ['operazione'] },
+        );
+    } catch {
+        // Un'intestazione illeggibile non toglie la risposta a nessuno: si perde la riga.
     }
 }
 

@@ -107,14 +107,6 @@ const CLIENT_DI_BROWSER = new Map<string, string>([
  * grezzo. Non costruisce un client, ma parla lo stesso col nostro database.
  */
 const FETCH_VERSO_SUPABASE = new Map<string, string>([
-    ['src/app/api/admin/apply-enrollment-migration/route.ts',
-        'DEROGA, ed è debito dichiarato. Sei `fetch` a mano verso `/rest/v1/rpc/exec_sql` e `/pg/query` '
-        + 'con la service-role key negli header: nessun tetto, nessuna riga. NON è stata portata al '
-        + 'factory per due ragioni concrete: `/pg/query` non ha nessun equivalente in supabase-js (è un '
-        + 'endpoint che sull\'hosted non esiste nemmeno, ed è il ramo di ripiego), e la route è '
-        + '`sealDangerous`, cioè risponde 404 in produzione — le migrazioni oggi si applicano con lo '
-        + 'strumento MCP `apply_migration`. Il rischio residuo è quindi limitato a sviluppo e preview, '
-        + 'dove appende la richiesta di chi la invoca. Va rimossa o ricondotta, non condonata.'],
     ['src/components/features/admin/ImportExportClient.tsx',
         'FALSO POSITIVO dichiarato: nomina `NEXT_PUBLIC_SUPABASE_URL` per costruire il proprio client '
         + 'di browser, e il suo unico `fetch` va a `/api/admin/import/anagrafiche`, cioè a una NOSTRA '

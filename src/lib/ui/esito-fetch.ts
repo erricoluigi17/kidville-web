@@ -515,6 +515,13 @@ export const CODICI_ERRORE = {
      */
     DOMANDA_NON_APRIBILE: 'erroreDomandaNonApribile',
     /**
+     * 409 — respingere una domanda d'iscrizione che non è più in attesa
+     * (`PATCH /api/admin/iscrizioni`, `action: 'reject'`). Già approvata, quindi già
+     * un'anagrafica, o già respinta (il doppio clic). Il filtro sta dentro l'UPDATE, quindi
+     * vale anche quando un'altra segreteria l'ha importata un istante prima.
+     */
+    DOMANDA_GIA_ESAMINATA: 'erroreDomandaGiaEsaminata',
+    /**
      * 500 — la lettura della domanda d'iscrizione non è riuscita
      * (`GET /api/admin/iscrizioni?id=`, errore PostgREST).
      *

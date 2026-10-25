@@ -751,5 +751,6 @@
   "apiConteggioSediNonDisponibili": "Unable to identify the locations for the count. Please try again.",
   "erroreCassaCategoriaNonValida": "The selected cash account or category is no longer available for this location. Update your selection.",
   "erroreArchiviazioneNonDisponibile": "Archiving periods is not available in this environment yet.",
-  "erroreScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again."
+  "erroreScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again.",
+  "erroreDomandaGiaEsaminata": "This application has already been reviewed: refresh the list to see its current status."
 }

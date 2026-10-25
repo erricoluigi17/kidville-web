@@ -45,7 +45,7 @@ degrada in modo pulito e visibile, mai con un crash.
 - `src/app/(dashboard)/{parent,teacher,admin}` — le tre aree (guardie di ruolo nei layout)
 - `src/app/api/**` — ~190 route API con gate auth applicativi + validazione zod colocata
 - `src/lib/**` — dominio (auth/scope, FEA, fatturazione, SIDI, push, presenze…)
-- `supabase/migrations/**` — migrazioni SQL (si applicano via `scripts/apply_*.mjs`, RPC `exec_sql`)
+- `supabase/migrations/**` — migrazioni SQL: le applica l'integrazione GitHub di Supabase al merge della PR, con la version del file (`exec_sql` non esiste più dal 2026-10-25)
 - `e2e/**` — suite Playwright (31 test; seed idempotente su scuola dedicata)
 
 Riferimenti: [docs/env.md](docs/env.md) (variabili d'ambiente) ·

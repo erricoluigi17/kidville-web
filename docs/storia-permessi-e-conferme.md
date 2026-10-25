@@ -385,3 +385,65 @@ tail .claude/.permessi-auto.log
 i backup `~/.claude/settings.json.bak-20260918-162359` e
 `.claude/settings.json.bak-20260918-162359`. Poi **riavviare**.
 
+### 🟥 APPLICATO IL 2026-10-25 — il freno sulle istruzioni distruttive
+
+**Decisione del titolare** (T3, 20/10, specifica `docs/superpowers/specs/2026-10-20-robustezza-seconda-serie-design.md`,
+§7 sessione 2): *freno sui distruttivi*. Il riquadro del 2026-09-03 qui sopra aveva scritto senza giri
+che, tolto `supabase_sql_gate.sh`, un `UPDATE` o un `DROP` sul database delle iscrizioni partiva senza
+che nessun essere umano vedesse l'istruzione. Da oggi non parte più da un agente.
+
+| | Prima | Adesso |
+|---|---|---|
+| `hooks.PreToolUse` | solo `ExitPlanMode` | in più il freno sui quattro strumenti SQL di Supabase (`execute_sql` e `apply_migration`, del progetto e del connettore claude.ai) |
+| `supabase_sql_gate.sh` | su disco, non registrato, rispondeva `allow`/`ask` | **eliminato**, sostituito da `supabase_sql_freno.py` |
+| `apply_migration` | in `allow`, usato dagli agenti | resta in `allow`, ma il freno lo **nega sempre**: la migrazione la applica l'integrazione al merge |
+| merge | lo faceva `/ship-cycle` | lo fa il titolare |
+| `public.exec_sql(text)` | in produzione, eseguibile da `service_role` | tolta dalla migrazione `20261025013356_via_exec_sql.sql` |
+
+**Perché `deny` e non `ask`.** Dal 18/09 un `ask` diventa una richiesta di permesso, e la richiesta di
+permesso la approva da solo `auto_allow_permission.py`. Un freno che chiede è un freno dipinto (§8,
+divieto 18 della specifica).
+
+**Perché Python.** Il gate vecchio cercava le parole chiave anche dentro stringhe e commenti, girava su
+bash 3.2 e `sed` BSD e non si poteva provare in automatico. Il freno legge stringhe, commenti, `$$` e
+parentesi; i suoi casi stanno in `__tests__/architecture/freno-sql-distruttivo.test.ts`, una riga per
+ogni istruzione fermata e per ogni istruzione lasciata passare.
+
+**Oltre il piano.** Il freno ferma anche le stesse categorie quando stanno dentro una stringa che il
+database ESEGUE — `EXECUTE` di PL/pgSQL (anche con `format()` o `||`), `cron.schedule`/`alter_job`,
+`dblink_exec`, il corpo fra apici di un `DO` o di una funzione —, `MERGE … THEN DELETE` e
+`UPDATE pg_settings`. Nel docstring in testa allo script c'è l'elenco vero e aggiornato.
+
+**Le quattro aggiunte alla decisione T3 non le ha confermate il titolare.** La specifica le chiedeva
+«da confermare col titolare all'apertura della sessione»: A (interruttori di registri e scatola nera),
+B (`session_replication_role`), C (`DISABLE TRIGGER`), D (in dubbio si ferma). Il titolare aveva chiesto
+di non essere interpellato, e il 25/10/2026 le ha decise l'assistente: **A sì, B sì, C sì, D sì**, cioè
+la scelta più severa. Si possono togliere una per una, dal codice del freno e dal suo test, seguendo la
+tabella del Compito 1, passo 5 del piano `docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md`.
+**Da confermare.**
+
+**Cosa NON copre, detto una volta.** SQL lanciato da `Bash` (`psql`, `supabase db query`,
+`supabase db push`, gli script con `DATABASE_URL`); gli altri strumenti MCP di Supabase; e il caso in
+cui il freno non parte (`python3` assente, timeout): Claude Code lo tratta come errore non bloccante e
+la chiamata passa. Dentro l'SQL passano ancora una funzione già nel database che scrive
+(`SELECT public.f()`), le parole spezzate apposta (`'DEL' || 'ETE FROM …'`, il nome di un interruttore
+costruito con `||`), `REVOKE`, `ALTER … RENAME`, `CREATE OR REPLACE` di una funzione esistente,
+`COPY`, una policy con `USING (true)` e `ALTER ROLE … BYPASSRLS`. (`ALTER … DISABLE ROW LEVEL SECURITY`
+e `NO FORCE ROW LEVEL SECURITY` li ferma dal ritocco del 25/10/2026, commit del freno.) Il freno ferma
+gli sbagli, non chi lo vuole aggirare.
+
+**Cosa può rompere la migrazione.** Al passo 0 del piano, in `pg_stat_statements`, `public.exec_sql`
+risulta chiamata **35 volte** da `service_role` (un minimo: la finestra parte dal 06/08/2026). Nel repo
+i chiamanti erano le sei route e i cinque script ora eliminati; uno script esterno al repo che la usa
+smetterebbe di funzionare (risposta `404 PGRST202`). Il ROLLBACK è scritto nell'intestazione della
+migrazione, e richiude la funzione ad `anon` e `authenticated`.
+
+**Come si prova** (in una sessione **nuova**, dopo il riavvio): chiedere l'esecuzione di
+`EXPLAIN DELETE FROM public.app_log WHERE false` con `execute_sql` → rifiutata con «Freno SQL»;
+`SELECT 1 AS prova_freno` → risponde `1`; in `.claude/.permessi-auto.log` una riga
+`FRENO SQL	esito=negato` e una `FRENO SQL	esito=passato`. L'istruzione di prova è innocua anche se il
+freno non scattasse: `EXPLAIN` senza `ANALYZE` non esegue niente.
+
+**Come si torna indietro**, in ordine di reversibilità: `export KIDVILLE_FRENO_SQL_SPENTO=1` (una
+sessione) → togliere la voce del freno da `hooks.PreToolUse` in `.claude/settings.json` (il file resta
+su disco). Poi **riavviare**.

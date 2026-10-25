@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -18,7 +18,8 @@ import { join } from 'node:path'
  *  TRIGGER   solo `workflow_dispatch` e, quando verrà armato, un unico `schedule` non alle :00.
  *            Mai `pull_request`, `push`, `workflow_run`: i segreti non si espongono a un evento
  *            che chiunque con un branch può provocare.
- *  PERMESSI  `contents: read` e basta; solo il job `avviso` può avere in più `issues: write`.
+ *  PERMESSI  `contents: read` e basta; solo il job `avviso` può avere in più `issues: write`, e solo il
+ *            job `guardia` `actions: write` (serve ad annullare SÉ STESSO, e a nient'altro).
  *  SEGRETI   solo quelli dell'elenco, tutti documentati in `docs/cicd.md`, usati SOLO in
  *            `NOME: ${{ secrets.X }}` (mai dentro un comando); i `BACKUP_*` solo nel job
  *            `backup`, che sta nell'ambiente GitHub `backup` (ristretto a `main`).
@@ -33,6 +34,9 @@ import { join } from 'node:path'
  *            nessun file tracciato del repo c'è una chiave age PRIVATA.
  *  ALLARME   il job `avviso` dipende dal backup e dal guasto simulato, parte con `failure()`,
  *            apre prima la segnalazione (nessun segreto) e poi manda l'email.
+ *  GUARDIA   gira solo sullo `schedule`, senza segreti, con ogni passo `continue-on-error`; può
+ *            annullare solo il proprio giro (`gh run cancel "$GITHUB_RUN_ID"`); il backup ne dipende
+ *            con `!cancelled()`, così parte anche quando la guardia è saltata.
  *
  * ─── COME LEGGE IL FILE ─────────────────────────────────────────────────────
  * Si tolgono i commenti PRIMA di cercare: l'intestazione del workflow spiega proprio le cose che
@@ -173,18 +177,25 @@ function violazioni(grezzo: string, cicd: string): string[] {
 
     // ── JOB ────────────────────────────────────────────────────────────────
     const job = nomiDeiJob(c)
-    for (const atteso of ['backup', 'guasto_simulato', 'avviso']) {
+    for (const atteso of ['guardia', 'backup', 'guasto_simulato', 'avviso']) {
         if (!job.includes(atteso)) v.push(`manca il job ${atteso}`)
     }
     for (const nome of job) {
         const b = blocco(c, nome) ?? ''
         if (!/^\s{4}timeout-minutes:\s*\d+/m.test(b)) v.push(`job ${nome}: manca timeout-minutes`)
         if (!/^\s{4}runs-on:\s*ubuntu-24\.04\s*$/m.test(b)) v.push(`job ${nome}: runs-on deve essere ubuntu-24.04 (fissato, non latest)`)
+        // La forma in linea (`permissions: write-all`, `permissions: {}`) sfuggirebbe al confronto qui
+        // sotto, che legge solo l'elenco a righe: a livello di job non è mai ammessa.
+        if (/^ {4}permissions:[ \t]*\S/m.test(b)) v.push(`permessi: il job ${nome} usa la forma in linea (write-all?)`)
         const perm = /^\s{4}permissions:\s*\n((?:\s{6}\S.*\n?)+)/m.exec(b)
+        const dichiarati = perm ? perm[1].trim().split('\n').map((x) => x.trim()).sort() : []
         if (nome === 'avviso') {
-            const dichiarati = perm ? perm[1].trim().split('\n').map((x) => x.trim()).sort() : []
             if (dichiarati.join('|') !== 'contents: read|issues: write') {
                 v.push('permessi: avviso deve avere esattamente `contents: read` e `issues: write`')
+            }
+        } else if (nome === 'guardia') {
+            if (dichiarati.join('|') !== 'actions: write|contents: read') {
+                v.push('permessi: guardia deve avere esattamente `actions: write` (per annullare SÉ STESSA) e `contents: read`')
             }
         } else if (perm) {
             v.push(`permessi: il job ${nome} non deve dichiarare permessi propri`)
@@ -208,6 +219,56 @@ function violazioni(grezzo: string, cicd: string): string[] {
     const guasto = blocco(c, 'guasto_simulato') ?? ''
     if (!/exit 1/.test(guasto)) v.push('guasto_simulato: deve fallire davvero (`exit 1`)')
 
+    // ── LA GUARDIA DELLE 20 ORE ────────────────────────────────────────────
+    // Gira SOLO sullo schedule (il lancio delle 02:23 dal Worker e i giri a mano non si fermano mai da
+    // soli), può annullare SOLO il giro in cui sta, non tocca segreti e non può fallire: un suo guasto non
+    // deve né fermare il backup né far suonare l'avviso del backup (`failure()` vede tutti gli antenati).
+    const guardia = blocco(c, 'guardia') ?? ''
+    if (!/^\s{4}if:\s*\$\{\{\s*github\.event_name\s*==\s*'schedule'\s*\}\}\s*$/m.test(guardia)) {
+        v.push("guardia: deve girare solo sullo schedule (`if: ${{ github.event_name == 'schedule' }}`)")
+    }
+    if (/secrets\./.test(guardia)) v.push('guardia: nessun segreto nel job guardia')
+    if (/^\s{4}environment:/m.test(guardia)) v.push('guardia: non deve stare in un ambiente')
+    if (!/node scripts\/backup\/guardia-notte\.mjs/.test(guardia)) v.push('guardia: deve passare da scripts/backup/guardia-notte.mjs')
+    for (const m of guardia.matchAll(/\bgh[ \t]+([a-z-]+)[ \t]+([a-z-]+)/g)) {
+        if (`${m[1]} ${m[2]}` !== 'run cancel') v.push(`guardia: comando gh non ammesso: gh ${m[1]} ${m[2]}`)
+    }
+    for (const riga of guardia.split('\n')) {
+        if (/\bgh[ \t]+run[ \t]+cancel\b/.test(riga) && !/gh run cancel "\$GITHUB_RUN_ID"/.test(riga)) {
+            v.push('guardia: può annullare solo SÉ STESSA (`gh run cancel "$GITHUB_RUN_ID"`)')
+        }
+    }
+    // Il token della guardia può scrivere sulle Actions: l'unica strada verso l'API è `gh run cancel`
+    // (sopra) e la lettura dello script. Un `curl` col token aggirerebbe il controllo dei comandi `gh`.
+    if (/\b(curl|wget)\b/.test(guardia)) v.push('guardia: niente curl/wget (l\'unica scrittura ammessa è `gh run cancel "$GITHUB_RUN_ID"`)')
+    // L'annullamento dipende dalla DECISIONE della guardia. Senza quell'`if` ogni giro dello schedule si
+    // annullerebbe, e la notte in cui il Worker non parte non ci sarebbe nessun backup.
+    const passoAnnulla = guardia.split(/^ {6}- /m).find((p) => /\bgh[ \t]+run[ \t]+cancel\b/.test(p))
+    if (!passoAnnulla) {
+        v.push('guardia: manca l\'annullamento del proprio giro (`gh run cancel "$GITHUB_RUN_ID"`)')
+    } else if (!/^ {8}if:[ \t]*\$\{\{\s*steps\.cerca\.outputs\.salta\s*==\s*'true'\s*\}\}[ \t]*$/m.test(passoAnnulla)) {
+        v.push("guardia: l'annullamento deve dipendere dalla decisione (`if: ${{ steps.cerca.outputs.salta == 'true' }}`)")
+    }
+    const passiGuardia = (guardia.match(/^\s{6}- /gm) ?? []).length
+    const tolleranti = (guardia.match(/^\s{8}continue-on-error:\s*true\s*$/gm) ?? []).length
+    if (passiGuardia === 0 || tolleranti !== passiGuardia) {
+        v.push('guardia: ogni passo deve avere continue-on-error: true (una guardia rotta non ferma il backup)')
+    }
+    if (!/^\s{4}needs:\s*guardia\s*$/m.test(backup)) v.push('backup: deve dipendere dalla guardia (`needs: guardia`)')
+    if (!/^\s{4}if:\s*\$\{\{\s*!cancelled\(\)\s*&&/m.test(backup)) {
+        v.push('backup: deve partire con `!cancelled() && …` (con la guardia saltata il backup parte lo stesso)')
+    }
+
+    // ── L'INPUT `origine` ──────────────────────────────────────────────────
+    // Il Worker delle 02:23 lancia con `inputs: { modalita: 'completo', origine: 'cloudflare' }` e NON
+    // ripiega su un lancio senza input (`lanciaBackup`, worker.mjs): se il workflow non dichiara
+    // `origine`, GitHub rifiuta il lancio con 422 «Unexpected inputs» e il backup di stanotte non parte.
+    const righeInput = /^ {4}inputs:\s*\n((?: {6,}\S.*\n|\s*\n)+)/m.exec(c)?.[1] ?? ''
+    const nomiInput = [...righeInput.matchAll(/^ {6}([A-Za-z_][\w-]*):\s*$/gm)].map((m) => m[1])
+    if (!nomiInput.includes('origine')) {
+        v.push('input origine: manca in workflow_dispatch (il Worker lo manda: senza, GitHub rifiuta il lancio e il backup non parte)')
+    }
+
     // ── CONCORRENZA ────────────────────────────────────────────────────────
     if (!/^concurrency:\s*\n\s+group:\s*backup-notturno\s*\n\s+cancel-in-progress:\s*false\s*$/m.test(c)) {
         v.push('concurrency: gruppo `backup-notturno` con `cancel-in-progress: false`')
@@ -217,7 +278,10 @@ function violazioni(grezzo: string, cicd: string): string[] {
     const usi = [...c.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1])
     for (const u of usi) if (u !== 'actions/checkout@v4') v.push(`azione non ammessa: ${u}`)
     if (/upload-artifact|actions\/cache/.test(c)) v.push('azione non ammessa: upload-artifact/cache (in un repo pubblico gli artefatti si scaricano da fuori)')
-    if (!/persist-credentials:\s*false/.test(c)) v.push('checkout: manca persist-credentials: false')
+    // Ogni checkout, non uno qualunque: con la guardia i checkout sono due.
+    const checkout = (c.match(/uses:\s*actions\/checkout@v4/g) ?? []).length
+    const chiusi = (c.match(/persist-credentials:\s*false/g) ?? []).length
+    if (chiusi === 0 || chiusi < checkout) v.push('checkout: manca persist-credentials: false')
 
     // ── SEGRETI ────────────────────────────────────────────────────────────
     const usati = new Set([...c.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]))
@@ -229,7 +293,7 @@ function violazioni(grezzo: string, cicd: string): string[] {
         if (/secrets\./.test(riga) && !/^\s*[A-Z_][A-Z0-9_]*:\s.*\$\{\{\s*secrets\.[A-Z0-9_]+\s*\}\}/.test(riga)) {
             v.push(`segreto usato fuori da un'assegnazione NOME: \${{ secrets.X }}: «${riga.trim().slice(0, 60)}»`)
         }
-        if (/inputs\./.test(riga) && !/^\s*(MODALITA|SIMULATO|if)\s*:/.test(riga)) {
+        if (/inputs\./.test(riga) && !/^\s*(MODALITA|SIMULATO|if|run-name)\s*:/.test(riga)) {
             v.push(`input usato fuori da env/if (rischio di iniezione nello script): «${riga.trim().slice(0, 60)}»`)
         }
     }
@@ -307,7 +371,7 @@ const BASE = REALE
 describe('LOCK · backup-notturno.yml', () => {
     it('il file esiste e gli script che chiama esistono', () => {
         expect(existsSync(FILE)).toBe(true)
-        for (const s of ['dump-cifrato.sh', 'specchio-storage.sh']) {
+        for (const s of ['dump-cifrato.sh', 'specchio-storage.sh', 'guardia-notte.mjs']) {
             expect(existsSync(join(RADICE, 'scripts', 'backup', s)), s).toBe(true)
         }
     })
@@ -395,6 +459,27 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         ['esclude solo la galleria', (s) => s.replace('ESCLUDI_BUCKET: gallery video_originals', 'ESCLUDI_BUCKET: gallery'), /devono essere esattamente/],
         ['non esclude più niente', (s) => s.replace('  ESCLUDI_BUCKET: gallery video_originals\n', ''), /devono essere esattamente/],
         ['senza passare dallo script dello specchio', (s) => s.replaceAll('bash scripts/backup/specchio-storage.sh', 'true'), /specchio-storage\.sh/],
+        ['guardia anche sui giri a mano', (s) => s.replace("    if: ${{ github.event_name == 'schedule' }}", '    if: ${{ always() }}'), /guardia: deve girare solo sullo schedule/],
+        ['guardia con contents: write', (s) => s.replace('      actions: write\n      contents: read', '      actions: write\n      contents: write'), /guardia deve avere esattamente/],
+        ['guardia senza permessi propri', (s) => s.replace('    permissions:\n      actions: write\n      contents: read\n', ''), /guardia deve avere esattamente/],
+        ['guardia che annulla un altro giro', (s) => s.replace('gh run cancel "$GITHUB_RUN_ID"', 'gh run cancel "$ALTRO_GIRO"'), /può annullare solo SÉ STESSA/],
+        ['guardia che spegne il workflow', (s) => s.replace('          if gh run cancel', '          gh workflow disable backup-notturno.yml\n          if gh run cancel'), /comando gh non ammesso: gh workflow disable/],
+        ['guardia con un segreto', (s) => s.replace('        run: node scripts/backup/guardia-notte.mjs', '          ALTRO: ${{ secrets.BACKUP_DB_URL }}\n        run: node scripts/backup/guardia-notte.mjs'), /nessun segreto nel job guardia/],
+        ['guardia che può fallire', (s) => s.replace('        id: cerca\n        continue-on-error: true\n', '        id: cerca\n'), /ogni passo deve avere continue-on-error/],
+        ['backup senza la guardia', (s) => s.replace('    needs: guardia\n', ''), /deve dipendere dalla guardia/],
+        ['backup senza !cancelled()', (s) => s.replace('    if: ${{ !cancelled() && !inputs.simula_guasto }}', '    if: ${{ !inputs.simula_guasto }}'), /deve partire con `!cancelled\(\)/],
+        // Oltre il piano (collaudo del Compito 8): i permessi che scappano, l'input che il Worker manda,
+        // l'annullamento che non aspetta la decisione, le strade verso l'API che non passano da `gh run cancel`.
+        ['guardia senza actions: write', (s) => s.replace('      actions: write\n      contents: read', '      contents: read'), /guardia deve avere esattamente/],
+        ['actions: write scritto solo in un commento della guardia', (s) => s.replace('      actions: write\n      contents: read', '      # actions: write\n      contents: read'), /guardia deve avere esattamente/],
+        ['actions: write dato al job backup', (s) => s.replace('    environment: backup\n', '    environment: backup\n    permissions:\n      actions: write\n'), /il job backup non deve dichiarare permessi propri/],
+        ['actions: write dato al job avviso', (s) => s.replace('      contents: read\n      issues: write', '      actions: write\n      contents: read\n      issues: write'), /avviso deve avere esattamente/],
+        ['job backup con permissions: write-all in linea', (s) => s.replace('    environment: backup\n', '    environment: backup\n    permissions: write-all\n'), /il job backup usa la forma in linea/],
+        ['senza l\'input origine', (s) => s.replace(/^ {6}origine:\n(?: {8}.*\n)+/m, ''), /input origine: manca/],
+        ['annullamento senza la decisione', (s) => s.replace("        if: ${{ steps.cerca.outputs.salta == 'true' }}\n", ''), /deve dipendere dalla decisione/],
+        ['guardia che non annulla più', (s) => s.replace('if gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"; then', 'if true; then'), /manca l'annullamento del proprio giro/],
+        ['guardia che annulla con curl', (s) => s.replace('          if gh run cancel', '          curl -X POST -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/o/r/actions/runs/1/cancel\n          if gh run cancel'), /niente curl\/wget/],
+        ['guardia che annulla con gh api', (s) => s.replace('          if gh run cancel', '          gh api -X POST repos/o/r/actions/runs/1/cancel\n          if gh run cancel'), /comando gh non ammesso: gh api/],
     ]
 
     it('controllo positivo: la base passa', () => {
@@ -418,15 +503,27 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         const conCommento = BASE.replace('on:\n', '# non usare pull_request: né rclone purge né upload-artifact\non:\n')
         expect(violazioni(conCommento, DOC)).toEqual([])
     })
+
+    it('i commenti non contano nemmeno nella guardia: nominare `gh workflow disable` o `curl` in un commento non fa scattare niente', () => {
+        // Dentro il blocco della guardia: uno a livello di job, uno nello script dell'annullamento.
+        const conCommento = BASE
+            .replace('  guardia:\n', '  guardia:\n    # niente curl, niente gh api, niente secrets.BACKUP_DB_URL\n')
+            .replace('          if gh run cancel', '          # mai gh workflow disable, mai gh run cancel "$ALTRO_GIRO"\n          if gh run cancel')
+        expect(conCommento.split('\n').length, 'la base non ha ancora il job guardia').toBe(BASE.split('\n').length + 2)
+        expect(violazioni(conCommento, DOC)).toEqual([])
+    })
 })
 
 describe('LOCK · le chiavi del backup non vanno online', () => {
     /**
-     * Il titolare tiene la cartella delle chiavi (`KIDVILLE-CHIAVI-BACKUP/`: chiave privata age e
-     * password di cifratura dei file) dentro la cartella dell'app, per averla a portata di mano.
-     * Il repository è PUBBLICO: una riga di `.gitignore` è l'unica cosa che separa quella cartella
-     * da internet, e basta una riga cancellata per sbaglio. Qui la riga è sorvegliata, e git stesso
-     * conferma che i file dentro sono ignorati (anche quando la cartella non esiste, come in CI).
+     * La cartella delle chiavi (`KIDVILLE-CHIAVI-BACKUP/`: chiave privata age e password di cifratura dei
+     * file) NON deve stare dentro la cartella dell'app: dalla sessione 4 della seconda serie il suo posto
+     * è fuori da ogni checkout (percorso e procedura nel runbook; lo spostamento lo fa il titolare, a
+     * mano), perché un `git clean -x` l'avrebbe cancellata e ogni worktree ne era una copia possibile.
+     * La regola di `.gitignore` e questo lock RESTANO come rete: se la cartella venisse ricopiata dentro
+     * l'app, resterebbe comunque fuori da git. Il repository è PUBBLICO, e basterebbe una riga
+     * cancellata per sbaglio. git stesso conferma che i file dentro sono ignorati (anche quando la
+     * cartella non esiste, come in CI).
      */
     const CARTELLA = 'KIDVILLE-CHIAVI-BACKUP'
     const FILE_SENSIBILI = ['chiave-age-PRIVATA.txt', 'password-cifratura-file.txt']
@@ -467,5 +564,35 @@ describe('LOCK · le chiavi del backup non vanno online', () => {
         const solo = GITIGNORE.replace(`\n/${CARTELLA}/`, `\n# /${CARTELLA}/`)
         expect(solo).not.toBe(GITIGNORE)
         expect(cartellaChiusa(solo)).toBe(false)
+    })
+})
+
+describe('LOCK · il runbook sa rimettere i segreti del Vault che i cron leggono', () => {
+    /**
+     * I cron leggono indirizzi e segreto con `cron_config('<nome>')`, che guarda il Vault. Il dump non
+     * porta il Vault, e `ALTER DATABASE … SET` è negato (42501): su un progetto nuovo (scenario E) i nomi
+     * li deve dare il runbook. Un nome nuovo in una migrazione che il runbook non elenca è un cron che,
+     * dopo un disastro, resta muto senza dirlo.
+     */
+    const MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
+    const RUNBOOK = readFileSync(join(RADICE, 'docs', 'runbook-ripristino.md'), 'utf8')
+    const nomi = new Set<string>()
+    for (const f of readdirSync(MIGRAZIONI).filter((x) => x.endsWith('.sql'))) {
+        for (const m of readFileSync(join(MIGRAZIONI, f), 'utf8').matchAll(/cron_config\(\s*'([a-z0-9_.]+)'\s*\)/gi)) {
+            nomi.add(m[1])
+        }
+    }
+
+    it('i nomi letti dalle migrazioni sono plausibili (sanity)', () => {
+        expect(nomi.size).toBeGreaterThanOrEqual(6)
+        expect(nomi.has('app.cron_secret')).toBe(true)
+    })
+
+    it('ogni nome è nel runbook, con la ricetta del Vault; la ricetta ALTER DATABASE non c\'è più', () => {
+        const mancanti = [...nomi].filter((n) => !RUNBOOK.includes('`' + n + '`'))
+        expect(mancanti, 'nomi letti dai cron ma assenti da docs/runbook-ripristino.md').toEqual([])
+        expect(RUNBOOK).toContain('vault.create_secret')
+        expect(RUNBOOK).not.toMatch(/ALTER DATABASE[^\n]*SET app\./i)
+        expect(DOC).not.toMatch(/ALTER DATABASE[^\n]*SET app\./i)
     })
 })

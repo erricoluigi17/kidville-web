@@ -174,8 +174,16 @@ const adminClient = {
     b.is = (c: string, v: unknown) => { st.filters[c] = v; return b }
     b.limit = () => b
     // Statistiche avvisi in BLOCCO e paginate (T11-F2): la catena si chiude su
-    // `.range()`, non più su `.then()`.
-    b.range = async () => ({ data: [], count: 0, error: null })
+    // `.range()`, non più su `.then()`. Dalla sessione 11 di robustezza 2 si chiudono
+    // su `.range()` anche l'archivio avvisi dello staff e la bacheca dei promemoria
+    // (`leggiABlocchi`): per quelle due tabelle, la pagina chiesta delle righe vere.
+    b.range = async (da: number, a: number) => {
+      if (table === 'avvisi' || table === 'task_interni') {
+        const righe = (result() as { data: unknown[] }).data
+        return { data: righe.slice(da, a + 1), count: null, error: null }
+      }
+      return { data: [], count: 0, error: null }
+    }
     b.insert = (rec: Record<string, unknown>) => { h.lastInsert = rec; st.inserted = rec; return b }
     b.update = (rec: Record<string, unknown>) => { h.lastUpdate = rec; st.updated = rec; return b }
     b.single = async () => {

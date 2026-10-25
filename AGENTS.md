@@ -98,6 +98,11 @@ branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
 Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**.
 🟩 **Stato dal 2026-09-18**: **autonomia piena, i prompt non arrivano più all'utente** — né in
 lettura né in scrittura, né sul DB di produzione, né su merge, `git push`, deploy o migrazioni.
+🟥 **Dal 2026-10-25 due eccezioni**: il merge lo fa il titolare, e la migrazione la applica
+l'integrazione al merge. Il freno `.claude/hooks/supabase_sql_freno.py` nega `apply_migration` e le
+istruzioni distruttive su `execute_sql` (anche quelle dentro una stringa che il database esegue): si
+mostrano al titolare. Dettagli in `CLAUDE.md`, dove sta anche la nota sulle quattro aggiunte al freno,
+decise in assenza del titolare e da confermare.
 🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**. Non
 copiare un conteggio da un file: rifallo con `SELECT count(*) FROM enrollment_submissions;` — è una
 **lettura**, non ti fermerà nessuno. E mostra comunque cosa stai per applicare: *mostrare* non è

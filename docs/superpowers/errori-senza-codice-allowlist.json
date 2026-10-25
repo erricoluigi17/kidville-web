@@ -16,31 +16,11 @@
     "`codice` accanto a `error`. Per i due dinieghi di sede esiste già `rifiutoSede()`",
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
-  "aggiornato": "2026-10-07",
-  "totale_occorrenze": 1361,
+  "aggiornato": "2026-10-25",
+  "totale_occorrenze": 1350,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
-      "n": 2
-    },
-    {
-      "path": "src/app/api/admin/apply-enrollment-migration/route.ts",
-      "n": 2
-    },
-    {
-      "path": "src/app/api/admin/apply-fase4-migration/route.ts",
-      "n": 2
-    },
-    {
-      "path": "src/app/api/admin/apply-forms-migration/route.ts",
-      "n": 2
-    },
-    {
-      "path": "src/app/api/admin/apply-mensa-multi-menu-migration/route.ts",
-      "n": 2
-    },
-    {
-      "path": "src/app/api/admin/apply-migration/route.ts",
       "n": 2
     },
     {
@@ -330,10 +310,6 @@
     {
       "path": "src/app/api/admin/settings/sidi/route.ts",
       "n": 3
-    },
-    {
-      "path": "src/app/api/admin/setup-registro/route.ts",
-      "n": 1
     },
     {
       "path": "src/app/api/admin/sidi/fase-a/route.ts",

@@ -248,7 +248,17 @@ export function posterioriCheContengono(
 // fotografie rigenerate dalla produzione — cambia davvero solo quella delle migrazioni. Le altre
 // sette cambiano solo l'istante dello scatto: la fotografia delle tabelle non guarda i CHECK, e
 // quella dei bucket guarda nome e visibilità, non i tipi ammessi.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10 · ROBUSTEZZA 2, SESSIONE 1 «iscrizioni: documenti mai persi, stati vincolati»:
+// `20261024235116_iscrizioni_stati_vincolati.sql` aggiunge due CHECK (`enrollment_submissions.status`,
+// `alunni.stato`) con `ADD CONSTRAINT`, e la guardia delle FK verso `utenti` la vede per quelle
+// parole: nessuna FK, nessuna policy, nessun indice unico cambia. Si toglie con la PR-B, cioè il
+// primo commit della sessione che apre dopo il rilascio, rigenerando le fotografie dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261024235116_iscrizioni_stati_vincolati.sql':
+        'due CHECK con ADD CONSTRAINT sugli stati di enrollment_submissions e alunni, nessuna FK verso utenti: ' +
+        'la applica l’integrazione al merge; la toglie la PR-B (primo commit della sessione dopo).',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

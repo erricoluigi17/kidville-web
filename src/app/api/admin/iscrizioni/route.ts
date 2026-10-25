@@ -3,6 +3,7 @@ import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATI_DOMANDA, STATO_DOMANDA_IN_ATTESA } from '@/lib/iscrizioni/stati'
 import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
@@ -356,9 +357,6 @@ const interoClampato = (def: number, min: number, max: number) =>
     if (!Number.isFinite(n)) return def
     return Math.min(Math.max(Math.trunc(n), min), max)
   }, z.number())
-
-/** I tre stati di una domanda, come stanno in `enrollment_submissions.status`. */
-const STATI_DOMANDA = ['pending', 'approved', 'rejected'] as const
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -877,13 +875,35 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     if (fuoriScope) return fuoriScope
 
     if (action === 'reject') {
+      // ── SOLO DA «IN ATTESA» (robustezza 2, sessione 1 — D9) ──────────────────
+      // Una domanda approvata è già un'anagrafica, con il documento copiato in `alunni` e
+      // `parents`. Respingerla la rimetteva nel giro di conservazione, che l'avrebbe
+      // cancellata con quei file. Il filtro sullo stato sta DENTRO l'UPDATE: fra la lettura
+      // qui sopra e la scrittura un'altra segreteria può averla importata, e solo Postgres
+      // sa dire «zero righe» nello stesso istante in cui scrive. `.maybeSingle()` perché
+      // zero righe è una risposta, non un guasto.
       const { data, error } = await supabase
         .from('enrollment_submissions')
         .update({ status: 'rejected', updated_at: new Date().toISOString() })
         .eq('id', id)
+        .eq('status', STATO_DOMANDA_IN_ATTESA)
         .select()
-        .single()
+        .maybeSingle()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (!data) {
+        logEvento('iscrizione', 'warn', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'rifiuto-domanda-non-in-attesa',
+          azione: 'reject',
+          entita_tipo: 'enrollment_submissions',
+          entita_id: id,
+          msg: 'rifiuto non applicato: la domanda non è più in attesa (già approvata o già respinta)',
+        })
+        return NextResponse.json(
+          { error: "La domanda è già stata esaminata: aggiorna l'elenco per vedere il suo stato.", codice: 'DOMANDA_GIA_ESAMINATA' },
+          { status: 409 },
+        )
+      }
       await logScrittura(supabase, {
         attore: auth.user,
         entitaTipo: 'iscrizione',

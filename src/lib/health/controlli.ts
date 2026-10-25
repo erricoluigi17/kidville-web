@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
 import { versioneDeploy } from '@/lib/versione/deploy'
+import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
 
 /**
  * I CONTROLLI DI SALUTE — la parte che MISURA. La route (`/api/health`) fa solo da porta.
@@ -40,6 +41,8 @@ import { versioneDeploy } from '@/lib/versione/deploy'
  *  8. `regione`      — la funzione gira nella regione del database (`dub1`), non altrove.
  *  9. `sezione-testo-allineato` — il testo della classe coincide col nome della sezione.
  *                      È QUALITÀ DEI DATI, non salute: sta nel suo livello (vedi sotto).
+ * 10. `audit-docente` — nessuna traccia d'audit persa nelle ultime 24 ore (`audit-non-registrato`
+ *                      di scritture, fascicolo e firma; robustezza 2, sessione 1).
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * I TRE LIVELLI (roadmap di robustezza, fase 3 — 2026-10-06)
@@ -549,6 +552,11 @@ function codiceDi(err: unknown): string {
     return 'sconosciuto'
 }
 
+/** Il codice di una lettura a blocchi fallita: `tetto`, oppure il solo `code` di PostgREST. */
+function motivoDi(esito: Extract<EsitoABlocchi<unknown>, { ok: false }>): string {
+    return esito.motivo === 'tetto' ? 'tetto' : codiceDi(esito.error)
+}
+
 /**
  * Esegue una misura con il suo tetto di tempo.
  *
@@ -1043,24 +1051,27 @@ async function controlloConfig(): Promise<Controllo> {
  */
 async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo> {
     return misura('sezione-testo-allineato', 'degradato', async () => {
-        const { data: sezioni, error: errSez } = await supabase
-            .from('sections')
-            .select('id, name')
+        // A BLOCCHI (robustezza 2, sessione 11): sopra 1000 righe PostgREST taglia in silenzio, e
+        // qui un taglio è un VERDE FALSO — gli iscritti (o le sezioni) oltre il millesimo non
+        // verrebbero confrontati. Il tetto di `leggiABlocchi` diventa `degradato`, col solo codice.
+        const sezioni = await leggiABlocchi<{ id: string; name: string }>(() =>
+            supabase.from('sections').select('id, name'),
+        )
         // PostgREST non lancia: senza questo ramo una lettura caduta darebbe
         // «zero divergenze», cioè un verde che non ha misurato niente.
-        if (errSez) return { esito: 'degradato', dettaglio: `sections:${codiceDi(errSez)}` }
+        if (!sezioni.ok) return { esito: 'degradato', dettaglio: `sections:${motivoDi(sezioni)}` }
 
-        const { data: alunni, error: errAl } = await supabase
-            .from('alunni')
-            .select('section_id, classe_sezione')
-            .eq('stato', 'iscritto')
-        if (errAl) return { esito: 'degradato', dettaglio: `alunni:${codiceDi(errAl)}` }
-
-        const nomePerSezione = new Map(
-            (sezioni ?? []).map((s) => [s.id as string, s.name as string]),
+        const alunni = await leggiABlocchi<{ section_id: string | null; classe_sezione: string | null }>(() =>
+            supabase
+                .from('alunni')
+                .select('section_id, classe_sezione')
+                .eq('stato', 'iscritto'),
         )
-        const divergenti = (alunni ?? []).filter((a) => {
-            const sid = a.section_id as string | null
+        if (!alunni.ok) return { esito: 'degradato', dettaglio: `alunni:${motivoDi(alunni)}` }
+
+        const nomePerSezione = new Map(sezioni.righe.map((s) => [s.id, s.name]))
+        const divergenti = alunni.righe.filter((a) => {
+            const sid = a.section_id
             if (!sid) return false // gli orfani sono un'altra misura, non questa
             const nome = nomePerSezione.get(sid)
             return nome !== undefined && a.classe_sezione !== nome
@@ -1072,7 +1083,7 @@ async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo
         if (divergenti > 0) {
             return { esito: 'degradato', dettaglio: `${divergenti} alunni col testo classe divergente` }
         }
-        return { esito: 'ok', dettaglio: `${(alunni ?? []).length} iscritti allineati` }
+        return { esito: 'ok', dettaglio: `${alunni.righe.length} iscritti allineati` }
     })
 }
 
@@ -1364,6 +1375,81 @@ export async function controlloCodeArretrate(supabase: SupabaseClient, adesso: n
     })
 }
 
+/**
+ * LA TRACCIA D'AUDIT PERSA (seconda serie della robustezza, sessione 1 — T6).
+ *
+ * `logScrittura` (`src/lib/audit/scrittura.ts`) non blocca mai la scrittura che racconta: se la
+ * riga d'audit non entra, la scrittura resta, e in `app_log` finisce un `error` con
+ * `esito: 'audit-non-registrato'`. È giusto per chi lavora, ma chi sorveglia non lo vede: UNA
+ * riga persa sta sotto le soglie di `tasso-errore` (5 impronte, 25 occorrenze in 15 minuti).
+ * Questo controllo va a `degradato` alla PRIMA occorrenza nelle ultime 24 ore, e il campanello
+ * apre `salute:audit-docente` alla seconda lettura di fila.
+ *
+ * TRE REGISTRI, UN ESITO. Lo stesso `audit-non-registrato` lo scrivono l'accesso al fascicolo
+ * della primaria (`src/lib/primaria/fascicolo-rbac.ts`, evento `fascicolo`) e la firma
+ * elettronica (`src/lib/fea/audit.ts`, evento `fea`). Il filtro non guarda l'evento: guarda il
+ * livello `error` e l'esito, così un registro nuovo con lo stesso esito entra da solo.
+ * `__tests__/lib/health/audit-docente.test.ts` elenca chi lo scrive oggi.
+ *
+ * DOVE STA L'ESITO. Il logger scrive i campi dell'evento in `contesto.campi` (`rigaEvento`,
+ * `src/lib/logging/logger.ts`), quindi il filtro è `contesto->campi->>esito`. Si contano solo
+ * le righe del SERVER (le righe `client` le scrive chiunque, via `/api/logs`) e solo
+ * dell'ambiente corrente. Si filtra su `visto_l_ultima`: `app_log` deduplica per giorno.
+ *
+ * Il nome dice «docente» perché è lì che la traccia conta di più (registro, voti, presenze,
+ * fascicolo), ma i tre registri servono tutto il personale, e il controllo li conta tutti.
+ *
+ * `degradato` e mai `giu`: una traccia persa non impedisce a nessuno di aprire l'app. Una
+ * lettura fallita dà `degradato` con il codice; colonna o tabella assente dà `ok` con la nota,
+ * come per le code. Escono solo conteggi e codici, perché la rotta è pubblica.
+ */
+export const FINESTRA_AUDIT_MS = 24 * ORA
+
+/** L'esito con cui i registri d'audit segnalano una traccia che non è entrata. */
+export const ESITO_AUDIT_NON_REGISTRATO = 'audit-non-registrato'
+
+/** Un tetto alle righe lette: ne basta una per decidere, e la somma serve solo al dettaglio. */
+const RIGHE_MAX_AUDIT = 50
+
+export async function controlloAuditDocente(
+    supabase: SupabaseClient,
+    adesso: number,
+    ambiente: string,
+): Promise<Controllo> {
+    return misura('audit-docente', 'degradato', async () => {
+        const da = new Date(adesso - FINESTRA_AUDIT_MS).toISOString()
+        const { data, count, error } = await supabase
+            .from('app_log')
+            .select('occorrenze', { count: 'exact' })
+            .eq('livello', 'error')
+            .eq('sorgente', 'server')
+            .eq('ambiente', ambiente)
+            .eq('contesto->campi->>esito', ESITO_AUDIT_NON_REGISTRATO)
+            .gte('visto_l_ultima', da)
+            .limit(RIGHE_MAX_AUDIT)
+        if (error) {
+            // PostgREST non lancia (regola 7): una lettura caduta non è «nessuna traccia persa».
+            const codice = codiceDi(error)
+            if (CODICI_NON_INSTALLATO.has(codice)) {
+                return { esito: 'ok', dettaglio: `app_log non leggibile su questo database (${codice})` }
+            }
+            return { esito: 'degradato', dettaglio: `lettura app_log ${codice}` }
+        }
+        const righe = (data ?? []) as { occorrenze?: unknown }[]
+        const n = count ?? righe.length
+        const ore = FINESTRA_AUDIT_MS / ORA
+        if (n === 0) return { esito: 'ok', dettaglio: `nessuna traccia d'audit persa nelle ultime ${ore} h` }
+        const occorrenze = righe.reduce(
+            (somma, r) => somma + (typeof r.occorrenze === 'number' && r.occorrenze > 0 ? r.occorrenze : 1),
+            0,
+        )
+        return {
+            esito: 'degradato',
+            dettaglio: `tracce d'audit non registrate nelle ultime ${ore} h: ${occorrenze} (${n} impronte)`,
+        }
+    })
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1418,8 +1504,8 @@ export async function eseguiVivo(supabase: SupabaseClient): Promise<Salute> {
 
 /**
  * LA SALUTE — il vivo più tutto ciò che si rompe senza che nessun genitore lo veda subito: schema,
- * cron, errori del server, configurazione, coda delle fatture, code che non si svuotano, regione. NON include la qualità dei
- * dati: vedi `eseguiQualita`.
+ * cron, errori del server, configurazione, coda delle fatture, code che non si svuotano, tracce
+ * d'audit perse, regione. NON include la qualità dei dati: vedi `eseguiQualita`.
  */
 export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSalute): Promise<Salute> {
     const t0 = Date.now()
@@ -1433,6 +1519,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloConfig(),
         controlloCodaFatture(supabase, adesso),
         controlloCodeArretrate(supabase, adesso),
+        controlloAuditDocente(supabase, adesso, opzioni.ambiente),
         Promise.resolve(controlloRegione()),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })

@@ -26,6 +26,7 @@ import { degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { firmaAllegatiAvvisi, normalizzaAllegatoAvviso } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { descriviTetto, leggiABlocchi } from '@/lib/db/leggi-a-blocchi';
 import { RUOLI_PUBBLICAZIONE_DEFAULT } from '@/lib/scuole/admin-settings-default';
 import {
     zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso,
@@ -382,7 +383,12 @@ async function listaAvvisiStaff(
     // «scaduto ma con le adesioni ancora aperte» che non è mai esistito.
     const adessoISO = new Date().toISOString();
 
-    const buildQuery = (cols: string) => {
+    // ── A BLOCCHI (robustezza 2, sessione 11) ─────────────────────────────────
+    // L'archivio dello staff non ha filtro di scadenza (qui sotto il perché), quindi cresce per
+    // sempre: oltre 1000 avvisi in una sede PostgREST consegnava i primi 1000 in silenzio.
+    // `leggiABlocchi` chiude l'ordine con `id` dopo `created_at`: fra avvisi creati nello stesso
+    // istante l'ordine resta lo stesso da un blocco all'altro.
+    const leggiAvvisi = (cols: string) => leggiABlocchi<AvvisoRow>(() => {
         // ⚠️ NESSUN FILTRO DI SCADENZA, ed è una decisione del committente: allo
         // staff gli avvisi scaduti restano visibili. Il cockpit è anche l'archivio
         // di ciò che è stato pubblicato, e «sparito dalla bacheca delle famiglie»
@@ -391,12 +397,12 @@ async function listaAvvisiStaff(
             .in('scuola_id', plessiScope);
         if (scope) query = query.eq('target_scope', scope);
         return query;
-    };
+    });
     // `scuola_id` serve al filtro della docente (la classe è una coppia nome+sede)
     // e sta in ENTRAMBI i passi del degrado: è una colonna storica.
-    let res = await buildQuery(`${AVVISO_COLS_SCADENZE}, form_model_id, scuola_id`);
-    if (colonnaMancante(res.error as { code?: string } | null)) {
-        res = await buildQuery(`${AVVISO_COLS}, scuola_id`);
+    let letti = await leggiAvvisi(`${AVVISO_COLS_SCADENZE}, form_model_id, scuola_id`);
+    if (!letti.ok && letti.motivo === 'errore' && colonnaMancante(letti.error as { code?: string } | null)) {
+        letti = await leggiAvvisi(`${AVVISO_COLS}, scuola_id`);
         // 🔴 IL DEGRADO SI DICHIARA, E QUI PIÙ CHE ALTROVE. Senza le sette colonne
         // del cantiere A2, `posti_totali` arriva `undefined` su OGNI riga e
         // `sopraCapienza` restituisce `false` per tutti: un indicatore di sicurezza
@@ -411,14 +417,29 @@ async function listaAvvisiStaff(
         logEvento('avvisi', 'warn', {
             operazione: 'avvisi:GET',
             esito: 'degrado-proiezione-capienza-spenta',
-            n: (res.data ?? []).length,
+            n: letti.ok ? letti.righe.length : 0,
         });
     }
-    if (res.error) {
-        logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, res.error);
-        return NextResponse.json({ error: res.error.message }, { status: 500 });
+    if (!letti.ok) {
+        // UNA risposta sola, come prima della sessione 11: le risposte d'errore senza `codice`
+        // di questo file sono contate (`errori-con-codice` e la sua allowlist) e non devono
+        // crescere. Sul guasto del DB il corpo resta quello di prima (il `message` di
+        // PostgREST): sistemarlo spetta alle sessioni dopo la 13 (specifica §7, «Sessione 13»).
+        let messaggio = 'Gli avvisi non si sono potuti leggere per intero.';
+        if (letti.motivo === 'tetto') {
+            // Solo il nome della lettura e dei conteggi: mai dati (AGENTS.md, regola 8).
+            logErrore(
+                { operazione: 'avvisi:GET', stato: 500, evento: 'lettura-troncata' },
+                new Error(`${descriviTetto('avvisi-staff', letti)}, rifiutata per intero`),
+            );
+        } else {
+            logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, letti.error);
+            const m = (letti.error as { message?: unknown } | null)?.message;
+            messaggio = typeof m === 'string' ? m : 'Lettura degli avvisi non riuscita';
+        }
+        return NextResponse.json({ error: messaggio }, { status: 500 });
     }
-    let filtered = (res.data ?? []) as unknown as AvvisoRow[];
+    let filtered = letti.righe;
     // La docente vede solo ciò che la riguarda. Le sue classi si leggono una volta
     // per richiesta, e solo per chi non è segreteria o direzione.
     if (!vedeTuttiGliAvvisi(user)) {

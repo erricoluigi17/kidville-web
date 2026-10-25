@@ -18,8 +18,9 @@
  *  sarebbe suonato per un ritardo di due ore, che capita; con 30 suona se alle 08:30 UTC il giro di
  *  oggi non è ancora finito, cioè quando un ritardo ha smesso di essere un ritardo.
  *
- *  Si guarda solo `event = schedule`: un giro lanciato a mano può essere in modalità `prova` (scrive
- *  sotto `prove/` e non è un backup), e dall'API dei giri non si distingue dal `completo`. */
+ *  Contano solo i giri AUTOMATICI (`eGiroBackupAutomatico`): lo `schedule` di GitHub e il lancio delle
+ *  02:23 del monitor esterno, riconosciuto dal titolo. Un giro lanciato a mano non conta, nemmeno se
+ *  `completo`: la copia che conta è quella che parte da sola. */
 export const ORE_ALLARME_BACKUP = 30
 
 /** La regione in cui devono girare le funzioni: quella del database. Copia di `REGIONE_ATTESA` in
@@ -99,14 +100,29 @@ export function valutaSalute(risposta) {
         }))
 }
 
+/** Il titolo che `backup-notturno.yml` (`run-name`) dà al lancio delle 02:23 del monitor esterno:
+ *  `modalita=completo` + `origine=cloudflare`. `backup-guardia-notte.test.ts` lo lega al `run-name`. */
+export const TITOLO_BACKUP_DA_FUORI = 'Backup notturno completo (da Cloudflare)'
+
 /**
- * IL BACKUP. `giri` = i giri RIUSCITI e AUTOMATICI di `backup-notturno.yml`, dal più recente
- * (`GET …/runs?event=schedule&status=success`). Nessun giro, o il più recente più vecchio di
- * `ORE_ALLARME_BACKUP` ore → `backup-vecchio`.
+ * Un giro AUTOMATICO e riuscito del backup: lo `schedule` di GitHub, oppure il lancio delle 02:23 del
+ * Worker di Cloudflare (un `workflow_dispatch` col titolo esatto). Un giro a mano NON conta, nemmeno se
+ * `completo`: un giro a mano che riesce non dice niente sul giro di stanotte.
+ */
+export function eGiroBackupAutomatico(g) {
+    if (!g || g.conclusion !== 'success') return false
+    if (g.event === 'schedule') return true
+    return g.event === 'workflow_dispatch' && g.display_title === TITOLO_BACKUP_DA_FUORI
+}
+
+/**
+ * IL BACKUP. `giri` = i giri RIUSCITI di `backup-notturno.yml`, dal più recente
+ * (`GET …/runs?status=success`), automatici e no: quali contano lo decide `eGiroBackupAutomatico`.
+ * Nessun giro automatico, o il più recente più vecchio di `ORE_ALLARME_BACKUP` ore → `backup-vecchio`.
  * @returns {Incidente | null}
  */
 export function valutaBackup({ giri, adesso }) {
-    const ultimo = (giri ?? []).find((g) => g && g.conclusion === 'success' && Number.isFinite(Date.parse(g.updated_at)))
+    const ultimo = (giri ?? []).find((g) => eGiroBackupAutomatico(g) && Number.isFinite(Date.parse(g.updated_at)))
     if (!ultimo) {
         return {
             chiave: 'backup-vecchio',

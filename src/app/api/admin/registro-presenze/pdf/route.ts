@@ -18,6 +18,9 @@ import { DEFAULT_LOCALE, LOCALES, formattaIstante, intlDateTime, meseCivile } fr
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): PDF mensile delle presenze di una classe intera, composto sul server.
+export const maxDuration = 300
+
 /**
  * GET /api/admin/registro-presenze/pdf?year=2026&month=5&sezione=<classe>&locale=it
  *

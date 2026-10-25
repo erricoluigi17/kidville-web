@@ -11,6 +11,9 @@ import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 import { formattaIstante } from '@/i18n/config'
 
+// Vita massima dichiarata (sessione 9): jsPDF con le risposte di un modulo, pagina per pagina, per tutta la sede.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
   id: zUuid,

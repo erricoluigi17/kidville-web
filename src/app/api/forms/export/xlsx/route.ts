@@ -11,6 +11,9 @@ import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 import { formattaIstante } from '@/i18n/config'
 
+// Vita massima dichiarata (sessione 9): foglio xlsx in memoria con tutte le risposte di un modulo.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
   // lista di id separati da virgola; voci vuote tollerate (split+trim+filter come prima)

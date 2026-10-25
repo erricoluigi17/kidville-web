@@ -7,6 +7,9 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): traduzione con Claude: 20 s per tentativo, un ritentativo, attesa massima 5 s, 45 s nel caso peggiore.
+export const maxDuration = 60
+
 // text/targetLang: oggi qualsiasi valore truthy è accettato e poi convertito con
 // String(...) prima della chiamata a translateText; lo schema replica esattamente
 // quel comportamento senza aggiungere vincoli di tipo.

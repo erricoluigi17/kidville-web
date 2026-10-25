@@ -20,6 +20,9 @@ import { rispostaErroreProtocollo } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): foglio xlsx con il registro di protocollo di un anno intero.
+export const maxDuration = 300
+
 // Export del registro (decisioni #13/#14): XLSX per elaborazioni + PDF
 // impaginato per stampa/verifiche, sui filtri attivi (il "registro giornaliero"
 // è l'export con da=a=giorno). Le righe annullate restano visibili con motivo

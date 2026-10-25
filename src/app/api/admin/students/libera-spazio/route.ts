@@ -17,6 +17,9 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): rimuove foto, video e messaggi di un alunno dallo Storage.
+export const maxDuration = 300
+
 // =============================================================================
 // LIBERA SPAZIO — il secondo tempo dell'archiviazione di un alunno.
 //

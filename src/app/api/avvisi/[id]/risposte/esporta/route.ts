@@ -13,6 +13,9 @@ import { APP_TIMEZONE, LOCALE_BCP47 } from '@/i18n/config';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
+// Vita massima dichiarata (sessione 9): CSV con tutte le adesioni a un avviso, una riga per risposta.
+export const maxDuration = 300;
+
 // =============================================================================
 // GET /api/avvisi/[id]/risposte/esporta — l'elenco delle adesioni in CSV.
 //

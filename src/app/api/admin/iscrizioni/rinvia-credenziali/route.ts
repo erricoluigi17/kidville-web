@@ -16,6 +16,9 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): fino a 100 email in fila, con la pausa fra una e la successiva e il tetto di 10 s di Resend per ciascuna.
+export const maxDuration = 300
+
 // =============================================================================
 // RIMANDARE LE CREDENZIALI A CHI NON È MAI ENTRATO — e le tre cose da non sbagliare.
 //

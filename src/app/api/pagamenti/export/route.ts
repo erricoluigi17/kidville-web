@@ -18,6 +18,9 @@ import { sediDeiPaganti } from '@/lib/pagamenti/rette-a-carico-server'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
+// Vita massima dichiarata (sessione 9): foglio xlsx con lo scadenziario di una sede.
+export const maxDuration = 300
+
 // ─── Schemi di validazione input ─────────────────────────────────────────────
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
 

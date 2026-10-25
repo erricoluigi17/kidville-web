@@ -1739,6 +1739,13 @@ export const CODICI_ERRORE = {
      */
     CRON_NON_AUTORIZZATO: 'erroreCronNonAutorizzato',
     /**
+     * 503 — un giro di cron con la presa con scadenza (`src/lib/cron/presa.ts`, sessione 8 della
+     * seconda serie di robustezza) non parte perché non si è potuto sapere se un altro giro la
+     * tiene: la RPC della presa è fallita. Come `CRON_NON_AUTORIZZATO`, non lo legge nessuno in
+     * un'interfaccia (lo chiama `pg_cron`), ma il lock `errori-con-codice` non ammette eccezioni.
+     */
+    CRON_PRESA_NON_VERIFICATA: 'erroreCronPresaNonVerificata',
+    /**
      * 500 — il giro giornaliero delle iscrizioni non è stato eseguito
      * (`iscrizione/import-massivo:POST`): elenchi non leggibili, lotto non preso,
      * oppure un'eccezione.

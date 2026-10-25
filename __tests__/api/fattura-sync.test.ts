@@ -20,6 +20,11 @@ vi.mock('@/lib/aruba/client', async (importActual) => {
   return { ...actual, arubaSignin: vi.fn(), arubaGetByFilename: vi.fn() }
 })
 vi.mock('@/lib/push/enqueue', () => ({ enqueueNotifiche: h.enqueue }))
+// La presa con scadenza (sessione 8) ha i suoi test: qui il giro la ottiene sempre, senza token.
+vi.mock('@/lib/cron/presa', () => ({
+  prendiPresaCron: async () => ({ esito: 'presa', token: null }),
+  rilasciaPresaCron: async () => undefined,
+}))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => h.supabase }))
 
 import { POST } from '@/app/api/pagamenti/fattura/sync/route'

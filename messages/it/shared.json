@@ -390,6 +390,7 @@
   "erroreRegistroClasseNonRisolta": "Questa classe non risulta fra le sedi attive: controlla la sede selezionata in alto e riprova.",
   "erroreRegistroNonGenerato": "Il registro non è stato generato: riprova fra qualche minuto.",
   "erroreCronNonAutorizzato": "Operazione riservata ai lavori automatici della piattaforma",
+  "erroreCronPresaNonVerificata": "Il giro automatico non è partito: non è stato possibile verificare se ne era già in corso un altro. Riprova fra qualche minuto",
   "erroreImportIscrizioniNonEseguito": "Il giro automatico delle iscrizioni non è stato eseguito: riprova fra qualche minuto",
   "erroreElencoClassiNonLetto": "Non è stato possibile leggere l’elenco delle classi: riprova fra qualche istante",
   "erroreElencoClassiNonSalvato": "L’elenco caricato non è stato salvato: il file è stato scartato, riprova fra qualche istante",

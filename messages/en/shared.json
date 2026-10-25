@@ -390,6 +390,7 @@
   "erroreRegistroClasseNonRisolta": "This class isn’t among your active locations: check the location selected at the top and try again.",
   "erroreRegistroNonGenerato": "The register was not generated: please try again in a few minutes.",
   "erroreCronNonAutorizzato": "This operation is reserved for the platform’s automated jobs",
+  "erroreCronPresaNonVerificata": "The automated run did not start: it was not possible to check whether another one was already in progress. Please try again in a few minutes",
   "erroreImportIscrizioniNonEseguito": "The automated enrolment run did not complete: please try again in a few minutes",
   "erroreElencoClassiNonLetto": "The class list could not be read: please try again in a moment",
   "erroreElencoClassiNonSalvato": "The uploaded list was not saved: the file was discarded, please try again in a moment",

@@ -25,6 +25,9 @@ const h = vi.hoisted(() => ({
   // oppure un RIGETTO (rete, client), sulla lettura dei livelli e sull'insert.
   erroreLivelli: null as null | { code: string; message: string },
   livelliLancia: false,
+  // Revisione del lotto 4: il guasto su UN blocco dei livelli (l'n-esima lettura del registro).
+  livelliErroreBlocco: null as null | number,
+  lettureLivelli: 0,
   erroreRegistro: null as null | { code: string; message: string },
   registroLancia: false,
   // Fase 8: la presa sulla cadenza, le letture a blocchi, l'ordine fra presa ed email.
@@ -131,6 +134,9 @@ vi.mock('@/lib/supabase/server-client', () => {
           if (table === 'pagamenti' && !aggiornamento && h.erroreLetturaPagamenti) {
             return resolve({ data: null, error: h.erroreLetturaPagamenti })
           }
+          if (table === 'solleciti' && ++h.lettureLivelli === h.livelliErroreBlocco) {
+            return resolve({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } })
+          }
           if (table === 'solleciti' && h.livelliLancia && reject) return reject(new TypeError('fetch failed'))
           if (table === 'solleciti' && h.erroreLivelli) return resolve({ data: null, error: h.erroreLivelli })
           const c = contenimento
@@ -176,6 +182,8 @@ beforeEach(() => {
   h.updates = []
   h.erroreLivelli = null
   h.livelliLancia = false
+  h.livelliErroreBlocco = null
+  h.lettureLivelli = 0
   h.erroreRegistro = null
   h.registroLancia = false
   h.presaVuota = false
@@ -469,8 +477,10 @@ describe('POST /api/pagamenti/solleciti — le coordinate del bonifico', () => {
  * inviati, l'accodamento della push e la scrittura del registro `solleciti` avevano un
  * `catch { /* commento *\/ }` — e due di loro stavano attorno a `await supabase.from(…)`,
  * che NON lancia: l'errore di PostgREST torna in `{ error }`, e il `catch` non scattava
- * mai. Il comportamento resta quello di prima (il sollecito parte lo stesso), ma ora il
- * guasto si DICE: `info` se è il registro assente del DB non migrato, `error` altrimenti.
+ * mai. Ora il guasto si DICE: `info` se è il registro assente del DB non migrato (e il
+ * sollecito parte dal livello 1), `error` altrimenti. Per i LIVELLI il comportamento è cambiato
+ * con la revisione del lotto 4: un guasto vero non lascia più partire il sollecito (sarebbe il 1°
+ * a chi ha già ricevuto il 2°), la voce salta come guasto. Push e registro restano secondari.
  */
 describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
   const eventi = (esito: string) =>
@@ -499,22 +509,51 @@ describe('sollecitaPagamenti — i guasti secondari non tacciono', () => {
     expect(log[0][2]).toEqual({ operazione: 'solleciti:livelli', esito: 'registro-solleciti-assente', n: 1 })
   })
 
-  it('livelli non letti per un altro motivo: il sollecito parte, e una riga `error` col codice', async () => {
+  // Revisione del lotto 4: fino a qui un guasto sui livelli lasciava partire il sollecito con
+  // `giaInviato = 0`, cioè il 1° a chi aveva già ricevuto il 2°. Ora la voce è «non letta»: salta
+  // come GUASTO, senza presa, senza email, senza push, senza registro.
+  const saltatoPerGuasto = async (res: Response) => {
+    expect(res.status).toBe(200)
+    expect((await res.json()).data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, guasto: true, motivo: 'livelli dei solleciti non letti: sollecito non inviato',
+    })
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.sequenza).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(h.inserts.filter((i) => i.table === 'solleciti')).toEqual([])
+  }
+
+  it('🔴 livelli non letti per un altro motivo (57014): la voce salta come guasto, e una riga `error` col codice', async () => {
     h.erroreLivelli = { code: '57014', message: 'canceling statement due to statement timeout' }
-    await partito(await POST(post({ pagamento_ids: [PID] })))
+    await saltatoPerGuasto(await POST(post({ pagamento_ids: [PID] })))
     const log = eventi('livelli-non-letti')
     expect(log).toHaveLength(1)
     expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
+    expect(log[0][2]).toMatchObject({ operazione: 'solleciti:livelli', n: 1 })
     expect(log[0][3]).toMatchObject({ code: '57014' })
   })
 
-  it('lettura dei livelli che RIGETTA: il sollecito parte, e il rigetto si logga', async () => {
+  it('🔴 lettura dei livelli che RIGETTA: la voce salta come guasto, e il rigetto si logga', async () => {
     h.livelliLancia = true
-    await partito(await POST(post({ pagamento_ids: [PID] })))
+    await saltatoPerGuasto(await POST(post({ pagamento_ids: [PID] })))
     const log = eventi('livelli-non-letti')
     expect(log).toHaveLength(1)
     expect(log[0].slice(0, 2)).toEqual(['pagamento', 'error'])
     expect(log[0][3]).toBeInstanceOf(TypeError)
+  })
+
+  it('🔴 il guasto su UN blocco dei livelli salta solo le voci di quel blocco: le altre proseguono', async () => {
+    const { sollecitaPagamenti } = await import('@/lib/pagamenti/solleciti-invio')
+    const { createAdminClient } = await import('@/lib/supabase/server-client')
+    const ids = Array.from({ length: 150 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    h.pagamenti = ids.map((id) => ({ ...h.pagamenti[0], id }))
+    h.livelliErroreBlocco = 1 // il primo blocco: le prime 100 voci
+    const esiti = await sollecitaPagamenti(await createAdminClient(), ids, { anteprima: true })
+    expect(esiti.slice(0, 100).every((e) => e.ok === false && e.guasto === true)).toBe(true)
+    expect(esiti.slice(100).every((e) => e.ok === true && e.livello === 1)).toBe(true)
+    const log = eventi('livelli-non-letti')
+    expect(log).toHaveLength(1)
+    expect(log[0][2]).toMatchObject({ n: 100 })
   })
 
   it('push che non si accoda: l’email è partita, il registro si scrive lo stesso, e la push persa si dice', async () => {

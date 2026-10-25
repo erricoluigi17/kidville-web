@@ -182,42 +182,47 @@ export async function sollecitaPagamenti(
         pags.push(...((pagRows || []) as unknown as PagRow[]))
     }
 
-    // livello già raggiunto (registro; degrade → si riparte da 1)
+    // livello già raggiunto (registro)
     //
-    // Il degrado resta quello di sempre, ma ora SI DICE. Il `catch` qui sotto aveva
-    // soltanto un commento, e non scattava nemmeno: PostgREST non lancia, l'errore
-    // torna in `{ error }` e `data` resta `null` — cioè «nessuno storico», in silenzio.
-    // Per il registro assente (DB della CI non migrato) è giusto ripartire da 1, e
-    // basta un `info`; per un guasto vero è un `error`, perché vuol dire rimandare il
-    // 1° sollecito a chi ha già ricevuto il 2°.
+    // Il `catch` qui aveva soltanto un commento, e non scattava nemmeno: PostgREST non
+    // lancia, l'errore torna in `{ error }` e `data` resta `null` — cioè «nessuno storico»,
+    // in silenzio. Due casi, due regole:
+    //  · registro ASSENTE (DB della CI non migrato): si riparte da 1, con un `info`;
+    //  · GUASTO vero (revisione del lotto 4): le voci del blocco sono «livelli non letti» e
+    //    SALTANO il giro come guasto, con una riga `error`. Fino ad allora si proseguiva con
+    //    `giaInviato = 0`, cioè si rimandava il 1° sollecito a chi aveva già ricevuto il 2°.
     //
     // A BLOCCHI (fase 8): tre livelli per voce, e un `.in()` di 500 voci poteva tornare
-    // più delle 1.000 righe che PostgREST restituisce — troncate senza dirlo.
+    // più delle 1.000 righe che PostgREST restituisce — troncate senza dirlo. Il `try` sta
+    // dentro il blocco: un rigetto (rete, client) toglie le voci di QUEL blocco, non le altre.
     const maxLivello = new Map<string, number>()
-    try {
-        for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
+    const livelliNonLetti = new Set<string>()
+    for (const blocco of aBlocchi(pagamentoIds, ID_PER_QUERY)) {
+        let righe: { pagamento_id: string; livello: number }[] = []
+        let guastoLivelli: { errore: unknown } | null = null
+        try {
             const { data, error: errLivelli } = await supabase.from('solleciti').select('pagamento_id, livello').in('pagamento_id', blocco).contains('destinatari', FILTRO_RECAPITATO)
-            if (errLivelli) {
-                const assente = REGISTRO_ASSENTE.has((errLivelli as { code?: string }).code ?? '')
-                logEvento('pagamento', assente ? 'info' : 'error', {
-                    operazione: 'solleciti:livelli',
-                    esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
-                    n: blocco.length,
-                }, errLivelli)
-                // Il registro assente lo è per tutti i blocchi: una riga sola basta.
-                if (assente) break
-                continue
-            }
-            for (const s of (data || []) as { pagamento_id: string; livello: number }[]) {
-                maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
-            }
+            if (errLivelli) guastoLivelli = { errore: errLivelli }
+            else righe = (data || []) as { pagamento_id: string; livello: number }[]
+        } catch (err) {
+            guastoLivelli = { errore: err }
         }
-    } catch (err) {
-        logEvento('pagamento', 'error', {
-            operazione: 'solleciti:livelli',
-            esito: 'livelli-non-letti',
-            n: pagamentoIds.length,
-        }, err)
+        if (guastoLivelli) {
+            const assente = REGISTRO_ASSENTE.has((guastoLivelli.errore as { code?: string } | null)?.code ?? '')
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'solleciti:livelli',
+                esito: assente ? 'registro-solleciti-assente' : 'livelli-non-letti',
+                n: blocco.length,
+                ...(assente ? {} : { msg: `livelli dei solleciti non letti: ${blocco.length} voci saltano il giro come guasto` }),
+            }, guastoLivelli.errore)
+            // Il registro assente lo è per tutti i blocchi: una riga sola basta.
+            if (assente) break
+            for (const id of blocco) livelliNonLetti.add(id)
+            continue
+        }
+        for (const s of righe) {
+            maxLivello.set(s.pagamento_id, Math.max(maxLivello.get(s.pagamento_id) ?? 0, s.livello))
+        }
     }
 
     const cfgCache = new Map<string, {
@@ -300,6 +305,12 @@ export async function sollecitaPagamenti(
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
             esiti.push({ pagamento_id: id, ok: false, motivo: `cadenza minima di ${cadenza}gg non ancora trascorsa` })
             continue
+        }
+
+        // Il livello raggiunto non si è letto (revisione del lotto 4): senza, il prossimo livello
+        // sarebbe un'invenzione. La voce salta come GUASTO, e il giro automatico non chiude «ok».
+        if (livelliNonLetti.has(id)) {
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'livelli dei solleciti non letti: sollecito non inviato', guasto: true }); continue
         }
 
         const giorniRitardo = pag.scadenza ? Math.max(0, Math.floor((adesso - Date.parse(pag.scadenza)) / MS_GIORNO)) : 0

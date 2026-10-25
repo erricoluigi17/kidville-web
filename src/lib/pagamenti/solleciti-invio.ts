@@ -6,6 +6,7 @@ import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { sanificaMessaggio } from '@/lib/logging/serialize'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
@@ -50,6 +51,18 @@ import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
 //    un ritentativo nello stesso giorno Resend non lo rispedisce;
 //  • un tetto di tempo (`scadenza`): oltre, le voci restanti escono `rinviato per
 //    tempo` e le riprende il giro dopo, invece di morire col muro della Function.
+//
+// SESSIONE 9 DELLA SECONDA SERIE (email e fornitori senza successi finti):
+//  • un sollecito è «inviato» solo se ALMENO UNA email è partita. Se non ne parte nessuna, la
+//    presa si annulla con un UPDATE condizionato sulla presa stessa (se un altro giro l'ha già
+//    ripresa, resta la sua), l'esito è `ok: false` e il giro dopo la riprende;
+//  • se l'esito è INCERTO (scadenza senza risposta, 409 concorrente) la presa resta: il
+//    sollecito slitta di una cadenza invece di partire due volte;
+//  • il registro si scrive anche quando l'invio fallisce, con l'esito per destinatario; i
+//    livelli contano solo le righe con almeno un `inviata: true` (`FILTRO_RECAPITATO`);
+//  • niente push se nessuna email è partita: la push accompagna il sollecito, non lo sostituisce;
+//  • nessun destinatario con un indirizzo ⇒ niente presa e niente registro, un `warn`;
+//  • nel giro automatico l'email ritenta (429, 5xx, rete) dentro il tetto del giro.
 
 export interface EsitoSollecito {
     pagamento_id: string
@@ -64,6 +77,9 @@ export interface EsitoSollecito {
     guasto?: boolean
     /** `true` = non tentato perché il giro ha raggiunto il suo tetto di tempo. */
     rinviato?: boolean
+    /** Sessione 9: le email partite e quelle tentate (i destinatari con un indirizzo). */
+    inviate?: number
+    tentate?: number
 }
 
 interface PagRow {
@@ -99,6 +115,28 @@ const REGISTRO_ASSENTE = new Set(['42P01', 'PGRST205'])
  * `cs.[{"inviata":true}]`, cioè `destinatari @> '[{"inviata":true}]'`.
  */
 const FILTRO_RECAPITATO = '[{"inviata":true}]'
+
+/** Un destinatario nel registro: l'esito del suo invio. */
+interface DestinatarioRegistrato {
+    id: string
+    email?: string | null
+    inviata: boolean
+    /** Il provider potrebbe averla presa (vedi `SendEmailResult.incerto`). */
+    incerta?: true
+}
+
+/** La riga del registro `solleciti`, senza il canale (lo aggiunge `registraSollecito`). */
+interface RigaRegistro {
+    pagamento_id: string
+    scuola_id: string
+    alunno_id: string
+    livello: number
+    destinatari: DestinatarioRegistrato[]
+    oggetto: string
+    corpo: string
+    automatico: boolean
+    inviato_da: string | null
+}
 
 export async function sollecitaPagamenti(
     supabase: SupabaseClient,
@@ -366,6 +404,19 @@ export async function sollecitaPagamenti(
             destinatari = (data || []) as { id: string; email?: string | null }[]
         }
         if (destinatari.length === 0) { esiti.push({ pagamento_id: id, ok: false, motivo: 'nessun destinatario collegato' }); continue }
+        if (!destinatari.some((d) => !!d.email)) {
+            // Sessione 9: nessuno dei destinatari ha un indirizzo. Prima si prendeva la cadenza,
+            // si mandava la sola push e si registrava un sollecito senza nessuna email partita: la
+            // voce risultava «sollecitata» e il livello saliva. Ora si dice, e la voce resta com'è.
+            if (!opts.anteprima) {
+                logEvento('pagamento', 'warn', {
+                    operazione: 'solleciti-invio', esito: 'nessun-indirizzo-email', pagamento_id: id,
+                    n_destinatari: destinatari.length,
+                    msg: 'sollecito non inviato: nessun destinatario collegato ha un indirizzo email',
+                })
+            }
+            esiti.push({ pagamento_id: id, ok: false, motivo: 'nessun destinatario con un indirizzo email' }); continue
+        }
 
         if (opts.anteprima) {
             esiti.push({ pagamento_id: id, ok: true, livello, oggetto, corpo, destinatari })
@@ -428,17 +479,82 @@ export async function sollecitaPagamenti(
         }
 
         const giorno = presaIl.slice(0, 10)
-        const esitiInvio: { id: string; email?: string | null; inviata: boolean }[] = []
+        const registrati: DestinatarioRegistrato[] = []
+        let inviate = 0
+        let tentate = 0
+        let incerte = 0
+        let ultimoErrore: string | null = null
         for (const d of destinatari) {
-            const inviata = d.email
-                ? (await sendEmailDetailed({
-                    to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
-                    // voce + livello + destinatario + giorno: lo stesso sollecito ritentato
-                    // lo stesso giorno Resend non lo rispedisce. Solo uuid e una data.
-                    chiaveIdempotenza: `sollecito:${id}:L${livello}:${d.id}:${giorno}`,
-                })).ok
+            if (!d.email) {
+                registrati.push({ id: d.id, email: d.email, inviata: false })
+                continue
+            }
+            tentate++
+            const invio = await sendEmailDetailed({
+                to: d.email, subject: oggetto, text: corpo, html: messaggio.html,
+                // voce + livello + destinatario + giorno: lo stesso sollecito ritentato
+                // lo stesso giorno Resend non lo rispedisce. Solo uuid e una data.
+                chiaveIdempotenza: `sollecito:${id}:L${livello}:${d.id}:${giorno}`,
+                // Sessione 9: i ritentativi (429, 5xx, rete) solo nel giro AUTOMATICO e dentro il
+                // suo tetto di tempo. Dal bottone la segreteria aspetta davanti allo schermo: un
+                // fallimento lo vede subito, e decide lei.
+                ...(opts.automatico ? { ritentativi: opts.scadenza !== undefined ? { scadenza: opts.scadenza } : {} } : {}),
+            })
+            if (invio.ok) {
+                inviate++
+            } else {
+                ultimoErrore = invio.error
+                if (invio.incerto) incerte++
+            }
+            registrati.push({ id: d.id, email: d.email, inviata: invio.ok, ...(invio.incerto ? { incerta: true as const } : {}) })
+        }
+        // Il registro è l'AUDIT di ciò che si è TENTATO, con l'esito per destinatario, e la fonte
+        // dei livelli qui sopra (che però contano solo le righe recapitate: `FILTRO_RECAPITATO`).
+        const riga: RigaRegistro = {
+            pagamento_id: id,
+            scuola_id: pag.scuola_id,
+            alunno_id: pag.alunno_id,
+            livello,
+            destinatari: registrati,
+            oggetto,
+            corpo,
+            automatico: !!opts.automatico,
+            inviato_da: opts.attoreId ?? null,
+        }
+        if (inviate === 0) {
+            // NESSUNA EMAIL È PARTITA (sessione 9). Prima: presa scritta, push mandata, registro
+            // scritto ed esito `ok: true` — la voce risultava sollecitata e la famiglia non aveva
+            // ricevuto niente. Ora:
+            //  · esito certo ⇒ la presa si annulla, e il giro dopo riprende la voce;
+            //  · esito incerto ⇒ la presa resta: meglio slittare di una cadenza che partire due volte.
+            // In entrambi i casi niente push, e il registro dice com'è andata.
+            const presaAnnullata = incerte === 0
+                ? await annullaPresa(supabase, id, presaIl, pag.ultimo_sollecito_il)
                 : false
-            esitiInvio.push({ id: d.id, email: d.email, inviata })
+            await registraSollecito(supabase, riga)
+            if (incerte > 0) {
+                logEvento('pagamento', 'warn', {
+                    operazione: 'solleciti-invio', esito: 'sollecito-esito-incerto', pagamento_id: id,
+                    livello_sollecito: livello, tentate, incerte,
+                    msg: 'nessuna email confermata dal provider, ma una potrebbe essere partita: la cadenza resta e il sollecito slitta di una cadenza',
+                })
+                esiti.push({
+                    pagamento_id: id, ok: false, livello, inviate: 0, tentate,
+                    motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+                })
+                continue
+            }
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti-invio', esito: 'sollecito-non-recapitato', pagamento_id: id,
+                livello_sollecito: livello, tentate, presa_annullata: presaAnnullata,
+            }, erroreNonRecapitato(ultimoErrore))
+            esiti.push({
+                pagamento_id: id, ok: false, livello, inviate: 0, tentate,
+                motivo: presaAnnullata
+                    ? 'nessuna email partita: il sollecito resta per il giro successivo'
+                    : 'nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+            })
+            continue
         }
         try {
             await enqueueNotifiche(supabase, {
@@ -459,40 +575,9 @@ export async function sollecitaPagamenti(
                 pagamento_id: id,
             }, err)
         }
-        // Il registro è l'AUDIT di ciò che è partito (e la fonte dei livelli qui sopra).
-        // Se non si scrive il sollecito resta valido — l'email è partita — ma il prossimo
-        // ripartirebbe dallo stesso livello: si dice, `info` se il registro non esiste
-        // (DB della CI), `error` altrimenti. PostgREST non lancia: si legge `{ error }`.
-        try {
-            const { error: errRegistro } = await supabase.from('solleciti').insert({
-                pagamento_id: id,
-                scuola_id: pag.scuola_id,
-                alunno_id: pag.alunno_id,
-                livello,
-                canale: 'email',
-                destinatari: esitiInvio,
-                oggetto,
-                corpo,
-                automatico: !!opts.automatico,
-                inviato_da: opts.attoreId ?? null,
-            })
-            if (errRegistro) {
-                const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
-                logEvento('pagamento', assente ? 'info' : 'error', {
-                    operazione: 'solleciti:registro',
-                    esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
-                    pagamento_id: id,
-                }, errRegistro)
-            }
-        } catch (err) {
-            logEvento('pagamento', 'error', {
-                operazione: 'solleciti:registro',
-                esito: 'registro-sollecito-non-scritto',
-                pagamento_id: id,
-            }, err)
-        }
+        await registraSollecito(supabase, riga)
         // La cadenza è già scritta: è la presa, qui sopra, prima dell'email.
-        esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari })
+        esiti.push({ pagamento_id: id, ok: true, livello, oggetto, destinatari, inviate, tentate })
     }
     if (rinviati > 0) {
         logEvento('pagamento', 'warn', {
@@ -501,4 +586,84 @@ export async function sollecitaPagamenti(
         })
     }
     return esiti
+}
+
+/**
+ * Riporta la cadenza al valore di prima, SOLO se è ancora la nostra presa (sessione 9).
+ *
+ * È lo stesso UPDATE condizionato della presa, al contrario: `… where ultimo_sollecito_il =
+ * <presa>`. Zero righe = un altro giro (il cron, o la segreteria dal bottone) ha ripreso la voce
+ * dopo di noi: la cadenza è sua, e non si tocca. `true` solo se la cadenza è tornata indietro.
+ */
+async function annullaPresa(
+    supabase: SupabaseClient,
+    id: string,
+    presaIl: string,
+    precedente: string | null,
+): Promise<boolean> {
+    try {
+        const { data, error } = await supabase
+            .from('pagamenti')
+            .update({ ultimo_sollecito_il: precedente })
+            .eq('id', id)
+            .eq('ultimo_sollecito_il', presaIl)
+            .select('id')
+        if (error) {
+            logEvento('pagamento', 'error', {
+                operazione: 'solleciti-invio', esito: 'presa-non-annullata', pagamento_id: id,
+                msg: 'nessuna email partita e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+            }, error)
+            return false
+        }
+        if ((data ?? []).length === 0) {
+            logEvento('pagamento', 'info', {
+                operazione: 'solleciti-invio', esito: 'presa-gia-ripresa', pagamento_id: id,
+                msg: 'la cadenza è cambiata dopo la presa: un altro giro ha ripreso la voce, e resta la sua',
+            })
+            return false
+        }
+        return true
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti-invio', esito: 'presa-non-annullata', pagamento_id: id,
+        }, err)
+        return false
+    }
+}
+
+/**
+ * Il registro è l'AUDIT di ciò che si è tentato (e la fonte dei livelli). Se non si scrive il
+ * sollecito resta quello che è, ma il prossimo ripartirebbe dallo stesso livello: si dice, `info`
+ * se il registro non esiste (DB della CI), `error` altrimenti. PostgREST non lancia: si legge
+ * `{ error }`. Mai oggetto né corpo nella riga di log.
+ */
+async function registraSollecito(supabase: SupabaseClient, riga: RigaRegistro): Promise<void> {
+    try {
+        const { error: errRegistro } = await supabase.from('solleciti').insert({ ...riga, canale: 'email' })
+        if (errRegistro) {
+            const assente = REGISTRO_ASSENTE.has((errRegistro as { code?: string }).code ?? '')
+            logEvento('pagamento', assente ? 'info' : 'error', {
+                operazione: 'solleciti:registro',
+                esito: assente ? 'registro-solleciti-assente' : 'registro-sollecito-non-scritto',
+                pagamento_id: riga.pagamento_id,
+            }, errRegistro)
+        }
+    } catch (err) {
+        logEvento('pagamento', 'error', {
+            operazione: 'solleciti:registro',
+            esito: 'registro-sollecito-non-scritto',
+            pagamento_id: riga.pagamento_id,
+        }, err)
+    }
+}
+
+/**
+ * L'ultimo motivo del provider come Error VERO, per la riga `sollecito-non-recapitato`: il
+ * messaggio arriva sanificato (un indirizzo dentro il rifiuto esce come `[email]`), così la
+ * colonna `app_log.messaggio` dice PERCHÉ senza dire A CHI.
+ */
+function erroreNonRecapitato(motivo: string | null): Error {
+    const err = new Error(sanificaMessaggio(motivo ?? 'nessun esito dal provider email'))
+    err.name = 'SollecitoNonRecapitato'
+    return err
 }

@@ -695,3 +695,168 @@ describe('solleciti — il livello conta solo i solleciti RECAPITATI (sessione 9
     expect(h.contenimenti).toContainEqual({ table: 'solleciti', col: 'destinatari', val: '[{"inviata":true}]' })
   })
 })
+
+describe('solleciti — nessuna email partita, nessun sollecito (sessione 9)', () => {
+  const righe = (esito: string) =>
+    h.logEvento.mock.calls.filter((c) => (c[2] as { esito?: string } | undefined)?.esito === esito)
+  const registro = () => h.inserts.filter((i) => i.table === 'solleciti')
+  const fallisce = (error: string, incerto?: boolean) =>
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      return incerto ? { ok: false, error, incerto: true } : { ok: false, error }
+    })
+
+  beforeEach(() => {
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }]
+  })
+
+  it('🔴 nessuna email partita ⇒ la presa si annulla, niente push, registro con l’esito, riga `error`', async () => {
+    fallisce('rifiutato dal provider email (403): dominio non verificato per genitore.uno@example.test')
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'annullamento'])
+    expect(h.annullamenti).toEqual([null])
+    expect(h.cadenzaInDb).toBeNull()
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()).toHaveLength(1)
+    expect(registro()[0].row.destinatari).toEqual([{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false }])
+    expect(j.data[0]).toMatchObject({
+      pagamento_id: PID, ok: false, livello: 1, inviate: 0, tentate: 1,
+      motivo: 'nessuna email partita: il sollecito resta per il giro successivo',
+    })
+    const riga = righe('sollecito-non-recapitato')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('error')
+    expect(riga[0][2]).toMatchObject({ operazione: 'solleciti-invio', pagamento_id: PID, livello_sollecito: 1, tentate: 1, presa_annullata: true })
+    const err = riga[0][3] as Error
+    expect(err.name).toBe('SollecitoNonRecapitato')
+    expect(err.message).toContain('[email]')
+    expect(err.message).not.toContain('example.test')
+  })
+
+  it('l’annullamento rimette la cadenza di PRIMA, non `null`', async () => {
+    const PRIMA = '2026-05-01T06:00:00.000Z'
+    h.pagamenti = [{ ...h.pagamenti[0], ultimo_sollecito_il: PRIMA }]
+    h.cadenzaInDb = PRIMA
+    fallisce('rifiutato dal provider email (500): errore finto')
+    await POST(post({ pagamento_ids: [PID] }))
+    expect(h.annullamenti).toEqual([PRIMA])
+    expect(h.cadenzaInDb).toBe(PRIMA)
+  })
+
+  it('🔴 un altro giro ha ripreso la voce mentre l’email falliva: l’annullamento non tocca la sua cadenza', async () => {
+    const ESTRANEA = '2026-10-21T06:00:09.000Z'
+    h.sendEmailDetailed.mockImplementation(async () => {
+      h.sequenza.push('email')
+      h.cadenzaInDb = ESTRANEA // il bottone della segreteria, nello stesso istante
+      return { ok: false, error: 'rifiutato dal provider email (500): errore finto' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'annullamento'])
+    expect(h.cadenzaInDb).toBe(ESTRANEA)
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 1,
+      motivo: 'nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza',
+    })
+    const ripresa = righe('presa-gia-ripresa')
+    expect(ripresa).toHaveLength(1)
+    expect(ripresa[0][1]).toBe('info')
+    expect(righe('sollecito-non-recapitato')[0][2]).toMatchObject({ presa_annullata: false })
+  })
+
+  it('🔴 un destinatario sì e uno no ⇒ il sollecito è partito: la presa resta, push e registro con i due esiti', async () => {
+    h.legami = [{ alunno_id: 'al-1', genitore_id: 'g-1' }, { alunno_id: 'al-1', genitore_id: 'g-2' }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }, { id: 'g-2', email: 'genitore.due@example.test' }]
+    h.sendEmailDetailed.mockImplementation(async (opts) => {
+      h.sequenza.push('email')
+      return opts.to === 'genitore.uno@example.test'
+        ? { ok: true, error: null }
+        : { ok: false, error: 'rifiutato dal provider email (422): indirizzo non valido' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).toHaveBeenCalledTimes(1)
+    expect((registro()[0].row.destinatari as { inviata: boolean }[]).map((d) => d.inviata)).toEqual([true, false])
+    expect(j.data[0]).toMatchObject({ ok: true, inviate: 1, tentate: 2 })
+    expect(righe('sollecito-non-recapitato')).toHaveLength(0)
+  })
+
+  it('nessun destinatario con un indirizzo ⇒ niente presa, niente email, niente push, niente registro; una riga `warn`', async () => {
+    h.utenti = [{ id: 'g-1', email: null }]
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual([])
+    expect(h.sendEmailDetailed).not.toHaveBeenCalled()
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()).toEqual([])
+    expect(j.data[0]).toMatchObject({ ok: false, motivo: 'nessun destinatario con un indirizzo email' })
+    const riga = righe('nessun-indirizzo-email')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('warn')
+    expect(riga[0][2]).toMatchObject({ pagamento_id: PID, n_destinatari: 1 })
+  })
+
+  it('esito INCERTO ⇒ la presa resta, niente push, registro con `incerta`, riga `warn`', async () => {
+    fallisce('errore di rete verso il provider email: scaduto', true)
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()[0].row.destinatari).toEqual([{ id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true }])
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 1,
+      motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+    })
+    const riga = righe('sollecito-esito-incerto')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('warn')
+    expect(riga[0][2]).toMatchObject({ pagamento_id: PID, tentate: 1, incerte: 1 })
+  })
+
+  // Aggiunto in esecuzione (mutation testing): con un solo destinatario «incerta» e «nessuna
+  // certa» coincidono, e una regola che annullasse la presa appena UNA email ha esito certo
+  // restava verde. Con un'email forse partita la presa resta, anche se l'altra è rifiutata:
+  // annullarla vorrebbe dire rispedire il sollecito a chi potrebbe averlo già ricevuto.
+  it('🔴 un destinatario INCERTO e uno rifiutato ⇒ la presa resta (nessun doppio invio), niente push', async () => {
+    h.legami = [{ alunno_id: 'al-1', genitore_id: 'g-1' }, { alunno_id: 'al-1', genitore_id: 'g-2' }]
+    h.utenti = [{ id: 'g-1', email: 'genitore.uno@example.test' }, { id: 'g-2', email: 'genitore.due@example.test' }]
+    h.sendEmailDetailed.mockImplementation(async (opts) => {
+      h.sequenza.push('email')
+      return opts.to === 'genitore.uno@example.test'
+        ? { ok: false, error: 'errore di rete verso il provider email: scaduto', incerto: true }
+        : { ok: false, error: 'rifiutato dal provider email (422): indirizzo non valido' }
+    })
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    expect(h.sequenza).toEqual(['presa', 'email', 'email'])
+    expect(h.annullamenti).toEqual([])
+    expect(h.enqueueNotifiche).not.toHaveBeenCalled()
+    expect(registro()[0].row.destinatari).toEqual([
+      { id: 'g-1', email: 'genitore.uno@example.test', inviata: false, incerta: true },
+      { id: 'g-2', email: 'genitore.due@example.test', inviata: false },
+    ])
+    expect(j.data[0]).toMatchObject({
+      ok: false, inviate: 0, tentate: 2,
+      motivo: 'esito incerto presso il provider: nessun nuovo invio prima della prossima cadenza',
+    })
+    expect(righe('sollecito-esito-incerto')[0][2]).toMatchObject({ tentate: 2, incerte: 1 })
+    expect(righe('sollecito-non-recapitato')).toHaveLength(0)
+  })
+
+  it('l’annullamento che fallisce (57014) ⇒ riga `error` col codice, e il sollecito slitta', async () => {
+    h.erroreAnnullamento = { code: '57014', message: 'canceling statement due to statement timeout' }
+    fallisce('rifiutato dal provider email (500): errore finto')
+    const j = await (await POST(post({ pagamento_ids: [PID] }))).json()
+
+    const riga = righe('presa-non-annullata')
+    expect(riga).toHaveLength(1)
+    expect(riga[0][1]).toBe('error')
+    expect((riga[0][3] as { code?: string }).code).toBe('57014')
+    expect(righe('sollecito-non-recapitato')[0][2]).toMatchObject({ presa_annullata: false })
+    expect(j.data[0].motivo).toBe('nessuna email partita, e la cadenza non è tornata indietro: il sollecito slitta di una cadenza')
+  })
+})

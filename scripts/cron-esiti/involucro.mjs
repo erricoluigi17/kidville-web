@@ -320,7 +320,9 @@ export function inversa(migrazione) {
     const nome = m[1].toLowerCase()
     if (nome === INVOLUCRO || nome === LETTORE) continue
     const fine = codice.indexOf(';', m.index)
-    const permessi = PERMESSI_DOPO.exec(codice.slice(fine + 1))[0].length
+    // Il `\s*` della regex mangia anche i commenti che seguono (mascherati, sono spazi): l'intestazione
+    // del blocco dopo, `-- == IL LETTORE ==`. Il pezzo finisce all'ultimo `;` dei suoi permessi.
+    const permessi = PERMESSI_DOPO.exec(codice.slice(fine + 1))[0].lastIndexOf(';') + 1
     pezzi.push(
       `${svolgi(migrazione.slice(m.index, fine).trimEnd()).definizione};\n\n` +
         migrazione.slice(fine + 1, fine + 1 + permessi).trim(),

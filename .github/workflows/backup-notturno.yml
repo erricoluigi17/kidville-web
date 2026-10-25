@@ -20,11 +20,13 @@ name: Backup notturno (database e file → R2)
 #   · simula_guasto         non tocca niente: fa fallire apposta il giro per vedere arrivare
 #                           l'allarme (segnalazione + email). Un allarme mai visto suonare non
 #                           è un allarme.
-# OGNI NOTTE. Lo `schedule` gira alle 02:23 UTC (dopo il backup fisico di Supabase delle 01:00 e
-# prima dei cron dell'app delle 03:30), sempre in modalità `completo`. Il minuto 23 non è a caso:
-# alle :00 le code di GitHub sono intasate e i giri partono in ritardo. Armato il 2026-10-06,
-# dopo un giro `prova` e uno `completo` riusciti dal ramo `main`, dopo le regole di lock e di
-# scadenza su R2 e dopo la prova dell'allarme con `simula_guasto`.
+# OGNI NOTTE. Alle 02:23 UTC (dopo il backup fisico di Supabase delle 01:00 e prima dei cron
+# dell'app delle 03:30) lo lancia il MONITOR ESTERNO, il Worker di Cloudflare
+# `monitor-esterno/worker.mjs`, con `modalita=completo` e `origine=cloudflare`: il cron di
+# Cloudflare è puntuale, quello di GitHub no (8 notti misurate, partenze fra 07:04 e 09:35 UTC).
+# Lo `schedule` qui sotto resta come RISERVA, alla stessa ora: se il Worker ha già fatto il backup,
+# la guardia delle 20 ore annulla il giro. Schedule armato il 2026-10-06; Worker dalla sessione 4
+# della seconda serie di robustezza.
 #
 # I SEGRETI vivono nell'ambiente GitHub `backup`, che accetta solo il branch `main` e non ha
 # revisori (deve girare di notte, da solo). Un branch con un workflow modificato non può quindi
@@ -45,8 +47,14 @@ name: Backup notturno (database e file → R2)
 #   · non stampa segreti, nomi di file né conteggi per tabella: il repository è pubblico e i
 #     log si leggono da fuori. I conteggi stanno nel manifest, cifrato.
 #
-# COME SI SPEGNE. `gh workflow disable backup-notturno.yml`. Nessun effetto sulla produzione.
+# COME SI SPEGNE. `gh workflow disable backup-notturno.yml`. Nessun effetto sulla produzione. Il
+# Worker delle 02:23 legge lo stato `disabled_manually` e NON lo riaccende (riattiva soltanto lo
+# spegnimento automatico di GitHub per inattività, `disabled_inactivity`).
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Il titolo di ogni giro. «Backup notturno completo (da Cloudflare)» è il lancio delle 02:23 UTC del
+# monitor esterno: lo riconoscono il campanello (`valutaBackup`) e la guardia delle 20 ore qui sotto.
+run-name: Backup notturno ${{ inputs.modalita || 'completo' }}${{ inputs.origine == 'cloudflare' && ' (da Cloudflare)' || '' }}
 
 on:
   schedule:
@@ -64,6 +72,10 @@ on:
         description: "Fa fallire apposta il giro per provare l'allarme (segnalazione + email). Non tocca niente."
         type: boolean
         default: false
+      origine:
+        description: "Chi lancia il giro: vuoto = a mano; cloudflare = il monitor esterno delle 02:23 UTC (cambia solo il titolo del giro)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -95,9 +107,53 @@ env:
   PIN_RCLONE_SHA256: "982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab"
 
 jobs:
+  # LA GUARDIA DELLE 20 ORE (robustezza, seconda serie, sessione 4). Il backup lo lancia alle 02:23
+  # UTC il monitor esterno; lo `schedule` qui sopra resta come riserva, ma GitHub lo fa arrivare fra
+  # le 07:00 e le 09:35. Se un backup completo è già riuscito nelle ultime 20 ore, il giro dello
+  # schedule ANNULLA SÉ STESSO: niente secondo backup nella punta delle scuole, e il giro risulta
+  # «cancelled», non «success» (il campanello conta solo i successi veri). Ogni passo ha
+  # `continue-on-error`: una guardia rotta non ferma il backup e non fa suonare l'avviso.
+  guardia:
+    name: Guardia delle 20 ore (solo sui giri dello schedule)
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/backup
+
+      - name: Cerca un backup completo riuscito nelle ultime 20 ore
+        id: cerca
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/backup/guardia-notte.mjs
+
+      - name: Annulla questo giro (il backup di stanotte c'è già)
+        if: ${{ steps.cerca.outputs.salta == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          if gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"; then
+            echo "::notice::giro annullato dalla guardia: un backup completo è già riuscito nelle ultime 20 ore"
+            sleep 120
+          fi
+          echo "::warning::l'annullamento non è arrivato: il backup parte comunque (meglio due copie che nessuna)"
+
   backup:
     name: Dump del database e specchio dei file
-    if: ${{ !inputs.simula_guasto }}
+    needs: guardia
+    # `!cancelled()` e non il `success()` implicito: con la guardia SALTATA (giro a mano o lanciato dal
+    # Worker) il backup deve partire lo stesso; con il giro annullato dalla guardia, non parte.
+    if: ${{ !cancelled() && !inputs.simula_guasto }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: backup

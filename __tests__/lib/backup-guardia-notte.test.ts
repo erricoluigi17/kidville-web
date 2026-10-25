@@ -1,4 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { TITOLO_BACKUP_DA_FUORI } from '../../scripts/campanello/valuta.mjs'
+import { TITOLO_DA_FUORI } from '../../scripts/campanello/allarme.mjs'
 import {
     ORE_GUARDIA,
     TITOLO_COMPLETO,
@@ -134,5 +138,18 @@ describe('esegui (fail-open: un guasto della guardia fa PARTIRE il backup)', () 
 
         expect(d.salta).toBe(false)
         expect(righe).toContain('timeout')
+    })
+})
+
+describe('i titoli che legano il workflow, la guardia e il campanello', () => {
+    it('il run-name produce «Backup notturno completo» e, dal Worker, « (da Cloudflare)»', () => {
+        const yml = readFileSync(join(process.cwd(), '.github/workflows/backup-notturno.yml'), 'utf8')
+        // Una RIGA intera, non un pezzo di testo: un `# run-name: …` commentato non deve bastare.
+        expect(yml.split('\n')).toContain(
+            "run-name: Backup notturno ${{ inputs.modalita || 'completo' }}${{ inputs.origine == 'cloudflare' && ' (da Cloudflare)' || '' }}",
+        )
+        expect(TITOLO_COMPLETO).toBe('Backup notturno completo')
+        expect(TITOLO_BACKUP_DA_FUORI).toBe(`${TITOLO_COMPLETO} ${TITOLO_DA_FUORI}`)
+        expect(DA_FUORI).toBe(TITOLO_BACKUP_DA_FUORI)
     })
 })

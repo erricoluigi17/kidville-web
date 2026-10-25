@@ -132,20 +132,24 @@ export const TABELLE_ATTESE = ['utenti', 'alunni', 'avvisi', 'notifiche', 'pagam
 /**
  * PERCHÉ NON `to_regclass()`, che sarebbe la via ovvia.
  *
- * `to_regclass()` è SQL: da PostgREST si raggiunge solo con una funzione RPC, che non
- * esiste e che richiederebbe una migrazione — cioè un endpoint di salute che nasce rotto
- * e resta rotto finché qualcuno non applica la migrazione, il che è un modo notevole di
- * fallire proprio nel compito di accorgersi che qualcosa non è stato applicato.
+ * `to_regclass()` è SQL: da PostgREST si raggiunge solo con una funzione RPC, e una RPC nuova
+ * arriva con una migrazione — un controllo che nasce cieco finché qualcuno non la applica, il che
+ * è un modo notevole di fallire proprio nel compito di accorgersi che qualcosa non è stato
+ * applicato.
  *
- * La sonda `select(head)` è però anche PIÙ FORTE, e questa è la vera ragione: misura la
- * vista che l'APPLICAZIONE ha dello schema, non quella che ha il superuser. Una tabella
- * che esiste ma non è esposta, o che c'è nel catalogo ma non nella schema cache di
- * PostgREST, per il codice di questo repo NON esiste — risponde `PGRST205`, che è
- * esattamente ciò che produce una migrazione mancante. `to_regclass()` la direbbe
- * presente e il controllo sarebbe verde mentre l'app è rotta: un controllo che mente.
+ * La sonda da PostgREST è anche PIÙ FORTE, e questa è la vera ragione: misura la vista che
+ * l'APPLICAZIONE ha dello schema, non quella del superuser. Una tabella che c'è nel catalogo ma
+ * non nella schema cache di PostgREST, per il codice di questo repo NON esiste — risponde
+ * `PGRST205`, che è esattamente ciò che produce una migrazione mancante.
  *
- * `head: true` non trasporta righe: si misura l'esistenza, non il contenuto. Su un
- * database con 152 codici fiscali di minori la differenza non è di prestazioni.
+ * ⚠️ UNA `GET`, NON UNA `HEAD` (sessione 7 della seconda serie, 2026-10-25). Fino ad allora la sonda
+ * era `select('id', { head: true, count: 'exact' })`. Una HEAD non ha corpo, e postgrest-js (2.112)
+ * rende un 404 SENZA corpo come `status 204` con `error: null`: il `PGRST205` sta nel corpo che la
+ * HEAD non porta, quindi il controllo non avrebbe visto la tabella assente per cui esiste. Lo
+ * prova `__tests__/lib/health/schema-atteso.test.ts`, con il client vero e un `fetch` finto. Il
+ * `count: 'exact'` faceva in più contare le righe di cinque tabelle a ogni richiesta, per niente.
+ * Ora: una `GET ?select=id&limit=1` per tabella, tutte e cinque in parallelo. Torna al più un uuid
+ * per tabella, che il controllo non legge e non rilancia.
  */
 const CODICI_TABELLA_ASSENTE = new Set(['PGRST205', 'PGRST202', '42P01'])
 
@@ -694,22 +698,32 @@ async function controlloAuth(supabase: SupabaseClient): Promise<Controllo> {
  * 2. Lo schema atteso è presente
  * ════════════════════════════════════════════════════════════════════════════ */
 
-async function controlloSchema(supabase: SupabaseClient): Promise<Controllo> {
-    return misura('schema-atteso', 'giu', async () => {
+/**
+ * Le cinque letture girano IN PARALLELO. In serie, cinque letture da 500 ms facevano 2,5 s e il
+ * tetto di 2 s diceva «giù» a un database soltanto lento. Per la stessa ragione lo scadere del
+ * tetto, o un'eccezione, è `degradato` (sessione 7 della seconda serie): lentezza non è assenza.
+ * Una tabella ASSENTE o ILLEGGIBILE resta `giu`: senza di lei le route che la leggono cadono.
+ */
+export async function controlloSchema(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('schema-atteso', 'degradato', async () => {
+        const letture = await Promise.all(
+            TABELLE_ATTESE.map(async (tabella) => {
+                // PostgREST NON lancia: ritorna `{ data, error }` (AGENTS, regola 7).
+                const { error } = await supabase.from(tabella).select('id').limit(1)
+                return { tabella, error }
+            }),
+        )
         const assenti: string[] = []
         const illeggibili: string[] = []
-        for (const tabella of TABELLE_ATTESE) {
-            const { error } = await supabase
-                .from(tabella)
-                .select('id', { head: true, count: 'exact' })
-                .limit(1)
+        for (const { tabella, error } of letture) {
             if (!error) continue
             // Si distingue «la tabella non c'è» da «la tabella c'è ma la query è caduta».
             // Sono due incidenti diversi che si riparano in due posti diversi: una
             // migrazione da applicare contro un database in affanno. Un controllo che li
             // fondesse manderebbe chi risponde all'allarme a cercare nel posto sbagliato.
-            if (CODICI_TABELLA_ASSENTE.has(codiceDi(error))) assenti.push(tabella)
-            else illeggibili.push(`${tabella}:${codiceDi(error)}`)
+            const codice = codiceDi(error)
+            if (CODICI_TABELLA_ASSENTE.has(codice)) assenti.push(tabella)
+            else illeggibili.push(`${tabella}:${codice}`)
         }
         if (assenti.length > 0) {
             return { esito: 'giu', dettaglio: `tabelle assenti: ${assenti.join(',')}` }

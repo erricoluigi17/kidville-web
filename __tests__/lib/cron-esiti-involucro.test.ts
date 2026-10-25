@@ -7,6 +7,7 @@
  * tocca un altro carattere. Questi casi provano che lo fa, che sa tornare indietro, e che si
  * ferma — con un messaggio — su tutto quello che non sa trattare.
  */
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -207,6 +208,22 @@ describe('inversa', () => {
     expect(inv).toMatch(/^-- distruttiva approvata: .{15,}$/m)
     expect(inv.trimEnd().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true)
     expect(() => inversa('SELECT 1;')).toThrow('nessuna funzione avvolta')
+  })
+
+  it('un pezzo finisce col suo ultimo permesso: i commenti che seguono (blocco dopo, `-- == IL LETTORE ==`) restano fuori', () => {
+    const due = riga({ proname: 'altra_tick', definizione: rinomina(TICK, 'altra_tick') })
+    const migrazione =
+      genera([una, due]).sql +
+      '\n-- == IL LETTORE ==\n\n' +
+      'CREATE OR REPLACE FUNCTION public.cron_esiti() RETURNS jsonb LANGUAGE sql AS $f$ SELECT 1::jsonb $f$;\n'
+    const inv = inversa(migrazione)
+    expect(inv).not.toContain('IL LETTORE')
+    expect(inv).not.toContain('· etichetta «')
+    // Sulla migrazione vera della sessione 6: gli unici commenti sono le tre righe di testa e la «distruttiva approvata».
+    const vera = inversa(readFileSync(join(process.cwd(), 'supabase/migrations/20261025095807_cron_esiti_osservati.sql'), 'utf8'))
+    const commenti = vera.split('\n').filter((r) => r.startsWith('--'))
+    expect(commenti.length).toBe(4)
+    expect(commenti[3]).toMatch(/^-- distruttiva approvata: /)
   })
 })
 

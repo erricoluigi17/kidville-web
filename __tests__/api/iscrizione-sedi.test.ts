@@ -54,7 +54,7 @@ const E2E = { id: SEDE_E2E, nome: NOME_SEDE_E2E }
 const req = (url = 'http://localhost/api/iscrizione/sedi') =>
   new Request(url) as unknown as import('next/server').NextRequest
 
-type Corpo = { success?: boolean; data?: { id: string; nome: string }[]; error?: string }
+type Corpo = { success?: boolean; data?: { id: string; nome: string }[]; error?: string; codice?: string }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -106,6 +106,9 @@ describe('GET /api/iscrizione/sedi', () => {
     expect(res.status).toBe(500)
     const json = (await res.json()) as Corpo
     expect(json.error).toBeTruthy()
+    // Il testo di Postgres («relation … does not exist») resta nel log di `sediReali`: a un anonimo il codice.
+    expect(json.codice).toBe('LETTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('relation')
   })
 
   it('rate-limit superato → 429 con Retry-After', async () => {

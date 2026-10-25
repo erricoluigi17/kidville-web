@@ -219,8 +219,12 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * `admin/apply-forms-migration`, `admin/apply-mensa-multi-menu-migration`, `admin/apply-migration`,
  * `admin/setup-registro`). Debito CANCELLATO col codice, non convertito: vedi il paragrafo gemello
  * su `MAX_OCCORRENZE`.
+ *
+ * 🔻 264 → 262 il 2026-10-25, branch `robustezza2/lotto2-b-s06-s13` (robustezza, seconda serie,
+ * sessione 13). Le voci di `notes/route.ts` e di `parent/competenze/route.ts` sono arrivate a ZERO e sono
+ * uscite dall'elenco: vedi il paragrafo gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 264;
+const MAX_FILE = 262;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -418,8 +422,16 @@ const MAX_FILE = 264;
  * 🔻 1361 → 1350 il 2026-10-25, stesso branch. Le sei route di `exec_sql` portavano 11 risposte
  * senza codice (2 + 2 + 2 + 2 + 2 + 1): escono con i loro file. Nessuna risposta è stata
  * convertita, e nessuna è stata spostata altrove.
+ *
+ * 🔻 1350 → 1331 il 2026-10-25, branch `robustezza2/lotto2-b-s06-s13` (sessione 13 della seconda
+ * serie di robustezza, «bordo pubblico»). Debito PAGATO. Le quattro porte anonime che mandavano il `message`
+ * di un errore a chiunque ora rispondono con `LETTURA_FALLITA`/`SCRITTURA_FALLITA`
+ * (`rispostaGuastoGiaRegistrato`) o con `ERRORE_INTERNO` (`src/lib/api/errore-interno.ts`). Con loro le
+ * altre risposte senza codice dei file toccati: `notes` 4 → 0, `parent/competenze` 1 → 0,
+ * `admin/competenze/download` 3 → 1, `forms/submit` 7 → 3, `iscrizione` 7 → 4, `iscrizione/sedi`
+ * 2 → 1, `public/forms/[token]/submit` 8 → 4 (la voce era già larga di uno: se ne misuravano 7).
  */
-const MAX_OCCORRENZE = 1350;
+const MAX_OCCORRENZE = 1331;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

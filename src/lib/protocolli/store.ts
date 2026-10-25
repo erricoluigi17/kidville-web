@@ -115,15 +115,29 @@ export function istanteVersione(quando: Date): string {
 /** Crea il bucket privato se manca (pattern fascicolo). Non lancia mai. */
 export async function ensureBucket(supabase: SupabaseClient): Promise<void> {
   try {
-    const { data } = await supabase.storage.listBuckets()
+    const { data, error: erroreElenco } = await supabase.storage.listBuckets()
+    if (erroreElenco) {
+      logEvento('storage', 'warn', {
+        operazione: 'protocolli/store:ensureBucket',
+        bucket: PROTOCOLLO_BUCKET,
+        esito: 'bucket_non_verificato',
+      }, erroreElenco)
+      return
+    }
     if (data?.some((b) => b.name === PROTOCOLLO_BUCKET)) return
     await supabase.storage.createBucket(PROTOCOLLO_BUCKET, {
       public: false,
       allowedMimeTypes: [...MIME_AMMESSI],
       fileSizeLimit: PROTOCOLLO_MAX_BYTES,
     })
-  } catch {
-    // corsa fra richieste parallele o bucket già esistente: ignorato
+  } catch (e) {
+    // Caso atteso (corsa fra richieste parallele, bucket già esistente): `info`, non `error`. Ma non
+    // muto: un fallimento vero (permessi, quota) qui è l'unico posto dove compare il motivo.
+    logEvento('storage', 'info', {
+      operazione: 'protocolli/store:ensureBucket',
+      bucket: PROTOCOLLO_BUCKET,
+      esito: 'creazione-saltata',
+    }, e)
   }
 }
 

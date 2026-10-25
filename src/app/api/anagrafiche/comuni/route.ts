@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie'
 import { comuniDiProvincia, comunePerBelfiore, siglePresenti, type Comune } from '@/lib/fiscale/comuni'
 import { withRoute } from '@/lib/logging/with-route'
+import { intestazioniCachePubblica } from '@/lib/security/cache-pubblica'
 import { clientIp, rateLimit } from '@/lib/security/rate-limit'
 import { parseQuery } from '@/lib/validation/http'
 
@@ -202,14 +202,14 @@ import { parseQuery } from '@/lib/validation/http'
 const TETTO = { limit: 60, windowMs: 10 * 60 * 1000 }
 
 /**
- * Le due intestazioni di cache, e perché sono DUE. La lunga spiegazione sta nella
- * testata: qui basta la regola. `public` = «qualunque proxy può conservarla e
- * riservirla a chiunque»; `private` = «solo la cache del browser di chi ha chiesto».
- * La seconda si usa quando il middleware potrebbe attaccare un `Set-Cookie` di
- * sessione a questa stessa risposta — misurato, non supposto.
+ * Un giorno in cache, una settimana servita stantia mentre si rinnova. Le intestazioni le scrive
+ * `intestazioniCachePubblica` (`src/lib/security/cache-pubblica.ts`), la stessa di `/api/iscrizione/sedi` e
+ * `/api/iscrizione/model`: `public` senza cookie di sessione, `private` con. La lunga spiegazione del perché sta
+ * nella testata. Le due righe stavano qui scritte a mano fino alla sessione 13 della seconda serie: una
+ * correzione della cache doveva essere fatta due volte.
  */
-const CACHE_CONDIVISA = 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800'
-const CACHE_PRIVATA = 'private, max-age=86400, stale-while-revalidate=604800'
+const CACHE_SECONDI = 86_400
+const CACHE_STANTIO = 604_800
 
 /**
  * ─── IL NOME DEL COOKIE DI SESSIONE NON SI RISCRIVE QUI ────────────────────────
@@ -242,7 +242,7 @@ const CACHE_PRIVATA = 'private, max-age=86400, stale-while-revalidate=604800'
  * autenticato» è sicuro perché il consumatore è il gate biometrico, e spegnerlo
  * evita di chiudere l'utente fuori dall'app. Su QUESTA route il default è
  * l'opposto: `haCookieSessioneNellIntestazione` ritorna `false` (`session-cookie.ts:60-62`),
- * `false` è il ramo `CACHE_CONDIVISA`, cioè `public` verso ogni cache condivisa —
+ * `false` è la strada `public` di `intestazioniCachePubblica`, verso ogni cache condivisa —
  * la direzione PERICOLOSA, esattamente quella che questa route esiste per non
  * prendere. Se qui servisse un default, servirebbe INVERTITO.
  *
@@ -252,7 +252,7 @@ const CACHE_PRIVATA = 'private, max-age=86400, stale-while-revalidate=604800'
  * `RegExp.test` su una regex senza `/g` nemmeno. È questo il fatto — «codice
  * morto» — non «fail-safe». Chi un giorno rendesse quel corpo capace di lanciare
  * (una normalizzazione, una decodifica percent, un limite di lunghezza) apra un
- * ramo `catch` PROPRIO qui dentro che scelga `CACHE_PRIVATA`, invece di ereditare
+ * ramo `catch` PROPRIO in `intestazioniCachePubblica` che scelga la strada `private`, invece di ereditare
  * un default scritto per un gate biometrico.
  * Se un giorno servisse un criterio DIVERSO da quello del logging, la seconda
  * regola va dichiarata lì accanto alla prima, come funzione esportata, non
@@ -460,13 +460,10 @@ export const GET = withRoute('anagrafiche/comuni:GET', async (request: NextReque
   const corpo = JSON.stringify({ comuni })
   const etag = impronta(corpo)
   const intestazioni = {
-    // La sola intestazione di questa route che dipende da CHI chiama. Vedi la
-    // testata: con una sessione in corso il middleware può attaccare qui sopra un
-    // `Set-Cookie`, e `public` lo consegnerebbe alla prima cache condivisa.
-    'Cache-Control': haCookieSessioneNellIntestazione(request.headers.get('cookie'))
-      ? CACHE_PRIVATA
-      : CACHE_CONDIVISA,
-    Vary: 'Cookie',
+    // La sola parte di questa route che dipende da CHI chiama. Vedi la testata: con una
+    // sessione in corso il middleware può attaccare qui sopra un `Set-Cookie`, e `public`
+    // lo consegnerebbe alla prima cache condivisa.
+    ...intestazioniCachePubblica(request, CACHE_SECONDI, CACHE_STANTIO),
     ETag: etag,
   }
 

@@ -7,7 +7,18 @@ const h = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
   insertError: null as unknown,
   sospensione: null as unknown, // NextResponse se sospeso, null altrimenti
+  modelError: null as unknown,
+  utenteError: null as unknown,
+  adminLancia: false,
+  logErrore: vi.fn(),
 }))
+
+// «Il messaggio solo nel log» va VERIFICATO: senza questa spia il test restava verde anche togliendo
+// il `logErrore` dal `catch` (mutazione provata il 25/10).
+vi.mock('@/lib/logging/logger', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
+  return { ...vero, logErrore: (...a: unknown[]) => h.logErrore(...a) }
+})
 
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 9, retryAfterMs: 0 }),
@@ -19,23 +30,26 @@ vi.mock('@/lib/pagamenti/sospensione', () => ({
     opts?.sempreFirmabile ? null : h.sospensione),
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
-    from: (table: string) => {
-      const b: Record<string, unknown> = {}
-      b.select = () => b
-      b.eq = () => b
-      // `utenti`: chi compila ha una sede — è la condizione di TUTTI i 51 utenti
-      // in produzione, ed è la prima fonte da cui la compilazione prende la
-      // propria `scuola_id` (una riga senza sede non la vedrebbe più nessuno).
-      b.maybeSingle = async () => ({
-        data: table === 'form_models' ? h.model : table === 'utenti' ? { scuola_id: 'sc-1' } : null,
-        error: null,
-      })
-      b.single = async () => ({ data: { id: 'sub-new' }, error: h.insertError })
-      b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
-      return b
-    },
-  }),
+  createAdminClient: async () => {
+    if (h.adminLancia) throw new Error('chiave di servizio assente: dettaglio interno')
+    return {
+      from: (table: string) => {
+        const b: Record<string, unknown> = {}
+        b.select = () => b
+        b.eq = () => b
+        // `utenti`: chi compila ha una sede — è la condizione di TUTTI i 51 utenti
+        // in produzione, ed è la prima fonte da cui la compilazione prende la
+        // propria `scuola_id` (una riga senza sede non la vedrebbe più nessuno).
+        b.maybeSingle = async () => ({
+          data: table === 'form_models' ? h.model : table === 'utenti' ? { scuola_id: 'sc-1' } : null,
+          error: table === 'form_models' ? h.modelError : table === 'utenti' ? h.utenteError : null,
+        })
+        b.single = async () => ({ data: { id: 'sub-new' }, error: h.insertError })
+        b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
+        return b
+      },
+    }
+  },
 }))
 
 import { POST } from '@/app/api/forms/submit/route'
@@ -65,6 +79,9 @@ beforeEach(() => {
   h.inserts = []
   h.insertError = null
   h.sospensione = null
+  h.modelError = null
+  h.utenteError = null
+  h.adminLancia = false
 })
 
 describe('POST /api/forms/submit (path senza firma)', () => {
@@ -98,5 +115,54 @@ describe('POST /api/forms/submit (path senza firma)', () => {
     const log = row.consents_log as Array<Record<string, unknown>>
     expect(log[0]).toMatchObject({ field_id: 'privacy', label: 'Trattamento dati', accepted: true })
     expect(typeof log[0].accepted_at).toBe('string')
+  })
+})
+
+describe('POST /api/forms/submit — un guasto risponde con un codice, mai con il testo di Postgres', () => {
+  const corpo = {
+    modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10',
+    userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11',
+    data: { nome: 'Marco', privacy: true },
+  }
+
+  it('modello non letto → 500 LETTURA_FALLITA, nessun inserimento', async () => {
+    h.modelError = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(req(corpo))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('LETTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('statement timeout')
+    expect(h.inserts).toHaveLength(0)
+  })
+
+  it('utente non letto → 500 LETTURA_FALLITA', async () => {
+    h.utenteError = { code: '57014', message: 'canceling statement due to statement timeout' }
+    const res = await POST(req(corpo))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('LETTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('statement timeout')
+  })
+
+  it('compilazione non registrata → 500 SCRITTURA_FALLITA', async () => {
+    h.insertError = { code: '23505', message: 'duplicate key value violates unique constraint "form_submissions_pkey"' }
+    const res = await POST(req(corpo))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('SCRITTURA_FALLITA')
+    expect(JSON.stringify(json)).not.toContain('duplicate key')
+  })
+
+  it('eccezione → 500 ERRORE_INTERNO, il messaggio solo nel log', async () => {
+    h.adminLancia = true
+    const res = await POST(req(corpo))
+    expect(res.status).toBe(500)
+    const json = await res.json()
+    expect(json.codice).toBe('ERRORE_INTERNO')
+    expect(JSON.stringify(json)).not.toContain('dettaglio interno')
+    expect(h.logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'forms/submit:POST', stato: 500 }),
+      expect.any(Error),
+    )
   })
 })

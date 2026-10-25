@@ -173,8 +173,14 @@ export const POST = withRoute('primaria/fascicolo:POST', async (request: NextReq
 
     // Bucket privato (no URL pubblico). Lo crea se assente.
     try {
-      const { data: buckets } = await supabase.storage.listBuckets()
-      if (!buckets?.some((b) => b.name === BUCKET)) {
+      const { data: buckets, error: erroreElenco } = await supabase.storage.listBuckets()
+      if (erroreElenco) {
+        logEvento('storage', 'warn', {
+          operazione: 'primaria/fascicolo:POST',
+          bucket: BUCKET,
+          esito: 'bucket_non_verificato',
+        }, erroreElenco)
+      } else if (!buckets?.some((b) => b.name === BUCKET)) {
         await supabase.storage.createBucket(BUCKET, { public: false, allowedMimeTypes: ALLOWED, fileSizeLimit: MAX_SIZE })
       }
     } catch (e) {

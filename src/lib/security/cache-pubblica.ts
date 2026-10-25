@@ -20,17 +20,25 @@ import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie'
 /**
  * Le intestazioni per una risposta pubblica che può restare in cache `secondi` (e `stantio`
  * secondi in più, servita mentre si rinnova).
+ *
+ * Sessione 13, prova 1 della diagnosi del MISS: sulla strada pubblica la durata si dichiara anche in
+ * `Vercel-CDN-Cache-Control`, che per la CDN di Vercel vince su `Cache-Control` e non arriva al browser.
+ * La strada con sessione non la porta: lì nessuna cache condivisa deve conservare niente.
  */
 export function intestazioniCachePubblica(
   request: Request,
   secondi: number,
   stantio: number,
 ): Record<string, string> {
-  const conSessione = haCookieSessioneNellIntestazione(request.headers.get('cookie'))
+  if (haCookieSessioneNellIntestazione(request.headers.get('cookie'))) {
+    return {
+      'Cache-Control': `private, max-age=${secondi}, stale-while-revalidate=${stantio}`,
+      Vary: 'Cookie',
+    }
+  }
   return {
-    'Cache-Control': conSessione
-      ? `private, max-age=${secondi}, stale-while-revalidate=${stantio}`
-      : `public, max-age=${secondi}, s-maxage=${secondi}, stale-while-revalidate=${stantio}`,
+    'Cache-Control': `public, max-age=${secondi}, s-maxage=${secondi}, stale-while-revalidate=${stantio}`,
+    'Vercel-CDN-Cache-Control': `max-age=${secondi}, stale-while-revalidate=${stantio}`,
     Vary: 'Cookie',
   }
 }

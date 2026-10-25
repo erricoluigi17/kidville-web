@@ -11,9 +11,10 @@ const richiesta = (cookie?: string) =>
   new Request('http://localhost/api/iscrizione/sedi', cookie ? { headers: { cookie } } : undefined)
 
 describe('intestazioniCachePubblica', () => {
-  it('senza sessione: public, con s-maxage', () => {
+  it('senza sessione: public con s-maxage, e la stessa durata dichiarata alla CDN di Vercel', () => {
     expect(intestazioniCachePubblica(richiesta(), 600, 3600)).toEqual({
       'Cache-Control': 'public, max-age=600, s-maxage=600, stale-while-revalidate=3600',
+      'Vercel-CDN-Cache-Control': 'max-age=600, stale-while-revalidate=3600',
       Vary: 'Cookie',
     })
   })

@@ -30,7 +30,11 @@
 --    cron_ultimo_esito ancora vuota, i fallimenti sono storia di prima dell'installazione; dal
 --    secondo vale anche per un job mai visto, come un mensile fuori dalle ultime 5000 esecuzioni),
 --    warn cron-esiti:esiti-persi, error cron-esiti:fallito e il battito info cron:cron-esiti.
---    Mai il corpo di una risposta: solo il suo codice in maiuscolo.
+--    Mai il corpo di una risposta: solo il valore del campo JSON «codice» (o «code») e solo se è
+--    un codice in maiuscolo con trattini bassi, da 3 a 64 caratteri (ERRORE_INTERNO, non un nome).
+--  · L'etichetta video-runner-kick non è un job di cron.job (video_runner_kick() la chiama
+--    un'altra funzione): le sue chiamate stanno in cron_chiamate e i suoi errori in app_log, ma
+--    non ha una riga in cron_ultimo_esito.
 --
 -- Domande d'iscrizione contate prima della migrazione: 734 alle 2026-10-25 09:58:33 UTC.
 --
@@ -51,6 +55,9 @@
 --
 -- ─── ROLLBACK ───
 -- Fermata subito (la esegue il titolare dall'editor SQL):  SELECT cron.unschedule('cron-esiti');
+--   Spegne solo il LETTORE: l'involucro continua a scrivere in cron_chiamate (circa 110 righe
+--   all'ora al ritmo di oggi) e la pulizia dei 14 giorni sta nel lettore, quindi con il lettore
+--   spento la tabella cresce. Per più di qualche giorno si usa il rollback completo.
 -- Completo: una migrazione NUOVA, dentro una PR di revert, generata da
 --   node scripts/cron-esiti/involucro.mjs inversa supabase/migrations/20261025095807_cron_esiti_osservati.sql
 -- che rimette le 19 definizioni di prima (quelle della produzione al 2026-10-25) coi loro permessi
@@ -170,6 +177,10 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.cron_http_post(text, text, jsonb, jsonb, jsonb, integer) FROM PUBLIC, anon, authenticated, service_role;
+-- Dopo la REVOKE ALL la eseguirebbe solo il proprietario: se questa migrazione la applicasse un
+-- ruolo diverso da postgres, le 19 funzioni (che girano come postgres) avrebbero un permesso negato
+-- (42501), ingoiato da quelle che hanno un EXCEPTION WHEN OTHERS. Oggi la riga non cambia niente.
+GRANT EXECUTE ON FUNCTION public.cron_http_post(text, text, jsonb, jsonb, jsonb, integer) TO postgres;
 
 COMMENT ON FUNCTION public.cron_http_post(text, text, jsonb, jsonb, jsonb, integer) IS
   'net.http_post con il nome del job davanti: manda la stessa richiesta con gli stessi argomenti e default, poi registra il numero in cron_chiamate. La chiamano solo le funzioni dei cron (SECURITY DEFINER, proprietario postgres); nessun ruolo client la esegue. Sessione 6 della seconda serie di robustezza.';
@@ -1257,7 +1268,8 @@ BEGIN
   --    sua prima corsa fallita dopo l'installazione deve diventare un error (passo 6).
   v_primo_giro := NOT EXISTS (SELECT 1 FROM public.cron_ultimo_esito);
 
-  -- 1. Chiude le chiamate che hanno una risposta. Il corpo non si copia: solo un codice in maiuscolo.
+  -- 1. Chiude le chiamate che hanno una risposta. Il corpo non si copia: solo il valore del campo JSON
+  --    «codice» o «code», e solo se è un codice in maiuscolo (mai la prima parola che somiglia a uno).
   --    Errore HTTP = 4xx o 5xx (la specifica: «4xx/5xx/rete»); un 3xx si chiude come ok.
   IF v_ha_net THEN
     UPDATE public.cron_chiamate AS c
@@ -1269,7 +1281,8 @@ BEGIN
                    END,
            codice_http   = r.status_code,
            codice_errore = CASE WHEN r.status_code >= 400
-                                THEN substring(left(r.content, 2000) FROM '[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}') END,
+                                THEN substring(left(r.content, 2000)
+                                               FROM '"(?:codice|code)"[[:space:]]*:[[:space:]]*"([A-Z][A-Z0-9_]{2,63})"') END,
            errore        = left(r.error_msg, 200),
            verificata_il = v_adesso
       FROM net._http_response AS r

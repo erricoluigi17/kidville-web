@@ -301,6 +301,39 @@ describe('il lettore cron_esiti', () => {
     ])
   })
 
+  it('del corpo di una risposta passa solo il campo JSON «codice» o «code» in forma di codice; mai una parola trovata nel testo', async () => {
+    const db = await nuovoDatabase()
+    await db.exec(MIGRAZIONE)
+    await chiamata(db, 'j-codice', { status_code: 500, content: '{ "error" : "x", "codice" :  "ERRORE_INTERNO" }' })
+    await chiamata(db, 'j-code', { status_code: 403, content: '{"code":"NON_AUTORIZZATO","error":"x"}' })
+    // una parola in maiuscolo con un trattino basso nel testo, anche se somiglia a un nome: non è un codice
+    await chiamata(db, 'j-testo', { status_code: 500, content: 'Utente ROSSI_MARIO_80 non trovato' })
+    await chiamata(db, 'j-html', { status_code: 500, content: '<script id="__NEXT_DATA__" type="application/json">{}</script>' })
+    // il campo c'è ma non è un codice: minuscolo, troppo corto, con uno spazio, più lungo di 64 caratteri
+    await chiamata(db, 'j-minuscolo', { status_code: 500, content: '{"codice":"non_un_codice"}' })
+    await chiamata(db, 'j-corto', { status_code: 500, content: '{"codice":"AB"}' })
+    await chiamata(db, 'j-spazio', { status_code: 500, content: '{"codice":"ROSSI MARIO"}' })
+    await chiamata(db, 'j-lungo', { status_code: 500, content: `{"codice":"${'A'.repeat(65)}"}` })
+    // un campo che si chiama in un altro modo non conta, nemmeno se il valore sembra un codice
+    await chiamata(db, 'j-altro', { status_code: 500, content: '{"messaggio":"ERRORE_INTERNO","nome":"ROSSI_MARIO_80"}' })
+
+    expect(await esitoDelLettore(db)).toMatchObject({ esito: 'ok', chiuse: 9 })
+    expect(await righe(db, 'SELECT job, codice_errore FROM public.cron_chiamate ORDER BY id')).toEqual([
+      { job: 'j-codice', codice_errore: 'ERRORE_INTERNO' },
+      { job: 'j-code', codice_errore: 'NON_AUTORIZZATO' },
+      { job: 'j-testo', codice_errore: null },
+      { job: 'j-html', codice_errore: null },
+      { job: 'j-minuscolo', codice_errore: null },
+      { job: 'j-corto', codice_errore: null },
+      { job: 'j-spazio', codice_errore: null },
+      { job: 'j-lungo', codice_errore: null },
+      { job: 'j-altro', codice_errore: null },
+    ])
+    // senza codice, in app_log resta il codice di ripiego («HTTP_<stato>»): mai un pezzo del corpo
+    expect(await righe(db, "SELECT codice FROM app_log WHERE fingerprint = 'cron-http:j-testo'")).toEqual([{ codice: 'HTTP_500' }])
+    expect(JSON.stringify(await righe(db, 'SELECT * FROM app_log'))).not.toMatch(/ROSSI|NEXT_DATA/)
+  })
+
   it('dopo la vita delle risposte e senza risposta: esito-ignoto, salvo se è ancora in coda', async () => {
     const db = await nuovoDatabase()
     await db.exec(MIGRAZIONE)

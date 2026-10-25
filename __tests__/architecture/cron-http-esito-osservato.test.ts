@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+    ASSENTI_IN_PRODUZIONE, INVOLUCRO, LETTORE, NON_SI_AVVOLGONO,
+    contaChiamate, corpoOVuoto, mascheraSql, minimoAvvolte, ultimeDefinizioni,
+} from '../../scripts/cron-esiti/involucro.mjs'
+import { JOB_CRON, JOB_CRON_NON_SORVEGLIATI } from '@/lib/health/controlli'
 
 /**
- * LOCK · il lavoro notturno della conservazione deve poter VEDERE il proprio esito.
+ * LOCK · ogni chiamata dei cron al server deve poter VEDERE il proprio esito.
  *
  * ─── LA STORIA, IN TRE GIORNI ────────────────────────────────────────────────
  *
@@ -37,121 +42,134 @@ import { join } from 'node:path'
  *
  * ─── PERIMETRO, DICHIARATO ──────────────────────────────────────────────────
  *
- * Sorveglia il solo job della conservazione delle iscrizioni. Gli altri quattro
- * lavori via `net.http_post` hanno la stessa cecità ma girano ogni 5-30 minuti:
- * un'esecuzione persa si riassorbe alla successiva. Qui il giro è MENSILE e i dati
- * sono sanitari, di minori non iscritti: un buco si scopre trentun giorni dopo.
- * Il giorno in cui si vorrà estendere la sorveglianza agli altri, questo lock è il
- * posto dove scriverlo.
+ * Fino al 2026-10-20 sorvegliava il solo job della conservazione delle iscrizioni:
+ * gli altri lavori via `net.http_post` avevano la stessa cecità, ma girando ogni
+ * 5-30 minuti un'esecuzione persa si riassorbiva alla successiva, mentre lì il giro
+ * era MENSILE e i dati sanitari, di minori non iscritti. Questo blocco diceva che il
+ * giorno in cui si fosse voluta estendere la sorveglianza agli altri, il posto per
+ * scriverlo era qui.
+ *
+ * ─── 2026-10-20: ESTESO A TUTTI ─────────────────────────────────────────────
+ *
+ * Sessione 6 della seconda serie di robustezza. Ogni funzione che chiama il server
+ * passa da `public.cron_http_post('<job>', …)`, che conserva il numero e lo scrive in
+ * `cron_chiamate`; `cron_esiti()` legge `net._http_response` e `cron.job_run_details`
+ * ogni 10 minuti e scrive l'esito in `app_log` col nome del job. Le funzioni sono
+ * state riscritte partendo dai corpi della PRODUZIONE (`pg_get_functiondef`) da
+ * `scripts/cron-esiti/involucro.mjs`, che cambia solo la chiamata. Le eccezioni
+ * stanno in `NON_SI_AVVOLGONO` e `ASSENTI_IN_PRODUZIONE` dello stesso file, ciascuna
+ * con la sua ragione; questo lock pretende che restino vere.
  */
 
 const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
+const FILE = readdirSync(MIGRAZIONI).filter((f) => f.endsWith('.sql')).sort()
+const ULTIME = ultimeDefinizioni(MIGRAZIONI)
+const ESCLUSE: Record<string, string> = { ...NON_SI_AVVOLGONO, ...ASSENTI_IN_PRODUZIONE }
 
-const FILE = readdirSync(MIGRAZIONI)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
+const definizione = (funzione: string): string => ULTIME.get(funzione)?.definizione ?? ''
+/** Il corpo senza commenti; le stringhe restano (servono i nomi delle tabelle e dei job). */
+const corpoSenzaCommenti = (funzione: string): string =>
+    mascheraSql(corpoOVuoto(definizione(funzione)), { stringhe: false })
+const chiamate = (funzione: string) => contaChiamate(corpoOVuoto(definizione(funzione)))
 
-const CONTENUTO = new Map(FILE.map((f) => [f, readFileSync(join(MIGRAZIONI, f), 'utf8')]))
-
-/** L'ultima migrazione che (ri)definisce una funzione: è quella che vale. */
-function ultimaDefinizione(funzione: string): { file: string; sql: string } | null {
-    const forma = new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+public\\.${funzione}\\s*\\(`, 'i')
-    for (let i = FILE.length - 1; i >= 0; i--) {
-        const sql = CONTENUTO.get(FILE[i]) ?? ''
-        if (forma.test(sql)) return { file: FILE[i], sql }
-    }
-    return null
-}
-
-/** Il corpo `AS $$ … $$` della funzione, senza i commenti `--`. */
-function corpo(sql: string, funzione: string): string {
-    const da = sql.search(new RegExp(`CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+public\\.${funzione}\\s*\\(`, 'i'))
-    if (da < 0) return ''
-    const apre = sql.indexOf('$$', da)
-    const chiude = sql.indexOf('$$', apre + 2)
-    if (apre < 0 || chiude < 0) return ''
-    return sql
-        .slice(apre + 2, chiude)
-        .split('\n')
-        .map((r) => r.replace(/--.*$/, ''))
-        .join('\n')
-}
-
-describe('lock architettura · il cron della conservazione vede il proprio esito', () => {
+describe('lock architettura · ogni chiamata dei cron al server vede il proprio esito', () => {
     it('le fonti sono piene (se cade questa, tutto il resto sta controllando il vuoto)', () => {
         expect(FILE.length, 'nessun file .sql sotto supabase/migrations').toBeGreaterThan(60)
-        const conHttpPost = FILE.filter((f) => (CONTENUTO.get(f) ?? '').includes('net.http_post'))
-        expect(
-            conHttpPost.length,
-            'Lo scanner non trova nessuna chiamata a net.http_post: il lock non sta guardando niente.',
-        ).toBeGreaterThan(0)
+        expect(ULTIME.size, 'lo scanner non trova le funzioni delle migrazioni').toBeGreaterThan(100)
+        expect(ULTIME.has(INVOLUCRO), `manca public.${INVOLUCRO}()`).toBe(true)
+        expect(ULTIME.has(LETTORE), `manca public.${LETTORE}()`).toBe(true)
     })
 
-    it('l’invio CONSERVA il numero d’ordine restituito da net.http_post', () => {
-        const def = ultimaDefinizione('iscrizioni_retention_http')
-        expect(def, 'manca `iscrizioni_retention_http()` in supabase/migrations/').toBeTruthy()
-        const body = corpo(def!.sql, 'iscrizioni_retention_http')
-
+    it('nessuna funzione chiama net.http_post da sola: passa dall’involucro, salvo le escluse dichiarate', () => {
+        const dirette = [...ULTIME.keys()].filter(
+            (nome) => nome !== INVOLUCRO && !Object.hasOwn(ESCLUSE, nome) && chiamate(nome).dirette > 0,
+        )
         expect(
-            /PERFORM\s+net\.http_post/i.test(body),
-            `${def!.file}: \`PERFORM net.http_post(…)\` BUTTA VIA il numero d'ordine. pg_net è ` +
-            `asincrono: senza quel numero l'esito che arriva dopo in net._http_response non è ` +
-            `riconducibile a niente, e il fallimento della chiamata resta invisibile per un mese.`,
-        ).toBe(false)
-
-        expect(
-            /INTO\s+\w+\s*;?/i.test(body) && /net\.http_post/i.test(body),
-            `${def!.file}: il valore restituito da net.http_post non viene raccolto in una ` +
-            `variabile. È l'unico aggancio fra la richiesta e la sua risposta.`,
-        ).toBe(true)
-
-        expect(
-            /iscrizioni_retention_esecuzioni/i.test(body),
-            `${def!.file}: il numero d'ordine non viene registrato da nessuna parte. Una ` +
-            `sorveglianza che non sa quali richieste aspettare non sorveglia niente.`,
-        ).toBe(true)
-
-        expect(
-            /timeout_milliseconds\s*:=\s*(\d+)/i.test(body) &&
-            Number(/timeout_milliseconds\s*:=\s*(\d+)/i.exec(body)![1]) > 5000,
-            `${def!.file}: il tempo massimo è quello di fabbrica di pg_net (5 secondi). Una route ` +
-            `che toglie file dall'archivio e righe dal database non finisce in cinque secondi: la ` +
-            `sorveglianza segnalerebbe come guasto un lavoro riuscito.`,
-        ).toBe(true)
+            dirette,
+            'Queste funzioni chiamano `net.http_post` direttamente e buttano via il numero della ' +
+            'richiesta: il loro esito non arriverà a nessuno. Si avvolgono con ' +
+            '`node scripts/cron-esiti/involucro.mjs genera`, partendo dal corpo della PRODUZIONE; ' +
+            'oppure si dichiarano in `NON_SI_AVVOLGONO`, con la ragione.',
+        ).toEqual([])
     })
 
-    it('qualcuno LEGGE net._http_response e ne scrive l’esito in app_log', () => {
-        const lettori = FILE.filter((f) => {
-            const sql = CONTENUTO.get(f) ?? ''
-            return /net\._http_response/i.test(sql) && /app_log/i.test(sql)
-        })
-        expect(
-            lettori,
-            `Nessuna migrazione legge \`net._http_response\`. È la tabella dove pg_net scrive ` +
-            `l'esito vero delle chiamate — status, timeout, errore di rete — e senza nessuno che ` +
-            `la legga il lavoro notturno non può accorgersi di NON essere arrivato a destinazione. ` +
-            `È il difetto misurato il 2026-08-02: un EXCEPTION attorno all'accodamento vede solo ` +
-            `ciò che rompe l'accodamento.`,
-        ).not.toEqual([])
+    it('ogni esclusione è ancora vera e porta una ragione', () => {
+        for (const [nome, ragione] of Object.entries(ESCLUSE)) {
+            expect(ragione.length, `${nome}: ragione troppo corta`).toBeGreaterThan(30)
+            expect(chiamate(nome).dirette, `${nome}: non chiama più net.http_post, si toglie l’esclusione`).toBe(1)
+        }
     })
 
-    it('la sorveglianza si accorge anche del SILENZIO (il caso che nessun trasporto segnala)', () => {
-        const def = ultimaDefinizione('iscrizioni_retention_sorveglia')
+    it('l’involucro conserva il numero, lo registra, ed è chiuso ai ruoli client', () => {
+        const corpo = corpoSenzaCommenti(INVOLUCRO)
+        expect(/\w+\s*:=\s*net\.http_post\s*\(/i.test(corpo), 'il numero di net.http_post non è raccolto').toBe(true)
+        expect(/PERFORM\s+net\.http_post/i.test(corpo), '`PERFORM net.http_post` butta via il numero').toBe(false)
+        expect(/INSERT\s+INTO\s+public\.cron_chiamate/i.test(corpo), 'il numero non viene registrato').toBe(true)
+        expect(definizione(INVOLUCRO)).toMatch(/SECURITY\s+DEFINER/i)
+        expect(definizione(INVOLUCRO)).toMatch(/SET\s+search_path\s+TO\s+'public',\s*'pg_temp'/i)
+        const file = readFileSync(join(MIGRAZIONI, ULTIME.get(INVOLUCRO)!.file), 'utf8')
+        expect(mascheraSql(file)).toMatch(
+            /REVOKE\s+ALL\s+ON\s+FUNCTION\s+public\.cron_http_post\([^)]*\)\s+FROM\s+PUBLIC,\s*anon,\s*authenticated/i,
+        )
+    })
+
+    it('le funzioni avvolte sono almeno quelle attese, e ogni etichetta è di una funzione sola', () => {
+        const etichette = new Map<string, string>()
+        let avvolte = 0
+        for (const nome of ULTIME.keys()) {
+            if (nome === INVOLUCRO || chiamate(nome).avvolte === 0) continue
+            avvolte++
+            const job = /public\.cron_http_post\(\s*'([a-z0-9][a-z0-9-]*)'/i.exec(corpoSenzaCommenti(nome))?.[1]
+            expect(job, `${nome}: l’involucro si chiama col nome del job, fra apici, come primo argomento`).toBeTruthy()
+            expect(etichette.get(job!), `etichetta «${job}» usata anche da ${etichette.get(job!)}`).toBeUndefined()
+            etichette.set(job!, nome)
+        }
+        expect(avvolte).toBeGreaterThanOrEqual(minimoAvvolte())
+    })
+
+    it('la conservazione delle iscrizioni conserva ancora il numero, lo registra, e aspetta più di 5 secondi', () => {
+        const nome = 'iscrizioni_retention_http'
+        const corpo = corpoSenzaCommenti(nome)
+        expect(corpo, `manca ${nome}()`).not.toBe('')
+        expect(chiamate(nome)).toEqual({ dirette: 0, avvolte: 1 })
+        expect(/PERFORM\s+public\.cron_http_post/i.test(corpo), '`PERFORM` butta via il numero d’ordine').toBe(false)
         expect(
-            def,
-            'manca `iscrizioni_retention_sorveglia()`: senza, un job spento o cancellato non ' +
-            'produce nessun segnale, perché non c\'è nessuna chiamata che possa fallire.',
-        ).toBeTruthy()
-        const body = corpo(def!.sql, 'iscrizioni_retention_sorveglia')
-        expect(
-            /interval\s+'(\d+)\s+days'/i.test(body),
-            `${def!.file}: la sorveglianza non misura da quanto tempo il lavoro non arriva a ` +
-            `destinazione. È l'unico controllo che non dipende dal trasporto che deve sorvegliare.`,
+            /(\w+\s*:=\s*public\.cron_http_post\s*\(|SELECT\s+public\.cron_http_post\s*\([\s\S]*?\)\s*INTO\s+\w+)/i.test(corpo),
+            'il numero restituito dall’involucro non è raccolto in una variabile',
         ).toBe(true)
-        expect(
-            /app_log/i.test(body),
-            `${def!.file}: la sorveglianza non scrive in app_log. Un controllo che non lascia ` +
-            `traccia è esattamente il guasto che deve trovare.`,
-        ).toBe(true)
+        expect(/iscrizioni_retention_esecuzioni/i.test(corpo), 'il numero non viene registrato').toBe(true)
+        const t = /timeout_milliseconds\s*(?::=|=>)\s*(\d+)/i.exec(corpo)
+        expect(t !== null && Number(t[1]) > 5000, 'timeout di fabbrica (5 s): la route non finisce in cinque secondi').toBe(true)
+    })
+
+    it('qualcuno LEGGE net._http_response e cron.job_run_details, e ne scrive l’esito in app_log', () => {
+        const corpo = corpoSenzaCommenti(LETTORE)
+        expect(corpo).toMatch(/to_regclass\('net\._http_response'\)/)
+        expect(corpo).toMatch(/to_regclass\('cron\.job_run_details'\)/)
+        expect(corpo).toMatch(/FROM\s+net\._http_response/i)
+        expect(corpo).toMatch(/FROM\s+cron\.job_run_details/i)
+        expect(corpo).toMatch(/'cron-http:'/)
+        expect(corpo).toMatch(/'cron-http-timeout:'/)
+        expect(corpo).toMatch(/'cron-esiti:fallito'/)
+        expect(corpo).toMatch(/INSERT\s+INTO\s+public\.app_log/i)
+    })
+
+    it('la sorveglianza delle iscrizioni si accorge anche del SILENZIO', () => {
+        const corpo = corpoSenzaCommenti('iscrizioni_retention_sorveglia')
+        expect(corpo, 'manca `iscrizioni_retention_sorveglia()`').not.toBe('')
+        expect(/interval\s+'(\d+)\s+days'/i.test(corpo), 'non misura da quanto il lavoro non arriva').toBe(true)
+        expect(/app_log/i.test(corpo), 'non lascia traccia in app_log').toBe(true)
+    })
+
+    it('il job cron-esiti è installato e dichiarato in una delle due liste della salute', () => {
+        const installano = FILE.filter((f) => /cron\.schedule\(\s*'cron-esiti'/.test(readFileSync(join(MIGRAZIONI, f), 'utf8')))
+        expect(installano, 'nessuna migrazione installa cron-esiti').not.toEqual([])
+        const nomi = [...JOB_CRON, ...JOB_CRON_NON_SORVEGLIATI].map((j) => j.nome)
+        expect(nomi).toContain('cron-esiti')
+    })
+
+    it('controllo positivo: il contatore vede la chiamata vera e ignora commento e stringa', () => {
+        expect(contaChiamate("-- net.http_post(\n RAISE LOG 'net.http_post('; PERFORM net.http_post(url := 'x');"))
+            .toEqual({ dirette: 1, avvolte: 0 })
     })
 })

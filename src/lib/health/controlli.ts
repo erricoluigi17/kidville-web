@@ -436,6 +436,18 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             '`cron:fascicolo-audit-ip-retention`) e la fotografia delle migrazioni rigenerata, ' +
             'passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
     },
+    // `cron-esiti` (minuti 4, 14, … 54, funzione SQL `cron_esiti`): legge gli esiti delle chiamate
+    // dei cron e scrive un battito `cron:cron-esiti` a ogni giro. Sta qui per lo stesso vincolo di
+    // SEQUENZA di `fascicolo-audit-ip-retention`: la migrazione la applica l'integrazione al merge
+    // della sessione 6, e un nome in `JOB_CRON` senza il suo lavoro manderebbe `/api/health` in
+    // `degradato` dal primo deploy. Lo porta in `JOB_CRON` la sessione 7, dopo il primo battito.
+    {
+        nome: 'cron-esiti',
+        perche:
+            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
+            'Supabase al merge della sessione 6. Dopo il primo battito `ok` in app_log (impronta ' +
+            '`cron:cron-esiti`) lo porta in `JOB_CRON` la sessione 7.',
+    },
 ]
 
 /** La finestra più larga: quanto indietro serve leggere `app_log` per coprirle tutte. */

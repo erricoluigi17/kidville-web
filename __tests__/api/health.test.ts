@@ -161,6 +161,7 @@ describe('GET /api/health', () => {
         // Non basta lo stato aggregato: se un controllo sparisse dall'elenco,
         // l'aggregato resterebbe 'ok' e nessuno se ne accorgerebbe.
         expect(corpo.controlli.map((c) => c.nome).sort()).toEqual([
+            'audit-docente',
             'auth',
             'coda-fatture',
             'code-arretrate',
@@ -179,6 +180,34 @@ describe('GET /api/health', () => {
         expect((await GET(new Request('https://app.kidville.it/api/health'))).headers.get('Cache-Control')).toBe(
             'no-store',
         )
+    })
+
+    it("UNA traccia d'audit persa porta la salute a degraded con `audit-docente`, e `tasso-errore` resta ok", async () => {
+        const db = dbSano()
+        db.app_log.push({
+            id: 'log-audit-perso',
+            evento: 'audit',
+            livello: 'error',
+            sorgente: 'server',
+            ambiente: 'production',
+            occorrenze: 1,
+            creato_il: fa(5 * MIN),
+            visto_l_ultima: fa(5 * MIN),
+            contesto: {
+                campi: { operazione: 'logScrittura', entita_tipo: 'presenze', azione: 'insert', esito: 'audit-non-registrato' },
+            },
+        })
+        montaDb(db)
+
+        const { stato, header, corpo } = await chiama()
+
+        // È un avviso, non un'interruzione: 200, come per un cron fermo.
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(header).toBe('degraded')
+        expect(controllo(corpo, 'audit-docente').esito).toBe('degradato')
+        // Ecco perché serve un controllo suo: una riga sola sta sotto le soglie del tasso.
+        expect(controllo(corpo, 'tasso-errore').esito).toBe('ok')
     })
 
     /* ═══════════════════════════════════════════════════════════════════════

@@ -22,17 +22,17 @@ che contiene solo documenti.
 
 | # | Sessione | Problemi | Dopo | Stato | PR | Piano | Note |
 |---|---|---|---|---|---|---|---|
-| 1 | Iscrizioni: documenti mai persi, stati vincolati | D9, D11 (CHECK, audit docente) | — | da fare | — | `s01-iscrizioni` | **entro il 31/10** (giro dell'1/11, 04:41 UTC). T6 |
-| 2 | Via `exec_sql` e freno sulle istruzioni distruttive | D1, D10 (istruzioni) | — | da fare | — | `s02-sql-arbitrario-e-freno` | T3 |
+| 1 | Iscrizioni: documenti mai persi, stati vincolati | D9, D11 (CHECK, audit docente) | — | in revisione | #266 | `docs/superpowers/plans/2026-10-20-robustezza2-s01-iscrizioni.md` | **entro il 31/10** (giro dell'1/11, 04:41 UTC). T6. Lotto 1 (con 2, 4, 11) |
+| 2 | Via `exec_sql` e freno sulle istruzioni distruttive | D1, D10 (istruzioni) | — | in revisione | #266 | `docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md` | T3; aggiunte al freno: A sì, B sì, C sì, D sì (decise il 25/10/2026 dall'assistente in assenza del titolare, da confermare; si tolgono una per una con la tabella del Compito 1, passo 5). Lotto 1 |
 | 3 | Scatola nera su cascate, anagrafiche e protocollo | D4, D6, D7 (ricevute delle note) | 2 | da fare | — | `s03-scatola-nera-cascate` | T4; crescita del DB da misurare prima |
-| 4 | Backup alle 02:23, secondo canale d'allarme, bucket, Vault, chiavi | S4, D5 (in parte), D8 (in parte) | — | da fare | — | `s04-backup-notte-e-allarme` | T2, T5, T12 |
+| 4 | Backup alle 02:23, secondo canale d'allarme, bucket, Vault, chiavi | S4, D5 (in parte), D8 (in parte) | — | in revisione | #266 | `docs/superpowers/plans/2026-10-20-robustezza2-s04-backup-notte-e-allarme.md` | T2, T5, T12. Lotto 1. Dopo il merge: pubblicare il Worker e incollare i segreti Resend (azioni del titolare); spostare le chiavi del backup fuori dall'app (titolare) |
 | 5 | Prova di ripristino completa | D5, D8 (verifica) | 4 | da fare | — | `s05-prova-ripristino` | T1, T11; mezza giornata del titolare |
 | 6 | Esiti dei cron: si osserva, non si cambia | S1 (osservazione) | 2 | da fare | — | `s06-esiti-cron` | dà il «prima» alla 8 |
 | 7 | La salute vede tutto, senza falsi «giù» | S1 (sorveglianza), S5, D10 (allarme migrazioni) | 6 | da fare | — | `s07-salute-completa` | misura di controllo a fine sessione |
 | 8 | Correggere i cron e l'igiene del database | S1 (comportamento), D11 (igiene), D12, S12 (`app_log`) | 6, 7 | da fare | — | `s08-cron-e-igiene` | T7 |
 | 9 | Email e fornitori senza successi finti | S2, S9 | 7 | da fare | — | `s09-email-e-fornitori` | solo codice |
 | 10 | Operazioni a più passi senza perdite | D7 | 3 | da fare | — | `s10-operazioni-a-piu-passi` | **entro metà dicembre** |
-| 11 | Letture che non si troncano | S6 | — | da fare | — | `s11-letture-a-blocchi` | anticipabile (vedi §3) |
+| 11 | Letture che non si troncano | S6 | — | in revisione | #266 | `docs/superpowers/plans/2026-10-20-robustezza2-s11-letture-a-blocchi.md` | anticipata nel lotto 1: `student_parents` 1096 legami > 1000 (misura del 24/10). `max_rows` del progetto ospitato da confermare dal pannello |
 | 12 | Chat leggera | S7 | — | da fare | — | `s12-chat-leggera` | — |
 | 13 | Bordo pubblico: cache, firewall, errori, login, build | S8, S10, S11, S12 (build) | — | da fare | — | `s13-bordo-pubblico` | T8, T9; misura di controllo a fine sessione |
 | 14 | Identità, **condizionale** | S3 | 7 | da fare | — | `s14-identita-condizionale` | T10: si procede solo sopra la soglia |

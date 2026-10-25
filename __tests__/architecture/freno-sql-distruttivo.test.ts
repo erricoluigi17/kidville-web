@@ -227,6 +227,106 @@ describe('freno SQL — via di fuga, input rotti, registro', () => {
   })
 })
 
+/**
+ * OLTRE IL PIANO (aggiunte dell'implementatore, 25/10/2026, commit separato): le stesse categorie,
+ * scritte in forme che il lettore del piano non vedeva. Il caso che le ha fatte cercare è vero:
+ * i piani di questo repo applicano i trigger con `EXECUTE format('DROP TRIGGER … %I', t)` dentro
+ * un blocco `DO`, e il freno del piano lo lasciava passare, perché il `DROP` sta in una stringa.
+ * Una stringa che viene ESEGUITA (`EXECUTE`, `cron.schedule`, `dblink_exec`, il corpo di un `DO` o
+ * di una funzione fra apici) si legge come SQL; una stringa che è solo un valore resta un valore.
+ * I casi marcati (A) e (B) dipendono dalle aggiunte A e B del Compito 1, passo 5: con un «no» si
+ * tolgono insieme alla voce.
+ */
+const FERMATE_OLTRE_IL_PIANO: ReadonlyArray<readonly [string, string, string]> = [
+  ['EXECUTE di una stringa in un DO', "DO $$ BEGIN EXECUTE 'DELETE FROM public.app_log'; END $$", 'DELETE'],
+  ['EXECUTE format(DROP TRIGGER …) in un ciclo, come nei piani del repo', "DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['avvisi'] LOOP EXECUTE format('DROP TRIGGER IF EXISTS x ON public.%I', t); END LOOP; END $$", 'DROP'],
+  ['EXECUTE format(TRUNCATE …)', "DO $$ BEGIN EXECUTE format('TRUNCATE %I', 'app_log'); END $$", 'TRUNCATE'],
+  ['EXECUTE format(UPDATE … senza WHERE)', "DO $$ BEGIN EXECUTE format('UPDATE %I SET stato = %L', 'alunni', 'x'); END $$", 'UPDATE senza WHERE'],
+  ['EXECUTE di stringhe concatenate', "DO $$ BEGIN EXECUTE 'DELETE FROM ' || quote_ident('app_log'); END $$", 'DELETE'],
+  ['UPDATE senza WHERE spezzato fra stringhe concatenate', "DO $$ BEGIN EXECUTE 'UPDATE ' || 'alunni' || ' SET stato = 1'; END $$", 'UPDATE senza WHERE'],
+  ['RETURN QUERY EXECUTE in una funzione', "CREATE FUNCTION public.f() RETURNS SETOF int LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY EXECUTE 'DELETE FROM public.app_log RETURNING 1'; END $$", 'DELETE'],
+  ['DO con il corpo fra apici', "DO 'BEGIN DELETE FROM public.app_log; END'", 'DELETE'],
+  ['DO LANGUAGE con il corpo fra apici', "DO LANGUAGE plpgsql 'BEGIN TRUNCATE public.app_log; END'", 'TRUNCATE'],
+  ['funzione con il corpo fra apici', "CREATE FUNCTION public.f() RETURNS void LANGUAGE sql AS 'DELETE FROM public.app_log'", 'DELETE'],
+  ['pg_cron: un DELETE che parte fra un minuto', "SELECT cron.schedule('pulizia', '* * * * *', 'DELETE FROM public.app_log')", 'DELETE'],
+  ['pg_cron: schedule_in_database', "SELECT cron.schedule_in_database('p', '* * * * *', 'TRUNCATE public.app_log', 'postgres')", 'TRUNCATE'],
+  ['pg_cron: alter_job che cambia il comando', "SELECT cron.alter_job(1, command := 'DROP TABLE public.app_log')", 'DROP'],
+  ['dblink_exec', "SELECT dblink_exec('dbname=postgres', 'DELETE FROM public.app_log')", 'DELETE'],
+  ['MERGE … WHEN MATCHED THEN DELETE', 'MERGE INTO public.app_log t USING (SELECT 1 AS id) s ON t.id = s.id WHEN MATCHED THEN DELETE', 'DELETE'],
+  // Le «;» separano davvero: il WHERE o il GRANT di un'altra istruzione non salvano questa.
+  ['UPDATE senza WHERE seguito da una lettura con WHERE', "UPDATE public.alunni SET stato = 'x'; SELECT id FROM public.alunni WHERE true", 'UPDATE senza WHERE'],
+  ['TRUNCATE dopo un GRANT, nella stessa stringa', 'GRANT SELECT ON public.prova_freno TO service_role; TRUNCATE public.app_log', 'TRUNCATE'],
+  ["UPDATE senza WHERE in una CTE, WHERE in un'altra CTE", 'WITH u AS (UPDATE public.alunni SET stato = 1 RETURNING id), v AS (SELECT id FROM public.alunni WHERE true) SELECT 1', 'UPDATE senza WHERE'],
+  ['(A) set_config con una E-stringa', "SELECT set_config(E'registri.manutenzione', 'on', true)", 'interruttore'],
+  ['(A) set_config con i dollari', 'SELECT set_config($$scatola_nera.senza_storico$$, \'on\', true)', 'interruttore'],
+  ['(A) UPDATE pg_settings, che equivale a set_config', "UPDATE pg_settings SET setting = 'on' WHERE name = 'registri.manutenzione'", 'interruttore'],
+  ['(B) ALTER ROLE … SET session_replication_role', 'ALTER ROLE postgres SET session_replication_role = replica', 'interruttore'],
+]
+
+/** Le stesse parole, quando NON vengono eseguite: restano letture. */
+const PASSANO_OLTRE_IL_PIANO: ReadonlyArray<readonly [string, string]> = [
+  ['CREATE TRIGGER … EXECUTE PROCEDURE', 'CREATE TRIGGER t BEFORE INSERT ON public.prova_freno FOR EACH ROW EXECUTE PROCEDURE public.f()'],
+  ['format() in una lettura', "SELECT format('%s righe cancellate', count(*)) FROM public.app_log"],
+  ['EXECUTE come privilegio, dentro una stringa', "SELECT has_function_privilege('anon', 'public.f(uuid)', 'EXECUTE')"],
+  ['i comandi dei cron, letti', "SELECT jobid, schedule, active FROM cron.job WHERE command ILIKE '%delete from%'"],
+  ['gli esiti dei cron, letti', "SELECT status, count(*) FROM cron.job_run_details WHERE command LIKE 'TRUNCATE%' GROUP BY 1"],
+  ['pg_settings, letto', "SELECT name, setting FROM pg_settings WHERE name = 'session_replication_role'"],
+  ['un DO che crea trigger con EXECUTE format', "DO $$ DECLARE t text := 'avvisi'; BEGIN EXECUTE format('CREATE TRIGGER x AFTER DELETE ON public.%I ' 'REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra()', t); END $$"],
+  ['un DO con RAISE NOTICE', "DO $$ BEGIN RAISE NOTICE 'l''elenco ha % righe', 3; END $$"],
+  ['MERGE … THEN UPDATE (la condizione è nell’ON)', 'MERGE INTO public.prova_freno t USING public.prova_freno s ON t.id = s.id WHEN MATCHED THEN UPDATE SET n = s.n WHEN NOT MATCHED THEN INSERT (id, n) VALUES (s.id, s.n)'],
+  ['parametro posizionale', 'SELECT $1::int'],
+  ['UPDATE con una sottoquery nel SET e il WHERE dopo', `UPDATE public.prova_freno SET n = (SELECT max(n) FROM public.prova_freno) WHERE id = '${UUID}'`],
+]
+
+describe('freno SQL — forme di aggiramento oltre il piano', () => {
+  it.each(FERMATE_OLTRE_IL_PIANO)('ferma: %s', (perche, query, categoria) => {
+    const e = freno(sql(query))
+    expect(e.decisione, perche).toBe('deny')
+    expect(e.motivo, perche).toContain(categoria)
+    expect(e.motivo).toContain('titolare')
+    expect(e.uscita).toBe(0)
+    expect(e.stderr).toBe('')
+  })
+
+  it.each(PASSANO_OLTRE_IL_PIANO)('lascia passare: %s', (perche, query) => {
+    const e = freno(sql(query))
+    expect(e.decisione, `${perche} → ${e.motivo}`).toBeNull()
+    expect(e.uscita).toBe(0)
+    expect(e.stderr).toBe('')
+  })
+
+  it('un errore interno del freno nega (fail-closed), non lascia passare', () => {
+    // Si rompe il freno dall'esterno: `os.environ.get` lancia alla prima riga di main(). Il
+    // ramo finale deve rispondere `deny`, e il registro rotto non deve impedirlo.
+    const rompi = [
+      'import os, runpy, sys',
+      'class Rotto(dict):',
+      '    def get(self, *a, **k):',
+      "        raise RuntimeError('rotto apposta')",
+      'os.environ = Rotto()',
+      "runpy.run_path(sys.argv[1], run_name='__main__')",
+    ].join('\n')
+    const esito = spawnSync('python3', ['-c', rompi, FRENO], {
+      input: JSON.stringify(sql('SELECT 1')),
+      encoding: 'utf8',
+      env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '', CLAUDE_PROJECT_DIR: progetto },
+      timeout: 10_000,
+    })
+    const json = JSON.parse(esito.stdout.trim()) as { hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string } }
+    expect(json.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(json.hookSpecificOutput.permissionDecisionReason).toContain('errore interno')
+    expect(json.hookSpecificOutput.permissionDecisionReason).toContain('In dubbio si ferma')
+    expect(esito.status).toBe(0)
+  })
+
+  it('SQL dentro SQL dentro SQL oltre tre livelli: in dubbio si ferma', () => {
+    const dentro = (q: string) => `DO '${q.replaceAll("'", "''")}'`
+    const e = freno(sql(dentro(dentro(dentro(dentro('BEGIN PERFORM 1; END'))))))
+    expect(e.decisione).toBe('deny')
+    expect(e.motivo).toContain('In dubbio si ferma')
+  })
+})
+
 type VoceHook = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> }
 type Impostazioni = { permissions: { allow: string[] }; hooks: { PreToolUse?: VoceHook[] } }
 

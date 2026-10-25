@@ -12,7 +12,16 @@ COSA FERMA (risposta ``deny``):
     ``UPDATE`` senza ``WHERE`` al suo stesso livello, e gli interruttori che spengono la scatola
     nera, i registri o i trigger (``registri.manutenzione``, ``scatola_nera.manutenzione``,
     ``scatola_nera.senza_storico``, ``session_replication_role``, ``DISABLE TRIGGER``);
-  · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno).
+  · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
+  · oltre il piano (25/10/2026): le stesse categorie dentro una stringa che viene ESEGUITA
+    (``EXECUTE`` di PL/pgSQL anche con ``format()`` o ``||``, ``cron.schedule``/``alter_job``,
+    ``dblink_exec``, il corpo fra apici di un ``DO`` o di una funzione) e ``MERGE … THEN DELETE``.
+
+LIMITI NOTI (passano): una funzione già nel database che scrive (``SELECT public.f()``); parole
+spezzate apposta (``'DEL' || 'ETE FROM …'``, il nome di un interruttore costruito con ``||``);
+``REVOKE``, ``ALTER … RENAME``, ``ALTER … DISABLE ROW LEVEL SECURITY``, ``CREATE OR REPLACE`` di
+una funzione esistente, ``COPY``. Il freno ferma gli sbagli, non chi lo vuole aggirare: per
+quello c'è comunque ``Bash``, fuori perimetro.
 
 COSA LASCIA PASSARE (nessun output: decide la modalità di permesso, come senza freno):
   ``SELECT``, ``INSERT`` (anche ``ON CONFLICT … DO UPDATE``), ``UPDATE … WHERE``, ``CREATE``,
@@ -74,12 +83,27 @@ DELIMITATORE_DOLLARO = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 # Gli interruttori che spengono la scatola nera, i registri o tutti i trigger. Si cercano anche
 # dentro le stringhe, perché è lì che li mette set_config(): in dubbio si ferma.
+# Oltre il piano: il primo argomento di set_config() può essere una E-stringa o fra dollari (i
+# delimitatori nel testo diventano spazi), e UPDATE pg_settings equivale a set_config().
 INTERRUTTORI = re.compile(
-    r"(?:SET_CONFIG\s*\(\s*'|\bSET\s+(?:LOCAL\s+|SESSION\s+)?)\"?"
+    r"(?:SET_CONFIG\s*\(\s*(?:E|U&)?'?\s*|\bSET\s+(?:LOCAL\s+|SESSION\s+)?)\"?"
     r"(?:(?:REGISTRI|SCATOLA_NERA)\"?\s*\.\s*\"?(?:MANUTENZIONE|SENZA_STORICO)"
     r"|SESSION_REPLICATION_ROLE)\b"
+    r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"
     r"|\bDISABLE\s+TRIGGER\b"
 )
+
+# SQL che sta in una STRINGA ma viene eseguito (oltre il piano). Le funzioni si riconoscono dal
+# nome seguito da «(», con o senza schema: pg_cron, dblink, query_to_xml.
+FUNZIONI_CHE_ESEGUONO = frozenset({
+    "SCHEDULE", "SCHEDULE_IN_DATABASE", "ALTER_JOB",
+    "DBLINK", "DBLINK_EXEC", "DBLINK_SEND_QUERY",
+    "QUERY_TO_XML", "QUERY_TO_XMLSCHEMA", "QUERY_TO_XML_AND_XMLSCHEMA",
+})
+# I segnaposto di format(): %I, %L, %s, anche nella forma %1$I.
+SEGNAPOSTO_FORMAT = re.compile(r"%(?:\d+\$)?-?\d*[sIL]")
+# Quanti livelli di SQL dentro una stringa dentro SQL si leggono prima di fermarsi in dubbio.
+LIVELLI_MASSIMI = 3
 
 # Parole che dopo UPDATE non possono essere il nome di una tabella: ON UPDATE delle chiavi
 # esterne, FOR UPDATE OF, UPDATE OR DELETE dei trigger, ON UPDATE SET NULL.
@@ -140,13 +164,16 @@ def _chiusura(sql: str, i: int, chiude: str, barra: bool, cosa: str) -> int:
     raise NonLeggibile(f"{cosa} senza la sua chiusura")
 
 
-def separa(sql: str) -> tuple[str, str]:
+def separa(sql: str, stringhe: list[str] | None = None) -> tuple[str, str]:
     """Restituisce (codice, testo), tutti e due in maiuscolo.
 
     codice: senza commenti, ogni stringa ridotta a ``''``, ogni identificatore fra virgolette
             ridotto a ``IDENTIFICATORE`` e i delimitatori ``$tag$`` tolti — il loro contenuto è il
             corpo di una funzione o di un blocco ``DO``, e lì dentro un ``DELETE`` resta un ``DELETE``;
     testo:  senza commenti e basta, per trovare gli interruttori che stanno dentro una stringa.
+
+    Se si passa ``stringhe``, ci aggiunge, in ordine, il contenuto di ogni stringa (con gli apici
+    raddoppiati già ridotti): serve a leggere le stringhe che vengono eseguite (oltre il piano).
     """
     codice: list[str] = []
     testo: list[str] = []
@@ -177,6 +204,11 @@ def separa(sql: str) -> tuple[str, str]:
             j = _chiusura(sql, i, "'", barra, "una stringa")
             codice.append("''")
             testo.append(sql[i : j + 1])
+            if stringhe is not None:
+                contenuto = sql[i + 1 : j]
+                if barra:
+                    contenuto = re.sub(r"\\(.)", r"\1", contenuto)
+                stringhe.append(contenuto.replace("''", "'"))
             i = j + 1
         elif sql[i] == '"':
             j = _chiusura(sql, i, '"', False, "un identificatore fra virgolette")
@@ -258,6 +290,8 @@ def categoria(tok: list[tuple[str, int]]) -> str | None:
         prima = parole[i - 1] if i > 0 else ""
         if parola == "DELETE" and dopo == "FROM":
             return "DELETE"
+        if parola == "DELETE" and prima == "THEN":  # MERGE … WHEN MATCHED THEN DELETE (oltre il piano)
+            return "DELETE"
         if parola == "DROP":
             return "ALTER … DROP" if parole[0] == "ALTER" else "DROP"
         if parola == "TRUNCATE" and parole[0] not in ("GRANT", "REVOKE") and prima not in ("OR", "BEFORE", "AFTER"):
@@ -269,16 +303,67 @@ def categoria(tok: list[tuple[str, int]]) -> str | None:
     return None
 
 
-def classifica(sql: str) -> list[str]:
+def esegue_stringhe(parole: list[str]) -> bool:
+    """Vero se l'istruzione ESEGUE il contenuto delle sue stringhe (oltre il piano): l'``EXECUTE``
+    di PL/pgSQL (non ``EXECUTE FUNCTION``/``PROCEDURE`` di un trigger), pg_cron e dblink, il corpo
+    fra apici di un ``DO`` o di una funzione."""
+    for i, parola in enumerate(parole):
+        dopo = parole[i + 1] if i + 1 < len(parole) else ""
+        if parola == "EXECUTE" and dopo not in ("FUNCTION", "PROCEDURE"):
+            return True
+        if parola in FUNZIONI_CHE_ESEGUONO and dopo == "(":
+            return True
+        if parola == "AS" and dopo == "''" and parole[0] == "CREATE" and (
+                "FUNCTION" in parole or "PROCEDURE" in parole):
+            return True
+    return parole[0] == "DO" and "''" in parole[1:4]
+
+
+def unisci(parole: list[str], mie: list[str]) -> str:
+    """Le stringhe di un'istruzione, unite come le unirebbero «||» o due stringhe vicine: fra due
+    stringhe va «X» quando in mezzo c'è altro (una variabile, quote_ident(…), una virgola fra gli
+    argomenti di format()), niente quando c'è solo «||» o uno spazio."""
+    pezzi: list[str] = []
+    altro = False
+    k = 0
+    for parola in parole:
+        if parola == "''":
+            if pezzi and altro:
+                pezzi.append(" X ")
+            pezzi.append(mie[k])
+            k += 1
+            altro = False
+        elif parola != "|":
+            altro = True
+    return "".join(pezzi)
+
+
+def classifica(sql: str, livello: int = 0) -> list[str]:
     """Le categorie distruttive trovate, in ordine e senza doppioni. Vuota = passa."""
-    codice, testo = separa(sql)
+    if livello > LIVELLI_MASSIMI:
+        raise NonLeggibile(f"più di {LIVELLI_MASSIMI} livelli di SQL dentro una stringa")
+    stringhe: list[str] = []
+    codice, testo = separa(sql, stringhe)
     trovate: list[str] = []
     if INTERRUTTORI.search(testo):
         trovate.append("interruttore della scatola nera, dei registri o dei trigger")
+    prossima = 0
     for tok in istruzioni(codice):
         c = categoria(tok)
         if c:
             trovate.append(c)
+        parole = [t for t, _ in tok]
+        mie = stringhe[prossima : prossima + parole.count("''")]
+        prossima += len(mie)
+        if mie and esegue_stringhe(parole):
+            eseguito = SEGNAPOSTO_FORMAT.sub(" X ", unisci(parole, mie))
+            try:
+                dentro = classifica(eseguito, livello + 1)
+            except NonLeggibile as errore:
+                raise NonLeggibile(f"{errore}, nel SQL che una stringa esegue") from None
+            trovate.extend(f"{d} dentro una stringa eseguita" for d in dentro)
+    if prossima != len(stringhe):
+        raise NonLeggibile("le stringhe trovate non tornano col codice")
     return list(dict.fromkeys(trovate))
 
 

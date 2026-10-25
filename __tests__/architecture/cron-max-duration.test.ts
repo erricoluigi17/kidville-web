@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
-  ASSENTI_IN_PRODUZIONE, INVOLUCRO, NON_SI_AVVOLGONO, contaChiamate, corpoDi, corpoOVuoto, ultimeDefinizioni,
+  ASSENTI_IN_PRODUZIONE, INVOLUCRO, NON_SI_AVVOLGONO, contaChiamate, corpoDi, corpoOVuoto, mascheraSql, ultimeDefinizioni,
 } from '../../scripts/cron-esiti/involucro.mjs'
 import { TIMEOUT_PREDEFINITO_MS, chiamataAllInvolucro, conTimeout } from '../../scripts/cron-esiti/timeout.mjs'
 
@@ -199,11 +199,13 @@ describe('lock — anche le route lunghe che non sono del cron dichiarano maxDur
 //
 // Dalla sessione 6 ogni funzione chiama `public.cron_http_post('<job>', url := …, …)`: gli
 // argomenti di `net.http_post`, per nome, col job davanti. Il timeout è l'argomento
-// `timeout_milliseconds` DENTRO quella chiamata (5000 se manca); il percorso non c'è, perché
-// l'URL lo legge dal Vault la funzione stessa. Per questo `CHIAMANTI_CRON` è l'unico posto che
-// dice quale funzione SQL chiama quale route. Una voce per riga, in questa forma esatta: lo
-// script che genera la migrazione la legge così. Lettura e riscrittura della chiamata stanno in
-// `scripts/cron-esiti/timeout.mjs`, lo stesso modulo che usa lo script.
+// `timeout_milliseconds` DENTRO quella chiamata (5000 se manca). L'origine dell'URL viene dal
+// Vault; il percorso è un letterale del corpo (`origine || '/api/…'`), salvo per le funzioni di
+// `URL_INTERO_DAL_VAULT`, che leggono dal Vault l'URL intero. `CHIAMANTI_CRON` dice quale funzione
+// SQL chiama quale route, e il criterio lo confronta col corpo (percorso o chiave del Vault), oltre
+// a SECURITY DEFINER e SET search_path della definizione. Una voce per riga, in questa forma
+// esatta: lo script che genera la migrazione la legge così. Lettura e riscrittura della chiamata
+// stanno in `scripts/cron-esiti/timeout.mjs`, lo stesso modulo che usa lo script.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -251,18 +253,60 @@ function maxDurationMs(route: string): number | null {
   return m ? Number(m[1]) * 1000 : null
 }
 
+/** Il percorso che la route serve: `src/app/api/x/route.ts` → `/api/x`. */
+function percorsoDi(route: string): string {
+  return route.replace(/^src\/app/, '').replace(/\/route\.ts$/, '')
+}
+
 /**
- * `null` = in regola; altrimenti la violazione, in parole. `corpo` è il corpo della funzione (fra
- * `AS $tag$` e la sua chiusura). Job e timeout li legge `chiamataAllInvolucro`, che si ferma con un
- * messaggio su ogni forma che non conosce: quel messaggio è la violazione.
+ * Le funzioni che leggono dal Vault l'URL INTERO, percorso compreso: nel corpo il percorso non c'è,
+ * e il legame con la route è la chiave del Vault. Per tutte le altre il percorso è un letterale del
+ * corpo (`origine || '/api/…'`), e deve essere quello della route della tabella.
  */
-function violazioneSql(c: Chiamante, corpo: string): string | null {
+const URL_INTERO_DAL_VAULT: Readonly<Record<string, string>> = {
+  notifiche_dispatch_tick: 'app.push_dispatch_url',
+  notifiche_promemoria_tick: 'app.notifiche_promemoria_url',
+  mensa_check_allergie_giornaliero: 'app.mensa_allergie_url',
+  fatture_sdi_sync_tick: 'app.fattura_sync_url',
+  iscrizioni_retention_http: 'app.retention_iscrizioni_url',
+}
+
+/** Il percorso chiamato, o la sua assenza, contro la tabella; `corpo` senza commenti, stringhe comprese. */
+function violazionePercorso(c: Chiamante, codice: string): string | null {
+  const percorsi = [...new Set([...codice.matchAll(/'(\/api\/[^'?]*)/g)].map((m) => m[1]))]
+  const chiave = URL_INTERO_DAL_VAULT[c.funzione]
+  if (chiave !== undefined) {
+    if (percorsi.length > 0) return `percorso ${percorsi.join(', ')} nel corpo, ma per la tabella l'URL intero viene da ${chiave}`
+    return codice.includes(`cron_config('${chiave}')`) ? null : `non legge ${chiave} dal Vault`
+  }
+  const atteso = percorsoDi(c.route)
+  if (percorsi.length === 0) return `nessun percorso '/api/…' nel corpo: la route della tabella è ${atteso}`
+  const altri = percorsi.filter((p) => p !== atteso)
+  return altri.length === 0 ? null : `chiama ${altri.join(', ')}, la route della tabella è ${atteso}`
+}
+
+/**
+ * `null` = in regola; altrimenti la violazione, in parole. `definizione` è il CREATE OR REPLACE
+ * intero. Fuori dal corpo (testata e coda, senza commenti né stringhe): SECURITY DEFINER e SET
+ * search_path, perché la funzione legge il Vault e scrive app_log come proprietario. Nel corpo: il
+ * percorso chiamato (`violazionePercorso`), poi job e timeout, che legge `chiamataAllInvolucro`;
+ * quella si ferma con un messaggio su ogni forma che non conosce, e il messaggio è la violazione.
+ */
+function violazioneSql(c: Chiamante, definizione: string): string | null {
+  let parti: { testata: string; tag: string; corpo: string; coda: string }
   let chiamata: { job: string; timeoutMs: number; nominato: boolean }
   try {
-    chiamata = chiamataAllInvolucro(corpo)
+    parti = corpoDi(definizione)
+    chiamata = chiamataAllInvolucro(parti.corpo)
   } catch (e) {
     return (e as Error).message
   }
+  // La testata finisce col tag che apre il corpo: senza toglierlo, la maschera nasconderebbe la coda.
+  const fuori = mascheraSql(`${parti.testata.slice(0, -parti.tag.length)}\n${parti.coda}`)
+  if (!/\bSECURITY\s+DEFINER\b/i.test(fuori)) return 'senza SECURITY DEFINER'
+  if (!/\bSET\s+search_path\b/i.test(fuori)) return 'senza SET search_path'
+  const percorso = violazionePercorso(c, mascheraSql(parti.corpo, { stringhe: false }))
+  if (percorso !== null) return percorso
   if (chiamata.job !== c.job) return `job '${chiamata.job}', la tabella dice '${c.job}'`
   if (c.timeoutDecisoMs !== undefined) {
     return chiamata.timeoutMs === c.timeoutDecisoMs
@@ -276,6 +320,14 @@ function violazioneSql(c: Chiamante, corpo: string): string | null {
     return `timeout ${chiamata.timeoutMs} ms${come}, il maxDuration di ${c.route} vale ${atteso} ms`
   }
   return null
+}
+
+/** Per «il criterio morde»: una definizione intera, come quelle delle migrazioni. */
+const TESTATA =
+  "CREATE OR REPLACE FUNCTION public.x()\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'pg_temp'\nAS $function$\n"
+const PERCORSO = "v_url := v_origine || '/api/admin/storici/cron';"
+function definizione(corpo: string, testata: string = TESTATA): string {
+  return `${testata}BEGIN\n  ${corpo}\nEND;\n$function$\n`
 }
 
 describe('lock — il timeout di pg_net è il maxDuration della route (sessione 8, seconda serie)', () => {
@@ -310,32 +362,75 @@ describe('lock — il timeout di pg_net è il maxDuration della route (sessione 
     const fuori = CHIAMANTI_CRON.flatMap((c) => {
       const d = ultime.get(c.funzione)
       if (!d) return []
-      const v = violazioneSql(c, corpoOVuoto(d.definizione))
+      const v = violazioneSql(c, d.definizione)
       return v === null ? [] : [`${c.funzione} (${d.file}): ${v}`]
     })
     expect(fuori, fuori.join('\n')).toEqual([])
   })
 
+  it('l’elenco delle funzioni con l’URL intero dal Vault nomina solo chiamanti della tabella', () => {
+    const note = new Set(CHIAMANTI_CRON.map((c) => c.funzione))
+    expect(Object.keys(URL_INTERO_DAL_VAULT).filter((f) => !note.has(f))).toEqual([])
+  })
+
   it('il criterio morde: default 5000, valore sbagliato, chiamata diretta, job sbagliato, timeout non letterale o per posizione', () => {
     const c: Chiamante = { funzione: 'x', job: 'storici-stampe', route: 'src/app/api/admin/storici/cron/route.ts' }
     const giusta = "PERFORM public.cron_http_post('storici-stampe', url := v_url, headers := v_h, timeout_milliseconds := 300000);"
-    expect(violazioneSql(c, giusta)).toBeNull()
-    expect(violazioneSql(c, giusta.replace(':= 300000', '=> 300000'))).toBeNull()
-    expect(violazioneSql(c, giusta.replace('300000', '5000'))).toMatch(/^timeout 5000 ms, il maxDuration/)
-    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', url := v_url, headers := v_h);"))
+    const v = (corpo: string): string | null => violazioneSql(c, definizione(`${PERCORSO}\n  ${corpo}`))
+    expect(v(giusta)).toBeNull()
+    expect(v(giusta.replace(':= 300000', '=> 300000'))).toBeNull()
+    expect(v(giusta.replace('300000', '5000'))).toMatch(/^timeout 5000 ms, il maxDuration/)
+    expect(v("PERFORM public.cron_http_post('storici-stampe', url := v_url, headers := v_h);"))
       .toMatch(/^timeout 5000 ms \(predefinito/)
-    expect(violazioneSql(c, 'PERFORM net.http_post(url := v_url);')).toMatch(/direttamente/)
-    expect(violazioneSql(c, giusta.replace("'storici-stampe'", "'altro'"))).toMatch(/job 'altro'/)
-    expect(violazioneSql(c, giusta.replace('300000', 'v_ms'))).toMatch(/non è un numero letterale/)
-    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', v_url, '{}'::jsonb, '{}'::jsonb, v_h, 300000);"))
+    expect(v('PERFORM net.http_post(url := v_url);')).toMatch(/direttamente/)
+    expect(v(giusta.replace("'storici-stampe'", "'altro'"))).toMatch(/job 'altro'/)
+    expect(v(giusta.replace('300000', 'v_ms'))).toMatch(/non è un numero letterale/)
+    expect(v("PERFORM public.cron_http_post('storici-stampe', v_url, '{}'::jsonb, '{}'::jsonb, v_h, 300000);"))
       .toMatch(/per posizione/)
-    expect(violazioneSql(c, `${giusta}\n${giusta}`)).toMatch(/trovate 2/)
+    expect(v(`${giusta}\n${giusta}`)).toMatch(/trovate 2/)
     // Conta solo il timeout DENTRO la chiamata: non quello di un commento né quello di un'altra istruzione.
-    expect(violazioneSql(c, "-- timeout_milliseconds := 300000\nPERFORM public.cron_http_post('storici-stampe', url := v_url);"))
+    expect(v("-- timeout_milliseconds := 300000\nPERFORM public.cron_http_post('storici-stampe', url := v_url);"))
       .toMatch(/^timeout 5000 ms \(predefinito/)
-    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', url := v_url);\nPERFORM altra(timeout_milliseconds := 300000);"))
+    expect(v("PERFORM public.cron_http_post('storici-stampe', url := v_url);\nPERFORM altra(timeout_milliseconds := 300000);"))
       .toMatch(/^timeout 5000 ms \(predefinito/)
     expect(TIMEOUT_PREDEFINITO_MS).toBe(5000)
+  })
+
+  it('il criterio morde: percorso della route, SECURITY DEFINER e SET search_path', () => {
+    const c: Chiamante = { funzione: 'x', job: 'storici-stampe', route: 'src/app/api/admin/storici/cron/route.ts' }
+    const chiamata = "PERFORM public.cron_http_post('storici-stampe', url := v_url, timeout_milliseconds := 300000);"
+    const giusta = `${PERCORSO}\n  ${chiamata}`
+    expect(violazioneSql(c, definizione(giusta))).toBeNull()
+    // Il percorso: un altro, nessuno, solo in un commento, uno in più; la query string non conta.
+    expect(violazioneSql(c, definizione(giusta.replace('/storici/cron', '/storici/run'))))
+      .toBe('chiama /api/admin/storici/run, la route della tabella è /api/admin/storici/cron')
+    expect(violazioneSql(c, definizione(chiamata))).toMatch(/^nessun percorso '\/api\/…' nel corpo/)
+    expect(violazioneSql(c, definizione(`-- ${PERCORSO}\n  ${chiamata}`))).toMatch(/^nessun percorso/)
+    expect(violazioneSql(c, definizione(`${giusta}\n  v_altra := v_origine || '/api/news/cron/run';`)))
+      .toMatch(/^chiama \/api\/news\/cron\/run,/)
+    expect(violazioneSql(c, definizione(giusta.replace("cron';", "cron?giro=1';")))).toBeNull()
+    // SECURITY DEFINER e search_path: assenti, in un commento, INVOKER; ammessi anche dopo il corpo.
+    expect(violazioneSql(c, definizione(giusta, TESTATA.replace(' SECURITY DEFINER\n', '')))).toBe('senza SECURITY DEFINER')
+    expect(violazioneSql(c, definizione(giusta, TESTATA.replace(' SECURITY DEFINER\n', ' -- SECURITY DEFINER\n'))))
+      .toBe('senza SECURITY DEFINER')
+    expect(violazioneSql(c, definizione(giusta, TESTATA.replace('SECURITY DEFINER', 'SECURITY INVOKER')))).toBe('senza SECURITY DEFINER')
+    expect(violazioneSql(c, definizione(giusta, TESTATA.replace(" SET search_path TO 'public', 'pg_temp'\n", ''))))
+      .toBe('senza SET search_path')
+    expect(violazioneSql(c, definizione(giusta, TESTATA.replace(' SET search_path', ' -- SET search_path'))))
+      .toBe('senza SET search_path')
+    const inCoda = `CREATE OR REPLACE FUNCTION public.x() RETURNS void AS $$\nBEGIN\n  ${giusta}\nEND;\n$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;`
+    expect(violazioneSql(c, inCoda)).toBeNull()
+    expect(violazioneSql(c, inCoda.replace(' SECURITY DEFINER', ''))).toBe('senza SECURITY DEFINER')
+    // L'URL intero dal Vault: la chiave dell'elenco, e nessun percorso nel corpo.
+    const dispatch: Chiamante = { funzione: 'notifiche_dispatch_tick', job: 'notifiche-dispatch', route: 'src/app/api/push/dispatch/route.ts' }
+    const ms = maxDurationMs(dispatch.route)
+    expect(ms).not.toBeNull()
+    const dalVault = `v_url := public.cron_config('app.push_dispatch_url');\n  PERFORM public.cron_http_post('notifiche-dispatch', url := v_url, timeout_milliseconds := ${ms});`
+    expect(violazioneSql(dispatch, definizione(dalVault))).toBeNull()
+    expect(violazioneSql(dispatch, definizione(dalVault.replace('app.push_dispatch_url', 'app.notifiche_promemoria_url'))))
+      .toBe('non legge app.push_dispatch_url dal Vault')
+    expect(violazioneSql(dispatch, definizione(dalVault.replace("('app.push_dispatch_url')", "('app.push_dispatch_url') || '/api/altro'"))))
+      .toMatch(/^percorso \/api\/altro nel corpo/)
   })
 
   it('conTimeout cambia una cosa sola: il numero, o l’argomento aggiunto in fondo alla chiamata', () => {

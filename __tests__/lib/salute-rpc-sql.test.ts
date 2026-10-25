@@ -127,7 +127,7 @@ beforeAll(async () => {
         (2, '*/10 * * * *', 'select 1', 'job-500', true),
         (3, '*/10 * * * *', 'select 1', 'job-rete', true),
         (4, '*/10 * * * *', 'select 1', 'job-timeout', true),
-        (5, '*/10 * * * *', 'select 1', 'job-ignoto', true),
+        (5, '0 4 * * *', 'select 1', 'job-ignoto', true),
         (6, '0 6 * * *', 'select 1', 'job-sql-ok', true),
         (7, '0 6 * * *', 'select 1', 'job-sql-ko', true),
         (8, '0 6 * * *', 'select 1', 'job-nuovo', true),
@@ -143,7 +143,7 @@ beforeAll(async () => {
         ('job-500',            true,  '2026-10-20 09:57+00', 'errore-http',  '2026-10-20 09:57+00', 'succeeded', '2026-10-20 09:20+00'),
         ('job-rete',           true,  '2026-10-20 09:56+00', 'errore-rete',  '2026-10-20 09:56+00', 'succeeded', NULL),
         ('job-timeout',        true,  '2026-10-20 09:58+00', 'timeout',      '2026-10-20 09:58+00', 'succeeded', '2026-10-20 08:20+00'),
-        ('job-ignoto',         true,  '2026-10-20 09:59+00', 'esito-ignoto', '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:49+00'),
+        ('job-ignoto',         true,  '2026-10-20 04:00+00', 'esito-ignoto', '2026-10-20 04:00+00', 'succeeded', '2026-10-19 04:00+00'),
         ('job-sql-ok',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
         ('job-sql-ko',         false, NULL, NULL, '2026-10-20 06:00+00', 'failed',    '2026-10-19 06:00+00'),
         ('job-spento',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
@@ -175,8 +175,9 @@ describe('salute_cron_esiti', () => {
             { job: 'job-aperta-recente', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
             // `http` vero ma nessuna chiamata chiusa: il giro visto è l'esecuzione SQL, ed è viva.
             { job: 'job-http-nullo', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
-            // Esito ignoto (pg_net ha dimenticato la risposta): l'esecuzione SQL riuscita NON la copre.
-            { job: 'job-ignoto', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:49' },
+            // Esito ignoto (nessuna risposta letta entro 6 ore): un esito suo, e mai vivo; vivo resta
+            // l'ultimo ok, del giorno prima.
+            { job: 'job-ignoto', cadenza: '0 4 * * *', esito: 'ignoto', visto: '10-20 04:00', vivo: '10-19 04:00' },
             { job: 'job-nuovo', cadenza: '0 6 * * *', esito: null, visto: null, vivo: null },
             { job: 'job-ok-http', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 09:55', vivo: '10-20 09:55' },
             // pg_net fermo prima della prima risposta: nessuna chiamata chiusa, una aperta da 40 minuti.
@@ -311,22 +312,25 @@ describe('vivo_il di un job HTTP: l’esecuzione SQL riuscita conta solo prima d
         await b.close()
     })
 
-    it('esito ignoto (pg_net ha dimenticato la risposta): le esecuzioni SQL riuscite non lo coprono', async () => {
-        const b = await banco({ esito: 'esito-ignoto' })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: '10-20 07:50' }])
+    // Un esito ignoto la sessione 6 lo scrive solo a 6 ore dall'invio: la chiamata è delle 03:58.
+    const IGNOTO = 'di questi, ultima chiamata a esito ignoto (lettore fermo oltre 6 ore attorno al giro): storici-stampe'
+
+    it('esito ignoto (la risposta non è stata letta entro 6 ore): le esecuzioni SQL riuscite non lo coprono, e il dettaglio lo dice', async () => {
+        const b = await banco({ chiamataIl: '2026-10-20 03:58+00', esito: 'esito-ignoto', ultimoOk: '2026-10-20 03:50+00' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ignoto', visto: '10-20 03:58', vivo: '10-20 03:50' }])
         expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
-            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+            dettaglio: `2 job attivi; senza un esito buono entro la finestra: storici-stampe; ${IGNOTO}`,
         })
         await b.close()
     })
 
     it('esito ignoto, esecuzioni SQL fallite e mai un esito buono: visto girare, quindi allarme e non «in attesa»', async () => {
-        const b = await banco({ esito: 'esito-ignoto', stato: 'failed', ultimoOk: null })
-        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: null }])
+        const b = await banco({ chiamataIl: '2026-10-20 03:58+00', esito: 'esito-ignoto', stato: 'failed', ultimoOk: null })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ignoto', visto: '10-20 03:58', vivo: null }])
         expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
-            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+            dettaglio: `2 job attivi; senza un esito buono entro la finestra: storici-stampe; ${IGNOTO}`,
         })
         await b.close()
     })

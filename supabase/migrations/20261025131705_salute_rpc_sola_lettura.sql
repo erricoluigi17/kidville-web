@@ -6,7 +6,8 @@
 --
 --   · salute_cron_esiti() — per ogni job ATTIVO di cron.job: il nome (coalesce(jobname,
 --     'jobid-' || jobid), la stessa chiave della sessione 6), la cadenza, l'esito dell'ultimo giro
---     ('ok', 'fallito', 'timeout' o NULL),
+--     ('ok', 'fallito', 'timeout', 'ignoto' o NULL; 'ignoto' = l'ultima chiamata chiusa di un job
+--     HTTP ha esito-ignoto: nessuna risposta letta entro 6 ore, il lettore fermo attorno al giro),
 --     l'istante dell'ultimo giro e l'ultimo istante in cui il job era VIVO: l'ultimo successo; per
 --     un job HTTP anche l'ultimo timeout del client, perché la route può aver finito lo stesso; e,
 --     SOLO per un job HTTP che non ha ancora NESSUNA chiamata chiusa, l'ultima esecuzione SQL
@@ -67,6 +68,8 @@ BEGIN
             WHEN u.http AND u.ultima_chiamata_esito = 'timeout' THEN 'timeout'
             WHEN u.http AND u.ultima_chiamata_esito IN ('errore-http', 'errore-rete') THEN 'fallito'
             WHEN u.http AND u.ultima_chiamata_esito = 'ok' THEN 'ok'
+            -- Mai vivo, e con un nome suo: la salute dice perché il job è senza esito buono.
+            WHEN u.http AND u.ultima_chiamata_esito = 'esito-ignoto' THEN 'ignoto'
             WHEN NOT u.http AND u.ultima_esecuzione_stato = 'failed' THEN 'fallito'
             WHEN NOT u.http AND u.ultima_esecuzione_stato = 'succeeded' THEN 'ok'
             ELSE NULL

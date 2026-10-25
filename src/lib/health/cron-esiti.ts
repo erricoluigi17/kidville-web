@@ -18,8 +18,10 @@ import type { Valutazione } from './valutazione'
  * chiamata chiusa, e solo se nessuna sua chiamata è aperta da più di 30 minuti (pg_net fermo). Dopo
  * la prima chiamata chiusa un giro SQL riuscito non vale più (un giro che non ha chiamato riesce lo
  * stesso), e non sono mai vive le chiamate respinte (errore-http, errore-rete) né quelle a esito
- * ignoto. Lo decide la RPC, che lo mette in `vivo_il`; la sessione 8 aggiungerà lì l'elenco dei
- * job che chiamano solo quando hanno lavoro. Un'ultima chiamata a esito ignoto fuori finestra si dice
+ * ignoto. Lo decide la RPC, che lo mette in `vivo_il`; dalla sessione 8 la RPC porta anche l'elenco
+ * dichiarato dei job che chiamano solo quando hanno lavoro (`storici-stampe`): per loro l'esecuzione
+ * SQL riuscita vale anche dopo la prima chiamata chiusa, purché l'ultima chiamata non sia stata
+ * respinta. Un'ultima chiamata a esito ignoto fuori finestra si dice
  * a parte: vuol dire che il lettore è rimasto fermo oltre 6 ore attorno al giro. Un job
  * che non è mai partito è «in attesa»: `cron.job` non dice quando un job è nato, quindi non si può
  * distinguere un job di ieri da uno che non parte da un mese — si scrive, non si indovina.

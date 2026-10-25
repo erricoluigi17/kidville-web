@@ -440,10 +440,14 @@ JA4, mai un nome: solo conteggi, codici, percorsi e famiglie di user agent.
   (le variabili del database nell'ambiente Preview ci sono). Scelta dell'assistente in assenza del titolare, da
   confermare: nessun link chiesto. Entra la sola prova 1 (`Vercel-CDN-Cache-Control`); la misura si fa in produzione su
   `/api/iscrizione/sedi`, con 2 richieste, dopo il merge. Se la prova 1 non basta, S8 resta aperto e la prova 2 (piano,
-  Compito 14, ramo B) la decide il titolare, col motivo dei Runtime Logs davanti. Esito: da completare con la misura di
-  produzione dopo il merge.
-- **Dopo il deploy:** in attesa. Le righe `x-vercel-cache` di `/api/iscrizione/sedi` (nel ramo R l'unica rotta
-  misurata), con data e ora UTC, le scrive la chiusura della sessione 13.
+  Compito 14, ramo B) la decide il titolare, col motivo dei Runtime Logs davanti. Esito: la misura di produzione
+  dopo il merge è `MISS` alla seconda richiesta (riga «Dopo il deploy» qui sotto): **S8 resta aperto**, e il motivo
+  nei Runtime Logs (Vercel → Logs → deployment di produzione → percorso `/api/iscrizione/sedi` → sezione «Cache») è
+  un'azione del titolare, non ancora fatta.
+- **Dopo il deploy:** 2026-10-25 12:53–12:54 UTC, seconda richiesta: sedi `MISS`, modello `MISS`, comuni `MISS`
+  (righe nel commento della PR #267). Tutte e sei le richieste: `age: 0`, `vary: Cookie`, `cache-control: public,
+  max-age=<600|300|86400>, s-maxage=<lo stesso>, stale-while-revalidate=<…>`. Misura fatta a deploy di produzione `success`
+  (stato del commit `89150a39`), una sola volta: la prova 1 (`Vercel-CDN-Cache-Control`) **non basta** in produzione.
 
 ### Firewall di Vercel (T8)
 
@@ -528,8 +532,9 @@ Finestra: 60 secondi.
     propone il passaggio a 429 (`rate_limit`), non a `deny`;
   - anche un solo evento dall'app nativa o da un browser mobile: si alza la soglia e si fanno altri 7 giorni
     di «log».
-- **Letture:** in attesa. Le regole, se il titolare dice sì, si pubblicano dopo il merge, e da lì partono 7 letture
-  giornaliere in un'issue: numero dell'issue, giorni, tabella e decisione li scrive la chiusura della sessione 13.
+- **Letture:** nessuna. Le regole **non sono state pubblicate** (25/10/2026: manca il sì esplicito del titolare, assente).
+  Se il titolare dice sì, si pubblicano e da lì partono 7 letture giornaliere in un'issue; numero dell'issue, giorni,
+  tabella e decisione si scrivono allora nella riga 13 della specifica.
 - **Come si spengono.** Dal pannello (Firewall → Rules → l'interruttore della regola), oppure:
   ```bash
   npx vercel@64.7.0 --cwd /Users/lerri/kidville-web firewall rules disable "<nome>" --yes

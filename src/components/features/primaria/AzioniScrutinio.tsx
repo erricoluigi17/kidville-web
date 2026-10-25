@@ -131,7 +131,7 @@ export function RiapriScrutinio({ scrutinioId, userId, ruolo, pubblicato, onRiap
         return;
       }
       setAperto(false);
-      onRiaperto(t('scrutinioRiaperto', { count: numeroDa(corpo, 'pagelleEliminate') }));
+      onRiaperto(t('scrutinioRiaperto', { count: numeroDa(corpo, 'pagelleRitirate') + numeroDa(corpo, 'pagelleEliminate') }));
     } catch (err) {
       // Un `catch` che non logga è un bug (AGENTS, regola 6): qui ci cade la rete.
       logClient({

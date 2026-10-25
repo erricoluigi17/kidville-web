@@ -27,7 +27,7 @@ function scrittoNeiLog(): string {
     )
 }
 
-import { percorsiCitati, PERCORSI_PER_QUERY } from '@/lib/iscrizioni/percorsi-citati'
+import { percorsiCitati, PERCORSI_PER_QUERY, LUNGHEZZA_MASSIMA_PERCORSO } from '@/lib/iscrizioni/percorsi-citati'
 
 /**
  * CHI CITA ANCORA UN ALLEGATO (robustezza 2, sessione 1 — D9).
@@ -326,6 +326,23 @@ describe('percorsiCitati — un percorso con " \\ o un carattere di controllo no
         const esito = await percorsiCitati(client, [conVirgolette, conBarra], OP)
         expect(citati(esito)).toEqual([conVirgolette, conBarra].sort())
         expect(inviati).toEqual([])
+    })
+
+    it('un percorso lunghissimo non va alla query (l\'URL di un blocco sforerebbe il proxy), si tiene, e il giro resta verificato', async () => {
+        const sulLimite = 'iscrizioni/prova-finta/' + 'a'.repeat(LUNGHEZZA_MASSIMA_PERCORSO - 'iscrizioni/prova-finta/'.length)
+        const troppoLungo = sulLimite + 'b'
+        expect(sulLimite).toHaveLength(LUNGHEZZA_MASSIMA_PERCORSO)
+        expect(troppoLungo).toHaveLength(LUNGHEZZA_MASSIMA_PERCORSO + 1)
+        const { client, inviati } = conSpiaSullIn(dbVuoto())
+        const esito = await percorsiCitati(client, [troppoLungo, sulLimite], OP)
+
+        expect(esito.verificato).toBe(true)
+        expect(citati(esito), 'solo quello oltre il limite si tiene «per prudenza»').toEqual([troppoLungo])
+        expect(inviati.filter((v) => v === sulLimite), 'quello sul limite arriva a tutte e quattro le sorgenti').toHaveLength(4)
+        expect(inviati.filter((v) => v === troppoLungo)).toEqual([])
+        const info = h.eventi.filter((e) => e.livello === 'info')
+        expect(info).toHaveLength(1)
+        expect(info[0].campi).toMatchObject({ esito: 'percorsi-non-interrogabili', n_file: 1 })
     })
 
     it('CONTROLLO: senza percorsi illeggibili nessun info, e nessun percorso tenuto «per prudenza»', async () => {

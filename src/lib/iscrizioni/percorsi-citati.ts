@@ -80,8 +80,17 @@ const SORGENTI: readonly Sorgente[] = [
     { tabella: 'student_documents', colonna: 'file_url', leggi: (s, b) => leggiFascicolo(s, 'file_url', b) },
 ]
 
-/** `"`, `\` e i caratteri di controllo: quello che `in.(…)` non porta intatto (vedi in testa). */
+/**
+ * Un percorso vero di `form_attachments` sta ben sotto i 150 caratteri. Il campo però arriva dal
+ * modulo pubblico senza vincoli di forma: un blocco di 25 percorsi lunghissimi farebbe un URL che il
+ * proxy rifiuta (414), e il giro risponderebbe 500 `citazioni-non-lette` ogni mese. Oltre questa
+ * soglia il percorso non va alla query e si tiene, come gli altri non interrogabili.
+ */
+export const LUNGHEZZA_MASSIMA_PERCORSO = 256
+
+/** `"`, `\`, i caratteri di controllo e i percorsi troppo lunghi: quello che `in.(…)` non porta intatto (vedi in testa). */
 function interrogabile(percorso: string): boolean {
+    if (percorso.length > LUNGHEZZA_MASSIMA_PERCORSO) return false
     for (let i = 0; i < percorso.length; i++) {
         const c = percorso.charCodeAt(i)
         if (c < 0x20 || c === 0x7f || c === 0x22 || c === 0x5c) return false

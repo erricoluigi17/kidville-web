@@ -23,6 +23,7 @@
 --
 -- ─── ROLLBACK ────────────────────────────────────────────────────────────────
 --   DROP FUNCTION IF EXISTS public.note_modifica(uuid[], uuid, uuid[], text, text, boolean, date, uuid);
+--   NOTIFY pgrst, 'reload schema';
 --   La route ripiega da sola (PGRST202). Nessun dato da riportare indietro.
 -- =============================================================================
 
@@ -48,6 +49,17 @@ BEGIN
   IF p_ids IS NULL OR cardinality(p_ids) = 0 OR p_section_id IS NULL THEN
     RAISE EXCEPTION 'note_modifica: p_ids e p_section_id obbligatori' USING ERRCODE = '22023';
   END IF;
+
+  -- Le note PRIMA di tutto, bloccate fino al COMMIT. Senza, un genitore che firma mentre
+  -- cambia il testo inserisce la sua presa visione dopo che la DELETE qui sotto ha già
+  -- guardato: la firma data sul testo VECCHIO resterebbe attaccata al testo nuovo. Con il
+  -- blocco l'inserimento aspetta (il controllo della chiave esterna di `nota_ricezioni` si
+  -- scontra con FOR UPDATE) e arriva dopo, sul testo nuovo. In ordine di id: due modifiche
+  -- che si incrociano sulle stesse note non si bloccano a vicenda.
+  PERFORM 1 FROM public.note_disciplinari
+   WHERE id = ANY (p_ids) AND section_id = p_section_id
+   ORDER BY id
+   FOR UPDATE;
 
   DELETE FROM public.nota_ricezioni r
    USING public.note_disciplinari n
@@ -83,3 +95,5 @@ COMMENT ON FUNCTION public.note_modifica(uuid[], uuid, uuid[], text, text, boole
   'Aggiorna le note di una sezione e toglie la presa visione delle famiglie SOLO alle note di '
   'p_ids_azzera (quelle a cui cambia il testo), nella stessa transazione. I parametri NULL '
   'lasciano il campo com''è. Ritorna le prese visione tolte e le note aggiornate.';
+
+NOTIFY pgrst, 'reload schema';

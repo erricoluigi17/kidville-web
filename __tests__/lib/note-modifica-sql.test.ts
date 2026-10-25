@@ -8,8 +8,9 @@ import { PGlite } from '@electric-sql/pglite'
 /**
  * MODIFICA DI UNA NOTA · LA MIGRAZIONE SU UN POSTGRES VERO.
  * Ciò che si prova: la presa visione si toglie SOLO alle note indicate, nella stessa
- * transazione dell'aggiornamento; una sezione sbagliata non tocca niente. Schema minimo
- * dalla baseline (righe 2050-2080) più `data_evento`. Solo uuid e testi inventati.
+ * transazione dell'aggiornamento; una sezione sbagliata non tocca niente. Schema dalla
+ * baseline (righe 2050-2080: NOT NULL, CHECK su `categoria`; 3436: il vincolo di unicità
+ * di `nota_ricezioni`) più `data_evento`. Solo uuid e testi inventati.
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
@@ -25,6 +26,8 @@ const N3 = '80000000-0000-4000-8000-000000000003'
 const GRUPPO = '90000000-0000-4000-8000-000000000001'
 const NUOVO_GRUPPO = '90000000-0000-4000-8000-000000000002'
 const GENITORE = 'a0000000-0000-4000-8000-000000000001'
+const ALUNNO = 'b0000000-0000-4000-8000-000000000001'
+const MAESTRA = 'c0000000-0000-4000-8000-000000000001'
 
 type PgErr = { code?: string; message: string }
 type Nota = { id: string; categoria: string; testo: string; firmata_il: string | null; firmata_da: string | null; nota_gruppo_id: string | null; data_evento: string | null }
@@ -80,27 +83,29 @@ beforeAll(async () => {
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
 
     CREATE TABLE public.note_disciplinari (
-      id uuid PRIMARY KEY,
-      alunno_id uuid,
-      maestra_id uuid,
-      categoria varchar(50),
-      testo text,
+      id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+      alunno_id uuid NOT NULL,
+      maestra_id uuid NOT NULL,
+      categoria character varying(50) NOT NULL,
+      testo text NOT NULL,
       richiede_firma boolean DEFAULT false,
-      firmata_il timestamptz,
+      firmata_il timestamp with time zone,
       firmata_da uuid,
-      creato_il timestamptz DEFAULT now(),
+      creato_il timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
       section_id uuid,
       nota_gruppo_id uuid,
-      oscurata_ad_altri boolean DEFAULT false,
-      data_evento date
+      oscurata_ad_altri boolean DEFAULT true NOT NULL,
+      data_evento date,
+      CONSTRAINT note_disciplinari_categoria_check CHECK (((categoria)::text = ANY ((ARRAY['disciplinare'::character varying, 'didattica'::character varying, 'compiti_non_svolti'::character varying])::text[])))
     );
     CREATE TABLE public.nota_ricezioni (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      nota_id uuid REFERENCES public.note_disciplinari(id) ON DELETE CASCADE,
-      alunno_id uuid,
-      genitore_id uuid,
-      firmato_il timestamptz,
-      firma jsonb
+      id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+      nota_id uuid NOT NULL REFERENCES public.note_disciplinari(id) ON DELETE CASCADE,
+      alunno_id uuid NOT NULL,
+      genitore_id uuid NOT NULL,
+      firmato_il timestamp with time zone DEFAULT now(),
+      firma jsonb,
+      CONSTRAINT nota_ricezioni_nota_id_genitore_id_key UNIQUE (nota_id, genitore_id)
     );
   `)
   await db.exec(MIGRAZIONE)
@@ -115,14 +120,14 @@ beforeEach(async () => {
   await db.exec(`
     DROP TRIGGER IF EXISTS rompi ON public.note_disciplinari;
     TRUNCATE public.nota_ricezioni, public.note_disciplinari;
-    INSERT INTO public.note_disciplinari (id, categoria, testo, richiede_firma, firmata_il, firmata_da, section_id, nota_gruppo_id, data_evento) VALUES
-      ('${N1}', 'comportamento', 'testo uno', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${SEZ}', '${GRUPPO}', '2026-09-08'),
-      ('${N2}', 'comportamento', 'testo uno', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${SEZ}', '${GRUPPO}', '2026-09-08'),
-      ('${N3}', 'comportamento', 'testo tre', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${ALTRA_SEZ}', NULL, '2026-09-08');
-    INSERT INTO public.nota_ricezioni (nota_id, genitore_id, firmato_il) VALUES
-      ('${N1}', '${GENITORE}', '2026-09-09T12:00:00Z'),
-      ('${N2}', '${GENITORE}', '2026-09-09T12:00:00Z'),
-      ('${N3}', '${GENITORE}', '2026-09-09T12:00:00Z');
+    INSERT INTO public.note_disciplinari (id, alunno_id, maestra_id, categoria, testo, richiede_firma, firmata_il, firmata_da, section_id, nota_gruppo_id, data_evento) VALUES
+      ('${N1}', '${ALUNNO}', '${MAESTRA}', 'disciplinare', 'testo uno', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${SEZ}', '${GRUPPO}', '2026-09-08'),
+      ('${N2}', '${ALUNNO}', '${MAESTRA}', 'disciplinare', 'testo uno', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${SEZ}', '${GRUPPO}', '2026-09-08'),
+      ('${N3}', '${ALUNNO}', '${MAESTRA}', 'disciplinare', 'testo tre', true, '2026-09-09T12:00:00Z', '${GENITORE}', '${ALTRA_SEZ}', NULL, '2026-09-08');
+    INSERT INTO public.nota_ricezioni (nota_id, alunno_id, genitore_id, firmato_il) VALUES
+      ('${N1}', '${ALUNNO}', '${GENITORE}', '2026-09-09T12:00:00Z'),
+      ('${N2}', '${ALUNNO}', '${GENITORE}', '2026-09-09T12:00:00Z'),
+      ('${N3}', '${ALUNNO}', '${GENITORE}', '2026-09-09T12:00:00Z');
   `)
 })
 
@@ -153,6 +158,25 @@ describe('note_modifica', () => {
     expect(await ricezioni(N3)).toBe(1)
   })
 
+  // Aggiunto dopo la revisione: senza questo caso, una DELETE che non guardasse `p_ids`
+  // (solo `p_ids_azzera` e la sezione) restava verde.
+  it('una nota da azzerare che non è fra quelle modificate non perde la presa visione', async () => {
+    const e = await modifica({ ids: [N1], sezione: SEZ, azzera: [N2], testo: 'testo nuovo' })
+    expect(e.ricezioni_cancellate).toBe(0)
+    expect(await ricezioni(N2)).toBe(1)
+    expect(await nota(N2)).toMatchObject({ testo: 'testo uno' })
+    expect((await nota(N2)).firmata_il).not.toBeNull()
+    expect(await ricezioni(N1)).toBe(1)
+  })
+
+  it('una categoria che il vincolo della baseline rifiuta (23514): niente tolto, niente cambiato', async () => {
+    const e = await errore(() => modifica({ ids: [N1], sezione: SEZ, azzera: [N1], categoria: 'inventata', testo: 'testo nuovo' }))
+    expect(e.code).toBe('23514')
+    expect(await ricezioni(N1)).toBe(1)
+    expect(await nota(N1)).toMatchObject({ testo: 'testo uno', categoria: 'disciplinare' })
+    expect((await nota(N1)).firmata_il).not.toBeNull()
+  })
+
   it('la data nuova sposta la nota in un gruppo nuovo', async () => {
     await modifica({ ids: [N1], sezione: SEZ, data: '2026-10-01', gruppo: NUOVO_GRUPPO })
     expect(await nota(N1)).toMatchObject({ data_evento: '2026-10-01', nota_gruppo_id: NUOVO_GRUPPO })
@@ -165,7 +189,7 @@ describe('note_modifica', () => {
     const richiedeFirma = async (id: string) =>
       (await db.query<{ r: boolean }>(`SELECT richiede_firma AS r FROM public.note_disciplinari WHERE id = '${id}'`)).rows[0].r
     await modifica({ ids: [N1], sezione: SEZ, azzera: [N1], testo: 'solo il testo' })
-    expect(await nota(N1)).toMatchObject({ testo: 'solo il testo', categoria: 'comportamento', data_evento: '2026-09-08', nota_gruppo_id: GRUPPO })
+    expect(await nota(N1)).toMatchObject({ testo: 'solo il testo', categoria: 'disciplinare', data_evento: '2026-09-08', nota_gruppo_id: GRUPPO })
     expect(await richiedeFirma(N1)).toBe(true)
     await modifica({ ids: [N2], sezione: SEZ, categoria: 'didattica' })
     expect(await nota(N2)).toMatchObject({ testo: 'testo uno', categoria: 'didattica', data_evento: '2026-09-08', nota_gruppo_id: GRUPPO })
@@ -184,6 +208,19 @@ describe('note_modifica', () => {
     expect(e.code).toBe('P0001')
     expect(await ricezioni(N1)).toBe(1)
     expect((await nota(N1)).firmata_il).not.toBeNull()
+  })
+
+  // La corsa con la firma di un genitore (due connessioni) PGlite non la sa riprodurre: è provata
+  // su Postgres 17 locale (senza il blocco resta 1 presa visione sul testo nuovo, con il blocco 0).
+  // Qui si fissa la forma che la chiude: FOR UPDATE sulle note, PRIMA della DELETE. Si legge il
+  // corpo installato senza i commenti, che nominano FOR UPDATE prima della DELETE anche da soli.
+  it('le note si bloccano FOR UPDATE prima di togliere le prese visione', async () => {
+    const { rows } = await db.query<{ src: string }>(`SELECT prosrc AS src FROM pg_proc WHERE proname = 'note_modifica'`)
+    const corpo = rows[0].src.replace(/--[^\n]*/g, '')
+    const blocco = corpo.search(/PERFORM\s+1\s+FROM\s+public\.note_disciplinari\s+WHERE[^;]*\sFOR\s+UPDATE\s*;/)
+    const cancella = corpo.indexOf('DELETE FROM public.nota_ricezioni')
+    expect(blocco).toBeGreaterThanOrEqual(0)
+    expect(cancella).toBeGreaterThan(blocco)
   })
 
   it('senza note o senza sezione è una richiesta sbagliata: 22023', async () => {

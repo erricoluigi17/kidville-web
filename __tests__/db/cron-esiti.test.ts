@@ -9,13 +9,17 @@
  *    si scrive la richiesta parte lo stesso (la registrazione non può fermare un job);
  *  · il lettore classifica le risposte, scrive in app_log col nome del job, non conta due volte,
  *    non copia mai il corpo di una risposta, e se si guasta lascia una traccia;
- *  · `cron_ultimo_esito` ha una riga per job, HTTP o solo SQL, anche per quelli spenti.
- * Il Compito 5 aggiunge l'equivalenza prima/dopo di ogni funzione ridefinita.
+ *  · `cron_ultimo_esito` ha una riga per job, HTTP o solo SQL, anche per quelli spenti;
+ *  · (Compito 5) ogni funzione ridefinita è, svolta, la definizione della produzione byte per byte;
+ *    fa la stessa chiamata di prima, anche quando pg_net solleva o il Vault è vuoto; conserva
+ *    proprietario, permessi, SECURITY DEFINER e search_path; la migrazione inversa la rimette
+ *    com'era in produzione.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
+import { NON_SI_AVVOLGONO, corpoDi, inversa, mascheraSql, md5, minimoAvvolte, svolgi } from '../../scripts/cron-esiti/involucro.mjs'
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
 const FILE = readdirSync(CARTELLA).filter((f) => f.endsWith('_cron_esiti_osservati.sql'))
@@ -77,6 +81,23 @@ async function nuovoDatabase(opzioni: { net?: boolean; cron?: boolean } = {}): P
     CREATE VIEW vault.decrypted_secrets AS SELECT nome AS name, valore AS decrypted_secret FROM public.vault_finto;
     CREATE FUNCTION public.cron_config(p_nome text) RETURNS text
     LANGUAGE sql AS $$ SELECT valore FROM public.vault_finto WHERE nome = p_nome $$;
+
+    -- Quello che tre corpi della produzione toccano PRIMA di chiamare il server, con le firme del
+    -- repo e tabelle vuote: senza, storici_tick, iscrizioni_retention_http e video_runner_kick si
+    -- fermerebbero prima di pg_net e il confronto prima/dopo non le proverebbe.
+    CREATE TABLE public.iscrizioni_retention_esecuzioni (request_id bigint);
+    CREATE TABLE public.alunni (id uuid, stato text, stato_cambiato_il timestamptz);
+    CREATE TABLE public.storici_revisioni (alunno_id uuid, modulo text, giorno_competenza date, contenuto jsonb);
+    CREATE FUNCTION public.alunno_uscita_consolidata(text, timestamptz) RETURNS boolean
+    LANGUAGE sql AS $$ SELECT false $$;
+    CREATE FUNCTION public._video_job_transition_log(
+      p_operazione text, p_livello text, p_job uuid, p_altro uuid, p_codice text, p_campi jsonb DEFAULT '{}'::jsonb
+    ) RETURNS void
+    LANGUAGE sql AS $$
+      INSERT INTO public.app_log (livello, evento, messaggio, codice, fingerprint)
+      VALUES (p_livello, 'video', 'transizione di prova', p_codice, p_operazione || ':' || coalesce(p_codice, 'ok'))
+      ON CONFLICT (fingerprint, giorno) DO UPDATE SET occorrenze = public.app_log.occorrenze + 1
+    $$;
   `)
   if (net) {
     await db.exec(`
@@ -415,5 +436,281 @@ describe('il lettore cron_esiti', () => {
     expect(await righe(db, `SELECT has_sequence_privilege('anon', 'public.cron_chiamate_id_seq', 'USAGE') AS anon,
         has_sequence_privilege('authenticated', 'public.cron_chiamate_id_seq', 'USAGE') AS authenticated`))
       .toEqual([{ anon: false, authenticated: false }])
+  })
+})
+
+/** Le funzioni che la migrazione ridefinisce, con la definizione di prima (svolta) e l'etichetta. */
+function ridefinite(): { nome: string; prima: string; dopo: string; job: string }[] {
+  const codice = mascheraSql(MIGRAZIONE)
+  const trovate: { nome: string; prima: string; dopo: string; job: string }[] = []
+  for (const m of codice.matchAll(/\bCREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.([a-z_][a-z0-9_]*)\s*\(/gi)) {
+    if (m[1] === 'cron_http_post' || m[1] === 'cron_esiti') continue
+    const fine = codice.indexOf(';', m.index)
+    const { definizione, job } = svolgi(MIGRAZIONE.slice(m.index, fine))
+    trovate.push({ nome: m[1], prima: definizione, dopo: MIGRAZIONE.slice(m.index, fine), job })
+  }
+  return trovate
+}
+
+describe('le funzioni ridefinite fanno la stessa chiamata di prima', () => {
+  const RIDEFINITE = ridefinite()
+
+  it('sono almeno quelle attese, nessuna è fra le escluse, nessun nome due volte', () => {
+    expect(RIDEFINITE.length).toBeGreaterThanOrEqual(minimoAvvolte())
+    for (const r of RIDEFINITE) expect(Object.hasOwn(NON_SI_AVVOLGONO, r.nome), r.nome).toBe(false)
+    expect(new Set(RIDEFINITE.map((r) => r.nome)).size).toBe(RIDEFINITE.length)
+  })
+
+  it('prima e dopo: stesse chiamate a pg_net, stessi errori, stesse righe in app_log', { timeout: 120_000 }, async () => {
+    const prima = await nuovoDatabase()
+    await prima.exec(RIDEFINITE.map((r) => `${r.prima};`).join('\n\n'))
+    const dopo = await nuovoDatabase()
+    await dopo.exec(MIGRAZIONE)
+    let raggiunte = 0
+    for (const r of RIDEFINITE) {
+      const esiti: unknown[] = []
+      for (const db of [prima, dopo]) {
+        await db.exec('DELETE FROM net.chiamate; DELETE FROM public.app_log;')
+        const [{ n, trigger }] = await righe<{ n: number; trigger: boolean }>(db,
+          `SELECT p.pronargs::int AS n, p.prorettype = 'trigger'::regtype AS trigger
+             FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+            WHERE s.nspname = 'public' AND p.proname = $1`, [r.nome])
+        if (trigger) { esiti.push('funzione di trigger: non si chiama da sola'); continue }
+        const errore = await erroreDi(db.query(`SELECT public.${r.nome}(${Array(n).fill('NULL').join(', ')})`))
+        esiti.push({
+          errore: errore?.code ?? null,
+          chiamate: await righe(db, 'SELECT url, body, params, headers, timeout_milliseconds FROM net.chiamate ORDER BY n'),
+          log: await righe(db, 'SELECT fingerprint, livello FROM public.app_log ORDER BY fingerprint COLLATE "C"'),
+        })
+      }
+      expect(esiti[1], r.nome).toEqual(esiti[0])
+      if ((await righe<{ n: number }>(dopo, 'SELECT count(*)::int AS n FROM net.chiamate'))[0].n > 0) {
+        raggiunte++
+        expect(await righe(dopo,
+          'SELECT DISTINCT job FROM public.cron_chiamate WHERE richiesta_id IN (SELECT n FROM net.chiamate)'), r.nome)
+          .toEqual([{ job: r.job }])
+      }
+    }
+    // Le cinque più semplici (dispatch, promemoria, allergie, news, digest) leggono il Vault e chiamano:
+    // se nemmeno quelle arrivano a pg_net, il banco di prova non sta provando niente.
+    expect(raggiunte).toBeGreaterThanOrEqual(5)
+  })
+
+  it('la migrazione inversa rimette ogni funzione com’era e toglie job, funzioni e tabelle', async () => {
+    const db = await nuovoDatabase({ cron: true })
+    await db.exec(MIGRAZIONE)
+    await db.exec(inversa(MIGRAZIONE))
+    for (const r of RIDEFINITE) {
+      expect(await righe(db, `SELECT md5(p.prosrc) AS m FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+          WHERE s.nspname = 'public' AND p.proname = $1`, [r.nome]), r.nome).toEqual([{ m: md5(corpoDi(r.prima).corpo) }])
+    }
+    expect(await righe(db, `SELECT to_regclass('public.cron_chiamate') IS NULL AS a, to_regclass('public.cron_ultimo_esito') IS NULL AS b,
+        (SELECT count(*)::int FROM pg_proc WHERE proname IN ('cron_http_post', 'cron_esiti')) AS f,
+        (SELECT count(*)::int FROM cron.job WHERE jobname = 'cron-esiti') AS j`)).toEqual([{ a: true, b: true, f: 0, j: 0 }])
+  })
+})
+
+/*
+ * ─── IL CONFRONTO CON LA PRODUZIONE, FUORI DAL GENERATORE ───────────────────────────────
+ *
+ * I test qui sopra confrontano la migrazione con sé stessa: «prima» è la definizione SVOLTA dalla
+ * migrazione. Se il generatore perdesse un argomento, un SECURITY DEFINER, un search_path o
+ * sbagliasse l'etichetta, prima e dopo sbaglierebbero insieme e resterebbero uguali. Serve un
+ * termine di paragone che il generatore non scrive: questi valori, letti in produzione con una
+ * SELECT sui cataloghi il 2026-10-25 (misura 0.6 delle 09:37 UTC, riletta prima delle 10:40 UTC con
+ * proacl e proconfig: impronte identiche). Non sono segreti: nomi di job, md5 e attributi delle funzioni.
+ *   impronta = md5(pg_get_functiondef(oid))   corpo = md5(prosrc)
+ */
+const SP_PUBBLICO = 'search_path=public, pg_temp'
+const PRODUZIONE: Record<string, { job: string; config: string; impronta: string; corpo: string }> = {
+  candidature_retention_http: { job: 'candidature-retention', config: SP_PUBBLICO, impronta: 'c762e40438b84280e14924fcedd7aedd', corpo: 'b7491ac3bce08c20c207a2158460ca60' },
+  cestino_registro_retention_http: { job: 'cestino-registro-retention', config: SP_PUBBLICO, impronta: 'bd84dced9db5ede86b8f9d2c06335290', corpo: '5d137079eabefed8f717ab1bd709bd1a' },
+  fatture_coda_tick_http: { job: 'fatture-coda-tick', config: SP_PUBBLICO, impronta: '970a522c9b6c849e605d73f6e6f5c8e9', corpo: '592674f892575c13c40fb2cb6917852c' },
+  fatture_sdi_sync_tick: { job: 'fatture-sdi-sync', config: SP_PUBBLICO, impronta: '8fe958ce0969e2537034cb8ba1f8e369', corpo: '1897a6782ef333ce2b1c8f9462840ed9' },
+  galleria_retention_http: { job: 'galleria-retention', config: SP_PUBBLICO, impronta: 'cdc1ab1a9c2beca05e5229317eb6a0ad', corpo: '7de21f00e9d2ae256770701bd29f04ac' },
+  iscrizioni_import_invio_http: { job: 'iscrizioni-import-invio', config: SP_PUBBLICO, impronta: '6d8ee4729625b9315ff16cb17fa3ebde', corpo: '1795a2ff1bb81657ebf8b6f64d053602' },
+  iscrizioni_retention_http: { job: 'iscrizioni-retention', config: 'search_path=public', impronta: '514d45f2aad549ee0bc320b4d72c9d0e', corpo: '3e6ede9fa467cfb3f9771eb345777a6a' },
+  mensa_check_allergie_giornaliero: { job: 'mensa-check-allergie', config: SP_PUBBLICO, impronta: 'b2168ad1b3891ff90b251c389e728bce', corpo: '173f6c012f0d3d9f72251b02aca0a485' },
+  news_digest_tick: { job: 'news-digest', config: SP_PUBBLICO, impronta: '2620c0072b57dca04b1d60b742ad4ea3', corpo: 'd1516c87408a3edfb473bbf6632c5a11' },
+  news_tick: { job: 'news-tick', config: SP_PUBBLICO, impronta: '3940b637ff299873a9fa249ff5f6c206', corpo: '8af5eb9e91272b8167b7019cce1a4584' },
+  notifiche_dispatch_tick: { job: 'notifiche-dispatch', config: 'search_path=public', impronta: '84f5a89da79915366f1ae73df137bbe8', corpo: '5039e0c2c518706de6b7d126ec148a26' },
+  notifiche_promemoria_tick: { job: 'notifiche-promemoria', config: 'search_path=public', impronta: 'a73d0acf63fcc851c9932ac1479cc391', corpo: 'e7aa90e4386b72978c348fd48a248299' },
+  pagamenti_solleciti_tick: { job: 'pagamenti-solleciti-run', config: SP_PUBBLICO, impronta: 'b5211511af519bd945ab72279c545323', corpo: '6c846648c20e7453ed715044406bb3a8' },
+  retention_personale_http: { job: 'retention-personale', config: SP_PUBBLICO, impronta: '3e63c9c0240de82276689c8979266f3b', corpo: 'c9eb1d182b598c8f5031e1ea54faf55f' },
+  scadenze_documenti_personale_http: { job: 'scadenze-documenti-personale', config: SP_PUBBLICO, impronta: 'b15b474c4e961b6b94007069136ec75f', corpo: '305f82bfc966f80165a50a675827e4b4' },
+  storici_tick: { job: 'storici-stampe', config: SP_PUBBLICO, impronta: '80e35f9040eeb5436d1b55527000754d', corpo: '45f88f222e83f9652a4e730b4f57cb76' },
+  video_retention_http: { job: 'video-retention', config: SP_PUBBLICO, impronta: '75ba17f3ac9c2b10d1d60ec49175aba7', corpo: 'bd6a099ab16c9fc7945f909a3c52c505' },
+  // Nessun job la chiama (la usa la route dei video): l'etichetta è il nome della funzione.
+  video_runner_kick: { job: 'video-runner-kick', config: 'search_path=pg_catalog', impronta: 'de2f2674c90af030b446137b36d7a0c4', corpo: 'cd6d4e5844b239d407cb9f26802d0849' },
+  video_runner_tick_http: { job: 'video-runner-tick', config: SP_PUBBLICO, impronta: 'dad54fbb12e54be5344898160c5e5b73', corpo: '37a5bd2f94bdbad8b0502c7b145588c6' },
+}
+/** Uguali per tutte e 19 in produzione: EXECUTE solo al proprietario e a service_role. */
+const COMUNI_IN_PRODUZIONE = {
+  proprietario: 'postgres', acl: '{postgres=X/postgres,service_role=X/postgres}', definer: true, volatilita: 'v',
+  parallelo: 'u', strict: false, leakproof: false, costo: '100', righe: '0', linguaggio: 'plpgsql',
+}
+
+type Attributi = Record<string, unknown> & { nome: string; corpo: string }
+
+/** Gli attributi di catalogo delle funzioni nominate, in ordine di nome. */
+async function attributi(db: PGlite, nomi: string[]): Promise<Attributi[]> {
+  return righe<Attributi>(db, `
+    SELECT p.proname AS nome, pg_get_userbyid(p.proowner) AS proprietario, coalesce(p.proacl::text, '-') AS acl,
+           p.prosecdef AS definer, coalesce(array_to_string(p.proconfig, ';'), '-') AS config,
+           p.provolatile AS volatilita, p.proparallel AS parallelo, p.proisstrict AS strict, p.proleakproof AS leakproof,
+           p.procost::text AS costo, p.prorows::text AS righe, l.lanname AS linguaggio,
+           pg_get_function_identity_arguments(p.oid) AS argomenti, pg_get_function_result(p.oid) AS risultato,
+           md5(p.prosrc) AS corpo
+      FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
+     WHERE s.nspname = 'public' AND p.proname = ANY (string_to_array($1, ','))
+     ORDER BY p.proname COLLATE "C"`, [nomi.join(',')])
+}
+
+/** Gli attributi senza le chiavi nominate. */
+const senza = (a: Attributi, ...chiavi: string[]) => Object.fromEntries(Object.entries(a).filter(([k]) => !chiavi.includes(k)))
+
+/** Le definizioni di prima, coi permessi che hanno in produzione: il database come era prima del merge. */
+async function comeInProduzione(db: PGlite, ridefinite: { nome: string; prima: string }[]): Promise<void> {
+  await db.exec(ridefinite.map((r) => `${r.prima};`).join('\n\n'))
+  await db.exec(`DO $$
+    DECLARE f regprocedure;
+    BEGIN
+      FOR f IN SELECT p.oid::regprocedure FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+                WHERE s.nspname = 'public' AND p.proname IN (${ridefinite.map((r) => `'${r.nome}'`).join(', ')}) LOOP
+        EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role', f);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', f);
+      END LOOP;
+    END $$`)
+}
+
+type Effetti = { errore: string | null; chiamate: Record<string, unknown>[]; log: Record<string, unknown>[] }
+
+/**
+ * Cosa lascia una chiamata alla funzione: l'errore, le richieste a pg_net, le righe in app_log.
+ * Un argomento uuid riceve un uuid di prova (con NULL video_runner_kick si ferma su BAD_INPUT),
+ * gli altri NULL.
+ */
+async function effetti(db: PGlite, nome: string): Promise<Effetti> {
+  await db.exec('DELETE FROM net.chiamate; DELETE FROM public.app_log;')
+  const [{ tipi }] = await righe<{ tipi: string[] }>(db, `SELECT ARRAY(SELECT format_type(t, NULL) FROM unnest(p.proargtypes) AS t) AS tipi
+      FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'public' AND p.proname = $1`, [nome])
+  const argomenti = tipi.map((t) => (t === 'uuid' ? `'00000000-0000-4000-8000-000000000006'::uuid` : 'NULL'))
+  const errore = await erroreDi(db.query(`SELECT public.${nome}(${argomenti.join(', ')})`))
+  return {
+    errore: errore ? `${errore.code} ${errore.message}` : null,
+    chiamate: await righe(db, 'SELECT url, body, params, headers, timeout_milliseconds FROM net.chiamate ORDER BY n'),
+    log: await righe(db, `SELECT fingerprint, livello, evento, codice, messaggio, contesto
+        FROM public.app_log ORDER BY fingerprint COLLATE "C"`),
+  }
+}
+
+const PG_NET_SOLLEVA = `CREATE OR REPLACE FUNCTION net.http_post(
+    url text, body jsonb DEFAULT '{}'::jsonb, params jsonb DEFAULT '{}'::jsonb,
+    headers jsonb DEFAULT '{"Content-Type": "application/json"}'::jsonb, timeout_milliseconds integer DEFAULT 5000
+  ) RETURNS bigint LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'coda piena' USING ERRCODE = '53400'; END $$`
+
+describe('le funzioni ridefinite, confrontate con la produzione', () => {
+  const RIDEFINITE = ridefinite()
+  const NOMI = RIDEFINITE.map((r) => r.nome)
+
+  it('sono esattamente le 19 della produzione, ciascuna con l’etichetta del suo job', () => {
+    expect([...NOMI].sort()).toEqual(Object.keys(PRODUZIONE).sort())
+    for (const r of RIDEFINITE) expect(r.job, r.nome).toBe(PRODUZIONE[r.nome].job)
+  })
+
+  it('svolta, ogni definizione è quella della produzione byte per byte (impronta 0.6), e il commento lo dichiara', () => {
+    expect(NOMI).toHaveLength(Object.keys(PRODUZIONE).length)
+    for (const r of RIDEFINITE) {
+      // Il generatore toglie l'a capo finale di pg_get_functiondef prima del «;».
+      expect(md5(`${r.prima}\n`), r.nome).toBe(PRODUZIONE[r.nome].impronta)
+      expect(md5(corpoDi(r.prima).corpo), r.nome).toBe(PRODUZIONE[r.nome].corpo)
+      expect(MIGRAZIONE, r.nome).toContain(
+        `-- ${r.nome} · etichetta «${r.job}» · pg_get_functiondef, impronta ${PRODUZIONE[r.nome].impronta}\n`)
+    }
+  })
+
+  it('sopra la produzione e in un database nuovo cambia solo il corpo: proprietario, permessi, SECURITY DEFINER, search_path, firma', async () => {
+    const attese = NOMI.map((nome) => ({ nome, ...COMUNI_IN_PRODUZIONE, config: PRODUZIONE[nome].config }))
+    const togli = (a: Attributi[]) => a.map((x) => senza(x, 'argomenti', 'risultato', 'corpo'))
+
+    // Sopra la produzione: le definizioni di prima coi loro permessi, poi la migrazione.
+    const db = await nuovoDatabase()
+    await comeInProduzione(db, RIDEFINITE)
+    const prima = await attributi(db, NOMI)
+    expect(togli(prima)).toEqual(attese)
+    expect(prima.map((a) => a.corpo)).toEqual(NOMI.map((nome) => PRODUZIONE[nome].corpo))
+    await db.exec(MIGRAZIONE)
+    const dopo = await attributi(db, NOMI)
+    expect(dopo.map((x) => senza(x, 'corpo'))).toEqual(prima.map((x) => senza(x, 'corpo')))
+    for (const [i, r] of RIDEFINITE.entries()) {
+      expect(dopo[i].corpo, r.nome).toBe(md5(corpoDi(r.dopo).corpo))
+      expect(dopo[i].corpo, r.nome).not.toBe(prima[i].corpo)
+    }
+
+    // Il database della CI: le funzioni nascono dalla migrazione, coi privilegi predefiniti del
+    // baseline accesi. Devono nascere come sono in produzione, non aperte ai ruoli client.
+    const nuovo = await nuovoDatabase()
+    await nuovo.exec(MIGRAZIONE)
+    expect(await attributi(nuovo, NOMI)).toEqual(dopo)
+  })
+
+  it('la migrazione inversa, sopra la produzione migrata, rimette corpi e permessi della produzione', async () => {
+    const db = await nuovoDatabase({ cron: true })
+    await comeInProduzione(db, RIDEFINITE)
+    const prima = await attributi(db, NOMI)
+    await db.exec(MIGRAZIONE)
+    await db.exec(inversa(MIGRAZIONE))
+    expect(await attributi(db, NOMI)).toEqual(prima)
+    expect((await attributi(db, NOMI)).map((a) => a.corpo)).toEqual(NOMI.map((nome) => PRODUZIONE[nome].corpo))
+  })
+
+  it('ognuna chiama pg_net una volta, con gli stessi argomenti di prima, e la chiamata è registrata col job della produzione', { timeout: 120_000 }, async () => {
+    const prima = await nuovoDatabase()
+    await prima.exec(RIDEFINITE.map((r) => `${r.prima};`).join('\n\n'))
+    const dopo = await nuovoDatabase()
+    await dopo.exec(MIGRAZIONE)
+    expect(NOMI).toHaveLength(Object.keys(PRODUZIONE).length)
+    for (const r of RIDEFINITE) {
+      const atteso = await effetti(prima, r.nome)
+      expect(atteso.chiamate, `${r.nome}: il banco di prova non arriva a pg_net`).toHaveLength(1)
+      expect(await effetti(dopo, r.nome), r.nome).toEqual(atteso)
+      expect(await righe(dopo, `SELECT c.job, c.timeout_ms = n.timeout_milliseconds AS stesso_timeout
+          FROM public.cron_chiamate c JOIN net.chiamate n ON n.n = c.richiesta_id`), r.nome)
+        .toEqual([{ job: PRODUZIONE[r.nome].job, stesso_timeout: true }])
+    }
+  })
+
+  it.each([
+    ['pg_net solleva', PG_NET_SOLLEVA],
+    ['il Vault è vuoto', 'DELETE FROM public.vault_finto'],
+  ])('quando %s, ogni funzione si comporta come prima', { timeout: 120_000 }, async (_caso, guasto) => {
+    const prima = await nuovoDatabase()
+    await prima.exec(RIDEFINITE.map((r) => `${r.prima};`).join('\n\n'))
+    const dopo = await nuovoDatabase()
+    await dopo.exec(MIGRAZIONE)
+    for (const db of [prima, dopo]) await db.exec(guasto)
+    expect(NOMI).toHaveLength(Object.keys(PRODUZIONE).length)
+    for (const r of RIDEFINITE) expect(await effetti(dopo, r.nome), r.nome).toEqual(await effetti(prima, r.nome))
+    expect(await righe(dopo, 'SELECT count(*)::int AS n FROM public.cron_chiamate')).toEqual([{ n: 0 }])
+  })
+
+  it('se il registro non si scrive, la chiamata parte uguale e resta in più un solo error col nome del job', { timeout: 120_000 }, async () => {
+    const prima = await nuovoDatabase()
+    await prima.exec(RIDEFINITE.map((r) => `${r.prima};`).join('\n\n'))
+    const dopo = await nuovoDatabase()
+    await dopo.exec(MIGRAZIONE)
+    await dopo.exec("ALTER TABLE public.cron_chiamate ADD CONSTRAINT guasto_di_prova CHECK (job = 'nessuno')")
+    expect(NOMI).toHaveLength(Object.keys(PRODUZIONE).length)
+    for (const r of RIDEFINITE) {
+      const atteso = await effetti(prima, r.nome)
+      const visto = await effetti(dopo, r.nome)
+      expect(visto.chiamate, r.nome).toHaveLength(1)
+      expect({ ...visto, log: visto.log.filter((l) => l.fingerprint !== 'cron-http:registro-non-scritto') }, r.nome)
+        .toEqual(atteso)
+      expect(await righe(dopo, `SELECT livello, codice, contesto->'campi'->>'job' AS job FROM public.app_log
+          WHERE fingerprint = 'cron-http:registro-non-scritto'`), r.nome)
+        .toEqual([{ livello: 'error', codice: '23514', job: PRODUZIONE[r.nome].job }])
+    }
+    expect(await righe(dopo, 'SELECT count(*)::int AS n FROM public.cron_chiamate')).toEqual([{ n: 0 }])
   })
 })

@@ -89,11 +89,15 @@ export function creaGitHub({ repo, token, fetchImpl = fetch }) {
             await chiama('PATCH', `/repos/${repo}/issues/${numero}`, { state: 'closed', state_reason: 'completed' })
         },
 
-        /** I giri RIUSCITI e AUTOMATICI del backup, dal più recente. Vedi `ORE_ALLARME_BACKUP`. */
+        /**
+         * I giri RIUSCITI del backup, dal più recente: lo `schedule`, il lancio delle 02:23 del monitor
+         * esterno e quelli a mano. Quali contano lo decide `eGiroBackupAutomatico` (valuta.mjs): qui non si
+         * filtra per evento, perché il lancio del Worker è un `workflow_dispatch` come quelli a mano.
+         */
         async giriBackupRiusciti() {
             const r = await chiama(
                 'GET',
-                `/repos/${repo}/actions/workflows/backup-notturno.yml/runs?event=schedule&status=success&per_page=5`,
+                `/repos/${repo}/actions/workflows/backup-notturno.yml/runs?status=success&per_page=30`,
             )
             return r?.workflow_runs ?? []
         },

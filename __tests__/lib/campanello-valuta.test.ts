@@ -4,7 +4,9 @@ import {
     ORE_ALLARME_BACKUP,
     PROMEMORIA_DOPO_MS,
     REGIONE_ATTESA,
+    TITOLO_BACKUP_DA_FUORI,
     chiaveDaTitolo,
+    eGiroBackupAutomatico,
     riconcilia,
     valutaBackup,
     valutaDopoDeploy,
@@ -142,7 +144,19 @@ describe('valutaMonitorEsterno', () => {
 })
 
 describe('valutaBackup', () => {
-    const giro = (oreFa: number) => ({ conclusion: 'success', updated_at: new Date(ADESSO - oreFa * ORA).toISOString() })
+    const giro = (oreFa: number) => ({ event: 'schedule', conclusion: 'success', updated_at: new Date(ADESSO - oreFa * ORA).toISOString() })
+    const daFuori = (oreFa: number) => ({
+        event: 'workflow_dispatch',
+        display_title: 'Backup notturno completo (da Cloudflare)',
+        conclusion: 'success',
+        updated_at: new Date(ADESSO - oreFa * ORA).toISOString(),
+    })
+    const aMano = (oreFa: number) => ({
+        event: 'workflow_dispatch',
+        display_title: 'Backup notturno completo',
+        conclusion: 'success',
+        updated_at: new Date(ADESSO - oreFa * ORA).toISOString(),
+    })
 
     it('un giro automatico riuscito 20 ore fa → nessun incidente', () => {
         expect(valutaBackup({ giri: [giro(20)], adesso: ADESSO })).toBeNull()
@@ -165,13 +179,16 @@ describe('valutaBackup', () => {
     })
 
     it('un giro non riuscito non conta come backup', () => {
-        const inc = valutaBackup({ giri: [{ conclusion: 'failure', updated_at: new Date(ADESSO - 2 * ORA).toISOString() }], adesso: ADESSO })
+        const inc = valutaBackup({ giri: [{ event: 'schedule', conclusion: 'failure', updated_at: new Date(ADESSO - 2 * ORA).toISOString() }], adesso: ADESSO })
 
         expect(inc?.chiave).toBe('backup-vecchio')
     })
 
     it('una data illeggibile non conta come «adesso»', () => {
-        expect(valutaBackup({ giri: [{ conclusion: 'success', updated_at: 'boh' }], adesso: ADESSO })?.chiave).toBe('backup-vecchio')
+        const illeggibile = { event: 'schedule', conclusion: 'success', updated_at: 'boh' }
+        expect(valutaBackup({ giri: [illeggibile], adesso: ADESSO })?.chiave).toBe('backup-vecchio')
+        // Si salta, e decide il giro leggibile dopo di lui (un'età NaN darebbe «fermo da NaN ore»).
+        expect(valutaBackup({ giri: [illeggibile, giro(20)], adesso: ADESSO })).toBeNull()
     })
 
     it('la soglia sta sopra il ritardo massimo osservato (6 h 45 min sulle 02:23 UTC) e sotto i due giorni', () => {
@@ -181,6 +198,31 @@ describe('valutaBackup', () => {
         // una notte saltata resterebbe invisibile fino al giorno dopo).
         expect(ORE_ALLARME_BACKUP).toBeGreaterThanOrEqual(28)
         expect(ORE_ALLARME_BACKUP).toBeLessThanOrEqual(36)
+    })
+
+    it('il lancio delle 02:23 dal Worker conta come giro automatico (lo dice il titolo)', () => {
+        expect(valutaBackup({ giri: [daFuori(5)], adesso: ADESSO })).toBeNull()
+    })
+
+    it('un giro lanciato a mano NON conta, nemmeno se completo e recente', () => {
+        expect(valutaBackup({ giri: [aMano(1)], adesso: ADESSO })?.chiave).toBe('backup-vecchio')
+    })
+
+    it('fra un giro a mano di un\'ora fa e uno automatico, decide quello automatico', () => {
+        expect(valutaBackup({ giri: [aMano(1), daFuori(20)], adesso: ADESSO })).toBeNull()
+        expect(valutaBackup({ giri: [aMano(1), giro(31)], adesso: ADESSO })?.titolo).toContain('31 ore')
+    })
+})
+
+describe('eGiroBackupAutomatico', () => {
+    it('lo schedule sì; il Worker solo come workflow_dispatch col titolo esatto; il resto no', () => {
+        expect(TITOLO_BACKUP_DA_FUORI).toBe('Backup notturno completo (da Cloudflare)')
+        expect(eGiroBackupAutomatico({ event: 'schedule', conclusion: 'success' })).toBe(true)
+        expect(eGiroBackupAutomatico({ event: 'workflow_dispatch', display_title: TITOLO_BACKUP_DA_FUORI, conclusion: 'success' })).toBe(true)
+        expect(eGiroBackupAutomatico({ event: 'workflow_dispatch', display_title: 'Backup notturno prova (da Cloudflare)', conclusion: 'success' })).toBe(false)
+        expect(eGiroBackupAutomatico({ event: 'push', display_title: TITOLO_BACKUP_DA_FUORI, conclusion: 'success' })).toBe(false)
+        expect(eGiroBackupAutomatico({ event: 'schedule', conclusion: 'cancelled' })).toBe(false)
+        expect(eGiroBackupAutomatico(null)).toBe(false)
     })
 })
 

@@ -264,7 +264,23 @@ export function posterioriCheContengono(
 // SVUOTATA il 25/10/2026 (chiusura nel primo commit della sessione seguente, dopo il merge di #267,
 // `89150a39`): applicata dall'integrazione, una riga nel registro; fotografie rigenerate dalla
 // produzione — migrazioni, indici unici (due PRIMARY KEY nuove) e policy (due tabelle con RLS).
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-25 · SESSIONE 8 della seconda serie «cron e igiene»: `20261025152254_promemoria_e_sync_senza_doppioni.sql`
+// aggiunge `notifiche.chiave_dedup` con l'indice UNICO `notifiche_chiave_dedup_key` (arbitro
+// dell'upsert dei promemoria) e crea `cron_prese` (PRIMARY KEY, RLS senza policy, solo
+// service_role). Le guardie degli indici unici e della RLS la vedono per `unique`, `primary key` e
+// `row level security`. Cambieranno davvero la fotografia degli indici unici (`notifiche_chiave_dedup_key`
+// e la chiave primaria di `cron_prese`), quella della RLS (`cron_prese` entra in `tabelle_rls_attiva`;
+// nessuna policy nuova) e quella delle migrazioni. Si toglie nella chiusura della precedente fatta
+// dalla sessione che apre dopo (sezione «Per la sessione dopo» del piano della sessione 8), dopo
+// aver rigenerato quelle tre fotografie dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+  '20261025152254_promemoria_e_sync_senza_doppioni.sql':
+    'Sessione 8 della seconda serie: indice unico su notifiche.chiave_dedup e tabella cron_prese. ' +
+    'La applica l’integrazione Supabase al merge; la voce si toglie nella chiusura della precedente ' +
+    '(la PR-B) fatta dalla sessione che apre dopo, rigenerando dalla produzione le fotografie delle ' +
+    'migrazioni, degli indici unici e della RLS.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

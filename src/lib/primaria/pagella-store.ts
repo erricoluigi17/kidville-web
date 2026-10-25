@@ -214,16 +214,29 @@ export async function persistPagella(
   // Senza il file, la riga `pagelle` prometterebbe una copia archiviata che non c'è. Si lancia:
   // `generaPagella` lo registra come `pagella-non-archiviata`.
   if (errUpload) throw new Error('Caricamento del PDF della pagella non riuscito', { cause: errUpload })
-  const { error: errRiga } = await supabase.from('pagelle').upsert(
+  // `ritirata_il: null`: una pagella rigenerata dopo una riapertura torna IN VIGORE. È la stessa
+  // riga (vincolo di unicità su scrutinio e alunno) e `file_ritirati` non si tocca: è lo storico
+  // delle versioni consegnate.
+  const riga =
     {
       scrutinio_id: scrutinioId,
       alunno_id: alunnoId,
       file_url: path,
       generata_da: userId,
       firma_applicativa: { dirigente: data.dirigente, chiuso_il: data.chiusoIl, metodo: 'firma_applicativa' },
-    },
-    { onConflict: 'scrutinio_id,alunno_id' }
-  )
+    }
+  const primo = await supabase.from('pagelle').upsert({ ...riga, ritirata_il: null }, { onConflict: 'scrutinio_id,alunno_id' })
+  let errRiga = primo.error
+  if (errRiga && colonnaNuovaAssente(errRiga)) {
+    // DB della CI senza la colonna del ritiro: lì la riapertura cancella ancora le righe.
+    logEvento('db', 'info', {
+      operazione: 'primaria/pagella-store:persistPagella',
+      esito: 'colonna-ritiro-assente',
+      scrutinio_id: scrutinioId,
+    })
+    const secondo = await supabase.from('pagelle').upsert(riga, { onConflict: 'scrutinio_id,alunno_id' })
+    errRiga = secondo.error
+  }
   if (errRiga) throw new Error('Registrazione della pagella archiviata non riuscita', { cause: errRiga })
 }
 

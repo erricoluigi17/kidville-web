@@ -11,7 +11,7 @@ import {
     leggiVivo,
     suonaCampanello,
 } from '../../monitor-esterno/worker.mjs'
-import { TITOLO_DA_FUORI } from '../../scripts/campanello/allarme.mjs'
+import { TITOLO_DA_FUORI, mandaEmail } from '../../scripts/campanello/allarme.mjs'
 
 /**
  * IL MONITOR ESTERNO (Worker di Cloudflare), con un `fetch` finto. Ogni caso forza un guasto e
@@ -23,10 +23,16 @@ const DISPATCH = `https://api.github.com/repos/${REPO}/actions/workflows/${WORKF
 type Risposta = { status: number; testo?: string } | Error
 
 function fetchFinto(per: Record<string, Risposta[]>) {
-    const chiamate: { url: string; corpo?: string; auth?: string }[] = []
+    const chiamate: { url: string; verbo?: string; corpo?: string; auth?: string; idem?: string }[] = []
     const indice: Record<string, number> = {}
-    const impl = vi.fn(async (url: string, init?: { body?: string; headers?: Record<string, string> }) => {
-        chiamate.push({ url, corpo: init?.body, auth: init?.headers?.Authorization })
+    const impl = vi.fn(async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+        chiamate.push({
+            url,
+            verbo: init?.method,
+            corpo: init?.body,
+            auth: init?.headers?.Authorization,
+            idem: init?.headers?.['Idempotency-Key'],
+        })
         const seq = per[url]
         if (!seq) throw new Error(`fetch finto: URL non previsto ${url}`)
         const i = Math.min(indice[url] ?? 0, seq.length - 1)
@@ -44,6 +50,10 @@ const PARTITO = { status: 204 }
 // Le 10:05 non sono un quarto d'ora; le 10:15 sì.
 const FUORI_BATTITO = new Date('2026-10-19T10:05:00Z')
 const SUL_BATTITO = new Date('2026-10-19T10:15:00Z')
+const RESEND = 'https://api.resend.com/emails'
+const ACCETTATA = { status: 200, testo: '{"id":"e1"}' }
+type Segreti = { chiaveResend?: string; destinatari?: string }
+const SEGRETI: Segreti = { chiaveResend: 're_prova', destinatari: 'a@esempio.test,b@esempio.test' }
 
 async function unGiro(f: ReturnType<typeof fetchFinto>, quando: Date, token = 'tok') {
     const dormi = vi.fn(async () => {})
@@ -179,5 +189,25 @@ describe('wrangler.toml', () => {
         expect(toml).toMatch(/^crons\s*=\s*\["\*\/5 \* \* \* \*"\]\s*$/m)
         expect(toml).toMatch(/^workers_dev\s*=\s*false\s*$/m)
         expect(toml).not.toMatch(/github_pat_|ghp_|\[vars\]/)
+    })
+})
+
+describe('mandaEmail e la chiave di Resend', () => {
+    const base = {
+        chiaveResend: 're_prova',
+        destinatari: 'a@esempio.test',
+        oggetto: 'o',
+        introHtml: 'i',
+        link: 'https://esempio.test/giri',
+        quando: 'q',
+    }
+
+    it('con la chiave manda Idempotency-Key; senza chiave non la manda (il campanello resta com\'è)', async () => {
+        const f = fetchFinto({ [RESEND]: [ACCETTATA] })
+
+        await mandaEmail({ ...base, chiaveIdempotenza: 'kidville-backup-non-partito-2026-10-21', fetchImpl: f.impl })
+        await mandaEmail({ ...base, fetchImpl: f.impl })
+
+        expect(f.a(RESEND).map((c) => c.idem)).toEqual(['kidville-backup-non-partito-2026-10-21', undefined])
     })
 })

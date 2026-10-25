@@ -125,14 +125,29 @@ export async function ensureBucket(supabase: SupabaseClient): Promise<void> {
       return
     }
     if (data?.some((b) => b.name === PROTOCOLLO_BUCKET)) return
-    await supabase.storage.createBucket(PROTOCOLLO_BUCKET, {
+    const { error: erroreCreazione } = await supabase.storage.createBucket(PROTOCOLLO_BUCKET, {
       public: false,
       allowedMimeTypes: [...MIME_AMMESSI],
       fileSizeLimit: PROTOCOLLO_MAX_BYTES,
     })
+    if (erroreCreazione) {
+      // `createBucket` NON lancia: risponde `{ error }`, e il `catch` qui sotto non lo vede mai.
+      // Un fallimento vero (permessi, quota) restava muto, e a valle il caricamento diceva solo
+      // «bucket mancante». Anche la corsa fra richieste parallele arriva qui
+      // (`ResourceAlreadyExists`): il codice la distingue. Solo bucket e codice, mai un percorso.
+      const { code, statusCode, status } = erroreCreazione as {
+        code?: unknown; statusCode?: unknown; status?: unknown
+      }
+      logEvento('storage', 'warn', {
+        operazione: 'protocolli/store:ensureBucket',
+        bucket: PROTOCOLLO_BUCKET,
+        esito: 'creazione-non-riuscita',
+        error_code: String(code ?? statusCode ?? status ?? 'sconosciuto'),
+      }, erroreCreazione)
+    }
   } catch (e) {
-    // Caso atteso (corsa fra richieste parallele, bucket già esistente): `info`, non `error`. Ma non
-    // muto: un fallimento vero (permessi, quota) qui è l'unico posto dove compare il motivo.
+    // Solo ciò che LANCIA (rete, eccezione del client): `info`, non `error`, come prima. Il rifiuto
+    // di `createBucket` arriva come valore ed è loggato sopra, a livello `warn`.
     logEvento('storage', 'info', {
       operazione: 'protocolli/store:ensureBucket',
       bucket: PROTOCOLLO_BUCKET,

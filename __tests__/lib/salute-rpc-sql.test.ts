@@ -10,9 +10,15 @@ import { leggiRigheCronEsiti, valutaCronEsiti } from '@/lib/health/cron-esiti'
  * LE DUE RPC DELLA SALUTE (sessione 7 della seconda serie) PROVATE SU UN POSTGRES VERO.
  *
  * `cron.job` e `supabase_migrations.schema_migrations` sono finte (PGlite non ha pg_cron) ma con le
- * colonne vere; `cron_ultimo_esito` NON è finta: il `CREATE TABLE` si prende dal file della
- * migrazione della sessione 6. Se la 6 cambia una colonna che la RPC legge, questo test diventa
- * rosso qui e non in produzione.
+ * colonne vere; `cron_ultimo_esito` e `cron_chiamate` NON sono finte: i due `CREATE TABLE` si
+ * prendono dal file della migrazione della sessione 6. Se la 6 cambia una colonna che la RPC legge,
+ * questo test diventa rosso qui e non in produzione. Gli esiti delle chiamate sono quelli che la 6
+ * scrive davvero: 'ok', 'errore-http', 'errore-rete', 'timeout', 'esito-ignoto', o nessuno.
+ *
+ * I PRIVILEGI: qui i ruoli nascono senza i privilegi predefiniti di Supabase (dove una funzione nuova
+ * di `postgres` in `public` è eseguibile da anon e authenticated finché non si revoca), quindi il
+ * test dei permessi prova la forma, non la revoca contro quei default. La revoca contro i default
+ * veri è provata a parte su un Postgres 17 locale (rapporto della sessione 7, nessun file nel repo).
  */
 
 const CARTELLA = join(process.cwd(), 'supabase/migrations')
@@ -25,19 +31,51 @@ function migrazione(suffisso: string): string {
 
 const MIGRAZIONE = migrazione('_salute_rpc_sola_lettura.sql')
 
-const TABELLA_DELLA_SESSIONE_6 = (() => {
-    const m = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?public\.cron_ultimo_esito\s*\([\s\S]*?\n\);/i.exec(
-        migrazione('_cron_esiti_osservati.sql'),
-    )
-    if (!m) throw new Error('CREATE TABLE public.cron_ultimo_esito non trovato nella migrazione della sessione 6')
+function tabellaDellaSessione6(tabella: 'cron_ultimo_esito' | 'cron_chiamate'): string {
+    const re = new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?public\\.${tabella}\\s*\\([\\s\\S]*?\\n\\);`, 'i')
+    const m = re.exec(migrazione('_cron_esiti_osservati.sql'))
+    if (!m) throw new Error(`CREATE TABLE public.${tabella} non trovato nella migrazione della sessione 6`)
     return m[0]
-})()
+}
+
+const TABELLA_ESITI = tabellaDellaSessione6('cron_ultimo_esito')
+const TABELLA_CHIAMATE = tabellaDellaSessione6('cron_chiamate')
 
 const RUOLI = `
   CREATE ROLE anon NOLOGIN;
   CREATE ROLE authenticated NOLOGIN;
   CREATE ROLE service_role NOLOGIN BYPASSRLS;
 `
+
+const CRON_JOB = `
+  CREATE SCHEMA cron;
+  CREATE TABLE cron.job (
+    jobid    bigserial PRIMARY KEY,
+    schedule text NOT NULL,
+    command  text NOT NULL,
+    jobname  text,
+    active   boolean NOT NULL DEFAULT true
+  );
+`
+
+// Come in Supabase: `version` è la chiave, quindi una migrazione applicata due volte a mano lascia
+// due righe con version DIVERSE (quella del file e l'orario del secondo giro) e lo stesso nome.
+const SCHEMA_MIGRAZIONI = `
+  CREATE SCHEMA supabase_migrations;
+  CREATE TABLE supabase_migrations.schema_migrations (version text PRIMARY KEY, name text);
+`
+
+/** Un database con le parti richieste, e la migrazione applicata. */
+async function nuovoDb(parti: { cron?: boolean; esiti?: boolean; chiamate?: boolean; migrazioni?: boolean } = {}): Promise<PGlite> {
+    const b = new PGlite()
+    await b.exec(RUOLI)
+    if (parti.cron ?? true) await b.exec(CRON_JOB)
+    if (parti.esiti ?? true) await b.exec(TABELLA_ESITI)
+    if (parti.chiamate ?? true) await b.exec(TABELLA_CHIAMATE)
+    if (parti.migrazioni ?? false) await b.exec(SCHEMA_MIGRAZIONI)
+    await b.exec(MIGRAZIONE)
+    return b
+}
 
 async function codiceErrore(db: PGlite, sql: string): Promise<string | null> {
     try {
@@ -48,24 +86,39 @@ async function codiceErrore(db: PGlite, sql: string): Promise<string | null> {
     }
 }
 
+/** Le righe come le leggono le persone: minuti UTC. */
+async function righeLeggibili(b: PGlite): Promise<unknown[]> {
+    const { rows } = await b.query(`
+      SELECT job, cadenza, esito,
+             to_char(visto_il AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS visto,
+             to_char(vivo_il  AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS vivo
+        FROM public.salute_cron_esiti()
+       ORDER BY job COLLATE "C"`)
+    return rows
+}
+
+/** Le righe come le porta PostgREST (istanti in testo ISO), passate alla decisione vera. */
+async function decisione(b: PGlite, adesso: number) {
+    const { rows } = await b.query(`
+      SELECT job, cadenza, esito,
+             to_json(visto_il) #>> '{}' AS visto_il,
+             to_json(vivo_il)  #>> '{}' AS vivo_il
+        FROM public.salute_cron_esiti()
+       ORDER BY job COLLATE "C"`)
+    const righe = leggiRigheCronEsiti(rows)
+    expect(righe).not.toBeNull()
+    return valutaCronEsiti(righe ?? [], adesso)
+}
+
 let db: PGlite
 
 beforeAll(async () => {
     db = new PGlite()
     await db.exec(RUOLI)
-    await db.exec(`
-      CREATE SCHEMA cron;
-      CREATE TABLE cron.job (
-        jobid    bigserial PRIMARY KEY,
-        schedule text NOT NULL,
-        command  text NOT NULL,
-        jobname  text,
-        active   boolean NOT NULL DEFAULT true
-      );
-      CREATE SCHEMA supabase_migrations;
-      CREATE TABLE supabase_migrations.schema_migrations (version text NOT NULL, name text);
-    `)
-    await db.exec(TABELLA_DELLA_SESSIONE_6)
+    await db.exec(CRON_JOB)
+    await db.exec(SCHEMA_MIGRAZIONI)
+    await db.exec(TABELLA_ESITI)
+    await db.exec(TABELLA_CHIAMATE)
     await db.exec(MIGRAZIONE)
     await db.exec(MIGRAZIONE) // la seconda volta è la prova dell'idempotenza
     await db.exec(`
@@ -74,24 +127,37 @@ beforeAll(async () => {
         (2, '*/10 * * * *', 'select 1', 'job-500', true),
         (3, '*/10 * * * *', 'select 1', 'job-rete', true),
         (4, '*/10 * * * *', 'select 1', 'job-timeout', true),
-        (5, '*/10 * * * *', 'select 1', 'job-attesa', true),
+        (5, '*/10 * * * *', 'select 1', 'job-ignoto', true),
         (6, '0 6 * * *', 'select 1', 'job-sql-ok', true),
         (7, '0 6 * * *', 'select 1', 'job-sql-ko', true),
         (8, '0 6 * * *', 'select 1', 'job-nuovo', true),
         (9, '0 6 * * *', 'select 1', 'job-spento', false),
+        (10, '*/10 * * * *', 'select 1', 'job-http-nullo', true),
+        (11, '*/10 * * * *', 'select 1', 'job-pgnet-fermo', true),
+        (12, '*/10 * * * *', 'select 1', 'job-aperta-recente', true),
         (99, '35 4 1 * *', 'select 1', NULL, true);
       INSERT INTO public.cron_ultimo_esito
         (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
       VALUES
-        ('job-ok-http', true,  '2026-10-20 09:55+00', 'ok',          '2026-10-20 09:55+00', 'succeeded', '2026-10-20 09:55+00'),
-        ('job-500',     true,  '2026-10-20 09:57+00', 'errore-http', '2026-10-20 09:57+00', 'succeeded', '2026-10-20 09:20+00'),
-        ('job-rete',    true,  '2026-10-20 09:56+00', 'errore-rete', '2026-10-20 09:56+00', 'succeeded', NULL),
-        ('job-timeout', true,  '2026-10-20 09:58+00', 'timeout',     '2026-10-20 09:58+00', 'succeeded', '2026-10-20 08:20+00'),
-        ('job-attesa',  true,  '2026-10-20 09:59+00', 'in-attesa',   '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:49+00'),
-        ('job-sql-ok',  false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
-        ('job-sql-ko',  false, NULL, NULL, '2026-10-20 06:00+00', 'failed',    '2026-10-19 06:00+00'),
-        ('job-spento',  false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
-        ('jobid-99',    false, NULL, NULL, '2026-10-01 04:35+00', 'succeeded', '2026-10-01 04:35+00');
+        ('job-ok-http',        true,  '2026-10-20 09:55+00', 'ok',           '2026-10-20 09:55+00', 'succeeded', '2026-10-20 09:55+00'),
+        ('job-500',            true,  '2026-10-20 09:57+00', 'errore-http',  '2026-10-20 09:57+00', 'succeeded', '2026-10-20 09:20+00'),
+        ('job-rete',           true,  '2026-10-20 09:56+00', 'errore-rete',  '2026-10-20 09:56+00', 'succeeded', NULL),
+        ('job-timeout',        true,  '2026-10-20 09:58+00', 'timeout',      '2026-10-20 09:58+00', 'succeeded', '2026-10-20 08:20+00'),
+        ('job-ignoto',         true,  '2026-10-20 09:59+00', 'esito-ignoto', '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:49+00'),
+        ('job-sql-ok',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
+        ('job-sql-ko',         false, NULL, NULL, '2026-10-20 06:00+00', 'failed',    '2026-10-19 06:00+00'),
+        ('job-spento',         false, NULL, NULL, '2026-10-20 06:00+00', 'succeeded', '2026-10-20 06:00+00'),
+        ('job-http-nullo',     true,  NULL, NULL, '2026-10-20 09:59+00', 'succeeded', NULL),
+        ('job-pgnet-fermo',    true,  '2026-10-20 07:00+00', 'ok',           '2026-10-20 09:59+00', 'succeeded', '2026-10-20 07:00+00'),
+        ('job-aperta-recente', true,  '2026-10-20 09:50+00', 'ok',           '2026-10-20 09:59+00', 'succeeded', '2026-10-20 09:50+00'),
+        ('jobid-99',           false, NULL, NULL, '2026-10-01 04:35+00', 'succeeded', '2026-10-01 04:35+00');
+      -- Le chiamate di cron_chiamate. Aperta = verificata_il nullo. Le età sono rispetto a now(): la
+      -- guardia della RPC le misura così, e i 30 minuti stanno fra 20 e 40.
+      INSERT INTO public.cron_chiamate (job, richiesta_id, percorso, timeout_ms, inviata_il, esito, verificata_il) VALUES
+        ('job-pgnet-fermo',    11, '/api/x', 5000, now() - interval '40 minutes', 'in-attesa', NULL),
+        ('job-pgnet-fermo',    12, '/api/x', 5000, now() - interval '20 minutes', 'in-attesa', NULL),
+        ('job-aperta-recente', 20, '/api/y', 5000, '2026-10-20 09:50+00',         'ok',        '2026-10-20 09:54+00'),
+        ('job-aperta-recente', 21, '/api/y', 5000, now() - interval '20 minutes', 'in-attesa', NULL);
     `)
 })
 
@@ -101,18 +167,19 @@ afterAll(async () => {
 
 describe('salute_cron_esiti', () => {
     it('un job attivo per riga, con la chiave della sessione 6; per un job HTTP conta la chiamata, per uno SQL il giro', async () => {
-        const { rows } = await db.query(`
-          SELECT job, cadenza, esito,
-                 to_char(visto_il AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS visto,
-                 to_char(vivo_il  AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS vivo
-            FROM public.salute_cron_esiti()
-           ORDER BY job COLLATE "C"`)
-        expect(rows).toEqual([
+        expect(await righeLeggibili(db)).toEqual([
             { job: 'job-500', cadenza: '*/10 * * * *', esito: 'fallito', visto: '10-20 09:57', vivo: '10-20 09:20' },
-            // La chiamata delle 09:59 non ha ancora un esito, ma la funzione SQL che l'ha mandata è riuscita: vivo.
-            { job: 'job-attesa', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
+            // Una chiamata aperta da 20 minuti è ancora normale: l'esecuzione SQL riuscita delle 09:59 conta.
+            { job: 'job-aperta-recente', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 09:50', vivo: '10-20 09:59' },
+            // `http` vero ma nessuna chiamata chiusa: il giro visto è l'esecuzione SQL, ed è viva.
+            { job: 'job-http-nullo', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' },
+            // Esito ignoto (pg_net ha dimenticato la risposta): l'esecuzione SQL riuscita NON la copre.
+            { job: 'job-ignoto', cadenza: '*/10 * * * *', esito: null, visto: '10-20 09:59', vivo: '10-20 09:49' },
             { job: 'job-nuovo', cadenza: '0 6 * * *', esito: null, visto: null, vivo: null },
             { job: 'job-ok-http', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 09:55', vivo: '10-20 09:55' },
+            // pg_net fermo: una chiamata aperta da 40 minuti, l'ultima chiusa ok alle 07:00. Le esecuzioni
+            // SQL riuscite non contano: vivo resta l'ultimo ok.
+            { job: 'job-pgnet-fermo', cadenza: '*/10 * * * *', esito: 'ok', visto: '10-20 07:00', vivo: '10-20 07:00' },
             { job: 'job-rete', cadenza: '*/10 * * * *', esito: 'fallito', visto: '10-20 09:56', vivo: null },
             { job: 'job-sql-ko', cadenza: '0 6 * * *', esito: 'fallito', visto: '10-20 06:00', vivo: '10-19 06:00' },
             { job: 'job-sql-ok', cadenza: '0 6 * * *', esito: 'ok', visto: '10-20 06:00', vivo: '10-20 06:00' },
@@ -122,26 +189,16 @@ describe('salute_cron_esiti', () => {
     })
 
     it('il timeout del client è vivo anche quando il giro SQL dopo è fallito (nel banco sopra lo copre l’esecuzione riuscita)', async () => {
-        const b = new PGlite()
-        await b.exec(RUOLI)
-        await b.exec(`
-          CREATE SCHEMA cron;
-          CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, schedule text NOT NULL, command text NOT NULL, jobname text, active boolean NOT NULL DEFAULT true);
-        `)
-        await b.exec(TABELLA_DELLA_SESSIONE_6)
-        await b.exec(MIGRAZIONE)
+        const b = await nuovoDb()
         await b.exec(`
           INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES (1, '*/10 * * * *', 'select 1', 'job-timeout', true);
           INSERT INTO public.cron_ultimo_esito
             (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
           VALUES ('job-timeout', true, '2026-10-20 09:58+00', 'timeout', '2026-10-20 09:59+00', 'failed', '2026-10-20 08:20+00');
         `)
-        const { rows } = await b.query(`
-          SELECT job, esito,
-                 to_char(visto_il AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS visto,
-                 to_char(vivo_il  AT TIME ZONE 'UTC', 'MM-DD HH24:MI') AS vivo
-            FROM public.salute_cron_esiti()`)
-        expect(rows).toEqual([{ job: 'job-timeout', esito: 'timeout', visto: '10-20 09:58', vivo: '10-20 09:58' }])
+        expect(await righeLeggibili(b)).toEqual([
+            { job: 'job-timeout', cadenza: '*/10 * * * *', esito: 'timeout', visto: '10-20 09:58', vivo: '10-20 09:58' },
+        ])
         await b.close()
     })
 })
@@ -155,21 +212,17 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
     // testimone della freschezza: senza, la salute direbbe «cron-esiti fermo» per la ragione sbagliata.
     const ADESSO = Date.parse('2026-10-20T10:00:00Z')
 
-    async function banco(ultimaChiamataEsito: 'ok' | 'errore-http' | 'timeout'): Promise<PGlite> {
-        const b = new PGlite()
-        await b.exec(RUOLI)
-        await b.exec(`
-          CREATE SCHEMA cron;
-          CREATE TABLE cron.job (
-            jobid    bigserial PRIMARY KEY,
-            schedule text NOT NULL,
-            command  text NOT NULL,
-            jobname  text,
-            active   boolean NOT NULL DEFAULT true
-          );
-        `)
-        await b.exec(TABELLA_DELLA_SESSIONE_6)
-        await b.exec(MIGRAZIONE)
+    interface Storici {
+        chiamataIl?: string | null
+        esito: 'ok' | 'errore-http' | 'errore-rete' | 'timeout' | 'esito-ignoto' | null
+        stato?: 'succeeded' | 'failed'
+        ultimoOk?: string | null
+        /** Una chiamata ancora aperta, inviata a quest'ora (lontana da now(): pg_net fermo). */
+        apertaDal?: string
+    }
+
+    async function banco(s: Storici): Promise<PGlite> {
+        const b = await nuovoDb()
         await b.exec(`
           INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES
             (1, '* * * * *', 'select 1', 'storici-stampe', true),
@@ -179,10 +232,21 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
             `INSERT INTO public.cron_ultimo_esito
                (job, http, ultima_chiamata_il, ultima_chiamata_esito, ultima_esecuzione_il, ultima_esecuzione_stato, ultimo_ok_il)
              VALUES
-               ('storici-stampe', true, '2026-10-20 07:58+00', $1, '2026-10-20 09:59+00', 'succeeded', '2026-10-20 07:50+00'),
+               ('storici-stampe', true, $1, $2, '2026-10-20 09:59+00', $3, $4),
                ('cron-esiti', false, NULL, NULL, '2026-10-20 09:54+00', 'succeeded', '2026-10-20 09:54+00')`,
-            [ultimaChiamataEsito],
+            [
+                s.chiamataIl === undefined ? '2026-10-20 07:58+00' : s.chiamataIl,
+                s.esito,
+                s.stato ?? 'succeeded',
+                s.ultimoOk === undefined ? '2026-10-20 07:50+00' : s.ultimoOk,
+            ],
         )
+        if (s.apertaDal) {
+            await b.query(
+                `INSERT INTO public.cron_chiamate (job, richiesta_id, percorso, timeout_ms, inviata_il) VALUES ('storici-stampe', 7, '/api/admin/storici/cron', 300000, $1)`,
+                [s.apertaDal],
+            )
+        }
         return b
     }
 
@@ -196,30 +260,17 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
         return rows
     }
 
-    /** Le righe come le porta PostgREST (istanti in testo ISO), passate alla decisione vera. */
-    async function decisione(b: PGlite) {
-        const { rows } = await b.query(`
-          SELECT job, cadenza, esito,
-                 to_json(visto_il) #>> '{}' AS visto_il,
-                 to_json(vivo_il)  #>> '{}' AS vivo_il
-            FROM public.salute_cron_esiti()
-           ORDER BY job COLLATE "C"`)
-        const righe = leggiRigheCronEsiti(rows)
-        expect(righe).not.toBeNull()
-        return valutaCronEsiti(righe ?? [], ADESSO)
-    }
-
     it('coda vuota da due ore, la funzione SQL riesce ogni minuto: vivo all’ultima esecuzione, e la salute dice ok', async () => {
-        const b = await banco('ok')
+        const b = await banco({ esito: 'ok' })
         expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 09:59' }])
-        expect(await decisione(b)).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
+        expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
         await b.close()
     })
 
     it('l’ultima chiamata è stata respinta (errore-http): le esecuzioni SQL riuscite non la coprono, e la salute dice degradato', async () => {
-        const b = await banco('errore-http')
+        const b = await banco({ esito: 'errore-http' })
         expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'fallito', visto: '10-20 07:58', vivo: '10-20 07:50' }])
-        expect(await decisione(b)).toEqual({
+        expect(await decisione(b, ADESSO)).toEqual({
             esito: 'degradato',
             dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
         })
@@ -227,9 +278,46 @@ describe('vivo_il di un job HTTP che chiama solo quando ha lavoro', () => {
     })
 
     it('un timeout del client resta vivo, come vuole la regola del modulo: le esecuzioni SQL riuscite dopo lo coprono', async () => {
-        const b = await banco('timeout')
+        const b = await banco({ esito: 'timeout' })
         expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'timeout', visto: '10-20 07:58', vivo: '10-20 09:59' }])
-        expect(await decisione(b)).toEqual({ esito: 'ok', dettaglio: '2 job attivi; timeout del client, vivi: storici-stampe' })
+        expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi; timeout del client, vivi: storici-stampe' })
+        await b.close()
+    })
+
+    it('pg_net fermo: una chiamata aperta dalle 08:00, l’ultima chiusa ok alle 07:58; le esecuzioni SQL riuscite non lo coprono', async () => {
+        const b = await banco({ esito: 'ok', apertaDal: '2026-10-20 08:00+00' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: 'ok', visto: '10-20 07:58', vivo: '10-20 07:50' }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    it('esito ignoto (pg_net ha dimenticato la risposta): le esecuzioni SQL riuscite non lo coprono', async () => {
+        const b = await banco({ esito: 'esito-ignoto' })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: '10-20 07:50' }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    it('esito ignoto, esecuzioni SQL fallite e mai un esito buono: visto girare, quindi allarme e non «in attesa»', async () => {
+        const b = await banco({ esito: 'esito-ignoto', stato: 'failed', ultimoOk: null })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 07:58', vivo: null }])
+        expect(await decisione(b, ADESSO)).toEqual({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: storici-stampe',
+        })
+        await b.close()
+    })
+
+    it('`http` vero e nessuna chiamata chiusa ancora: vale l’esecuzione SQL riuscita, e la salute dice ok', async () => {
+        const b = await banco({ chiamataIl: null, esito: null, ultimoOk: null })
+        expect(await storici(b)).toEqual([{ job: 'storici-stampe', esito: null, visto: '10-20 09:59', vivo: '10-20 09:59' }])
+        expect(await decisione(b, ADESSO)).toEqual({ esito: 'ok', dettaglio: '2 job attivi' })
         await b.close()
     })
 })
@@ -243,20 +331,7 @@ describe('i job che il lettore della sessione 6 non ha mai visto girare', () => 
     const ADESSO = Date.parse('2026-10-25T13:00:00Z')
 
     it('riga presente con le date nulle: esito nullo, nessuna data, e la decisione dice ok «in attesa»', async () => {
-        const b = new PGlite()
-        await b.exec(RUOLI)
-        await b.exec(`
-          CREATE SCHEMA cron;
-          CREATE TABLE cron.job (
-            jobid    bigserial PRIMARY KEY,
-            schedule text NOT NULL,
-            command  text NOT NULL,
-            jobname  text,
-            active   boolean NOT NULL DEFAULT true
-          );
-        `)
-        await b.exec(TABELLA_DELLA_SESSIONE_6)
-        await b.exec(MIGRAZIONE)
+        const b = await nuovoDb()
         await b.exec(`
           INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES
             (1, '4,14,24,34,44,54 * * * *', 'select 1', 'cron-esiti', true),
@@ -279,9 +354,7 @@ describe('i job che il lettore della sessione 6 non ha mai visto girare', () => 
             { job: 'app-log-bonifica-pii', cadenza: '11 5 * * 1', esito: null, visto_il: null, vivo_il: null },
             { job: 'notifiche-retention', cadenza: '35 4 1 * *', esito: null, visto_il: null, vivo_il: null },
         ])
-        const righe = leggiRigheCronEsiti(rows)
-        expect(righe).not.toBeNull()
-        expect(valutaCronEsiti(righe ?? [], ADESSO)).toEqual({
+        expect(await decisione(b, ADESSO)).toEqual({
             esito: 'ok',
             dettaglio: '3 job attivi; in attesa del primo esito: app-log-bonifica-pii,notifiche-retention',
         })
@@ -290,14 +363,15 @@ describe('i job che il lettore della sessione 6 non ha mai visto girare', () => 
 })
 
 describe('salute_migrazioni', () => {
-    it('la versione più alta e il numero delle righe; una riga doppia cambia il numero, non la versione', async () => {
+    it('la versione più alta e il numero delle righe; una migrazione riapplicata a mano cambia il numero, non la versione', async () => {
         await db.exec(`INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES
           ('20261001000000', 'a'), ('20261020000000', 'c'), ('20261010000000', 'b')`)
         expect((await db.query('SELECT * FROM public.salute_migrazioni()')).rows).toEqual([
             { ultima: '20261020000000', numero: 3 },
         ])
 
-        await db.exec(`INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20261010000000', 'b')`)
+        // La stessa migrazione «b» applicata una seconda volta a mano: version diversa, stesso nome.
+        await db.exec(`INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20261015000000', 'b')`)
         expect((await db.query('SELECT * FROM public.salute_migrazioni()')).rows).toEqual([
             { ultima: '20261020000000', numero: 4 },
         ])
@@ -332,23 +406,22 @@ describe('le due funzioni', () => {
 
     it('senza le tabelle di pg_cron e di supabase_migrations la migrazione si applica e la chiamata alza P0001', async () => {
         // È il database della CI: la migrazione deve passare, e la salute deve vedere il guasto.
-        const vuoto = new PGlite()
-        await vuoto.exec(RUOLI)
-        await vuoto.exec(MIGRAZIONE)
+        const vuoto = await nuovoDb({ cron: false, esiti: false, chiamate: false })
         expect(await codiceErrore(vuoto, 'SELECT * FROM public.salute_cron_esiti()')).toBe('P0001')
         expect(await codiceErrore(vuoto, 'SELECT * FROM public.salute_migrazioni()')).toBe('P0001')
         await vuoto.close()
     })
 
     it('con pg_cron ma senza cron_ultimo_esito (la sessione 6 non applicata) la chiamata alza P0001, non 42P01', async () => {
-        const mezzo = new PGlite()
-        await mezzo.exec(RUOLI)
-        await mezzo.exec(`
-          CREATE SCHEMA cron;
-          CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, schedule text NOT NULL, command text NOT NULL, jobname text, active boolean NOT NULL DEFAULT true);
-          INSERT INTO cron.job (schedule, command, jobname) VALUES ('*/10 * * * *', 'select 1', 'job-qualsiasi');
-        `)
-        await mezzo.exec(MIGRAZIONE)
+        const mezzo = await nuovoDb({ esiti: false })
+        await mezzo.exec(`INSERT INTO cron.job (schedule, command, jobname) VALUES ('*/10 * * * *', 'select 1', 'job-qualsiasi')`)
+        expect(await codiceErrore(mezzo, 'SELECT * FROM public.salute_cron_esiti()')).toBe('P0001')
+        await mezzo.close()
+    })
+
+    it('con cron_ultimo_esito ma senza cron_chiamate la chiamata alza P0001, non 42P01', async () => {
+        const mezzo = await nuovoDb({ chiamate: false })
+        await mezzo.exec(`INSERT INTO cron.job (schedule, command, jobname) VALUES ('*/10 * * * *', 'select 1', 'job-qualsiasi')`)
         expect(await codiceErrore(mezzo, 'SELECT * FROM public.salute_cron_esiti()')).toBe('P0001')
         await mezzo.close()
     })

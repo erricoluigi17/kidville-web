@@ -840,13 +840,17 @@ describe('useConversazioneChat — S4-B: il segnale non porta il messaggio, la b
         await pronto(result);
         const prima = conta('GET', '/api/chat/threads');
 
-        const arriva = (n: number) =>
+        const arriva = (n: number) => {
+            // S7: il server finto conta i non letti come quello vero. La lista ricaricata porta il
+            // totale, e un finto che dicesse sempre zero misurerebbe sé stesso, non il codice.
+            rete.threads = rete.threads.map((t) => (t.id === 'th-b' ? { ...t, unread_count: n } : t));
             act(() =>
                 realtime().onThreadUnread(
                     'th-b',
                     segnale({ id: `m-r${n}`, thread_id: 'th-b', sender_id: 'doc-1', created_at: new Date(Date.UTC(2026, 9, 12, 10, n, 0)).toISOString() }),
                 ),
             );
+        };
 
         arriva(1);
         await scorri();
@@ -855,6 +859,7 @@ describe('useConversazioneChat — S4-B: il segnale non porta il messaggio, la b
         for (let n = 2; n <= 6; n++) arriva(n);
         await scorri();
         expect(conta('GET', '/api/chat/threads'), 'cinque segnali nella stessa finestra: cinque GET della lista').toBe(prima + 1);
+        expect(result.current.nonLetti, 'i +1 locali dei segnali strozzati, prima che la lista arrivi').toBe(6);
 
         // La finestra si chiude: la ricarica rimandata parte, UNA sola per tutta la raffica.
         await act(async () => {
@@ -864,13 +869,11 @@ describe('useConversazioneChat — S4-B: il segnale non porta il messaggio, la b
         expect(conta('GET', '/api/chat/threads'), 'la ricarica strozzata non è mai partita: l’anteprima resta vecchia').toBe(prima + 2);
 
         /**
-         * E il TOTALE ha contato tutti e sei, non solo quelli che hanno chiesto la lista.
+         * E il TOTALE dopo la ricarica rimandata è quello del server, che conta tutti e sei.
          *
-         * Si guarda il totale e non `unread_count` della riga perché la lista la riscrive la
-         * risposta del server, che è la fonte autorevole dei badge per conversazione (qui il finto
-         * dice sempre zero): il `+1` locale copre solo i millisecondi prima che arrivi. Il totale
-         * invece vive qui fra un giro e l'altro della campanella, e se perdesse i segnali strozzati
-         * mostrerebbe un numero più BASSO del vero — la bugia «hai letto tutto».
+         * Dalla sessione 12 il totale della pagina lo riscrive ogni lista applicata (`annunciaNonLetti`):
+         * il `+1` locale copre i millisecondi prima che la lista arrivi, e la lista porta il numero vero.
+         * Se la ricarica rimandata non partisse, il totale resterebbe quello locale fino al giro dopo.
          */
         expect(result.current.nonLetti).toBe(6);
     });

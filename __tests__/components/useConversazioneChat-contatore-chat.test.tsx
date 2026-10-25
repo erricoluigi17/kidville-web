@@ -40,7 +40,6 @@ const TB = { ...TA, id: 'th-b', unread_count: 3 };
 const h = vi.hoisted(() => ({
     logClient: vi.fn(),
     realtime: null as null | Record<string, unknown>,
-    unread: null as null | Record<string, unknown>,
 }));
 
 vi.mock('@/lib/logging/client', () => ({
@@ -52,11 +51,7 @@ vi.mock('@/components/features/chat/useChatRealtime', () => ({
         h.realtime = o;
     },
 }));
-vi.mock('@/components/features/chat/useUnreadNotifications', () => ({
-    useUnreadNotifications: (o: Record<string, unknown>) => {
-        h.unread = o;
-    },
-}));
+vi.mock('@/components/features/chat/useUnreadNotifications', () => ({ useUnreadNotifications: () => {} }));
 vi.mock('@/lib/push/native-register', () => ({ isNativeApp: () => false }));
 
 /** Lo stato della rete finta, per test. */
@@ -116,11 +111,6 @@ function realtime() {
     };
 }
 
-function unread() {
-    if (!h.unread) throw new Error('useUnreadNotifications non montato');
-    return h.unread as { onUnreadChange?: (n: number) => void };
-}
-
 /**
  * IL SEGNALE del canale privato per un messaggio altrui: le sei chiavi del trigger, e nessun
  * contenuto (S4-B, 2026-10-12). Dal passaggio al broadcast dal database il canale porta solo lo
@@ -151,7 +141,6 @@ beforeEach(() => {
     rete.corpoRotto = false;
     rete.patch = [];
     h.realtime = null;
-    h.unread = null;
     h.logClient.mockClear();
     vi.stubGlobal('fetch', vi.fn(fetchFinto));
 });
@@ -273,8 +262,9 @@ describe('useConversazioneChat → contatore: le letture scendono', () => {
     });
 
     it('…e lo stesso vale per il totale LOCALE dell’hook, quello dell’intestazione della pagina chat', async () => {
+        // S7: il totale arriva dalla lista (2 + 3), non più da un secondo orologio.
+        rete.threads = [{ ...TA, unread_count: 2 }, TB];
         const { vista } = await apparato();
-        act(() => unread().onUnreadChange?.(5));
         expect(vista.result.current.nonLetti).toBe(5);
 
         act(() => vista.result.current.apri(TB as never));
@@ -395,36 +385,28 @@ describe('useConversazioneChat → la campanella: `notifiche_lette`', () => {
 });
 
 /**
- * ⚠️ IL TOTALE DI `useUnreadNotifications` NON DEVE ENTRARE NELLO STORE, e questo è il lock.
+ * ⚠️ IL TOTALE DELLA LISTA NON DEVE ENTRARE NELLO STORE, e questo è il lock.
  *
- * Il numero sarebbe lo stesso di `chat_non_letti` — stesso `or`, stessi «messaggi altrui con
- * `read_at` nullo» — ma la route da cui viene (`chat/threads:GET`) trasforma l'errore del conteggio
- * di UN thread in uno zero (`unread_count: unreadCount ?? 0`): un guasto parziale è indistinguibile
- * da «quella conversazione è tutta letta», e finirebbe nello store come un totale sbagliato PER
- * DIFETTO, cioè come la bugia «hai letto tutto».
+ * Dalla sessione 12 di robustezza 2 il totale della pagina chat lo calcola `annunciaNonLetti` sulla
+ * lista di `chat/threads:GET`. Se la RPC di riepilogo manca, la route torna al percorso di prima, che
+ * trasforma l'errore del conteggio di UN thread in uno zero (`unread_count: unreadCount ?? 0`): un
+ * guasto parziale resta indistinguibile da «quella conversazione è tutta letta», e finirebbe nello
+ * store come un totale sbagliato PER DIFETTO.
  *
  * La fonte di verità dal server resta UNA: `GET /api/notifiche`, che su qualunque errore risponde
- * `null`. Il totale dell'hook serve solo alla pagina chat, dove convive con la lista da cui è nato.
+ * `null`. Il totale della lista serve solo alla pagina chat, dove convive con la lista da cui è nato.
  */
 describe('useConversazioneChat → il totale della pagina chat resta nella pagina chat', () => {
-    it('`onUnreadChange` non scrive nel contatore della barra in basso', async () => {
-        const { store } = await apparato();
-
-        act(() => unread().onUnreadChange?.(7));
-
-        expect(
-            store.chatNonLetti(),
-            'Il totale di `chat/threads:GET` è finito nello store: quella route conta 0 anche quando ' +
-                'il conteggio di un thread FALLISCE, quindi un guasto parziale scriverebbe un numero ' +
-                'più basso del vero sulla barra di ogni schermata.',
-        ).toBeNull();
-    });
-
-    it('e lo aggiorna comunque dentro la pagina (nessuna funzione persa)', async () => {
-        const { vista } = await apparato();
-
-        act(() => unread().onUnreadChange?.(7));
+    it('il totale della lista aggiorna la pagina e NON il contatore della barra in basso', async () => {
+        rete.threads = [{ ...TA, unread_count: 4 }, TB];
+        const { store, vista } = await apparato();
 
         expect(vista.result.current.nonLetti).toBe(7);
+        expect(
+            store.chatNonLetti(),
+            'Il totale di `chat/threads:GET` è finito nello store: col ripiego quella route conta 0 anche ' +
+                'quando il conteggio di un thread FALLISCE, quindi un guasto parziale scriverebbe un numero ' +
+                'più basso del vero sulla barra di ogni schermata.',
+        ).toBeNull();
     });
 });

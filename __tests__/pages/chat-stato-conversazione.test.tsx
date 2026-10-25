@@ -438,13 +438,13 @@ describe.each(PAGINE)('chat del $nome — C1: un messaggio inviato è UNA bolla'
     it('l’INSERT del realtime arriva PRIMA della 201 (la POST attende notifica e firma): una bolla per contenitore', async () => {
         rete.threads = [thread(p, TH_A, p.nomeA)];
         rete.messaggi[TH_A] = [messaggio('m-1', TH_A, p.altro, 'Buongiorno')];
-        rete.trattieni = (metodo) => metodo === 'POST';
+        rete.trattieni = (verbo, url) => verbo === 'POST' && url.startsWith('/api/chat/messages');
         render(<p.Pagina />);
         await apri(p.nomeA);
         await screen.findAllByText('Buongiorno');
 
         await scrivi('Ciao, a domani');
-        await waitFor(() => expect(rete.trattenute.some((r) => r.metodo === 'POST')).toBe(true));
+        await waitFor(() => expect(rete.trattenute.some((r) => r.url.startsWith('/api/chat/messages'))).toBe(true));
 
         // Il realtime consegna la riga del database mentre la POST è ancora in volo.
         emettiInsert(messaggio('m-post-1', TH_A, p.io, 'Ciao, a domani', { created_at: '2026-09-14T09:00:01.000Z' }));

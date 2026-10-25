@@ -184,7 +184,7 @@ type MessaggioBroadcast = { payload?: unknown };
  * no, il `warn` di sempre (è un'interruzione vera). Il perché e le regole stanno in
  * `@/lib/chat/esito-1006`. Gli altri motivi si loggano subito, come sopra.
  *
- * Il polling (30 s, fermo a pagina nascosta) resta come rete quando il Realtime non c'è.
+ * Il polling resta come rete quando il Realtime non c'è: la lista ogni 30 s (5 minuti a pagina nascosta), i messaggi della conversazione aperta ogni 30 s (fermi a pagina nascosta).
  */
 export function useChatRealtime({
     userId,

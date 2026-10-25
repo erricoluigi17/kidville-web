@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { creaFintoSupabase, type DBFinto, type Riga } from '../fixtures/finto-supabase'
+import { creaFintoSupabase, type DBFinto, type Riga, type Scrittura } from '../fixtures/finto-supabase'
 
 // =============================================================================
 // L'OBLIO DI UN BAMBINO SVUOTA ANCHE LA SCATOLA NERA (2026-10-09).
@@ -48,6 +48,32 @@ describe('anonimizzaAlunno — la scatola nera', () => {
     const successo = spie.logEvento.mock.calls.find((c) => (c[2] as { esito?: string }).esito === 'scatola-nera-dimenticata')
     expect(successo?.[2]).toMatchObject({ n: 7, entita_tipo: 'alunno' })
     expect(JSON.stringify(spie.logEvento.mock.calls), 'l’uuid del bambino è finito nei log').not.toContain(BIMBO)
+  })
+
+  // Dalla sessione 3 della seconda serie l'anonimizzazione (UPDATE di `alunni`) lascia la riga
+  // com'era in `scatola_nera.modifiche`: se la scatola si svuotasse PRIMA di una scrittura, quella
+  // copia resterebbe 90 giorni. L'ordine è il contenuto del test (la regola SQL è provata in
+  // `scatola-nera-cascate-sql.test.ts`).
+  it('si chiama PER ULTIMA: dopo l’anonimizzazione della scheda e dopo ogni altra scrittura', async () => {
+    const scritture: Scrittura[] = []
+    let scrittePrima = -1
+    const client = creaFintoSupabase({ ...db(), alunni: [{ id: BIMBO, nome: 'Bimbo di prova' }] }, [], {
+      scritture,
+      rpc: {
+        ...RPC_OBLIO_VIDEO,
+        scatola_nera_dimentica: () => {
+          scrittePrima = scritture.length
+          return { data: 1, error: null }
+        },
+      },
+    })
+
+    await anonimizzaAlunno(client, { id: BIMBO }, AT, 'test')
+
+    const anonimizzazione = scritture.findIndex((s) => s.tabella === 'alunni' && s.operazione === 'update')
+    expect(anonimizzazione, 'l’oblio non anonimizza la scheda').toBeGreaterThanOrEqual(0)
+    expect(scrittePrima, 'la scatola è stata svuotata prima dell’anonimizzazione').toBeGreaterThan(anonimizzazione)
+    expect(scrittePrima, 'una scrittura dopo la scatola resterebbe in copia').toBe(scritture.length)
   })
 
   it('una scatola che rifiuta: una lettura fallita in più, e un errore nel log', async () => {

@@ -33,8 +33,14 @@
 --    proprie DELETE e lo rimettono com'era: una copia di 90 giorni disferebbe la bonifica.
 --  · L'oblio (`public.scatola_nera_dimentica`) toglie anche ciò che nomina la persona solo
 --    attraverso una conversazione: i messaggi delle sue conversazioni (che la nominano per
---    `thread_id`) e le revisioni di quei messaggi (per `entita_id`), con le conversazioni
---    cancellate (in scatola) o ancora vive. `soggetti_di` legge solo `id` e `*_id`.
+--    `thread_id`), le revisioni di quei messaggi (per `entita_id`) e le sospensioni di quelle
+--    conversazioni, con le conversazioni cancellate (in scatola) o ancora vive; e le
+--    sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da`.
+--    `soggetti_di` legge solo `id` e `*_id`.
+--  · Anonimizzare un'anagrafica è un UPDATE: lascia in `scatola_nera.modifiche` la riga
+--    com'era, dati personali compresi, finché l'oblio dell'app non chiama
+--    `scatola_nera_dimentica`, che la toglie perché nomina l'`id`. Per questo l'app la
+--    chiama PER ULTIMA (`src/lib/gdpr/esegui.ts`).
 --
 -- ─── COSA RESTA FUORI, E PERCHÉ ──────────────────────────────────────────────
 --  · notifiche, push_subscriptions: effimere (campanella, iscrizioni ai push), con la
@@ -277,3 +283,91 @@ begin
 end $$;
 REVOKE ALL ON FUNCTION public.storici_oblio_alunno() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.storici_oblio_alunno() TO service_role;
+
+-- ── 5. L'oblio segue le conversazioni ─────────────────────────────────────────
+-- Corpo di 20261019215733_scatola_nera_modifiche.sql:248-280, più la regola delle
+-- conversazioni. Un messaggio nomina la persona solo per `thread_id`, e la revisione di
+-- un messaggio solo per `entita_id`: `soggetti_di` (solo `id` e `*_id`) li vede come uuid
+-- qualunque. Le conversazioni della persona si cercano sia fra le copie (cancellate) sia
+-- fra le vive; la tabella viva si legge con EXECUTE dietro `to_regclass`.
+-- La copia di una sospensione (la decima figlia) nomina la conversazione per `thread_id`
+-- e le persone in `sospesa_da`, `sospesa_verso` e `riaperta_da` (la Direzione che riapre
+-- non è nella conversazione), che `soggetti_di` non legge; il suo `motivo` è testo libero.
+-- Le stesse colonne che l'oblio dell'app bonifica sulla riga viva (`src/lib/gdpr/esegui.ts`).
+CREATE OR REPLACE FUNCTION public.scatola_nera_dimentica(p_soggetti uuid[], p_tipo text, p_canale text DEFAULT NULL)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_righe     int := 0;
+  v_modifiche int := 0;
+  v_thread    uuid[] := '{}';
+  v_messaggi  uuid[] := '{}';
+  v_vivi      uuid[] := '{}';
+  v_collegati uuid[] := '{}';
+  v_s         uuid;
+BEGIN
+  IF p_tipo IS NULL OR p_tipo NOT IN ('alunno', 'genitore', 'personale', 'altro') THEN
+    RAISE EXCEPTION 'scatola_nera_dimentica: tipo % non ammesso', p_tipo USING ERRCODE = '22023';
+  END IF;
+  IF p_soggetti IS NULL OR cardinality(p_soggetti) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  -- Le conversazioni che nominano la persona: le copie e le vive.
+  SELECT COALESCE(array_agg(DISTINCT (e.riga ->> 'id')::uuid), '{}')
+    INTO v_thread
+    FROM scatola_nera.eliminazioni e
+   WHERE e.tabella = 'chat_threads' AND e.soggetti && p_soggetti;
+  IF to_regclass('public.chat_threads') IS NOT NULL THEN
+    EXECUTE 'SELECT COALESCE(array_agg(t.id), ''{}''::uuid[]) FROM public.chat_threads t '
+            'WHERE t.parent_id = ANY ($1) OR t.student_id = ANY ($1) OR t.teacher_id = ANY ($1)'
+       INTO v_vivi USING p_soggetti;
+    v_thread := v_thread || v_vivi;
+  END IF;
+
+  -- I messaggi di quelle conversazioni: le loro revisioni li nominano in `entita_id`.
+  SELECT COALESCE(array_agg(DISTINCT (e.riga ->> 'id')::uuid), '{}')
+    INTO v_messaggi
+    FROM scatola_nera.eliminazioni e
+   WHERE e.tabella = 'chat_messages' AND e.soggetti && v_thread;
+  IF to_regclass('public.chat_messages') IS NOT NULL AND cardinality(v_thread) > 0 THEN
+    EXECUTE 'SELECT COALESCE(array_agg(m.id), ''{}''::uuid[]) FROM public.chat_messages m '
+            'WHERE m.thread_id = ANY ($1)'
+       INTO v_vivi USING v_thread;
+    v_messaggi := v_messaggi || v_vivi;
+  END IF;
+  v_collegati := v_thread || v_messaggi;
+
+  PERFORM set_config('scatola_nera.manutenzione', 'on', true);
+  -- Le persone di una sospensione si confrontano come TESTO: nessun cast che possa fallire
+  -- su una riga di un'altra tabella, e un `riaperta_da` NULL non è uguale a niente.
+  DELETE FROM scatola_nera.eliminazioni
+   WHERE soggetti && p_soggetti
+      OR (tabella IN ('chat_messages', 'storici_revisioni', 'conversazioni_sospensioni')
+          AND soggetti && v_collegati)
+      OR (tabella = 'conversazioni_sospensioni'
+          AND ARRAY[riga ->> 'sospesa_da', riga ->> 'sospesa_verso', riga ->> 'riaperta_da']
+              && p_soggetti::text[]);
+  GET DIAGNOSTICS v_righe = ROW_COUNT;
+  DELETE FROM scatola_nera.modifiche WHERE soggetti && p_soggetti;
+  GET DIAGNOSTICS v_modifiche = ROW_COUNT;
+  PERFORM set_config('scatola_nera.manutenzione', 'off', true);
+
+  FOREACH v_s IN ARRAY p_soggetti LOOP
+    IF v_s IS NOT NULL THEN
+      INSERT INTO scatola_nera.oblii (soggetto, tipo, canale, righe_dimenticate)
+      VALUES (v_s, p_tipo, left(p_canale, 200), v_righe + v_modifiche);
+    END IF;
+  END LOOP;
+  RETURN v_righe + v_modifiche;
+END $$;
+REVOKE ALL ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) TO service_role;
+
+COMMENT ON FUNCTION public.scatola_nera_dimentica(uuid[], text, text) IS
+  'Oblio nella scatola nera: toglie da scatola_nera.eliminazioni e da scatola_nera.modifiche le righe che nominano uno di questi uuid (in id o in una colonna *_id), più i messaggi, le revisioni di messaggi e le sospensioni delle conversazioni che lo nominano e le sospensioni che lo nominano in sospesa_da, sospesa_verso o riaperta_da, e scrive un oblio per uuid in scatola_nera.oblii (mai dati). Restituisce le righe tolte. Solo service_role.';
+
+NOTIFY pgrst, 'reload schema';

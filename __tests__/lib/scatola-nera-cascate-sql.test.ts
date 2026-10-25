@@ -33,6 +33,8 @@ const ALTRO_ALUNNO = '10000000-0000-4000-8000-000000000002'
 const GENITORE = '20000000-0000-4000-8000-000000000001'
 const ALTRO_GENITORE = '20000000-0000-4000-8000-000000000002'
 const DOCENTE = '30000000-0000-4000-8000-000000000001'
+/** Una persona del personale che NON partecipa a nessuna conversazione (la Direzione che riapre). */
+const DIREZIONE = '30000000-0000-4000-8000-000000000002'
 const THREAD = '40000000-0000-4000-8000-000000000001'
 const ALTRO_THREAD = '40000000-0000-4000-8000-000000000002'
 const MSG_GENITORE = '50000000-0000-4000-8000-000000000001'
@@ -143,12 +145,12 @@ const SCHEMA = `
       rettifica_staff text, rettifica_staff_il timestamptz, rettifica_staff_da uuid,
       rettifica_versione int NOT NULL DEFAULT 0
     );
-    -- La prova che una conversazione è stata moderata (policy UGC): chi sospende e chi è sospeso
-    -- stanno in colonne SENZA il suffisso _id, che soggetti_di non vede.
+    -- La prova che una conversazione è stata moderata (policy UGC): chi sospende, chi è sospeso e
+    -- chi riapre stanno in colonne SENZA il suffisso _id, che soggetti_di non vede.
     CREATE TABLE public.conversazioni_sospensioni (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       thread_id uuid NOT NULL REFERENCES public.chat_threads(id) ON DELETE CASCADE,
-      sospesa_da uuid NOT NULL, sospesa_verso uuid NOT NULL, motivo text
+      sospesa_da uuid NOT NULL, sospesa_verso uuid NOT NULL, motivo text, riaperta_da uuid
     );
     CREATE TABLE public.avvisi (
       id uuid PRIMARY KEY, author_id uuid REFERENCES public.utenti(id) ON DELETE CASCADE, titolo text
@@ -442,5 +444,110 @@ describe('le bonifiche accendono l’interruttore nella propria transazione', ()
       COMMIT;
     `)
     expect(await perTabella()).toEqual({ chat_messages: 1 })
+  })
+})
+
+describe('l’oblio segue le conversazioni: chi nomina la persona solo per thread_id', () => {
+  it('oblio del genitore: se ne vanno anche il messaggio della docente nella sua conversazione, la sua revisione e la sospensione', async () => {
+    await db.exec(`
+      DELETE FROM public.storici_revisioni WHERE entita_id = '${MSG_DOCENTE}';
+      DELETE FROM public.chat_threads WHERE id IN ('${THREAD}', '${ALTRO_THREAD}');
+    `)
+    expect(await perTabella()).toEqual({
+      chat_messages: 3, chat_threads: 2, conversazioni_sospensioni: 1, storici_revisioni: 1,
+    })
+    // La regola dei soli `id` e `*_id` ne troverebbe 2 su 5: la conversazione e il messaggio del
+    // genitore. La sospensione lo nomina in `sospesa_verso`, e la conversazione per `thread_id`.
+    expect(await numero(
+      `SELECT count(*) FROM scatola_nera.eliminazioni WHERE soggetti && ARRAY['${GENITORE}']::uuid[]`)).toBe(2)
+
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${GENITORE}']::uuid[], 'genitore', 'prova') AS n`)
+    expect(rows[0].n).toBe(5)
+    // Controllo positivo: l'altra conversazione e il suo messaggio restano.
+    expect(await perTabella()).toEqual({ chat_messages: 1, chat_threads: 1 })
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni WHERE riga ->> 'id' = '${MSG_ALTRO}'`)).toBe(1)
+    expect(await numero(`SELECT righe_dimenticate FROM scatola_nera.oblii WHERE soggetto = '${GENITORE}'`)).toBe(5)
+  })
+
+  it('oblio dell’alunno con la conversazione ANCORA VIVA: se ne va la copia del messaggio cancellato della docente', async () => {
+    await db.exec(`DELETE FROM public.chat_messages WHERE id IN ('${MSG_DOCENTE}', '${MSG_ALTRO}')`)
+    expect(await perTabella()).toEqual({ chat_messages: 2 })
+
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${ALUNNO}']::uuid[], 'alunno', 'prova') AS n`)
+    expect(rows[0].n).toBe(1)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni WHERE riga ->> 'id' = '${MSG_DOCENTE}'`)).toBe(0)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.eliminazioni WHERE riga ->> 'id' = '${MSG_ALTRO}'`)).toBe(1)
+  })
+
+  it('oblio dell’alunno: la sospensione della sua conversazione cancellata se ne va con la conversazione', async () => {
+    await db.exec(`DELETE FROM public.chat_threads WHERE id = '${THREAD}'`)
+    expect(await perTabella()).toEqual({ chat_messages: 2, chat_threads: 1, conversazioni_sospensioni: 1 })
+
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${ALUNNO}']::uuid[], 'alunno', 'prova') AS n`)
+    expect(rows[0].n).toBe(4)
+    expect(await perTabella()).toEqual({})
+  })
+
+  // Chi sospende, chi è sospeso e chi riapre (la Direzione, che nella conversazione non c'è) stanno
+  // in colonne senza `_id`: la copia di una sospensione li nomina SOLO lì.
+  it.each(['sospesa_da', 'sospesa_verso', 'riaperta_da'])(
+    'la sospensione nomina la persona solo in `%s`: l’oblio la toglie, e lascia la conversazione degli altri',
+    async (colonna) => {
+      const persone: Record<string, string | null> = {
+        sospesa_da: DOCENTE, sospesa_verso: ALTRO_GENITORE, riaperta_da: null, [colonna]: DIREZIONE,
+      }
+      await db.exec(`
+        INSERT INTO public.conversazioni_sospensioni (thread_id, sospesa_da, sospesa_verso, riaperta_da, motivo)
+        VALUES ('${ALTRO_THREAD}', '${persone.sospesa_da}', '${persone.sospesa_verso}',
+                ${persone.riaperta_da ? `'${persone.riaperta_da}'` : 'NULL'}, 'motivo di prova');
+        DELETE FROM public.chat_threads WHERE id = '${ALTRO_THREAD}';
+      `)
+      expect(await perTabella()).toEqual({ chat_messages: 1, chat_threads: 1, conversazioni_sospensioni: 1 })
+
+      const { rows } = await db.query<{ n: number }>(
+        `SELECT public.scatola_nera_dimentica(ARRAY['${DIREZIONE}']::uuid[], 'personale', 'prova') AS n`)
+      expect(rows[0].n).toBe(1)
+      // Controllo positivo: la conversazione e il messaggio, che la Direzione non nominano, restano.
+      expect(await perTabella()).toEqual({ chat_messages: 1, chat_threads: 1 })
+    },
+  )
+
+  it('le modifiche: l’oblio toglie ancora le versioni di prima che nominano la persona', async () => {
+    await db.exec(`UPDATE public.parents SET nome = 'Adulta corretta' WHERE id = '${GENITORE}'`)
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${GENITORE}']::uuid[], 'genitore', 'prova') AS n`)
+    expect(rows[0].n).toBe(1)
+    expect(await numero('SELECT count(*) FROM scatola_nera.modifiche')).toBe(0)
+  })
+
+  // L'anonimizzazione è un UPDATE delle anagrafiche: dal Compito 5 lascia in `scatola_nera.modifiche`
+  // la riga com'era, con i dati personali. Se ne va solo perché l'oblio dell'app chiama
+  // `scatola_nera_dimentica` PER ULTIMA (`src/lib/gdpr/esegui.ts`, provato in
+  // `gdpr-oblio-scatola-nera-alunno.test.ts` e `gdpr-oblio-account.test.ts`).
+  it('anonimizzare un alunno lascia la riga com’era nello storico: l’oblio chiamato DOPO la toglie', async () => {
+    await db.exec(`UPDATE public.alunni SET nome = 'Anonimo', anonimizzato_il = now() WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE prima ->> 'nome' = 'Bimbo'`)).toBe(1)
+
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT public.scatola_nera_dimentica(ARRAY['${ALUNNO}']::uuid[], 'alunno', 'prova') AS n`)
+    expect(rows[0].n).toBe(1)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE prima ->> 'nome' = 'Bimbo'`)).toBe(0)
+  })
+
+  it('CONTROLLO POSITIVO dell’ordine: un’anonimizzazione DOPO l’oblio lascia la copia in scatola', async () => {
+    await db.query(`SELECT public.scatola_nera_dimentica(ARRAY['${ALUNNO}']::uuid[], 'alunno', 'prova')`)
+    await db.exec(`UPDATE public.alunni SET nome = 'Anonimo', anonimizzato_il = now() WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM scatola_nera.modifiche WHERE prima ->> 'nome' = 'Bimbo'`)).toBe(1)
+  })
+
+  it('solo il servizio chiama l’oblio', async () => {
+    const { rows } = await db.query<Record<string, boolean>>(`
+      SELECT has_function_privilege('authenticated', 'public.scatola_nera_dimentica(uuid[], text, text)', 'EXECUTE') AS auth,
+             has_function_privilege('anon', 'public.scatola_nera_dimentica(uuid[], text, text)', 'EXECUTE') AS anon,
+             has_function_privilege('service_role', 'public.scatola_nera_dimentica(uuid[], text, text)', 'EXECUTE') AS servizio`)
+    expect(rows[0]).toEqual({ auth: false, anon: false, servizio: true })
   })
 })

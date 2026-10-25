@@ -8,7 +8,9 @@ import {
     type RispostaRpc,
     type Riga,
 } from '../../fixtures/finto-supabase'
-import { controlloCronEsiti, controlloStorage, TETTO_CONTROLLO_MS } from '@/lib/health/controlli'
+import { controlloCronEsiti, controlloEmail, controlloPush, controlloStorage, TETTO_CONTROLLO_MS } from '@/lib/health/controlli'
+import { fcmConfigured } from '@/lib/push/native-push'
+import { vapidConfigured } from '@/lib/push/web-push'
 import { logEvento } from '@/lib/logging/logger'
 
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
@@ -240,5 +242,178 @@ describe('storage', () => {
 
         expect(r).toMatchObject({ esito: 'degradato', dettaglio: 'storage fatture: 404 StorageApiError' })
         expect(JSON.stringify(r)).not.toContain('percorso-da-non-rilanciare')
+    })
+})
+
+/** Una riga di `app_log` come la scrive `externalFetch`; `operazione` in cima è la colonna che la
+ *  `select` ottiene con l'alias `operazione:contesto->campi->>operazione`. */
+function esito(
+    evento: string,
+    provider: string,
+    livello: string,
+    stato: number | null,
+    occorrenze: number,
+    faMs: number,
+    extra: Riga = {},
+): Riga {
+    return {
+        evento,
+        livello,
+        sorgente: 'server',
+        ambiente: 'production',
+        stato_http: stato,
+        occorrenze,
+        visto_l_ultima: fa(faMs),
+        operazione: 'invio',
+        contesto: { campi: { provider, operazione: 'invio' } },
+        ...extra,
+    }
+}
+
+describe('email', () => {
+    // Righe che la lettura deve ignorare, ciascuna da 50: se una entrasse nel conteggio,
+    // ogni caso qui sotto cambierebbe esito.
+    const RUMORE: Riga[] = [
+        esito('email', 'resend', 'warn', 429, 50, 10 * MIN),
+        esito('email', 'fcm', 'error', 500, 50, 10 * MIN),
+        esito('email', 'resend', 'error', 403, 50, 25 * ORA),
+        esito('email', 'resend', 'error', 403, 50, 10 * MIN, { ambiente: 'preview' }),
+        esito('email', 'resend', 'error', 403, 50, 10 * MIN, { sorgente: 'client' }),
+        esito('push', 'resend', 'error', 403, 50, 10 * MIN),
+    ]
+
+    it.each([
+        { riusciti: 0, rifiuti: 3, atteso: 'degradato' }, // soglia
+        { riusciti: 0, rifiuti: 2, atteso: 'ok' }, // soglia
+        { riusciti: 5, rifiuti: 6, atteso: 'degradato' },
+        { riusciti: 6, rifiuti: 6, atteso: 'ok' },
+        { riusciti: 40, rifiuti: 2, atteso: 'ok' },
+    ])('$riusciti riusciti e $rifiuti rifiutati nelle ultime 24 h → $atteso', async ({ riusciti, rifiuti, atteso }) => {
+        const app_log = [...RUMORE]
+        if (riusciti > 0) app_log.push(esito('email', 'resend', 'info', 200, riusciti, 10 * MIN))
+        if (rifiuti > 0) app_log.push(esito('email', 'resend', 'error', 403, rifiuti, 20 * MIN))
+
+        expect(await controlloEmail(client({ db: { app_log } }), ADESSO, 'production')).toMatchObject({
+            nome: 'email',
+            esito: atteso,
+            dettaglio: `resend nelle ultime 24 h: ${riusciti} riusciti, ${rifiuti} rifiutati, ${
+                riusciti > 0 ? 'ultimo riuscito 10 min fa' : 'nessuno riuscito'
+            }`,
+        })
+    })
+
+    it('nessun invio: ok', async () => {
+        expect(await controlloEmail(client({ db: { app_log: [...RUMORE] } }), ADESSO, 'production')).toMatchObject({
+            esito: 'ok',
+            dettaglio: 'resend: nessun invio nelle ultime 24 h',
+        })
+    })
+
+    it('app_log illeggibile: degradato, con il codice', async () => {
+        const c = client({ db: { app_log: [] }, errori: { app_log: { code: '57014', message: 'x' } } })
+
+        expect(await controlloEmail(c, ADESSO, 'production')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'lettura esiti resend 57014',
+        })
+    })
+
+    // Fuori dal piano, aggiunto al mutation testing: senza, un `misura('email', 'giu', …)` restava
+    // verde qui (il lock «mai giu» arriva al Compito 11).
+    it('una lettura che lancia (rete): degradato con il nome dell’eccezione, mai giu', async () => {
+        expect(await controlloEmail(clientCheLancia(), ADESSO, 'production')).toMatchObject({
+            nome: 'email',
+            esito: 'degradato',
+            dettaglio: 'eccezione TypeError',
+        })
+    })
+})
+
+/** Un client la cui `from()` lancia, come `fetch` quando la rete non c'è. */
+function clientCheLancia(): SupabaseClient {
+    return Object.assign(client(), {
+        from: () => {
+            throw new TypeError('fetch failed')
+        },
+    }) as SupabaseClient
+}
+
+describe('push', () => {
+    function configuraTutto(): void {
+        for (const nome of ['FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY', 'NEXT_PUBLIC_VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY']) {
+            vi.stubEnv(nome, 'valore-di-prova')
+        }
+    }
+
+    it('FCM respinto e web-push sano: degradato, e il dettaglio dice quale', async () => {
+        configuraTutto()
+        const app_log = [
+            esito('push', 'fcm', 'error', 403, 4, 30 * MIN),
+            esito('push', 'fcm', 'warn', 503, 100, 5 * MIN),
+            esito('push', 'fcm', 'info', 200, 50, 5 * MIN, {
+                operazione: 'oauth-token',
+                contesto: { campi: { provider: 'fcm', operazione: 'oauth-token' } },
+            }),
+            esito('push', 'web-push', 'info', 201, 3, 5 * MIN),
+            esito('push', 'web-push', 'info', 410, 30, 5 * MIN),
+        ]
+
+        expect(await controlloPush(client({ db: { app_log } }), ADESSO, 'production')).toMatchObject({
+            nome: 'push',
+            esito: 'degradato',
+            dettaglio:
+                'fcm nelle ultime 24 h: 0 riusciti, 4 rifiutati, nessuno riuscito; ' +
+                'web-push nelle ultime 24 h: 3 riusciti, 0 rifiutati, ultimo riuscito 5 min fa',
+        })
+    })
+
+    it('FCM non configurato: lo dice, non lo legge, e resta ok (lo segnala già config)', async () => {
+        configuraTutto()
+        vi.stubEnv('FCM_PRIVATE_KEY', '')
+
+        expect(await controlloPush(client({ db: { app_log: [] } }), ADESSO, 'production')).toMatchObject({
+            esito: 'ok',
+            dettaglio: 'fcm non configurato (vedi config); web-push: nessun invio nelle ultime 24 h',
+        })
+    })
+
+    it('app_log illeggibile: degradato, per ogni canale', async () => {
+        configuraTutto()
+        const c = client({ db: { app_log: [] }, errori: { app_log: { code: '57014', message: 'x' } } })
+
+        expect(await controlloPush(c, ADESSO, 'production')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'lettura esiti fcm 57014; lettura esiti web-push 57014',
+        })
+    })
+
+    // Fuori dal piano, aggiunto al mutation testing: senza, un `misura('push', 'giu', …)` restava
+    // verde qui (il lock «mai giu» arriva al Compito 11).
+    it('una lettura che lancia (rete): degradato con il nome dell’eccezione, mai giu', async () => {
+        configuraTutto()
+
+        expect(await controlloPush(clientCheLancia(), ADESSO, 'production')).toMatchObject({
+            nome: 'push',
+            esito: 'degradato',
+            dettaglio: 'eccezione TypeError',
+        })
+    })
+
+    it.each([
+        { fcm: true, vapid: true },
+        { fcm: false, vapid: true },
+        { fcm: true, vapid: false },
+        { fcm: false, vapid: false },
+    ])('la stessa regola di fcmConfigured() e vapidConfigured(): fcm $fcm, vapid $vapid', async ({ fcm, vapid }) => {
+        configuraTutto()
+        if (!fcm) vi.stubEnv('FCM_CLIENT_EMAIL', '')
+        if (!vapid) vi.stubEnv('NEXT_PUBLIC_VAPID_PUBLIC_KEY', '')
+
+        const { dettaglio } = await controlloPush(client({ db: { app_log: [] } }), ADESSO, 'production')
+
+        expect(fcmConfigured()).toBe(fcm)
+        expect(vapidConfigured()).toBe(vapid)
+        expect(dettaglio?.includes('fcm non configurato')).toBe(!fcm)
+        expect(dettaglio?.includes('web-push non configurato')).toBe(!vapid)
     })
 })

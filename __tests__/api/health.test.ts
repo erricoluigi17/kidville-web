@@ -197,6 +197,8 @@ describe('GET /api/health', () => {
             'cron-battito',
             'cron-esiti',
             'db-lettura',
+            'email',
+            'push',
             'regione',
             'schema-atteso',
             'storage',

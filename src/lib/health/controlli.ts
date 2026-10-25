@@ -2,6 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
 import { versioneDeploy } from '@/lib/versione/deploy'
 import { leggiRigheCronEsiti, valutaCronEsiti } from '@/lib/health/cron-esiti'
+import {
+    FINESTRA_FORNITORI_MS,
+    contaEsitiFornitore,
+    valutaFornitore,
+    type RigaEsitoFornitore,
+} from '@/lib/health/fornitori'
 import { inAttesaDellIntegrazione, type Valutazione } from '@/lib/health/valutazione'
 import { logEvento } from '@/lib/logging/logger'
 import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
@@ -1603,6 +1609,89 @@ export async function controlloStorage(supabase: SupabaseClient): Promise<Contro
     })
 }
 
+/** Quante righe di `app_log` legge al più ogni fornitore. Le righe sono già aggregate per giorno e
+ *  per impronta (`occorrenze`): in 24 h sono decine, e 500 è un tetto, non una stima. */
+const RIGHE_MAX_FORNITORE = 500
+
+/**
+ * Gli esiti di un fornitore nelle ultime 24 h, da `app_log`. `operazione` arriva come colonna con
+ * un alias sul JSON, così la risposta non porta il resto di `contesto`.
+ */
+async function leggiEsitiFornitore(
+    supabase: SupabaseClient,
+    evento: 'email' | 'push',
+    provider: string,
+    adesso: number,
+    ambiente: string,
+): Promise<{ righe: RigaEsitoFornitore[] } | { codice: string }> {
+    const { data, error } = await supabase
+        .from('app_log')
+        .select('livello, stato_http, occorrenze, visto_l_ultima, operazione:contesto->campi->>operazione')
+        .eq('evento', evento)
+        .eq('sorgente', 'server')
+        .eq('ambiente', ambiente)
+        .eq('contesto->campi->>provider', provider)
+        .gte('visto_l_ultima', new Date(adesso - FINESTRA_FORNITORI_MS).toISOString())
+        .limit(RIGHE_MAX_FORNITORE)
+    if (error) return { codice: codiceDi(error) }
+    return { righe: (data ?? []) as RigaEsitoFornitore[] }
+}
+
+/**
+ * `email` — Resend non respinge più di quanto consegna. Letto da `app_log` (evento `email`,
+ * `provider: resend`): la salute non chiama MAI Resend. La regola sta in `@/lib/health/fornitori`.
+ */
+export async function controlloEmail(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('email', 'degradato', async () => {
+        const letti = await leggiEsitiFornitore(supabase, 'email', 'resend', adesso, ambiente)
+        if ('codice' in letti) return { esito: 'degradato', dettaglio: `lettura esiti resend ${letti.codice}` }
+        return valutaFornitore('resend', contaEsitiFornitore(letti.righe), adesso)
+    })
+}
+
+/**
+ * I canali push e se sono configurati, con le STESSE condizioni di `fcmConfigured()`
+ * (`src/lib/push/native-push.ts`) e `vapidConfigured()` (`src/lib/push/web-push.ts`). Non si
+ * importano: quei moduli si portano dietro la firma RS256 e la libreria `web-push`, che la salute
+ * non deve caricare. Le due regole le confronta `__tests__/lib/health/controlli-nuovi.test.ts` su
+ * quattro combinazioni. Accesso statico a `process.env`.
+ */
+function canaliPush(): { provider: 'fcm' | 'web-push'; configurato: boolean }[] {
+    return [
+        {
+            provider: 'fcm',
+            configurato: Boolean(process.env.FCM_PROJECT_ID && process.env.FCM_CLIENT_EMAIL && process.env.FCM_PRIVATE_KEY),
+        },
+        {
+            provider: 'web-push',
+            configurato: Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+        },
+    ]
+}
+
+/**
+ * `push` — per ogni canale configurato, FCM e web-push non respingono più di quanto consegnano
+ * (evento `push`, letto da `app_log`). Un canale non configurato lo dice `config`; qui si scrive e
+ * resta `ok`, così la stessa assenza non apre due segnalazioni. Il battito del dispatcher è già
+ * `push-dispatch` in `cron-battito`.
+ */
+export async function controlloPush(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('push', 'degradato', async () => {
+        const valutazioni = await Promise.all(
+            canaliPush().map(async ({ provider, configurato }): Promise<Valutazione> => {
+                if (!configurato) return { esito: 'ok', dettaglio: `${provider} non configurato (vedi config)` }
+                const letti = await leggiEsitiFornitore(supabase, 'push', provider, adesso, ambiente)
+                if ('codice' in letti) return { esito: 'degradato', dettaglio: `lettura esiti ${provider} ${letti.codice}` }
+                return valutaFornitore(provider, contaEsitiFornitore(letti.righe), adesso)
+            }),
+        )
+        return {
+            esito: valutazioni.some((v) => v.esito === 'degradato') ? 'degradato' : 'ok',
+            dettaglio: valutazioni.map((v) => v.dettaglio).join('; '),
+        }
+    })
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1676,6 +1765,8 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         Promise.resolve(controlloRegione()),
         controlloCronEsiti(supabase, adesso),
         controlloStorage(supabase),
+        controlloEmail(supabase, adesso, opzioni.ambiente),
+        controlloPush(supabase, adesso, opzioni.ambiente),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

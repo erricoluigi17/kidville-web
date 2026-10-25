@@ -225,3 +225,46 @@ describe('freno SQL — via di fuga, input rotti, registro', () => {
     expect(sorgente).toMatch(/["']deny["']/)
   })
 })
+
+type VoceHook = { matcher?: string; hooks: Array<{ type: string; command: string; timeout?: number }> }
+type Impostazioni = { permissions: { allow: string[] }; hooks: { PreToolUse?: VoceHook[] } }
+
+describe('freno SQL — è registrato, e copre ciò che è in allow', () => {
+  const impostazioni = JSON.parse(
+    fs.readFileSync(path.join(RADICE, '.claude', 'settings.json'), 'utf8'),
+  ) as Impostazioni
+  const voce = (impostazioni.hooks.PreToolUse ?? []).find((v) =>
+    v.hooks.some((h) => h.command.includes('supabase_sql_freno.py')),
+  )
+  const coperti = (voce?.matcher ?? '').split('|')
+
+  it('un PreToolUse chiama il freno dal progetto, con un tetto di 10 s', () => {
+    expect(voce, 'il freno non è registrato in .claude/settings.json → hooks.PreToolUse').toBeDefined()
+    const comando = voce?.hooks.find((h) => h.command.includes('supabase_sql_freno.py'))
+    expect(comando?.type).toBe('command')
+    expect(comando?.command).toBe('"$CLAUDE_PROJECT_DIR/.claude/hooks/supabase_sql_freno.py"')
+    expect(comando?.timeout ?? 60).toBeLessThanOrEqual(10)
+  })
+
+  it('il matcher è un elenco di nomi esatti: i quattro strumenti SQL di Supabase', () => {
+    // Solo lettere, cifre, `_` e `|`: Claude Code lo legge come elenco di nomi, non come regex.
+    expect(voce?.matcher ?? '').toMatch(/^[A-Za-z0-9_|]+$/)
+    expect([...coperti].sort()).toEqual([
+      'mcp__claude_ai_Supabase__apply_migration',
+      'mcp__claude_ai_Supabase__execute_sql',
+      'mcp__supabase__apply_migration',
+      'mcp__supabase__execute_sql',
+    ])
+  })
+
+  it('ogni strumento SQL o di migrazione in permissions.allow passa dal freno', () => {
+    const inAllow = impostazioni.permissions.allow.filter((p) => /__(execute_sql|apply_migration)$/.test(p))
+    expect(inAllow.length).toBeGreaterThanOrEqual(3)
+    expect(inAllow.filter((p) => !coperti.includes(p))).toEqual([])
+  })
+
+  it('il freno è eseguibile, e il gate vecchio in bash non c’è più', () => {
+    expect(fs.statSync(FRENO).mode & 0o111).not.toBe(0)
+    expect(fs.existsSync(path.join(RADICE, '.claude', 'hooks', 'supabase_sql_gate.sh'))).toBe(false)
+  })
+})

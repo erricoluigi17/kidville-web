@@ -1,3 +1,87 @@
+## 🛡️ Changelog — Robustezza 2, sessione 12: la chat leggera — 2026-10-25 (branch `robustezza2/s03-s06-s12-s13-lotto2`)
+
+**Stato:** 🟡 in revisione (PR #@PR@), **merge a mano del titolare**. La sessione 12 arriva nel **lotto 2** con le sessioni 3, 6 e 13 della stessa serie, riunite sul ramo `robustezza2/s03-s06-s12-s13-lotto2`: una sola PR. Specifica: `docs/superpowers/specs/2026-10-20-robustezza-seconda-serie-design.md` §7, sessione 12; piano: `docs/superpowers/plans/2026-10-20-robustezza2-s12-chat-leggera.md`. Una migrazione, `supabase/migrations/20261025105058_chat_riepilogo_conversazioni.sql`, applicata dall'integrazione al merge con la version del file; non è in `MIGRAZIONI_ATTESE_AL_MERGE` (crea solo una funzione: nessuna guardia delle fotografie la riconosce). Domande d'iscrizione contate prima della migrazione: **734** (domenica 25/10/2026, 10:46:48 UTC). «In produzione», il commit di `main` e la misura «dopo» li scrive la sessione che apre dopo (sezione «Per la sessione dopo» del piano).
+
+- **Misura prima** (domenica 25/10/2026, 10:46–10:55 UTC, sola lettura, solo conteggi e gettoni di log):
+  - conversazioni **1.028** su **672** utenti; per utente al massimo **37**, p50 2, p95 14 (10:47 UTC). La `GET` più pesante, dal codice: 3 + 4·37 = **151** richieste al database;
+  - venerdì 23/10/2026, 00:00–24:00 UTC (`edge_logs` del client del server): **3.026** `GET` della lista, **40,77** richieste al database per `GET` in media ((3.026 + 4·28.581 + 3.002) / 3.026 + 1). Controllo di coerenza: 28.595 conteggi dei non letti contro 28.581 letture dell'ultimo messaggio (scarto 0,05 %); 0 chiamate alla RPC;
+  - realtime, 7 giorni dal 18/10 al 24/10 (`app_log` client): `socket-chiuso-1006` **357**, `trasporto` **877**, `chat-realtime-rientrato` 1.082 (859 `nessuno`, 194 `ricarica`, 29 `pagina-nascosta`). Per giorno feriale dal 12/10 al 23/10: `1006` da 25 (21/10) a 111 (13/10), altri errori da 61 a 276, rientri da 76 a 327; venerdì 23/10: 72 · 181 · 223;
+  - dispatch anticipato, venerdì 23/10: **255** giri avviati, **178** superflui (0,70);
+  - schema (10:50 UTC): la funzione non c'era, le 21 colonne sì, e due indici di `chat_messages` hanno `thread_id` in testa (`idx_chat_messages_thread`, `idx_chat_messages_unread`);
+  - `pg_stat_statements` (10:51 UTC, chiamate / ms totali): ultimo messaggio 991.044 / 58.542; lista dei thread 153.803 / 34.472; id dei thread 238.585 / 33.615; conteggio dei non letti 812.116 / 26.156; `INSERT` in `chat_messages` 13.192 / 13.196;
+  - il corpo della funzione, senza crearla, con `EXPLAIN ANALYZE` sull'utente da 37 conversazioni scelto nel database (10:53 UTC): **4,6 ms** (di cui 1,34 ms per scegliere l'utente), 37 righe, 420 buffer dalla cache, con gli indici di `chat_threads`, `utenti`, `alunni` e i due di `chat_messages`.
+- **S7 — il riepilogo in una chiamata** (`60eb775a`, `a59ece6d`).
+  - `public.chat_riepilogo_conversazioni(p_utente uuid)` restituisce in `jsonb` la lista con la forma di prima: le colonne di `chat_threads`, `other_user` e `student` con i ripieghi «?»/«unknown», `last_message`, `unread_count`; ordine per `last_message_at` decrescente.
+  - `STABLE`, `SECURITY INVOKER`, `search_path` fisso (`public, pg_temp`); `EXECUTE` tolto a `PUBLIC`, `anon` e `authenticated`, dato solo a `service_role`. Con INVOKER, un `EXECUTE` dato per sbaglio ad `authenticated` lascerebbe la RLS di `chat_threads` come seconda difesa. Una guardia sulle 21 colonne non crea la funzione dove ne manca una (il DB della CI) e lo dice con un NOTICE. ROLLBACK nell'intestazione (`DROP FUNCTION`), solo dentro una PR di revert.
+  - `GET /api/chat/threads` passa da 3 + 4·N richieste al database (151 con 37 conversazioni) a **2**: la chiamata alla RPC, con l'id del gate (mai `?userId=`), e una lettura delle sospensioni. La specifica chiede ≤ 5.
+  - Se la funzione manca (`PGRST202` dalla schema cache, `42883` da Postgres) la route torna al percorso di prima con una riga `info` `riepilogo-non-installato`; con ogni altro guasto (`riepilogo-rpc-fallito`) o con una risposta di forma inattesa (`riepilogo-forma-inattesa`) torna lo stesso al percorso di prima, con una riga `error`: la lista non si svuota per colpa del riepilogo. L'insieme dei codici è locale (`RPC_RIEPILOGO_ASSENTE`, `src/lib/chat/riepilogo-conversazioni.ts`); `src/lib/db/tolleranza-schema.ts` non cambia.
+  - **Oltre il piano:** `__tests__/api/chat-threads-riepilogo-equivalenza.test.ts` fa girare la `GET` vera su PGlite, con lo schema di produzione (letto il 25/10) e un client che traduce le chiamate in SQL come PostgREST. Riepilogo e percorso di prima danno la stessa lista (righe, ordine, campi) per due docenti di sedi diverse, la segreteria, un genitore con figli in due sedi, un genitore col nome vuoto, un partecipante assente da `utenti` e un utente senza conversazioni; la stessa anche con un guasto `57014` e col `42883` vero di Postgres.
+- **S7 — la consegna esplicita** (`94b1df15`). L'`UPDATE` di `delivered_at` (`marcaConsegnati`) esce dalla `GET`, che non scrive più, e diventa `POST /api/chat/threads/consegnati`: corpo `{}` (schema `zod` stretto), gate `requireUser`, solo i thread di cui l'identità del gate è teacher o parent, nessun limite temporale; risponde `{ consegna: 'ok' | 'fermati' }`. La pagina chat la chiede solo quando la lista mostra non letti nuovi (`serveConsegna`), una richiesta alla volta e al più una in coda. Nel lock `isolamento-sede-coverage` entra la voce `chat/threads/consegnati:POST` in `AMMESSE`, con lo scope della `GET`; contatori `routeConServiceRole` 357 → 358, `handlerControllati` 555 → 556, `handlerEsentati` 107 → 108 (decisione 1, sotto).
+- **S7 — un orologio solo** (`836d691a`, `eb473cb7`).
+  - La lista della chat la scarica un orologio solo, quello di `useConversazioneChat`: 30 s a pagina visibile, 5 minuti a pagina nascosta (è da nascosta che parte la notifica del browser), ricarica al ritorno. Prima le `GET` identiche erano due: la seconda partiva da `useUnreadNotifications`.
+  - `useUnreadNotifications` chiede solo il permesso delle notifiche.
+  - Totale dei non letti, titolo della pagina e notifica del browser li fa `annunciaNonLetti` (`src/lib/chat/annuncio-non-letti.ts`) sulla lista già in mano, con le regole di prima: titolo fisso «Nuovo messaggio in chat», mai il testo del messaggio, un nome o un conteggio; nessuna notifica a pagina a fuoco; il clic apre la conversazione.
+  - La `GET` della lista (`scaricaListaConversazioni`) e la `POST` della consegna (`inviaConsegna`) sono funzioni di modulo che non rifiutano mai: l'applicazione della lista non ha più `try`.
+- **S7 — un giro per finestra** (`f40ef19e`). `chat/messages:POST` programma un solo giro di dispatch anticipato per conversazione ogni 30 s: il messaggio che trova la finestra aperta non programma niente (riga `info` `dispatch-anticipato-gia-programmato`), e la sua notifica la spedisce il giro già in attesa. La finestra si chiude prima di leggere la coda (un messaggio arrivato a giro avviato programma il suo), anche se `after()` o il giro lanciano, e scade da sola dopo 45 s (30 + 15 di margine). È per conversazione e **per istanza** della funzione (decisione 2, sotto); fra istanze resta la presa atomica di `eseguiDispatch`. Provato con una coda finta che modella `debounce` e presa: la notifica del secondo messaggio nella finestra non si perde.
+- **S7 — il 1006 che rientra** (`65e966bd`). Un'interruzione aperta da `socket-chiuso-1006` non si logga subito (decisione 3, sotto). Se il canale rientra entro 60 s resta solo la riga `chat-realtime-rientrato` che c'era già; se dopo 60 s è ancora giù e la pagina si vede, parte il `warn` `chat-realtime-errore: socket-chiuso-1006` di prima: l'interruzione vera resta `warn`, non diventa `error`. A pagina nascosta il controllo si riarma, e se la scheda si chiude prima non si scrive niente. Gli altri motivi, `trasporto` compreso, si loggano subito come prima.
+- **Decisioni dell'assistente in assenza del titolare (25/10), da confermare.** Il titolare aveva chiesto di non essere interpellato; il piano è scritto per il «sì», e l'assistente ha risposto sì a tutte e tre:
+  1. la voce nuova in `AMMESSE` per `chat/threads/consegnati:POST`, con i tre contatori +1. Non è un presidio tolto: l'`UPDATE` esce da una route già esentata, con lo stesso scope. L'alternativa era lasciare la consegna a `/api/notifiche` e a `chat/messages`, senza la richiesta esplicita che la §7 chiede;
+  2. la finestra del dispatch per conversazione e per istanza, non «per sede» come diceva il rapporto del 20/10: una finestra condivisa vorrebbe una tabella o un lock nel database, cioè il carico che questa sessione toglie;
+  3. il `1006` che rientra entro 60 s non si scrive affatto, perché lato client non c'è un `info` persistito: la riconnessione la conta `chat-realtime-rientrato`.
+
+  Le scelte 4-8 del piano («Decisioni che restano al titolare») sono applicate come scritte e restano anch'esse al titolare: `trasporto` (877 in 7 giorni) fuori dal rinvio, da decidere dopo la misura «dopo» (4); la doppia spunta dei messaggi più vecchi (5); `error.message` nel ripiego (6); `NOTIFY pgrst, 'reload schema'` solo col suo sì (7); i due `try/finally` (8).
+- **Cosa può comportarsi diversamente per chi usa la chat** (dichiarato prima del merge):
+  - la notifica del browser può partire prima di prima: il totale ora lo aggiorna ogni lista applicata, non più solo il giro dell'orologio di `useUnreadNotifications`;
+  - una `POST` di consegna fallita non si ritenta finché la lista non cambia (lo dice la riga `chat-consegna-non-riuscita`); la copre in parte `consegnaSeInAttesa` di `GET /api/notifiche`, a ogni giro della campanella (60 s) e col suo limite temporale;
+  - i messaggi nati prima della colonna `delivered_at`, già letti e mai consegnati, non ricevono più la doppia spunta all'apertura della lista: la ricevono alla prima consegna esplicita di quel thread, cioè quando arriva un non letto (scelta 5). Sono messaggi che il destinatario ha già letto;
+  - se `after()` accetta il giro ma la piattaforma non lo esegue, per 45 s i messaggi di quella conversazione non programmano un giro loro: la notifica aspetta il cron, al massimo 5 minuti;
+  - a parità esatta di `last_message_at` l'ordine della lista ora è fisso (per `id`); prima lo sceglieva il database.
+- **Osservato, non corretto:**
+  - il `500` della `GET` sul percorso di prima espone ancora `error.message` dopo la lettura di `chat_threads`. Resta com'era: la specifica vuole che lo sistemi una sessione successiva alla 13 che tocca il file (scelta 6);
+  - in `useConversazioneChat` restano due `try/finally` (`caricaPrecedenti`, `invia`), e per questo il compilatore di React rinuncia al hook intero; toglierli è un lavoro a parte (scelta 8).
+- **Logging.** Lato server: `chat` `info` `riepilogo-non-installato` ed `error` `riepilogo-rpc-fallito` / `riepilogo-forma-inattesa` (campi `operazione`, `error_code`, `ripiego`); `push` `info` `dispatch-anticipato-gia-programmato` (`operazione`, `threadId`). La `POST` di consegna passa da `withRoute`; un guasto della lettura dei thread è un `500` con `logErrore` (`db:chat_threads`), un guasto dell'`UPDATE` lo registra `marcaConsegnati`. Lato client: `chat-consegna-non-riuscita: http-<stato>` o `: <classe>` (`warn`) e `chat-permesso-notifiche-non-chiesto: <classe>` (`warn`, nuova: prima il rifiuto restava non gestito); `chat-non-letti-conteggio-fallito` e `chat-notifica-browser-non-mostrata` cambiano solo posto. Nessun dato personale: solo uuid, codici e gettoni a cardinalità chiusa; nessuna chiave nuova nella lista bianca della redazione (`error_code` c'era già, `ripiego` è un booleano).
+- **Prove** (rilanciate il 25/10 su questo ramo, salvo dove è scritto altro):
+  - compito 2: `__tests__/lib/chat-riepilogo-conversazioni-sql.test.ts`, la migrazione vera su PGlite, 12 test;
+  - compito 3: 5 file, 58 test (`esitoRiepilogo`, la route con ≤ 5 richieste e nessun `UPDATE`, l'equivalenza su PGlite, le sospensioni, `auth-gaps-m9`);
+  - compiti 4-5: la `POST` della consegna e i tre moduli puri, 4 file, 40 test;
+  - compito 6: i 6 file di test toccati, 107 test; dal rapporto del compito (non rilanciati qui) 120 file di test di componenti e pagine della chat, 1585 test, verdi. I due test di `useUnreadNotifications` su riservatezza e clic sono eliminati: i loro casi stanno in `__tests__/lib/chat-annuncio-non-letti.test.ts`;
+  - compiti 7-8: 11 file (gli otto `chat-messages-*`, `useChatRealtime-canale`, `chat-esito-1006`, `chat-finestra-dispatch`), 119 test;
+  - mutazioni, dai rapporti dei compiti: 24 per i compiti 2-3, 38 per i 4-5, 16 per il 6, 20 per i 7-8, tutte prese da un test.
+- **Dopo il merge** (lo scrive la sessione che apre dopo, dalla sezione «Per la sessione dopo» del piano). ⚠️ Nel lotto 2 la PR sta sul ramo `robustezza2/s03-s06-s12-s13-lotto2`: la ricerca `head:robustezza2/s12-` di quella sezione non la trova, si cerca il ramo del lotto.
+  1. Le `SELECT` di conferma: una riga `20261025105058` · `chat_riepilogo_conversazioni` in `supabase_migrations.schema_migrations`; `prosecdef` false e `proconfig` `{"search_path=public, pg_temp"}`; `EXECUTE` false per `anon` e `authenticated`, true per `service_role`; `get_advisors` a 0 `ERROR`; la fotografia delle migrazioni rigenerata dalla produzione.
+  2. Un'ora dopo il deploy, in `app_log` nessuna riga `riepilogo-%`, oppure solo `riepilogo-non-installato` entro 15 minuti dal merge. Se continua oltre, `NOTIFY pgrst, 'reload schema'` è una scrittura: si mostra l'istruzione al titolare e si lancia solo col suo sì.
+  3. **Misura «dopo»: da misurare dopo il merge**, sul primo giorno feriale intero dopo il deploy (00:00–24:00 UTC; matura alle 00:00 UTC del giorno seguente). Richieste al database per `GET` = `(riepiloghi + sospensioni) / riepiloghi`, atteso ≤ 5 (prima 40,77 in media, 151 la più pesante), con `liste` e `ultimi_messaggi` vicini a 0 e `consegne` più basse; per giorno feriale `1006` più bassi di prima e rientri presenti. Le due query qui sotto; le altre due (giri anticipati per esito, riepilogo in uso) sono nello stesso punto del piano.
+
+```sql
+-- (a) richieste per GET della lista — query_logs, finestra del giorno feriale 00:00–24:00 UTC
+select
+  countIf(v = 'GET'   and p = '/rest/v1/chat_threads'  and position(s, 'order=last_message_at.desc') > 0) as liste,
+  countIf(v = 'GET'   and p = '/rest/v1/chat_messages' and position(s, 'select=content%2Csender_id%2Ccreated_at') > 0) as ultimi_messaggi,
+  countIf(v = 'GET'   and p = '/rest/v1/conversazioni_sospensioni' and position(s, 'select=thread_id%2Csospesa_da%2Csospesa_verso%2Cmotivo%2Csospesa_il') > 0) as sospensioni,
+  countIf(v = 'PATCH' and p = '/rest/v1/chat_messages' and position(s, 'delivered_at=is.null') > 0) as consegne,
+  countIf(v = 'POST'  and p = '/rest/v1/rpc/chat_riepilogo_conversazioni') as riepiloghi
+from (
+  select toString(log_attributes['request.method']) as v,
+         toString(log_attributes['request.path']) as p,
+         toString(log_attributes['request.search']) as s
+  from logs
+  where source = 'edge_logs'
+    and toString(log_attributes['request.headers.x_client_info']) like '%createServerClient'
+)
+
+-- (b) errori del realtime per giorno, client, 14 giorni — execute_sql
+select giorno,
+  coalesce(sum(occorrenze) filter (where messaggio = 'chat-realtime-errore: socket-chiuso-1006'), 0) as errori_1006,
+  coalesce(sum(occorrenze) filter (where messaggio like 'chat-realtime-errore:%'
+                                     and messaggio <> 'chat-realtime-errore: socket-chiuso-1006'), 0) as altri_errori,
+  coalesce(sum(occorrenze) filter (where messaggio like 'chat-realtime-rientrato:%'), 0) as rientri
+from app_log
+where sorgente = 'client'
+  and giorno >= (now() at time zone 'utc')::date - 14
+group by giorno
+order by giorno;
+```
+
 ## 🛡️ Changelog — Robustezza, seconda serie, sessione 3: la scatola nera sulle cascate, sulle anagrafiche e sul protocollo — 2026-10-25 (branch `robustezza2/lotto2-a-s03-s12`)
 
 **Stato:** 🟡 in revisione (PR #@PR@), **merge a mano del titolare**. La sessione 3 arriva nel **lotto 2** con le sessioni 6, 12 e 13 della stessa serie: due rami di lavoro, una sola PR. Le due migrazioni le applica l'integrazione al merge, una riga ciascuna con la version del file. «In produzione», il commit di `main` e la misura «dopo» li scrive la sessione che apre dopo (sezione «Per la sessione dopo» del piano `docs/superpowers/plans/2026-10-20-robustezza2-s03-scatola-nera-cascate.md`).

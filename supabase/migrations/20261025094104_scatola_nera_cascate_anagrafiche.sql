@@ -225,3 +225,55 @@ BEGIN
       'FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica()', t);
   END LOOP;
 END $$;
+
+-- ── 4. Le bonifiche accendono l'interruttore per le sole proprie DELETE ────────
+-- Una bonifica cancella una copia storica APPOSTA (il testo di prima di un messaggio
+-- corretto, le copie di un alunno anonimizzato): copiarla 90 giorni in scatola la
+-- disferebbe. L'interruttore si accende per le due DELETE e torna com'era subito dopo:
+-- chi è nella stessa transazione non perde lo storico di quello che fa dopo.
+
+-- Corpo di 20261015183000_storici_stampe_rettifiche.sql:437-446, più l'interruttore.
+create or replace function public.storici_bonifica_chat() returns trigger
+language plpgsql security definer set search_path to 'public','pg_temp' as $$
+declare v_prima text;
+begin
+  if new.content is distinct from old.content then
+    new.rettifica_staff:=null; new.rettifica_staff_il:=null; new.rettifica_staff_da:=null;
+    new.rettifica_versione:=old.rettifica_versione+1;
+    v_prima := current_setting('scatola_nera.senza_storico', true);
+    perform set_config('scatola_nera.senza_storico', 'on', true);
+    delete from public.storici_revisioni where modulo='chat' and entita_id=new.id;
+    perform set_config('scatola_nera.senza_storico', coalesce(v_prima, 'off'), true);
+  end if;
+  return new;
+end $$;
+revoke all on function public.storici_bonifica_chat() from public, anon, authenticated;
+grant execute on function public.storici_bonifica_chat() to service_role;
+
+-- Corpo di 20261019223123_battiti_app_log_che_contano.sql:157-176, più l'interruttore.
+CREATE OR REPLACE FUNCTION public.storici_oblio_alunno()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $$
+declare v_prima text;
+begin
+  if new.anonimizzato_il is not null and old.anonimizzato_il is null then
+    v_prima := current_setting('scatola_nera.senza_storico', true);
+    perform set_config('scatola_nera.senza_storico', 'on', true);
+    delete from public.storici_revisioni where alunno_id=new.id;
+    delete from public.storici_collegamenti where alunno_id=new.id;
+    perform set_config('scatola_nera.senza_storico', coalesce(v_prima, 'off'), true);
+    update public.storici_generazioni set scade_il=least(scade_il,now()) where alunni_ids @> array[new.id];
+    begin
+      insert into public.app_log(livello,evento,sorgente,messaggio,fingerprint,contesto)
+      values('info','gdpr','server','Copie storiche del minore invalidate','storici-oblio-alunno',jsonb_build_object('alunno_id',new.id))
+      on conflict (fingerprint, giorno) do update
+        set occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now(), contesto = excluded.contesto;
+    exception when others then raise log 'storici: logging oblio non riuscito [%]',SQLSTATE; end;
+  end if;
+  return new;
+end $$;
+REVOKE ALL ON FUNCTION public.storici_oblio_alunno() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.storici_oblio_alunno() TO service_role;

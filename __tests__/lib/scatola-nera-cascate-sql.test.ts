@@ -382,3 +382,65 @@ describe('un database con la fase 4 ma senza lo storico delle modifiche (la CI n
     expect(copie.rows[0].n).toBe(1)
   })
 })
+
+describe('le bonifiche accendono l’interruttore nella propria transazione', () => {
+  beforeAll(async () => {
+    // In produzione i due trigger esistono dal 15/10 (20261015183000_storici_stampe_rettifiche.sql:222
+    // e :449); qui li crea il test, sulle funzioni ridefinite dalla migrazione della sessione 3.
+    await db.exec(`
+      CREATE OR REPLACE TRIGGER storici_oblio_alunno AFTER UPDATE OF anonimizzato_il ON public.alunni
+        FOR EACH ROW EXECUTE FUNCTION public.storici_oblio_alunno();
+      CREATE OR REPLACE TRIGGER storici_bonifica_chat BEFORE UPDATE OF content ON public.chat_messages
+        FOR EACH ROW EXECUTE FUNCTION public.storici_bonifica_chat();
+    `)
+  })
+
+  it('anonimizzare un alunno toglie revisioni e collegamenti SENZA copiarli', async () => {
+    await db.exec(`UPDATE public.alunni SET anonimizzato_il = now() WHERE id = '${ALUNNO}'`)
+    expect(await numero(`SELECT count(*) FROM public.storici_revisioni WHERE alunno_id = '${ALUNNO}'`)).toBe(0)
+    expect(await numero(`SELECT count(*) FROM public.storici_collegamenti WHERE alunno_id = '${ALUNNO}'`)).toBe(0)
+    expect(await numero('SELECT count(*) FROM scatola_nera.eliminazioni')).toBe(0)
+    // Il battito resta quello di prima, con ON CONFLICT.
+    expect(await numero(`SELECT count(*) FROM public.app_log WHERE fingerprint = 'storici-oblio-alunno'`)).toBe(1)
+  })
+
+  it('CONTROLLO POSITIVO: nella stessa transazione, dopo la bonifica, una DELETE torna a lasciare la copia', async () => {
+    await db.exec(`
+      BEGIN;
+      UPDATE public.alunni SET anonimizzato_il = now() WHERE id = '${ALUNNO}';
+      DELETE FROM public.fascicolo_accessi_audit WHERE alunno_id = '${ALUNNO}';
+      COMMIT;
+    `)
+    expect(await perTabella()).toEqual({ fascicolo_accessi_audit: 1 })
+  })
+
+  it('l’interruttore torna com’era: se una pulizia dichiarata l’aveva già acceso, resta acceso', async () => {
+    await db.exec(`
+      BEGIN;
+      SELECT set_config('scatola_nera.senza_storico', 'on', true);
+      UPDATE public.alunni SET anonimizzato_il = now() WHERE id = '${ALUNNO}';
+      DELETE FROM public.fascicolo_accessi_audit WHERE alunno_id = '${ALUNNO}';
+      COMMIT;
+    `)
+    expect(await numero('SELECT count(*) FROM scatola_nera.eliminazioni')).toBe(0)
+    // Controllo positivo: la DELETE dopo la bonifica è avvenuta davvero, solo senza copia.
+    expect(await numero(`SELECT count(*) FROM public.fascicolo_accessi_audit WHERE alunno_id = '${ALUNNO}'`)).toBe(0)
+  })
+
+  it('correggere il testo di un messaggio toglie la sua revisione senza copiarla', async () => {
+    await db.exec(`UPDATE public.chat_messages SET content = 'testo corretto' WHERE id = '${MSG_DOCENTE}'`)
+    expect(await numero(`SELECT count(*) FROM public.storici_revisioni WHERE entita_id = '${MSG_DOCENTE}'`)).toBe(0)
+    expect(await numero('SELECT count(*) FROM scatola_nera.eliminazioni')).toBe(0)
+    expect(await numero(`SELECT rettifica_versione FROM public.chat_messages WHERE id = '${MSG_DOCENTE}'`)).toBe(1)
+  })
+
+  it('CONTROLLO POSITIVO: corretto e poi cancellato nella stessa transazione, il messaggio resta in scatola', async () => {
+    await db.exec(`
+      BEGIN;
+      UPDATE public.chat_messages SET content = 'testo corretto' WHERE id = '${MSG_DOCENTE}';
+      DELETE FROM public.chat_messages WHERE id = '${MSG_DOCENTE}';
+      COMMIT;
+    `)
+    expect(await perTabella()).toEqual({ chat_messages: 1 })
+  })
+})

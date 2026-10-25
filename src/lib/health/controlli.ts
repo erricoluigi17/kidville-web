@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
 import { versioneDeploy } from '@/lib/versione/deploy'
+import { leggiRigheCronEsiti, valutaCronEsiti } from '@/lib/health/cron-esiti'
+import { inAttesaDellIntegrazione, type Valutazione } from '@/lib/health/valutazione'
+import { logEvento } from '@/lib/logging/logger'
 import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
 
 /**
@@ -175,6 +178,14 @@ export interface JobCron {
  *   pagamenti-solleciti   pagamenti-solleciti-run  0 6 ogni gg 26 h
  *   mensa-allergie-check  mensa-check-allergie  0 7 ogni gg    26 h
  *   fatture-coda-tick     fatture-coda-tick   ogni 5 min*      30 min  (*salta :02 e :32; dal 2026-09-23)
+ *   fascicolo-audit-ip-retention  (stesso nome)  29 4 ogni gg  26 h   (dal 2026-10-25)
+ *   cron-esiti            cron-esiti          ogni 10 min      40 min  (dal 2026-10-25)
+ *
+ * Dal 2026-10-25 (sessione 7 della seconda serie) i job hanno DUE guardie: questa (`cron-battito`, il
+ * battito che la route o la funzione scrive in `app_log`) e `cron-esiti` (l'esito che pg_cron e
+ * pg_net hanno registrato, letto da `cron_ultimo_esito`), che copre TUTTI i job attivi, mensili
+ * compresi. Le due possono suonare insieme per lo stesso job, e dicono cose diverse: «la route non
+ * ha finito il giro» e «pg_cron non ha avuto un esito buono».
  *
  * La finestra è ~3-4 volte la cadenza per i job frequenti e cadenza+2h per i giornalieri:
  * deve assorbire un giro saltato senza gridare, e non due. Un allarme che scatta al primo
@@ -362,6 +373,16 @@ export const JOB_CRON: readonly JobCron[] = [
     // di silenzio, invece, non è più un ritardo.
     // Ogni esito del giro (anche «niente da fare» e «finestra della sync») batte `esito: 'ok'`.
     { nome: 'fatture-coda-tick', finestraMs: 30 * MIN },
+    // Notturno di sola SQL (`29 4 * * *`, `fascicolo_audit_ip_retention_tick`): azzera `ip` e
+    // `user_agent` del registro degli accessi ai dati dei bambini dopo un anno. Battito
+    // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
+    // (misura della sessione 7). Finestra di 26 ore come gli altri giornalieri.
+    { nome: 'fascicolo-audit-ip-retention', finestraMs: 26 * ORA },
+    // Ogni 10 minuti (`4,14,24,34,44,54 * * * *`, funzione `cron_esiti` della sessione 6): legge
+    // gli esiti di tutti gli altri job. Se si ferma, il controllo `cron-esiti` diventa cieco (e lo
+    // dice: «cron-esiti fermo da N min»); il suo battito qui è la seconda guardia. 40 minuti =
+    // `finestraDaIntervallo(10)` in `@/lib/health/cron-esiti`.
+    { nome: 'cron-esiti', finestraMs: 40 * MIN },
 ]
 
 /**
@@ -381,8 +402,12 @@ export const JOB_CRON: readonly JobCron[] = [
  * che gira perfettamente. Un allarme che suona da solo viene spento, e allora non protegge più
  * niente — che è la frase già scritta in testa a questo modulo.
  *
- * Questi job si seguono con una query su `app_log` (il battito c'è e si legge), non con un
- * endpoint interrogato ogni minuto.
+ * Questi job NON sono ciechi: dal 2026-10-25 (sessione 7 della seconda serie) li sorveglia il controllo
+ * `cron-esiti`, che legge `cron_ultimo_esito` — una riga per job che NON scade, scritta ogni 10
+ * minuti dalla funzione `cron_esiti` della sessione 6 — con la finestra della cadenza di ciascuno
+ * (`finestraDaCadenza` in `@/lib/health/cron-esiti`: per un mensile 31 giorni + 2 ore). Restano
+ * fuori da `JOB_CRON` perché `cron-battito` legge il battito in `app_log`, e per loro quel battito
+ * o non c'è o sparisce prima del successivo.
  */
 export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }[] = [
     {
@@ -390,13 +415,14 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
         perche:
             'MENSILE (`35 4 1 * *`): la finestra necessaria (~32 giorni) supera la conservazione ' +
             'di app_log (30 giorni), quindi il battito precedente sparisce prima che arrivi il ' +
-            'successivo e l’allarme suonerebbe ogni mese su un lavoro sano.',
+            'successivo e l’allarme suonerebbe ogni mese su un lavoro sano. Lo sorveglia ' +
+            '`cron-esiti` (cron_ultimo_esito) con la finestra della sua cadenza.',
     },
     {
         nome: 'iscrizioni-retention',
         perche:
             'MENSILE (`41 4 1 * *`), stessa ragione del gemello; e il suo battito non dichiara ' +
-            '`esito: ok`. Si segue con una query su app_log.',
+            '`esito: ok`. Lo sorveglia `cron-esiti` (cron_ultimo_esito) con la finestra della sua cadenza.',
     },
     {
         nome: 'news-digest',
@@ -411,46 +437,16 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             '`operazione: digest`, dove ora compaiono anche gli esiti `rimandata-quota` ' +
             '(tetto email raggiunto, edizione lasciata in coda) e `digest-arretrate`. ' +
             'Diventa sorvegliabile da qui il giorno in cui la cadenza passa a giornaliera: ' +
-            'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri.',
+            'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri. ' +
+            'Il 20/10 era SPENTO in cron.job: `cron-esiti` legge i soli job attivi, e lo ' +
+            'riprende da solo il giorno in cui torna attivo.',
     },
     {
         nome: 'app-log-purge',
         perche:
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
-            'per consensi-retention, audit-docente-retention e app-log-bonifica-pii.',
-    },
-    // `fascicolo-audit-ip-retention` (`29 4 * * *`, OGNI NOTTE, funzione SQL
-    // `fascicolo_audit_ip_retention_tick`): azzera `ip` e `user_agent` del registro degli accessi
-    // ai dati dei bambini dopo un anno, decisione del titolare del 2026-10-04; la riga resta. È
-    // giornaliero e il suo battito ha la forma che `controlloBattitoCron` legge (lock
-    // `informativa-conservazione-dichiarata`, `BATTITI_DA_LEGGERE`): il suo posto è `JOB_CRON`, con
-    // `finestraMs: 26 * ORA` come gli altri giornalieri.
-    //
-    // Sta qui per un vincolo di SEQUENZA, non per una scelta — come `galleria-retention` e
-    // `cestino-registro-retention` prima di lui. La migrazione
-    // (`20261004215133_fascicolo_audit_ip_retention`) la applica l'integrazione al merge della PR
-    // #184, e fino ad allora il lock `cron-sorvegliato-e-applicato` vieta di sorvegliarla: un nome
-    // in `JOB_CRON` senza il suo lavoro manda `/api/health` in `degradato` dal primo deploy, e un
-    // allarme che suona da solo viene spento.
-    {
-        nome: 'fascicolo-audit-ip-retention',
-        perche:
-            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
-            'Supabase al merge della PR #184. Dopo il primo battito `ok` in app_log (impronta ' +
-            '`cron:fascicolo-audit-ip-retention`) e la fotografia delle migrazioni rigenerata, ' +
-            'passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
-    },
-    // `cron-esiti` (minuti 4, 14, … 54, funzione SQL `cron_esiti`): legge gli esiti delle chiamate
-    // dei cron e scrive un battito `cron:cron-esiti` a ogni giro. Sta qui per lo stesso vincolo di
-    // SEQUENZA di `fascicolo-audit-ip-retention`: la migrazione la applica l'integrazione al merge
-    // della sessione 6, e un nome in `JOB_CRON` senza il suo lavoro manderebbe `/api/health` in
-    // `degradato` dal primo deploy. Lo porta in `JOB_CRON` la sessione 7, dopo il primo battito.
-    {
-        nome: 'cron-esiti',
-        perche:
-            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
-            'Supabase al merge della sessione 6. Dopo il primo battito `ok` in app_log (impronta ' +
-            '`cron:cron-esiti`) lo porta in `JOB_CRON` la sessione 7.',
+            'per consensi-retention, audit-docente-retention e app-log-bonifica-pii. Li sorveglia ' +
+            'tutti `cron-esiti` (cron_ultimo_esito) con la finestra della loro cadenza.',
     },
 ]
 
@@ -1512,6 +1508,73 @@ export async function controlloAuditDocente(
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 10. I controlli della sessione 7 (seconda serie di robustezza): al più `degradato`, MAI `giu`
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * L'istante della build, fissato da `next.config.ts` (`KV_BUILD_IL`). `null` fuori da una build
+ * (test, script): allora nessuna tolleranza scade, perché non c'è un'integrazione da aspettare.
+ * Accesso STATICO: la chiave `env` di `next.config.ts` sostituisce solo questa forma.
+ */
+function buildIlMs(): number | null {
+    const grezzo = process.env.KV_BUILD_IL
+    if (!grezzo) return null
+    const t = Date.parse(grezzo)
+    return Number.isNaN(t) ? null : t
+}
+
+/**
+ * LA RPC DELLA SALUTE NON C'È — i due modi in cui succede, sul modello di `RPC_ASSENTE` di
+ * `src/app/api/avvisi/[id]/risposte/route.ts`: `PGRST202` (PostgREST non la trova nella cache dello
+ * schema) e `42883` (Postgres: «undefined function»). Insieme LOCALE a queste due chiamate, come
+ * vuole il §5 della specifica: `CODICI_TABELLA_ASSENTE` parla di tabelle, e
+ * `src/lib/db/tolleranza-schema.ts` non si allarga. `PGRST203` (due funzioni con lo stesso nome)
+ * resta fuori: è uno schema rotto, non uno schema in arrivo.
+ */
+const RPC_SALUTE_ASSENTE = new Set(['PGRST202', '42883'])
+
+/**
+ * Una RPC che il database non conosce ancora. Succede per qualche minuto a ogni rilascio che ne
+ * porta una: la migrazione e il deploy partono insieme, e la cache dello schema arriva dopo. Per 30
+ * minuti dalla build è attesa (`ok`, il dettaglio lo dice e una riga `info` spiega perché); dopo,
+ * l'integrazione non l'ha applicata (`degradato`, e la porta lo scrive a livello `warn`). Vedi
+ * `@/lib/health/valutazione`. L'evento `rpc` non è persistito: la riga va nei log di Vercel e non
+ * aggiunge niente ad `app_log` a ogni giro del campanello.
+ */
+function rpcNonInstallata(nome: string, codice: string, adesso: number): Valutazione {
+    if (!inAttesaDellIntegrazione(buildIlMs(), adesso)) {
+        return { esito: 'degradato', dettaglio: `${nome} assente da oltre 30 min dalla build (${codice})` }
+    }
+    logEvento('rpc', 'info', {
+        operazione: `health:${nome}`,
+        esito: 'rpc-non-ancora-installata',
+        msg: `${nome} non ancora installata (${codice}): migrazione e deploy partono insieme, tollerata fino a 30 min dalla build`,
+    })
+    return { esito: 'ok', dettaglio: `${nome} non ancora installata (${codice})` }
+}
+
+/**
+ * `cron-esiti` — ogni job ATTIVO di `pg_cron` ha avuto un esito buono dentro la finestra della sua
+ * cadenza, mensili compresi. La decisione sta in `@/lib/health/cron-esiti`; qui solo la lettura.
+ * Escono nomi di job, numeri e codici. Un'eccezione della funzione SQL (`P0001`: mancano le tabelle
+ * di pg_cron o della sessione 6) è `degradato` subito: non è un rilascio in corso, è una
+ * sorveglianza che non c'è.
+ */
+export async function controlloCronEsiti(supabase: SupabaseClient, adesso: number): Promise<Controllo> {
+    return misura('cron-esiti', 'degradato', async () => {
+        const { data, error } = await supabase.rpc('salute_cron_esiti')
+        if (error) {
+            const codice = codiceDi(error)
+            if (RPC_SALUTE_ASSENTE.has(codice)) return rpcNonInstallata('salute_cron_esiti', codice, adesso)
+            return { esito: 'degradato', dettaglio: `lettura esiti dei cron ${codice}` }
+        }
+        const righe = leggiRigheCronEsiti(data)
+        if (righe === null) return { esito: 'degradato', dettaglio: 'risposta di salute_cron_esiti illeggibile' }
+        return valutaCronEsiti(righe, adesso)
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -1582,6 +1645,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloCodeArretrate(supabase, adesso),
         controlloAuditDocente(supabase, adesso, opzioni.ambiente),
         Promise.resolve(controlloRegione()),
+        controlloCronEsiti(supabase, adesso),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

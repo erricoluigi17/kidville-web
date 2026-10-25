@@ -2,10 +2,12 @@
 -- GLI IP DEL REGISTRO DEGLI ACCESSI SI CONSERVANO UN ANNO
 -- (decisione del titolare, 2026-10-04)
 --
--- STATO: NON APPLICATA al 2026-10-04, e di proposito. Sta nella PR #184 e la applica
--- l'integrazione Supabase al merge, con la `version` di questo file. Applicarla
--- prima a mano (MCP `apply_migration`, `supabase db push`) registrerebbe una seconda
--- riga in `supabase_migrations.schema_migrations` al momento del merge.
+-- ✅ APPLICATA il 2026-10-05, version `20261004215133`: l'ha applicata l'integrazione
+-- Supabase al merge della PR #184, con la `version` di questo file (una riga sola in
+-- `supabase_migrations.schema_migrations`; è nella fotografia delle migrazioni applicate).
+-- Attestata qui il 2026-10-25 (sessione 7 della seconda serie di robustezza), quando il
+-- job è entrato in `JOB_CRON` dopo il primo battito `ok`. Riapplicarla a mano (MCP
+-- `apply_migration`, `supabase db push`) registrerebbe una seconda riga.
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
 -- ─── IL FATTO ─────────────────────────────────────────────────────────────────

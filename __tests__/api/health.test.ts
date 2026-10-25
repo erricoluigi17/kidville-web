@@ -195,6 +195,7 @@ describe('GET /api/health', () => {
             'code-arretrate',
             'config',
             'cron-battito',
+            'cron-esiti',
             'db-lettura',
             'regione',
             'schema-atteso',
@@ -208,6 +209,25 @@ describe('GET /api/health', () => {
         expect((await GET(new Request('https://app.kidville.it/api/health'))).headers.get('Cache-Control')).toBe(
             'no-store',
         )
+    })
+
+    it('cron-esiti: un job senza esito buono dentro la finestra porta a degraded, mai a down, e lo nomina', async () => {
+        rpc.cronEsiti.mockResolvedValue({
+            data: [
+                { job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', visto_il: fa(MIN), vivo_il: fa(MIN) },
+                { job: 'notifiche-retention', cadenza: '35 4 1 * *', esito: 'fallito', visto_il: fa(2 * ORA), vivo_il: fa(32 * 24 * ORA) },
+            ],
+            error: null,
+        })
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'cron-esiti')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: notifiche-retention',
+        })
     })
 
     it("UNA traccia d'audit persa porta la salute a degraded con `audit-docente`, e `tasso-errore` resta ok", async () => {

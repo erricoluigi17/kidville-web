@@ -183,7 +183,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 // La spunta verde solo se qualcosa è partito davvero: su «0 inviati» sarebbe un successo finto.
                 <p className={inviati > 0
                     ? 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success'
-                    : 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-sm font-bold text-kidville-muted'}>
+                    : 'mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-sm font-bold text-kidville-sub'}>
                     {inviati > 0 && <SaveCheck size={16} />} {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
                 </p>
             )}

@@ -30,8 +30,9 @@ import { osservaVisibilita } from '@/lib/hooks/visibilita-pagina';
 interface Opzioni {
     /**
      * Il ritmo da usare quando la pagina è nascosta. Omesso (il caso normale) l'orologio si
-     * FERMA. Si dà un valore solo dove fermarsi spegnerebbe una funzione: `useUnreadNotifications`
-     * è l'unico punto che manda la notifica del browser quando la pagina non è a fuoco.
+     * FERMA. Si dà un valore solo dove fermarsi spegnerebbe una funzione: dalla sessione 12 di
+     * robustezza 2 è la lista della chat in `useConversazioneChat`, da cui `annunciaNonLetti` manda
+     * la notifica del browser quando la pagina non è a fuoco.
      */
     intervalloNascostoMs?: number;
     /** `false` non arma niente. Serve ai punti che hanno già un gate proprio (es. una media query). */

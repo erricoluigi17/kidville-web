@@ -137,7 +137,7 @@ type MessaggioBroadcast = { payload?: unknown };
  *    volte di fila, poi un log e resta il polling. Il CLOSED del nostro smontaggio — che può
  *    arrivare subito o dopo l'ack del leave — si ignora con un flag per esecuzione dell'effect.
  *
- * Il polling (30 s, fermo a pagina nascosta) resta come rete quando il Realtime non c'è.
+ * Il polling resta come rete quando il Realtime non c'è: la lista ogni 30 s (5 minuti a pagina nascosta), i messaggi della conversazione aperta ogni 30 s (fermi a pagina nascosta).
  */
 export function useChatRealtime({
     userId,

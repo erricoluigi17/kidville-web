@@ -182,7 +182,7 @@ SELECT tgname, count(*) AS n
  GROUP BY 1 ORDER BY 1;
 ```
 
-Atteso: `scatola_nera_eliminazioni` 42, `scatola_nera_modifiche` 13, `scatola_nera_no_truncate` 42. Scrivi `E0=` (eliminazioni) e `M0=` (modifiche). **Soglia:** se non sono 42 e 13, i numeri «dopo» (Rilascio, Passo 6, e sezione «Per la sessione dopo», punto 4) diventano `E0 + 11` e `M0 + 7`, e la differenza va spiegata nel PRD prima di andare avanti (una sessione intermedia ha toccato la scatola).
+Atteso: `scatola_nera_eliminazioni` 42, `scatola_nera_modifiche` 13, `scatola_nera_no_truncate` 42. Scrivi `E0=` (eliminazioni) e `M0=` (modifiche). **Soglia:** se non sono 42 e 13, i numeri «dopo» (Rilascio, Passo 6, e sezione «Per la sessione dopo», punto 4) diventano `E0 + 12` e `M0 + 7` (dieci figlie più le due tabelle del protocollo: `conversazioni_sospensioni` è entrata come decima il 25/10, decisione dell'assistente in assenza del titolare), e la differenza va spiegata nel PRD prima di andare avanti (una sessione intermedia ha toccato la scatola).
 
 - [ ] **Passo 3: le figlie in cascata, esatte**
 
@@ -744,7 +744,7 @@ Scrivi in `$MIG_A` l'intestazione intera (resta la stessa fino al Rilascio):
 -- Invariato: se la copia non si scrive, fallisce la DELETE o l'UPDATE.
 --
 -- ─── COME SI VERIFICA ────────────────────────────────────────────────────────
---   select count(*) from pg_trigger where tgname = 'scatola_nera_eliminazioni';   -- 42 + 9 = 51
+--   select count(*) from pg_trigger where tgname = 'scatola_nera_eliminazioni';   -- 42 + 10 = 52
 --   select count(*) from pg_trigger where tgname = 'scatola_nera_modifiche';      -- 13 + 5 = 18
 --   select prosrc ~ 'senza_storico' from pg_proc
 --    where oid = 'scatola_nera.registra()'::regprocedure;                            -- true
@@ -2649,10 +2649,10 @@ il protocollo fino alla sessione 3 della seconda serie (Decisione #6: cancellazi
 
 **Misura «prima»** ({ISCRIZIONI_ALLE} UTC, sola lettura): `enrollment_submissions` = **{ISCRIZIONI}** righe. Database {DB_PRIMA}; scatola nera {SCATOLA_PRIMA}. Trigger: {E0} sulle eliminazioni, {M0} sulle modifiche. Crescita stimata della scatola in 90 giorni: **{CRESCITA_MB} MB** (finestra di {GIORNI} giorni dal {DAL}; stima prudente: byte medi per riga con indici e TOAST). Bucket del protocollo: {STORAGE_PROTOCOLLO_PRIMA}, {VERSIONI_PRIMA} versioni.
 
-- **Le cascate** (`{version A}_scatola_nera_cascate_anagrafiche.sql`). Cancellare un utente, un alunno o un avviso portava via in CASCADE tabelle che la scatola nera non vedeva (D4). Ora nove figlie restano 90 giorni in `scatola_nera.eliminazioni`, con il TRUNCATE vietato: `chat_messages`, `chat_threads`, `avvisi`, `avvisi_risposte`, `nota_ricezioni`, `alunni_classi_storico`, `storici_collegamenti`, `storici_revisioni`, `fascicolo_accessi_audit`. Fuori, col motivo nell'intestazione: notifiche e push (effimere), personale, galleria e candidature (retention per legge), configurazione d'accesso, tabelle operative, lavori di stampa, `registro_destinatari` (decide il titolare).
+- **Le cascate** (`{version A}_scatola_nera_cascate_anagrafiche.sql`). Cancellare un utente, un alunno o un avviso portava via in CASCADE tabelle che la scatola nera non vedeva (D4). Ora dieci figlie restano 90 giorni in `scatola_nera.eliminazioni`, con il TRUNCATE vietato: `chat_messages`, `chat_threads`, `conversazioni_sospensioni` (la prova di moderazione che la policy UGC chiede di conservare: trovata dalla misura del Passo 0 fuori dagli elenchi del piano, entrata per decisione dell'assistente in assenza del titolare, da confermare), `avvisi`, `avvisi_risposte`, `nota_ricezioni`, `alunni_classi_storico`, `storici_collegamenti`, `storici_revisioni`, `fascicolo_accessi_audit`. Fuori, col motivo nell'intestazione: notifiche e push (effimere), personale, galleria e candidature (retention per legge), configurazione d'accesso, tabelle operative, lavori di stampa, `registro_destinatari` (decide il titolare).
 - **Le anagrafiche.** Lo storico delle modifiche copre anche `alunni`, `parents`, `utenti`, `note_disciplinari`, `certificati_medici`. Un UPDATE che cambia solo `storico_versione` non si copia: è il tocco con cui una presa visione firmata segna la nota.
 - **Le pulizie.** `scatola_nera.registra()` rispetta `scatola_nera.senza_storico`; `storici_bonifica_chat` e `storici_oblio_alunno` lo accendono per le sole proprie DELETE, perché una copia di 90 giorni disferebbe la bonifica.
-- **L'oblio** toglie anche i messaggi delle conversazioni che nominano la persona (per `thread_id`) e le revisioni di quei messaggi (per `entita_id`), con le conversazioni cancellate o vive.
+- **L'oblio** toglie anche i messaggi delle conversazioni che nominano la persona (per `thread_id`), le revisioni di quei messaggi (per `entita_id`) e le sospensioni di quelle conversazioni, con le conversazioni cancellate o vive; e le sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da` (colonne senza `_id`, il `motivo` è testo libero). Anonimizzare una scheda lascia la riga com'era in `scatola_nera.modifiche` finché l'oblio dell'app non chiama `scatola_nera_dimentica`, per ultima.
 - **Il protocollo, «copia silenziosa» (T4)** (`{version B}_scatola_nera_protocollo.sql`, `rettifica/route.ts`). `protocolli` e `protocolli_allegati` restano 90 giorni in scatola quando si eliminano o si modificano; la rettifica copia il documento di prima in `<sede>/<anno>/<numero>-versioni/` prima di caricare il nuovo, e se la copia non riesce non parte; `protocollo_elimina` restituisce anche quelle versioni, che la route toglie dal bucket (decisione #2). Le decisioni #6 e #26 restano: nessun `logScrittura`, nessun log sul successo, nessun badge.
 - **Avvisi.** La cancellazione conta le risposte dei genitori prima di portarle via: `n_risposte_portate_via` nel log `cancellato`, `risposte-non-contate` (error) se il conteggio fallisce.
 - **«Libera spazio» e la chat.** Con `chat_messages` nella scatola, i messaggi senza allegato che «libera spazio» (`src/lib/alunni/libera-spazio.ts`) toglie a un bambino ritirato restano 90 giorni in `scatola_nera.eliminazioni` (l'oblio li toglie se richiesto): lo spazio si libera davvero dopo 90 giorni. Accettato dal titolare all'apertura della sessione. Misura: {LIBERA_SPAZIO_MESSAGGI} messaggi su {LIBERA_SPAZIO_ALUNNI} ritirati ancora da liberare; {LIBERA_SPAZIO_USATA} alunni già liberati, {LIBERA_SPAZIO_90G} negli ultimi 90 giorni.
@@ -2661,7 +2661,7 @@ il protocollo fino alla sessione 3 della seconda serie (Decisione #6: cancellazi
 
 **Prove.** PGlite `scatola-nera-cascate-sql.test.ts` (le tre migrazioni della scatola lette dal disco, la terza applicata due volte), `scatola-nera-protocollo-sql.test.ts`, `protocollo-elimina-sql.test.ts` (senza Storage, come la CI); route `protocolli-rettifica-versioni.test.ts` e `avvisi-orfani-cancellazione.test.ts`; `protocolli-store.test.ts`; impronta dell'informativa.
 
-**Dopo il merge** (lo scrive la sessione che apre dopo, con la sezione «Per la sessione dopo» di questo piano): le `SELECT` di conferma (trigger {E0}+11 e {M0}+7, corpi, permessi), la misura «dopo» con data e ora UTC, il conteggio per tabella che matura sette giorni dopo il merge, la rettifica di prova sulla sede di prova solo con il via del titolare.
+**Dopo il merge** (lo scrive la sessione che apre dopo, con la sezione «Per la sessione dopo» di questo piano): le `SELECT` di conferma (trigger {E0}+12 e {M0}+7, corpi, permessi), la misura «dopo» con data e ora UTC, il conteggio per tabella che matura sette giorni dopo il merge, la rettifica di prova sulla sede di prova solo con il via del titolare.
 
 ```
 
@@ -2759,8 +2759,8 @@ gh pr create --base main --head robustezza2/s03-scatola-nera-cascate \
 - Informativa a una versione nuova (da rileggere da parte del titolare); runbook A0 e A0-bis.
 
 ## Migrazioni (le applica l'integrazione al merge)
-- `*_scatola_nera_cascate_anagrafiche.sql` — trigger e funzioni, nessuna tabella, nessuna colonna. Dopo: trigger delle eliminazioni +9, delle modifiche +5 (da 42 a 51 e da 13 a 18, se il «prima» del PRD è 42 e 13).
-- `*_scatola_nera_protocollo.sql` — trigger su `protocolli` e `protocolli_allegati`, `protocollo_elimina`. Dopo: altri +2 e +2 (53 e 20).
+- `*_scatola_nera_cascate_anagrafiche.sql` — trigger e funzioni, nessuna tabella, nessuna colonna. Dopo: trigger delle eliminazioni (e del TRUNCATE vietato) +10, delle modifiche +5 (da 42 a 52 e da 13 a 18, se il «prima» del PRD è 42 e 13: misurato il 25/10).
+- `*_scatola_nera_protocollo.sql` — trigger su `protocolli` e `protocolli_allegati`, `protocollo_elimina`. Dopo: altri +2 e +2 (54 e 20).
 - Rollback nell'intestazione di ciascuna; si applica solo dentro una PR di revert.
 
 ## Misura «prima»
@@ -2838,7 +2838,7 @@ SELECT p.oid::regprocedure AS funzione,
  ORDER BY 1;
 ```
 
-Atteso: due migrazioni con la version dei file; `scatola_nera_eliminazioni` = `scatola_nera_no_truncate` = {E0} + 11 (53 se {E0} era 42), `scatola_nera_modifiche` = {M0} + 7 (20 se {M0} era 13); sei funzioni con `aggiornata = true` e `authenticated_esegue = false`. Se un numero non torna, la migrazione è stata applicata a metà o con un'altra version: **fermati** e leggi `schema_migrations` prima di toccare qualunque cosa.
+Atteso: due migrazioni con la version dei file; `scatola_nera_eliminazioni` = `scatola_nera_no_truncate` = {E0} + 12 (54 se {E0} era 42), `scatola_nera_modifiche` = {M0} + 7 (20 se {M0} era 13); sei funzioni con `aggiornata = true` e `authenticated_esegue = false`. Se un numero non torna, la migrazione è stata applicata a metà o con un'altra version: **fermati** e leggi `schema_migrations` prima di toccare qualunque cosa.
 
 - [ ] **Passo 7: misura «dopo», conteggio a una settimana e rettifica di prova: non qui**
 
@@ -2991,7 +2991,7 @@ SELECT pg_size_pretty(pg_database_size(current_database())) AS database,
 SELECT count(*) FROM enrollment_submissions;
 ```
 
-Atteso: i trigger «prima» sono nella voce del PRD della sessione 3 («Trigger: N sulle eliminazioni, M sulle modifiche»); dopo, `scatola_nera_eliminazioni` = `scatola_nera_no_truncate` = N + 11 e `scatola_nera_modifiche` = M + 7. Sei funzioni con `aggiornata = true` e `authenticated_esegue = false`. Se un numero non torna, la migrazione è stata applicata a metà o con un'altra version: **fermati** e avvisa il titolare prima di toccare qualunque cosa. Le dimensioni e il conteggio si scrivono con la data e l'ora UTC della prima riga, accanto a quelle «prima» della voce del PRD.
+Atteso: i trigger «prima» sono nella voce del PRD della sessione 3 («Trigger: N sulle eliminazioni, M sulle modifiche»); dopo, `scatola_nera_eliminazioni` = `scatola_nera_no_truncate` = N + 12 (54 se N era 42) e `scatola_nera_modifiche` = M + 7 (20 se M era 13). Sei funzioni con `aggiornata = true` e `authenticated_esegue = false`. Se un numero non torna, la migrazione è stata applicata a metà o con un'altra version: **fermati** e avvisa il titolare prima di toccare qualunque cosa. Le dimensioni e il conteggio si scrivono con la data e l'ora UTC della prima riga, accanto a quelle «prima» della voce del PRD.
 
 - [ ] **5. Conteggio per tabella — matura dal settimo giorno dopo il merge**
 

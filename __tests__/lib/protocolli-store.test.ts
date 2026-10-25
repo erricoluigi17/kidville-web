@@ -5,6 +5,7 @@ import {
   slugNomeFile,
   pathStaging,
   pathDefinitivi,
+  istanteVersione,
   SCHEMA_MANCANTE,
 } from '@/lib/protocolli/store'
 import { logoLightBytes } from '@/lib/protocolli/assets'
@@ -50,6 +51,21 @@ describe('path nello storage', () => {
     expect(percorsi.allegato(2, 'Delega firmata.jpg')).toBe(
       '11111111-2222-3333-4444-555555555555/2026/0000042-allegati/2-delega-firmata.jpg'
     )
+  })
+  it('versioni: accanto alla registrazione, istante e nome del file di prima', () => {
+    const percorsi = pathDefinitivi('11111111-2222-3333-4444-555555555555', 2026, 42)
+    expect(percorsi.prefissoVersioni).toBe('11111111-2222-3333-4444-555555555555/2026/0000042-versioni/')
+    expect(
+      percorsi.versione('20261021103015123', '11111111-2222-3333-4444-555555555555/2026/0000042-originale.pdf')
+    ).toBe('11111111-2222-3333-4444-555555555555/2026/0000042-versioni/20261021103015123-0000042-originale.pdf')
+    // Lo stesso prefisso che `protocollo_elimina` ricava in SQL: scuola/anno/numero a 7 cifre + '-versioni/'.
+    expect(percorsi.versione('x', 'y.pdf').startsWith(percorsi.prefissoVersioni)).toBe(true)
+  })
+  it('istanteVersione: UTC al millesimo, 17 cifre, ordinabile come testo', () => {
+    expect(istanteVersione(new Date('2026-10-21T10:30:15.123Z'))).toBe('20261021103015123')
+    expect(
+      istanteVersione(new Date('2026-10-21T10:30:15.124Z')) > istanteVersione(new Date('2026-10-21T10:30:15.123Z'))
+    ).toBe(true)
   })
 })
 

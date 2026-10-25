@@ -826,6 +826,23 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
         // Prima della cancellazione, perché dopo il dato non c'è più.
         const allegato = await percorsoAllegatoArchiviatoAvviso(supabase, id, 'avvisi/[id]:DELETE');
 
+        // LE RISPOSTE DEI GENITORI (adesioni, autorizzazioni) se ne vanno con l'avviso, in
+        // CASCADE (`avvisi_risposte_avviso_id_fkey`). Dalla sessione 3 della seconda serie di
+        // robustezza restano 90 giorni in `scatola_nera.eliminazioni`; il log di successo dice
+        // QUANTE, così chi deve recuperarle sa che c'erano. Si contano prima: dopo non c'è più
+        // niente da contare. Un conteggio fallito non ferma la cancellazione (è una lettura che
+        // non decide niente): il numero resta `null`, che non è «zero».
+        let nRisposte: number | null = null;
+        const { count: risposteContate, error: errContaRisposte } = await supabase
+            .from('avvisi_risposte')
+            .select('id', { count: 'exact', head: true })
+            .eq('avviso_id', id);
+        if (errContaRisposte) {
+            guastoLetturaAccessoria('avvisi', 'avvisi/[id]:DELETE', 'risposte-non-contate', errContaRisposte);
+        } else {
+            nRisposte = typeof risposteContate === 'number' ? risposteContate : null;
+        }
+
         const { error } = await supabase
             .from('avvisi')
             .delete()
@@ -887,6 +904,7 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
             avviso: id,
             n_notifiche_rimosse: nNotifiche,
             n_allegati_rimossi: nAllegati,
+            n_risposte_portate_via: nRisposte,
         });
 
         return NextResponse.json({ success: true });

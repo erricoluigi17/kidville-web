@@ -54,8 +54,14 @@ type PgErr = { code?: string; message: string }
 
 async function schema(conn: PGlite, definizione: string): Promise<void> {
   await conn.exec(`
+    -- scuola_id, anno e numero dalla sessione 3 della seconda serie: la funzione ne ricava il
+    -- prefisso delle versioni. Qui restano NULL e lo Storage non c'è: si provano i soli percorsi
+    -- della registrazione, come nel database della CI.
     CREATE TABLE public.protocolli (
       id uuid PRIMARY KEY,
+      scuola_id uuid,
+      anno int,
+      numero int,
       file_originale text,
       file_timbrato text
     );

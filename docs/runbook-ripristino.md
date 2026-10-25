@@ -106,12 +106,32 @@ rclone lsf CRIPTO:corrente --dirs-only
 
 ## Scenario A0 — «Una riga è stata CANCELLATA negli ultimi 90 giorni» (la scatola nera)
 
-Dal 2026-10-09 (fase 4 della roadmap) ogni riga cancellata da una delle **42 tabelle preziose** resta per 90 giorni
+Dal 2026-10-09 (fase 4 della roadmap) ogni riga cancellata da una delle **tabelle preziose** resta per 90 giorni
 in `scatola_nera.eliminazioni`, con le righe portate via in CASCADE: anagrafica, presenze, diario, voti e scrutini,
-certificati e documenti, pagamenti e incassi, cassa, moduli, sezioni e sedi. L'elenco esatto sta nella migrazione
-`*_scatola_nera_registro_eliminazioni.sql`, fra i marcatori `tabelle-preziose`. **Fuori**: le tabelle che una retention
-svuota per legge (domande di iscrizione, personale, candidature, galleria, allegati del registro, notifiche), il
-protocollo e i registri. Per quelle si passa allo scenario A.
+certificati e documenti, pagamenti e incassi, cassa, moduli, sezioni e sedi (42 tabelle, fra i marcatori
+`tabelle-preziose` di `*_scatola_nera_registro_eliminazioni.sql`). Dalla sessione 3 della seconda serie anche le
+**figlie in cascata** (messaggi, conversazioni e sospensioni delle conversazioni della chat, avvisi e risposte dei
+genitori, prese visione delle note, storico delle classi, copie storiche, registro degli accessi al fascicolo: dieci
+tabelle fra i marcatori `figlie-in-cascata` di `*_scatola_nera_cascate_anagrafiche.sql`) e il **registro di
+protocollo** con i suoi allegati (`*_scatola_nera_protocollo.sql`). **Fuori**: le tabelle che una retention svuota per
+legge (domande di iscrizione, personale, candidature, galleria, allegati del registro, notifiche) e i registri; chi
+altro resta fuori, col motivo (configurazione d'accesso, tabelle operative, lavori di stampa, `registro_destinatari`),
+sta nell'intestazione di `*_scatola_nera_cascate_anagrafiche.sql`. Per quelle si passa allo scenario A.
+
+**Il protocollo.** Una registrazione eliminata torna con `scatola_nera.ripristina_transazione` (prima la
+registrazione, poi gli allegati: l'ordine lo risolve la funzione; il WORM non vieta l'INSERT). I **file** no:
+`protocollo_elimina` li toglie subito dal bucket (decisione #2), mentre la riga resta 90 giorni. I file della
+registrazione e le versioni dei documenti rettificati tornano dal cestino dello specchio di R2 (scenario C, 30
+giorni), con lo stesso prefisso `<sede>/<anno>/<numero a 7 cifre>` (`-originale.<ext>`, `-timbrato.pdf`,
+`-allegati/`, `-versioni/`). Dopo 30 giorni la riga si ripristina ancora, i file non più.
+
+**La chat e «libera spazio».** I messaggi senza allegato che «libera spazio» (`src/lib/alunni/libera-spazio.ts`)
+toglie a un bambino ritirato finiscono anche loro in `scatola_nera.eliminazioni`: **i testi delle conversazioni fra
+famiglia e insegnanti restano nel database per 90 giorni**, e lo spazio si libera davvero solo alla scadenza. L'oblio
+li toglie se una famiglia lo chiede; nessun giro li toglie prima della scadenza. È la scelta «accetta», decisa
+dall'assistente il 25/10/2026 in assenza del titolare, **da confermare**; l'informativa lo dice. Per tornare indietro
+serve una funzione SQL che accenda `scatola_nera.senza_storico` per la sola DELETE di «libera spazio» (PostgREST da
+solo non può farlo).
 
 Si lavora dal **SQL editor** del pannello Supabase (ruolo `postgres`): l'app non ha accesso allo schema. Si legge prima,
 si mostra, poi si scrive.
@@ -142,10 +162,34 @@ si mostra, poi si scrive.
 
 Dal 2026-10-19 (fase 12 della roadmap) ogni UPDATE su **13 tabelle** lascia in `scatola_nera.modifiche` la riga
 **com'era prima**, per 90 giorni: valutazioni e obiettivi, presenze e giustifiche didattiche, pagamenti, quote e incassi,
-scrutini (giudizi, comportamento, giudizio descrittivo, periodi) e pagelle. L'elenco esatto sta nella migrazione
-`*_scatola_nera_modifiche.sql`. Non si copia una modifica che tocca solo `updated_at`/`aggiornato_il`, né la retention
-notturna delle giustificazioni (svuota testi per legge: copiarli li terrebbe in vita). **Fuori**: l'anagrafica e
-tutto il resto, per cui si passa allo scenario A.
+scrutini (giudizi, comportamento, giudizio descrittivo, periodi) e pagelle (`*_scatola_nera_modifiche.sql`). Dalla
+sessione 3 della seconda serie le tabelle sono **20**: anche alunni, genitori (`parents`), utenti, note disciplinari,
+certificati medici (`*_scatola_nera_cascate_anagrafiche.sql`, marcatori `anagrafiche-storico`) e il registro di
+protocollo con gli allegati (`*_scatola_nera_protocollo.sql`). Non si copia una modifica che tocca solo
+`updated_at`/`aggiornato_il`/`storico_versione`, né la retention notturna delle giustificazioni (svuota testi per legge:
+copiarli li terrebbe in vita). **Fuori**: tutto il resto, per cui si passa allo scenario A.
+
+**Il protocollo.** Il WORM del registro rifiuta un UPDATE che non passa dalla rettifica: il ripristino di una
+registrazione rettificata male si fa nella stessa transazione del suo interruttore, dopo averlo mostrato:
+`BEGIN; SELECT set_config('app.protocollo_admin_update', 'on', true); SELECT scatola_nera.ripristina_modifiche(ARRAY[<id>]::bigint[]); COMMIT;`
+(senza l'interruttore la riga finisce in `fallite`). Il documento di prima sta in
+`<sede>/<anno>/<numero a 7 cifre>-versioni/<istante>-<nome del file di prima>` (istante UTC a 17 cifre, nome come
+`<numero a 7 cifre>-originale.<ext>`): si rimette al percorso dell'originale dal pannello dello Storage, e il timbrato si
+rigenera con una rettifica che ricarica quel documento. Le versioni non scadono: restano finché esiste la registrazione.
+⚠️ **Riserva della regola T4:** la rettifica copia il documento di prima *prima* di caricare il nuovo, e se la copia non
+riesce non parte e risponde **500**. Se il file indicato da `file_originale` non c'è più nel bucket, la copia fallisce
+sempre: un documento già orfano non si può più sostituire con una rettifica finché qualcuno non rimette un file a quel
+percorso dal pannello dello Storage. Misurato il 25/10/2026 (10:41 UTC): 0 orfani su 325 registrazioni.
+
+**Le anagrafiche e l'oblio.** Anonimizzare una scheda (alunno, genitore, utente) è un UPDATE: lascia in
+`scatola_nera.modifiche` la riga **com'era**, con i dati personali, finché l'oblio dell'app non chiama
+`public.scatola_nera_dimentica`, che la toglie perché nomina l'`id`. L'app la chiama **per ultima**
+(`src/lib/gdpr/esegui.ts`, `src/lib/gdpr/scatola-nera.ts`). Se quella chiamata fallisce, la copia **resta fino alla
+scadenza dei 90 giorni**: nessuno la ritenta da solo; l'oblio risulta parziale (`letture_fallite` > 0; nel log `gdpr`
+una riga `error` `scatola-nera-non-dimenticata` e, dalle route dell'oblio, `oblio-parziale`). Si rimedia dal SQL editor, dopo averla
+mostrata: `SELECT public.scatola_nera_dimentica(ARRAY['<uuid>']::uuid[], '<alunno|genitore|personale|altro>', 'runbook');`
+La funzione toglie anche i messaggi, le revisioni dei messaggi e le sospensioni delle conversazioni della persona, e le
+sospensioni che la nominano in `sospesa_da`, `sospesa_verso` o `riaperta_da`.
 
 Sempre dal **SQL editor** (ruolo `postgres`), leggendo prima e mostrando poi.
 

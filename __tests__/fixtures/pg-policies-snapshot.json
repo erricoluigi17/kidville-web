@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-20",
-  "generato_alle": "2026-10-20T10:54:12Z",
-  "sha256": "c10245c3f602ef8920c67b82fd7ac6744f4e0ff12fd211fca34f6f8bb5f49a9b",
+  "generato_il": "2026-10-25",
+  "generato_alle": "2026-10-25T12:56:11Z",
+  "sha256": "54cec66a34052257ea5cadd1c438eae858f54255011963ffe025792c51bc2b4d",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -592,6 +592,8 @@
     "consensi_accettazioni",
     "conversazioni_sospensioni",
     "crediti_famiglia",
+    "cron_chiamate",
+    "cron_ultimo_esito",
     "delegates",
     "divise_articoli",
     "divise_ordini",

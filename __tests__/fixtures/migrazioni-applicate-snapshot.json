@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-10-25",
-  "generato_alle": "2026-10-25T09:29:14Z",
-  "sha256": "1d66cab08f51b48952c9c909ac0e3be0ba6543f1bc1b841c191b79d1c2dfd485",
+  "generato_alle": "2026-10-25T12:55:00Z",
+  "sha256": "fc2741cf6accae79e21520fb340a60887018a17eb20178db6359b62a78e014be",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -939,6 +939,22 @@
     {
       "version": "20261025021715",
       "name": "bucket_dichiarati_dalla_produzione"
+    },
+    {
+      "version": "20261025094104",
+      "name": "scatola_nera_cascate_anagrafiche"
+    },
+    {
+      "version": "20261025095807",
+      "name": "cron_esiti_osservati"
+    },
+    {
+      "version": "20261025101945",
+      "name": "scatola_nera_protocollo"
+    },
+    {
+      "version": "20261025105058",
+      "name": "chat_riepilogo_conversazioni"
     }
   ]
 }

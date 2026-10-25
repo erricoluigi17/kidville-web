@@ -262,6 +262,15 @@ const DEROGHE_INFO_NON_PERSISTITI = new Map<string, string>([
     // `coordinate-non-leggibili` — che si persistono per livello e che prima non
     // esistevano affatto. Si è tolto rumore e aggiunto segnale, non il contrario.
     ['fiscale', "l'unico `info` è `dati-struttura-mancanti` abbassato da `coordinateBonificoSede` (lettura informativa ad alta frequenza, degrado pulito). Per chi emette documenti resta `error` e si persiste. Il buco è coperto dai tre `warn`/`error` sull'IBAN dello stesso percorso."],
+    // `rpc` (2026-10-25, sessione 7 della seconda serie di robustezza): l'unico `info` è
+    // `rpc-non-ancora-installata` di `rpcNonInstallata` (`src/lib/health/controlli.ts`). Il §5
+    // della specifica vuole che chi regge una RPC nuova lo DICA, con una riga `info` e il perché;
+    // il piano della sessione 7 (sezione «Log») la vuole NON persistita, e la ragione è il volume:
+    // la riga partirebbe a OGNI chiamata di `/api/health` nei 30 minuti dopo la build, cioè una
+    // riga in `app_log` a ogni giro del campanello per raccontare un'attesa prevista. Il buco non
+    // diventa invisibile: passati i 30 minuti lo stesso controllo dice `degradato` e la porta lo
+    // scrive a `warn` (evento `config`), che si persiste per livello.
+    ['rpc', "l'unico `info` è `rpc-non-ancora-installata` di `rpcNonInstallata` (salute): una RPC della salute che PostgREST non conosce ancora nei 30 minuti dopo la build, attesa e non un successo di dominio; persistita sarebbe una riga a ogni chiamata di `/api/health`. Dopo i 30 minuti il controllo è `degradato` e la porta lo scrive a `warn`, che si persiste."],
 ]);
 
 describe('vocabolario chiuso degli eventi di log', () => {

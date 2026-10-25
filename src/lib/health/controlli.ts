@@ -1,6 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso'
 import { versioneDeploy } from '@/lib/versione/deploy'
+import { leggiRigheCronEsiti, valutaCronEsiti } from '@/lib/health/cron-esiti'
+import {
+    FINESTRA_FORNITORI_MS,
+    contaEsitiFornitore,
+    valutaFornitore,
+    type RigaEsitoFornitore,
+} from '@/lib/health/fornitori'
+import { leggiStatoMigrazioniDb, valutaMigrazioni, type StatoMigrazioni } from '@/lib/health/migrazioni'
+import { inAttesaDellIntegrazione, type Valutazione } from '@/lib/health/valutazione'
+import { logEvento } from '@/lib/logging/logger'
 import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
 
 /**
@@ -43,6 +53,21 @@ import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
  *                      È QUALITÀ DEI DATI, non salute: sta nel suo livello (vedi sotto).
  * 10. `audit-docente` — nessuna traccia d'audit persa nelle ultime 24 ore (`audit-non-registrato`
  *                      di scritture, fascicolo e firma; robustezza 2, sessione 1).
+ * 11. `cron-esiti`   — ogni job ATTIVO di `pg_cron`, mensili e sola SQL compresi, ha avuto un
+ *                      esito buono dentro la finestra della sua cadenza (2026-10-25).
+ * 12. `storage`      — l'API dello Storage risponde e il bucket privato della sonda c'è.
+ * 13. `email`        — Resend non respinge più di quanto consegna (da `app_log`, mai chiamato).
+ * 14. `push`         — lo stesso per FCM e web-push, per ogni canale configurato.
+ * 15. `migrazioni`   — il database ha applicato le migrazioni del repo fissate alla build.
+ *
+ * Le misure 11-15 (sessione 7 della seconda serie di robustezza) dicono al più `degradato`, MAI
+ * `giu`: il `503` resta di `db-lettura`, `auth` e `schema-atteso`, e per lo schema solo quando una
+ * tabella manca o non si legge, non quando è lenta. `db-lettura` e `auth` restano `giu` anche
+ * oltre il tetto di 2 s, per scelta: sono i controlli di `eseguiVivo` (`/api/health/vivo`, 200 su
+ * `degradato`), e un loro timeout a `degradato` lascerebbe muto il Worker `monitor-esterno` davanti
+ * a un database appeso. Lock:
+ * `__tests__/architecture/salute-controlli-nuovi-mai-giu.test.ts`. Il Realtime NON ha una sonda:
+ * aprire un socket a ogni lettura costerebbe più di ciò che misura; lo misura la sessione 12.
  *
  * ════════════════════════════════════════════════════════════════════════════════
  * I TRE LIVELLI (roadmap di robustezza, fase 3 — 2026-10-06)
@@ -54,7 +79,8 @@ import { leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi'
  *
  *   `eseguiVivo`    → `/api/health/vivo`     DB + Auth, 200 o 503. È ciò che sorveglia un
  *                                            campanello esterno: «il sito serve i genitori?»
- *   `eseguiSalute`  → `/api/health`          vivo + schema, cron, errori, config, coda, regione.
+ *   `eseguiSalute`  → `/api/health`          vivo + schema, cron (battito ed esiti), errori, config,
+ *                                            coda, regione, storage, email, push, migrazioni.
  *                                            `degraded` (200) = qualcosa che nessuno vedrebbe è
  *                                            rotto; `down` (503) = come il vivo.
  *   `eseguiQualita` → `/api/health/qualita`  la qualità dei dati. Risponde SEMPRE 200: non
@@ -132,20 +158,24 @@ export const TABELLE_ATTESE = ['utenti', 'alunni', 'avvisi', 'notifiche', 'pagam
 /**
  * PERCHÉ NON `to_regclass()`, che sarebbe la via ovvia.
  *
- * `to_regclass()` è SQL: da PostgREST si raggiunge solo con una funzione RPC, che non
- * esiste e che richiederebbe una migrazione — cioè un endpoint di salute che nasce rotto
- * e resta rotto finché qualcuno non applica la migrazione, il che è un modo notevole di
- * fallire proprio nel compito di accorgersi che qualcosa non è stato applicato.
+ * `to_regclass()` è SQL: da PostgREST si raggiunge solo con una funzione RPC, e una RPC nuova
+ * arriva con una migrazione — un controllo che nasce cieco finché qualcuno non la applica, il che
+ * è un modo notevole di fallire proprio nel compito di accorgersi che qualcosa non è stato
+ * applicato.
  *
- * La sonda `select(head)` è però anche PIÙ FORTE, e questa è la vera ragione: misura la
- * vista che l'APPLICAZIONE ha dello schema, non quella che ha il superuser. Una tabella
- * che esiste ma non è esposta, o che c'è nel catalogo ma non nella schema cache di
- * PostgREST, per il codice di questo repo NON esiste — risponde `PGRST205`, che è
- * esattamente ciò che produce una migrazione mancante. `to_regclass()` la direbbe
- * presente e il controllo sarebbe verde mentre l'app è rotta: un controllo che mente.
+ * La sonda da PostgREST è anche PIÙ FORTE, e questa è la vera ragione: misura la vista che
+ * l'APPLICAZIONE ha dello schema, non quella del superuser. Una tabella che c'è nel catalogo ma
+ * non nella schema cache di PostgREST, per il codice di questo repo NON esiste — risponde
+ * `PGRST205`, che è esattamente ciò che produce una migrazione mancante.
  *
- * `head: true` non trasporta righe: si misura l'esistenza, non il contenuto. Su un
- * database con 152 codici fiscali di minori la differenza non è di prestazioni.
+ * ⚠️ UNA `GET`, NON UNA `HEAD` (sessione 7 della seconda serie, 2026-10-25). Fino ad allora la sonda
+ * era `select('id', { head: true, count: 'exact' })`. Una HEAD non ha corpo, e postgrest-js (2.112)
+ * rende un 404 SENZA corpo come `status 204` con `error: null`: il `PGRST205` sta nel corpo che la
+ * HEAD non porta, quindi il controllo non avrebbe visto la tabella assente per cui esiste. Lo
+ * prova `__tests__/lib/health/schema-atteso.test.ts`, con il client vero e un `fetch` finto. Il
+ * `count: 'exact'` faceva in più contare le righe di cinque tabelle a ogni richiesta, per niente.
+ * Ora: una `GET ?select=id&limit=1` per tabella, tutte e cinque in parallelo. Torna al più un uuid
+ * per tabella, che il controllo non legge e non rilancia.
  */
 const CODICI_TABELLA_ASSENTE = new Set(['PGRST205', 'PGRST202', '42P01'])
 
@@ -171,6 +201,14 @@ export interface JobCron {
  *   pagamenti-solleciti   pagamenti-solleciti-run  0 6 ogni gg 26 h
  *   mensa-allergie-check  mensa-check-allergie  0 7 ogni gg    26 h
  *   fatture-coda-tick     fatture-coda-tick   ogni 5 min*      30 min  (*salta :02 e :32; dal 2026-09-23)
+ *   fascicolo-audit-ip-retention  (stesso nome)  29 4 ogni gg  26 h   (dal 2026-10-25)
+ *   cron-esiti            cron-esiti          ogni 10 min      40 min  (dal 2026-10-25)
+ *
+ * Dal 2026-10-25 (sessione 7 della seconda serie) i job hanno DUE guardie: questa (`cron-battito`, il
+ * battito che la route o la funzione scrive in `app_log`) e `cron-esiti` (l'esito che pg_cron e
+ * pg_net hanno registrato, letto da `cron_ultimo_esito`), che copre TUTTI i job attivi, mensili
+ * compresi. Le due possono suonare insieme per lo stesso job, e dicono cose diverse: «la route non
+ * ha finito il giro» e «pg_cron non ha avuto un esito buono».
  *
  * La finestra è ~3-4 volte la cadenza per i job frequenti e cadenza+2h per i giornalieri:
  * deve assorbire un giro saltato senza gridare, e non due. Un allarme che scatta al primo
@@ -358,6 +396,16 @@ export const JOB_CRON: readonly JobCron[] = [
     // di silenzio, invece, non è più un ritardo.
     // Ogni esito del giro (anche «niente da fare» e «finestra della sync») batte `esito: 'ok'`.
     { nome: 'fatture-coda-tick', finestraMs: 30 * MIN },
+    // Notturno di sola SQL (`29 4 * * *`, `fascicolo_audit_ip_retention_tick`): azzera `ip` e
+    // `user_agent` del registro degli accessi ai dati dei bambini dopo un anno. Battito
+    // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
+    // (misura della sessione 7). Finestra di 26 ore come gli altri giornalieri.
+    { nome: 'fascicolo-audit-ip-retention', finestraMs: 26 * ORA },
+    // Ogni 10 minuti (`4,14,24,34,44,54 * * * *`, funzione `cron_esiti` della sessione 6): legge
+    // gli esiti di tutti gli altri job. Se si ferma, il controllo `cron-esiti` diventa cieco (e lo
+    // dice: «cron-esiti fermo da N min»); il suo battito qui è la seconda guardia. 40 minuti =
+    // `finestraDaIntervallo(10)` in `@/lib/health/cron-esiti`.
+    { nome: 'cron-esiti', finestraMs: 40 * MIN },
 ]
 
 /**
@@ -377,8 +425,12 @@ export const JOB_CRON: readonly JobCron[] = [
  * che gira perfettamente. Un allarme che suona da solo viene spento, e allora non protegge più
  * niente — che è la frase già scritta in testa a questo modulo.
  *
- * Questi job si seguono con una query su `app_log` (il battito c'è e si legge), non con un
- * endpoint interrogato ogni minuto.
+ * Questi job NON sono ciechi: dal 2026-10-25 (sessione 7 della seconda serie) li sorveglia il controllo
+ * `cron-esiti`, che legge `cron_ultimo_esito` — una riga per job che NON scade, scritta ogni 10
+ * minuti dalla funzione `cron_esiti` della sessione 6 — con la finestra della cadenza di ciascuno
+ * (`finestraDaCadenza` in `@/lib/health/cron-esiti`: per un mensile 31 giorni + 2 ore). Restano
+ * fuori da `JOB_CRON` perché `cron-battito` legge il battito in `app_log`, e per loro quel battito
+ * o non c'è o sparisce prima del successivo.
  */
 export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }[] = [
     {
@@ -386,13 +438,14 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
         perche:
             'MENSILE (`35 4 1 * *`): la finestra necessaria (~32 giorni) supera la conservazione ' +
             'di app_log (30 giorni), quindi il battito precedente sparisce prima che arrivi il ' +
-            'successivo e l’allarme suonerebbe ogni mese su un lavoro sano.',
+            'successivo e l’allarme suonerebbe ogni mese su un lavoro sano. Lo sorveglia ' +
+            '`cron-esiti` (cron_ultimo_esito) con la finestra della sua cadenza.',
     },
     {
         nome: 'iscrizioni-retention',
         perche:
             'MENSILE (`41 4 1 * *`), stessa ragione del gemello; e il suo battito non dichiara ' +
-            '`esito: ok`. Si segue con una query su app_log.',
+            '`esito: ok`. Lo sorveglia `cron-esiti` (cron_ultimo_esito) con la finestra della sua cadenza.',
     },
     {
         nome: 'news-digest',
@@ -407,46 +460,16 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             '`operazione: digest`, dove ora compaiono anche gli esiti `rimandata-quota` ' +
             '(tetto email raggiunto, edizione lasciata in coda) e `digest-arretrate`. ' +
             'Diventa sorvegliabile da qui il giorno in cui la cadenza passa a giornaliera: ' +
-            'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri.',
+            'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri. ' +
+            'Il 20/10 era SPENTO in cron.job: `cron-esiti` legge i soli job attivi, e lo ' +
+            'riprende da solo il giorno in cui torna attivo.',
     },
     {
         nome: 'app-log-purge',
         perche:
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
-            'per consensi-retention, audit-docente-retention e app-log-bonifica-pii.',
-    },
-    // `fascicolo-audit-ip-retention` (`29 4 * * *`, OGNI NOTTE, funzione SQL
-    // `fascicolo_audit_ip_retention_tick`): azzera `ip` e `user_agent` del registro degli accessi
-    // ai dati dei bambini dopo un anno, decisione del titolare del 2026-10-04; la riga resta. È
-    // giornaliero e il suo battito ha la forma che `controlloBattitoCron` legge (lock
-    // `informativa-conservazione-dichiarata`, `BATTITI_DA_LEGGERE`): il suo posto è `JOB_CRON`, con
-    // `finestraMs: 26 * ORA` come gli altri giornalieri.
-    //
-    // Sta qui per un vincolo di SEQUENZA, non per una scelta — come `galleria-retention` e
-    // `cestino-registro-retention` prima di lui. La migrazione
-    // (`20261004215133_fascicolo_audit_ip_retention`) la applica l'integrazione al merge della PR
-    // #184, e fino ad allora il lock `cron-sorvegliato-e-applicato` vieta di sorvegliarla: un nome
-    // in `JOB_CRON` senza il suo lavoro manda `/api/health` in `degradato` dal primo deploy, e un
-    // allarme che suona da solo viene spento.
-    {
-        nome: 'fascicolo-audit-ip-retention',
-        perche:
-            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
-            'Supabase al merge della PR #184. Dopo il primo battito `ok` in app_log (impronta ' +
-            '`cron:fascicolo-audit-ip-retention`) e la fotografia delle migrazioni rigenerata, ' +
-            'passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
-    },
-    // `cron-esiti` (minuti 4, 14, … 54, funzione SQL `cron_esiti`): legge gli esiti delle chiamate
-    // dei cron e scrive un battito `cron:cron-esiti` a ogni giro. Sta qui per lo stesso vincolo di
-    // SEQUENZA di `fascicolo-audit-ip-retention`: la migrazione la applica l'integrazione al merge
-    // della sessione 6, e un nome in `JOB_CRON` senza il suo lavoro manderebbe `/api/health` in
-    // `degradato` dal primo deploy. Lo porta in `JOB_CRON` la sessione 7, dopo il primo battito.
-    {
-        nome: 'cron-esiti',
-        perche:
-            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
-            'Supabase al merge della sessione 6. Dopo il primo battito `ok` in app_log (impronta ' +
-            '`cron:cron-esiti`) lo porta in `JOB_CRON` la sessione 7.',
+            'per consensi-retention, audit-docente-retention e app-log-bonifica-pii. Li sorveglia ' +
+            'tutti `cron-esiti` (cron_ultimo_esito) con la finestra della loro cadenza.',
     },
 ]
 
@@ -546,6 +569,34 @@ export const VARIABILI_CRITICHE = [
     // cambiato con lei: altrimenti sorveglierebbe una variabile che nessuno legge più —
     // cioè suonerebbe l'allarme sbagliato, che è peggio del silenzio.
     'ARUBA_PASSWORD',
+    // Dal 2026-10-25 (sessione 7 della seconda serie di robustezza) i canali push e il link
+    // dell'app. Senza le tre FCM nessuna notifica arriva ai telefoni (`fcmConfigured()` in
+    // `src/lib/push/native-push.ts`), senza le due VAPID nessuna ai browser (`vapidConfigured()`
+    // in `src/lib/push/web-push.ts`): il dispatcher le rimanda in silenzio, e `code-arretrate` lo
+    // vede solo dopo 30 minuti. Senza `NEXT_PUBLIC_APP_URL` il link di accesso nelle email delle
+    // credenziali diventa relativo (`/auth/login`), cioè inutilizzabile fuori dall'app.
+    // Sono qui perché il 2026-10-25 erano definite in Production E in Preview (`vercel env ls`, solo i
+    // nomi): una variabile assente per scelta accenderebbe un allarme che suona da solo.
+    //
+    // FUORI, e perché — stesso criterio: la loro assenza non è un guasto silenzioso.
+    //  · `ANTHROPIC_API_KEY`: il 2026-10-25 non era definita su Vercel, né in Production né in
+    //    Preview. Senza, la traduzione della chat si spegne (`src/lib/translate/claude.ts`) e il
+    //    pulsante si nasconde: è lo stato di oggi, non un guasto. Dentro, accenderebbe un allarme
+    //    permanente. Entra qui, e nel preflight, il giorno in cui la chiave c'è nei due ambienti.
+    //  · `NEXT_PUBLIC_SUPABASE_ANON_KEY`: se manca l'app esplode al primo clic (`instrumentation.ts`).
+    //  · `OTP_TICKET_SECRET`: ripiega su `SUPABASE_SERVICE_ROLE_KEY` (`src/lib/auth/otp-ticket.ts:21`,
+    //    `src/lib/allegati/sigillo.ts:59`), che è già qui.
+    //  · `VAPID_SUBJECT`: ha un ripiego scritto (`src/lib/push/web-push.ts:50`).
+    //  · `SIDI_*`: come `ARUBA_USERNAME`, la configurazione sta prima in banca dati
+    //    (`src/lib/sidi/client.ts:50`); il SIDI la salute non lo sorveglia.
+    //  · `ALLOW_HEADER_IDENTITY`, `PARENT_READS_USE_SESSION`, `KV_LOG_LEVEL`,
+    //    `NEXT_PUBLIC_CARICAMENTI_NATIVI`: interruttori, la loro assenza è un valore.
+    'FCM_PROJECT_ID',
+    'FCM_CLIENT_EMAIL',
+    'FCM_PRIVATE_KEY',
+    'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
+    'VAPID_PRIVATE_KEY',
+    'NEXT_PUBLIC_APP_URL',
 ] as const
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -664,8 +715,10 @@ async function controlloDbLettura(supabase: SupabaseClient): Promise<Controllo> 
 
 /**
  * IL PUNTO CIECO CHE QUESTO CONTROLLO CHIUDE. Il login passa da GoTrue, che ha il suo pool di
- * connessioni (fisso a 10: advisor `auth_db_connections_absolute`) e può cadere con il database
- * dell'app perfettamente sano: `db-lettura` sarebbe verde e nessun genitore riuscirebbe a entrare.
+ * connessioni e può cadere con il database dell'app perfettamente sano: `db-lettura` sarebbe verde
+ * e nessun genitore riuscirebbe a entrare. Dal 2026-10-19 il pool è una PERCENTUALE, il 15 % delle
+ * connessioni del database (13 su un'istanza Small); fino ad allora era fisso a 10, e l'advisor
+ * `auth_db_connections_absolute` lo segnalava. Riletto il 2026-10-25: l'advisor non c'è più.
  *
  * Si chiede a GoTrue di cercare un utente CHE NON ESISTE (`UUID_NULLO`). Un `404 user_not_found` è
  * la risposta di un Auth VIVO che ha consultato il suo database: è l'esito `ok`. Qualunque altro
@@ -694,22 +747,32 @@ async function controlloAuth(supabase: SupabaseClient): Promise<Controllo> {
  * 2. Lo schema atteso è presente
  * ════════════════════════════════════════════════════════════════════════════ */
 
-async function controlloSchema(supabase: SupabaseClient): Promise<Controllo> {
-    return misura('schema-atteso', 'giu', async () => {
+/**
+ * Le cinque letture girano IN PARALLELO. In serie, cinque letture da 500 ms facevano 2,5 s e il
+ * tetto di 2 s diceva «giù» a un database soltanto lento. Per la stessa ragione lo scadere del
+ * tetto, o un'eccezione, è `degradato` (sessione 7 della seconda serie): lentezza non è assenza.
+ * Una tabella ASSENTE o ILLEGGIBILE resta `giu`: senza di lei le route che la leggono cadono.
+ */
+export async function controlloSchema(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('schema-atteso', 'degradato', async () => {
+        const letture = await Promise.all(
+            TABELLE_ATTESE.map(async (tabella) => {
+                // PostgREST NON lancia: ritorna `{ data, error }` (AGENTS, regola 7).
+                const { error } = await supabase.from(tabella).select('id').limit(1)
+                return { tabella, error }
+            }),
+        )
         const assenti: string[] = []
         const illeggibili: string[] = []
-        for (const tabella of TABELLE_ATTESE) {
-            const { error } = await supabase
-                .from(tabella)
-                .select('id', { head: true, count: 'exact' })
-                .limit(1)
+        for (const { tabella, error } of letture) {
             if (!error) continue
             // Si distingue «la tabella non c'è» da «la tabella c'è ma la query è caduta».
             // Sono due incidenti diversi che si riparano in due posti diversi: una
             // migrazione da applicare contro un database in affanno. Un controllo che li
             // fondesse manderebbe chi risponde all'allarme a cercare nel posto sbagliato.
-            if (CODICI_TABELLA_ASSENTE.has(codiceDi(error))) assenti.push(tabella)
-            else illeggibili.push(`${tabella}:${codiceDi(error)}`)
+            const codice = codiceDi(error)
+            if (CODICI_TABELLA_ASSENTE.has(codice)) assenti.push(tabella)
+            else illeggibili.push(`${tabella}:${codice}`)
         }
         if (assenti.length > 0) {
             return { esito: 'giu', dettaglio: `tabelle assenti: ${assenti.join(',')}` }
@@ -1018,6 +1081,13 @@ function valoriCritici(): Record<(typeof VARIABILI_CRITICHE)[number], string | u
         CRON_SECRET: process.env.CRON_SECRET,
         LOG_HASH_SALT: process.env.LOG_HASH_SALT,
         ARUBA_PASSWORD: process.env.ARUBA_PASSWORD,
+        // Accesso STATICO, uno per uno: le `NEXT_PUBLIC_*` il bundler le sostituisce solo così.
+        FCM_PROJECT_ID: process.env.FCM_PROJECT_ID,
+        FCM_CLIENT_EMAIL: process.env.FCM_CLIENT_EMAIL,
+        FCM_PRIVATE_KEY: process.env.FCM_PRIVATE_KEY,
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     }
 }
 
@@ -1463,6 +1533,222 @@ export async function controlloAuditDocente(
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 10. I controlli della sessione 7 (seconda serie di robustezza): al più `degradato`, MAI `giu`
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * L'istante della build, fissato da `next.config.ts` (`KV_BUILD_IL`). `null` fuori da una build
+ * (test, script): allora nessuna tolleranza scade, perché non c'è un'integrazione da aspettare.
+ * Accesso STATICO: la chiave `env` di `next.config.ts` sostituisce solo questa forma.
+ */
+function buildIlMs(): number | null {
+    const grezzo = process.env.KV_BUILD_IL
+    if (!grezzo) return null
+    const t = Date.parse(grezzo)
+    return Number.isNaN(t) ? null : t
+}
+
+/**
+ * LA RPC DELLA SALUTE NON C'È — i due modi in cui succede, sul modello di `RPC_ASSENTE` di
+ * `src/app/api/avvisi/[id]/risposte/route.ts`: `PGRST202` (PostgREST non la trova nella cache dello
+ * schema) e `42883` (Postgres: «undefined function»). Insieme LOCALE a queste due chiamate, come
+ * vuole il §5 della specifica: `CODICI_TABELLA_ASSENTE` parla di tabelle, e
+ * `src/lib/db/tolleranza-schema.ts` non si allarga. `PGRST203` (due funzioni con lo stesso nome)
+ * resta fuori: è uno schema rotto, non uno schema in arrivo.
+ */
+const RPC_SALUTE_ASSENTE = new Set(['PGRST202', '42883'])
+
+/**
+ * Una RPC che il database non conosce ancora. Succede per qualche minuto a ogni rilascio che ne
+ * porta una: la migrazione e il deploy partono insieme, e la cache dello schema arriva dopo. Per 30
+ * minuti dalla build è attesa (`ok`, il dettaglio lo dice e una riga `info` spiega perché); dopo,
+ * l'integrazione non l'ha applicata (`degradato`, e la porta lo scrive a livello `warn`). Vedi
+ * `@/lib/health/valutazione`. L'evento `rpc` non è persistito: la riga va nei log di Vercel e non
+ * aggiunge niente ad `app_log` a ogni giro del campanello.
+ */
+function rpcNonInstallata(nome: string, codice: string, adesso: number): Valutazione {
+    if (!inAttesaDellIntegrazione(buildIlMs(), adesso)) {
+        return { esito: 'degradato', dettaglio: `${nome} assente da oltre 30 min dalla build (${codice})` }
+    }
+    logEvento('rpc', 'info', {
+        operazione: `health:${nome}`,
+        esito: 'rpc-non-ancora-installata',
+        msg: `${nome} non ancora installata (${codice}): migrazione e deploy partono insieme, tollerata fino a 30 min dalla build`,
+    })
+    return { esito: 'ok', dettaglio: `${nome} non ancora installata (${codice})` }
+}
+
+/**
+ * `cron-esiti` — ogni job ATTIVO di `pg_cron` ha avuto un esito buono dentro la finestra della sua
+ * cadenza, mensili compresi. La decisione sta in `@/lib/health/cron-esiti`; qui solo la lettura.
+ * Escono nomi di job, numeri e codici. Un'eccezione della funzione SQL (`P0001`: mancano le tabelle
+ * di pg_cron o della sessione 6) è `degradato` subito: non è un rilascio in corso, è una
+ * sorveglianza che non c'è.
+ */
+export async function controlloCronEsiti(supabase: SupabaseClient, adesso: number): Promise<Controllo> {
+    return misura('cron-esiti', 'degradato', async () => {
+        const { data, error } = await supabase.rpc('salute_cron_esiti')
+        if (error) {
+            const codice = codiceDi(error)
+            if (RPC_SALUTE_ASSENTE.has(codice)) return rpcNonInstallata('salute_cron_esiti', codice, adesso)
+            return { esito: 'degradato', dettaglio: `lettura esiti dei cron ${codice}` }
+        }
+        const righe = leggiRigheCronEsiti(data)
+        if (righe === null) return { esito: 'degradato', dettaglio: 'risposta di salute_cron_esiti illeggibile' }
+        return valutaCronEsiti(righe, adesso)
+    })
+}
+
+/**
+ * Il bucket e il prefisso della sonda di `storage`. Un bucket PRIVATO (le fatture) e un prefisso che
+ * non esiste: la `list` prova che l'API dello Storage risponde, che arriva al suo database e che il
+ * bucket c'è, e non restituisce il nome di nessun file. Scelti al Passo 0.8 del piano della sessione
+ * 7: se il bucket cambia, si cambia qui e nei due test.
+ */
+export const BUCKET_SONDA_STORAGE = 'fatture'
+export const PREFISSO_SONDA_STORAGE = 'salute-sonda-inesistente'
+
+/**
+ * `storage` — lo Storage di Supabase risponde. È un servizio a parte dal database dell'app: può
+ * cadere con `db-lettura` verde, e allora le foto della galleria, i documenti e le fatture non si
+ * aprono più senza che nessun controllo lo veda. Escono lo stato HTTP e il codice dello Storage, mai
+ * il messaggio (può citare un percorso). Una `list` che lancia (rete) la prende `misura`.
+ */
+export async function controlloStorage(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('storage', 'degradato', async () => {
+        const { error } = await supabase.storage.from(BUCKET_SONDA_STORAGE).list(PREFISSO_SONDA_STORAGE, { limit: 1 })
+        if (error) {
+            const stato = (error as { status?: unknown }).status
+            return {
+                esito: 'degradato',
+                dettaglio: `storage ${BUCKET_SONDA_STORAGE}: ${typeof stato === 'number' ? stato : 'senza-stato'} ${codiceDi(error)}`,
+            }
+        }
+        return { esito: 'ok', dettaglio: `bucket ${BUCKET_SONDA_STORAGE} leggibile` }
+    })
+}
+
+/** Quante righe di `app_log` legge al più ogni fornitore. Le righe sono già aggregate per giorno e
+ *  per impronta (`occorrenze`): in 24 h sono decine, e 500 è un tetto, non una stima. */
+const RIGHE_MAX_FORNITORE = 500
+
+/**
+ * Gli esiti di un fornitore nelle ultime 24 h, da `app_log`. `operazione` arriva come colonna con
+ * un alias sul JSON, così la risposta non porta il resto di `contesto`.
+ */
+async function leggiEsitiFornitore(
+    supabase: SupabaseClient,
+    evento: 'email' | 'push',
+    provider: string,
+    adesso: number,
+    ambiente: string,
+): Promise<{ righe: RigaEsitoFornitore[] } | { codice: string }> {
+    const { data, error } = await supabase
+        .from('app_log')
+        .select('livello, stato_http, occorrenze, visto_l_ultima, operazione:contesto->campi->>operazione')
+        .eq('evento', evento)
+        .eq('sorgente', 'server')
+        .eq('ambiente', ambiente)
+        .eq('contesto->campi->>provider', provider)
+        .gte('visto_l_ultima', new Date(adesso - FINESTRA_FORNITORI_MS).toISOString())
+        .limit(RIGHE_MAX_FORNITORE)
+    if (error) return { codice: codiceDi(error) }
+    return { righe: (data ?? []) as RigaEsitoFornitore[] }
+}
+
+/**
+ * `email` — Resend non respinge più di quanto consegna. Letto da `app_log` (evento `email`,
+ * `provider: resend`): la salute non chiama MAI Resend. La regola sta in `@/lib/health/fornitori`.
+ */
+export async function controlloEmail(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('email', 'degradato', async () => {
+        const letti = await leggiEsitiFornitore(supabase, 'email', 'resend', adesso, ambiente)
+        if ('codice' in letti) return { esito: 'degradato', dettaglio: `lettura esiti resend ${letti.codice}` }
+        return valutaFornitore('resend', contaEsitiFornitore(letti.righe), adesso)
+    })
+}
+
+/**
+ * I canali push e se sono configurati, con le STESSE condizioni di `fcmConfigured()`
+ * (`src/lib/push/native-push.ts`) e `vapidConfigured()` (`src/lib/push/web-push.ts`). Non si
+ * importano: quei moduli si portano dietro la firma RS256 e la libreria `web-push`, che la salute
+ * non deve caricare. Le due regole le confronta `__tests__/lib/health/controlli-nuovi.test.ts` su
+ * quattro combinazioni. Accesso statico a `process.env`.
+ */
+function canaliPush(): { provider: 'fcm' | 'web-push'; configurato: boolean }[] {
+    return [
+        {
+            provider: 'fcm',
+            configurato: Boolean(process.env.FCM_PROJECT_ID && process.env.FCM_CLIENT_EMAIL && process.env.FCM_PRIVATE_KEY),
+        },
+        {
+            provider: 'web-push',
+            configurato: Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+        },
+    ]
+}
+
+/**
+ * `push` — per ogni canale configurato, FCM e web-push non respingono più di quanto consegnano
+ * (evento `push`, letto da `app_log`). Un canale non configurato lo dice `config`; qui si scrive e
+ * resta `ok`, così la stessa assenza non apre due segnalazioni. Il battito del dispatcher è già
+ * `push-dispatch` in `cron-battito`.
+ */
+export async function controlloPush(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('push', 'degradato', async () => {
+        const valutazioni = await Promise.all(
+            canaliPush().map(async ({ provider, configurato }): Promise<Valutazione> => {
+                if (!configurato) return { esito: 'ok', dettaglio: `${provider} non configurato (vedi config)` }
+                const letti = await leggiEsitiFornitore(supabase, 'push', provider, adesso, ambiente)
+                if ('codice' in letti) return { esito: 'degradato', dettaglio: `lettura esiti ${provider} ${letti.codice}` }
+                return valutaFornitore(provider, contaEsitiFornitore(letti.righe), adesso)
+            }),
+        )
+        return {
+            esito: valutazioni.some((v) => v.esito === 'degradato') ? 'degradato' : 'ok',
+            dettaglio: valutazioni.map((v) => v.dettaglio).join('; '),
+        }
+    })
+}
+
+/**
+ * La versione del repo fissata alla build da `next.config.ts`; `null` fuori da una build o se la
+ * cartella non si è letta. Accesso STATICO a `process.env.KV_…`: la chiave `env` di Next sostituisce
+ * solo questa forma (lock `__tests__/architecture/migrazioni-versione-in-build.test.ts`).
+ */
+function migrazioniDellaBuild(): StatoMigrazioni | null {
+    const ultima = process.env.KV_MIGRAZIONE_REPO
+    const numero = Number(process.env.KV_MIGRAZIONI_REPO_NUMERO)
+    if (!ultima || !/^\d{14}$/.test(ultima) || !Number.isInteger(numero) || numero <= 0) return null
+    return { ultima, numero }
+}
+
+/**
+ * `migrazioni` — il database ha applicato le migrazioni del repo. In locale senza build (`next dev`
+ * le ha, un test no) non c'è niente da confrontare ed è `ok`; altrove una build senza versione è un
+ * guasto della build. La decisione sta in `@/lib/health/migrazioni`.
+ */
+export async function controlloMigrazioni(supabase: SupabaseClient, adesso: number, ambiente: string): Promise<Controllo> {
+    return misura('migrazioni', 'degradato', async () => {
+        const repo = migrazioniDellaBuild()
+        if (repo === null) {
+            return ambiente === 'locale'
+                ? { esito: 'ok', dettaglio: 'versione del repo non fissata (fuori dalla build)' }
+                : { esito: 'degradato', dettaglio: 'versione del repo non fissata alla build' }
+        }
+        const { data, error } = await supabase.rpc('salute_migrazioni')
+        if (error) {
+            const codice = codiceDi(error)
+            if (RPC_SALUTE_ASSENTE.has(codice)) return rpcNonInstallata('salute_migrazioni', codice, adesso)
+            return { esito: 'degradato', dettaglio: `lettura delle migrazioni ${codice}` }
+        }
+        const db = leggiStatoMigrazioniDb(data)
+        if (db === null) return { esito: 'degradato', dettaglio: 'risposta di salute_migrazioni illeggibile' }
+        return valutaMigrazioni(repo, db, buildIlMs(), adesso)
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -1516,8 +1802,10 @@ export async function eseguiVivo(supabase: SupabaseClient): Promise<Salute> {
 
 /**
  * LA SALUTE — il vivo più tutto ciò che si rompe senza che nessun genitore lo veda subito: schema,
- * cron, errori del server, configurazione, coda delle fatture, code che non si svuotano, tracce
- * d'audit perse, regione. NON include la qualità dei dati: vedi `eseguiQualita`.
+ * cron (battito ed esiti), errori del server, configurazione, coda delle fatture, code che non si
+ * svuotano, tracce d'audit perse, regione, Storage, email, push e migrazioni. NON include la
+ * qualità dei dati: vedi `eseguiQualita`. I cinque controlli della sessione 7 dicono al più
+ * `degradato`.
  */
 export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSalute): Promise<Salute> {
     const t0 = Date.now()
@@ -1533,6 +1821,11 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloCodeArretrate(supabase, adesso),
         controlloAuditDocente(supabase, adesso, opzioni.ambiente),
         Promise.resolve(controlloRegione()),
+        controlloCronEsiti(supabase, adesso),
+        controlloStorage(supabase),
+        controlloEmail(supabase, adesso, opzioni.ambiente),
+        controlloPush(supabase, adesso, opzioni.ambiente),
+        controlloMigrazioni(supabase, adesso, opzioni.ambiente),
     ])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

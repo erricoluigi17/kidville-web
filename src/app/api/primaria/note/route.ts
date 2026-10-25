@@ -561,11 +561,64 @@ export const POST = withRoute('primaria/note:POST', async (request: NextRequest)
   }
 })
 
+/**
+ * `note_modifica` NON C'È ANCORA in questo database — i soli due codici con cui succede:
+ * `PGRST202` (PostgREST non la trova nella schema cache: è il DB E2E della CI, che non è
+ * migrato) e `42883` (Postgres: «undefined function»). Solo su QUESTA chiamata si ripiega sulle
+ * due richieste di prima, e lo si dice a livello `info` (specifica della seconda serie, §5;
+ * modello: `RPC_ASSENTE` in `src/app/api/avvisi/[id]/risposte/route.ts`). Un insieme locale e non
+ * un modulo comune, di proposito. Ogni altro codice (`57014`, `42P01`, `42703`…) è un guasto vero
+ * e risponde 500: ripiegare lì rifarebbe a pezzi ciò che la funzione ha rifiutato di fare insieme.
+ */
+const NOTE_MODIFICA_ASSENTE = new Set(['PGRST202', '42883'])
+
+/**
+ * Il ripiego della PATCH quando `note_modifica` non c'è ancora (DB della CI: `PGRST202`). Due
+ * richieste come prima della sessione 10, nell'ordine che lascia ripetibile un guasto a metà:
+ * prima le prese visione delle note a cui cambia il testo, poi le note. Con l'update riuscito e
+ * la cancellazione fallita la firma resterebbe attaccata al testo nuovo, e il nuovo tentativo
+ * troverebbe la nota «invariata»; così invece la ritrova «cambiata» e completa.
+ */
+async function modificaSenzaRpc(
+  supabase: SupabaseClient,
+  ids: string[],
+  idsAzzera: string[],
+  sectionId: string,
+  valoriBase: Record<string, unknown>,
+  valoriAzzera: Record<string, unknown>,
+): Promise<{ ricezioni: number; dopo: unknown[] } | { error: unknown }> {
+  let ricezioni = 0
+  if (idsAzzera.length > 0) {
+    const r = await supabase.from('nota_ricezioni').delete().in('nota_id', idsAzzera).select('id')
+    if (r.error) return { error: r.error }
+    ricezioni = ((r.data ?? []) as unknown[]).length
+  }
+  const dopo: unknown[] = []
+  const restano = ids.filter((i) => !idsAzzera.includes(i))
+  const lotti: Array<[string[], Record<string, unknown>]> = [
+    [idsAzzera, valoriAzzera],
+    [restano, valoriBase],
+  ]
+  for (const [lotto, valori] of lotti) {
+    if (lotto.length === 0) continue
+    const n = await supabase
+      .from('note_disciplinari')
+      .update(valori)
+      .in('id', lotto)
+      .eq('section_id', sectionId)
+      .select(COLONNE_NOTA)
+    if (n.error) return { error: n.error }
+    dopo.push(...((n.data ?? []) as unknown[]))
+  }
+  return { ricezioni, dopo }
+}
+
 // PATCH /api/primaria/note
 // body: { id, categoria?, testo?, richiedeFirma?, ambito: 'alunno'|'gruppo' }
-// Nota già FIRMATA dal genitore e poi modificata → la firma si AZZERA
-// (`firmata_il`/`firmata_da` a null, `nota_ricezioni` cancellate): il genitore
-// la rifirma sul testo nuovo. Nessun avviso al genitore.
+// Nota già FIRMATA dal genitore e poi modificata NEL TESTO → la firma si AZZERA
+// (`firmata_il`/`firmata_da` a null, `nota_ricezioni` cancellate): il genitore la rifirma
+// sul testo nuovo. Data, categoria e «firma richiesta» non la toccano (sessione 10). Nota e
+// prese visione cambiano nella STESSA transazione (`note_modifica`). Nessun avviso al genitore.
 export const PATCH = withRoute('primaria/note:PATCH', async (request: NextRequest) => {
   const operazione = 'primaria/note:PATCH'
   try {
@@ -608,36 +661,68 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     const giorniOriginali = [...new Set(cambiate.map(n => voceDi(n, t.sectionId, t.scuolaId).dataEvento))]
     const politicaModifica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: b.data.data ?? giorniOriginali[0], giornoOriginale: [...giorniOriginali].sort()[0] })
     const ids = cambiate.map((n) => n.id)
-    const firmate = cambiate.filter((n) => n.firmata_il != null).length
+    // La presa visione del genitore riguarda il TESTO che ha letto (sessione 10): si toglie solo
+    // alle note a cui il testo cambia. Data, categoria e «firma richiesta» non la toccano.
+    // ⚠️ Sulla via di `note_modifica` questo elenco NON decide: è calcolato su una lettura fatta
+    // prima, che un'altra modifica può aver reso vecchia. Decide la funzione, confrontando il
+    // testo che legge sotto il blocco con `p_testo`. Qui serve alla rettifica storica (che ha il
+    // suo controllo di versione), al ripiego senza la funzione (limite noto: lì la lettura
+    // vecchia conta ancora) e a `firme_azzerate`, che resta la stima di questa lettura.
+    const azzerate = patch.testo === undefined ? [] : cambiate.filter((n) => !stessoValore(n, 'testo'))
+    const idsAzzera = azzerate.map((n) => n.id)
+    const firmate = azzerate.filter((n) => n.firmata_il != null).length
+    const nuovoGruppo = cambiaData && t.nota.nota_gruppo_id ? crypto.randomUUID() : null
+    const valoriBase: Record<string, unknown> = { ...patch, ...(nuovoGruppo ? { nota_gruppo_id: nuovoGruppo } : {}) }
+    const valoriAzzera: Record<string, unknown> = { ...valoriBase, firmata_il: null, firmata_da: null }
 
-    // Le prese visione firmate si riferivano al testo VECCHIO: si cancellano
-    // PRIMA di toccare la nota. L'ordine inverso non si ripara: con l'update
-    // riuscito e la cancellazione fallita, la firma del genitore resterebbe
-    // attaccata al testo NUOVO, e un nuovo tentativo troverebbe il testo già
-    // uguale (`nota-invariata`) senza più cancellarla. Così, se si ferma qui, la
-    // nota è intatta; se si ferma all'update, al nuovo tentativo la nota risulta
-    // ancora «cambiata» e il lavoro si completa.
-    let ricezioni: unknown[] | null
-    let dopo: unknown[] | null
+    let ricezioniCancellate = 0
+    let dopo: unknown[] | null = null
     let error: unknown = null
-    const valori = { ...patch, ...(cambiaData && t.nota.nota_gruppo_id ? { nota_gruppo_id: crypto.randomUUID() } : {}), firmata_il: null, firmata_da: null }
     if (politicaModifica.sopprimiGenitori) {
       if (t.bersagli.some(n => n.storico_versione === undefined) || !t.scuolaId) return storicoIndisponibile()
       const azioni: AzioneStorica[] = []
       for (const n of cambiate) {
-        azioni.push({ tabella: 'nota_ricezioni', operazione: 'delete', filtro: { nota_id: n.id } })
-        azioni.push({ tabella: 'note_disciplinari', operazione: 'update', filtro: { id: n.id, section_id: t.sectionId }, valori })
+        const azzera = idsAzzera.includes(n.id)
+        // La rettifica storica è già UNA transazione (`storici_applica_rettifica`): le prese
+        // visione si tolgono lì dentro, e solo alle note a cui cambia il testo.
+        if (azzera) azioni.push({ tabella: 'nota_ricezioni', operazione: 'delete', filtro: { nota_id: n.id } })
+        azioni.push({ tabella: 'note_disciplinari', operazione: 'update', filtro: { id: n.id, section_id: t.sectionId }, valori: azzera ? valoriAzzera : valoriBase })
       }
       const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: t.scuolaId, sectionId: t.sectionId, modulo: 'note', giorno: giorniOriginali[0], attese: t.bersagli.map(n => ({ tabella: 'note_disciplinari', filtro: { id: n.id, section_id: t.sectionId }, versione: b.data.versioniAttese?.[n.id] ?? (n.id === id ? b.data.versioneAttesa : undefined) })), azioni })
       if ('response' in rettifica) return rettifica.response
-      ricezioni = rettifica.righe.filter((_,i) => i % 2 === 0).flat()
-      dopo = rettifica.righe.filter((_,i) => i % 2 === 1).flat()
+      ricezioniCancellate = rettifica.righe.filter((_, i) => azioni[i]?.tabella === 'nota_ricezioni').flat().length
+      dopo = rettifica.righe.filter((_, i) => azioni[i]?.tabella === 'note_disciplinari').flat()
     } else {
-      const r = await supabase.from('nota_ricezioni').delete().in('nota_id', ids).select('id')
-      if (r.error) { logErrore({ operazione, evento: 'db' }, r.error); return operazioneNonRiuscita() }
-      ricezioni = r.data
-      const n = await supabase.from('note_disciplinari').update(valori).in('id', ids).eq('section_id', t.sectionId).select(COLONNE_NOTA)
-      dopo = n.data; error = n.error
+      // UNA chiamata: prese visione e nota insieme, o niente (sessione 10). `p_testo` va a tutte
+      // le note modificate, anche quelle che qui sembrano già avere quel testo: la funzione
+      // toglie la presa visione dove il testo, sotto il blocco, cambia davvero.
+      const r = await supabase.rpc('note_modifica', {
+        p_ids: ids,
+        p_section_id: t.sectionId,
+        p_ids_azzera: idsAzzera,
+        p_categoria: patch.categoria ?? null,
+        p_testo: patch.testo ?? null,
+        p_richiede_firma: patch.richiede_firma ?? null,
+        p_data_evento: patch.data_evento ?? null,
+        p_nuovo_gruppo: nuovoGruppo,
+      })
+      if (r.error && NOTE_MODIFICA_ASSENTE.has(r.error.code)) {
+        // DB della CI: la funzione non c'è ancora. `info` (specifica §5): è previsto lì, e solo lì.
+        logEvento('registro', 'info', { operazione, esito: 'rpc-note-modifica-assente' }, r.error)
+        const senza = await modificaSenzaRpc(supabase, ids, idsAzzera, t.sectionId, valoriBase, valoriAzzera)
+        if ('error' in senza) {
+          error = senza.error
+        } else {
+          ricezioniCancellate = senza.ricezioni
+          dopo = senza.dopo
+        }
+      } else if (r.error) {
+        error = r.error
+      } else {
+        const esito = (r.data ?? {}) as { ricezioni_cancellate?: number; note?: unknown[] }
+        ricezioniCancellate = esito.ricezioni_cancellate ?? 0
+        dopo = esito.note ?? []
+      }
     }
     if (error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, error)
@@ -685,7 +770,7 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
       gruppo: t.gruppo,
       n: ids.length,
       firme_azzerate: firmate,
-      ricezioni_cancellate: ((ricezioni ?? []) as unknown[]).length,
+      ricezioni_cancellate: ricezioniCancellate,
       notifiche_allineate: allineate,
     })
     return NextResponse.json({

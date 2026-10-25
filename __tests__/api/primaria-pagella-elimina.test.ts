@@ -351,6 +351,85 @@ describe('DELETE /api/primaria/pagella — il percorso completo', () => {
   })
 })
 
+describe('DELETE /api/primaria/pagella — le versioni ritirate restano (sessione 10)', () => {
+  const RITIRATA = `ritirate/${SCRUTINIO}/${ALUNNO}-20261103100000123.pdf`
+
+  it('pagella in vigore con versioni ritirate: il PDF esce, la riga si RITIRA sull’ultima versione invece di sparire', async () => {
+    preparaPercorsoFelice(rigaPagella({ ritirata_il: null, file_ritirati: [RITIRATA] }))
+    h.state.code['pagelle:update'] = [{ data: [{ id: PAGELLA }], error: null }]
+    const res = await DELETE(reqValida())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, rigaEliminata: false, rigaConservata: true, fileEliminati: 1 })
+    expect(h.state.storage[0].arg).toEqual([FILE_ALUNNO])
+    expect(h.state.ordine).toEqual(['scrutini:select', 'pagelle:select', 'storage:pagelle:remove', 'pagelle:update'])
+
+    const w = scritture()
+    expect(w.map((c) => `${c.table}:${c.op}`)).toEqual(['pagelle:update'])
+    expect(w[0].payload).toEqual({ ritirata_il: expect.any(String), file_url: RITIRATA })
+    expect(w[0].filtri).toContainEqual(['is', 'ritirata_il', null])
+    expect(filtro(w[0], 'eq', 'id')).toBe(PAGELLA)
+
+    expect(auditMock.logScrittura.mock.calls[0][1]).toMatchObject({
+      azione: 'update',
+      entitaId: PAGELLA,
+      valoreDopo: { ritirata_il: expect.any(String), file_url: RITIRATA },
+    })
+    expect(logMock.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'pagella-eliminata-storico-conservato', riga_conservata: true }),
+      undefined,
+      expect.anything(),
+    )
+  })
+
+  it('due versioni ritirate alle spalle: la riga torna a nominare l’ULTIMA consegnata, non la più vecchia', async () => {
+    const PIU_VECCHIA = `ritirate/${SCRUTINIO}/${ALUNNO}-20261001090000000.pdf`
+    preparaPercorsoFelice(rigaPagella({ ritirata_il: null, file_ritirati: [PIU_VECCHIA, RITIRATA] }))
+    h.state.code['pagelle:update'] = [{ data: [{ id: PAGELLA }], error: null }]
+    const res = await DELETE(reqValida())
+    expect(res.status).toBe(200)
+    expect(scritture()[0].payload).toEqual({ ritirata_il: expect.any(String), file_url: RITIRATA })
+  })
+
+  it('riga già ritirata e nessun PDF in vigore → 404: la riga e le sue copie non si toccano', async () => {
+    preparaPercorsoFelice(rigaPagella({ file_url: RITIRATA, ritirata_il: '2026-11-03T10:00:00Z', file_ritirati: [RITIRATA] }))
+    h.state.fileEsistenti = new Set([RITIRATA])
+    const res = await DELETE(reqValida())
+    expect(res.status).toBe(404)
+    expect(h.state.storage[0].arg).toEqual([FILE_ALUNNO])
+    expect(h.state.fileEsistenti.has(RITIRATA)).toBe(true)
+    expect(scritture()).toEqual([])
+  })
+
+  it('colonne del ritiro assenti (DB della CI, 42703): legge come prima e cancella la riga, e lo dice', async () => {
+    preparaPercorsoFelice()
+    h.state.code['pagelle:select'] = [
+      { data: null, error: { code: '42703', message: 'column pagelle.ritirata_il does not exist' } },
+      rigaPagella(),
+    ]
+    const res = await DELETE(reqValida())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true, rigaEliminata: true, fileEliminati: 1 })
+    const letture = h.state.chiamate.filter((c) => c.table === 'pagelle' && c.op === 'select')
+    expect(letture.map((c) => c.colonne)).toEqual([
+      'id, file_url, generata_il, generata_da, ritirata_il, file_ritirati',
+      'id, file_url, generata_il, generata_da',
+    ])
+    expect(logMock.logEvento).toHaveBeenCalledWith('db', 'info', expect.objectContaining({ esito: 'colonna-ritiro-assente' }))
+  })
+
+  it('ritiro della riga fallito → 500 con codice, niente audit né log di successo', async () => {
+    preparaPercorsoFelice(rigaPagella({ file_ritirati: [RITIRATA] }))
+    h.state.code['pagelle:update'] = [{ data: null, error: GUASTO }]
+    const res = await DELETE(reqValida())
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('PAGELLA_ELIMINAZIONE_NON_RIUSCITA')
+    expect(auditMock.logScrittura).not.toHaveBeenCalled()
+    expect(logMock.logEvento).toHaveBeenCalledWith('db', 'error', expect.objectContaining({ esito: 'riga-pagella-non-ritirata' }), GUASTO)
+  })
+})
+
 describe('DELETE /api/primaria/pagella — rifiuti e guasti', () => {
   it('scrutinio inesistente → 404 con codice, nessun file e nessuna riga toccati', async () => {
     h.state.code = { 'scrutini:select': [{ data: null, error: null }] }

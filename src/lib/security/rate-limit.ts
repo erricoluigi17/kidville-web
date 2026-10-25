@@ -103,7 +103,7 @@ import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
  *     POST /api/public/forms/[token]/upload  (30/10min)
  *     POST /api/public/cancellazione-account  (5/10min)
  *     POST /api/logs                          (per-IP, vedi la route)
- *     GET  /api/health                        (per-IP, vedi la route)
+ *     GET  /api/health                        (per-IP IN MEMORIA: rateLimitLocale, lib/health/porta.ts)
  *     GET  /api/anagrafiche/comuni           (60/10min)
  *
  * 🔻 Ne manca una, e la si dice invece di sbagliare il totale in due punti diversi:
@@ -409,6 +409,22 @@ export async function rateLimit(
 ): Promise<RateLimitResult> {
   const condiviso = await consumaCondiviso(key, opts);
   if (condiviso) return condiviso;
+  return consumaLocale(key, opts, now);
+}
+
+/**
+ * Il tetto PER ISTANZA, senza database: lo stesso conteggio che `rateLimit` usa come ripiego.
+ *
+ * Ha un solo chiamante, `src/lib/health/porta.ts` (i tre endpoint di salute): una salute che
+ * scrive sul database a ogni richiesta misura il database dopo averlo caricato. Su più istanze il
+ * tetto effettivo è N × `limit` — vedi la testata della porta. Una rotta che SCRIVE usa
+ * `rateLimit`, il contatore condiviso.
+ */
+export function rateLimitLocale(
+  key: string,
+  opts: RateLimitOptions,
+  now: number = Date.now(),
+): RateLimitResult {
   return consumaLocale(key, opts, now);
 }
 

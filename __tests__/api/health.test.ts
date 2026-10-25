@@ -29,6 +29,10 @@ vi.mock('@/lib/supabase/server-client', () => supa)
 // GoTrue, visto dal controllo `auth`: `auth.admin.getUserById(<uuid nullo>)`.
 const auth = vi.hoisted(() => ({ getUserById: vi.fn() }))
 
+// Le RPC che la salute chiama (e quella del tetto condiviso, che NON deve chiamare) e lo Storage.
+const rpc = vi.hoisted(() => ({ tetto: vi.fn(), cronEsiti: vi.fn(), migrazioni: vi.fn() }))
+const storage = vi.hoisted(() => ({ from: vi.fn(), list: vi.fn() }))
+
 import { GET } from '@/app/api/health/route'
 import { resetRateLimit } from '@/lib/security/rate-limit'
 import {
@@ -107,9 +111,21 @@ function authVivo() {
 }
 
 function montaDb(db: DBFinto, errori: Record<string, ErrorePostgrest> = {}): void {
-    const finto = creaFintoSupabase(db, [], { errori })
+    const finto = creaFintoSupabase(db, [], {
+        errori,
+        rpc: {
+            // Il contatore CONDIVISO del tetto: dal Compito 2 della sessione 7 la salute non lo
+            // chiama più. È qui perché, se tornasse a chiamarlo, il test lo vedrebbe.
+            tetto_frequenza_consuma: rpc.tetto,
+            salute_cron_esiti: rpc.cronEsiti,
+            salute_migrazioni: rpc.migrazioni,
+        },
+    })
     supa.createAdminClient.mockResolvedValue(
-        Object.assign(finto, { auth: { admin: { getUserById: auth.getUserById } } }),
+        Object.assign(finto, {
+            auth: { admin: { getUserById: auth.getUserById } },
+            storage: { from: storage.from },
+        }),
     )
 }
 
@@ -141,6 +157,18 @@ beforeEach(() => {
     vi.stubEnv('VERCEL_ENV', 'production')
     for (const nome of VARIABILI_CRITICHE) vi.stubEnv(nome, 'valore-di-prova')
     montaDb(dbSano())
+    rpc.tetto.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'funzione finta assente' } })
+    rpc.cronEsiti.mockResolvedValue({
+        data: [{ job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', visto_il: fa(MIN), vivo_il: fa(MIN) }],
+        error: null,
+    })
+    rpc.migrazioni.mockResolvedValue({ data: [{ ultima: '20261020000000', numero: 232 }], error: null })
+    storage.from.mockReturnValue({ list: storage.list })
+    storage.list.mockResolvedValue({ data: [], error: null })
+    // Le tre chiavi che `next.config.ts` fissa alla build (Compito 10): in un test non c'è build.
+    vi.stubEnv('KV_MIGRAZIONE_REPO', '20261020000000')
+    vi.stubEnv('KV_MIGRAZIONI_REPO_NUMERO', '232')
+    vi.stubEnv('KV_BUILD_IL', new Date().toISOString())
 })
 
 afterEach(() => {
@@ -167,9 +195,14 @@ describe('GET /api/health', () => {
             'code-arretrate',
             'config',
             'cron-battito',
+            'cron-esiti',
             'db-lettura',
+            'email',
+            'migrazioni',
+            'push',
             'regione',
             'schema-atteso',
+            'storage',
             'tasso-errore',
         ])
         for (const c of corpo.controlli) expect([c.nome, c.esito]).toEqual([c.nome, 'ok'])
@@ -180,6 +213,92 @@ describe('GET /api/health', () => {
         expect((await GET(new Request('https://app.kidville.it/api/health'))).headers.get('Cache-Control')).toBe(
             'no-store',
         )
+    })
+
+    it('cron-esiti: un job senza esito buono dentro la finestra porta a degraded, mai a down, e lo nomina', async () => {
+        rpc.cronEsiti.mockResolvedValue({
+            data: [
+                { job: 'storici-stampe', cadenza: '* * * * *', esito: 'ok', visto_il: fa(MIN), vivo_il: fa(MIN) },
+                { job: 'notifiche-retention', cadenza: '35 4 1 * *', esito: 'fallito', visto_il: fa(2 * ORA), vivo_il: fa(32 * 24 * ORA) },
+            ],
+            error: null,
+        })
+
+        const { stato, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'cron-esiti')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: '2 job attivi; senza un esito buono entro la finestra: notifiche-retention',
+        })
+    })
+
+    it('storage: un 503 dello Storage porta a degraded, mai a down, e il messaggio del fornitore non esce', async () => {
+        storage.list.mockResolvedValue({
+            data: null,
+            error: Object.assign(new Error('messaggio-del-fornitore-da-non-rilanciare'), {
+                name: 'StorageApiError',
+                status: 503,
+            }),
+        })
+
+        const { stato, corpo, grezzo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(corpo.stato).toBe('degraded')
+        expect(controllo(corpo, 'storage')).toMatchObject({
+            esito: 'degradato',
+            dettaglio: 'storage fatture: 503 StorageApiError',
+        })
+        expect(grezzo).not.toContain('messaggio-del-fornitore-da-non-rilanciare')
+        expect(storage.from).toHaveBeenCalledWith('fatture')
+        expect(storage.list).toHaveBeenCalledWith('salute-sonda-inesistente', { limit: 1 })
+        // La porta scrive il guasto in `app_log` (evento `config`, livello `warn` per `/api/health`).
+        expect(log.logEvento).toHaveBeenCalledWith(
+            'config',
+            'warn',
+            expect.objectContaining({
+                msg: expect.stringContaining('storage(degradato): storage fatture: 503 StorageApiError'),
+            }),
+        )
+    })
+
+    it('i cinque controlli nuovi rotti tutti insieme: 200 e degraded, mai 503', async () => {
+        for (const nome of ['FCM_PROJECT_ID', 'FCM_CLIENT_EMAIL', 'FCM_PRIVATE_KEY', 'NEXT_PUBLIC_VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY']) {
+            vi.stubEnv(nome, 'valore-di-prova')
+        }
+        const rifiuti = (evento: string, provider: string) => ({
+            id: `rifiuto-${evento}-${provider}`,
+            evento,
+            livello: 'error',
+            sorgente: 'server',
+            ambiente: 'production',
+            stato_http: 403,
+            occorrenze: 5,
+            creato_il: fa(10 * MIN),
+            visto_l_ultima: fa(10 * MIN),
+            operazione: 'invio',
+            contesto: { campi: { provider, operazione: 'invio' } },
+        })
+        const sano = dbSano()
+        montaDb({
+            ...sano,
+            app_log: [...sano.app_log, rifiuti('email', 'resend'), rifiuti('push', 'fcm'), rifiuti('push', 'web-push')],
+        })
+        rpc.cronEsiti.mockResolvedValue({ data: null, error: { code: 'P0001', message: 'x' } })
+        rpc.migrazioni.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'x' } })
+        storage.list.mockRejectedValue(new TypeError('fetch failed'))
+
+        const { stato, header, corpo } = await chiama()
+
+        expect(stato).toBe(200)
+        expect(header).toBe('degraded')
+        expect(corpo.stato).toBe('degraded')
+        for (const nome of ['cron-esiti', 'storage', 'email', 'push', 'migrazioni']) {
+            expect(controllo(corpo, nome).esito, nome).toBe('degradato')
+        }
+        expect(corpo.controlli.filter((c) => c.esito === 'giu')).toEqual([])
     })
 
     it("UNA traccia d'audit persa porta la salute a degraded con `audit-docente`, e `tasso-errore` resta ok", async () => {
@@ -990,6 +1109,39 @@ describe('GET /api/health', () => {
         expect(controllo(corpo, 'config').dettaglio).toContain('CRON_SECRET')
     })
 
+    it('config guarda anche i canali push e il link dell’app; gli interruttori no', () => {
+        // Sessione 7 della seconda serie: «controlloConfig guarda tutte le variabili critiche».
+        // Critiche = la loro assenza è un guasto SILENZIOSO (vedi la testata di VARIABILI_CRITICHE).
+        for (const nome of [
+            'FCM_PROJECT_ID',
+            'FCM_CLIENT_EMAIL',
+            'FCM_PRIVATE_KEY',
+            'NEXT_PUBLIC_VAPID_PUBLIC_KEY',
+            'VAPID_PRIVATE_KEY',
+            'NEXT_PUBLIC_APP_URL',
+        ]) {
+            expect(VARIABILI_CRITICHE, `${nome} manca dalle variabili critiche`).toContain(nome)
+        }
+        // Fuori, ciascuna con la sua ragione scritta accanto all'elenco.
+        for (const nome of [
+            // Il 25/10/2026 non era definita su Vercel, né in Production né in Preview: dentro,
+            // accenderebbe un allarme che suona da solo.
+            'ANTHROPIC_API_KEY',
+            'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+            'OTP_TICKET_SECRET',
+            'VAPID_SUBJECT',
+            'ARUBA_USERNAME',
+            'SIDI_USERNAME',
+            'SIDI_PASSWORD',
+            'ALLOW_HEADER_IDENTITY',
+            'PARENT_READS_USE_SESSION',
+            'KV_LOG_LEVEL',
+            'NEXT_PUBLIC_CARICAMENTI_NATIVI',
+        ]) {
+            expect(VARIABILI_CRITICHE, `${nome} non è una variabile critica: vedi il commento`).not.toContain(nome)
+        }
+    })
+
     /* ═══════════════════════════════════════════════════════════════════════
      * (e) LA CODA DELLE FATTURE — i casi di confine stanno in
      *     __tests__/lib/health/coda-fatture.test.ts; qui si prova che il controllo
@@ -1071,6 +1223,17 @@ describe('GET /api/health', () => {
 
         expect((await GET(con('203.0.113.1'))).status).toBe(429)
         expect((await GET(con('198.51.100.7'))).status).toBe(200)
+    })
+
+    it('il tetto per IP sta in memoria: la salute non scrive sul database che misura', async () => {
+        const req = () =>
+            new Request('https://app.kidville.it/api/health', { headers: { 'x-forwarded-for': '203.0.113.20' } })
+        for (let i = 0; i < 30; i++) expect((await GET(req())).status).toBe(200)
+        expect((await GET(req())).status).toBe(429)
+
+        // Fino alla sessione 7 ogni richiesta faceva `rpc('tetto_frequenza_consuma')`, cioè una
+        // SCRITTURA su Postgres prima di misurarlo.
+        expect(rpc.tetto).not.toHaveBeenCalled()
     })
 
     /* ═══════════════════════════════════════════════════════════════════════

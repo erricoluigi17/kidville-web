@@ -11,6 +11,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { pagelleInVigore } from '@/lib/primaria/pagelle-ritirate'
 
 /**
  * Il guasto del DATABASE di questa route, distinto dai suoi rifiuti.
@@ -279,9 +280,9 @@ export const GET = withRoute('primaria/scrutinio:GET', async (request: NextReque
         scuolaId
           ? supabase.from('giudizi_sintetici_scala').select('etichetta, ordine').eq('scuola_id', scuolaId).eq('attivo', true).order('ordine')
           : Promise.resolve({ data: [] as { etichetta: string; ordine: number }[], error: null }),
-        // Quali alunni hanno DAVVERO un PDF archiviato (spec 2026-09-24, S3):
-        // la pagina mostra «Elimina pagella» solo su queste, non su ogni alunno.
-        supabase.from('pagelle').select('alunno_id').eq('scrutinio_id', scrutinio.id),
+        // Quali alunni hanno DAVVERO un PDF archiviato IN VIGORE (spec 2026-09-24, S3; le
+        // ritirate da una riapertura no): la pagina mostra «Elimina pagella» solo su queste.
+        pagelleInVigore(supabase, scrutinio.id),
       ])
     // Il contenuto dello scrutinio: un guasto non è una classe senza alunni, senza
     // materie, senza giudizi o senza comportamento. Le materie del docente decidono

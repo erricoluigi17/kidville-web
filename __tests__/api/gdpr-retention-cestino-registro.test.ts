@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { GIORNI_CESTINO_REGISTRO, GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO } from '@/lib/primaria/cestino-registro'
+import { TETTO_FILE_CESTINO } from '@/lib/storage/cestino-file'
 
 /**
  * La purga a 7 giorni del cestino di registro e fascicolo
@@ -28,7 +29,8 @@ const h = vi.hoisted(() => ({
     /** File che `remove()` NON toglie pur rispondendo senza errore (ancora presenti). */
     resistenti: new Set<string>(),
     /**
-     * Errori iniettati: `${tabella}:scadute|conservazione|reclami|delete` e `remove:${bucket}`.
+     * Errori iniettati: `${tabella}:scadute|conservazione|reclami|delete`, `remove:${bucket}` e
+     * `list:${bucket}`.
      * `scadute` è la lettura del cestino (`lt('eliminato_il')`), `conservazione` quella per
      * età di caricamento (`lt('creato_il')`); `${tabella}:delete:creato_il` colpisce la sola
      * cancellazione per conservazione.
@@ -160,13 +162,27 @@ vi.mock('@/lib/supabase/server-client', () => ({
                         for (const p of tolti) insieme.delete(p)
                         return { data: tolti.map((name) => ({ name })), error: null }
                     },
-                    async list(cartella: string, opzioni?: { search?: string }) {
+                    async list(cartella: string, opzioni?: { search?: string; limit?: number; offset?: number }) {
+                        const err = h.errori[`list:${bucket}`]
+                        if (err) return { data: null, error: err }
+                        // Come lo Storage: le CARTELLE con `id: null`, i file con un id, per nome
+                        // crescente, a pagine (`limit` 100 se non indicato), `search` = «comincia per».
                         const prefisso = cartella ? `${cartella}/` : ''
-                        const nomi = [...insieme]
-                            .filter((p) => p.startsWith(prefisso))
-                            .map((p) => p.slice(prefisso.length))
-                            .filter((n) => !n.includes('/') && n.startsWith(opzioni?.search ?? ''))
-                        return { data: nomi.map((name) => ({ name, id: 'oggetto' })), error: null }
+                        const voci = new Map<string, string | null>()
+                        for (const p of insieme) {
+                            if (!p.startsWith(prefisso)) continue
+                            const resto = p.slice(prefisso.length)
+                            const barra = resto.indexOf('/')
+                            if (barra < 0) voci.set(resto, 'oggetto')
+                            else if (!voci.has(resto.slice(0, barra))) voci.set(resto.slice(0, barra), null)
+                        }
+                        const nomi = [...voci.keys()].filter((n) => n.startsWith(opzioni?.search ?? '')).sort()
+                        const da = opzioni?.offset ?? 0
+                        const quanti = opzioni?.limit ?? 100
+                        return {
+                            data: nomi.slice(da, da + quanti).map((name) => ({ name, id: voci.get(name) ?? null })),
+                            error: null,
+                        }
                     },
                 }
             },
@@ -902,5 +918,82 @@ describe('la migrazione del cron chiama QUESTA route con QUESTO nome di lavoro',
         expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.cestino_registro_retention_http\(\) TO service_role/)
         expect(sql).toMatch(/EXCEPTION WHEN OTHERS THEN null;\s*END \$\$;/)
         expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.cestino_registro_retention_http\(\)/)
+    })
+})
+
+describe('POST — il cestino dei file del personale (sessione 10)', () => {
+    const B_PERSONALE = 'documenti_personale'
+    const giornoFa = (giorni: number) => new Date(Date.now() - giorni * GIORNO).toISOString().slice(0, 10)
+
+    it('svuota le cartelle-giorno oltre il termine del cestino e lascia le giovani', async () => {
+        semina([], [])
+        const vecchia = giornoFa(GIORNI_CESTINO_REGISTRO + 1)
+        const nuova = giornoFa(GIORNI_CESTINO_REGISTRO - 1)
+        h.bucket[B_PERSONALE] = new Set([
+            `cestino/${vecchia}/P1/fronte.jpg`,
+            `cestino/${vecchia}/P1/retro.jpg`,
+            `cestino/${nuova}/P2/fronte.jpg`,
+            'P3/fronte.jpg',
+        ])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect((await res.json()).cestino_personale).toMatchObject({ esito: 'ok', giorniScaduti: 1, fileRimossi: 2 })
+        expect([...h.bucket[B_PERSONALE]].sort()).toEqual(['P3/fronte.jpg', `cestino/${nuova}/P2/fronte.jpg`])
+        expect(battito()?.campi).toMatchObject({
+            esito: 'ok',
+            n_cestino_personale_giorni: 1,
+            n_cestino_personale_file: 2,
+            n_cestino_personale_bloccanti: 0,
+            cestino_personale_ok: true,
+        })
+    })
+
+    it('un file che resiste: 500, e il battito dice perché', async () => {
+        semina([], [])
+        const file = `cestino/${giornoFa(GIORNI_CESTINO_REGISTRO + 1)}/P1/fronte.jpg`
+        h.bucket[B_PERSONALE] = new Set([file])
+        h.resistenti.add(file)
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        expect((await res.json()).motivo).toBe('cestino-personale-file-non-rimossi')
+        expect(battito()?.campi).toMatchObject({
+            esito: 'cestino-personale-file-non-rimossi',
+            cestino_personale_ok: false,
+            n_cestino_personale_bloccanti: 1,
+        })
+    })
+
+    it('un elenco che non risponde: 500, e niente si cancella', async () => {
+        semina([], [])
+        const file = `cestino/${giornoFa(GIORNI_CESTINO_REGISTRO + 1)}/P1/fronte.jpg`
+        h.bucket[B_PERSONALE] = new Set([file])
+        h.errori[`list:${B_PERSONALE}`] = { message: 'internal error', statusCode: '500' }
+        const res = await chiama()
+        expect(res.status).toBe(500)
+        expect((await res.json()).motivo).toBe('cestino-personale-elenco-fallito')
+        expect(h.bucket[B_PERSONALE].has(file)).toBe(true)
+    })
+
+    it('oltre il tetto del giro: ne escono TETTO_FILE_CESTINO, il battito dice lotto_pieno, il resto aspetta', async () => {
+        semina([], [])
+        const vecchia = giornoFa(GIORNI_CESTINO_REGISTRO + 1)
+        h.bucket[B_PERSONALE] = new Set(
+            Array.from({ length: TETTO_FILE_CESTINO + 1 }, (_, i) => `cestino/${vecchia}/P${i + 1}/fronte.jpg`),
+        )
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        expect((await res.json()).cestino_personale).toMatchObject({
+            esito: 'ok',
+            fileRimossi: TETTO_FILE_CESTINO,
+            lottoPieno: true,
+        })
+        expect(h.bucket[B_PERSONALE].size).toBe(1)
+        expect(battito()?.campi).toMatchObject({ lotto_pieno: true, n_cestino_personale_file: TETTO_FILE_CESTINO })
+    })
+
+    it('il bucket è quello delle scansioni del personale, non un nome scritto a mano', () => {
+        const sorgente = readFileSync(join(process.cwd(), 'src/app/api/gdpr/retention-cestino-registro/route.ts'), 'utf8')
+        expect(sorgente).toContain("import { BUCKET_DOCUMENTI_PERSONALE } from '@/lib/personale/caricamenti'")
+        expect(sorgente).toMatch(/svuotaCestinoScaduto\(\s*supabase,\s*BUCKET_DOCUMENTI_PERSONALE/)
     })
 })

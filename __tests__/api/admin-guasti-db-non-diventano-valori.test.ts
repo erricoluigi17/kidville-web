@@ -184,6 +184,22 @@ describe('merch — una scrittura principale fallita è 500, e la creazione a me
     expect(cancellate).toEqual(['pagamenti', 'divise_ordini_righe', 'divise_ordini'])
   })
 
+  it('ordine: anche la compensazione fallisce → 500, e l’addebito rimasto è nel log col suo id', async () => {
+    preparaOrdine()
+    h.guasti['divise_ordini:update'] = GUASTO
+    h.guasti['pagamenti:delete'] = GUASTO
+    const res = await creaOrdine(json('http://localhost/api/admin/merch/ordini', 'POST', corpoOrdine))
+    expect(res.status).toBe(500)
+    // Un passo che non riesce non ferma gli altri: righe e ordine si tolgono lo stesso.
+    expect(h.scritture.filter((s) => s.op === 'delete').map((s) => s.table)).toEqual(['pagamenti', 'divise_ordini_righe', 'divise_ordini'])
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'db',
+      'error',
+      expect.objectContaining({ operazione: 'admin/merch/ordini:POST', esito: 'addebito-orfano-non-rimosso', entita_id: 'pagamenti-nuovo' }),
+      GUASTO,
+    )
+  })
+
   it('ordine: la categoria dell’addebito non letta → 500 PRIMA di scrivere qualunque cosa', async () => {
     preparaOrdine()
     h.guasti['payment_categories:select'] = GUASTO

@@ -54,7 +54,7 @@ interface ArchivioCfg {
   listError?: { message: string } | null
   // ── sorgenti applicative ──────────────────────────────────────────────────
   parent?: Record<string, unknown> | null
-  pagelle?: { id: string; file_url: string | null }[]
+  pagelle?: { id: string; file_url: string | null; file_ritirati?: string[] }[]
   certificati?: { id: string; file_path: string | null }[]
   media?: Record<string, unknown>[]
   threadAlunno?: { id: string }[]
@@ -348,5 +348,38 @@ describe('oblio del GENITORE · stessa regola, stesso conteggio', () => {
     expect(r.fileRimossi).toBe(1)
     expect(r.fileNonRimossi).toBe(0)
     expect(f.archivio.get('credenziali')?.size).toBe(0)
+  })
+})
+
+describe('oblio · le pagelle RITIRATE da una riapertura (sessione 10)', () => {
+  const R1 = 'ritirate/scr-1/al-1-20261001090000000.pdf'
+  const R2 = 'ritirate/scr-1/al-1-20261103100000123.pdf'
+
+  it('ALUNNO · escono anche le copie in `ritirate/`, PRIMA della riga che le nomina', async () => {
+    const f = fakeArchivio({
+      presenti: { pagelle: ['scr-1/al-1.pdf', R1, R2] },
+      pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf', file_ritirati: [R1, R2] }],
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    expect(f.archivio.get('pagelle')?.size, 'una pagella ritirata è rimasta nell’archivio dopo l’oblio').toBe(0)
+    const iCopie = f.removed.findIndex((x) => x.bucket === 'pagelle' && x.paths.includes(R1))
+    const iOriginale = f.removed.findIndex((x) => x.bucket === 'pagelle' && x.paths.includes('scr-1/al-1.pdf'))
+    expect(iCopie).toBeGreaterThanOrEqual(0)
+    expect(iCopie).toBeLessThan(iOriginale)
+    expect(f.deleted.some((d) => d.table === 'pagelle')).toBe(true)
+    expect(r.fileNonRimossi).toBe(0)
+  })
+
+  it('ALUNNO · una copia ritirata resta nel bucket → la riga NON si cancella, e si grida', async () => {
+    const f = fakeArchivio({
+      presenti: { pagelle: ['scr-1/al-1.pdf', R1] },
+      rimuoveDavvero: false,
+      forma: 'vuota',
+      pagelle: [{ id: 'pg-1', file_url: 'scr-1/al-1.pdf', file_ritirati: [R1] }],
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+    expect(f.deleted.some((d) => d.table === 'pagelle'), 'la riga che nomina la copia rimasta è sparita').toBe(false)
+    expect(r.fileNonRimossi).toBeGreaterThan(0)
+    expect(esitiErrore()).toContain('pagelle-ritirate-trattenute')
   })
 })

@@ -15,6 +15,8 @@ import {
 import { fascicoloNelCestino, fascicoloAncheNelCestino } from '@/lib/primaria/cestino-fascicolo'
 import { allegatiRegistroNelCestino, allegatiRegistroAncheNelCestino } from '@/lib/primaria/cestino-allegati-registro'
 import { BUCKET_ALLEGATI_REGISTRO } from '@/lib/primaria/allegati-registro'
+import { BUCKET_DOCUMENTI_PERSONALE } from '@/lib/personale/caricamenti'
+import { SVUOTAMENTO_VUOTO, svuotaCestinoScaduto, type EsitoSvuotamento } from '@/lib/storage/cestino-file'
 
 /**
  * LA PURGA DEL CESTINO DEL REGISTRO E DEL FASCICOLO — prima il file, poi la riga.
@@ -688,6 +690,9 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
         conservazione: { ...NIENTE },
         fascicolo: { ...NIENTE },
     }
+    // Il cestino dei FILE del personale (sessione 10): non ha righe, ha cartelle-giorno
+    // (`cestino/<AAAA-MM-GG>/…`) nel bucket delle scansioni.
+    let cestinoPersonale: EsitoSvuotamento = { ...SVUOTAMENTO_VUOTO }
 
     try {
         const secret = request.headers.get('x-cron-secret')
@@ -719,6 +724,13 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
         for (const c of CONTENITORI_CESTINO_REGISTRO) {
             esiti[c.chiave] = await purgaContenitore(supabase, c, c.soglia(adesso), canale)
         }
+        // Stesso termine del cestino del registro, dalla stessa costante: un numero solo.
+        cestinoPersonale = await svuotaCestinoScaduto(
+            supabase,
+            BUCKET_DOCUMENTI_PERSONALE,
+            sogliaPurgaCestinoRegistro(adesso).slice(0, 10),
+            JOB,
+        )
 
         const lista = Object.values(esiti)
         const guasto = lista.find((e) => ESITI_GUASTO.has(e.esito))
@@ -729,11 +741,16 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
             allegati: esiti.allegati,
             conservazione: esiti.conservazione,
             fascicolo: esiti.fascicolo,
+            cestino_personale: cestinoPersonale,
         }
 
         if (guasto) {
             esitoBattito = guasto.esito
             return NextResponse.json({ ok: false, motivo: guasto.esito, ...corpo }, { status: 500 })
+        }
+        if (cestinoPersonale.esito !== 'ok') {
+            esitoBattito = `cestino-personale-${cestinoPersonale.esito}`
+            return NextResponse.json({ ok: false, motivo: esitoBattito, ...corpo }, { status: 500 })
         }
         if (assenza) {
             esitoBattito = assenza.esito
@@ -788,13 +805,18 @@ export const POST = withRoute('gdpr/retention-cestino-registro:POST', async (req
             n_allegati_file: a.fileRimossi,
             n_fascicolo_righe: f.cancellate,
             n_fascicolo_file: f.fileRimossi,
-            lotto_pieno: tutti.some((e) => e.lottoPieno),
+            n_cestino_personale_giorni: cestinoPersonale.giorniScaduti,
+            n_cestino_personale_file: cestinoPersonale.fileRimossi,
+            n_cestino_personale_bloccanti: cestinoPersonale.fileBloccanti,
+            cestino_personale_ok: cestinoPersonale.esito === 'ok',
+            lotto_pieno: tutti.some((e) => e.lottoPieno) || cestinoPersonale.lottoPieno,
             conteggio_verificato: tutti.every((e) => e.cancellate === 0 || e.conteggioVerificato),
             ms: Date.now() - t0,
             msg:
                 `${JOB}: cestino ${a.cancellate + f.cancellate} righe e ${a.fileRimossi + f.fileRimossi} file ` +
                 `oltre i ${GIORNI_CESTINO_REGISTRO} giorni; conservazione ${k.cancellate} righe e ${k.fileRimossi} ` +
-                `file oltre i ${GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO} giorni dal caricamento`,
+                `file oltre i ${GIORNI_CONSERVAZIONE_ALLEGATI_REGISTRO} giorni dal caricamento; ` +
+                `personale ${cestinoPersonale.fileRimossi} file dal cestino`,
         })
     }
 })

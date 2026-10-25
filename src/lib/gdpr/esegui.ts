@@ -785,13 +785,53 @@ async function obliaFileDaTabella(
  * Le PAGELLE del minore: il PDF esce dal bucket e la riga che lo indicizza
  * sparisce. Dentro ci sono i giudizi per disciplina, il comportamento e il
  * giudizio globale — una descrizione del bambino, non un atto contabile.
+ *
+ * PRIMA LE VERSIONI RITIRATE (sessione 10 della seconda serie di robustezza). Una
+ * riapertura dello scrutinio non cancella più la pagella consegnata: la copia in
+ * `ritirate/<scrutinio>/…` e ne tiene il percorso in `file_ritirati`. Quelle copie sono
+ * giudizi sul bambino come la pagella in vigore, e l'unica colonna che le nomina sta nella
+ * riga che `obliaFileDaTabella` sta per cancellare: si tolgono prima, e se una resta nel
+ * bucket le righe restano anche loro (l'oblio si ripete e la ritrova). Se non si riesce a
+ * leggerle, l'oblio si ferma qui: `letto: false`, come per ogni inventario non letto.
  */
 export async function obliaPagelleAlunno(
   supabase: SupabaseClient,
   alunnoId: string,
   op: string,
 ): Promise<EsitoTabellaOblio> {
-  return obliaFileDaTabella(supabase, {
+  if (!alunnoId) return { rimossi: 0, nonRimossi: 0, righe: 0, letto: true }
+
+  let rimosseRitirate = 0
+  const { data, error } = await supabase.from('pagelle').select('id, file_ritirati').eq('alunno_id', alunnoId)
+  if (error && !schemaAssente(error)) {
+    logErrore({ operazione: op, evento: 'oblio_pagelle_ritirate_select' }, error)
+    return { rimossi: 0, nonRimossi: 0, righe: 0, letto: false }
+  }
+  if (!error) {
+    const copie = ((data ?? []) as unknown as { file_ritirati?: unknown }[]).flatMap((r) =>
+      Array.isArray(r.file_ritirati) ? r.file_ritirati.filter((p): p is string => typeof p === 'string') : [],
+    )
+    if (copie.length > 0) {
+      const percorsi = copie.map((p) => percorsoDelBucket(BUCKET_PAGELLE, p))
+      const illeggibili = percorsi.filter((p) => p === null).length
+      const esito = await rimuoviFileOblio(supabase, BUCKET_PAGELLE, percorsi, op)
+      const trattenute = esito.nonRimossi + illeggibili
+      if (trattenute > 0) {
+        // Mai i percorsi: portano l'uuid del bambino. Solo il conteggio.
+        logEvento('gdpr', 'error', {
+          operazione: op,
+          esito: 'pagelle-ritirate-trattenute',
+          bucket: BUCKET_PAGELLE,
+          n_file: trattenute,
+          msg: `${op}: ${trattenute} pagelle ritirate restano nell'archivio: le righe di \`pagelle\` NON sono state cancellate`,
+        })
+        return { rimossi: esito.rimossi, nonRimossi: trattenute, righe: 0, letto: true }
+      }
+      rimosseRitirate = esito.rimossi
+    }
+  }
+
+  const resto = await obliaFileDaTabella(supabase, {
     tabella: 'pagelle',
     colonnePercorso: ['file_url'],
     colonnaFiltro: 'alunno_id',
@@ -800,6 +840,7 @@ export async function obliaPagelleAlunno(
     evento: 'oblio_pagelle',
     op,
   })
+  return { ...resto, rimossi: resto.rimossi + rimosseRitirate }
 }
 
 /**

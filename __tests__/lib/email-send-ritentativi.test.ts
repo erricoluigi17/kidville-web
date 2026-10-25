@@ -367,3 +367,90 @@ describe('sendEmailDetailed — esito incerto quando la richiesta può essere ar
     expect(r).toMatchObject({ ok: false, tentativi: 3, incerto: true })
   })
 })
+
+/**
+ * SECONDA REVISIONE DEL LOTTO 4.
+ *
+ * (3) L'elenco degli errori PRIMA della connessione era incompleto: un certificato scaduto
+ *     (`CERT_HAS_EXPIRED`), un nome che non torna (`ERR_TLS_CERT_ALTNAME_INVALID`), una rete o un
+ *     host irraggiungibili uscivano «incerti», e il sollecito slittava di una cadenza invece di
+ *     riprovare il giorno dopo. Lì la richiesta HTTP non è mai partita: l'handshake è fallito prima.
+ * (4) Qualunque 4xx smentiva un 5xx precedente, anche quello di un intermediario (il 403 HTML di
+ *     un WAF, un 408, un 409 senza `name`): esito certo, presa annullata, doppione possibile il
+ *     giorno dopo. Smentisce solo un rifiuto STRUTTURATO di Resend, cioè con un `name`.
+ */
+describe('sendEmailDetailed — seconda revisione del lotto 4', () => {
+  it.each(['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_TLS_HANDSHAKE_TIMEOUT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'SELF_SIGNED_CERT_IN_CHAIN', 'EHOSTUNREACH', 'ENETUNREACH'])(
+    'errore PRIMA della richiesta (%s), con la chiave: esito certo',
+    async (codice) => {
+      resendFinto([rete(codice)])
+      const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain('errore di rete')
+      expect(r.incerto).toBeUndefined()
+    },
+  )
+
+  it.each(['ERR_TLS_RENEGOTIATION_DISABLED', 'UND_ERR_SOCKET', 'EPIPE'])(
+    'errore a connessione APERTA (%s), con la chiave: resta incerto (la richiesta può essere partita)',
+    async (codice) => {
+      resendFinto([rete(codice)])
+      const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+      expect(r).toMatchObject({ ok: false, incerto: true })
+    },
+  )
+
+  /** 500, poi `secondo`: due chiamate (il 4xx ferma i ritentativi). */
+  async function cinquecentoPoi(secondo: () => Risposta) {
+    const chiavi = resendFinto([rifiuto(500, { message: 'errore' }), secondo])
+    const p = sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE, ritentativi: {} })
+    await finché(() => chiavi.length === 1 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await finché(() => chiavi.length === 2)
+    return p
+  }
+
+  it.each([
+    ['403 HTML di un WAF', () => new Response('<html><body>403 Forbidden</body></html>', { status: 403 })],
+    ['408 di un proxy, senza corpo', () => new Response('', { status: 408 })],
+    ['409 JSON senza `name`', rifiuto(409, { message: 'Conflict' })],
+    ['400 JSON con un `name` vuoto', rifiuto(400, { name: '', message: 'Bad Request' })],
+  ])('500 poi %s: NON smentisce il 500, l’esito resta incerto', async (_nome, secondo) => {
+    const r = await cinquecentoPoi(secondo as () => Risposta)
+    expect(r).toMatchObject({ ok: false, tentativi: 2, incerto: true })
+  })
+
+  it('500 poi 403 STRUTTURATO di Resend (`name`): smentisce il 500, esito certo', async () => {
+    const r = await cinquecentoPoi(rifiuto(403, { statusCode: 403, name: 'validation_error', message: 'The domain is not verified' }))
+    expect(r).toMatchObject({ ok: false, tentativi: 2 })
+    expect(r.incerto).toBeUndefined()
+    expect(r.error).toContain('The domain is not verified')
+  })
+
+  it('scadenza poi 403 HTML di un WAF: la scadenza NON è smentita, resta incerto', async () => {
+    const chiavi = resendFinto([scaduto, () => new Response('<html>403 Forbidden</html>', { status: 403 })])
+    const p = sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE, ritentativi: {} })
+    await finché(() => chiavi.length === 1 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await finché(() => chiavi.length === 2)
+    expect(await p).toMatchObject({ ok: false, tentativi: 2, incerto: true })
+  })
+
+  it('scadenza poi 429 STRUTTURATO di Resend (`rate_limit_exceeded`): anche con il `name`, un 429 non smentisce niente', async () => {
+    const chiavi = resendFinto([scaduto, rifiuto(429, { statusCode: 429, name: 'rate_limit_exceeded', message: 'Too many requests' })])
+    const p = sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE, ritentativi: {} })
+    await finché(() => chiavi.length === 1 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await finché(() => chiavi.length === 2 && vi.getTimerCount() > 0)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await finché(() => chiavi.length === 3)
+    expect(await p).toMatchObject({ ok: false, rinviabile: true, incerto: true, tentativi: 3 })
+  })
+
+  it('un 403 HTML da solo (nessun dubbio prima): esito certo, come sempre', async () => {
+    resendFinto([() => new Response('<html>403 Forbidden</html>', { status: 403 })])
+    const r = await sendEmailDetailed({ ...params, chiaveIdempotenza: CHIAVE })
+    expect(r.ok).toBe(false)
+    expect(r.incerto).toBeUndefined()
+  })
+})

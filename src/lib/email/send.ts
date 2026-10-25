@@ -178,10 +178,13 @@ export interface SendEmailResult {
    *  · con la chiave d'idempotenza INVIATA (revisione del lotto 4): un `5xx` — 502 e 504 di un
    *    gateway compresi, che possono rispondere dopo che Resend ha preso il messaggio — e uno
    *    `stato: 0` che non sia un errore PRIMA della connessione (`ECONNRESET`, un socket chiuso a
-   *    metà, un errore senza codice). Restano certi `ENOTFOUND`, `EAI_AGAIN`, `ECONNREFUSED` e
-   *    `UND_ERR_CONNECT_TIMEOUT`: lì la richiesta non è mai partita.
-   * Lo smentiscono solo un successo o un rifiuto 4xx definitivo a un tentativo successivo (stessa
-   * chiave ⇒ stesso esito); un `429` o un errore prima della connessione non dicono niente.
+   *    metà, un errore senza codice). Restano certi DNS, porta chiusa, rete o host irraggiungibili,
+   *    connessione mai stabilita e handshake TLS fallito (`primaDellaRichiesta`): lì la richiesta
+   *    non è mai partita.
+   * Lo smentiscono solo un successo o un rifiuto 4xx definitivo DI RESEND (con il `name` dei suoi
+   * errori) a un tentativo successivo (stessa chiave ⇒ stesso esito); un `429`, un 4xx di un
+   * intermediario (il 403 HTML di un WAF, un 408) o un errore prima della connessione non dicono
+   * niente.
    *
    * Chi tiene una presa (i solleciti) NON la annulla su un esito incerto: il sollecito slitta di
    * una cadenza. È il prezzo accettato: durante un guasto di Resend i solleciti slittano.
@@ -216,12 +219,43 @@ const IDEMPOTENZA_CONCORRENTE = 'concurrent_idempotent_requests'
 const IDEMPOTENZA_CHIAVE_RIUSATA = 'invalid_idempotent_request'
 
 /**
- * Gli errori di rete che arrivano PRIMA che la connessione esista (revisione del lotto 4): DNS
- * (`ENOTFOUND`, `EAI_AGAIN`), porta chiusa (`ECONNREFUSED`), connessione mai stabilita entro il
- * tetto di undici (`UND_ERR_CONNECT_TIMEOUT`). Lì la richiesta non è mai partita e l'esito è
- * certo. Ogni altro `stato: 0` può arrivare DOPO l'invio, ed è incerto (vedi `forseArrivata`).
+ * Gli errori di rete che arrivano PRIMA che la richiesta HTTP parta (revisione del lotto 4): DNS
+ * (`ENOTFOUND`, `EAI_AGAIN`), porta chiusa (`ECONNREFUSED`), rete o host irraggiungibili
+ * (`ENETUNREACH`, `EHOSTUNREACH`), connessione mai stabilita entro il tetto di undici
+ * (`UND_ERR_CONNECT_TIMEOUT`). Lì la richiesta non è mai partita e l'esito è certo. Ogni altro
+ * `stato: 0` può arrivare DOPO l'invio, ed è incerto (vedi `forseArrivata`).
+ *
+ * Più gli errori dell'HANDSHAKE TLS (seconda revisione del lotto 4: un `CERT_HAS_EXPIRED` usciva
+ * incerto, e il sollecito slittava di una cadenza invece di riprovare il giorno dopo), che si
+ * riconoscono per FAMIGLIA e non uno per uno — vedi `primaDellaRichiesta`.
  */
-const ERRORI_PRIMA_DELLA_CONNESSIONE: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT'])
+const ERRORI_PRIMA_DELLA_CONNESSIONE: ReadonlySet<string> = new Set([
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+  // Le verifiche del certificato che OpenSSL non chiama `CERT_…`: le più comuni davanti a un
+  // proxy o a una catena incompleta. Anche queste fermano l'handshake, quindi la richiesta.
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+])
+
+/**
+ * Le famiglie dell'handshake TLS: `CERT_…` (le verifiche X.509 di OpenSSL: scaduto, non ancora
+ * valido, revocato…) e `ERR_TLS_…` di Node (nome che non torna, handshake scaduto…). Ancorate
+ * all'INIZIO del codice. L'handshake si chiude prima che un solo byte della richiesta HTTP parta.
+ */
+const FAMIGLIE_TLS_PRIMA_DELLA_RICHIESTA = /^(?:CERT_|ERR_TLS_)/
+
+/**
+ * Le due eccezioni della famiglia `ERR_TLS_`: una RINEGOZIAZIONE può arrivare a connessione già
+ * aperta, cioè DOPO che la richiesta è partita. Restano incerte, come ogni errore a metà strada.
+ */
+const ERRORI_TLS_A_CONNESSIONE_APERTA: ReadonlySet<string> = new Set(['ERR_TLS_RENEGOTIATION_DISABLED', 'ERR_TLS_SESSION_ATTACK'])
+
+/** Il codice di rete dice che la richiesta HTTP NON è mai partita? (esito certo) */
+function primaDellaRichiesta(codice: string | undefined): boolean {
+  if (codice === undefined) return false
+  if (ERRORI_PRIMA_DELLA_CONNESSIONE.has(codice)) return true
+  return FAMIGLIE_TLS_PRIMA_DELLA_RICHIESTA.test(codice) && !ERRORI_TLS_A_CONNESSIONE_APERTA.has(codice)
+}
 
 /** Quante chiamate al massimo, ritentativi compresi (sessione 9). */
 export const TENTATIVI_EMAIL_MAX = 3
@@ -495,9 +529,9 @@ async function chiamaResend(
 ): Promise<{ esito: EsitoEsterno; tentativi: number; fermata: MotivoFermata | null; incerto: boolean }> {
   let tentativi = 0
   // «Una chiamata può essere arrivata a Resend senza che sappiamo com'è andata» (`forseArrivata`).
-  // Lo smentisce solo un successo o un rifiuto 4xx definitivo a un tentativo dopo (stessa chiave
-  // ⇒ stesso esito); un 429 o un errore PRIMA della connessione non dicono niente sui tentativi
-  // di prima, e il «forse» resta com'era.
+  // Lo smentisce solo un successo o un rifiuto 4xx definitivo DI RESEND a un tentativo dopo
+  // (`smentisceIlDubbio`: stessa chiave ⇒ stesso esito); un 429, un 4xx di un intermediario o un
+  // errore PRIMA della connessione non dicono niente sui tentativi di prima, e il «forse» resta.
   let incerto = false
   for (;;) {
     tentativi++
@@ -508,7 +542,7 @@ async function chiamaResend(
         ? {}
         : { gravita: (stato: number): Livello => (eRitentabile(stato, chiave) ? 'warn' : 'error') }),
     })
-    if (esito.ok || (esito.stato >= 400 && esito.stato < 500 && esito.stato !== QUOTA_ESAURITA)) incerto = false
+    if (smentisceIlDubbio(esito)) incerto = false
     else if (forseArrivata(esito, chiave)) incerto = true
 
     if (esito.ok) {
@@ -559,7 +593,8 @@ async function chiamaResend(
  * volte. Ora:
  *  · la scadenza del nostro tetto (`codice: 'timeout'`): sempre, con o senza chiave, come prima;
  *  · con la chiave d'idempotenza INVIATA: ogni `5xx` (502 e 504 compresi) e ogni `stato: 0` che
- *    non sia in `ERRORI_PRIMA_DELLA_CONNESSIONE` — un errore senza codice compreso, nel dubbio.
+ *    non sia un errore di prima della richiesta (`primaDellaRichiesta`: DNS, porta chiusa, rete
+ *    irraggiungibile, handshake TLS fallito) — un errore senza codice compreso, nel dubbio.
  * Senza chiave un 5xx o una connessione caduta restano l'esito di sempre: chi non passa la chiave
  * non tiene una presa da proteggere, e non ritenta.
  */
@@ -568,7 +603,21 @@ function forseArrivata(esito: EsitoEsterno, chiave: string | undefined): boolean
   if (esito.stato === 0 && esito.codice === 'timeout') return true
   if (chiave === undefined) return false
   if (esito.stato >= 500 && esito.stato <= 599) return true
-  return esito.stato === 0 && !ERRORI_PRIMA_DELLA_CONNESSIONE.has(esito.codice ?? '')
+  return esito.stato === 0 && !primaDellaRichiesta(esito.codice)
+}
+
+/**
+ * «Questa risposta smentisce un dubbio di prima» (seconda revisione del lotto 4). Stessa chiave ⇒
+ * stesso esito: se Resend ora risponde con un rifiuto definitivo, la chiamata di prima non era
+ * partita. Ma lo può dire solo RESEND: un rifiuto 4xx (≠ 429) con il `name` dei suoi errori
+ * strutturati (`{ statusCode, name, message }`). Un 403 HTML di un WAF, un 408 di un proxy, un 409
+ * senza `name` vengono da un intermediario che non sa niente della chiamata di prima: il dubbio
+ * resta. Fino ad allora qualunque 4xx smentiva, e la presa si annullava su un esito forse partito.
+ */
+function smentisceIlDubbio(esito: EsitoEsterno): boolean {
+  if (esito.ok) return true
+  if (esito.stato < 400 || esito.stato >= 500 || esito.stato === QUOTA_ESAURITA) return false
+  return nomeDelProvider(esito.corpo) !== null
 }
 
 /**

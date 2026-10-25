@@ -64,9 +64,10 @@ const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
  *
  * L'unica eccezione sono le righe NATE PRIMA della colonna, già lette e mai consegnate: con zero
  * non letti questa GET non le tocca (se ce n'è almeno uno, l'UPDATE sui thread le prende insieme
- * alle altre), e la doppia spunta gliela mette comunque l'apertura della lista chat, che consegna
- * senza limite temporale. Sono messaggi che il destinatario ha già letto: nessuno aspetta più
- * niente.
+ * alle altre). Fino al 2026-10-20 la doppia spunta gliela metteva comunque l'apertura della lista
+ * chat; dalla sessione 12 di robustezza 2 la lista non scrive più, e la consegna senza limite
+ * temporale è `POST /api/chat/threads/consegnati`, che la pagina chat chiede solo quando ci sono non
+ * letti. Sono messaggi che il destinatario ha già letto: nessuno aspetta più niente.
  *
  * I THREAD SONO QUELLI DEL MODULO, l'identità quella del GATE. `threadIds` arriva da
  * `leggiChatNonLetti`, che li legge con l'`or` su `teacher_id`/`parent_id`: sono le

@@ -1073,6 +1073,10 @@ const AMMESSE: Record<string, string> = {
     // verificata riga per riga. Una conversazione di un altro plesso non è
     // raggiungibile perché non se ne è partecipanti, non perché filtrata.
     'chat/threads:GET': 'scope conversazione: solo i thread di cui si è teacher o parent',
+    // S7, robustezza 2 sessione 12 (2026-10-20): l'UPDATE di `delivered_at` è uscito da
+    // `chat/threads:GET` ed è diventato questa richiesta. Stesso scope della GET, riga per riga:
+    // i thread di cui si è teacher o parent, con l'id del gate; il corpo è `{}`.
+    'chat/threads/consegnati:POST': 'scope conversazione: si consegnano solo i messaggi dei thread di cui si è teacher o parent',
     'chat/messages:GET': 'scope conversazione: partecipazione verificata sul thread (404/403)',
     'chat/messages:POST': 'scope conversazione: partecipazione verificata prima di scrivere',
     'chat/messages/read:PATCH': 'scope conversazione: si segnano letti solo i propri thread',
@@ -2528,7 +2532,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 363 → 357 il 2026-10-25 (robustezza, seconda serie, sessione 2): escono le sei
             // route sigillate che chiamavano `exec_sql` (`admin/apply-*` e
             // `admin/setup-registro`). Non è un presidio tolto: sono file che non esistono più.
-            routeConServiceRole: 357,
+            // 357 → 358 il 2026-10-25: `chat/threads/consegnati` (S7, robustezza 2 sessione 12).
+            routeConServiceRole: 358,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2824,7 +2829,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 552 → 566 il 2026-10-15: quattordici handler delle dieci route
             // dichiarate sopra; handlerEsentati resta 112.
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
-            handlerControllati: 555,
+            // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
+            handlerControllati: 556,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -3202,7 +3208,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 112 → 107 il 2026-10-25: escono le cinque voci `sealDangerous (rpc exec_sql …)`
             // insieme alle loro route. Il numero scende perché il codice non c'è più, non
             // perché un'esenzione sia stata allargata.
-            handlerEsentati: 107,
+            // 107 → 108 il 2026-10-25: ENTRA `chat/threads/consegnati:POST`. Non è un pezzo di
+            // lock tolto: è l'UPDATE uscito da `chat/threads:GET` (già esentata, stesso scope) per
+            // diventare una richiesta a sé. Decisione 1 del piano della sessione 12, presa
+            // dall'assistente in assenza del titolare: da confermare.
+            handlerEsentati: 108,
         })
     })
 })

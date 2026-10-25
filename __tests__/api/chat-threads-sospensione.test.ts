@@ -33,6 +33,8 @@ vi.mock('@/lib/db/guasto', async (originale) => ({
 }))
 
 const adminClient = {
+  // S7: senza riepilogo installato. Questo file prova il percorso di PRIMA (le sospensioni batched).
+  rpc: async () => ({ data: null, error: { code: 'PGRST202', message: 'funzione assente' } }),
   from(table: string) {
     if (table === 'conversazioni_sospensioni') h.sospFromCount += 1
     const st = { table, head: false }

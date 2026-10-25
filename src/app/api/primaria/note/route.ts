@@ -663,6 +663,11 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
     const ids = cambiate.map((n) => n.id)
     // La presa visione del genitore riguarda il TESTO che ha letto (sessione 10): si toglie solo
     // alle note a cui il testo cambia. Data, categoria e «firma richiesta» non la toccano.
+    // ⚠️ Sulla via di `note_modifica` questo elenco NON decide: è calcolato su una lettura fatta
+    // prima, che un'altra modifica può aver reso vecchia. Decide la funzione, confrontando il
+    // testo che legge sotto il blocco con `p_testo`. Qui serve alla rettifica storica (che ha il
+    // suo controllo di versione), al ripiego senza la funzione (limite noto: lì la lettura
+    // vecchia conta ancora) e a `firme_azzerate`, che resta la stima di questa lettura.
     const azzerate = patch.testo === undefined ? [] : cambiate.filter((n) => !stessoValore(n, 'testo'))
     const idsAzzera = azzerate.map((n) => n.id)
     const firmate = azzerate.filter((n) => n.firmata_il != null).length
@@ -688,7 +693,9 @@ export const PATCH = withRoute('primaria/note:PATCH', async (request: NextReques
       ricezioniCancellate = rettifica.righe.filter((_, i) => azioni[i]?.tabella === 'nota_ricezioni').flat().length
       dopo = rettifica.righe.filter((_, i) => azioni[i]?.tabella === 'note_disciplinari').flat()
     } else {
-      // UNA chiamata: prese visione e nota insieme, o niente (sessione 10).
+      // UNA chiamata: prese visione e nota insieme, o niente (sessione 10). `p_testo` va a tutte
+      // le note modificate, anche quelle che qui sembrano già avere quel testo: la funzione
+      // toglie la presa visione dove il testo, sotto il blocco, cambia davvero.
       const r = await supabase.rpc('note_modifica', {
         p_ids: ids,
         p_section_id: t.sectionId,

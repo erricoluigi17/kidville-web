@@ -7,8 +7,10 @@ import { PGlite } from '@electric-sql/pglite'
 
 /**
  * MODIFICA DI UNA NOTA · LA MIGRAZIONE SU UN POSTGRES VERO.
- * Ciò che si prova: la presa visione si toglie SOLO alle note indicate, nella stessa
- * transazione dell'aggiornamento; una sezione sbagliata non tocca niente. Schema dalla
+ * Ciò che si prova: la presa visione si toglie SOLO alle note a cui il testo cambia DAVVERO,
+ * confrontato con quello letto dalla funzione sotto il blocco (non con l'elenco `p_ids_azzera`
+ * che la route calcola su una lettura che può essere vecchia), nella stessa transazione
+ * dell'aggiornamento; una sezione sbagliata non tocca niente. Schema dalla
  * baseline (righe 2050-2080: NOT NULL, CHECK su `categoria`; 3436: il vincolo di unicità
  * di `nota_ricezioni`) più `data_evento`. Solo uuid e testi inventati.
  */
@@ -141,14 +143,47 @@ describe('note_modifica', () => {
     expect(await ricezioni(N2)).toBe(1)
   })
 
-  it('il testo nuovo azzera la firma solo delle note indicate', async () => {
-    const e = await modifica({ ids: [N1, N2], sezione: SEZ, azzera: [N1], testo: 'testo nuovo' })
+  it('il testo nuovo azzera la firma solo delle note a cui cambia, non di quelle che lo hanno già', async () => {
+    await db.exec(`UPDATE public.note_disciplinari SET testo = 'testo nuovo' WHERE id = '${N2}'`)
+    const e = await modifica({ ids: [N1, N2], sezione: SEZ, azzera: [N1, N2], testo: 'testo nuovo' })
     expect(e.ricezioni_cancellate).toBe(1)
     expect(await nota(N1)).toMatchObject({ testo: 'testo nuovo', firmata_il: null, firmata_da: null })
     expect(await ricezioni(N1)).toBe(0)
-    expect(await nota(N2)).toMatchObject({ testo: 'testo nuovo' })
+    expect(await nota(N2)).toMatchObject({ testo: 'testo nuovo', firmata_da: GENITORE })
     expect((await nota(N2)).firmata_il).not.toBeNull()
     expect(await ricezioni(N2)).toBe(1)
+  })
+
+  // I due casi della seconda revisione: la route ha letto le note PRIMA, e nel frattempo
+  // un'altra modifica ha cambiato il testo. Decide il testo letto sotto il blocco.
+  it('la route ha letto un testo vecchio («X»), nel DB c\'è «B» firmato: manda «X» senza azzerare → la firma si toglie', async () => {
+    await db.exec(`UPDATE public.note_disciplinari SET testo = 'B' WHERE id = '${N1}'`)
+    const e = await modifica({ ids: [N1], sezione: SEZ, azzera: [], categoria: 'didattica', testo: 'X' })
+    expect(e.ricezioni_cancellate).toBe(1)
+    expect(await nota(N1)).toMatchObject({ testo: 'X', categoria: 'didattica', firmata_il: null, firmata_da: null })
+    expect(await ricezioni(N1)).toBe(0)
+  })
+
+  it('nel DB c\'è già il testo nuovo, la route crede di cambiarlo: la firma resta', async () => {
+    await db.exec(`UPDATE public.note_disciplinari SET testo = 'testo nuovo' WHERE id = '${N1}'`)
+    const e = await modifica({ ids: [N1], sezione: SEZ, azzera: [N1], testo: 'testo nuovo' })
+    expect(e.ricezioni_cancellate).toBe(0)
+    expect(await nota(N1)).toMatchObject({ testo: 'testo nuovo', firmata_da: GENITORE })
+    expect((await nota(N1)).firmata_il).not.toBeNull()
+    expect(await ricezioni(N1)).toBe(1)
+  })
+
+  // Il testo si confronta rifilato come lo rifila la route (`String.prototype.trim()`): un a
+  // capo in coda o uno spazio indivisibile non sono una modifica.
+  it.each([
+    ['un a capo e degli spazi in coda', 'testo uno\n  '],
+    ['una tabulazione in testa', '\ttesto uno'],
+    ['uno spazio indivisibile in coda', 'testo uno\u00A0'],
+  ])('%s non tolgono la firma', async (_caso, inviato) => {
+    const e = await modifica({ ids: [N1], sezione: SEZ, azzera: [N1], testo: inviato })
+    expect(e.ricezioni_cancellate).toBe(0)
+    expect((await nota(N1)).firmata_il).not.toBeNull()
+    expect(await ricezioni(N1)).toBe(1)
   })
 
   it('una nota di un\'altra sezione non si tocca, nemmeno se indicata da azzerare', async () => {
@@ -159,14 +194,14 @@ describe('note_modifica', () => {
   })
 
   // Aggiunto dopo la revisione: senza questo caso, una DELETE che non guardasse `p_ids`
-  // (solo `p_ids_azzera` e la sezione) restava verde.
-  it('una nota da azzerare che non è fra quelle modificate non perde la presa visione', async () => {
+  // (solo il confronto e la sezione) restava verde. `p_ids_azzera` non decide più niente.
+  it('una nota che non è fra quelle modificate non perde la presa visione, anche se è «da azzerare»', async () => {
     const e = await modifica({ ids: [N1], sezione: SEZ, azzera: [N2], testo: 'testo nuovo' })
-    expect(e.ricezioni_cancellate).toBe(0)
+    expect(e.ricezioni_cancellate).toBe(1)
+    expect(await ricezioni(N1)).toBe(0)
     expect(await ricezioni(N2)).toBe(1)
     expect(await nota(N2)).toMatchObject({ testo: 'testo uno' })
     expect((await nota(N2)).firmata_il).not.toBeNull()
-    expect(await ricezioni(N1)).toBe(1)
   })
 
   it('una categoria che il vincolo della baseline rifiuta (23514): niente tolto, niente cambiato', async () => {

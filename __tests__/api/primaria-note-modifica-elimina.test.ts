@@ -191,16 +191,19 @@ const dbBase = (): DBFinto => ({
 
 /**
  * `note_modifica` come la scrive la migrazione della sessione 10: tutto o niente, la presa
- * visione tolta solo alle note di `p_ids_azzera`, i parametri NULL lasciano il campo com'è.
+ * visione tolta solo alle note il cui testo (quello nel DB al momento della chiamata, rifilato)
+ * è diverso da `p_testo` — `p_ids_azzera` non decide —, i parametri NULL lasciano il campo com'è.
  * La funzione SQL vera la prova `__tests__/lib/note-modifica-sql.test.ts` su PGlite.
  */
 function noteModificaFinta(args: Riga): { data: unknown; error: unknown } {
   const ids = new Set(args.p_ids as string[])
-  const azzera = new Set((args.p_ids_azzera as string[] | null) ?? [])
   const bersagli = (h.db.note_disciplinari as Riga[]).filter(
     (n) => ids.has(String(n.id)) && n.section_id === args.p_section_id,
   )
-  const togliere = new Set(bersagli.filter((n) => azzera.has(String(n.id))).map((n) => n.id))
+  const nuovo = args.p_testo == null ? null : String(args.p_testo).trim()
+  const togliere = new Set(
+    bersagli.filter((n) => nuovo != null && String(n.testo ?? '').trim() !== nuovo).map((n) => n.id),
+  )
   const prima = (h.db.nota_ricezioni as Riga[]).length
   h.db.nota_ricezioni = (h.db.nota_ricezioni as Riga[]).filter((r) => !togliere.has(r.nota_id))
   const campi: Array<[string, string]> = [
@@ -736,6 +739,23 @@ describe('PATCH — una sola transazione, e la firma si toglie solo se cambia il
     expect(notaDb(NOTA_1)).toMatchObject({ categoria: 'didattica', firmata_il: '2026-09-09T12:00:00Z', firmata_da: GENITORE_1 })
     expect(ricezioni()).toContain(NOTA_1)
     expect(h.rpcChiamate[0].args.p_ids_azzera).toEqual([])
+  })
+
+  it('nel frattempo un\'altra modifica ha cambiato il testo: la route manda comunque p_testo, e decide la funzione', async () => {
+    // La route legge «Testo originale» e crede invariato il testo che rimanda; nel DB, al
+    // momento della chiamata, c'è già un altro testo firmato.
+    h.rpc = {
+      note_modifica: (args: Riga) => {
+        const n = notaDb(NOTA_1)
+        if (n) n.testo = 'Testo cambiato da un altro'
+        return noteModificaFinta(args)
+      },
+    }
+    const res = await patch({ id: NOTA_1, testo: 'Testo originale', categoria: 'didattica', ambito: 'alunno' })
+    expect(res.status).toBe(200)
+    expect(h.rpcChiamate[0].args).toMatchObject({ p_ids: [NOTA_1], p_ids_azzera: [], p_testo: 'Testo originale' })
+    expect(notaDb(NOTA_1)).toMatchObject({ testo: 'Testo originale', firmata_il: null })
+    expect(ricezioni()).not.toContain(NOTA_1)
   })
 
   it('il log del successo conta le prese visione che la funzione ha tolto davvero', async () => {

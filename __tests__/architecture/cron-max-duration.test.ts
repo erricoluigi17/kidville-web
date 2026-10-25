@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import {
+  ASSENTI_IN_PRODUZIONE, INVOLUCRO, NON_SI_AVVOLGONO, contaChiamate, corpoDi, corpoOVuoto, ultimeDefinizioni,
+} from '../../scripts/cron-esiti/involucro.mjs'
+import { TIMEOUT_PREDEFINITO_MS, chiamataAllInvolucro, conTimeout } from '../../scripts/cron-esiti/timeout.mjs'
 
 /**
  * LOCK · OGNI ROUTE CHIAMATA DAL CRON DICHIARA LA SUA VITA MASSIMA.
@@ -179,5 +183,172 @@ describe('lock — anche le route lunghe che non sono del cron dichiarano maxDur
     expect(fuoriMisura(durataDichiarata('export const maxDuration = 30\n'))).toMatch(/fuori/)
     expect(fuoriMisura(durataDichiarata('const x = 1\n'))).toMatch(/manca/)
     expect(fuoriMisura(durataDichiarata('export const maxDuration = 300\n'))).toBeNull()
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IL LATO SQL: IL TIMEOUT DI pg_net È IL maxDuration DELLA ROUTE
+// (sessione 8 della seconda serie di robustezza — S1, «timeout finti»).
+//
+// pg_net chiude il lato client dopo `timeout_milliseconds` (5000 se non lo si passa), ma la route
+// su Vercel prosegue e finisce: in `net._http_response` resta «Timeout of 5000 ms reached» al
+// posto dell'esito vero. Il 20/10 erano 27 in circa 6 ore. Il timeout giusto è la vita massima
+// della route che il giro chiama, in millisecondi: si smette di aspettare quando la piattaforma
+// stessa non può più rispondere, non prima (stessa scelta di
+// `20260911113000_fattura_sync_timeout_pg_net.sql`).
+//
+// Dalla sessione 6 ogni funzione chiama `public.cron_http_post('<job>', url := …, …)`: gli
+// argomenti di `net.http_post`, per nome, col job davanti. Il timeout è l'argomento
+// `timeout_milliseconds` DENTRO quella chiamata (5000 se manca); il percorso non c'è, perché
+// l'URL lo legge dal Vault la funzione stessa. Per questo `CHIAMANTI_CRON` è l'unico posto che
+// dice quale funzione SQL chiama quale route. Una voce per riga, in questa forma esatta: lo
+// script che genera la migrazione la legge così. Lettura e riscrittura della chiamata stanno in
+// `scripts/cron-esiti/timeout.mjs`, lo stesso modulo che usa lo script.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `timeoutDecisoMs`: un timeout scelto dal titolare al posto del `maxDuration` della route. Oggi
+ * solo `video_runner_kick`, che non è un job ma un trigger a ogni caricamento video: a 300 s ogni
+ * caricamento terrebbe un posto di pg_net finché il runner lavora (specifica, §7, sessione 8).
+ */
+type Chiamante = { funzione: string; job: string; route: string; timeoutDecisoMs?: number }
+
+const CHIAMANTI_CRON: readonly Chiamante[] = [
+  { funzione: 'notifiche_dispatch_tick', job: 'notifiche-dispatch', route: 'src/app/api/push/dispatch/route.ts' },
+  { funzione: 'notifiche_promemoria_tick', job: 'notifiche-promemoria', route: 'src/app/api/notifiche/promemoria/route.ts' },
+  { funzione: 'mensa_check_allergie_giornaliero', job: 'mensa-check-allergie', route: 'src/app/api/mensa/allergie-check/route.ts' },
+  { funzione: 'fatture_sdi_sync_tick', job: 'fatture-sdi-sync', route: 'src/app/api/pagamenti/fattura/sync/route.ts' },
+  { funzione: 'fatture_coda_tick_http', job: 'fatture-coda-tick', route: 'src/app/api/pagamenti/fattura/coda/giro/route.ts' },
+  { funzione: 'pagamenti_solleciti_tick', job: 'pagamenti-solleciti-run', route: 'src/app/api/pagamenti/solleciti/run/route.ts' },
+  { funzione: 'news_tick', job: 'news-tick', route: 'src/app/api/news/cron/run/route.ts' },
+  { funzione: 'news_digest_tick', job: 'news-digest', route: 'src/app/api/news/cron/run/route.ts' },
+  { funzione: 'iscrizioni_retention_http', job: 'iscrizioni-retention', route: 'src/app/api/gdpr/retention-iscrizioni/route.ts' },
+  { funzione: 'iscrizioni_import_invio_http', job: 'iscrizioni-import-invio', route: 'src/app/api/iscrizione/import-massivo/route.ts' },
+  { funzione: 'candidature_retention_http', job: 'candidature-retention', route: 'src/app/api/gdpr/retention-candidature/route.ts' },
+  { funzione: 'retention_personale_http', job: 'retention-personale', route: 'src/app/api/gdpr/retention-personale/route.ts' },
+  { funzione: 'scadenze_documenti_personale_http', job: 'scadenze-documenti-personale', route: 'src/app/api/notifiche/scadenze-documenti/route.ts' },
+  { funzione: 'galleria_retention_http', job: 'galleria-retention', route: 'src/app/api/gdpr/retention-galleria/route.ts' },
+  { funzione: 'video_retention_http', job: 'video-retention', route: 'src/app/api/gdpr/retention-video/route.ts' },
+  { funzione: 'video_runner_tick_http', job: 'video-runner-tick', route: 'src/app/api/video/runner/route.ts' },
+  { funzione: 'video_runner_kick', job: 'video-runner-kick', route: 'src/app/api/video/runner/route.ts', timeoutDecisoMs: 5000 },
+  { funzione: 'cestino_registro_retention_http', job: 'cestino-registro-retention', route: 'src/app/api/gdpr/retention-cestino-registro/route.ts' },
+  { funzione: 'storici_tick', job: 'storici-stampe', route: 'src/app/api/admin/storici/cron/route.ts' },
+]
+
+/** Le funzioni contate nel repo il 2026-10-20 (15 a 5000 ms, 4 con il timeout esplicito). */
+const MINIMO_CHIAMANTI = 19
+const MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
+/** Escluse dalla sessione 6, ciascuna con la sua ragione: chiamano ancora `net.http_post` da sole. */
+const ESCLUSE_DALLA_S06: Record<string, string> = { ...NON_SI_AVVOLGONO, ...ASSENTI_IN_PRODUZIONE }
+
+function esisteFile(percorso: string): boolean {
+  return statSync(join(RADICE, percorso), { throwIfNoEntry: false })?.isFile() ?? false
+}
+
+function maxDurationMs(route: string): number | null {
+  if (!esisteFile(route)) return null
+  const m = DICHIARAZIONE.exec(senzaCommenti(readFileSync(join(RADICE, route), 'utf8')))
+  return m ? Number(m[1]) * 1000 : null
+}
+
+/**
+ * `null` = in regola; altrimenti la violazione, in parole. `corpo` è il corpo della funzione (fra
+ * `AS $tag$` e la sua chiusura). Job e timeout li legge `chiamataAllInvolucro`, che si ferma con un
+ * messaggio su ogni forma che non conosce: quel messaggio è la violazione.
+ */
+function violazioneSql(c: Chiamante, corpo: string): string | null {
+  let chiamata: { job: string; timeoutMs: number; nominato: boolean }
+  try {
+    chiamata = chiamataAllInvolucro(corpo)
+  } catch (e) {
+    return (e as Error).message
+  }
+  if (chiamata.job !== c.job) return `job '${chiamata.job}', la tabella dice '${c.job}'`
+  if (c.timeoutDecisoMs !== undefined) {
+    return chiamata.timeoutMs === c.timeoutDecisoMs
+      ? null
+      : `timeout ${chiamata.timeoutMs} ms, il titolare ha deciso ${c.timeoutDecisoMs} ms per ${c.funzione}`
+  }
+  const atteso = maxDurationMs(c.route)
+  if (atteso === null) return `${c.route} non esiste o non dichiara maxDuration`
+  if (chiamata.timeoutMs !== atteso) {
+    const come = chiamata.nominato ? '' : ' (predefinito: manca `timeout_milliseconds`)'
+    return `timeout ${chiamata.timeoutMs} ms${come}, il maxDuration di ${c.route} vale ${atteso} ms`
+  }
+  return null
+}
+
+describe('lock — il timeout di pg_net è il maxDuration della route (sessione 8, seconda serie)', () => {
+  const ultime = ultimeDefinizioni(MIGRAZIONI)
+  const corpo = (funzione: string): string => corpoOVuoto(ultime.get(funzione)?.definizione ?? '')
+
+  it(`la tabella ha almeno ${MINIMO_CHIAMANTI} voci, e ogni voce ha la sua definizione e la sua route`, () => {
+    expect(CHIAMANTI_CRON.length).toBeGreaterThanOrEqual(MINIMO_CHIAMANTI)
+    const mancanti = CHIAMANTI_CRON.filter((c) => !ultime.has(c.funzione)).map((c) => c.funzione)
+    expect(mancanti, `nessuna migrazione definisce: ${mancanti.join(', ')}`).toEqual([])
+    const senzaRoute = CHIAMANTI_CRON.filter((c) => !esisteFile(c.route)).map((c) => c.route)
+    expect(senzaRoute, `route che non esistono: ${senzaRoute.join(', ')}`).toEqual([])
+  })
+
+  it('ogni funzione che chiama il server è nella tabella (salvo le escluse dalla sessione 6)', () => {
+    const note = new Set(CHIAMANTI_CRON.map((c) => c.funzione))
+    const fuori = [...ultime.keys()]
+      .filter((nome) => nome !== INVOLUCRO && !Object.hasOwn(ESCLUSE_DALLA_S06, nome))
+      .filter((nome) => {
+        const { dirette, avvolte } = contaChiamate(corpo(nome))
+        return dirette + avvolte > 0
+      })
+      .filter((nome) => !note.has(nome))
+    expect(
+      fuori,
+      `Chiamano il server ma non sono in CHIAMANTI_CRON: ${fuori.join(', ')}. Aggiungi la voce con la ` +
+        'route che chiamano: senza, nessuno controlla il loro timeout.',
+    ).toEqual([])
+  })
+
+  it('ogni chiamante passa a cron_http_post il maxDuration della sua route', () => {
+    const fuori = CHIAMANTI_CRON.flatMap((c) => {
+      const d = ultime.get(c.funzione)
+      if (!d) return []
+      const v = violazioneSql(c, corpoOVuoto(d.definizione))
+      return v === null ? [] : [`${c.funzione} (${d.file}): ${v}`]
+    })
+    expect(fuori, fuori.join('\n')).toEqual([])
+  })
+
+  it('il criterio morde: default 5000, valore sbagliato, chiamata diretta, job sbagliato, timeout non letterale o per posizione', () => {
+    const c: Chiamante = { funzione: 'x', job: 'storici-stampe', route: 'src/app/api/admin/storici/cron/route.ts' }
+    const giusta = "PERFORM public.cron_http_post('storici-stampe', url := v_url, headers := v_h, timeout_milliseconds := 300000);"
+    expect(violazioneSql(c, giusta)).toBeNull()
+    expect(violazioneSql(c, giusta.replace(':= 300000', '=> 300000'))).toBeNull()
+    expect(violazioneSql(c, giusta.replace('300000', '5000'))).toMatch(/^timeout 5000 ms, il maxDuration/)
+    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', url := v_url, headers := v_h);"))
+      .toMatch(/^timeout 5000 ms \(predefinito/)
+    expect(violazioneSql(c, 'PERFORM net.http_post(url := v_url);')).toMatch(/direttamente/)
+    expect(violazioneSql(c, giusta.replace("'storici-stampe'", "'altro'"))).toMatch(/job 'altro'/)
+    expect(violazioneSql(c, giusta.replace('300000', 'v_ms'))).toMatch(/non è un numero letterale/)
+    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', v_url, '{}'::jsonb, '{}'::jsonb, v_h, 300000);"))
+      .toMatch(/per posizione/)
+    expect(violazioneSql(c, `${giusta}\n${giusta}`)).toMatch(/trovate 2/)
+    // Conta solo il timeout DENTRO la chiamata: non quello di un commento né quello di un'altra istruzione.
+    expect(violazioneSql(c, "-- timeout_milliseconds := 300000\nPERFORM public.cron_http_post('storici-stampe', url := v_url);"))
+      .toMatch(/^timeout 5000 ms \(predefinito/)
+    expect(violazioneSql(c, "PERFORM public.cron_http_post('storici-stampe', url := v_url);\nPERFORM altra(timeout_milliseconds := 300000);"))
+      .toMatch(/^timeout 5000 ms \(predefinito/)
+    expect(TIMEOUT_PREDEFINITO_MS).toBe(5000)
+  })
+
+  it('conTimeout cambia una cosa sola: il numero, o l’argomento aggiunto in fondo alla chiamata', () => {
+    const def = (chiamata: string): string =>
+      `CREATE OR REPLACE FUNCTION public.x()\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n  ${chiamata}\nEND;\n$function$\n`
+    const conValore = "PERFORM public.cron_http_post('a', url:=v_url, body:='{}'::jsonb, timeout_milliseconds:=120000);"
+    expect(conTimeout(def(conValore), 300000)).toBe(def(conValore.replace(':=120000', ':=300000')))
+    const senza = "PERFORM public.cron_http_post('a',\n    url := v_url,\n    body := '{}'::jsonb -- corpo vuoto\n  );"
+    const dopo = conTimeout(def(senza), 300000)
+    expect(dopo).toBe(def(senza.replace("'{}'::jsonb -- corpo", "'{}'::jsonb, timeout_milliseconds := 300000 -- corpo")))
+    expect(chiamataAllInvolucro(corpoDi(dopo).corpo)).toMatchObject({ job: 'a', timeoutMs: 300000, nominato: true })
+    const freccia = "PERFORM public.cron_http_post('a', url => v_url);"
+    expect(conTimeout(def(freccia), 300000)).toBe(def(freccia.replace('v_url)', 'v_url, timeout_milliseconds => 300000)')))
+    expect(() => conTimeout(def('PERFORM net.http_post(url := v_url);'), 300000)).toThrow('direttamente')
   })
 })

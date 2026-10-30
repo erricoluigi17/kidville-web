@@ -5,6 +5,7 @@
 - **Tolto `.claude/hooks/auto_approve_plan.py`** e la sua voce in `hooks.PreToolUse` di `.claude/settings.json`. Dal 18/09 approvava da solo ogni piano scritto in plan mode (29 volte, l'ultima il 30/10 alle 20:52). Richiesta del titolare: il piano lo approva lui dopo averlo letto.
 - **`auto_allow_permission.py` si astiene su `ExitPlanMode`**, come già su `AskUserQuestion`: altrimenti, se l'approvazione arrivasse come richiesta di permesso, la concederebbe lui.
 - `CLAUDE.md`, `AGENTS.md` e `docs/storia-permessi-e-conferme.md` (riquadro del 2026-10-30) aggiornati; la via di fuga `KIDVILLE_PIANO_A_MANO` non serve più.
+- **Test delle scadenze dei documenti, ora legale.** In `scadenze-documenti-cron.test.ts` il caso «il secondo giro conta UNO» fissava l'ultimo avviso a 7 × 24 ore fa, mentre la route conta giorni civili `Europe/Rome`: nella settimana dopo il cambio d'ora, fra le 22 e le 23 UTC, risultavano 6 giorni e il test cadeva (CI di questa PR, 22:43 UTC). Ora l'ultimo avviso sta su un giorno di calendario (`fra(-7)`), senza congelare l'orologio. La route non cambia. I tre casi a 8 giorni hanno un giorno di margine e restano come sono.
 
 **Da fare dopo il merge.** In una sessione nuova, un piano qualunque in plan mode deve fermarsi ad aspettare il titolare; in `.claude/.permessi-auto.log` nessuna riga `PIANO APPROVATO IN AUTOMATICO` dopo il 30/10 20:52.
 

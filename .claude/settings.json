@@ -157,16 +157,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/auto_approve_plan.py\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "mcp__supabase__execute_sql|mcp__supabase__apply_migration|mcp__claude_ai_Supabase__execute_sql|mcp__claude_ai_Supabase__apply_migration",
         "hooks": [
           {

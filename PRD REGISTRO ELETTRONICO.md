@@ -1,3 +1,13 @@
+## 📝 Changelog — Il piano di Claude lo approva il titolare — 2026-10-30 (branch `chore/piano-approvato-a-mano`)
+
+**Stato:** 🟡 in revisione (merge a mano). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
+
+- **Tolto `.claude/hooks/auto_approve_plan.py`** e la sua voce in `hooks.PreToolUse` di `.claude/settings.json`. Dal 18/09 approvava da solo ogni piano scritto in plan mode (29 volte, l'ultima il 30/10 alle 20:52). Richiesta del titolare: il piano lo approva lui dopo averlo letto.
+- **`auto_allow_permission.py` si astiene su `ExitPlanMode`**, come già su `AskUserQuestion`: altrimenti, se l'approvazione arrivasse come richiesta di permesso, la concederebbe lui.
+- `CLAUDE.md`, `AGENTS.md` e `docs/storia-permessi-e-conferme.md` (riquadro del 2026-10-30) aggiornati; la via di fuga `KIDVILLE_PIANO_A_MANO` non serve più.
+
+**Da fare dopo il merge.** In una sessione nuova, un piano qualunque in plan mode deve fermarsi ad aspettare il titolare; in `.claude/.permessi-auto.log` nessuna riga `PIANO APPROVATO IN AUTOMATICO` dopo il 30/10 20:52.
+
 ## 🛡️ Changelog — Robustezza, seconda serie, sessione 8: cron senza timeout finti, storici solo con lavoro, igiene del database — 2026-10-25 (branch `robustezza2/s09-lotto4`, nel lotto 4 con la sessione 9)
 
 **Stato:** 🟡 in revisione (PR #269, nel **lotto 4** con la sessione 9; merge a mano). Le quattro migrazioni le applica l'integrazione al merge, una riga ciascuna con la version del file. «In produzione», il commit di `main` e i numeri «dopo» li scrive la sessione che apre dopo, nella sua chiusura della precedente. Piano: `docs/superpowers/plans/2026-10-20-robustezza2-s08-cron-e-igiene.md`.

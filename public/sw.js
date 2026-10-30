@@ -226,8 +226,13 @@
 // (anagrafica degli alunni in sola lettura per le insegnanti). Senza, l'elenco di
 // /offline avrebbe reso «Alunni» capitalizzando l'URL, e la copia vecchia della
 // pagina sarebbe rimasta nella CacheStorage dei dispositivi che l'hanno già salvata.
-const VERSIONE = 'v15';
-// IMPRONTA-PAGINA-OFFLINE: 94dae4a4ee2b97bf47c7280863e267221b0f873dedbadc65f99c12a4e6d08d1d
+//
+// `VERSIONE` sale a `v16` per la ragione di sempre: la voce «crm» aggiunta a `segmenti` in
+// `messages/{it,en}/offline.json`, per la nuova pagina `/admin/crm` (il CRM della segreteria).
+// Senza, l'elenco di /offline avrebbe reso «Crm» capitalizzando l'URL, e la copia vecchia della
+// pagina sarebbe rimasta nella CacheStorage dei dispositivi che l'hanno già salvata.
+const VERSIONE = 'v16';
+// IMPRONTA-PAGINA-OFFLINE: 72cfb3214016f2a11ad6f3bc76a49e2ba933f217fc6a32413725393a0d6f900e
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

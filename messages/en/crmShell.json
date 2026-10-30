@@ -1,0 +1,100 @@
+{
+  "eyebrow": "Administration",
+  "titolo": "CRM",
+  "sottotitolo": "Families asking for information, visits in the diary and calls to make.",
+  "sedeCosa": "the CRM",
+  "tabAgenda": "Diary",
+  "tabRichiamare": "To call back",
+  "tabSchede": "Records",
+  "tabDisponibilita": "Availability",
+  "tabStatistiche": "Statistics",
+  "inCostruzione": "Under construction: this part of the CRM is coming soon.",
+  "selezionaScheda": "Pick a record from the list to see its history.",
+  "dettaglioTitolo": "Family record",
+  "esiti": {
+    "aperto": "Open",
+    "iscritto": "Enrolled",
+    "lista_attesa": "On the waiting list",
+    "ci_pensa": "Thinking it over",
+    "perso": "Lost"
+  },
+  "origini": {
+    "telefonata": "Phone call",
+    "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
+    "facebook": "Facebook",
+    "google": "Google",
+    "sito": "Website",
+    "passaparola": "Word of mouth",
+    "open_day": "Open day",
+    "ai": "AI assistant",
+    "altro": "Other"
+  },
+  "motiviPerdita": {
+    "prezzo": "Price",
+    "distanza": "Distance",
+    "orari": "Opening hours",
+    "altra_scuola": "Chose another school",
+    "non_risponde": "No longer answering",
+    "rinviato": "Postponed to next year",
+    "altro": "Other"
+  },
+  "anniIngresso": {
+    "in_corso": "Current school year",
+    "prossimo": "Next school year",
+    "non_indicato": "Not specified"
+  },
+  "statiAppuntamento": {
+    "in_programma": "Scheduled",
+    "svolto": "Completed",
+    "non_presentato": "No-show",
+    "annullato": "Cancelled"
+  },
+  "tipiAzione": {
+    "follow_up_1": "First call after the visit",
+    "riprova_1": "First retry",
+    "follow_up_2": "Second call",
+    "riprova_2": "Second retry",
+    "ultimatum": "Final call",
+    "recupero": "Call about the missed visit",
+    "richiamare": "To call back"
+  },
+  "esitiAzione": {
+    "ci_pensa": "Thinking it over",
+    "non_risponde": "Not answering",
+    "vuole_iscriversi": "Wants to enrol",
+    "non_interessato": "Not interested"
+  },
+  "motiviIndisponibilita": {
+    "ferie": "Holiday",
+    "malattia": "Sick leave",
+    "chiusura": "Location closed",
+    "altro": "Other"
+  },
+  "tipiEvento": {
+    "creata": "Record created",
+    "modificata": "Details updated",
+    "telefonata": "Phone call",
+    "nota": "Note",
+    "bambino_aggiunto": "Child added",
+    "bambino_modificato": "Child updated",
+    "appuntamento_fissato": "Visit scheduled",
+    "appuntamento_spostato": "Visit rescheduled",
+    "appuntamento_riassegnato": "Visit handed to someone else",
+    "appuntamento_svolto": "Visit completed",
+    "appuntamento_non_presentato": "Family did not show up for the visit",
+    "appuntamento_annullato": "Visit cancelled",
+    "esito_cambiato": "Outcome changed",
+    "quota_segnata": "Registration fee recorded",
+    "domanda_collegata_auto": "Application linked automatically",
+    "domanda_collegata_mano": "Application linked manually",
+    "domanda_da_associare": "Application to be matched",
+    "collegamento_tolto": "Link removed",
+    "domanda_respinta": "Application rejected",
+    "altra_domanda": "Enrolled with a different application",
+    "azione_pianificata": "Call scheduled",
+    "azione_fatta": "Call made",
+    "azione_spostata": "Call rescheduled",
+    "azione_cancellata": "Call cancelled"
+  }
+}

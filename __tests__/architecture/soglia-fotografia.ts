@@ -280,6 +280,13 @@ export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     'La applica l’integrazione Supabase al merge; la voce si toglie nella chiusura della precedente ' +
     '(la PR-B) fatta dalla sessione che apre dopo, rigenerando dalla produzione le fotografie delle ' +
     'migrazioni, degli indici unici e della RLS.',
+  // 2026-10-30 · CRM DELLA SEGRETERIA, sessione 1: `20261030230225_crm_segreteria.sql` crea sette
+  // tabelle `crm_*` (indici unici, RLS accesa senza policy, un EXCLUDE sugli appuntamenti, chiavi
+  // esterne nuove verso `schools`, `utenti` e `enrollment_submissions`). Le guardie degli indici unici,
+  // della RLS e delle FK la vedono per `unique`, `primary key`, `row level security` e `references`.
+  '20261030230225_crm_segreteria.sql':
+    'CRM della segreteria: sette tabelle nuove con indici unici, RLS ed exclude; la applica ' +
+    'l’integrazione al merge; la voce si toglie rigenerando le fotografie (PR-B).',
 }
 
 /**
@@ -296,6 +303,65 @@ export function posterioriDaRigenerare(
     return posterioriCheContengono(cartella, soglia, riconosci).filter(
         (f) => !Object.prototype.hasOwnProperty.call(attese, f),
     )
+}
+
+/**
+ * LE TABELLE CON SEDE NATE DOPO LA FOTOGRAFIA — i nomi delle tabelle di `public` che una migrazione
+ * posteriore alla soglia CREA con una colonna `scuola_id`.
+ *
+ * ─── PERCHÉ ESISTE (2026-10-30, CRM della segreteria, sessione 1) ────────────────────────────────
+ *
+ * `isolamento-sede-coverage` decide quali tabelle sono «di sede» dalla fotografia
+ * `tabelle-scuola-id.json`, che è cieca per costruzione a ciò che nasce dopo lo scatto. Una tabella
+ * nuova con `scuola_id` finisce fra le sorvegliate solo quando qualcuno rigenera la fotografia dalla
+ * produzione — cioè dopo il merge e dopo l'applicazione della migrazione. Nel frattempo le route che
+ * la leggono e la scrivono (le sei sessioni del CRM le stanno scrivendo ora) non sarebbero controllate
+ * da nessuno: il lock sarebbe verde perché non guarda, la forma di verde più comune di questo repo.
+ *
+ * Questo riconoscitore dà al lock la parte che la fotografia non ha ancora. Quando la fotografia
+ * viene rigenerata la tabella compare in entrambe, e l'unione non cambia niente.
+ *
+ * ─── COSA VEDE, E COSA NO ───────────────────────────────────────────────────────────────────────
+ * Vede `CREATE TABLE [IF NOT EXISTS] [public.]nome ( … scuola_id … )`, con la colonna dichiarata nel
+ * corpo (non in un commento, non in un'altra tabella che la nomina in una FK). NON vede
+ * `ALTER TABLE … ADD COLUMN scuola_id`: dare una sede a una tabella che esisteva è un'altra storia, e
+ * il suo posto è la rigenerazione della fotografia. Le tabelle di altri schemi (`cron.x`) non
+ * contano. Il riconoscimento è LARGO di proposito, come quello degli altri: un falso positivo rende il
+ * lock più severo su una tabella in più, che è il verso giusto in cui sbagliare.
+ */
+export function tabelleConSedeNellePosteriori(cartella: string, soglia: Soglia): string[] {
+    const trovate = new Set<string>()
+    for (const f of migrazioniPosteriori(cartella, soglia)) {
+        const sql = senzaCommenti(readFileSync(join(cartella, f), 'utf8'))
+        const crea = /create\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?((?:"?public"?\s*\.\s*)?"?[a-z_][a-z0-9_]*"?)\s*\(/gi
+        for (let m = crea.exec(sql); m; m = crea.exec(sql)) {
+            let livello = 1
+            let j = crea.lastIndex
+            while (j < sql.length && livello > 0) {
+                if (sql[j] === '(') livello++
+                else if (sql[j] === ')') livello--
+                j++
+            }
+            const corpo = sql.slice(crea.lastIndex, j - 1)
+            // Gli elementi del corpo, divisi sulle virgole di primo livello (`numeric(10,2)` non si spezza).
+            let profondita = 0
+            let corrente = ''
+            const elementi: string[] = []
+            for (const c of corpo) {
+                if (c === '(') profondita++
+                if (c === ')') profondita--
+                if (c === ',' && profondita === 0) {
+                    elementi.push(corrente)
+                    corrente = ''
+                } else corrente += c
+            }
+            elementi.push(corrente)
+            if (elementi.some((el) => /^\s*"?scuola_id"?\s+\S/i.test(el))) {
+                trovate.add(m[1].replace(/"/g, '').replace(/^public\s*\.\s*/i, '').toLowerCase())
+            }
+        }
+    }
+    return [...trovate].sort()
 }
 
 /**

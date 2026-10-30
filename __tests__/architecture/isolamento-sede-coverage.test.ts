@@ -2575,7 +2575,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // gate `requireCrm` + sede da `resolveScuoleAttive`/`restringiSedi`. Nessuna esenzione. Le altre
             // cinque sessioni del CRM aggiungeranno le loro route: ognuna somma al proprio ramo, e alla
             // fusione i due numeri si RICALCOLANO rieseguendo il lock (non si sommano a mano).
-            routeConServiceRole: 359,
+            // 359 → 361 il 2026-10-31: `admin/crm/azioni` e `admin/crm/azioni/[id]` (CRM, sessione 5, follow-up).
+            // Controllate: gate `requireCrm`, sede da `restringiSedi` (GET) o da `assertSchedaInScope` (POST,
+            // PATCH), ogni `update` con `.eq('scuola_id')` nella stessa istruzione. Nessuna esenzione.
+            routeConServiceRole: 361,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2873,7 +2876,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
             // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
             // 556 → 557 il 2026-10-30: `admin/crm/persone:GET` (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 557,
+            // 557 → 560 il 2026-10-31: `admin/crm/azioni:GET`, `admin/crm/azioni:POST` e
+            // `admin/crm/azioni/[id]:PATCH` (CRM, sessione 5); `handlerEsentati` non cambia.
+            handlerControllati: 560,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

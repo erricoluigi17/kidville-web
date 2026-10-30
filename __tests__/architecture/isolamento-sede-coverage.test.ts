@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { mascheraSorgente, fineCatena, fineParentesi, fileSorgente, riga } from '../fixtures/sorgente'
+import { sogliaFotografia, tabelleConSedeNellePosteriori } from './soglia-fotografia'
 
 /**
  * COVERAGE-LOCK dell'isolamento fra sedi — per HANDLER, per SCRITTURA, su tabelle
@@ -128,7 +129,18 @@ const SENZA_COLONNA: Record<string, string> = {
     utenti_sezioni_materie: 'sede della sezione (assertSezioneInScope)',
 }
 
-const CON_SEDE = new Set(foto.con_scuola_id)
+/**
+ * Le tabelle di sede sono quelle della FOTOGRAFIA più quelle che una migrazione posteriore alla
+ * fotografia ha creato con `scuola_id` (2026-10-30, CRM della segreteria). La fotografia è cieca a ciò
+ * che nasce dopo lo scatto: senza l'unione, le route di una tabella nuova resterebbero fuori da questo
+ * lock finché qualcuno non rigenera la fotografia — cioè proprio mentre vengono scritte. Quando la
+ * fotografia viene rigenerata la tabella compare in entrambe e l'unione non cambia niente.
+ */
+const MIGRAZIONI = path.join(process.cwd(), 'supabase', 'migrations')
+const CON_SEDE = new Set([
+    ...foto.con_scuola_id,
+    ...tabelleConSedeNellePosteriori(MIGRAZIONI, sogliaFotografia(foto)),
+])
 const LEGATE_ALUNNO = new Set([...foto.legate_all_alunno, ...Object.keys(SENZA_COLONNA)])
 const SENSIBILI = new Set([...CON_SEDE, ...LEGATE_ALUNNO])
 
@@ -1850,6 +1862,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             `La fotografia non corrisponde al suo sha256: qualcuno l'ha modificata a mano invece di ` +
             `rigenerarla — ed è il modo più semplice di far tacere questo lock. ${COME_RIGENERARE}`,
         ).toBe(atteso)
+    })
+
+    it('vede anche le tabelle con scuola_id create dopo la fotografia', () => {
+        // Le tabelle `crm_*` nascono da una migrazione che la fotografia (20/10) non può ancora contenere:
+        // senza l'unione, le route del CRM non sarebbero sorvegliate da questo lock finché qualcuno non
+        // rigenera la fotografia dalla produzione. Un lock che non vede una tabella non la sta collaudando.
+        expect(CON_SEDE.has('crm_schede')).toBe(true)
+        expect(CON_SEDE.has('crm_appuntamenti')).toBe(true)
+        // e quelle della fotografia restano
+        expect(CON_SEDE.has('pagamenti')).toBe(true)
+        // una tabella senza sede non entra per sbaglio
+        expect(CON_SEDE.has('crm_eventi_che_non_esiste')).toBe(false)
     })
 
     it('ci sono route e tabelle da controllare (se cade, il lock si sta autoingannando)', () => {

@@ -90,7 +90,7 @@ export const EVENTI_NOTI = new Set([
     // sull'identità di genitori e alunni: tre canali sulla stessa etichetta renderebbero
     // impossibile la sola query che conta, «quante anagrafiche del personale sono arrivate?».
     'agenda', 'anagrafica', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
-    'credenziali', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
+    'credenziali', 'crm', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
     'iscrizione', 'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento',
     'pagella', 'personale', 'protocolli', 'registro', 'segnalazione', 'sidi',
     // Infrastruttura. `db`/`rpc`/`storage`/`auth`/`altro` sono le aree di `supabase-fetch`,
@@ -252,6 +252,13 @@ export const EVENTI_PERSISTITI = new Set([
     // che diventa rosso in ENTRAMBE le direzioni: evento promosso senza battito, e
     // battito senza promozione. Le due modifiche vivono nello stesso commit.
     'credenziali',
+    // `crm` (2026-10-30) · il CRM della segreteria. Nessuna schermata lo dice quando il collegamento
+    // automatico con le domande di iscrizione smette di lavorare, né quando lo storico di una scheda
+    // smette di riempirsi: «nessuna riga nuova» non distingue «nessuna famiglia ha chiamato» da «il CRM
+    // non scrive più». Il battito di successo è in `registraEvento` (`src/lib/crm/eventi.ts`): una riga
+    // `esito: 'evento-registrato'` per ogni voce di storico, con tipo, sede e scheda — mai testo né dati
+    // di famiglie e minori. Volume: una riga per gesto della segreteria, cioè poche decine al giorno.
+    'crm',
 ]);
 
 /**

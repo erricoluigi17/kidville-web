@@ -3397,6 +3397,37 @@ export const CODICI_ERRORE = {
      * robustezza). Il testo dell'eccezione resta nel log; al client arriva solo questo codice.
      */
     ERRORE_INTERNO: 'erroreInterno',
+    /**
+     * CRM della segreteria (sessione 1, 2026-10-30). I dodici codici che le sei sessioni del CRM mandano
+     * al client sono dichiarati TUTTI QUI, in un colpo solo: dichiararli uno per sessione avrebbe fatto
+     * toccare lo stesso punto di questo file e dei due cataloghi a cinque sessioni parallele, cioè
+     * cinque conflitti di fusione sulle stesse righe. Chi manda uno di questi codici da una route non
+     * deve ridichiararlo (due chiavi uguali in un oggetto letterale sono un errore di compilazione).
+     *  · 409 `SLOT_OCCUPATO` — l'EXCLUDE degli appuntamenti (23P01): la persona ha già una visita in quell'orario;
+     *  · 409 `SCHEDA_ESISTENTE` — un telefono o un'email già presenti in un'altra scheda della sede;
+     *  · 409 `STATO_NON_AMMESSO` — l'operazione non è ammessa nello stato attuale della scheda o della visita;
+     *  · 403 `SOLO_ADMIN` — operazione riservata alla Direzione;
+     *  · 404 `SCHEDA_NON_TROVATA` — la scheda non esiste (o non esiste più);
+     *  · 422 `PERSONA_NON_DELLA_SEDE` — la persona scelta non è segreteria/admin attiva di quella sede;
+     *  · 422 `MOTIVO_OBBLIGATORIO` — un esito «perso» senza motivo;
+     *  · 409 `GIA_FATTA` — il richiamo è già stato segnato come fatto;
+     *  · 409 `GIA_COLLEGATO` — la domanda di iscrizione è già collegata a un altro bambino (23505);
+     *  · 503 `CRM_NON_INSTALLATO` — le tabelle `crm_*` non esistono su questo database (schema assente);
+     *  · 403 `SOLO_LA_PROPRIA` — la segreteria può modificare soltanto la propria disponibilità;
+     *  · 500 `CRM_OPERAZIONE_NON_RIUSCITA` — qualunque altro guasto del database nel CRM (il dettaglio è nel log).
+     */
+    SLOT_OCCUPATO: 'erroreCrmSlotOccupato',
+    SCHEDA_ESISTENTE: 'erroreCrmSchedaEsistente',
+    STATO_NON_AMMESSO: 'erroreCrmStatoNonAmmesso',
+    SOLO_ADMIN: 'erroreCrmSoloAdmin',
+    SCHEDA_NON_TROVATA: 'erroreCrmSchedaNonTrovata',
+    PERSONA_NON_DELLA_SEDE: 'erroreCrmPersonaNonDellaSede',
+    MOTIVO_OBBLIGATORIO: 'erroreCrmMotivoObbligatorio',
+    GIA_FATTA: 'erroreCrmGiaFatta',
+    GIA_COLLEGATO: 'erroreCrmGiaCollegato',
+    CRM_NON_INSTALLATO: 'erroreCrmNonInstallato',
+    SOLO_LA_PROPRIA: 'erroreCrmSoloLaPropria',
+    CRM_OPERAZIONE_NON_RIUSCITA: 'erroreCrmOperazioneNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

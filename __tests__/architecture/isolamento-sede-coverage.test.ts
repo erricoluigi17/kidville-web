@@ -2547,7 +2547,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // route sigillate che chiamavano `exec_sql` (`admin/apply-*` e
             // `admin/setup-registro`). Non è un presidio tolto: sono file che non esistono più.
             // 357 → 358 il 2026-10-25: `chat/threads/consegnati` (S7, robustezza 2 sessione 12).
-            routeConServiceRole: 358,
+            // 358 → 359 il 2026-10-30: `admin/crm/persone` (CRM della segreteria, sessione 1). Controllata:
+            // gate `requireCrm` + sede da `resolveScuoleAttive`/`restringiSedi`. Nessuna esenzione. Le altre
+            // cinque sessioni del CRM aggiungeranno le loro route: ognuna somma al proprio ramo, e alla
+            // fusione i due numeri si RICALCOLANO rieseguendo il lock (non si sommano a mano).
+            routeConServiceRole: 359,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2844,7 +2848,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // dichiarate sopra; handlerEsentati resta 112.
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
             // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
-            handlerControllati: 556,
+            // 556 → 557 il 2026-10-30: `admin/crm/persone:GET` (vedi sopra); `handlerEsentati` non cambia.
+            handlerControllati: 557,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

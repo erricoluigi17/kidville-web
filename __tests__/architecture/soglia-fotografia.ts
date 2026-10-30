@@ -280,6 +280,13 @@ export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     'La applica l’integrazione Supabase al merge; la voce si toglie nella chiusura della precedente ' +
     '(la PR-B) fatta dalla sessione che apre dopo, rigenerando dalla produzione le fotografie delle ' +
     'migrazioni, degli indici unici e della RLS.',
+  // 2026-10-30 · CRM DELLA SEGRETERIA, sessione 1: `20261030230225_crm_segreteria.sql` crea sette
+  // tabelle `crm_*` (indici unici, RLS accesa senza policy, un EXCLUDE sugli appuntamenti, chiavi
+  // esterne nuove verso `schools`, `utenti` e `enrollment_submissions`). Le guardie degli indici unici,
+  // della RLS e delle FK la vedono per `unique`, `primary key`, `row level security` e `references`.
+  '20261030230225_crm_segreteria.sql':
+    'CRM della segreteria: sette tabelle nuove con indici unici, RLS ed exclude; la applica ' +
+    'l’integrazione al merge; la voce si toglie rigenerando le fotografie (PR-B).',
 }
 
 /**

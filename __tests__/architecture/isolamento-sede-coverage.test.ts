@@ -2589,7 +2589,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `.eq('scuola_id', <sede della riga>)` e la sede della riga passa da `assertSedeInScope`; le
             // creazioni risolvono la sede con `resolveScuolaScrittura` o con `assertSchedaInScope`. Misurato
             // rieseguendo il lock: 362 → 368.
-            routeConServiceRole: 368,
+            // 368 → 370 il 2026-10-31 (CRM, sessione 4): `admin/crm/domande` e
+            // `admin/crm/schede/[id]/bambini/[bambinoId]/collegamento` (PUT e DELETE). Controllate: gate
+            // `requireCrm`, sede da `resolveScuoleAttive`/`restringiSedi` (la prima) o da `assertSchedaInScope`
+            // (la seconda). Nessuna esenzione. Ricalcolato all'integrazione.
+            routeConServiceRole: 370,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2896,7 +2900,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // indisponibilita/[id] DELETE). Il passo NON coincide col numero di file (+6 route, +10 handler):
             // è il caso normale, un file espone più metodi. Tutti CONTROLLATI, `handlerEsentati` fermo a 109.
             // Misurato rieseguendo il lock: 561 → 571.
-            handlerControllati: 571,
+            // 571 → 574 il 2026-10-31 (CRM, sessione 4): `admin/crm/domande:GET` e `…/collegamento:PUT`/`:DELETE`
+            // (vedi sopra); `handlerEsentati` non cambia.
+            handlerControllati: 574,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

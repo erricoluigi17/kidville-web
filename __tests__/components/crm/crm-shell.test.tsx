@@ -262,7 +262,8 @@ describe('crmShell · i sei namespace sono montati', () => {
   //  · Sessione 5: crmFollowUp → le chiavi sono usate da `follow-up/*`, il test `follow-up.test.tsx` le legge a schermo
   //  · Sessione 6: crmStatistiche → ha i suoi test in `statistiche.test.tsx`
   //  · Sessione 3: crmAgenda → le chiavi sono usate da `agenda/*` e `disponibilita/*`, test `agenda.test.tsx`
-  const RIEMPITI = ['crmFollowUp', 'crmStatistiche', 'crmAgenda']
+  //  · Sessione 4: crmCollegamento → le chiavi sono usate da `collegamento/*`, test `collegamento.test.tsx`
+  const RIEMPITI = ['crmFollowUp', 'crmStatistiche', 'crmAgenda', 'crmCollegamento']
 
   it('i namespace non ancora riempiti nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
     for (const lingua of LINGUE) {

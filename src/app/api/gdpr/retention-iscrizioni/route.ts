@@ -6,6 +6,7 @@ import { logEvento } from '@/lib/logging/logger'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { percorsiCitati } from '@/lib/iscrizioni/percorsi-citati'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
+import { segnalaDomandeCancellate } from '@/lib/crm/collegamento'
 import { parseQuery } from '@/lib/validation/http'
 import { z } from 'zod'
 
@@ -372,10 +373,24 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
         // ── POI LE RIGHE ──
         let domandeCancellate = 0
         if (chiudibili.length > 0) {
+            const idDaCancellare = chiudibili.map((d) => d.id)
+            // CRM della segreteria: PRIMA di cancellare, lo storico delle schede collegate a queste
+            // domande ne prende nota (poi sarà il database ad azzerare `domanda_id`). Non lancia mai
+            // e non può fermare la conservazione: un guasto del CRM non trattiene una domanda scaduta
+            // (è un obbligo di legge). Il `try` è una cintura in più, per lo stesso motivo.
+            try {
+                await segnalaDomandeCancellate(supabase, idDaCancellare)
+            } catch (e) {
+                logEvento('crm', 'error', {
+                    operazione: JOB,
+                    esito: 'segnala-cancellate-eccezione',
+                    n_domande: idDaCancellare.length,
+                }, e)
+            }
             const { error: erroreDelete } = await supabase
                 .from('enrollment_submissions')
                 .delete()
-                .in('id', chiudibili.map((d) => d.id))
+                .in('id', idDaCancellare)
             if (erroreDelete) {
                 logEvento('cron', 'error', {
                     operazione: JOB,

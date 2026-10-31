@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -26,6 +26,7 @@ import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioRicevutaIscrizione } from '@/lib/email/messaggi/ricevuta-iscrizione'
 import { formattaIstante } from '@/i18n/config'
+import { collegaDomandaAlCrm } from '@/lib/crm/collegamento'
 import type {
   EnrollmentSubmissionData,
   FormField,
@@ -33,6 +34,44 @@ import type {
 } from '@/types/database.types'
 
 const OPERAZIONE = 'iscrizione:POST'
+
+/**
+ * CRM della segreteria: se la famiglia è già in scheda, il bambino diventa «iscritto» e la scheda ricorda
+ * la domanda (`collegaDomandaAlCrm`). È un EXTRA della domanda, e questa porta è pubblica.
+ *
+ * ─── IL MODULO NON PUÒ ROMPERSI NÉ RALLENTARE PER COLPA DEL CRM ─────────────
+ * La domanda è già registrata, la segreteria già avvisata, la ricevuta già partita: tutto quello che
+ * succede qui dentro cambia solo la scheda del CRM. Perciò il lavoro NON si aspetta: si programma con
+ * `after()` e parte DOPO che la risposta è andata alla famiglia.
+ *  · NON FA ASPETTARE, per costruzione e non per un tetto: non c'è un timer da tarare, e un CRM lento,
+ *    appeso o morto non può spostare di un millisecondo la risposta (la prova è nel test, con un CRM che
+ *    non risolve mai);
+ *  · NON LANCIA MAI: `collegaDomandaAlCrm` non lancia, e comunque ogni eccezione (anche una promessa
+ *    rifiutata, un mock, un modulo che non si carica) è inghiottita dal `try`/`catch` del giro e
+ *    registrata; se `after()` stesso non si può usare (fuori da una richiesta: test, script) si scrive un
+ *    `warn` e si va avanti;
+ *  · NON CAMBIA LA RISPOSTA: la funzione ritorna `void` e la risposta è già stata decisa;
+ *  · con le tabelle `crm_*` assenti (database E2E non migrato) il giro non fa niente e lo dice nel log;
+ *  · se il giro non arriva in fondo (istanza spenta prima) la domanda resta senza collegamento: la
+ *    segreteria la associa a mano dal pulsante «Associa al bambino». È un danno piccolo e visibile, al
+ *    posto di uno invisibile: la famiglia ha già la sua ricevuta.
+ * Il collegamento è idempotente (la stessa domanda lanciata due volte non duplica niente).
+ * Nel log entrano solo l'id della domanda e il codice d'esito: mai un recapito, mai un nome.
+ */
+function programmaAggancioAlCrm(supabase: SupabaseClient, domandaId: string): void {
+  const giro = async () => {
+    try {
+      await collegaDomandaAlCrm(supabase, domandaId)
+    } catch (err) {
+      logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
+    }
+  }
+  try {
+    after(giro)
+  } catch (err) {
+    logEvento('crm', 'warn', { operazione: OPERAZIONE, esito: 'aggancio-crm-non-programmato', entita_id: domandaId }, err)
+  }
+}
 
 /**
  * La ricevuta alla famiglia, subito dopo l'invio del modulo pubblico.
@@ -396,6 +435,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         // funzione nuova si dimentica: la domanda è registrata, la famiglia ha
         // diritto alla sua conferma qualunque colonna manchi.
         await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
+        // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
+        programmaAggancioAlCrm(supabase, retry.data.id)
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
       }
       // Una domanda che non entra è il guasto più grave di questa porta: fino al 20/10 non lasciava
@@ -428,6 +469,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
     }
 
     await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults })
+    // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
+    programmaAggancioAlCrm(supabase, row.id)
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {

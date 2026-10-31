@@ -4,14 +4,22 @@ import { creaFintoSupabase, type DBFinto, type ErrorePostgrest, type Riga, type 
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 /**
- * CRM della segreteria · la disponibilità settimanale e le assenze:
- * `GET/POST /api/admin/crm/disponibilita`, `PATCH/DELETE /disponibilita/[id]`,
- * `GET/POST /api/admin/crm/indisponibilita`, `DELETE /indisponibilita/[id]`.
+ * CRM della segreteria · le disponibilità per settimana e le assenze:
+ * `GET/PUT /api/admin/crm/disponibilita`, `GET/POST /api/admin/crm/indisponibilita`, `DELETE /indisponibilita/[id]`.
  *
  * Come per gli appuntamenti: gate e cookie delle sedi finti, tutto il resto vero, database finto che applica
- * i filtri ed esegue le scritture. La regola che questi test fissano è una: **ognuna modifica la PROPRIA, la
- * Direzione quella di tutte** (`403 SOLO_LA_PROPRIA`), e le chiusure di sede le gestisce qualsiasi segretaria
- * della sede. Gli orari sono di Roma; l'orologio è congelato (solo `Date`).
+ * i filtri ed esegue le scritture. Le fasce stanno in `crm_settimane` (la testata, col lunedì) e `crm_fasce`, di
+ * una persona o della sede (`utente_id` nullo): «una settimana mai toccata è uguale all'ultima registrata prima di
+ * lei». Chi salva una settimana chiama la funzione SQL `crm_salva_settimana`, che qui è un MODELLO IN MEMORIA
+ * (`salvaSettimanaFinta`) con le sue stesse regole: prova che la route le passi gli argomenti nella forma che
+ * la funzione legge (chiavi `giorno_settimana`, `ora_inizio`…) e traduca ogni esito nella risposta giusta.
+ *
+ * Le regole che questi test fissano:
+ *  · **ogni persona della sede cambia la sede e le colleghe** (spec §6.1): niente più `SOLO_LA_PROPRIA` per le
+ *    fasce (resta per le assenze);
+ *  · **la persona deve essere della sede**, controllata PRIMA della funzione (che non lo verifica);
+ *  · le settimane passate non si modificano.
+ * Gli orari sono di Roma; l'orologio è congelato (solo `Date`) a lunedì 2/11/2026, 08:00 a Roma.
  */
 
 const h = vi.hoisted(() => ({
@@ -22,8 +30,14 @@ const h = vi.hoisted(() => ({
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message?: string }>,
     scritture: [] as unknown[],
+    letture: [] as string[],
     /** Eseguito PRIMA della seconda `from(tabella)` (la scrittura che segue la lettura della riga). */
     corsa: null as null | { tabella: string; fa: () => void },
+    /** La funzione SQL `crm_salva_settimana`, come la risponde questo test. */
+    rpc: (() => ({ data: null, error: null })) as (args: Record<string, unknown>) => { data: unknown; error: unknown },
+    chiamateRpc: [] as Record<string, unknown>[],
+    logEvento: vi.fn(),
+    logErrore: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -36,11 +50,31 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/auth/scope')>()
     return { ...vero, resolveScuoleAttive: async () => [...h.attive] }
 })
+vi.mock('@/lib/logging/logger', async (importActual) => {
+    const vero = await importActual<typeof import('@/lib/logging/logger')>()
+    return {
+        ...vero,
+        logEvento: (...a: Parameters<typeof vero.logEvento>) => {
+            h.logEvento(...a)
+            return vero.logEvento(...a)
+        },
+        logErrore: (...a: Parameters<typeof vero.logErrore>) => {
+            h.logErrore(...a)
+            return vero.logErrore(...a)
+        },
+    }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => {
-        const vero = creaFintoSupabase(h.db as DBFinto, [], {
+        const vero = creaFintoSupabase(h.db as DBFinto, h.letture, {
             errori: h.errori as Record<string, ErrorePostgrest>,
             scritture: h.scritture as Scrittura[],
+            rpc: {
+                crm_salva_settimana: async (args) => {
+                    h.chiamateRpc.push(args)
+                    return h.rpc(args)
+                },
+            },
         })
         const viste: Record<string, number> = {}
         return new Proxy(vero, {
@@ -56,22 +90,27 @@ vi.mock('@/lib/supabase/server-client', () => ({
     },
 }))
 
-import { GET as GET_DISP, POST as POST_DISP } from '@/app/api/admin/crm/disponibilita/route'
-import { PATCH as PATCH_DISP, DELETE as DELETE_DISP } from '@/app/api/admin/crm/disponibilita/[id]/route'
+import { GET as GET_DISP, PUT as PUT_DISP } from '@/app/api/admin/crm/disponibilita/route'
 import { GET as GET_ASS, POST as POST_ASS } from '@/app/api/admin/crm/indisponibilita/route'
 import { DELETE as DELETE_ASS } from '@/app/api/admin/crm/indisponibilita/[id]/route'
 
 const U1 = '20000000-0000-4000-8000-000000000001' // l'utente sotto test: segreteria di SEDE_A
 const U2 = '20000000-0000-4000-8000-000000000002' // una collega della stessa sede
 const U_B = '20000000-0000-4000-8000-00000000000b' // segreteria di SEDE_B
+const U_ARCH = '20000000-0000-4000-8000-0000000000aa' // segreteria di SEDE_A, archiviata
 const ADMIN = '20000000-0000-4000-8000-0000000000ad' // Direzione, con A e B
-const F1 = '50000000-0000-4000-8000-000000000001' // fascia di U1
-const F2 = '50000000-0000-4000-8000-000000000002' // fascia di U2
-const F_B = '50000000-0000-4000-8000-00000000000b' // fascia di U_B (SEDE_B)
 const AS1 = '60000000-0000-4000-8000-000000000001' // assenza di U1
 const AS2 = '60000000-0000-4000-8000-000000000002' // assenza di U2
 const AS_SEDE = '60000000-0000-4000-8000-0000000000cc' // chiusura di SEDE_A
 const AS_B = '60000000-0000-4000-8000-00000000000b' // chiusura di SEDE_B
+
+/** Una riga di `data.proprietari` come la restituisce il GET (la forma di `FasceDelProprietario`). */
+interface Proprietario {
+    utenteId: string | null
+    origine: 'registrata' | 'ereditata' | 'nessuna'
+    daSettimana: string | null
+    fasce: { utenteId: string | null; settimana: string; giornoSettimana: number; oraInizio: string; oraFine: string; durataSlotMin: number }[]
+}
 
 const json = (url: string, metodo: string, corpo?: unknown) =>
     new NextRequest(`http://localhost${url}`, {
@@ -81,17 +120,24 @@ const json = (url: string, metodo: string, corpo?: unknown) =>
     })
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) })
 
-const fascia = (o: Riga = {}): Riga => ({
-    id: F1,
+const testata = (o: Riga = {}): Riga => ({
+    id: 'sett-1',
     scuola_id: SEDE_A,
     utente_id: U1,
+    settimana: '2026-10-05',
+    aggiornata_da: null,
+    aggiornata_il: '2026-10-01T00:00:00.000Z',
+    creata_il: '2026-10-01T00:00:00.000Z',
+    ...o,
+})
+const fascia = (o: Riga = {}): Riga => ({
+    id: 'fas-1',
+    scuola_id: SEDE_A,
+    settimana_id: 'sett-1',
     giorno_settimana: 1,
     ora_inizio: '09:00:00',
     ora_fine: '13:00:00',
     durata_slot_min: 45,
-    valida_dal: '2026-09-01',
-    valida_al: null,
-    creata_il: '2026-09-01T00:00:00.000Z',
     ...o,
 })
 const assenza = (o: Riga = {}): Riga => ({
@@ -110,6 +156,55 @@ const scritte = (tabella: string, operazione: string) =>
     (h.scritture as Scrittura[]).filter((s) => s.tabella === tabella && s.operazione === operazione)
 const riga = (tabella: string, id: string) => h.db[tabella].find((r) => r.id === id)
 
+/**
+ * `crm_salva_settimana` come la intende la migrazione, in memoria: lunedì, settimana non passata (il lunedì
+ * della settimana in corso è quello di Roma: con l'orologio congelato a lunedì 2/11 è il 2/11), fasce non
+ * sovrapposte; poi la testata si crea o si aggiorna e le fasce si SOSTITUISCONO. Legge le fasce con le chiavi
+ * di `jsonb_to_recordset` (`giorno_settimana`, `ora_inizio`, `ora_fine`, `durata_slot_min`): una route che le
+ * passasse con altri nomi non salverebbe niente di leggibile.
+ */
+function salvaSettimanaFinta(args: Record<string, unknown>): { data: unknown; error: unknown } {
+    const sede = args.p_scuola_id as string
+    const utente = (args.p_utente_id ?? null) as string | null
+    const settimana = args.p_settimana as string
+    const fasce = args.p_fasce as Riga[]
+    if (!sede || !settimana || !Array.isArray(fasce)) return { data: null, error: { code: '22023', message: 'argomenti' } }
+    if (new Date(`${settimana}T12:00:00Z`).getUTCDay() !== 1) return { data: { esito: 'settimana_non_valida' }, error: null }
+    if (settimana < '2026-11-02') return { data: { esito: 'settimana_passata' }, error: null }
+    const sovrapposte = fasce.some(
+        (a, i) =>
+            fasce.some(
+                (b, j) =>
+                    i !== j &&
+                    a.giorno_settimana === b.giorno_settimana &&
+                    String(b.ora_inizio) < String(a.ora_fine) &&
+                    String(a.ora_inizio) < String(b.ora_fine),
+            ),
+    )
+    if (sovrapposte) return { data: { esito: 'fasce_sovrapposte' }, error: null }
+
+    const testate = h.db.crm_settimane
+    let t = testate.find((r) => r.scuola_id === sede && (r.utente_id ?? null) === utente && r.settimana === settimana)
+    if (!t) {
+        t = { id: `sett-nuova-${testate.length + 1}`, scuola_id: sede, utente_id: utente, settimana }
+        testate.push(t)
+    }
+    t.aggiornata_da = args.p_eseguito_da
+    h.db.crm_fasce = h.db.crm_fasce.filter((f) => f.settimana_id !== t.id)
+    fasce.forEach((f, n) =>
+        h.db.crm_fasce.push({
+            id: `${t.id}-f${n}`,
+            scuola_id: sede,
+            settimana_id: t.id,
+            giorno_settimana: f.giorno_settimana,
+            ora_inizio: f.ora_inizio,
+            ora_fine: f.ora_fine,
+            durata_slot_min: f.durata_slot_min ?? 45,
+        }),
+    )
+    return { data: { esito: 'ok', settimana_id: t.id }, error: null }
+}
+
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-11-02T07:00:00.000Z')) // lunedì 2/11, 08:00 a Roma
@@ -119,22 +214,44 @@ beforeEach(() => {
     h.attive = [SEDE_A]
     h.errori = {}
     h.scritture = []
+    h.letture = []
     h.corsa = null
+    h.rpc = salvaSettimanaFinta
+    h.chiamateRpc = []
+    h.logEvento = vi.fn()
+    h.logErrore = vi.fn()
     h.db = {
         utenti: [
             { id: U1, nome: 'Anna', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: null },
             { id: U2, nome: 'Elena', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: null },
             { id: U_B, nome: 'Marta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },
+            { id: U_ARCH, nome: 'Rita', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: '2026-09-01T00:00:00.000Z' },
             { id: ADMIN, nome: 'Dir', cognome: 'Prova', ruolo: 'admin', scuola_id: SEDE_A, archiviato_il: null },
         ],
         utenti_scuole: [
             { utente_id: ADMIN, scuola_id: SEDE_A },
             { utente_id: ADMIN, scuola_id: SEDE_B },
         ],
-        crm_disponibilita: [
-            fascia(),
-            fascia({ id: F2, utente_id: U2, giorno_settimana: 2 }),
-            fascia({ id: F_B, scuola_id: SEDE_B, utente_id: U_B }),
+        // U1: dal 5/10 lunedì 9–13, dal 26/10 mercoledì 14–17 · la SEDE: dal 12/10 martedì 10–11 ·
+        // U2: dal 26/10 una settimana volutamente vuota · e due testate che NON devono mai uscire:
+        // quella di un'altra sede e quella di una persona che non è della sede.
+        crm_settimane: [
+            testata({ id: 's-u1-a', utente_id: U1, settimana: '2026-10-05' }),
+            testata({ id: 's-u1-b', utente_id: U1, settimana: '2026-10-26' }),
+            testata({ id: 's-sede', utente_id: null, settimana: '2026-10-12' }),
+            testata({ id: 's-u2', utente_id: U2, settimana: '2026-10-26' }),
+            testata({ id: 's-b', scuola_id: SEDE_B, utente_id: U_B, settimana: '2026-10-26' }),
+            testata({ id: 's-fuori', utente_id: U_B, settimana: '2026-10-26' }),
+        ],
+        crm_fasce: [
+            fascia({ id: 'f-u1-a', settimana_id: 's-u1-a', giorno_settimana: 1, ora_inizio: '09:00:00', ora_fine: '13:00:00' }),
+            fascia({ id: 'f-u1-b', settimana_id: 's-u1-b', giorno_settimana: 3, ora_inizio: '14:00:00', ora_fine: '17:00:00' }),
+            fascia({ id: 'f-sede', settimana_id: 's-sede', giorno_settimana: 2, ora_inizio: '10:00:00', ora_fine: '11:00:00' }),
+            fascia({ id: 'f-b', scuola_id: SEDE_B, settimana_id: 's-b', giorno_settimana: 4 }),
+            fascia({ id: 'f-fuori', settimana_id: 's-fuori', giorno_settimana: 5 }),
+            // Una riga INCOERENTE: punta a una testata di SEDE_A ma dichiara SEDE_B. Non deve mai uscire dalla
+            // lettura di SEDE_A: è il filtro per sede sulla lettura delle fasce a fermarla, non la testata.
+            fascia({ id: 'f-incoerente', scuola_id: SEDE_B, settimana_id: 's-u1-b', giorno_settimana: 6 }),
         ],
         crm_indisponibilita: [
             assenza(),
@@ -156,314 +273,398 @@ const comeAdmin = () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────
 describe('GET /api/admin/crm/disponibilita', () => {
-    const url = (q = '') => `/api/admin/crm/disponibilita?scuolaId=${SEDE_A}${q}`
+    const url = (settimana = '2026-11-04', sede = SEDE_A) => `/api/admin/crm/disponibilita?scuolaId=${sede}&settimana=${settimana}`
+    const leggi = async (settimana?: string) => (await (await GET_DISP(json(url(settimana), 'GET'))).json()).data
+    const di = (data: { proprietari: Proprietario[] }, utenteId: string | null) =>
+        data.proprietari.find((p) => p.utenteId === utenteId)
 
     it('docente → 403', async () => {
         h.ruolo = 'educator'
         expect((await GET_DISP(json(url(), 'GET'))).status).toBe(403)
     })
 
-    it('una sede che non è la propria → 403 SEDE_NON_ACCESSIBILE', async () => {
-        const res = await GET_DISP(json(`/api/admin/crm/disponibilita?scuolaId=${SEDE_B}`, 'GET'))
+    it('una sede che non è la propria → 403 SEDE_NON_ACCESSIBILE, e non si legge niente', async () => {
+        const res = await GET_DISP(json(url('2026-11-04', SEDE_B), 'GET'))
         expect(res.status).toBe(403)
         expect((await res.json()).codice).toBe('SEDE_NON_ACCESSIBILE')
+        expect(h.letture).not.toContain('crm_settimane')
     })
 
-    it('la sede è richiesta', async () => {
-        expect((await GET_DISP(json('/api/admin/crm/disponibilita', 'GET'))).status).toBe(400)
+    it('la sede e la settimana sono richieste, e la settimana dev’essere una data vera', async () => {
+        expect((await GET_DISP(json('/api/admin/crm/disponibilita?settimana=2026-11-02', 'GET'))).status).toBe(400)
+        expect((await GET_DISP(json(`/api/admin/crm/disponibilita?scuolaId=${SEDE_A}`, 'GET'))).status).toBe(400)
+        expect((await GET_DISP(json(url('2026-02-30'), 'GET'))).status).toBe(400)
+        expect((await GET_DISP(json(url('domani'), 'GET'))).status).toBe(400)
     })
 
-    it('le fasce della sede, e solo della sede', async () => {
-        const { data } = await (await GET_DISP(json(url(), 'GET'))).json()
-        expect(data.map((f: Riga) => f.id).sort()).toEqual([F1, F2].sort())
+    it('normalizza il giorno al lunedì e dà sede + persone, con origine e daSettimana', async () => {
+        const data = await leggi('2026-11-04') // un mercoledì: la settimana è quella di lunedì 2/11
+        expect(data.settimana).toBe('2026-11-02')
+        expect(data.modificabile).toBe(true)
+
+        // La sede per prima, poi le persone della sede (per cognome e nome): una riga ciascuna, anche vuota.
+        expect(data.proprietari.map((p: { utenteId: string | null }) => p.utenteId)).toEqual([null, U1, ADMIN, U2])
+        expect(data.persone.map((p: { id: string }) => p.id)).toEqual([U1, ADMIN, U2])
+
+        expect(di(data, null)).toEqual({
+            utenteId: null,
+            origine: 'ereditata',
+            daSettimana: '2026-10-12',
+            fasce: [{ utenteId: null, settimana: '2026-11-02', giornoSettimana: 2, oraInizio: '10:00', oraFine: '11:00', durataSlotMin: 45 }],
+        })
+        expect(di(data, U1)).toEqual({
+            utenteId: U1,
+            origine: 'ereditata',
+            daSettimana: '2026-10-26',
+            fasce: [{ utenteId: U1, settimana: '2026-11-02', giornoSettimana: 3, oraInizio: '14:00', oraFine: '17:00', durataSlotMin: 45 }],
+        })
+        // Mai registrato niente: nessuna origine, nessuna fascia. Una testata vuota: ereditata, vuota.
+        expect(di(data, ADMIN)).toEqual({ utenteId: ADMIN, origine: 'nessuna', daSettimana: null, fasce: [] })
+        expect(di(data, U2)).toEqual({ utenteId: U2, origine: 'ereditata', daSettimana: '2026-10-26', fasce: [] })
     })
 
-    it('le fasce già finite non tornano; quelle che finiscono oggi o dopo sì', async () => {
-        h.db.crm_disponibilita.push(
-            fascia({ id: 'f-scaduta', valida_al: '2026-11-01' }),
-            fascia({ id: 'f-oggi', valida_al: '2026-11-02' }),
-            fascia({ id: 'f-futura', valida_dal: '2026-12-01', valida_al: '2027-01-31' }),
-        )
-        const { data } = await (await GET_DISP(json(url(), 'GET'))).json()
-        const ids = data.map((f: Riga) => f.id)
-        expect(ids).not.toContain('f-scaduta')
-        expect(ids).toEqual(expect.arrayContaining(['f-oggi', 'f-futura']))
+    it('un giorno qualunque vale come il suo lunedì (anche la domenica, anche il lunedì stesso)', async () => {
+        const lunedi = await leggi('2026-11-02')
+        expect(await leggi('2026-11-08')).toEqual(lunedi)
+        expect(await leggi('2026-11-05')).toEqual(lunedi)
+        expect(lunedi.settimana).toBe('2026-11-02')
     })
 
-    it('«scaduta» si decide col giorno di Roma: all’una di notte del 3/11 (00:30Z) quella che finiva il 2/11 è finita', async () => {
-        vi.setSystemTime(new Date('2026-11-02T23:30:00.000Z')) // martedì 3/11, 00:30 a Roma
-        h.db.crm_disponibilita.push(fascia({ id: 'f-ieri', valida_al: '2026-11-02' }))
-        const { data } = await (await GET_DISP(json(url(), 'GET'))).json()
-        expect(data.map((f: Riga) => f.id)).not.toContain('f-ieri')
+    it('una settimana registrata si dice «registrata» e porta le proprie fasce', async () => {
+        const data = await leggi('2026-10-26')
+        expect(di(data, U1)).toMatchObject({ origine: 'registrata', daSettimana: '2026-10-26' })
+        expect(di(data, U1)?.fasce).toHaveLength(1)
     })
 
-    it('dice a chi guarda chi è (dalla sessione), così la schermata sa di chi sono le fasce', async () => {
+    it('la modifica di una settimana si vede da quella dopo e non da quella prima', async () => {
+        const prima = await leggi('2026-10-19') // U1 eredita dal 5/10: lunedì
+        const dopo = await leggi('2026-11-09') // U1 eredita dal 26/10: mercoledì
+        expect(di(prima, U1)).toMatchObject({ origine: 'ereditata', daSettimana: '2026-10-05' })
+        expect(di(prima, U1)?.fasce.map((f: { giornoSettimana: number }) => f.giornoSettimana)).toEqual([1])
+        expect(di(dopo, U1)?.fasce.map((f: { giornoSettimana: number }) => f.giornoSettimana)).toEqual([3])
+        // E prima della prima settimana registrata non c'è niente.
+        expect(di(await leggi('2026-09-28'), U1)).toMatchObject({ origine: 'nessuna', daSettimana: null, fasce: [] })
+    })
+
+    it('settimana passata → modificabile false; quella in corso e le future sì', async () => {
+        expect((await leggi('2026-10-26')).modificabile).toBe(false) // oggi è lunedì 2/11
+        expect((await leggi('2026-10-31')).modificabile).toBe(false) // sabato della settimana scorsa
+        expect((await leggi('2026-11-02')).modificabile).toBe(true)
+        expect((await leggi('2026-11-08')).modificabile).toBe(true)
+        expect((await leggi('2026-12-14')).modificabile).toBe(true)
+    })
+
+    it('«la settimana in corso» si decide col giorno di Roma: lunedì all’una di notte (23:30Z della domenica) è già la nuova', async () => {
+        vi.setSystemTime(new Date('2026-10-25T23:30:00.000Z')) // lunedì 26/10, 00:30 a Roma
+        expect((await leggi('2026-10-26')).modificabile).toBe(true)
+        expect((await leggi('2026-10-19')).modificabile).toBe(false)
+        vi.setSystemTime(new Date('2026-10-25T22:30:00.000Z')) // domenica 25/10, 23:30 a Roma: ancora la settimana del 19
+        expect((await leggi('2026-10-19')).modificabile).toBe(true)
+        expect((await leggi('2026-10-26')).modificabile).toBe(true)
+    })
+
+    it('le testate e le fasce di un’altra sede non entrano, né le righe di chi non è più della sede', async () => {
+        const data = await leggi('2026-10-26')
+        expect(data.proprietari.map((p: { utenteId: string | null }) => p.utenteId)).not.toContain(U_B)
+        expect(JSON.stringify(data.proprietari)).not.toContain('"giornoSettimana":4')
+        expect(JSON.stringify(data.proprietari)).not.toContain('"giornoSettimana":5')
+        expect(JSON.stringify(data.proprietari)).not.toContain('"giornoSettimana":6') // la riga incoerente
+        // …e la sede B vede le sue.
+        comeAdmin()
+        h.attive = [SEDE_A, SEDE_B]
+        const b = (await (await GET_DISP(json(url('2026-10-26', SEDE_B), 'GET'))).json()).data
+        expect(b.proprietari.find((p: { utenteId: string | null }) => p.utenteId === U_B)?.fasce).toHaveLength(1)
+    })
+
+    it('dice a chi guarda chi è (dalla sessione)', async () => {
         expect((await (await GET_DISP(json(url(), 'GET'))).json()).io).toEqual({ id: U1, ruolo: 'segreteria' })
         comeAdmin()
         expect((await (await GET_DISP(json(url(), 'GET'))).json()).io).toEqual({ id: ADMIN, ruolo: 'admin' })
     })
 
-    it('si può chiedere solo quelle di una persona', async () => {
-        const { data } = await (await GET_DISP(json(url(`&utenteId=${U2}`), 'GET'))).json()
-        expect(data.map((f: Riga) => f.id)).toEqual([F2])
+    it('legge le testate e poi le fasce, tutte di quella sede', async () => {
+        await GET_DISP(json(url(), 'GET'))
+        expect(h.letture.filter((t) => t.startsWith('crm_'))).toEqual(['crm_settimane', 'crm_fasce'])
     })
 
-    it('un guasto di lettura → 500', async () => {
-        h.errori = { 'crm_disponibilita:select': { code: '08006' } }
-        expect((await GET_DISP(json(url(), 'GET'))).status).toBe(500)
+    it('un guasto di lettura → 500 (testate o fasce), mai una settimana vuota', async () => {
+        for (const tabella of ['crm_settimane', 'crm_fasce']) {
+            h.errori = { [`${tabella}:select`]: { code: '08006' } }
+            expect((await GET_DISP(json(url(), 'GET'))).status, tabella).toBe(500)
+        }
+    })
+
+    it('tabelle assenti → 503 CRM_NON_INSTALLATO', async () => {
+        h.errori = { 'crm_settimane:select': { code: 'PGRST205' } }
+        const res = await GET_DISP(json(url(), 'GET'))
+        expect(res.status).toBe(503)
+        expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
     })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-describe('POST /api/admin/crm/disponibilita', () => {
-    const corpo = (o: Record<string, unknown> = {}) => ({ giornoSettimana: 3, oraInizio: '14:00', oraFine: '17:30', ...o })
-    const invia = (o?: Record<string, unknown>) => POST_DISP(json('/api/admin/crm/disponibilita', 'POST', corpo(o)))
+describe('PUT /api/admin/crm/disponibilita', () => {
+    const fasciaCorpo = (o: Record<string, unknown> = {}) => ({ giornoSettimana: 3, oraInizio: '14:00', oraFine: '17:30', durataSlotMin: 45, ...o })
+    const corpo = (o: Record<string, unknown> = {}) => ({
+        scuolaId: SEDE_A,
+        settimana: '2026-11-09',
+        utenteId: U1,
+        fasce: [fasciaCorpo()],
+        ...o,
+    })
+    const invia = (o?: Record<string, unknown>) => PUT_DISP(json('/api/admin/crm/disponibilita', 'PUT', corpo(o)))
+    const ultima = () => h.chiamateRpc[h.chiamateRpc.length - 1]
 
-    it('docente → 403', async () => {
+    it('docente → 403, e la funzione non parte', async () => {
         h.ruolo = 'educator'
         expect((await invia()).status).toBe(403)
+        expect(h.chiamateRpc).toHaveLength(0)
     })
 
-    it('la propria fascia → 201: sede, persona, durata 45 di default, valida da oggi senza fine', async () => {
+    it('salva la propria settimana → 200, e la funzione riceve sede, persona, lunedì, fasce nella forma che legge e chi ha salvato', async () => {
         const res = await invia()
-        expect(res.status).toBe(201)
-        expect((await res.json()).id).toBeTruthy()
-        expect(scritte('crm_disponibilita', 'insert')[0].valori[0]).toMatchObject({
-            scuola_id: SEDE_A,
-            utente_id: U1,
-            giorno_settimana: 3,
-            ora_inizio: '14:00',
-            ora_fine: '17:30',
-            durata_slot_min: 45,
-            valida_dal: '2026-11-02',
-            valida_al: null,
+        expect(res.status).toBe(200)
+        const { data } = await res.json()
+        expect(data).toMatchObject({ settimana: '2026-11-09', utenteId: U1 })
+        expect(typeof data.settimanaId).toBe('string')
+        expect(h.chiamateRpc).toHaveLength(1)
+        expect(ultima()).toEqual({
+            p_scuola_id: SEDE_A,
+            p_utente_id: U1,
+            p_settimana: '2026-11-09',
+            // le chiavi sono quelle di `jsonb_to_recordset` nella funzione SQL, in snake_case
+            p_fasce: [{ giorno_settimana: 3, ora_inizio: '14:00', ora_fine: '17:30', durata_slot_min: 45 }],
+            p_eseguito_da: U1,
         })
     })
 
-    it('«da oggi» è il giorno di Roma, non quello di UTC: all’una di notte del 25/10 (23:30Z del 24) è il 25', async () => {
-        vi.setSystemTime(new Date('2026-10-24T23:30:00.000Z'))
-        await invia()
-        expect(scritte('crm_disponibilita', 'insert')[0].valori[0].valida_dal).toBe('2026-10-25')
+    it('la settimana in corso si può salvare', async () => {
+        expect((await invia({ settimana: '2026-11-02' })).status).toBe(200)
     })
 
-    it('durata e periodo si possono dire', async () => {
-        await invia({ durataSlotMin: 30, validaDal: '2026-12-01', validaAl: '2027-06-30' })
-        expect(scritte('crm_disponibilita', 'insert')[0].valori[0]).toMatchObject({
-            durata_slot_min: 30,
-            valida_dal: '2026-12-01',
-            valida_al: '2027-06-30',
-        })
-    })
-
-    it('POST di una fascia di una collega da una segreteria → 403 SOLO_LA_PROPRIA, e non si scrive', async () => {
+    it('una collega cambia le fasce di un’altra persona della sede → 200 (non c’è più «solo la propria»)', async () => {
         const res = await invia({ utenteId: U2 })
-        expect(res.status).toBe(403)
-        expect((await res.json()).codice).toBe('SOLO_LA_PROPRIA')
-        expect(scritte('crm_disponibilita', 'insert')).toHaveLength(0)
+        expect(res.status).toBe(200)
+        expect(ultima()).toMatchObject({ p_utente_id: U2, p_eseguito_da: U1 })
     })
 
-    it('fatta dall’admin → 201 per la collega', async () => {
-        comeAdmin()
-        const res = await invia({ utenteId: U2, scuolaId: SEDE_A })
-        expect(res.status).toBe(201)
-        expect(scritte('crm_disponibilita', 'insert')[0].valori[0]).toMatchObject({ utente_id: U2, scuola_id: SEDE_A })
+    it('la sede (utenteId nullo) la cambia qualsiasi persona della sede', async () => {
+        const res = await invia({ utenteId: null })
+        expect(res.status).toBe(200)
+        expect(ultima()).toMatchObject({ p_utente_id: null, p_scuola_id: SEDE_A })
+        expect((await res.json()).data.utenteId).toBeNull()
     })
 
-    it('l’admin con due sedi e nessuna indicata → 400 (la sede non si indovina)', async () => {
+    it('anche l’admin: la sede dichiarata, e la persona di quella sede', async () => {
         comeAdmin()
         h.attive = [SEDE_A, SEDE_B]
-        const res = await invia({ utenteId: U2 })
-        expect(res.status).toBe(400)
-        expect(scritte('crm_disponibilita', 'insert')).toHaveLength(0)
+        const res = await invia({ scuolaId: SEDE_B, utenteId: U_B })
+        expect(res.status).toBe(200)
+        expect(ultima()).toMatchObject({ p_scuola_id: SEDE_B, p_utente_id: U_B, p_eseguito_da: ADMIN })
     })
 
-    it('l’admin scrive nella sede dichiarata, anche se non è la prima', async () => {
-        comeAdmin()
-        const res = await invia({ utenteId: U_B, scuolaId: SEDE_B })
-        expect(res.status).toBe(201)
-        expect(scritte('crm_disponibilita', 'insert')[0].valori[0].scuola_id).toBe(SEDE_B)
-    })
-
-    it('una persona che non è della sede dichiarata → 422 PERSONA_NON_DELLA_SEDE', async () => {
-        comeAdmin()
-        const res = await invia({ utenteId: U_B, scuolaId: SEDE_A })
+    it('persona di un’altra sede → 422 PERSONA_NON_DELLA_SEDE, controllata PRIMA della funzione', async () => {
+        const res = await invia({ utenteId: U_B })
         expect(res.status).toBe(422)
         expect((await res.json()).codice).toBe('PERSONA_NON_DELLA_SEDE')
-        expect(scritte('crm_disponibilita', 'insert')).toHaveLength(0)
+        expect(h.chiamateRpc).toHaveLength(0)
     })
 
-    it('una sede che non è la propria → 403', async () => {
-        const res = await invia({ scuolaId: SEDE_B })
+    it('una persona archiviata, o che non esiste → 422, e la funzione non parte', async () => {
+        expect((await invia({ utenteId: U_ARCH })).status).toBe(422)
+        expect((await invia({ utenteId: '20000000-0000-4000-8000-0000000000ff' })).status).toBe(422)
+        expect(h.chiamateRpc).toHaveLength(0)
+    })
+
+    it('per la sede non si controlla nessuna persona (e il controllo c’è quando la persona c’è)', async () => {
+        await invia({ utenteId: null })
+        expect(h.letture).not.toContain('utenti')
+        await invia({ utenteId: U2 })
+        expect(h.letture).toContain('utenti')
+    })
+
+    it('una sede che non è la propria → 403, e la funzione non parte', async () => {
+        const res = await invia({ scuolaId: SEDE_B, utenteId: U_B })
         expect(res.status).toBe(403)
-        expect(scritte('crm_disponibilita', 'insert')).toHaveLength(0)
+        expect((await res.json()).codice).toBe('SEDE_NON_ACCESSIBILE')
+        expect(h.chiamateRpc).toHaveLength(0)
+    })
+
+    it('settimana passata → 409 SETTIMANA_PASSATA, e il database non cambia', async () => {
+        const prima = JSON.stringify([h.db.crm_settimane, h.db.crm_fasce])
+        const res = await invia({ settimana: '2026-10-26' })
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('SETTIMANA_PASSATA')
+        expect(JSON.stringify([h.db.crm_settimane, h.db.crm_fasce])).toBe(prima)
+    })
+
+    it('una data che non è un lunedì → 400 (la funzione risponde settimana_non_valida)', async () => {
+        const res = await invia({ settimana: '2026-11-04' })
+        expect(res.status).toBe(400)
+    })
+
+    it('oraFine prima di oraInizio (o uguale) → 400, e la funzione non parte', async () => {
+        for (const f of [{ oraInizio: '14:00', oraFine: '09:00' }, { oraInizio: '10:00', oraFine: '10:00' }]) {
+            const res = await invia({ fasce: [fasciaCorpo(), fasciaCorpo({ giornoSettimana: 4, ...f })] })
+            expect(res.status).toBe(400)
+            expect(JSON.stringify((await res.json()).details)).toContain('fasce.1.oraFine')
+        }
+        expect(h.chiamateRpc).toHaveLength(0)
+    })
+
+    it('fasce sovrapposte → 422 FASCE_SOVRAPPOSTE; due che si toccano soltanto passano', async () => {
+        const sovrapposte = await invia({ fasce: [fasciaCorpo({ oraInizio: '09:00', oraFine: '11:00' }), fasciaCorpo({ oraInizio: '10:30', oraFine: '12:00' })] })
+        expect(sovrapposte.status).toBe(422)
+        expect((await sovrapposte.json()).codice).toBe('FASCE_SOVRAPPOSTE')
+
+        const identiche = await invia({ fasce: [fasciaCorpo(), fasciaCorpo()] })
+        expect(identiche.status).toBe(422)
+
+        const contigue = await invia({ fasce: [fasciaCorpo({ oraInizio: '09:00', oraFine: '10:00' }), fasciaCorpo({ oraInizio: '10:00', oraFine: '11:00' })] })
+        expect(contigue.status).toBe(200)
+        // Lo stesso orario in due giorni diversi non è una sovrapposizione.
+        const giorni = await invia({ fasce: [fasciaCorpo({ giornoSettimana: 1 }), fasciaCorpo({ giornoSettimana: 2 })] })
+        expect(giorni.status).toBe(200)
+    })
+
+    it('nessuna fascia → 200: è una settimana volutamente vuota, e la funzione riceve l’elenco vuoto', async () => {
+        const res = await invia({ fasce: [] })
+        expect(res.status).toBe(200)
+        expect(ultima().p_fasce).toEqual([])
     })
 
     it.each([
-        ['fine uguale all’inizio', { oraInizio: '10:00', oraFine: '10:00' }],
-        ['fine prima dell’inizio', { oraInizio: '14:00', oraFine: '09:00' }],
-        ['ora senza lo zero', { oraInizio: '9:00' }],
-        ['ora inesistente', { oraFine: '25:00' }],
-        ['giorno 0', { giornoSettimana: 0 }],
-        ['giorno 8', { giornoSettimana: 8 }],
-        ['giorno non intero', { giornoSettimana: 1.5 }],
-        ['slot di 10 minuti', { durataSlotMin: 10 }],
-        ['slot di 300 minuti', { durataSlotMin: 300 }],
-        ['periodo al contrario', { validaDal: '2026-12-01', validaAl: '2026-11-01' }],
-        ['fine prima di oggi senza inizio', { validaAl: '2026-10-01' }],
-        ['data inesistente', { validaDal: '2026-02-30' }],
-    ])('%s → 400, e non si scrive', async (_nome, o) => {
-        const res = await invia(o as Record<string, unknown>)
-        expect(res.status).toBe(400)
-        expect(scritte('crm_disponibilita', 'insert')).toHaveLength(0)
+        ['il giorno 0', { giornoSettimana: 0 }],
+        ['il giorno 8', { giornoSettimana: 8 }],
+        ['un giorno con la virgola', { giornoSettimana: 2.5 }],
+        ['una durata di 10 minuti', { durataSlotMin: 10 }],
+        ['una durata di 241 minuti', { durataSlotMin: 241 }],
+        ['una durata con la virgola', { durataSlotMin: 45.5 }],
+        ['una durata mancante', { durataSlotMin: undefined }],
+        ['un’ora senza lo zero', { oraInizio: '9:00' }],
+        ['un’ora 24:00', { oraFine: '24:00' }],
+        ['un’ora con i secondi', { oraInizio: '09:00:00' }],
+    ])('%s → 400, e la funzione non parte', async (_nome, f) => {
+        expect((await invia({ fasce: [fasciaCorpo(f)] })).status).toBe(400)
+        expect(h.chiamateRpc).toHaveLength(0)
     })
 
-    it('un guasto del database → 500; tabelle assenti → 503', async () => {
-        h.errori = { 'crm_disponibilita:insert': { code: '08006' } }
-        expect((await invia()).status).toBe(500)
-        h.errori = { 'crm_disponibilita:insert': { code: 'PGRST205' } }
-        expect((await invia()).status).toBe(503)
-    })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-describe('PATCH /api/admin/crm/disponibilita/[id]', () => {
-    const modifica = (corpo: unknown, id = F1) => PATCH_DISP(json(`/api/admin/crm/disponibilita/${id}`, 'PATCH', corpo), ctx(id))
-
-    it('docente → 403', async () => {
-        h.ruolo = 'educator'
-        expect((await modifica({ oraFine: '12:00' })).status).toBe(403)
+    it('al massimo 50 fasce: 50 passano, 51 no', async () => {
+        const molte = (n: number) =>
+            Array.from({ length: n }, (_, i) => {
+                const ora = 6 + Math.floor(i / 7)
+                return fasciaCorpo({ giornoSettimana: (i % 7) + 1, oraInizio: `${String(ora).padStart(2, '0')}:00`, oraFine: `${String(ora).padStart(2, '0')}:30` })
+            })
+        expect((await invia({ fasce: molte(50) })).status).toBe(200)
+        h.chiamateRpc = []
+        expect((await invia({ fasce: molte(51) })).status).toBe(400)
+        expect(h.chiamateRpc).toHaveLength(0)
     })
 
-    it('la propria fascia → 200, e cambia solo quello che si è detto', async () => {
-        const res = await modifica({ oraFine: '12:00', durataSlotMin: 30 })
+    it('sede, settimana, persona (anche nulla) e fasce sono tutte richieste; la settimana dev’essere una data vera', async () => {
+        const senza = (chiave: string) => {
+            const c = corpo() as Record<string, unknown>
+            delete c[chiave]
+            return c
+        }
+        for (const chiave of ['scuolaId', 'settimana', 'utenteId', 'fasce']) {
+            const res = await PUT_DISP(json('/api/admin/crm/disponibilita', 'PUT', senza(chiave)))
+            expect(res.status, chiave).toBe(400)
+        }
+        expect((await invia({ settimana: '2026-02-30' })).status).toBe(400)
+        expect((await invia({ settimana: 'lunedì' })).status).toBe(400)
+        expect((await invia({ utenteId: 'non-un-uuid' })).status).toBe(400)
+        expect(h.chiamateRpc).toHaveLength(0)
+    })
+
+    it('dopo il salvataggio la settimana si legge com’è stata salvata; quella prima non cambia e quelle dopo la ereditano', async () => {
+        // U2 non ha fasce reali: gli si dà il martedì 8–10 dalla settimana del 9/11.
+        const res = await invia({ utenteId: U2, fasce: [fasciaCorpo({ giornoSettimana: 2, oraInizio: '08:00', oraFine: '10:00' })] })
         expect(res.status).toBe(200)
-        expect(riga('crm_disponibilita', F1)).toMatchObject({
-            ora_inizio: '09:00:00',
-            ora_fine: '12:00',
-            durata_slot_min: 30,
-            giorno_settimana: 1,
-            valida_dal: '2026-09-01',
-            valida_al: null,
+        const di = (data: { proprietari: Proprietario[] }) => data.proprietari.find((p) => p.utenteId === U2)
+        const leggi = async (settimana: string) =>
+            (await (await GET_DISP(json(`/api/admin/crm/disponibilita?scuolaId=${SEDE_A}&settimana=${settimana}`, 'GET'))).json()).data
+
+        const stessa = di(await leggi('2026-11-09'))
+        expect(stessa).toMatchObject({ origine: 'registrata', daSettimana: '2026-11-09' })
+        expect(stessa?.fasce).toEqual([{ utenteId: U2, settimana: '2026-11-09', giornoSettimana: 2, oraInizio: '08:00', oraFine: '10:00', durataSlotMin: 45 }])
+
+        const dopo = di(await leggi('2026-11-23'))
+        expect(dopo).toMatchObject({ origine: 'ereditata', daSettimana: '2026-11-09' })
+        expect(dopo?.fasce).toHaveLength(1)
+
+        // La settimana prima (2/11) eredita ancora la testata vuota del 26/10: la modifica non la raggiunge.
+        const prima = di(await leggi('2026-11-02'))
+        expect(prima).toMatchObject({ origine: 'ereditata', daSettimana: '2026-10-26', fasce: [] })
+    })
+
+    it('salvare di nuovo la stessa settimana la sostituisce, non la raddoppia', async () => {
+        await invia({ utenteId: U2, fasce: [fasciaCorpo({ giornoSettimana: 2 }), fasciaCorpo({ giornoSettimana: 4 })] })
+        await invia({ utenteId: U2, fasce: [fasciaCorpo({ giornoSettimana: 5 })] })
+        const testate = (h.db.crm_settimane as Riga[]).filter((t) => t.utente_id === U2 && t.settimana === '2026-11-09')
+        expect(testate).toHaveLength(1)
+        const fasce = (h.db.crm_fasce as Riga[]).filter((f) => f.settimana_id === testate[0].id)
+        expect(fasce.map((f) => f.giorno_settimana)).toEqual([5])
+    })
+
+    it('registra l’esito nel log con sede e numero di fasce, e nient’altro di personale', async () => {
+        await invia({ fasce: [fasciaCorpo(), fasciaCorpo({ giornoSettimana: 4 })] })
+        const riga = h.logEvento.mock.calls.find((c) => c[0] === 'crm' && c[2]?.esito === 'settimana-salvata')
+        expect(riga).toBeDefined()
+        expect(riga?.[1]).toBe('info')
+        expect(riga?.[2]).toMatchObject({ operazione: 'admin/crm/disponibilita:PUT', scuola_id: SEDE_A, n: 2 })
+        expect(JSON.stringify(riga)).not.toContain('Prova')
+    })
+
+    describe('gli esiti e gli errori della funzione', () => {
+        it('un esito che la route non conosce → 500 CRM_OPERAZIONE_NON_RIUSCITA, con un log di errore', async () => {
+            h.rpc = () => ({ data: { esito: 'inventato' }, error: null })
+            const res = await invia()
+            expect(res.status).toBe(500)
+            expect((await res.json()).codice).toBe('CRM_OPERAZIONE_NON_RIUSCITA')
+            expect(h.logEvento.mock.calls.some((c) => c[1] === 'error')).toBe(true)
         })
-    })
 
-    it('si può mettere una fine al periodo, e anche toglierla (null)', async () => {
-        await modifica({ validaAl: '2026-12-31' })
-        expect(riga('crm_disponibilita', F1)?.valida_al).toBe('2026-12-31')
-        await modifica({ validaAl: null })
-        expect(riga('crm_disponibilita', F1)?.valida_al).toBeNull()
-    })
+        it('una risposta vuota → 500, non un «salvato» finto', async () => {
+            h.rpc = () => ({ data: null, error: null })
+            expect((await invia()).status).toBe(500)
+        })
 
-    it('disponibilità di una collega fatta da una segreteria → 403; fatta dall’admin → 200', async () => {
-        const rifiutata = await modifica({ oraFine: '12:00' }, F2)
-        expect(rifiutata.status).toBe(403)
-        expect((await rifiutata.json()).codice).toBe('SOLO_LA_PROPRIA')
-        expect(riga('crm_disponibilita', F2)?.ora_fine).toBe('13:00:00')
+        it('settimana_non_valida → 400', async () => {
+            h.rpc = () => ({ data: { esito: 'settimana_non_valida' }, error: null })
+            expect((await invia()).status).toBe(400)
+        })
 
-        comeAdmin()
-        expect((await modifica({ oraFine: '12:00' }, F2)).status).toBe(200)
-        expect(riga('crm_disponibilita', F2)?.ora_fine).toBe('12:00')
-    })
+        it('la funzione non c’è (PGRST202, 42883) o la tabella manca (PGRST205, 42P01) → 503 CRM_NON_INSTALLATO', async () => {
+            for (const code of ['PGRST202', '42883', 'PGRST205', '42P01']) {
+                h.rpc = () => ({ data: null, error: { code, message: 'x' } })
+                const res = await invia()
+                expect(res.status, code).toBe(503)
+                expect((await res.json()).codice, code).toBe('CRM_NON_INSTALLATO')
+            }
+        })
 
-    it('la fascia che ne risulta deve reggersi: una fine prima dell’inizio che c’è già → 400', async () => {
-        const res = await modifica({ oraFine: '08:00' }) // l'inizio esistente è 09:00
-        expect(res.status).toBe(400)
-        expect(riga('crm_disponibilita', F1)?.ora_fine).toBe('13:00:00')
-        expect((await modifica({ oraInizio: '14:00' })).status).toBe(400) // la fine esistente è 13:00
-    })
+        it('una colonna inesistente DENTRO la funzione (42703, PGRST204) è un errore vero: 500, non «CRM non installato»', async () => {
+            for (const code of ['42703', 'PGRST204']) {
+                h.rpc = () => ({ data: null, error: { code, message: 'x' } })
+                const res = await invia()
+                expect(res.status, code).toBe(500)
+                expect((await res.json()).codice, code).toBe('CRM_OPERAZIONE_NON_RIUSCITA')
+            }
+        })
 
-    it('un periodo che finisce prima di iniziare, contando quello che c’è già → 400', async () => {
-        expect((await modifica({ validaAl: '2026-08-31' })).status).toBe(400) // valida_dal esistente: 2026-09-01
-        expect(riga('crm_disponibilita', F1)?.valida_al).toBeNull()
-    })
+        it('argomenti che la funzione non sa leggere (22023) e ogni altro guasto → 500', async () => {
+            for (const code of ['22023', '08006', '40001']) {
+                h.rpc = () => ({ data: null, error: { code, message: 'x' } })
+                expect((await invia()).status, code).toBe(500)
+            }
+        })
 
-    it('nessuna modifica, o valori senza senso → 400', async () => {
-        expect((await modifica({})).status).toBe(400)
-        expect((await modifica({ giornoSettimana: 9 })).status).toBe(400)
-        expect((await modifica({ oraInizio: 'tardi' })).status).toBe(400)
-    })
-
-    it('una fascia di un’altra sede → 403', async () => {
-        const res = await modifica({ oraFine: '12:00' }, F_B)
-        expect(res.status).toBe(403)
-        expect(riga('crm_disponibilita', F_B)?.ora_fine).toBe('13:00:00')
-    })
-
-    it('una fascia che non c’è → 404 ELEMENTO_NON_TROVATO', async () => {
-        const res = await modifica({ oraFine: '12:00' }, '50000000-0000-4000-8000-0000000000ff')
-        expect(res.status).toBe(404)
-        expect((await res.json()).codice).toBe('ELEMENTO_NON_TROVATO')
-    })
-
-    it('tolta dalla collega fra la lettura e la scrittura → 404, non un 200 per niente', async () => {
-        h.corsa = { tabella: 'crm_disponibilita', fa: () => void (h.db.crm_disponibilita = h.db.crm_disponibilita.filter((r) => r.id !== F1)) }
-        expect((await modifica({ oraFine: '12:00' })).status).toBe(404)
-    })
-
-    it('l’update mira la sede oltre all’id', async () => {
-        h.db.crm_disponibilita.push(fascia({ scuola_id: SEDE_B })) // stesso id, altra sede
-        await modifica({ oraFine: '12:00' })
-        const [u] = scritte('crm_disponibilita', 'update')
-        expect(u.colpite).toHaveLength(1)
-        expect(u.colpite[0].scuola_id).toBe(SEDE_A)
-    })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-describe('DELETE /api/admin/crm/disponibilita/[id]', () => {
-    const elimina = (id = F1) => DELETE_DISP(json(`/api/admin/crm/disponibilita/${id}`, 'DELETE'), ctx(id))
-
-    it('docente → 403', async () => {
-        h.ruolo = 'educator'
-        expect((await elimina()).status).toBe(403)
-    })
-
-    it('la propria → 200 e sparisce', async () => {
-        expect((await elimina()).status).toBe(200)
-        expect(riga('crm_disponibilita', F1)).toBeUndefined()
-        expect(h.db.crm_disponibilita).toHaveLength(2)
-    })
-
-    it('quella di una collega: segreteria → 403 e resta; admin → 200', async () => {
-        const res = await elimina(F2)
-        expect(res.status).toBe(403)
-        expect((await res.json()).codice).toBe('SOLO_LA_PROPRIA')
-        expect(riga('crm_disponibilita', F2)).toBeDefined()
-
-        comeAdmin()
-        expect((await elimina(F2)).status).toBe(200)
-        expect(riga('crm_disponibilita', F2)).toBeUndefined()
-    })
-
-    it('di un’altra sede → 403 e resta', async () => {
-        expect((await elimina(F_B)).status).toBe(403)
-        expect(riga('crm_disponibilita', F_B)).toBeDefined()
-    })
-
-    it('che non c’è → 404', async () => {
-        const res = await elimina('50000000-0000-4000-8000-0000000000ff')
-        expect(res.status).toBe(404)
-        expect((await res.json()).codice).toBe('ELEMENTO_NON_TROVATO')
-    })
-
-    it('già tolta fra la lettura e la scrittura → 404', async () => {
-        h.corsa = { tabella: 'crm_disponibilita', fa: () => void (h.db.crm_disponibilita = h.db.crm_disponibilita.filter((r) => r.id !== F1)) }
-        expect((await elimina()).status).toBe(404)
-    })
-
-    it('il delete mira la sede oltre all’id', async () => {
-        h.db.crm_disponibilita.push(fascia({ scuola_id: SEDE_B }))
-        await elimina()
-        const [d] = scritte('crm_disponibilita', 'delete')
-        expect(d.colpite).toHaveLength(1)
-        expect(d.colpite[0].scuola_id).toBe(SEDE_A)
-        expect(h.db.crm_disponibilita.filter((r) => r.id === F1)).toHaveLength(1) // quella di SEDE_B è intatta
-    })
-
-    it('un guasto del database → 500', async () => {
-        h.errori = { 'crm_disponibilita:delete': { code: '08006' } }
-        expect((await elimina()).status).toBe(500)
-        expect(riga('crm_disponibilita', F1)).toBeDefined()
+        it('il guasto non scrive «settimana-salvata» nel log', async () => {
+            h.rpc = () => ({ data: null, error: { code: '08006', message: 'x' } })
+            await invia()
+            expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'settimana-salvata')).toBe(false)
+        })
     })
 })
 

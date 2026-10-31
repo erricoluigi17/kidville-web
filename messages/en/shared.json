@@ -774,5 +774,7 @@
   "erroreCrmQuotaCassaChiusa": "The cash register for that day is already closed. Pick a day after the last closing, or today.",
   "erroreCrmQuotaGiaInContabilita": "The fee is already in accounting: correct it there.",
   "erroreCrmAlunnoNonDellaSede": "The selected student does not belong to this location.",
-  "erroreCrmAlunnoGiaCollegato": "The child or the selected student is already linked: remove the existing link first."
+  "erroreCrmAlunnoGiaCollegato": "The child or the selected student is already linked: remove the existing link first.",
+  "erroreCrmSettimanaPassata": "That week is already over and can no longer be edited.",
+  "erroreCrmFasceSovrapposte": "Two time slots on the same day overlap. Please fix the times."
 }

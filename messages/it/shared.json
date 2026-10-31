@@ -774,5 +774,7 @@
   "erroreCrmQuotaCassaChiusa": "La cassa di quel giorno è già chiusa. Scegli un giorno dopo l’ultima chiusura, oppure oggi.",
   "erroreCrmQuotaGiaInContabilita": "La quota è già in contabilità: si corregge da lì.",
   "erroreCrmAlunnoNonDellaSede": "L’alunno scelto non fa parte di questa sede.",
-  "erroreCrmAlunnoGiaCollegato": "Il bambino o l’alunno scelto sono già collegati: togli prima il collegamento esistente."
+  "erroreCrmAlunnoGiaCollegato": "Il bambino o l’alunno scelto sono già collegati: togli prima il collegamento esistente.",
+  "erroreCrmSettimanaPassata": "La settimana è già passata: non si può più modificare.",
+  "erroreCrmFasceSovrapposte": "Due fasce dello stesso giorno si sovrappongono. Correggi gli orari."
 }

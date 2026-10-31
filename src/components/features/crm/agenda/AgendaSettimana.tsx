@@ -153,6 +153,9 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
       metti(dataCivile(new Date(v.inizio)), v.assegnata_a, { tipo: 'visita', inizio: v.inizio, visita: v })
     }
     for (const s of dati?.slot ?? []) {
+      // Gli slot della SEDE (`utenteId` nullo) non stanno in nessuna colonna di persona: li mostra il pannello
+      // della sede (Compito 8). Finché non c'è, la griglia fa vedere solo quelli delle persone.
+      if (s.utenteId === null) continue
       metti(dataCivile(new Date(s.inizio)), s.utenteId, { tipo: 'slot', inizio: s.inizio, slot: s })
     }
     for (const [k, lista] of mappa) mappa.set(k, [...lista].sort((a, b) => (a.inizio < b.inizio ? -1 : a.inizio > b.inizio ? 1 : 0)))
@@ -257,7 +260,7 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
                                     type="button"
                                     className="min-h-[36px] rounded-pill border border-dashed border-kidville-green px-3 font-maven text-sm font-bold tabular-nums text-kidville-green transition-colors hover:bg-kidville-green-soft"
                                     aria-label={t('slotAria', { giorno: `${nomeGiorno(g)} ${fmt.giornoMese(mezzogiorno(g))}`, ora: fmt.ora(voce.slot.inizio), persona: c.nome })}
-                                    onClick={() => setFissa({ inizio: voce.slot.inizio, assegnataA: voce.slot.utenteId })}
+                                    onClick={() => setFissa({ inizio: voce.slot.inizio, assegnataA: voce.slot.utenteId ?? undefined })}
                                   >
                                     {fmt.ora(voce.slot.inizio)}
                                   </button>

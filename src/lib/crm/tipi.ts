@@ -295,27 +295,10 @@ export interface EventoRow {
   creato_il: string
 }
 
-export interface DisponibilitaRow {
-  id: string
-  scuola_id: string
-  utente_id: string
-  /** 1 = lunedì … 7 = domenica (ISO) */
-  giorno_settimana: number
-  /** `HH:MM:SS`, come lo restituisce Postgres per `time` */
-  ora_inizio: string
-  ora_fine: string
-  durata_slot_min: number
-  /** `yyyy-mm-dd` */
-  valida_dal: string
-  /** `yyyy-mm-dd`; nullo = senza fine */
-  valida_al: string | null
-  creata_il: string
-}
-
 /**
  * La testata di una settimana di disponibilità di un proprietario (una persona, oppure la sede).
  * Una testata senza fasce è una settimana volutamente vuota. Dal 31/10/2026 sostituisce la settimana
- * tipo di `DisponibilitaRow`, che il Compito 7 toglie.
+ * tipo per persona: le fasce risolte per una settimana sono in `settimane.ts` (`FasciaEffettiva`).
  */
 export interface SettimanaRow {
   id: string

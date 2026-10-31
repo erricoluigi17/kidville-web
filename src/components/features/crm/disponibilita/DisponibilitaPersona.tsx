@@ -5,8 +5,8 @@ import { useTranslations } from 'next-intl'
 import { AlertTriangle, CalendarOff, Pencil, Plus, Trash2 } from 'lucide-react'
 import { DateField } from '@/components/ui/DateField'
 import { Modal } from '@/components/ui/Modal'
-import { APP_TIMEZONE, intlDateTime } from '@/i18n/config'
-import type { DisponibilitaRow, IndisponibilitaRow, MotivoIndisponibilita } from '@/lib/crm/tipi'
+import { APP_TIMEZONE, dataCivile, intlDateTime } from '@/i18n/config'
+import type { IndisponibilitaRow, MotivoIndisponibilita } from '@/lib/crm/tipi'
 import { oraCivile } from '@/lib/format/confini-giorno'
 import { addGiorni } from '@/lib/format/data'
 import { conIniziale, useDateFormat } from '@/lib/i18n/date'
@@ -38,8 +38,29 @@ interface Persona {
   ruolo: string
 }
 
+/**
+ * La fascia della «settimana tipo» come questo pannello la conosce ancora.
+ *
+ * ⚠️ PROVVISORIO (Compito 7 → 8): il server non ha più la settimana tipo per persona. Le disponibilità sono
+ * SETTIMANA PER SETTIMANA, della persona o della sede (`GET/PUT /api/admin/crm/disponibilita?settimana=`), e le
+ * righe della vecchia tabella della settimana tipo non esistono più. Finché il Compito 8 non riscrive questo pannello, qui le fasce
+ * restano nella forma di prima, ma il server non le restituisce (la lista esce vuota) e aggiungerle, cambiarle o
+ * toglierle non va a buon fine. Le assenze e le chiusure della sede funzionano come prima.
+ */
+interface FasciaTipo {
+  id: string
+  scuola_id: string
+  utente_id: string
+  giorno_settimana: number
+  ora_inizio: string
+  ora_fine: string
+  durata_slot_min: number
+  valida_al: string | null
+  creata_il: string
+}
+
 interface Dati {
-  fasce: DisponibilitaRow[]
+  fasce: FasciaTipo[]
   assenze: IndisponibilitaRow[]
   persone: Persona[]
   io: { id: string; ruolo: string }
@@ -75,13 +96,16 @@ async function leggi<T>(url: string): Promise<T | null> {
 
 async function caricaTutto(chiave: string, scuolaId: string): Promise<Esito> {
   const q = `?${new URLSearchParams({ scuolaId }).toString()}`
+  // La disponibilità si legge per settimana: oggi basta a far arrivare `io` (chi sta guardando) senza che il
+  // pannello intero fallisca. Le fasce nuove le mostrerà il Compito 8.
+  const qSettimana = `?${new URLSearchParams({ scuolaId, settimana: dataCivile(new Date()) }).toString()}`
   const [disp, ass, per] = await Promise.all([
-    leggi<{ data?: DisponibilitaRow[]; io?: { id: string; ruolo: string } }>(`/api/admin/crm/disponibilita${q}`),
+    leggi<{ data?: unknown; io?: { id: string; ruolo: string } }>(`/api/admin/crm/disponibilita${qSettimana}`),
     leggi<{ data?: IndisponibilitaRow[] }>(`/api/admin/crm/indisponibilita${q}`),
     leggi<{ data?: Persona[] }>(`/api/admin/crm/persone${q}`),
   ])
   if (!disp?.io || !ass || !per) return { chiave, ok: false }
-  return { chiave, ok: true, dati: { fasce: disp.data ?? [], assenze: ass.data ?? [], persone: per.data ?? [], io: disp.io } }
+  return { chiave, ok: true, dati: { fasce: Array.isArray(disp.data) ? (disp.data as FasciaTipo[]) : [], assenze: ass.data ?? [], persone: per.data ?? [], io: disp.io } }
 }
 
 /** Scrive (POST/PATCH/DELETE) e rende il testo da mostrare se il server ha rifiutato. `null` = riuscito. */
@@ -113,10 +137,10 @@ const BTN_ICONA =
   'inline-flex h-9 w-9 items-center justify-center rounded-lg border border-kidville-line text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green'
 
 type Dialogo =
-  | { tipo: 'fascia'; fascia?: DisponibilitaRow }
+  | { tipo: 'fascia'; fascia?: FasciaTipo }
   | { tipo: 'assenza' }
   | { tipo: 'chiusura' }
-  | { tipo: 'elimina-fascia'; fascia: DisponibilitaRow }
+  | { tipo: 'elimina-fascia'; fascia: FasciaTipo }
   | { tipo: 'elimina-assenza'; assenza: IndisponibilitaRow }
 
 export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
@@ -424,7 +448,7 @@ function DialogoFascia({
 }: {
   scuolaId: string
   utenteId: string
-  fascia?: DisponibilitaRow
+  fascia?: FasciaTipo
   nomeGiorno: (n: number) => string
   onFatto: () => void
   onChiudi: () => void

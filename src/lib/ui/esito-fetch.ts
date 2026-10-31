@@ -3463,6 +3463,15 @@ export const CODICI_ERRORE = {
      */
     ALUNNO_NON_DELLA_SEDE: 'erroreCrmAlunnoNonDellaSede',
     ALUNNO_GIA_COLLEGATO: 'erroreCrmAlunnoGiaCollegato',
+    /**
+     * Le disponibilità settimana per settimana (31/10/2026, `PUT /api/admin/crm/disponibilita`):
+     *  · 409 `SETTIMANA_PASSATA` — la settimana è già finita (il lunedì viene prima di quello della settimana in
+     *    corso, a Roma): le settimane passate non si modificano;
+     *  · 422 `FASCE_SOVRAPPOSTE` — due fasce dello stesso giorno si toccano (anche identiche): le fasce che si
+     *    appoggiano soltanto (una finisce quando l'altra comincia) non sono una sovrapposizione.
+     */
+    SETTIMANA_PASSATA: 'erroreCrmSettimanaPassata',
+    FASCE_SOVRAPPOSTE: 'erroreCrmFasceSovrapposte',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

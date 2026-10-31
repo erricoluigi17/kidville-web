@@ -588,7 +588,7 @@ describe('AgendaSettimana · i comandi rapidi', () => {
 
 const FASCIA_P1 = {
   id: F1, scuola_id: SEDE_A, utente_id: P1, giorno_settimana: 1, ora_inizio: '09:00:00', ora_fine: '13:00:00',
-  durata_slot_min: 45, valida_dal: '2026-09-01', valida_al: null, creata_il: '2026-09-01T00:00:00Z',
+  durata_slot_min: 45, valida_al: null, creata_il: '2026-09-01T00:00:00Z',
 }
 const FASCIA_P2 = { ...FASCIA_P1, id: F2, utente_id: P2, giorno_settimana: 2, ora_inizio: '15:00:00', ora_fine: '18:00:00' }
 

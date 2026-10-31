@@ -22,7 +22,7 @@
 //
 // ─── IL FATTO DA CUI NASCE ──────────────────────────────────────────────────
 //
-// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 63 chiavi
+// `utenti.id` è FK verso `auth.users(id)` con `ON DELETE CASCADE`, e 77 chiavi
 // esterne puntano a `utenti(id)`. Una cancellazione vera quindi:
 //   • viene RIFIUTATA da Postgres se esiste una riga su una FK `NO ACTION`
 //     (diario, presenze, valutazioni, registro, firme, pagamenti…);
@@ -80,9 +80,10 @@ export interface VoceTraccia {
 }
 
 /**
- * IL REGISTRO — tutte e 63 le FK verso `utenti(id)`, misurate da `pg_constraint`
+ * IL REGISTRO — tutte e 77 le FK verso `utenti(id)`, misurate da `pg_constraint`
  * il 2026-09-20 (56) e il 2026-09-25 (+2: i due `eliminato_da` del cestino del
- * registro e del fascicolo), poi il 2026-10-15 (+5 per gli storici). Non dai file di migrazione: ricostruirle dai `.sql`
+ * registro e del fascicolo), poi il 2026-10-15 (+5 per gli storici) e il
+ * 2026-10-31 (+14 per il CRM della segreteria). Non dai file di migrazione: ricostruirle dai `.sql`
  * ne trova ~46, e le dieci che mancano sono esattamente quelle che nessuno si
  * ricorda.
  */
@@ -559,6 +560,115 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     azioneFk: 'blocca',
     pesa: true,
     chiave: 'tracciaDocenteAgenda',
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CRM DELLA SEGRETERIA — censite il 2026-10-31 (PR-B dopo il merge di #273), dalla
+  // fotografia rigenerata. Tutte e 14 `blocca`, e tutte PESANO, comprese le due
+  // che a prima vista sono assegnazioni correnti (`crm_disponibilita.utente_id`,
+  // `crm_indisponibilita.utente_id`): la procedura di cancellazione non tocca le
+  // tabelle del CRM, quindi una voce che non pesasse farebbe dire all'anteprima
+  // «si cancella» su una persona che Postgres rifiuterebbe di cancellare. È la
+  // regola scritta nella migrazione stessa (punto 7): un utente con righe del CRM
+  // non si cancella senza decidere prima che ne è di quelle righe.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    tabella: 'crm_schede',
+    colonna: 'creato_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmSchede',
+  },
+  {
+    tabella: 'crm_appuntamenti',
+    colonna: 'fissato_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmAppuntamentiFissati',
+  },
+  {
+    tabella: 'crm_appuntamenti',
+    colonna: 'assegnata_a',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmVisiteAssegnate',
+  },
+  {
+    tabella: 'crm_appuntamenti',
+    colonna: 'svolto_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmVisiteSvolte',
+  },
+  {
+    tabella: 'crm_appuntamenti',
+    colonna: 'segnato_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmEsitiVisite',
+  },
+  {
+    tabella: 'crm_bambini',
+    colonna: 'esito_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmEsitiBambini',
+  },
+  {
+    tabella: 'crm_bambini',
+    colonna: 'quota_segnata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmQuoteSegnate',
+  },
+  {
+    tabella: 'crm_azioni',
+    colonna: 'responsabile',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmRichiamiAssegnati',
+  },
+  {
+    tabella: 'crm_azioni',
+    colonna: 'fatta_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmRichiamiFatti',
+  },
+  {
+    tabella: 'crm_azioni',
+    colonna: 'cancellata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmRichiamiAnnullati',
+  },
+  {
+    tabella: 'crm_eventi',
+    colonna: 'autore',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmStorico',
+  },
+  {
+    tabella: 'crm_disponibilita',
+    colonna: 'utente_id',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmDisponibilita',
+  },
+  {
+    tabella: 'crm_indisponibilita',
+    colonna: 'utente_id',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmAssenze',
+  },
+  {
+    tabella: 'crm_indisponibilita',
+    colonna: 'creata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmAssenzeInserite',
   },
 ]
 

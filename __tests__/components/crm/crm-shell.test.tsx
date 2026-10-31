@@ -223,9 +223,14 @@ describe('crmShell · i sei namespace sono montati', () => {
     }
   })
 
-  it('cinque dei sei nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
+  // Ogni sessione che riempie il suo catalogo lo mette qui e lo toglie dal controllo «nasce vuoto»:
+  // SESSIONE 4 (collegamento con le domande) → crmCollegamento. Il suo contenuto lo prova
+  // `collegamento.test.tsx`, e i lock di parità/glossario ne controllano le due lingue.
+  const RIEMPITI = ['crmCollegamento']
+
+  it('i namespace non ancora riempiti nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
     for (const lingua of LINGUE) {
-      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell')) {
+      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell' && !RIEMPITI.includes(n))) {
         const file = JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8'))
         expect(Object.keys(file)).toEqual([])
       }

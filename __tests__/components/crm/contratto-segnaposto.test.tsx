@@ -111,9 +111,6 @@ describe('i dodici segnaposto · le firme del contratto', () => {
 })
 
 describe('i dodici segnaposto · si montano con quelle props e dicono «in costruzione»', () => {
-  const bambino = { id: 'bambino-1' } as BambinoRow
-  const scheda = { id: 'scheda-1' } as SchedaRow
-
   const CASI: [string, () => React.ReactElement][] = [
     ['ElencoSchede', () => <ElencoSchede scuolaId={SEDE_A} onApri={noop} />],
     ['DettaglioScheda', () => <DettaglioScheda schedaId="scheda-1" onChiudi={noop} />],
@@ -121,16 +118,18 @@ describe('i dodici segnaposto · si montano con quelle props e dicono «in costr
     ['AgendaSettimana', () => <AgendaSettimana scuolaId={SEDE_A} onApriScheda={noop} />],
     ['FissaVisita', () => <FissaVisita scuolaId={SEDE_A} onFatto={noop} onAnnulla={noop} />],
     ['DisponibilitaPersona', () => <DisponibilitaPersona scuolaId={SEDE_A} />],
-    ['BadgeCollegamento', () => <BadgeCollegamento bambino={bambino} />],
-    ['AssociaDomanda', () => <AssociaDomanda scuolaId={SEDE_A} schedaId="scheda-1" bambino={bambino} onCollegato={noop} />],
-    ['AvvisoDomandaDaAssociare', () => <AvvisoDomandaDaAssociare scheda={scheda} onAggiornata={noop} />],
     ['DaRichiamare', () => <DaRichiamare scuolaId={SEDE_A} onApriScheda={noop} />],
     ['AzioniScheda', () => <AzioniScheda scuolaId={SEDE_A} schedaId="scheda-1" onAggiornata={noop} />],
     ['StatisticheCrm', () => <StatisticheCrm scuolaId={SEDE_A} />],
   ]
 
+  // SESSIONE 4 · tre segnaposto sono diventati schermate vere (Compito 4.3): non dicono più «in costruzione»
+  // e il loro comportamento si prova in `collegamento.test.tsx`. Le FIRME restano nel blocco qui sopra,
+  // che è il contratto con le altre sessioni. Ogni sessione toglie dai CASI i suoi e li aggiunge qui.
+  const SOSTITUITI = ['BadgeCollegamento', 'AssociaDomanda', 'AvvisoDomandaDaAssociare']
+
   it('sono dodici', () => {
-    expect(CASI).toHaveLength(12)
+    expect(CASI.length + SOSTITUITI.length).toBe(12)
   })
 
   it.each(CASI)('%s', (nome, el) => {

@@ -39,8 +39,11 @@ import { CAMPO, COLLEGAMENTO_PASTIGLIA, MESSAGGIO_ERRORE, TESTO_SECONDARIO } fro
  * ── Il modulo ───────────────────────────────────────────────────────────────────────────────────────
  *  · l'IMPORTO si scrive all'italiana: la virgola vale come il punto, due decimali al massimo, maggiore di
  *    zero e non oltre il tetto della route. Il resto non parte: il bottone resta spento e il perché si legge;
- *  · il GIORNO è `DateField` (vuoto = oggi, deciso dal server a Roma). Non ha un `max`: un giorno dopo oggi
- *    spegne il bottone con la stessa frase della route (`QUOTA_GIORNO_FUTURO`);
+ *  · il GIORNO è `DateField` e PARTE VALORIZZATO con oggi (a Roma). La richiesta lo manda SEMPRE: un campo
+ *    vuoto o a metà («15/10/20», un carattere cancellato) non vale «oggi» — il `DateField` consegna `''` per
+ *    una data incompleta, e omettere `giorno` farebbe registrare il contante nella cassa di oggi senza avvisare.
+ *    Quindi vuoto o incompleto spegne il bottone e dice «Indica un giorno valido». Non ha un `max`: un giorno
+ *    dopo oggi spegne il bottone con la stessa frase della route (`QUOTA_GIORNO_FUTURO`);
  *  · l'ANNO non si sceglie, si legge («Anno scolastico 2027/28»): viene dall'anno di ingresso del bambino.
  *    Con `non_indicato` il modulo dice di indicarlo prima e il bottone resta spento;
  *  · un `409 QUOTA_CASSA_CHIUSA` mette nel campo il giorno che la route propone (oggi), con la sua frase.
@@ -261,7 +264,9 @@ function ModuloQuota({
   const ts = useTranslations('shared')
   const id = useId()
   const [importo, setImporto] = useState(() => importoPerCampo(bambino.quota_importo))
-  const [giorno, setGiorno] = useState(() => bambino.quota_saldata_il ?? '')
+  // Oggi a Roma: è il giorno proposto (o quello già segnato, se si corregge) e il confine del futuro.
+  const oggi = dataCivile()
+  const [giorno, setGiorno] = useState(() => bambino.quota_saldata_il ?? oggi)
   const [metodo, setMetodo] = useState<MetodoQuota>(() => (eMetodo(bambino.quota_metodo) ? bambino.quota_metodo : 'contanti'))
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
@@ -273,9 +278,10 @@ function ModuloQuota({
   const importoErrato = importo.trim() !== '' && importoNumero === null
   // L'anno si ricava dall'anno di ingresso, adesso: lo stesso calcolo che la route rifà al momento di salvare.
   const annoQuota = annoDellaQuota(bambino.anno_ingresso)
-  const oggi = dataCivile()
-  const giornoFuturo = giorno !== '' && giorno > oggi
-  const pronto = importoNumero !== null && annoQuota !== null && !giornoFuturo && !invio
+  // `DateField` consegna `''` per una data vuota, incompleta o inesistente: non è «oggi», è un giorno che manca.
+  const giornoValido = GIORNO_ISO.test(giorno)
+  const giornoFuturo = giornoValido && giorno > oggi
+  const pronto = importoNumero !== null && annoQuota !== null && giornoValido && !giornoFuturo && !invio
 
   const invia = async () => {
     if (!pronto || importoNumero === null || inVolo.current) return
@@ -283,9 +289,8 @@ function ModuloQuota({
     setInvio(true)
     setErrore(null)
 
-    const corpo: { importo: number; giorno?: string; metodo: MetodoQuota } = { importo: importoNumero, metodo }
-    if (giorno !== '') corpo.giorno = giorno
-    const res = await chiama('quota-segna', url, scrittura('PUT', corpo))
+    // `giorno` parte SEMPRE: omesso, il server prenderebbe oggi e un giorno scritto a metà finirebbe in cassa oggi.
+    const res = await chiama('quota-segna', url, scrittura('PUT', { importo: importoNumero, giorno, metodo }))
 
     if (res === null) {
       setErrore(t('quotaErrore'))
@@ -352,7 +357,7 @@ function ModuloQuota({
             className={CAMPO}
           />
           <p id={`${id}-giorno-aiuto`} className={`mt-1 ${TESTO_SECONDARIO}`}>
-            {giornoFuturo ? ts('erroreCrmQuotaGiornoFuturo') : t('quotaGiornoOggi')}
+            {!giornoValido ? t('quotaGiornoNonValido') : giornoFuturo ? ts('erroreCrmQuotaGiornoFuturo') : t('quotaGiornoOggi')}
           </p>
         </div>
       </div>

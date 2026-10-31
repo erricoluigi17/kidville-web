@@ -167,6 +167,13 @@ const conferma = () => screen.getByRole('button', { name: 'Segna la quota' }) as
 // L'anno atteso si calcola con la stessa funzione del componente: il test non dipende dal giorno in cui gira.
 const ANNO_PROSSIMO = etichettaAnno(annoDellaQuota('prossimo') as number)
 
+// Oggi a Roma, calcolato qui in modo INDIPENDENTE dal componente (non con la sua `dataCivile`): se il campo
+// partisse da un altro giorno, il test se ne accorgerebbe.
+const OGGI_ISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date())
+const OGGI_IT = OGGI_ISO.split('-').reverse().join('/')
+const GIORNO = 'Giorno del pagamento'
+const GIORNO_NON_VALIDO = 'Indica un giorno valido'
+
 // ════════════════════════════════════════════════════════════════════════════════
 describe('QuotaIscrizione · segnare la quota', () => {
   it('nessuna quota: c’è solo il bottone, e non parte nessuna chiamata', () => {
@@ -187,9 +194,61 @@ describe('QuotaIscrizione · segnare la quota', () => {
     fireEvent.click(conferma())
 
     await waitFor(() => expect(chiamate('PUT', URL_QUOTA)).toHaveLength(1))
-    // Il giorno vuoto non parte: «oggi» lo decide il server, a Roma.
-    expect(chiamate('PUT', URL_QUOTA)[0].corpo).toEqual({ importo: 150.5, metodo: 'contanti' })
+    // Il giorno parte SEMPRE: qui non l'abbiamo toccato, ed è quello che il campo proponeva (oggi a Roma).
+    expect(chiamate('PUT', URL_QUOTA)[0].corpo).toEqual({ importo: 150.5, giorno: OGGI_ISO, metodo: 'contanti' })
     await waitFor(() => expect(onCambiata).toHaveBeenCalledTimes(1))
+  })
+
+  it('all’apertura il campo del giorno vale oggi, e salvando senza toccarlo il corpo porta giorno = oggi', async () => {
+    rotta('PUT', URL_QUOTA, json(200, { data: { stato: 'in_attesa', passaggio: null } }))
+    monta()
+
+    apriModulo()
+    expect((screen.getByLabelText(GIORNO) as HTMLInputElement).value).toBe(OGGI_IT)
+    expect(screen.queryByText(GIORNO_NON_VALIDO)).toBeNull()
+    scrivi('Importo (€)', '150')
+    expect(conferma().disabled).toBe(false)
+    fireEvent.click(conferma())
+
+    await waitFor(() => expect(chiamate('PUT', URL_QUOTA)).toHaveLength(1))
+    expect((chiamate('PUT', URL_QUOTA)[0].corpo as { giorno?: string }).giorno).toBe(OGGI_ISO)
+  })
+
+  it.each([
+    ['una data digitata a metà', '15/10/20'],
+    ['un carattere cancellato', '15/10/202'],
+    ['il campo svuotato', ''],
+    ['una data inesistente', '31/02/2026'],
+  ])('%s: «Salva» è spento, c’è «Indica un giorno valido» e non parte nessuna fetch', (_nome, digitato) => {
+    monta()
+    apriModulo()
+    scrivi('Importo (€)', '150')
+    scrivi(GIORNO, digitato)
+
+    // Presenza del messaggio (non un'assenza): il bottone spento e il testo del catalogo.
+    expect(screen.getByText(GIORNO_NON_VALIDO)).toBeTruthy()
+    expect(conferma().disabled).toBe(true)
+    // Anche forzando l'invio del modulo non parte niente: il contante non finisce nella cassa di oggi.
+    fireEvent.click(conferma())
+    fireEvent.submit(screen.getByRole('form', { name: 'Quota d’iscrizione' }))
+    expect(h.chiamate).toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('riscrivere il giorno per intero riaccende «Salva» e toglie l’avviso', async () => {
+    rotta('PUT', URL_QUOTA, json(200, { data: { stato: 'in_attesa', passaggio: null } }))
+    monta()
+    apriModulo()
+    scrivi('Importo (€)', '150')
+    scrivi(GIORNO, '15/10/20')
+    expect(screen.getByText(GIORNO_NON_VALIDO)).toBeTruthy()
+
+    scrivi(GIORNO, '15/10/2026')
+    expect(screen.queryByText(GIORNO_NON_VALIDO)).toBeNull()
+    expect(conferma().disabled).toBe(false)
+    fireEvent.click(conferma())
+    await waitFor(() => expect(chiamate('PUT', URL_QUOTA)).toHaveLength(1))
+    expect(chiamate('PUT', URL_QUOTA)[0].corpo).toEqual({ importo: 150, giorno: '2026-10-15', metodo: 'contanti' })
   })
 
   it('il giorno e il metodo scelti partono nel corpo', async () => {

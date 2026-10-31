@@ -22,6 +22,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { guastoSecondario } from '@/lib/db/guasto'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { segnalaDomandaRespinta } from '@/lib/crm/collegamento'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
 import {
   copiaSanitariPresente,
@@ -911,6 +912,19 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         azione: 'update',
         valoreDopo: { status: 'rejected' },
       })
+
+      // CRM della segreteria: se la domanda era collegata a un bambino, quel bambino va verificato.
+      // `segnalaDomandaRespinta` non lancia mai e non cambia la risposta: il rifiuto è già scritto. Il
+      // `try` è una cintura in più, perché un'eccezione qui trasformerebbe un rifiuto riuscito in un 500.
+      try {
+        await segnalaDomandaRespinta(supabase, id)
+      } catch (e) {
+        logEvento('crm', 'error', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'segnala-respinta-eccezione',
+          entita_id: id,
+        }, e)
+      }
 
       // Esito al genitore SOLO se un account esiste già (match best-effort per
       // email degli adulti dell'invio): la pre-iscrizione può essere anonima.

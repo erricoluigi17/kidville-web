@@ -358,6 +358,16 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     descrizione: 'Quando viene pubblicato un video con bambini che nel frattempo hanno perso la liberatoria fotografica',
     sicurezza: true,
   },
+  // CRM della segreteria (sessione 3, 2026-10-30): una collega fissa o sposta su di te una visita. Tipo PROPRIO e
+  // `gruppo: 'staff'`: la segreteria è l'unica destinataria, e spegnerlo non deve toccare nient'altro. Titolo e corpo
+  // portano SOLO giorno e ora (`testoNotificaVisita`, `src/lib/crm/agenda.ts`): compaiono sul telefono bloccato, e il
+  // nome della famiglia o del bambino non ci entra mai. Non è in `TIPI_PUSH_STAFF` (`src/lib/push/dispatch.ts`): per ora
+  // resta nella campanella dell'app, come dice la specifica (§8); portarla in push è una decisione del titolare.
+  crm_visita_assegnata: {
+    label: 'CRM: visita assegnata',
+    gruppo: 'staff',
+    descrizione: 'Quando una collega ti assegna una visita in agenda (il testo porta solo giorno e ora)',
+  },
 }
 
 /** Risolve eventuali alias sul tipo canonico del catalogo. */

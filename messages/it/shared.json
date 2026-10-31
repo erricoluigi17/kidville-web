@@ -754,5 +754,19 @@
   "erroreArchiviazioneNonDisponibile": "L’archiviazione dei periodi non è ancora disponibile su questo ambiente.",
   "erroreScritturaFallita": "Il salvataggio non è riuscito. Ricarica la pagina per vedere cosa risulta registrato, poi riprova.",
   "erroreDomandaGiaEsaminata": "Questa domanda è già stata esaminata: aggiorna l’elenco per vedere il suo stato.",
-  "erroreInterno": "Si è verificato un errore imprevisto. Riprova fra poco."
+  "erroreInterno": "Si è verificato un errore imprevisto. Riprova fra poco.",
+  "erroreCrmSlotOccupato": "Questo orario è già occupato per la persona scelta. Scegli un altro orario.",
+  "erroreCrmSchedaEsistente": "Esiste già una scheda con questo numero di telefono o questa email. Aprila invece di crearne una nuova.",
+  "erroreCrmStatoNonAmmesso": "Questa operazione non è possibile nello stato attuale. Aggiorna la pagina e riprova.",
+  "erroreCrmSoloAdmin": "Questa operazione è riservata alla Direzione.",
+  "erroreCrmSchedaNonTrovata": "La scheda non esiste più. Aggiorna l’elenco.",
+  "erroreCrmPersonaNonDellaSede": "La persona scelta non fa parte di questa sede.",
+  "erroreCrmMotivoObbligatorio": "Indica il motivo.",
+  "erroreCrmGiaFatta": "Questo richiamo è già stato segnato come fatto. Aggiorna la pagina.",
+  "erroreCrmGiaCollegato": "Questa domanda di iscrizione è già collegata a un altro bambino.",
+  "erroreCrmNonInstallato": "Il CRM non è ancora disponibile su questo ambiente.",
+  "erroreCrmSoloLaPropria": "Puoi modificare solo la tua disponibilità. Per le altre persone serve la Direzione.",
+  "erroreCrmOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco.",
+  "erroreCrmElementoNonTrovato": "L’elemento non esiste più. Aggiorna la pagina.",
+  "erroreCrmContattoObbligatorio": "Serve almeno un telefono o un’email validi."
 }

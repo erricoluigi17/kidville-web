@@ -1,0 +1,100 @@
+{
+  "eyebrow": "Amministrazione",
+  "titolo": "CRM",
+  "sottotitolo": "Le famiglie che chiedono informazioni, le visite in agenda e i richiami da fare.",
+  "sedeCosa": "il CRM",
+  "tabAgenda": "Agenda",
+  "tabRichiamare": "Da richiamare",
+  "tabSchede": "Schede",
+  "tabDisponibilita": "Disponibilità",
+  "tabStatistiche": "Statistiche",
+  "inCostruzione": "In costruzione: questa parte del CRM arriva a breve.",
+  "selezionaScheda": "Scegli una scheda dall’elenco per vederne lo storico.",
+  "dettaglioTitolo": "Scheda della famiglia",
+  "esiti": {
+    "aperto": "Aperto",
+    "iscritto": "Iscritto",
+    "lista_attesa": "In lista d’attesa",
+    "ci_pensa": "Ci sta pensando",
+    "perso": "Perso"
+  },
+  "origini": {
+    "telefonata": "Telefonata",
+    "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
+    "facebook": "Facebook",
+    "google": "Google",
+    "sito": "Sito web",
+    "passaparola": "Passaparola",
+    "open_day": "Open day",
+    "ai": "Assistente AI",
+    "altro": "Altro"
+  },
+  "motiviPerdita": {
+    "prezzo": "Prezzo",
+    "distanza": "Distanza",
+    "orari": "Orari",
+    "altra_scuola": "Ha scelto un’altra scuola",
+    "non_risponde": "Non risponde più",
+    "rinviato": "Rimandato all’anno dopo",
+    "altro": "Altro"
+  },
+  "anniIngresso": {
+    "in_corso": "Anno in corso",
+    "prossimo": "Anno prossimo",
+    "non_indicato": "Non indicato"
+  },
+  "statiAppuntamento": {
+    "in_programma": "In programma",
+    "svolto": "Svolto",
+    "non_presentato": "Non presentato",
+    "annullato": "Annullato"
+  },
+  "tipiAzione": {
+    "follow_up_1": "Primo richiamo dopo la visita",
+    "riprova_1": "Primo nuovo tentativo",
+    "follow_up_2": "Secondo richiamo",
+    "riprova_2": "Secondo nuovo tentativo",
+    "ultimatum": "Ultimo richiamo",
+    "recupero": "Richiamo per la visita saltata",
+    "richiamare": "Da richiamare"
+  },
+  "esitiAzione": {
+    "ci_pensa": "Ci sta pensando",
+    "non_risponde": "Non risponde",
+    "vuole_iscriversi": "Vuole iscriversi",
+    "non_interessato": "Non interessata"
+  },
+  "motiviIndisponibilita": {
+    "ferie": "Ferie",
+    "malattia": "Malattia",
+    "chiusura": "Chiusura della sede",
+    "altro": "Altro"
+  },
+  "tipiEvento": {
+    "creata": "Scheda creata",
+    "modificata": "Dati modificati",
+    "telefonata": "Telefonata",
+    "nota": "Nota",
+    "bambino_aggiunto": "Bambino aggiunto",
+    "bambino_modificato": "Bambino modificato",
+    "appuntamento_fissato": "Visita fissata",
+    "appuntamento_spostato": "Visita spostata",
+    "appuntamento_riassegnato": "Visita affidata a un’altra persona",
+    "appuntamento_svolto": "Visita svolta",
+    "appuntamento_non_presentato": "Famiglia assente alla visita",
+    "appuntamento_annullato": "Visita annullata",
+    "esito_cambiato": "Esito cambiato",
+    "quota_segnata": "Quota di iscrizione segnata",
+    "domanda_collegata_auto": "Domanda collegata in automatico",
+    "domanda_collegata_mano": "Domanda collegata a mano",
+    "domanda_da_associare": "Domanda da associare",
+    "collegamento_tolto": "Collegamento tolto",
+    "domanda_respinta": "Domanda respinta",
+    "altra_domanda": "Iscritto con un’altra domanda",
+    "azione_pianificata": "Richiamo pianificato",
+    "azione_fatta": "Richiamo fatto",
+    "azione_spostata": "Richiamo spostato",
+    "azione_cancellata": "Richiamo cancellato"
+  }
+}

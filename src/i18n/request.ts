@@ -70,6 +70,17 @@ export default getRequestConfig(async () => {
     prestampatiGenitore: (await import(`../../messages/${locale}/prestampatiGenitore.json`)).default,
     prestampatiSegreteria: (await import(`../../messages/${locale}/prestampatiSegreteria.json`)).default,
     public: (await import(`../../messages/${locale}/public.json`)).default,
+    // Il CRM della segreteria (`/admin/crm`): UN namespace per sessione di lavoro, così le sei
+    // sessioni che lo costruiscono non si pestano i piedi sullo stesso file. `crmShell` porta la
+    // cornice (nomi delle schede, «in costruzione») e le etichette di TUTTI i vocabolari
+    // (`esiti.*`, `origini.*`, `tipiEvento.*`…); gli altri cinque nascono vuoti e li riempie la
+    // sessione che ne ha la schermata.
+    crmShell: (await import(`../../messages/${locale}/crmShell.json`)).default,
+    crmSchede: (await import(`../../messages/${locale}/crmSchede.json`)).default,
+    crmAgenda: (await import(`../../messages/${locale}/crmAgenda.json`)).default,
+    crmCollegamento: (await import(`../../messages/${locale}/crmCollegamento.json`)).default,
+    crmFollowUp: (await import(`../../messages/${locale}/crmFollowUp.json`)).default,
+    crmStatistiche: (await import(`../../messages/${locale}/crmStatistiche.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

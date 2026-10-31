@@ -25,6 +25,7 @@ import {
   ListOrdered,
   Printer,
   UserCheck,
+  Handshake,
 } from 'lucide-react';
 
 /**
@@ -134,6 +135,13 @@ export const NAV_GROUPS: NavGroup[] = [
       // Registro protocolli: riservato ad admin+segreteria (decisione spec
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
+      // CRM della segreteria (`/admin/crm`): le famiglie che chiedono informazioni, le visite in
+      // agenda, i richiami da fare. Sta SOPRA Candidature e non sotto: il lock di questo file
+      // pretende che Candidature sia subito sopra Modulistica.
+      // `roles` = i due che `requireCrm` ammette sulle route `/api/admin/crm/*` (`RUOLI_CRM`,
+      // `src/lib/crm/accesso.ts`): la coordinatrice e la `cuoca` vedrebbero una voce che risponde
+      // 403. Il gate vero è nelle API, qui è solo UI.
+      { href: '/admin/crm', label: 'CRM', labelKey: 'nav_crm', icon: Handshake, roles: ['segreteria', 'admin'] },
       // Candidature «Lavora con noi»: fino al 2026-10-17 erano la quarta linguetta di
       // Modulistica, e il vecchio indirizzo `?tab=candidature` (scritto in ogni
       // notifica `candidatura_ricevuta` già spedita) rimanda qui da `next.config.ts`.

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { mascheraSorgente, fineCatena, fineParentesi, fileSorgente, riga } from '../fixtures/sorgente'
+import { sogliaFotografia, tabelleConSedeNellePosteriori } from './soglia-fotografia'
 
 /**
  * COVERAGE-LOCK dell'isolamento fra sedi — per HANDLER, per SCRITTURA, su tabelle
@@ -128,7 +129,18 @@ const SENZA_COLONNA: Record<string, string> = {
     utenti_sezioni_materie: 'sede della sezione (assertSezioneInScope)',
 }
 
-const CON_SEDE = new Set(foto.con_scuola_id)
+/**
+ * Le tabelle di sede sono quelle della FOTOGRAFIA più quelle che una migrazione posteriore alla
+ * fotografia ha creato con `scuola_id` (2026-10-30, CRM della segreteria). La fotografia è cieca a ciò
+ * che nasce dopo lo scatto: senza l'unione, le route di una tabella nuova resterebbero fuori da questo
+ * lock finché qualcuno non rigenera la fotografia — cioè proprio mentre vengono scritte. Quando la
+ * fotografia viene rigenerata la tabella compare in entrambe e l'unione non cambia niente.
+ */
+const MIGRAZIONI = path.join(process.cwd(), 'supabase', 'migrations')
+const CON_SEDE = new Set([
+    ...foto.con_scuola_id,
+    ...tabelleConSedeNellePosteriori(MIGRAZIONI, sogliaFotografia(foto)),
+])
 const LEGATE_ALUNNO = new Set([...foto.legate_all_alunno, ...Object.keys(SENZA_COLONNA)])
 const SENSIBILI = new Set([...CON_SEDE, ...LEGATE_ALUNNO])
 
@@ -1852,6 +1864,18 @@ describe('coverage-lock isolamento fra sedi', () => {
         ).toBe(atteso)
     })
 
+    it('vede anche le tabelle con scuola_id create dopo la fotografia', () => {
+        // Le tabelle `crm_*` nascono da una migrazione che la fotografia (20/10) non può ancora contenere:
+        // senza l'unione, le route del CRM non sarebbero sorvegliate da questo lock finché qualcuno non
+        // rigenera la fotografia dalla produzione. Un lock che non vede una tabella non la sta collaudando.
+        expect(CON_SEDE.has('crm_schede')).toBe(true)
+        expect(CON_SEDE.has('crm_appuntamenti')).toBe(true)
+        // e quelle della fotografia restano
+        expect(CON_SEDE.has('pagamenti')).toBe(true)
+        // una tabella senza sede non entra per sbaglio
+        expect(CON_SEDE.has('crm_eventi_che_non_esiste')).toBe(false)
+    })
+
     it('ci sono route e tabelle da controllare (se cade, il lock si sta autoingannando)', () => {
         // Un lock che gira su zero file o zero tabelle passa sempre: è il modo più
         // silenzioso di non controllare niente.
@@ -2547,7 +2571,34 @@ describe('coverage-lock isolamento fra sedi', () => {
             // route sigillate che chiamavano `exec_sql` (`admin/apply-*` e
             // `admin/setup-registro`). Non è un presidio tolto: sono file che non esistono più.
             // 357 → 358 il 2026-10-25: `chat/threads/consegnati` (S7, robustezza 2 sessione 12).
-            routeConServiceRole: 358,
+            // 358 → 359 il 2026-10-30: `admin/crm/persone` (CRM della segreteria, sessione 1). Controllata:
+            // gate `requireCrm` + sede da `resolveScuoleAttive`/`restringiSedi`. Nessuna esenzione. Le altre
+            // cinque sessioni del CRM aggiungeranno le loro route: ognuna somma al proprio ramo, e alla
+            // fusione i due numeri si RICALCOLANO rieseguendo il lock (non si sommano a mano).
+            // 359 → 360 il 2026-10-31: `admin/crm/statistiche` (CRM della segreteria, sessione 6). Controllata:
+            // gate `requireCrm`, sede da `resolveScuoleAttive`/`restringiSedi`, ogni lettura `.in('scuola_id', …)`;
+            // i nomi vengono da id che le righe di quella sede hanno già nominato. Nessuna esenzione.
+            // 360 → 362 il 2026-10-31: `admin/crm/azioni` e `admin/crm/azioni/[id]` (CRM, sessione 5, follow-up).
+            // Controllate: gate `requireCrm`, sede da `restringiSedi` (GET) o da `assertSchedaInScope` (POST,
+            // PATCH), ogni `update` con `.eq('scuola_id')` nella stessa istruzione. Nessuna esenzione.
+            // 362 → 368 il 2026-10-31 (CRM della segreteria, sessione 3, agenda): le SEI route nuove —
+            // `admin/crm/appuntamenti`, `admin/crm/appuntamenti/[id]`, `admin/crm/disponibilita`,
+            // `admin/crm/disponibilita/[id]`, `admin/crm/indisponibilita` e `admin/crm/indisponibilita/[id]`.
+            // Tutte controllate, nessuna esenzione: gate `requireCrm`; le liste portano `.in('scuola_id', …)`
+            // (sede da `resolveScuoleAttive`/`restringiSedi`); le scritture sulle righe già lette portano
+            // `.eq('scuola_id', <sede della riga>)` e la sede della riga passa da `assertSedeInScope`; le
+            // creazioni risolvono la sede con `resolveScuolaScrittura` o con `assertSchedaInScope`. Misurato
+            // rieseguendo il lock: 362 → 368.
+            // 368 → 370 il 2026-10-31 (CRM, sessione 4): `admin/crm/domande` e
+            // `admin/crm/schede/[id]/bambini/[bambinoId]/collegamento` (PUT e DELETE). Controllate: gate
+            // `requireCrm`, sede da `resolveScuoleAttive`/`restringiSedi` (la prima) o da `assertSchedaInScope`
+            // (la seconda). Nessuna esenzione. Ricalcolato all'integrazione.
+            // 370 → 375 il 2026-10-31 (CRM della segreteria, sessione 2): le cinque route di
+            // `admin/crm/schede` (elenco+creazione, dettaglio+modifica, bambini, bambino, eventi). Tutte
+            // CONTROLLATE: gate `requireCrm`, e la sede la danno `restringiSedi`, `resolveScuolaScrittura`
+            // o `assertSchedaInScope`, con `scuola_id` esplicito su ogni lettura e scrittura. Nessuna
+            // esenzione. Ricalcolato all'integrazione rieseguendo il lock.
+            routeConServiceRole: 375,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2844,7 +2895,21 @@ describe('coverage-lock isolamento fra sedi', () => {
             // dichiarate sopra; handlerEsentati resta 112.
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
             // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
-            handlerControllati: 556,
+            // 556 → 557 il 2026-10-30: `admin/crm/persone:GET` (vedi sopra); `handlerEsentati` non cambia.
+            // 557 → 558 il 2026-10-31: `admin/crm/statistiche:GET` (CRM, sessione 6); `handlerEsentati` non cambia.
+            // 558 → 561 il 2026-10-31: `admin/crm/azioni:GET`, `admin/crm/azioni:POST` e
+            // `admin/crm/azioni/[id]:PATCH` (CRM, sessione 5); `handlerEsentati` non cambia.
+            // 561 → 571 il 2026-10-31: i DIECI handler delle sei route del CRM dichiarate sopra, a
+            // `routeConServiceRole` (2+1+2+2+2+1: appuntamenti GET e POST, appuntamenti/[id] PATCH,
+            // disponibilita GET e POST, disponibilita/[id] PATCH e DELETE, indisponibilita GET e POST,
+            // indisponibilita/[id] DELETE). Il passo NON coincide col numero di file (+6 route, +10 handler):
+            // è il caso normale, un file espone più metodi. Tutti CONTROLLATI, `handlerEsentati` fermo a 109.
+            // Misurato rieseguendo il lock: 561 → 571.
+            // 571 → 574 il 2026-10-31 (CRM, sessione 4): `admin/crm/domande:GET` e `…/collegamento:PUT`/`:DELETE`
+            // (vedi sopra); `handlerEsentati` non cambia.
+            // 574 → 581 il 2026-10-31: i sette handler delle cinque route `admin/crm/schede` (vedi sopra);
+            // `handlerEsentati` non cambia.
+            handlerControllati: 581,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

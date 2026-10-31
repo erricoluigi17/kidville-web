@@ -8,6 +8,7 @@ import {
     posterioriCheContengono,
     posterioriDaRigenerare,
     sogliaFotografia,
+    tabelleConSedeNellePosteriori,
     toccaLaRls,
     toccaLeFkUtenti,
     toccaUnUnico,
@@ -357,5 +358,81 @@ describe('i riconoscitori spostati qui dalle guardie dicono ancora la stessa cos
         expect(toccaLeFkUtenti('-- references utenti, on delete cascade\nSELECT 1;')).toBe(false)
         // Senza FK verso `utenti` (è il caso di `fatture_coda.creato_da`): non si accende.
         expect(toccaLeFkUtenti('CREATE TABLE t (creato_da uuid NOT NULL, p uuid REFERENCES public.pagamenti(id));')).toBe(false)
+    })
+})
+
+describe('tabelleConSedeNellePosteriori · le tabelle con sede nate dopo la fotografia', () => {
+    const SOGLIA = '20261020105412'
+    let cartella: string
+
+    beforeAll(() => {
+        cartella = mkdtempSync(join(tmpdir(), 'kv-sede-'))
+        const f = (nome: string, sql: string) => writeFileSync(join(cartella, nome), sql, 'utf8')
+        // POSTERIORE alla soglia, con la sede: due tabelle in un file, una con IF NOT EXISTS e schema
+        f(
+            '20261030230225_nuove_con_sede.sql',
+            `CREATE TABLE IF NOT EXISTS public.nuova_a (
+               id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+               scuola_id uuid NOT NULL REFERENCES public.schools(id),
+               importo numeric(10,2) NOT NULL DEFAULT 0
+             );
+             create table "public"."nuova_b" (id uuid, "scuola_id" uuid);`,
+        )
+        // POSTERIORE, SENZA sede: la nomina solo in una FK, in un commento e in una colonna dal nome simile
+        f(
+            '20261030230300_nuove_senza_sede.sql',
+            `-- scuola_id uuid NOT NULL: la sede sta nel padre
+             CREATE TABLE public.figlia_senza_sede (
+               id uuid PRIMARY KEY,
+               padre_id uuid REFERENCES public.padri(id),
+               scuola_id_vecchia text,
+               nota text DEFAULT 'scuola_id uuid'
+             );`,
+        )
+        // POSTERIORE, in un altro schema: non è di \`public\`
+        f('20261030230400_altro_schema.sql', 'CREATE TABLE cron.lavori (id int, scuola_id uuid);')
+        // POSTERIORE, la sede aggiunta a una tabella che esisteva: NON è una tabella nata dopo la fotografia
+        f('20261030230500_colonna_aggiunta.sql', 'ALTER TABLE public.vecchia ADD COLUMN scuola_id uuid;')
+        // ANTERIORE alla soglia: è già nella fotografia
+        f('20261001000000_gia_nella_fotografia.sql', 'CREATE TABLE public.vecchia_con_sede (id uuid, scuola_id uuid);')
+        // Fuori forma: lo sorveglia un altro lock
+        f('appunti.sql', 'CREATE TABLE public.appunti (scuola_id uuid);')
+    })
+
+    afterAll(() => {
+        rmSync(cartella, { recursive: true, force: true })
+    })
+
+    it('vede le tabelle create dopo la soglia con una colonna `scuola_id`, ordinate e senza schema', () => {
+        expect(tabelleConSedeNellePosteriori(cartella, SOGLIA)).toEqual(['nuova_a', 'nuova_b'])
+    })
+
+    it('NON vede la sede nominata in una FK, in un commento, in una stringa o in una colonna dal nome simile', () => {
+        expect(tabelleConSedeNellePosteriori(cartella, SOGLIA)).not.toContain('figlia_senza_sede')
+    })
+
+    it('NON vede le tabelle di altri schemi, né la colonna aggiunta a una tabella che esisteva', () => {
+        const trovate = tabelleConSedeNellePosteriori(cartella, SOGLIA)
+        expect(trovate).not.toContain('lavori')
+        expect(trovate).not.toContain('vecchia')
+    })
+
+    it('NON vede le migrazioni anteriori alla soglia (sono già nella fotografia) né i file fuori forma', () => {
+        const trovate = tabelleConSedeNellePosteriori(cartella, SOGLIA)
+        expect(trovate).not.toContain('vecchia_con_sede')
+        expect(trovate).not.toContain('appunti')
+    })
+
+    it('abbassando la soglia entrano anche quelle precedenti: il filtro è davvero la soglia', () => {
+        expect(tabelleConSedeNellePosteriori(cartella, '20260101000000')).toContain('vecchia_con_sede')
+    })
+
+    it('su una cartella vuota: nessuna tabella', () => {
+        const vuota = mkdtempSync(join(tmpdir(), 'kv-sede-vuota-'))
+        try {
+            expect(tabelleConSedeNellePosteriori(vuota, SOGLIA)).toEqual([])
+        } finally {
+            rmSync(vuota, { recursive: true, force: true })
+        }
     })
 })

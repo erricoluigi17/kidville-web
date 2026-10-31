@@ -754,5 +754,19 @@
   "erroreArchiviazioneNonDisponibile": "Archiving periods is not available in this environment yet.",
   "erroreScritturaFallita": "Saving failed. Reload the page to see what was recorded, then try again.",
   "erroreDomandaGiaEsaminata": "This application has already been reviewed: refresh the list to see its current status.",
-  "erroreInterno": "An unexpected error occurred. Please try again shortly."
+  "erroreInterno": "An unexpected error occurred. Please try again shortly.",
+  "erroreCrmSlotOccupato": "That time slot is already taken for the selected person. Please choose another time.",
+  "erroreCrmSchedaEsistente": "A file with this phone number or email already exists. Open it instead of creating a new one.",
+  "erroreCrmStatoNonAmmesso": "This action is not possible in the current state. Reload the page and try again.",
+  "erroreCrmSoloAdmin": "This action is reserved for the management.",
+  "erroreCrmSchedaNonTrovata": "This file no longer exists. Refresh the list.",
+  "erroreCrmPersonaNonDellaSede": "The selected person does not belong to this location.",
+  "erroreCrmMotivoObbligatorio": "Please state the reason.",
+  "erroreCrmGiaFatta": "This follow-up has already been marked as done. Reload the page.",
+  "erroreCrmGiaCollegato": "This enrolment application is already linked to another child.",
+  "erroreCrmNonInstallato": "The CRM is not yet available in this environment.",
+  "erroreCrmSoloLaPropria": "You can only edit your own availability. Editing other people’s availability requires the management.",
+  "erroreCrmOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly.",
+  "erroreCrmElementoNonTrovato": "This item no longer exists. Refresh the page.",
+  "erroreCrmContattoObbligatorio": "At least one valid phone number or email is required."
 }

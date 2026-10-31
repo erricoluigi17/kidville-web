@@ -89,3 +89,37 @@ describe('Candidature — voce propria nel gruppo Amministrazione', () => {
     expect(typeof catalogo.nav_candidature).toBe('string');
   });
 });
+
+// Il CRM della segreteria (`/admin/crm`, 2026-10-30): una voce propria nel gruppo Amministrazione,
+// vicino a Candidature. Lo vedono i due ruoli che le route `/api/admin/crm/*` ammettono
+// (`RUOLI_CRM`): una voce che risponde 403 a chi la clicca è un menu che mente.
+describe('CRM — voce propria nel gruppo Amministrazione', () => {
+  const amministrazione = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_amministrazione');
+  const voci = amministrazione?.items ?? [];
+  const crm = voci.find((i) => i.href === '/admin/crm') as NavItem;
+
+  it('esiste, nel gruppo Amministrazione, subito sopra Candidature', () => {
+    expect(crm).toBeDefined();
+    expect(voci.findIndex((i) => i.href === '/admin/crm')).toBe(voci.findIndex((i) => i.href === '/admin/candidature') - 1);
+    expect(ALL_HREFS).toContain('/admin/crm');
+  });
+
+  it('la vedono segreteria e admin — non la coordinatrice, non la cuoca', async () => {
+    const { RUOLI_CRM } = await import('@/lib/crm/accesso');
+    expect(crm.roles).toEqual([...RUOLI_CRM]);
+    expect(visibleItem(crm, 'segreteria')).toBe(true);
+    expect(visibleItem(crm, 'admin')).toBe(true);
+    expect(visibleItem(crm, 'coordinator')).toBe(false);
+    expect(visibleItem(crm, 'cuoca')).toBe(false);
+  });
+
+  it.each(['it', 'en'])("l'etichetta nav_crm esiste nel catalogo %s", async (lingua) => {
+    const catalogo = (await import(`../../messages/${lingua}/etichette.json`)).default as Record<string, unknown>;
+    expect(crm.labelKey).toBe('nav_crm');
+    expect(typeof catalogo.nav_crm).toBe('string');
+  });
+
+  it("su /admin/crm evidenzia il CRM", () => {
+    expect(activeHref('/admin/crm')).toBe('/admin/crm');
+  });
+});

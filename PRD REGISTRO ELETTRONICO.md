@@ -1,3 +1,61 @@
+## 🗂️ Changelog — CRM della segreteria, prima versione: schede delle famiglie, agenda delle visite, follow-up, collegamento con le domande, statistiche per persona — 2026-10-31 (branch `feat/crm-segreteria`)
+
+**Stato:** 🟡 in revisione (PR da `feat/crm-segreteria` verso `main`; merge a mano). La migrazione `20261030230225_crm_segreteria.sql` la applica l'integrazione al merge: una riga sola, con la version del file. Specifica approvata dal titolare: `docs/superpowers/specs/2026-10-30-crm-segreteria-design.md`; piano: `docs/superpowers/plans/2026-10-30-crm-segreteria.md`. Implementata in sei sessioni separate (S1 fondamenta, S2 schede, S3 agenda, S4 collegamento, S5 follow-up, S6 statistiche), riunite e riviste nel ramo integrato.
+
+**Perché.** Le segretarie tracciavano contatti, visite ed esiti in una mini-app esterna (Firebase + Netlify) il cui link pubblico mostrava a chiunque nomi, telefoni, date di nascita e note sui bambini. Le sue statistiche sbagliavano in silenzio: due nomi nel campo «tour» prendevano entrambi l'iscrizione, il close rate poteva superare il 100%, e «ISCRITTO» era una voce di menu che nessuno confrontava con le domande vere. Il CRM ora sta dentro l'app, con l'autorizzazione per sede di tutto il resto della segreteria.
+
+**Misura «prima»** (2026-10-31 00:58 UTC, sola lettura): `enrollment_submissions` = **737** righe. Il CRM le **legge** soltanto (per id, per collegare la domanda alla scheda): non ne scrive nessuna. Le 228 schede della mini-app **non si importano** (decisione del titolare, 30/10): il CRM parte vuoto.
+
+**Schema** (`supabase/migrations/20261030230225_crm_segreteria.sql`, idempotente). Sette tabelle, tutte con `scuola_id` verso `schools`, RLS attiva e **nessuna policy** (si legge e si scrive solo dal server, col gate applicativo):
+- `crm_schede` (la famiglia, con `UNIQUE (id, scuola_id)` per le FK composte), `crm_bambini` (più bambini per scheda; `domanda_id` verso `enrollment_submissions`, `ON DELETE SET NULL`);
+- `crm_appuntamenti`: `fissato_da` e `svolto_da` sono colonne esplicite (l'utente che preme il tasto, mai un nome scritto a mano); il vincolo `crm_appuntamenti_no_sovrapposti` (`EXCLUDE USING gist`, estensione `btree_gist`) impedisce due visite `in_programma` sovrapposte per la stessa persona — due prenotazioni simultanee: una sola riesce, l'altra riceve `409 SLOT_OCCUPATO`;
+- `crm_azioni` (i follow-up, con `responsabile` e scadenza), `crm_eventi` (lo storico: si aggiunge, non si sovrascrive), `crm_disponibilita` (la settimana di ciascuna), `crm_indisponibilita` (le assenze);
+- le figlie puntano alla scheda con la FK composta `(scheda_id, scuola_id)` `ON DELETE CASCADE`: una riga non può stare in una sede diversa da quella della sua scheda;
+- le colonne con dati personali nascono annullabili, più `anonimizzata_il`, per l'anonimizzazione a 12 mesi (vedi «Fuori da questa versione»). Lo schema nasce già con `fissato_via` e `creato_via` per l'assistente AI, che non richiederà migrazioni di struttura.
+
+**Permessi** (`requireCrm`, `src/lib/crm/accesso.ts`; `RUOLI_CRM = segreteria, admin`):
+- segreteria: tutto sulla **propria** sede, colleghe comprese (vede, modifica e sposta anche le loro visite; fissa una visita a nome di una collega della stessa sede); niente sulle altre — una scheda o una visita di un'altra sede risponde `403 SEDE_NON_ACCESSIBILE` senza leggere altro, una persona di un'altra sede `422 PERSONA_NON_DELLA_SEDE`;
+- admin: tutte le sedi; con più sedi, ogni scrittura dichiara la sua (`resolveScuolaScrittura`, `400` se manca);
+- coordinatrici, docenti, genitori, cucina: `403`;
+- le statistiche per persona di tutta la sede le vede ogni segretaria di quella sede (decisione del titolare).
+
+**Schermate.** `/admin/crm`, voce di menu per segreteria e admin, cinque linguette (`?tab=`):
+- **Agenda**: la settimana, una colonna per persona, con slot liberi e visite; si fissa, si sposta, si segna «svolta», «non presentato» o «annullata». Fissare fuori dalla disponibilità si può (avviso «fuori disponibilità», non blocco): il database impedisce solo la sovrapposizione;
+- **Da richiamare**: le azioni scadute e di oggi, con «fatta», «sposta», «cancella»;
+- **Schede**: elenco con filtri e ricerca; il dettaglio si apre **sullo storico**, con sopra famiglia, bambini (badge dell'esito, «Associa» alla domanda, «Aggiungi un bambino»), visite e prossima azione; nota libera nello storico;
+- **Disponibilità**: ognuna modifica la propria settimana e le proprie assenze;
+- **Statistiche**: vedi sotto.
+
+**Collegamento con la domanda** (`src/lib/crm/collegamento.ts`):
+- all'invio del modulo pubblico (`/api/iscrizione`), **dopo** la risposta alla famiglia (`after()`), se email o telefono (normalizzato: `+39`, `0039`, spazi) coincidono con una scheda della **stessa** sede, il bambino diventa «iscritto» e la scheda ricorda la domanda. Il modulo non può rompersi né rallentare per colpa del CRM. Con più schede coincidenti, o con bambini che non si abbinano con certezza, non si indovina: lo storico chiede alla segreteria di associare. Un telefono che coincide con una scheda di un'altra sede non collega niente;
+- a mano dal pulsante «Associa al bambino» (`PUT …/bambini/[id]/collegamento`; `409 GIA_COLLEGATO` se la domanda è già di un altro bambino), e si scollega con `DELETE`;
+- domanda **respinta** dalla segreteria → il bambino collegato va verificato (evento nello storico); domanda **cancellata** dalla conservazione (`/api/gdpr/retention-iscrizioni`) → lo storico ne prende nota prima, poi il database azzera `domanda_id`.
+
+**Follow-up** (`src/lib/crm/follow-up.ts`). Visita svolta → `follow_up_1` due giorni dopo (mai nel passato); «ci pensa» → `follow_up_2` a +3 giorni → `ultimatum` a +3; «senza risposta» → `riprova_1`/`riprova_2` il giorno dopo, una volta sola per passo; non presentato → `recupero` il giorno dopo. Ogni passo è una riga di `crm_azioni` e un evento nello storico.
+
+**Statistiche** (`src/lib/crm/statistiche.ts`, funzione pura, `GET /api/admin/crm/statistiche`). Tasso di presentazione = svolti / conclusi, a chi ha **fissato**; close rate = bambini iscritti / bambini delle schede con una visita svolta nel periodo, a chi ha **svolto** l'ultima visita prima dell'iscrizione (una persona per bambino, mai due); iscritti verificati (con domanda collegata) e iscritti a mano mostrati separati; ritardo contatto → visita (mediana); follow-up in tempo a `responsabile`. Un tasso con denominatore zero è «—», non 0%. I sei casi di prova del §10 della specifica sono test.
+
+**Notifiche.** `crm_visita_assegnata` alla collega a cui si fissa una visita: solo data e ora, **mai** il nome della famiglia.
+
+**Log.** Ogni route è avvolta in `withRoute` e validata con `zod`; gli eventi vanno in `logEvento('crm', …)` (`crm` in `EVENTI_NOTI` e `EVENTI_PERSISTITI`) con uuid ed esiti, mai un nome, un telefono o una nota. Errori del database tradotti da `rispostaErroreDb`: `23P01` → `409 SLOT_OCCUPATO`, `23505` → `409 GIA_COLLEGATO`, tabelle assenti → `503 CRM_NON_INSTALLATO`, il resto → `500 CRM_OPERAZIONE_NON_RIUSCITA`.
+
+**Lock nuovo:** `crm-gate-requirecrm` — ogni handler sotto `src/app/api/admin/crm/` chiama `requireCrm` prima del client service-role, e nessuno chiama `requireStaff` col suo default (che ammette la coordinatrice). **Lock aggiornati.** `isolamento-sede-coverage` (`routeConServiceRole` 375, `handlerControllati` 581: +le route del CRM, tutte con gate di sede), `soglia-fotografia` (`MIGRAZIONI_ATTESE_AL_MERGE` con la migrazione del CRM: si toglie nella PR che rigenera le fotografie dopo il merge), Service Worker `v16` per le nuove etichette offline.
+
+**Fuori da questa versione** (lavori datati, ciascuno col suo piano):
+- l'interfaccia per l'assistente AI e la pagina «Integrazioni» (specifica §8): dopo l'avvio di gennaio;
+- il cron di anonimizzazione a 12 mesi dall'ultimo evento (specifica §9): il CRM parte vuoto, quindi la prima scheda da anonimizzare arriva un anno dopo l'avvio; il cron va fatto **prima di quella scadenza**.
+
+**Limiti noti** (scelti o misurati, da rivedere con l'uso):
+- un'azione si può pianificare anche in un giorno passato, e `POST /azioni` non prende un'ora;
+- l'elenco delle schede non esclude ancora quelle anonimizzate (non ce ne sono finché non esiste il cron);
+- se l'istanza si spegne prima che il giro di `after()` finisca, la domanda resta senza collegamento: la segreteria la associa a mano. La cancellazione SQL delle domande fatta da `pg_cron` non passa dal gancio dello storico (l'FK azzera comunque `domanda_id`);
+- la tabella delle statistiche (12 colonne) non è ancora stata provata su un telefono vero; nessuna prova su un browser vero in locale (il server `:3100` parla col database di produzione, dove le tabelle `crm_*` nasceranno solo al merge). La prova dal browser è l'E2E `e2e/crm-segreteria.spec.ts` in CI.
+
+**Passi del titolare dopo il merge:**
+1. spegnere il progetto Firebase `crm-vendite` e le sue funzioni, il sito Netlify, e cancellare dai tre Google Calendar di sede gli eventi con dati personali; poi provare il vecchio link da una **finestra anonima**: non deve mostrare dati;
+2. controllare che chi fa le visite abbia un account `segreteria` o `admin` nella propria sede (al 30/10: 5 `segreteria` — Aversa 1, Cesa 2, Giugliano 2 — e 2 `admin` con sede; nella mini-app i nomi erano circa 6);
+3. chiedere alla consulente del lavoro se serve un'informativa alle segretarie per le statistiche per persona visibili alle colleghe (Statuto dei lavoratori, art. 4).
+
 ## 📝 Changelog — Il piano di Claude lo approva il titolare — 2026-10-30 (branch `chore/piano-approvato-a-mano`)
 
 **Stato:** 🟡 in revisione (merge a mano). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.

@@ -134,7 +134,12 @@ describe('i dodici segnaposto · si montano con quelle props e dicono «in costr
     expect(CASI).toHaveLength(11)
   })
 
-  it.each(CASI)('%s', (nome, el) => {
+  // Le schermate vere hanno già sostituito il segnaposto: la firma resta nel contratto (test di tipo
+  // qui sopra) e nei CASI, ma «in costruzione» non è più vero e il loro comportamento ha un test suo.
+  //  · Sessione 5: DaRichiamare, AzioniScheda → `follow-up.test.tsx`
+  const SOSTITUITI = ['DaRichiamare', 'AzioniScheda']
+
+  it.each(CASI.filter(([nome]) => !SOSTITUITI.includes(nome)))('%s', (nome, el) => {
     render(el())
     const riquadro = screen.getByRole('status')
     expect(riquadro.getAttribute('data-crm-segnaposto')).toBe(nome)

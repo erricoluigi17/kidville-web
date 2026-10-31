@@ -117,9 +117,23 @@ describe('Sidebar — il contatore di «Coda fatture»', () => {
         const contatore = await screen.findByTestId('contatore-coda-fatture')
         expect(contatore.textContent).toContain('6')
         expect(screen.getByText('6 voci attive in coda')).toBeTruthy()
+        // Su /admin il gruppo «Contabilità e servizi» è chiuso (menu a fisarmonica, 31/10): il numero
+        // sta sull'intestazione del gruppo, altrimenti le fatture in attesa sparirebbero dalla vista.
+        const intestazione = contatore.closest('button')
+        expect(intestazione?.getAttribute('aria-expanded')).toBe('false')
+        expect(intestazione?.textContent).toContain('Contabilità e servizi')
+        expect(lettureCoda()).toEqual([URL_CONTEGGI])
+    })
+
+    it('a gruppo aperto il numero sta accanto alla voce, e solo lì', async () => {
+        stub.pathname = '/admin/coda-fatture'
+        risposta.body = { disponibile: true, conteggi: conteggi({ in_coda: 3 }) }
+        render(<AdminSidebar />)
+
+        const contatore = await screen.findByTestId('contatore-coda-fatture')
         // Dentro il link della voce, non altrove nel menu.
         expect(contatore.closest('a')?.getAttribute('href')).toBe('/admin/coda-fatture')
-        expect(lettureCoda()).toEqual([URL_CONTEGGI])
+        expect(screen.getAllByTestId('contatore-coda-fatture')).toHaveLength(1)
     })
 
     it('una lettura per pagina: il tempo che passa non chiede niente, il cambio di pagina sì', async () => {
@@ -138,6 +152,7 @@ describe('Sidebar — il contatore di «Coda fatture»', () => {
     })
 
     it('coda vuota ⇒ nessun numero accanto alla voce', async () => {
+        stub.pathname = '/admin/pagamenti' // gruppo aperto: la voce è a schermo
         risposta.body = { disponibile: true, conteggi: conteggi({ emesse_7g: 12 }) }
         render(<AdminSidebar />)
         await waitFor(() => expect(lettureCoda()).toHaveLength(1))
@@ -154,6 +169,7 @@ describe('Sidebar — il contatore di «Coda fatture»', () => {
 
     it('lettura fallita (500) ⇒ nessun numero, e la voce resta', async () => {
         risposta = { ok: false, status: 500, body: { error: 'guasto', codice: 'LETTURA_FALLITA' } }
+        stub.pathname = '/admin/pagamenti' // gruppo aperto: la voce è a schermo
         render(<AdminSidebar />)
         await waitFor(() => expect(lettureCoda()).toHaveLength(1))
         expect(screen.getByText('Coda fatture')).toBeTruthy()
@@ -162,9 +178,11 @@ describe('Sidebar — il contatore di «Coda fatture»', () => {
 
     it('la cuoca (che la GET rifiuterebbe con 403) non vede la voce e non chiede il contatore', async () => {
         stub.identita.ruolo = 'cuoca'
+        stub.pathname = '/admin/pagamenti' // gruppo aperto: se la voce ci fosse, si vedrebbe
         render(<AdminSidebar />)
         await screen.findByText('Contabilità')
         expect(screen.queryByText('Coda fatture')).toBeNull()
+        expect(screen.queryByTestId('contatore-coda-fatture')).toBeNull()
         expect(lettureCoda()).toHaveLength(0)
     })
 })

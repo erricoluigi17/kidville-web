@@ -3428,6 +3428,12 @@ export const CODICI_ERRORE = {
     CRM_NON_INSTALLATO: 'erroreCrmNonInstallato',
     SOLO_LA_PROPRIA: 'erroreCrmSoloLaPropria',
     CRM_OPERAZIONE_NON_RIUSCITA: 'erroreCrmOperazioneNonRiuscita',
+    /**
+     * 404 — una visita, una fascia di disponibilità o un'assenza del CRM che non esiste più (sessione 3, agenda):
+     * un'altra segretaria l'ha già tolta, o l'elenco a schermo è rimasto indietro. NON riusa `SCHEDA_NON_TROVATA`,
+     * la cui frase parla di una scheda; qui non c'è una scheda di mezzo.
+     */
+    ELEMENTO_NON_TROVATO: 'erroreCrmElementoNonTrovato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

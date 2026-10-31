@@ -2575,7 +2575,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // gate `requireCrm` + sede da `resolveScuoleAttive`/`restringiSedi`. Nessuna esenzione. Le altre
             // cinque sessioni del CRM aggiungeranno le loro route: ognuna somma al proprio ramo, e alla
             // fusione i due numeri si RICALCOLANO rieseguendo il lock (non si sommano a mano).
-            routeConServiceRole: 359,
+            // 359 → 365 il 2026-10-31 (CRM della segreteria, sessione 3, agenda): le SEI route nuove —
+            // `admin/crm/appuntamenti`, `admin/crm/appuntamenti/[id]`, `admin/crm/disponibilita`,
+            // `admin/crm/disponibilita/[id]`, `admin/crm/indisponibilita` e `admin/crm/indisponibilita/[id]`.
+            // Tutte controllate, nessuna esenzione: gate `requireCrm`; le liste portano `.in('scuola_id', …)`
+            // (sede da `resolveScuoleAttive`/`restringiSedi`); le scritture sulle righe già lette portano
+            // `.eq('scuola_id', <sede della riga>)` e la sede della riga passa da `assertSedeInScope`; le
+            // creazioni risolvono la sede con `resolveScuolaScrittura` o con `assertSchedaInScope`. Misurato
+            // rieseguendo il lock: 359 → 365.
+            routeConServiceRole: 365,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2873,7 +2881,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
             // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
             // 556 → 557 il 2026-10-30: `admin/crm/persone:GET` (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 557,
+            // 557 → 567 il 2026-10-31: i DIECI handler delle sei route del CRM dichiarate sopra, a
+            // `routeConServiceRole` (2+1+2+2+2+1: appuntamenti GET e POST, appuntamenti/[id] PATCH,
+            // disponibilita GET e POST, disponibilita/[id] PATCH e DELETE, indisponibilita GET e POST,
+            // indisponibilita/[id] DELETE). Il passo NON coincide col numero di file (+6 route, +10 handler):
+            // è il caso normale, un file espone più metodi. Tutti CONTROLLATI, `handlerEsentati` fermo a 109.
+            // Misurato rieseguendo il lock: 557 → 567.
+            handlerControllati: 567,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

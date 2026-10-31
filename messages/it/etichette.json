@@ -172,6 +172,8 @@
   "notifica_video_esito_desc": "Quando un video che hai caricato in galleria viene pubblicato, oppure non si riesce a pubblicarlo",
   "notifica_video_liberatoria_revocata_label": "Video pubblicato senza liberatoria",
   "notifica_video_liberatoria_revocata_desc": "Quando viene pubblicato un video con bambini che nel frattempo hanno perso la liberatoria fotografica",
+  "notifica_crm_visita_assegnata_label": "CRM: visita assegnata",
+  "notifica_crm_visita_assegnata_desc": "Quando una collega ti assegna una visita in agenda (il testo porta solo giorno e ora)",
   "campoPersonale_gender": "Sesso",
   "campoPersonale_birth_date": "Data di nascita",
   "campoPersonale_codice_belfiore_nascita": "Comune di nascita",

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-25",
-  "generato_alle": "2026-10-25T09:29:54Z",
-  "sha256": "d010af8651a35a5d4168a256dcaed66c240a492e2fba0a4c32c0bed1541dc7bc",
+  "generato_il": "2026-10-31",
+  "generato_alle": "2026-10-31T10:44:15Z",
+  "sha256": "700f510158a6cb5969d9423a476d5c3947a66826ab34c81a6c312c3420e9e157",
   "fk": [
     {
       "tabella": "allegati_registro",
@@ -93,6 +93,76 @@
       "tabella": "chat_threads",
       "colonna": "teacher_id",
       "azione": "cascade"
+    },
+    {
+      "tabella": "crm_appuntamenti",
+      "colonna": "assegnata_a",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_appuntamenti",
+      "colonna": "fissato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_appuntamenti",
+      "colonna": "segnato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_appuntamenti",
+      "colonna": "svolto_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_azioni",
+      "colonna": "cancellata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_azioni",
+      "colonna": "fatta_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_azioni",
+      "colonna": "responsabile",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_bambini",
+      "colonna": "esito_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_bambini",
+      "colonna": "quota_segnata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_disponibilita",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_eventi",
+      "colonna": "autore",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_indisponibilita",
+      "colonna": "creata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_indisponibilita",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_schede",
+      "colonna": "creato_da",
+      "azione": "blocca"
     },
     {
       "tabella": "eventi_agenda",

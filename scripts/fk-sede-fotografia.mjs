@@ -36,6 +36,13 @@ import { join } from 'node:path'
 //                 fermo che l'UNIQUE globale su `codice_fiscale` e' VOLUTO (impedisce
 //                 la doppia iscrizione dello stesso minore in due sedi) e che quello
 //                 sulla colonna dismessa NON deve tornare.
+//
+// Per ogni tabella si fotografa UNA chiave esterna su `scuola_id`: quella a una sola colonna, se c'è,
+// e solo dopo le composte. Fino al 31/10/2026 l'ordine era il solo nome, e il CRM l'ha smentito: le sue
+// tabelle figlie hanno sia `scuola_id → schools` sia `(scheda_id, scuola_id) → crm_schede`, e il nome
+// `…_scheda_id_scuola_id_fkey` precede `…_scuola_id_fkey` — la fotografia diceva «la sede punta a
+// crm_schede» con lo schema giusto. Una tabella che ha SOLO la composta resta fotografata con quella,
+// e il lock la segnala ancora: la chiave composta garantisce la coerenza col padre, non la sede.
 const SQL = `SELECT json_build_object(
   'tabelle', (
     SELECT coalesce(json_agg(x ORDER BY x.tabella), '[]'::json) FROM (
@@ -43,10 +50,10 @@ const SQL = `SELECT json_build_object(
              a.attnotnull AS not_null,
              (SELECT k.conname FROM pg_constraint k
                WHERE k.contype='f' AND k.conrelid=c.oid AND a.attnum = ANY(k.conkey)
-               ORDER BY k.conname LIMIT 1) AS fk_nome,
+               ORDER BY cardinality(k.conkey), k.conname LIMIT 1) AS fk_nome,
              (SELECT k.confrelid::regclass::text FROM pg_constraint k
                WHERE k.contype='f' AND k.conrelid=c.oid AND a.attnum = ANY(k.conkey)
-               ORDER BY k.conname LIMIT 1) AS fk_verso
+               ORDER BY cardinality(k.conkey), k.conname LIMIT 1) AS fk_verso
       FROM pg_class c
       JOIN pg_namespace n ON n.oid=c.relnamespace AND n.nspname='public'
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='scuola_id'

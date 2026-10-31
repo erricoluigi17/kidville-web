@@ -1,3 +1,23 @@
+## 🧭 Changelog — Menu della segreteria a 7 voci, a fisarmonica — 2026-10-31 (branch `chore/piano-approvato-a-mano`)
+
+**Stato:** 🟡 in revisione (merge a mano, nella PR #272). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
+
+| | Prima | Dopo |
+|---|---|---|
+| Righe del menu | 33 (27 voci + 6 titoli di gruppo) | **7 voci di primo livello** |
+| Gruppo più lungo | «Amministrazione», 10 voci scollegate | 6 voci |
+| Come si apre | tutto sempre aperto | a fisarmonica, un gruppo alla volta |
+
+**I sette elementi:** Home · Anagrafica (link diretti) · **Registro** (Appello, Diario 0–6, Primaria, Competenze, Galleria) · **Comunicazione** (Messaggi, Avvisi, News, Compiti, Moderazione) · **Contabilità e servizi** (Contabilità, Coda fatture, Mensa, Report Cucina, Armadietto, Merchandise) · **Segreteria** (CRM, Candidature, Modulistica, Documenti firmati, Protocollo, Storici e stampe) · **Impostazioni** (Impostazioni, Strumenti, Privacy & GDPR).
+
+- **Stesso comportamento su computer, pannello del tablet e foglio del telefono**: all'arrivo su una pagina è aperto il suo gruppo; toccare un'altra intestazione la apre e chiude la precedente; toccare quella aperta la chiude. Sul telefono le voci già nei tab in basso restano fuori dai gruppi, come prima.
+- **A gruppo chiuso** l'intestazione del gruppo della pagina resta segnata («sei qui»; in Alto Contrasto una barra nera a sinistra) e porta il **numero della Coda fatture**, che altrimenti sparirebbe con la voce.
+- La barra in basso del telefono e il binario del tablet non cambiano. I ruoli delle voci non cambiano: il gate resta nelle API.
+- **Scelte dell'assistente, da confermare:** in «Segreteria» l'ordine è CRM · Candidature · Modulistica (restano veri i lock del 17/10 e del 30/10); «Dashboard» si chiama «Home» anche sul computer, come sul telefono; toccare un'intestazione apre o chiude, non porta a una pagina; nessuna memoria del gruppo aperto nel browser.
+- **Log:** nessun log nuovo, e non serve: nessuna route, nessuna integrazione esterna, nessun percorso d'errore nuovo.
+- **Codice:** `admin-nav-config.ts` (struttura a 7 voci, `gruppoDellaPagina`, `gruppiVisibili`), `use-gruppo-aperto.ts` (nuovo), `AdminSidebar.tsx`, `AdminMenuSheet.tsx`, due regole di Alto Contrasto in `globals.css` con la loro variante `:focus-visible`, titoli dei gruppi in `etichette` (it/en).
+- **Test:** nuovo `admin-menu-fisarmonica.test.tsx`; lock della struttura in `admin-nav-config.test.ts`; aggiornati `contatore-menu-coda-fatture`, `admin-binario`, `admin-bottom-nav` e `contrasto-bordi-superfici-pubbliche` (le intestazioni ora sono bottoni). Specifica e piano: `docs/superpowers/specs/2026-10-31-menu-segreteria-7-voci-design.md`, `docs/superpowers/plans/2026-10-31-menu-segreteria-7-voci.md`.
+
 ## 🗂️ Changelog — CRM della segreteria, prima versione: schede delle famiglie, agenda delle visite, follow-up, collegamento con le domande, statistiche per persona — 2026-10-31 (branch `feat/crm-segreteria`)
 
 **Stato:** 🟡 in revisione (PR da `feat/crm-segreteria` verso `main`; merge a mano). La migrazione `20261030230225_crm_segreteria.sql` la applica l'integrazione al merge: una riga sola, con la version del file. Specifica approvata dal titolare: `docs/superpowers/specs/2026-10-30-crm-segreteria-design.md`; piano: `docs/superpowers/plans/2026-10-30-crm-segreteria.md`. Implementata in sei sessioni separate (S1 fondamenta, S2 schede, S3 agenda, S4 collegamento, S5 follow-up, S6 statistiche), riunite e riviste nel ramo integrato.

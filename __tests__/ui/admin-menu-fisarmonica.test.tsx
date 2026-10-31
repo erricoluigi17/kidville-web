@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRef } from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi';
 
@@ -231,5 +233,17 @@ describe('foglio «Menu» (telefono) e pannello (tablet) — la stessa fisarmoni
     // Prima il conteggio: un ciclo su zero intestazioni sarebbe verde senza aver controllato nulla.
     expect(intestazioni()).toHaveLength(5);
     for (const b of intestazioni()) expect(raggiungibili).toContain(b);
+  });
+});
+
+// In Alto Contrasto le utility colore sono inlinate (`@theme inline`) e il verde chiaro del «sei qui»
+// non si rimappa da solo: senza una regola esplicita, a gruppo chiuso nessun segno direbbe dove sei.
+describe('Alto Contrasto — l’intestazione «sei qui» resta riconoscibile senza colore', () => {
+  const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8');
+  it.each(['kv-admin-nav', 'kv-admin-sheet'])('.%s: barra nera a sinistra', (superficie) => {
+    const regola = new RegExp(
+      `\\[data-contrast="high"\\] \\.${superficie} button\\[data-contiene-pagina="true"\\][^{]*\\{[^}]*box-shadow:\\s*inset 4px 0 0 #000000`,
+    );
+    expect(css).toMatch(regola);
   });
 });

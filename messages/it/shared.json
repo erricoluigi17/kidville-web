@@ -772,5 +772,7 @@
   "erroreCrmQuotaGiornoFuturo": "Il giorno del pagamento non può essere nel futuro.",
   "erroreCrmQuotaAnnoMancante": "Indica l’anno di ingresso del bambino prima di segnare la quota.",
   "erroreCrmQuotaCassaChiusa": "La cassa di quel giorno è già chiusa. Scegli un giorno dopo l’ultima chiusura, oppure oggi.",
-  "erroreCrmQuotaGiaInContabilita": "La quota è già in contabilità: si corregge da lì."
+  "erroreCrmQuotaGiaInContabilita": "La quota è già in contabilità: si corregge da lì.",
+  "erroreCrmAlunnoNonDellaSede": "L’alunno scelto non fa parte di questa sede.",
+  "erroreCrmAlunnoGiaCollegato": "Il bambino o l’alunno scelto sono già collegati: togli prima il collegamento esistente."
 }

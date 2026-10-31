@@ -772,5 +772,7 @@
   "erroreCrmQuotaGiornoFuturo": "The payment date cannot be in the future.",
   "erroreCrmQuotaAnnoMancante": "Set the child’s year of entry before recording the fee.",
   "erroreCrmQuotaCassaChiusa": "The cash register for that day is already closed. Pick a day after the last closing, or today.",
-  "erroreCrmQuotaGiaInContabilita": "The fee is already in accounting: correct it there."
+  "erroreCrmQuotaGiaInContabilita": "The fee is already in accounting: correct it there.",
+  "erroreCrmAlunnoNonDellaSede": "The selected student does not belong to this location.",
+  "erroreCrmAlunnoGiaCollegato": "The child or the selected student is already linked: remove the existing link first."
 }

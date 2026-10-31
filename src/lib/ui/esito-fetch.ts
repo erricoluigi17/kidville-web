@@ -3453,6 +3453,16 @@ export const CODICI_ERRORE = {
     QUOTA_ANNO_MANCANTE: 'erroreCrmQuotaAnnoMancante',
     QUOTA_CASSA_CHIUSA: 'erroreCrmQuotaCassaChiusa',
     QUOTA_GIA_IN_CONTABILITA: 'erroreCrmQuotaGiaInContabilita',
+    /**
+     * Il collegamento del bambino del CRM all'alunno (31/10/2026, `PUT`/`DELETE …/bambini/[bambinoId]/alunno`):
+     *  · 422 `ALUNNO_NON_DELLA_SEDE` — l'alunno scelto è di un'altra sede (o non esiste): un collegamento non
+     *    attraversa i plessi;
+     *  · 409 `ALUNNO_GIA_COLLEGATO` — il bambino è già di un altro alunno, oppure l'alunno è già di un altro
+     *    bambino del CRM (la UNIQUE sull'alunno: l'import e un collegamento a mano arrivano insieme). Non è
+     *    `GIA_COLLEGATO`, che parla delle domande di iscrizione.
+     */
+    ALUNNO_NON_DELLA_SEDE: 'erroreCrmAlunnoNonDellaSede',
+    ALUNNO_GIA_COLLEGATO: 'erroreCrmAlunnoGiaCollegato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

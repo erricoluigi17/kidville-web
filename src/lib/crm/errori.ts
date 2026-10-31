@@ -31,6 +31,15 @@ const TABELLA_ASSENTE = new Set(['PGRST205', '42P01'])
  */
 export const CODICI_SCHEMA_CRM_ASSENTE = new Set(['PGRST202', 'PGRST205', 'PGRST204', '42P01', '42883', '42703'])
 
+/**
+ * «Manca un pezzo dello schema» detto DOPO una chiamata `rpc`: la funzione (`PGRST202`, `42883`) o una tabella
+ * che il suo corpo legge (`PGRST205`, `42P01`). Sono i SOLI quattro codici, e non i sei di
+ * `CODICI_SCHEMA_CRM_ASSENTE`: su una funzione già installata un `42703` («colonna inesistente») o un
+ * `PGRST204` sono un errore vero nel suo corpo, e devono finire nel log a livello `error`, non travestirsi da
+ * «CRM non installato». I sei valgono per le LETTURE con `select` di colonne nuove.
+ */
+export const CODICI_RPC_CRM_ASSENTE = new Set(['PGRST202', 'PGRST205', '42P01', '42883'])
+
 /** Il codice di un errore, comunque sia arrivato (oggetto PostgREST o eccezione): stringa vuota se non c'è. */
 export function codiceErroreDb(error: unknown): string {
   const c = (error as { code?: unknown } | null | undefined)?.code

@@ -2602,7 +2602,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (PUT e DELETE) e `…/quota/riprova` (POST). CONTROLLATE: gate `requireCrm`, sede da
             // `assertSchedaInScope` e `assertBambinoInScope` (il bambino è della scheda E della sede nella
             // stessa query); le funzioni SQL ricevono l'id che quel gate ha verificato. Nessuna esenzione.
-            routeConServiceRole: 377,
+            // 377 → 379 il 2026-10-31 (CRM, quota d'iscrizione, compito 4): `…/bambini/[bambinoId]/alunno`
+            // (PUT e DELETE) e `admin/crm/alunni` (GET, la ricerca fra gli alunni). Il passo è +2 e non +3: le
+            // route sono due (un file espone due metodi). CONTROLLATE: gate `requireCrm`; PUT e DELETE prendono
+            // la sede da `assertSchedaInScope` e `assertBambinoInScope` (scheda e sede nella stessa query), e la
+            // DELETE porta `scuola_id` anche nell'update; la GET dichiara la sede (`resolveScuoleAttive` +
+            // `restringiSedi`, 403 se non è fra le proprie) e filtra `alunni` con `.eq('scuola_id', …)` nella
+            // stessa query. Nessuna esenzione.
+            routeConServiceRole: 379,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2915,7 +2922,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `handlerEsentati` non cambia.
             // 581 → 584 il 2026-10-31 (CRM, quota d'iscrizione, compito 3): `…/quota:PUT`, `…/quota:DELETE` e
             // `…/quota/riprova:POST` (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 584,
+            // 584 → 587 il 2026-10-31 (CRM, quota d'iscrizione, compito 4): `…/alunno:PUT`, `…/alunno:DELETE`
+            // e `admin/crm/alunni:GET` (vedi sopra); `handlerEsentati` non cambia.
+            handlerControllati: 587,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -26,6 +26,7 @@ import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioRicevutaIscrizione } from '@/lib/email/messaggi/ricevuta-iscrizione'
 import { formattaIstante } from '@/i18n/config'
+import { collegaDomandaAlCrm } from '@/lib/crm/collegamento'
 import type {
   EnrollmentSubmissionData,
   FormField,
@@ -33,6 +34,50 @@ import type {
 } from '@/types/database.types'
 
 const OPERAZIONE = 'iscrizione:POST'
+
+/** Quanto, al massimo, il modulo pubblico aspetta il CRM della segreteria (vedi `agganciaAlCrm`). */
+const TETTO_AGGANCIO_CRM_MS = 3000
+
+/**
+ * CRM della segreteria: se la famiglia è già in scheda, il bambino diventa «iscritto» e la scheda ricorda
+ * la domanda (`collegaDomandaAlCrm`). È un EXTRA della domanda, e questa porta è pubblica.
+ *
+ * ─── IL MODULO NON PUÒ ROMPERSI NÉ RALLENTARE PER COLPA DEL CRM ─────────────
+ * La domanda è già registrata, la segreteria già avvisata, la ricevuta già partita: tutto quello che
+ * succede qui dentro cambia solo la scheda del CRM. Perciò:
+ *  · NON LANCIA MAI: `collegaDomandaAlCrm` non lancia, e comunque ogni eccezione (anche una promessa
+ *    rifiutata, un mock, un modulo che non si carica) è inghiottita da questo `try`/`catch` e registrata;
+ *  · NON FA ASPETTARE: il CRM ha un tetto di tempo (`TETTO_AGGANCIO_CRM_MS`). Oltre, la famiglia riceve la
+ *    sua risposta e il collegamento continua in coda — è idempotente (la stessa domanda lanciata due
+ *    volte non duplica niente), quindi un secondo giro non fa danni;
+ *  · NON CAMBIA LA RISPOSTA: il valore di ritorno è `void`, l'esito del collegamento non arriva alla famiglia;
+ *  · con le tabelle `crm_*` assenti (database E2E non migrato) non fa niente e lo dice nel log.
+ * Nel log entrano solo l'id della domanda e il codice d'esito: mai un recapito, mai un nome.
+ */
+async function agganciaAlCrm(supabase: SupabaseClient, domandaId: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const lavoro = Promise.resolve()
+      .then(() => collegaDomandaAlCrm(supabase, domandaId))
+      .then(
+        () => 'finito' as const,
+        (err: unknown) => {
+          logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
+          return 'finito' as const
+        },
+      )
+    const scaduto = new Promise<'scaduto'>((resolve) => {
+      timer = setTimeout(() => resolve('scaduto'), TETTO_AGGANCIO_CRM_MS)
+    })
+    if ((await Promise.race([lavoro, scaduto])) === 'scaduto') {
+      logEvento('crm', 'warn', { operazione: OPERAZIONE, esito: 'aggancio-crm-scaduto', entita_id: domandaId })
+    }
+  } catch (err) {
+    logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 
 /**
  * La ricevuta alla famiglia, subito dopo l'invio del modulo pubblico.
@@ -396,6 +441,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         // funzione nuova si dimentica: la domanda è registrata, la famiglia ha
         // diritto alla sua conferma qualunque colonna manchi.
         await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
+        // Il CRM della segreteria, DOPO la ricevuta e senza poter cambiare la risposta (vedi `agganciaAlCrm`).
+        await agganciaAlCrm(supabase, retry.data.id)
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
       }
       // Una domanda che non entra è il guasto più grave di questa porta: fino al 20/10 non lasciava
@@ -428,6 +475,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
     }
 
     await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults })
+    // Il CRM della segreteria, DOPO la ricevuta e senza poter cambiare la risposta (vedi `agganciaAlCrm`).
+    await agganciaAlCrm(supabase, row.id)
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {

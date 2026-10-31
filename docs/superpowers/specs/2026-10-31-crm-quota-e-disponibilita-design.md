@@ -120,6 +120,8 @@ dell'anno d'apertura** (es. `2027-09-01` per il 2027/28), `tipo = 'singolo'`, `a
 sede della scheda, `creato_da`. Poi il suo **incasso** in `incassi` con lo stesso importo e metodo e
 **`data_incasso` = giorno del pagamento**, non il giorno dell'aggancio.
 
+*Nota di esecuzione (31/10/2026): per il bonifico la scadenza è il giorno del pagamento + 30 giorni, perché il cron dei solleciti non scriva a chi ha già pagato; decisione dell'assistente, da confermare dal titolare.*
+
 Il `periodo_competenza` non è un dettaglio: la fatturazione sceglie la serie dall'anno di competenza
 (`annoScolasticoDiCompetenza`, `src/lib/fatturazione/sezionale.ts`). Senza, una quota del 2027/28 pagata a
 novembre 2026 verrebbe fatturata sulla serie del 2026/27.

@@ -286,13 +286,25 @@ BEGIN
 
   IF v_voce_id IS NULL THEN
     -- Nessuna voce: nasce con gli stessi campi di POST /api/pagamenti.
+    --
+    -- La SCADENZA. Contanti e carta: il giorno del pagamento, perché la voce nasce pagata (l'incasso la
+    -- chiude qui sotto, nella stessa transazione) e quel giorno non scade mai. BONIFICO: giorno del pagamento
+    -- + 30 giorni. La voce nasce `da_pagare` e la chiude la banca, quando l'estratto conto viene importato: il
+    -- cron dei solleciti (`pagamenti/solleciti/run`) manda il primo sollecito a scadenza + 3 giorni alle voci
+    -- aperte, obbligatorie e non `padre`, e con scadenza = giorno del bonifico (oggi o passato) scriverebbe
+    -- «non risulta ancora saldato» a una famiglia che ha appena pagato, prima che la banca lo riconcili. Trenta
+    -- giorni coprono il bonifico più l'import dell'estratto conto; se il bonifico non arriva, il sollecito
+    -- torna giusto. Una voce che l'alunno ha GIÀ non passa di qui (v_voce_id è valorizzato): la sua scadenza
+    -- non si tocca.
     INSERT INTO public.pagamenti
       (alunno_id, scuola_id, descrizione, importo, scadenza, categoria_id, tipo, obbligatorio,
        periodo_competenza, gruppo, creato_da, stato)
     VALUES
       (v_b.alunno_id, v_b.scuola_id,
        'Iscrizione ' || v_b.quota_anno::text || '/' || lpad(((v_b.quota_anno + 1) % 100)::text, 2, '0'),
-       v_b.quota_importo, v_b.quota_saldata_il, v_categoria, 'singolo', true,
+       v_b.quota_importo,
+       CASE WHEN v_b.quota_metodo = 'bonifico' THEN v_b.quota_saldata_il + 30 ELSE v_b.quota_saldata_il END,
+       v_categoria, 'singolo', true,
        v_inizio_anno, NULL, v_b.quota_segnata_da, 'da_pagare')
     RETURNING id INTO v_voce_id;
     v_voce_nuova := true;
@@ -350,7 +362,7 @@ REVOKE ALL ON FUNCTION public.crm_quota_passa(uuid, uuid) FROM PUBLIC, anon, aut
 GRANT EXECUTE ON FUNCTION public.crm_quota_passa(uuid, uuid) TO service_role;
 
 COMMENT ON FUNCTION public.crm_quota_passa(uuid, uuid) IS
-  'CRM: la quota d''iscrizione di un bambino collegato a un alunno diventa la voce Iscrizione AAAA/AA in contabilita'' (o si lega a quella che l''alunno ha gia'', o resta bloccata con un motivo). Una transazione sola, riga del bambino bloccata. Contanti e carta: incasso da registra_incasso_voce e, per i contanti, entrata di cassa assorbita (incasso_id). Bonifico: voce da pagare, nessun incasso. Solo service_role.';
+  'CRM: la quota d''iscrizione di un bambino collegato a un alunno diventa la voce Iscrizione AAAA/AA in contabilita'' (o si lega a quella che l''alunno ha gia'', o resta bloccata con un motivo). Una transazione sola, riga del bambino bloccata. Contanti e carta: incasso da registra_incasso_voce e, per i contanti, entrata di cassa assorbita (incasso_id). Bonifico: voce da pagare con scadenza a 30 giorni dal giorno del pagamento (il cron dei solleciti non scrive a chi ha appena pagato), nessun incasso. Solo service_role.';
 
 -- 6b) crm_quota_segna: segna o corregge la quota ----------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.crm_quota_segna(

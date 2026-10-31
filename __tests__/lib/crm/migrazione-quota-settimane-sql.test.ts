@@ -693,6 +693,51 @@ describe('il passaggio in contabilità · il totale di nessun giorno di cassa ca
     expect((await bambino(b)).quota_stato).toBe('in_contabilita')
   })
 
+  // La scadenza della voce NUOVA. Il cron dei solleciti scrive «non risulta ancora saldato» a scadenza + 3 giorni
+  // alle voci aperte e obbligatorie: una voce da bonifico con scadenza = giorno del pagamento (oggi o passato)
+  // farebbe scrivere a una famiglia che ha già pagato, prima che la banca riconcili. Decisione del 31/10/2026.
+  describe('la scadenza della voce nuova', () => {
+    async function voceNuovaDi(metodo: string, giorno: string) {
+      const alunno = uuid('c2000000', ++contatore)
+      await db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [alunno, SEDE_A])
+      const b = await nuovoBambino({ alunno })
+      const r = await segna(b, { importo: 100, metodo, giorno })
+      expect(r.passaggio).toMatchObject({ esito: 'ok', voce_nuova: true, metodo })
+      const elenco = await voci(alunno)
+      expect(elenco).toHaveLength(1)
+      return elenco[0]
+    }
+
+    it('bonifico: la voce nuova scade 30 giorni DOPO il giorno del pagamento, e resta da pagare', async () => {
+      const voce = await voceNuovaDi('bonifico', '2026-10-29')
+      expect(voce.stato).toBe('da_pagare')
+      expect(voce.scadenza).toBe('2026-11-28')
+    })
+
+    it('bonifico: i 30 giorni sono di calendario, anche a cavallo di mese e d’anno', async () => {
+      expect((await voceNuovaDi('bonifico', '2026-12-15')).scadenza).toBe('2027-01-14')
+      expect((await voceNuovaDi('bonifico', '2027-01-31')).scadenza).toBe('2027-03-02')
+    })
+
+    it.each(['contanti', 'carta'])('%s: la voce nuova nasce pagata e scade il giorno del pagamento', async (metodo) => {
+      const voce = await voceNuovaDi(metodo, '2026-10-29')
+      expect(voce.stato).toBe('pagato')
+      expect(voce.scadenza).toBe('2026-10-29')
+    })
+
+    it('bonifico su una voce che l’alunno ha già: la sua scadenza non si tocca', async () => {
+      const alunno = uuid('c2000000', ++contatore)
+      await db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [alunno, SEDE_A])
+      const esistente = await voceEsistente(alunno, { importo: 100, scadenza: '2027-09-10' })
+      const b = await nuovoBambino({ alunno })
+      const r = await segna(b, { importo: 100, metodo: 'bonifico', giorno: '2026-10-29' })
+      expect(r.passaggio).toMatchObject({ esito: 'ok', voce_nuova: false, pagamento_id: esistente })
+      const elenco = await voci(alunno)
+      expect(elenco).toHaveLength(1)
+      expect(elenco[0].scadenza).toBe('2027-09-10')
+    })
+  })
+
   it('l’anno scolastico mette la competenza al 1° settembre di quell’anno e la descrizione AAAA/AA', async () => {
     const alunno = uuid('c0000000', 13)
     await db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [alunno, SEDE_A])

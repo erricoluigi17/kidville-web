@@ -125,9 +125,16 @@ describe('migrazione CRM · forma del file', () => {
         for (const m of tutte) expect(m[1]).toMatch(/on\s+delete\s+set\s+null/i)
     })
 
-    it('è dichiarata in MIGRAZIONI_ATTESE_AL_MERGE', () => {
-        expect(Object.keys(MIGRAZIONI_ATTESE_AL_MERGE)).toContain(NOME_FILE)
-        expect(MIGRAZIONI_ATTESE_AL_MERGE[NOME_FILE]).toMatch(/integrazione/i)
+    it("è applicata in produzione con la version del file, e non più attesa al merge", () => {
+        // Fino al merge di #273 la si dichiarava in MIGRAZIONI_ATTESE_AL_MERGE: la applicava
+        // l'integrazione. Dalla PR-B del 31/10/2026 sta nella fotografia delle migrazioni, una riga
+        // sola e con la version del file — una version diversa vorrebbe dire un'applicazione a mano.
+        const foto = JSON.parse(
+            readFileSync(join(process.cwd(), '__tests__', 'fixtures', 'migrazioni-applicate-snapshot.json'), 'utf8'),
+        ) as { migrazioni: { version: string; name: string }[] }
+        const righe = foto.migrazioni.filter((m) => m.name === 'crm_segreteria')
+        expect(righe.map((m) => m.version)).toEqual([NOME_FILE.slice(0, 14)])
+        expect(Object.keys(MIGRAZIONI_ATTESE_AL_MERGE)).not.toContain(NOME_FILE)
     })
 
     it('niente uuid di sede cablato e niente dati personali', () => {

@@ -120,7 +120,7 @@ describe('decisioneEliminazione — le due regole che si sbagliano', () => {
 })
 
 describe('TRACCE_DOCENTE — integrità del registro', () => {
-  it('copre tutte e 63 le chiavi esterne verso utenti(id), senza doppioni', () => {
+  it('copre tutte e 77 le chiavi esterne verso utenti(id), senza doppioni', () => {
     // 56 misurate da `pg_constraint` il 2026-09-20, 58 il 2026-09-25: le due nuove
     // sono `allegati_registro.eliminato_da` e `student_documents.eliminato_da`
     // (cestino del registro e del fascicolo, `SET NULL`). Il numero SALE perché il
@@ -128,16 +128,18 @@ describe('TRACCE_DOCENTE — integrità del registro', () => {
     // nel commento perché una FK nuova deve rendere rosso qualcosa.
     // Il 15/10/2026 la fotografia reale ne conta 63: +5 per appartenenze,
     // collegamenti, revisioni, rettifiche chat e lavori temporanei degli storici.
-    expect(TRACCE_DOCENTE).toHaveLength(63)
+    // Il 31/10/2026 ne conta 77: +14 del CRM della segreteria, tutte `blocca`.
+    expect(TRACCE_DOCENTE).toHaveLength(77)
     const chiavi = TRACCE_DOCENTE.map((v) => `${v.tabella}.${v.colonna}`)
     expect(new Set(chiavi).size).toBe(chiavi.length)
   })
 
-  it('50 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
+  it('64 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
     // 44 fino al 2026-09-25; le due `eliminato_da` del cestino pesano come
     // `galleria_media_v2.eliminato_da` (vedi il registro).
     // +4 tracce storiche misurate e classificate dopo il rilascio del 15/10.
-    expect(VOCI_CHE_PESANO).toHaveLength(50)
+    // +14 del CRM il 31/10: bloccano la DELETE e la procedura non le sgancia.
+    expect(VOCI_CHE_PESANO).toHaveLength(64)
     for (const v of VOCI_CHE_PESANO) {
       expect(v.chiave, `${v.tabella}.${v.colonna} pesa ma non ha chiave`).toBeTruthy()
       expect(v.perche, `${v.tabella}.${v.colonna} pesa e non deve motivare`).toBeUndefined()

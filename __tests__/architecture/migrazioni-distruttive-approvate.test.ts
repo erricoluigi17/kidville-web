@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { senzaCommenti } from './soglia-fotografia'
+import { approvata, senzaCommenti } from './soglia-fotografia'
 
 /**
  * LOCK — UNA MIGRAZIONE CHE DISTRUGGE DATI DEVE DIRLO, CON IL SUO MOTIVO.
@@ -39,8 +39,6 @@ import { senzaCommenti } from './soglia-fotografia'
 const CARTELLA = join(process.cwd(), 'supabase', 'migrations')
 /** La prima migrazione sotto il lucchetto. Le precedenti sono storia: applicate, viste. */
 const DA_QUI = '20261009171012'
-
-const MARCATORE = /^\s*--\s*distruttiva approvata:\s*(.+)$/im
 
 /** Lo SQL che gira AL MOMENTO della migrazione, senza commenti, stringhe e corpi di funzione. */
 export function eseguitoAllaMigrazione(sql: string): string {
@@ -96,11 +94,7 @@ export function distruttiveEseguite(sql: string): string[] {
   return DISTRUTTIVE.filter((d) => d.re.test(eseguito)).map((d) => d.nome)
 }
 
-/** Il file dichiara l'approvazione, con un motivo vero? */
-export function approvata(sql: string): boolean {
-  const m = MARCATORE.exec(sql)
-  return m !== null && m[1].trim().length >= 15
-}
+// `approvata` sta in `soglia-fotografia.ts` (2026-10-31): la legge anche il lock della migrazione della quota.
 
 const sotto = readdirSync(CARTELLA)
   .filter((f) => /^\d{14}_.+\.sql$/.test(f) && f.slice(0, 14) >= DA_QUI)

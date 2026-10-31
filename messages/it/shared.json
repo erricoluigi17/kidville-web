@@ -768,5 +768,13 @@
   "erroreCrmSoloLaPropria": "Puoi modificare solo la tua disponibilità. Per le altre persone serve la Direzione.",
   "erroreCrmOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco.",
   "erroreCrmElementoNonTrovato": "L’elemento non esiste più. Aggiorna la pagina.",
-  "erroreCrmContattoObbligatorio": "Serve almeno un telefono o un’email validi."
+  "erroreCrmContattoObbligatorio": "Serve almeno un telefono o un’email validi.",
+  "erroreCrmQuotaGiornoFuturo": "Il giorno del pagamento non può essere nel futuro.",
+  "erroreCrmQuotaAnnoMancante": "Indica l’anno di ingresso del bambino prima di segnare la quota.",
+  "erroreCrmQuotaCassaChiusa": "La cassa di quel giorno è già chiusa. Scegli un giorno dopo l’ultima chiusura, oppure oggi.",
+  "erroreCrmQuotaGiaInContabilita": "La quota è già in contabilità: si corregge da lì.",
+  "erroreCrmAlunnoNonDellaSede": "L’alunno scelto non fa parte di questa sede.",
+  "erroreCrmAlunnoGiaCollegato": "Il bambino o l’alunno scelto sono già collegati: togli prima il collegamento esistente.",
+  "erroreCrmSettimanaPassata": "La settimana è già passata: non si può più modificare.",
+  "erroreCrmFasceSovrapposte": "Due fasce dello stesso giorno si sovrappongono. Correggi gli orari."
 }

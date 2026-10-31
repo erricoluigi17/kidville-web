@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { SaldoCassa, CassaNonDisponibile, EntratoOggiVoce, CassaMovimento } from './tipi'
+import { soloMovimentiContati } from './assorbiti'
 
 // =============================================================================
 // MODULO CASSA · logica del saldo (contratto §3.2).
@@ -16,6 +17,11 @@ import type { SaldoCassa, CassaNonDisponibile, EntratoOggiVoce, CassaMovimento }
 // degradato) e `storno_di` = originale — sommare solo metodo='contanti' NON
 // basta, il saldo resterebbe gonfiato. Va sottratto risalendo al metodo
 // dell'incasso originale via `storno_di`.
+//
+// Dal 2026-10-31 un movimento con `incasso_id` è ASSORBITO da quell'incasso (la
+// quota d'iscrizione passata dal CRM in contabilità: l'entrata di cassa in contanti
+// e l'incasso che nasce sono gli stessi soldi) e dal ledger NON si somma: lo conta
+// già l'incasso, qui sopra, come entrata auto. Vedi `assorbiti.ts`.
 // =============================================================================
 
 /** Codici PostgREST «schema cassa assente» (DB E2E CI non migrato). */
@@ -89,7 +95,7 @@ export async function caricaSaldoCassa(
   //    (cassa_movimenti assente): senza il ledger non c'è saldo → non disponibile.
   const { data: movRaw, error: eMov } = await supabase
     .from('cassa_movimenti')
-    .select('tipo, importo, metodo')
+    .select('tipo, importo, metodo, incasso_id')
     .eq('scuola_id', scuolaId)
   if (eMov) {
     const code = (eMov as { code?: string }).code ?? ''
@@ -100,7 +106,15 @@ export async function caricaSaldoCassa(
     logErrore({ operazione: 'caricaSaldoCassa', stato: 500, evento: 'db' }, eMov)
     return { disponibile: false }
   }
-  const movimenti = (movRaw ?? []) as { tipo: CassaMovimento['tipo']; importo: number; metodo: CassaMovimento['metodo'] }[]
+  // Un movimento assorbito da un incasso lo conta già l'incasso (entrata auto, sotto).
+  const movimenti = soloMovimentiContati(
+    (movRaw ?? []) as {
+      tipo: CassaMovimento['tipo']
+      importo: number
+      metodo: CassaMovimento['metodo']
+      incasso_id: string | null
+    }[],
+  )
 
   // 2) Entrate auto dagli incassi contanti della sede (netto storni).
   const incassi = await incassiPerSaldo(supabase, scuolaId)

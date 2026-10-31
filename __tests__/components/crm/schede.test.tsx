@@ -131,6 +131,26 @@ vi.mock('@/components/features/crm/agenda/FissaVisita', () => ({
   ),
 }))
 
+// ── i due pezzi della quota e dell'alunno: marcatori che espongono le props e il gesto «è cambiato qualcosa» ──
+vi.mock('@/components/features/crm/schede/QuotaIscrizione', () => ({
+  QuotaIscrizione: (p: { schedaId: string; bambino: { id: string }; onCambiata: () => void }) => (
+    <div data-testid="quota-iscrizione" data-scheda-id={p.schedaId} data-bambino-id={p.bambino.id}>
+      <button type="button" onClick={p.onCambiata}>
+        quota-cambiata
+      </button>
+    </div>
+  ),
+}))
+vi.mock('@/components/features/crm/schede/CollegaAlunno', () => ({
+  CollegaAlunno: (p: { schedaId: string; scuolaId: string; bambino: { id: string }; onCambiata: () => void }) => (
+    <div data-testid="collega-alunno" data-scheda-id={p.schedaId} data-scuola-id={p.scuolaId} data-bambino-id={p.bambino.id}>
+      <button type="button" onClick={p.onCambiata}>
+        alunno-cambiato
+      </button>
+    </div>
+  ),
+}))
+
 // ── fetch finto ───────────────────────────────────────────────────────────────────
 /** Registra una regola. L'ULTIMA registrata vince: un test può correggere ciò che ha messo `beforeEach`. */
 function rispondi(metodo: string, url: RegExp, risposta: Risposta | ((c: Chiamata) => Risposta)) {
@@ -220,9 +240,17 @@ function bambino(over: Record<string, unknown> = {}) {
     domanda_collegata_il: null,
     nota_collegamento: null,
     da_verificare: false,
-    quota_saldata: false,
+    quota_importo: null,
+    quota_metodo: null,
+    quota_anno: null,
+    quota_stato: null,
+    quota_blocco_motivo: null,
     quota_saldata_il: null,
     quota_segnata_da: null,
+    quota_cassa_movimento_id: null,
+    quota_pagamento_id: null,
+    alunno_id: null,
+    alunno_collegato_il: null,
     creata_il: '2026-10-01T09:00:00.000Z',
     aggiornata_il: '2026-10-01T09:00:00.000Z',
     ...over,
@@ -434,7 +462,57 @@ describe('DettaglioScheda', () => {
     expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ esito: 'aperto' })
   })
 
-  it('un «perso» già registrato: toccare solo la quota non rimanda il motivo', async () => {
+  it('la vecchia casella «Quota di iscrizione saldata» non c’è più: per ogni bambino ci sono la quota e l’alunno', async () => {
+    rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio({ bambini: [bambino(), bambino({ id: 'bambino-2', nome: 'Altro Bambino' })] }) })
+    await apriDettaglio()
+
+    // La sezione è arrivata (lo storico c'è): la casella e il suo campo data non ci sono più, né nella card…
+    expect(screen.queryByLabelText('Quota di iscrizione saldata')).toBeNull()
+    expect(screen.queryByLabelText('Saldata il')).toBeNull()
+    // …e al loro posto, in ogni card, i due pezzi nuovi con le props giuste.
+    const quote = screen.getAllByTestId('quota-iscrizione')
+    expect(quote.map((e) => e.getAttribute('data-bambino-id'))).toEqual(['bambino-1', 'bambino-2'])
+    const alunni = screen.getAllByTestId('collega-alunno')
+    expect(alunni.map((e) => e.getAttribute('data-bambino-id'))).toEqual(['bambino-1', 'bambino-2'])
+    for (const e of [...quote, ...alunni]) expect(e.getAttribute('data-scheda-id')).toBe(ID_SCHEDA)
+    // La sede viene dalla SCHEDA (la risposta), come per l'associazione delle domande.
+    for (const e of alunni) expect(e.getAttribute('data-scuola-id')).toBe(SEDE_A)
+    const card = screen.getByRole('article', { name: 'Bambino Prova' })
+    expect(within(card).getAllByTestId('quota-iscrizione')).toHaveLength(1)
+    expect(within(card).getAllByTestId('collega-alunno')).toHaveLength(1)
+  })
+
+  it('quando la quota o l’alunno cambiano la scheda si rilegge', async () => {
+    let letture = 0
+    rispondi('GET', URL_DETTAGLIO, () => {
+      letture++
+      return { corpo: dettaglio() }
+    })
+    await apriDettaglio()
+    expect(letture).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'quota-cambiata' }))
+    await waitFor(() => expect(letture).toBe(2))
+    fireEvent.click(screen.getByRole('button', { name: 'alunno-cambiato' }))
+    await waitFor(() => expect(letture).toBe(3))
+  })
+
+  it('il salvataggio del bambino non porta più la quota: esito e nota, e basta', async () => {
+    rispondi('GET', URL_DETTAGLIO, {
+      corpo: dettaglio({ bambini: [bambino({ quota_stato: 'in_attesa', quota_importo: 150, quota_metodo: 'contanti', quota_anno: 2027, quota_saldata_il: '2026-10-20' })] }),
+    })
+    rispondi('PATCH', /\/bambini\/bambino-1$/, { corpo: { id: 'bambino-1', modificato: true } })
+    await apriDettaglio()
+
+    const card = screen.getByRole('article', { name: 'Bambino Prova' })
+    fireEvent.change(within(card).getByLabelText('Esito'), { target: { value: 'ci_pensa' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Salva' }))
+
+    await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
+    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ esito: 'ci_pensa' })
+  })
+
+  it('un «perso» già registrato: toccare solo la nota non rimanda il motivo', async () => {
     rispondi('GET', URL_DETTAGLIO, {
       corpo: dettaglio({ bambini: [bambino({ esito: 'perso', motivo_perdita: 'distanza', motivo_nota: 'Troppo lontano' })] }),
     })
@@ -442,38 +520,65 @@ describe('DettaglioScheda', () => {
     await apriDettaglio()
 
     const card = screen.getByRole('article', { name: 'Bambino Prova' })
-    fireEvent.click(within(card).getByLabelText('Quota di iscrizione saldata'))
+    fireEvent.change(within(card).getByLabelText('Nota sul motivo'), { target: { value: 'Si è trasferita' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Salva' }))
 
     await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
-    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ quotaSaldata: true })
+    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ motivoNota: 'Si è trasferita' })
   })
 
-  it('un «perso» vecchio, senza motivo, non blocca la correzione della quota', async () => {
+  it('un «perso» vecchio, senza motivo, non blocca la correzione della nota', async () => {
     rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio({ bambini: [bambino({ esito: 'perso', motivo_perdita: null })] }) })
     rispondi('PATCH', /\/bambini\/bambino-1$/, { corpo: { id: 'bambino-1', modificato: true } })
     await apriDettaglio()
 
     const card = screen.getByRole('article', { name: 'Bambino Prova' })
-    fireEvent.click(within(card).getByLabelText('Quota di iscrizione saldata'))
+    fireEvent.change(within(card).getByLabelText('Nota sul motivo'), { target: { value: 'Nota di prova' } })
     expect((within(card).getByRole('button', { name: 'Salva' }) as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(within(card).getByRole('button', { name: 'Salva' }))
 
     await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
-    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ quotaSaldata: true })
+    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ motivoNota: 'Nota di prova' })
   })
 
-  it('la quota si segna con la data, e solo quella parte', async () => {
-    rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio() })
-    rispondi('PATCH', /\/bambini\/bambino-1$/, { corpo: { id: 'bambino-1', modificato: true } })
-    await apriDettaglio()
+  it('lo storico racconta la quota e l’alunno, anche con gli eventi vecchi', async () => {
+    const evento = (id: string, tipo: string, dati: Record<string, unknown>) => ({
+      id,
+      scuola_id: SEDE_A,
+      scheda_id: ID_SCHEDA,
+      tipo,
+      autore: 'utente-1',
+      autore_via: 'segreteria',
+      dati: { bambino_id: 'bambino-1', ...dati },
+      testo: null,
+      creato_il: '2026-10-05T10:00:00.000Z',
+      autore_persona: { id: 'utente-1', nome: 'Prova', cognome: 'Segreteria' },
+    })
+    const eventi = [
+      evento('e-1', 'quota_segnata', { importo: 150.5, metodo: 'contanti', giorno: '2026-10-20', anno: 2027 }),
+      evento('e-2', 'quota_corretta', { importo: 160 }),
+      evento('e-3', 'quota_in_contabilita', {}),
+      evento('e-4', 'quota_tolta', {}),
+      evento('e-5', 'alunno_collegato', {}),
+      evento('e-6', 'alunno_scollegato', {}),
+      // Gli eventi della vecchia spunta: senza importo, con `saldata`.
+      evento('e-7', 'quota_segnata', { saldata: true }),
+      evento('e-8', 'quota_segnata', { saldata: false }),
+    ]
+    rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio({ eventi, eventi_totale: eventi.length }) })
+    const storico = await apriDettaglio()
 
-    const card = screen.getByRole('article', { name: 'Bambino Prova' })
-    fireEvent.click(within(card).getByLabelText('Quota di iscrizione saldata'))
-    fireEvent.click(within(card).getByRole('button', { name: 'Salva' }))
-
-    await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
-    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ quotaSaldata: true })
+    const righe = await within(storico).findAllByRole('listitem')
+    const testo = righe.map((r) => r.textContent ?? '')
+    const dettaglioDi = (id: string) => testo[eventi.findIndex((e) => e.id === id)]
+    expect(dettaglioDi('e-1')).toContain('Bambino Prova: quota di 150,50 € segnata')
+    expect(dettaglioDi('e-2')).toContain('Bambino Prova: quota corretta')
+    expect(dettaglioDi('e-3')).toContain('Bambino Prova: quota passata in contabilità')
+    expect(dettaglioDi('e-4')).toContain('Bambino Prova: quota tolta')
+    expect(dettaglioDi('e-5')).toContain('Bambino Prova: collegato all’alunno in anagrafica')
+    expect(dettaglioDi('e-6')).toContain('Bambino Prova: collegamento all’alunno tolto')
+    expect(dettaglioDi('e-7')).toContain('Bambino Prova: quota saldata')
+    expect(dettaglioDi('e-8')).toContain('Bambino Prova: quota tolta')
   })
 
   it('un errore del server nel salvataggio si dice, e la scheda non si ricarica', async () => {

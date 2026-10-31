@@ -1059,8 +1059,12 @@ describe('scheda staff · caricare e sostituire una scansione', () => {
     scegli(controllo, fileFinto())
 
     await waitFor(() => expect(apriFaccia('Fronte')).toBeInTheDocument())
-    expect(document.activeElement?.tagName, 'il fuoco è finito su <body>').not.toBe('BODY')
-    expect(document.activeElement?.textContent).toMatch(/Fronte/)
+    // Il fuoco lo sposta un effetto DOPO che «Apri» è nel DOM: si aspetta, non lo si legge subito (sotto il carico
+    // della suite intera arrivava dopo, e il test cadeva a caso).
+    await waitFor(() => {
+      expect(document.activeElement?.tagName, 'il fuoco è finito su <body>').not.toBe('BODY')
+      expect(document.activeElement?.textContent).toMatch(/Fronte/)
+    })
   })
 
   it('nessuna violazione axe sul tab Documento, conferma aperta compresa', async () => {

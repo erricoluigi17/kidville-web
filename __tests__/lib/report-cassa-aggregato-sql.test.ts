@@ -1,9 +1,8 @@
 // @vitest-environment node
 
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
+import { funzione, funzioneConPermessi, migrazione, senzaCommentiSql } from './sql-da-migrazioni'
 import {
   aggregaEntratePerCategoria,
   aggregaMensile,
@@ -29,13 +28,12 @@ import {
  * il caso che prima si perdeva. Solo dati finti.
  */
 
-const CARTELLA = join(process.cwd(), 'supabase/migrations')
-function migrazione(suffisso: string): string {
-  const f = readdirSync(CARTELLA).find((x) => x.endsWith(suffisso))
-  if (!f) throw new Error(`migrazione *${suffisso} non trovata`)
-  return readFileSync(join(CARTELLA, f), 'utf8')
-}
 const NUOVA = migrazione('_report_cassa_aggregato.sql')
+// Dal 2026-10-31 la funzione ha una definizione più recente: non conta i movimenti di cassa assorbiti da un
+// incasso. Si installa quella del file della migrazione del CRM, sopra l'originale: la prova di sempre (il
+// riferimento in TypeScript, su dati senza assorbimenti) deve restare identica.
+const MIGRAZIONE_CRM = migrazione('_crm_quota_e_settimane.sql')
+const DEFINIZIONE_CRM = funzioneConPermessi(MIGRAZIONE_CRM, 'report_cassa_aggregato')
 
 const SEDI = ['a0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000003']
 const FUORI = 'a0000000-0000-4000-8000-0000000000ff' // una sede che nessun filtro chiede
@@ -96,9 +94,10 @@ beforeAll(async () => {
     CREATE TABLE public.incassi (id uuid PRIMARY KEY, pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id),
       importo numeric(10,2) NOT NULL, metodo public.incasso_metodo NOT NULL, storno_di uuid, data_incasso date);
     CREATE TABLE public.cassa_movimenti (id uuid PRIMARY KEY, scuola_id uuid, tipo text NOT NULL, importo numeric(10,2) NOT NULL,
-      metodo text, data date, categoria_id uuid REFERENCES public.cassa_categorie(id));
+      metodo text, data date, categoria_id uuid REFERENCES public.cassa_categorie(id), incasso_id uuid);
   `)
   await db.exec(NUOVA)
+  await db.exec(DEFINIZIONE_CRM)
   for (const [i, c] of CAT_PAG.entries()) await db.query('INSERT INTO public.payment_categories VALUES ($1, $2)', [c, `Categoria ${'CAB'[i]}`])
   for (const [i, c] of CAT_CASSA.entries()) await db.query('INSERT INTO public.cassa_categorie VALUES ($1, $2)', [c, `Spesa ${i + 1}`])
   for (const p of PAGAMENTI) await db.query('INSERT INTO public.pagamenti VALUES ($1, $2, $3)', [p.id, p.sede, p.categoria])
@@ -206,6 +205,29 @@ describe('report_cassa_aggregato · identico al riferimento, e i totali quadrano
     const top = componiReport(storto, null)
     const voci = differenzeTotali(storto, top, SEDI.map((s) => componiReport(storto, s))).map((d) => d.voce)
     expect(voci).toEqual(['entrate:categorie', 'entrate:sedi', 'entrate:mensile'])
+  })
+
+  it('un movimento di cassa assorbito da un incasso non si conta: né nelle uscite né nel controllo', async () => {
+    const prima = await sql({ sedi: SEDI })
+    const m = MOVIMENTI.find((x) => x.tipo === 'uscita' && SEDI.includes(x.sede))
+    expect(m).toBeDefined()
+    await db.exec('BEGIN')
+    try {
+      await db.query('UPDATE public.cassa_movimenti SET incasso_id = $2 WHERE id = $1', [m!.id, INCASSI[0].id])
+      const dopo = await sql({ sedi: SEDI })
+      expect(Number(dopo.controllo.movimenti)).toBe(Number(prima.controllo.movimenti) - 1)
+      expect(Number(dopo.controllo.uscite)).toBeCloseTo(Number(prima.controllo.uscite) - m!.importo, 2)
+    } finally {
+      await db.exec('ROLLBACK')
+    }
+    // E tornato tutto com'era: la prova non ha lasciato niente.
+    expect(Number((await sql({ sedi: SEDI })).controllo.movimenti)).toBe(Number(prima.controllo.movimenti))
+  })
+
+  it('la definizione installata viene dal file del CRM e legge i movimenti con `m.incasso_id IS NULL`', () => {
+    const corpo = senzaCommentiSql(funzione(MIGRAZIONE_CRM, 'report_cassa_aggregato'))
+    expect(corpo).toMatch(/from\s+public\.cassa_movimenti\s+m\b/i)
+    expect(corpo).toMatch(/\bm\.incasso_id\s+is\s+null/i)
   })
 
   it('i permessi: EXECUTE solo alla service_role', async () => {

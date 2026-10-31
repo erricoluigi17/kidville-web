@@ -128,7 +128,7 @@ describe('calcolaAggregatiMovimenti (pura)', () => {
 
 // ── Mock Supabase minimale per l'orchestrazione ──────────────────────────────
 interface Op {
-  movimenti?: { tipo: string; importo: number; metodo: string }[]
+  movimenti?: { tipo: string; importo: number; metodo: string; incasso_id?: string | null }[]
   erroreMov?: { code?: string } | null
   incassiDiretti?: unknown[]
   incassiNulli?: unknown[]
@@ -198,6 +198,57 @@ describe('caricaSaldoCassa (orchestrazione — scenari di collaudo 1-4)', () => 
       expect(saldo.prelievi).toBe(28)
       expect(saldo.rettifiche).toBe(-2)
     }
+  })
+
+  // Quota d'iscrizione passata dal CRM in contabilità: l'entrata di cassa in contanti
+  // fatta dal CRM ha `incasso_id` = l'incasso che la rappresenta. Quell'incasso è già
+  // contato come entrata virtuale: il movimento non si somma una seconda volta.
+  it('entrata di cassa con incasso_id + incasso contanti che la rappresenta: il saldo sale di 50, non di 100', async () => {
+    const supabase = makeSupabase({
+      movimenti: [{ tipo: 'entrata', importo: 50, metodo: 'contanti', incasso_id: 'inc-1' }],
+      incassiDiretti: [{ id: 'inc-1', importo: 50, metodo: 'contanti', storno_di: null }],
+    })
+    const saldo = await caricaSaldoCassa(supabase, SEDE, 100)
+    expect(saldo.disponibile).toBe(true)
+    if (saldo.disponibile) {
+      expect(saldo.saldo_atteso).toBe(150)
+      expect(saldo.entrate_contanti).toBe(50)
+    }
+  })
+
+  it('un\'entrata manuale SENZA incasso_id accanto a quella assorbita si conta ancora', async () => {
+    const supabase = makeSupabase({
+      movimenti: [
+        { tipo: 'entrata', importo: 50, metodo: 'contanti', incasso_id: 'inc-1' },
+        { tipo: 'entrata', importo: 10, metodo: 'contanti', incasso_id: null },
+      ],
+      incassiDiretti: [{ id: 'inc-1', importo: 50, metodo: 'contanti', storno_di: null }],
+    })
+    const saldo = await caricaSaldoCassa(supabase, SEDE, 100)
+    expect(saldo.disponibile).toBe(true)
+    if (saldo.disponibile) {
+      expect(saldo.saldo_atteso).toBe(160)
+      expect(saldo.entrate_contanti).toBe(60)
+    }
+  })
+
+  it('la lettura dei movimenti chiede anche incasso_id (senza non si può filtrare)', async () => {
+    const selezioni: string[] = []
+    const base = makeSupabase({ movimenti: [] })
+    const spia = {
+      from(table: string) {
+        const b = (base as unknown as { from: (t: string) => Record<string, unknown> }).from(table)
+        const select = b.select as (cols?: string) => unknown
+        b.select = (cols?: string) => {
+          if (table === 'cassa_movimenti') selezioni.push(String(cols))
+          return select(cols)
+        }
+        return b
+      },
+    } as unknown as SupabaseClient
+    await caricaSaldoCassa(spia, SEDE, 0)
+    expect(selezioni).toHaveLength(1)
+    expect(selezioni[0]).toContain('incasso_id')
   })
 
   it('degrada a { disponibile:false } quando lo schema cassa è assente (42P01)', async () => {

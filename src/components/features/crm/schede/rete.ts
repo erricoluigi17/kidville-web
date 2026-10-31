@@ -39,7 +39,7 @@ export async function chiama(operazione: string, url: string, init?: RequestInit
 }
 
 /** Una scrittura JSON: l'intestazione giusta e il corpo già serializzato. */
-export function scrittura(metodo: 'POST' | 'PATCH', corpo: unknown): RequestInit {
+export function scrittura(metodo: 'POST' | 'PATCH' | 'PUT', corpo: unknown): RequestInit {
   return { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }
 }
 

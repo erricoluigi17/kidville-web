@@ -12,10 +12,11 @@ import {
   zDurataVisitaMin,
   zOrarioVisita,
 } from '@/lib/crm/agenda'
-import { rispostaErroreDb } from '@/lib/crm/errori'
+import { rispostaErroreDb, tabellaAssente } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
+import { caricaFasceEffettive } from '@/lib/crm/settimane'
 import { calcolaSlotLiberi, fuoriDisponibilita } from '@/lib/crm/slot'
-import type { AppuntamentoRow, DisponibilitaRow, IndisponibilitaRow } from '@/lib/crm/tipi'
+import type { AppuntamentoRow, IndisponibilitaRow } from '@/lib/crm/tipi'
 import { addGiorni } from '@/lib/format/data'
 import { inizioGiornoCivile } from '@/lib/format/confini-giorno'
 import { logEvento } from '@/lib/logging/logger'
@@ -28,7 +29,9 @@ import { parseBody, parseQuery, validationError } from '@/lib/validation/http'
  * CRM della segreteria · le visite fissate.
  *
  *  · `GET  /api/admin/crm/appuntamenti?scuolaId&dal&al` — la settimana dell'agenda: le visite (con la
- *    famiglia, l'avviso «fuori disponibilità» e il segno «da chiudere»), gli slot liberi e le persone;
+ *    famiglia, l'avviso «fuori disponibilità» e il segno «da chiudere»), gli slot liberi e le persone. Gli slot
+ *    vengono dalle fasce di OGNI settimana del periodo (`caricaFasceEffettive`: una settimana mai toccata è uguale
+ *    all'ultima registrata prima di lei), della persona o della sede; uno slot della sede porta `personeLibere`;
  *  · `POST /api/admin/crm/appuntamenti` — fissa una visita per una scheda e una persona.
  *
  * La sede della visita è quella della SCHEDA (verificata con `assertSchedaInScope`), non quella del cookie:
@@ -79,7 +82,7 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
 
   const adesso = new Date()
 
-  const [visite, disp, ass] = await Promise.all([
+  const [visite, lette, ass] = await Promise.all([
     supabase
       .from('crm_appuntamenti')
       .select('*')
@@ -88,20 +91,28 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
       .gt('fine', da)
       .neq('stato', 'annullato')
       .order('inizio', { ascending: true }),
-    supabase
-      .from('crm_disponibilita')
-      .select('*')
-      .in('scuola_id', scuole)
-      .lte('valida_dal', al)
-      .or(`valida_al.is.null,valida_al.gte.${dal}`),
+    // `caricaFasceEffettive` LANCIA sull'errore del database: lo si porta nella stessa forma `{ data, error }`
+    // delle altre letture. Un guasto è un 500; le tabelle delle settimane assenti no (vedi sotto).
+    caricaFasceEffettive(supabase, scuole[0], dal, al).then(
+      (data) => ({ data, error: null as { code?: string; message?: string } | null }),
+      (error: { code?: string; message?: string }) => ({ data: null, error }),
+    ),
     supabase.from('crm_indisponibilita').select('*').in('scuola_id', scuole).lt('dal', a).gt('al', da),
   ])
   if (visite.error) return rispostaErroreDb(visite.error, 'admin/crm/appuntamenti:GET:appuntamenti')
-  if (disp.error) return rispostaErroreDb(disp.error, 'admin/crm/appuntamenti:GET:disponibilita')
+  // Le tabelle delle settimane ASSENTI (un database col CRM ma senza la loro migrazione: quello E2E della CI, o
+  // la finestra fra il deploy e la migrazione) non spengono l'agenda: le visite si vedono, senza slot proposti e
+  // senza l'avviso «fuori disponibilità», che senza fasce segnerebbe fuori ogni visita.
+  const disponibilitaInstallata = !(lette.error && tabellaAssente(lette.error))
+  if (!disponibilitaInstallata) {
+    logEvento('crm', 'warn', { operazione: 'admin/crm/appuntamenti:GET:disponibilita', esito: 'settimane-non-installate' }, lette.error)
+  } else if (lette.error) {
+    return rispostaErroreDb(lette.error, 'admin/crm/appuntamenti:GET:disponibilita')
+  }
   if (ass.error) return rispostaErroreDb(ass.error, 'admin/crm/appuntamenti:GET:indisponibilita')
 
   const appuntamenti = (visite.data ?? []) as AppuntamentoRow[]
-  const disponibilita = (disp.data ?? []) as DisponibilitaRow[]
+  const fasce = lette.data ?? []
   const indisponibilita = (ass.data ?? []) as IndisponibilitaRow[]
 
   // Il nome della famiglia sta sulla scheda: una lettura sola per le schede della settimana.
@@ -121,10 +132,12 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
   }
 
   // Gli slot li offrono solo le persone che oggi sono davvero della sede: la fascia di chi è stata
-  // archiviata, o ha cambiato sede, non deve restare prenotabile.
+  // archiviata, o ha cambiato sede, non deve restare prenotabile. Quella della sede (`utenteId` nullo) resta,
+  // e `personeLibere` si ricava dalle stesse persone.
   const dellaSede = new Set(persone.map((p) => p.id))
-  const slot = calcolaSlotLiberi({
-    disponibilita: disponibilita.filter((d) => dellaSede.has(d.utente_id)),
+  const slot = !disponibilitaInstallata ? [] : calcolaSlotLiberi({
+    fasce: fasce.filter((f) => f.utenteId === null || dellaSede.has(f.utenteId)),
+    persone: persone.map((p) => p.id),
     indisponibilita,
     appuntamenti,
     dal,
@@ -138,7 +151,7 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
       return {
         ...x,
         scheda: { id: x.scheda_id, genitore_nome: nomi.get(x.scheda_id) ?? null },
-        fuori_disponibilita: inProgramma ? fuoriDisponibilita(x, disponibilita, indisponibilita) : false,
+        fuori_disponibilita: inProgramma && disponibilitaInstallata ? fuoriDisponibilita(x, fasce, indisponibilita) : false,
         da_chiudere: inProgramma && Date.parse(x.fine) < adesso.getTime(),
       }
     }),

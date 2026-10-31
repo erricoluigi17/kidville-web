@@ -4,12 +4,16 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { funzione, funzioneConPermessi, migrazione, senzaCommentiSql } from './sql-da-migrazioni'
 
 // Solo dati sintetici. Eseguiamo l'intera migrazione su Postgres, inclusi FK,
 // trigger e permessi: nessun mock delle query o copia della funzione SQL.
 const directory = join(process.cwd(), 'supabase/migrations')
 const migrationFile = readdirSync(directory).find((file) => file.endsWith('_cassa_provenienza_conteggio.sql'))
 const migration = migrationFile ? readFileSync(join(directory, migrationFile), 'utf8') : ''
+// Dal 2026-10-31 il conteggio ha una definizione più recente (non conta i movimenti di cassa assorbiti da un
+// incasso): si installa quella del file della migrazione del CRM sopra l'originale, che porta anche i trigger.
+const MIGRAZIONE_CRM = migrazione('_crm_quota_e_settimane.sql')
 const uuid = (prefix: string, n: number) => `${prefix}-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
 const SEDI = [uuid('a0000000', 1), uuid('a0000000', 2)]
 const FUORI = uuid('a0000000', 3)
@@ -73,10 +77,11 @@ beforeAll(async () => {
     CREATE TABLE public.incassi (id uuid PRIMARY KEY, pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id), importo numeric(10,2), data_incasso date, metodo public.incasso_metodo, storno_di uuid REFERENCES public.incassi(id));
     CREATE TABLE public.cassa_movimenti (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), scuola_id uuid NOT NULL, tipo text NOT NULL,
       importo numeric(10,2), metodo text DEFAULT 'contanti', data date DEFAULT CURRENT_DATE, storno_di uuid REFERENCES public.cassa_movimenti(id),
-      stornato_il timestamptz, storno_motivo text, chiusura_id uuid);
+      stornato_il timestamptz, storno_motivo text, chiusura_id uuid, incasso_id uuid);
   `)
   await db.query('INSERT INTO public.cassa_movimenti(id, scuola_id, tipo, importo, data) VALUES ($1,$2,\'uscita\',12,\'2026-10-01\')', [STORICO, SEDI[0]])
   await db.exec(migration)
+  await db.exec(funzioneConPermessi(MIGRAZIONE_CRM, 'conteggio_cassa_provenienza'))
   await db.query(`INSERT INTO public.payment_categories VALUES ($1,NULL,'Globale',true),($2,$3,'Locale',true),($4,$3,'Inattiva',false),($5,$6,'Altra sede',true)`, [GLOBALE, LOCALE, SEDI[0], INATTIVA, ALTRA_SEDE, FUORI])
   await db.query('INSERT INTO public.pagamenti VALUES ($1,$2,$3),($4,$5,NULL),($6,$7,$8),($9,$2,$10)', [uuid('c0000000', 1), SEDI[0], GLOBALE, uuid('c0000000', 2), SEDI[1], uuid('c0000000', 3), FUORI, ALTRA_SEDE, uuid('c0000000', 4), LOCALE])
   await db.query(`INSERT INTO public.incassi SELECT (r->>'id')::uuid,(r->>'pagamento')::uuid,(r->>'importo')::numeric,(r->>'data')::date,(r->>'metodo')::public.incasso_metodo,(r->>'storno')::uuid FROM jsonb_array_elements($1::jsonb) r`, [JSON.stringify(incassi)])
@@ -167,6 +172,28 @@ describe('conteggio cassa per provenienza · contanti e scope reali in SQL', () 
     expect(result.righe.some((r) => r.cassa_categoria_id === null && r.cassa_nome === null)).toBe(true)
     for (const key of Object.keys(result.totali) as (keyof Totali)[]) expect(round(result.righe.reduce((s, r) => s + r[key], 0))).toBe(result.totali[key])
     expect(result.totali.netto).toBe(round(result.totali.entrate - result.totali.uscite - result.totali.prelievi + result.totali.rettifiche))
+  })
+  it('un movimento assorbito da un incasso non si conta: l’entrata del CRM e il suo incasso sono lo stesso denaro', async () => temporaneo(async () => {
+    const giorno = '2026-10-20' // nessun dato della fixture cade in questo giorno
+    expect((await conteggio([SEDI[0]], giorno, giorno)).totali).toEqual(empty())
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO public.cassa_movimenti(scuola_id,tipo,importo,metodo,data,cassa_categoria_id) VALUES ($1,'entrata',33.3,'contanti',$2,$3) RETURNING id`,
+      [SEDI[0], giorno, GLOBALE],
+    )
+    // L'entrata di cassa da sola: il giorno vale 33,30.
+    expect((await conteggio([SEDI[0]], giorno, giorno)).totali).toMatchObject({ entrate: 33.3, netto: 33.3 })
+    // Poi nasce l'incasso in contanti (lo stesso denaro) e l'entrata si aggancia: il giorno vale 33,30 UNA volta,
+    // non due — l'entrata sparisce dal conto e resta l'incasso.
+    await db.query(`INSERT INTO public.incassi VALUES ($1,$2,33.3,$3,'contanti',NULL)`, [uuid('d9000000', 1), uuid('c0000000', 1), giorno])
+    await db.query('UPDATE public.cassa_movimenti SET incasso_id = $2 WHERE id = $1', [rows[0].id, uuid('d9000000', 1)])
+    const dopo = await conteggio([SEDI[0]], giorno, giorno)
+    expect(dopo.totali).toMatchObject({ entrate: 33.3, netto: 33.3 })
+    expect(dopo.righe).toEqual([expect.objectContaining({ cassa_categoria_id: GLOBALE, entrate: 33.3 })])
+  }))
+  it('la definizione installata viene dal file del CRM e legge i movimenti con `m.incasso_id IS NULL`', () => {
+    const corpo = senzaCommentiSql(funzione(MIGRAZIONE_CRM, 'conteggio_cassa_provenienza'))
+    expect(corpo).toMatch(/from\s+public\.cassa_movimenti\s+m\b/i)
+    expect(corpo).toMatch(/\bm\.incasso_id\s+is\s+null/i)
   })
   it('STABLE e invoker: EXECUTE concesso solo a service_role', async () => {
     const permissions = await db.query<{ ruolo: string; puo: boolean }>(`SELECT ruolo,has_function_privilege(ruolo,'public.conteggio_cassa_provenienza(uuid[],date,date)','EXECUTE') AS puo FROM unnest(ARRAY['anon','authenticated','service_role']) ruolo`)

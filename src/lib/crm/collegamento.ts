@@ -3,9 +3,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { formaConfronto } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logEvento } from '@/lib/logging/logger'
+import { agganciaAlunno, alunnoDaDomandaImportata } from './aggancio-alunno'
 import { contattiNormalizzati } from './contatti'
 import { rispostaErroreDb } from './errori'
 import { registraEvento } from './eventi'
+import { nomiSiSomigliano } from './nomi'
 import type { BambinoRow } from './tipi'
 
 /**
@@ -34,6 +36,12 @@ import type { BambinoRow } from './tipi'
  *    schede, ogni `update` e ogni lettura portano `scuola_id` nella STESSA istruzione, e le righe tornate
  *    vengono ricontrollate in codice. La coincidenza di un telefono con una scheda di un'altra sede NON
  *    collega niente: lascia una riga di log senza dati (`coincidenza-altra-sede`) e basta.
+ *
+ * ─── E DOPO IL COLLEGAMENTO: L'ALUNNO ────────────────────────────────────────────────────────────────
+ * Se la domanda collegata era GIÀ stata importata, l'alunno esiste già e l'import non ripasserà di qui:
+ * `agganciaSeImportata` lo ritrova fra quelli che l'import ha creato per quella domanda e collega il bambino
+ * (è l'aggancio che fa passare la quota in contabilità). Vale per il collegamento automatico e per quello a
+ * mano. È un di più rispetto al collegamento: non ne cambia mai l'esito, e un guasto qui è una riga di log.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,19 +165,6 @@ export function estraiDaDomanda(data: unknown): Estratto {
   return { figli, telefoni, email, genitore }
 }
 
-/** Le parole di almeno tre lettere di un nome, senza maiuscole né accenti. */
-function paroleDelNome(nome: string | null): Set<string> {
-  if (!nome) return new Set()
-  return new Set(
-    nome
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .split(/[^\p{L}]+/u)
-      .filter((p) => p.length >= 3),
-  )
-}
-
 type BambinoPerAbbinare = Pick<BambinoRow, 'id' | 'nome' | 'data_nascita' | 'domanda_id'>
 
 function siAbbinano(b: BambinoPerAbbinare, f: FiglioDomanda): boolean {
@@ -179,9 +174,7 @@ function siAbbinano(b: BambinoPerAbbinare, f: FiglioDomanda): boolean {
   if (dataB && dataF) return dataB === dataF
   // Senza una delle due, basta una parola di tre lettere in comune nel NOME del figlio. Mai il cognome:
   // lo condividono i fratelli, e «Bimba Prova» non deve prendersi «Bimbo Prova».
-  const pb = paroleDelNome(b.nome)
-  for (const p of paroleDelNome(f.nome)) if (pb.has(p)) return true
-  return false
+  return nomiSiSomigliano(b.nome, f.nome)
 }
 
 /**
@@ -238,6 +231,31 @@ function esitoDaEccezione(err: unknown, domandaId: string, operazione: string): 
   }
   logEvento('crm', 'error', { operazione, esito: 'errore', entita_id: domandaId }, err)
   return { esito: 'errore' }
+}
+
+/**
+ * Dopo un collegamento riuscito: se la domanda era già stata importata, il bambino si aggancia all'alunno che
+ * l'import ha creato per lei (`eseguitoDa`: chi ha collegato; `null` nel collegamento automatico). Cerca e
+ * aggancia solo se l'alunno è UNO: nessuno o più d'uno resta da collegare a mano dalla scheda.
+ *
+ * **Non lancia MAI** e non cambia l'esito del collegamento: le due funzioni che chiama non lanciano, ma questa
+ * è anche l'ultima difesa del modulo pubblico (un `catch` che logga, mai che inghiotte).
+ */
+async function agganciaSeImportata(
+  supabase: SupabaseClient,
+  p: { domandaId: string; sede: string; bambino: Pick<BambinoRow, 'id' | 'nome' | 'data_nascita'>; eseguitoDa: string | null; operazione: string },
+): Promise<void> {
+  try {
+    const alunnoId = await alunnoDaDomandaImportata(supabase, {
+      domandaId: p.domandaId,
+      scuolaId: p.sede,
+      nome: p.bambino.nome ?? null,
+      dataNascita: p.bambino.data_nascita ?? null,
+    })
+    if (alunnoId) await agganciaAlunno(supabase, p.bambino.id, alunnoId, p.eseguitoDa)
+  } catch (err) {
+    logEvento('crm', 'error', { operazione: p.operazione, esito: 'aggancio-dopo-collegamento-non-riuscito', entita_id: p.domandaId }, err)
+  }
 }
 
 // ⚠️ Il `codice` di ogni risposta è un LETTERALE nel punto in cui la risposta nasce: il lock
@@ -522,6 +540,8 @@ async function collegaCoppie(
       autoreVia: 'sistema',
       dati: { bambino_id: b.id, figlio: c.figlio, domanda_id: p.domandaId },
     })
+    // La domanda poteva essere già stata importata: l'alunno c'è, e il bambino va agganciato.
+    await agganciaSeImportata(supabase, { domandaId: p.domandaId, sede: p.sede, bambino: b, eseguitoDa: null, operazione: OP_AUTO })
   }
   return { collegati, conflitti }
 }
@@ -708,7 +728,7 @@ export async function collegaAMano(
 ): Promise<NextResponse | null> {
   const { data: b, error: eB } = await supabase
     .from('crm_bambini')
-    .select('id, scheda_id, scuola_id, esito, domanda_id')
+    .select('id, scheda_id, scuola_id, esito, domanda_id, nome, data_nascita')
     .eq('id', a.bambinoId)
     .eq('scheda_id', a.schedaId)
     .eq('scuola_id', a.scuolaId)
@@ -784,6 +804,14 @@ export async function collegaAMano(
   })
   await spegniAvviso(supabase, a.schedaId, a.scuolaId, a.domandaId, OP_MANO)
   logEvento('crm', 'info', { esito: 'collegata-a-mano', entita_id: a.domandaId, scuola_id: a.scuolaId })
+  // La domanda poteva essere già stata importata: l'alunno c'è, e il bambino va agganciato (a nome di chi ha collegato).
+  await agganciaSeImportata(supabase, {
+    domandaId: a.domandaId,
+    sede: a.scuolaId,
+    bambino: { id: a.bambinoId, nome: typeof b.nome === 'string' ? b.nome : null, data_nascita: typeof b.data_nascita === 'string' ? b.data_nascita : null },
+    eseguitoDa: a.autore,
+    operazione: OP_MANO,
+  })
   return null
 }
 

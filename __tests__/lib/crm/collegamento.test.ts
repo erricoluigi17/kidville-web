@@ -31,6 +31,15 @@ vi.mock('@/lib/logging/logger', async (orig) => {
   }
 })
 
+// L'aggancio all'alunno (Compito 4) è un'altra unità, con i suoi test: qui si prova SOLO che il collegamento lo
+// chiami al momento giusto, con gli argomenti giusti, e che non cambi l'esito di niente. Di serie: la domanda
+// non è stata importata (nessun alunno), quindi tutti gli altri test di questo file vedono il comportamento di prima.
+const ag = vi.hoisted(() => ({
+  alunnoDaDomandaImportata: vi.fn(),
+  agganciaAlunno: vi.fn(),
+}))
+vi.mock('@/lib/crm/aggancio-alunno', () => ag)
+
 import {
   abbinaFigli,
   collegaAMano,
@@ -113,6 +122,10 @@ const eventiScritti = (db: DBFinto) => (db.crm_eventi ?? []) as Riga[]
 
 beforeEach(() => {
   h.log.length = 0
+  ag.alunnoDaDomandaImportata.mockReset()
+  ag.alunnoDaDomandaImportata.mockResolvedValue(null)
+  ag.agganciaAlunno.mockReset()
+  ag.agganciaAlunno.mockResolvedValue({ esito: 'ok', collegato: true, passaggio: null })
 })
 afterEach(() => {
   // Il registro non contiene mai i dati di una famiglia, in nessun test.
@@ -947,5 +960,208 @@ describe('scollega', () => {
     await scollega(client, r())
     // Il bambino di un'altra sede (anche con lo stesso domanda_id) non è toccato.
     expect((db.crm_bambini as Riga[]).find((x) => x.id === B2)!.domanda_id).toBe(D1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L'aggancio all'alunno dopo il collegamento (Compito 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALUNNO = 'a9a9a9a9-0000-4000-8000-000000000009'
+
+describe('dopo il collegamento a mano — la domanda era già stata importata', () => {
+  function dbMano(): DBFinto {
+    return {
+      enrollment_submissions: [domanda(D1, SEDE_A, [figlioDomanda('Bimbo', '2024-03-05')], [adultoDomanda()])],
+      crm_schede: [scheda(S1, SEDE_A, { tel: ['3330000001'] }, { domanda_da_associare: D1 })],
+      crm_bambini: [bambino(B1, S1, SEDE_A)],
+      crm_eventi: [],
+    }
+  }
+  const richiesta = (extra: Record<string, unknown> = {}) => ({
+    schedaId: S1,
+    scuolaId: SEDE_A,
+    bambinoId: B1,
+    domandaId: D1,
+    figlio: 0,
+    autore: UTENTE,
+    ...extra,
+  })
+
+  it('l’alunno si trova → agganciaAlunno è chiamata con quell’alunno e con chi ha collegato', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    const { client } = conDb(dbMano())
+
+    expect(await collegaAMano(client, richiesta())).toBeNull()
+
+    // La ricerca riceve la domanda, la sede e il nome e la nascita del BAMBINO DEL CRM (non della domanda).
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledTimes(1)
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledWith(client, {
+      domandaId: D1,
+      scuolaId: SEDE_A,
+      nome: 'Bimbo',
+      dataNascita: '2024-03-05',
+    })
+    expect(ag.agganciaAlunno).toHaveBeenCalledTimes(1)
+    expect(ag.agganciaAlunno).toHaveBeenCalledWith(client, B1, ALUNNO, UTENTE)
+  })
+
+  it('la ricerca non trova nessun alunno (null) → agganciaAlunno NON è chiamata, e il collegamento riesce', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(null)
+    const { client, db } = conDb(dbMano())
+
+    expect(await collegaAMano(client, richiesta())).toBeNull()
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledTimes(1)
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+    expect((db.crm_bambini as Riga[])[0].domanda_id).toBe(D1)
+  })
+
+  it('l’aggancio parte DOPO la scrittura del collegamento, non prima', async () => {
+    const ordine: string[] = []
+    ag.alunnoDaDomandaImportata.mockImplementation(async () => {
+      ordine.push('ricerca')
+      return ALUNNO
+    })
+    const { client, db } = conDb(dbMano())
+    ag.agganciaAlunno.mockImplementation(async () => {
+      // A questo punto la domanda è già sul bambino.
+      ordine.push(`aggancio:${(db.crm_bambini as Riga[])[0].domanda_id}`)
+      return { esito: 'ok', collegato: true, passaggio: null }
+    })
+    await collegaAMano(client, richiesta())
+    expect(ordine).toEqual(['ricerca', `aggancio:${D1}`])
+  })
+
+  it('il collegamento che NON riesce non cerca e non aggancia niente', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    // 23505: quel figlio è già di un altro bambino.
+    const { client } = conDb(dbMano(), { 'crm_bambini:update': { code: '23505', message: 'duplicate key value' } })
+    const r = await collegaAMano(client, richiesta())
+    expect(r!.status).toBe(409)
+    expect(ag.alunnoDaDomandaImportata).not.toHaveBeenCalled()
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+  })
+
+  it('una domanda di un’altra sede (403) non cerca e non aggancia niente', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    const db = dbMano()
+    ;(db.enrollment_submissions as Riga[]).push(domanda(D2, SEDE_B, [figlioDomanda('Bimbo', '2024-03-05')], [adultoDomanda()]))
+    const { client } = conDb(db)
+    const r = await collegaAMano(client, richiesta({ domandaId: D2 }))
+    expect(r!.status).toBe(403)
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+  })
+
+  it('l’aggancio risponde con un esito negativo → il collegamento resta com’è (null)', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    for (const esito of ['sede_diversa', 'gia_collegato_altro', 'alunno_gia_collegato', 'non_installato', 'errore']) {
+      ag.agganciaAlunno.mockResolvedValue({ esito })
+      const { client, db } = conDb(dbMano())
+      expect(await collegaAMano(client, richiesta())).toBeNull()
+      expect((db.crm_bambini as Riga[])[0].domanda_id).toBe(D1)
+    }
+  })
+
+  it('l’aggancio LANCIA → il collegamento riesce lo stesso, e il guasto è nel log', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    ag.agganciaAlunno.mockRejectedValue(new Error('il CRM è esploso'))
+    const { client, db } = conDb(dbMano())
+
+    expect(await collegaAMano(client, richiesta())).toBeNull()
+    expect((db.crm_bambini as Riga[])[0].domanda_id).toBe(D1)
+    expect(h.log.some((r) => r.evento === 'crm' && r.livello === 'error')).toBe(true)
+  })
+
+  it('la RICERCA dell’alunno lancia → il collegamento riesce lo stesso', async () => {
+    ag.alunnoDaDomandaImportata.mockRejectedValue(new Error('lettura esplosa'))
+    const { client } = conDb(dbMano())
+    expect(await collegaAMano(client, richiesta())).toBeNull()
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+    expect(h.log.some((r) => r.evento === 'crm' && r.livello === 'error')).toBe(true)
+  })
+})
+
+describe('dopo il collegamento automatico — la domanda era già stata importata', () => {
+  function dbAuto(): DBFinto {
+    return {
+      enrollment_submissions: [
+        domanda(D1, SEDE_A, [figlioDomanda('Bimbo', '2024-03-05')], [adultoDomanda({ phone: '+39 333 000 0001' })]),
+      ],
+      crm_schede: [scheda(S1, SEDE_A, { tel: ['3330000001'] })],
+      crm_bambini: [bambino(B1, S1, SEDE_A)],
+      crm_eventi: [],
+    }
+  }
+
+  it('l’alunno si trova → agganciaAlunno è chiamata con eseguitoDa null (lo fa il sistema)', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    const { client } = conDb(dbAuto())
+
+    expect(await collegaDomandaAlCrm(client, D1)).toEqual({ esito: 'collegato', schedaId: S1, bambini: 1 })
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledWith(client, {
+      domandaId: D1,
+      scuolaId: SEDE_A,
+      nome: 'Bimbo',
+      dataNascita: '2024-03-05',
+    })
+    expect(ag.agganciaAlunno).toHaveBeenCalledTimes(1)
+    expect(ag.agganciaAlunno).toHaveBeenCalledWith(client, B1, ALUNNO, null)
+  })
+
+  it('la ricerca non trova nessun alunno → agganciaAlunno non è chiamata', async () => {
+    const { client } = conDb(dbAuto())
+    expect((await collegaDomandaAlCrm(client, D1)).esito).toBe('collegato')
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledTimes(1)
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+  })
+
+  it('due bambini collegati dalla stessa domanda → un aggancio per ciascuno, con il SUO nome e la SUA nascita', async () => {
+    const db = dbAuto()
+    ;(db.enrollment_submissions as Riga[])[0] = domanda(
+      D1,
+      SEDE_A,
+      [figlioDomanda('Bimbo', '2024-03-05'), figlioDomanda('Bimba', '2022-07-09')],
+      [adultoDomanda({ phone: '+39 333 000 0001' })],
+    )
+    db.crm_bambini = [
+      bambino(B1, S1, SEDE_A),
+      bambino(B2, S1, SEDE_A, { nome: 'Bimba', data_nascita: '2022-07-09' }),
+    ]
+    ag.alunnoDaDomandaImportata.mockImplementation(async (_c: unknown, b: { nome: string }) => (b.nome === 'Bimbo' ? ALUNNO : null))
+    const { client } = conDb(db)
+
+    expect(await collegaDomandaAlCrm(client, D1)).toEqual({ esito: 'collegato', schedaId: S1, bambini: 2 })
+    expect(ag.alunnoDaDomandaImportata).toHaveBeenCalledTimes(2)
+    expect(ag.agganciaAlunno).toHaveBeenCalledTimes(1)
+    expect(ag.agganciaAlunno).toHaveBeenCalledWith(client, B1, ALUNNO, null)
+  })
+
+  it('più schede con quel telefono (da associare): niente è collegato, niente si aggancia', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    const db = dbAuto()
+    db.crm_schede = [scheda(S1, SEDE_A, { tel: ['3330000001'] }), scheda(S2, SEDE_A, { tel: ['3330000001'] })]
+    db.crm_bambini = [bambino(B1, S1, SEDE_A), bambino(B2, S2, SEDE_A)]
+    const { client } = conDb(db)
+    expect((await collegaDomandaAlCrm(client, D1)).esito).toBe('da_associare')
+    expect(ag.alunnoDaDomandaImportata).not.toHaveBeenCalled()
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+  })
+
+  it('domanda già collegata (rilancio): niente di nuovo, quindi niente aggancio', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    const db = dbAuto()
+    db.crm_bambini = [bambino(B1, S1, SEDE_A, { domanda_id: D1, domanda_figlio: 0 })]
+    const { client } = conDb(db)
+    expect((await collegaDomandaAlCrm(client, D1)).esito).toBe('collegato')
+    expect(ag.agganciaAlunno).not.toHaveBeenCalled()
+  })
+
+  it('l’aggancio LANCIA → l’esito del collegamento è lo stesso, e l’evento di storico è scritto', async () => {
+    ag.alunnoDaDomandaImportata.mockResolvedValue(ALUNNO)
+    ag.agganciaAlunno.mockRejectedValue(new Error('il CRM è esploso'))
+    const { client, db } = conDb(dbAuto())
+    expect(await collegaDomandaAlCrm(client, D1)).toEqual({ esito: 'collegato', schedaId: S1, bambini: 1 })
+    expect(eventiScritti(db)).toHaveLength(1)
+    expect(h.log.some((r) => r.evento === 'crm' && r.livello === 'error')).toBe(true)
   })
 })

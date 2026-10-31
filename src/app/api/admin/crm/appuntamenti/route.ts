@@ -12,7 +12,7 @@ import {
   zDurataVisitaMin,
   zOrarioVisita,
 } from '@/lib/crm/agenda'
-import { rispostaErroreDb } from '@/lib/crm/errori'
+import { rispostaErroreDb, tabellaAssente } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
 import { caricaFasceEffettive } from '@/lib/crm/settimane'
 import { calcolaSlotLiberi, fuoriDisponibilita } from '@/lib/crm/slot'
@@ -92,7 +92,7 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
       .neq('stato', 'annullato')
       .order('inizio', { ascending: true }),
     // `caricaFasceEffettive` LANCIA sull'errore del database: lo si porta nella stessa forma `{ data, error }`
-    // delle altre letture, così passa da `rispostaErroreDb` (503 se le tabelle mancano, 500 per un guasto).
+    // delle altre letture. Un guasto è un 500; le tabelle delle settimane assenti no (vedi sotto).
     caricaFasceEffettive(supabase, scuole[0], dal, al).then(
       (data) => ({ data, error: null as { code?: string; message?: string } | null }),
       (error: { code?: string; message?: string }) => ({ data: null, error }),
@@ -100,7 +100,15 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
     supabase.from('crm_indisponibilita').select('*').in('scuola_id', scuole).lt('dal', a).gt('al', da),
   ])
   if (visite.error) return rispostaErroreDb(visite.error, 'admin/crm/appuntamenti:GET:appuntamenti')
-  if (lette.error) return rispostaErroreDb(lette.error, 'admin/crm/appuntamenti:GET:disponibilita')
+  // Le tabelle delle settimane ASSENTI (un database col CRM ma senza la loro migrazione: quello E2E della CI, o
+  // la finestra fra il deploy e la migrazione) non spengono l'agenda: le visite si vedono, senza slot proposti e
+  // senza l'avviso «fuori disponibilità», che senza fasce segnerebbe fuori ogni visita.
+  const disponibilitaInstallata = !(lette.error && tabellaAssente(lette.error))
+  if (!disponibilitaInstallata) {
+    logEvento('crm', 'warn', { operazione: 'admin/crm/appuntamenti:GET:disponibilita', esito: 'settimane-non-installate' }, lette.error)
+  } else if (lette.error) {
+    return rispostaErroreDb(lette.error, 'admin/crm/appuntamenti:GET:disponibilita')
+  }
   if (ass.error) return rispostaErroreDb(ass.error, 'admin/crm/appuntamenti:GET:indisponibilita')
 
   const appuntamenti = (visite.data ?? []) as AppuntamentoRow[]
@@ -127,7 +135,7 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
   // archiviata, o ha cambiato sede, non deve restare prenotabile. Quella della sede (`utenteId` nullo) resta,
   // e `personeLibere` si ricava dalle stesse persone.
   const dellaSede = new Set(persone.map((p) => p.id))
-  const slot = calcolaSlotLiberi({
+  const slot = !disponibilitaInstallata ? [] : calcolaSlotLiberi({
     fasce: fasce.filter((f) => f.utenteId === null || dellaSede.has(f.utenteId)),
     persone: persone.map((p) => p.id),
     indisponibilita,
@@ -143,7 +151,7 @@ export const GET = withRoute('admin/crm/appuntamenti:GET', async (request: NextR
       return {
         ...x,
         scheda: { id: x.scheda_id, genitore_nome: nomi.get(x.scheda_id) ?? null },
-        fuori_disponibilita: inProgramma ? fuoriDisponibilita(x, fasce, indisponibilita) : false,
+        fuori_disponibilita: inProgramma && disponibilitaInstallata ? fuoriDisponibilita(x, fasce, indisponibilita) : false,
         da_chiudere: inProgramma && Date.parse(x.fine) < adesso.getTime(),
       }
     }),

@@ -381,12 +381,15 @@ describe('POST /api/admin/crm/appuntamenti', () => {
             }
         })
 
-        it('le tabelle delle settimane assenti → 503 CRM_NON_INSTALLATO, e non si scrive', async () => {
-            h.errori = { 'crm_settimane:select': { code: 'PGRST205' } }
-            const res = await POST(post(corpo()))
-            expect(res.status).toBe(503)
-            expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
-            expect(scritte('crm_appuntamenti', 'insert')).toHaveLength(0)
+        it('le tabelle delle settimane assenti (CRM senza la loro migrazione) → la visita si fissa lo stesso, senza avviso', async () => {
+            for (const code of ['PGRST205', '42P01']) {
+                h.errori = { 'crm_settimane:select': { code } }
+                // alle 18:00 sarebbe fuori dalla fascia di U2: il `false` viene dalle tabelle assenti, non dalla fascia
+                const res = await POST(post(corpo({ inizio: '2026-11-02T18:00' })))
+                expect(res.status, code).toBe(201)
+                expect((await res.json()).fuori_disponibilita, code).toBe(false)
+            }
+            expect(scritte('crm_appuntamenti', 'insert')).toHaveLength(2)
         })
 
         it('una fascia della SEDE basta: la visita di chiunque dentro la fascia della sede non è fuori', async () => {
@@ -909,10 +912,25 @@ describe('GET /api/admin/crm/appuntamenti', () => {
     })
 
     it('le tabelle del CRM assenti → 503', async () => {
-        h.errori = { 'crm_settimane:select': { code: 'PGRST205' } }
+        h.errori = { 'crm_appuntamenti:select': { code: 'PGRST205' } }
         const res = await GET(get(settimana))
         expect(res.status).toBe(503)
         expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
+    })
+
+    it('le tabelle delle SETTIMANE assenti → l’agenda c’è, senza slot e senza avviso «fuori disponibilità»', async () => {
+        h.db.crm_appuntamenti = [
+            // martedì 10:00 Roma di U2, che non ha nessuna fascia: con le settimane installate sarebbe «fuori»
+            visita({ id: 'v-2', inizio: '2026-11-03T09:00:00.000Z', fine: '2026-11-03T09:45:00.000Z', assegnata_a: U2 }),
+        ]
+        h.errori = { 'crm_settimane:select': { code: 'PGRST205' } }
+        const res = await GET(get(settimana))
+        expect(res.status).toBe(200)
+        const { appuntamenti, slot, persone } = await res.json()
+        expect(appuntamenti).toHaveLength(1)
+        expect(appuntamenti[0]).toMatchObject({ id: 'v-2', fuori_disponibilita: false })
+        expect(slot).toEqual([])
+        expect(persone.length).toBeGreaterThan(0)
     })
 
     it('un guasto nel leggere le fasce → 500, non una settimana senza orari', async () => {

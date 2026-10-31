@@ -11,7 +11,7 @@ import { formatData } from '@/lib/i18n/date'
 import { logEvento } from '@/lib/logging/logger'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { zDataOraLocale, zDataYMD } from '@/lib/validation/common'
-import { rispostaErroreDb } from './errori'
+import { rispostaErroreDb, tabellaAssente } from './errori'
 import { caricaFasceEffettive, type FasciaEffettiva } from './settimane'
 import { fuoriDisponibilita } from './slot'
 import { DURATA_SLOT_DEFAULT_MIN, type IndisponibilitaRow } from './tipi'
@@ -125,8 +125,13 @@ export async function assertSedeInScope(
  * che toccano la visita (della persona e di tutta la sede) e decide con `fuoriDisponibilita`. Una visita sta
  * dentro se sta per intero in una fascia della sua persona OPPURE della sede.
  *
- * Un guasto di lettura NON diventa «dentro»: torna la risposta d'errore (500, o 503 se le tabelle
- * mancano), perché un avviso che tace per un guasto direbbe alla segretaria «tutto a posto» quando non lo sa.
+ * Un guasto di lettura NON diventa «dentro»: torna la risposta d'errore (500), perché un avviso che tace per
+ * un guasto direbbe alla segretaria «tutto a posto» quando non lo sa.
+ *
+ * Le tabelle delle settimane ASSENTI sono un'altra cosa: le disponibilità per settimana non sono installate.
+ * Succede su un database col CRM ma senza la migrazione delle settimane (quello E2E della CI, che non ha la
+ * cassa e non può riceverla; o i minuti in cui il codice nuovo è già in linea e la migrazione non ancora). Lì
+ * la visita si fissa e si sposta lo stesso, senza l'avviso: senza fasce, ogni visita risulterebbe «fuori».
  */
 export async function visitaFuoriDisponibilita(
   supabase: SupabaseClient,
@@ -138,6 +143,10 @@ export async function visitaFuoriDisponibilita(
   try {
     fasce = await caricaFasceEffettive(supabase, v.scuolaId, giorno, giorno)
   } catch (err) {
+    if (tabellaAssente(err)) {
+      logEvento('crm', 'warn', { operazione: `${v.operazione}:disponibilita`, esito: 'settimane-non-installate' }, err)
+      return { fuori: false }
+    }
     return { response: rispostaErroreDb(err as { code?: string; message?: string }, `${v.operazione}:disponibilita`) }
   }
 

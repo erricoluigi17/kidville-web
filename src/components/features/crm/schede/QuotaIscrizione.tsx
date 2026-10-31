@@ -208,7 +208,11 @@ export function QuotaIscrizione({
       bambino.quota_pagamento_stato !== 'pagato'
     contenuto = (
       <>
-        <Badge tone="success">{inAttesaBonifico ? t('quotaStatoAttesaBonifico') : t('quotaStatoInContabilita')}</Badge>
+        {/* In attesa = blu (`inCorso`), non verde: il verde di «in contabilità» dice «fatto», e un bonifico che la
+            banca non ha ancora chiuso non lo è. (`info` qui è verde, la stessa faccia di «fatto»: non basta.) */}
+        <Badge tone={inAttesaBonifico ? 'inCorso' : 'success'}>
+          {inAttesaBonifico ? t('quotaStatoAttesaBonifico') : t('quotaStatoInContabilita')}
+        </Badge>
         {dettagli}
         <div>
           <Link href="/admin/pagamenti?vista=scadenzario" className={COLLEGAMENTO_PASTIGLIA}>

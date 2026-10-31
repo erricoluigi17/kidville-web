@@ -127,12 +127,15 @@ function leggiEsito(json: unknown, bambinoId: string, alunnoId: string, eseguito
   if (j.esito === 'ok') {
     const collegato = j.collegato === true
     const passaggio = j.passaggio == null ? null : esitoPassaggioDa(j.passaggio)
+    // ⚠️ Chi ha collegato sta DENTRO `esito` (`alunno-collegato:segreteria`, `alunno-collegato:sistema`), non in
+    // un campo `via`: la redazione del logger è a lista bianca e una chiave `via` non è fra quelle permesse, quindi
+    // uscirebbe `[redatto]`. Lo stesso accorgimento del motivo di blocco (`quota-bloccata:<motivo>`).
+    const chi = eseguitoDa ? 'segreteria' : 'sistema'
     logEvento('crm', 'info', {
       operazione: OP_AGGANCIA,
-      esito: collegato ? 'alunno-collegato' : 'alunno-gia-collegato',
+      esito: `${collegato ? 'alunno-collegato' : 'alunno-gia-collegato'}:${chi}`,
       entita_id: bambinoId,
       alunno_id: alunnoId,
-      via: eseguitoDa ? 'segreteria' : 'sistema',
     })
     if (passaggio) registraEsitoPassaggio(passaggio, bambinoId, OP_AGGANCIA)
     return { esito: 'ok', collegato, passaggio }

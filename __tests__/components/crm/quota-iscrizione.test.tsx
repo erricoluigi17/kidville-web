@@ -548,6 +548,27 @@ describe('QuotaIscrizione · gli stati', () => {
     expect(screen.getByText('In contabilità, in attesa del bonifico')).toBeTruthy()
   })
 
+  it('«in attesa del bonifico» ha un tono d’attesa, diverso dal verde di «in contabilità»', () => {
+    const base = {
+      quota_stato: 'in_contabilita' as const,
+      quota_importo: 150,
+      quota_anno: 2027,
+      quota_saldata_il: '2026-10-20',
+      quota_pagamento_id: 'pagamento-1',
+      alunno_id: ALUNNO,
+    }
+    monta({ ...base, quota_metodo: 'bonifico', quota_pagamento_stato: 'da_pagare' })
+    const attesa = screen.getByText('In contabilità, in attesa del bonifico').className
+    cleanup()
+    monta({ ...base, quota_metodo: 'bonifico', quota_pagamento_stato: 'pagato' })
+    const fatto = screen.getByText('In contabilità').className
+
+    expect(fatto).toContain('kidville-success-soft')
+    expect(attesa).toContain('kidville-info-soft')
+    expect(attesa).not.toContain('kidville-success-soft')
+    expect(attesa).not.toBe(fatto)
+  })
+
   it('bonifico in contabilità e voce pagata dalla banca: solo «in contabilità»', () => {
     monta({
       quota_stato: 'in_contabilita',

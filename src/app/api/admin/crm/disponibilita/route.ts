@@ -136,6 +136,13 @@ export const PUT = withRoute('admin/crm/disponibilita:PUT', async (request: Next
     p_eseguito_da: auth.user.id,
   })
   if (error) {
+    if (codiceErroreDb(error) === '22023') {
+      // La validazione di sopra dovrebbe averlo fermato: se la funzione rifiuta gli argomenti, qualcosa non torna
+      // fra le due. Non è un guasto del server (500) ma nemmeno una cosa da far passare in silenzio: avviso nel log
+      // e 400, come fa la route della quota.
+      logEvento('crm', 'warn', { operazione: OP_PUT, esito: 'settimana-argomenti-non-validi', scuola_id: scuolaId }, error)
+      return validationError([{ path: ['fasce'], message: 'Dati non validi' }])
+    }
     // Dopo una `rpc` valgono SOLO i quattro codici di «funzione o tabella assente»: su una funzione installata
     // un `42703` è un errore vero nel suo corpo, e non deve travestirsi da «CRM non installato».
     if (CODICI_RPC_CRM_ASSENTE.has(codiceErroreDb(error))) {

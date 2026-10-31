@@ -36,6 +36,7 @@ vi.mock('@/lib/logging/logger', async (orig) => {
 })
 
 import { agganciaAlunno, agganciaDaImport, alunnoDaDomandaImportata } from '@/lib/crm/aggancio-alunno'
+import { redact } from '@/lib/logging/redact'
 
 const DOMANDA = 'd1d1d1d1-0000-4000-8000-000000000001'
 const B0 = 'b0b0b0b0-0000-4000-8000-000000000000'
@@ -122,17 +123,42 @@ describe('agganciaAlunno — la porta sulla funzione SQL', () => {
 
   it('un aggancio che riesce lascia una riga di log col suo id (anche il successo si registra)', async () => {
     await agganciaAlunno(conDb({}), B0, A0, UTENTE)
-    const riga = logCrm().find((r) => r.campi.esito === 'alunno-collegato')
+    const riga = logCrm().find((r) => r.campi.esito === 'alunno-collegato:segreteria')
     expect(riga?.livello).toBe('info')
     expect(riga?.campi.entita_id).toBe(B0)
     expect(riga?.campi.alunno_id).toBe(A0)
+  })
+
+  it('chi ha collegato sta DENTRO esito (segreteria o sistema), non in una chiave «via» che il logger redige', async () => {
+    await agganciaAlunno(conDb({}), B0, A0, UTENTE)
+    await agganciaAlunno(conDb({}), B0, A0, null)
+    rispondeOk(false)
+    await agganciaAlunno(conDb({}), B0, A0, null)
+
+    const esiti = logCrm().map((r) => r.campi.esito)
+    expect(esiti).toContain('alunno-collegato:segreteria')
+    expect(esiti).toContain('alunno-collegato:sistema')
+    expect(esiti).toContain('alunno-gia-collegato:sistema')
+    for (const r of logCrm()) expect(Object.keys(r.campi)).not.toContain('via')
+  })
+
+  it('con la redazione VERA l’informazione sopravvive: esito esce in chiaro, con chi ha collegato', async () => {
+    await agganciaAlunno(conDb({}), B0, A0, null)
+    const riga = logCrm().find((r) => String(r.campi.esito).startsWith('alunno-collegato'))
+    expect(riga).toBeDefined()
+    const uscito = redact(riga!.campi) as Record<string, unknown>
+    expect(uscito.esito).toBe('alunno-collegato:sistema')
+    expect(uscito.operazione).toBe(riga!.campi.operazione)
+    // La prova che la chiave «via» NON sopravvive: è il motivo per cui l'informazione sta nel valore di esito.
+    const conVia = redact({ esito: 'alunno-collegato', via: 'sistema' }) as Record<string, unknown>
+    expect(conVia.via).not.toBe('sistema')
   })
 
   it('ok senza novità (collegato: false): è un esito, e dice che non è stato scritto niente', async () => {
     rispondeOk(false)
     const esito = await agganciaAlunno(conDb({}), B0, A0, UTENTE)
     expect(esito).toEqual({ esito: 'ok', collegato: false, passaggio: null })
-    expect(logCrm().some((r) => r.campi.esito === 'alunno-gia-collegato')).toBe(true)
+    expect(logCrm().some((r) => r.campi.esito === 'alunno-gia-collegato:segreteria')).toBe(true)
   })
 
   it.each(['non_trovato', 'sede_diversa', 'gia_collegato_altro', 'alunno_gia_collegato'] as const)(

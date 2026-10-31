@@ -653,8 +653,21 @@ describe('PUT /api/admin/crm/disponibilita', () => {
             }
         })
 
-        it('argomenti che la funzione non sa leggere (22023) e ogni altro guasto → 500', async () => {
-            for (const code of ['22023', '08006', '40001']) {
+        it('argomenti che la funzione rifiuta (22023): 400 e un avviso nel log, non un 500 (come la route della quota)', async () => {
+            h.rpc = () => ({ data: null, error: { code: '22023', message: 'sede, settimana e fasce sono obbligatori' } })
+            const res = await invia()
+            expect(res.status).toBe(400)
+            const avviso = h.logEvento.mock.calls.find((c) => c[2]?.esito === 'settimana-argomenti-non-validi')
+            expect(avviso).toBeDefined()
+            expect(avviso![0]).toBe('crm')
+            expect(avviso![1]).toBe('warn')
+            // Il testo del database non torna al client.
+            expect(JSON.stringify(await res.json())).not.toContain('obbligatori')
+            expect(h.logEvento.mock.calls.some((c) => c[2]?.esito === 'settimana-salvata')).toBe(false)
+        })
+
+        it('ogni altro guasto del database → 500', async () => {
+            for (const code of ['08006', '40001']) {
                 h.rpc = () => ({ data: null, error: { code, message: 'x' } })
                 expect((await invia()).status, code).toBe(500)
             }

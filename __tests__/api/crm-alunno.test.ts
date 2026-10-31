@@ -191,7 +191,7 @@ describe('PUT …/alunno — collega il bambino a un alunno della sede', () => {
   it('l’aggancio riuscito lascia una riga di log col bambino', async () => {
     rispondeConEsito({ esito: 'ok', collegato: true, passaggio: null })
     await put({ alunnoId: ALUNNO })
-    expect(logCrm().some((r) => r.campi.esito === 'alunno-collegato' && r.campi.entita_id === B_LIBERO)).toBe(true)
+    expect(logCrm().some((r) => r.campi.esito === 'alunno-collegato:segreteria' && r.campi.entita_id === B_LIBERO)).toBe(true)
   })
 
   it('alunno di un’altra sede: 422 ALUNNO_NON_DELLA_SEDE', async () => {

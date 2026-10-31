@@ -1,6 +1,4 @@
-import { describe, it, expect, expectTypeOf, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { SEDE_A } from '../../fixtures/sedi'
+import { describe, it, expectTypeOf } from 'vitest'
 import type { AppuntamentoRow, BambinoRow, SchedaRow } from '@/lib/crm/tipi'
 import { ElencoSchede } from '@/components/features/crm/schede/ElencoSchede'
 import { DettaglioScheda } from '@/components/features/crm/schede/DettaglioScheda'
@@ -26,14 +24,11 @@ import { StatisticheCrm } from '@/components/features/crm/statistiche/Statistich
  * Le due metà:
  *  · i test di TIPO (`expectTypeOf`) sono controllati da `tsc --noEmit`, non da vitest: a
  *    runtime non fanno niente. Il gate li vede perché `tsconfig.json` include `**\/*.tsx`;
- *  · i test di RENDER verificano che ogni segnaposto si monti con quelle props e dica «in
- *    costruzione» finché non c'è la schermata vera.
+ *  · i test di RENDER, che verificavano «in costruzione», sono stati tolti all'integrazione: vedi in fondo.
  *
  * Una sessione che sostituisce un segnaposto tiene queste firme; se ne serve una diversa lo dice
  * nel rapporto, non la cambia di nascosto.
  */
-
-const noop = () => {}
 
 describe('i dodici segnaposto · le firme del contratto', () => {
   it('ElencoSchede', () => {
@@ -110,44 +105,6 @@ describe('i dodici segnaposto · le firme del contratto', () => {
   })
 })
 
-describe('i dodici segnaposto · si montano con quelle props e dicono «in costruzione»', () => {
-  const bambino = { id: 'bambino-1' } as BambinoRow
-  const scheda = { id: 'scheda-1' } as SchedaRow
-
-  const CASI: [string, () => React.ReactElement][] = [
-    ['ElencoSchede', () => <ElencoSchede scuolaId={SEDE_A} onApri={noop} />],
-    ['DettaglioScheda', () => <DettaglioScheda schedaId="scheda-1" onChiudi={noop} />],
-    ['NuovaScheda', () => <NuovaScheda scuolaId={SEDE_A} onCreata={noop} onAnnulla={noop} />],
-    ['AgendaSettimana', () => <AgendaSettimana scuolaId={SEDE_A} onApriScheda={noop} />],
-    ['FissaVisita', () => <FissaVisita scuolaId={SEDE_A} onFatto={noop} onAnnulla={noop} />],
-    ['DisponibilitaPersona', () => <DisponibilitaPersona scuolaId={SEDE_A} />],
-    ['BadgeCollegamento', () => <BadgeCollegamento bambino={bambino} />],
-    ['AssociaDomanda', () => <AssociaDomanda scuolaId={SEDE_A} schedaId="scheda-1" bambino={bambino} onCollegato={noop} />],
-    ['AvvisoDomandaDaAssociare', () => <AvvisoDomandaDaAssociare scheda={scheda} onAggiornata={noop} />],
-    ['DaRichiamare', () => <DaRichiamare scuolaId={SEDE_A} onApriScheda={noop} />],
-    ['AzioniScheda', () => <AzioniScheda scuolaId={SEDE_A} schedaId="scheda-1" onAggiornata={noop} />],
-    // `StatisticheCrm` non è più un segnaposto: dalla sessione 6 è la schermata vera (la sua firma resta
-    // protetta dal test di tipo qui sopra; il comportamento sta in `statistiche.test.tsx`).
-  ]
-
-  it('sono undici (dodici meno quelli già sostituiti: StatisticheCrm)', () => {
-    expect(CASI).toHaveLength(11)
-  })
-
-  // Le schermate vere hanno già sostituito il segnaposto: la firma resta nel contratto (test di tipo
-  // qui sopra) e nei CASI, ma «in costruzione» non è più vero e il loro comportamento ha un test suo.
-  //  · Sessione 5: DaRichiamare, AzioniScheda → `follow-up.test.tsx`
-  const SOSTITUITI = ['DaRichiamare', 'AzioniScheda']
-
-  it.each(CASI.filter(([nome]) => !SOSTITUITI.includes(nome)))('%s', (nome, el) => {
-    render(el())
-    const riquadro = screen.getByRole('status')
-    expect(riquadro.getAttribute('data-crm-segnaposto')).toBe(nome)
-    expect(riquadro.textContent).toContain('In costruzione')
-  })
-
-  it('FissaVisita passa la scheda quando c’è', () => {
-    render(<FissaVisita scuolaId={SEDE_A} schedaId="scheda-9" onFatto={vi.fn()} onAnnulla={vi.fn()} />)
-    expect(screen.getByRole('status').getAttribute('data-scheda-id')).toBe('scheda-9')
-  })
-})
+// Il secondo blocco di questo file («si montano con quelle props e dicono "in costruzione"») è stato tolto
+// all'integrazione (2026-10-31): le sessioni 2–6 hanno sostituito tutti i dodici segnaposto con le schermate
+// vere, ognuna col proprio test di comportamento. Resta il contratto che conta, le FIRME qui sopra.

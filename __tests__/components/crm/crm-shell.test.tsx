@@ -21,8 +21,8 @@ import {
  * CRM della segreteria · Compito 1.6 — la cornice: cinque schede guidate da `?tab=` e le etichette
  * di TUTTI i vocabolari in italiano e in inglese.
  *
- * Qui girano i segnaposto VERI (`data-crm-segnaposto`): il test misura che la cornice monti la
- * schermata giusta e le passi la sede. Il comportamento del pannello di dettaglio, che ha bisogno
+ * Le schermate vere sono sostituite da finti che rendono il segnaposto (`data-crm-segnaposto`): il test
+ * misura che la cornice monti la schermata giusta e le passi la sede. Il comportamento del pannello di dettaglio, che ha bisogno
  * di schermate che chiamino `onApri`, sta in `crm-shell-dettaglio.test.tsx`.
  */
 
@@ -34,26 +34,38 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
 
-// `StatisticheCrm` non è più un segnaposto (sessione 6): chiama il server. La cornice si misura con un
-// segnaposto al suo posto; la schermata vera ha il suo test (`statistiche.test.tsx`).
-vi.mock('@/components/features/crm/statistiche/StatisticheCrm', async () => {
+// Le cinque schermate delle linguette non sono più segnaposto: le hanno riempite le sessioni 2, 3, 5 e 6, e
+// chiamano il server. Qui si misura la CORNICE (quale schermata monta e con quale sede), quindi ognuna è
+// sostituita da un finto che rende il segnaposto: le asserzioni su `data-crm-segnaposto` restano vere senza far
+// partire la rete. Le schermate vere hanno i loro test (`schede`, `agenda`, `follow-up`, `statistiche`).
+vi.mock('@/components/features/crm/agenda/AgendaSettimana', async () => {
   const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
   return {
-    StatisticheCrm: ({ scuolaId }: { scuolaId: string }) => (
-      <Segnaposto nome="StatisticheCrm" dati={{ 'scuola-id': scuolaId }} />
-    ),
+    AgendaSettimana: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="AgendaSettimana" dati={{ 'scuola-id': scuolaId }} />,
   }
 })
-
-// Sessione 5: «Da richiamare» non è più un segnaposto, ha la sua schermata vera (e il suo test,
-// `follow-up.test.tsx`). Qui si misura la CORNICE: quale schermata monta e con quale sede. Un finto che
-// rende il segnaposto tiene vere le asserzioni su `data-crm-segnaposto` senza far partire la rete.
 vi.mock('@/components/features/crm/follow-up/DaRichiamare', async () => {
   const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
   return {
-    DaRichiamare: ({ scuolaId }: { scuolaId: string }) => (
-      <Segnaposto nome="DaRichiamare" dati={{ 'scuola-id': scuolaId }} />
-    ),
+    DaRichiamare: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="DaRichiamare" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
+vi.mock('@/components/features/crm/schede/ElencoSchede', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    ElencoSchede: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="ElencoSchede" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
+vi.mock('@/components/features/crm/disponibilita/DisponibilitaPersona', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    DisponibilitaPersona: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="DisponibilitaPersona" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
+vi.mock('@/components/features/crm/statistiche/StatisticheCrm', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    StatisticheCrm: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="StatisticheCrm" dati={{ 'scuola-id': scuolaId }} />,
   }
 })
 
@@ -249,7 +261,8 @@ describe('crmShell · i sei namespace sono montati', () => {
   // Un namespace riempito dalla sua sessione esce da questo elenco (e dal controllo qui sotto), con la ragione:
   //  · Sessione 5: crmFollowUp → le chiavi sono usate da `follow-up/*`, il test `follow-up.test.tsx` le legge a schermo
   //  · Sessione 6: crmStatistiche → ha i suoi test in `statistiche.test.tsx`
-  const RIEMPITI = ['crmFollowUp', 'crmStatistiche']
+  //  · Sessione 3: crmAgenda → le chiavi sono usate da `agenda/*` e `disponibilita/*`, test `agenda.test.tsx`
+  const RIEMPITI = ['crmFollowUp', 'crmStatistiche', 'crmAgenda']
 
   it('i namespace non ancora riempiti nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
     for (const lingua of LINGUE) {

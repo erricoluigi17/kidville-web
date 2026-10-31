@@ -2581,7 +2581,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 360 → 362 il 2026-10-31: `admin/crm/azioni` e `admin/crm/azioni/[id]` (CRM, sessione 5, follow-up).
             // Controllate: gate `requireCrm`, sede da `restringiSedi` (GET) o da `assertSchedaInScope` (POST,
             // PATCH), ogni `update` con `.eq('scuola_id')` nella stessa istruzione. Nessuna esenzione.
-            routeConServiceRole: 362,
+            // 362 → 368 il 2026-10-31 (CRM della segreteria, sessione 3, agenda): le SEI route nuove —
+            // `admin/crm/appuntamenti`, `admin/crm/appuntamenti/[id]`, `admin/crm/disponibilita`,
+            // `admin/crm/disponibilita/[id]`, `admin/crm/indisponibilita` e `admin/crm/indisponibilita/[id]`.
+            // Tutte controllate, nessuna esenzione: gate `requireCrm`; le liste portano `.in('scuola_id', …)`
+            // (sede da `resolveScuoleAttive`/`restringiSedi`); le scritture sulle righe già lette portano
+            // `.eq('scuola_id', <sede della riga>)` e la sede della riga passa da `assertSedeInScope`; le
+            // creazioni risolvono la sede con `resolveScuolaScrittura` o con `assertSchedaInScope`. Misurato
+            // rieseguendo il lock: 362 → 368.
+            routeConServiceRole: 368,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2882,7 +2890,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 557 → 558 il 2026-10-31: `admin/crm/statistiche:GET` (CRM, sessione 6); `handlerEsentati` non cambia.
             // 558 → 561 il 2026-10-31: `admin/crm/azioni:GET`, `admin/crm/azioni:POST` e
             // `admin/crm/azioni/[id]:PATCH` (CRM, sessione 5); `handlerEsentati` non cambia.
-            handlerControllati: 561,
+            // 561 → 571 il 2026-10-31: i DIECI handler delle sei route del CRM dichiarate sopra, a
+            // `routeConServiceRole` (2+1+2+2+2+1: appuntamenti GET e POST, appuntamenti/[id] PATCH,
+            // disponibilita GET e POST, disponibilita/[id] PATCH e DELETE, indisponibilita GET e POST,
+            // indisponibilita/[id] DELETE). Il passo NON coincide col numero di file (+6 route, +10 handler):
+            // è il caso normale, un file espone più metodi. Tutti CONTROLLATI, `handlerEsentati` fermo a 109.
+            // Misurato rieseguendo il lock: 561 → 571.
+            handlerControllati: 571,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

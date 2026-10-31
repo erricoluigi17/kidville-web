@@ -34,6 +34,17 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
 
+// `StatisticheCrm` non è più un segnaposto (sessione 6): chiama il server. La cornice si misura con un
+// segnaposto al suo posto; la schermata vera ha il suo test (`statistiche.test.tsx`).
+vi.mock('@/components/features/crm/statistiche/StatisticheCrm', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    StatisticheCrm: ({ scuolaId }: { scuolaId: string }) => (
+      <Segnaposto nome="StatisticheCrm" dati={{ 'scuola-id': scuolaId }} />
+    ),
+  }
+})
+
 /** Quale segnaposto sta a schermo per ciascuna linguetta. */
 const SEGNAPOSTO_DI: Record<(typeof TAB_CRM)[number], string> = {
   agenda: 'AgendaSettimana',
@@ -223,9 +234,10 @@ describe('crmShell · i sei namespace sono montati', () => {
     }
   })
 
-  it('cinque dei sei nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
+  it('quattro dei sei nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
+    // `crmStatistiche` l'ha riempito la sessione 6 (statistiche): ha i suoi test in `statistiche.test.tsx`.
     for (const lingua of LINGUE) {
-      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell')) {
+      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell' && n !== 'crmStatistiche')) {
         const file = JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8'))
         expect(Object.keys(file)).toEqual([])
       }

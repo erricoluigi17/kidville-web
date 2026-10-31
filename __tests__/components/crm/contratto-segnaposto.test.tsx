@@ -126,11 +126,12 @@ describe('i dodici segnaposto · si montano con quelle props e dicono «in costr
     ['AvvisoDomandaDaAssociare', () => <AvvisoDomandaDaAssociare scheda={scheda} onAggiornata={noop} />],
     ['DaRichiamare', () => <DaRichiamare scuolaId={SEDE_A} onApriScheda={noop} />],
     ['AzioniScheda', () => <AzioniScheda scuolaId={SEDE_A} schedaId="scheda-1" onAggiornata={noop} />],
-    ['StatisticheCrm', () => <StatisticheCrm scuolaId={SEDE_A} />],
+    // `StatisticheCrm` non è più un segnaposto: dalla sessione 6 è la schermata vera (la sua firma resta
+    // protetta dal test di tipo qui sopra; il comportamento sta in `statistiche.test.tsx`).
   ]
 
-  it('sono dodici', () => {
-    expect(CASI).toHaveLength(12)
+  it('sono undici (dodici meno quelli già sostituiti: StatisticheCrm)', () => {
+    expect(CASI).toHaveLength(11)
   })
 
   it.each(CASI)('%s', (nome, el) => {

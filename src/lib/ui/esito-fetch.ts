@@ -3441,6 +3441,18 @@ export const CODICI_ERRORE = {
      *    di `admin/crm/schede`).
      */
     CONTATTO_OBBLIGATORIO: 'erroreCrmContattoObbligatorio',
+    /**
+     * La quota d'iscrizione del CRM (31/10/2026, `PUT`/`DELETE …/bambini/[bambinoId]/quota`):
+     *  · 422 `QUOTA_GIORNO_FUTURO` — il giorno del pagamento è dopo oggi (a Roma);
+     *  · 422 `QUOTA_ANNO_MANCANTE` — il bambino non ha l'anno di ingresso: l'anno della quota si ricava da lì;
+     *  · 409 `QUOTA_CASSA_CHIUSA` — contanti datati a un giorno già chiuso in cassa (la risposta porta
+     *    anche `giornoProposto`: oggi);
+     *  · 409 `QUOTA_GIA_IN_CONTABILITA` — la quota è già una voce dell'alunno: si corregge in contabilità.
+     */
+    QUOTA_GIORNO_FUTURO: 'erroreCrmQuotaGiornoFuturo',
+    QUOTA_ANNO_MANCANTE: 'erroreCrmQuotaAnnoMancante',
+    QUOTA_CASSA_CHIUSA: 'erroreCrmQuotaCassaChiusa',
+    QUOTA_GIA_IN_CONTABILITA: 'erroreCrmQuotaGiaInContabilita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -768,5 +768,9 @@
   "erroreCrmSoloLaPropria": "You can only edit your own availability. Editing other people’s availability requires the management.",
   "erroreCrmOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly.",
   "erroreCrmElementoNonTrovato": "This item no longer exists. Refresh the page.",
-  "erroreCrmContattoObbligatorio": "At least one valid phone number or email is required."
+  "erroreCrmContattoObbligatorio": "At least one valid phone number or email is required.",
+  "erroreCrmQuotaGiornoFuturo": "The payment date cannot be in the future.",
+  "erroreCrmQuotaAnnoMancante": "Set the child’s year of entry before recording the fee.",
+  "erroreCrmQuotaCassaChiusa": "The cash register for that day is already closed. Pick a day after the last closing, or today.",
+  "erroreCrmQuotaGiaInContabilita": "The fee is already in accounting: correct it there."
 }

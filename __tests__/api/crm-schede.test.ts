@@ -841,21 +841,12 @@ describe('PATCH /schede/[id]/bambini/[bambinoId]', () => {
         expect(riga(B2).motivo_perdita).toBeNull()
     })
 
-    it('quota saldata: data scelta o, in mancanza, oggi a Roma; chi l’ha segnata; evento quota_segnata', async () => {
+    it('la vecchia spunta della quota non scrive più niente (dal 31/10/2026 la quota è `PUT …/quota`)', async () => {
         const res = await cambia(S1, B1A, { quotaSaldata: true, quotaSaldataIl: '2026-10-20' })
-        expect(res.status).toBe(200)
-        expect(riga(B1A)).toMatchObject({ quota_saldata: true, quota_saldata_il: '2026-10-20', quota_segnata_da: USER })
-        expect(eventiScritti()[0]).toMatchObject({ tipo: 'quota_segnata' })
-        expect(eventiScritti()[0].dati).toEqual({ bambino_id: B1A, saldata: true })
-
-        h.scritture = []
-        await cambia(S3, B3, { quotaSaldata: true })
-        expect(riga(B3).quota_saldata_il).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-
-        h.scritture = []
-        await cambia(S1, B1A, { quotaSaldata: false })
-        expect(riga(B1A)).toMatchObject({ quota_saldata: false, quota_saldata_il: null })
-        expect(eventiScritti()[0].dati).toEqual({ bambino_id: B1A, saldata: false })
+        expect(res.status).toBe(400)
+        expect(scritto('crm_bambini', 'update')).toHaveLength(0)
+        expect(eventiScritti()).toHaveLength(0)
+        expect(riga(B1A)).toMatchObject({ quota_saldata: false, quota_saldata_il: null, quota_segnata_da: null })
     })
 
     it('nome, data di nascita e anno: evento «bambino_modificato» con i soli nomi dei campi', async () => {
@@ -868,9 +859,10 @@ describe('PATCH /schede/[id]/bambini/[bambinoId]', () => {
         expect(JSON.stringify(eventi)).not.toContain('Corretto')
     })
 
-    it('più cose insieme: un evento per ciascuna (esito, quota, modifica)', async () => {
+    it('più cose insieme: un evento per ciascuna (esito, modifica); la spunta della quota è ignorata', async () => {
         await cambia(S2, B2, { esito: 'iscritto', quotaSaldata: true, nome: 'Bimbo Prova Rinominato' })
-        expect(eventiScritti().map((e) => e.tipo).sort()).toEqual(['bambino_modificato', 'esito_cambiato', 'quota_segnata'])
+        expect(eventiScritti().map((e) => e.tipo).sort()).toEqual(['bambino_modificato', 'esito_cambiato'])
+        expect(riga(B2)).toMatchObject({ quota_saldata: false, quota_segnata_da: null })
     })
 
     it('l’update porta scuola_id e scheda_id: la riga gemella di un’altra sede non si tocca', async () => {

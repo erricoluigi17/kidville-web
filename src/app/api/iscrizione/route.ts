@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -35,47 +35,41 @@ import type {
 
 const OPERAZIONE = 'iscrizione:POST'
 
-/** Quanto, al massimo, il modulo pubblico aspetta il CRM della segreteria (vedi `agganciaAlCrm`). */
-const TETTO_AGGANCIO_CRM_MS = 3000
-
 /**
  * CRM della segreteria: se la famiglia è già in scheda, il bambino diventa «iscritto» e la scheda ricorda
  * la domanda (`collegaDomandaAlCrm`). È un EXTRA della domanda, e questa porta è pubblica.
  *
  * ─── IL MODULO NON PUÒ ROMPERSI NÉ RALLENTARE PER COLPA DEL CRM ─────────────
  * La domanda è già registrata, la segreteria già avvisata, la ricevuta già partita: tutto quello che
- * succede qui dentro cambia solo la scheda del CRM. Perciò:
+ * succede qui dentro cambia solo la scheda del CRM. Perciò il lavoro NON si aspetta: si programma con
+ * `after()` e parte DOPO che la risposta è andata alla famiglia.
+ *  · NON FA ASPETTARE, per costruzione e non per un tetto: non c'è un timer da tarare, e un CRM lento,
+ *    appeso o morto non può spostare di un millisecondo la risposta (la prova è nel test, con un CRM che
+ *    non risolve mai);
  *  · NON LANCIA MAI: `collegaDomandaAlCrm` non lancia, e comunque ogni eccezione (anche una promessa
- *    rifiutata, un mock, un modulo che non si carica) è inghiottita da questo `try`/`catch` e registrata;
- *  · NON FA ASPETTARE: il CRM ha un tetto di tempo (`TETTO_AGGANCIO_CRM_MS`). Oltre, la famiglia riceve la
- *    sua risposta e il collegamento continua in coda — è idempotente (la stessa domanda lanciata due
- *    volte non duplica niente), quindi un secondo giro non fa danni;
- *  · NON CAMBIA LA RISPOSTA: il valore di ritorno è `void`, l'esito del collegamento non arriva alla famiglia;
- *  · con le tabelle `crm_*` assenti (database E2E non migrato) non fa niente e lo dice nel log.
+ *    rifiutata, un mock, un modulo che non si carica) è inghiottita dal `try`/`catch` del giro e
+ *    registrata; se `after()` stesso non si può usare (fuori da una richiesta: test, script) si scrive un
+ *    `warn` e si va avanti;
+ *  · NON CAMBIA LA RISPOSTA: la funzione ritorna `void` e la risposta è già stata decisa;
+ *  · con le tabelle `crm_*` assenti (database E2E non migrato) il giro non fa niente e lo dice nel log;
+ *  · se il giro non arriva in fondo (istanza spenta prima) la domanda resta senza collegamento: la
+ *    segreteria la associa a mano dal pulsante «Associa al bambino». È un danno piccolo e visibile, al
+ *    posto di uno invisibile: la famiglia ha già la sua ricevuta.
+ * Il collegamento è idempotente (la stessa domanda lanciata due volte non duplica niente).
  * Nel log entrano solo l'id della domanda e il codice d'esito: mai un recapito, mai un nome.
  */
-async function agganciaAlCrm(supabase: SupabaseClient, domandaId: string): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    const lavoro = Promise.resolve()
-      .then(() => collegaDomandaAlCrm(supabase, domandaId))
-      .then(
-        () => 'finito' as const,
-        (err: unknown) => {
-          logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
-          return 'finito' as const
-        },
-      )
-    const scaduto = new Promise<'scaduto'>((resolve) => {
-      timer = setTimeout(() => resolve('scaduto'), TETTO_AGGANCIO_CRM_MS)
-    })
-    if ((await Promise.race([lavoro, scaduto])) === 'scaduto') {
-      logEvento('crm', 'warn', { operazione: OPERAZIONE, esito: 'aggancio-crm-scaduto', entita_id: domandaId })
+function programmaAggancioAlCrm(supabase: SupabaseClient, domandaId: string): void {
+  const giro = async () => {
+    try {
+      await collegaDomandaAlCrm(supabase, domandaId)
+    } catch (err) {
+      logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
     }
+  }
+  try {
+    after(giro)
   } catch (err) {
-    logEvento('crm', 'error', { operazione: OPERAZIONE, esito: 'aggancio-crm-eccezione', entita_id: domandaId }, err)
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
+    logEvento('crm', 'warn', { operazione: OPERAZIONE, esito: 'aggancio-crm-non-programmato', entita_id: domandaId }, err)
   }
 }
 
@@ -441,8 +435,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         // funzione nuova si dimentica: la domanda è registrata, la famiglia ha
         // diritto alla sua conferma qualunque colonna manchi.
         await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
-        // Il CRM della segreteria, DOPO la ricevuta e senza poter cambiare la risposta (vedi `agganciaAlCrm`).
-        await agganciaAlCrm(supabase, retry.data.id)
+        // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
+        programmaAggancioAlCrm(supabase, retry.data.id)
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
       }
       // Una domanda che non entra è il guasto più grave di questa porta: fino al 20/10 non lasciava
@@ -475,8 +469,8 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
     }
 
     await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults })
-    // Il CRM della segreteria, DOPO la ricevuta e senza poter cambiare la risposta (vedi `agganciaAlCrm`).
-    await agganciaAlCrm(supabase, row.id)
+    // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
+    programmaAggancioAlCrm(supabase, row.id)
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {

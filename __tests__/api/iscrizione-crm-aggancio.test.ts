@@ -7,10 +7,13 @@ import { creaFintoSupabase, type DBFinto, type Riga, type Scrittura } from '../f
  *
  * La porta pubblica da cui arrivano le domande VERE non deve cambiare di una virgola per colpa del CRM
  * (anti-obiettivo 1 del piano): stesso stato, stesso corpo, stesso tempo — qualunque cosa faccia il CRM.
- * Le prime prove usano un `collegaDomandaAlCrm` finto che si comporta male in tutti i modi possibili
- * (esito d'errore, promessa rifiutata, eccezione sincrona, nessuna risposta mai). Le ultime usano la
- * libreria VERA sopra un database finto che applica i filtri: tabelle `crm_*` assenti → non succede
- * niente; scheda già in archivio → il bambino risulta iscritto con la domanda appena inserita.
+ * Il CRM NON si aspetta: la route lo programma con `after()` e parte dopo la risposta. Qui `after` è finto
+ * e ACCODA i giri (`h.dopo`): la risposta si legge PRIMA di eseguirli, ed è la prova che il CRM non può
+ * rallentarla — nemmeno se non risolve mai. Le prime prove usano un `collegaDomandaAlCrm` finto che si
+ * comporta male in tutti i modi possibili (esito d'errore, promessa rifiutata, eccezione sincrona, nessuna
+ * risposta mai). Le ultime usano la libreria VERA sopra un database finto che applica i filtri: tabelle
+ * `crm_*` assenti → non succede niente; scheda già in archivio → il bambino risulta iscritto con la
+ * domanda appena inserita.
  *
  * Solo dati finti: «Famiglia Prova», 333 000 0001.
  */
@@ -47,6 +50,10 @@ const h = vi.hoisted(() => ({
   clientVero: null as unknown,
   collega: vi.fn(),
   usaLibreriaVera: false,
+  /** I giri che la route ha programmato con `after()`, in ordine: non partono finché il test non li esegue. */
+  dopo: [] as Array<() => unknown>,
+  /** `after()` fuori da una richiesta lancia: qui si può simulare. */
+  afterLancia: false,
   log: [] as Array<{ evento: string; livello: string; campi: Record<string, unknown> }>,
 }))
 
@@ -57,6 +64,16 @@ vi.mock('@/lib/logging/logger', async (importOriginal) => {
     logEvento: (evento: string, livello: string, campi: Record<string, unknown>, err?: unknown) => {
       h.log.push({ evento, livello, campi })
       return vero.logEvento(evento as never, livello as never, campi as never, err)
+    },
+  }
+})
+vi.mock('next/server', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('next/server')>()
+  return {
+    ...vero,
+    after: (giro: () => unknown) => {
+      if (h.afterLancia) throw new Error('after() chiamato fuori da una richiesta')
+      h.dopo.push(giro)
     },
   }
 })
@@ -133,6 +150,12 @@ const domanda = {
 
 const logCrm = () => h.log.filter((r) => r.evento === 'crm')
 
+/** Esegue i giri programmati con `after()`, come farebbe Next DOPO aver mandato la risposta. */
+async function eseguiDopo(): Promise<void> {
+  const giri = h.dopo.splice(0)
+  for (const giro of giri) await giro()
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.inserimenti = []
@@ -141,9 +164,12 @@ beforeEach(() => {
   h.collega.mockReset()
   h.collega.mockResolvedValue({ esito: 'nessuna_scheda' })
   h.log.length = 0
+  h.dopo.length = 0
+  h.afterLancia = false
 })
 afterEach(() => {
-  vi.useRealTimers()
+  // Un giro rimasto in coda è un giro che nessun test ha guardato: non deve passare in silenzio.
+  expect(h.dopo).toEqual([])
 })
 
 describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
@@ -151,6 +177,10 @@ describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
     const res = await POST(req(domanda))
     expect(res.status).toBe(201)
     expect(await res.json()).toEqual({ id: 'sub-1' })
+    // La famiglia ha la sua risposta e il CRM NON È ANCORA partito: è programmato, non atteso.
+    expect(h.collega).not.toHaveBeenCalled()
+    expect(h.dopo).toHaveLength(1)
+    await eseguiDopo()
     expect(h.collega).toHaveBeenCalledTimes(1)
     expect(h.collega.mock.calls[0][1]).toBe('sub-1')
   })
@@ -163,6 +193,8 @@ describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
     const res = await POST(req(domanda))
     expect(res.status).toBe(201)
     expect(await res.json()).toEqual({ id: 'sub-ripiego' })
+    expect(h.dopo).toHaveLength(1)
+    await eseguiDopo()
     expect(h.collega).toHaveBeenCalledTimes(1)
     expect(h.collega.mock.calls[0][1]).toBe('sub-ripiego')
   })
@@ -171,6 +203,7 @@ describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
     h.inserimenti = [{ data: null, error: { code: '23505', message: 'duplicate key' } }]
     const res = await POST(req(domanda))
     expect(res.status).toBe(500)
+    expect(h.dopo).toEqual([])
     expect(h.collega).not.toHaveBeenCalled()
   })
 
@@ -192,14 +225,18 @@ describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
     it.each(casi)('%s', async (_nome, prepara) => {
       prepara()
       const res = await POST(req(domanda))
+      // La risposta è già in mano alla famiglia PRIMA che il CRM giri: qualunque cosa faccia, non la tocca.
       expect(res.status).toBe(201)
       expect(await res.json()).toEqual({ id: 'sub-1' })
+      // E il giro, a sua volta, non lancia mai: il CRM che si comporta male non lascia una promessa rifiutata a Next.
+      await expect(eseguiDopo()).resolves.toBeUndefined()
       expect(h.collega).toHaveBeenCalledTimes(1)
     })
 
     it('una promessa rifiutata lascia una riga di log di errore con l’id della domanda e senza dati', async () => {
       h.collega.mockRejectedValue(new Error('giù'))
       await POST(req(domanda))
+      await eseguiDopo()
       const riga = logCrm().find((r) => r.campi.esito === 'aggancio-crm-eccezione')
       expect(riga).toBeDefined()
       expect(riga!.livello).toBe('error')
@@ -208,31 +245,26 @@ describe('POST /api/iscrizione → collegaDomandaAlCrm', () => {
       for (const dato of ['Marco', '333', 'Famiglia']) expect(testo).not.toContain(dato)
     })
 
-    it('il CRM che non risponde MAI non tiene sospesa la famiglia oltre il tetto', async () => {
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    it('il CRM che non risponde MAI non rallenta la famiglia di un istante: la risposta arriva senza aspettarlo', async () => {
       h.collega.mockReturnValue(new Promise(() => undefined))
-      let risposta: Response | null = null
-      const p = POST(req(domanda)).then((r) => {
-        risposta = r
-        return r
-      })
-      // Prima del tetto, la famiglia sta ancora aspettando…
-      await vi.advanceTimersByTimeAsync(2000)
-      expect(risposta).toBeNull()
-      // …allo scadere del tetto (3 s) riceve la sua risposta di sempre.
-      await vi.advanceTimersByTimeAsync(1500)
-      const res = await p
-      expect(res.status).toBe(201)
-      expect(await res.json()).toEqual({ id: 'sub-1' })
-      const riga = logCrm().find((r) => r.campi.esito === 'aggancio-crm-scaduto')
-      expect(riga).toMatchObject({ livello: 'warn', campi: expect.objectContaining({ entita_id: 'sub-1' }) })
-    })
-
-    it('un CRM che risponde presto non lascia timer pendenti', async () => {
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       const res = await POST(req(domanda))
       expect(res.status).toBe(201)
-      expect(vi.getTimerCount()).toBe(0)
+      expect(await res.json()).toEqual({ id: 'sub-1' })
+      // Il giro è in coda e non è mai stato avviato dalla route: nessun timer da tarare, nessuna attesa.
+      expect(h.collega).not.toHaveBeenCalled()
+      expect(h.dopo).toHaveLength(1)
+      // Non si esegue: appenderebbe il test, come appenderebbe un giro vero che non finisce mai.
+      h.dopo.length = 0
+    })
+
+    it('after() non disponibile (fuori da una richiesta) → 201 lo stesso, un warn con l’id e il CRM non parte', async () => {
+      h.afterLancia = true
+      const res = await POST(req(domanda))
+      expect(res.status).toBe(201)
+      expect(await res.json()).toEqual({ id: 'sub-1' })
+      expect(h.collega).not.toHaveBeenCalled()
+      const riga = logCrm().find((r) => r.campi.esito === 'aggancio-crm-non-programmato')
+      expect(riga).toMatchObject({ livello: 'warn', campi: expect.objectContaining({ entita_id: 'sub-1' }) })
     })
   })
 })
@@ -288,6 +320,9 @@ describe('POST /api/iscrizione con la libreria vera', () => {
     expect(res.status).toBe(201)
     const { id } = await res.json()
     expect(typeof id).toBe('string')
+    // Alla risposta il CRM non ha ancora toccato niente: lo fa il giro programmato.
+    expect((db.crm_bambini as Riga[])[0]).toMatchObject({ esito: 'aperto', domanda_id: null })
+    await eseguiDopo()
     const bambino = (db.crm_bambini as Riga[])[0]
     expect(bambino).toMatchObject({ esito: 'iscritto', esito_origine: 'automatico', domanda_id: id, domanda_figlio: 0 })
   })
@@ -303,6 +338,7 @@ describe('POST /api/iscrizione con la libreria vera', () => {
     const res = await POST(req(domanda))
     expect(res.status).toBe(201)
     expect(typeof (await res.json()).id).toBe('string')
+    await eseguiDopo()
     expect(scritture.filter((s) => s.tabella.startsWith('crm_'))).toEqual([])
     expect(logCrm().some((r) => r.livello === 'warn' && r.campi.esito === 'schema-crm-assente')).toBe(true)
   })
@@ -312,6 +348,7 @@ describe('POST /api/iscrizione con la libreria vera', () => {
     conClient(db, { errori: { crm_bambini: { code: 'XX000', message: 'boom' } } })
     const res = await POST(req(domanda))
     expect(res.status).toBe(201)
+    await eseguiDopo()
     expect(logCrm().some((r) => r.livello === 'error')).toBe(true)
     expect((db.crm_bambini as Riga[])[0].domanda_id).toBeNull()
   })
@@ -323,6 +360,7 @@ describe('POST /api/iscrizione con la libreria vera', () => {
     conClient(db)
     const res = await POST(req(domanda))
     expect(res.status).toBe(201)
+    await eseguiDopo()
     expect((db.crm_bambini as Riga[])[0]).toMatchObject({ esito: 'aperto', domanda_id: null })
   })
 })

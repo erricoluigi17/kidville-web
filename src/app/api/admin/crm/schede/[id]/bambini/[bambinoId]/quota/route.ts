@@ -3,7 +3,13 @@ import { z } from 'zod'
 import { dataCivile } from '@/i18n/config'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { assertBambinoInScope, assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
-import { codiceErroreDb, rispostaCrmNonRiuscita, rispostaErroreDb, rispostaErroreDbSchema } from '@/lib/crm/errori'
+import {
+  CODICI_RPC_CRM_ASSENTE,
+  codiceErroreDb,
+  rispostaCrmNonInstallato,
+  rispostaCrmNonRiuscita,
+  rispostaErroreDb,
+} from '@/lib/crm/errori'
 import {
   annoDellaQuota,
   esitoPassaggioDa,
@@ -49,7 +55,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  *  · 409 `QUOTA_GIA_IN_CONTABILITA` — la quota è già una voce dell'alunno: si corregge in contabilità;
  *  · 409 `QUOTA_CASSA_CHIUSA` (+ `giornoProposto`) — contanti datati a un giorno già chiuso in cassa;
  *  · 422 `QUOTA_GIORNO_FUTURO`, 422 `QUOTA_ANNO_MANCANTE`;
- *  · 503 `CRM_NON_INSTALLATO` — tabelle, colonne o funzioni del CRM assenti (il database E2E della CI);
+ *  · 503 `CRM_NON_INSTALLATO` — tabelle del CRM, colonne lette dal bambino o funzioni SQL assenti (il database
+ *    E2E della CI). Dopo una `rpc` valgono SOLO i quattro codici di `CODICI_RPC_CRM_ASSENTE` (funzione o tabella
+ *    mancante): un `42703` o un `PGRST204` dal corpo di una funzione installata è un errore vero, e va in 500;
  *  · 500 `CRM_OPERAZIONE_NON_RIUSCITA` — qualunque altro guasto, comprese le categorie di sistema assenti.
  *
  * ── La notifica al genitore ────────────────────────────────────────────────────────────────────
@@ -74,6 +82,20 @@ type Contesto = { params: Promise<{ id: string; bambinoId: string }> }
 
 const bambinoSparito = () =>
   NextResponse.json({ error: 'Scheda non trovata.', codice: 'SCHEDA_NON_TROVATA' }, { status: 404 })
+
+/**
+ * Un errore tornato da una `rpc`. «Schema assente» (503, con un `warn`) solo per i quattro codici di funzione o
+ * tabella mancante: su una funzione già installata un `42703` o un `PGRST204` sono un errore vero nel suo corpo,
+ * e finiscono nel log a livello `error` con un 500. Per questo NON si usa `rispostaErroreDbSchema`, che allarga
+ * il «non installato» anche alle colonne (valido per le letture con `select`, non qui).
+ */
+function rispostaErroreRpc(error: { code?: string; message?: string }, operazione: string): NextResponse {
+  if (CODICI_RPC_CRM_ASSENTE.has(codiceErroreDb(error))) {
+    logEvento('crm', 'warn', { operazione, esito: 'schema-crm-assente' }, error)
+    return rispostaCrmNonInstallato()
+  }
+  return rispostaErroreDb(error, operazione)
+}
 
 const giaInContabilita = () =>
   NextResponse.json(
@@ -210,7 +232,7 @@ export const PUT = withRoute(
         logEvento('crm', 'warn', { operazione: OP_PUT, esito: 'quota-argomenti-non-validi', entita_id: bambinoId }, error)
         return validationError([{ path: ['quota'], message: 'Dati non validi' }])
       }
-      return rispostaErroreDbSchema(error, OP_PUT)
+      return rispostaErroreRpc(error, OP_PUT)
     }
 
     const esito = (data ?? {}) as Record<string, unknown>
@@ -278,7 +300,7 @@ export const DELETE = withRoute(
       p_bambino_id: bambinoP.data,
       p_eseguito_da: auth.user.id,
     })
-    if (error) return rispostaErroreDbSchema(error, OP_DELETE)
+    if (error) return rispostaErroreRpc(error, OP_DELETE)
 
     const esito = (data ?? {}) as Record<string, unknown>
     if (esito.esito === 'in_contabilita') return giaInContabilita()

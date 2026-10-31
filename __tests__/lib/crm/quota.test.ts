@@ -245,6 +245,25 @@ describe('passaQuotaInContabilita', () => {
     },
   )
 
+  it.each(['42703', 'PGRST204'])(
+    'dopo la rpc un %s è un errore vero nel corpo della funzione: «errore», livello error, mai «non_installato»',
+    async (code) => {
+      const supabase = conRpc(async () => ({ data: null, error: { code, message: 'column "x" does not exist' } }))
+      expect(await passaQuotaInContabilita(supabase, BAMBINO, AUTORE)).toEqual({ esito: 'errore' })
+      const righe = logCrm()
+      expect(righe.some((r) => r.livello === 'error' && r.campi.esito === 'errore')).toBe(true)
+      expect(righe.some((r) => r.campi.esito === 'schema-crm-assente')).toBe(false)
+    },
+  )
+
+  it('se rpc lancia con un 42703 sull’eccezione, è «errore» e non «non_installato»', async () => {
+    const supabase = conRpc(async () => {
+      throw Object.assign(new Error('colonna'), { code: '42703' })
+    })
+    await expect(passaQuotaInContabilita(supabase, BAMBINO, AUTORE)).resolves.toEqual({ esito: 'errore' })
+    expect(logCrm().some((r) => r.campi.esito === 'schema-crm-assente')).toBe(false)
+  })
+
   it('un errore del database è «errore» e resta nel log a livello error', async () => {
     const supabase = conRpc(async () => ({ data: null, error: { code: 'P0001', message: 'registra_incasso_voce non ha registrato' } }))
     expect(await passaQuotaInContabilita(supabase, BAMBINO, AUTORE)).toEqual({ esito: 'errore' })

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
 import { logEvento } from '@/lib/logging/logger'
-import { CODICI_SCHEMA_CRM_ASSENTE, codiceErroreDb } from './errori'
+import { CODICI_RPC_CRM_ASSENTE, codiceErroreDb } from './errori'
 import {
   QUOTA_MOTIVI_BLOCCO,
   type MetodoQuota,
@@ -181,8 +181,13 @@ export function registraEsitoPassaggio(esito: EsitoPassaggio, bambinoId: string,
   }
 }
 
+/**
+ * Dopo una `rpc` valgono SOLO i quattro codici di `CODICI_RPC_CRM_ASSENTE` (funzione o tabella assente): su una
+ * funzione già installata un `42703` o un `PGRST204` è un errore vero nel suo corpo, e non deve travestirsi da
+ * «schema assente» (warn) ma finire nel log a livello `error`.
+ */
 function esitoDaErrore(err: unknown, bambinoId: string, operazione: string): EsitoPassaggio {
-  if (CODICI_SCHEMA_CRM_ASSENTE.has(codiceErroreDb(err))) {
+  if (CODICI_RPC_CRM_ASSENTE.has(codiceErroreDb(err))) {
     logEvento('crm', 'warn', { operazione, esito: 'schema-crm-assente', entita_id: bambinoId }, err)
     return { esito: 'non_installato' }
   }

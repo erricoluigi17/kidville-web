@@ -423,12 +423,17 @@ describe('PUT …/quota · segnare la quota', () => {
     expect(h.chiamateRpc).toHaveLength(0)
   })
 
-  it.each(['PGRST202', '42883'])('la funzione non c’è ancora (%s): 503 CRM_NON_INSTALLATO', async (code) => {
-    h.rpc.crm_quota_segna = () => ({ data: null, error: { code, message: 'Could not find the function' } })
-    const res = await put(corpoValido())
-    expect(res.status).toBe(503)
-    expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
-  })
+  it.each(['PGRST202', '42883', 'PGRST205', '42P01'])(
+    'la funzione o la tabella non c’è ancora (%s): 503 CRM_NON_INSTALLATO, con un warn',
+    async (code) => {
+      h.rpc.crm_quota_segna = () => ({ data: null, error: { code, message: 'Could not find the function' } })
+      const res = await put(corpoValido())
+      expect(res.status).toBe(503)
+      expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
+      expect(logCrm().some((r) => r.livello === 'warn' && r.campi.esito === 'schema-crm-assente')).toBe(true)
+      expect(h.logErrore).not.toHaveBeenCalled()
+    },
+  )
 
   it('una colonna della quota non c’è ancora (42703): 503, non un 500', async () => {
     h.errori = { crm_bambini: { code: '42703', message: 'column does not exist' } }
@@ -436,6 +441,18 @@ describe('PUT …/quota · segnare la quota', () => {
     expect(res.status).toBe(503)
     expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
   })
+
+  it.each(['42703', 'PGRST204'])(
+    'dopo la rpc un %s è un errore vero nel corpo della funzione: 500 e log error, mai 503 «non installato»',
+    async (code) => {
+      h.rpc.crm_quota_segna = () => ({ data: null, error: { code, message: 'column "x" does not exist' } })
+      const res = await put(corpoValido())
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('CRM_OPERAZIONE_NON_RIUSCITA')
+      expect(h.logErrore).toHaveBeenCalled()
+      expect(logCrm().some((r) => r.campi.esito === 'schema-crm-assente')).toBe(false)
+    },
+  )
 
   it('non scrive mai da sé: tutte le scritture passano dalla funzione SQL', async () => {
     segnaOk()
@@ -599,6 +616,30 @@ describe('DELETE …/quota · togliere la quota', () => {
     h.errori = { crm_bambini: { code: '42P01', message: 'no table' } }
     expect((await del()).status).toBe(503)
   })
+
+  it.each(['42703', 'PGRST204'])(
+    'dopo la rpc un %s è un errore vero nel corpo della funzione: 500 e log error, mai 503 «non installato»',
+    async (code) => {
+      h.rpc.crm_quota_togli = () => ({ data: null, error: { code, message: 'column "x" does not exist' } })
+      const res = await del()
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('CRM_OPERAZIONE_NON_RIUSCITA')
+      expect(h.logErrore).toHaveBeenCalled()
+      expect(logCrm().some((r) => r.campi.esito === 'schema-crm-assente')).toBe(false)
+    },
+  )
+
+  it.each(['PGRST202', '42883', 'PGRST205', '42P01'])(
+    'dopo la rpc la funzione o la tabella assente (%s) è 503 CRM_NON_INSTALLATO, con un warn',
+    async (code) => {
+      h.rpc.crm_quota_togli = () => ({ data: null, error: { code, message: 'assente' } })
+      const res = await del()
+      expect(res.status).toBe(503)
+      expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
+      expect(logCrm().some((r) => r.livello === 'warn' && r.campi.esito === 'schema-crm-assente')).toBe(true)
+      expect(h.logErrore).not.toHaveBeenCalled()
+    },
+  )
 
   it('errore del database: 500 con il codice generico', async () => {
     h.rpc.crm_quota_togli = () => ({ data: null, error: { code: 'P0001', message: 'il movimento non si storna' } })

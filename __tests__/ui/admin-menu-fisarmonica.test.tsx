@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createRef } from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi';
 
@@ -80,6 +81,7 @@ vi.mock('@/components/ui/CambiaProfiloMenuButton', () => ({
 }));
 
 import { AdminSidebar } from '@/components/features/admin/AdminSidebar';
+import { AdminMenuSheet } from '@/components/features/admin/AdminMenuSheet';
 
 /** Le intestazioni dei gruppi: gli unici bottoni del menu con `aria-expanded`. */
 function intestazioni(): HTMLElement[] {
@@ -177,5 +179,57 @@ describe('sidebar — la fisarmonica', () => {
     expect(contabilita).toHaveAttribute('type', 'button');
     const gruppo = screen.getByRole('group', { name: /Contabilità e servizi/ });
     expect(contabilita.getAttribute('aria-controls')).toBe(gruppo.id);
+  });
+});
+
+// Lo stesso selettore del focus-trap di `AdminMenuSheet` (lì non è esportato).
+const FOCUSABILI =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function foglio(onClose = vi.fn()) {
+  render(
+    <AdminMenuSheet open onClose={onClose} withUser={(h) => h} ruolo="segreteria" returnFocusRef={createRef<HTMLButtonElement>()} />,
+  );
+  return onClose;
+}
+
+describe('foglio «Menu» (telefono) e pannello (tablet) — la stessa fisarmonica', () => {
+  it('a /admin/coda-fatture si apre «Contabilità e servizi», senza Contabilità e Mensa che sono già nei tab', () => {
+    stub.pathname = '/admin/coda-fatture';
+    foglio();
+    expect(aperte()).toEqual([intestazione(/^Contabilità e servizi/)]);
+    const gruppo = screen.getByRole('group', { name: /Contabilità e servizi/ });
+    expect(within(gruppo).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+      '/admin/coda-fatture',
+      '/admin/mensa/cucina',
+      '/admin/armadietto',
+      '/admin/merchandise',
+    ]);
+  });
+
+  it('a /admin/mensa nessun gruppo aperto: la pagina è un tab, la voce accesa è già lì', () => {
+    stub.pathname = '/admin/mensa';
+    foglio();
+    expect(intestazioni()).toHaveLength(5);
+    expect(aperte()).toHaveLength(0);
+  });
+
+  it('toccare un gruppo non chiude il foglio; toccare una voce sì', () => {
+    stub.pathname = '/admin';
+    const onClose = foglio();
+    fireEvent.click(intestazione(/^Segreteria/));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(aperte()).toEqual([intestazione(/^Segreteria/)]);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Protocollo' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('le intestazioni sono fra gli elementi che il focus-trap attraversa', () => {
+    foglio();
+    const raggiungibili = Array.from(screen.getByRole('dialog').querySelectorAll(FOCUSABILI));
+    // Prima il conteggio: un ciclo su zero intestazioni sarebbe verde senza aver controllato nulla.
+    expect(intestazioni()).toHaveLength(5);
+    for (const b of intestazioni()) expect(raggiungibili).toContain(b);
   });
 });

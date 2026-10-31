@@ -17,10 +17,16 @@ import { zDataYMD, zUuid } from '@/lib/validation/common'
 /**
  * CRM della segreteria · i richiami da fare.
  *
- * ── GET /api/admin/crm/azioni?scuolaId&responsabile?&finoA? ───────────────────────────────────────────────
+ * ── GET /api/admin/crm/azioni?scuolaId&responsabile?&finoA?&schedaId? ─────────────────────────────────────
  * Le azioni APERTE (né fatte né cancellate) di UNA sede, con scadenza fino alla fine del giorno `finoA`
  * (di default oggi), in ordine di scadenza: le scadute in cima. Ogni azione porta `scheda` (id, nome del
  * genitore, primo telefono: quanto basta per chiamare, niente altro) e `in_ritardo`.
+ *
+ * `schedaId` (aggiunta al piano, che non la prevedeva): restringe alle azioni di UNA scheda, per la sezione
+ * «Richiami» dentro la scheda. Senza `finoA` NON c'è il tetto di oggi: il prossimo follow-up di una scheda
+ * sta quasi sempre nel futuro, ed è proprio quello che la sezione deve mostrare. La scheda passa dal gate
+ * `assertSchedaInScope` (404 se non esiste, 403 se non è di una sede dell'utente: un elenco vuoto
+ * sembrerebbe «nessun richiamo»), e le righe restano comunque ancorate alla sede dichiarata.
  *
  * ⚠️ OGGI E «IN RITARDO» SONO GIORNI DI ROMA. Su Vercel il processo gira in UTC e chi usa l'app sta in
  * Italia: «fino a oggi» come `${oggi}T23:59:59Z` farebbe entrare anche i richiami di domani mattina presto
@@ -47,6 +53,7 @@ const getQuerySchema = z.object({
   scuolaId: zUuid,
   responsabile: zUuid.optional(),
   finoA: zDataYMD.optional(),
+  schedaId: zUuid.optional(),
 })
 
 const postBodySchema = z
@@ -84,9 +91,16 @@ export const GET = withRoute('admin/crm/azioni:GET', async (request: NextRequest
     return rifiutoSede('SEDE_NON_ACCESSIBILE')
   }
 
+  if (q.data.schedaId) {
+    const gate = await assertSchedaInScope(supabase, auth.user, q.data.schedaId)
+    if ('response' in gate) return gate.response
+  }
+
   const oggi = dataCivile()
-  const limite = fineGiornoCivile(q.data.finoA ?? oggi)
-  if (limite === null) {
+  // Per una scheda sola il tetto c'è solo se lo si chiede: vedi la docstring.
+  const giornoLimite = q.data.finoA ?? (q.data.schedaId ? null : oggi)
+  const limite = giornoLimite === null ? null : fineGiornoCivile(giornoLimite)
+  if (giornoLimite !== null && limite === null) {
     return validationError([{ path: ['finoA'], message: 'Data inesistente nel calendario' }])
   }
 
@@ -98,9 +112,10 @@ export const GET = withRoute('admin/crm/azioni:GET', async (request: NextRequest
     .in('scuola_id', scuole)
     .is('fatta_il', null)
     .is('cancellata_il', null)
-    .lte('scadenza', limite)
     .order('scadenza', { ascending: true })
+  if (limite !== null) query = query.lte('scadenza', limite)
   if (q.data.responsabile) query = query.eq('responsabile', q.data.responsabile)
+  if (q.data.schedaId) query = query.eq('scheda_id', q.data.schedaId)
 
   const { data: lette, error } = await query
   if (error) return rispostaErroreDb(error, 'admin/crm/azioni:GET')

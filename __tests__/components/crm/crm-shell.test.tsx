@@ -34,6 +34,18 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
 
+// Sessione 5: «Da richiamare» non è più un segnaposto, ha la sua schermata vera (e il suo test,
+// `follow-up.test.tsx`). Qui si misura la CORNICE: quale schermata monta e con quale sede. Un finto che
+// rende il segnaposto tiene vere le asserzioni su `data-crm-segnaposto` senza far partire la rete.
+vi.mock('@/components/features/crm/follow-up/DaRichiamare', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    DaRichiamare: ({ scuolaId }: { scuolaId: string }) => (
+      <Segnaposto nome="DaRichiamare" dati={{ 'scuola-id': scuolaId }} />
+    ),
+  }
+})
+
 /** Quale segnaposto sta a schermo per ciascuna linguetta. */
 const SEGNAPOSTO_DI: Record<(typeof TAB_CRM)[number], string> = {
   agenda: 'AgendaSettimana',
@@ -223,9 +235,13 @@ describe('crmShell · i sei namespace sono montati', () => {
     }
   })
 
+  // Un namespace riempito dalla sua sessione esce da questo elenco (e dal controllo qui sotto), con la ragione:
+  //  · Sessione 5: crmFollowUp → le chiavi sono usate da `follow-up/*`, il test `follow-up.test.tsx` le legge a schermo
+  const RIEMPITI = ['crmFollowUp']
+
   it('cinque dei sei nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
     for (const lingua of LINGUE) {
-      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell')) {
+      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell' && !RIEMPITI.includes(n))) {
         const file = JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8'))
         expect(Object.keys(file)).toEqual([])
       }

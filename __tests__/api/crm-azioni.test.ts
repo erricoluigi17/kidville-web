@@ -252,6 +252,58 @@ describe('GET /api/admin/crm/azioni', () => {
         expect(data.map((a: Riga) => a.id)).toEqual([AZ_2])
     })
 
+    // ── schedaId: le azioni aperte di UNA scheda (la sezione «Richiami» dentro la scheda) ──────────────────
+    it('schedaId: tutte le aperte di quella scheda, anche quelle di giorni futuri, e solo di quella', async () => {
+        h.db.crm_azioni = [
+            azione(AZ_1, { scadenza: alle(5) }),
+            azione(AZ_2, { scadenza: alle(-2) }),
+            azione(AZ_3, { scheda_id: ALTRA_SCHEDA, scadenza: alle(0) }),
+            azione('50000000-0000-4000-8000-0000000000a1', { fatta_il: alle(-1), esito: 'ci_pensa' }),
+            azione('50000000-0000-4000-8000-0000000000a2', { cancellata_il: alle(-1) }),
+        ]
+        const res = await get(`?scuolaId=${SEDE_A}&schedaId=${SCHEDA}`)
+        expect(res.status).toBe(200)
+        const { data } = await res.json()
+        // le scadute in cima, poi la futura: nessun tetto «fino a oggi» quando si chiede una scheda
+        expect(data.map((a: Riga) => a.id)).toEqual([AZ_2, AZ_1])
+        expect(data.map((a: Riga) => a.in_ritardo)).toEqual([true, false])
+    })
+
+    it('schedaId insieme a finoA: il tetto torna a valere', async () => {
+        h.db.crm_azioni = [
+            azione(AZ_1, { scadenza: alle(5) }),
+            azione(AZ_2, { scadenza: alle(1) }),
+            azione(AZ_3, { scheda_id: ALTRA_SCHEDA, scadenza: alle(1) }),
+        ]
+        const { data } = await (await get(`?scuolaId=${SEDE_A}&schedaId=${SCHEDA}&finoA=${giorno(2)}`)).json()
+        expect(data.map((a: Riga) => a.id)).toEqual([AZ_2])
+    })
+
+    it('schedaId di un’altra sede → 403, di una scheda che non c’è → 404: mai un elenco vuoto che sembri «nessun richiamo»', async () => {
+        h.db.crm_azioni = [azione(AZ_ALTRA_SEDE, { scuola_id: SEDE_B, scheda_id: SCHEDA_ALTRA_SEDE })]
+        const altra = await get(`?scuolaId=${SEDE_A}&schedaId=${SCHEDA_ALTRA_SEDE}`)
+        expect(altra.status).toBe(403)
+        expect((await altra.json()).codice).toBe('SEDE_NON_ACCESSIBILE')
+        const assente = await get(`?scuolaId=${SEDE_A}&schedaId=40000000-0000-4000-8000-0000000000ee`)
+        expect(assente.status).toBe(404)
+    })
+
+    it('schedaId di una sede dell’utente ma scuolaId di un’altra: niente righe (la sede dichiarata comanda)', async () => {
+        // La Direzione ha due sedi: la scheda è di B, ma la sede dichiarata è A.
+        h.ruolo = 'admin'
+        h.utente = DIREZIONE
+        h.attive = [SEDE_A, SEDE_B]
+        h.db.utenti_scuole = [{ utente_id: DIREZIONE, scuola_id: SEDE_B }]
+        h.db.crm_azioni = [azione(AZ_ALTRA_SEDE, { scuola_id: SEDE_B, scheda_id: SCHEDA_ALTRA_SEDE })]
+        const res = await get(`?scuolaId=${SEDE_A}&schedaId=${SCHEDA_ALTRA_SEDE}`)
+        expect(res.status).toBe(200)
+        expect((await res.json()).data).toEqual([])
+    })
+
+    it('schedaId che non è un uuid → 400', async () => {
+        expect((await get(`?scuolaId=${SEDE_A}&schedaId=non-un-uuid`)).status).toBe(400)
+    })
+
     it('una scheda anonimizzata o sparita non rompe l’elenco', async () => {
         h.db.crm_azioni = [azione(AZ_1, { scheda_id: '40000000-0000-4000-8000-0000000000ff' })]
         const res = await get(`?scuolaId=${SEDE_A}`)

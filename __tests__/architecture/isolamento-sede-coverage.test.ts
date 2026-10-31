@@ -2575,7 +2575,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // gate `requireCrm` + sede da `resolveScuoleAttive`/`restringiSedi`. Nessuna esenzione. Le altre
             // cinque sessioni del CRM aggiungeranno le loro route: ognuna somma al proprio ramo, e alla
             // fusione i due numeri si RICALCOLANO rieseguendo il lock (non si sommano a mano).
-            routeConServiceRole: 359,
+            // 359 → 364 il 2026-10-31 (CRM della segreteria, sessione 2): le cinque route di
+            // `admin/crm/schede` (elenco+creazione, dettaglio+modifica, bambini, bambino, eventi). Tutte
+            // CONTROLLATE: gate `requireCrm`, e la sede la danno `restringiSedi`, `resolveScuolaScrittura`
+            // o `assertSchedaInScope`, con `scuola_id` esplicito su ogni lettura e scrittura. Nessuna
+            // esenzione. Misurato rieseguendo il lock, non sommato a mano (le altre sessioni del CRM
+            // aggiungono le loro: alla fusione si ricalcola).
+            routeConServiceRole: 364,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2873,7 +2879,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 566 → 555 il 2026-10-25: gli undici handler di quelle sei route (2+2+2+2+2+1).
             // 555 → 556 il 2026-10-25: `chat/threads/consegnati:POST` (vedi sopra).
             // 556 → 557 il 2026-10-30: `admin/crm/persone:GET` (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 557,
+            // 557 → 564 il 2026-10-31: i sette handler delle cinque route `admin/crm/schede` (vedi sopra);
+            // `handlerEsentati` non cambia.
+            handlerControllati: 564,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -3428,6 +3428,13 @@ export const CODICI_ERRORE = {
     CRM_NON_INSTALLATO: 'erroreCrmNonInstallato',
     SOLO_LA_PROPRIA: 'erroreCrmSoloLaPropria',
     CRM_OPERAZIONE_NON_RIUSCITA: 'erroreCrmOperazioneNonRiuscita',
+    /**
+     * Aggiunto dalla sessione 2 del CRM (schede, 2026-10-31), in fondo al blocco:
+     *  · 422 `CONTATTO_OBBLIGATORIO` — una scheda senza nemmeno un telefono o un'email validi: la
+     *    famiglia non si potrebbe né richiamare né riconoscere quando richiama (`POST` e `PATCH`
+     *    di `admin/crm/schede`).
+     */
+    CONTATTO_OBBLIGATORIO: 'erroreCrmContattoObbligatorio',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -296,6 +296,26 @@ describe('QuoteCrmPanel · «Riprova»', () => {
     expect(riga.textContent).toContain('In attesa dell’alunno')
   })
 
+  it('non c’è per una riga «senza importo», anche se l’alunno è collegato; per «in attesa» collegata sì', async () => {
+    // Il collegamento all'alunno non dipende dallo stato: la vecchia spunta può averlo. Ma per `senza_importo`
+    // la funzione SQL risponde `non_pronta` (manca l'importo, non l'alunno): il tasto porterebbe a un messaggio falso.
+    rotta(
+      'GET',
+      '/api/admin/crm/quote',
+      elenco(
+        quota({ bambinoId: BAMBINO, schedaId: SCHEDA, nome: 'Bimbo Prova', stato: 'senza_importo', importo: null, alunnoCollegato: true }),
+        quota({ bambinoId: BAMBINO_2, schedaId: SCHEDA_2, nome: 'Bimbo Collegato', stato: 'in_attesa', alunnoCollegato: true }),
+      ),
+    )
+    monta()
+    // Si aspetta la PRESENZA di entrambe le righe e del tasto dell'altra: solo allora l'assenza vale qualcosa.
+    await screen.findByRole('link', { name: 'Bimbo Prova' })
+    expect(await screen.findByRole('button', { name: 'Riprova per Bimbo Collegato' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: RIPROVA })).toBeNull()
+    const riga = screen.getByRole('link', { name: 'Bimbo Prova' }).closest('tr') as HTMLElement
+    expect(riga.textContent).toContain('Quota segnata senza importo')
+  })
+
   it('chiama la route del bambino e ricarica la lista: la quota passata in contabilità sparisce', async () => {
     // La lista riletta dopo il «Riprova» è vuota: il passaggio è riuscito.
     rotta('GET', '/api/admin/crm/quote', sequenza(elenco(quota({ alunnoCollegato: true })), elenco()))

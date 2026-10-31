@@ -336,7 +336,8 @@ export function QuoteCrmPanel({ scuolaId }: { userId: string; scuolaId: string |
                       )}
                     </td>
                     <td className={`${TD} whitespace-nowrap`}>
-                      {r.alunnoCollegato && (
+                      {/* Solo dove il passaggio può partire: `senza_importo` risponde `non_pronta` anche con l'alunno collegato (manca l'importo), e la scheda lì non offre «Riprova». */}
+                      {r.alunnoCollegato && r.stato !== 'senza_importo' && (
                         <Btn
                           variant="secondary"
                           size="sm"

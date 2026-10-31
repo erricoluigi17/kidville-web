@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
     sedePropria: null as string | null,
     db: {} as Record<string, Record<string, unknown>[]>,
     scritture: [] as unknown[],
+    /** Le tabelle lette (`from(…)`), nell'ordine: serve a provare che dopo un 403 non si legge altro. */
+    letture: [] as string[],
     errori: {} as Record<string, unknown>,
     maxRighe: undefined as number | undefined,
     prima: null as null | ((tabella: string, metodo: string) => void),
@@ -53,7 +55,7 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 })
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => {
-        const vero = creaFintoSupabase(h.db as DBFinto, [], {
+        const vero = creaFintoSupabase(h.db as DBFinto, h.letture, {
             scritture: h.scritture as Scrittura[],
             errori: h.errori as Record<string, ErrorePostgrest>,
             maxRighe: h.maxRighe,
@@ -189,6 +191,7 @@ beforeEach(() => {
     h.ruolo = 'segreteria'
     h.sedePropria = SEDE_A
     h.scritture = []
+    h.letture = []
     h.errori = {}
     h.maxRighe = undefined
     h.prima = null
@@ -630,6 +633,9 @@ describe('GET /schede/[id]', () => {
         const res = await apri(SB)
         expect(res.status).toBe(403)
         expect((await res.json()).codice).toBe('SEDE_NON_ACCESSIBILE')
+        // Il gate legge la scheda (e le sedi dell'utente); bambini, visite, azioni e storico mai.
+        expect(h.letture).toContain('crm_schede')
+        for (const t of ['crm_bambini', 'crm_appuntamenti', 'crm_azioni', 'crm_eventi']) expect(h.letture).not.toContain(t)
     })
 
     it('scheda che non esiste → 404 SCHEDA_NON_TROVATA', async () => {

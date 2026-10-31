@@ -185,6 +185,20 @@ describe('PUT …/collegamento', () => {
     expect(h.scritture).toHaveLength(0)
   })
 
+  // Il test sopra usa una domanda della sede A: il 403 potrebbe venire anche dal controllo della domanda.
+  // Qui scheda, bambino e domanda sono TUTTI dell'altra sede, così a fermarsi può essere solo il gate della
+  // scheda, e prima di leggere il bambino o la domanda.
+  it('scheda, bambino e domanda tutti di un’altra sede → 403 dal gate della scheda, senza leggere bambino né domanda', async () => {
+    const res = await put(S_ALTRA, B_ALTRA, { domandaId: D_ALTRA_SEDE, figlio: 0 })
+    expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('SEDE_NON_ACCESSIBILE')
+    expect(h.scritture).toHaveLength(0)
+    const tabelle = h.catene.map((c) => c.tabella)
+    expect(tabelle).toContain('crm_schede')
+    expect(tabelle).not.toContain('crm_bambini')
+    expect(tabelle).not.toContain('enrollment_submissions')
+  })
+
   it('una scheda che non esiste → 404 SCHEDA_NON_TROVATA', async () => {
     const res = await put(NON_ESISTE, B1, { domandaId: D1, figlio: 0 })
     expect(res.status).toBe(404)

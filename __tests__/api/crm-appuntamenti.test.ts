@@ -685,6 +685,48 @@ describe('PATCH /api/admin/crm/appuntamenti/[id]', () => {
             expect(riga('crm_appuntamenti', VISITA)?.inizio).toBe('2026-10-25T09:00:00.000Z')
         })
     })
+
+    // La regola del titolare: ogni segretaria modifica e sposta le visite della propria sede, ANCHE quelle
+    // delle colleghe. Qui chi preme il tasto è la 3, che la visita non l'ha fissata (la 1) né la riceve (la 2):
+    // se un gate guardasse `fissato_da` o `assegnata_a` invece della sede, questi test sarebbero rossi.
+    describe('una collega della stessa sede, che non ha fissato né riceve la visita', () => {
+        beforeEach(() => {
+            h.db.utenti.push({ id: U3, nome: 'Sara', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: null })
+            h.userId = U3
+        })
+
+        it('la sposta due volte: un appuntamento solo, due eventi della 3 concatenati, chi ha fissato resta la 1', async () => {
+            expect((await PATCH(patch({ azione: 'sposta', inizio: '2026-11-04T11:00' }), ctx())).status).toBe(200)
+            expect((await PATCH(patch({ azione: 'sposta', inizio: '2026-11-05T09:00' }), ctx())).status).toBe(200)
+
+            expect(h.db.crm_appuntamenti).toHaveLength(1)
+            expect(riga('crm_appuntamenti', VISITA)).toMatchObject({
+                inizio: '2026-11-05T08:00:00.000Z',
+                assegnata_a: U2,
+                fissato_da: U1,
+                stato: 'in_programma',
+            })
+            const eventi = eventiScritti()
+            expect(eventi.map((e) => [e.tipo, e.autore])).toEqual([
+                ['appuntamento_spostato', U3],
+                ['appuntamento_spostato', U3],
+            ])
+            expect(eventi[0].dati).toMatchObject({ inizio_prima: '2026-11-02T08:00:00.000Z', inizio_dopo: '2026-11-04T10:00:00.000Z' })
+            expect(eventi[1].dati).toMatchObject({ inizio_prima: '2026-11-04T10:00:00.000Z', inizio_dopo: '2026-11-05T08:00:00.000Z' })
+        })
+
+        it('la segna svolta dalla 2: la visita va alla 2, la 3 resta solo chi l’ha segnata', async () => {
+            const res = await PATCH(patch({ azione: 'svolto', svoltoDa: U2 }), ctx())
+            expect(res.status).toBe(200)
+            expect(riga('crm_appuntamenti', VISITA)).toMatchObject({ stato: 'svolto', svolto_da: U2, segnato_da: U3, fissato_da: U1 })
+        })
+
+        it('la annulla', async () => {
+            const res = await PATCH(patch({ azione: 'annulla' }), ctx())
+            expect(res.status).toBe(200)
+            expect(riga('crm_appuntamenti', VISITA)?.stato).toBe('annullato')
+        })
+    })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────

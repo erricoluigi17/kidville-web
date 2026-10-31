@@ -3,10 +3,27 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContabilitaNav, VISTE_CONTABILITA } from '@/components/features/admin/pagamenti/ContabilitaNav';
 
 describe('ContabilitaNav', () => {
-  it('espone le 12 viste attese, con Uscite e Riepilogo dopo Cassa', () => {
+  it('espone le 13 viste attese, con Quote dal CRM dopo Riconciliazione e Uscite e Riepilogo dopo Cassa', () => {
     expect(VISTE_CONTABILITA.map((v) => v.id)).toEqual([
-      'scadenzario', 'transazioni', 'genera', 'servizi', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa', 'uscite', 'riepilogo', 'causali',
+      'scadenzario', 'transazioni', 'genera', 'servizi', 'solleciti', 'riconciliazione', 'quote', 'fiscale', 'ticket', 'cassa', 'uscite', 'riepilogo', 'causali',
     ]);
+  });
+
+  it('ha la vista quote: «Quote dal CRM», cliccabile, chiama onChange con «quote»', () => {
+    const quote = VISTE_CONTABILITA.find((v) => v.id === 'quote');
+    expect(quote?.label).toBe('Quote dal CRM');
+    const onChange = vi.fn();
+    render(<ContabilitaNav value="scadenzario" onChange={onChange} />);
+    fireEvent.click(screen.getAllByText('Quote dal CRM')[0]);
+    expect(onChange).toHaveBeenCalledWith('quote');
+  });
+
+  it('quando la vista attiva è «quote» il controllo è marcato aria-pressed', () => {
+    render(<ContabilitaNav value="quote" onChange={() => {}} />);
+    const premuti = screen
+      .getAllByRole('button', { pressed: true })
+      .filter((b) => b.textContent?.includes('Quote dal CRM'));
+    expect(premuti.length).toBeGreaterThan(0);
   });
 
   it('rende le etichette delle viste', () => {

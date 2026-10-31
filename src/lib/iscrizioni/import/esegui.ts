@@ -66,6 +66,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildParentRecord } from '@/lib/anagrafiche/parents'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { findAuthUserIdByEmail } from '@/lib/auth/parent-identity'
+import { agganciaDaImport } from '@/lib/crm/aggancio-alunno'
 import { logEvento } from '@/lib/logging/logger'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
@@ -508,11 +509,17 @@ export async function eseguiDomanda(
   const referenteParentId = referente.parentId
 
   const alunnoPerNome = new Map<string, string>()
+  /**
+   * Per il CRM della segreteria: l'alunno di ogni figlio, col numero del figlio nella domanda (`ass.indice`,
+   * la posizione in `data.children` — lo stesso che il CRM salva in `crm_bambini.domanda_figlio`).
+   */
+  const figliAlunni: { figlio: number; alunnoId: string }[] = []
   for (const ass of assegnazioni) {
     const grezzo = bambiniGrezzi[ass.indice]
     const esito = await alunnoDiRiferimento(supabase, grezzo, ass, scuolaId, domanda.id)
     if ('errore' in esito) return fallisci(esito.errore)
     alunnoPerNome.set(normalizzaNome(`${ass.cognome} ${ass.nome}`), esito.id)
+    figliAlunni.push({ figlio: ass.indice, alunnoId: esito.id })
 
     for (const pid of parentIds) {
       const { error } = await supabase.from('student_parents').upsert(
@@ -578,6 +585,7 @@ export async function eseguiDomanda(
         sede_id: scuolaId,
       })
       await chiudi(supabase, domanda.id, assegnazioni)
+      await agganciaAlCrm(supabase, domanda.id, scuolaId, figliAlunni)
       await invitaGliAltri(supabase, conEmail.slice(1), scuolaId, domanda.id, alunniDellaDomanda)
       return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: 0 }
     }
@@ -592,6 +600,7 @@ export async function eseguiDomanda(
 
   // ── 4. CHIUSURA ───────────────────────────────────────────────────────────
   await chiudi(supabase, domanda.id, assegnazioni)
+  await agganciaAlCrm(supabase, domanda.id, scuolaId, figliAlunni)
 
   if (invito.tipo === 'gia_invitata') {
     // Il posto nel registro era già preso: l'alunno entra lo stesso, l'email non
@@ -619,6 +628,33 @@ export async function eseguiDomanda(
   })
 
   return { esito: 'inviata', messageId: invito.messageId, errore: null, emailSpedite: 1 + altre }
+}
+
+/**
+ * I bambini del CRM della segreteria con questa domanda si agganciano ai loro alunni (e la quota d'iscrizione
+ * già segnata passa in contabilità). Vale in tutti e due i punti in cui la domanda si chiude.
+ *
+ * ⚠️ L'IMPORT NON FALLISCE MAI PER COLPA DEL CRM. `agganciaDaImport` non lancia, ma questa è la difesa di chi la
+ * chiama: un'eccezione (o un esito negativo) non cambia l'esito dell'import, che a questo punto ha già scritto
+ * l'anagrafica e spedito le credenziali. Il guasto lascia la sua riga di log, a livello `error`: un `catch` che
+ * non logga è un bug. Una domanda non agganciata si riaggancia a mano dalla scheda («Collega all'alunno»).
+ */
+async function agganciaAlCrm(
+  supabase: SupabaseClient,
+  domandaId: string,
+  scuolaId: string,
+  figli: { figlio: number; alunnoId: string }[],
+): Promise<void> {
+  try {
+    await agganciaDaImport(supabase, { domandaId, scuolaId, figli })
+  } catch (err) {
+    logEvento('crm', 'error', {
+      operazione: OPERAZIONE,
+      esito: 'aggancio-import-non-riuscito',
+      entita_id: domandaId,
+      sede_id: scuolaId,
+    }, err)
+  }
 }
 
 /** La domanda diventa `approved`, con le classi assegnate scritte accanto. */

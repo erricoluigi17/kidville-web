@@ -17,3 +17,15 @@ export const TAB_PREDEFINITO: TabCrm = 'agenda'
 export function tabDaParametro(valore: string | null | undefined): TabCrm {
   return (TAB_CRM as readonly string[]).includes(valore ?? '') ? (valore as TabCrm) : TAB_PREDEFINITO
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * La famiglia indicata da `?scheda=` (il collegamento che la lista «Quote dal CRM» della contabilità mette
+ * accanto a ogni bambino: `/admin/crm?scheda=<schedaId>`). Solo un uuid passa, in minuscolo; qualunque altra
+ * cosa — assente, vuota, con spazi, con un carattere in più — è `null` e si ignora. Un valore dell'indirizzo
+ * entra in una richiesta (`/api/admin/crm/schede/<id>`) solo dopo essere stato riconosciuto qui.
+ */
+export function schedaDaParametro(valore: string | null | undefined): string | null {
+  return typeof valore === 'string' && UUID.test(valore) ? valore.toLowerCase() : null
+}

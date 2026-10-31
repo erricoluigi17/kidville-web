@@ -6,7 +6,8 @@ import { formaConfronto, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { logEvento } from '@/lib/logging/logger'
-import { rispostaErroreDb } from './errori'
+import { rispostaErroreDb, rispostaErroreDbSchema } from './errori'
+import type { AnnoIngresso } from './tipi'
 
 /**
  * CRM DELLA SEGRETERIA · CHI PUÒ ENTRARE, E IN QUALE SEDE.
@@ -60,6 +61,49 @@ export async function assertSchedaInScope(
     return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
   }
   return { scheda }
+}
+
+export type BambinoDellaScheda = { id: string; anno_ingresso: AnnoIngresso; alunno_id: string | null }
+
+/**
+ * Il bambino è proprio di QUELLA scheda e della sede della scheda? Torna il bambino (id, anno di ingresso,
+ * alunno collegato), oppure la risposta pronta: 404 `SCHEDA_NON_TROVATA` se non c'è o è di un'altra scheda o
+ * di un'altra sede, 503/500 per un guasto del database.
+ *
+ * Le funzioni SQL della quota lavorano con la service-role e non conoscono la sede di chi chiede: è QUI che
+ * si decide che un bambino di un altro plesso non esiste. La sede sta nella stessa query (`scuola_id`), non
+ * in un confronto fatto dopo: un bambino con la scheda giusta e la sede sbagliata è un dato incoerente, e
+ * si tratta come non trovato.
+ *
+ * `rispostaErroreDbSchema`: nella finestra fra il deploy e la migrazione della quota le colonne nuove non
+ * ci sono (`42703`), ed è «non installato», non un guasto.
+ */
+export async function assertBambinoInScope(
+  supabase: SupabaseClient,
+  scheda: { id: string; scuola_id: string },
+  bambinoId: string,
+  operazione: string,
+): Promise<{ bambino: BambinoDellaScheda } | { response: NextResponse }> {
+  const { data, error } = await supabase
+    .from('crm_bambini')
+    .select('id, anno_ingresso, alunno_id')
+    .eq('id', bambinoId)
+    .eq('scheda_id', scheda.id)
+    .eq('scuola_id', scheda.scuola_id)
+    .maybeSingle()
+  if (error) return { response: rispostaErroreDbSchema(error, operazione) }
+  if (!data) {
+    return {
+      response: Risposta.json({ error: 'Scheda non trovata.', codice: 'SCHEDA_NON_TROVATA' }, { status: 404 }),
+    }
+  }
+  return {
+    bambino: {
+      id: data.id as string,
+      anno_ingresso: data.anno_ingresso as AnnoIngresso,
+      alunno_id: (data.alunno_id as string | null) ?? null,
+    },
+  }
 }
 
 const PERSONA_NON_DELLA_SEDE = () =>

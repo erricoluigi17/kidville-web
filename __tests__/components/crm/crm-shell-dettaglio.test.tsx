@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { useState } from 'react'
 import { SEDE_A } from '../../fixtures/sedi'
 import { CrmShell } from '@/components/features/crm/CrmShell'
+import { schedaDaParametro } from '@/lib/crm/tab'
 
 /**
  * CRM della segreteria · Compito 1.6 — il pannello di dettaglio della cornice.
@@ -188,3 +189,105 @@ describe('CrmShell · il pannello di dettaglio', () => {
     }
   })
 })
+
+/**
+ * `?scheda=<uuid>` — il collegamento che porta dritto a una famiglia (lo usa la lista «Quote dal CRM» della
+ * contabilità: `/admin/crm?scheda=<schedaId>`).
+ *
+ * Si legge UNA volta, al montaggio: l'indirizzo non è la verità (lo è lo stato di React), quindi chiudere il
+ * pannello non lo fa riaprire al render dopo. Un valore che non è un uuid si ignora, e non arriva mai a una
+ * richiesta.
+ */
+const SCHEDA_UUID = '5c5c5c5c-5c5c-45c5-85c5-5c5c5c5c5c5c'
+
+describe('CrmShell · ?scheda=<uuid> apre il dettaglio', () => {
+  it('?scheda=<uuid> apre quella famiglia nella linguetta Schede, senza altro nell’indirizzo', () => {
+    h.query = `scheda=${SCHEDA_UUID}`
+    render(<CrmShell scuolaId={SEDE_A} />)
+
+    expect(screen.getByTestId('dettaglio').getAttribute('data-scheda-id')).toBe(SCHEDA_UUID)
+    // È la linguetta Schede (c'è l'elenco, e non l'agenda), e il pannello ha preso il posto dell'invito.
+    expect(screen.getByRole('button', { name: 'apri-scheda-1' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'apri-dall-agenda' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Schede' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByText(INVITO)).toBeNull()
+    // Il dettaglio nasce una volta sola, con l'id giusto.
+    expect(h.dettaglio).toEqual([SCHEDA_UUID])
+    expect(h.montaggi.agenda).toBe(0)
+  })
+
+  it('vince sulla linguetta dell’indirizzo: ?tab=agenda&scheda=… apre comunque la famiglia nelle Schede', () => {
+    h.query = `tab=agenda&scheda=${SCHEDA_UUID}`
+    render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.getByTestId('dettaglio').getAttribute('data-scheda-id')).toBe(SCHEDA_UUID)
+    expect(screen.getByRole('button', { name: 'Schede' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('l’uuid in maiuscolo è lo stesso uuid: si apre, con l’id in minuscolo', () => {
+    h.query = `scheda=${SCHEDA_UUID.toUpperCase()}`
+    render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.getByTestId('dettaglio').getAttribute('data-scheda-id')).toBe(SCHEDA_UUID)
+  })
+
+  it.each([
+    ['un testo qualunque', 'scheda=abc'],
+    ['un valore vuoto', 'scheda='],
+    ['un uuid con un carattere in più', `scheda=${SCHEDA_UUID}0`],
+    ['un percorso', 'scheda=..%2F..%2Fetc'],
+    ['un uuid con dentro un invio', `scheda=${SCHEDA_UUID}%0A`],
+  ])('con %s si ignora: si apre l’agenda e nessun dettaglio', (_nome, query) => {
+    h.query = query
+    render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.queryByTestId('dettaglio')).toBeNull()
+    expect(screen.getByRole('button', { name: 'apri-dall-agenda' })).toBeTruthy()
+    expect(h.dettaglio).toEqual([])
+  })
+
+  it('un valore non valido non cancella una linguetta valida: ?tab=richiamare&scheda=abc resta sui richiami', () => {
+    h.query = 'tab=richiamare&scheda=abc'
+    render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.getByRole('button', { name: 'apri-dal-richiamo' })).toBeTruthy()
+    expect(screen.queryByTestId('dettaglio')).toBeNull()
+  })
+
+  it('si legge al montaggio e basta: chiuso il pannello, un nuovo render non lo riapre', () => {
+    h.query = `scheda=${SCHEDA_UUID}`
+    const { rerender } = render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.getByTestId('dettaglio')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'chiudi-dettaglio' }))
+    rerender(<CrmShell scuolaId={SEDE_A} />)
+
+    expect(screen.queryByTestId('dettaglio')).toBeNull()
+    expect(screen.getByText(INVITO)).toBeTruthy()
+  })
+
+  it('dalla famiglia aperta dall’indirizzo si passa a un’altra, e il dettaglio si rimonta', () => {
+    h.query = `scheda=${SCHEDA_UUID}`
+    render(<CrmShell scuolaId={SEDE_A} />)
+    fireEvent.click(screen.getByRole('button', { name: 'apri-scheda-2' }))
+    expect(screen.getByTestId('dettaglio').getAttribute('data-scheda-id')).toBe('scheda-2')
+    expect(h.dettaglio).toEqual([SCHEDA_UUID, 'scheda-2'])
+  })
+
+  it('cambiare linguetta chiude il dettaglio e toglie ?scheda= dall’indirizzo', () => {
+    window.history.replaceState(null, '', `/admin/crm?scheda=${SCHEDA_UUID}`)
+    h.query = `scheda=${SCHEDA_UUID}`
+    render(<CrmShell scuolaId={SEDE_A} />)
+    expect(screen.getByTestId('dettaglio')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agenda' }))
+
+    expect(screen.queryByTestId('dettaglio')).toBeNull()
+    expect(window.location.search).toBe('?tab=agenda')
+  })
+
+  it('schedaDaParametro: solo un uuid passa; null, vuoto e tutto il resto sono null', () => {
+    expect(schedaDaParametro(SCHEDA_UUID)).toBe(SCHEDA_UUID)
+    expect(schedaDaParametro(SCHEDA_UUID.toUpperCase())).toBe(SCHEDA_UUID)
+    for (const v of [null, undefined, '', ' ', 'abc', `${SCHEDA_UUID} `, ` ${SCHEDA_UUID}`, `${SCHEDA_UUID}x`, '__proto__']) {
+      expect(schedaDaParametro(v), String(v)).toBeNull()
+    }
+  })
+})
+

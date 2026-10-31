@@ -1,12 +1,12 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Euro, Coins, CalendarClock, BellRing, Landmark, FileSpreadsheet, Ticket, Wallet, Pencil, Repeat, TrendingDown, BarChart3 } from 'lucide-react';
+import { Euro, Coins, CalendarClock, BellRing, Landmark, FileSpreadsheet, Ticket, Wallet, Pencil, Repeat, TrendingDown, BarChart3, Handshake } from 'lucide-react';
 import { Tabs } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 
-export type VistaContabilita = 'scadenzario' | 'transazioni' | 'genera' | 'servizi' | 'solleciti' | 'riconciliazione' | 'fiscale' | 'ticket' | 'cassa' | 'uscite' | 'riepilogo' | 'causali';
+export type VistaContabilita = 'scadenzario' | 'transazioni' | 'genera' | 'servizi' | 'solleciti' | 'riconciliazione' | 'quote' | 'fiscale' | 'ticket' | 'cassa' | 'uscite' | 'riepilogo' | 'causali';
 
 export const VISTE_CONTABILITA: { id: VistaContabilita; label: string; icon: LucideIcon }[] = [
     { id: 'scadenzario', label: 'Scadenzario', icon: Euro },
@@ -15,6 +15,7 @@ export const VISTE_CONTABILITA: { id: VistaContabilita; label: string; icon: Luc
     { id: 'servizi', label: 'Servizi', icon: Repeat },
     { id: 'solleciti', label: 'Solleciti', icon: BellRing },
     { id: 'riconciliazione', label: 'Riconciliazione', icon: Landmark },
+    { id: 'quote', label: 'Quote dal CRM', icon: Handshake },
     { id: 'fiscale', label: 'Fiscale', icon: FileSpreadsheet },
     { id: 'ticket', label: 'Ticket mensa', icon: Ticket },
     { id: 'cassa', label: 'Cassa', icon: Wallet },

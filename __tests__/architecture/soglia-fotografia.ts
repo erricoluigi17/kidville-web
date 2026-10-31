@@ -289,7 +289,29 @@ export function posterioriCheContengono(
 // bucket e lo schema delle candidature solo l'istante dello scatto. La fotografia delle FK di sede ha
 // chiesto di correggere il suo generatore (`scripts/fk-sede-fotografia.mjs`): sceglieva la FK per nome
 // e prendeva la composta verso `crm_schede` invece di `scuola_id → schools`, che c'è.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-31 · CRM, «quota d'iscrizione in contabilità e disponibilità per settimana», compito 1:
+// `20261031161800_crm_quota_e_settimane.sql` aggiunge a `crm_bambini` nove colonne con un UNIQUE
+// (`crm_bambini_alunno_unico`) e tre CHECK, crea `crm_settimane` e `crm_fasce` (chiavi primarie, un UNIQUE
+// NULLS NOT DISTINCT `crm_settimane_proprietario`, un `UNIQUE (id, scuola_id)` per la chiave composta, RLS
+// accesa senza policy, FK verso `schools` e `utenti`), converte `crm_disponibilita` e la TOGLIE. Le guardie
+// degli indici unici, della RLS e delle FK la vedono per `unique`, `primary key`, `row level security`,
+// `references` e `add constraint`. Cambieranno davvero, rigenerando dalla produzione dopo il merge: la
+// fotografia delle migrazioni (+1 riga); degli indici unici (+5: `crm_bambini_alunno_unico`,
+// `crm_settimane_pkey`, `crm_settimane_proprietario`, `crm_settimane_id_scuola_id_key`, `crm_fasce_pkey`,
+// e in meno quelli di `crm_disponibilita`); della RLS (`crm_settimane` e `crm_fasce` entrano in
+// `tabelle_rls_attiva`, `crm_disponibilita` esce; nessuna policy); delle FK di sede (+2, −1); delle FK verso
+// `utenti` (+2 «blocca»: `crm_settimane.utente_id` e `.aggiornata_da`; −1 quella di `crm_disponibilita`); delle
+// tabelle con `scuola_id` (+2, −1). I bucket e lo schema delle candidature solo l'istante dello scatto. Le
+// funzioni di cassa riscritte (`report_cassa_*`, `conteggio_cassa_provenienza`) e le cinque `crm_*` nuove non
+// toccano nessuna fotografia. Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261031161800_crm_quota_e_settimane.sql':
+        "Applicata dall'integrazione Supabase al merge, con la version del file (mai a mano). Crea due tabelle " +
+        'con chiavi primarie, un UNIQUE NULLS NOT DISTINCT e RLS accesa, aggiunge un UNIQUE su crm_bambini.alunno_id ' +
+        'e toglie crm_disponibilita: cambiano le fotografie di migrazioni, indici unici, RLS, FK di sede, FK verso ' +
+        'utenti e tabelle con sede. Si toglie con la PR-B dopo il merge, rigenerando le fotografie dalla produzione.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file
@@ -364,6 +386,22 @@ export function tabelleConSedeNellePosteriori(cartella: string, soglia: Soglia):
         }
     }
     return [...trovate].sort()
+}
+
+/**
+ * Il marcatore che una migrazione distruttiva deve portare: una riga di commento
+ * `-- distruttiva approvata: <motivo>` a inizio riga.
+ *
+ * Sta QUI e non nel lock `migrazioni-distruttive-approvate.test.ts` (2026-10-31) perché lo
+ * leggono due test: importarlo da un file di test farebbe registrare e rieseguire anche i suoi
+ * `describe` dentro l'altro.
+ */
+export const MARCATORE_DISTRUTTIVA = /^\s*--\s*distruttiva approvata:\s*(.+)$/im
+
+/** Il file dichiara l'approvazione, con un motivo vero (almeno 15 caratteri)? */
+export function approvata(sql: string): boolean {
+    const m = MARCATORE_DISTRUTTIVA.exec(sql)
+    return m !== null && m[1].trim().length >= 15
 }
 
 /**

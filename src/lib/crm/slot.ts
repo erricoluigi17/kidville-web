@@ -1,18 +1,26 @@
 import { dataCivile } from '@/i18n/config'
 import { istanteCivile, oraCivile } from '@/lib/format/confini-giorno'
 import { addGiorni } from '@/lib/format/data'
-import type { AppuntamentoRow, DisponibilitaRow, IndisponibilitaRow } from './tipi'
+import type { FasciaEffettiva } from './settimane'
+import type { AppuntamentoRow, IndisponibilitaRow } from './tipi'
 
 /**
  * CRM DELLA SEGRETERIA · GLI SLOT LIBERI.
  *
- *   slot libero = disponibilità settimanale − assenze (della persona e della sede) − visite in programma
+ *   slot libero = fasce della settimana − assenze (della persona e della sede) − visite in programma
+ *
+ * Le fasce sono `FasciaEffettiva` (`./settimane`): già risolte per UNA settimana — «una settimana mai toccata è
+ * uguale all'ultima registrata prima di lei» lo decide quel modulo, non questo — e di due tipi (spec §6.3):
+ *  · della PERSONA (`utenteId` = lei): uno slot per lei, tolte le sue assenze e le sue visite;
+ *  · della SEDE (`utenteId` nullo): uno slot senza nome, libero se ALMENO UNA persona della sede lo è. Quali, lo
+ *    dice `personeLibere`: la finestra «fissa la visita» propone solo loro.
+ * Se una persona ha una sua fascia e la sede ne ha una alla stessa ora, si vedono entrambi gli slot.
  *
  * Funzioni PURE: niente database, niente orologio (`adesso` è un argomento), niente `Date` locale.
  * Le userà anche l'interfaccia per l'assistente AI (spec §8), dopo la prima versione.
  *
  * ── GLI ORARI SONO DI ROMA ──────────────────────────────────────────────────────
- * `ora_inizio`/`ora_fine` sono cifre su un orologio a muro italiano (`09:00`), non istanti. Ogni slot
+ * `oraInizio`/`oraFine` sono cifre su un orologio a muro italiano (`09:00`), non istanti. Ogni slot
  * nasce da `istanteCivile(giorno, ora)`, che conosce il cambio dell'ora legale: le 10:00 di domenica
  * 25/10/2026 sono le 09:00Z, le 10:00 del sabato prima le 08:00Z. Lo scarto fra i due giorni è di 25 ore
  * reali, ed è giusto così: la segretaria che ha «domenica alle 10» ce l'ha alle 10 tutto l'anno.
@@ -23,19 +31,22 @@ import type { AppuntamentoRow, DisponibilitaRow, IndisponibilitaRow } from './ti
  * UTC); l'ora di un ISTANTE si legge con `oraCivile`/`dataCivile`, che dichiarano `Europe/Rome`.
  *
  * ── LA GRIGLIA ──────────────────────────────────────────────────────────────────
- * Si parte da `ora_inizio` e si tagliano slot consecutivi di `durata_slot_min` finché lo slot sta TUTTO
- * entro `ora_fine` (9:00–11:00 da 45 minuti → 9:00 e 9:45, non 10:30: sforerebbe di un quarto d'ora). La
+ * Si parte da `oraInizio` e si tagliano slot consecutivi di `durataSlotMin` finché lo slot sta TUTTO
+ * entro `oraFine` (9:00–11:00 da 45 minuti → 9:00 e 9:45, non 10:30: sforerebbe di un quarto d'ora). La
  * fine di uno slot è `inizio + durata` in tempo reale, la stessa aritmetica del vincolo EXCLUDE del
  * database (`tstzrange(inizio, fine)`): due intervalli che si toccano soltanto (la fine dell'uno è
  * l'inizio dell'altro) NON si sovrappongono, né qui né là.
  */
 
 export interface SlotLibero {
-  utenteId: string
+  /** la persona che riceve; nullo = slot della sede (chi riceve lo sceglie chi fissa, fra `personeLibere`) */
+  utenteId: string | null
   /** ISO UTC */
   inizio: string
   /** ISO UTC */
   fine: string
+  /** Solo negli slot della sede: le persone libere in quello slot, nell'ordine di `persone`. Mai vuoto. */
+  personeLibere?: string[]
 }
 
 const MINUTI_GIORNO = 1440
@@ -70,11 +81,13 @@ function giornoSettimanaIso(ymd: string): number {
   return dow === 0 ? 7 : dow
 }
 
-/** La disponibilità vale in questo giorno civile? (`valida_dal` e `valida_al` sono entrambi INCLUSI.) */
-function valeIl(d: DisponibilitaRow, ymd: string): boolean {
-  if (d.valida_dal && ymd < d.valida_dal) return false
-  if (d.valida_al && ymd > d.valida_al) return false
-  return d.giorno_settimana === giornoSettimanaIso(ymd)
+/**
+ * La fascia vale in questo giorno civile? Solo dentro la sua settimana (dal lunedì `settimana` alla domenica,
+ * estremi inclusi) e nello stesso giorno della settimana.
+ */
+function valeIl(f: FasciaEffettiva, ymd: string): boolean {
+  if (ymd < f.settimana || ymd > addGiorni(f.settimana, 6)) return false
+  return f.giornoSettimana === giornoSettimanaIso(ymd)
 }
 
 interface Intervallo {
@@ -103,12 +116,17 @@ function assenzeDi(indisponibilita: IndisponibilitaRow[], utenteId: string): Int
 
 /**
  * Gli slot liberi nell'intervallo di giorni civili `dal`…`al` (estremi compresi), ordinati per inizio e, a
- * parità, per persona. Tolti: quelli che toccano un'assenza della persona o della sede, quelli che si
- * sovrappongono a una visita `in_programma` della stessa persona (annullate, svolte e non presentate non
- * occupano niente: lo dice anche l'EXCLUDE del database) e quelli che iniziano prima di `adesso`.
+ * parità, per persona (lo slot della sede dopo quelli delle persone). Tolti: quelli che toccano un'assenza
+ * della persona o della sede, quelli che si sovrappongono a una visita `in_programma` della stessa persona
+ * (annullate, svolte e non presentate non occupano niente: lo dice anche l'EXCLUDE del database) e quelli che
+ * iniziano prima di `adesso`.
+ *
+ * `persone` sono le persone della sede, nell'ordine in cui `personeLibere` le elencherà: servono solo per gli
+ * slot della sede. Le fasce delle persone che non sono più della sede le toglie chi chiama.
  */
 export function calcolaSlotLiberi(i: {
-  disponibilita: DisponibilitaRow[]
+  fasce: FasciaEffettiva[]
+  persone: string[]
   indisponibilita: IndisponibilitaRow[]
   appuntamenti: Pick<AppuntamentoRow, 'assegnata_a' | 'inizio' | 'fine' | 'stato'>[]
   dal: string
@@ -139,17 +157,21 @@ export function calcolaSlotLiberi(i: {
     }
     return v
   }
+  /** La persona ha questo slot libero? (nessuna assenza sua o della sede, nessuna visita in programma che si sovrappone) */
+  const liberaIn = (utenteId: string, slot: Intervallo) =>
+    !intervalliAssenze(utenteId).some((x) => siSovrappongono(slot, x)) &&
+    !intervalliVisite(utenteId).some((x) => siSovrappongono(slot, x))
 
   const visti = new Set<string>()
   const out: SlotLibero[] = []
 
   let giorno = i.dal
   for (let n = 0; giorno <= i.al && n < GIORNI_MAX; n++, giorno = addGiorni(giorno, 1)) {
-    for (const d of i.disponibilita) {
-      if (!valeIl(d, giorno)) continue
-      const da = minutiDaOra(d.ora_inizio)
-      const fino = minutiDaOra(d.ora_fine)
-      const durata = d.durata_slot_min
+    for (const f of i.fasce) {
+      if (!valeIl(f, giorno)) continue
+      const da = minutiDaOra(f.oraInizio)
+      const fino = minutiDaOra(f.oraFine)
+      const durata = f.durataSlotMin
       if (da === null || fino === null || !(durata > 0)) continue
 
       for (let inizioMin = da; inizioMin + durata <= fino && inizioMin < MINUTI_GIORNO; inizioMin += durata) {
@@ -159,24 +181,43 @@ export function calcolaSlotLiberi(i: {
         if (inizioMs < adessoMs) continue
 
         const slot: Intervallo = { da: inizioMs, a: inizioMs + durata * MS_MINUTO }
-        if (intervalliAssenze(d.utente_id).some((x) => siSovrappongono(slot, x))) continue
-        if (intervalliVisite(d.utente_id).some((x) => siSovrappongono(slot, x))) continue
+        const fine = new Date(slot.a).toISOString()
 
-        // Due righe di disponibilità che si coprono non devono offrire lo stesso orario due volte.
-        const chiave = `${d.utente_id}|${inizio}`
+        if (f.utenteId === null) {
+          // La sede: lo slot c'è se almeno una persona è libera, e dice chi.
+          const personeLibere = i.persone.filter((p) => liberaIn(p, slot))
+          if (personeLibere.length === 0) continue
+          // Due fasce della sede che si coprono non devono offrire lo stesso orario due volte.
+          const chiave = `sede|${inizio}`
+          if (visti.has(chiave)) continue
+          visti.add(chiave)
+          out.push({ utenteId: null, inizio, fine, personeLibere })
+          continue
+        }
+
+        if (!liberaIn(f.utenteId, slot)) continue
+        // Due fasce della stessa persona che si coprono non devono offrire lo stesso orario due volte.
+        const chiave = `${f.utenteId}|${inizio}`
         if (visti.has(chiave)) continue
         visti.add(chiave)
-        out.push({ utenteId: d.utente_id, inizio, fine: new Date(slot.a).toISOString() })
+        out.push({ utenteId: f.utenteId, inizio, fine })
       }
     }
   }
 
-  return out.sort((x, y) => (x.inizio < y.inizio ? -1 : x.inizio > y.inizio ? 1 : x.utenteId < y.utenteId ? -1 : x.utenteId > y.utenteId ? 1 : 0))
+  // Per inizio; a parità le persone (per id) e, dopo di loro, la sede.
+  const chiavePersona = (s: SlotLibero) => s.utenteId ?? '\uffff'
+  return out.sort((x, y) => {
+    if (x.inizio !== y.inizio) return x.inizio < y.inizio ? -1 : 1
+    const cx = chiavePersona(x)
+    const cy = chiavePersona(y)
+    return cx < cy ? -1 : cx > cy ? 1 : 0
+  })
 }
 
 /**
- * Questa visita cade FUORI dalla disponibilità della sua persona? `true` se non sta per intero dentro una
- * fascia di disponibilità valida in quel giorno (non serve che sia allineata alla griglia degli slot:
+ * Questa visita cade FUORI dalla disponibilità? `true` se non sta per intero dentro una fascia della sua
+ * persona OPPURE della sede, valida in quel giorno (non serve che sia allineata alla griglia degli slot:
  * la segretaria può fissare a qualsiasi ora, spec §9) oppure se tocca un'assenza della persona o della
  * sede. L'agenda la mostra come avviso «fuori disponibilità»; non blocca niente.
  *
@@ -184,7 +225,7 @@ export function calcolaSlotLiberi(i: {
  */
 export function fuoriDisponibilita(
   a: Pick<AppuntamentoRow, 'assegnata_a' | 'inizio' | 'fine'>,
-  disponibilita: DisponibilitaRow[],
+  fasce: FasciaEffettiva[],
   indisponibilita: IndisponibilitaRow[],
 ): boolean {
   const iv = intervalloDi(a.inizio, a.fine)
@@ -199,10 +240,11 @@ export function fuoriDisponibilita(
   const stessoGiorno = dataCivile(new Date(iv.a)) === giorno
   const fineEffettiva = stessoGiorno ? fineMin : MINUTI_GIORNO + fineMin
 
-  return !disponibilita.some((d) => {
-    if (d.utente_id !== a.assegnata_a || !valeIl(d, giorno)) return false
-    const da = minutiDaOra(d.ora_inizio)
-    const fino = minutiDaOra(d.ora_fine)
+  return !fasce.some((f) => {
+    // Una fascia di un'altra persona non vale; una della sede (utenteId nullo) vale per chiunque.
+    if ((f.utenteId !== null && f.utenteId !== a.assegnata_a) || !valeIl(f, giorno)) return false
+    const da = minutiDaOra(f.oraInizio)
+    const fino = minutiDaOra(f.oraFine)
     return da !== null && fino !== null && da <= inizioMin && fineEffettiva <= fino
   })
 }

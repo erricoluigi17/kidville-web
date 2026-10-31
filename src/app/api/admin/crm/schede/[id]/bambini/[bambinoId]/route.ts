@@ -5,15 +5,19 @@ import { assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
 import { ANNI_INGRESSO, ESITI_BAMBINO, MOTIVI_PERDITA } from '@/lib/crm/tipi'
-import { oggiRoma } from '@/lib/storici/retroattivita'
 import { withRoute } from '@/lib/logging/with-route'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { parseBody, parseData } from '@/lib/validation/http'
 
 /**
- * CRM della segreteria · un bambino della scheda: nome, nascita, anno, ESITO e quota.
+ * CRM della segreteria · un bambino della scheda: nome, nascita, anno ed ESITO.
  *
  * `PATCH /api/admin/crm/schede/[id]/bambini/[bambinoId]` → `200 { id, modificato }`.
+ *
+ * ⚠️ La QUOTA non si segna più da qui (dal 31/10/2026): la vecchia spunta `quotaSaldata`/`quotaSaldataIl`
+ * è stata sostituita dalla quota con importo, metodo e giorno (`PUT …/quota`), che passa in contabilità.
+ * Il corpo di un vecchio client con la sola spunta non scrive niente: i campi sono ignorati, il corpo
+ * resta «vuoto» e la risposta è 400.
  *
  * ── L'esito ─────────────────────────────────────────────────────────────────────────────────────
  *  · «perso» richiede il motivo (422 `MOTIVO_OBBLIGATORIO`): «non si è iscritto» senza il perché è
@@ -31,8 +35,8 @@ import { parseBody, parseData } from '@/lib/validation/http'
  * risposta è 409 `STATO_NON_AMMESSO` — non una sovrascrittura silenziosa.
  *
  * ── Lo storico ──────────────────────────────────────────────────────────────────────────────────
- * `esito_cambiato` ({ bambino_id, da, a }), `quota_segnata` ({ bambino_id, saldata }) e
- * `bambino_modificato` ({ bambino_id, campi }, i soli NOMI dei campi). Mai nomi di minori né note.
+ * `esito_cambiato` ({ bambino_id, da, a }) e `bambino_modificato` ({ bambino_id, campi }, i soli NOMI dei
+ * campi). Mai nomi di minori né note.
  */
 
 const OPERAZIONE = 'admin/crm/schede/[id]/bambini/[bambinoId]:PATCH'
@@ -50,8 +54,6 @@ const patchBodySchema = z
       .union([z.string().max(500), z.null()])
       .optional()
       .transform((v) => (typeof v === 'string' ? (v.trim() === '' ? null : v.trim()) : v)),
-    quotaSaldata: z.boolean().optional(),
-    quotaSaldataIl: dataOppureNulla,
   })
   .refine((b) => Object.values(b).some((v) => v !== undefined), { message: 'Nessun campo da modificare' })
 
@@ -148,21 +150,6 @@ export const PATCH = withRoute(
       patch.esito_il = new Date().toISOString()
     }
 
-    // quota saldata
-    let quotaCambiata = false
-    let saldata = Boolean(corrente.quota_saldata)
-    if (b.quotaSaldata !== undefined || b.quotaSaldataIl !== undefined) {
-      saldata = b.quotaSaldata ?? Boolean(corrente.quota_saldata)
-      const dataAttuale = (corrente.quota_saldata_il as string | null) ?? null
-      const nuovaData = saldata ? (b.quotaSaldataIl ?? (corrente.quota_saldata ? dataAttuale : null) ?? oggiRoma()) : null
-      if (saldata !== Boolean(corrente.quota_saldata) || nuovaData !== dataAttuale) {
-        quotaCambiata = true
-        patch.quota_saldata = saldata
-        patch.quota_saldata_il = nuovaData
-        patch.quota_segnata_da = auth.user.id
-      }
-    }
-
     // niente di davvero cambiato: nessuna scrittura, nessuna riga di storico
     if (Object.keys(patch).length === 0) return NextResponse.json({ id: bambinoId, modificato: false })
 
@@ -184,9 +171,6 @@ export const PATCH = withRoute(
         tipo: 'esito_cambiato',
         dati: { bambino_id: bambinoId, da: esitoAttuale, a: esitoFinale },
       })
-    }
-    if (quotaCambiata) {
-      await registraEvento(supabase, { ...evento, tipo: 'quota_segnata', dati: { bambino_id: bambinoId, saldata } })
     }
     if (campiModificati.length > 0) {
       await registraEvento(supabase, {

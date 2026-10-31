@@ -7,6 +7,7 @@ import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
 import { ORIGINI, type Origine } from '@/lib/crm/tipi'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
+import { logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { zUuid } from '@/lib/validation/common'
 import { parseBody, parseData } from '@/lib/validation/http'
@@ -15,7 +16,9 @@ import { parseBody, parseData } from '@/lib/validation/http'
  * CRM della segreteria · la scheda di una famiglia.
  *
  *  · `GET   /api/admin/crm/schede/[id]` — tutto ciò che serve ad aprirla: `{ scheda, bambini,
- *    appuntamenti, azioni_aperte, eventi, eventi_totale }`;
+ *    appuntamenti, azioni_aperte, eventi, eventi_totale }`. Ogni bambino è la sua riga di `crm_bambini`
+ *    (`select('*')`: le colonne della quota e `alunno_id` ci sono tutte), più — solo per un BONIFICO già
+ *    passato in contabilità — `quota_pagamento_stato`, lo `stato` della voce «Iscrizione» (vedi sotto);
  *  · `PATCH /api/admin/crm/schede/[id]` — contatti, genitore, origine e le tre domande.
  *
  * La sede NON si chiede al client: la dice la scheda stessa, e `assertSchedaInScope` verifica che sia una
@@ -145,6 +148,27 @@ export const GET = withRoute('admin/crm/schede/[id]:GET', async (request: NextRe
   for (const z of righeAzioni) if (typeof z.responsabile === 'string') daNominare.add(z.responsabile)
   for (const e of righeEventi) if (typeof e.autore === 'string') daNominare.add(e.autore)
 
+  // ── Lo stato della voce «Iscrizione» dei bonifici già in contabilità ─────────────────────────────
+  // Un bonifico passa in contabilità «da pagare» e lo chiude la banca (spec §5.2): la scheda dice «in attesa del
+  // bonifico» finché la voce non è pagata, e per dirlo deve sapere lo `stato`. È l'UNICA lettura della
+  // contabilità di questa route, col filtro di sede nella stessa query. Non è essenziale: se fallisce la scheda
+  // si apre lo stesso, senza quel dettaglio (la quota si legge «in contabilità»), e il guasto resta nel log.
+  const righeBambini = (bambini.data ?? []) as Record<string, unknown>[]
+  const vociDaLeggere = righeBambini
+    .filter((b) => b.quota_stato === 'in_contabilita' && b.quota_metodo === 'bonifico' && typeof b.quota_pagamento_id === 'string')
+    .map((b) => b.quota_pagamento_id as string)
+  const statoVoce = new Map<string, string>()
+  for (const blocco of aBlocchi(vociDaLeggere, ID_PER_QUERY)) {
+    const { data, error } = await supabase.from('pagamenti').select('id, stato').in('id', blocco).eq('scuola_id', scuolaId)
+    if (error) {
+      logEvento('crm', 'warn', { operazione: OPERAZIONE_GET, esito: 'quota-voce-non-letta', entita_id: id }, error)
+      break
+    }
+    for (const v of data ?? []) {
+      if (typeof v.id === 'string' && typeof v.stato === 'string') statoVoce.set(v.id, v.stato)
+    }
+  }
+
   const persone = new Map<string, Persona>()
   for (const blocco of aBlocchi([...daNominare], ID_PER_QUERY)) {
     const { data, error } = await supabase.from('utenti').select('id, nome, cognome').in('id', blocco)
@@ -161,7 +185,11 @@ export const GET = withRoute('admin/crm/schede/[id]:GET', async (request: NextRe
 
   return NextResponse.json({
     scheda: scheda.data,
-    bambini: bambini.data ?? [],
+    bambini: righeBambini.map((b) =>
+      typeof b.quota_pagamento_id === 'string' && statoVoce.has(b.quota_pagamento_id)
+        ? { ...b, quota_pagamento_stato: statoVoce.get(b.quota_pagamento_id) }
+        : b,
+    ),
     appuntamenti: righeAppuntamenti.map((a) => ({
       ...a,
       assegnata_a_persona: persona(a.assegnata_a),

@@ -14,6 +14,9 @@ import {
     MOTIVI_PERDITA,
     NOTE_COLLEGAMENTO,
     ORIGINI,
+    QUOTA_METODI,
+    QUOTA_MOTIVI_BLOCCO,
+    QUOTA_STATI,
     STATI_APPUNTAMENTO,
     TIPI_AZIONE,
     TIPI_EVENTO,
@@ -34,8 +37,15 @@ import { senzaCommenti } from '../../architecture/soglia-fotografia'
  */
 
 const CARTELLA = join(process.cwd(), 'supabase', 'migrations')
-const FILE = readdirSync(CARTELLA).filter((f) => /^\d{14}_crm_segreteria\.sql$/.test(f))
-const SQL = FILE.length === 1 ? senzaCommenti(readFileSync(join(CARTELLA, FILE[0]), 'utf8')) : ''
+/**
+ * Le migrazioni del CRM, in ordine di nome: la prima crea le tabelle, le successive le cambiano
+ * (la seconda, del 31/10/2026, aggiunge le colonne della quota e allunga il vincolo degli eventi).
+ * Per ogni colonna vince la definizione dell'ULTIMO file che la dichiara.
+ */
+const FILE = readdirSync(CARTELLA)
+    .filter((f) => /^\d{14}_crm_(segreteria|quota_e_settimane)\.sql$/.test(f))
+    .sort()
+const SQL_PER_FILE = FILE.map((f) => senzaCommenti(readFileSync(join(CARTELLA, f), 'utf8')))
 
 /** Quale costante governa quale colonna (tabella.colonna). */
 const MAPPA: Record<string, readonly string[]> = {
@@ -46,6 +56,9 @@ const MAPPA: Record<string, readonly string[]> = {
     'crm_bambini.motivo_perdita': MOTIVI_PERDITA,
     'crm_bambini.esito_origine': ESITO_ORIGINE,
     'crm_bambini.nota_collegamento': NOTE_COLLEGAMENTO,
+    'crm_bambini.quota_metodo': QUOTA_METODI,
+    'crm_bambini.quota_stato': QUOTA_STATI,
+    'crm_bambini.quota_blocco_motivo': QUOTA_MOTIVI_BLOCCO,
     'crm_appuntamenti.fissato_via': VIA,
     'crm_appuntamenti.stato': STATI_APPUNTAMENTO,
     'crm_azioni.tipo': TIPI_AZIONE,
@@ -55,33 +68,75 @@ const MAPPA: Record<string, readonly string[]> = {
     'crm_indisponibilita.motivo': MOTIVI_INDISPONIBILITA,
 }
 
-/** Ogni `check (colonna in ('a','b',…))` di ogni `create table crm_*`, come `tabella.colonna → valori`. */
-function checkDellaMigrazione(sql: string): Record<string, string[]> {
+/** I valori fra apici di una lista `('a','b',…)`. */
+const valori = (lista: string): string[] => [...lista.matchAll(/'([^']*)'/g)].map((v) => v[1])
+
+/**
+ * Ogni vocabolario di ogni `crm_*`, come `tabella.colonna → valori`, letto da tre forme:
+ *  · `create table crm_* ( … check (colonna in (…)) … )` — le tabelle di nascita;
+ *  · `alter table crm_* add column [if not exists] colonna … check (colonna in (…))` — le colonne aggiunte dopo;
+ *  · `alter table crm_* … add constraint <nome> check (colonna in (…))` — un vincolo ricreato.
+ *
+ * I file si passano IN ORDINE e, per ogni `tabella.colonna`, vince l'ultima definizione: è quella che il
+ * database ha dopo che tutte le migrazioni sono state applicate.
+ */
+function checkDelleMigrazioni(files: string[]): Record<string, string[]> {
     const out: Record<string, string[]> = {}
-    const tabella = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(crm_\w+)\s*\(/gi
-    for (let m = tabella.exec(sql); m; m = tabella.exec(sql)) {
-        let livello = 1
-        let j = tabella.lastIndex
-        while (j < sql.length && livello > 0) {
-            if (sql[j] === '(') livello++
-            if (sql[j] === ')') livello--
-            j++
+    for (const sql of files) {
+        const tabella = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(crm_\w+)\s*\(/gi
+        for (let m = tabella.exec(sql); m; m = tabella.exec(sql)) {
+            let livello = 1
+            let j = tabella.lastIndex
+            while (j < sql.length && livello > 0) {
+                if (sql[j] === '(') livello++
+                if (sql[j] === ')') livello--
+                j++
+            }
+            const corpo = sql.slice(tabella.lastIndex, j - 1)
+            const check = /check\s*\(\s*(\w+)\s+in\s*\(([^)]*)\)\s*\)/gi
+            for (let c = check.exec(corpo); c; c = check.exec(corpo)) {
+                out[`${m[1].toLowerCase()}.${c[1].toLowerCase()}`] = valori(c[2])
+            }
         }
-        const corpo = sql.slice(tabella.lastIndex, j - 1)
-        const check = /check\s*\(\s*(\w+)\s+in\s*\(([^)]*)\)\s*\)/gi
-        for (let c = check.exec(corpo); c; c = check.exec(corpo)) {
-            out[`${m[1].toLowerCase()}.${c[1].toLowerCase()}`] = [...c[2].matchAll(/'([^']*)'/g)].map((v) => v[1])
+        // Un ALTER TABLE non ha `;` al suo interno (le liste dei vocabolari non ne contengono).
+        const alter = /alter\s+table\s+(?:only\s+)?(?:public\.)?(crm_\w+)\s+([^;]*);/gi
+        for (let a = alter.exec(sql); a; a = alter.exec(sql)) {
+            const nomeTabella = a[1].toLowerCase()
+            const clausole = a[2]
+            // `add column colonna <tipo> check (colonna in (…))`: la clausola non può sconfinare nella successiva.
+            const colonna = /add\s+column\s+(?:if\s+not\s+exists\s+)?(\w+)(?:(?!add\s+(?:column|constraint)\b)[\s\S])*?check\s*\(\s*\1\s+in\s*\(([^)]*)\)\s*\)/gi
+            for (let c = colonna.exec(clausole); c; c = colonna.exec(clausole)) {
+                out[`${nomeTabella}.${c[1].toLowerCase()}`] = valori(c[2])
+            }
+            const vincolo = /add\s+constraint\s+\w+\s+check\s*\(\s*(\w+)\s+in\s*\(([^)]*)\)\s*\)/gi
+            for (let c = vincolo.exec(clausole); c; c = vincolo.exec(clausole)) {
+                out[`${nomeTabella}.${c[1].toLowerCase()}`] = valori(c[2])
+            }
         }
     }
     return out
 }
 
-const TROVATI = checkDellaMigrazione(SQL)
+const TROVATI = checkDelleMigrazioni(SQL_PER_FILE)
 
 describe('vocabolari del CRM · migrazione e tipi.ts dicono la stessa cosa', () => {
-    it('la migrazione c’è e i check sono stati letti (sanity: senza, il resto sarebbe verde sul vuoto)', () => {
-        expect(FILE).toHaveLength(1)
+    it('le migrazioni ci sono e i check sono stati letti (sanity: senza, il resto sarebbe verde sul vuoto)', () => {
+        expect(FILE).toHaveLength(2)
+        expect(FILE[0]).toMatch(/_crm_segreteria\.sql$/)
+        expect(FILE[1]).toMatch(/_crm_quota_e_settimane\.sql$/)
         expect(Object.keys(TROVATI).length).toBeGreaterThan(10)
+    })
+
+    it('il vincolo degli eventi è quello RICREATO dalla seconda migrazione (vince l’ultima definizione)', () => {
+        // Senza questo, un lettore che guardasse solo le `create table` vedrebbe i 24 valori vecchi.
+        expect(TROVATI['crm_eventi.tipo']).toHaveLength(24 + 5)
+        expect(TROVATI['crm_eventi.tipo'].slice(-5)).toEqual([
+            'quota_in_contabilita',
+            'quota_corretta',
+            'quota_tolta',
+            'alunno_collegato',
+            'alunno_scollegato',
+        ])
     })
 
     it('ogni colonna con un vocabolario ha la sua mappa, e viceversa', () => {
@@ -102,7 +157,9 @@ describe('vocabolari del CRM · migrazione e tipi.ts dicono la stessa cosa', () 
     })
 
     it('la durata dello slot di default coincide con il default del database', () => {
-        expect(SQL).toMatch(new RegExp(`durata_min\\s+int\\s+not\\s+null\\s+default\\s+${DURATA_SLOT_DEFAULT_MIN}\\b`, 'i'))
-        expect(SQL).toMatch(new RegExp(`durata_slot_min\\s+int\\s+not\\s+null\\s+default\\s+${DURATA_SLOT_DEFAULT_MIN}\\b`, 'i'))
+        // `crm_appuntamenti.durata_min` nasce nella prima migrazione; `crm_fasce.durata_slot_min` nella seconda
+        // (prima stava in `crm_disponibilita`, tolta).
+        expect(SQL_PER_FILE[0]).toMatch(new RegExp(`durata_min\\s+int\\s+not\\s+null\\s+default\\s+${DURATA_SLOT_DEFAULT_MIN}\\b`, 'i'))
+        expect(SQL_PER_FILE[1]).toMatch(new RegExp(`durata_slot_min\\s+smallint\\s+not\\s+null\\s+default\\s+${DURATA_SLOT_DEFAULT_MIN}\\b`, 'i'))
     })
 })

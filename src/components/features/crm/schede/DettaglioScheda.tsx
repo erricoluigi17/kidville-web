@@ -516,7 +516,7 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const [esito, setEsito] = useState<EsitoBambino>(b.esito)
   const [motivo, setMotivo] = useState<string>(b.motivo_perdita ?? '')
   const [nota, setNota] = useState<string>(b.motivo_nota ?? '')
-  const [saldata, setSaldata] = useState<boolean>(b.quota_saldata)
+  const [saldata, setSaldata] = useState<boolean>(b.quota_saldata ?? false)
   const [dataSaldo, setDataSaldo] = useState<string>(b.quota_saldata_il ?? '')
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
@@ -531,7 +531,7 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
     if (esitoCambiato || motivoCambiato) corpo.motivoPerdita = motivo
     if (pulito(nota) !== (b.motivo_nota ?? '').trim()) corpo.motivoNota = pulito(nota)
   }
-  if (saldata !== b.quota_saldata) corpo.quotaSaldata = saldata
+  if (saldata !== (b.quota_saldata ?? false)) corpo.quotaSaldata = saldata
   if (saldata && dataSaldo !== '' && dataSaldo !== (b.quota_saldata_il ?? '')) corpo.quotaSaldataIl = dataSaldo
 
   const cambiato = Object.keys(corpo).length > 0

@@ -2,9 +2,10 @@
  * CRM DELLA SEGRETERIA · VOCABOLARI E FORMA DELLE RIGHE.
  *
  * Questo file è la fonte del codice per tutto ciò che il database conosce come
- * `check (<colonna> in (…))` nella migrazione `supabase/migrations/*_crm_segreteria.sql`. Le liste
- * qui sotto e quelle della migrazione devono essere IDENTICHE, valore per valore e nello stesso
- * ordine: lo verifica `__tests__/lib/crm/vocabolari-allineati.test.ts`. Aggiungere un valore in un
+ * `check (<colonna> in (…))` nelle migrazioni `supabase/migrations/*_crm_segreteria.sql` e
+ * `*_crm_quota_e_settimane.sql` (quest'ultima aggiunge la quota d'iscrizione ai bambini e allunga il
+ * vincolo dei tipi di evento). Le liste qui sotto e quelle delle migrazioni devono essere IDENTICHE,
+ * valore per valore e nello stesso ordine: lo verifica `__tests__/lib/crm/vocabolari-allineati.test.ts`. Aggiungere un valore in un
  * posto solo fa cadere quel test — ed è voluto: un valore che il database rifiuta (23514) si scopre
  * altrimenti davanti a una famiglia vera.
  *
@@ -85,6 +86,24 @@ export type EsitoOrigine = (typeof ESITO_ORIGINE)[number]
 export const NOTE_COLLEGAMENTO = ['domanda_respinta', 'altra_domanda'] as const
 export type NotaCollegamento = (typeof NOTE_COLLEGAMENTO)[number]
 
+/** Come ha pagato la quota d'iscrizione. `incasso_metodo` non ha `carta`: in contabilità diventa `pos`. */
+export const QUOTA_METODI = ['contanti', 'carta', 'bonifico'] as const
+export type MetodoQuota = (typeof QUOTA_METODI)[number]
+
+/**
+ * A che punto è la quota d'iscrizione di un bambino. Nullo = nessuna quota.
+ *  · `senza_importo`  la vecchia spunta, senza importo: si completa dalla scheda;
+ *  · `in_attesa`      importo, metodo e giorno ci sono, ma il bambino non è ancora un alunno;
+ *  · `in_contabilita` è diventata la voce «Iscrizione AAAA/AA» dell'alunno;
+ *  · `bloccata`       il passaggio non si può fare da solo, e `quota_blocco_motivo` dice perché.
+ */
+export const QUOTA_STATI = ['senza_importo', 'in_attesa', 'in_contabilita', 'bloccata'] as const
+export type StatoQuota = (typeof QUOTA_STATI)[number]
+
+/** Perché una quota resta bloccata in lista invece di passare in contabilità. */
+export const QUOTA_MOTIVI_BLOCCO = ['gia_pagata', 'supera_residuo', 'piu_voci', 'entrata_stornata'] as const
+export type MotivoBloccoQuota = (typeof QUOTA_MOTIVI_BLOCCO)[number]
+
 /** Tutto ciò che finisce nello storico di una scheda. */
 export const TIPI_EVENTO = [
   'creata',
@@ -111,10 +130,16 @@ export const TIPI_EVENTO = [
   'azione_fatta',
   'azione_spostata',
   'azione_cancellata',
+  // Dal 31/10/2026: la quota d'iscrizione in contabilità e il collegamento all'alunno.
+  'quota_in_contabilita',
+  'quota_corretta',
+  'quota_tolta',
+  'alunno_collegato',
+  'alunno_scollegato',
 ] as const
 export type TipoEvento = (typeof TIPI_EVENTO)[number]
 
-/** Durata di una visita se non se ne sceglie un'altra (anche `crm_appuntamenti.durata_min` e `crm_disponibilita.durata_slot_min`). */
+/** Durata di una visita se non se ne sceglie un'altra (anche `crm_appuntamenti.durata_min` e `crm_fasce.durata_slot_min`). */
 export const DURATA_SLOT_DEFAULT_MIN = 45
 
 /** L'ora, a Roma, in cui scade un richiamo pianificato dal sistema. */
@@ -163,10 +188,29 @@ export interface BambinoRow {
   domanda_collegata_il: string | null
   nota_collegamento: NotaCollegamento | null
   da_verificare: boolean
-  quota_saldata: boolean
-  /** `yyyy-mm-dd` */
+  /**
+   * DISMESSA dal 31/10/2026: la verità è `quota_stato`. La colonna resta nel database (nessuna `DROP
+   * COLUMN`) ma non la legge e non la scrive più nessuno. Facoltativa solo finché i vecchi punti d'uso
+   * non sono stati sistemati: si toglie con la sostituzione della spunta nella scheda (Compito 5).
+   */
+  quota_saldata?: boolean
+  /** L'importo della quota in euro. `numeric` arriva da PostgREST come numero o come stringa. */
+  quota_importo: number | string | null
+  quota_metodo: MetodoQuota | null
+  /** L'anno in cui si apre l'anno scolastico della quota: 2027 per il 2027/28. */
+  quota_anno: number | null
+  quota_stato: StatoQuota | null
+  quota_blocco_motivo: MotivoBloccoQuota | null
+  /** `yyyy-mm-dd`: il giorno in cui la famiglia ha pagato. */
   quota_saldata_il: string | null
   quota_segnata_da: string | null
+  /** L'entrata registrata in cassa (solo contanti) finché il bambino non è un alunno. */
+  quota_cassa_movimento_id: string | null
+  /** La voce «Iscrizione AAAA/AA» in contabilità, quando la quota ci è passata. */
+  quota_pagamento_id: string | null
+  /** L'alunno in anagrafica a cui il bambino è collegato (uno solo, e un alunno a un solo bambino). */
+  alunno_id: string | null
+  alunno_collegato_il: string | null
   creata_il: string
   aggiornata_il: string
 }
@@ -232,6 +276,34 @@ export interface DisponibilitaRow {
   /** `yyyy-mm-dd`; nullo = senza fine */
   valida_al: string | null
   creata_il: string
+}
+
+/**
+ * La testata di una settimana di disponibilità di un proprietario (una persona, oppure la sede).
+ * Una testata senza fasce è una settimana volutamente vuota. Dal 31/10/2026 sostituisce la settimana
+ * tipo di `DisponibilitaRow`, che il Compito 7 toglie.
+ */
+export interface SettimanaRow {
+  id: string
+  scuola_id: string
+  /** nullo = la sede */
+  utente_id: string | null
+  /** `yyyy-mm-dd`: il lunedì della settimana */
+  settimana: string
+  aggiornata_da: string | null
+  aggiornata_il: string
+}
+
+export interface FasciaRow {
+  id: string
+  scuola_id: string
+  settimana_id: string
+  /** 1 = lunedì … 7 = domenica (ISO) */
+  giorno_settimana: number
+  /** `HH:MM:SS`, come lo restituisce Postgres per `time` */
+  ora_inizio: string
+  ora_fine: string
+  durata_slot_min: number
 }
 
 export interface IndisponibilitaRow {

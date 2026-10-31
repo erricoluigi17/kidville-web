@@ -149,7 +149,6 @@ export function bambino(o: Partial<BambinoRow> & Pick<BambinoRow, 'scheda_id'>):
     domanda_collegata_il: null,
     nota_collegamento: null,
     da_verificare: false,
-    quota_saldata: false,
     quota_importo: null,
     quota_metodo: null,
     quota_anno: null,

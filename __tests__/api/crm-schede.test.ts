@@ -671,6 +671,58 @@ describe('GET /schede/[id]', () => {
         h.errori = { 'crm_bambini:select': { code: '08006' } }
         expect((await apri(S1)).status).toBe(500)
     })
+
+    describe('la quota in contabilità', () => {
+        const VOCE = '60000000-0000-4000-8000-000000000001'
+        const metti = (extra: Record<string, unknown>) => {
+            const riga = h.db.crm_bambini.find((b) => b.id === B1A)
+            if (!riga) throw new Error('fixture: manca il bambino B1A')
+            Object.assign(riga, { quota_stato: 'in_contabilita', quota_pagamento_id: VOCE, quota_metodo: 'bonifico', ...extra })
+        }
+        const bambinoB1A = async () => {
+            const corpo = await (await apri(S1)).json()
+            return corpo.bambini.find((b: { id: string }) => b.id === B1A) as Record<string, unknown>
+        }
+
+        it('un bonifico già in contabilità porta lo stato della voce: dice se la banca ha chiuso', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).toMatchObject({ quota_stato: 'in_contabilita', quota_pagamento_stato: 'da_pagare' })
+
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'pagato' }]
+            expect(await bambinoB1A()).toMatchObject({ quota_pagamento_stato: 'pagato' })
+        })
+
+        it('la voce di un’altra sede non si legge, nemmeno con lo stesso id', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_B, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).not.toHaveProperty('quota_pagamento_stato')
+        })
+
+        it('contanti o carta: la contabilità non si legge nemmeno', async () => {
+            metti({ quota_metodo: 'contanti' })
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).not.toHaveProperty('quota_pagamento_stato')
+            expect(h.letture).not.toContain('pagamenti')
+        })
+
+        it('senza bonifici in contabilità la scheda non tocca la contabilità', async () => {
+            await apri(S1)
+            expect(h.letture).not.toContain('pagamenti')
+        })
+
+        it('se la contabilità non si legge la scheda si apre lo stesso, e il guasto resta nel log', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            h.errori = { 'pagamenti:select': { code: '08006' } }
+            const res = await apri(S1)
+            expect(res.status).toBe(200)
+            const b = (await res.json()).bambini.find((x: { id: string }) => x.id === B1A)
+            expect(b).toMatchObject({ quota_stato: 'in_contabilita' })
+            expect(b).not.toHaveProperty('quota_pagamento_stato')
+            expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ esito: 'quota-voce-non-letta' }), expect.anything())
+        })
+    })
 })
 
 // ── PATCH /schede/[id] ───────────────────────────────────────────────────────

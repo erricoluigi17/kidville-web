@@ -1,11 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
 import { logEvento } from '@/lib/logging/logger'
 import { CODICI_SCHEMA_CRM_ASSENTE, codiceErroreDb } from './errori'
 import {
   QUOTA_MOTIVI_BLOCCO,
-  type AnnoIngresso,
   type MetodoQuota,
   type MotivoBloccoQuota,
   type StatoQuota,
@@ -33,21 +31,9 @@ import {
 
 // ── Anno, etichetta, competenza, metodo ──────────────────────────────────────
 
-/**
- * L'anno d'apertura dell'anno scolastico della quota: 2027 per il 2027/28. `non_indicato` non ne ha uno
- * (`null`): il CRM chiede di indicarlo prima di salvare. Il giorno si conta a Roma (`annoScolasticoCorrente`).
- */
-export function annoDellaQuota(annoIngresso: AnnoIngresso, adesso: Date = new Date()): number | null {
-  if (annoIngresso !== 'in_corso' && annoIngresso !== 'prossimo') return null
-  const apertura = Number.parseInt(annoScolasticoCorrente(adesso).split('/')[0], 10)
-  if (!Number.isFinite(apertura)) return null
-  return annoIngresso === 'prossimo' ? apertura + 1 : apertura
-}
-
-/** 2027 → `2027/28`; 2099 → `2099/00`. */
-export function etichettaAnno(anno: number): string {
-  return `${anno}/${String((anno + 1) % 100).padStart(2, '0')}`
-}
+// `annoDellaQuota` e `etichettaAnno` vivono in `quota-anno.ts` (calcolo puro, usabile anche dai componenti
+// client: questo file importa il logger del server). Qui si ripubblicano con lo stesso nome.
+export { annoDellaQuota, etichettaAnno } from './quota-anno'
 
 /** Il 1° settembre dell'anno d'apertura: 2027 → `2027-09-01`. */
 export function competenzaDellaQuota(anno: number): string {

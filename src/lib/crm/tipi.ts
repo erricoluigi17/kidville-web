@@ -188,12 +188,8 @@ export interface BambinoRow {
   domanda_collegata_il: string | null
   nota_collegamento: NotaCollegamento | null
   da_verificare: boolean
-  /**
-   * DISMESSA dal 31/10/2026: la verità è `quota_stato`. La colonna resta nel database (nessuna `DROP
-   * COLUMN`) ma non la legge e non la scrive più nessuno. Facoltativa solo finché i vecchi punti d'uso
-   * non sono stati sistemati: si toglie con la sostituzione della spunta nella scheda (Compito 5).
-   */
-  quota_saldata?: boolean
+  // La colonna `quota_saldata` esiste ancora nel database ma è DISMESSA dal 31/10/2026 (nessuna `DROP COLUMN`):
+  // la verità è `quota_stato`, e nessun codice la legge né la scrive più. Per questo non è nella riga.
   /** L'importo della quota in euro. `numeric` arriva da PostgREST come numero o come stringa. */
   quota_importo: number | string | null
   quota_metodo: MetodoQuota | null
@@ -213,6 +209,16 @@ export interface BambinoRow {
   alunno_collegato_il: string | null
   creata_il: string
   aggiornata_il: string
+}
+
+/**
+ * Un bambino come lo restituisce `GET /api/admin/crm/schede/[id]`: la riga di `crm_bambini` più un campo che
+ * NON è una colonna. `quota_pagamento_stato` è lo `stato` della voce «Iscrizione» in contabilità, ed è
+ * presente solo per i bonifici già passati in contabilità: serve a dire «in attesa del bonifico» finché la
+ * banca non ha chiuso la voce (spec §5.2). Assente o nullo = non lo si sa, e la scheda non dice nulla di più.
+ */
+export interface BambinoDettaglioRow extends BambinoRow {
+  quota_pagamento_stato?: string | null
 }
 
 export interface AppuntamentoRow {

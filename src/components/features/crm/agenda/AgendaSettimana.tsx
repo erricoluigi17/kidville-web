@@ -20,6 +20,12 @@ import { FissaVisita } from './FissaVisita'
  * e i comandi rapidi) e gli slot ancora liberi, cliccabili per fissarne una. Le frecce portano alla settimana
  * prima e dopo; di domenica si guarda già la settimana che viene, perché la domenica non è un giorno di agenda.
  *
+ * ── LA COLONNA «SEDE» ────────────────────────────────────────────────────────────────
+ * Gli slot della SEDE (`utenteId` nullo) non sono di nessuna persona: chi li riceve lo sceglie chi fissa, fra le
+ * persone libere in quell'orario (`personeLibere`). Stanno in una colonna «Sede», PRIMA delle persone, che compare
+ * solo se in quella settimana c'è almeno uno slot della sede. Il clic apre «Fissa una visita» con quell'ora e
+ * con SOLE quelle persone da scegliere.
+ *
  * ── UNA SETTIMANA È UN'INTERROGAZIONE SOLA ─────────────────────────────────────────
  * `GET /api/admin/crm/appuntamenti` restituisce visite, slot e persone nello stesso colpo: le tre cose si
  * leggono dallo stesso istante, e uno slot non può risultare libero accanto a una visita che lo occupa. La sede
@@ -56,6 +62,9 @@ interface DatiSettimana {
 type Esito = { chiave: string; ok: true; dati: DatiSettimana } | { chiave: string; ok: false; testo: string }
 
 const ROUTE = '/admin/crm'
+
+/** L'identità della colonna degli slot della sede: non è un uuid, quindi non si scambia con nessuna persona. */
+const COLONNA_SEDE = 'sede'
 
 /** Il lunedì da mostrare per `oggi` (giorno civile): la domenica guarda già avanti. */
 function lunediDa(oggi: string): string {
@@ -109,7 +118,7 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
   const [lunedi, setLunedi] = useState(() => lunediDa(oggi))
   const [versione, setVersione] = useState(0)
   const [esito, setEsito] = useState<Esito | null>(null)
-  const [fissa, setFissa] = useState<{ appuntamento?: AppuntamentoRow; inizio?: string; assegnataA?: string } | null>(null)
+  const [fissa, setFissa] = useState<{ appuntamento?: AppuntamentoRow; inizio?: string; assegnataA?: string; personeProposte?: string[] } | null>(null)
   const [azione, setAzione] = useState<{ tipo: TipoAzione; visita: VisitaAgenda } | null>(null)
 
   const chiave = `${scuolaId}|${lunedi}|${versione}`
@@ -136,7 +145,9 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
     if (!dati) return []
     const note = new Map(dati.persone.map((p) => [p.id, p]))
     const extra = [...new Set(dati.appuntamenti.map((a) => a.assegnata_a))].filter((id) => !note.has(id))
+    const conSlotSede = dati.slot.some((s) => s.utenteId === null)
     return [
+      ...(conSlotSede ? [{ id: COLONNA_SEDE, nome: t('sede') }] : []),
       ...dati.persone.map((p) => ({ id: p.id, nome: nomeDi(p) })),
       ...extra.map((id) => ({ id, nome: t('personaSconosciuta') })),
     ]
@@ -153,10 +164,8 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
       metti(dataCivile(new Date(v.inizio)), v.assegnata_a, { tipo: 'visita', inizio: v.inizio, visita: v })
     }
     for (const s of dati?.slot ?? []) {
-      // Gli slot della SEDE (`utenteId` nullo) non stanno in nessuna colonna di persona: li mostra il pannello
-      // della sede (Compito 8). Finché non c'è, la griglia fa vedere solo quelli delle persone.
-      if (s.utenteId === null) continue
-      metti(dataCivile(new Date(s.inizio)), s.utenteId, { tipo: 'slot', inizio: s.inizio, slot: s })
+      // Gli slot della SEDE (`utenteId` nullo) stanno nella colonna «Sede».
+      metti(dataCivile(new Date(s.inizio)), s.utenteId ?? COLONNA_SEDE, { tipo: 'slot', inizio: s.inizio, slot: s })
     }
     for (const [k, lista] of mappa) mappa.set(k, [...lista].sort((a, b) => (a.inizio < b.inizio ? -1 : a.inizio > b.inizio ? 1 : 0)))
     return mappa
@@ -259,8 +268,18 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
                                   <button
                                     type="button"
                                     className="min-h-[36px] rounded-pill border border-dashed border-kidville-green px-3 font-maven text-sm font-bold tabular-nums text-kidville-green transition-colors hover:bg-kidville-green-soft"
-                                    aria-label={t('slotAria', { giorno: `${nomeGiorno(g)} ${fmt.giornoMese(mezzogiorno(g))}`, ora: fmt.ora(voce.slot.inizio), persona: c.nome })}
-                                    onClick={() => setFissa({ inizio: voce.slot.inizio, assegnataA: voce.slot.utenteId ?? undefined })}
+                                    aria-label={
+                                      voce.slot.utenteId === null
+                                        ? t('slotSedeAria', { giorno: `${nomeGiorno(g)} ${fmt.giornoMese(mezzogiorno(g))}`, ora: fmt.ora(voce.slot.inizio) })
+                                        : t('slotAria', { giorno: `${nomeGiorno(g)} ${fmt.giornoMese(mezzogiorno(g))}`, ora: fmt.ora(voce.slot.inizio), persona: c.nome })
+                                    }
+                                    onClick={() =>
+                                      setFissa(
+                                        voce.slot.utenteId === null
+                                          ? { inizio: voce.slot.inizio, personeProposte: voce.slot.personeLibere }
+                                          : { inizio: voce.slot.inizio, assegnataA: voce.slot.utenteId },
+                                      )
+                                    }
                                   >
                                     {fmt.ora(voce.slot.inizio)}
                                   </button>
@@ -296,6 +315,7 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
           appuntamento={fissa.appuntamento}
           inizioProposto={fissa.inizio}
           assegnataProposta={fissa.assegnataA}
+          personeProposte={fissa.personeProposte}
           onFatto={() => {
             setFissa(null)
             ricarica()

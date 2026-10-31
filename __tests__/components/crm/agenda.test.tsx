@@ -32,15 +32,17 @@ const P_ESTRANEA = '99999999-9999-4999-8999-999999999999'
 const S1 = '33333333-3333-4333-8333-333333333333'
 const V1 = '44444444-4444-4444-8444-444444444444'
 const V2 = '55555555-5555-4555-8555-555555555555'
-const F1 = '66666666-6666-4666-8666-666666666666'
-const F2 = '77777777-7777-4777-8777-777777777777'
 const A1 = '88888888-8888-4888-8888-888888888888'
 const C1 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+
+const P3 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 
 const PERSONE = [
   { id: P1, nome: 'Prima', cognome: 'Prova', ruolo: 'segreteria' },
   { id: P2, nome: 'Seconda', cognome: 'Prova', ruolo: 'admin' },
 ]
+/** Una terza persona della sede: negli slot della sede serve una che NON sia libera. */
+const PERSONE_TRE = [...PERSONE, { id: P3, nome: 'Terza', cognome: 'Prova', ruolo: 'segreteria' }]
 
 // ── fetch finto ──────────────────────────────────────────────────────────────────────
 
@@ -140,13 +142,22 @@ function visita(o: Record<string, unknown> = {}) {
 /** Lo slot libero di giovedì 5 novembre alle 09:45 (08:45 UTC) per la prima persona. */
 const SLOT = { utenteId: P1, inizio: '2026-11-05T08:45:00.000Z', fine: '2026-11-05T09:30:00.000Z' }
 
-function preparaAgenda(settimana: { appuntamenti?: unknown[]; slot?: unknown[] } = {}) {
+/** Lo slot della SEDE di giovedì 5 novembre alle 09:45: nessuna persona in particolare, scelgono le libere. */
+const slotSede = (personeLibere: string[]) => ({
+  utenteId: null,
+  inizio: '2026-11-05T08:45:00.000Z',
+  fine: '2026-11-05T09:30:00.000Z',
+  personeLibere,
+})
+
+function preparaAgenda(settimana: { appuntamenti?: unknown[]; slot?: unknown[]; persone?: typeof PERSONE } = {}) {
+  const persone = settimana.persone ?? PERSONE
   rotta('GET', /\/api\/admin\/crm\/appuntamenti$/, () => ({
     appuntamenti: settimana.appuntamenti ?? [visita()],
     slot: settimana.slot ?? [SLOT],
-    persone: PERSONE,
+    persone,
   }))
-  rotta('GET', /\/api\/admin\/crm\/persone$/, () => ({ data: PERSONE }))
+  rotta('GET', /\/api\/admin\/crm\/persone$/, () => ({ data: persone }))
 }
 
 async function montaAgenda(onApriScheda: (id: string) => void = () => {}) {
@@ -319,6 +330,43 @@ describe('AgendaSettimana · gli slot liberi', () => {
     expect(quante('POST', /appuntamenti$/)).toHaveLength(0)
   })
 
+  it('senza slot della sede non c’è la colonna «Sede»', async () => {
+    preparaAgenda()
+    await montaAgenda()
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Giorno', 'Prima Prova', 'Seconda Prova'])
+  })
+
+  it('uno slot della sede apre FissaVisita che propone solo le persone libere', async () => {
+    preparaAgenda({ slot: [slotSede([P1, P2])], persone: PERSONE_TRE })
+    await montaAgenda()
+
+    // La colonna «Sede» compare prima delle persone, e lo slot sta nel suo giorno.
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Giorno', 'Sede', 'Prima Prova', 'Seconda Prova', 'Terza Prova'])
+    const giovedi = screen.getByRole('rowheader', { name: /^Giovedì/ }).closest('tr') as HTMLElement
+    const slot = within(within(giovedi).getAllByRole('cell')[0]).getByRole('button', { name: /^Fissa una visita Giovedì 5 novembre, ore 09:45/ })
+    fireEvent.click(slot)
+
+    const dialogo = await screen.findByRole('dialog', { name: 'Fissa una visita' })
+    expect((within(dialogo).getByLabelText('Ora') as HTMLInputElement).value).toBe('09:45')
+    expect((within(dialogo).getByLabelText('Giorno') as HTMLInputElement).value).toBe('05/11/2026')
+    // Il selettore elenca solo chi è libero: la terza persona della sede non c'è.
+    const scelta = within(dialogo).getByLabelText('Persona') as HTMLSelectElement
+    await waitFor(() => expect([...scelta.options].map((o) => o.textContent)).toEqual(['Scegli una persona', 'Prima Prova', 'Seconda Prova']))
+    // Con più di una libera non se ne preseleziona nessuna: la scelta è di chi fissa.
+    expect(scelta.value).toBe('')
+  })
+
+  it('con una sola persona libera è già scelta', async () => {
+    preparaAgenda({ slot: [slotSede([P2])], persone: PERSONE_TRE })
+    await montaAgenda()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Fissa una visita Giovedì 5 novembre, ore 09:45/ }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Fissa una visita' })
+    const scelta = within(dialogo).getByLabelText('Persona') as HTMLSelectElement
+    await waitFor(() => expect(scelta.value).toBe(P2))
+    expect([...scelta.options].map((o) => o.textContent)).toEqual(['Scegli una persona', 'Seconda Prova'])
+  })
+
   it('«Fissa una visita» in alto apre il dialogo senza ora né persona decise', async () => {
     preparaAgenda()
     await montaAgenda()
@@ -415,6 +463,47 @@ describe('FissaVisita · fissare', () => {
     rotta('GET', /\/api\/admin\/crm\/persone$/, () => ({ data: [PERSONE[0]] }))
     render(<FissaVisita scuolaId={SEDE_A} schedaId={S1} onFatto={() => {}} onAnnulla={() => {}} />)
     await waitFor(() => expect((screen.getByLabelText('Persona') as HTMLSelectElement).value).toBe(P1))
+  })
+
+  it('con più persone proposte la scelta è obbligatoria: il pulsante resta spento finché non si sceglie', async () => {
+    rotta('POST', /appuntamenti$/, () => json({ id: V1, fuori_disponibilita: false }, 201))
+    const { onFatto } = montaDialogo({ schedaId: S1, inizioProposto: SLOT.inizio, personeProposte: [P1, P2] })
+
+    const scelta = screen.getByLabelText('Persona') as HTMLSelectElement
+    await waitFor(() => expect(scelta.options.length).toBe(3))
+    expect(scelta.value).toBe('')
+    // Il pulsante è spento e il testo d'aiuto dice perché.
+    const fissa = screen.getByRole('button', { name: 'Fissa la visita' }) as HTMLButtonElement
+    expect(fissa.disabled).toBe(true)
+    expect(screen.getByText('A quest’ora sono libere più persone: scegli chi riceve la famiglia.')).toBeTruthy()
+
+    fireEvent.change(scelta, { target: { value: P2 } })
+    expect(fissa.disabled).toBe(false)
+    expect(screen.queryByText('A quest’ora sono libere più persone: scegli chi riceve la famiglia.')).toBeNull()
+    fireEvent.click(fissa)
+    await waitFor(() => expect(onFatto).toHaveBeenCalledTimes(1))
+    expect(ultima('POST', /appuntamenti$/)?.corpo?.assegnataA).toBe(P2)
+  })
+
+  it('con una sola persona proposta è già scelta, anche se la sede ne ha altre', async () => {
+    rotta('POST', /appuntamenti$/, () => json({ id: V1, fuori_disponibilita: false }, 201))
+    const { onFatto } = montaDialogo({ schedaId: S1, inizioProposto: SLOT.inizio, personeProposte: [P2] })
+
+    const scelta = screen.getByLabelText('Persona') as HTMLSelectElement
+    await waitFor(() => expect(scelta.value).toBe(P2))
+    expect([...scelta.options].map((o) => o.textContent)).toEqual(['Scegli una persona', 'Seconda Prova'])
+    fireEvent.click(screen.getByRole('button', { name: 'Fissa la visita' }))
+    await waitFor(() => expect(onFatto).toHaveBeenCalledTimes(1))
+    expect(ultima('POST', /appuntamenti$/)?.corpo?.assegnataA).toBe(P2)
+  })
+
+  it('con le persone proposte vuote il dialogo si comporta come sempre', async () => {
+    montaDialogo({ schedaId: S1, inizioProposto: SLOT.inizio, personeProposte: [] })
+    const scelta = screen.getByLabelText('Persona') as HTMLSelectElement
+    await waitFor(() => expect(scelta.options.length).toBe(3))
+    expect(scelta.value).toBe('')
+    expect((screen.getByRole('button', { name: 'Fissa la visita' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText('A quest’ora sono libere più persone: scegli chi riceve la famiglia.')).toBeNull()
   })
 
   it('«Annulla» chiude senza chiamare il server', async () => {
@@ -586,15 +675,23 @@ describe('AgendaSettimana · i comandi rapidi', () => {
 // La disponibilità
 // ═════════════════════════════════════════════════════════════════════════════════════
 
-const FASCIA_P1 = {
-  id: F1, scuola_id: SEDE_A, utente_id: P1, giorno_settimana: 1, ora_inizio: '09:00:00', ora_fine: '13:00:00',
-  durata_slot_min: 45, valida_al: null, creata_il: '2026-09-01T00:00:00Z',
-}
-const FASCIA_P2 = { ...FASCIA_P1, id: F2, utente_id: P2, giorno_settimana: 2, ora_inizio: '15:00:00', ora_fine: '18:00:00' }
-
-function preparaDisponibilita(o: { io?: { id: string; ruolo: string }; assenze?: unknown[]; fasce?: unknown[] } = {}) {
+/**
+ * La pagina «Disponibilità»: la griglia della settimana (`SettimanaDisponibilita`, provata a parte in
+ * `disponibilita-settimana.test.tsx`) più le assenze e le chiusure, che sono di questo pannello.
+ * Qui la GET delle disponibilità serve due volte: alla griglia per le fasce, al pannello per sapere CHI guarda.
+ */
+function preparaDisponibilita(o: { io?: { id: string; ruolo: string }; assenze?: unknown[] } = {}) {
   rotta('GET', /\/api\/admin\/crm\/disponibilita$/, () => ({
-    data: o.fasce ?? [FASCIA_P1, FASCIA_P2],
+    data: {
+      settimana: '2026-11-02',
+      modificabile: true,
+      proprietari: [
+        { utenteId: null, origine: 'nessuna', daSettimana: null, fasce: [] },
+        { utenteId: P1, origine: 'nessuna', daSettimana: null, fasce: [] },
+        { utenteId: P2, origine: 'nessuna', daSettimana: null, fasce: [] },
+      ],
+      persone: PERSONE,
+    },
     io: o.io ?? { id: P1, ruolo: 'segreteria' },
   }))
   rotta('GET', /\/api\/admin\/crm\/indisponibilita$/, () => ({ data: o.assenze ?? [] }))
@@ -606,111 +703,62 @@ async function montaDisponibilita() {
   await screen.findByRole('heading', { name: 'Disponibilità' })
 }
 
-describe('DisponibilitaPersona · la settimana tipo', () => {
-  it('la segreteria vede la PROPRIA settimana e non può scegliere un’altra persona', async () => {
+// Le assenze dei test sono scritte come le restituisce il server: intervalli con l'estremo finale ESCLUSO.
+const ASSENZA_P1 = {
+  id: A1, scuola_id: SEDE_A, utente_id: P1, motivo: 'ferie',
+  dal: '2026-11-02T23:00:00.000Z', al: '2026-11-05T23:00:00.000Z', // 3–5 novembre (a Roma)
+  creata_da: P1, creata_il: '2026-10-30T00:00:00Z',
+}
+const ASSENZA_P2 = {
+  ...ASSENZA_P1, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', utente_id: P2,
+  dal: '2026-11-09T23:00:00.000Z', al: '2026-11-12T23:00:00.000Z', // 10–12 novembre (a Roma)
+}
+
+describe('DisponibilitaPersona · la pagina', () => {
+  it('porta dentro la griglia della settimana: chiede la settimana in corso della sede', async () => {
     preparaDisponibilita()
     await montaDisponibilita()
-    expect(screen.getByText('09:00–13:00')).toBeTruthy()
-    expect(screen.queryByText('15:00–18:00')).toBeNull() // è della collega
+    await screen.findByRole('table')
+    expect(screen.getByRole('heading', { name: 'Gli orari, settimana per settimana' })).toBeTruthy()
+    // Una riga per la sede e una per ogni persona, anche se nessuna ha ancora impostato niente.
+    expect(screen.getAllByRole('rowheader')).toHaveLength(3)
+    // Due letture: quella del pannello (per sapere chi guarda, la settimana di oggi) e quella della griglia
+    // (il lunedì della settimana in corso). Tutte e due dichiarano la sede.
+    const letture = quante('GET', /\/api\/admin\/crm\/disponibilita$/)
+    expect(letture.map((l) => l.query.get('settimana')).sort()).toEqual(['2026-11-02', '2026-11-04'])
+    for (const l of letture) expect(l.query.get('scuolaId')).toBe(SEDE_A)
+  })
+
+  it('la segreteria vede le PROPRIE assenze e non può scegliere un’altra persona', async () => {
+    preparaDisponibilita({ assenze: [ASSENZA_P1, ASSENZA_P2] })
+    await montaDisponibilita()
+    expect(screen.getAllByText(/03\/11\/2026 – 05\/11\/2026/)).toHaveLength(1) // quella di P1
+    expect(screen.queryByText(/10\/11\/2026 – 12\/11\/2026/)).toBeNull() // quella della collega
     expect(screen.queryByLabelText('Persona')).toBeNull()
-    expect(screen.getByRole('heading', { name: 'La mia settimana tipo' })).toBeTruthy()
   })
 
-  it('l’admin può scegliere la persona e vede la sua settimana', async () => {
-    preparaDisponibilita({ io: { id: P2, ruolo: 'admin' } })
+  it('l’admin può scegliere la persona e vede le sue assenze', async () => {
+    preparaDisponibilita({ io: { id: P2, ruolo: 'admin' }, assenze: [ASSENZA_P1, ASSENZA_P2] })
     await montaDisponibilita()
-    expect(screen.getByText('15:00–18:00')).toBeTruthy() // la propria, di default
+    expect(screen.getByText(/10\/11\/2026 – 12\/11\/2026/)).toBeTruthy() // la propria, di default
+    expect(screen.queryByText(/03\/11\/2026 – 05\/11\/2026/)).toBeNull()
     fireEvent.change(screen.getByLabelText('Persona'), { target: { value: P1 } })
-    expect(screen.getByText('09:00–13:00')).toBeTruthy()
-    expect(screen.queryByText('15:00–18:00')).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Settimana tipo della persona' })).toBeTruthy()
+    expect(screen.getByText(/03\/11\/2026 – 05\/11\/2026/)).toBeTruthy()
+    expect(screen.queryByText(/10\/11\/2026 – 12\/11\/2026/)).toBeNull()
   })
 
-  it('aggiunge una fascia per sé: manda la sede, la persona e gli orari', async () => {
-    preparaDisponibilita()
-    rotta('POST', /\/disponibilita$/, () => json({ id: F1 }, 201))
-    await montaDisponibilita()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi una fascia' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuova fascia' })
-    fireEvent.change(within(dialogo).getByLabelText('Giorno'), { target: { value: '3' } })
-    fireEvent.change(within(dialogo).getByLabelText('Dalle'), { target: { value: '14:30' } })
-    fireEvent.change(within(dialogo).getByLabelText('Alle'), { target: { value: '17:00' } })
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }))
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(ultima('POST', /\/disponibilita$/)?.corpo).toEqual({
-      scuolaId: SEDE_A,
-      utenteId: P1,
-      giornoSettimana: 3,
-      oraInizio: '14:30',
-      oraFine: '17:00',
-      durataSlotMin: 45,
-      validaAl: null,
-    })
-    // E la settimana si è riletta.
-    expect(quante('GET', /\/disponibilita$/).length).toBeGreaterThanOrEqual(2)
-  })
-
-  it('l’admin che aggiunge una fascia a una collega manda quella persona', async () => {
+  it('l’assenza aggiunta dall’admin per una collega manda quella persona', async () => {
     preparaDisponibilita({ io: { id: P2, ruolo: 'admin' } })
-    rotta('POST', /\/disponibilita$/, () => json({ id: F1 }, 201))
+    rotta('POST', /\/indisponibilita$/, () => json({ id: A1 }, 201))
     await montaDisponibilita()
     fireEvent.change(screen.getByLabelText('Persona'), { target: { value: P1 } })
-    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi una fascia' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuova fascia' })
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi un’assenza' }))
+    const dialogo = await screen.findByRole('dialog', { name: 'Nuova assenza' })
+    fireEvent.change(within(dialogo).getByLabelText('Dal'), { target: { value: '03/11/2026' } })
+    fireEvent.change(within(dialogo).getByLabelText('Al'), { target: { value: '05/11/2026' } })
     fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }))
-    await waitFor(() => expect(quante('POST', /\/disponibilita$/)).toHaveLength(1))
-    expect(ultima('POST', /\/disponibilita$/)?.corpo?.utenteId).toBe(P1)
-  })
-
-  it('un’ora di fine che non segue quella di inizio non parte', async () => {
-    preparaDisponibilita()
-    await montaDisponibilita()
-    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi una fascia' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuova fascia' })
-    fireEvent.change(within(dialogo).getByLabelText('Alle'), { target: { value: '08:00' } })
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }))
-    expect((await within(dialogo).findByRole('alert')).textContent).toBe('L’ora di fine deve essere dopo quella di inizio.')
-    expect(quante('POST', /\/disponibilita$/)).toHaveLength(0)
-  })
-
-  it('modifica una fascia esistente con una PATCH', async () => {
-    preparaDisponibilita()
-    rotta('PATCH', new RegExp(`/disponibilita/${F1}$`), () => json({ id: F1 }))
-    await montaDisponibilita()
-    fireEvent.click(screen.getByRole('button', { name: 'Modifica la fascia Lunedì 09:00–13:00' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Modifica la fascia' })
-    expect((within(dialogo).getByLabelText('Dalle') as HTMLInputElement).value).toBe('09:00')
-    fireEvent.change(within(dialogo).getByLabelText('Alle'), { target: { value: '12:00' } })
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(ultima('PATCH', /\/disponibilita\//)?.corpo).toEqual({
-      giornoSettimana: 1, oraInizio: '09:00', oraFine: '12:00', durataSlotMin: 45, validaAl: null,
-    })
-  })
-
-  it('toglie una fascia solo dopo la conferma', async () => {
-    preparaDisponibilita()
-    rotta('DELETE', new RegExp(`/disponibilita/${F1}$`), () => json({ id: F1 }))
-    await montaDisponibilita()
-    fireEvent.click(screen.getByRole('button', { name: 'Elimina la fascia Lunedì 09:00–13:00' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Togliere la fascia?' })
-    expect(quante('DELETE', /\/disponibilita\//)).toHaveLength(0)
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Togli' }))
-    await waitFor(() => expect(quante('DELETE', /\/disponibilita\//)).toHaveLength(1))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  })
-
-  it('un rifiuto del server (403) si legge nel dialogo e il dialogo resta', async () => {
-    preparaDisponibilita()
-    rotta('POST', /\/disponibilita$/, () => errore(403, 'SOLO_LA_PROPRIA'))
-    await montaDisponibilita()
-    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi una fascia' }))
-    const dialogo = await screen.findByRole('dialog', { name: 'Nuova fascia' })
-    fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }))
-    expect((await within(dialogo).findByRole('alert')).textContent).toContain(shared.erroreCrmSoloLaPropria)
-    expect(screen.getByRole('dialog', { name: 'Nuova fascia' })).toBeTruthy()
+    await waitFor(() => expect(quante('POST', /\/indisponibilita$/)).toHaveLength(1))
+    expect(ultima('POST', /\/indisponibilita$/)?.corpo?.utenteId).toBe(P1)
   })
 })
 
@@ -816,5 +864,15 @@ describe('DisponibilitaPersona · quando qualcosa non va', () => {
     render(<DisponibilitaPersona scuolaId={SEDE_A} />)
     expect((await screen.findByRole('alert')).textContent).toContain('Non riesco a leggere la disponibilità')
     expect(screen.getByRole('button', { name: 'Riprova' })).toBeTruthy()
+  })
+
+  it('503 (le tabelle del CRM non ci sono): dice che il CRM non è disponibile, senza «Riprova» e senza griglia', async () => {
+    rotta('GET', /\/disponibilita$/, () => errore(503, 'CRM_NON_INSTALLATO'))
+    rotta('GET', /\/indisponibilita$/, () => errore(503, 'CRM_NON_INSTALLATO'))
+    rotta('GET', /\/persone$/, () => ({ data: PERSONE }))
+    render(<DisponibilitaPersona scuolaId={SEDE_A} />)
+    expect((await screen.findByRole('alert')).textContent).toContain(shared.erroreCrmNonInstallato)
+    expect(screen.queryByRole('button', { name: 'Riprova' })).toBeNull()
+    expect(screen.queryByRole('table')).toBeNull()
   })
 })

@@ -2593,7 +2593,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `admin/crm/schede/[id]/bambini/[bambinoId]/collegamento` (PUT e DELETE). Controllate: gate
             // `requireCrm`, sede da `resolveScuoleAttive`/`restringiSedi` (la prima) o da `assertSchedaInScope`
             // (la seconda). Nessuna esenzione. Ricalcolato all'integrazione.
-            routeConServiceRole: 370,
+            // 370 → 375 il 2026-10-31 (CRM della segreteria, sessione 2): le cinque route di
+            // `admin/crm/schede` (elenco+creazione, dettaglio+modifica, bambini, bambino, eventi). Tutte
+            // CONTROLLATE: gate `requireCrm`, e la sede la danno `restringiSedi`, `resolveScuolaScrittura`
+            // o `assertSchedaInScope`, con `scuola_id` esplicito su ogni lettura e scrittura. Nessuna
+            // esenzione. Ricalcolato all'integrazione rieseguendo il lock.
+            routeConServiceRole: 375,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2902,7 +2907,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Misurato rieseguendo il lock: 561 → 571.
             // 571 → 574 il 2026-10-31 (CRM, sessione 4): `admin/crm/domande:GET` e `…/collegamento:PUT`/`:DELETE`
             // (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 574,
+            // 574 → 581 il 2026-10-31: i sette handler delle cinque route `admin/crm/schede` (vedi sopra);
+            // `handlerEsentati` non cambia.
+            handlerControllati: 581,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

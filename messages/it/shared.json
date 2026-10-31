@@ -767,5 +767,6 @@
   "erroreCrmNonInstallato": "Il CRM non è ancora disponibile su questo ambiente.",
   "erroreCrmSoloLaPropria": "Puoi modificare solo la tua disponibilità. Per le altre persone serve la Direzione.",
   "erroreCrmOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco.",
-  "erroreCrmElementoNonTrovato": "L’elemento non esiste più. Aggiorna la pagina."
+  "erroreCrmElementoNonTrovato": "L’elemento non esiste più. Aggiorna la pagina.",
+  "erroreCrmContattoObbligatorio": "Serve almeno un telefono o un’email validi."
 }

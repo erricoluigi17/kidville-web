@@ -59,6 +59,7 @@ const ROTTA_DI: Record<string, string[]> = {
   'admin/iscrizioni/filtri-candidature.ts': ['src/app/api/admin/candidature-insegnanti/route.ts'],
   'admin/iscrizioni/filtri-ricevuti.ts': ['src/app/api/admin/iscrizioni/route.ts'],
   'admin/personale/filtri-pratiche.ts': ['src/app/api/admin/pratiche-personale/route.ts'],
+  'crm/schede/filtri-schede.ts': ['src/app/api/admin/crm/schede/route.ts'],
   'teacher/filtri-modulistica.ts': [
     'src/app/api/teacher/modulistica/route.ts',
     'src/app/api/teacher/medical-certificates/route.ts',

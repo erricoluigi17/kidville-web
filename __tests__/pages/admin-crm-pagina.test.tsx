@@ -25,6 +25,15 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
 
+// L'elenco delle schede (Compito 2.2) parla col server: qui conta solo che la cornice lo monti con QUELLA
+// sede, quindi resta il vecchio marcatore (la prova vera dell'elenco è `components/crm/schede.test.tsx`).
+vi.mock('@/components/features/crm/schede/ElencoSchede', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    ElencoSchede: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="ElencoSchede" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
+
 // Riproduzione fedele del guard vero (sede-context.tsx): senza UNA sede risolta non rende i figli.
 vi.mock('@/lib/context/sede-context', () => ({
   useSediAttive: () => ({ sedi: h.stato.sedi, sedeCorrente: h.stato.sedeCorrente, loading: h.stato.loading }),

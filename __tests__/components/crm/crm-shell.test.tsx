@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SEDE_A } from '../../fixtures/sedi'
@@ -258,20 +258,6 @@ describe('crmShell · i sei namespace sono montati', () => {
     }
   })
 
-  // Un namespace riempito dalla sua sessione esce da questo elenco (e dal controllo qui sotto), con la ragione:
-  //  · Sessione 5: crmFollowUp → le chiavi sono usate da `follow-up/*`, il test `follow-up.test.tsx` le legge a schermo
-  //  · Sessione 6: crmStatistiche → ha i suoi test in `statistiche.test.tsx`
-  //  · Sessione 3: crmAgenda → le chiavi sono usate da `agenda/*` e `disponibilita/*`, test `agenda.test.tsx`
-  //  · Sessione 4: crmCollegamento → le chiavi sono usate da `collegamento/*`, test `collegamento.test.tsx`
-  const RIEMPITI = ['crmFollowUp', 'crmStatistiche', 'crmAgenda', 'crmCollegamento']
-
-  it('i namespace non ancora riempiti nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
-    for (const lingua of LINGUE) {
-      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell' && !RIEMPITI.includes(n))) {
-        const file = JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8'))
-        expect(Object.keys(file)).toEqual([])
-      }
-    }
-    cleanup()
-  })
+  // Il test «i namespace nascono vuoti» è stato tolto all'integrazione (2026-10-31): le sessioni 2–6 hanno
+  // riempito tutti e cinque i namespace delle schermate, e ognuno è letto a schermo dai test della sua schermata.
 })

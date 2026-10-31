@@ -767,5 +767,6 @@
   "erroreCrmNonInstallato": "The CRM is not yet available in this environment.",
   "erroreCrmSoloLaPropria": "You can only edit your own availability. Editing other people’s availability requires the management.",
   "erroreCrmOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly.",
-  "erroreCrmElementoNonTrovato": "This item no longer exists. Refresh the page."
+  "erroreCrmElementoNonTrovato": "This item no longer exists. Refresh the page.",
+  "erroreCrmContattoObbligatorio": "At least one valid phone number or email is required."
 }

@@ -3350,6 +3350,11 @@ export const CODICI_ERRORE = {
     IDENTITA_NON_VERIFICATA: 'erroreIdentitaNonVerificata',
     /** 400 — la firma dei moduli genitore si attribuisce solo dopo la verifica OTP server. */
     MODULO_FIRMA_OTP_RICHIESTA: 'erroreModuloFirmaOtpRichiesta',
+    /**
+     * 403 — `forms/submit`: il corpo intesta la compilazione a un account diverso dalla
+     * sessione (S-1, 2026-10-31). L'intestatario è sempre chi ha fatto l'accesso.
+     */
+    MODULO_INTESTATARIO_NON_PROPRIO: 'erroreModuloIntestatarioNonProprio',
     /** `forms/signed-pdf`: dinieghi, letture dei permessi e guasti inattesi, senza dettagli DB. */
     MODULO_FIRMATO_ACCESSO_NON_VERIFICATO: 'erroreModuloFirmatoAccessoNonVerificato',
     MODULO_FIRMATO_ACCESSO_NEGATO: 'erroreModuloFirmatoAccessoNegato',

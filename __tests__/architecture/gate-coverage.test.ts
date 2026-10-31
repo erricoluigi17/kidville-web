@@ -485,7 +485,12 @@ const PUBBLICHE: Record<string, string> = {
     // genitore intestatario dalla propria area, e il destinatario si prende dai
     // tutori REGISTRATI dell'alunno. Ciò che è sparito è l'anonimo — quindi le
     // due voci non stanno più qui, e il tetto qui sotto è sceso da 16 a 14.
-    'forms/submit:POST': 'compilazione senza firma dal wizard pubblico: tetto 20/10 min per IP + guard server-side sui consensi obbligatori',
+    //
+    // E dal 2026-10-31 è uscita anche `forms/submit:POST` (S-1). La voce diceva
+    // «compilazione senza firma dal wizard pubblico», ma il wizard pubblico non
+    // passa di lì: usa `public/forms/[token]/submit`. Dietro questa porta c'era
+    // invece una compilazione `completed` intestata al `userId` che il corpo
+    // dichiarava, da chiunque. Ora l'intestatario è la sessione (`requireUser`).
 
     // ── GDPR: la cancellazione si chiede PROPRIO quando non si ha più l'app ───
     'public/cancellazione-account:POST': "richiesta di cancellazione via magic-link: la risposta è SEMPRE identica (anti-enumerazione delle email), nessun dato esce, tetto per IP. Un gate qui renderebbe l'oblio irraggiungibile a chi ha già disinstallato",
@@ -916,12 +921,18 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // difendersi, dentro un lavoro che esiste per toglierlo. Quello che tiene ferma
         // l'affermazione «non porta dati» è `__tests__/api/versione.test.ts`, che verifica che il
         // corpo abbia ESATTAMENTE la chiave `versione` e che un valore non-sha non esca.
+        //
+        // 🔻 23 → 22 il 2026-10-31, una DISCESA: `forms/submit:POST` ha preso il gate (S-1). La
+        // sua voce giustificava l'assenza di sessione con un modulo pubblico che da lì non passa
+        // (va su `public/forms/[token]/submit`), e intanto la route intestava la compilazione al
+        // `userId` scritto nel corpo. È la seconda volta dopo `forms/send-otp`: una motivazione
+        // plausibile che copriva una porta che nessuno aveva deciso di lasciare aperta.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(23)
+        ).toBe(22)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {

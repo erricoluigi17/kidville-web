@@ -715,6 +715,7 @@
   "erroreEliminazioneRicaricaNonDisponibile": "L’eliminazione di una ricarica di ticket non è disponibile su questo ambiente: la voce non è stata eliminata.",
   "erroreIdentitaNonVerificata": "Non è stato possibile verificare la tua identità: riprova fra poco.",
   "erroreModuloFirmaOtpRichiesta": "Per firmare il modulo usa la verifica OTP.",
+  "erroreModuloIntestatarioNonProprio": "Puoi inviare un modulo solo a tuo nome: esci e rientra con il tuo account.",
   "erroreModuloFirmatoAccessoNonVerificato": "Non è stato possibile verificare l’accesso al documento: riprova fra poco.",
   "erroreModuloFirmatoAccessoNegato": "Non puoi consultare questo documento.",
   "erroreModuloFirmatoNonDisponibile": "Questo documento non è disponibile: ricarica l’elenco dei moduli.",

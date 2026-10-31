@@ -289,7 +289,17 @@ export function posterioriCheContengono(
 // bucket e lo schema delle candidature solo l'istante dello scatto. La fotografia delle FK di sede ha
 // chiesto di correggere il suo generatore (`scripts/fk-sede-fotografia.mjs`): sceglieva la FK per nome
 // e prendeva la composta verso `crm_schede` invece di `scuola_id → schools`, che c'è.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261031195836_form_submissions_senza_policy_browser.sql`
+// toglie le tre policy `fs_*` di `form_submissions` e revoca i grant di `anon`/`authenticated`. La guardia
+// della RLS la vede per `policy`. Cambieranno davvero la fotografia della RLS (−3 policy, la tabella resta
+// in `tabelle_rls_attiva`) e quella delle migrazioni; nessun indice, nessuna FK, nessuna colonna. Si toglie
+// con la PR-B dopo il merge, rigenerando le due fotografie dalla produzione.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261031195836_form_submissions_senza_policy_browser.sql':
+        'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
+        'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

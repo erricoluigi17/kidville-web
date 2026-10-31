@@ -20,6 +20,14 @@ vi.mock('@/lib/logging/logger', async (importOriginal) => {
   return { ...vero, logErrore: (...a: unknown[]) => h.logErrore(...a) }
 })
 
+// Dal 31/10 (S-1) l'intestatario è la SESSIONE: qui c'è sempre, ed è lo stesso
+// genitore che il corpo dichiara. Il rifiuto di un `userId` altrui sta in
+// `forms-submit-identita.test.ts`.
+vi.mock('@/lib/auth/require-staff', () => ({
+  requireUser: vi.fn(async () => ({
+    user: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', role: 'genitore', scuola_id: 'sc-1' },
+  })),
+}))
 vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 9, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('test-ip'),

@@ -372,5 +372,8 @@ it('gruppiVisibili nasconde alla cuoca CRM, Candidature, Protocollo e Storici', 
    → `Test Files 4 passed`.
 2. Gate completo verde: eslint, tsc, vitest, build.
 3. Screenshot delle tre larghezze, con il gruppo della pagina aperto e un gruppo solo alla volta.
-4. CI della PR #272 verde su **tutti** i job, E2E compresi (gli E2E Playwright non cliccano le voci
-   dei gruppi; `tablet-layout.spec.ts` misura solo la geometria, che non cambia).
+4. CI della PR #272 verde su **tutti** i job, E2E compresi. ⚠️ Correzione dopo la revisione finale: la
+   frase scritta qui, «gli E2E non cliccano le voci dei gruppi», era falsa. Tre E2E cercavano voci che
+   ora stanno in gruppi chiusi: `admin-candidature.spec.ts` (voce Candidature dalla Home) e
+   `tablet-layout.spec.ts` (più di 8 link nella sidebar; «Impostazioni» come link nel pannello).
+   Sono stati aggiornati: aprono il gruppo prima di cercare la voce.

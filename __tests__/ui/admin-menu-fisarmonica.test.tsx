@@ -239,11 +239,22 @@ describe('foglio «Menu» (telefono) e pannello (tablet) — la stessa fisarmoni
 // In Alto Contrasto le utility colore sono inlinate (`@theme inline`) e il verde chiaro del «sei qui»
 // non si rimappa da solo: senza una regola esplicita, a gruppo chiuso nessun segno direbbe dove sei.
 describe('Alto Contrasto — l’intestazione «sei qui» resta riconoscibile senza colore', () => {
-  const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8');
-  it.each(['kv-admin-nav', 'kv-admin-sheet'])('.%s: barra nera a sinistra', (superficie) => {
-    const regola = new RegExp(
-      `\\[data-contrast="high"\\] \\.${superficie} button\\[data-contiene-pagina="true"\\][^{]*\\{[^}]*box-shadow:\\s*inset 4px 0 0 #000000`,
-    );
-    expect(css).toMatch(regola);
+  // Senza commenti: un lock che legge il CSS come testo troverebbe la regola anche nel commento che la spiega.
+  const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /** Le dichiarazioni delle regole il cui elenco di selettori contiene ESATTAMENTE `selettore`. */
+  function dichiarazioniDi(selettore: string): string[] {
+    const corpi: string[] = [];
+    for (const [, selettori, corpo] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (selettori.split(',').some((s) => s.trim() === selettore)) corpi.push(corpo.trim());
+    }
+    return corpi;
+  }
+
+  // Il selettore SENZA pseudo-classi. La variante `:focus-visible` ripete la barra, ma vale solo col
+  // fuoco da tastiera: da sola lascerebbe senza segno il gruppo chiuso di chi usa mouse o dito.
+  it.each(['kv-admin-nav', 'kv-admin-sheet'])('.%s: barra nera a sinistra, anche senza fuoco', (superficie) => {
+    const corpi = dichiarazioniDi(`[data-contrast="high"] .${superficie} button[data-contiene-pagina="true"]`);
+    expect(corpi.some((c) => /box-shadow:\s*inset 4px 0 0 #000000\s*(;|$)/.test(c))).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SEDE_A } from '../../fixtures/sedi'
@@ -33,6 +33,18 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/admin/crm',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
+
+/**
+ * L'elenco delle schede (Compito 2.2) non è più un segnaposto: parla con il server. Qui si misura
+ * soltanto che la cornice lo monti e gli passi la sede, quindi lo si sostituisce con il vecchio
+ * marcatore (la sua prova vera sta in `schede.test.tsx`).
+ */
+vi.mock('@/components/features/crm/schede/ElencoSchede', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    ElencoSchede: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="ElencoSchede" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
 
 /** Quale segnaposto sta a schermo per ciascuna linguetta. */
 const SEGNAPOSTO_DI: Record<(typeof TAB_CRM)[number], string> = {
@@ -221,15 +233,5 @@ describe('crmShell · i sei namespace sono montati', () => {
       const file = readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8')
       expect(typeof JSON.parse(file)).toBe('object')
     }
-  })
-
-  it('cinque dei sei nascono vuoti: li riempie la sessione che ne ha la schermata', () => {
-    for (const lingua of LINGUE) {
-      for (const ns of NAMESPACE.filter((n) => n !== 'crmShell')) {
-        const file = JSON.parse(readFileSync(join(process.cwd(), `messages/${lingua}/${ns}.json`), 'utf8'))
-        expect(Object.keys(file)).toEqual([])
-      }
-    }
-    cleanup()
   })
 })

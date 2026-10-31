@@ -183,6 +183,11 @@ const HOST_NON_CHIAMATI = new Map<string, string>([
         + '2026-10-02 né il runner Sandbox né la CI prendono niente da GitHub — la release datata è '
         + 'stata cancellata da BtbN il 29/09/2026 (404) e i binari vivono nel nostro bucket privato '
         + '`video_build`. Da `src/` non parte nessuna richiesta verso questo host.'],
+    ['wa.me',
+        'il collegamento «Scrivi su WhatsApp» della scheda di una famiglia del CRM '
+        + '(`src/components/features/crm/schede/contatti-link.ts`): è un `<a href>` che la segreteria '
+        + 'apre dal proprio telefono o dal proprio computer. Il nostro server non contatta WhatsApp, '
+        + 'e nel link entra soltanto il numero già scritto sulla scheda.'],
 ]);
 
 /**

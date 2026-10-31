@@ -110,14 +110,11 @@ describe('i dodici segnaposto · le firme del contratto', () => {
   })
 })
 
-describe('i dodici segnaposto · si montano con quelle props e dicono «in costruzione»', () => {
+describe('i segnaposto ancora in costruzione · si montano con quelle props e lo dicono', () => {
   const bambino = { id: 'bambino-1' } as BambinoRow
   const scheda = { id: 'scheda-1' } as SchedaRow
 
   const CASI: [string, () => React.ReactElement][] = [
-    ['ElencoSchede', () => <ElencoSchede scuolaId={SEDE_A} onApri={noop} />],
-    ['DettaglioScheda', () => <DettaglioScheda schedaId="scheda-1" onChiudi={noop} />],
-    ['NuovaScheda', () => <NuovaScheda scuolaId={SEDE_A} onCreata={noop} onAnnulla={noop} />],
     ['AgendaSettimana', () => <AgendaSettimana scuolaId={SEDE_A} onApriScheda={noop} />],
     ['FissaVisita', () => <FissaVisita scuolaId={SEDE_A} onFatto={noop} onAnnulla={noop} />],
     ['DisponibilitaPersona', () => <DisponibilitaPersona scuolaId={SEDE_A} />],
@@ -129,8 +126,10 @@ describe('i dodici segnaposto · si montano con quelle props e dicono «in costr
     ['StatisticheCrm', () => <StatisticheCrm scuolaId={SEDE_A} />],
   ]
 
-  it('sono dodici', () => {
-    expect(CASI).toHaveLength(12)
+  // Dodici meno i tre della Sessione 2 (elenco, scheda, nuova famiglia), che non sono più segnaposto:
+  // la loro prova è `schede.test.tsx`. Le tre firme restano verificate sopra, a livello di tipo.
+  it('sono nove', () => {
+    expect(CASI).toHaveLength(9)
   })
 
   it.each(CASI)('%s', (nome, el) => {

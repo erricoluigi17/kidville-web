@@ -1,3 +1,23 @@
+## 🧭 Changelog — Menu della segreteria a 7 voci, a fisarmonica — 2026-10-31 (branch `chore/piano-approvato-a-mano`)
+
+**Stato:** 🟡 in revisione (merge a mano, nella PR #272). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
+
+| | Prima | Dopo |
+|---|---|---|
+| Righe del menu | 33 (27 voci + 6 titoli di gruppo) | **7 voci di primo livello** |
+| Gruppo più lungo | «Amministrazione», 10 voci scollegate | 6 voci |
+| Come si apre | tutto sempre aperto | a fisarmonica, un gruppo alla volta |
+
+**I sette elementi:** Home · Anagrafica (link diretti) · **Registro** (Appello, Diario 0–6, Primaria, Competenze, Galleria) · **Comunicazione** (Messaggi, Avvisi, News, Compiti, Moderazione) · **Contabilità e servizi** (Contabilità, Coda fatture, Mensa, Report Cucina, Armadietto, Merchandise) · **Segreteria** (CRM, Candidature, Modulistica, Documenti firmati, Protocollo, Storici e stampe) · **Impostazioni** (Impostazioni, Strumenti, Privacy & GDPR).
+
+- **Stesso comportamento su computer, pannello del tablet e foglio del telefono**: all'arrivo su una pagina è aperto il suo gruppo; toccare un'altra intestazione la apre e chiude la precedente; toccare quella aperta la chiude. Sul telefono le voci già nei tab in basso restano fuori dai gruppi, come prima.
+- **A gruppo chiuso** l'intestazione del gruppo della pagina resta segnata («sei qui»; in Alto Contrasto una barra nera a sinistra) e porta il **numero della Coda fatture**, che altrimenti sparirebbe con la voce.
+- La barra in basso del telefono e il binario del tablet non cambiano. I ruoli delle voci non cambiano: il gate resta nelle API.
+- **Scelte dell'assistente, da confermare:** in «Segreteria» l'ordine è CRM · Candidature · Modulistica (restano veri i lock del 17/10 e del 30/10); «Dashboard» si chiama «Home» anche sul computer, come sul telefono; toccare un'intestazione apre o chiude, non porta a una pagina; nessuna memoria del gruppo aperto nel browser.
+- **Log:** nessun log nuovo, e non serve: nessuna route, nessuna integrazione esterna, nessun percorso d'errore nuovo.
+- **Codice:** `admin-nav-config.ts` (struttura a 7 voci, `gruppoDellaPagina`, `gruppiVisibili`), `use-gruppo-aperto.ts` (nuovo), `AdminSidebar.tsx`, `AdminMenuSheet.tsx`, due regole di Alto Contrasto in `globals.css` con la loro variante `:focus-visible`, titoli dei gruppi in `etichette` (it/en).
+- **Test:** nuovo `admin-menu-fisarmonica.test.tsx`; lock della struttura in `admin-nav-config.test.ts`; aggiornati `contatore-menu-coda-fatture`, `admin-binario`, `admin-bottom-nav` e `contrasto-bordi-superfici-pubbliche` (le intestazioni ora sono bottoni). E2E aggiornati: `admin-candidature.spec.ts` apre il gruppo «Segreteria» prima della voce; `tablet-layout.spec.ts` conta i cinque gruppi e controlla quello aperto su ogni rotta (prima pretendeva più di 8 link) e nel pannello apre «Impostazioni» prima della voce. Specifica e piano: `docs/superpowers/specs/2026-10-31-menu-segreteria-7-voci-design.md`, `docs/superpowers/plans/2026-10-31-menu-segreteria-7-voci.md`.
+
 ## 🗂️ Changelog — CRM della segreteria, prima versione: schede delle famiglie, agenda delle visite, follow-up, collegamento con le domande, statistiche per persona — 2026-10-31 (branch `feat/crm-segreteria`)
 
 **Stato:** ✅ in produzione dal 2026-10-31 02:09 UTC (commit `c0126d82`, PR [#273](https://github.com/erricoluigi17/kidville-web/pull/273); merge a mano dell'assistente col sì del titolare, «a CI verde»). La migrazione `20261030230225_crm_segreteria.sql` l'ha applicata l'integrazione al merge: una riga sola, con la version del file (247 migrazioni); sette tabelle con RLS accesa e nessuna policy, il vincolo `EXCLUDE` presente, advisor senza ERROR, «Verifica dopo il deploy» ok su `c0126d8`. Fotografie rigenerate dalla produzione e voce tolta da `MIGRAZIONI_ATTESE_AL_MERGE` nella PR-B del 31/10, la stessa della chiusura del lotto 4; lì il generatore della fotografia delle FK di sede (`scripts/fk-sede-fotografia.mjs`) è stato corretto perché preferisca la chiave a una colonna: sceglieva per nome e prendeva `(scheda_id, scuola_id) → crm_schede` invece di `scuola_id → schools`, che c'è su tutte e sette le tabelle. Nella stessa PR-B le 14 chiavi esterne del CRM verso `utenti` (tutte senza `ON DELETE`) entrano nel registro delle tracce del personale (`src/lib/personale/tracce-docente-voci.ts`, 63 → 77 voci) e tutte pesano: fino ad allora l'anteprima dell'eliminazione di un membro dello staff poteva dire «si cancella» su una segretaria con righe del CRM, che Postgres avrebbe rifiutato di cancellare. Ora la dà da archiviare. Ancora da vedere: l'uso vero di una segretaria e la tabella delle statistiche su un telefono. Specifica approvata dal titolare: `docs/superpowers/specs/2026-10-30-crm-segreteria-design.md`; piano: `docs/superpowers/plans/2026-10-30-crm-segreteria.md`. Implementata in sei sessioni separate (S1 fondamenta, S2 schede, S3 agenda, S4 collegamento, S5 follow-up, S6 statistiche), riunite e riviste nel ramo integrato.
@@ -55,6 +75,17 @@
 1. spegnere il progetto Firebase `crm-vendite` e le sue funzioni, il sito Netlify, e cancellare dai tre Google Calendar di sede gli eventi con dati personali; poi provare il vecchio link da una **finestra anonima**: non deve mostrare dati;
 2. controllare che chi fa le visite abbia un account `segreteria` o `admin` nella propria sede (al 30/10: 5 `segreteria` — Aversa 1, Cesa 2, Giugliano 2 — e 2 `admin` con sede; nella mini-app i nomi erano circa 6);
 3. chiedere alla consulente del lavoro se serve un'informativa alle segretarie per le statistiche per persona visibili alle colleghe (Statuto dei lavoratori, art. 4).
+
+## 📝 Changelog — Il piano di Claude lo approva il titolare — 2026-10-30 (branch `chore/piano-approvato-a-mano`)
+
+**Stato:** 🟡 in revisione (merge a mano). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
+
+- **Tolto `.claude/hooks/auto_approve_plan.py`** e la sua voce in `hooks.PreToolUse` di `.claude/settings.json`. Dal 18/09 approvava da solo ogni piano scritto in plan mode (29 volte, l'ultima il 30/10 alle 20:52). Richiesta del titolare: il piano lo approva lui dopo averlo letto.
+- **`auto_allow_permission.py` si astiene su `ExitPlanMode`**, come già su `AskUserQuestion`: altrimenti, se l'approvazione arrivasse come richiesta di permesso, la concederebbe lui.
+- `CLAUDE.md`, `AGENTS.md` e `docs/storia-permessi-e-conferme.md` (riquadro del 2026-10-30) aggiornati; la via di fuga `KIDVILLE_PIANO_A_MANO` non serve più.
+- **Test delle scadenze dei documenti, ora legale.** In `scadenze-documenti-cron.test.ts` il caso «il secondo giro conta UNO» fissava l'ultimo avviso a 7 × 24 ore fa, mentre la route conta giorni civili `Europe/Rome`: nella settimana dopo il cambio d'ora, fra le 22 e le 23 UTC, risultavano 6 giorni e il test cadeva (CI di questa PR, 22:43 UTC). Ora l'ultimo avviso sta su un giorno di calendario (`fra(-7)`), senza congelare l'orologio. La route non cambia. I tre casi a 8 giorni hanno un giorno di margine e restano come sono.
+
+**Da fare dopo il merge.** In una sessione nuova, un piano qualunque in plan mode deve fermarsi ad aspettare il titolare; in `.claude/.permessi-auto.log` nessuna riga `PIANO APPROVATO IN AUTOMATICO` dopo il 30/10 20:52.
 
 ## 🛡️ Changelog — Robustezza, seconda serie, sessione 8: cron senza timeout finti, storici solo con lavoro, igiene del database — 2026-10-25 (branch `robustezza2/s09-lotto4`, nel lotto 4 con la sessione 9)
 

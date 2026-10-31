@@ -78,10 +78,24 @@ async function sediArrivate(page: Page) {
   await expect(page.getByRole('button', { name: /^Prova1 Candidata / })).toContainText(NOMI_SEDI.scuola)
 }
 
+/**
+ * Apre un gruppo del menu a fisarmonica (31/10): sulla Home tutti i gruppi sono chiusi e le loro
+ * voci non sono nel DOM. La sidebar arriva già nell'HTML del server, e un clic dato prima
+ * dell'idratazione non apre niente: si riguarda lo stato e si riclicca solo se è ancora chiuso.
+ */
+async function apriGruppoDelMenu(page: Page, nome: string) {
+  const gruppo = page.locator('[data-kv-sidebar-admin]').getByRole('button', { name: nome, exact: true })
+  await expect(async () => {
+    if ((await gruppo.getAttribute('aria-expanded')) !== 'true') await gruppo.click()
+    await expect(gruppo).toHaveAttribute('aria-expanded', 'true', { timeout: 2_000 })
+  }).toPass({ timeout: 20_000 })
+}
+
 test('la voce «Candidature» sta nel menu e apre la pagina propria', async ({ page }) => {
   await serverFinto(page)
   await page.goto('/admin')
-  await page.getByRole('link', { name: 'Candidature', exact: true }).first().click()
+  await apriGruppoDelMenu(page, 'Segreteria')
+  await page.locator('[data-kv-sidebar-admin]').getByRole('link', { name: 'Candidature', exact: true }).click()
   // I link della sidebar portano con sé `?userId=…` (identità di sessione): si controlla il
   // percorso, che finisce lì o prosegue con la query — non con un altro segmento.
   await expect(page).toHaveURL(/\/admin\/candidature(\?|$)/)

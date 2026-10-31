@@ -36,17 +36,25 @@
  * cockpit era in sola lettura, senza che nulla lo dicesse. Qui la scelta è a due
  * tocchi. Le righe NON chiudono lo sheet: sono uno STATO, non una navigazione, e
  * la spunta che compare è la conferma che la scelta è stata registrata.
+ *
+ * I GRUPPI SI APRONO A FISARMONICA (2026-10-31), come nella sidebar: uno alla volta, ed è aperto
+ * quello della pagina in cui sei (`useGruppoAperto`, con gli esclusi qui sotto: su una pagina che è
+ * già un tab in basso non si apre nulla, perché la voce accesa è il tab). Toccare un'intestazione
+ * apre o chiude il gruppo e NON chiude il foglio; toccare una voce sì, come sempre. A gruppo chiuso
+ * il numero della Coda fatture sta sull'intestazione.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { X, Users, ChevronRight, Check, School } from 'lucide-react';
+import { X, Users, ChevronRight, ChevronDown, Check, School } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import { useSediAttive } from '@/lib/context/sede-context';
-import { NAV_GROUPS, visibleItem, CODA_FATTURE_HREF, puoLeggereCodaFatture } from './admin-nav-config';
+import { activeHref, gruppiVisibili, CODA_FATTURE_HREF, puoLeggereCodaFatture, type NavItem } from './admin-nav-config';
+import { useGruppoAperto } from './use-gruppo-aperto';
 import { useConteggioCodaFatture } from './use-conteggio-coda-fatture';
 import { ContatoreCodaFatture } from './ContatoreCodaFatture';
 
@@ -139,6 +147,10 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
   const { sedi, effettive, soloSede, tutte } = useSediAttive();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  // La fisarmonica: gli hook stanno qui, PRIMA del `return null` a foglio chiuso.
+  const pathname = usePathname() ?? '';
+  const { aperto, alterna } = useGruppoAperto(pathname, ESCLUSI);
+  const idBase = useId();
 
   // Focus iniziale sul «Chiudi» all'apertura; alla chiusura (unmount dello sheet)
   // il focus torna al bottone «Menu». `open` guida il mount → il cleanup coincide
@@ -168,10 +180,25 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
   if (!open) return null;
 
   // Gruppi filtrati per ruolo, senza gli href già coperti dai tab / da Anagrafica.
-  const gruppi = NAV_GROUPS.map((g) => ({
-    ...g,
-    items: g.items.filter((i) => visibleItem(i, ruolo) && !ESCLUSI.has(i.href)),
-  })).filter((g) => g.items.length > 0);
+  const gruppi = gruppiVisibili(ruolo, ESCLUSI);
+  const current = activeHref(pathname);
+
+  // La riga di una voce, come prima della fisarmonica.
+  const rigaVoce = (item: NavItem) => {
+    const Icon = item.icon;
+    return (
+      <Link key={item.href} href={withUser(item.href)} onClick={onClose} className={ROW_CLS}>
+        <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
+        <span className="min-w-0 flex-1 font-semibold">
+          {item.href === CODA_FATTURE_HREF
+            ? tc('codaFatture.menu.codaFatture')
+            : te.has(item.labelKey) ? te(item.labelKey) : item.label}
+        </span>
+        {item.href === CODA_FATTURE_HREF && <ContatoreCodaFatture n={vociCoda} />}
+        <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
+      </Link>
+    );
+  };
 
   // Il blocco sede si mostra solo a chi ha davvero una scelta da fare: con un
   // plesso solo non c'è ambiguità e la riga sarebbe rumore.
@@ -277,31 +304,53 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
           <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
         </Link>
 
-        <div className="flex flex-col gap-4">
-          {gruppi.map((g, gi) => (
-            <div key={gi} className="flex flex-col gap-1">
-              {g.title && (
-                <p className="px-1 pb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
-                  {g.titleKey && te.has(g.titleKey) ? te(g.titleKey) : g.title}
-                </p>
-              )}
-              {g.items.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link key={item.href} href={withUser(item.href)} onClick={onClose} className={ROW_CLS}>
-                    <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
-                    <span className="min-w-0 flex-1 font-semibold">
-                      {item.href === CODA_FATTURE_HREF
-                        ? tc('codaFatture.menu.codaFatture')
-                        : te.has(item.labelKey) ? te(item.labelKey) : item.label}
-                    </span>
-                    {item.href === CODA_FATTURE_HREF && <ContatoreCodaFatture n={vociCoda} />}
-                    <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+        <div className="flex flex-col gap-1">
+          {gruppi.map((g, gi) => {
+            if (g.title === null) return <div key={gi}>{g.items.map(rigaVoce)}</div>;
+            const chiave = g.titleKey ?? g.title;
+            const isAperto = aperto === chiave;
+            // «Sei qui» solo a gruppo chiuso: aperto, la voce della pagina è lì sotto.
+            const segnato = !isAperto && g.items.some((i) => i.href === current);
+            const conCoda = g.items.some((i) => i.href === CODA_FATTURE_HREF);
+            const Icon = g.icon;
+            const idIntestazione = `${idBase}-${gi}-intestazione`;
+            const idPannello = `${idBase}-${gi}-voci`;
+            return (
+              <div key={gi} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  id={idIntestazione}
+                  onClick={() => alterna(chiave)}
+                  aria-expanded={isAperto}
+                  aria-controls={isAperto ? idPannello : undefined}
+                  data-contiene-pagina={segnato ? 'true' : undefined}
+                  className={`${ROW_CLS} w-full text-left ${segnato ? 'bg-kidville-green-soft' : ''}`}
+                >
+                  {Icon && <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />}
+                  <span className="min-w-0 flex-1 font-semibold">
+                    {g.titleKey && te.has(g.titleKey) ? te(g.titleKey) : g.title}
+                  </span>
+                  {conCoda && !isAperto && <ContatoreCodaFatture n={vociCoda} />}
+                  <ChevronDown
+                    size={16}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                    className={`shrink-0 text-kidville-muted transition-transform duration-200 ${isAperto ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {isAperto && (
+                  <div
+                    id={idPannello}
+                    role="group"
+                    aria-labelledby={idIntestazione}
+                    className="ml-3 flex flex-col gap-1 border-l border-kidville-line pl-2"
+                  >
+                    {g.items.map(rigaVoce)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Cambio di veste + accessibilità + uscita, in fondo come nel BottomNav

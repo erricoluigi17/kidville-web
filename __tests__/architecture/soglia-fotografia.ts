@@ -274,20 +274,22 @@ export function posterioriCheContengono(
 // nessuna policy nuova) e quella delle migrazioni. Si toglie nella chiusura della precedente fatta
 // dalla sessione che apre dopo (sezione «Per la sessione dopo» del piano della sessione 8), dopo
 // aver rigenerato quelle tre fotografie dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-  '20261025161733_promemoria_e_sync_senza_doppioni.sql':
-    'Sessione 8 della seconda serie: indice unico su notifiche.chiave_dedup e tabella cron_prese. ' +
-    'La applica l’integrazione Supabase al merge; la voce si toglie nella chiusura della precedente ' +
-    '(la PR-B) fatta dalla sessione che apre dopo, rigenerando dalla produzione le fotografie delle ' +
-    'migrazioni, degli indici unici e della RLS.',
-  // 2026-10-30 · CRM DELLA SEGRETERIA, sessione 1: `20261030230225_crm_segreteria.sql` crea sette
-  // tabelle `crm_*` (indici unici, RLS accesa senza policy, un EXCLUDE sugli appuntamenti, chiavi
-  // esterne nuove verso `schools`, `utenti` e `enrollment_submissions`). Le guardie degli indici unici,
-  // della RLS e delle FK la vedono per `unique`, `primary key`, `row level security` e `references`.
-  '20261030230225_crm_segreteria.sql':
-    'CRM della segreteria: sette tabelle nuove con indici unici, RLS ed exclude; la applica ' +
-    'l’integrazione al merge; la voce si toglie rigenerando le fotografie (PR-B).',
-}
+// SVUOTATA il 31/10/2026 (PR-B dopo il merge di #269, `9283f2b9`): applicata dall'integrazione; fotografie
+// delle migrazioni, degli indici unici e della RLS rigenerate dalla produzione.
+//
+// 2026-10-30 · CRM DELLA SEGRETERIA, sessione 1: `20261030230225_crm_segreteria.sql` crea sette
+// tabelle `crm_*` (indici unici, RLS accesa senza policy, un EXCLUDE sugli appuntamenti, chiavi
+// esterne nuove verso `schools`, `utenti` e `enrollment_submissions`). Le guardie degli indici unici,
+// della RLS e delle FK la vedono per `unique`, `primary key`, `row level security` e `references`.
+// SVUOTATA il 31/10/2026 (PR-B dopo il merge di #273, `c0126d82`): applicata dall'integrazione, una riga
+// sola nel registro (247 migrazioni); le otto fotografie rigenerate dalla produzione nella stessa PR della
+// chiusura del lotto 4 — cambiano davvero migrazioni, indici unici (+11: nove del CRM, più
+// `notifiche_chiave_dedup_key` e `cron_prese_pkey`), RLS (+8 tabelle con RLS accesa, nessuna policy
+// nuova), FK di sede (+7), FK verso `utenti` (+14, tutte «blocca») e tabelle con `scuola_id` (+7); i
+// bucket e lo schema delle candidature solo l'istante dello scatto. La fotografia delle FK di sede ha
+// chiesto di correggere il suo generatore (`scripts/fk-sede-fotografia.mjs`): sceglieva la FK per nome
+// e prendeva la composta verso `crm_schede` invece di `scuola_id → schools`, che c'è.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

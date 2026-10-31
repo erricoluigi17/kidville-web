@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-25",
-  "generato_alle": "2026-10-25T15:23:04Z",
-  "sha256": "cc692347d07852abe520da767917aee34db5e8c2efd5a0a6281af2fc67717926",
+  "generato_il": "2026-10-31",
+  "generato_alle": "2026-10-31T10:44:15Z",
+  "sha256": "57c67bd3566101118cd44924d267788c05cbc2a85b1205ad271c1cb24aad9ecc",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -971,6 +971,26 @@
     {
       "version": "20261025131705",
       "name": "salute_rpc_sola_lettura"
+    },
+    {
+      "version": "20261025161702",
+      "name": "cron_timeout_uguale_max_duration"
+    },
+    {
+      "version": "20261025161719",
+      "name": "storici_tick_solo_con_lavoro"
+    },
+    {
+      "version": "20261025161733",
+      "name": "promemoria_e_sync_senza_doppioni"
+    },
+    {
+      "version": "20261025161748",
+      "name": "igiene_cron_log_ruoli"
+    },
+    {
+      "version": "20261030230225",
+      "name": "crm_segreteria"
     }
   ]
 }

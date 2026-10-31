@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-25",
-  "generato_alle": "2026-10-25T12:56:11Z",
-  "sha256": "19df5657c0801f0e178792e88c8ee53cdf38a4d78424544f67a7c421188fb39f",
+  "generato_il": "2026-10-31",
+  "generato_alle": "2026-10-31T10:44:15Z",
+  "sha256": "2bc61236590f6470fbdac094fd9fa92d7ade71133edb69c71b18b30c8bca16bd",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -481,6 +481,107 @@
       ]
     },
     {
+      "tabella": "crm_appuntamenti",
+      "indice": "crm_appuntamenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_azioni",
+      "indice": "crm_azioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_bambini",
+      "indice": "crm_bambini_domanda_id_domanda_figlio_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "domanda_figlio",
+        "domanda_id"
+      ]
+    },
+    {
+      "tabella": "crm_bambini",
+      "indice": "crm_bambini_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_disponibilita",
+      "indice": "crm_disponibilita_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_eventi",
+      "indice": "crm_eventi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_indisponibilita",
+      "indice": "crm_indisponibilita_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crm_schede",
+      "indice": "crm_schede_id_scuola_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "crm_schede",
+      "indice": "crm_schede_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
       "tabella": "cron_chiamate",
       "indice": "cron_chiamate_pkey",
       "parziale": false,
@@ -489,6 +590,17 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
+      ]
+    },
+    {
+      "tabella": "cron_prese",
+      "indice": "cron_prese_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "job"
       ]
     },
     {
@@ -1527,6 +1639,17 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
+      ]
+    },
+    {
+      "tabella": "notifiche",
+      "indice": "notifiche_chiave_dedup_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "chiave_dedup"
       ]
     },
     {

@@ -2609,7 +2609,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // DELETE porta `scuola_id` anche nell'update; la GET dichiara la sede (`resolveScuoleAttive` +
             // `restringiSedi`, 403 se non è fra le proprie) e filtra `alunni` con `.eq('scuola_id', …)` nella
             // stessa query. Nessuna esenzione.
-            routeConServiceRole: 379,
+            // 379 → 380 il 2026-10-31 (CRM, quota d'iscrizione, compito 6): `admin/crm/quote` (GET, la lista
+            // «Quote dal CRM» della contabilità). CONTROLLATA: gate `requireCrm`; la sede la dichiara
+            // (`resolveScuoleAttive` + `restringiSedi`, 403 `SEDE_NON_ACCESSIBILE` se `?scuolaId` non è fra le
+            // proprie, elenco vuoto senza sedi) e `crm_bambini` si legge con `.in('scuola_id', sedi)` nella stessa
+            // query. Nessuna esenzione.
+            routeConServiceRole: 380,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2924,7 +2929,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `…/quota/riprova:POST` (vedi sopra); `handlerEsentati` non cambia.
             // 584 → 587 il 2026-10-31 (CRM, quota d'iscrizione, compito 4): `…/alunno:PUT`, `…/alunno:DELETE`
             // e `admin/crm/alunni:GET` (vedi sopra); `handlerEsentati` non cambia.
-            handlerControllati: 587,
+            // 587 → 588 il 2026-10-31 (CRM, quota d'iscrizione, compito 6): `admin/crm/quote:GET` (vedi sopra);
+            // `handlerEsentati` non cambia. Misurato rieseguendo il lock: 587 → 588.
+            handlerControllati: 588,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

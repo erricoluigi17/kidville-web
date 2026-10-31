@@ -61,6 +61,24 @@ export function giornoContantiAmmesso(giorno: string, ultimaChiusuraIl: string |
   return giorno > dataCivile(chiusura)
 }
 
+/**
+ * Da quanti giorni una quota aspetta: i giorni CIVILI fra il giorno del pagamento (`yyyy-mm-dd`, la colonna
+ * `quota_saldata_il` è una `date`) e `oggi` (`yyyy-mm-dd`, a Roma: lo dà `dataCivile()`).
+ *
+ * Si contano sulle date e non sugli istanti: due giorni di calendario distano sempre un numero intero di
+ * giorni, anche attraverso il cambio dell'ora legale, dove un conto in millisecondi su orari locali darebbe
+ * 23 o 25 ore. Nullo se il giorno manca o non è una data; mai negativo (un giorno che sembra nel futuro, per
+ * un orologio sfasato, vale zero e non «-3 giorni di attesa»).
+ */
+export function giorniDiAttesa(giorno: string | null | undefined, oggi: string): number | null {
+  const da = /^(\d{4})-(\d{2})-(\d{2})$/.exec(giorno ?? '')
+  const a = /^(\d{4})-(\d{2})-(\d{2})$/.exec(oggi)
+  if (!da || !a) return null
+  const mezzanotteUtc = (m: RegExpExecArray) => Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  const giorni = Math.round((mezzanotteUtc(a) - mezzanotteUtc(da)) / 86_400_000)
+  return Math.max(0, giorni)
+}
+
 // ── L'esito del passaggio in contabilità ─────────────────────────────────────
 
 export type EsitoPassaggio =

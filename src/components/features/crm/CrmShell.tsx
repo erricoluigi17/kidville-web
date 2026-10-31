@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl'
 import { CalendarDays, ChartColumn, Clock, ContactRound, PhoneCall } from 'lucide-react'
 import { Tabs, type TabOption } from '@/components/ui/cockpit'
 import { ColonnaDettaglio } from '@/components/ui/ColonnaDettaglio'
-import { tabDaParametro, type TabCrm } from '@/lib/crm/tab'
+import { schedaDaParametro, tabDaParametro, type TabCrm } from '@/lib/crm/tab'
 import { AgendaSettimana } from './agenda/AgendaSettimana'
 import { DisponibilitaPersona } from './disponibilita/DisponibilitaPersona'
 import { DaRichiamare } from './follow-up/DaRichiamare'
@@ -46,6 +46,15 @@ import { StatisticheCrm } from './statistiche/StatisticheCrm'
  * collegamento a `/admin/crm?tab=richiamare` cliccato mentre si è già sulla pagina — lo stato lo segue
  * (vedi `parametroVisto`). Passando da una scheda all'altra si tolgono gli altri parametri: i filtri
  * dell'elenco, su un'agenda, sarebbero rumore.
+ *
+ * ── `?scheda=<uuid>`: IL COLLEGAMENTO CHE APRE UNA FAMIGLIA ─────────────────────
+ * `/admin/crm?scheda=<id>` (lo mette la lista «Quote dal CRM» della contabilità) apre quella famiglia nel
+ * pannello di dettaglio della scheda «Schede», anche se `?tab=` dice altro: il collegamento è fatto per
+ * arrivare lì. Si legge UNA volta, al montaggio (stato iniziale, non effetto): da quel momento la verità è lo
+ * stato, e chiudere il pannello non lo fa riaprire al render dopo. Un valore che non è un uuid si ignora
+ * (`schedaDaParametro`). Se il collegamento è cliccato mentre si è GIÀ sulla pagina non si riapre da solo:
+ * `parametroVisto` guarda `?tab=`, e il caso — arrivare da un'altra pagina — è sempre un montaggio nuovo.
+ * Cambiando scheda l'indirizzo viene riscritto con il solo `?tab=` (`scriviTab`), e `scheda` se ne va.
  */
 
 function scriviTab(tab: TabCrm): void {
@@ -58,13 +67,16 @@ function scriviTab(tab: TabCrm): void {
 
 export function CrmShell({ scuolaId }: { scuolaId: string }) {
   const t = useTranslations('crmShell')
-  const parametro = useSearchParams().get('tab')
+  const ricerca = useSearchParams()
+  const parametro = ricerca.get('tab')
 
-  const [tab, setTab] = useState<TabCrm>(() => tabDaParametro(parametro))
+  // `?scheda=` si legge una volta, nello stato iniziale: una famiglia indicata dall'indirizzo apre le Schede.
+  const [schedaIndicata] = useState(() => schedaDaParametro(ricerca.get('scheda')))
+  const [tab, setTab] = useState<TabCrm>(() => (schedaIndicata !== null ? 'schede' : tabDaParametro(parametro)))
   // L'indirizzo è cambiato da fuori: lo stato lo segue. Si confronta durante il render (e non in un
   // effetto) perché è il modo documentato di adattare lo stato a una prop che cambia.
   const [parametroVisto, setParametroVisto] = useState(parametro)
-  const [schedaAperta, setSchedaAperta] = useState<string | null>(null)
+  const [schedaAperta, setSchedaAperta] = useState<string | null>(schedaIndicata)
   if (parametro !== parametroVisto) {
     setParametroVisto(parametro)
     setTab(tabDaParametro(parametro))

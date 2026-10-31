@@ -76,6 +76,7 @@ vi.mock('@/components/features/admin/pagamenti/TransazioniPanel', () => ({ Trans
 vi.mock('@/components/features/admin/pagamenti/SollecitiPanel', () => ({ SollecitiPanel: segnaposto('solleciti') }));
 vi.mock('@/components/features/admin/pagamenti/RiconciliazionePanel', () => ({ RiconciliazionePanel: segnaposto('riconciliazione') }));
 vi.mock('@/components/features/admin/pagamenti/FiscalePanel', () => ({ FiscalePanel: segnaposto('fiscale') }));
+vi.mock('@/components/features/admin/pagamenti/QuoteCrmPanel', () => ({ QuoteCrmPanel: segnaposto('quote') }));
 vi.mock('@/components/features/admin/pagamenti/TicketMensaPanel', () => ({ TicketMensaPanel: segnaposto('ticket') }));
 vi.mock('@/components/features/admin/pagamenti/CassaPanel', () => ({ CassaPanel: segnaposto('cassa') }));
 vi.mock('@/components/features/admin/pagamenti/GeneratoreRette', () => ({ GeneratoreRette: segnaposto('genera-rette') }));
@@ -136,7 +137,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const VISTE_MULTI_SEDE = ['scadenzario', 'transazioni', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'cassa'] as const;
+const VISTE_MULTI_SEDE = ['scadenzario', 'transazioni', 'solleciti', 'riconciliazione', 'quote', 'fiscale', 'ticket', 'cassa'] as const;
 
 describe('/admin/pagamenti — più sedi selezionate', () => {
   it('scadenzario con due sedi: il pannello si monta con scuolaId = null, niente «Seleziona una sede»', async () => {

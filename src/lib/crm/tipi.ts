@@ -221,6 +221,34 @@ export interface BambinoDettaglioRow extends BambinoRow {
   quota_pagamento_stato?: string | null
 }
 
+/**
+ * Una riga della lista «Quote dal CRM» della contabilità (`GET /api/admin/crm/quote`): una quota segnata nel
+ * CRM che non è ancora diventata la voce «Iscrizione» dell'alunno.
+ *
+ * Solo ciò che la tabella mostra. `nome` è il nome del bambino come sta nella scheda (può mancare);
+ * `importo` è già un numero (il `numeric` di PostgREST arriva anche come stringa); `giorno` è il giorno del
+ * pagamento (`yyyy-mm-dd`) e `giorniAttesa` i giorni civili, a Roma, da quel giorno a oggi.
+ */
+export interface QuotaInAttesa {
+  bambinoId: string
+  schedaId: string
+  scuolaId: string
+  nome: string | null
+  /** L'anno in cui si apre l'anno scolastico della quota: 2027 per il 2027/28. */
+  anno: number | null
+  importo: number | null
+  metodo: MetodoQuota | null
+  giorno: string | null
+  giorniAttesa: number | null
+  stato: 'senza_importo' | 'in_attesa' | 'bloccata'
+  motivo: MotivoBloccoQuota | null
+  /** Il bambino è già agganciato a un alunno: solo allora «Riprova» può far passare la quota. */
+  alunnoCollegato: boolean
+}
+
+/** Gli stati di una quota che la lista della contabilità mostra: tutti tranne `in_contabilita`. */
+export const QUOTA_STATI_IN_ATTESA = ['senza_importo', 'in_attesa', 'bloccata'] as const
+
 export interface AppuntamentoRow {
   id: string
   scuola_id: string

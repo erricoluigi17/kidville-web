@@ -197,6 +197,12 @@ describe('GET /api/admin/crm/disponibilita', () => {
         expect(data.map((f: Riga) => f.id)).not.toContain('f-ieri')
     })
 
+    it('dice a chi guarda chi è (dalla sessione), così la schermata sa di chi sono le fasce', async () => {
+        expect((await (await GET_DISP(json(url(), 'GET'))).json()).io).toEqual({ id: U1, ruolo: 'segreteria' })
+        comeAdmin()
+        expect((await (await GET_DISP(json(url(), 'GET'))).json()).io).toEqual({ id: ADMIN, ruolo: 'admin' })
+    })
+
     it('si può chiedere solo quelle di una persona', async () => {
         const { data } = await (await GET_DISP(json(url(`&utenteId=${U2}`), 'GET'))).json()
         expect(data.map((f: Riga) => f.id)).toEqual([F2])

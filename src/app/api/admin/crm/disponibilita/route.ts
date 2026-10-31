@@ -17,7 +17,7 @@ import { parseBody, parseQuery, validationError } from '@/lib/validation/http'
  * CRM della segreteria · la settimana tipo di ciascuno (le fasce di disponibilità).
  *
  *  · `GET  /api/admin/crm/disponibilita?scuolaId[&utenteId]` — le fasce ancora valide della sede (quelle il cui
- *    `valida_al` non è passato): servono all'agenda per sapere chi c'è e a «La mia disponibilità» per mostrarle;
+ *    `valida_al` non è passato) e `io`, cioè chi sta chiedendo: servono a «La mia disponibilità» per mostrarle;
  *  · `POST /api/admin/crm/disponibilita` — aggiunge una fascia: `giornoSettimana` 1 (lunedì) … 7 (domenica),
  *    `oraInizio`/`oraFine` come si leggono sull'orologio di Roma, `durataSlotMin` (default 45).
  *
@@ -61,7 +61,12 @@ export const GET = withRoute('admin/crm/disponibilita:GET', async (request: Next
   const { data, error } = await query.order('giorno_settimana', { ascending: true }).order('ora_inizio', { ascending: true })
   if (error) return rispostaErroreDb(error, 'admin/crm/disponibilita:GET')
 
-  return NextResponse.json({ data: (data ?? []) as DisponibilitaRow[] })
+  // `io` dice a chi guarda CHI È (id e ruolo letti dalla sessione, non dal client): la schermata «La mia
+  // disponibilità» deve sapere di chi sono le fasce che mostra per prime e se può scegliere un'altra persona.
+  return NextResponse.json({
+    data: (data ?? []) as DisponibilitaRow[],
+    io: { id: auth.user.id, ruolo: auth.user.role },
+  })
 })
 
 const postSchema = z

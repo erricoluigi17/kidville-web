@@ -305,3 +305,34 @@ export function periodoDaSettembre(adesso: Date): PeriodoStatistiche {
   const { anno, mese } = annoMeseRoma(adesso)
   return { dal: giornoYmd(mese >= 9 ? anno : anno - 1, 9, 1), al: giornoYmd(anno, mese, ultimoGiorno(anno, mese)) }
 }
+
+// ── La risposta di `GET /api/admin/crm/statistiche`, condivisa con la schermata ─────────────────────
+
+/** Una persona risolta dalla route: l'unico dato personale che le statistiche portano (nome e cognome). */
+export interface PersonaStatistiche {
+  id: string
+  nome: string
+  cognome: string
+}
+
+/** Una riga di `calcolaStatistiche` con la persona risolta: un utente, oppure `'ai'`. */
+export type RigaPersonaNominata = Omit<RigaPersona, 'persona'> & { persona: typeof PERSONA_AI | PersonaStatistiche }
+
+/** Il totale di una sede, per il confronto fra sedi (solo l'admin lo riceve). */
+export interface ConfrontoSede {
+  scuolaId: string
+  nome: string
+  totale: TotaleStatistiche
+  ritardoMedianoGiorni: number | null
+}
+
+export interface RispostaStatistiche {
+  scuolaId: string
+  dal: string
+  al: string
+  righe: RigaPersonaNominata[]
+  totale: TotaleStatistiche
+  ritardoMedianoGiorni: number | null
+  nonAttribuiti: { visite: number; bambini: number }
+  confronto?: ConfrontoSede[]
+}

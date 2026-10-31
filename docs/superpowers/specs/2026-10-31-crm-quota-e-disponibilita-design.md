@@ -120,7 +120,7 @@ dell'anno d'apertura** (es. `2027-09-01` per il 2027/28), `tipo = 'singolo'`, `a
 sede della scheda, `creato_da`. Poi il suo **incasso** in `incassi` con lo stesso importo e metodo e
 **`data_incasso` = giorno del pagamento**, non il giorno dell'aggancio.
 
-*Nota di esecuzione (31/10/2026): per il bonifico la scadenza è il giorno del pagamento + 30 giorni, perché il cron dei solleciti non scriva a chi ha già pagato; decisione dell'assistente, da confermare dal titolare.*
+*Nota di esecuzione (31/10/2026): per il bonifico la scadenza è il giorno del pagamento + 30 giorni, perché il cron dei solleciti non scriva a chi ha già pagato; decisione dell'assistente, da confermare dal titolare. Precisazione (ritocco finale, 31/10/2026): i 30 giorni partono dal più tardi fra il giorno del pagamento e oggi a Roma (`GREATEST(quota_saldata_il, oggi a Roma) + 30`), perché la voce nasce quando arriva l'alunno e per un bambino «prossimo» può essere mesi dopo il bonifico: ancorata al giorno del pagamento nascerebbe già scaduta, col sollecito in coda a chi ha pagato, e un bonifico arrivato prima che la voce esistesse non ha potuto essere riconciliato (la segreteria lo associa a mano entro i 30 giorni). Inoltre l'interfaccia ora manda sempre `giorno` (il campo parte da oggi, e un giorno vuoto o incompleto spegne «Salva»); il server accetta ancora il vuoto come oggi, quindi «vuoto = oggi» del §5.1 vale solo per chi chiama l'API.*
 
 Il `periodo_competenza` non è un dettaglio: la fatturazione sceglie la serie dall'anno di competenza
 (`annoScolasticoDiCompetenza`, `src/lib/fatturazione/sezionale.ts`). Senza, una quota del 2027/28 pagata a

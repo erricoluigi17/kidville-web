@@ -173,6 +173,7 @@ const OGGI_ISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).f
 const OGGI_IT = OGGI_ISO.split('-').reverse().join('/')
 const GIORNO = 'Giorno del pagamento'
 const GIORNO_NON_VALIDO = 'Indica un giorno valido'
+const GIORNO_PROPOSTO = 'Il giorno proposto è oggi: cambialo se il pagamento è di un altro giorno.'
 
 // ════════════════════════════════════════════════════════════════════════════════
 describe('QuotaIscrizione · segnare la quota', () => {
@@ -233,6 +234,31 @@ describe('QuotaIscrizione · segnare la quota', () => {
     fireEvent.submit(screen.getByRole('form', { name: 'Quota d’iscrizione' }))
     expect(h.chiamate).toEqual([])
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('quota nuova: sotto il campo si legge che il giorno proposto è oggi', () => {
+    monta()
+    apriModulo()
+    expect((screen.getByLabelText(GIORNO) as HTMLInputElement).value).toBe(OGGI_IT)
+    expect(screen.getByText(GIORNO_PROPOSTO)).toBeTruthy()
+  })
+
+  it('correzione: il campo mostra il giorno già segnato e la frase «proposto è oggi» non c’è', () => {
+    monta({ quota_stato: 'in_attesa', quota_importo: 150, quota_metodo: 'contanti', quota_anno: 2027, quota_saldata_il: '2026-10-20' })
+    fireEvent.click(screen.getByRole('button', { name: 'Correggi' }))
+    // Prima si aspetta una presenza (il campo, col giorno segnato), poi si guarda l'assenza della frase.
+    expect((screen.getByLabelText(GIORNO) as HTMLInputElement).value).toBe('20/10/2026')
+    expect(screen.queryByText(GIORNO_PROPOSTO)).toBeNull()
+    // Gli avvisi che servono restano: svuotato il campo, «Indica un giorno valido» compare.
+    scrivi(GIORNO, '')
+    expect(screen.getByText(GIORNO_NON_VALIDO)).toBeTruthy()
+  })
+
+  it('vecchia spunta da completare (giorno già segnato, nessun importo): niente «proposto è oggi»', () => {
+    monta({ quota_stato: 'senza_importo', quota_saldata_il: '2026-09-10' })
+    fireEvent.click(screen.getByRole('button', { name: 'Completa la quota' }))
+    expect((screen.getByLabelText(GIORNO) as HTMLInputElement).value).toBe('10/09/2026')
+    expect(screen.queryByText(GIORNO_PROPOSTO)).toBeNull()
   })
 
   it('riscrivere il giorno per intero riaccende «Salva» e toglie l’avviso', async () => {

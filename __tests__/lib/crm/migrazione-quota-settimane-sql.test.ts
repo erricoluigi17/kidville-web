@@ -696,6 +696,8 @@ describe('il passaggio in contabilità · il totale di nessun giorno di cassa ca
   // La scadenza della voce NUOVA. Il cron dei solleciti scrive «non risulta ancora saldato» a scadenza + 3 giorni
   // alle voci aperte e obbligatorie: una voce da bonifico con scadenza = giorno del pagamento (oggi o passato)
   // farebbe scrivere a una famiglia che ha già pagato, prima che la banca riconcili. Decisione del 31/10/2026.
+  // Per il bonifico la scadenza è 30 giorni dal PIÙ TARDI fra il giorno del pagamento e OGGI a Roma: la voce nasce
+  // quando arriva l'alunno, e per un bambino «prossimo» può essere mesi dopo il bonifico.
   describe('la scadenza della voce nuova', () => {
     async function voceNuovaDi(metodo: string, giorno: string) {
       const alunno = uuid('c2000000', ++contatore)
@@ -708,15 +710,35 @@ describe('il passaggio in contabilità · il totale di nessun giorno di cassa ca
       return elenco[0]
     }
 
-    it('bonifico: la voce nuova scade 30 giorni DOPO il giorno del pagamento, e resta da pagare', async () => {
-      const voce = await voceNuovaDi('bonifico', '2026-10-29')
+    // «Oggi a Roma» e i giorni attorno a oggi li calcola il DATABASE, non una data scritta qui: la voce nasce
+    // quando arriva l'alunno, e il test non deve invecchiare col calendario.
+    const giornoRelativo = async (delta: number) =>
+      (await una<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Rome')::date + $1::int)::text AS d`, [delta])).d
+
+    /** La scadenza della voce nuova del bonifico, con l'atteso «oggi a Roma + 30» preso prima e dopo la chiamata (a cavallo di mezzanotte). */
+    async function scadenzaBonifico(giorno: string) {
+      const prima = await giornoRelativo(30)
+      const voce = await voceNuovaDi('bonifico', giorno)
+      const dopo = await giornoRelativo(30)
+      return { voce, ammesse: [prima, dopo] }
+    }
+
+    it('bonifico: il pagamento è di molto tempo fa e l’alunno arriva oggi → la voce scade OGGI + 30, non nasce già scaduta', async () => {
+      const { voce, ammesse } = await scadenzaBonifico('2026-03-10')
       expect(voce.stato).toBe('da_pagare')
-      expect(voce.scadenza).toBe('2026-11-28')
+      expect(ammesse).toContain(voce.scadenza)
     })
 
-    it('bonifico: i 30 giorni sono di calendario, anche a cavallo di mese e d’anno', async () => {
-      expect((await voceNuovaDi('bonifico', '2026-12-15')).scadenza).toBe('2027-01-14')
-      expect((await voceNuovaDi('bonifico', '2027-01-31')).scadenza).toBe('2027-03-02')
+    it('bonifico: il pagamento è di ieri → oggi + 30 (non ieri + 30)', async () => {
+      const { voce, ammesse } = await scadenzaBonifico(await giornoRelativo(-1))
+      expect(voce.stato).toBe('da_pagare')
+      expect(ammesse).toContain(voce.scadenza)
+    })
+
+    it('bonifico: il pagamento è di oggi → oggi + 30', async () => {
+      const { voce, ammesse } = await scadenzaBonifico(await giornoRelativo(0))
+      expect(voce.stato).toBe('da_pagare')
+      expect(ammesse).toContain(voce.scadenza)
     })
 
     it.each(['contanti', 'carta'])('%s: la voce nuova nasce pagata e scade il giorno del pagamento', async (metodo) => {

@@ -285,6 +285,16 @@ function ModuloQuota({
   // `DateField` consegna `''` per una data vuota, incompleta o inesistente: non è «oggi», è un giorno che manca.
   const giornoValido = GIORNO_ISO.test(giorno)
   const giornoFuturo = giornoValido && giorno > oggi
+  // «Il giorno proposto è oggi» è vero solo per una quota nuova: se il campo mostra il giorno GIÀ segnato (una
+  // correzione, o la vecchia spunta da completare) quella frase direbbe il falso, e si tace.
+  const giornoGiaSegnato = bambino.quota_saldata_il !== null
+  const aiutoGiorno = !giornoValido
+    ? t('quotaGiornoNonValido')
+    : giornoFuturo
+      ? ts('erroreCrmQuotaGiornoFuturo')
+      : giornoGiaSegnato
+        ? null
+        : t('quotaGiornoOggi')
   const pronto = importoNumero !== null && annoQuota !== null && giornoValido && !giornoFuturo && !invio
 
   const invia = async () => {
@@ -357,12 +367,14 @@ function ModuloQuota({
             value={giorno}
             onChange={setGiorno}
             disabled={invio}
-            aria-describedby={`${id}-giorno-aiuto`}
+            aria-describedby={aiutoGiorno !== null ? `${id}-giorno-aiuto` : undefined}
             className={CAMPO}
           />
-          <p id={`${id}-giorno-aiuto`} className={`mt-1 ${TESTO_SECONDARIO}`}>
-            {!giornoValido ? t('quotaGiornoNonValido') : giornoFuturo ? ts('erroreCrmQuotaGiornoFuturo') : t('quotaGiornoOggi')}
-          </p>
+          {aiutoGiorno !== null && (
+            <p id={`${id}-giorno-aiuto`} className={`mt-1 ${TESTO_SECONDARIO}`}>
+              {aiutoGiorno}
+            </p>
+          )}
         </div>
       </div>
 

@@ -60,9 +60,6 @@ import { etichetta } from './vocabolari'
  * `AzioniScheda` (richiami) e `FissaVisita` (agenda) sono montati e basta, con le props fissate dal
  * contratto. Quando una di loro cambia qualcosa chiama `onCollegato` / `onAggiornata` / `onFatto`, e la
  * scheda si rilegge.
- *
- * ── Cosa NON c'è ─────────────────────────────────────────────────────────────────────────────────
- * Aggiungere un bambino a una scheda esistente: la route c'è (`POST …/bambini`), il pulsante no.
  */
 
 interface Persona {
@@ -395,7 +392,119 @@ function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambi
         // che il database ha davvero, senza un effetto che la riallinei.
         <CardBambino key={`${b.id}:${b.aggiornata_il}`} scheda={scheda} bambino={b} rileggi={rileggi} />
       ))}
+      <AggiungiBambino schedaId={scheda.id} rileggi={rileggi} />
     </section>
+  )
+}
+
+/**
+ * Un fratello di cui la famiglia parla dopo: si aggiunge alla scheda che c'è (`POST …/bambini`, evento
+ * `bambino_aggiunto`), invece di aprire una seconda scheda della stessa famiglia. Gli stessi tre campi
+ * di «Nuova famiglia»; l'esito parte «aperto».
+ */
+function AggiungiBambino({ schedaId, rileggi }: { schedaId: string; rileggi: () => void }) {
+  const t = useTranslations('crmSchede')
+  const tc = useTranslations('crmShell')
+  const id = useId()
+  const [aperto, setAperto] = useState(false)
+  const [nome, setNome] = useState('')
+  const [dataNascita, setDataNascita] = useState('')
+  const [annoIngresso, setAnnoIngresso] = useState<(typeof ANNI_INGRESSO)[number]>('prossimo')
+  const [invio, setInvio] = useState(false)
+  const [errore, setErrore] = useState<string | null>(null)
+
+  if (!aperto) {
+    return (
+      <Btn variant="ghost" size="sm" onClick={() => setAperto(true)}>
+        {t('bambinoAggiungi')}
+      </Btn>
+    )
+  }
+
+  const pronto = pulito(nome) !== ''
+  const aggiungi = async () => {
+    if (!pronto || invio) return
+    setInvio(true)
+    setErrore(null)
+    const corpo: Record<string, string> = { nome: pulito(nome), annoIngresso }
+    if (dataNascita !== '') corpo.dataNascita = dataNascita
+    const res = await chiama('bambino-aggiungi', `${urlScheda(schedaId)}/bambini`, scrittura('POST', corpo))
+    if (res === null || !res.ok) {
+      setErrore(res === null ? t('bambinoAggiungiErrore') : await messaggioErrore(res, t('bambinoAggiungiErrore')))
+      setInvio(false)
+      return
+    }
+    setInvio(false)
+    setAperto(false)
+    setNome('')
+    setDataNascita('')
+    rileggi()
+  }
+
+  return (
+    <form
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault()
+        void aggiungi()
+      }}
+      className={`${RIQUADRO} space-y-3`}
+    >
+      <div>
+        <label htmlFor={`${id}-nome`} className={ETICHETTA_CAMPO_FILTRO}>
+          {t('nuovaBambinoNome')}
+        </label>
+        <input
+          id={`${id}-nome`}
+          type="text"
+          autoComplete="off"
+          maxLength={100}
+          value={nome}
+          disabled={invio}
+          onChange={(e) => setNome(e.target.value)}
+          className={CAMPO}
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor={`${id}-nascita`} className={ETICHETTA_CAMPO_FILTRO}>
+            {t('nuovaBambinoNascita')}
+          </label>
+          <DateField id={`${id}-nascita`} value={dataNascita} onChange={setDataNascita} className={CAMPO} />
+        </div>
+        <div>
+          <label htmlFor={`${id}-anno`} className={ETICHETTA_CAMPO_FILTRO}>
+            {t('nuovaBambinoAnno')}
+          </label>
+          <select
+            id={`${id}-anno`}
+            value={annoIngresso}
+            disabled={invio}
+            onChange={(e) => setAnnoIngresso(e.target.value as (typeof ANNI_INGRESSO)[number])}
+            className={CAMPO}
+          >
+            {ANNI_INGRESSO.map((a) => (
+              <option key={a} value={a}>
+                {etichetta(tc, 'anniIngresso', a)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {errore !== null && (
+        <p role="alert" className={MESSAGGIO_ERRORE}>
+          {errore}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Btn variant="ghost" size="sm" disabled={invio} onClick={() => setAperto(false)}>
+          {t('annulla')}
+        </Btn>
+        <Btn type="submit" size="sm" disabled={!pronto || invio}>
+          {invio ? t('salvataggio') : t('bambinoAggiungiConferma')}
+        </Btn>
+      </div>
+    </form>
   )
 }
 

@@ -329,6 +329,45 @@ describe('DettaglioScheda', () => {
     expect(screen.queryByTestId('avviso-domanda')).toBeNull()
   })
 
+  it('aggiunge un bambino a una scheda esistente: POST con nome, nascita e ingresso, poi rilegge', async () => {
+    let letture = 0
+    rispondi('GET', URL_DETTAGLIO, () => {
+      letture++
+      return { corpo: dettaglio() }
+    })
+    rispondi('POST', /\/api\/admin\/crm\/schede\/scheda-1\/bambini$/, { stato: 201, corpo: { id: 'bambino-2' } })
+    await apriDettaglio()
+    const primaLettura = letture
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi un bambino' }))
+    const conferma = screen.getByRole('button', { name: 'Aggiungi il bambino' })
+    // Senza il nome non parte niente.
+    expect((conferma as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Nome del bambino'), { target: { value: '  Secondo Prova ' } })
+    fireEvent.change(screen.getByLabelText('Quando vorrebbe iniziare?'), { target: { value: 'in_corso' } })
+    fireEvent.click(conferma)
+
+    await waitFor(() => expect(chiamateA('POST', /\/bambini$/)).toHaveLength(1))
+    expect(chiamateA('POST', /\/bambini$/)[0].corpo).toEqual({ nome: 'Secondo Prova', annoIngresso: 'in_corso' })
+    // La scheda si rilegge e il modulo si chiude.
+    await waitFor(() => expect(letture).toBeGreaterThan(primaLettura))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Aggiungi il bambino' })).toBeNull())
+  })
+
+  it('aggiungere un bambino: un rifiuto del server resta nel modulo con il suo messaggio', async () => {
+    rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio() })
+    rispondi('POST', /\/api\/admin\/crm\/schede\/scheda-1\/bambini$/, { stato: 500, corpo: { error: 'x', codice: 'CRM_OPERAZIONE_NON_RIUSCITA' } })
+    await apriDettaglio()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi un bambino' }))
+    fireEvent.change(screen.getByLabelText('Nome del bambino'), { target: { value: 'Secondo Prova' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi il bambino' }))
+
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    // Il modulo resta aperto, con quello che si era scritto.
+    expect((screen.getByLabelText('Nome del bambino') as HTMLInputElement).value).toBe('Secondo Prova')
+  })
+
   it('l’avviso «domanda da associare» compare solo se la scheda ne ha una', async () => {
     rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio({ scheda: scheda({ domanda_da_associare: 'domanda-9' }) }) })
     await apriDettaglio()

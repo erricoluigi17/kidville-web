@@ -1,3 +1,30 @@
+## 🧪 Changelog — Il fuoco dopo un'attesa: due test che potevano cadere a caso ora lo aspettano — 2026-11-01 (branch `claude/upbeat-jennings-f61353`)
+
+**Stato:** 🟡 sul branch, PR verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.
+
+**Perché.** La #277, la #279 e la #280 hanno corretto, uno per volta, test del job «Lint · Typecheck · Unit» che cadevano a caso. Questa è la ricerca sistematica sulle asserzioni sul fuoco (`toHaveFocus()`, `document.activeElement`) dei test di componente. Il criterio è quello della #280: c'è gara solo se (1) il fuoco lo sposta un `useEffect`, (2) lo stato che fa partire l'effetto arriva fuori da `act` (la risposta di rete dopo un `fireEvent` senza `await act`, o un `setState` dopo un `await` nel gestore) e (3) il test controlla il fuoco subito dopo un `await find…`/`await waitFor` su altro. Un `focus()` chiamato nel gestore, un fuoco posato a mano dal test o un `setState` prima del primo `await` non fanno gara.
+
+**Le due gare vere, corrette.** Ora i test aspettano la presenza del fuoco: `await waitFor(() => expect(document.activeElement).toBe(…))`.
+- `AnagraficaPersonaleWizard-invio:172`, «la conferma… si prende il fuoco». Il fuoco va sul titolo della conferma con un effetto su `inviata`, e `setInviata(true)` arriva dopo la `fetch`.
+- `CandidaturaInsegnanteWizard-sede:841`, «dopo il rifiuto il fuoco è sul pannello che spiega». Il fuoco va sul pannello con un effetto su `erroreInvio` (tipo `sede`), e il rifiuto arriva dopo la `fetch`.
+
+Prova del morso, fatta sui due componenti e poi annullata (il diff tocca solo i test): con il `focus()` dell'effetto ritardato di 60 ms i vecchi test cadono alle righe del fuoco (conferma: fuoco su `<body>`; pannello: fuoco ancora sul titolo del passo) e i nuovi passano. Senza il `focus()` i nuovi cadono dopo 5 s, il tetto di `asyncUtilTimeout` in `test/setup.ts`.
+
+**Giudicati al sicuro, non toccati.**
+- Fuoco posato a mano dal test, che deve restare dov'è; nessun effetto lo sposta: `a11y/anagrafica-personale-a11y:613, 626` (il 503 è un errore `generico`: l'effetto del pannello scatta solo su `sede`, quello del titolo salta con un errore d'invio), `a11y/scadenze-documenti-a11y:393`, `CodiciFiscaliDaVerificare:1266` (`setScrivendo` prima del primo `await`, stesso bottone), `ScadenzeDocumenti:709, 717` (sul percorso riuscito non scatta nessun ricovero).
+- Il `focus()` lo chiama il gestore, non un effetto: `AnagraficaPersonaleWizard-codice-fiscale:343, 374` (`portaIlFuoco`, sul nodo che esiste già, prima del render che mostra l'errore), `ElencoAlunniDocente:259` e `SchedaAlunnoLettura:357` (`riprova`).
+- Effetto sì, ma lo stato nasce dentro l'`act` di `fireEvent`: `AnagraficaPersonaleWizard-sede:80` e `CandidaturaInsegnanteWizard-riepilogo:819` (`setErroreSede` prima del primo `await`), `MovimentoDialog-componi-riapertura:268, 285` (il pannello finto chiama `onChiudi`/`onFatto` nel clic), `admin-sezione-rinomina:175, 182` (`setRinominaAperta` nel clic), `parent-voti-impreparati:378, 379, 383, 453, 457` (gestori sincroni che prenotano `fuocoDopo`).
+- `parent-voti-impreparati:444`: il fuoco su «Modifica» è già atteso con `waitFor` alle righe 424-428; dopo lo sblocco della rilettura (fuori da `act`) il test controlla che resti lì. Non può cadere a caso, ma può guardare prima che la rilettura sia ridisegnata.
+
+**Controlli di ASSENZA del fuoco, annotati e non riscritti (nessuna prova di un difetto).**
+- `CandidaturaInsegnanteWizard-forma-visiva:842`, «all'apertura il fuoco non si tocca»: guarda `activeElement === body` subito dopo il `findByRole` della prima casella, che arriva con la risposta delle sedi, fuori da `act`. Non può cadere a caso. Un effetto nuovo che rubasse il fuoco su quel render, però, sotto carico potrebbe girare dopo il controllo: verde falso possibile.
+- `ComunicaAssenzaCard:487`, «al montaggio il fuoco NON viene rubato»: aspetta che la GET sia partita, non che sia tornata. Prova che il primo render non ruba il fuoco, non che non lo rubi l'arrivo dell'elenco.
+- `MovimentoDialog-componi-riapertura:285`: tutto dentro `act`, l'assenza è affidabile.
+
+Un controllo incrociato sugli altri effetti che spostano il fuoco dopo una `fetch` (`CodiciFiscaliDaVerificare`, `ScadenzeDocumenti`, la conferma della candidatura) non trova altre gare: le loro asserzioni stanno già dentro `waitFor`.
+
+File dei test toccati: 2 su 2 verdi (48 test), tre esecuzioni di fila; `eslint --max-warnings 0` pulito.
+
 ## 🧪 Changelog — «Sblocca» si aspetta: il ruolo arriva dopo l'avviso — 2026-11-01 (branch `fix/test-sblocca-aspetta-ruolo`)
 
 **Stato:** 🟡 sul branch, PR verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.

@@ -15,7 +15,7 @@ import {
   ORIGINI,
   TIPI_EVENTO,
   type AppuntamentoRow,
-  type BambinoRow,
+  type BambinoDettaglioRow,
   type EsitoBambino,
   type EventoRow,
   type SchedaRow,
@@ -29,9 +29,12 @@ import { AssociaDomanda } from '../collegamento/AssociaDomanda'
 import { AvvisoDomandaDaAssociare } from '../collegamento/AvvisoDomandaDaAssociare'
 import { BadgeCollegamento } from '../collegamento/BadgeCollegamento'
 import { AzioniScheda } from '../follow-up/AzioniScheda'
+import { CollegaAlunno } from './CollegaAlunno'
 import { linkTelefono, linkWhatsApp } from './contatti-link'
 import { TONO_ESITO } from './filtri-schede'
 import { ModuloFamiglia, contattoValido, famigliaDaScheda, type DatiFamiglia } from './ModuloFamiglia'
+import { QuotaIscrizione } from './QuotaIscrizione'
+import { importoLeggibile } from './quota-importo'
 import { chiama, leggiJson, scrittura } from './rete'
 import { AREA, CAMPO, COLLEGAMENTO_PASTIGLIA, MESSAGGIO_ERRORE, RIQUADRO, TESTO_SECONDARIO, TITOLO_SEZIONE } from './stile'
 import { etichetta } from './vocabolari'
@@ -60,6 +63,12 @@ import { etichetta } from './vocabolari'
  * `AzioniScheda` (richiami) e `FissaVisita` (agenda) sono montati e basta, con le props fissate dal
  * contratto. Quando una di loro cambia qualcosa chiama `onCollegato` / `onAggiornata` / `onFatto`, e la
  * scheda si rilegge.
+ *
+ * ── La quota e l'alunno (dal 31/10/2026) ──────────────────────────────────────────────────────────
+ * Al posto della vecchia casella «quota saldata» ogni bambino ha `CollegaAlunno` e `QuotaIscrizione`, fuori
+ * dal modulo dell'esito (hanno i loro moduli, e un form dentro un form non è HTML valido). Il salvataggio
+ * del bambino non porta più la quota: la route `PATCH` la rifiuterebbe con 400. Gli eventi della vecchia
+ * spunta (`dati.saldata`) si leggono ancora nello storico.
  */
 
 interface Persona {
@@ -76,7 +85,7 @@ interface EventoDettaglio extends EventoRow {
 }
 interface Dettaglio {
   scheda: SchedaRow
-  bambini: BambinoRow[]
+  bambini: BambinoDettaglioRow[]
   appuntamenti: AppuntamentoDettaglio[]
   eventi: EventoDettaglio[]
   eventi_totale: number
@@ -379,7 +388,7 @@ function ModificaFamiglia({ scheda, onSalvata, onAnnulla }: { scheda: SchedaRow;
 // I BAMBINI
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambini: BambinoRow[]; rileggi: () => void }) {
+function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambini: BambinoDettaglioRow[]; rileggi: () => void }) {
   const t = useTranslations('crmSchede')
   const id = useId()
   return (
@@ -508,7 +517,7 @@ function AggiungiBambino({ schedaId, rileggi }: { schedaId: string; rileggi: () 
   )
 }
 
-function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambino: BambinoRow; rileggi: () => void }) {
+function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambino: BambinoDettaglioRow; rileggi: () => void }) {
   const t = useTranslations('crmSchede')
   const tc = useTranslations('crmShell')
   const date = useDateFormat()
@@ -516,8 +525,6 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const [esito, setEsito] = useState<EsitoBambino>(b.esito)
   const [motivo, setMotivo] = useState<string>(b.motivo_perdita ?? '')
   const [nota, setNota] = useState<string>(b.motivo_nota ?? '')
-  const [saldata, setSaldata] = useState<boolean>(b.quota_saldata)
-  const [dataSaldo, setDataSaldo] = useState<string>(b.quota_saldata_il ?? '')
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
 
@@ -531,12 +538,10 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
     if (esitoCambiato || motivoCambiato) corpo.motivoPerdita = motivo
     if (pulito(nota) !== (b.motivo_nota ?? '').trim()) corpo.motivoNota = pulito(nota)
   }
-  if (saldata !== b.quota_saldata) corpo.quotaSaldata = saldata
-  if (saldata && dataSaldo !== '' && dataSaldo !== (b.quota_saldata_il ?? '')) corpo.quotaSaldataIl = dataSaldo
 
   const cambiato = Object.keys(corpo).length > 0
   // Il motivo si pretende quando «perso» è una scelta nuova o il motivo lo si sta toccando: un «perso»
-  // vecchio, senza motivo, non impedisce di correggere la quota.
+  // vecchio, senza motivo, non impedisce di correggere la nota.
   const motivoMancante = esito === 'perso' && motivo === ''
   const valido = !(motivoMancante && (esitoCambiato || motivoCambiato))
 
@@ -640,37 +645,6 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
           </>
         )}
 
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="inline-flex min-h-11 items-center gap-2 font-maven text-sm text-kidville-ink">
-            <input
-              type="checkbox"
-              checked={saldata}
-              disabled={invio}
-              onChange={(e) => setSaldata(e.target.checked)}
-              className="h-5 w-5 rounded border-kidville-line accent-kidville-green"
-            />
-            {t('bambinoQuota')}
-          </label>
-          {saldata && (
-            <div className="w-40">
-              <label htmlFor={`${id}-data-saldo`} className={ETICHETTA_CAMPO_FILTRO}>
-                {t('bambinoQuotaData')}
-              </label>
-              <DateField
-                id={`${id}-data-saldo`}
-                value={dataSaldo}
-                onChange={setDataSaldo}
-                disabled={invio}
-                aria-describedby={`${id}-data-saldo-aiuto`}
-                className={CAMPO}
-              />
-              <p id={`${id}-data-saldo-aiuto`} className={`mt-1 ${TESTO_SECONDARIO}`}>
-                {t('bambinoQuotaOggi')}
-              </p>
-            </div>
-          )}
-        </div>
-
         {errore !== null && (
           <p role="alert" className={MESSAGGIO_ERRORE}>
             {errore}
@@ -682,6 +656,10 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
           </Btn>
         </div>
       </form>
+
+      {/* Fuori dal modulo dell'esito: hanno i loro moduli, e un form dentro un form non è HTML valido. */}
+      <CollegaAlunno schedaId={scheda.id} scuolaId={scheda.scuola_id} bambino={b} onCambiata={rileggi} />
+      <QuotaIscrizione schedaId={scheda.id} bambino={b} onCambiata={rileggi} />
     </article>
   )
 }
@@ -906,7 +884,17 @@ function dettaglioEvento(e: EventoDettaglio, nomiBambini: Map<string, string>, t
   const esito = (v: unknown) => (typeof v === 'string' && (ESITI_BAMBINO as readonly string[]).includes(v) ? etichetta(tc, 'esiti', v) : '—')
 
   if (e.tipo === 'esito_cambiato') return t('eventoEsito', { nome, da: esito(dati.da), a: esito(dati.a) })
-  if (e.tipo === 'quota_segnata') return t(dati.saldata === true ? 'eventoQuotaSaldata' : 'eventoQuotaTolta', { nome })
+  if (e.tipo === 'quota_segnata') {
+    // Dal 31/10/2026 porta l'importo. Gli eventi della vecchia spunta no: portano `saldata` (vero/falso).
+    const importo = importoLeggibile(typeof dati.importo === 'number' || typeof dati.importo === 'string' ? dati.importo : null)
+    if (importo !== null) return t('eventoQuotaSegnata', { nome, importo })
+    return t(dati.saldata === false ? 'eventoQuotaTolta' : 'eventoQuotaSaldata', { nome })
+  }
+  if (e.tipo === 'quota_corretta') return t('eventoQuotaCorretta', { nome })
+  if (e.tipo === 'quota_in_contabilita') return t('eventoQuotaInContabilita', { nome })
+  if (e.tipo === 'quota_tolta') return t('eventoQuotaTolta', { nome })
+  if (e.tipo === 'alunno_collegato') return t('eventoAlunnoCollegato', { nome })
+  if (e.tipo === 'alunno_scollegato') return t('eventoAlunnoScollegato', { nome })
   if (e.tipo === 'modificata' || e.tipo === 'bambino_modificato') {
     const campi = typeof dati.campi === 'string' ? dati.campi.split(',').map((c) => nomeCampo(t, c.trim())) : []
     const noti = campi.filter((c): c is string => c !== null)
@@ -915,7 +903,7 @@ function dettaglioEvento(e: EventoDettaglio, nomiBambini: Map<string, string>, t
   return null
 }
 
-function Storico({ eventi, totale, bambini }: { eventi: EventoDettaglio[]; totale: number; bambini: BambinoRow[] }) {
+function Storico({ eventi, totale, bambini }: { eventi: EventoDettaglio[]; totale: number; bambini: BambinoDettaglioRow[] }) {
   const t = useTranslations('crmSchede')
   const tc = useTranslations('crmShell')
   const date = useDateFormat()

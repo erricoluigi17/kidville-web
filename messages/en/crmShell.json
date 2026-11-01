@@ -95,6 +95,11 @@
     "azione_pianificata": "Call scheduled",
     "azione_fatta": "Call made",
     "azione_spostata": "Call rescheduled",
-    "azione_cancellata": "Call cancelled"
+    "azione_cancellata": "Call cancelled",
+    "quota_in_contabilita": "Registration fee moved to accounting",
+    "quota_corretta": "Registration fee corrected",
+    "quota_tolta": "Registration fee removed",
+    "alunno_collegato": "Pupil linked",
+    "alunno_scollegato": "Pupil unlinked"
   }
 }

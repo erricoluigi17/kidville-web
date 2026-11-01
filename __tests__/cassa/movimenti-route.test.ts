@@ -160,6 +160,55 @@ describe('GET /api/pagamenti/cassa/movimenti', () => {
     const res = await GET(getReq())
     expect(await res.json()).toHaveProperty('totali')
   })
+
+  // Quota d'iscrizione passata dal CRM in contabilità: l'entrata di cassa in contanti
+  // fatta dal CRM porta `incasso_id` = l'incasso che la rappresenta, e la lista già
+  // mostra quell'incasso come entrata virtuale. Il movimento non si elenca e non si
+  // somma una seconda volta, nemmeno nel totale del giorno.
+  describe('movimento assorbito da un incasso (incasso_id)', () => {
+    const riga = (extra: Record<string, unknown>) => ({
+      id: 'm-crm', tipo: 'entrata', importo: 50, metodo: 'contanti', data: '2026-10-31',
+      categoria_id: null, cassa_categoria_id: null, descrizione: null, note: null, allegato_path: null,
+      incasso_id: null, chiusura_id: null, registrato_da: 'admin-1', creato_il: '2026-10-31T09:00:00Z',
+      storno_di: null, stornato_il: null, storno_motivo: null, ...extra,
+    })
+    const incassoContanti = {
+      id: 'inc-1', importo: 50, metodo: 'contanti', data_incasso: '2026-10-31', creato_il: '2026-10-31T09:01:00Z',
+      pagamenti: { scuola_id: SEDE, categoria_id: null },
+    }
+
+    it('entrata 50 con incasso_id + incasso contanti 50: la lista ha UNA riga da 50 e il totale entrate è 50', async () => {
+      h.movimentiResp = { data: [riga({ incasso_id: 'inc-1' })], error: null }
+      h.incassiResp = { data: [incassoContanti], error: null }
+      const res = await GET(getReq())
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.movimenti).toHaveLength(1)
+      expect(body.movimenti[0]).toMatchObject({ id: 'incasso:inc-1', origine: 'incasso', importo: 50, incasso_id: 'inc-1' })
+      expect(body.totali.entrate).toBe(50)
+    })
+
+    it('un\'entrata manuale SENZA incasso_id accanto all\'assorbita resta in lista e nel totale', async () => {
+      h.movimentiResp = {
+        data: [riga({ incasso_id: 'inc-1' }), riga({ id: 'm-manuale', importo: 10 })],
+        error: null,
+      }
+      h.incassiResp = { data: [incassoContanti], error: null }
+      const body = await (await GET(getReq())).json()
+      expect(body.movimenti.map((m: { id: string }) => m.id).sort()).toEqual(['incasso:inc-1', 'm-manuale'])
+      expect(body.totali.entrate).toBe(60)
+    })
+
+    it('anche per la segreteria (senza totali) il movimento assorbito non compare', async () => {
+      h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE } })
+      h.movimentiResp = { data: [riga({ incasso_id: 'inc-1' })], error: null }
+      h.incassiResp = { data: [incassoContanti], error: null }
+      const body = await (await GET(getReq())).json()
+      expect(body.movimenti).toHaveLength(1)
+      expect(body.movimenti[0].origine).toBe('incasso')
+      expect(body).not.toHaveProperty('totali')
+    })
+  })
 })
 
 describe('POST /api/pagamenti/cassa/movimenti', () => {

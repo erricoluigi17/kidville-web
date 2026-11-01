@@ -91,9 +91,10 @@ const esitiInvio = [
 describe('SollecitiPanel — il motivo di un sollecito non partito, tradotto', () => {
     afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); lingua.valore = 'it'; });
 
-    it('le due chiavi esistono, in fondo a tutti e due i cataloghi, e dicono la stessa cosa', () => {
-        expect(Object.keys(itContabilita).at(-1)).toBe('soll_motivo_altro_giro');
-        expect(Object.keys(enContabilita).at(-1)).toBe('soll_motivo_altro_giro');
+    it('le due chiavi esistono, in tutti e due i cataloghi, e dicono la stessa cosa', () => {
+        // La posizione nel file non è il comportamento: conta che la chiave ci sia in it e in en.
+        expect(Object.keys(itContabilita)).toContain('soll_motivo_altro_giro');
+        expect(Object.keys(enContabilita)).toContain('soll_motivo_altro_giro');
         expect(itContabilita.soll_motivo_altro_giro).toBe(PROSA_ALTRO_GIRO);
         expect(enContabilita.soll_motivo_altro_giro).not.toBe(PROSA_ALTRO_GIRO);
     });

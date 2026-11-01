@@ -9,6 +9,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { notificaUscitaNonAdmin, verificaSogliaCassa } from '@/lib/cassa/notifiche'
 import { CASSA_SCHEMA_ASSENTE, calcolaAggregatiMovimenti } from '@/lib/cassa/saldo'
+import { soloMovimentiContati } from '@/lib/cassa/assorbiti'
 import type { RigaMovimentoCassa } from '@/lib/cassa/tipi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -175,7 +176,12 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
       }
       return letturaRegistroFallita('cassa-movimenti', movLetti)
     }
-    const movimentiReali = movLetti.righe
+    // Un movimento con `incasso_id` è assorbito da quell'incasso (la quota d'iscrizione
+    // passata dal CRM in contabilità): l'entrata virtuale sotto lo rappresenta già, con
+    // lo stesso importo, metodo e data. Elencarlo o sommarlo conterebbe i soldi due
+    // volte. Il filtro sta QUI, prima di tutto, così lista, casse e totali sono lo
+    // stesso insieme. Lo storno di un movimento con `incasso_id` è già rifiutato.
+    const movimentiReali = soloMovimentiContati(movLetti.righe)
 
     // 2) Entrate AUTO virtuali: incassi contanti delle sedi, non stornati. La sede
     //    di ogni riga è quella del SUO pagamento (embed), non il parametro: con

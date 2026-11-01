@@ -63,6 +63,8 @@ describe('i dodici segnaposto · le firme del contratto', () => {
       appuntamento?: AppuntamentoRow
       inizioProposto?: string
       assegnataProposta?: string
+      // Compito 8 (disponibilità per settimana): le persone libere di uno slot della sede, per il selettore.
+      personeProposte?: string[]
       onFatto: () => void
       onAnnulla: () => void
     }>()

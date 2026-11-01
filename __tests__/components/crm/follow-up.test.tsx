@@ -568,7 +568,8 @@ describe('AzioniScheda', () => {
 
     await screen.findByText('Questo richiamo è già stato segnato come fatto. Aggiorna la pagina.')
     expect(onAggiornata).toHaveBeenCalledTimes(1)
-    expect(letture('/api/admin/crm/azioni?')).toHaveLength(2)
+    // La rilettura parte da un effetto di `ricarica`, dopo che il messaggio è a schermo: si aspetta, non si legge subito.
+    await waitFor(() => expect(letture('/api/admin/crm/azioni?')).toHaveLength(2))
   })
 
   it('sposta: propone il giorno e l’ora di adesso, manda quelli scelti e dice dove è finito', async () => {

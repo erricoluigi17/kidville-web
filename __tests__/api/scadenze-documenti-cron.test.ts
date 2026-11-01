@@ -37,6 +37,9 @@ const CRON_SECRET = 'segreto-di-prova-scadenze-documenti-non-usato-altrove'
 /** Il giorno civile italiano: lo stesso che usa la route. */
 const OGGI = dataCivile()
 const fra = (giorni: number) => aggiungiGiorni(OGGI, giorni)
+// Gli istanti «N giorni fa» si scrivono a giorni CIVILI (`${fra(-N)}T09:00:00Z`), mai come `Date.now() - N×24h`:
+// la route conta date di Roma, e nella settimana dopo un cambio d'ora 168 ore fa possono essere 6 giorni civili
+// (31/10 alle 23:28 → 25/10 alle 00:28). Così il test del risollecito a 7 giorni cadeva ogni sera fra le 23 e mezzanotte.
 
 const UTENTE_1 = '11111111-1111-4111-8111-111111111111'
 const UTENTE_2 = '22222222-2222-4222-8222-222222222222'
@@ -900,7 +903,7 @@ describe('scadenze-documenti · la seconda esecuzione non rimanda niente', () =>
   it('il documento SCADUTO avvisato ieri non risollecita oggi', async () => {
     h.anagrafiche = [anagrafica(UTENTE_1, fra(-30), {
       scadenza_soglia_avvisata: 0,
-      scadenza_avvisata_il: new Date(Date.now() - 86_400_000).toISOString(),
+      scadenza_avvisata_il: `${fra(-1)}T09:00:00Z`,
     })]
     h.utenti = [persona(UTENTE_1, SEDE_A)]
     await chiama()
@@ -910,7 +913,7 @@ describe('scadenze-documenti · la seconda esecuzione non rimanda niente', () =>
   it('…ma dopo una settimana sì: una non conformità aperta non si dimentica', async () => {
     h.anagrafiche = [anagrafica(UTENTE_1, fra(-120), {
       scadenza_soglia_avvisata: 0,
-      scadenza_avvisata_il: new Date(Date.now() - 8 * 86_400_000).toISOString(),
+      scadenza_avvisata_il: `${fra(-8)}T09:00:00Z`,
     })]
     h.utenti = [persona(UTENTE_1, SEDE_A)]
     await chiama()
@@ -1058,7 +1061,7 @@ describe('scadenze-documenti · l’allarme che si può zittire', () => {
     h.anagrafiche = [
       anagrafica(UTENTE_1, fra(-64), {
         scadenza_soglia_avvisata: 0,
-        scadenza_avvisata_il: new Date(Date.now() - 8 * 86_400_000).toISOString(),
+        scadenza_avvisata_il: `${fra(-8)}T09:00:00Z`,
       }),
     ]
     h.utenti = [persona(UTENTE_1, SEDE_A)]
@@ -1084,7 +1087,7 @@ describe('scadenze-documenti · l’allarme che si può zittire', () => {
     h.anagrafiche = [
       anagrafica(UTENTE_1, fra(-57), {
         scadenza_soglia_avvisata: 0,
-        scadenza_avvisata_il: new Date(Date.now() - 8 * 86_400_000).toISOString(),
+        scadenza_avvisata_il: `${fra(-8)}T09:00:00Z`,
       }),
     ]
     h.utenti = [persona(UTENTE_1, SEDE_A)]
@@ -1143,7 +1146,7 @@ describe('scadenze-documenti · l’allarme che si può zittire', () => {
     h.anagrafiche = [
       anagrafica(UTENTE_1, fra(-222), {
         scadenza_soglia_avvisata: 0,
-        scadenza_avvisata_il: new Date(Date.now() - 7 * 86_400_000).toISOString(),
+        scadenza_avvisata_il: `${fra(-7)}T09:00:00Z`,
         creata_il: `${fra(-7)}T09:00:00Z`,
       }),
     ]

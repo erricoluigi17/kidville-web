@@ -3446,6 +3446,37 @@ export const CODICI_ERRORE = {
      *    di `admin/crm/schede`).
      */
     CONTATTO_OBBLIGATORIO: 'erroreCrmContattoObbligatorio',
+    /**
+     * La quota d'iscrizione del CRM (31/10/2026, `PUT`/`DELETE …/bambini/[bambinoId]/quota`):
+     *  · 422 `QUOTA_GIORNO_FUTURO` — il giorno del pagamento è dopo oggi (a Roma);
+     *  · 422 `QUOTA_ANNO_MANCANTE` — il bambino non ha l'anno di ingresso: l'anno della quota si ricava da lì;
+     *  · 409 `QUOTA_CASSA_CHIUSA` — contanti datati a un giorno già chiuso in cassa (la risposta porta
+     *    anche `giornoProposto`: oggi);
+     *  · 409 `QUOTA_GIA_IN_CONTABILITA` — la quota è già una voce dell'alunno: si corregge in contabilità.
+     */
+    QUOTA_GIORNO_FUTURO: 'erroreCrmQuotaGiornoFuturo',
+    QUOTA_ANNO_MANCANTE: 'erroreCrmQuotaAnnoMancante',
+    QUOTA_CASSA_CHIUSA: 'erroreCrmQuotaCassaChiusa',
+    QUOTA_GIA_IN_CONTABILITA: 'erroreCrmQuotaGiaInContabilita',
+    /**
+     * Il collegamento del bambino del CRM all'alunno (31/10/2026, `PUT`/`DELETE …/bambini/[bambinoId]/alunno`):
+     *  · 422 `ALUNNO_NON_DELLA_SEDE` — l'alunno scelto è di un'altra sede (o non esiste): un collegamento non
+     *    attraversa i plessi;
+     *  · 409 `ALUNNO_GIA_COLLEGATO` — il bambino è già di un altro alunno, oppure l'alunno è già di un altro
+     *    bambino del CRM (la UNIQUE sull'alunno: l'import e un collegamento a mano arrivano insieme). Non è
+     *    `GIA_COLLEGATO`, che parla delle domande di iscrizione.
+     */
+    ALUNNO_NON_DELLA_SEDE: 'erroreCrmAlunnoNonDellaSede',
+    ALUNNO_GIA_COLLEGATO: 'erroreCrmAlunnoGiaCollegato',
+    /**
+     * Le disponibilità settimana per settimana (31/10/2026, `PUT /api/admin/crm/disponibilita`):
+     *  · 409 `SETTIMANA_PASSATA` — la settimana è già finita (il lunedì viene prima di quello della settimana in
+     *    corso, a Roma): le settimane passate non si modificano;
+     *  · 422 `FASCE_SOVRAPPOSTE` — due fasce dello stesso giorno si toccano (anche identiche): le fasce che si
+     *    appoggiano soltanto (una finisce quando l'altra comincia) non sono una sovrapposizione.
+     */
+    SETTIMANA_PASSATA: 'erroreCrmSettimanaPassata',
+    FASCE_SOVRAPPOSTE: 'erroreCrmFasceSovrapposte',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

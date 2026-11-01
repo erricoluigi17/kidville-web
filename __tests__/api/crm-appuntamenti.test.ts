@@ -109,19 +109,36 @@ const visita = (o: Riga = {}): Riga => ({
     ...o,
 })
 
-const fascia = (o: Riga = {}): Riga => ({
-    id: 'f-1',
-    scuola_id: SEDE_A,
-    utente_id: U1,
-    giorno_settimana: 1,
-    ora_inizio: '09:00:00',
-    ora_fine: '13:00:00',
-    durata_slot_min: 45,
-    valida_dal: '2026-09-01',
-    valida_al: null,
-    creata_il: '2026-09-01T00:00:00.000Z',
-    ...o,
-})
+let contatoreSettimane = 0
+
+/**
+ * Programma una persona (o la SEDE, con `utenteId` nullo) a partire dal lunedì `settimana`: una testata e le sue
+ * fasce, come le scrive `crm_salva_settimana`. Le settimane dopo la prima ereditano da lei; per provare
+ * l'ereditarietà basta registrarla prima della settimana che si legge.
+ */
+function programma(utenteId: string | null, fasce: Riga[], settimana = '2026-11-02', sede = SEDE_A) {
+    const id = `s-${++contatoreSettimane}`
+    h.db.crm_settimane.push({
+        id,
+        scuola_id: sede,
+        utente_id: utenteId,
+        settimana,
+        aggiornata_da: null,
+        aggiornata_il: '2026-10-30T09:00:00.000Z',
+    })
+    fasce.forEach((f, n) =>
+        h.db.crm_fasce.push({
+            id: `${id}-f${n}`,
+            scuola_id: sede,
+            settimana_id: id,
+            giorno_settimana: 1,
+            ora_inizio: '09:00:00',
+            ora_fine: '13:00:00',
+            durata_slot_min: 45,
+            ...f,
+        }),
+    )
+}
 
 const scritte = (tabella: string, operazione: string) =>
     (h.scritture as Scrittura[]).filter((s) => s.tabella === tabella && s.operazione === operazione)
@@ -160,7 +177,8 @@ beforeEach(() => {
             { id: SCHEDA_B, scuola_id: SEDE_B, genitore_nome: 'Famiglia Prova' },
         ],
         crm_appuntamenti: [],
-        crm_disponibilita: [],
+        crm_settimane: [],
+        crm_fasce: [],
         crm_indisponibilita: [],
         crm_eventi: [],
         crm_azioni: [],
@@ -302,7 +320,8 @@ describe('POST /api/admin/crm/appuntamenti', () => {
 
     describe('fuori disponibilità: si può prenotare lo stesso, e la risposta lo dice', () => {
         beforeEach(() => {
-            h.db.crm_disponibilita = [fascia({ utente_id: U2 })] // lunedì 9–13 della collega
+            // lunedì 9–13 della collega, registrato cinque settimane prima di quella della visita (2/11): la eredita
+            programma(U2, [{ giorno_settimana: 1 }], '2026-09-28')
         })
 
         it('dentro la fascia → 201 con fuori_disponibilita false', async () => {
@@ -345,17 +364,55 @@ describe('POST /api/admin/crm/appuntamenti', () => {
         })
 
         it('il giorno è quello di Roma: le 00:30 del lunedì (23:30Z della domenica) stanno nella fascia del lunedì', async () => {
-            h.db.crm_disponibilita = [fascia({ utente_id: U2, ora_inizio: '00:00:00', ora_fine: '01:00:00' })]
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U2, [{ giorno_settimana: 1, ora_inizio: '00:00:00', ora_fine: '01:00:00' }], '2026-11-02')
             const res = await POST(post(corpo({ inizio: '2026-11-02T00:30', durataMin: 15 })))
             expect(scritte('crm_appuntamenti', 'insert')[0].valori[0].inizio).toBe('2026-11-01T23:30:00.000Z')
             expect((await res.json()).fuori_disponibilita).toBe(false)
         })
 
-        it('un guasto nel leggere la disponibilità non diventa «dentro»: 500', async () => {
-            h.errori = { 'crm_disponibilita:select': { code: '08006' } }
-            const res = await POST(post(corpo()))
-            expect(res.status).toBe(500)
-            expect(scritte('crm_appuntamenti', 'insert')).toHaveLength(0)
+        it('un guasto nel leggere le settimane (o le fasce) non diventa «dentro»: 500, e non si scrive', async () => {
+            for (const tabella of ['crm_settimane', 'crm_fasce']) {
+                h.errori = { [`${tabella}:select`]: { code: '08006' } }
+                const res = await POST(post(corpo()))
+                expect(res.status, tabella).toBe(500)
+                expect(scritte('crm_appuntamenti', 'insert'), tabella).toHaveLength(0)
+            }
+        })
+
+        it('le tabelle delle settimane assenti (CRM senza la loro migrazione) → la visita si fissa lo stesso, senza avviso', async () => {
+            for (const code of ['PGRST205', '42P01']) {
+                h.errori = { 'crm_settimane:select': { code } }
+                // alle 18:00 sarebbe fuori dalla fascia di U2: il `false` viene dalle tabelle assenti, non dalla fascia
+                const res = await POST(post(corpo({ inizio: '2026-11-02T18:00' })))
+                expect(res.status, code).toBe(201)
+                expect((await res.json()).fuori_disponibilita, code).toBe(false)
+            }
+            expect(scritte('crm_appuntamenti', 'insert')).toHaveLength(2)
+        })
+
+        it('una fascia della SEDE basta: la visita di chiunque dentro la fascia della sede non è fuori', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(null, [{ giorno_settimana: 1 }], '2026-11-02') // la sede, lunedì 9–13
+            expect((await (await POST(post(corpo()))).json()).fuori_disponibilita).toBe(false) // alle 10:00, per U2
+            expect((await (await POST(post(corpo({ inizio: '2026-11-02T18:00' })))).json()).fuori_disponibilita).toBe(true)
+        })
+
+        it('la fascia è di UNA settimana: la settimana dopo una registrata VUOTA la visita è fuori', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U2, [{ giorno_settimana: 1 }], '2026-10-26') // lunedì 9–13 …
+            programma(U2, [], '2026-11-02') // … e dal 2/11 la collega non riceve più
+            expect((await (await POST(post(corpo()))).json()).fuori_disponibilita).toBe(true)
+        })
+
+        it('le fasce di un’altra sede non contano', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U2, [{ giorno_settimana: 1 }], '2026-11-02', SEDE_B)
+            expect((await (await POST(post(corpo()))).json()).fuori_disponibilita).toBe(true)
         })
     })
 
@@ -735,7 +792,8 @@ describe('GET /api/admin/crm/appuntamenti', () => {
 
     beforeEach(() => {
         oggiIl('2026-11-02T10:00:00.000Z') // lunedì 2/11, 11:00 a Roma
-        h.db.crm_disponibilita = [fascia({ utente_id: U1, giorno_settimana: 2, ora_inizio: '09:00:00', ora_fine: '11:00:00' })]
+        // U1: martedì 9–11, registrato nella settimana del 2/11 (quella che si legge)
+        programma(U1, [{ giorno_settimana: 2, ora_inizio: '09:00:00', ora_fine: '11:00:00' }])
     })
 
     it('docente → 403', async () => {
@@ -819,14 +877,15 @@ describe('GET /api/admin/crm/appuntamenti', () => {
     })
 
     it('la disponibilità di una persona archiviata non offre slot', async () => {
-        h.db.crm_disponibilita = [fascia({ utente_id: U_ARCH, giorno_settimana: 2 }), ...(h.db.crm_disponibilita as Riga[])]
+        programma(U_ARCH, [{ giorno_settimana: 2 }])
         const { slot } = await (await GET(get(settimana))).json()
         expect(slot.every((s: { utenteId: string }) => s.utenteId === U1)).toBe(true)
         expect(slot.length).toBeGreaterThan(0)
     })
 
     it('la disponibilità di un’altra sede non entra, né le sue assenze', async () => {
-        h.db.crm_disponibilita = [fascia({ id: 'f-b', scuola_id: SEDE_B, utente_id: U_B, giorno_settimana: 2 }), ...(h.db.crm_disponibilita as Riga[])]
+        programma(U_B, [{ giorno_settimana: 2 }], '2026-11-02', SEDE_B)
+        programma(null, [{ giorno_settimana: 2 }], '2026-11-02', SEDE_B)
         h.db.crm_indisponibilita = [
             { id: 'a-b', scuola_id: SEDE_B, utente_id: null, dal: '2026-11-03T00:00:00.000Z', al: '2026-11-04T00:00:00.000Z', motivo: 'chiusura' },
         ]
@@ -853,7 +912,129 @@ describe('GET /api/admin/crm/appuntamenti', () => {
     })
 
     it('le tabelle del CRM assenti → 503', async () => {
-        h.errori = { 'crm_disponibilita:select': { code: 'PGRST205' } }
-        expect((await GET(get(settimana))).status).toBe(503)
+        h.errori = { 'crm_appuntamenti:select': { code: 'PGRST205' } }
+        const res = await GET(get(settimana))
+        expect(res.status).toBe(503)
+        expect((await res.json()).codice).toBe('CRM_NON_INSTALLATO')
+    })
+
+    it('le tabelle delle SETTIMANE assenti → l’agenda c’è, senza slot e senza avviso «fuori disponibilità»', async () => {
+        h.db.crm_appuntamenti = [
+            // martedì 10:00 Roma di U2, che non ha nessuna fascia: con le settimane installate sarebbe «fuori»
+            visita({ id: 'v-2', inizio: '2026-11-03T09:00:00.000Z', fine: '2026-11-03T09:45:00.000Z', assegnata_a: U2 }),
+        ]
+        h.errori = { 'crm_settimane:select': { code: 'PGRST205' } }
+        const res = await GET(get(settimana))
+        expect(res.status).toBe(200)
+        const { appuntamenti, slot, persone } = await res.json()
+        expect(appuntamenti).toHaveLength(1)
+        expect(appuntamenti[0]).toMatchObject({ id: 'v-2', fuori_disponibilita: false })
+        expect(slot).toEqual([])
+        expect(persone.length).toBeGreaterThan(0)
+    })
+
+    it('un guasto nel leggere le fasce → 500, non una settimana senza orari', async () => {
+        h.errori = { 'crm_fasce:select': { code: '08006' } }
+        expect((await GET(get(settimana))).status).toBe(500)
+    })
+
+    describe('le settimane', () => {
+        it('una settimana mai toccata è uguale all’ultima registrata prima di lei', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U1, [{ giorno_settimana: 2, ora_inizio: '09:00:00', ora_fine: '09:45:00' }], '2026-10-05') // un mese prima
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot).toEqual([{ utenteId: U1, inizio: '2026-11-03T08:00:00.000Z', fine: '2026-11-03T08:45:00.000Z' }])
+        })
+
+        it('la modifica di una settimana FUTURA non cambia quella che si legge', async () => {
+            programma(U1, [{ giorno_settimana: 4, ora_inizio: '09:00:00', ora_fine: '09:45:00' }], '2026-11-09')
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot.map((s: { inizio: string }) => s.inizio)).toEqual(['2026-11-03T08:00:00.000Z', '2026-11-03T08:45:00.000Z'])
+        })
+
+        it('una settimana registrata vuota toglie tutti gli slot, e quelle dopo restano vuote', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U1, [{ giorno_settimana: 2 }], '2026-10-26')
+            programma(U1, [], '2026-11-02')
+            expect((await (await GET(get(settimana))).json()).slot).toEqual([])
+            expect((await (await GET(get(`?scuolaId=${SEDE_A}&dal=2026-11-09&al=2026-11-14`))).json()).slot).toEqual([])
+        })
+
+        it('un periodo a cavallo di due settimane risolve ciascuna per conto suo', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(U1, [{ giorno_settimana: 3, ora_inizio: '09:00:00', ora_fine: '09:45:00' }], '2026-10-26')
+            programma(U1, [{ giorno_settimana: 5, ora_inizio: '09:00:00', ora_fine: '09:45:00' }], '2026-11-09')
+            const { slot } = await (await GET(get(`?scuolaId=${SEDE_A}&dal=2026-11-02&al=2026-11-15`))).json()
+            // Mercoledì 4/11 (ereditata da fine ottobre) e venerdì 13/11 (registrata il 9): non il venerdì 6/11, non il mercoledì 11/11.
+            expect(slot.map((s: { inizio: string }) => s.inizio)).toEqual(['2026-11-04T08:00:00.000Z', '2026-11-13T08:00:00.000Z'])
+        })
+    })
+
+    describe('le fasce della sede', () => {
+        // La sede: mercoledì 9:00–10:30 (08:00Z e 08:45Z). Le persone della sede, per nome: U1 (Anna), ADMIN (Dir), U2 (Elena).
+        beforeEach(() => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(null, [{ giorno_settimana: 3, ora_inizio: '09:00:00', ora_fine: '10:30:00' }])
+        })
+
+        it('uno slot senza nome, con le persone libere', async () => {
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot).toEqual([
+                { utenteId: null, inizio: '2026-11-04T08:00:00.000Z', fine: '2026-11-04T08:45:00.000Z', personeLibere: [U1, ADMIN, U2] },
+                { utenteId: null, inizio: '2026-11-04T08:45:00.000Z', fine: '2026-11-04T09:30:00.000Z', personeLibere: [U1, ADMIN, U2] },
+            ])
+        })
+
+        it('A ha una visita alle 9:00, B è in ferie alle 9:45: lo slot c’è finché una è libera e propone solo chi lo è', async () => {
+            h.db.crm_appuntamenti = [
+                visita({ id: 'v-a', assegnata_a: U1, inizio: '2026-11-04T08:00:00.000Z', fine: '2026-11-04T08:45:00.000Z' }),
+                visita({ id: 'v-adm', assegnata_a: ADMIN, inizio: '2026-11-04T08:00:00.000Z', fine: '2026-11-04T08:45:00.000Z' }),
+            ]
+            h.db.crm_indisponibilita = [
+                { id: 'a-u2', scuola_id: SEDE_A, utente_id: U2, dal: '2026-11-04T08:45:00.000Z', al: '2026-11-04T09:30:00.000Z', motivo: 'ferie' },
+            ]
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot.map((s: { inizio: string; personeLibere: string[] }) => [s.inizio, s.personeLibere])).toEqual([
+                ['2026-11-04T08:00:00.000Z', [U2]],
+                ['2026-11-04T08:45:00.000Z', [U1, ADMIN]],
+            ])
+        })
+
+        it('nessuna persona libera → nessuno slot della sede', async () => {
+            h.db.crm_indisponibilita = [
+                { id: 'a-ch', scuola_id: SEDE_A, utente_id: null, dal: '2026-11-03T23:00:00.000Z', al: '2026-11-04T23:00:00.000Z', motivo: 'chiusura' },
+            ]
+            expect((await (await GET(get(settimana))).json()).slot).toEqual([])
+        })
+
+        it('persona e sede alla stessa ora: si vedono entrambi gli slot', async () => {
+            programma(U1, [{ giorno_settimana: 3, ora_inizio: '09:00:00', ora_fine: '09:45:00' }])
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot.filter((s: { inizio: string }) => s.inizio === '2026-11-04T08:00:00.000Z').map((s: { utenteId: string | null }) => s.utenteId)).toEqual([U1, null])
+        })
+
+        it('le persone non più della sede (archiviate) non sono fra le libere', async () => {
+            h.db.utenti.push({ id: 'u-x', nome: 'Zeta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: '2026-09-01T00:00:00.000Z' })
+            const { slot } = await (await GET(get(settimana))).json()
+            expect(slot[0].personeLibere).not.toContain('u-x')
+            expect(slot[0].personeLibere).toEqual([U1, ADMIN, U2])
+        })
+
+        it('la fascia della sede di un’altra sede non entra', async () => {
+            h.db.crm_settimane = []
+            h.db.crm_fasce = []
+            programma(null, [{ giorno_settimana: 3 }], '2026-11-02', SEDE_B)
+            expect((await (await GET(get(settimana))).json()).slot).toEqual([])
+        })
+
+        it('una visita dentro la fascia della sede non è «fuori disponibilità»', async () => {
+            h.db.crm_appuntamenti = [visita({ id: 'v-s', assegnata_a: U2, inizio: '2026-11-04T08:00:00.000Z', fine: '2026-11-04T08:45:00.000Z' })]
+            const { appuntamenti } = await (await GET(get(settimana))).json()
+            expect(appuntamenti[0]).toMatchObject({ id: 'v-s', fuori_disponibilita: false })
+        })
     })
 })

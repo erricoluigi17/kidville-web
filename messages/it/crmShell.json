@@ -95,6 +95,11 @@
     "azione_pianificata": "Richiamo pianificato",
     "azione_fatta": "Richiamo fatto",
     "azione_spostata": "Richiamo spostato",
-    "azione_cancellata": "Richiamo cancellato"
+    "azione_cancellata": "Richiamo cancellato",
+    "quota_in_contabilita": "Quota passata in contabilità",
+    "quota_corretta": "Quota di iscrizione corretta",
+    "quota_tolta": "Quota di iscrizione tolta",
+    "alunno_collegato": "Alunno collegato",
+    "alunno_scollegato": "Alunno scollegato"
   }
 }

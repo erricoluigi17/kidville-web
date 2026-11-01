@@ -2598,7 +2598,29 @@ describe('coverage-lock isolamento fra sedi', () => {
             // CONTROLLATE: gate `requireCrm`, e la sede la danno `restringiSedi`, `resolveScuolaScrittura`
             // o `assertSchedaInScope`, con `scuola_id` esplicito su ogni lettura e scrittura. Nessuna
             // esenzione. Ricalcolato all'integrazione rieseguendo il lock.
-            routeConServiceRole: 375,
+            // 375 → 377 il 2026-10-31 (CRM, quota d'iscrizione, compito 3): `…/bambini/[bambinoId]/quota`
+            // (PUT e DELETE) e `…/quota/riprova` (POST). CONTROLLATE: gate `requireCrm`, sede da
+            // `assertSchedaInScope` e `assertBambinoInScope` (il bambino è della scheda E della sede nella
+            // stessa query); le funzioni SQL ricevono l'id che quel gate ha verificato. Nessuna esenzione.
+            // 377 → 379 il 2026-10-31 (CRM, quota d'iscrizione, compito 4): `…/bambini/[bambinoId]/alunno`
+            // (PUT e DELETE) e `admin/crm/alunni` (GET, la ricerca fra gli alunni). Il passo è +2 e non +3: le
+            // route sono due (un file espone due metodi). CONTROLLATE: gate `requireCrm`; PUT e DELETE prendono
+            // la sede da `assertSchedaInScope` e `assertBambinoInScope` (scheda e sede nella stessa query), e la
+            // DELETE porta `scuola_id` anche nell'update; la GET dichiara la sede (`resolveScuoleAttive` +
+            // `restringiSedi`, 403 se non è fra le proprie) e filtra `alunni` con `.eq('scuola_id', …)` nella
+            // stessa query. Nessuna esenzione.
+            // 379 → 380 il 2026-10-31 (CRM, quota d'iscrizione, compito 6): `admin/crm/quote` (GET, la lista
+            // «Quote dal CRM» della contabilità). CONTROLLATA: gate `requireCrm`; la sede la dichiara
+            // (`resolveScuoleAttive` + `restringiSedi`, 403 `SEDE_NON_ACCESSIBILE` se `?scuolaId` non è fra le
+            // proprie, elenco vuoto senza sedi) e `crm_bambini` si legge con `.in('scuola_id', sedi)` nella stessa
+            // query. Nessuna esenzione.
+            // 380 → 379 il 2026-10-31 (CRM, compito 7, le disponibilità per settimana): è USCITA la route
+            // `admin/crm/disponibilita/[id]` (PATCH e DELETE di una fascia della «settimana tipo»), cancellata
+            // perché la tabella della «settimana tipo» non c'è più; `admin/crm/disponibilita` resta UNA route (ora
+            // GET e PUT) e non cambia il conto. CONTROLLATA: gate `requireCrm`; la sede la dichiara
+            // (`assertSedeInScope`), la persona è della sede (`assertPersonaInScope`) PRIMA della funzione SQL, e
+            // `crm_settimane` e `crm_fasce` si leggono con `.eq('scuola_id', …)` nella stessa query.
+            routeConServiceRole: 379,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2909,7 +2931,16 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (vedi sopra); `handlerEsentati` non cambia.
             // 574 → 581 il 2026-10-31: i sette handler delle cinque route `admin/crm/schede` (vedi sopra);
             // `handlerEsentati` non cambia.
-            handlerControllati: 581,
+            // 581 → 584 il 2026-10-31 (CRM, quota d'iscrizione, compito 3): `…/quota:PUT`, `…/quota:DELETE` e
+            // `…/quota/riprova:POST` (vedi sopra); `handlerEsentati` non cambia.
+            // 584 → 587 il 2026-10-31 (CRM, quota d'iscrizione, compito 4): `…/alunno:PUT`, `…/alunno:DELETE`
+            // e `admin/crm/alunni:GET` (vedi sopra); `handlerEsentati` non cambia.
+            // 587 → 588 il 2026-10-31 (CRM, quota d'iscrizione, compito 6): `admin/crm/quote:GET` (vedi sopra);
+            // `handlerEsentati` non cambia. Misurato rieseguendo il lock: 587 → 588.
+            // 588 → 586 il 2026-10-31 (CRM, compito 7): `admin/crm/disponibilita` passa da GET+POST a GET+PUT
+            // (stesso numero di handler) e `admin/crm/disponibilita/[id]` PATCH+DELETE esce: −2. `handlerEsentati`
+            // non cambia. Misurato rieseguendo il lock: 588 → 586.
+            handlerControllati: 586,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

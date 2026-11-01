@@ -11,9 +11,10 @@ import { formatData } from '@/lib/i18n/date'
 import { logEvento } from '@/lib/logging/logger'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { zDataOraLocale, zDataYMD } from '@/lib/validation/common'
-import { rispostaErroreDb } from './errori'
+import { rispostaErroreDb, tabellaAssente } from './errori'
+import { caricaFasceEffettive, type FasciaEffettiva } from './settimane'
 import { fuoriDisponibilita } from './slot'
-import { DURATA_SLOT_DEFAULT_MIN, type DisponibilitaRow, type IndisponibilitaRow } from './tipi'
+import { DURATA_SLOT_DEFAULT_MIN, type IndisponibilitaRow } from './tipi'
 
 /**
  * CRM DELLA SEGRETERIA · L'AGENDA: quello che le route di visite, disponibilità e assenze si dividono.
@@ -119,11 +120,18 @@ export async function assertSedeInScope(
 // ── «Fuori disponibilità» ────────────────────────────────────────────────────────
 
 /**
- * Questa visita cade fuori dalla disponibilità della persona? Legge le fasce valide quel giorno e le
- * assenze che toccano la visita (della persona e di tutta la sede) e decide con `fuoriDisponibilita`.
+ * Questa visita cade fuori dalla disponibilità? Legge le fasce della settimana di quel giorno (della persona e
+ * della sede: `caricaFasceEffettive` risolve «una settimana mai toccata è uguale alla precedente»), le assenze
+ * che toccano la visita (della persona e di tutta la sede) e decide con `fuoriDisponibilita`. Una visita sta
+ * dentro se sta per intero in una fascia della sua persona OPPURE della sede.
  *
- * Un guasto di lettura NON diventa «dentro»: torna la risposta d'errore (500, o 503 se le tabelle
- * mancano), perché un avviso che tace per un guasto direbbe alla segretaria «tutto a posto» quando non lo sa.
+ * Un guasto di lettura NON diventa «dentro»: torna la risposta d'errore (500), perché un avviso che tace per
+ * un guasto direbbe alla segretaria «tutto a posto» quando non lo sa.
+ *
+ * Le tabelle delle settimane ASSENTI sono un'altra cosa: le disponibilità per settimana non sono installate.
+ * Succede su un database col CRM ma senza la migrazione delle settimane (quello E2E della CI, che non ha la
+ * cassa e non può riceverla; o i minuti in cui il codice nuovo è già in linea e la migrazione non ancora). Lì
+ * la visita si fissa e si sposta lo stesso, senza l'avviso: senza fasce, ogni visita risulterebbe «fuori».
  */
 export async function visitaFuoriDisponibilita(
   supabase: SupabaseClient,
@@ -131,14 +139,16 @@ export async function visitaFuoriDisponibilita(
 ): Promise<{ fuori: boolean } | { response: NextResponse }> {
   const giorno = dataCivile(new Date(v.inizio))
 
-  const disp = await supabase
-    .from('crm_disponibilita')
-    .select('*')
-    .eq('scuola_id', v.scuolaId)
-    .eq('utente_id', v.utenteId)
-    .lte('valida_dal', giorno)
-    .or(`valida_al.is.null,valida_al.gte.${giorno}`)
-  if (disp.error) return { response: rispostaErroreDb(disp.error, `${v.operazione}:disponibilita`) }
+  let fasce: FasciaEffettiva[]
+  try {
+    fasce = await caricaFasceEffettive(supabase, v.scuolaId, giorno, giorno)
+  } catch (err) {
+    if (tabellaAssente(err)) {
+      logEvento('crm', 'warn', { operazione: `${v.operazione}:disponibilita`, esito: 'settimane-non-installate' }, err)
+      return { fuori: false }
+    }
+    return { response: rispostaErroreDb(err as { code?: string; message?: string }, `${v.operazione}:disponibilita`) }
+  }
 
   const ass = await supabase
     .from('crm_indisponibilita')
@@ -152,7 +162,7 @@ export async function visitaFuoriDisponibilita(
   return {
     fuori: fuoriDisponibilita(
       { assegnata_a: v.utenteId, inizio: v.inizio, fine: v.fine },
-      (disp.data ?? []) as DisponibilitaRow[],
+      fasce,
       (ass.data ?? []) as IndisponibilitaRow[],
     ),
   }

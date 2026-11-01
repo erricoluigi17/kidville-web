@@ -1,17 +1,13 @@
 // @vitest-environment node
 
-import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { RigaDettaglioCassa } from '@/lib/cassa/dettaglio'
+import { funzione, funzioneConPermessi, migrazione, senzaCommentiSql } from './sql-da-migrazioni'
 
-const CARTELLA = join(process.cwd(), 'supabase/migrations')
-function migrazione(suffisso: string) {
-  const file = readdirSync(CARTELLA).find((nome) => nome.endsWith(suffisso))
-  if (!file) throw new Error(`migrazione *${suffisso} non trovata`)
-  return readFileSync(join(CARTELLA, file), 'utf8')
-}
+// Dal 2026-10-31 le due funzioni hanno una definizione più recente (non contano i movimenti di cassa assorbiti da
+// un incasso): si installa quella del file della migrazione del CRM sopra gli originali.
+const MIGRAZIONE_CRM = migrazione('_crm_quota_e_settimane.sql')
 
 const uuid = (prefisso: string, n: number) => `${prefisso}-0000-4000-8000-${n.toString(16).padStart(12, '0')}`
 const SEDI = [uuid('a0000000', 1), uuid('a0000000', 2)]
@@ -60,12 +56,15 @@ beforeAll(async () => {
     );
     CREATE TABLE public.cassa_movimenti (
       id uuid PRIMARY KEY, scuola_id uuid, tipo text, importo numeric(10,2), metodo text, data date,
-      categoria_id uuid, descrizione text, note text, allegato_path text, storno_di uuid, stornato_il timestamptz
+      categoria_id uuid, descrizione text, note text, allegato_path text, storno_di uuid, stornato_il timestamptz,
+      incasso_id uuid
     );
     GRANT SELECT ON ALL TABLES IN SCHEMA public TO service_role;
   `)
   await db.exec(migrazione('_report_cassa_aggregato.sql'))
   await db.exec(migrazione('_report_cassa_dettaglio.sql'))
+  await db.exec(funzioneConPermessi(MIGRAZIONE_CRM, 'report_cassa_aggregato'))
+  await db.exec(funzioneConPermessi(MIGRAZIONE_CRM, 'report_cassa_dettaglio'))
   for (const id of CAT_P) await db.query('INSERT INTO public.payment_categories VALUES ($1, $2)', [id, 'Categoria omonima'])
   for (const id of CAT_C) await db.query('INSERT INTO public.cassa_categorie VALUES ($1, $2)', [id, 'Spesa omonima'])
   const pagamenti = [
@@ -200,6 +199,31 @@ describe('report_cassa_dettaglio · SQL reale, pagine e totale del filtro', () =
     expect(r.righe[0]).toMatchObject({ id: uuid('f1000000', 2), origine: 'cassa', importo: -20, storno_di: uuid('f1000000', 1), categoria_nome: 'Spesa omonima', pagamento_id: null })
     expect(r.righe[1]).toMatchObject({ allegato_path: 'cassa/file.pdf', note: 'Nota fittizia', pagamento_id: null })
     expect(await sql({ tipo: 'uscita', metodo: 'carta' })).toMatchObject({ conteggio: 602, totale: 1505, contanti: 0, altri: 1505 })
+  })
+
+  it('un movimento di cassa assorbito da un incasso non compare nel dettaglio e non entra nel totale', async () => {
+    const filtri = { tipo: 'uscita', da: '2026-05-11', a: '2026-05-12' } as const
+    const prima = await sql(filtri)
+    expect(prima.conteggio).toBe(2)
+    await db.exec('BEGIN')
+    try {
+      await db.query('UPDATE public.cassa_movimenti SET incasso_id = $2 WHERE id = $1', [uuid('f1000000', 1), uuid('e1000000', 1)])
+      const dopo = await sql(filtri)
+      expect(dopo.conteggio).toBe(1)
+      expect(dopo.righe.map((r) => r.id)).toEqual([uuid('f1000000', 2)])
+      expect(dopo.totale).toBeCloseTo(prima.totale - 20, 2)
+    } finally {
+      await db.exec('ROLLBACK')
+    }
+    expect((await sql(filtri)).conteggio).toBe(2)
+  })
+
+  it('le definizioni installate vengono dal file del CRM e leggono i movimenti con `m.incasso_id IS NULL`', () => {
+    for (const nome of ['report_cassa_aggregato', 'report_cassa_dettaglio']) {
+      const corpo = senzaCommentiSql(funzione(MIGRAZIONE_CRM, nome))
+      expect(corpo, nome).toMatch(/from\s+public\.cassa_movimenti\s+m\b/i)
+      expect(corpo, nome).toMatch(/\bm\.incasso_id\s+is\s+null/i)
+    }
   })
 
   it('tutti i campi restano presenti e nullable, e il limite non supera cento', async () => {

@@ -671,6 +671,58 @@ describe('GET /schede/[id]', () => {
         h.errori = { 'crm_bambini:select': { code: '08006' } }
         expect((await apri(S1)).status).toBe(500)
     })
+
+    describe('la quota in contabilità', () => {
+        const VOCE = '60000000-0000-4000-8000-000000000001'
+        const metti = (extra: Record<string, unknown>) => {
+            const riga = h.db.crm_bambini.find((b) => b.id === B1A)
+            if (!riga) throw new Error('fixture: manca il bambino B1A')
+            Object.assign(riga, { quota_stato: 'in_contabilita', quota_pagamento_id: VOCE, quota_metodo: 'bonifico', ...extra })
+        }
+        const bambinoB1A = async () => {
+            const corpo = await (await apri(S1)).json()
+            return corpo.bambini.find((b: { id: string }) => b.id === B1A) as Record<string, unknown>
+        }
+
+        it('un bonifico già in contabilità porta lo stato della voce: dice se la banca ha chiuso', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).toMatchObject({ quota_stato: 'in_contabilita', quota_pagamento_stato: 'da_pagare' })
+
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'pagato' }]
+            expect(await bambinoB1A()).toMatchObject({ quota_pagamento_stato: 'pagato' })
+        })
+
+        it('la voce di un’altra sede non si legge, nemmeno con lo stesso id', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_B, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).not.toHaveProperty('quota_pagamento_stato')
+        })
+
+        it('contanti o carta: la contabilità non si legge nemmeno', async () => {
+            metti({ quota_metodo: 'contanti' })
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            expect(await bambinoB1A()).not.toHaveProperty('quota_pagamento_stato')
+            expect(h.letture).not.toContain('pagamenti')
+        })
+
+        it('senza bonifici in contabilità la scheda non tocca la contabilità', async () => {
+            await apri(S1)
+            expect(h.letture).not.toContain('pagamenti')
+        })
+
+        it('se la contabilità non si legge la scheda si apre lo stesso, e il guasto resta nel log', async () => {
+            metti({})
+            h.db.pagamenti = [{ id: VOCE, scuola_id: SEDE_A, stato: 'da_pagare' }]
+            h.errori = { 'pagamenti:select': { code: '08006' } }
+            const res = await apri(S1)
+            expect(res.status).toBe(200)
+            const b = (await res.json()).bambini.find((x: { id: string }) => x.id === B1A)
+            expect(b).toMatchObject({ quota_stato: 'in_contabilita' })
+            expect(b).not.toHaveProperty('quota_pagamento_stato')
+            expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ esito: 'quota-voce-non-letta' }), expect.anything())
+        })
+    })
 })
 
 // ── PATCH /schede/[id] ───────────────────────────────────────────────────────
@@ -841,21 +893,12 @@ describe('PATCH /schede/[id]/bambini/[bambinoId]', () => {
         expect(riga(B2).motivo_perdita).toBeNull()
     })
 
-    it('quota saldata: data scelta o, in mancanza, oggi a Roma; chi l’ha segnata; evento quota_segnata', async () => {
+    it('la vecchia spunta della quota non scrive più niente (dal 31/10/2026 la quota è `PUT …/quota`)', async () => {
         const res = await cambia(S1, B1A, { quotaSaldata: true, quotaSaldataIl: '2026-10-20' })
-        expect(res.status).toBe(200)
-        expect(riga(B1A)).toMatchObject({ quota_saldata: true, quota_saldata_il: '2026-10-20', quota_segnata_da: USER })
-        expect(eventiScritti()[0]).toMatchObject({ tipo: 'quota_segnata' })
-        expect(eventiScritti()[0].dati).toEqual({ bambino_id: B1A, saldata: true })
-
-        h.scritture = []
-        await cambia(S3, B3, { quotaSaldata: true })
-        expect(riga(B3).quota_saldata_il).toMatch(/^\d{4}-\d{2}-\d{2}$/)
-
-        h.scritture = []
-        await cambia(S1, B1A, { quotaSaldata: false })
-        expect(riga(B1A)).toMatchObject({ quota_saldata: false, quota_saldata_il: null })
-        expect(eventiScritti()[0].dati).toEqual({ bambino_id: B1A, saldata: false })
+        expect(res.status).toBe(400)
+        expect(scritto('crm_bambini', 'update')).toHaveLength(0)
+        expect(eventiScritti()).toHaveLength(0)
+        expect(riga(B1A)).toMatchObject({ quota_saldata: false, quota_saldata_il: null, quota_segnata_da: null })
     })
 
     it('nome, data di nascita e anno: evento «bambino_modificato» con i soli nomi dei campi', async () => {
@@ -868,9 +911,10 @@ describe('PATCH /schede/[id]/bambini/[bambinoId]', () => {
         expect(JSON.stringify(eventi)).not.toContain('Corretto')
     })
 
-    it('più cose insieme: un evento per ciascuna (esito, quota, modifica)', async () => {
+    it('più cose insieme: un evento per ciascuna (esito, modifica); la spunta della quota è ignorata', async () => {
         await cambia(S2, B2, { esito: 'iscritto', quotaSaldata: true, nome: 'Bimbo Prova Rinominato' })
-        expect(eventiScritti().map((e) => e.tipo).sort()).toEqual(['bambino_modificato', 'esito_cambiato', 'quota_segnata'])
+        expect(eventiScritti().map((e) => e.tipo).sort()).toEqual(['bambino_modificato', 'esito_cambiato'])
+        expect(riga(B2)).toMatchObject({ quota_saldata: false, quota_segnata_da: null })
     })
 
     it('l’update porta scuola_id e scheda_id: la riga gemella di un’altra sede non si tocca', async () => {

@@ -2,29 +2,31 @@
 
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslations } from 'next-intl'
-import { AlertTriangle, CalendarOff, Pencil, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CalendarOff, Trash2 } from 'lucide-react'
 import { DateField } from '@/components/ui/DateField'
 import { Modal } from '@/components/ui/Modal'
-import { APP_TIMEZONE, intlDateTime } from '@/i18n/config'
-import type { DisponibilitaRow, IndisponibilitaRow, MotivoIndisponibilita } from '@/lib/crm/tipi'
+import { dataCivile } from '@/i18n/config'
+import type { IndisponibilitaRow, MotivoIndisponibilita } from '@/lib/crm/tipi'
 import { oraCivile } from '@/lib/format/confini-giorno'
-import { addGiorni } from '@/lib/format/data'
-import { conIniziale, useDateFormat } from '@/lib/i18n/date'
+import { useDateFormat } from '@/lib/i18n/date'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
+import { SettimanaDisponibilita } from './SettimanaDisponibilita'
 
 /**
  * CRM DELLA SEGRETERIA · LA DISPONIBILITÀ DI CHI FA LE VISITE.
  *
  * Tre cose, in quest'ordine:
- *  · la SETTIMANA TIPO: le fasce in cui una persona riceve (giorno, da quando a quando, quanto dura uno slot).
- *    Gli slot dell'agenda si calcolano da qui, ogni volta: toglierne una fascia non tocca le visite già fissate;
- *  · le ASSENZE di quella persona (ferie, malattia, altro): tolgono gli slot di quei giorni;
+ *  · la SETTIMANA: le fasce in cui la sede e ogni persona ricevono, settimana per settimana
+ *    (`SettimanaDisponibilita`). Gli slot dell'agenda si calcolano da qui, ogni volta: cambiare una fascia non
+ *    tocca le visite già fissate;
+ *  · le ASSENZE di una persona (ferie, malattia, altro): tolgono gli slot di quei giorni;
  *  · le CHIUSURE DELLA SEDE: tolgono gli slot di tutte.
  *
- * La segreteria vede e modifica la PROPRIA settimana; l'admin può scegliere un'altra persona. Lo dice il server
- * (`io` nella risposta), non il client: il ruolo non si indovina da qui. E il server rifiuta comunque (403) chi
- * tenta di toccare la settimana di una collega.
+ * La griglia della settimana mostra TUTTI e ognuno può modificare le fasce di chiunque: non dipende da chi
+ * guarda. Le ASSENZE sono invece di una persona sola: la segreteria vede le PROPRIE, l'admin può scegliere
+ * un'altra persona. Chi sta guardando lo dice il server (`io` nella risposta alla GET delle disponibilità),
+ * non il client: il ruolo non si indovina da qui.
  *
  * ── GIORNI E ORARI SONO DI ROMA ────────────────────────────────────────────────────
  * Le assenze sono intervalli di istanti con l'estremo finale ESCLUSO: l'ultimo giorno di ferie va mostrato un
@@ -39,53 +41,62 @@ interface Persona {
 }
 
 interface Dati {
-  fasce: DisponibilitaRow[]
   assenze: IndisponibilitaRow[]
   persone: Persona[]
   io: { id: string; ruolo: string }
 }
 
-type Esito = { chiave: string; ok: true; dati: Dati } | { chiave: string; ok: false }
+/** `testo` è quello da mostrare (il catalogo per il codice del server, o la frase generica); `stato` nullo = la richiesta non è arrivata. */
+type Esito = { chiave: string; ok: true; dati: Dati } | { chiave: string; ok: false; testo: string; stato: number | null }
+
+type Lettura<T> = { ok: true; corpo: T } | { ok: false; testo: string; stato: number | null }
 
 const ROUTE = '/admin/crm'
-const DURATE_SLOT_MIN = [15, 20, 30, 45, 60, 90]
-const DURATA_SLOT_DEFAULT_MIN = 45
-/** I giorni in cui si offrono visite: da lunedì (1) a sabato (6), come l'agenda. */
-const GIORNI_OFFERTI = [1, 2, 3, 4, 5, 6]
-/** Un lunedì qualunque (1 gennaio 2024), per ricavare il nome dei giorni nella lingua corrente. */
-const UN_LUNEDI = '2024-01-01'
 
-const mezzogiorno = (ymd: string) => new Date(`${ymd}T12:00:00Z`)
-const hhmm = (ora: string) => ora.slice(0, 5)
 const nomeDi = (p: { nome: string; cognome: string }) => `${p.nome} ${p.cognome}`.trim()
 
-async function leggi<T>(url: string): Promise<T | null> {
+async function leggi<T>(url: string, fallback: string): Promise<Lettura<T>> {
   try {
     const res = await fetch(url)
     if (!res.ok) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: 'crm-disponibilita-lettura-respinta', route: ROUTE, stato: res.status })
-      return null
+      // 503: le tabelle del CRM non ci sono (`CRM_NON_INSTALLATO`). La frase generica direbbe «riprova» a chi non
+      // può farci niente: lì si dice com'è, col testo del catalogo. Ogni altro guasto resta «non riesco a leggere».
+      if (res.status === 503) {
+        const errore = await erroreDaRisposta(res, fallback)
+        return { ok: false, testo: errore.testo, stato: res.status }
+      }
+      return { ok: false, testo: fallback, stato: res.status }
     }
-    return (await res.json()) as T
+    return { ok: true, corpo: (await res.json()) as T }
   } catch (e) {
     logClient({ livello: 'error', evento: 'fetch', messaggio: `crm-disponibilita-lettura-fallita: ${nomeErrore(e)}`, route: ROUTE })
-    return null
+    return { ok: false, testo: fallback, stato: null }
   }
 }
 
-async function caricaTutto(chiave: string, scuolaId: string): Promise<Esito> {
+async function caricaTutto(chiave: string, scuolaId: string, fallback: string): Promise<Esito> {
   const q = `?${new URLSearchParams({ scuolaId }).toString()}`
+  // Da questa lettura il pannello prende SOLO `io` (chi sta guardando): le fasce le legge e le mostra
+  // `SettimanaDisponibilita`, con la sua richiesta. La settimana è quella di oggi, a Roma.
+  const qSettimana = `?${new URLSearchParams({ scuolaId, settimana: dataCivile(new Date()) }).toString()}`
   const [disp, ass, per] = await Promise.all([
-    leggi<{ data?: DisponibilitaRow[]; io?: { id: string; ruolo: string } }>(`/api/admin/crm/disponibilita${q}`),
-    leggi<{ data?: IndisponibilitaRow[] }>(`/api/admin/crm/indisponibilita${q}`),
-    leggi<{ data?: Persona[] }>(`/api/admin/crm/persone${q}`),
+    leggi<{ io?: { id: string; ruolo: string } }>(`/api/admin/crm/disponibilita${qSettimana}`, fallback),
+    leggi<{ data?: IndisponibilitaRow[] }>(`/api/admin/crm/indisponibilita${q}`, fallback),
+    leggi<{ data?: Persona[] }>(`/api/admin/crm/persone${q}`, fallback),
   ])
-  if (!disp?.io || !ass || !per) return { chiave, ok: false }
-  return { chiave, ok: true, dati: { fasce: disp.data ?? [], assenze: ass.data ?? [], persone: per.data ?? [], io: disp.io } }
+  // La prima lettura andata male dà il testo: se le tabelle del CRM non ci sono, lo dice (503).
+  for (const lettura of [disp, ass, per]) {
+    if (!lettura.ok) return { chiave, ok: false, testo: lettura.testo, stato: lettura.stato }
+  }
+  if (!disp.ok || !ass.ok || !per.ok) return { chiave, ok: false, testo: fallback, stato: null }
+  // Senza `io` non si sa chi guarda: non si indovina.
+  if (!disp.corpo.io) return { chiave, ok: false, testo: fallback, stato: null }
+  return { chiave, ok: true, dati: { assenze: ass.corpo.data ?? [], persone: per.corpo.data ?? [], io: disp.corpo.io } }
 }
 
-/** Scrive (POST/PATCH/DELETE) e rende il testo da mostrare se il server ha rifiutato. `null` = riuscito. */
-async function scrivi(metodo: 'POST' | 'PATCH' | 'DELETE', url: string, corpo: unknown, fallback: string, evento: string): Promise<string | null> {
+/** Scrive (POST/DELETE) e rende il testo da mostrare se il server ha rifiutato. `null` = riuscito. */
+async function scrivi(metodo: 'POST' | 'DELETE', url: string, corpo: unknown, fallback: string, evento: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       method: metodo,
@@ -112,12 +123,7 @@ const BTN_SECONDARIO =
 const BTN_ICONA =
   'inline-flex h-9 w-9 items-center justify-center rounded-lg border border-kidville-line text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green'
 
-type Dialogo =
-  | { tipo: 'fascia'; fascia?: DisponibilitaRow }
-  | { tipo: 'assenza' }
-  | { tipo: 'chiusura' }
-  | { tipo: 'elimina-fascia'; fascia: DisponibilitaRow }
-  | { tipo: 'elimina-assenza'; assenza: IndisponibilitaRow }
+type Dialogo = { tipo: 'assenza' } | { tipo: 'chiusura' } | { tipo: 'elimina-assenza'; assenza: IndisponibilitaRow }
 
 export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
   const t = useTranslations('crmAgenda')
@@ -131,15 +137,16 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
   const [dialogo, setDialogo] = useState<Dialogo | null>(null)
 
   const chiave = `${scuolaId}|${versione}`
+  const fallbackErrore = t('dispErroreCaricamento')
   useEffect(() => {
     let attivo = true
-    void caricaTutto(chiave, scuolaId).then((e) => {
+    void caricaTutto(chiave, scuolaId, fallbackErrore).then((e) => {
       if (attivo) setEsito(e)
     })
     return () => {
       attivo = false
     }
-  }, [chiave, scuolaId])
+  }, [chiave, scuolaId, fallbackErrore])
 
   const ricarica = () => setVersione((v) => v + 1)
   const chiudiERicarica = () => {
@@ -148,19 +155,15 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
   }
 
   const dati = esito?.ok ? esito.dati : null
-  const nomeGiorno = (n: number) =>
-    conIniziale(intlDateTime(fmt.locale, { weekday: 'long', timeZone: APP_TIMEZONE }).format(mezzogiorno(addGiorni(UN_LUNEDI, n - 1))))
 
-  // La persona di cui si guarda la settimana: io, salvo che l'admin ne scelga un'altra.
+  // La persona di cui si guardano le assenze: io, salvo che l'admin ne scelga un'altra.
   const puoScegliere = dati?.io.ruolo === 'admin'
   const persona = useMemo(() => {
     if (!dati) return ''
     if (puoScegliere && scelta && dati.persone.some((p) => p.id === scelta)) return scelta
     return dati.io.id
   }, [dati, puoScegliere, scelta])
-  const miaSettimana = dati !== null && persona === dati.io.id
 
-  const fasce = (dati?.fasce ?? []).filter((f) => f.utente_id === persona)
   const assenze = (dati?.assenze ?? []).filter((a) => a.utente_id === persona)
   const chiusure = (dati?.assenze ?? []).filter((a) => a.utente_id === null)
 
@@ -186,10 +189,13 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
   if (!esito.ok || !dati) {
     return (
       <div role="alert" className="space-y-3 rounded-card border border-kidville-error/30 bg-kidville-error-soft p-5 font-maven text-sm text-kidville-error-strong">
-        <p>{t('dispErroreCaricamento')}</p>
-        <button type="button" className={BTN_SECONDARIO} onClick={ricarica}>
-          {t('riprova')}
-        </button>
+        <p>{esito.ok ? fallbackErrore : esito.testo}</p>
+        {/* Se le tabelle del CRM non ci sono, riprovare non cambia niente. */}
+        {(esito.ok || esito.stato !== 503) && (
+          <button type="button" className={BTN_SECONDARIO} onClick={ricarica}>
+            {t('riprova')}
+          </button>
+        )}
       </div>
     )
   }
@@ -201,6 +207,22 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
           {t('dispTitolo')}
         </h2>
         <p className="font-maven text-sm text-kidville-sub">{t('dispIntro')}</p>
+      </header>
+
+      {/* ── La settimana: la sede e ogni persona, fasce per fasce ── */}
+      <SettimanaDisponibilita scuolaId={scuolaId} />
+
+      {/* ── Le assenze ── */}
+      <section aria-labelledby={`${idPersona}-assenze`} className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 id={`${idPersona}-assenze`} className="font-maven text-base font-bold text-kidville-ink">
+            {t('dispAssenze')}
+          </h3>
+          <button type="button" className={BTN_SECONDARIO} onClick={() => setDialogo({ tipo: 'assenza' })}>
+            <CalendarOff size={16} aria-hidden="true" />
+            {t('dispAggiungiAssenza')}
+          </button>
+        </div>
         {puoScegliere && (
           <div className="max-w-xs space-y-1">
             <label htmlFor={idPersona} className="block font-maven text-xs font-semibold text-kidville-sub">
@@ -215,77 +237,6 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
             </select>
           </div>
         )}
-      </header>
-
-      {/* ── La settimana tipo ── */}
-      <section aria-labelledby={`${idPersona}-settimana`} className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 id={`${idPersona}-settimana`} className="font-maven text-base font-bold text-kidville-ink">
-            {miaSettimana ? t('dispSettimanaMia') : t('dispSettimanaAltri')}
-          </h3>
-          <button type="button" className={BTN_PRIMARIO} onClick={() => setDialogo({ tipo: 'fascia' })}>
-            <Plus size={16} aria-hidden="true" />
-            {t('dispAggiungiFascia')}
-          </button>
-        </div>
-        <ul className="divide-y divide-kidville-line rounded-card border border-kidville-line bg-kidville-white">
-          {[...GIORNI_OFFERTI, ...(fasce.some((f) => f.giorno_settimana === 7) ? [7] : [])].map((g) => {
-            const delGiorno = fasce.filter((f) => f.giorno_settimana === g)
-            return (
-              <li key={g} className="flex flex-wrap items-start gap-3 px-3 py-3">
-                <span className="w-28 shrink-0 font-maven text-sm font-bold text-kidville-ink">{nomeGiorno(g)}</span>
-                {delGiorno.length === 0 ? (
-                  <span className="font-maven text-sm text-kidville-sub">{t('dispNessunaFascia')}</span>
-                ) : (
-                  <ul className="flex min-w-0 flex-1 flex-col gap-2">
-                    {delGiorno.map((f) => (
-                      <li key={f.id} className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-maven text-sm text-kidville-ink">
-                          <span className="font-semibold tabular-nums">
-                            {hhmm(f.ora_inizio)}–{hhmm(f.ora_fine)}
-                          </span>
-                          <span className="text-kidville-sub"> · {t('dispSlotDa', { min: f.durata_slot_min })}</span>
-                          {f.valida_al && <span className="text-kidville-sub"> · {t('dispFinoAl', { data: fmt.dataBreve(mezzogiorno(f.valida_al)) })}</span>}
-                        </span>
-                        <span className="flex gap-1.5">
-                          <button
-                            type="button"
-                            className={BTN_ICONA}
-                            aria-label={t('dispModificaAria', { giorno: nomeGiorno(g), da: hhmm(f.ora_inizio), a: hhmm(f.ora_fine) })}
-                            onClick={() => setDialogo({ tipo: 'fascia', fascia: f })}
-                          >
-                            <Pencil size={16} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            className={BTN_ICONA}
-                            aria-label={t('dispEliminaAria', { giorno: nomeGiorno(g), da: hhmm(f.ora_inizio), a: hhmm(f.ora_fine) })}
-                            onClick={() => setDialogo({ tipo: 'elimina-fascia', fascia: f })}
-                          >
-                            <Trash2 size={16} aria-hidden="true" />
-                          </button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      </section>
-
-      {/* ── Le assenze ── */}
-      <section aria-labelledby={`${idPersona}-assenze`} className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 id={`${idPersona}-assenze`} className="font-maven text-base font-bold text-kidville-ink">
-            {t('dispAssenze')}
-          </h3>
-          <button type="button" className={BTN_SECONDARIO} onClick={() => setDialogo({ tipo: 'assenza' })}>
-            <CalendarOff size={16} aria-hidden="true" />
-            {t('dispAggiungiAssenza')}
-          </button>
-        </div>
         <ElencoAssenze
           righe={assenze}
           vuoto={t('dispNessunaAssenza')}
@@ -318,33 +269,11 @@ export function DisponibilitaPersona({ scuolaId }: { scuolaId: string }) {
         />
       </section>
 
-      {dialogo?.tipo === 'fascia' && (
-        <DialogoFascia
-          key={dialogo.fascia?.id ?? 'nuova'}
-          scuolaId={scuolaId}
-          utenteId={persona}
-          fascia={dialogo.fascia}
-          nomeGiorno={nomeGiorno}
-          onFatto={chiudiERicarica}
-          onChiudi={() => setDialogo(null)}
-        />
-      )}
       {(dialogo?.tipo === 'assenza' || dialogo?.tipo === 'chiusura') && (
         <DialogoAssenza
           key={dialogo.tipo}
           scuolaId={scuolaId}
           utenteId={dialogo.tipo === 'chiusura' ? null : persona}
-          onFatto={chiudiERicarica}
-          onChiudi={() => setDialogo(null)}
-        />
-      )}
-      {dialogo?.tipo === 'elimina-fascia' && (
-        <DialogoElimina
-          key={dialogo.fascia.id}
-          titolo={t('dispEliminaFasciaTitolo')}
-          corpo={t('dispEliminaFasciaCorpo', { giorno: nomeGiorno(dialogo.fascia.giorno_settimana), da: hhmm(dialogo.fascia.ora_inizio), a: hhmm(dialogo.fascia.ora_fine) })}
-          url={`/api/admin/crm/disponibilita/${dialogo.fascia.id}`}
-          evento="disponibilita-elimina"
           onFatto={chiudiERicarica}
           onChiudi={() => setDialogo(null)}
         />
@@ -408,130 +337,6 @@ function Errore({ testo }: { testo: string }) {
       <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
       <span>{testo}</span>
     </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────────────
-
-/** Aggiungere o modificare una fascia della settimana tipo. */
-function DialogoFascia({
-  scuolaId,
-  utenteId,
-  fascia,
-  nomeGiorno,
-  onFatto,
-  onChiudi,
-}: {
-  scuolaId: string
-  utenteId: string
-  fascia?: DisponibilitaRow
-  nomeGiorno: (n: number) => string
-  onFatto: () => void
-  onChiudi: () => void
-}) {
-  const t = useTranslations('crmAgenda')
-  const idBase = useId()
-  const [giorno, setGiorno] = useState(fascia?.giorno_settimana ?? 1)
-  const [oraInizio, setOraInizio] = useState(fascia ? hhmm(fascia.ora_inizio) : '09:00')
-  const [oraFine, setOraFine] = useState(fascia ? hhmm(fascia.ora_fine) : '13:00')
-  const [durata, setDurata] = useState(fascia?.durata_slot_min ?? DURATA_SLOT_DEFAULT_MIN)
-  const [validaAl, setValidaAl] = useState(fascia?.valida_al ?? '')
-  const [inCorso, setInCorso] = useState(false)
-  const [errore, setErrore] = useState('')
-
-  const giorni = GIORNI_OFFERTI.includes(giorno) ? GIORNI_OFFERTI : [...GIORNI_OFFERTI, giorno]
-  const durate = DURATE_SLOT_MIN.includes(durata) ? DURATE_SLOT_MIN : [...DURATE_SLOT_MIN, durata].sort((a, b) => a - b)
-
-  const salva = async () => {
-    if (!oraInizio || !oraFine || oraFine <= oraInizio) {
-      setErrore(t('dispErroreOre'))
-      return
-    }
-    setInCorso(true)
-    setErrore('')
-    const campi = { giornoSettimana: giorno, oraInizio, oraFine, durataSlotMin: durata, validaAl: validaAl || null }
-    const testo = fascia
-      ? await scrivi('PATCH', `/api/admin/crm/disponibilita/${fascia.id}`, campi, t('dispErroreSalva'), 'disponibilita-modifica')
-      : await scrivi('POST', '/api/admin/crm/disponibilita', { scuolaId, utenteId, ...campi }, t('dispErroreSalva'), 'disponibilita-aggiunta')
-    setInCorso(false)
-    if (testo) {
-      setErrore(testo)
-      return
-    }
-    onFatto()
-  }
-
-  const titolo = fascia ? t('dispModificaFasciaTitolo') : t('dispNuovaFasciaTitolo')
-  return (
-    <Modal open onClose={onChiudi} title={titolo} labelledBy={`${idBase}-titolo`} className="w-full max-w-md">
-      <div className="max-h-[90vh] overflow-y-auto rounded-3xl border border-kidville-line bg-white p-5 shadow-2xl">
-        <h2 id={`${idBase}-titolo`} className="font-barlow text-lg font-black uppercase leading-tight text-kidville-green">
-          {titolo}
-        </h2>
-        <form
-          className="mt-4 space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void salva()
-          }}
-        >
-          <div className="space-y-1">
-            <label htmlFor={`${idBase}-giorno`} className="block font-maven text-xs font-semibold text-kidville-sub">
-              {t('dispGiorno')}
-            </label>
-            <select id={`${idBase}-giorno`} value={giorno} onChange={(e) => setGiorno(Number(e.target.value))} style={{ fontSize: '16px' }} className={CAMPO}>
-              {giorni.map((g) => (
-                <option key={g} value={g}>
-                  {nomeGiorno(g)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label htmlFor={`${idBase}-da`} className="block font-maven text-xs font-semibold text-kidville-sub">
-                {t('dispDalle')}
-              </label>
-              <input id={`${idBase}-da`} type="time" value={oraInizio} onChange={(e) => setOraInizio(e.target.value)} style={{ fontSize: '16px' }} className={CAMPO} />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor={`${idBase}-a`} className="block font-maven text-xs font-semibold text-kidville-sub">
-                {t('dispAlle')}
-              </label>
-              <input id={`${idBase}-a`} type="time" value={oraFine} onChange={(e) => setOraFine(e.target.value)} style={{ fontSize: '16px' }} className={CAMPO} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label htmlFor={`${idBase}-slot`} className="block font-maven text-xs font-semibold text-kidville-sub">
-              {t('dispDurataSlot')}
-            </label>
-            <select id={`${idBase}-slot`} value={durata} onChange={(e) => setDurata(Number(e.target.value))} style={{ fontSize: '16px' }} className={CAMPO}>
-              {durate.map((m) => (
-                <option key={m} value={m}>
-                  {t('durataMinuti', { min: m })}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label htmlFor={`${idBase}-fino`} className="block font-maven text-xs font-semibold text-kidville-sub">
-              {t('dispValidaFinoAl')}
-            </label>
-            <DateField id={`${idBase}-fino`} value={validaAl} onChange={setValidaAl} className={CAMPO} />
-            <p className="font-maven text-xs text-kidville-sub">{t('dispValidaFinoAlAiuto')}</p>
-          </div>
-          <Errore testo={errore} />
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button type="button" onClick={onChiudi} className={BTN_SECONDARIO}>
-              {t('annulla')}
-            </button>
-            <button type="submit" disabled={inCorso} className={BTN_PRIMARIO}>
-              {inCorso ? t('invioInCorso') : t('dispSalva')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </Modal>
   )
 }
 

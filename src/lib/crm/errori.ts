@@ -10,16 +10,71 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  *
  *  · `23P01` — l'EXCLUDE di `crm_appuntamenti`: la persona ha già una visita che si sovrappone → 409.
  *  · `23505` — la UNIQUE `(domanda_id, domanda_figlio)`: quella domanda è già collegata → 409.
- *  · `PGRST205` / `42P01` — le tabelle `crm_*` non esistono su questo database (il DB E2E della CI non
- *    è migrato, o è la finestra fra il deploy e la migrazione) → 503, con un `warn` persistito: in
- *    produzione non deve mai succedere, ed è una frase diversa da «qualcosa è andato storto».
+ *  · `PGRST205` / `42P01` — le tabelle `crm_*` non esistono su questo database (la finestra fra il deploy
+ *    e la migrazione, o il DB E2E della CI, che ha la prima migrazione del CRM ma non quella delle
+ *    settimane: senza la cassa non può riceverla) → 503, con un `warn` persistito: in produzione non deve
+ *    mai succedere, ed è una frase diversa da «qualcosa è andato storto». Le tabelle delle SETTIMANE
+ *    fanno eccezione nell'agenda (`tabellaAssente`): la visita si fissa senza l'avviso.
  *  · tutto il resto → 500. Il testo del database NON torna al client (può nominare tabelle e colonne);
  *    resta nel log, con il codice.
+ *  · `rispostaErroreDbSchema` allarga il «non installato» ai pezzi di schema che una migrazione aggiunge
+ *    DOPO le tabelle (una funzione `rpc`, una colonna): la quota d'iscrizione ne usa tre, e nella finestra
+ *    fra il deploy e la migrazione mancano. Le route che non ne dipendono continuano con `rispostaErroreDb`.
  *
  * `operazione` è il nome stabile del punto di chiamata (`crm/schede:POST`): è ciò che si cerca nel log.
  */
 
 const TABELLA_ASSENTE = new Set(['PGRST205', '42P01'])
+
+/**
+ * Tutto ciò che dice «a questo database manca un pezzo dello schema del CRM»: la tabella (`PGRST205`,
+ * `42P01`), la funzione (`PGRST202` per PostgREST, `42883` per Postgres), la colonna (`42703` in lettura,
+ * `PGRST204` in scrittura). Il database E2E della CI ha la prima migrazione del CRM, non quella della quota.
+ */
+export const CODICI_SCHEMA_CRM_ASSENTE = new Set(['PGRST202', 'PGRST205', 'PGRST204', '42P01', '42883', '42703'])
+
+/**
+ * «Manca un pezzo dello schema» detto DOPO una chiamata `rpc`: la funzione (`PGRST202`, `42883`) o una tabella
+ * che il suo corpo legge (`PGRST205`, `42P01`). Sono i SOLI quattro codici, e non i sei di
+ * `CODICI_SCHEMA_CRM_ASSENTE`: su una funzione già installata un `42703` («colonna inesistente») o un
+ * `PGRST204` sono un errore vero nel suo corpo, e devono finire nel log a livello `error`, non travestirsi da
+ * «CRM non installato». I sei valgono per le LETTURE con `select` di colonne nuove.
+ */
+export const CODICI_RPC_CRM_ASSENTE = new Set(['PGRST202', 'PGRST205', '42P01', '42883'])
+
+/** Il codice di un errore, comunque sia arrivato (oggetto PostgREST o eccezione): stringa vuota se non c'è. */
+export function codiceErroreDb(error: unknown): string {
+  const c = (error as { code?: unknown } | null | undefined)?.code
+  return typeof c === 'string' ? c : ''
+}
+
+/**
+ * 503 `CRM_NON_INSTALLATO`, SENZA scrivere nel log: per chi ha già lasciato la sua riga (come
+ * `passaQuotaInContabilita`, che registra l'assenza dello schema e poi restituisce un esito).
+ */
+export function rispostaCrmNonInstallato(): NextResponse {
+  return NextResponse.json(
+    { error: 'Il CRM non è ancora disponibile su questo ambiente.', codice: 'CRM_NON_INSTALLATO' },
+    { status: 503 },
+  )
+}
+
+/**
+ * 500 `CRM_OPERAZIONE_NON_RIUSCITA`, SENZA scrivere nel log: per chi ha già lasciato la sua riga e non ha un
+ * errore di database in mano (una funzione SQL che risponde con un esito che è un guasto di configurazione).
+ */
+export function rispostaCrmNonRiuscita(): NextResponse {
+  return NextResponse.json(
+    { error: 'L’operazione non è riuscita. Riprova fra poco.', codice: 'CRM_OPERAZIONE_NON_RIUSCITA' },
+    { status: 500 },
+  )
+}
+
+/** Il 503, con un `warn` persistito: in produzione non deve mai succedere. */
+function schemaAssente(error: { code?: string; message?: string }, operazione: string): NextResponse {
+  logEvento('crm', 'warn', { operazione, esito: 'schema-crm-assente' }, error)
+  return rispostaCrmNonInstallato()
+}
 
 export function rispostaErroreDb(error: { code?: string; message?: string }, operazione: string): NextResponse {
   const codice = typeof error?.code === 'string' ? error.code : ''
@@ -36,16 +91,18 @@ export function rispostaErroreDb(error: { code?: string; message?: string }, ope
       { status: 409 },
     )
   }
-  if (TABELLA_ASSENTE.has(codice)) {
-    logEvento('crm', 'warn', { operazione, esito: 'schema-crm-assente' }, error)
-    return NextResponse.json(
-      { error: 'Il CRM non è ancora disponibile su questo ambiente.', codice: 'CRM_NON_INSTALLATO' },
-      { status: 503 },
-    )
-  }
+  if (TABELLA_ASSENTE.has(codice)) return schemaAssente(error, operazione)
   logErrore({ operazione, stato: 500 }, error)
-  return NextResponse.json(
-    { error: 'L’operazione non è riuscita. Riprova fra poco.', codice: 'CRM_OPERAZIONE_NON_RIUSCITA' },
-    { status: 500 },
-  )
+  return rispostaCrmNonRiuscita()
+}
+
+/** L'errore dice che la TABELLA non c'è (`PGRST205`, `42P01`): la parte di CRM che la usa non è installata. */
+export function tabellaAssente(error: unknown): boolean {
+  return TABELLA_ASSENTE.has(codiceErroreDb(error))
+}
+
+/** Come `rispostaErroreDb`, ma anche una funzione o una colonna mancante è «non installato» (503), non un 500. */
+export function rispostaErroreDbSchema(error: { code?: string; message?: string }, operazione: string): NextResponse {
+  if (CODICI_SCHEMA_CRM_ASSENTE.has(codiceErroreDb(error))) return schemaAssente(error, operazione)
+  return rispostaErroreDb(error, operazione)
 }

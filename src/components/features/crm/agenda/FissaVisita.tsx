@@ -22,6 +22,12 @@ import { NuovaScheda } from '../schede/NuovaScheda'
  *  · senza `schedaId` né `appuntamento` la famiglia si CERCA (o si crea: «Nuova famiglia»);
  *  · con `schedaId` la famiglia è già quella; con `appuntamento` è uno SPOSTAMENTO (PATCH `sposta`).
  *
+ * ── LA PERSONA, QUANDO LO SLOT È DELLA SEDE ─────────────────────────────────────────
+ * Uno slot della sede non ha una persona: ce n'è una o più di libere (`personeProposte`, gli uuid, nell'ordine
+ * della sede). Il selettore elenca SOLO quelle. Con una sola è già scelta; con più di una non se ne
+ * preseleziona nessuna e la scelta è obbligatoria: il pulsante resta spento finché non si sceglie, e il testo
+ * d'aiuto lo dice. Senza `personeProposte` (o vuoto) il dialogo si comporta come sempre.
+ *
  * ── UN 409 SLOT_OCCUPATO NON CHIUDE IL DIALOGO ──────────────────────────────────────
  * L'orario può essere stato preso un attimo prima da una collega (il database lo impedisce: EXCLUDE). Il
  * messaggio sta nel dialogo, in un `role="alert"`, e i campi restano come sono: si cambia l'ora e si riprova.
@@ -100,6 +106,7 @@ export function FissaVisita({
   appuntamento,
   inizioProposto,
   assegnataProposta,
+  personeProposte,
   onFatto,
   onAnnulla,
 }: {
@@ -108,6 +115,8 @@ export function FissaVisita({
   appuntamento?: AppuntamentoRow
   inizioProposto?: string
   assegnataProposta?: string
+  /** Solo per gli slot della sede: le persone libere in quell'orario. Il selettore elenca solo loro. */
+  personeProposte?: string[]
   onFatto: () => void
   onAnnulla: () => void
 }) {
@@ -119,6 +128,7 @@ export function FissaVisita({
   const idOra = `${idBase}-ora`
   const idDurata = `${idBase}-durata`
   const idPersona = `${idBase}-persona`
+  const idPersonaAiuto = `${idBase}-persona-aiuto`
   const idCerca = `${idBase}-cerca`
 
   const sposta = appuntamento !== undefined
@@ -149,9 +159,15 @@ export function FissaVisita({
   const persone = esitoPersone?.chiave === scuolaId ? esitoPersone.persone : []
   const personeInErrore = esitoPersone?.chiave === scuolaId && esitoPersone.errore
 
+  // Fra le persone proposte (slot della sede) si elencano solo quelle; altrimenti tutte le persone della sede.
+  const proposte = personeProposte ?? []
+  const elencoPersone = proposte.length > 0 ? persone.filter((p) => proposte.includes(p.id)) : persone
+
   // Con una persona sola non c'è da scegliere: si propone lei.
-  const personaScelta = persona || (persone.length === 1 ? persone[0].id : '')
+  const personaScelta = persona || (elencoPersone.length === 1 ? elencoPersone[0].id : '')
   const personaFuoriElenco = personaScelta !== '' && persone.length > 0 && !persone.some((p) => p.id === personaScelta)
+  // Più persone libere nello stesso slot: chi riceve la famiglia lo decide chi fissa, non il dialogo.
+  const sceltaObbligatoria = proposte.length > 1 && personaScelta === ''
 
   // ── La ricerca della famiglia ──────────────────────────────────────────────────────
   const [domanda, setDomanda] = useState('')
@@ -379,17 +395,23 @@ export function FissaVisita({
                   id={idPersona}
                   value={personaScelta}
                   onChange={(e) => setPersona(e.target.value)}
+                  aria-describedby={sceltaObbligatoria ? idPersonaAiuto : undefined}
                   style={{ fontSize: '16px' }}
                   className={CAMPO}
                 >
                   <option value="">{t('scegliPersona')}</option>
                   {personaFuoriElenco && <option value={personaScelta}>{t('personaSconosciuta')}</option>}
-                  {persone.map((p) => (
+                  {elencoPersone.map((p) => (
                     <option key={p.id} value={p.id}>
                       {nomeDi(p)}
                     </option>
                   ))}
                 </select>
+                {sceltaObbligatoria && (
+                  <p id={idPersonaAiuto} className="font-maven text-xs text-kidville-sub">
+                    {t('scegliPersonaAiuto')}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -410,7 +432,7 @@ export function FissaVisita({
               <button type="button" onClick={onAnnulla} className={BTN_SECONDARIO}>
                 {t('annulla')}
               </button>
-              <button type="submit" disabled={inCorso} className={BTN_PRIMARIO}>
+              <button type="submit" disabled={inCorso || sceltaObbligatoria} className={BTN_PRIMARIO}>
                 {inCorso ? t('invioInCorso') : sposta ? t('spostaConferma') : t('fissaConferma')}
               </button>
             </div>

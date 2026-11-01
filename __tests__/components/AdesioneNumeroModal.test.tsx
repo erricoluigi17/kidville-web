@@ -313,9 +313,10 @@ describe('AdesioneNumeroModal · l’esito si legge SUBITO, a schermo', () => {
 
         await waitFor(() => expect(screen.getByText(T('adesioneEsitoAttesaCorpo'))).toBeInTheDocument())
         expect(onChiudi, 'la modale si è chiusa portandosi via l’unica informazione utile').not.toHaveBeenCalled()
-        // Un solo comando nel pannello d'esito, e il fuoco ci sta sopra.
+        // Un solo comando nel pannello d'esito, e il fuoco ci sta sopra. Il fuoco lo sposta un `useEffect` DOPO che
+        // il pannello è nel DOM: si aspetta lui, non lo si legge subito (sotto carico, in CI, arriva dopo).
         const hoCapito = screen.getByRole('button', { name: T('adesioneEsitoChiudi') })
-        expect(document.activeElement).toBe(hoCapito)
+        await waitFor(() => expect(document.activeElement).toBe(hoCapito))
 
         fireEvent.click(hoCapito)
         expect(onChiudi).toHaveBeenCalledTimes(1)

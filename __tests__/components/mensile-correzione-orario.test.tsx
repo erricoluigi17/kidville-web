@@ -31,11 +31,18 @@ const SEZIONE = 'TEST Infanzia';
 const SECTION_ID = 'aaaa1111-0000-4000-8000-00000000000a';
 const ALUNNO = { id: 'cccc3333-0000-4000-8000-00000000000c', nome: 'Mario', cognome: 'Rossi' };
 
-/** Il 2 del mese in corso: un ritardo, con l'ora. 06:20Z = 08:20 italiane. */
+/** Il 2 del mese in corso: un ritardo, con l'ora. */
 const oggi = new Date();
 const ANNO = oggi.getFullYear();
 const MESE = oggi.getMonth() + 1;
 const GIORNO_ISO = `${ANNO}-${String(MESE).padStart(2, '0')}-02`;
+const ENTRATA_UTC = `${GIORNO_ISO}T06:20:00.000Z`;
+// 06:20Z fa 08:20 con l'ora legale e 07:20 senza: fino al 01/11/2026 qui c'era
+// «08:20» cablato, e il test scadeva da solo il primo mese d'inverno. L'ora attesa
+// si ricava dall'istante col fuso di Roma, senza passare dalla funzione provata.
+const ENTRATA_ROMA = new Intl.DateTimeFormat('it-IT', {
+    timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(new Date(ENTRATA_UTC));
 
 const fetchMock = vi.fn();
 const patch = () =>
@@ -58,7 +65,7 @@ beforeEach(() => {
                     // `date`, non `alunno_id`/`data` (che sono i nomi in colonna).
                     student_id: ALUNNO.id, student_nome: ALUNNO.nome, student_cognome: ALUNNO.cognome,
                     section_name: SEZIONE, date: GIORNO_ISO, stato: 'ritardo',
-                    orario_entrata: `${GIORNO_ISO}T06:20:00.000Z`, orario_uscita: null,
+                    orario_entrata: ENTRATA_UTC, orario_uscita: null,
                 }],
             });
         }
@@ -120,7 +127,8 @@ describe('riepilogo mensile — la cella con uno stato è un comando', () => {
         const chip = document.querySelector(`#btn-orario-entrata-${ALUNNO.id}`) as HTMLButtonElement;
         expect(chip).not.toBeNull();
         // L'ora si legge all'orologio di Roma, non in UTC.
-        expect(chip.textContent).toContain('08:20');
+        expect(chip.textContent).toContain(ENTRATA_ROMA);
+        expect(chip.textContent).not.toContain('06:20');
 
         fireEvent.click(chip);
         const input = document.querySelector(`#input-orario-entrata-${ALUNNO.id}`) as HTMLInputElement;

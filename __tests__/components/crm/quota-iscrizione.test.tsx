@@ -560,6 +560,25 @@ describe('QuotaIscrizione · gli stati', () => {
     expect(screen.queryAllByRole('button')).toEqual([])
   })
 
+  it('voce eliminata dallo scadenzario: lo dice, e non scrive «In contabilità» (01/11)', () => {
+    monta({
+      quota_stato: 'in_contabilita',
+      quota_importo: 200,
+      quota_metodo: 'bonifico',
+      quota_anno: 2027,
+      quota_saldata_il: '2026-10-27',
+      quota_pagamento_id: null,
+      alunno_id: ALUNNO,
+    })
+    expect(screen.getByText('Voce eliminata in contabilità')).toBeTruthy()
+    expect(screen.getByText(/è stata eliminata dalla contabilità/)).toBeTruthy()
+    expect(screen.queryByText('In contabilità')).toBeNull()
+    expect(screen.queryByText('In contabilità, in attesa del bonifico')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Apri lo scadenzario' })).toBeTruthy()
+    // Nessun rimedio dalla scheda: cosa fare lo decide il titolare.
+    expect(screen.queryAllByRole('button')).toEqual([])
+  })
+
   it('bonifico in contabilità e voce non ancora pagata: «in attesa del bonifico»', () => {
     monta({
       quota_stato: 'in_contabilita',

@@ -525,6 +525,12 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const [esito, setEsito] = useState<EsitoBambino>(b.esito)
   const [motivo, setMotivo] = useState<string>(b.motivo_perdita ?? '')
   const [nota, setNota] = useState<string>(b.motivo_nota ?? '')
+  // L'anno d'ingresso si cambia anche dopo: la nuova scheda parte da «non indicato», e la quota non si segna
+  // finché non è indicato («Indica prima l'anno di ingresso»). Fino al 2026-11-01 la card non aveva il campo.
+  const annoIniziale = (ANNI_INGRESSO as readonly string[]).includes(b.anno_ingresso)
+    ? (b.anno_ingresso as (typeof ANNI_INGRESSO)[number])
+    : 'non_indicato'
+  const [annoIngresso, setAnnoIngresso] = useState<(typeof ANNI_INGRESSO)[number]>(annoIniziale)
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
 
@@ -533,6 +539,7 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const esitoCambiato = esito !== b.esito
   const motivoCambiato = motivo !== motivoVecchio
   const corpo: Record<string, unknown> = {}
+  if (annoIngresso !== annoIniziale) corpo.annoIngresso = annoIngresso
   if (esitoCambiato) corpo.esito = esito
   if (esito === 'perso') {
     if (esitoCambiato || motivoCambiato) corpo.motivoPerdita = motivo
@@ -593,6 +600,24 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
         className="space-y-3"
       >
         <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor={`${id}-anno`} className={ETICHETTA_CAMPO_FILTRO}>
+              {t('nuovaBambinoAnno')}
+            </label>
+            <select
+              id={`${id}-anno`}
+              value={annoIngresso}
+              disabled={invio}
+              onChange={(e) => setAnnoIngresso(e.target.value as (typeof ANNI_INGRESSO)[number])}
+              className={CAMPO}
+            >
+              {ANNI_INGRESSO.map((a) => (
+                <option key={a} value={a}>
+                  {etichetta(tc, 'anniIngresso', a)}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label htmlFor={`${id}-esito`} className={ETICHETTA_CAMPO_FILTRO}>
               {t('bambinoEsito')}

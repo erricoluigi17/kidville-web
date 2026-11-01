@@ -371,8 +371,10 @@ describe('DettaglioScheda', () => {
     const conferma = screen.getByRole('button', { name: 'Aggiungi il bambino' })
     // Senza il nome non parte niente.
     expect((conferma as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('Nome del bambino'), { target: { value: '  Secondo Prova ' } })
-    fireEvent.change(screen.getByLabelText('Quando vorrebbe iniziare?'), { target: { value: 'in_corso' } })
+    // Dal 01/11 la stessa domanda sta anche nella card del bambino già salvato: si cerca nel modulo.
+    const modulo = within(conferma.closest('form')!)
+    fireEvent.change(modulo.getByLabelText('Nome del bambino'), { target: { value: '  Secondo Prova ' } })
+    fireEvent.change(modulo.getByLabelText('Quando vorrebbe iniziare?'), { target: { value: 'in_corso' } })
     fireEvent.click(conferma)
 
     await waitFor(() => expect(chiamateA('POST', /\/bambini$/)).toHaveLength(1))
@@ -510,6 +512,24 @@ describe('DettaglioScheda', () => {
 
     await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
     expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ esito: 'ci_pensa' })
+  })
+
+  it('l\'anno d\'ingresso si corregge dalla scheda: senza, la quota non si può segnare (01/11)', async () => {
+    // Prova d'uso nella sede Demo, 01/11: un bambino salvato «Non indicato» mostrava «Indica prima l'anno di
+    // ingresso» accanto alla quota, e la scheda non aveva nessun campo per indicarlo. Vicolo cieco.
+    rispondi('GET', URL_DETTAGLIO, { corpo: dettaglio({ bambini: [bambino({ anno_ingresso: 'non_indicato' })] }) })
+    rispondi('PATCH', /\/bambini\/bambino-1$/, { corpo: { id: 'bambino-1', modificato: true } })
+    await apriDettaglio()
+
+    const card = screen.getByRole('article', { name: 'Bambino Prova' })
+    const anno = within(card).getByLabelText('Quando vorrebbe iniziare?') as HTMLSelectElement
+    expect(anno.value).toBe('non_indicato')
+    fireEvent.change(anno, { target: { value: 'prossimo' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Salva' }))
+
+    await waitFor(() => expect(chiamateA('PATCH', /bambini/)).toHaveLength(1))
+    // Solo ciò che è cambiato: l'esito resta fuori dal corpo.
+    expect(chiamateA('PATCH', /bambini/)[0].corpo).toEqual({ annoIngresso: 'prossimo' })
   })
 
   it('un «perso» già registrato: toccare solo la nota non rimanda il motivo', async () => {

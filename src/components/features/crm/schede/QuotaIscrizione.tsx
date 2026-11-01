@@ -110,7 +110,7 @@ export function QuotaIscrizione({
       rilettura = true
     } else {
       const esito = ((await leggiJson(res, 'quota-riprova')) as { data?: { esito?: unknown } } | null)?.data?.esito
-      if (esito === 'ok' || esito === 'bloccata' || esito === 'gia_in_contabilita') rilettura = true
+      if (esito === 'ok' || esito === 'bloccata' || esito === 'gia_in_contabilita' || esito === 'voce_eliminata') rilettura = true
       else messaggio = esito === 'non_pronta' ? t('quotaRiprovaNonPronta') : t('quotaErrore')
     }
 
@@ -198,6 +198,21 @@ export function QuotaIscrizione({
         {motivoNoto !== null && <p className="font-maven text-sm text-kidville-ink">{t(`quotaBlocco_${motivoNoto}`)}</p>}
         {dettagli}
         {azioni({ riprova: true })}
+      </>
+    )
+  } else if (stato === 'in_contabilita' && bambino.quota_pagamento_id === null) {
+    // La voce «Iscrizione» è stata eliminata dallo scadenzario (`ON DELETE SET NULL`): dire «In contabilità»
+    // sarebbe falso. La scheda non offre rimedi: cosa fare in questo caso lo decide il titolare (01/11/2026).
+    contenuto = (
+      <>
+        <Badge tone="warn">{t('quotaStatoVoceEliminata')}</Badge>
+        <p className="font-maven text-sm text-kidville-ink">{t('quotaVoceEliminata')}</p>
+        {dettagli}
+        <div>
+          <Link href="/admin/pagamenti?vista=scadenzario" className={COLLEGAMENTO_PASTIGLIA}>
+            {t('quotaApriContabilita')}
+          </Link>
+        </div>
       </>
     )
   } else if (stato === 'in_contabilita') {

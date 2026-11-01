@@ -564,8 +564,8 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
 
   // ───────────────────────────────────────────────────────────────────────────
   // CRM DELLA SEGRETERIA — censite il 2026-10-31 (PR-B dopo il merge di #273), dalla
-  // fotografia rigenerata. Tutte e 14 `blocca`, e tutte PESANO, comprese le due
-  // che a prima vista sono assegnazioni correnti (`crm_disponibilita.utente_id`,
+  // fotografia rigenerata. Tutte `blocca` (14, 15 dal 2026-11-01), e tutte PESANO, comprese
+  // quelle che a prima vista sono assegnazioni correnti (`crm_settimane.utente_id`,
   // `crm_indisponibilita.utente_id`): la procedura di cancellazione non tocca le
   // tabelle del CRM, quindi una voce che non pesasse farebbe dire all'anteprima
   // «si cancella» su una persona che Postgres rifiuterebbe di cancellare. È la
@@ -649,12 +649,22 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     pesa: true,
     chiave: 'tracciaDocenteCrmStorico',
   },
+  // Il 2026-11-01 (PR-B dopo il merge di #276) `crm_disponibilita` non c'è più: le fasce
+  // stanno in `crm_settimane` (la testata della settimana, con il proprietario e chi l'ha
+  // salvata) e `crm_fasce` (che non porta utenti). Due FK `blocca` al posto di una.
   {
-    tabella: 'crm_disponibilita',
+    tabella: 'crm_settimane',
     colonna: 'utente_id',
     azioneFk: 'blocca',
     pesa: true,
     chiave: 'tracciaDocenteCrmDisponibilita',
+  },
+  {
+    tabella: 'crm_settimane',
+    colonna: 'aggiornata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmSettimaneSalvate',
   },
   {
     tabella: 'crm_indisponibilita',

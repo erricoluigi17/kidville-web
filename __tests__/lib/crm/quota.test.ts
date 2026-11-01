@@ -149,6 +149,15 @@ describe('esitoPassaggioDa', () => {
     })
   })
 
+  it('gia_in_contabilita SENZA voce è la voce eliminata dallo scadenzario, non un guasto (01/11)', () => {
+    // Prova d'uso nella sede Demo: voce eliminata, `quota_pagamento_id` tornato nullo, e la «riprova» rispondeva 500.
+    expect(esitoPassaggioDa({ esito: 'gia_in_contabilita', pagamento_id: null })).toEqual({ esito: 'voce_eliminata' })
+    // Una forma diversa (assente, non una stringa) resta «errore».
+    expect(esitoPassaggioDa({ esito: 'gia_in_contabilita' })).toEqual({ esito: 'errore' })
+    expect(esitoPassaggioDa({ esito: 'gia_in_contabilita', pagamento_id: 42 })).toEqual({ esito: 'errore' })
+    expect(statoDopoPassaggio({ esito: 'voce_eliminata' })).toBe('in_contabilita')
+  })
+
   it('gli esiti senza dati passano così come sono', () => {
     for (const esito of ['non_pronta', 'non_trovato', 'sede_diversa', 'categoria_assente'] as const) {
       expect(esitoPassaggioDa({ esito })).toEqual({ esito })

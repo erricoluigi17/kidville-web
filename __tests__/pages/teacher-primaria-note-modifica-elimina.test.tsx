@@ -341,8 +341,10 @@ describe('rifiuti ed elenco senza permessi', () => {
     expect(screen.getByText(/Voce bloccata: è passato il termine/)).toBeTruthy();
 
     // La Direzione sblocca: la rilettura dopo lo sblocco la dà di nuovo modificabile.
+    // «Sblocca» si ASPETTA: il messaggio sopra compare anche senza ruolo (la nota è
+    // dell'autrice), il bottone solo quando `/api/primaria/me` ha risposto «admin».
     elenco = [nota()];
-    fireEvent.click(screen.getByRole('button', { name: /Sblocca la nota di Rossi Mario/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Sblocca la nota di Rossi Mario/ }));
     const sblocco = await screen.findByRole('dialog');
     fireEvent.change(within(sblocco).getByLabelText('Motivo dello sblocco'), { target: { value: 'Correzione richiesta' } });
     fireEvent.click(within(sblocco).getByRole('button', { name: 'Autorizza' }));
@@ -449,7 +451,8 @@ describe('nuova nota staff con competenza storica', () => {
 it('la modale staff può cambiare solo la data della nota', async () => {
   ruolo = 'segreteria';
   const dialogo = await montaEApri(/^Modifica la nota/);
-  fireEvent.change(within(dialogo).getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+  // Il campo è solo dello staff: compare quando `/api/primaria/me` ha risposto, si aspetta.
+  fireEvent.change(await within(dialogo).findByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
   fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
   await waitFor(() => expect(chiamate('PATCH', '/api/primaria/note')).toHaveLength(1));
   expect(JSON.parse(String((chiamate('PATCH', '/api/primaria/note')[0]![1] as RequestInit).body))).toMatchObject({ data: '2020-04-02' });

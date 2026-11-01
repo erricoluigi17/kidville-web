@@ -1,6 +1,19 @@
+## 🧪 Changelog — «Sblocca» si aspetta: il ruolo arriva dopo l'avviso — 2026-11-01 (branch `fix/test-sblocca-aspetta-ruolo`)
+
+**Stato:** 🟡 sul branch, PR verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.
+
+**Perché.** Subito dopo il merge della #277 il job Unit di `main` (run 41269063580) è caduto su `teacher-primaria-note-modifica-elimina`, «dopo un 423 e uno sblocco la modale NON si riapre da sola»: non trovava il bottone «Sblocca la nota di Rossi Mario». Rilanciato, è passato. La pagina delle note legge il ruolo da `/api/primaria/me` in un effetto, partendo da `null`. Il messaggio «Oltre il termine…» compare all'autrice anche senza ruolo, «Sblocca» solo quando il ruolo dice Direzione. Il test aspettava il messaggio e cercava il bottone subito: su un runner lento il ruolo non era ancora arrivato.
+
+**Cosa cambia.** I test aspettano con `findBy` ciò che dipende dal ruolo. I punti li ha trovati una prova: la risposta finta di `/api/primaria/me` ritardata di 300 ms, poi tolta.
+- `teacher-primaria-note-modifica-elimina`: col ritardo cadevano due test, quello della CI (con lo stesso messaggio) e «la modale staff può cambiare solo la data della nota», il cui campo «Data di competenza» è solo dello staff. Corretti: 24 su 24 verdi anche col ritardo.
+- `teacher-primaria-registro-elimina-sblocca`: cadevano i due test del termine dichiarato dalla GET («Sblocca la lezione della 1ª ora», «Sblocca l'ora: 2ª ora»). `pronta()` vede la chiamata a `/me` partita, non la risposta. Corretti; nel primo il bottone si aspetta prima di leggere le assenze.
+- Due punti con la stessa forma reggono già e non sono toccati: «Sblocca l'allegato» (`registro-allegati-cestino`) e «Sblocca il giorno» (`registro-elimina-sblocca`). Lì è il contenitore stesso a comparire solo col ruolo.
+
+Senza ritardo i tre file passano tre volte su tre (69 test). Restano da passare con la stessa prova gli altri 14 file di test che simulano `/api/primaria/me`.
+
 ## 🧪 Changelog — Test che dipendevano dall'orologio e dalla velocità della CI — 2026-11-01 (branch `chore/dopo-crm-276`)
 
-**Stato:** 🟡 sul branch, PR #277 verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.
+**Stato:** ✅ in `main` dal 01/11/2026, 03:24 UTC (`8b1c7445`, PR #277). Il merge l'ha fatto l'assistente su indicazione del titolare, a CI verde. Solo test: nessun codice dell'app, nessuna migrazione.
 
 **Perché.** Dopo il merge della #276 il job Unit di `main` è caduto due volte su due test diversi, nessuno toccato dalla PR.
 

@@ -21,6 +21,8 @@ import { parseData } from '@/lib/validation/http'
  *  · `ok`, `bloccata` (+ motivo), `gia_in_contabilita`, `non_pronta`, `sede_diversa`, `categoria_assente`
  *    → 200 `{ data }`: sono risposte, non guasti (la schermata sa cosa dire per ciascuna; la categoria di
  *    sistema assente è comunque un incidente, e `passaQuotaInContabilita` lo logga a livello `error`);
+ *  · `voce_eliminata` (la quota era passata, ma la voce è stata eliminata dallo scadenzario) → 200 `{ data }`
+ *    anche lei: fino al 01/11/2026 rispondeva 500 `CRM_OPERAZIONE_NON_RIUSCITA` (prova d'uso nella sede Demo);
  *  · `non_trovato` → 404 `SCHEDA_NON_TROVATA`;
  *  · `non_installato` → 503 `CRM_NON_INSTALLATO`;
  *  · `errore` → 500 `CRM_OPERAZIONE_NON_RIUSCITA` (il dettaglio è nel log).

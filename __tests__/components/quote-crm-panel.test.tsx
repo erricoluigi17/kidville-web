@@ -353,6 +353,8 @@ describe('QuoteCrmPanel · «Riprova»', () => {
     ['non_pronta', 'Il bambino non è ancora collegato a un alunno: il passaggio non può partire.'],
     ['sede_diversa', 'L’alunno collegato è di un’altra sede: la quota non può passare in contabilità.'],
     ['categoria_assente', 'Manca la categoria di pagamento «Iscrizione» in contabilità: la quota non può passare.'],
+    // 01/11: la voce eliminata dallo scadenzario era un 500, ora è un esito che si sa dire.
+    ['voce_eliminata', 'La voce «Iscrizione» nata da questa quota è stata eliminata dalla contabilità. La scheda non la rimette da sola: per ora si sistema in contabilità.'],
   ])('«%s»: lo dice con parole sue, e la riga resta', async (esito, frase) => {
     rotta('GET', '/api/admin/crm/quote', elenco(quota({ alunnoCollegato: true })))
     rotta('POST', URL_RIPROVA(SCHEDA, BAMBINO), json(200, { data: { esito } }))

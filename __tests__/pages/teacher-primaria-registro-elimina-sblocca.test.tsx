@@ -625,6 +625,9 @@ describe('il termine dichiarato dalla GET: «Sblocca» sulla riga SENZA alcun ge
         await pronta()
 
         const avvisi = await screen.findAllByTestId('registro-voce-bloccata')
+        // Gli avvisi compaiono col termine, «Sblocca» solo col ruolo: `pronta()` vede la
+        // chiamata a `/me` PARTITA, non la risposta. Prima la presenza, poi le assenze.
+        const sblocca = await within(avvisi[0]).findByRole('button', { name: /Sblocca la lezione della 1ª ora del 01\/09\/2026/ })
         expect(avvisi, 'Un avviso per l’ora scritta e uno per quella mai firmata.').toHaveLength(2)
         expect(delete_(), 'Nessun gesto: il blocco arriva con la lettura.').toHaveLength(0)
         expect(chiamate.filter((c) => c.init?.method === 'POST')).toHaveLength(0)
@@ -636,7 +639,7 @@ describe('il termine dichiarato dalla GET: «Sblocca» sulla riga SENZA alcun ge
         expect(screen.queryByRole('button', { name: 'Elimina la mia firma della 1ª ora' })).toBeNull()
 
         // 1ª ora (scritta) → la lezione come voce.
-        fireEvent.click(within(avvisi[0]).getByRole('button', { name: /Sblocca la lezione della 1ª ora del 01\/09\/2026/ }))
+        fireEvent.click(sblocca)
         fireEvent.change(await screen.findByLabelText(itPrimaria.sbloccaMotivo), { target: { value: 'Correzione tardiva' } })
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.sbloccaAutorizza }))
         await waitFor(() => expect(postSblocca()).toHaveLength(1))
@@ -651,7 +654,8 @@ describe('il termine dichiarato dalla GET: «Sblocca» sulla riga SENZA alcun ge
         render(<RegistroPage />)
         await pronta()
         const avvisi = await screen.findAllByTestId('registro-voce-bloccata')
-        fireEvent.click(within(avvisi[1]).getByRole('button', { name: /Sblocca l’ora: 2ª ora del 01\/09\/2026/ }))
+        // «Sblocca» arriva col ruolo, dopo l'avviso: si aspetta.
+        fireEvent.click(await within(avvisi[1]).findByRole('button', { name: /Sblocca l’ora: 2ª ora del 01\/09\/2026/ }))
         fireEvent.change(await screen.findByLabelText(itPrimaria.sbloccaMotivo), { target: { value: 'Maestra assente' } })
         fireEvent.click(screen.getByRole('button', { name: itPrimaria.sbloccaAutorizza }))
         await waitFor(() => expect(postSblocca()).toHaveLength(1))

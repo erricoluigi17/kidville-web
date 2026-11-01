@@ -1,3 +1,15 @@
+## 🐞 Changelog — Diario della docente: il riquadro si spegne mentre carica ciò che è già salvato — 2026-11-01 (branch `fix/diario-ripristino-in-volo`)
+
+**Stato:** 🟡 sul branch `fix/diario-ripristino-in-volo`, non ancora in `main`. Niente migrazioni, niente route nuove: cambia solo `DiaryEventEditor.tsx`, più i test.
+
+**Perché.** Aprire un tipo di evento (Merenda, Umore, Nanna…) fa partire la lettura delle voci di oggi, e quando torna il ripristino riscrive lo stato di tutti i bambini. Nel frattempo i bottoni erano già toccabili e mostravano lo stato vuoto. Un tocco in quell'attimo spariva, sovrascritto da ciò che diceva il server; su un bambino già segnato (l'umore è un interruttore) lo spegneva appena il ripristino l'aveva acceso. Con una rete lenta capita alla maestra. È anche l'E2E `teacher-diary.spec.ts` «salva merenda e umore» che passava solo al secondo tentativo dal 5 ottobre (ultima volta nella CI della #272, 01/11): leggeva `aria-pressed` fra la risposta e il ridisegno.
+
+- **Il riquadro è un `<fieldset>` spento e `aria-busy` finché il ripristino legge** (`ripristinoInVolo`, esposto dall'hook come `inRipristino`): bottoni dei bambini, campi, note e «Salva», anche dentro i pannelli figli, con un'opacità al 60% per farlo vedere. La X della testata resta fuori: chiudere si può sempre. Vale anche per la rilettura dopo un salvataggio.
+- **Lo riaccende solo il ripristino che l'ha spento.** Uno superato (cambio di tipo mentre legge) non riaccende il riquadro mentre il successore legge ancora; uno superato perché il riquadro è stato chiuso non lo lascia spento per sempre.
+- **E2E:** `apriEventoEAttendiRipristino` aspetta, dopo la risposta, la PRESENZA di `aria-busy="false"` sul riquadro di quel tipo (`data-diario-riquadro`), perché col cambio di tipo il riquadro di prima esce con un'animazione ed è anch'esso un fieldset libero. Vale per la stella della merenda e per l'umore.
+- **Test:** `__tests__/components/diary-ripristino-in-volo.test.tsx` (4 casi). Ciascuno dei tre modi di rompere la correzione lo fa cadere: fieldset mai spento, azzeramento incondizionato, azzeramento solo se non superato. Verdi i 21 file del diario, `a11y`, `ui` e i 196 lock di `architecture`.
+- **Nello stesso branch, un test delle note di primaria caduto su `main`.** Dopo il merge della #272 la CI di `main` ha avuto un rosso, su un albero identico a quello verde della PR: `teacher-primaria-note-modifica-elimina.test.tsx`, «dopo un 423 e uno sblocco…», non trovava «Sblocca». La modale si chiude per una risposta di rete, fuori da `act`. React toglie il dialogo nel commit, ma libera lo sfondo da `inert` e `aria-hidden` nella pulizia dell'effetto, un giro dopo, e il `getByRole` lo cercava in quel giro. Ora è un `findByRole`, che aspetta la presenza. Causa riprodotta ritardando di 30 ms la liberazione in `Modal`: la CI dava esattamente quell'errore. Per la segreteria non cambia niente: in un browser quel giro dura meno di un fotogramma. Il job rilanciato su `main` dirà se era solo un caso.
+
 ## 🧾 Changelog — CRM della segreteria, seconda versione: la quota d'iscrizione in contabilità e le disponibilità settimana per settimana — 2026-10-31 (branch `feat/crm-quota-disponibilita`)
 
 **Stato:** 🟡 sul branch `feat/crm-quota-disponibilita`, non ancora in `main` e **non migrato**: la migrazione `20261031161800_crm_quota_e_settimane.sql` la applica l'integrazione Supabase al merge, con la version del file, e il merge lo fa il titolare. Questa sessione non ha scritto in produzione: le sole letture sono le `SELECT` della «Misura prima». Otto compiti, ciascuno rivisto da un revisore indipendente (commit da `e21adc02` a `f0aa0474`, più la correzione di un test ereditato, `471d1ba8`, e le correzioni della revisione finale dell'intero branch del 31/10). Specifica approvata dal titolare il 31/10: `docs/superpowers/specs/2026-10-31-crm-quota-e-disponibilita-design.md`; piano: `docs/superpowers/plans/2026-10-31-crm-quota-e-disponibilita.md`. Ancora da vedere: la prova d'uso in sede Demo (vedi «Dopo il merge»). Le cinque funzioni SQL non girano nel vitest normale: le esercita un test su **PGlite** (Postgres in WebAssembly) con la cassa, `registra_incasso_voce` e i trigger caricati dalle migrazioni vere, 14 scenari su 15 della specifica; il database vero resta la prova finale.
@@ -63,7 +75,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 
 ## 🧭 Changelog — Menu della segreteria a 7 voci, a fisarmonica — 2026-10-31 (branch `chore/piano-approvato-a-mano`)
 
-**Stato:** 🟡 in revisione (merge a mano, nella PR #272). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
+**Stato:** ✅ in produzione dal 01/11/2026 (#272, `c6a4b0e6`, merge di Claude su richiesta del titolare; «Il sito serve il rilascio nuovo» verde). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
 
 | | Prima | Dopo |
 |---|---|---|
@@ -141,7 +153,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 
 ## 📝 Changelog — Il piano di Claude lo approva il titolare — 2026-10-30 (branch `chore/piano-approvato-a-mano`)
 
-**Stato:** 🟡 in revisione (merge a mano). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
+**Stato:** ✅ in produzione dal 01/11/2026 (#272, `c6a4b0e6`). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
 
 - **Tolto `.claude/hooks/auto_approve_plan.py`** e la sua voce in `hooks.PreToolUse` di `.claude/settings.json`. Dal 18/09 approvava da solo ogni piano scritto in plan mode (29 volte, l'ultima il 30/10 alle 20:52). Richiesta del titolare: il piano lo approva lui dopo averlo letto.
 - **`auto_allow_permission.py` si astiene su `ExitPlanMode`**, come già su `AskUserQuestion`: altrimenti, se l'approvazione arrivasse come richiesta di permesso, la concederebbe lui.

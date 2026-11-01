@@ -342,7 +342,12 @@ describe('rifiuti ed elenco senza permessi', () => {
 
     // La Direzione sblocca: la rilettura dopo lo sblocco la dà di nuovo modificabile.
     elenco = [nota()];
-    fireEvent.click(screen.getByRole('button', { name: /Sblocca la nota di Rossi Mario/ }));
+    // `findBy`, non `getBy`: la modale l'ha chiusa una risposta di rete, FUORI da `act`.
+    // React toglie il dialogo nel commit, ma rende lo sfondo di nuovo accessibile (via
+    // `inert` e `aria-hidden`) nella pulizia dell'effetto, un giro dopo. Un `getByRole`
+    // in quel giro non vede il bottone: CI di `main` dell'01/11/2026, verde sulla PR con
+    // lo stesso albero. Riprodotto ritardando di 30 ms `ripristinaInerzia` in `Modal`.
+    fireEvent.click(await screen.findByRole('button', { name: /Sblocca la nota di Rossi Mario/ }));
     const sblocco = await screen.findByRole('dialog');
     fireEvent.change(within(sblocco).getByLabelText('Motivo dello sblocco'), { target: { value: 'Correzione richiesta' } });
     fireEvent.click(within(sblocco).getByRole('button', { name: 'Autorizza' }));

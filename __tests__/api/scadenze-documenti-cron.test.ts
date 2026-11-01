@@ -1146,6 +1146,10 @@ describe('scadenze-documenti · l’allarme che si può zittire', () => {
     h.anagrafiche = [
       anagrafica(UTENTE_1, fra(-222), {
         scadenza_soglia_avvisata: 0,
+        // Sette giorni CIVILI, non 7 × 86_400_000 ms: la route conta in
+        // `Europe/Rome`, e nella settimana dopo il cambio d'ora, fra le 22 e le
+        // 23 UTC, le 168 ore di prima cadevano nel giorno civile dopo — sei
+        // giorni, nessun risollecito, test rosso (CI del 30/10/2026, 22:43 UTC).
         scadenza_avvisata_il: `${fra(-7)}T09:00:00Z`,
         creata_il: `${fra(-7)}T09:00:00Z`,
       }),

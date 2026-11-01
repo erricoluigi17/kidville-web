@@ -1727,6 +1727,17 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover {
   box-shadow: inset 0 0 0 2px #000000;
 }
+/* Menu a fisarmonica (2026-10-31): a gruppo CHIUSO l'intestazione del gruppo che contiene la
+   pagina è segnata da un fondo verde chiaro (`bg-kidville-green-soft`, inlinato → in HC non cambia,
+   e da solo non si distingue). Qui una barra nera a sinistra, sidebar e foglio «Menu»: un'ombra
+   interna e non un `border-left`, che allargherebbe la riga di 4 px. */
+[data-contrast="high"] .kv-admin-nav button[data-contiene-pagina="true"],
+[data-contrast="high"] .kv-admin-sheet button[data-contiene-pagina="true"] {
+  box-shadow: inset 4px 0 0 #000000;
+}
+[data-contrast="high"] .kv-admin-nav button[aria-expanded]:hover {
+  box-shadow: inset 0 0 0 2px #000000;
+}
 /* 🔴 a11y #6 del collaudo 2026-08-02, chiuso qui.
    Le intestazioni di gruppo della sidebar («ANAGRAFICA», «DIDATTICA»,
    «OPERATIVO», «AMMINISTRAZIONE») restavano a 2,51:1 CON l'Alto Contrasto
@@ -2712,5 +2723,14 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    momento porta anche il fuoco da tastiera, il suo contorno nero cancellerebbe
    gli anelli. Raro, ma è la stessa identica causa e costa una riga. */
 [data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover:focus-visible {
+  box-shadow: inset 0 0 0 2px #000000, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+/* Le intestazioni dei gruppi a fisarmonica (2026-10-31): la barra «sei qui» e il contorno
+   dell'hover sono `box-shadow`, quindi a fuoco rimettono il proprio segno E i due anelli. */
+[data-contrast="high"] .kv-admin-nav button[data-contiene-pagina="true"]:focus-visible,
+[data-contrast="high"] .kv-admin-sheet button[data-contiene-pagina="true"]:focus-visible {
+  box-shadow: inset 4px 0 0 #000000, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-admin-nav button[aria-expanded]:hover:focus-visible {
   box-shadow: inset 0 0 0 2px #000000, 0 0 0 2px #000000, 0 0 0 7px #000000;
 }

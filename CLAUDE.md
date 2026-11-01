@@ -92,14 +92,18 @@ messaggi di commit.
 database di produzione, né su merge, `git push`, deploy o migrazioni. Le sessioni partono in
 **`bypassPermissions`** (`permissions.defaultMode` in **`~/.claude/settings.json`**; quello di
 progetto è stato **tolto** perché lo sovrascriveva), e i prompt che nessuna modalità auto-approva li
-risolvono due hook committati: `.claude/hooks/auto_allow_permission.py` (evento `PermissionRequest`)
-e `.claude/hooks/auto_approve_plan.py` (`PreToolUse` su `ExitPlanMode`, che **non** è più un punto di
-controllo).
+risolve l'hook committato `.claude/hooks/auto_allow_permission.py` (evento `PermissionRequest`).
 
-Restano accese le **22 regole `deny`** e **un solo** interruttore: `rm`/`rmdir` su percorsi critici —
-radice, home, **la cartella di lavoro e i suoi genitori**. Vie di fuga per una sessione:
-`KIDVILLE_PIANO_A_MANO=1` (riporta a mano l'approvazione del piano) ·
-`KIDVILLE_AUTO_PERMESSI_ANCHE_RM=1` (toglie anche quell'ultimo prompt).
+🟥 **Il piano lo approva il titolare — dal 2026-10-30.** Fino a quel giorno `auto_approve_plan.py`
+(`PreToolUse` su `ExitPlanMode`) approvava da solo ogni piano: 29 volte dal 18/09, l'ultima il 30/10
+alle 20:52. Il titolare l'ha fatto togliere: *«devo essere io ad approvarlo dopo averlo letto»*.
+L'hook è eliminato e `auto_allow_permission.py` si astiene su `ExitPlanMode` come su
+`AskUserQuestion`. **Non rimetterlo**, né un suo equivalente (un `allow` su `ExitPlanMode` in un hook
+qualunque), senza che il titolare lo chieda.
+
+Restano accese le **22 regole `deny`** e **due** interruttori: l'approvazione del piano e
+`rm`/`rmdir` su percorsi critici — radice, home, **la cartella di lavoro e i suoi genitori**. Via di
+fuga per una sessione: `KIDVILLE_AUTO_PERMESSI_ANCHE_RM=1` (toglie il prompt sugli `rm`).
 
 🟥 **Il freno sulle istruzioni distruttive — dal 2026-10-25** (robustezza, seconda serie, sessione 2;
 decisione T3). Due eccezioni all'autonomia piena: **la migrazione la applica l'integrazione al merge**
@@ -140,7 +144,7 @@ non leggendo un paragrafo.
 **Mostrare non è chiedere.** Non costa niente, ed è l'ultima cosa rimasta fra un errore e le famiglie
 dietro quelle righe: chi sta per applicare una scrittura in produzione mostri prima l'istruzione.
 
-📜 **Come ci si è arrivati** — i riquadri datati dal 31/07 al 18/09, con tutte le volte in cui questo
+📜 **Come ci si è arrivati** — i riquadri datati dal 31/07 al 30/10, con tutte le volte in cui questo
 file ha detto il falso su sé stesso, i tre gate che sembravano armati e non lo erano, e le istruzioni
 per tornare indietro: **`docs/storia-permessi-e-conferme.md`**.
 

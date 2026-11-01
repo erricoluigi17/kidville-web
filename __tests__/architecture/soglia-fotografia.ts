@@ -305,6 +305,11 @@ export function posterioriCheContengono(
 // tabelle con `scuola_id` (+2, −1). I bucket e lo schema delle candidature solo l'istante dello scatto. Le
 // funzioni di cassa riscritte (`report_cassa_*`, `conteggio_cassa_provenienza`) e le cinque `crm_*` nuove non
 // toccano nessuna fotografia. Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+// SVUOTATA il 01/11/2026 (PR-B dopo il merge di #276, `31e4faf8`): applicata dall'integrazione, una riga sola
+// nel registro (248 migrazioni); le otto fotografie rigenerate dalla produzione cambiano esattamente come
+// previsto qui sopra — indici unici +5 −1 (256), FK di sede +2 −1 e FK verso `utenti` +2 −1 (78, le due di
+// `crm_settimane` «blocca»), `crm_settimane` e `crm_fasce` al posto di `crm_disponibilita` nella RLS e nelle
+// tabelle con `scuola_id` (91); bucket e schema delle candidature solo l'istante dello scatto.
 //
 // 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261031195836_form_submissions_senza_policy_browser.sql`
 // toglie le tre policy `fs_*` di `form_submissions` e revoca i grant di `anon`/`authenticated`. La guardia
@@ -312,11 +317,6 @@ export function posterioriCheContengono(
 // in `tabelle_rls_attiva`) e quella delle migrazioni; nessun indice, nessuna FK, nessuna colonna. Si toglie
 // con la PR-B dopo il merge, rigenerando le due fotografie dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261031161800_crm_quota_e_settimane.sql':
-        "Applicata dall'integrazione Supabase al merge, con la version del file (mai a mano). Crea due tabelle " +
-        'con chiavi primarie, un UNIQUE NULLS NOT DISTINCT e RLS accesa, aggiunge un UNIQUE su crm_bambini.alunno_id ' +
-        'e toglie crm_disponibilita: cambiano le fotografie di migrazioni, indici unici, RLS, FK di sede, FK verso ' +
-        'utenti e tabelle con sede. Si toglie con la PR-B dopo il merge, rigenerando le fotografie dalla produzione.',
     '20261031195836_form_submissions_senza_policy_browser.sql':
         'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
         'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',

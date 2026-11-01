@@ -107,7 +107,7 @@ async function leggiElenco(scuolaId: string | null): Promise<Elenco> {
 // ── «Riprova» ──────────────────────────────────────────────────────────────────────────────────────
 
 type EsitoRiprova =
-  | { esito: 'passata' | 'bloccata' | 'non_pronta' | 'sede_diversa' | 'categoria_assente' }
+  | { esito: 'passata' | 'bloccata' | 'non_pronta' | 'sede_diversa' | 'categoria_assente' | 'voce_eliminata' }
   /** Il server ha risposto con un rifiuto (`stato` 0 = la richiesta non è arrivata). */
   | { esito: 'rifiuto'; stato: number; codice: string | null }
   /** 200 con un esito che non si riconosce: non passa per un successo. */
@@ -130,7 +130,13 @@ async function provaAPassare(r: QuotaInAttesa): Promise<EsitoRiprova> {
   }
   const esito = ((corpo as { data?: { esito?: unknown } } | null)?.data?.esito ?? null) as unknown
   if (esito === 'ok' || esito === 'gia_in_contabilita') return { esito: 'passata' }
-  if (esito === 'bloccata' || esito === 'non_pronta' || esito === 'sede_diversa' || esito === 'categoria_assente') {
+  if (
+    esito === 'bloccata' ||
+    esito === 'non_pronta' ||
+    esito === 'sede_diversa' ||
+    esito === 'categoria_assente' ||
+    esito === 'voce_eliminata'
+  ) {
     return { esito }
   }
   logClient({ livello: 'error', evento: 'fetch', messaggio: 'quote-crm-riprova-esito-illeggibile', route: ROUTE_LOG, stato: res.status })
@@ -199,6 +205,9 @@ export function QuoteCrmPanel({ scuolaId }: { userId: string; scuolaId: string |
         break
       case 'categoria_assente':
         setAvviso({ ok: false, testo: t('quoteRiprovaCategoriaAssente') })
+        break
+      case 'voce_eliminata':
+        setAvviso({ ok: false, testo: tc('quotaVoceEliminata') })
         break
       case 'illeggibile':
         setAvviso({ ok: false, testo: tc('quotaErrore') })

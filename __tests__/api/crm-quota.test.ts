@@ -678,6 +678,15 @@ describe('POST …/quota/riprova · ritentare il passaggio in contabilità', () 
     expect(h.notificaEvento).not.toHaveBeenCalled()
   })
 
+  it('voce eliminata dallo scadenzario: 200 «voce_eliminata» e un avviso, non un 500 (01/11)', async () => {
+    h.rpc.crm_quota_passa = () => ({ data: { esito: 'gia_in_contabilita', pagamento_id: null }, error: null })
+    const res = await riprova(B_ALUNNO)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ data: { esito: 'voce_eliminata' } })
+    expect(logCrm().some((r) => r.livello === 'warn' && r.campi.esito === 'quota-voce-eliminata')).toBe(true)
+    expect(logCrm().some((r) => r.campi.esito === 'quota-risposta-illeggibile')).toBe(false)
+  })
+
   it('bambino non trovato: 404', async () => {
     h.rpc.crm_quota_passa = () => ({ data: { esito: 'non_trovato' }, error: null })
     const res = await riprova(B_ALUNNO)

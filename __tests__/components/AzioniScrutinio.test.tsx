@@ -531,8 +531,10 @@ describe('la pagina dello scrutinio monta i comandi', () => {
     // `hidden: true`: l'assenza deve essere vera, non un bottone solo nascosto
     // dall'inert della modale che si sta chiudendo.
     expect(screen.queryByRole('button', { name: `Elimina pagella di ${NOME}`, hidden: true })).toBeNull()
-    // Le righe restano: si toglie il comando, non l'alunno.
-    expect(screen.getAllByRole('button', { name: /Pagella PDF/ })).toHaveLength(2)
+    // Le righe restano: si toglie il comando, non l'alunno. La modale l'ha chiusa la
+    // risposta della DELETE, fuori da `act`: lo sfondo torna accessibile (inert tolto)
+    // solo nella pulizia dell'effetto, un giro dopo. Per questo si aspetta.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Pagella PDF/ })).toHaveLength(2))
     const del = fetchMock.mock.calls.filter(([, i]) => (i as RequestInit | undefined)?.method === 'DELETE')
     expect(del).toHaveLength(1)
     expect(new URL(String(del[0][0]), 'http://localhost').searchParams.get('alunnoId')).toBe(ALUNNO)

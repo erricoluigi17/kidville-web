@@ -26,6 +26,10 @@ import {
   Printer,
   UserCheck,
   Handshake,
+  NotebookPen,
+  MessagesSquare,
+  Wallet,
+  FolderOpen,
 } from 'lucide-react';
 
 /**
@@ -39,8 +43,15 @@ import {
  *
  * Il ruolo determina (a) lo scope dati a livello API e (b) — via `roles` —
  * l'eventuale visibilità delle voci. Il gate VERO è nelle API: qui è solo UI.
- * Gruppi come nel design cockpit (DR segreteria-direzione): raggruppo per area.
  * Mappo SOLO rotte reali (niente nav morte).
+ *
+ * SETTE VOCI DI PRIMO LIVELLO (decisione del titolare, 2026-10-31). Fino a quel giorno il menu
+ * aveva 27 voci in 7 gruppi, 33 righe, e il gruppo «Amministrazione» da solo ne teneva 10
+ * scollegate (Contabilità accanto a Moderazione, il CRM accanto alla Privacy): ogni voce nuova
+ * finiva dove c'era posto. Oggi sono due link diretti (`title: null`: Home e Anagrafica) e cinque
+ * gruppi raggruppati per LAVORO, che sidebar e foglio «Menu» aprono a fisarmonica, uno alla volta
+ * (`use-gruppo-aperto.ts`). Contenuto e ordine li fissa `__tests__/ui/admin-nav-config.test.ts`:
+ * una voce nuova va nel gruppo del suo lavoro, non in fondo.
  */
 
 export interface NavItem {
@@ -56,8 +67,10 @@ export interface NavItem {
 export interface NavGroup {
   /** Titolo IT — fallback se la chiave i18n manca. */
   title: string | null;
-  /** Chiave i18n del titolo (namespace `etichette`, `navgruppo_<id>`). */
+  /** Chiave i18n del titolo (namespace `etichette`, `navgruppo_<id>`). È anche l'identità del gruppo aperto. */
   titleKey?: string | null;
+  /** Icona dell'intestazione del gruppo; assente sui link diretti (`title: null`). */
+  icon?: typeof LayoutDashboard;
   items: NavItem[];
 }
 
@@ -65,21 +78,20 @@ export interface NavGroup {
 const RUOLI_CODA_FATTURE: readonly string[] = ['admin', 'coordinator', 'segreteria'];
 
 export const NAV_GROUPS: NavGroup[] = [
+  // Home e Anagrafica: link diretti, senza gruppo. Sono le due pagine da cui si parte.
   {
     title: null,
-    items: [{ href: '/admin', label: 'Dashboard', labelKey: 'nav_dashboard', icon: LayoutDashboard }],
+    items: [{ href: '/admin', label: 'Home', labelKey: 'nav_dashboard', icon: LayoutDashboard }],
   },
   {
-    title: 'Anagrafica',
-    titleKey: 'navgruppo_anagrafica',
+    title: null,
     items: [{ href: '/admin/students', label: 'Anagrafica', labelKey: 'nav_students', icon: Users }],
   },
   {
-    title: 'Didattica',
-    titleKey: 'navgruppo_didattica',
+    title: 'Registro',
+    titleKey: 'navgruppo_registro',
+    icon: NotebookPen,
     items: [
-      { href: '/admin/primaria', label: 'Primaria', labelKey: 'nav_primaria', icon: GraduationCap },
-      { href: '/admin/diary', label: 'Diario 0–6', labelKey: 'nav_diary', icon: BookOpen },
       // Appello di TUTTI i gradi: nido e infanzia si compilano qui dentro, la primaria
       // porta al registro della sua classe (che ha una schermata sua, dentro
       // `ClasseShell`). Una voce sola e non due: il menu è un elenco di lavori, non di
@@ -88,10 +100,13 @@ export const NAV_GROUPS: NavGroup[] = [
       // `roles` non è facoltativo. La `cuoca` entra nell'area admin per il solo report
       // cucina, ma `requireDocente` la esclude dalle route delle presenze: vedrebbe una
       // voce che promette l'appello di minori e poi risponde 403. È la stessa ragione,
-      // già scritta, della voce «Galleria» qui sopra.
+      // già scritta, della voce «Galleria» in fondo a questo gruppo.
       { href: '/admin/appello', label: 'Appello', labelKey: 'nav_appello', icon: CheckSquare, roles: ['admin', 'coordinator', 'segreteria'] },
+      { href: '/admin/diary', label: 'Diario 0–6', labelKey: 'nav_diary', icon: BookOpen },
+      { href: '/admin/primaria', label: 'Primaria', labelKey: 'nav_primaria', icon: GraduationCap },
+      { href: '/admin/competenze', label: 'Competenze', labelKey: 'nav_competenze', icon: Award },
       // Galleria del PLESSO (segreteria): le foto di tutta la sede, filtrabili per
-      // classe, per bambino e per giornata. Sta accanto al Diario perché sono i due
+      // classe, per bambino e per giornata. Sta nel Registro col Diario perché sono i due
       // registri della stessa giornata; `/teacher/gallery` resta la vista di UNA
       // sezione, senza filtro data né filtro bambino. Il gate vero è nelle API
       // (`GET /api/gallery?scope=sede` → `requireStaff`), qui è solo UI.
@@ -101,24 +116,27 @@ export const NAV_GROUPS: NavGroup[] = [
       // «Galleria» in sidebar e nel menu, e aprendola atterrerebbe su un 403 —
       // un menu che promette una schermata di foto di minori e poi la nega.
       { href: '/admin/gallery', label: 'Galleria', labelKey: 'nav_gallery', icon: Images, roles: ['admin', 'coordinator', 'segreteria'] },
-      { href: '/admin/competenze', label: 'Competenze', labelKey: 'nav_competenze', icon: Award },
     ],
   },
   {
-    title: 'Operativo',
-    titleKey: 'navgruppo_operativo',
+    title: 'Comunicazione',
+    titleKey: 'navgruppo_comunicazione',
+    icon: MessagesSquare,
     items: [
-      { href: '/admin/armadietto', label: 'Armadietto', labelKey: 'nav_armadietto', icon: Package },
-      { href: '/admin/merchandise', label: 'Merchandise', labelKey: 'nav_merchandise', icon: ShoppingBag },
-      { href: '/admin/mensa', label: 'Mensa', labelKey: 'nav_mensa', icon: UtensilsCrossed },
-      { href: '/admin/mensa/cucina', label: 'Report Cucina', labelKey: 'nav_mensa_cucina', icon: ChefHat },
+      { href: '/admin/messaggi', label: 'Messaggi', labelKey: 'nav_messaggi', icon: MessageCircle },
+      { href: '/admin/avvisi', label: 'Avvisi', labelKey: 'nav_avvisi', icon: Bell },
+      { href: '/admin/news', label: 'News', labelKey: 'nav_news', icon: Newspaper },
+      { href: '/admin/compiti', label: 'Compiti', labelKey: 'nav_compiti', icon: ListTodo },
+      // Moderazione UGC (C5 §2): coda segnalazioni. Riservata alla Direzione
+      // (admin/coordinator); il gate vero è nelle API admin/segnalazioni.
+      { href: '/admin/moderazione', label: 'Moderazione', labelKey: 'nav_moderazione', icon: Flag, roles: ['admin', 'coordinator'] },
     ],
   },
   {
-    title: 'Amministrazione',
-    titleKey: 'navgruppo_amministrazione',
+    title: 'Contabilità e servizi',
+    titleKey: 'navgruppo_contabilita_servizi',
+    icon: Wallet,
     items: [
-      { href: '/admin/storici', label: 'Storici e stampe', labelKey: 'nav_storici', icon: Printer, roles: ['admin', 'coordinator', 'segreteria'] },
       { href: '/admin/pagamenti', label: 'Contabilità', labelKey: 'nav_pagamenti', icon: Euro },
       // Coda fatture (nucleo §4, docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md):
       // sta SOTTO Contabilità nell'elenco, come voce a sé — non una vista interna di
@@ -132,9 +150,17 @@ export const NAV_GROUPS: NavGroup[] = [
       // la `cuoca` vedrebbe la voce, aprirebbe un 403 — e il contatore della voce (nucleo §4,
       // `useConteggioCodaFatture`) chiederebbe un 403 a ogni cambio di pagina.
       { href: '/admin/coda-fatture', label: 'Coda fatture', labelKey: 'nav_coda_fatture', icon: ListOrdered, roles: [...RUOLI_CODA_FATTURE] },
-      // Registro protocolli: riservato ad admin+segreteria (decisione spec
-      // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
-      { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
+      { href: '/admin/mensa', label: 'Mensa', labelKey: 'nav_mensa', icon: UtensilsCrossed },
+      { href: '/admin/mensa/cucina', label: 'Report Cucina', labelKey: 'nav_mensa_cucina', icon: ChefHat },
+      { href: '/admin/armadietto', label: 'Armadietto', labelKey: 'nav_armadietto', icon: Package },
+      { href: '/admin/merchandise', label: 'Merchandise', labelKey: 'nav_merchandise', icon: ShoppingBag },
+    ],
+  },
+  {
+    title: 'Segreteria',
+    titleKey: 'navgruppo_segreteria',
+    icon: FolderOpen,
+    items: [
       // CRM della segreteria (`/admin/crm`): le famiglie che chiedono informazioni, le visite in
       // agenda, i richiami da fare. Sta SOPRA Candidature e non sotto: il lock di questo file
       // pretende che Candidature sia subito sopra Modulistica.
@@ -152,28 +178,20 @@ export const NAV_GROUPS: NavGroup[] = [
       // Archivio dei documenti firmati di ogni alunno (moduli, fascicolo,
       // certificati). Il gate dei documenti sanitari è nelle API, non qui.
       { href: '/admin/documenti-firmati', label: 'Documenti firmati', labelKey: 'nav_documenti_firmati', icon: FileSignature },
-      { href: '/admin/gdpr', label: 'Privacy & GDPR', labelKey: 'nav_gdpr', icon: ShieldCheck },
-      // Moderazione UGC (C5 §2): coda segnalazioni. Riservata alla Direzione
-      // (admin/coordinator); il gate vero è nelle API admin/segnalazioni.
-      { href: '/admin/moderazione', label: 'Moderazione', labelKey: 'nav_moderazione', icon: Flag, roles: ['admin', 'coordinator'] },
+      // Registro protocolli: riservato ad admin+segreteria (decisione spec
+      // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
+      { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
+      { href: '/admin/storici', label: 'Storici e stampe', labelKey: 'nav_storici', icon: Printer, roles: ['admin', 'coordinator', 'segreteria'] },
     ],
   },
   {
-    title: 'Comunicazione',
-    titleKey: 'navgruppo_comunicazione',
-    items: [
-      { href: '/admin/messaggi', label: 'Messaggi', labelKey: 'nav_messaggi', icon: MessageCircle },
-      { href: '/admin/avvisi', label: 'Avvisi', labelKey: 'nav_avvisi', icon: Bell },
-      { href: '/admin/news', label: 'News', labelKey: 'nav_news', icon: Newspaper },
-      { href: '/admin/compiti', label: 'Compiti', labelKey: 'nav_compiti', icon: ListTodo },
-    ],
-  },
-  {
-    title: 'Sistema',
-    titleKey: 'navgruppo_sistema',
+    title: 'Impostazioni',
+    titleKey: 'navgruppo_impostazioni',
+    icon: Settings,
     items: [
       { href: '/admin/impostazioni', label: 'Impostazioni', labelKey: 'nav_impostazioni', icon: Settings },
       { href: '/admin/tools', label: 'Strumenti', labelKey: 'nav_tools', icon: Wrench },
+      { href: '/admin/gdpr', label: 'Privacy & GDPR', labelKey: 'nav_gdpr', icon: ShieldCheck },
     ],
   },
 ];
@@ -208,4 +226,31 @@ export function activeHref(pathname: string): string {
 // visibile solo se il ruolo è noto ed è nella lista.
 export function visibleItem(item: NavItem, ruolo: string | null | undefined): boolean {
   return !item.roles || (!!ruolo && item.roles.includes(ruolo));
+}
+
+/**
+ * Il gruppo che la fisarmonica apre su questa pagina: il `titleKey` del gruppo con titolo che
+ * contiene `current` (l'href già risolto da `activeHref`), oppure `null` per i link diretti, per
+ * gli href in `escludi` e per gli href sconosciuti.
+ *
+ * Cerca su TUTTA la config, senza filtro per ruolo: il ruolo arriva in due tempi (`null` al primo
+ * render, come l'SSR, poi quello vero), e il gruppo aperto non deve saltare quando arriva. Il
+ * foglio del telefono passa i suoi esclusi (le voci già nei tab in basso): su una pagina-tab non
+ * apre nulla, perché la voce accesa è già il tab.
+ */
+export function gruppoDellaPagina(current: string, escludi?: ReadonlySet<string>): string | null {
+  if (escludi?.has(current)) return null;
+  const gruppo = NAV_GROUPS.find((g) => g.title !== null && g.items.some((i) => i.href === current));
+  return gruppo?.titleKey ?? null;
+}
+
+/**
+ * La config come la vede questo ruolo: voci filtrate da `visibleItem` e da `escludi`, senza i
+ * gruppi rimasti vuoti (un'intestazione che apre il nulla sarebbe un menu che mente).
+ */
+export function gruppiVisibili(ruolo: string | null | undefined, escludi?: ReadonlySet<string>): NavGroup[] {
+  return NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => visibleItem(i, ruolo) && !escludi?.has(i.href)),
+  })).filter((g) => g.items.length > 0);
 }

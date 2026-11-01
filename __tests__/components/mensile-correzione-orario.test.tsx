@@ -31,18 +31,19 @@ const SEZIONE = 'TEST Infanzia';
 const SECTION_ID = 'aaaa1111-0000-4000-8000-00000000000a';
 const ALUNNO = { id: 'cccc3333-0000-4000-8000-00000000000c', nome: 'Mario', cognome: 'Rossi' };
 
-/** Il 2 del mese in corso: un ritardo, con l'ora. */
+/**
+ * Il 2 del mese in corso: un ritardo, entrato alle 08:20 italiane. L'istante UTC
+ * dipende dal mese: 06:20Z con l'ora legale, 07:20Z con la solare. Era cablato a
+ * 06:20Z, e dal 1° novembre il test leggeva 07:20 (CI del 01/11/2026).
+ */
 const oggi = new Date();
 const ANNO = oggi.getFullYear();
 const MESE = oggi.getMonth() + 1;
 const GIORNO_ISO = `${ANNO}-${String(MESE).padStart(2, '0')}-02`;
-const ENTRATA_UTC = `${GIORNO_ISO}T06:20:00.000Z`;
-// 06:20Z fa 08:20 con l'ora legale e 07:20 senza: fino al 01/11/2026 qui c'era
-// «08:20» cablato, e il test scadeva da solo il primo mese d'inverno. L'ora attesa
-// si ricava dall'istante col fuso di Roma, senza passare dalla funzione provata.
-const ENTRATA_ROMA = new Intl.DateTimeFormat('it-IT', {
-    timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-}).format(new Date(ENTRATA_UTC));
+const scartoRoma = (giorno: string) =>
+    Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hour: '2-digit', hourCycle: 'h23' })
+        .format(new Date(`${giorno}T12:00:00Z`))) - 12;
+const ENTRATA_UTC = `${GIORNO_ISO}T${String(8 - scartoRoma(GIORNO_ISO)).padStart(2, '0')}:20:00.000Z`;
 
 const fetchMock = vi.fn();
 const patch = () =>
@@ -127,8 +128,7 @@ describe('riepilogo mensile — la cella con uno stato è un comando', () => {
         const chip = document.querySelector(`#btn-orario-entrata-${ALUNNO.id}`) as HTMLButtonElement;
         expect(chip).not.toBeNull();
         // L'ora si legge all'orologio di Roma, non in UTC.
-        expect(chip.textContent).toContain(ENTRATA_ROMA);
-        expect(chip.textContent).not.toContain('06:20');
+        expect(chip.textContent).toContain('08:20');
 
         fireEvent.click(chip);
         const input = document.querySelector(`#input-orario-entrata-${ALUNNO.id}`) as HTMLInputElement;

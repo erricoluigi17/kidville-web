@@ -103,6 +103,8 @@ l'integrazione al merge. Il freno `.claude/hooks/supabase_sql_freno.py` nega `ap
 istruzioni distruttive su `execute_sql` (anche quelle dentro una stringa che il database esegue): si
 mostrano al titolare. Dettagli in `CLAUDE.md`, dove sta anche la nota sulle quattro aggiunte al freno,
 decise in assenza del titolare e da confermare.
+🟥 **Dal 2026-10-30 il piano lo approva il titolare**, dopo averlo letto: l'hook che approvava
+`ExitPlanMode` da solo è stato tolto, e non si rimette senza che lo chieda lui.
 🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**. Non
 copiare un conteggio da un file: rifallo con `SELECT count(*) FROM enrollment_submissions;` — è una
 **lettura**, non ti fermerà nessuno. E mostra comunque cosa stai per applicare: *mostrare* non è

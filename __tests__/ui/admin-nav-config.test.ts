@@ -4,6 +4,8 @@ import {
   ALL_HREFS,
   activeHref,
   visibleItem,
+  gruppoDellaPagina,
+  gruppiVisibili,
   type NavItem,
 } from '@/components/features/admin/admin-nav-config';
 
@@ -57,16 +59,79 @@ describe('NAV_GROUPS — copre le rotte cardine della nav', () => {
   );
 });
 
+// Il menu a 7 voci (decisione del titolare, 2026-10-31): da 27 voci in 7 gruppi, 33 righe, a due
+// link diretti e cinque gruppi che si aprono a fisarmonica. Le voci raggruppate per lavoro e non per
+// tipo di pagina. Questo lock fissa contenuto e ordine: una voce nuova si aggiunge QUI, nel gruppo
+// del suo lavoro, e non in fondo dove c'è posto (così era nato il gruppo «Amministrazione» da 10).
+describe('Menu a 7 voci — struttura decisa il 31/10', () => {
+  const ATTESO: [string | null, string[]][] = [
+    [null, ['/admin']],
+    [null, ['/admin/students']],
+    ['navgruppo_registro', ['/admin/appello', '/admin/diary', '/admin/primaria', '/admin/competenze', '/admin/gallery']],
+    ['navgruppo_comunicazione', ['/admin/messaggi', '/admin/avvisi', '/admin/news', '/admin/compiti', '/admin/moderazione']],
+    ['navgruppo_contabilita_servizi', ['/admin/pagamenti', '/admin/coda-fatture', '/admin/mensa', '/admin/mensa/cucina', '/admin/armadietto', '/admin/merchandise']],
+    ['navgruppo_segreteria', ['/admin/crm', '/admin/candidature', '/admin/modulistica', '/admin/documenti-firmati', '/admin/protocolli', '/admin/storici']],
+    ['navgruppo_impostazioni', ['/admin/impostazioni', '/admin/tools', '/admin/gdpr']],
+  ];
+
+  it("7 voci di primo livello, nell'ordine e col contenuto decisi il 31/10", () => {
+    expect(NAV_GROUPS.map((g) => [g.titleKey ?? null, g.items.map((i) => i.href)])).toEqual(ATTESO);
+  });
+
+  it('nessuna voce persa: le stesse 27 rotte di prima, nessuna doppia', () => {
+    expect(ALL_HREFS).toHaveLength(27);
+    expect(new Set(ALL_HREFS).size).toBe(27);
+  });
+
+  it.each(['it', 'en'])('link diretti con una voce sola; ogni gruppo con titolo ha icona e titolo nel catalogo %s', async (lingua) => {
+    const catalogo = (await import(`../../messages/${lingua}/etichette.json`)).default as Record<string, unknown>;
+    for (const g of NAV_GROUPS) {
+      if (g.title === null) {
+        expect(g.items).toHaveLength(1);
+        expect(g.icon).toBeUndefined();
+        continue;
+      }
+      expect(g.icon).toBeDefined();
+      expect(typeof catalogo[g.titleKey!]).toBe('string');
+    }
+  });
+
+  it.each([
+    ['/admin', null],
+    ['/admin/students', null],
+    ['/admin/mensa/cucina', 'navgruppo_contabilita_servizi'],
+    ['/admin/protocolli', 'navgruppo_segreteria'],
+    ['/admin/qualcosa-che-non-esiste', null],
+  ])('gruppoDellaPagina(%s) = %s', (href, atteso) => {
+    expect(gruppoDellaPagina(href)).toBe(atteso);
+  });
+
+  // Il foglio del telefono esclude le voci già nei tab in basso: su una pagina-tab non apre nulla.
+  it('gruppoDellaPagina ignora gli href esclusi', () => {
+    expect(gruppoDellaPagina('/admin/mensa', new Set(['/admin/mensa']))).toBeNull();
+  });
+
+  it('gruppiVisibili toglie un gruppo rimasto vuoto', () => {
+    const gruppi = gruppiVisibili('segreteria', new Set(['/admin/impostazioni', '/admin/tools', '/admin/gdpr']));
+    expect(gruppi.map((g) => g.titleKey)).not.toContain('navgruppo_impostazioni');
+  });
+
+  it('gruppiVisibili nasconde alla cuoca CRM, Candidature, Protocollo e Storici', () => {
+    const segreteria = gruppiVisibili('cuoca').find((g) => g.titleKey === 'navgruppo_segreteria')!;
+    expect(segreteria.items.map((i) => i.href)).toEqual(['/admin/modulistica', '/admin/documenti-firmati']);
+  });
+});
+
 // Le candidature («Lavora con noi») escono da Modulistica e diventano una voce
 // propria del menu (decisione del titolare, 2026-10-17): sono centinaia di
 // curriculum da scorrere ogni settimana, e una linguetta al quarto posto di una
-// pagina che parla d'altro non è un posto dove si torna.
-describe('Candidature — voce propria nel gruppo Amministrazione', () => {
-  const amministrazione = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_amministrazione');
-  const voci = amministrazione?.items ?? [];
+// pagina che parla d'altro non è un posto dove si torna. Dal 31/10 il gruppo è «Segreteria».
+describe('Candidature — voce propria nel gruppo Segreteria', () => {
+  const segreteria = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_segreteria');
+  const voci = segreteria?.items ?? [];
   const candidature = voci.find((i) => i.href === '/admin/candidature') as NavItem;
 
-  it('esiste, nel gruppo Amministrazione, subito sopra Modulistica', () => {
+  it('esiste, nel gruppo Segreteria, subito sopra Modulistica', () => {
     expect(candidature).toBeDefined();
     const posCand = voci.findIndex((i) => i.href === '/admin/candidature');
     const posModulistica = voci.findIndex((i) => i.href === '/admin/modulistica');
@@ -90,15 +155,15 @@ describe('Candidature — voce propria nel gruppo Amministrazione', () => {
   });
 });
 
-// Il CRM della segreteria (`/admin/crm`, 2026-10-30): una voce propria nel gruppo Amministrazione,
-// vicino a Candidature. Lo vedono i due ruoli che le route `/api/admin/crm/*` ammettono
+// Il CRM della segreteria (`/admin/crm`, 2026-10-30): una voce propria, vicino a Candidature, nel
+// gruppo Segreteria dal 31/10. Lo vedono i due ruoli che le route `/api/admin/crm/*` ammettono
 // (`RUOLI_CRM`): una voce che risponde 403 a chi la clicca è un menu che mente.
-describe('CRM — voce propria nel gruppo Amministrazione', () => {
-  const amministrazione = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_amministrazione');
-  const voci = amministrazione?.items ?? [];
+describe('CRM — voce propria nel gruppo Segreteria', () => {
+  const segreteria = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_segreteria');
+  const voci = segreteria?.items ?? [];
   const crm = voci.find((i) => i.href === '/admin/crm') as NavItem;
 
-  it('esiste, nel gruppo Amministrazione, subito sopra Candidature', () => {
+  it('esiste, nel gruppo Segreteria, subito sopra Candidature', () => {
     expect(crm).toBeDefined();
     expect(voci.findIndex((i) => i.href === '/admin/crm')).toBe(voci.findIndex((i) => i.href === '/admin/candidature') - 1);
     expect(ALL_HREFS).toContain('/admin/crm');

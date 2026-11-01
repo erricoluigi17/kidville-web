@@ -73,6 +73,15 @@ const SENZA_INDICATORE_DEV = 'nextjs-portal { display: none !important; }';
 const ROTTE_GENITORE = ['/parent', '/parent/diary', '/parent/avvisi', '/parent/mensa', '/parent/pagamenti', '/parent/gallery', '/parent/news', '/parent/chat'];
 const ROTTE_DOCENTE = ['/teacher', '/teacher/attendance', '/teacher/diary', '/teacher/gallery', '/teacher/chat'];
 const ROTTE_SEGRETERIA = ['/admin', '/admin/students', '/admin/pagamenti', '/admin/avvisi', '/admin/mensa', '/admin/impostazioni'];
+/** Il gruppo del menu a fisarmonica aperto all'arrivo su ciascuna rotta; Home e Anagrafica sono link diretti. */
+const GRUPPO_APERTO_SEGRETERIA: Record<string, string | null> = {
+  '/admin': null,
+  '/admin/students': null,
+  '/admin/pagamenti': 'Contabilità e servizi',
+  '/admin/avvisi': 'Comunicazione',
+  '/admin/mensa': 'Contabilità e servizi',
+  '/admin/impostazioni': 'Impostazioni',
+};
 
 /**
  * Quante colonne ha il primo `[data-kv-colonne]` della pagina: sul binario (768 px) e con la
@@ -297,8 +306,15 @@ async function verificaGuscioAdmin(page: Page, rotta: string) {
   await expect(page.locator('[data-kv-barra-bassa-admin]'), 'la barra del telefono si vede ancora').toBeHidden();
   if (conSidebar) {
     await expect(page.locator('[data-kv-binario-admin]'), 'in orizzontale c’è ancora il binario a icone').toBeHidden();
-    // La sidebar piena ha tutte le voci, non i cinque tab del binario.
-    expect(await nav.getByRole('link').count(), 'la sidebar non ha le voci del menu').toBeGreaterThan(8);
+    // La sidebar piena ha il menu intero, non i cinque tab del binario: dal 31/10 sono Home e
+    // Anagrafica dirette più cinque gruppi a fisarmonica, e sulla pagina di un gruppo è aperto quello.
+    await expect(nav.locator('button[aria-expanded]'), 'la sidebar non ha i cinque gruppi del menu').toHaveCount(5);
+    await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Anagrafica', exact: true })).toBeVisible();
+    const aperti = nav.locator('button[aria-expanded="true"]');
+    const atteso = GRUPPO_APERTO_SEGRETERIA[rotta];
+    if (atteso) await expect(aperti, `su «${rotta}» non è aperto «${atteso}»`).toHaveText([atteso]);
+    else await expect(aperti, `su «${rotta}» c’è un gruppo aperto`).toHaveCount(0);
   } else {
     await expect(page.locator('[data-kv-sidebar-admin]'), 'la sidebar piena c’è già sotto i 1024 px').toBeHidden();
     await expect(nav.getByRole('link', { name: 'Home' })).toBeVisible();
@@ -358,7 +374,7 @@ test.describe('segreteria su iPad', () => {
   }
 
   test('«Menu» del binario apre il pannello accanto e porta alla voce scelta', async ({ page }) => {
-    test.skip(page.viewportSize()!.width >= 1024, 'da 1024 px c’è la sidebar con tutte le voci: non c’è un Menu da aprire');
+    test.skip(page.viewportSize()!.width >= 1024, 'da 1024 px c’è la sidebar col menu intero: non c’è un Menu da aprire');
     await page.goto('/admin');
     const binario = page.locator('[data-kv-binario-admin]');
     await expect(binario).toBeVisible({ timeout: 20_000 });
@@ -377,6 +393,10 @@ test.describe('segreteria su iPad', () => {
       contentType: 'image/png',
     });
 
+    // Dal 31/10 «Impostazioni» è un gruppo a fisarmonica, chiuso sulla Home: si apre, poi si sceglie la voce.
+    const gruppo = pannello.getByRole('button', { name: /impostazioni/i });
+    await gruppo.click();
+    await expect(gruppo).toHaveAttribute('aria-expanded', 'true');
     await pannello.getByRole('link', { name: /impostazioni/i }).click();
     await expect(page).toHaveURL(/\/admin\/impostazioni/, { timeout: 15_000 });
     await expect(page.getByRole('dialog')).toHaveCount(0);

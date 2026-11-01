@@ -689,8 +689,13 @@ describe('DialogoEliminaMedia — non si annulla mentre la richiesta è in volo'
         rigetta(erroreElimina('Errore del server', 500));
         await screen.findByRole('alert');
 
-        fireEvent.keyDown(document, { key: 'Escape' });
-        await waitFor(() => expect(onChiudi).toHaveBeenCalledTimes(1));
+        // `Modal` aggiorna la sua `onCloseRef` in un effetto DOPO il commit: un Escape premuto appena compare
+        // l'avviso può trovare ancora la `chiudiSePossibile` con `inCorso` vero, e nessuno lo ripremerebbe (4 cadute
+        // in CI). Si ripreme finché la guardia è scesa: se restasse INCASTRATA, il `waitFor` scadrebbe lo stesso.
+        await waitFor(() => {
+            if (onChiudi.mock.calls.length === 0) fireEvent.keyDown(document, { key: 'Escape' });
+            expect(onChiudi).toHaveBeenCalledTimes(1);
+        });
     });
 });
 

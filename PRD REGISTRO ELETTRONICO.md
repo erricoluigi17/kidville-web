@@ -19,9 +19,22 @@
 
 **Dopo il merge.** Una `SELECT` su `pg_policies` deve dare 0 policy su `form_submissions` e `information_schema.role_table_grants` nessun grant per `anon`/`authenticated`; `get_advisors` senza ERROR (l'advisor «RLS accesa senza policy» è un INFO atteso, come per le tabelle del CRM); poi la PR-B: fotografie della RLS e delle migrazioni rigenerate, voce tolta da `MIGRAZIONI_ATTESE_AL_MERGE`, questa voce a «in produzione».
 
+## 🧪 Changelog — «Sblocca» si aspetta: il ruolo arriva dopo l'avviso — 2026-11-01 (branch `fix/test-sblocca-aspetta-ruolo`)
+
+**Stato:** 🟡 sul branch, PR verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.
+
+**Perché.** Subito dopo il merge della #277 il job Unit di `main` (run 41269063580) è caduto su `teacher-primaria-note-modifica-elimina`, «dopo un 423 e uno sblocco la modale NON si riapre da sola»: non trovava il bottone «Sblocca la nota di Rossi Mario». Rilanciato, è passato. La pagina delle note legge il ruolo da `/api/primaria/me` in un effetto, partendo da `null`. Il messaggio «Oltre il termine…» compare all'autrice anche senza ruolo, «Sblocca» solo quando il ruolo dice Direzione. Il test aspettava il messaggio e cercava il bottone subito: su un runner lento il ruolo non era ancora arrivato.
+
+**Cosa cambia.** I test aspettano con `findBy` ciò che dipende dal ruolo. I punti li ha trovati una prova: la risposta finta di `/api/primaria/me` ritardata di 300 ms, poi tolta.
+- `teacher-primaria-note-modifica-elimina`: col ritardo cadevano due test, quello della CI (con lo stesso messaggio) e «la modale staff può cambiare solo la data della nota», il cui campo «Data di competenza» è solo dello staff. Corretti: 24 su 24 verdi anche col ritardo. La riga del primo l'aveva già cambiata in `findByRole` la #278, entrata in `main` mentre questo branch era aperto, per un'altra causa che dà lo stesso rosso: lo sfondo della modale torna accessibile un giro dopo. Le due spiegazioni ora stanno insieme nel commento del test.
+- `teacher-primaria-registro-elimina-sblocca`: cadevano i due test del termine dichiarato dalla GET («Sblocca la lezione della 1ª ora», «Sblocca l'ora: 2ª ora»). `pronta()` vede la chiamata a `/me` partita, non la risposta. Corretti; nel primo il bottone si aspetta prima di leggere le assenze.
+- Due punti con la stessa forma reggono già e non sono toccati: «Sblocca l'allegato» (`registro-allegati-cestino`) e «Sblocca il giorno» (`registro-elimina-sblocca`). Lì è il contenitore stesso a comparire solo col ruolo.
+
+Senza ritardo i tre file passano tre volte su tre (69 test). Restano da passare con la stessa prova gli altri 14 file di test che simulano `/api/primaria/me`.
+
 ## 🧪 Changelog — Test che dipendevano dall'orologio e dalla velocità della CI — 2026-11-01 (branch `chore/dopo-crm-276`)
 
-**Stato:** 🟡 sul branch, PR #277 verso `main`. Solo test: nessun codice dell'app, nessuna migrazione.
+**Stato:** ✅ in `main` dal 01/11/2026, 03:24 UTC (`8b1c7445`, PR #277). Il merge l'ha fatto l'assistente su indicazione del titolare, a CI verde. Solo test: nessun codice dell'app, nessuna migrazione.
 
 **Perché.** Dopo il merge della #276 il job Unit di `main` è caduto due volte su due test diversi, nessuno toccato dalla PR.
 
@@ -29,6 +42,19 @@
 - **`DialogoEliminaMedia`, quarta caduta** («finita la richiesta l'annullamento torna possibile»). `Modal` aggiorna `onCloseRef` in un effetto dopo il commit: un Escape premuto appena compare l'avviso può trovare ancora la `chiudiSePossibile` con `inCorso` vero, e il test non lo ripremeva più. Ora lo ripreme finché la guardia è scesa; una guardia davvero incastrata fa ancora scadere il test. Prova del morso: con l'aggiornamento del riferimento ritardato di 60 ms e una pausa prima del rigetto, il vecchio test cade dopo 5,2 s (la firma delle cadute in CI), il nuovo passa.
 
 Suite intera in locale il 1° novembre: rosso solo `offline-html-nativo`, noto ed estraneo (in CI è saltato).
+
+## 🐞 Changelog — Diario della docente: il riquadro si spegne mentre carica ciò che è già salvato — 2026-11-01 (branch `fix/diario-ripristino-in-volo`)
+
+**Stato:** 🟡 sul branch `fix/diario-ripristino-in-volo`, non ancora in `main`. Niente migrazioni, niente route nuove: cambia solo `DiaryEventEditor.tsx`, più i test.
+
+**Perché.** Aprire un tipo di evento (Merenda, Umore, Nanna…) fa partire la lettura delle voci di oggi, e quando torna il ripristino riscrive lo stato di tutti i bambini. Nel frattempo i bottoni erano già toccabili e mostravano lo stato vuoto. Un tocco in quell'attimo spariva, sovrascritto da ciò che diceva il server; su un bambino già segnato (l'umore è un interruttore) lo spegneva appena il ripristino l'aveva acceso. Con una rete lenta capita alla maestra. È anche l'E2E `teacher-diary.spec.ts` «salva merenda e umore» che passava solo al secondo tentativo dal 5 ottobre (ultima volta nella CI della #272, 01/11): leggeva `aria-pressed` fra la risposta e il ridisegno.
+
+- **Il riquadro è un `<fieldset>` spento e `aria-busy` finché il ripristino legge** (`ripristinoInVolo`, esposto dall'hook come `inRipristino`): bottoni dei bambini, campi, note e «Salva», anche dentro i pannelli figli, con un'opacità al 60% per farlo vedere. La X della testata resta fuori: chiudere si può sempre. Vale anche per la rilettura dopo un salvataggio.
+- **Lo riaccende solo il ripristino che l'ha spento.** Uno superato (cambio di tipo mentre legge) non riaccende il riquadro mentre il successore legge ancora; uno superato perché il riquadro è stato chiuso non lo lascia spento per sempre.
+- **E2E:** `apriEventoEAttendiRipristino` aspetta, dopo la risposta, la PRESENZA di `aria-busy="false"` sul riquadro di quel tipo (`data-diario-riquadro`), perché col cambio di tipo il riquadro di prima esce con un'animazione ed è anch'esso un fieldset libero. Vale per la stella della merenda e per l'umore.
+- **Test:** `__tests__/components/diary-ripristino-in-volo.test.tsx` (4 casi). Ciascuno dei tre modi di rompere la correzione lo fa cadere: fieldset mai spento, azzeramento incondizionato, azzeramento solo se non superato. Verdi i 21 file del diario, `a11y`, `ui` e i 196 lock di `architecture`.
+- **Nello stesso branch, un test delle note di primaria caduto su `main`.** Dopo il merge della #272 la CI di `main` ha avuto un rosso, su un albero identico a quello verde della PR: `teacher-primaria-note-modifica-elimina.test.tsx`, «dopo un 423 e uno sblocco…», non trovava «Sblocca». La modale si chiude per una risposta di rete, fuori da `act`. React toglie il dialogo nel commit, ma libera lo sfondo da `inert` e `aria-hidden` nella pulizia dell'effetto, un giro dopo, e il `getByRole` lo cercava in quel giro. Ora è un `findByRole`, che aspetta la presenza. Causa riprodotta ritardando di 30 ms la liberazione in `Modal`: la CI dava esattamente quell'errore. Per la segreteria non cambia niente: in un browser quel giro dura meno di un fotogramma. Il job rilanciato su `main` è passato al secondo tentativo, sullo stesso commit: era un caso, non un difetto del codice.
+- **E un test del CRM della stessa famiglia, caduto nella CI di questa PR.** `crm/follow-up.test.tsx`, «aggiungi richiamo…», contava le letture appena compariva «Richiamo aggiunto», ma la rilettura parte da un effetto di `ricarica`, un giro dopo: a volte ne trovava una invece di due. Ora la aspetta, come già faceva il caso del 409 nello stesso file. Provato: con la rilettura ritardata di 30 ms il test vecchio cade e il nuovo passa; senza rilettura il nuovo cade.
 
 ## 🧾 Changelog — CRM della segreteria, seconda versione: la quota d'iscrizione in contabilità e le disponibilità settimana per settimana — 2026-10-31 (branch `feat/crm-quota-disponibilita`)
 
@@ -95,7 +121,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 
 ## 🧭 Changelog — Menu della segreteria a 7 voci, a fisarmonica — 2026-10-31 (branch `chore/piano-approvato-a-mano`)
 
-**Stato:** 🟡 in revisione (merge a mano, nella PR #272). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
+**Stato:** ✅ in produzione dal 01/11/2026 (#272, `c6a4b0e6`, merge di Claude su richiesta del titolare; «Il sito serve il rilascio nuovo» verde). **Nessuna pagina toccata**: cambia solo il menu del cockpit Direzione/Segreteria. Richiesta del titolare: *«troppo lungo e disordinato, poche voci, accorpare con un sottomenu»*.
 
 | | Prima | Dopo |
 |---|---|---|
@@ -173,7 +199,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 
 ## 📝 Changelog — Il piano di Claude lo approva il titolare — 2026-10-30 (branch `chore/piano-approvato-a-mano`)
 
-**Stato:** 🟡 in revisione (merge a mano). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
+**Stato:** ✅ in produzione dal 01/11/2026 (#272, `c6a4b0e6`). Solo configurazione di Claude Code: niente codice dell'app, niente migrazioni, niente che cambi per le famiglie o per la segreteria.
 
 - **Tolto `.claude/hooks/auto_approve_plan.py`** e la sua voce in `hooks.PreToolUse` di `.claude/settings.json`. Dal 18/09 approvava da solo ogni piano scritto in plan mode (29 volte, l'ultima il 30/10 alle 20:52). Richiesta del titolare: il piano lo approva lui dopo averlo letto.
 - **`auto_allow_permission.py` si astiene su `ExitPlanMode`**, come già su `AskUserQuestion`: altrimenti, se l'approvazione arrivasse come richiesta di permesso, la concederebbe lui.

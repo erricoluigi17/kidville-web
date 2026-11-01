@@ -61,6 +61,7 @@ async function salvaEAttendi(page: import('@playwright/test').Page, bottone: Reg
 async function apriEventoEAttendiRipristino(
   page: import('@playwright/test').Page,
   evento: string,
+  tipo: 'merenda' | 'umore',
 ) {
   // `scopo=spente` è l'ALTRA GET delle voci di oggi (dal 2026-09-28): la schermata la fa al carico
   // e dopo ogni salvataggio, per trovare le routine spente che oggi hanno voci. Non è il ripristino
@@ -73,6 +74,15 @@ async function apriEventoEAttendiRipristino(
     page.getByRole('button', { name: evento }).click(),
   ]);
   expect(res.status(), `GET /api/diary/entries ha risposto ${res.status()}`).toBeLessThan(300);
+  // La RISPOSTA non basta: la pagina deve ancora leggerne il corpo e ridisegnare i bottoni.
+  // Guardare `aria-pressed` in quell'attimo leggeva lo stato vuoto di prima, e il click che
+  // seguiva spegneva l'umore appena ripristinato (un interruttore) o veniva sovrascritto dal
+  // ripristino: era l'instabilità di riga 162 vista dal 5 ottobre (causa capita il 01/11/2026).
+  // Si aspetta la PRESENZA di `aria-busy="false"` sul riquadro di QUESTO tipo: col cambio di
+  // tipo il riquadro di prima esce con un'animazione, ed è anche lui un fieldset non occupato.
+  await expect(
+    page.locator(`fieldset[data-diario-riquadro="${tipo}"][aria-busy="false"]`),
+  ).toBeAttached({ timeout: 15_000 });
 }
 
 async function mostraTuttiIBambini(page: import('@playwright/test').Page) {
@@ -121,7 +131,7 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await mostraTuttiIBambini(page);
 
   // Evento Merenda: i pannelli per bambino compaiono dopo la scelta del tipo.
-  await apriEventoEAttendiRipristino(page, 'Registra Merenda');
+  await apriEventoEAttendiRipristino(page, 'Registra Merenda', 'merenda');
   await expect(page.getByText('Aurora').first()).toBeVisible();
   // Le quantità sono simboli: ✗ ¼ ½ ¾ ★ (★ = "Tutto!"), prima riga = Aurora.
   //
@@ -153,7 +163,7 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   // il primo (merenda) era andato a buon fine. Il test era verde solo alla prima
   // esecuzione su un database pulito, e da lì in poi dipendeva da ciò che aveva lasciato
   // la volta prima.
-  await apriEventoEAttendiRipristino(page, 'Registra Umore');
+  await apriEventoEAttendiRipristino(page, 'Registra Umore', 'umore');
   const felice = page.getByRole('button', { name: 'Aurora: Felice' });
   if ((await felice.getAttribute('aria-pressed')) !== 'true') {
     await felice.click();
@@ -176,7 +186,7 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   // avesse salvato davvero, la risposta arriverebbe comunque (200, ma vuota) e
   // `aria-pressed` resterebbe `false`: il test continua a misurare la
   // persistenza, non la pazienza.
-  await apriEventoEAttendiRipristino(page, 'Registra Umore');
+  await apriEventoEAttendiRipristino(page, 'Registra Umore', 'umore');
   await expect(page.getByRole('button', { name: 'Aurora: Felice' })).toHaveAttribute(
     'aria-pressed',
     'true'

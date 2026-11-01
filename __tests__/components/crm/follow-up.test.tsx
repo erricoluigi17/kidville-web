@@ -669,7 +669,9 @@ describe('AzioniScheda', () => {
     expect(scritture('POST')).toHaveLength(1)
     expect(scritture('POST')[0].corpo).toEqual({ schedaId: SCHEDA_1, giorno: '2030-12-12', responsabile: SEG_1 })
     expect(onAggiornata).toHaveBeenCalledTimes(1)
-    expect(letture('/api/admin/crm/azioni?')).toHaveLength(2)
+    // Come per il 409 qui sopra: la rilettura parte da un effetto di `ricarica`, dopo il messaggio.
+    // Letta subito, una volta su tante è ancora una (CI della #278, 01/11/2026).
+    await waitFor(() => expect(letture('/api/admin/crm/azioni?')).toHaveLength(2))
     // Il modulo si chiude.
     expect(screen.queryByRole('button', { name: 'Aggiungi' })).toBeNull()
   })

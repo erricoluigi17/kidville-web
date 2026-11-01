@@ -1,6 +1,21 @@
+## 🧪 Changelog — Lo sfondo della modale torna accessibile un giro dopo: due test aspettano — 2026-11-01 (branch `fix/test-valutazioni-sfondo-inert`)
+
+**Stato:** 🟡 sul branch `fix/test-valutazioni-sfondo-inert`, PR verso `main`. Tocca solo i test: nessun codice dell'app, nessuna migrazione.
+
+**Perché.** Dopo il merge della #282, il job Unit di `main` (run 41324864308) è caduto su `teacher-primaria-valutazioni-voci`, nel caso «cambiando alunno, con la lettura nuova FALLITA…»: il test non trovava le select (`combobox`). Nel DOM dell'errore lo sfondo era ancora `aria-hidden` e `inert`. La causa è quella già vista con la #278. La `Modal` chiusa dalla risposta di rete sparisce subito, ma `ripristinaInerzia` gira nella pulizia dell'effetto, un giro dopo. `findByText` ignora `aria-hidden` e passa. Il `getAllByRole` che segue, su un runner lento, non vede niente.
+
+**Cosa cambia.** I punti da correggere li ha trovati una prova: `ripristinaInerzia` ritardato di 30 ms e l'intera suite lanciata così. Poi `Modal.tsx` è stato rimesso identico a `main`.
+- `teacher-primaria-valutazioni-voci`: il caso caduto in CI aspetta le select con `findAllByRole`.
+- `AzioniScrutinio`, caso «Elimina pagella… sparisce dopo l'eliminazione»: contava le righe «Pagella PDF» con `getAllByRole` subito dopo la chiusura fatta dalla risposta della DELETE. È la stessa gara, ora si aspetta con `waitFor`.
+- Col ritardo cadevano altri 16 casi, che non sono esposti e restano come sono:
+  - 15 chiudono la modale con un clic, un Escape, un `change` o un `rerender`. Queste chiusure passano da `act`, che esegue la pulizia subito: la gara c'è solo col ritardo finto. Sono Modal (3), le prove di accessibilità di AvvisoForm, OtpEmail e QuickAcquisto, AlunniArchiviati, FatturaDocumenti, MovimentoDialog, RevisioneFatture, SettimanaMensa, l'appello della primaria (`salvaFinestra` chiude la modale prima che arrivi il 422), il fascicolo, le note e l'«Elimina» degli allegati.
+  - 1, il cestino dopo la firma, aspetta una rilettura che produce un render nuovo, e prima di ogni render React esegue gli effetti rimasti in sospeso.
+
+**Prove.** Col ritardo attivo i due file corretti passano: 63 test su 63, e prima della correzione cadevano. Senza ritardo passano tre volte su tre.
+
 ## 🗂️ Changelog — CRM, il lavoro dopo la #276: fotografie dalla produzione, tracce dello staff, oblio dell'alunno nel CRM, anno d'ingresso nella scheda — 2026-11-01 (branch `chore/crm-pr-b`)
 
-**Stato:** 🟡 sul branch `chore/crm-pr-b`, PR verso `main`. Nessuna migrazione, nessuna route nuova.
+**Stato:** ✅ **in produzione** dal 01/11/2026 (`510e1d40`, PR #282). Il merge a squash l'ha fatto l'assistente alle 16:09 UTC, su indicazione del titolare («Sì, fai il merge») e con la CI della PR tutta verde. Su `main` sono verdi il deploy Vercel, «Il sito serve il rilascio nuovo, in dub1, vivo», l'E2E e Supabase Preview. Il job Unit è caduto su un test della primaria che la PR non tocca: è la gara dello sfondo della modale, corretta nella voce «Lo sfondo della modale torna accessibile un giro dopo». Nessuna migrazione, nessuna route nuova.
 
 **Perché.** La #276 è in produzione dal 31/10, 23:21 UTC, con la migrazione applicata dall'integrazione. Nella sua voce restavano i compiti da fare dopo il merge («PR-B») e la prova d'uso nella sede Demo. Questa voce li chiude, tranne le riprese dei video 8 e 11, che chiedono l'accesso del titolare.
 

@@ -20,6 +20,7 @@ import { dimenticaNellaScatolaNera } from '@/lib/gdpr/scatola-nera'
 import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { obliaModuliGenitori } from './moduli-genitori'
+import { obliaCrmAlunno } from '@/lib/crm/oblio'
 
 // =============================================================================
 // Esecuzione dell'oblio, PER SINGOLA ENTITÀ e riusabile.
@@ -2721,6 +2722,10 @@ export async function anonimizzaAlunno(
   lettureFallite: number
   /** Righe tolte dalla scatola nera perché nominavano il bambino (2026-10-09). */
   scatolaNeraDimenticate: number
+  /** Bambini del CRM collegati all'alunno, svuotati di nome e data di nascita (2026-11-01). */
+  crmBambiniBonificati: number
+  /** Schede del CRM anonimizzate perché nessun loro bambino resta in chiaro (2026-11-01). */
+  crmSchedeAnonimizzate: number
   /**
    * Le chiavi di ricerca (codice fiscale, documento) NON usate perché sono anche di un'altra scheda
    * alunno viva o di un genitore (2026-10-09): vedi `chiaviDiRicercaProprie`. Maggiore di zero vuol
@@ -2917,6 +2922,12 @@ export async function anonimizzaAlunno(
     }
   }
 
+  // 3e-bis. IL CRM DELLA SEGRETERIA (2026-11-01). Il bambino che la segreteria seguiva prima
+  //     dell'iscrizione, collegato all'alunno da `crm_bambini.alunno_id`, e le entrate di cassa della
+  //     sua quota, che portano il NOME e non il codice fiscale: 3e non le vede. Vedi `obliaCrmAlunno`.
+  const crm = await obliaCrmAlunno(supabase, alunno.id, at, op)
+  cassa += crm.cassa
+
   // 3f. LE TRACCE DI TESTO SENZA FK — notifiche, segnalazioni, sospensioni, audit del diario senza
   //     id. Vedi `bonificaTracceTestualiAlunno`, che le tratta per l'oblio E per l'eliminazione
   //     definitiva. Sta QUI e non più in basso perché legge da sé gli id dei media del bambino per
@@ -3055,6 +3066,8 @@ export async function anonimizzaAlunno(
     videoIntentiTrattati: videoIntenti.intenti,
     videoIntentiRevocati: videoIntenti.revocati,
     scatolaNeraDimenticate: scatola.righe,
+    crmBambiniBonificati: crm.bambini,
+    crmSchedeAnonimizzate: crm.schede,
     // ── GLI INVENTARI CHE NON SI SONO POTUTI LEGGERE ──
     //
     // Un elenco esplicito e non una somma di flag sparsi, così chi aggiunge un
@@ -3084,6 +3097,9 @@ export async function anonimizzaAlunno(
       // Dal 2026-10-09: la scatola nera. `false` = la funzione c'è e ha rifiutato, e le copie delle
       // righe cancellate che nominano il bambino restano leggibili fino alla scadenza.
       scatola.completo,
+      // Dal 2026-11-01: il CRM della segreteria. `false` = il bambino del CRM, le sue entrate di cassa o la
+      // scheda della famiglia possono essere rimasti in chiaro.
+      crm.completo,
     ].filter((l) => l === false).length
       // Le verifiche delle chiavi di ricerca che non si sono potute fare (2026-10-09): la chiave non si
       // è usata, quindi ciò che le stava agganciato non è stato guardato.

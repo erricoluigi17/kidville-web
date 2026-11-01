@@ -59,6 +59,8 @@
   "quotaStatoBloccata": "Blocked",
   "quotaStatoInContabilita": "In accounting",
   "quotaStatoAttesaBonifico": "In accounting, waiting for the bank transfer",
+  "quotaStatoVoceEliminata": "Entry deleted in accounting",
+  "quotaVoceEliminata": "The «Enrolment» entry created from this fee has been deleted from accounting. The record will not restore it on its own: for now it is fixed in accounting.",
   "quotaRiepilogo": "{importo} € · {metodo} · {giorno}",
   "quotaAnno": "School year {anno}",
   "quotaAnnoServe": "Set the year of entry first",

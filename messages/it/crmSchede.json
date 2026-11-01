@@ -59,6 +59,8 @@
   "quotaStatoBloccata": "Bloccata",
   "quotaStatoInContabilita": "In contabilità",
   "quotaStatoAttesaBonifico": "In contabilità, in attesa del bonifico",
+  "quotaStatoVoceEliminata": "Voce eliminata in contabilità",
+  "quotaVoceEliminata": "La voce «Iscrizione» nata da questa quota è stata eliminata dalla contabilità. La scheda non la rimette da sola: per ora si sistema in contabilità.",
   "quotaRiepilogo": "{importo} € · {metodo} · {giorno}",
   "quotaAnno": "Anno scolastico {anno}",
   "quotaAnnoServe": "Indica prima l’anno di ingresso",

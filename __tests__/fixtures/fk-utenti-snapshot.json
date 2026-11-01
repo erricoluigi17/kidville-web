@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-10-31",
-  "generato_alle": "2026-10-31T10:44:15Z",
-  "sha256": "700f510158a6cb5969d9423a476d5c3947a66826ab34c81a6c312c3420e9e157",
+  "generato_il": "2026-11-01",
+  "generato_alle": "2026-11-01T13:47:44Z",
+  "sha256": "6dccef0d15645e4e9c46168cdd241568642b6620f1f6d7c3562d43e40f9ed848",
   "fk": [
     {
       "tabella": "allegati_registro",
@@ -140,11 +140,6 @@
       "azione": "blocca"
     },
     {
-      "tabella": "crm_disponibilita",
-      "colonna": "utente_id",
-      "azione": "blocca"
-    },
-    {
       "tabella": "crm_eventi",
       "colonna": "autore",
       "azione": "blocca"
@@ -162,6 +157,16 @@
     {
       "tabella": "crm_schede",
       "colonna": "creato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_settimane",
+      "colonna": "aggiornata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_settimane",
+      "colonna": "utente_id",
       "azione": "blocca"
     },
     {

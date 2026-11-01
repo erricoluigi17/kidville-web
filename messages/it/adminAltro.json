@@ -813,6 +813,7 @@
   "tracciaDocenteCrmDisponibilita": "Disponibilità per le visite del CRM",
   "tracciaDocenteCrmAssenze": "Assenze dall’agenda del CRM",
   "tracciaDocenteCrmAssenzeInserite": "Assenze inserite nell’agenda del CRM",
+  "tracciaDocenteCrmSettimaneSalvate": "Settimane di disponibilità del CRM salvate",
   "archiviazioneMantieneRegistro": "Il registro resta intatto: presenze, diario e note firmate non si toccano",
   "archiviazioneMantieneValutazioni": "Valutazioni, pagelle e scrutini restano al loro posto",
   "archiviazioneMantieneChat": "Le conversazioni con le famiglie restano leggibili",

@@ -85,6 +85,12 @@ export type EsitoPassaggio =
   | { esito: 'ok'; pagamentoId: string; incassoId: string | null; voceNuova: boolean }
   | { esito: 'bloccata'; motivo: MotivoBloccoQuota }
   | { esito: 'gia_in_contabilita'; pagamentoId: string }
+  /**
+   * La quota è passata in contabilità, ma la voce «Iscrizione» non c'è più: qualcuno l'ha eliminata dallo
+   * scadenzario e `quota_pagamento_id` è tornato nullo (`ON DELETE SET NULL`). Non è un guasto, è uno stato
+   * che la scheda deve dire: fino al 01/11/2026 diventava `errore` e la «riprova» rispondeva 500.
+   */
+  | { esito: 'voce_eliminata' }
   | { esito: 'non_pronta' | 'non_trovato' | 'sede_diversa' | 'categoria_assente' | 'non_installato' | 'errore' }
 
 const ESITI_SENZA_DATI = ['non_pronta', 'non_trovato', 'sede_diversa', 'categoria_assente'] as const
@@ -116,7 +122,9 @@ export function esitoPassaggioDa(json: unknown): EsitoPassaggio {
       return motivo ? { esito: 'bloccata', motivo } : { esito: 'errore' }
     }
     case 'gia_in_contabilita':
-      return stringaNonVuota(j.pagamento_id) ? { esito: 'gia_in_contabilita', pagamentoId: j.pagamento_id } : { esito: 'errore' }
+      if (stringaNonVuota(j.pagamento_id)) return { esito: 'gia_in_contabilita', pagamentoId: j.pagamento_id }
+      // `crm_quota_passa` restituisce `quota_pagamento_id` così com'è: nullo vuol dire voce eliminata.
+      return j.pagamento_id === null ? { esito: 'voce_eliminata' } : { esito: 'errore' }
     default: {
       const senzaDati = ESITI_SENZA_DATI.find((e) => e === j.esito)
       return senzaDati ? { esito: senzaDati } : { esito: 'errore' }
@@ -126,7 +134,9 @@ export function esitoPassaggioDa(json: unknown): EsitoPassaggio {
 
 /** Lo stato della quota dopo che `crm_quota_segna` ha provato il passaggio (`null` = il bambino non è ancora alunno). */
 export function statoDopoPassaggio(passaggio: EsitoPassaggio | null): StatoQuota {
-  if (passaggio?.esito === 'ok' || passaggio?.esito === 'gia_in_contabilita') return 'in_contabilita'
+  if (passaggio?.esito === 'ok' || passaggio?.esito === 'gia_in_contabilita' || passaggio?.esito === 'voce_eliminata') {
+    return 'in_contabilita'
+  }
   if (passaggio?.esito === 'bloccata') return 'bloccata'
   return 'in_attesa'
 }
@@ -157,6 +167,10 @@ export function registraEsitoPassaggio(esito: EsitoPassaggio, bambinoId: string,
       return
     case 'gia_in_contabilita':
       logEvento('crm', 'info', { ...base, esito: 'quota-gia-in-contabilita', pagamento_id: esito.pagamentoId })
+      return
+    case 'voce_eliminata':
+      // Un dato da guardare, non un guasto: la voce l'ha tolta qualcuno dallo scadenzario.
+      logEvento('crm', 'warn', { ...base, esito: 'quota-voce-eliminata' })
       return
     case 'non_pronta':
       logEvento('crm', 'info', { ...base, esito: 'quota-non-pronta' })

@@ -715,6 +715,7 @@
   "erroreEliminazioneRicaricaNonDisponibile": "Deleting a ticket top-up is not available in this environment: the item was not deleted.",
   "erroreIdentitaNonVerificata": "Your identity could not be verified: please try again shortly.",
   "erroreModuloFirmaOtpRichiesta": "Use OTP verification to sign the form.",
+  "erroreModuloIntestatarioNonProprio": "You can only submit a form in your own name: sign out and sign back in with your account.",
   "erroreModuloFirmatoAccessoNonVerificato": "Access to the document could not be verified: please try again shortly.",
   "erroreModuloFirmatoAccessoNegato": "You cannot view this document.",
   "erroreModuloFirmatoNonDisponibile": "This document is not available: reload the forms list.",

@@ -28,7 +28,19 @@ const h = vi.hoisted(() => ({
   tabelle: [] as string[],
   scritture: [] as Scrittura[],
   notifica: vi.fn(),
+  /** Dal 31/10 (S-1) l'intestatario è la sessione: ogni caso dice chi compila. */
+  chiamante: null as string | null,
 }))
+
+vi.mock('@/lib/auth/require-staff', async () => {
+  const { NextResponse } = await import('next/server')
+  return {
+    requireUser: async () =>
+      h.chiamante
+        ? { user: { id: h.chiamante, role: 'genitore', scuola_id: null } }
+        : { response: NextResponse.json({ error: 'Non autenticato' }, { status: 401 }) },
+  }
+})
 
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -98,12 +110,19 @@ beforeEach(() => {
   h.db = dbBase()
   h.tabelle = []
   h.scritture = []
+  h.chiamante = null
 })
+
+/** L'invio del wizard autenticato: la sessione è di chi il corpo dichiara. */
+const invioDi = (userId: string, payload: Record<string, unknown>) => {
+  h.chiamante = userId
+  return SUBMIT(corpo({ ...payload, userId }))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('POST /api/forms/submit — la compilazione di un genitore nasce con una sede', () => {
   it('la sede di chi compila vince: 201 e la riga la porta scritta', async () => {
-    const res = await SUBMIT(corpo({ modelId: MODELLO_GLOBALE, userId: GENITORE_CON_SEDE, data: { a: 1 } }))
+    const res = await invioDi(GENITORE_CON_SEDE, { modelId: MODELLO_GLOBALE, data: { a: 1 } })
     expect(res.status).toBe(201)
     expect(compilazioni()).toHaveLength(1)
     expect(compilazioni()[0].scuola_id).toBe(SEDE_A)
@@ -111,14 +130,14 @@ describe('POST /api/forms/submit — la compilazione di un genitore nasce con un
   })
 
   it('sede non risolvibile e due sedi reali: 400 e NESSUNA riga orfana', async () => {
-    const res = await SUBMIT(corpo({ modelId: MODELLO_GLOBALE, userId: GENITORE_SENZA_SEDE, data: { a: 1 } }))
+    const res = await invioDi(GENITORE_SENZA_SEDE, { modelId: MODELLO_GLOBALE, data: { a: 1 } })
     expect(res.status).toBe(400)
     expect(compilazioni()).toHaveLength(0)
     expect(scrittureSu('form_submissions')).toHaveLength(0)
   })
 
   it('chi compila non ha sede ma il modello sì: 201 con la sede del modello', async () => {
-    const res = await SUBMIT(corpo({ modelId: MODELLO_DI_SEDE_B, userId: GENITORE_SENZA_SEDE, data: { a: 1 } }))
+    const res = await invioDi(GENITORE_SENZA_SEDE, { modelId: MODELLO_DI_SEDE_B, data: { a: 1 } })
     expect(res.status).toBe(201)
     expect(compilazioni()[0].scuola_id).toBe(SEDE_B)
   })
@@ -126,7 +145,7 @@ describe('POST /api/forms/submit — la compilazione di un genitore nasce con un
   it('una sola sede reale (la sede E2E non conta): si usa quella, nessun 400', async () => {
     h.db.schools = [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_E2E, nome: NOME_SEDE_E2E }]
     h.db.scuole = [{ id: SEDE_A, attiva: true }]
-    const res = await SUBMIT(corpo({ modelId: MODELLO_GLOBALE, userId: GENITORE_SENZA_SEDE, data: { a: 1 } }))
+    const res = await invioDi(GENITORE_SENZA_SEDE, { modelId: MODELLO_GLOBALE, data: { a: 1 } })
     expect(res.status).toBe(201)
     expect(compilazioni()[0].scuola_id).toBe(SEDE_A)
   })

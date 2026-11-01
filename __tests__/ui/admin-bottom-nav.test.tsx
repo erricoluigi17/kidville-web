@@ -154,6 +154,8 @@ describe('AdminBottomNav — bottom-nav a pillola (Step 2)', () => {
     render(<AdminBottomNav />);
     fireEvent.click(screen.getByRole('button', { name: /menu/i }));
     const dialog = screen.getByRole('dialog');
+    // Dal 31/10 i gruppi sono a fisarmonica: Protocollo sta dentro «Segreteria», che va aperta.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Segreteria' }));
     expect(within(dialog).getByText('Protocollo')).toBeInTheDocument();
     // Anagrafica in evidenza in cima
     expect(within(dialog).getByText('Anagrafica')).toBeInTheDocument();
@@ -164,6 +166,9 @@ describe('AdminBottomNav — bottom-nav a pillola (Step 2)', () => {
     render(<AdminBottomNav />);
     fireEvent.click(screen.getByRole('button', { name: /menu/i }));
     const dialog = screen.getByRole('dialog');
+    // Il gruppo si apre PRIMA di cercare: a gruppo chiuso l'assenza sarebbe vera per tutti.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Segreteria' }));
+    expect(within(dialog).getByText('Modulistica')).toBeInTheDocument();
     expect(within(dialog).queryByText('Protocollo')).toBeNull();
   });
 
@@ -180,9 +185,17 @@ describe('AdminBottomNav — bottom-nav a pillola (Step 2)', () => {
     render(<AdminBottomNav />);
     fireEvent.click(screen.getByRole('button', { name: /menu/i }));
     const dialog = screen.getByRole('dialog');
-    const hrefs = within(dialog)
-      .getAllByRole('link')
-      .map((a) => a.getAttribute('href') ?? '');
+    // Gruppi a fisarmonica (31/10): si apre ogni gruppo a turno e si raccolgono tutti i link.
+    const visti = new Set<string>();
+    const raccogli = () => within(dialog).getAllByRole('link').forEach((a) => visti.add(a.getAttribute('href') ?? ''));
+    raccogli();
+    const gruppi = within(dialog).getAllByRole('button').filter((b) => b.hasAttribute('aria-expanded'));
+    expect(gruppi).toHaveLength(5);
+    for (const g of gruppi) {
+      fireEvent.click(g);
+      raccogli();
+    }
+    const hrefs = [...visti];
     for (const tab of TAB_HREFS) {
       const ripetuto = hrefs.some((h) => h === tab || h.startsWith(`${tab}?`));
       expect(ripetuto, `lo sheet ripete il tab ${tab}`).toBe(false);

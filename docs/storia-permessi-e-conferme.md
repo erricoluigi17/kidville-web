@@ -356,6 +356,9 @@ mai a quell'hook, quindi **ogni** rimozione che genera un prompt punta a qualcos
 Costa zero prompt nel lavoro normale. Per toglierlo anche lì:
 `export KIDVILLE_AUTO_PERMESSI_ANCHE_RM=1`.
 
+> 🟥 **Revocato il 2026-10-30** per la riga `ExitPlanMode` della tabella e per il paragrafo qui
+> sotto: il piano lo approva di nuovo il titolare. Vedi il riquadro in fondo al file.
+
 ⚠️ **Il plan mode non è più un punto di controllo.** Resta il posto dove **mostrare** cosa si sta per
 fare. Mostrare non è chiedere, non costa niente, ed è l'ultima cosa rimasta fra un errore e le
 famiglie dietro le righe di `enrollment_submissions`. Per rimettere l'approvazione a mano solo per una
@@ -447,3 +450,38 @@ freno non scattasse: `EXPLAIN` senza `ANALYZE` non esegue niente.
 **Come si torna indietro**, in ordine di reversibilità: `export KIDVILLE_FRENO_SQL_SPENTO=1` (una
 sessione) → togliere la voce del freno da `hooks.PreToolUse` in `.claude/settings.json` (il file resta
 su disco). Poi **riavviare**.
+
+### 🟥 APPLICATO IL 2026-10-30 — il piano torna al titolare
+
+**Richiesta del titolare**: *«quando scrivo un piano, nella modalità piano, c'è qualche impostazione di
+Claude che lo approva in automatico. E non deve essere così. Devo essere io ad approvarlo dopo averlo
+letto.»*
+
+**Cosa lo approvava.** Nessuna impostazione dell'app né la modalità `auto`: era l'hook di progetto
+`.claude/hooks/auto_approve_plan.py`, agganciato a `PreToolUse` su `ExitPlanMode` dal riquadro del
+2026-09-18. In `.claude/.permessi-auto.log` ha lasciato **29** righe `PIANO APPROVATO IN AUTOMATICO`,
+l'ultima il 2026-10-30 alle 20:52.
+
+| | Prima | Adesso |
+|---|---|---|
+| `auto_approve_plan.py` | registrato in `hooks.PreToolUse`, rispondeva `allow` con `updatedInput` | **eliminato**, e tolto da `.claude/settings.json` |
+| `auto_allow_permission.py` | si asteneva solo su `AskUserQuestion` (e sugli `rm` critici) | si astiene anche su `ExitPlanMode`: senza, se l'approvazione del piano passasse come richiesta di permesso, la concederebbe lui |
+| `KIDVILLE_PIANO_A_MANO` | via di fuga per una sessione | non serve più, nessuno la legge |
+
+**Cosa resta come prima.** Le 22 `deny`, l'interruttore sugli `rm` critici, il freno SQL, la modalità
+`auto` di `~/.claude/settings.json`. Dentro un piano approvato le scritture passano senza chiedere di
+nuovo, come dal 2026-09-02: l'approvazione del piano È la conferma, e per questo deve darla una persona.
+
+**Effetto sulle sessioni già aperte.** Gli hook si leggono all'avvio: una sessione aperta prima ha
+ancora in memoria la voce di `auto_approve_plan.py`, ma il file non c'è più. Claude Code tratta lo
+script mancante come errore non bloccante e il piano compare comunque al titolare. I worktree e i
+branch nati da `main` prima del merge hanno ancora l'hook finché non si aggiornano.
+
+**Come si prova** (in una sessione **nuova**): entrare in plan mode, farsi scrivere un piano
+qualunque e guardare che `ExitPlanMode` si fermi ad aspettare la risposta. In
+`.claude/.permessi-auto.log` non devono comparire righe `PIANO APPROVATO IN AUTOMATICO` dopo il
+2026-10-30 20:52; se l'approvazione passa da `PermissionRequest`, compare una riga
+`PROMPT LASCIATO ALL'UTENTE — ExitPlanMode`.
+
+**Come si torna indietro**: solo se lo chiede il titolare. Il file eliminato è nella storia di git
+(`git show 3d78434b:.claude/hooks/auto_approve_plan.py`), e va rimesso anche in `hooks.PreToolUse`.

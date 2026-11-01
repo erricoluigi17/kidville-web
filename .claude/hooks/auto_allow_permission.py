@@ -19,6 +19,10 @@ COSA NON RISPONDE, e perché (vedi CLAUDE.md, blocco «Auto mode effettivo»):
    al posto suo sceglierebbe in silenzio. Servirebbe comunque ``updatedInput``
    con le risposte, che un "allow" secco non fornisce.
 
+   ``ExitPlanMode``, dal 2026-10-30. Il piano lo approva il titolare dopo
+   averlo letto: un "sì" automatico qui lo approverebbe al posto suo, come
+   faceva ``auto_approve_plan.py`` (tolto lo stesso giorno).
+
 3. Gli strumenti MCP marcati ``requiresUserInteraction``: dalla v2.1.199 non
    sono aggirabili da un hook. Qui si concede lo stesso e decide Claude Code.
 
@@ -93,6 +97,9 @@ def main() -> None:
 
     if strumento == "AskUserQuestion":
         astieniti("AskUserQuestion: è una domanda all'utente, non un permesso")
+
+    if strumento == "ExitPlanMode":
+        astieniti("ExitPlanMode: il piano lo approva il titolare dopo averlo letto")
 
     anche_rm = os.environ.get("KIDVILLE_AUTO_PERMESSI_ANCHE_RM") == "1"
     if strumento in ("Bash", "PowerShell") and not anche_rm:

@@ -543,11 +543,15 @@ function montaReact(nodo: React.ReactElement, hc: boolean): HTMLElement {
   return container
 }
 
-/** Le intestazioni di gruppo della sidebar, dal DOM vero del componente. */
+/**
+ * Le intestazioni di gruppo della sidebar, dal DOM vero del componente. Dal 2026-10-31 (menu a
+ * fisarmonica) non sono più `<p>` di sola lettura ma i bottoni che aprono i gruppi: stesso testo,
+ * stesso obbligo di contrasto, e ora anche un comando.
+ */
 function intestazioniSidebar(hc = false): HTMLElement[] {
   const nav = montaReact(<AdminSidebar />, hc).querySelector('.kv-admin-nav')
   expect(nav, 'la sidebar è a schermo').toBeTruthy()
-  return Array.from(nav!.querySelectorAll<HTMLElement>('p'))
+  return Array.from(nav!.querySelectorAll<HTMLElement>('button[aria-expanded]'))
 }
 
 describe('S19 §2 · sidebar admin — l\'Alto Contrasto arriva anche alle intestazioni', () => {

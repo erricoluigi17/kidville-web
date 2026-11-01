@@ -136,8 +136,9 @@ describe('AdminBinario — il binario del cockpit sul tablet', () => {
     expect(menuBtn).toHaveAttribute('aria-expanded', 'true');
     // Col pannello aperto si accende «Menu» e si spegne la voce della pagina: una sola accesa.
     expect(screen.getByText('Home').closest('a')).not.toHaveAttribute('aria-current');
-    // Il pannello ha le voci del menu, non i tab del binario.
-    expect(within(dialog).getByRole('link', { name: /impostazioni/i })).toBeInTheDocument();
+    // Il pannello ha i gruppi del menu, non i tab del binario (dal 31/10 «Impostazioni» è un gruppo
+    // a fisarmonica: un bottone che apre le sue voci).
+    expect(within(dialog).getByRole('button', { name: /impostazioni/i })).toHaveAttribute('aria-expanded', 'false');
 
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();

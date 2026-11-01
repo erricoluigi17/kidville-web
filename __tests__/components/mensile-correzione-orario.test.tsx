@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { istanteDaLocale } from '@/lib/format/confini-giorno';
 
 /**
  * Riepilogo mensile — correggere un'ora senza tornare su «Oggi».
@@ -33,15 +32,18 @@ const SECTION_ID = 'aaaa1111-0000-4000-8000-00000000000a';
 const ALUNNO = { id: 'cccc3333-0000-4000-8000-00000000000c', nome: 'Mario', cognome: 'Rossi' };
 
 /**
- * Il 2 del mese in corso: un ritardo, alle 08:20 di Roma. L'istante si COSTRUISCE dall'ora di Roma
- * (`istanteDaLocale`), non si cabla in UTC: «06:20Z = 08:20 italiane» vale solo con l'ora legale, e
- * dal 1° novembre (ora solare, 06:20Z = 07:20) questo test è stato rosso a ogni esecuzione.
+ * Il 2 del mese in corso: un ritardo, entrato alle 08:20 italiane. L'istante UTC
+ * dipende dal mese: 06:20Z con l'ora legale, 07:20Z con la solare. Era cablato a
+ * 06:20Z, e dal 1° novembre il test leggeva 07:20 (CI del 01/11/2026).
  */
 const oggi = new Date();
 const ANNO = oggi.getFullYear();
 const MESE = oggi.getMonth() + 1;
 const GIORNO_ISO = `${ANNO}-${String(MESE).padStart(2, '0')}-02`;
-const ENTRATA_ISO = istanteDaLocale(`${GIORNO_ISO}T08:20`);
+const scartoRoma = (giorno: string) =>
+    Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hour: '2-digit', hourCycle: 'h23' })
+        .format(new Date(`${giorno}T12:00:00Z`))) - 12;
+const ENTRATA_UTC = `${GIORNO_ISO}T${String(8 - scartoRoma(GIORNO_ISO)).padStart(2, '0')}:20:00.000Z`;
 
 const fetchMock = vi.fn();
 const patch = () =>
@@ -64,7 +66,7 @@ beforeEach(() => {
                     // `date`, non `alunno_id`/`data` (che sono i nomi in colonna).
                     student_id: ALUNNO.id, student_nome: ALUNNO.nome, student_cognome: ALUNNO.cognome,
                     section_name: SEZIONE, date: GIORNO_ISO, stato: 'ritardo',
-                    orario_entrata: ENTRATA_ISO, orario_uscita: null,
+                    orario_entrata: ENTRATA_UTC, orario_uscita: null,
                 }],
             });
         }

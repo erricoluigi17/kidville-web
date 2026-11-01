@@ -269,7 +269,10 @@ describe('EliminaDefinitivoDialog — quando qualcosa va storto', () => {
         const avviso = await screen.findByRole('alert')
         expect(avviso).toHaveTextContent(/non sono usciti/)
         // I comandi spariscono durante la rimisura: il fuoco va sul messaggio, non su <body>.
-        expect(avviso).toHaveFocus()
+        // Lo sposta un `useEffect`, che gira DOPO il commit: `findByRole` può risolvere in
+        // mezzo, col fuoco ancora su «Annulla» (01/11/2026, CI della #275). Si aspetta la
+        // PRESENZA del fuoco, e senza il `focus()` il test resta rosso.
+        await waitFor(() => expect(avviso).toHaveFocus())
         // La rimisura: i numeri NUOVI, e il messaggio è ancora lì.
         expect(await screen.findByText('4 presenze')).toBeInTheDocument()
         expect(corpoDi(2)).toEqual({ alunno_id: AL.id, mode: 'dryrun' })

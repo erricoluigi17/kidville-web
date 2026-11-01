@@ -813,6 +813,7 @@
   "tracciaDocenteCrmDisponibilita": "Availability for CRM visits",
   "tracciaDocenteCrmAssenze": "Absences from the CRM calendar",
   "tracciaDocenteCrmAssenzeInserite": "Absences entered in the CRM calendar",
+  "tracciaDocenteCrmSettimaneSalvate": "CRM availability weeks saved",
   "archiviazioneMantieneRegistro": "The register stays intact: attendance, diary and signed notes are untouched",
   "archiviazioneMantieneValutazioni": "Assessments, report cards and boards stay in place",
   "archiviazioneMantieneChat": "Conversations with families remain readable",

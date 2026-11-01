@@ -1,6 +1,17 @@
+## 🧪 Changelog — «Elimina definitivamente»: il test aspetta che il fuoco arrivi sul messaggio d'errore — 2026-11-01 (branch `claude/recursing-bassi-c49ec2`)
+
+**Stato:** 🟡 sul branch, PR verso `main`. Solo un test: nessun codice dell'app, nessuna migrazione.
+
+**Perché.** Il 1° novembre il job «Lint · Typecheck · Unit» della #275 è caduto su un test che quella PR non tocca: `EliminaDefinitivoDialog.test.tsx`, «esecuzione rifiutata: la finestra resta aperta col messaggio del server…» (run 41269491127). In locale passava 3 volte su 3. Quando l'esecuzione viene rifiutata, il fuoco passa sul messaggio d'errore grazie a un `useEffect`, che gira dopo il commit. Il test aspettava il messaggio con `findByRole('alert')` e controllava il fuoco subito dopo. La risposta arriva fuori da `act`, perché il clic è un `fireEvent` senza `await act`: con la CI carica `findByRole` risolveva fra il commit e l'effetto, e il fuoco stava ancora su «Annulla», dove lo mette `Modal` all'apertura.
+
+- **Ora il test aspetta il fuoco:** `await waitFor(() => expect(avviso).toHaveFocus())`. Aspetta una presenza, quindi non può dare verde prima del tempo. Prova del morso, fatta sul componente e poi annullata (il diff tocca solo il test): con il `focus()` dell'effetto ritardato di 60 ms il vecchio test cade alla riga del fuoco, col fuoco su «Annulla» come in CI, e il nuovo passa; senza il `focus()` il nuovo cade dopo 5 s, il tetto di `asyncUtilTimeout` in `test/setup.ts`.
+- **Nello stesso file e nei dialoghi vicini lo schema non si ripete.** Gli altri casi del file controllano testi e bottoni che nascono nello stesso commit. `LiberaSpazioDialog` e `AlunniArchiviatiView` spostano il fuoco con un effetto e lo controllano subito dopo un `findByRole('status')`, ma il clic è dentro `await act(async …)`: risposta, render ed effetto finiscono tutti dentro `act`, prima che il test arrivi al `findByRole`. `DialogoEliminaMedia` non controlla il fuoco. Nel resto dei test di componente ci sono altre asserzioni sul fuoco dopo un'attesa asincrona: vanno guardate una per una, ma restano fuori da questa PR.
+
+File del test: 28 su 28 verdi, tre esecuzioni di fila.
+
 ## 🗂️ Changelog — CRM, il lavoro dopo la #276: fotografie dalla produzione, tracce dello staff, oblio dell'alunno nel CRM, anno d'ingresso nella scheda — 2026-11-01 (branch `chore/crm-pr-b`)
 
-**Stato:** 🟡 sul branch `chore/crm-pr-b`, PR verso `main`. Nessuna migrazione, nessuna route nuova.
+**Stato:** ✅ in `main` dal 01/11/2026, 16:09 UTC (`510e1d40`, PR #282). Nessuna migrazione, nessuna route nuova.
 
 **Perché.** La #276 è in produzione dal 31/10, 23:21 UTC, con la migrazione applicata dall'integrazione. Nella sua voce restavano i compiti da fare dopo il merge («PR-B») e la prova d'uso nella sede Demo. Questa voce li chiude, tranne le riprese dei video 8 e 11, che chiedono l'accesso del titolare.
 

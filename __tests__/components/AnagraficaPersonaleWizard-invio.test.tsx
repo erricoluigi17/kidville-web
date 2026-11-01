@@ -169,7 +169,10 @@ describe('AnagraficaPersonaleWizard — la conferma', () => {
     // l'invio riuscito è indistinguibile da una pagina che si è rotta.
     const conferma = screen.getByText(itPublic.persInviata)
     expect(conferma.closest('[role="status"]')).not.toBeNull()
-    expect(document.activeElement).toBe(conferma)
+    // Il fuoco lo sposta un `useEffect`, che gira DOPO il commit, e `setInviata`
+    // arriva dopo la `fetch`, cioè fuori da `act`: il `waitFor` qui sopra può
+    // risolvere in mezzo (01/11/2026). Si aspetta la PRESENZA del fuoco.
+    await waitFor(() => expect(document.activeElement).toBe(conferma))
     expect(screen.queryByRole('button', { name: itPublic.persInvia })).not.toBeInTheDocument()
   })
 })

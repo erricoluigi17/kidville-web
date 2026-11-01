@@ -341,9 +341,15 @@ describe('rifiuti ed elenco senza permessi', () => {
     expect(screen.getByText(/Voce bloccata: è passato il termine/)).toBeTruthy();
 
     // La Direzione sblocca: la rilettura dopo lo sblocco la dà di nuovo modificabile.
-    // «Sblocca» si ASPETTA: il messaggio sopra compare anche senza ruolo (la nota è
-    // dell'autrice), il bottone solo quando `/api/primaria/me` ha risposto «admin».
     elenco = [nota()];
+    // «Sblocca» si ASPETTA, per due ragioni indipendenti, ciascuna riprodotta da sola:
+    //  · il ruolo: il messaggio sopra compare anche senza ruolo (la nota è dell'autrice),
+    //    il bottone solo quando `/api/primaria/me` ha risposto «admin» (risposta finta
+    //    ritardata di 300 ms → stesso rosso della CI di `main` dell'01/11/2026);
+    //  · lo sfondo: la modale l'ha chiusa una risposta di rete, FUORI da `act`. React
+    //    toglie il dialogo nel commit, ma rende lo sfondo di nuovo accessibile (via
+    //    `inert` e `aria-hidden`) nella pulizia dell'effetto, un giro dopo (riprodotto
+    //    ritardando di 30 ms `ripristinaInerzia` in `Modal`).
     fireEvent.click(await screen.findByRole('button', { name: /Sblocca la nota di Rossi Mario/ }));
     const sblocco = await screen.findByRole('dialog');
     fireEvent.change(within(sblocco).getByLabelText('Motivo dello sblocco'), { target: { value: 'Correzione richiesta' } });

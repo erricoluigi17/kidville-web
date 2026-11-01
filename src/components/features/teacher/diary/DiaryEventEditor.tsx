@@ -271,6 +271,16 @@ export function useDiaryDay(
      */
     const ripristinoCorrente = useRef(0);
     /**
+     * Il numero del ripristino che sta ancora LEGGENDO l'archivio, o `null`. Finché c'è, il
+     * riquadro è spento: alla fine il ripristino riscrive `studentStates` per intero, e un
+     * tocco dato in quell'attimo spariva (sovrascritto dal server) o, su un umore già
+     * salvato, lo spegneva (il tocco è un interruttore, e il ripristino l'aveva appena
+     * acceso). È anche la causa per cui l'E2E del diario cadeva a caso dal 5 ottobre
+     * (01/11/2026). Lo azzera solo il ripristino che l'ha scritto: uno superato non
+     * riaccende il riquadro mentre il suo successore legge ancora.
+     */
+    const [ripristinoInVolo, setRipristinoInVolo] = useState<number | null>(null);
+    /**
      * Il riquadro aperto ADESSO, letto dopo un `await`. `selectedEvent` no: dentro
      * `handleSave` è quello della chiusura, cioè del momento in cui si è premuto Salva.
      * Serve a riconoscere il riquadro CHIUSO E RIAPERTO mentre il salvataggio era in
@@ -642,6 +652,7 @@ export function useDiaryDay(
         if (list.length === 0 || !sezione) { nessuna(); return; }
         // Il giro delle voci si prende alla PARTENZA della lettura: vince l'ultima partita.
         const mioVoci = ++giroVoci.current;
+        setRipristinoInVolo(mio);
         try {
             const today = dataDiario;
             const res = await fetch(`/api/diary/entries?${paramClasse}&date=${today}&userId=${userId}`);
@@ -763,6 +774,8 @@ export function useDiaryDay(
             if (superato()) return;
             setSavedStudentIds(new Set());
             setRegistrate({ tipo: eventType, righe: {} });
+        } finally {
+            setRipristinoInVolo(n => (n === mio ? null : n));
         }
     };
 
@@ -1436,6 +1449,7 @@ export function useDiaryDay(
         routineDi,
         selectedEvent,
         setSelectedEvent,
+        inRipristino: ripristinoInVolo !== null,
         studentStates,
         savedStudentIds,
         activities,
@@ -1472,7 +1486,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const umoreLabel = useUmoreLabel();
     const {
         students, eventTypes, configPronta, tipiSpenti, solaLettura, fonteSpenta, ultimeDi, nonPiuValidi, listaSoloPresenti, segniTolti,
-        routineDi, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
+        routineDi, selectedEvent, setSelectedEvent, inRipristino, studentStates, savedStudentIds,
         dataDiario, activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         daSalvare, daTogliere, esitoSalvataggio, orariAttivitaIncoerenti,
         isSaving, showSavedToast,
@@ -1643,6 +1657,15 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 </button>
                             </div>
 
+                            {/* Spento mentre il ripristino legge l'archivio (vedi `ripristinoInVolo`): un
+                                fieldset spegne in un colpo bottoni, campi e Salva, anche quelli dei
+                                pannelli figli. La X della testata resta fuori: chiudere si può sempre. */}
+                            <fieldset
+                                disabled={inRipristino}
+                                aria-busy={inRipristino}
+                                data-diario-riquadro={selectedEvent}
+                                className="m-0 min-w-0 border-0 p-0 transition-opacity aria-busy:opacity-60"
+                            >
                             {/* Contenuto sezione */}
                             <div className="p-4 space-y-2">
                                 {/* ── ROUTINE SPENTA CON VOCI DI OGGI: sola lettura, col cestino (2026-09-28) ── */}
@@ -2094,6 +2117,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 </button>
                             </div>
                             </>)}
+                            </fieldset>
                         </div>
                     </motion.div>
                 )}

@@ -311,13 +311,15 @@ export function posterioriCheContengono(
 // `crm_settimane` «blocca»), `crm_settimane` e `crm_fasce` al posto di `crm_disponibilita` nella RLS e nelle
 // tabelle con `scuola_id` (91); bucket e schema delle candidature solo l'istante dello scatto.
 //
-// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261031195836_form_submissions_senza_policy_browser.sql`
+// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261101161401_form_submissions_senza_policy_browser.sql`
 // toglie le tre policy `fs_*` di `form_submissions` e revoca i grant di `anon`/`authenticated`. La guardia
 // della RLS la vede per `policy`. Cambieranno davvero la fotografia della RLS (−3 policy, la tabella resta
 // in `tabelle_rls_attiva`) e quella delle migrazioni; nessun indice, nessuna FK, nessuna colonna. Si toglie
-// con la PR-B dopo il merge, rigenerando le due fotografie dalla produzione.
+// con la PR-B dopo il merge, rigenerando le due fotografie dalla produzione. RINOMINATA il 01/11/2026
+// (era `20261031195836_…`): le fotografie della #282 sono state scattate alle 13:47:44Z del 01/11, dopo
+// l'istante che il file dichiarava, e non la contengono perché non è ancora applicata.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261031195836_form_submissions_senza_policy_browser.sql':
+    '20261101161401_form_submissions_senza_policy_browser.sql':
         'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
         'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
 }

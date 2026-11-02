@@ -1,6 +1,6 @@
 ## 🔒 Changelog — S-1: nessuna compilazione a nome di un altro, e `form_submissions` chiusa al browser — 2026-10-31 (branch `claude/fix-s1-forms-submit-70e603`)
 
-**Stato:** 🟡 in PR, da mergiare a cura del titolare. La migrazione `20261101161401_form_submissions_senza_policy_browser.sql` la applica l'integrazione al merge, con la version del file (rinominata il 01/11 da `20261031195836_…`, perché le fotografie della #282 sono state scattate dopo quell'istante); la voce in `MIGRAZIONI_ATTESE_AL_MERGE` e le fotografie della RLS e delle migrazioni si sistemano nella PR-B dopo il merge.
+**Stato:** 🟡 in PR, da mergiare a cura del titolare. La migrazione `20261102130156_form_submissions_senza_policy_browser.sql` la applica l'integrazione al merge, con la version del file (rinominata il 01/11 da `20261031195836_…`, perché le fotografie della #282 sono state scattate dopo quell'istante, e il 02/11 da `20261101161401_…`, perché la #284 ha applicato `20261102100040_…` e una version anteriore all'ultima applicata `supabase db push` la rifiuta); la voce in `MIGRAZIONI_ATTESE_AL_MERGE` e le fotografie della RLS e delle migrazioni si sistemano nella PR-B dopo il merge.
 
 **Il difetto** (segnalato dagli agenti del clone il 18/10, riverificato il 31/10 su `origin/main`). `POST /api/forms/submit`, l'invio dei moduli senza firma del Sistema A, leggeva `userId` dal corpo, usava il service-role e non guardava mai la sessione. Chiunque, anche senza account, poteva quindi creare in `form_submissions` una compilazione `completed` intestata a qualunque genitore. Con lo stesso `userId` falso sceglieva anche quale sospensione per morosità controllare (bastava dichiarare un genitore in regola, o non dichiararne nessuno) e in quale sede far finire la riga. La voce dell'allowlist dei gate la giustificava con «il wizard pubblico», che però da lì non passa: il link pubblico `/m/<token>` usa `/api/public/forms/[token]/submit`, anonimo, che scrive `user_id: null`.
 
@@ -10,7 +10,7 @@
 - **L'intestatario è la sessione** (`src/app/api/forms/submit/route.ts`). La route chiama `requireUser` prima di leggere il corpo: anonimo → `401`. Un `userId` nel corpo è ammesso solo se coincide con la sessione; se è diverso → `403 MODULO_INTESTATARIO_NON_PROPRIO`, prima di qualunque lettura, e anche per la segreteria (lo sportello che compila per un genitore passa dalla firma, `forms/send-otp`). Il controllo di sospensione non si salta più omettendo `userId`, e la sede si risolve da chi ha la sessione.
 - **Log.** Il rifiuto scrive `logEvento('modulistica', 'warn', { operazione, esito: 'intestatario-non-proprio', utente, ruolo })`, che finisce in `app_log`: solo uuid e ruolo, nessun dato del modulo. Il resto dei log della route (successo `compilazione-registrata`, guasti) non cambia.
 - **Le route vicine** hanno già un gate e non leggono l'identità dal corpo: `forms/send-otp` (`requireUser`, `userId` ≠ sessione → `403`, salvo lo sportello), `forms/signed-pdf` (sessione verificata), `forms/upload` (`requireUser`), `forms/delibera` e i tre `forms/export/*` (`requireStaff`). Non sono state toccate.
-- **Le policy `fs_*`** (migrazione `20261101161401_form_submissions_senza_policy_browser.sql`). Dal 2026-05 nessun client di sessione legge o scrive `form_submissions`: 13 file in `src/`, tutti col service-role. Le tre policy però restavano aperte a chiunque avesse una sessione, con la chiave anon del bundle. `fs_insert_authenticated` permetteva di inserire una riga propria o senza intestatario con qualunque colonna (`status='completed'`, `signed_at`, `signature_log`, `consents_log`, `score`, `esito_ammissione`, sede): un modulo «firmato» senza OTP, o una compilazione nella sede di un altro plesso. `fs_update_owner` permetteva di cambiare le stesse colonne sulle proprie righe, compresi punteggio ed esito della graduatoria. `fs_select_owner` permetteva di leggere `otp_secret`, lo sha256 di `<id>:<6 cifre>`, che si ricava subito: nella firma congiunta (DL-031) l'intestatario avrebbe letto il codice mandato al secondo genitore e firmato al suo posto. La migrazione toglie le tre policy e revoca i grant di `anon` e `authenticated`. Nessuna riga viene toccata, e il service-role non cambia.
+- **Le policy `fs_*`** (migrazione `20261102130156_form_submissions_senza_policy_browser.sql`). Dal 2026-05 nessun client di sessione legge o scrive `form_submissions`: 13 file in `src/`, tutti col service-role. Le tre policy però restavano aperte a chiunque avesse una sessione, con la chiave anon del bundle. `fs_insert_authenticated` permetteva di inserire una riga propria o senza intestatario con qualunque colonna (`status='completed'`, `signed_at`, `signature_log`, `consents_log`, `score`, `esito_ammissione`, sede): un modulo «firmato» senza OTP, o una compilazione nella sede di un altro plesso. `fs_update_owner` permetteva di cambiare le stesse colonne sulle proprie righe, compresi punteggio ed esito della graduatoria. `fs_select_owner` permetteva di leggere `otp_secret`, lo sha256 di `<id>:<6 cifre>`, che si ricava subito: nella firma congiunta (DL-031) l'intestatario avrebbe letto il codice mandato al secondo genitore e firmato al suo posto. La migrazione toglie le tre policy e revoca i grant di `anon` e `authenticated`. Nessuna riga viene toccata, e il service-role non cambia.
 
 **Test.** `__tests__/api/forms-submit-identita.test.ts` (nuovo, 8 casi): `userId` di un altro → `403`, nessuna riga, nessuna lettura di `utenti` né sospensione a suo nome; il rifiuto in `warn` con i soli campi attesi; la segreteria → `403`; anonimo → `401`, anche se dichiara un `userId`; `userId` uguale alla sessione o assente → `201` con sede e sospensione della sessione; il modulo pubblico resta `201` anonimo con `user_id` null, anche se il corpo dichiara un genitore. Sul codice di prima falliscono 6 casi su 8; togliendo il solo confronto con la sessione ne falliscono 3. `forms-submit.test.ts` e `modulistica-submit-sede.test.ts` ora passano da una sessione. Lock aggiornati: `gate-coverage` (la voce `forms/submit:POST` esce dall'allowlist, tetto 23 → 22), `soglia-fotografia` (la migrazione è in `MIGRAZIONI_ATTESE_AL_MERGE`), codice d'errore `MODULO_INTESTATARIO_NON_PROPRIO` dichiarato in `CODICI_ERRORE` e nei due cataloghi.
 **Cambia per le famiglie.** Niente: il wizard manda già l'id della propria sessione. Chi aprisse `/parent/forms/<id>?userId=<altro>` riceve un rifiuto invece di intestare il modulo a un altro.
@@ -18,6 +18,123 @@
 **Da decidere al titolare.** (1) `forms/send-otp` permette allo sportello (admin, coordinatrice, segreteria) di intestare una firma a un genitore, mentre `forms/submit` no: se lo sportello deve poter compilare per un genitore anche senza firma, è una riga, ma va decisa. (2) La pagina `/parent/forms/[id]` legge ancora `?userId=` dall'indirizzo e lo passa al wizard: ora il server lo rifiuta, ma si può togliere del tutto.
 
 **Dopo il merge.** Una `SELECT` su `pg_policies` deve dare 0 policy su `form_submissions` e `information_schema.role_table_grants` nessun grant per `anon`/`authenticated`; `get_advisors` senza ERROR (l'advisor «RLS accesa senza policy» è un INFO atteso, come per le tabelle del CRM); poi la PR-B: fotografie della RLS e delle migrazioni rigenerate, voce tolta da `MIGRAZIONI_ATTESE_AL_MERGE`, questa voce a «in produzione».
+
+## 🗳️ Changelog — Votazioni dei rappresentanti dei genitori, di classe e d'istituto — 2026-11-02 (branch `feat/votazioni-rappresentanti`)
+
+**Stato:** 🟡 sul branch `feat/votazioni-rappresentanti`, PR verso `main`, CI verde con lo spec E2E delle votazioni eseguito davvero; il merge lo fa il titolare. **Collaudata il 02/11 sulla sede Demo** (sezione «Collaudo» più sotto). Le tabelle sono **già in produzione**: per il collaudo il titolare ha chiesto all'assistente di applicare lui la migrazione `20261102100040_votazioni_rappresentanti.sql`, ed è stata eseguita il 02/11 con `execute_sql`. Lo storico delle migrazioni non ne porta traccia, quindi al merge l'integrazione riapplica il file, che è idempotente, e scrive una riga sola. Il codice di `main` non legge queste tabelle, quindi averle prima del deploy non cambia niente. Le fotografie dalla produzione, le tracce delle FK verso `utenti` e la voce in `MIGRAZIONI_ATTESE_AL_MERGE` si sistemano nella PR-B dopo il merge, come per il CRM. Specifica approvata dal titolare: `docs/superpowers/specs/2026-11-02-votazioni-rappresentanti-design.md`; piano: `docs/superpowers/plans/2026-11-02-votazioni-rappresentanti.md`.
+
+**Perché.** Kidville vuole eleggere dall'app i rappresentanti dei genitori. Ogni genitore vota un genitore della propria classe come rappresentante di classe; per l'istituto vota uno dei candidati scelti dalla segreteria, con un rappresentante per sede (Giugliano, Aversa, Cesa). Prima nell'app non c'era nulla del genere. I sondaggi della modulistica salvano per famiglia e non hanno liste di candidati per classe.
+
+**Decisioni del titolare** (02/11):
+- il voto **non è segreto**: la segreteria vede chi ha votato chi. Lo si dice nell'avviso alle famiglie, la scheda non porta nessuna scritta;
+- sulla scheda di classe compaiono i nomi di tutti i genitori della classe;
+- la segreteria fissa una scadenza e sceglie se aprire solo le elezioni di classe o anche quella d'istituto. Può aprirle anche per una classe sola;
+- il voto si cambia fino alla scadenza e vale l'ultimo;
+- i risultati li vede solo la segreteria;
+- nessuna notifica automatica;
+- la segreteria può chiudere in anticipo e prorogare;
+- votano e sono candidabili anche i genitori morosi.
+
+Scelte dell'assistente, non contestate:
+- votano entrambi i genitori, ognuno con il proprio account;
+- chi ha figli in più classi vota in ciascuna, e una volta per sede per l'istituto;
+- ci si può votare da soli;
+- il nido è incluso;
+- vince chi ha più voti, in parità decide la segreteria.
+
+**Misura «prima»** (02/11, sola lettura, conteggi):
+- 37 classi in 3 sedi, 10 del nido;
+- 913 genitori legati ad alunni attivi, 852 con account;
+- 251 bambini con entrambi i genitori con account;
+- 151 genitori con figli in classi diverse, 4 in sedi diverse.
+
+Votano e si votano solo i genitori **con account** (852 su 913), perché l'identità del voto è `utenti.id`, la stessa del login.
+
+**Schema** (`supabase/migrations/20261102100040_votazioni_rappresentanti.sql`, idempotente). Quattro tabelle, tutte con `scuola_id`, RLS accesa e **nessuna policy**, `REVOKE` ad `anon`/`authenticated`:
+- `votazioni` (la tornata: titolo di 1-120 caratteri, `scadenza`, `chiusa_il`, `rappresentante_istituto`, `creata_da`/`aggiornata_da` verso `utenti`, `UNIQUE (id, scuola_id)`);
+- `votazioni_classi` e `votazioni_candidati` (i candidati d'istituto), con FK composta `(votazione_id, scuola_id)` `ON DELETE CASCADE`;
+- `votazioni_voti`: `ambito` (`classe`/`istituto`), `section_id` presente se e solo se l'ambito è di classe, `elettore_id` e `candidato_id` verso `utenti`. `UNIQUE NULLS NOT DISTINCT (votazione_id, ambito, section_id, elettore_id)`: un voto per elettore e per scheda, e il cambio è un `update` della stessa riga. Niente `.upsert()`: si legge, poi `insert` o `update`; su `23505` (due richieste insieme) si rilegge e si aggiorna.
+
+**Chi ha diritto** si calcola al momento del voto, non all'apertura (`src/lib/votazioni/aventi-diritto.ts`, `ammissione-genitore.ts`). Contano gli alunni della classe (`section_id`) negli stati con canale famiglia e non archiviati. Si passa ai genitori con `getGenitoriDiAlunniEsito`, che unisce `student_parents` e `legame_genitori_alunni`, e i nomi vengono dagli utenti attivi. Una scheda compare al genitore solo se il voto gli sarebbe accettato: la regola è la stessa per la lettura e per il voto.
+
+**Permessi.**
+- Segreteria (`requireVotazioni`, `RUOLI_VOTAZIONI = admin, coordinator, segreteria`): la sede si legge con `resolveScuoleAttive` più `restringiSedi` e si scrive con `resolveScuolaScrittura`. Una votazione di un'altra sede risponde `403 SEDE_NON_ACCESSIBILE` senza leggere altro, una che non esiste `404 VOTAZIONE_NON_TROVATA`.
+- Genitore (`requireUser`): l'elettore è **sempre** l'utente della sessione, mai un campo del corpo. Il voto è rifiutato se:
+  - la votazione è chiusa o scaduta (`409 VOTAZIONE_CHIUSA`);
+  - il genitore non ha figli in quella classe o sede (`403 VOTO_ELETTORE_NON_AMMESSO`);
+  - il candidato è fuori lista (`400 VOTAZIONE_CANDIDATO_NON_VALIDO`).
+
+  Nessun gate di morosità.
+
+**Regole della tornata:**
+- una classe sta in una sola votazione aperta alla volta, e lo stesso vale per l'istituto di una sede (`409 VOTAZIONE_CLASSE_GIA_APERTA` / `VOTAZIONE_ISTITUTO_GIA_APERTA`);
+- la chiusura anticipata è definitiva;
+- la proroga vale finché la votazione non è stata chiusa a mano, e una votazione scaduta da sola la proroga la riapre;
+- si elimina solo una votazione senza voti (`409 VOTAZIONE_CON_VOTI`);
+- dopo la scadenza la scheda sparisce al genitore.
+
+**Schermate.**
+- `/admin/votazioni`, voce «Votazioni» nel gruppo Comunicazione del menu (28 voci), per admin, coordinatrici e segreteria:
+  - l'elenco delle votazioni della sede con lo stato, la scadenza, le classi e i votanti;
+  - «Nuova votazione»: titolo precompilato, classi a spunta per grado, interruttore «Anche rappresentante d'istituto» con la ricerca dei candidati, scadenza in ora di Roma;
+  - il dettaglio (`?id=`) con una sezione per scheda: affluenza, voti per candidato, eletto oppure «parità: decide la segreteria», e la tabella **chi ha votato chi** con l'ora del voto e il segno «modificato»;
+  - le azioni Chiudi ora, Proroga ed Elimina.
+- `/parent/votazioni`: una scheda per ogni classe dei figli con l'elezione aperta, più una per l'istituto di ogni sede. Ogni scheda ha i candidati con la ricerca e i pulsanti «Vota» / «Cambia voto». In home la card compare solo quando c'è qualcosa da votare. Non c'è una voce di menu.
+
+**Log.** Ogni route è avvolta in `withRoute` e validata con `zod`. Gli eventi vanno in `logEvento('votazioni', …)` (`votazioni` in `EVENTI_NOTI` e `EVENTI_PERSISTITI`): apertura, chiusura, proroga, eliminazione e ogni voto, compreso il successo. Si registrano solo uuid ed esiti, mai un nome. Nessuna chiave contiene «voto», perché la redazione la oscurerebbe. Le scritture della segreteria passano anche da `logScrittura`. Lo schema assente (`PGRST205`, `42P01`, `42703`, `PGRST204`) dà `503 VOTAZIONI_NON_DISPONIBILI` alla segreteria e `{ disponibile: false }` al genitore, così la card non compare; il resto dà `500 VOTAZIONE_OPERAZIONE_NON_RIUSCITA`.
+
+**Lock nuovo:** `votazioni-gate-requirevotazioni`, che controlla che ogni handler sotto `src/app/api/admin/votazioni/` chiami `requireVotazioni` prima del client service-role. **Lock aggiornati:**
+- `isolamento-sede-coverage`: `routeConServiceRole` 379 → 384 e `handlerControllati` 586 → 594, perché si aggiungono le route delle votazioni, tutte con gate di sede;
+- `soglia-fotografia`: la migrazione entra in `MIGRAZIONI_ATTESE_AL_MERGE`;
+- `admin-nav-config`;
+- Service Worker `v17`, per le etichette offline delle due rotte nuove.
+
+**Prove.**
+- Test della migrazione su PGlite, applicata due volte.
+- Test unitari della libreria e delle API di segreteria e genitore, con il cambio voto e la corsa su `23505`.
+- Test delle schermate.
+- E2E `e2e/votazioni.spec.ts` in CI: la segreteria apre una votazione per la Girasoli più l'istituto; il genitore vota in classe, vota l'istituto e cambia quel voto; la segreteria vede chi ha votato chi, con il segno «modificato», e chiude; il genitore non trova più schede. Il cambio di voto si prova sull'istituto perché nella classe E2E c'è un solo genitore con account. Lo spec pulisce le votazioni delle sedi E2E prima e dopo ogni giro, per i retry; lo stesso fa `scripts/seed-e2e.mjs` all'avvio. Lo spec salta se il DB della CI non ha le tabelle.
+
+**Collaudo** (02/11, sede «Kidville Demo», con gli account TEST). Server locale `:3100` con il codice del branch, sul database di produzione.
+- Segreteria nel browser integrato:
+  - apertura di TEST Infanzia GIU (10 aventi diritto) e TEST 1A GIU (9) più l'istituto (21; due candidati), con scadenza il giorno dopo;
+  - una seconda apertura con Infanzia GIU risponde 409 con un messaggio chiaro;
+  - una votazione di prova è stata prorogata e poi eliminata (senza voti);
+  - risultati, eletto, affluenza e «chi ha votato chi» con il segno «modificato» sono esatti;
+  - «Elimina» non compare finché ci sono voti; dopo «Chiudi ora», con conferma, sparisce anche «Proroga».
+- Genitori nell'app nativa con il server locale. iPhone (simulatore iOS) e Android (emulatore), con quattro situazioni:
+  - genitore con due figli nella stessa classe: una sola scheda di classe;
+  - genitore moroso: vota;
+  - genitore con il figlio in una classe non inclusa: solo la scheda d'istituto;
+  - genitore che vota sé stesso.
+
+  Funzionano:
+  - la card in home col numero di schede;
+  - la ricerca;
+  - «Vota» spento finché non si sceglie;
+  - «Hai votato», «Voto registrato» e «Cambia voto», che aggiorna la stessa riga;
+  - nessuna voce di menu.
+- Dopo la chiusura un voto inviato da una pagina rimasta aperta è respinto («La votazione è chiusa: il voto non è stato registrato.»), la pagina passa a «Non ci sono votazioni aperte» e la card sparisce dalla home su tutti e due i telefoni. Sul database: 5 voti, 1 modificato, nessuna scrittura dopo la chiusura.
+- Rete senza errori.
+- Il sospetto di caselle delle classi senza nome accessibile era un falso allarme: ognuna è associata alla propria etichetta, e «on» era il `value` predefinito della casella.
+
+Note minori, non corrette per non cambiare il codice dopo il collaudo:
+- l'errore 409 resta nel modulo dopo aver cambiato le classi scelte, fino al tentativo successivo;
+- il messaggio di conflitto non dice quale classe è già aperta;
+- su Android l'avviso d'idratazione su `<html>` è preesistente (lo `style` delle safe-area iniettato da Capacitor) e non riguarda le votazioni.
+
+La votazione di prova, chiusa e con 5 voti, resta nella sede Demo: si toglie dall'editor SQL (il freno nega `DELETE` all'assistente).
+
+**Limiti noti:**
+- l'apertura controlla i conflitti fra votazioni prima di scrivere, senza un vincolo nel database: due aperture simultanee della stessa classe da due postazioni potrebbero passare entrambe;
+- la proroga può anche accorciare la scadenza, purché verso una data futura;
+- un genitore senza account non compare sulla scheda.
+
+**Passi del titolare:**
+1. il merge della PR;
+2. togliere dall'editor SQL la votazione di prova della sede Demo (le righe figlie vanno via in cascata);
+3. l'avviso alle famiglie che spiega che la segreteria vede chi ha votato chi;
+4. aprire la prima votazione dalla pagina «Votazioni».
 
 ## 🗂️ Changelog — CRM, il lavoro dopo la #276: fotografie dalla produzione, tracce dello staff, oblio dell'alunno nel CRM, anno d'ingresso nella scheda — 2026-11-01 (branch `chore/crm-pr-b`)
 

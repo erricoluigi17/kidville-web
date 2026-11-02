@@ -777,5 +777,18 @@
   "erroreCrmAlunnoNonDellaSede": "The selected student does not belong to this location.",
   "erroreCrmAlunnoGiaCollegato": "The child or the selected student is already linked: remove the existing link first.",
   "erroreCrmSettimanaPassata": "That week is already over and can no longer be edited.",
-  "erroreCrmFasceSovrapposte": "Two time slots on the same day overlap. Please fix the times."
+  "erroreCrmFasceSovrapposte": "Two time slots on the same day overlap. Please fix the times.",
+  "erroreVotazioniNonDisponibili": "Elections are not yet available in this environment.",
+  "erroreVotazioneNonTrovata": "Election not found.",
+  "erroreVotazioneChiusa": "The election is closed: your vote was not recorded.",
+  "erroreVotazioneClasseGiaAperta": "One of the selected classes already has an open election. Close it before opening another.",
+  "erroreVotazioneIstitutoGiaAperta": "This location already has an open election for the school representative.",
+  "erroreVotazioneConVoti": "The election already has votes and cannot be deleted.",
+  "erroreVotazioneSenzaSchede": "Select at least one class or the school representative.",
+  "erroreVotazioneScadenzaPassata": "The deadline must be a future date.",
+  "erroreVotazioneClasseFuoriSede": "One of the selected classes does not belong to this location.",
+  "erroreVotazioneCandidatiMancanti": "Add at least one candidate for the school representative.",
+  "erroreVotazioneCandidatoNonValido": "The selected candidate cannot be voted for on this ballot.",
+  "erroreVotoElettoreNonAmmesso": "You cannot vote on this ballot.",
+  "erroreVotazioneOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly."
 }

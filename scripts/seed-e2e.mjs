@@ -1152,6 +1152,50 @@ async function ripulisciVideoE2E() {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * LE VOTAZIONI DEI RAPPRESENTANTI lasciate dai run precedenti
+ *
+ * ─── PERCHÉ SI CANCELLANO ──────────────────────────────────────────────────────
+ * `e2e/votazioni.spec.ts` apre una votazione per la classe Girasoli della sede E2E (più l'istituto) e la
+ * chiude a mano. La regola del prodotto è che una classe sta in UNA sola votazione aperta alla volta, e lo
+ * stesso vale per l'istituto di una sede: il database E2E della CI è persistente, quindi una votazione
+ * rimasta aperta da un giro morto a metà farebbe rispondere 409 (`VOTAZIONE_CLASSE_GIA_APERTA` /
+ * `VOTAZIONE_ISTITUTO_GIA_APERTA`) a ogni giro successivo — un rosso che accuserebbe il prodotto. Una
+ * votazione aperta rimasta lì mostrerebbe inoltre la card «Votazioni aperte» nella home di `GENITORE` a
+ * tutti gli altri spec.
+ *
+ * ─── COSA TOGLIE ───────────────────────────────────────────────────────────────
+ * Le votazioni delle DUE sedi E2E (`SCUOLA`, `SCUOLA2`) e nient'altro: classi, candidati e voti se ne vanno
+ * per CASCADE (le tre tabelle figlie hanno la FK composta `(votazione_id, scuola_id)` ON DELETE CASCADE).
+ * Mai una riga di un'altra sede: il filtro è sul `scuola_id`, e questo seed rifiuta di girare su un
+ * database che non sia quello isolato della CI.
+ *
+ * ⚠️ NON USA `must()`, come `ripulisciVideoE2E`: il database E2E della CI non è migrato da solo
+ * (`migrate-ci.yml`, a mano), e finché non lo è le tabelle non ci sono (`PGRST205`/`42P01`). Far morire
+ * l'INTERA suite prima del primo test per la pulizia di una funzionalità che là non esiste sarebbe il
+ * danno peggiore del difetto: si avvisa NOMINANDO il passo, e si prosegue (lo spec salta da sé).
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+async function ripulisciVotazioniE2E() {
+  const assente = (e) => /PGRST205|42P01|42703|PGRST204|does not exist|schema cache/i.test(
+    `${e?.code ?? ''} ${e?.message ?? ''}`,
+  );
+  try {
+    const { data, error } = await db
+      .from('votazioni')
+      .delete()
+      .in('scuola_id', [IDS.SCUOLA, IDS.SCUOLA2])
+      .select('id');
+    if (error) {
+      if (assente(error)) console.warn('↷ reset votazioni saltato: le tabelle delle votazioni non ci sono su questo database');
+      else console.error(`reset votazioni E2E: ${error.code ?? ''} ${error.message ?? JSON.stringify(error)}`);
+      return;
+    }
+    console.log(`  🗳️ votazioni E2E: ${(data ?? []).length} dei run precedenti tolte`);
+  } catch (errore) {
+    console.error('reset votazioni E2E (eccezione):', errore?.message ?? errore);
+  }
+}
+
 async function main() {
   console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2,
     '· sede visibile ai moduli pubblici', IDS.SCUOLA_COLLAUDO);
@@ -1402,6 +1446,9 @@ async function main() {
   // I video lasciati dai run precedenti (intenti, job, byte, la riga di galleria del video pubblicato):
   // vedi `ripulisciVideoE2E`. Non usa `must()` — la pipeline video può non esserci su questo database.
   await ripulisciVideoE2E();
+  // Le votazioni dei rappresentanti (classi, candidati e voti per CASCADE): vedi `ripulisciVotazioniE2E`.
+  // Anche questa non usa `must()` — le tabelle possono non esserci su questo database.
+  await ripulisciVotazioniE2E();
 
   // Avvisi: prima le RISPOSTE (FK avvisi_risposte.avviso_id → avvisi.id), poi
   // gli avvisi creati dai test. Fino al 2026-07-31 si cancellavano solo le

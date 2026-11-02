@@ -24,7 +24,9 @@
       "/anagrafica-personale": "Your personal details",
       "/cancellazione-account": "Account deletion",
       "/cancellazione-account/conferma": "Confirm deletion",
-      "/admin/storici": "Archives and printing"
+      "/admin/storici": "Archives and printing",
+      "/admin/votazioni": "Elections",
+      "/parent/votazioni": "Elections"
     },
     "segmenti": {
       "alunni": "Students",

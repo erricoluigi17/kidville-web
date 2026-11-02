@@ -1,6 +1,6 @@
 ## 🗳️ Changelog — Votazioni dei rappresentanti dei genitori, di classe e d'istituto — 2026-11-02 (branch `feat/votazioni-rappresentanti`)
 
-**Stato:** 🟡 sul branch `feat/votazioni-rappresentanti`, PR verso `main`; il merge lo fa il titolare. La migrazione `20261102100040_votazioni_rappresentanti.sql` la applica l'integrazione al merge. Le fotografie dalla produzione, le tracce delle FK verso `utenti` e la voce in `MIGRAZIONI_ATTESE_AL_MERGE` si sistemano nella PR-B dopo il merge, come per il CRM. Specifica approvata dal titolare: `docs/superpowers/specs/2026-11-02-votazioni-rappresentanti-design.md`; piano: `docs/superpowers/plans/2026-11-02-votazioni-rappresentanti.md`.
+**Stato:** 🟡 sul branch `feat/votazioni-rappresentanti`, PR verso `main`, CI verde con lo spec E2E delle votazioni eseguito davvero; il merge lo fa il titolare. **Collaudata il 02/11 sulla sede Demo** (sezione «Collaudo» più sotto). Le tabelle sono **già in produzione**: per il collaudo il titolare ha chiesto all'assistente di applicare lui la migrazione `20261102100040_votazioni_rappresentanti.sql`, ed è stata eseguita il 02/11 con `execute_sql`. Lo storico delle migrazioni non ne porta traccia, quindi al merge l'integrazione riapplica il file, che è idempotente, e scrive una riga sola. Il codice di `main` non legge queste tabelle, quindi averle prima del deploy non cambia niente. Le fotografie dalla produzione, le tracce delle FK verso `utenti` e la voce in `MIGRAZIONI_ATTESE_AL_MERGE` si sistemano nella PR-B dopo il merge, come per il CRM. Specifica approvata dal titolare: `docs/superpowers/specs/2026-11-02-votazioni-rappresentanti-design.md`; piano: `docs/superpowers/plans/2026-11-02-votazioni-rappresentanti.md`.
 
 **Perché.** Kidville vuole eleggere dall'app i rappresentanti dei genitori. Ogni genitore vota un genitore della propria classe come rappresentante di classe; per l'istituto vota uno dei candidati scelti dalla segreteria, con un rappresentante per sede (Giugliano, Aversa, Cesa). Prima nell'app non c'era nulla del genere. I sondaggi della modulistica salvano per famiglia e non hanno liste di candidati per classe.
 
@@ -74,16 +74,46 @@ Votano e si votano solo i genitori **con account** (852 su 913), perché l'ident
 - Test delle schermate.
 - E2E `e2e/votazioni.spec.ts` in CI: la segreteria apre una votazione per la Girasoli più l'istituto; il genitore vota in classe, vota l'istituto e cambia quel voto; la segreteria vede chi ha votato chi, con il segno «modificato», e chiude; il genitore non trova più schede. Il cambio di voto si prova sull'istituto perché nella classe E2E c'è un solo genitore con account. Lo spec pulisce le votazioni delle sedi E2E prima e dopo ogni giro, per i retry; lo stesso fa `scripts/seed-e2e.mjs` all'avvio. Lo spec salta se il DB della CI non ha le tabelle.
 
+**Collaudo** (02/11, sede «Kidville Demo», con gli account TEST). Server locale `:3100` con il codice del branch, sul database di produzione.
+- Segreteria nel browser integrato:
+  - apertura di TEST Infanzia GIU (10 aventi diritto) e TEST 1A GIU (9) più l'istituto (21; due candidati), con scadenza il giorno dopo;
+  - una seconda apertura con Infanzia GIU risponde 409 con un messaggio chiaro;
+  - una votazione di prova è stata prorogata e poi eliminata (senza voti);
+  - risultati, eletto, affluenza e «chi ha votato chi» con il segno «modificato» sono esatti;
+  - «Elimina» non compare finché ci sono voti; dopo «Chiudi ora», con conferma, sparisce anche «Proroga».
+- Genitori nell'app nativa con il server locale. iPhone (simulatore iOS) e Android (emulatore), con quattro situazioni:
+  - genitore con due figli nella stessa classe: una sola scheda di classe;
+  - genitore moroso: vota;
+  - genitore con il figlio in una classe non inclusa: solo la scheda d'istituto;
+  - genitore che vota sé stesso.
+
+  Funzionano:
+  - la card in home col numero di schede;
+  - la ricerca;
+  - «Vota» spento finché non si sceglie;
+  - «Hai votato», «Voto registrato» e «Cambia voto», che aggiorna la stessa riga;
+  - nessuna voce di menu.
+- Dopo la chiusura un voto inviato da una pagina rimasta aperta è respinto («La votazione è chiusa: il voto non è stato registrato.»), la pagina passa a «Non ci sono votazioni aperte» e la card sparisce dalla home su tutti e due i telefoni. Sul database: 5 voti, 1 modificato, nessuna scrittura dopo la chiusura.
+- Rete senza errori.
+- Il sospetto di caselle delle classi senza nome accessibile era un falso allarme: ognuna è associata alla propria etichetta, e «on» era il `value` predefinito della casella.
+
+Note minori, non corrette per non cambiare il codice dopo il collaudo:
+- l'errore 409 resta nel modulo dopo aver cambiato le classi scelte, fino al tentativo successivo;
+- il messaggio di conflitto non dice quale classe è già aperta;
+- su Android l'avviso d'idratazione su `<html>` è preesistente (lo `style` delle safe-area iniettato da Capacitor) e non riguarda le votazioni.
+
+La votazione di prova, chiusa e con 5 voti, resta nella sede Demo: si toglie dall'editor SQL (il freno nega `DELETE` all'assistente).
+
 **Limiti noti:**
-- nessuna prova su un browser vero in locale: il server `:3100` parla col database di produzione, dove le tabelle nasceranno solo al merge;
 - l'apertura controlla i conflitti fra votazioni prima di scrivere, senza un vincolo nel database: due aperture simultanee della stessa classe da due postazioni potrebbero passare entrambe;
 - la proroga può anche accorciare la scadenza, purché verso una data futura;
 - un genitore senza account non compare sulla scheda.
 
 **Passi del titolare:**
 1. il merge della PR;
-2. l'avviso alle famiglie che spiega che la segreteria vede chi ha votato chi;
-3. aprire la prima votazione dalla pagina «Votazioni».
+2. togliere dall'editor SQL la votazione di prova della sede Demo (le righe figlie vanno via in cascata);
+3. l'avviso alle famiglie che spiega che la segreteria vede chi ha votato chi;
+4. aprire la prima votazione dalla pagina «Votazioni».
 
 ## 🗂️ Changelog — CRM, il lavoro dopo la #276: fotografie dalla produzione, tracce dello staff, oblio dell'alunno nel CRM, anno d'ingresso nella scheda — 2026-11-01 (branch `chore/crm-pr-b`)
 

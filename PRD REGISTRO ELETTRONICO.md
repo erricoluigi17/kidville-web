@@ -1,3 +1,90 @@
+## 🗳️ Changelog — Votazioni dei rappresentanti dei genitori, di classe e d'istituto — 2026-11-02 (branch `feat/votazioni-rappresentanti`)
+
+**Stato:** 🟡 sul branch `feat/votazioni-rappresentanti`, PR verso `main`; il merge lo fa il titolare. La migrazione `20261102100040_votazioni_rappresentanti.sql` la applica l'integrazione al merge. Le fotografie dalla produzione, le tracce delle FK verso `utenti` e la voce in `MIGRAZIONI_ATTESE_AL_MERGE` si sistemano nella PR-B dopo il merge, come per il CRM. Specifica approvata dal titolare: `docs/superpowers/specs/2026-11-02-votazioni-rappresentanti-design.md`; piano: `docs/superpowers/plans/2026-11-02-votazioni-rappresentanti.md`.
+
+**Perché.** Kidville vuole eleggere dall'app i rappresentanti dei genitori. Ogni genitore vota un genitore della propria classe come rappresentante di classe; per l'istituto vota uno dei candidati scelti dalla segreteria, con un rappresentante per sede (Giugliano, Aversa, Cesa). Prima nell'app non c'era nulla del genere. I sondaggi della modulistica salvano per famiglia e non hanno liste di candidati per classe.
+
+**Decisioni del titolare** (02/11):
+- il voto **non è segreto**: la segreteria vede chi ha votato chi. Lo si dice nell'avviso alle famiglie, la scheda non porta nessuna scritta;
+- sulla scheda di classe compaiono i nomi di tutti i genitori della classe;
+- la segreteria fissa una scadenza e sceglie se aprire solo le elezioni di classe o anche quella d'istituto. Può aprirle anche per una classe sola;
+- il voto si cambia fino alla scadenza e vale l'ultimo;
+- i risultati li vede solo la segreteria;
+- nessuna notifica automatica;
+- la segreteria può chiudere in anticipo e prorogare;
+- votano e sono candidabili anche i genitori morosi.
+
+Scelte dell'assistente, non contestate:
+- votano entrambi i genitori, ognuno con il proprio account;
+- chi ha figli in più classi vota in ciascuna, e una volta per sede per l'istituto;
+- ci si può votare da soli;
+- il nido è incluso;
+- vince chi ha più voti, in parità decide la segreteria.
+
+**Misura «prima»** (02/11, sola lettura, conteggi):
+- 37 classi in 3 sedi, 10 del nido;
+- 913 genitori legati ad alunni attivi, 852 con account;
+- 251 bambini con entrambi i genitori con account;
+- 151 genitori con figli in classi diverse, 4 in sedi diverse.
+
+Votano e si votano solo i genitori **con account** (852 su 913), perché l'identità del voto è `utenti.id`, la stessa del login.
+
+**Schema** (`supabase/migrations/20261102100040_votazioni_rappresentanti.sql`, idempotente). Quattro tabelle, tutte con `scuola_id`, RLS accesa e **nessuna policy**, `REVOKE` ad `anon`/`authenticated`:
+- `votazioni` (la tornata: titolo di 1-120 caratteri, `scadenza`, `chiusa_il`, `rappresentante_istituto`, `creata_da`/`aggiornata_da` verso `utenti`, `UNIQUE (id, scuola_id)`);
+- `votazioni_classi` e `votazioni_candidati` (i candidati d'istituto), con FK composta `(votazione_id, scuola_id)` `ON DELETE CASCADE`;
+- `votazioni_voti`: `ambito` (`classe`/`istituto`), `section_id` presente se e solo se l'ambito è di classe, `elettore_id` e `candidato_id` verso `utenti`. `UNIQUE NULLS NOT DISTINCT (votazione_id, ambito, section_id, elettore_id)`: un voto per elettore e per scheda, e il cambio è un `update` della stessa riga. Niente `.upsert()`: si legge, poi `insert` o `update`; su `23505` (due richieste insieme) si rilegge e si aggiorna.
+
+**Chi ha diritto** si calcola al momento del voto, non all'apertura (`src/lib/votazioni/aventi-diritto.ts`, `ammissione-genitore.ts`). Contano gli alunni della classe (`section_id`) negli stati con canale famiglia e non archiviati. Si passa ai genitori con `getGenitoriDiAlunniEsito`, che unisce `student_parents` e `legame_genitori_alunni`, e i nomi vengono dagli utenti attivi. Una scheda compare al genitore solo se il voto gli sarebbe accettato: la regola è la stessa per la lettura e per il voto.
+
+**Permessi.**
+- Segreteria (`requireVotazioni`, `RUOLI_VOTAZIONI = admin, coordinator, segreteria`): la sede si legge con `resolveScuoleAttive` più `restringiSedi` e si scrive con `resolveScuolaScrittura`. Una votazione di un'altra sede risponde `403 SEDE_NON_ACCESSIBILE` senza leggere altro, una che non esiste `404 VOTAZIONE_NON_TROVATA`.
+- Genitore (`requireUser`): l'elettore è **sempre** l'utente della sessione, mai un campo del corpo. Il voto è rifiutato se:
+  - la votazione è chiusa o scaduta (`409 VOTAZIONE_CHIUSA`);
+  - il genitore non ha figli in quella classe o sede (`403 VOTO_ELETTORE_NON_AMMESSO`);
+  - il candidato è fuori lista (`400 VOTAZIONE_CANDIDATO_NON_VALIDO`).
+
+  Nessun gate di morosità.
+
+**Regole della tornata:**
+- una classe sta in una sola votazione aperta alla volta, e lo stesso vale per l'istituto di una sede (`409 VOTAZIONE_CLASSE_GIA_APERTA` / `VOTAZIONE_ISTITUTO_GIA_APERTA`);
+- la chiusura anticipata è definitiva;
+- la proroga vale finché la votazione non è stata chiusa a mano, e una votazione scaduta da sola la proroga la riapre;
+- si elimina solo una votazione senza voti (`409 VOTAZIONE_CON_VOTI`);
+- dopo la scadenza la scheda sparisce al genitore.
+
+**Schermate.**
+- `/admin/votazioni`, voce «Votazioni» nel gruppo Comunicazione del menu (28 voci), per admin, coordinatrici e segreteria:
+  - l'elenco delle votazioni della sede con lo stato, la scadenza, le classi e i votanti;
+  - «Nuova votazione»: titolo precompilato, classi a spunta per grado, interruttore «Anche rappresentante d'istituto» con la ricerca dei candidati, scadenza in ora di Roma;
+  - il dettaglio (`?id=`) con una sezione per scheda: affluenza, voti per candidato, eletto oppure «parità: decide la segreteria», e la tabella **chi ha votato chi** con l'ora del voto e il segno «modificato»;
+  - le azioni Chiudi ora, Proroga ed Elimina.
+- `/parent/votazioni`: una scheda per ogni classe dei figli con l'elezione aperta, più una per l'istituto di ogni sede. Ogni scheda ha i candidati con la ricerca e i pulsanti «Vota» / «Cambia voto». In home la card compare solo quando c'è qualcosa da votare. Non c'è una voce di menu.
+
+**Log.** Ogni route è avvolta in `withRoute` e validata con `zod`. Gli eventi vanno in `logEvento('votazioni', …)` (`votazioni` in `EVENTI_NOTI` e `EVENTI_PERSISTITI`): apertura, chiusura, proroga, eliminazione e ogni voto, compreso il successo. Si registrano solo uuid ed esiti, mai un nome. Nessuna chiave contiene «voto», perché la redazione la oscurerebbe. Le scritture della segreteria passano anche da `logScrittura`. Lo schema assente (`PGRST205`, `42P01`, `42703`, `PGRST204`) dà `503 VOTAZIONI_NON_DISPONIBILI` alla segreteria e `{ disponibile: false }` al genitore, così la card non compare; il resto dà `500 VOTAZIONE_OPERAZIONE_NON_RIUSCITA`.
+
+**Lock nuovo:** `votazioni-gate-requirevotazioni`, che controlla che ogni handler sotto `src/app/api/admin/votazioni/` chiami `requireVotazioni` prima del client service-role. **Lock aggiornati:**
+- `isolamento-sede-coverage`: `routeConServiceRole` 379 → 384 e `handlerControllati` 586 → 594, perché si aggiungono le route delle votazioni, tutte con gate di sede;
+- `soglia-fotografia`: la migrazione entra in `MIGRAZIONI_ATTESE_AL_MERGE`;
+- `admin-nav-config`;
+- Service Worker `v17`, per le etichette offline delle due rotte nuove.
+
+**Prove.**
+- Test della migrazione su PGlite, applicata due volte.
+- Test unitari della libreria e delle API di segreteria e genitore, con il cambio voto e la corsa su `23505`.
+- Test delle schermate.
+- E2E `e2e/votazioni.spec.ts` in CI: la segreteria apre una votazione per la Girasoli più l'istituto; il genitore vota in classe, vota l'istituto e cambia quel voto; la segreteria vede chi ha votato chi, con il segno «modificato», e chiude; il genitore non trova più schede. Il cambio di voto si prova sull'istituto perché nella classe E2E c'è un solo genitore con account. Lo spec pulisce le votazioni delle sedi E2E prima e dopo ogni giro, per i retry; lo stesso fa `scripts/seed-e2e.mjs` all'avvio. Lo spec salta se il DB della CI non ha le tabelle.
+
+**Limiti noti:**
+- nessuna prova su un browser vero in locale: il server `:3100` parla col database di produzione, dove le tabelle nasceranno solo al merge;
+- l'apertura controlla i conflitti fra votazioni prima di scrivere, senza un vincolo nel database: due aperture simultanee della stessa classe da due postazioni potrebbero passare entrambe;
+- la proroga può anche accorciare la scadenza, purché verso una data futura;
+- un genitore senza account non compare sulla scheda.
+
+**Passi del titolare:**
+1. il merge della PR;
+2. l'avviso alle famiglie che spiega che la segreteria vede chi ha votato chi;
+3. aprire la prima votazione dalla pagina «Votazioni».
+
 ## 🗂️ Changelog — CRM, il lavoro dopo la #276: fotografie dalla produzione, tracce dello staff, oblio dell'alunno nel CRM, anno d'ingresso nella scheda — 2026-11-01 (branch `chore/crm-pr-b`)
 
 **Stato:** 🟡 sul branch `chore/crm-pr-b`, PR verso `main`. Nessuna migrazione, nessuna route nuova.

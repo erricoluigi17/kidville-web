@@ -231,8 +231,8 @@
 // `messages/{it,en}/offline.json`, per la nuova pagina `/admin/crm` (il CRM della segreteria).
 // Senza, l'elenco di /offline avrebbe reso «Crm» capitalizzando l'URL, e la copia vecchia della
 // pagina sarebbe rimasta nella CacheStorage dei dispositivi che l'hanno già salvata.
-const VERSIONE = 'v16';
-// IMPRONTA-PAGINA-OFFLINE: 72cfb3214016f2a11ad6f3bc76a49e2ba933f217fc6a32413725393a0d6f900e
+const VERSIONE = 'v17';
+// IMPRONTA-PAGINA-OFFLINE: 1488b454871758aa7aa3a8ce48c2be0999782087c980e0f10905134320f63eed
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

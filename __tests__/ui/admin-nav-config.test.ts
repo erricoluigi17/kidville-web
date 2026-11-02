@@ -68,7 +68,7 @@ describe('Menu a 7 voci — struttura decisa il 31/10', () => {
     [null, ['/admin']],
     [null, ['/admin/students']],
     ['navgruppo_registro', ['/admin/appello', '/admin/diary', '/admin/primaria', '/admin/competenze', '/admin/gallery']],
-    ['navgruppo_comunicazione', ['/admin/messaggi', '/admin/avvisi', '/admin/news', '/admin/compiti', '/admin/moderazione']],
+    ['navgruppo_comunicazione', ['/admin/messaggi', '/admin/avvisi', '/admin/news', '/admin/compiti', '/admin/votazioni', '/admin/moderazione']],
     ['navgruppo_contabilita_servizi', ['/admin/pagamenti', '/admin/coda-fatture', '/admin/mensa', '/admin/mensa/cucina', '/admin/armadietto', '/admin/merchandise']],
     ['navgruppo_segreteria', ['/admin/crm', '/admin/candidature', '/admin/modulistica', '/admin/documenti-firmati', '/admin/protocolli', '/admin/storici']],
     ['navgruppo_impostazioni', ['/admin/impostazioni', '/admin/tools', '/admin/gdpr']],
@@ -78,9 +78,10 @@ describe('Menu a 7 voci — struttura decisa il 31/10', () => {
     expect(NAV_GROUPS.map((g) => [g.titleKey ?? null, g.items.map((i) => i.href)])).toEqual(ATTESO);
   });
 
-  it('nessuna voce persa: le stesse 27 rotte di prima, nessuna doppia', () => {
-    expect(ALL_HREFS).toHaveLength(27);
-    expect(new Set(ALL_HREFS).size).toBe(27);
+  // 27 rotte il 31/10, più `/admin/votazioni` (Comunicazione, 2026-11-02) = 28.
+  it('nessuna voce persa: le 27 rotte di prima più le Votazioni, nessuna doppia', () => {
+    expect(ALL_HREFS).toHaveLength(28);
+    expect(new Set(ALL_HREFS).size).toBe(28);
   });
 
   it.each(['it', 'en'])('link diretti con una voce sola; ogni gruppo con titolo ha icona e titolo nel catalogo %s', async (lingua) => {
@@ -186,5 +187,47 @@ describe('CRM — voce propria nel gruppo Segreteria', () => {
 
   it("su /admin/crm evidenzia il CRM", () => {
     expect(activeHref('/admin/crm')).toBe('/admin/crm');
+  });
+});
+
+// Le Votazioni dei rappresentanti (`/admin/votazioni`, 2026-11-02): una voce nel gruppo Comunicazione,
+// fra Compiti e Moderazione. La vedono i tre ruoli che le route `/api/admin/votazioni/*` ammettono
+// (`RUOLI_VOTAZIONI`): una voce che risponde 403 a chi la clicca è un menu che mente.
+describe('Votazioni — voce nel gruppo Comunicazione', () => {
+  const comunicazione = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_comunicazione');
+  const voci = comunicazione?.items ?? [];
+  const votazioni = voci.find((i) => i.href === '/admin/votazioni') as NavItem;
+
+  it('esiste, nel gruppo Comunicazione, subito dopo Compiti', () => {
+    expect(votazioni).toBeDefined();
+    expect(voci.findIndex((i) => i.href === '/admin/votazioni')).toBe(voci.findIndex((i) => i.href === '/admin/compiti') + 1);
+    expect(ALL_HREFS).toContain('/admin/votazioni');
+  });
+
+  // L'elenco dei ruoli sta scritto nella config (importare `accesso.ts` porterebbe `next/server` e il
+  // gate del server nel bundle del browser): questo è il punto in cui le due copie si confrontano.
+  it('i ruoli sono esattamente RUOLI_VOTAZIONI: admin, coordinatrice e segreteria — non la cuoca', async () => {
+    const { RUOLI_VOTAZIONI } = await import('@/lib/votazioni/accesso');
+    expect(votazioni.roles).toEqual([...RUOLI_VOTAZIONI]);
+    expect(visibleItem(votazioni, 'admin')).toBe(true);
+    expect(visibleItem(votazioni, 'coordinator')).toBe(true);
+    expect(visibleItem(votazioni, 'segreteria')).toBe(true);
+    expect(visibleItem(votazioni, 'cuoca')).toBe(false);
+  });
+
+  it.each(['it', 'en'])("l'etichetta nav_votazioni esiste nel catalogo %s", async (lingua) => {
+    const catalogo = (await import(`../../messages/${lingua}/etichette.json`)).default as Record<string, unknown>;
+    expect(votazioni.labelKey).toBe('nav_votazioni');
+    expect(typeof catalogo.nav_votazioni).toBe('string');
+  });
+
+  it('su /admin/votazioni evidenzia le Votazioni, e il gruppo che si apre è Comunicazione', () => {
+    expect(activeHref('/admin/votazioni')).toBe('/admin/votazioni');
+    expect(gruppoDellaPagina('/admin/votazioni')).toBe('navgruppo_comunicazione');
+  });
+
+  it('la cuoca non le trova nemmeno nel gruppo visibile', () => {
+    const gruppo = gruppiVisibili('cuoca').find((g) => g.titleKey === 'navgruppo_comunicazione');
+    expect(gruppo?.items.map((i) => i.href) ?? []).not.toContain('/admin/votazioni');
   });
 });

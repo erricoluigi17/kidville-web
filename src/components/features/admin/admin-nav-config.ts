@@ -30,6 +30,7 @@ import {
   MessagesSquare,
   Wallet,
   FolderOpen,
+  Vote,
 } from 'lucide-react';
 
 /**
@@ -127,6 +128,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/avvisi', label: 'Avvisi', labelKey: 'nav_avvisi', icon: Bell },
       { href: '/admin/news', label: 'News', labelKey: 'nav_news', icon: Newspaper },
       { href: '/admin/compiti', label: 'Compiti', labelKey: 'nav_compiti', icon: ListTodo },
+      // Votazioni dei rappresentanti (`/admin/votazioni`): la segreteria apre la votazione di classe e,
+      // se serve, quella d'istituto; i genitori votano dall'app. `roles` = `RUOLI_VOTAZIONI`
+      // (`src/lib/votazioni/accesso.ts`), cioè i tre che `requireStaff` ammette. L'elenco è SCRITTO
+      // qui e non importato: `accesso.ts` porta con sé `next/server`, il gate e il logger del server, e
+      // una config di navigazione che finisce nel bundle del browser non può tirarseli dietro. Che le
+      // due liste restino uguali lo prova `__tests__/ui/admin-nav-config.test.ts`.
+      { href: '/admin/votazioni', label: 'Votazioni', labelKey: 'nav_votazioni', icon: Vote, roles: ['admin', 'coordinator', 'segreteria'] },
       // Moderazione UGC (C5 §2): coda segnalazioni. Riservata alla Direzione
       // (admin/coordinator); il gate vero è nelle API admin/segnalazioni.
       { href: '/admin/moderazione', label: 'Moderazione', labelKey: 'nav_moderazione', icon: Flag, roles: ['admin', 'coordinator'] },

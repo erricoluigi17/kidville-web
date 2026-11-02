@@ -508,6 +508,13 @@ export interface RigaFiglio {
   cognome: string | null;
   classe_sezione: string | null;
   scuola_id: string | null;
+  /**
+   * `sections.id` della classe del figlio (2026-11-02, votazioni dei rappresentanti). È l'IDENTITÀ della
+   * classe: da quando le sedi sono tre il NOME («2 ANNI») esiste in più plessi, e `classe_sezione` non
+   * basta a dire di quale. `null` solo dove la colonna non esiste (DB E2E della CI non migrato): dove c'è,
+   * un figlio senza classe è già stato nascosto da `motivoNascosto`.
+   */
+  section_id: string | null;
 }
 
 export interface EsitoFigliAttivi {
@@ -525,7 +532,9 @@ export interface EsitoFigliAttivi {
 
 /**
  * Le colonne lette. Le prime cinque sono il contratto dell'app di famiglia; le
- * ultime tre servono SOLO a decidere chi si mostra e non escono di qui.
+ * ultime tre servono a decidere chi si mostra, e di queste solo `section_id` esce
+ * (`RigaFiglio.section_id`, dal 2026-11-02): `stato` e `archiviato_il` restano qui.
+ * Nessuna colonna nuova nella SELECT: `section_id` era già letta, andava soltanto restituita.
  */
 const COLONNE_FIGLIO = [
   'id', 'nome', 'cognome', 'classe_sezione', 'scuola_id',
@@ -626,6 +635,7 @@ export async function getFigliAttiviDiGenitore(
       cognome: testo(r.cognome),
       classe_sezione: testo(r.classe_sezione),
       scuola_id: testo(r.scuola_id),
+      section_id: testo(r.section_id),
     });
   }
 

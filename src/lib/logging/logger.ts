@@ -92,7 +92,7 @@ export const EVENTI_NOTI = new Set([
     'agenda', 'anagrafica', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
     'credenziali', 'crm', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
     'iscrizione', 'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento',
-    'pagella', 'personale', 'protocolli', 'registro', 'segnalazione', 'sidi',
+    'pagella', 'personale', 'protocolli', 'registro', 'segnalazione', 'sidi', 'votazioni',
     // Infrastruttura. `db`/`rpc`/`storage`/`auth`/`altro` sono le aree di `supabase-fetch`,
     // `esterno` il default di `externalFetch`, `email`/`push` i suoi due chiamanti nominati,
     // `route` la riga di esito di `withRoute`, `app_log` il sink che si segnala da solo,
@@ -259,6 +259,15 @@ export const EVENTI_PERSISTITI = new Set([
     // `esito: 'evento-registrato'` per ogni voce di storico, con tipo, sede e scheda — mai testo né dati
     // di famiglie e minori. Volume: una riga per gesto della segreteria, cioè poche decine al giorno.
     'crm',
+    // `votazioni` (2026-11-02) · l'elezione dei rappresentanti dei genitori. Nessuna schermata dice che
+    // una votazione è stata aperta, chiusa o prorogata, né che un voto è entrato: senza il battito di
+    // successo «nessuna riga» non distingue «nessuno ha votato» da «le votazioni non scrivono più».
+    // I battiti stanno nelle route (`src/app/api/{admin,parent}/votazioni/`): una riga per gesto della
+    // segreteria (apri, chiudi, proroga, elimina) e una per voto, con votazione, ambito e conteggi.
+    // ⚠️ MAI nel log chi ha scelto chi: né il candidato né l'elettore, solo uuid di votazione, ambito e
+    // conteggi (la segreteria lo vede a schermo; il log non è il posto dove ricostruire una scelta).
+    // Il lock `eventi-log` resta ROSSO su questo evento finché le route non emettono il primo `info`.
+    'votazioni',
 ]);
 
 /**

@@ -81,6 +81,11 @@ export default getRequestConfig(async () => {
     crmCollegamento: (await import(`../../messages/${locale}/crmCollegamento.json`)).default,
     crmFollowUp: (await import(`../../messages/${locale}/crmFollowUp.json`)).default,
     crmStatistiche: (await import(`../../messages/${locale}/crmStatistiche.json`)).default,
+    // Le votazioni dei rappresentanti (`/admin/votazioni`, `/parent/votazioni`): DUE namespace, uno per
+    // schermata, come i prestampati e il CRM. Le chiavi sono PIATTE (il mock globale di next-intl nei test
+    // risolve solo il primo livello). I codici d'errore stanno in `shared`, non qui.
+    votazioniAdmin: (await import(`../../messages/${locale}/votazioniAdmin.json`)).default,
+    votazioniGenitore: (await import(`../../messages/${locale}/votazioniGenitore.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

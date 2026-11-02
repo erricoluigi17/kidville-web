@@ -19,6 +19,7 @@ import { GalleryTodayCard } from '@/components/features/parent/home/GalleryToday
 import { LockerTodayCard } from '@/components/features/parent/home/LockerTodayCard';
 import { AgendaTodayCard } from '@/components/features/parent/home/AgendaTodayCard';
 import { PresenzeTodayCard } from '@/components/features/parent/home/PresenzeTodayCard';
+import { VotazioniCard } from '@/components/features/parent/home/VotazioniCard';
 
 interface QuickAction {
   id: string;
@@ -385,6 +386,11 @@ function ParentHomeContent() {
             <AvvisiPreview parentId={parentId} studentId={studentId} />
           </div>
         )}
+
+        {/* ── VOTAZIONI APERTE (si nasconde se non c'è niente da votare) ──
+            Il guscio `px-4 pt-5` sta DENTRO la card: da 1024 px la griglia a due colonne non
+            deve riservare una cella a un riquadro che non c'è. */}
+        {parentId && <VotazioniCard parentId={parentId} href={wi('/parent/votazioni')} />}
 
         {/* ── NEWS (top 3, sola lettura; si nasconde se vuoto) ── */}
         {parentId && (

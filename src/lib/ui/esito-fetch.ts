@@ -3472,6 +3472,38 @@ export const CODICI_ERRORE = {
      */
     SETTIMANA_PASSATA: 'erroreCrmSettimanaPassata',
     FASCE_SOVRAPPOSTE: 'erroreCrmFasceSovrapposte',
+    /**
+     * Le votazioni dei rappresentanti (02/11/2026, `src/app/api/{admin,parent}/votazioni/`):
+     *  · 503 `VOTAZIONI_NON_DISPONIBILI` — le tabelle `votazioni*` non esistono su questo database (schema
+     *    assente: la finestra fra il deploy e la migrazione, o il DB E2E della CI);
+     *  · 404 `VOTAZIONE_NON_TROVATA` — la votazione non esiste (o non esiste più);
+     *  · 409 `VOTAZIONE_CHIUSA` — la votazione è chiusa (a mano o per scadenza): il voto non si registra
+     *    più e la scadenza non si prolunga da qui;
+     *  · 409 `VOTAZIONE_CLASSE_GIA_APERTA` — una classe scelta è già in un'altra votazione aperta;
+     *  · 409 `VOTAZIONE_ISTITUTO_GIA_APERTA` — la sede ha già una votazione aperta per il rappresentante
+     *    d'istituto;
+     *  · 409 `VOTAZIONE_CON_VOTI` — l'eliminazione è negata perché ci sono già voti;
+     *  · 400 `VOTAZIONE_SENZA_SCHEDE` — né una classe né l'istituto: non ci sarebbe niente da votare;
+     *  · 400 `VOTAZIONE_SCADENZA_PASSATA` — la scadenza non è nel futuro;
+     *  · 400 `VOTAZIONE_CLASSE_FUORI_SEDE` — una classe scelta non è della sede;
+     *  · 400 `VOTAZIONE_CANDIDATI_MANCANTI` — il rappresentante d'istituto senza nessun candidato;
+     *  · 400 `VOTAZIONE_CANDIDATO_NON_VALIDO` — il candidato non è un genitore della scheda (o della sede);
+     *  · 403 `VOTO_ELETTORE_NON_AMMESSO` — chi vota non ha un figlio in quella classe/sede;
+     *  · 500 `VOTAZIONE_OPERAZIONE_NON_RIUSCITA` — qualunque altro guasto del database (il dettaglio è nel log).
+     */
+    VOTAZIONI_NON_DISPONIBILI: 'erroreVotazioniNonDisponibili',
+    VOTAZIONE_NON_TROVATA: 'erroreVotazioneNonTrovata',
+    VOTAZIONE_CHIUSA: 'erroreVotazioneChiusa',
+    VOTAZIONE_CLASSE_GIA_APERTA: 'erroreVotazioneClasseGiaAperta',
+    VOTAZIONE_ISTITUTO_GIA_APERTA: 'erroreVotazioneIstitutoGiaAperta',
+    VOTAZIONE_CON_VOTI: 'erroreVotazioneConVoti',
+    VOTAZIONE_SENZA_SCHEDE: 'erroreVotazioneSenzaSchede',
+    VOTAZIONE_SCADENZA_PASSATA: 'erroreVotazioneScadenzaPassata',
+    VOTAZIONE_CLASSE_FUORI_SEDE: 'erroreVotazioneClasseFuoriSede',
+    VOTAZIONE_CANDIDATI_MANCANTI: 'erroreVotazioneCandidatiMancanti',
+    VOTAZIONE_CANDIDATO_NON_VALIDO: 'erroreVotazioneCandidatoNonValido',
+    VOTO_ELETTORE_NON_AMMESSO: 'erroreVotoElettoreNonAmmesso',
+    VOTAZIONE_OPERAZIONE_NON_RIUSCITA: 'erroreVotazioneOperazioneNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

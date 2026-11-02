@@ -310,7 +310,29 @@ export function posterioriCheContengono(
 // previsto qui sopra — indici unici +5 −1 (256), FK di sede +2 −1 e FK verso `utenti` +2 −1 (78, le due di
 // `crm_settimane` «blocca»), `crm_settimane` e `crm_fasce` al posto di `crm_disponibilita` nella RLS e nelle
 // tabelle con `scuola_id` (91); bucket e schema delle candidature solo l'istante dello scatto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-11-02 · VOTAZIONI DEI RAPPRESENTANTI, PR-A: `20261102100040_votazioni_rappresentanti.sql` crea quattro
+// tabelle `votazioni*` (`votazioni`, `votazioni_classi`, `votazioni_candidati`, `votazioni_voti`), tutte con
+// `scuola_id`, PRIMARY KEY, `UNIQUE (id, scuola_id)` per la chiave composta delle figlie e un
+// `UNIQUE NULLS NOT DISTINCT` sul voto, RLS accesa senza policy, FK verso `schools`, `sections` e `utenti`.
+// Le guardie degli indici unici, della RLS e delle FK la vedono per `unique`, `primary key`,
+// `row level security` e `references`. Cambieranno davvero, rigenerando dalla produzione dopo il merge: la
+// fotografia delle migrazioni (+1 riga), degli indici unici (+6: le quattro chiavi primarie,
+// `votazioni_id_scuola_id_key` e l'unico del voto), della RLS (le quattro tabelle entrano in
+// `tabelle_rls_attiva`, nessuna policy nuova), delle tabelle con `scuola_id` (+4), delle FK di sede (+4) e
+// delle FK verso `utenti` (+5: `votazioni.creata_da` e `.aggiornata_da`, `votazioni_candidati.utente_id`,
+// `votazioni_voti.elettore_id` e `.candidato_id`, da censire in `tracce-docente-voci.ts` come «blocca»).
+// Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261102100040_votazioni_rappresentanti.sql':
+        'Votazioni dei rappresentanti, PR-A: la migrazione crea quattro tabelle nuove `votazioni*`, tutte con ' +
+        '`scuola_id`, chiave primaria e UNIQUE (compreso un UNIQUE NULLS NOT DISTINCT sul voto), FK verso ' +
+        '`schools`, `sections` e `utenti`, e la RLS accesa senza policy. La applica l\'integrazione Supabase al ' +
+        'merge, con la version del file, mai a mano; finché non è in produzione nessuna fotografia può contenerla. ' +
+        'La voce si toglie nella PR-B, dopo il merge: si rigenerano le fotografie dalla produzione (migrazioni, ' +
+        'indici unici, RLS, FK di sede, FK verso `utenti`, tabelle con `scuola_id`) e si censiscono le tracce di ' +
+        '`utenti` in `src/lib/personale/tracce-docente-voci.ts`.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

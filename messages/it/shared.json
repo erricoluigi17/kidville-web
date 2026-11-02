@@ -776,5 +776,18 @@
   "erroreCrmAlunnoNonDellaSede": "L’alunno scelto non fa parte di questa sede.",
   "erroreCrmAlunnoGiaCollegato": "Il bambino o l’alunno scelto sono già collegati: togli prima il collegamento esistente.",
   "erroreCrmSettimanaPassata": "La settimana è già passata: non si può più modificare.",
-  "erroreCrmFasceSovrapposte": "Due fasce dello stesso giorno si sovrappongono. Correggi gli orari."
+  "erroreCrmFasceSovrapposte": "Due fasce dello stesso giorno si sovrappongono. Correggi gli orari.",
+  "erroreVotazioniNonDisponibili": "Le votazioni non sono ancora disponibili su questo ambiente.",
+  "erroreVotazioneNonTrovata": "Votazione non trovata.",
+  "erroreVotazioneChiusa": "La votazione è chiusa: il voto non è stato registrato.",
+  "erroreVotazioneClasseGiaAperta": "Una delle classi scelte ha già una votazione aperta. Chiudila prima di aprirne un’altra.",
+  "erroreVotazioneIstitutoGiaAperta": "C’è già una votazione aperta per il rappresentante d’istituto in questa sede.",
+  "erroreVotazioneConVoti": "La votazione ha già dei voti e non si può eliminare.",
+  "erroreVotazioneSenzaSchede": "Scegli almeno una classe oppure il rappresentante d’istituto.",
+  "erroreVotazioneScadenzaPassata": "La scadenza deve essere una data futura.",
+  "erroreVotazioneClasseFuoriSede": "Una delle classi scelte non fa parte di questa sede.",
+  "erroreVotazioneCandidatiMancanti": "Indica almeno un candidato per il rappresentante d’istituto.",
+  "erroreVotazioneCandidatoNonValido": "Il candidato scelto non può essere votato per questa scheda.",
+  "erroreVotoElettoreNonAmmesso": "Non puoi votare per questa scheda.",
+  "erroreVotazioneOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco."
 }

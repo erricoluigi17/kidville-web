@@ -2620,7 +2620,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // GET e PUT) e non cambia il conto. CONTROLLATA: gate `requireCrm`; la sede la dichiara
             // (`assertSedeInScope`), la persona è della sede (`assertPersonaInScope`) PRIMA della funzione SQL, e
             // `crm_settimane` e `crm_fasce` si leggono con `.eq('scuola_id', …)` nella stessa query.
-            routeConServiceRole: 379,
+            // 379 → 384 il 2026-11-02 (votazioni dei rappresentanti): entrano `admin/votazioni`,
+            // `admin/votazioni/[id]`, `admin/votazioni/genitori`, `parent/votazioni` e
+            // `parent/votazioni/[id]/voto`. Tutte CONTROLLATE, nessuna esenzione: le tre admin hanno il gate
+            // `requireVotazioni` e la sede da `resolveScuoleAttive` + `restringiSedi` (letture) o
+            // `resolveScuolaScrittura` (scritture), con `scuola_id` nella stessa query; le due parent leggono
+            // le votazioni con `.in('scuola_id', <sedi dei figli>)` e scrivono il voto con lo `scuola_id`
+            // della votazione.
+            routeConServiceRole: 384,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2940,7 +2947,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 588 → 586 il 2026-10-31 (CRM, compito 7): `admin/crm/disponibilita` passa da GET+POST a GET+PUT
             // (stesso numero di handler) e `admin/crm/disponibilita/[id]` PATCH+DELETE esce: −2. `handlerEsentati`
             // non cambia. Misurato rieseguendo il lock: 588 → 586.
-            handlerControllati: 586,
+            // 586 → 594 il 2026-11-02 (votazioni dei rappresentanti, vedi `routeConServiceRole`): admin
+            // GET+POST, `[id]` GET+PATCH+DELETE, `genitori` GET, parent GET, `[id]/voto` POST = +8.
+            // `handlerEsentati` non cambia. Misurato rieseguendo il lock: 586 → 594.
+            handlerControllati: 594,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

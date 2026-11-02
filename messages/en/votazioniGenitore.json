@@ -1,3 +1,25 @@
 {
-  "titoloPagina": "Elections"
+  "titoloPagina": "Elections",
+  "eyebrowPagina": "Parent representatives",
+  "sottotitoloPagina": "Choose the parent you want as your representative.",
+  "caricamento": "Loading the elections…",
+  "vuotoTitolo": "There are no open elections",
+  "vuotoDescrizione": "When the school opens an election, you will find it here.",
+  "erroreCaricamento": "We could not load the elections.",
+  "riprova": "Try again",
+  "schedaTitoloClasse": "Class representative — {classe}",
+  "schedaTitoloClasseSenzaNome": "Class representative",
+  "schedaTitoloIstituto": "School representative — {nomeSede}",
+  "schedaScadenza": "Voting closes on {data}, at {ora}",
+  "cercaGenitore": "Search for a parent",
+  "nessunRisultato": "No parent matches your search.",
+  "haiVotato": "You voted for: {nome}",
+  "haiVotatoAltro": "You already voted for a parent who is no longer on the list.",
+  "votaAzione": "Vote",
+  "cambiaVoto": "Change vote",
+  "invioInCorso": "Sending…",
+  "votoRegistrato": "Vote recorded",
+  "erroreVoto": "We could not record your vote. Please try again.",
+  "cardTitolo": "Open elections",
+  "cardDettaglio": "{count, plural, one {# ballot} other {# ballots}}, closes {data}"
 }

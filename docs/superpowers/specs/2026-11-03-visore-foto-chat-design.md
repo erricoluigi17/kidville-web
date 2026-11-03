@@ -161,7 +161,7 @@ la scelta dei plugin), che consegna il FILE al foglio di condivisione:
   pretende non si indebolisce. (La prima stesura diceva «disabilitato» per entrambi.)
 - **Log**: una riga per gesto, stesso schema di `registraEsito` con una nuova operazione
   `condivisione` (`<etichetta>-condivisione-riuscita:<esito>`, `-annullata`,
-  `-non-riuscita: <motivo>`), etichetta `gallery` in Foto e `chat` in chat.
+  `-gesto-scaduto`, `-non-riuscita: <motivo>`), etichetta `gallery` in Foto e `chat` in chat.
 
 ### In chat
 
@@ -288,6 +288,7 @@ tocco avvisa di aggiornare l'app (come già fanno i documenti con
   che non ricarica l'immagine ma aggiorna le azioni); segreteria (foto e documento
   visibili nelle due schede).
 - Test di `MediaGrid` esistenti verdi; quelli su «Condividi» aggiornati al file.
-- E2E `e2e/chat.spec.ts`: dopo l'invio della foto, il tocco apre il dialogo e mostra
-  «Scarica».
+- E2E `e2e/chat.spec.ts`: dopo l'invio della foto, l'E2E consegna il clic al pulsante della
+  miniatura (`toBeAttached` + `dispatchEvent('click')`, perché il PNG di prova 1×1 può avere un
+  box vuoto), poi verifica il dialogo con «Scarica» ed Escape.
 - PRD `PRD REGISTRO ELETTRONICO.md`: voce di changelog datata.

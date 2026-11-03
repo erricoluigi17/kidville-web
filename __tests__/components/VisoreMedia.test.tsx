@@ -179,6 +179,97 @@ describe('VisoreMedia — portale e livello', () => {
     });
 });
 
+describe('VisoreMedia — nel cockpit non copre binario e sidebar', () => {
+    /*
+     * Nel cockpit della Direzione/Segreteria la cornice persistente (binario da 88 px, sidebar
+     * da 16rem) non va coperta da un overlay a tutto schermo: `globals.css` lo garantisce con
+     * `[data-cockpit-content] .fixed.inset-0 { left: var(--kv-rail-w) }` (da 744 px). Col portale
+     * su `body` il visore ne usciva (trovato dalla revisione del 2026-11-03). jsdom non applica
+     * il CSS: qui si prova la metà che compete al componente — il DOM in cui il visore si
+     * monta — valutando proprio il selettore della regola. L'altra metà (che la regola esista,
+     * e con quel selettore) la tiene `visore-rispetta-la-cornice-del-cockpit`.
+     *
+     * Il visore nasce CHIUSO e si apre con un tocco, come nell'app: il contenitore lo sceglie
+     * al momento dell'apertura, quando l'area contenuto è già in pagina. Montarlo aperto nello
+     * stesso istante in cui nasce la pagina non è un caso reale (lo apre sempre un'azione).
+     */
+    function Cockpit({ sovrapposti }: { sovrapposti?: React.ReactNode }) {
+        const [id, setId] = useState<string | null>(null);
+        return (
+            <div data-kv-guscio-admin>
+                <nav data-testid="binario">Binario</nav>
+                <main data-testid="area" data-cockpit-content>
+                    <p data-testid="pagina">Pagina della segreteria</p>
+                    <button type="button" onClick={() => setId('a')}>
+                        Apri il visore
+                    </button>
+                    <VisoreMedia
+                        elementi={TRE}
+                        apertoId={id}
+                        onCambia={setId}
+                        onChiudi={() => setId(null)}
+                        etichetta={etichetta}
+                        sovrapposti={sovrapposti}
+                    />
+                </main>
+            </div>
+        );
+    }
+
+    function apri() {
+        fireEvent.click(screen.getByRole('button', { name: 'Apri il visore' }));
+    }
+
+    it('nel cockpit il dialog vive nell’area contenuto, e la regola dei .fixed.inset-0 copre radice e Modal figlio', () => {
+        render(<Cockpit sovrapposti={<div data-testid="modale-figlio" className="fixed inset-0 z-[120]" />} />);
+        apri();
+        const area = screen.getByTestId('area');
+        const dialogo = screen.getByRole('dialog');
+
+        expect(dialogo.parentElement, 'il visore non è nell’area contenuto del cockpit').toBe(area);
+        // Il selettore è QUELLO della regola di `globals.css`: se qui i due nodi ci sono, il
+        // browser li fa partire dopo `--kv-rail-w`.
+        const coperti = [...document.querySelectorAll('[data-cockpit-content] .fixed.inset-0')];
+        expect(coperti, 'la radice del visore sfugge alla regola: coprirebbe binario e sidebar').toContain(dialogo);
+        expect(
+            coperti,
+            'il Modal di conferma, figlio del visore, sfugge alla regola: coprirebbe binario e sidebar',
+        ).toContain(screen.getByTestId('modale-figlio'));
+        // Fuori dall'area contenuto non resta niente: niente copia del visore in body.
+        expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    });
+
+    it('binario e pagina restano inerti sotto il visore, come prima; il visore e l’area che lo ospita no', () => {
+        render(<Cockpit />);
+        apri();
+        expect(screen.getByTestId('binario').closest('[inert]'), 'il binario è raggiungibile col Tab sotto il velo').not.toBeNull();
+        expect(screen.getByTestId('pagina').closest('[inert]'), 'la pagina dietro il velo non è inerte').not.toBeNull();
+        expect(screen.getByRole('dialog').closest('[inert]'), 'il visore è finito dentro un sottoalbero inerte').toBeNull();
+        expect(screen.getByTestId('area').closest('[inert]'), 'l’area contenuto, che ospita il visore, è inerte').toBeNull();
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.getByTestId('binario').closest('[inert]'), 'l’inerzia non è stata tolta alla chiusura').toBeNull();
+        expect(screen.getByTestId('pagina').closest('[inert]'), 'l’inerzia non è stata tolta alla chiusura').toBeNull();
+    });
+
+    it('aprire e chiudere il visore non tocca il resto dell’area contenuto', () => {
+        render(<Cockpit />);
+        const pagina = screen.getByTestId('pagina');
+        apri();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.getByTestId('pagina'), 'la pagina è stata rimontata insieme al portale').toBe(pagina);
+        expect(screen.getByTestId('area').children, 'il portale ha lasciato qualcosa nell’area').toHaveLength(2);
+    });
+
+    it('senza area contenuto (genitore, docente, chat) resta in body, a tutto schermo', () => {
+        render(<Arnese />);
+        expect(document.querySelector('[data-cockpit-content]')).toBeNull();
+        expect(screen.getByRole('dialog').parentElement).toBe(document.body);
+    });
+});
+
 describe('VisoreMedia — il tasto Indietro di Android', () => {
     it('Indietro di Android chiude il visore', () => {
         const onChiudi = vi.fn();

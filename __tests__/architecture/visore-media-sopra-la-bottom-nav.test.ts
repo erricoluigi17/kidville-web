@@ -53,10 +53,15 @@ import path from 'node:path';
  * una libreria). In chat la conversazione mobile è un `fixed inset-0 z-[60]`, un
  * contesto vero. Per questo `VisoreMedia` si rende con `createPortal` su
  * `document.body`: fuori da ogni antenato, il numero scritto sulla radice torna a
- * valere. Questo lock non lo misura (legge classi, non l'albero): lo misura
+ * valere. UNICA ECCEZIONE, il cockpit della Direzione/Segreteria: lì il portale va
+ * nell'area contenuto (`[data-cockpit-content]`), perché la regola di `globals.css`
+ * che fa partire gli overlay dopo binario e sidebar vale solo lì dentro; e l'area
+ * contenuto non crea contesti d'impilamento, cosa che il lock
+ * `visore-rispetta-la-cornice-del-cockpit` verifica sulle classi del layout. Questo
+ * lock non misura l'albero (legge classi): lo misura
  * `__tests__/components/VisoreMedia.test.tsx` («il dialog vive in document.body ed è
- * a z-[115]»). La prova che conta resta quella sul dispositivo, scritta sopra con
- * la data.
+ * a z-[115]», e il gruppo sul cockpit). La prova che conta resta quella sul
+ * dispositivo, scritta sopra con la data.
  *
  * ⚠️ PROVATO A ROMPERSI: riportando la radice del visore a `z-50` questo test
  * diventa rosso su tutte e tre le bottom-nav. Un lock mai visto fallire non è

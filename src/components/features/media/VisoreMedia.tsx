@@ -3,11 +3,39 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import type { TipoMedia } from '@/lib/native/scarica';
+
+/**
+ * DOVE SI MONTA IL PORTALE: `document.body`, TRANNE nel cockpit della Direzione/Segreteria.
+ *
+ * Lì la cornice persistente (il binario a 88 px dei tablet in verticale, la sidebar da 16rem
+ * da 1024 px) non deve MAI essere coperta da un overlay a tutto schermo: lo dice
+ * `globals.css`, dove la regola `[data-cockpit-content] .fixed.inset-0 { left: var(--kv-rail-w) }`
+ * (da 744 px) fa partire ogni overlay `fixed inset-0` DOPO la navigazione. Il visore stava
+ * dentro quell'area quando viveva in `MediaGrid`; col portale su `body` ne usciva e la regola
+ * non lo vedeva più: il visore dipingeva a `z-[115]` sopra binario, sidebar e topbar (trovato
+ * dalla revisione del 2026-11-03).
+ *
+ * Si poteva ridefinire `--kv-rail-w` fuori dal guscio (`:root:has(…)`) e ripetere la regola
+ * per un secondo selettore: due posti per le stesse larghezze, e niente sulle WebView che non
+ * conoscono `:has()` (iOS 15.0–15.3). Montando il portale NELL'AREA CONTENUTO la regola che
+ * esiste già copre da sola la radice del visore e il `Modal` di conferma che ci sta dentro
+ * (anch'esso `fixed inset-0`), come prima, senza una riga di CSS in più.
+ *
+ * Fuori dal cockpit (genitore, docente, chat) il selettore non trova niente e il visore resta
+ * figlio di `body`, a tutto schermo: lì la cornice, sul tablet, va coperta (lock
+ * `visore-media-sopra-la-bottom-nav`). Il lock `visore-rispetta-la-cornice-del-cockpit` tiene
+ * insieme le due metà: la regola in `globals.css` e questo selettore.
+ */
+const AREA_CONTENUTO_COCKPIT = '[data-cockpit-content]';
+
+function dovePortare(): HTMLElement {
+    return document.querySelector<HTMLElement>(AREA_CONTENUTO_COCKPIT) ?? document.body;
+}
 
 /**
  * UN MEDIA DEL VISORE, ridotto a ciò che il visore deve sapere per mostrarlo.
@@ -70,12 +98,12 @@ export interface VisoreMediaProps {
  * i pulsanti scritti due volte). Il comportamento è quello di prima, con due eccezioni
  * volute:
  *
- *  · **PORTALE SU `document.body`.** La conversazione mobile della chat è un
- *    `fixed inset-0 z-[60]`, cioè un contesto d'impilamento: un visore reso lì dentro
- *    resterebbe chiuso a 60, sotto la bottom-nav e il chrome del cockpit, qualunque `z-` si
- *    scriva sulla sua radice. Fuori da ogni antenato, il `z-[115]` torna a contare. Si monta
- *    solo da aperto e solo se `document` esiste, quindi la prima resa (server compresa)
- *    non cambia.
+ *  · **PORTALE FUORI DALLA PAGINA** (`document.body`, o l'area contenuto del cockpit: vedi
+ *    `dovePortare`). La conversazione mobile della chat è un `fixed inset-0 z-[60]`, cioè un
+ *    contesto d'impilamento: un visore reso lì dentro resterebbe chiuso a 60, sotto la
+ *    bottom-nav e il chrome del cockpit, qualunque `z-` si scriva sulla sua radice. Fuori da
+ *    ogni antenato, il `z-[115]` torna a contare. Si monta solo da aperto e solo se
+ *    `document` esiste, quindi la prima resa (server compresa) non cambia.
  *  · **TASTO INDIETRO DI ANDROID.** Prima, con il visore aperto, Indietro usciva dalla
  *    pagina; adesso chiude il visore (`useOverlayIndietro`, come `ui/Modal`). Con il
  *    dialogo di conferma aperto quello è più in alto nella pila e si chiude per primo.
@@ -96,6 +124,13 @@ export function VisoreMedia({
     const indice = apertoId === null ? -1 : elementi.findIndex((m) => m.id === apertoId);
     const corrente = indice >= 0 ? elementi[indice] : undefined;
     const visoreAperto = corrente !== undefined;
+
+    // Il contenitore si sceglie UNA volta per apertura: se cambiasse a visore aperto, React
+    // smonterebbe e rimonterebbe il portale (fuoco compreso) sotto gli occhi di chi guarda.
+    const contenitore = useMemo(
+        () => (visoreAperto && typeof document !== 'undefined' ? dovePortare() : null),
+        [visoreAperto],
+    );
 
     useOverlayIndietro(visoreAperto, onChiudi);
 
@@ -126,8 +161,10 @@ export function VisoreMedia({
      * scritta a mano —, ricorda chi aveva il fuoco e glielo restituisce alla
      * chiusura, e non lo ruba se nel frattempo è finito altrove.
      *
-     * Dal portale in poi il visore è figlio diretto di `body`: i nodi che marca sono i
-     * suoi fratelli, cioè la radice dell'app intera. `inert` si eredita lungo il
+     * Dal portale in poi il visore è figlio diretto di `body` (o dell'area contenuto del
+     * cockpit): i nodi che marca sono i suoi fratelli, e quelli dei suoi antenati — fuori
+     * dal cockpit la radice dell'app intera, dentro il cockpit anche binario, sidebar e
+     * topbar, come quando il visore stava in `MediaGrid`. `inert` si eredita lungo il
      * sottoalbero, quindi la griglia (o la chat) dietro il velo è inerte anche se non è
      * lei il nodo marcato.
      *
@@ -180,7 +217,7 @@ export function VisoreMedia({
         return () => window.removeEventListener('keydown', gestisciTasto);
     }, [visoreAperto, tastiBloccati, vaiAlPrecedente, vaiAlSuccessivo, onChiudi]);
 
-    if (!corrente || typeof document === 'undefined') return null;
+    if (!corrente || !contenitore) return null;
 
     return createPortal(
         /*
@@ -379,6 +416,6 @@ export function VisoreMedia({
             */}
             {sovrapposti}
         </div>,
-        document.body,
+        contenitore,
     );
 }

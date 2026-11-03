@@ -46,9 +46,26 @@ describe('MediaGrid — media senza indirizzo utilizzabile', () => {
   });
 
   it('con il link i pulsanti Scarica/Condividi restano', () => {
+    // «Condividi» consegna il FILE: compare solo su un dispositivo che sa condividerne uno
+    // (`navigator.canShare({ files })`, che jsdom non ha). Qui il dispositivo lo sa, e la
+    // funzione che lo decide è quella VERA, non un doppio.
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+    try {
+      render(<MediaGrid items={[base]} showActions />);
+      expect(screen.getByTitle(t('mediaScarica'))).toBeTruthy();
+      expect(screen.getByTitle(t('mediaCondividi'))).toBeTruthy();
+    } finally {
+      delete (navigator as { canShare?: unknown }).canShare;
+    }
+  });
+
+  it('su un dispositivo che non sa condividere un file «Condividi» non c’è, «Scarica» sì', () => {
+    // jsdom senza `navigator.canShare`: il web come Firefox su desktop. Un «Condividi» che
+    // mandasse il link firmato (10 minuti di vita) è il difetto che si toglie, e uno che
+    // scaricasse dicendo «Condividi» mentirebbe.
     render(<MediaGrid items={[base]} showActions />);
     expect(screen.getByTitle(t('mediaScarica'))).toBeTruthy();
-    expect(screen.getByTitle(t('mediaCondividi'))).toBeTruthy();
+    expect(screen.queryByTitle(t('mediaCondividi'))).toBeNull();
   });
 
   it('la didascalia e il resto della card restano leggibili anche senza foto', () => {

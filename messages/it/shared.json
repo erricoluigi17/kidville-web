@@ -789,5 +789,9 @@
   "erroreVotazioneCandidatiMancanti": "Indica almeno un candidato per il rappresentante d’istituto.",
   "erroreVotazioneCandidatoNonValido": "Il candidato scelto non può essere votato per questa scheda.",
   "erroreVotoElettoreNonAmmesso": "Non puoi votare per questa scheda.",
-  "erroreVotazioneOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco."
+  "erroreVotazioneOperazioneNonRiuscita": "L’operazione non è riuscita. Riprova fra poco.",
+  "mediaInPreparazione": "Preparo…",
+  "mediaCondividiToccaDiNuovo": "Il file è pronto: tocca di nuovo «Condividi».",
+  "mediaCondividiAppDaAggiornare": "Per condividere il file aggiorna l’app Kidville dallo store.",
+  "mediaCondivisioneNonRiuscita": "Condivisione non riuscita. Riprova fra qualche minuto."
 }

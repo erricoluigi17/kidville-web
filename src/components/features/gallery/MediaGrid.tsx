@@ -3,14 +3,13 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
-// `scaricaMedia` del modulo è rinominata qui perché il componente ha già una
-// `scaricaMedia` sua (il `useCallback` con la guardia «uno alla volta»).
-import { nomeFileScarico, scaricaMedia as scaricaNelDispositivo, type TipoMedia } from '@/lib/native/scarica';
-import { condividiLink } from '@/lib/native/share';
+import type { TipoMedia } from '@/lib/native/scarica';
 import { Download, Share2, Play, ImageOff } from 'lucide-react';
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { DialogoEliminaMedia } from '@/components/features/gallery/DialogoEliminaMedia';
+import { ComandiMedia } from '@/components/features/media/ComandiMedia';
+import { useAzioniMedia, type MediaAzionabile } from '@/components/features/media/useAzioniMedia';
 import { VisoreMedia, type MediaVisore } from '@/components/features/media/VisoreMedia';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
@@ -177,36 +176,16 @@ function etichettaCard(item: MediaItem, t: Traduttore): string {
  * superfici, e il modo giusto è lasciar parlare la pagina.
  */
 
-/**
- * L'ESITO DELLO SCARICO FINISCE SEMPRE IN `app_log` — successo compreso — ma
- * da app 1.1 LO SCRIVE L'HELPER, non questo file.
+/*
+ * SCARICA E CONDIVIDI NON STANNO PIÙ QUI — stanno in `useAzioniMedia` (`../media/useAzioniMedia`),
+ * che serve anche il visore della chat. Qui restano due cose: costruire il `MediaAzionabile` di
+ * una riga (`mediaAzionabile`, sotto) e disegnare i pulsanti della card.
  *
- * Qui c'era `registraEsitoScarico`, che traduceva il verdetto di `scarica()` in
- * una riga: `gallery-scarico-riuscito:<esito>`, `gallery-scarico-ripiego-*: <motivo>`,
- * `gallery-scarico-non-riuscito: <motivo>`. `scaricaMedia` di `@/lib/native/scarica`
- * (NAT2) scrive GLI STESSI token da sé — con `etichetta: 'gallery'` — più i campi
- * `esito`, `operazione` e `piattaforma`, e conosce un esito in più: `nativo-galleria`,
- * la foto finita nel Rullino. Loggare anche da qui sarebbe la stessa notizia due
- * volte in `app_log`, cioè un contatore di successi raddoppiato.
- *
- * Le ragioni che reggevano quella funzione restano vere e ora valgono per
- * `registraEsito` dell'helper:
- *  - ANCHE IL SUCCESSO: senza, «nessun log» non distingue «va tutto bene» da «il
- *    pulsante non ha mai fatto partire niente» (§5 di AGENTS.md) — ed è così che il
- *    guasto dello scarico è rimasto in piedi per mesi;
- *  - `warn` PER UN SUCCESSO: `/api/logs` accetta solo `warn|error`, e
- *    `controlloTassoErrore` guarda solo `error`;
- *  - LO STATO HTTP NEL MESSAGGIO e non in `stato`: `livelloFetch` scarterebbe in
- *    silenzio un 403, che è proprio l'indirizzo firmato scaduto.
- *
- * Cosa resta al componente, su due piani distinti:
- *  - UNA sola riga di LOG: `gallery-scarico-gia-in-corso`, la pressione scartata
- *    dalla guardia «uno scarico alla volta». L'helper non la può scrivere perché
- *    non viene mai chiamato;
- *  - gli AVVISI A SCHERMO, che sono della UI e NON si loggano, perché l'helper ha
- *    già registrato l'esito: `mediaLinkCopiato` su `ripiego-appunti`,
- *    `mediaSalvataInGalleria` su `nativo-galleria`, `mediaScaricoNonRiuscito` su
- *    `non-riuscito` tranne quando `motivo === 'annullato'` (gesto ritirato, non guasto).
+ * Due perché stanno altrove: quello dell'esito che finisce SEMPRE in `app_log` (successo compreso,
+ * `warn` anche per un successo perché `/api/logs` accetta solo `warn|error`, lo stato HTTP nel
+ * messaggio e non in `stato`) è su `registraEsito` di `@/lib/native/scarica`, che lo scrive da sé;
+ * quello della guardia «un'azione alla volta», che logga la pressione scartata
+ * (`gallery-scarico-gia-in-corso`), è sull'hook.
  */
 
 /**
@@ -217,6 +196,24 @@ function etichettaCard(item: MediaItem, t: Traduttore): string {
  */
 function tipoMedia(fileType: string): TipoMedia {
     return (fileType ?? '').trim().toLowerCase() === 'video' ? 'video' : 'foto';
+}
+
+/**
+ * Ciò che serve ai due gesti (scarica, condividi) di una riga della galleria.
+ *
+ * `nomeFile` è la didascalia GREZZA: la ripulisce e le dà l'estensione `nomeFileScarico`, dentro
+ * l'hook. `titolo` è la didascalia o, se manca, il neutro «Foto da Kidville» dell'hook: mai un
+ * nome di persona. `chiave` per la condivisione è `id`: l'indirizzo firmato cambia a ogni
+ * ricarico dell'elenco, l'id della riga no.
+ */
+function mediaAzionabile(item: MediaItem, url: string): MediaAzionabile {
+    return {
+        id: item.id,
+        url,
+        tipo: tipoMedia(item.file_type),
+        nomeFile: item.caption,
+        ...(item.caption !== null ? { titolo: item.caption } : {}),
+    };
 }
 
 /**
@@ -262,12 +259,12 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
     const [daEliminare, setDaEliminare] = useState<MediaItem | null>(null);
 
     /**
-     * UNO SCARICO ALLA VOLTA. Non è cosmesi: su iOS presentare un secondo foglio
-     * di condivisione mentre il primo è aperto solleva, e su nativo la seconda
-     * pressione riscriverebbe lo stesso file mentre lo si sta consegnando. Un
-     * `ref` e non uno `state` perché non deve ridisegnare niente.
+     * SCARICA E CONDIVIDI: UN HOOK SOLO, CHIAMATO UNA VOLTA — è la guardia «un'azione alla volta» di
+     * tutta la griglia. Le card e il visore ne ricevono lo STESSO risultato: due card diverse non
+     * devono poter scaricare insieme (su iOS un secondo foglio di condivisione, mentre il primo è
+     * aperto, solleva). Il perché per esteso, e gli avvisi d'esito, sono in `useAzioniMedia`.
      */
-    const scaricoInCorso = useRef(false);
+    const azioni = useAzioniMedia({ etichetta: 'gallery' });
 
     /**
      * LA DELETE DELLA CONFERMA È IN VOLO — e finché è vera il visore non si chiude.
@@ -312,117 +309,10 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
      * sono state catturate, non per una regola che si possa leggere sul posto.
      * Il `ref` resta la scelta perché toglie quella dipendenza invisibile — e
      * perché non ridisegna la griglia (fino a 40 card) due volte per pressione: è
-     * la stessa ragione di `scaricoInCorso` qui sopra. Il segnale a schermo c'è
+     * la stessa ragione della guardia di `useAzioniMedia`, qui sopra. Il segnale a schermo c'è
      * già, ed è lo spinner sul bottone della conferma.
      */
     const eliminaInVolo = useRef(false);
-
-    /**
-     * LO SCARICO, IN UN POSTO SOLO — ed è metà della correzione.
-     *
-     * Prima questa logica era scritta DUE VOLTE, sulla card e nel visore, e le
-     * due copie erano già divergenti: quella della card non aveva nemmeno un
-     * `logClient`. Due copie che divergono non sono un difetto di domani: erano
-     * il difetto di ieri.
-     */
-    const scaricaMedia = useCallback(async (item: MediaItem, url: string) => {
-        if (scaricoInCorso.current) {
-            /**
-             * NON UN `return` NUDO — e non è pignoleria.
-             *
-             * `scarica()` non lancia mai, ma può NON RISOLVERE: la `fetch` verso
-             * l'indirizzo firmato è CROSS-ORIGIN e nella WebView può accettare e
-             * tacere (è la riga di produzione con `stato_http = 0` citata in
-             * `scarica.ts`). In quel caso il `finally` qui sotto non gira mai, il
-             * ref resta `true` per tutta la vita della pagina, e da lì in avanti
-             * OGNI pressione di «Scarica» esce da questa riga.
-             *
-             * Senza questa riga «il pulsante è incagliato» e «nessuno l'ha mai
-             * premuto» sarebbero lo stesso identico silenzio in `app_log`: è
-             * l'ambiguità che il §5 di AGENTS.md vieta, ed è precisamente il modo
-             * in cui lo «Scarica» rotto è sopravvissuto per mesi.
-             *
-             * Il TETTO DI TEMPO su `scarica()` è una decisione separata e non si
-             * prende qui: `MAI_OLTRE_MS` è 30 s, e trenta secondi sono pochi per
-             * il video di un genitore su rete lenta. Loggare la pressione
-             * scartata invece non richiede nessuna scelta sui tempi.
-             */
-            logClient({
-                livello: 'warn',
-                evento: 'fetch',
-                messaggio: 'gallery-scarico-gia-in-corso',
-            });
-            return;
-        }
-        scaricoInCorso.current = true;
-        try {
-            // L'HELPER UNICO DELL'APP 1.1: nell'app aggiornata foto e video vanno
-            // DIRETTAMENTE in Galleria/Rullino (Android: album «Kidville»); sul web e
-            // sul binario 1.0 fa quello che faceva `scarica()`. Logga da sé l'esito
-            // — successo compreso — PRIMA di risolvere: quindi la riga c'è già
-            // quando qui sotto, eventualmente, parte l'`alert()` che blocca il thread.
-            const risultato = await scaricaNelDispositivo({
-                url,
-                nomeFile: nomeFileScarico(item.caption, url, item.file_type),
-                tipo: tipoMedia(item.file_type),
-                titolo: item.caption ?? t('galleryFotoDaKidville'),
-                etichetta: 'gallery',
-            });
-            // L'UNICO RAMO MUTO, e va detto — esattamente come fa `condividiMedia`
-            // qui sotto. Ci si arriva sul web senza Web Share (Firefox su desktop)
-            // quando l'indirizzo firmato è scaduto: il file non c'è, negli appunti
-            // c'è il link, e sullo schermo non è cambiato niente. Senza queste due
-            // righe «Scarica» tornerebbe a essere un pulsante che sembra rotto,
-            // che è il difetto da cui è nato tutto questo lavoro.
-            if (risultato.esito === 'ripiego-appunti') alert(t('mediaLinkCopiato'));
-            // I DUE SILENZI DELL'APP 1.1. `nativo-galleria` scrive il file nel
-            // Rullino SENZA foglio di sistema: prima, sul binario nativo, almeno il
-            // foglio di condivisione si vedeva; ora, senza questa conferma, «Scarica»
-            // (magari dopo parecchi secondi di FileTransfer per un video) non
-            // cambierebbe niente sullo schermo — e le pressioni ripetute finirebbero
-            // tutte in `gallery-scarico-gia-in-corso`. `non-riuscito` è l'altro
-            // silenzio: l'utente non ha niente e nessuno glielo dice. Tranne
-            // `annullato`, che è un gesto ritirato, non un guasto. Nessun log qui:
-            // l'helper ha già registrato l'esito.
-            if (risultato.esito === 'nativo-galleria') alert(t('mediaSalvataInGalleria'));
-            else if (risultato.esito === 'non-riuscito' && risultato.motivo !== 'annullato') {
-                alert(t('mediaScaricoNonRiuscito'));
-            }
-        } finally {
-            scaricoInCorso.current = false;
-        }
-    }, [t]);
-
-    /**
-     * LA CONDIVISIONE, dallo stesso modulo nativo di tutto il resto dell'app
-     * (`@/lib/native/share`) invece che riscritta a mano due volte. Qui il ramo
-     * nativo mancava del tutto: c'era solo `navigator.share`, che nella WebView
-     * esiste ma non è il foglio di sistema di Capacitor.
-     *
-     * `avvisoAppunti` è il messaggio da mostrare QUANDO si finisce sugli appunti,
-     * che è l'unico ramo muto: senza, la copia riuscita e il pulsante rotto si
-     * assomigliano troppo. Lo decide `condividiLink`, non una condizione
-     * ricopiata qui.
-     */
-    const condividiMedia = useCallback(async (item: MediaItem, url: string, avvisoAppunti: string) => {
-        const esito = await condividiLink({
-            url,
-            title: item.caption ?? t('galleryFotoDaKidville'),
-        });
-        if (esito === 'appunti') {
-            alert(avvisoAppunti);
-            return;
-        }
-        if (esito === 'non-riuscita') {
-            // Nessun canale: prima di oggi questo ramo taceva del tutto, e un
-            // «Condividi» che non condivide non lasciava traccia da nessuna parte.
-            logClient({
-                livello: 'warn',
-                evento: 'fetch',
-                messaggio: 'gallery-condivisione-senza-canale',
-            });
-        }
-    }, [t]);
 
     const handleCloseLightbox = () => {
         /*
@@ -440,7 +330,7 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
          */
         if (eliminaInVolo.current) {
             /*
-             * La pressione scartata si LOGGA, come già fa `scaricaMedia` con lo
+             * La pressione scartata si LOGGA, come già fa `useAzioniMedia` con lo
              * scarico doppio e per lo stesso motivo del §5 di AGENTS.md: senza
              * questa riga «la ✕ è incagliata» e «nessuno l'ha premuta» sarebbero
              * lo stesso silenzio in `app_log`. Il gesto non è muto a schermo —
@@ -686,7 +576,7 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        void scaricaMedia(item, url);
+                                        void azioni.scarica(mediaAzionabile(item, url));
                                     }}
                                     className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaScarica')}
@@ -694,11 +584,17 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
                                     <Download size={14} strokeWidth={2.5} />
                                 </button>
                                 {/* Condividi resta del GENITORE (`showActions`): a docenti e
-                                    Segreteria la spec dà il solo «Scarica». */}
-                                {showActions && <button
+                                    Segreteria la spec dà il solo «Scarica». E c'è solo se il
+                                    dispositivo sa condividere un FILE (`puoCondividere`): sul web
+                                    senza `navigator.canShare` resta «Scarica», perché un
+                                    «Condividi» che manda un link da 10 minuti è il difetto che si
+                                    toglie. La card NON mostra lo stato «Preparo…» (lo fa la riga
+                                    del visore): il secondo tocco arriva alla guardia dell'hook,
+                                    che lo scarta e lo logga. */}
+                                {showActions && azioni.puoCondividere && <button
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        void condividiMedia(item, url, t('mediaLinkCopiato'));
+                                        void azioni.condividi(mediaAzionabile(item, url));
                                     }}
                                     className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaCondividi')}
@@ -899,41 +795,35 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
                         </div>
                     )}
 
-                    {/* Actions.
-                        `flex-wrap` e gap più stretto: le tre etichette italiane
+                    {/* Actions: la riga è `ComandiMedia`, la stessa della chat.
+                        `flex-wrap` e gap più stretto (li porta lei): le tre etichette italiane
                         («Scarica» ~126 px, «Condividi» ~144, «Segnala foto/video» ~200)
                         più i gap fanno ~494 px in 358 disponibili sul telefono, e con
                         `justify-center` l'eccesso si divide fra i due lati — ~68 px
                         tagliati a sinistra e ~68 a destra, cioè metà della prima pillola
                         e metà dell'ultima. Andare a capo costa una riga in più; non
-                        andarci costa due comandi. */}
-                    {/* Col solo `scaricabile` e senza indirizzo firmato non resterebbe
-                        nessun comando: niente riga vuota da `mt-4` in mezzo al visore. */}
-                    {(showActions || (scaricabile && urlVisore)) && (
-                        <div data-testid="visore-comandi" className="flex flex-wrap items-center justify-center gap-2 mt-4">
-                            {/* Gli STESSI due gesti della card, e nient'altro: la
-                                duplicazione fra questi due punti è ciò che aveva
-                                lasciato la card senza nemmeno un log. */}
-                            {urlVisore && <button
-                                onClick={() => { void scaricaMedia(lightbox, urlVisore); }}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
-                            </button>}
-                            {showActions && urlVisore && <button
-                                onClick={() => { void condividiMedia(lightbox, urlVisore, t('mediaLinkCopiatoLungo')); }}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
-                            </button>}
-                            {/* Segnalazione contenuto (C5 §2): sempre etichettata, SOLO lato
-                                genitore — con `scaricabile` (staff) non compare. */}
-                            {showActions && <SegnalaContenuto
+                        andarci costa due comandi.
+                        Senza indirizzo firmato `ComandiMedia` non mostra né Scarica né
+                        Condividi (e se non resta niente, nemmeno la riga: niente `mt-4` vuoto
+                        in mezzo al visore); «Segnala» del genitore resta, come prima.
+                        Gli STESSI due gesti della card, e dalla stessa guardia: la duplicazione
+                        fra questi due punti è ciò che aveva lasciato la card senza nemmeno un log. */}
+                    <ComandiMedia
+                        media={mediaAzionabile(lightbox, urlVisore ?? '')}
+                        azioni={azioni}
+                        conScarica={conScarica}
+                        conCondividi={Boolean(showActions)}
+                        extra={showActions ? (
+                            /* Segnalazione contenuto (C5 §2): sempre etichettata, SOLO lato
+                               genitore — con `scaricabile` (staff) non compare. */
+                            <SegnalaContenuto
                                 tipoOggetto="media_galleria"
                                 oggettoId={lightbox.id}
                                 label={t('mediaSegnala')}
                                 variant="pill"
-                            />}
-                        </div>
-                    )}
+                            />
+                        ) : null}
+                    />
 
                     {/*
                       ELIMINA — E IL COMANDO RESTA SOLO QUI, non sulla miniatura.

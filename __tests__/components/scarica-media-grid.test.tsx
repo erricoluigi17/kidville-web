@@ -39,6 +39,12 @@ const scaricaMediaMock = vi.hoisted(() =>
 const condividiLinkMock = vi.hoisted(() =>
   vi.fn<(input: { url?: string; title?: string; text?: string }) => Promise<string>>(),
 )
+type ArgomentoCondividiMedia = ArgomentoScaricaMedia & { chiave: string }
+const condividiMediaMock = vi.hoisted(() =>
+  vi.fn<(input: ArgomentoCondividiMedia) => Promise<{ esito: string; motivo?: string; annullata?: boolean }>>(),
+)
+/** Il dispositivo sa condividere un FILE? Sul web di jsdom no (`navigator.canShare` non esiste). */
+const puoCondividereMock = vi.hoisted(() => vi.fn<() => boolean>())
 const logClientMock = vi.hoisted(() => vi.fn())
 /** L'helper VERO, per il caso che deve passare dal suo log e non da un finto. */
 const vero = vi.hoisted(() => ({ scaricaMedia: null as null | ((i: ArgomentoScaricaMedia) => Promise<unknown>) }))
@@ -48,8 +54,17 @@ vi.mock('@/lib/native/scarica', async () => {
   // un doppio finto lo direbbe giusto qualunque cosa faccia il vero.
   const modulo = await vi.importActual<typeof import('@/lib/native/scarica')>('@/lib/native/scarica')
   vero.scaricaMedia = modulo.scaricaMedia as unknown as (i: ArgomentoScaricaMedia) => Promise<unknown>
-  return { ...modulo, scaricaMedia: scaricaMediaMock }
+  // Anche `condividiMedia` e `puoCondividereFileMedia` sono finte: la griglia deve CHIAMARLE
+  // con gli argomenti giusti, ciò che fanno lo prova `condividi-media.test.ts`.
+  return {
+    ...modulo,
+    scaricaMedia: scaricaMediaMock,
+    condividiMedia: condividiMediaMock,
+    puoCondividereFileMedia: puoCondividereMock,
+  }
 })
+// `condividiLink` resta DEFINITO e finto per una ragione sola: se un domani «Condividi» tornasse
+// a mandare il link che scade, i test qui sotto lo vedrebbero chiamato.
 vi.mock('@/lib/native/share', () => ({ condividiLink: condividiLinkMock, condividiFileLocale: vi.fn() }))
 vi.mock('@/lib/logging/client', () => ({ logClient: logClientMock, nomeErrore: () => 'Error' }))
 vi.mock('@/components/features/segnalazioni/SegnalaContenuto', () => ({
@@ -105,6 +120,8 @@ describe('MediaGrid — lo scarico lato genitore', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     scaricaMediaMock.mockResolvedValue({ esito: 'web-blob' })
+    condividiMediaMock.mockResolvedValue({ esito: 'nativo-foglio' })
+    puoCondividereMock.mockReturnValue(true)
     condividiLinkMock.mockResolvedValue('foglio')
     vi.spyOn(window, 'alert').mockImplementation(() => {})
   })
@@ -312,25 +329,95 @@ describe('MediaGrid — lo scarico lato genitore', () => {
     })
   })
 
-  it('la condivisione passa dal modulo nativo, non da `navigator.share` riscritto a mano', async () => {
+  it('la condivisione consegna il FILE: condividiMedia con chiave = id del media, mai condividiLink', async () => {
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Condividi'))
-    await waitFor(() => expect(condividiLinkMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(condividiMediaMock).toHaveBeenCalledTimes(1))
 
-    expect(condividiLinkMock).toHaveBeenCalledWith({
+    expect(condividiMediaMock.mock.calls[0][0]).toEqual({
       url: URL_FIRMATO,
-      title: 'Laboratorio dei colori',
+      // Con estensione: il nome finisce nel foglio di condivisione e nel file temporaneo.
+      nomeFile: 'Laboratorio dei colori.jpg',
+      tipo: 'foto',
+      titolo: 'Laboratorio dei colori',
+      etichetta: 'gallery',
+      // L'identità STABILE del media: l'URL firmato cambia a ogni ricarico dell'elenco.
+      chiave: 'm1',
     })
+    // Il link firmato scade dopo 10 minuti: chi lo riceve su WhatsApp mezz'ora dopo trova un
+    // errore. «Condividi» non lo manda MAI.
+    expect(condividiLinkMock).not.toHaveBeenCalled()
   })
 
-  it('la copia negli appunti è muta: si avvisa l’utente, altrimenti sembra rotto', async () => {
-    condividiLinkMock.mockResolvedValueOnce('appunti')
+  it('card e visore condividono con la stessa funzione e lo stesso argomento', async () => {
+    render(<MediaGrid items={[VOCE]} showActions />)
+
+    // 1) Il pulsante sulla card (si distingue per il `title`, prima che il visore esista).
+    const sullaCard = screen.getByTitle('Condividi')
+    fireEvent.click(sullaCard)
+    await waitFor(() => expect(condividiMediaMock).toHaveBeenCalledTimes(1))
+
+    // 2) Il visore, dalla sua riga dei comandi: è un ALTRO elemento.
+    const visore = apriVisore('Foto: Laboratorio dei colori')
+    const nelVisore = within(within(visore).getByTestId('visore-comandi')).getByRole('button', { name: 'Condividi' })
+    expect(nelVisore).not.toBe(sullaCard)
+    fireEvent.click(nelVisore)
+    await waitFor(() => expect(condividiMediaMock).toHaveBeenCalledTimes(2))
+
+    // È il lock: due punti, un solo comportamento.
+    expect(condividiMediaMock.mock.calls[1][0]).toEqual(condividiMediaMock.mock.calls[0][0])
+    expect(condividiLinkMock).not.toHaveBeenCalled()
+  })
+
+  it('una condivisione NON riuscita lo dice, e non ripiega mai sul link: altrimenti sembra rotto', async () => {
+    // Era «la copia negli appunti è muta»: il ripiego sul link che scade è sparito, ma il
+    // difetto da cui nasceva resta in agguato — un pulsante che non fa niente e non dice perché.
+    condividiMediaMock.mockResolvedValueOnce({ esito: 'non-riuscita', motivo: 'http-403' })
     const avviso = vi.spyOn(window, 'alert').mockImplementation(() => {})
     render(<MediaGrid items={[VOCE]} showActions />)
 
     fireEvent.click(screen.getByTitle('Condividi'))
     await waitFor(() => expect(avviso).toHaveBeenCalledTimes(1))
+
+    expect(avviso).toHaveBeenCalledWith('Condivisione non riuscita. Riprova fra qualche minuto.')
+    expect(condividiLinkMock).not.toHaveBeenCalled()
+  })
+
+  it('la card e il visore usano UNA guardia sola: un’azione in corso su una card ferma anche le altre', async () => {
+    // Due card, un solo foglio di sistema alla volta: su iOS presentarne un secondo mentre il
+    // primo è aperto solleva. La guardia è della griglia, non della singola card.
+    const seconda: MediaItem = { ...VOCE, id: 'm3', caption: 'Orto in giardino' }
+    condividiMediaMock.mockReturnValue(new Promise(() => {}))
+    render(<MediaGrid items={[VOCE, seconda]} showActions />)
+
+    const [primaCard, secondaCard] = screen.getAllByTitle('Condividi')
+    fireEvent.click(primaCard)
+    fireEvent.click(secondaCard)
+
+    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    expect(condividiMediaMock).toHaveBeenCalledTimes(1)
+    expect(logClientMock).toHaveBeenCalledWith({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'gallery-azione-gia-in-corso',
+    })
+  })
+
+  it('senza condivisione di file (web senza canShare) Condividi non c’è né sulla card né nel visore; Scarica sì', () => {
+    // Un «Condividi» che manda un link da 10 minuti è il difetto che si toglie, e uno che
+    // scarica dicendo «Condividi» mentirebbe: il pulsante non compare.
+    puoCondividereMock.mockReturnValue(false)
+    render(<MediaGrid items={[VOCE]} showActions />)
+
+    expect(screen.getByTitle('Scarica')).toBeTruthy()
+    expect(screen.queryByTitle('Condividi')).toBeNull()
+    const visore = apriVisore('Foto: Laboratorio dei colori')
+    const comandi = within(visore).getByTestId('visore-comandi')
+    expect(within(comandi).getByRole('button', { name: 'Scarica' })).toBeTruthy()
+    expect(within(comandi).queryByRole('button', { name: 'Condividi' })).toBeNull()
+    // «Segnala» è del genitore e non dipende dal foglio di sistema.
+    expect(within(comandi).getByTestId('segnala-contenuto')).toBeTruthy()
   })
 
   it('col genitore il visore porta anche Condividi e «Segnala»', () => {
@@ -350,6 +437,9 @@ describe('MediaGrid — «Scarica» per docenti e Segreteria (`scaricabile`)', (
   beforeEach(() => {
     vi.clearAllMocks()
     scaricaMediaMock.mockResolvedValue({ esito: 'nativo-galleria' })
+    // Il dispositivo SAPREBBE condividere: così «Condividi non c'è» dipende dal ruolo (lo staff ha
+    // il solo «Scarica»), non da un dispositivo che non può.
+    puoCondividereMock.mockReturnValue(true)
     vi.spyOn(window, 'alert').mockImplementation(() => {})
   })
   afterEach(() => {

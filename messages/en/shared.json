@@ -789,5 +789,9 @@
   "erroreVotazioneCandidatiMancanti": "Add at least one candidate for the school representative.",
   "erroreVotazioneCandidatoNonValido": "The selected candidate cannot be voted for on this ballot.",
   "erroreVotoElettoreNonAmmesso": "You cannot vote on this ballot.",
-  "erroreVotazioneOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly."
+  "erroreVotazioneOperazioneNonRiuscita": "The operation did not succeed. Please try again shortly.",
+  "mediaInPreparazione": "Preparing…",
+  "mediaCondividiToccaDiNuovo": "The file is ready: tap “Share” again.",
+  "mediaCondividiAppDaAggiornare": "To share the file, update the Kidville app from the store.",
+  "mediaCondivisioneNonRiuscita": "Sharing failed. Please try again in a few minutes."
 }

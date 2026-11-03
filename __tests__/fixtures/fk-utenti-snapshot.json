@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-01",
-  "generato_alle": "2026-11-01T13:47:44Z",
-  "sha256": "6dccef0d15645e4e9c46168cdd241568642b6620f1f6d7c3562d43e40f9ed848",
+  "generato_il": "2026-11-03",
+  "generato_alle": "2026-11-03T16:25:24Z",
+  "sha256": "767ee28680284a3c3e079f1c40d728a485b2f6c1c47acb02bfabf83bf7a10c31",
   "fk": [
     {
       "tabella": "allegati_registro",
@@ -392,6 +392,31 @@
     {
       "tabella": "video_jobs",
       "colonna": "owner_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "votazioni",
+      "colonna": "aggiornata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "votazioni",
+      "colonna": "creata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "votazioni_candidati",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "votazioni_voti",
+      "colonna": "candidato_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "votazioni_voti",
+      "colonna": "elettore_id",
       "azione": "blocca"
     }
   ]

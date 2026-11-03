@@ -10,6 +10,8 @@ import { sembraItaliano } from '@/lib/translate/lingua';
 import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
 import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
 import { NotaRettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
+import { FotoAllegatoChat } from '@/components/features/chat/FotoAllegatoChat';
+import { VisoreFotoChat } from '@/components/features/chat/VisoreFotoChat';
 
 /**
  * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
@@ -39,6 +41,14 @@ interface Props {
     /** L'ultimo tentativo non è riuscito: l'avviso resta finché non si riprova a mano. */
     errorePrecedenti?: boolean;
     onCaricaPrecedenti?: () => void;
+    /**
+     * Chi sta guardando la conversazione, cioè quali comandi ha una foto aperta a tutto schermo
+     * (spec 2026-11-03): `genitore` — Scarica e Condividi (il file); `staff` — solo Scarica. OBBLIGATORIA
+     * di proposito: una pagina nuova che monta la chat deve DIRE chi è, invece di ereditare in
+     * silenzio il default che dà o toglie un pulsante. La supervisione della segreteria non passa da
+     * qui: monta `VisoreFotoChat` per conto suo (`azioni="vigilanza"`).
+     */
+    azioniFoto: 'genitore' | 'staff';
 }
 
 /**
@@ -160,7 +170,7 @@ export function offriTraduzione(
 }
 
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
-function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+function MessageBubble({ msg, isMine, currentUserId, onApriFoto }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onApriFoto: (messaggioId: string) => void }) {
     const locale = useLocale();
     const t = useTranslations('parentChat');
     const ts = useTranslations('shared');
@@ -212,12 +222,12 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                     : '0 1px 2px rgba(0,84,75,.05), 0 8px 22px -20px rgba(0,84,75,.3)',
             }}
         >
-            {/* Attachment preview */}
+            {/* Attachment preview. La foto è un comando (2026-11-03): il tocco la apre a tutto
+                schermo in `VisoreFotoChat`. Con il percorso GREZZO (messaggio arrivato dal realtime,
+                non ancora firmato) `allegatoMostrabile` è falso: né miniatura né tocco, e la foto
+                non è nemmeno fra quelle del visore finché il polling non porta il link firmato. */}
             {msg.attachment_type === 'image' && allegatoMostrabile(msg.attachment_url) && (
-                <div className="mb-2 rounded-xl overflow-hidden">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.attachment_url!} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
-                </div>
+                <FotoAllegatoChat url={msg.attachment_url!} onApri={() => onApriFoto(msg.id)} />
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
                 allegatoMostrabile(msg.attachment_url) ? (
@@ -333,7 +343,45 @@ function messaggioNelContenitore(contenitore: HTMLElement, id: string): HTMLElem
     return contenitore.querySelector<HTMLElement>(`[data-msg-id="${id}"]`);
 }
 
-export function ChatMessageArea({
+/**
+ * L'AREA DEI MESSAGGI DI UNA CONVERSAZIONE, con il visore delle sue foto.
+ *
+ * Il visore (`VisoreFotoChat`) è UNO per conversazione e lo stato «quale foto è aperta»
+ * (`fotoAperta`, l'id di un MESSAGGIO) sta qui e non nelle bolle: le frecce scorrono fra le foto di
+ * tutta la conversazione, e un tocco su una bolla deve poter aprire quella e le altre.
+ *
+ * ⚠️ IL VISORE È MONTATO ANCHE CON LO SPINNER E CON LA LISTA VUOTA, ed è per questo che l'area vera
+ * è `CorpoChat` e qui sta solo il guscio. Quando la conversazione cambia la lista si svuota e compare
+ * lo spinner: se il visore sparisse con lei, `fotoAperta` resterebbe impostata e alla prima risposta
+ * (che riporta gli stessi id) la foto si riaprirebbe da sola. Montato, vede la lista vuota e chiama
+ * `onChiudi`: lo stato si azzera, e riaprire è di nuovo un gesto di chi guarda.
+ *
+ * ⚠️ DUE ISTANZE PER PAGINA (desktop e mobile a schermo intero, entrambe nel DOM): ognuna ha il suo
+ * `fotoAperta`, quindi un tocco apre UN visore solo — quello dell'istanza in cui si è toccato — e il
+ * tasto Indietro di Android, che chiude l'overlay in cima al registro, chiude quello. L'altra
+ * istanza ha `apertoId` nullo: non rende niente e non si iscrive al registro.
+ */
+export function ChatMessageArea({ azioniFoto, ...resto }: Props) {
+    const [fotoAperta, setFotoAperta] = useState<string | null>(null);
+    // Stabile: il visore la tiene fra le dipendenze di un effetto, e non deve dipendere da argomenti
+    // (`onClick={onChiudi}` gli passa il MouseEvent).
+    const chiudiFoto = useCallback(() => setFotoAperta(null), []);
+
+    return (
+        <>
+            <CorpoChat {...resto} onApriFoto={setFotoAperta} />
+            <VisoreFotoChat
+                messaggi={resto.messages}
+                apertoId={fotoAperta}
+                onCambia={setFotoAperta}
+                onChiudi={chiudiFoto}
+                azioni={azioniFoto}
+            />
+        </>
+    );
+}
+
+function CorpoChat({
     messages,
     currentUserId,
     otherUserName,
@@ -344,7 +392,8 @@ export function ChatMessageArea({
     caricandoPrecedenti,
     errorePrecedenti,
     onCaricaPrecedenti,
-}: Props) {
+    onApriFoto,
+}: Omit<Props, 'azioniFoto'> & { onApriFoto: (messaggioId: string) => void }) {
     const locale = useLocale();
     const tCommon = useTranslations('common');
     const t = useTranslations('parentChat');
@@ -633,7 +682,7 @@ export function ChatMessageArea({
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}
                                     >
-                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} />
+                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} onApriFoto={onApriFoto} />
                                     </motion.div>
                                 </div>
                             );

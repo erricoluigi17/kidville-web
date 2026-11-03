@@ -37,6 +37,7 @@ describe('ChatMessageArea — il contenitore che scorre', () => {
                 currentUserId="gen-1"
                 otherUserName="Dora"
                 firstUnreadId={null}
+                azioniFoto="genitore"
             />,
         );
         const contenitore = screen.getByTestId('chat-messaggi');
@@ -98,8 +99,8 @@ describe('ChatMessageArea — l’observer dei letti guarda solo DENTRO il propr
     it('due istanze montate insieme (desktop e mobile): ciascun observer osserva solo le proprie bolle', () => {
         render(
             <>
-                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={vi.fn()} />
-                <ChatMessageArea messages={[nonLetto('m-b', 'Bolla di B')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={vi.fn()} />
+                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={vi.fn()} />
+                <ChatMessageArea messages={[nonLetto('m-b', 'Bolla di B')]} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={vi.fn()} />
             </>,
         );
 
@@ -116,12 +117,12 @@ describe('ChatMessageArea — l’observer dei letti guarda solo DENTRO il propr
     it('i messaggi arrivati mentre era in caricamento vengono osservati quando il caricamento finisce', () => {
         const messaggi = [nonLetto('m-a', 'Bolla di A')];
         const { rerender } = render(
-            <ChatMessageArea messages={messaggi} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={vi.fn()} loading />,
+            <ChatMessageArea messages={messaggi} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={vi.fn()} loading />,
         );
         expect(attivi().flatMap((o) => o.osservati)).toHaveLength(0);
 
         // Stessi messaggi, stesso array: cambia solo `loading`.
-        rerender(<ChatMessageArea messages={messaggi} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={vi.fn()} loading={false} />);
+        rerender(<ChatMessageArea messages={messaggi} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={vi.fn()} loading={false} />);
 
         expect(attivi().flatMap((o) => o.osservati), 'la bolla non letta non è mai stata osservata: non verrà segnata letta').toHaveLength(1);
     });
@@ -129,7 +130,7 @@ describe('ChatMessageArea — l’observer dei letti guarda solo DENTRO il propr
     it('una bolla che entra nel viewport arriva a onMarkRead col suo id, dopo il debounce', async () => {
         vi.useFakeTimers();
         const onMarkRead = vi.fn();
-        render(<ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={onMarkRead} />);
+        render(<ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={onMarkRead} />);
         const o = attivi().find((x) => x.osservati.length > 0);
         expect(o).toBeDefined();
         o?.cb([{ isIntersecting: true, target: o.osservati[0] }]);
@@ -154,7 +155,7 @@ describe('ChatMessageArea — [inert]: ciò che è coperto non è visto', () => 
         const onMarkRead = vi.fn();
         render(
             <div inert>
-                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={onMarkRead} />
+                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={onMarkRead} />
             </div>,
         );
         const o = attivi().find((x) => x.osservati.length > 0);
@@ -168,7 +169,7 @@ describe('ChatMessageArea — [inert]: ciò che è coperto non è visto', () => 
         const onMarkRead = vi.fn();
         render(
             <div data-testid="copertura" inert>
-                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={onMarkRead} />
+                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" azioniFoto="genitore" firstUnreadId={null} onMarkRead={onMarkRead} />
             </div>,
         );
         const primo = attivi().find((x) => x.osservati.length > 0);

@@ -824,6 +824,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['pagamenti.fatturaViewerPagina', 'forma «pagina N di M»: posizione del documento, non quantità da pluralizzare'],
         ['teacherPresenze.pdfPiePagina', 'forma «pagina N di M»: posizione in una sequenza'],
         ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
+        ['parentChat.chatFotoConversazione', 'forma «foto N di M»: posizione in una sequenza'],
 
         // (c) FRAZIONE `n/tot`: il sostantivo concorda con il totale, non con il
         //     numeratore. «1/20 presenti» è corretto e «1/20 presente» sarebbe
@@ -993,7 +994,17 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // concorda con lui e non con un numero, e cade sotto il riconoscitore solo in
         // inglese («is» ha due lettere, «è» una). Riscrivere la frase inglese per
         // schivare la regexp è la scelta già scartata il 12 e il 13 agosto.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(42)
+        //
+        // 2026-11-03 · 42 → 43. `parentChat.chatFotoConversazione` («Foto {n} di {totale} della
+        // conversazione» / «Photo {n} of {totale} in the conversation») è il nome del visore a tutto
+        // schermo delle foto della chat: dice QUALE foto, fra quante, e lo screen reader lo annuncia
+        // all'apertura. Categoria (b), gemella di `teacherServizi.galleryFotoNofM` (il visore di Foto):
+        // è una POSIZIONE in una sequenza, e nessun sostantivo deve concordare col numero — la forma
+        // ICU plural sarebbe semanticamente falsa («Foto 1 di 1» non è un plurale). Il riconoscitore
+        // scatta perché dopo il segnaposto viene «di»/«of»; cambiare la preposizione o scrivere
+        // «{n}/{totale}» per schivarlo è la frase piegata al lock già scartata più volte, qui sopra.
+        // Un messaggio nuovo, un'eccezione dichiarata: il tetto sale di uno e non di più.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(43)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

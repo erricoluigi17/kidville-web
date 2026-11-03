@@ -96,6 +96,10 @@ const SRC = path.join(RADICE, 'src');
  * `TaskCard`); misurati uno per uno, TRE sono conformi e non entrano qui:
  *  · `ChatMessageArea.tsx:210` — `w-full h-auto max-h-48 object-cover`: il tetto
  *    c'è (`max-h-48`) e l'`object-fit` c'è. È la forma giusta, non un'eccezione.
+ *    (Dal 2026-11-03 quell'`<img>` non sta più in `ChatMessageArea.tsx`: la miniatura è
+ *    `FotoAllegatoChat.tsx`, un `<button>` che si apre a tutto schermo, e l'immagine ha le
+ *    STESSE classi. La riga qui sopra è la misura storica del 2026-09-11; il lock, che
+ *    scandisce tutto `src/`, vede l'`<img>` nel file nuovo e lo vuole conforme.)
  *  · `TaskCard.tsx:241` — `w-full h-full object-cover` dentro un quadrato
  *    `w-9 h-9`: l'altezza è quella del padre, che è dichiarata.
  *  · `InstagramEmbed.tsx` — non contiene nessun `<img>` né `<video>`: è un

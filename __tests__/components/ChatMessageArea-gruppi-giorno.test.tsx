@@ -43,7 +43,7 @@ function msg(n: number, extra: Partial<ChatMessage>): ChatMessage {
 }
 
 function area(messages: ChatMessage[]) {
-    return <ChatMessageArea currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} messages={messages} />;
+    return <ChatMessageArea currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} messages={messages} azioniFoto="genitore" />;
 }
 
 /** «Oggi» è il 1° marzo 2027: tutte le date di prova sono più vecchie, e l'etichetta è giorno e mese. */

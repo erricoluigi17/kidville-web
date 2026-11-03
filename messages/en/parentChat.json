@@ -73,5 +73,7 @@
   "invioNonRiuscitoRete": "The message was not sent: no connection. It is still here — try again when you are back online.",
   "invioNonRiuscitoSospeso": "The message was not sent: the account is suspended. Please contact the office.",
   "threadsNonCaricatiTitolo": "Conversations not loaded",
-  "threadsNonCaricatiCorpo": "We couldn’t load your conversations. Check your connection and try again."
+  "threadsNonCaricatiCorpo": "We couldn’t load your conversations. Check your connection and try again.",
+  "chatApriFoto": "Open the photo full screen",
+  "chatFotoConversazione": "Photo {n} of {totale} in the conversation"
 }

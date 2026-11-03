@@ -356,6 +356,7 @@ function ParentChatContent() {
                                 loading={chat.caricamentoMessaggi}
                                 firstUnreadId={chat.primoNonLettoId}
                                 onMarkRead={chat.segnaLetti}
+                                azioniFoto="genitore"
                                 {...precedenti}
                             />
                             {terminiCta}
@@ -427,6 +428,7 @@ function ParentChatContent() {
                             loading={chat.caricamentoMessaggi}
                             firstUnreadId={chat.primoNonLettoId}
                             onMarkRead={chat.segnaLetti}
+                            azioniFoto="genitore"
                             {...precedenti}
                         />
                         {terminiCta}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import itAdminComunicazioni from '../../messages/it/adminComunicazioni.json'
 import enAdminComunicazioni from '../../messages/en/adminComunicazioni.json'
 
@@ -129,5 +129,56 @@ describe('RegistroVigilanza — la riga dei soli conteggi', () => {
       expect(itAdminComunicazioni, `manca in it: ${k}`).toHaveProperty(k)
       expect(enAdminComunicazioni, `manca in en: ${k}`).toHaveProperty(k)
     }
+  })
+})
+
+describe('RegistroVigilanza — lo scarico di una foto dalla supervisione', () => {
+  // La riga `scarico` la scrive `admin/chat/messages/scarico:POST`: ha SEMPRE il thread (come la lettura vera)
+  // e `nMessaggi` 1 (la foto scaricata). Non è una lettura di conversazione e non è un conteggio.
+  const SCARICO = { ...CONVERSAZIONE, id: 'r3', azione: 'scarico', nMessaggi: 1 }
+
+  it('la riga scarico si legge «Ha scaricato una foto», non «Ha aperto una conversazione»', async () => {
+    h.fetchMock.mockImplementation(() => risposta([SCARICO]))
+    render(<RegistroVigilanza />)
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+    const tabella = within(screen.getByRole('table'))
+    const riga = tabella.getByText(itAdminComunicazioni.registroAzioneScarico).closest('tr') as HTMLElement
+    expect(riga.textContent ?? '').toContain('Alfa Rossi')
+    // Né «aperto una conversazione» né «conteggiati»: lo scarico non è nessuna delle due cose.
+    expect(riga.textContent ?? '').not.toContain(itAdminComunicazioni.registroAzioneLettura)
+    expect(riga.textContent ?? '').not.toMatch(/conteggiati/)
+    // E «Quanti» è il numero nudo: una foto.
+    const celle = Array.from(riga.querySelectorAll('td')).map((c) => (c.textContent ?? '').trim())
+    expect(celle).toContain('1')
+    // Controllo positivo: la frase dice davvero «scaricato una foto» (un catalogo svuotato passerebbe i test sopra).
+    expect(itAdminComunicazioni.registroAzioneScarico).toBe('Ha scaricato una foto')
+  })
+
+  it('il filtro per azione la offre, e sceglierla chiede al registro azione=scarico', async () => {
+    h.fetchMock.mockImplementation(() => risposta([SCARICO]))
+    render(<RegistroVigilanza />)
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+    expect(screen.getByRole('option', { name: itAdminComunicazioni.registroAzioneScarico })).toBeInTheDocument()
+
+    h.fetchMock.mockClear()
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'scarico' } })
+    await waitFor(() => expect(h.fetchMock).toHaveBeenCalled())
+    const url = String(h.fetchMock.mock.calls[h.fetchMock.mock.calls.length - 1][0])
+    expect(new URL(url, 'http://localhost').searchParams.get('azione')).toBe('scarico')
+  })
+
+  it('uno scarico fuori sede porta il marcatore «fuori-scope» accanto all’etichetta', async () => {
+    h.fetchMock.mockImplementation(() => risposta([{ ...SCARICO, esito: 'fuori-scope', nMessaggi: null }]))
+    render(<RegistroVigilanza />)
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+    const tabella = within(screen.getByRole('table'))
+    const riga = tabella.getByText(itAdminComunicazioni.registroAzioneScarico).closest('tr') as HTMLElement
+    expect(riga.textContent ?? '').toContain(itAdminComunicazioni.registroEsitoFuoriScope)
+  })
+
+  it('la chiave nuova esiste in entrambi i cataloghi, e in inglese non resta la frase italiana', () => {
+    expect(itAdminComunicazioni).toHaveProperty('registroAzioneScarico')
+    expect(enAdminComunicazioni).toHaveProperty('registroAzioneScarico')
+    expect((enAdminComunicazioni as Record<string, string>).registroAzioneScarico).toBe('Downloaded a photo')
   })
 })

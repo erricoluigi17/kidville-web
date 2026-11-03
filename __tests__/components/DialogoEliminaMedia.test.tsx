@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
 import itShared from '../../messages/it/shared.json';
 
 /**
@@ -46,6 +46,7 @@ vi.mock('@/lib/logging/client', () => ({
 
 import { DialogoEliminaMedia, erroreElimina } from '@/components/features/gallery/DialogoEliminaMedia';
 import { MediaGrid, type MediaItem } from '@/components/features/gallery/MediaGrid';
+import { chiudiOverlayInCima } from '@/lib/mobile/overlay-indietro';
 
 /** Una promise che si risolve/rigetta quando vuole il test. */
 function differita<T>() {
@@ -822,5 +823,96 @@ describe('MediaGrid — il visore non si chiude con la DELETE in volo', () => {
         rigetta(erroreElimina('Media non trovato', 404));
         await waitFor(() => expect(screen.queryByTestId('visore-colonna')).toBeNull());
         expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('IL RICARICO ARRIVA PRIMA DELL’ESITO: l’elenco perde il media, ma visore e conferma restano fino alla risposta', async () => {
+        // È il caso reale di `onDelete`: il chiamante RICARICA l'elenco dentro la propria
+        // risoluzione, e solo dopo `onEliminato` chiude il visore. Nell'intervallo il media
+        // aperto non è più in `items`: il visore deve restare montato su di lui, perché la
+        // conferma è sua figlia e smontarla ora sarebbe lo stesso silenzio del rifiuto perso.
+        const { promessa, risolvi } = differita<void>();
+        const onDelete = vi.fn(() => promessa);
+        const { rerender } = render(<MediaGrid items={[FOTO, SECONDA]} onDelete={onDelete} />);
+        apriDialogo();
+        fireEvent.click(await screen.findByRole('button', { name: CONFERMA }));
+        await screen.findByText(itShared.galleryEliminaInCorso);
+
+        rerender(<MediaGrid items={[SECONDA]} onDelete={onDelete} />);
+
+        expect(
+            screen.queryByTestId('visore-colonna'),
+            'il ricarico dell’elenco ha chiuso il visore mentre la conferma era in volo',
+        ).not.toBeNull();
+        expect(
+            screen.queryByText(itShared.galleryEliminaInCorso),
+            'la conferma è stata smontata dal ricarico',
+        ).not.toBeNull();
+        expect(
+            screen.getByRole('dialog', { hidden: true, name: `${itShared.galleryAltFoto}: Laboratorio dei colori` }),
+            'il visore non è più quello del media che si sta eliminando',
+        ).toBeInTheDocument();
+
+        risolvi();
+        await waitFor(() => expect(screen.queryByTestId('visore-colonna')).toBeNull());
+    });
+
+    /*
+     * IL TASTO INDIETRO DI ANDROID, dal 2026-11-03 (il visore è `VisoreMedia`).
+     *
+     * Prima Indietro, col visore aperto, usciva dalla pagina. Adesso il visore è un overlay
+     * del registro: chiude lui, e passa dallo stesso imbuto della ✕ — `handleCloseLightbox`.
+     * Il dialogo di conferma è reso DOPO, quindi è più in alto nella pila e si chiude per
+     * primo (e con la richiesta in volo non si chiude affatto: la sua guardia).
+     * `act` perché il gestore nativo chiama fuori da React e la chiusura aggiorna uno stato.
+     */
+    function premiIndietro(): boolean {
+        let consumato = false;
+        act(() => {
+            consumato = chiudiOverlayInCima();
+        });
+        return consumato;
+    }
+
+    it('Indietro di Android a riposo chiude il visore, e il secondo Indietro torna a navigare', async () => {
+        render(<MediaGrid items={[FOTO, SECONDA]} onDelete={vi.fn()} />);
+        apriVisore();
+        expect(screen.getByTestId('visore-colonna')).toBeInTheDocument();
+
+        expect(premiIndietro(), 'il visore non ha preso il tasto Indietro').toBe(true);
+        await waitFor(() => expect(screen.queryByTestId('visore-colonna')).toBeNull());
+        expect(premiIndietro(), 'il visore chiuso tiene ancora il tasto Indietro: non si esce più dalla pagina').toBe(false);
+    });
+
+    it('Indietro con la conferma aperta chiude PRIMA la conferma, e il visore resta', async () => {
+        render(<MediaGrid items={[FOTO, SECONDA]} onDelete={vi.fn()} />);
+        apriDialogo();
+        expect(await screen.findByText(itShared.galleryEliminaTitoloFoto)).toBeInTheDocument();
+
+        expect(premiIndietro()).toBe(true);
+        await waitFor(() => expect(screen.queryByText(itShared.galleryEliminaTitoloFoto)).toBeNull());
+        expect(
+            screen.getByTestId('visore-colonna'),
+            'Indietro ha chiuso il visore portandosi via la conferma: doveva chiudere solo lei',
+        ).toBeInTheDocument();
+
+        // …e il secondo Indietro chiude il visore.
+        expect(premiIndietro()).toBe(true);
+        await waitFor(() => expect(screen.queryByTestId('visore-colonna')).toBeNull());
+    });
+
+    it('Indietro con la DELETE in volo NON smonta niente, e il rifiuto che arriva dopo si VEDE', async () => {
+        const { rigetta } = await confermaInVolo();
+
+        // L'evento è consumato (Android non esce dalla pagina) ma la conferma resta.
+        expect(premiIndietro()).toBe(true);
+        expect(
+            screen.queryByText(itShared.galleryEliminaTitoloFoto),
+            'Indietro ha smontato la conferma con la DELETE in volo: il rifiuto non avrà più dove dirsi',
+        ).not.toBeNull();
+        expect(screen.getByTestId('visore-colonna')).toBeInTheDocument();
+
+        rigetta(erroreElimina('Errore del server', 500));
+        const avviso = await screen.findByRole('alert');
+        expect(avviso.textContent).toContain('Errore del server');
     });
 });

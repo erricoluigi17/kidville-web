@@ -508,21 +508,59 @@ describe('MediaGrid — il visore è una finestra modale, e il fuoco ci entra', 
     });
 
     it('la griglia dietro il velo diventa inerte: il Tab non gira sui comandi coperti', () => {
+        /*
+         * ⚠️ `closest('[inert]')` E NON `hasAttribute('inert')` SULLA GRIGLIA — dal 2026-11-03.
+         *
+         * Il visore è un portale su `document.body` (`VisoreMedia`), quindi i nodi che
+         * `rendiInerteFuoriDa` marca sono i SUOI fratelli — la radice dell'app, qui il
+         * contenitore del render — e non più il fratello diretto della griglia. `inert` si
+         * eredita lungo il sottoalbero: la griglia è inerte se lo è lei o un suo antenato, ed
+         * è l'unica domanda che conta («il Tab arriva ai suoi bottoni?»). L'asserzione ha la
+         * stessa severità di prima, e in più pretende il contrario per il visore: se
+         * l'inerzia lo prendesse, non si potrebbe più usare.
+         */
         render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         const griglia = screen.getByTestId('griglia-media');
-        expect(griglia.hasAttribute('inert'), 'la griglia è inerte prima di aprire il visore').toBe(false);
+        expect(griglia.closest('[inert]'), 'la griglia è inerte prima di aprire il visore').toBeNull();
 
         apriVisoreFoto();
         expect(
-            griglia.hasAttribute('inert'),
+            griglia.closest('[inert]'),
             'la griglia resta nel giro del Tab sotto il velo: i suoi bottoni sono invisibili e attivabili con Invio',
-        ).toBe(true);
+        ).not.toBeNull();
+        expect(
+            screen.getByRole('dialog').closest('[inert]'),
+            'il visore stesso è finito dentro un sottoalbero inerte: i suoi comandi non si potrebbero usare',
+        ).toBeNull();
 
         fireEvent.keyDown(window, { key: 'Escape' });
         expect(
-            griglia.hasAttribute('inert'),
+            griglia.closest('[inert]'),
             'l’inerzia non è stata togliata alla chiusura: la griglia resta irraggiungibile per sempre',
-        ).toBe(false);
+        ).toBeNull();
+    });
+});
+
+describe('MediaGrid — il visore aperto non si ricarica se la pagina ri-firma gli indirizzi', () => {
+    /*
+     * Gli indirizzi sono FIRMATI A TEMPO e la pagina può ricaricare l'elenco a visore
+     * aperto (dopo un salvataggio dei tag, un caricamento). Il media aperto si legge dallo
+     * stato `lightbox` e non da `items`: così l'immagine a schermo non cambia sotto gli
+     * occhi di chi la guarda — era così quando il visore stava dentro `MediaGrid`, e deve
+     * restarlo ora che sta in `VisoreMedia`, che di `items` vede solo la vista ridotta.
+     */
+    it('un elenco ricaricato con un indirizzo nuovo non cambia l’<img> già aperta', () => {
+        const { rerender } = render(<MediaGrid items={[FOTO]} />);
+        apriVisoreFoto();
+        const nelVisore = () => screen.getByRole('dialog').querySelector('img') as HTMLImageElement;
+        expect(nelVisore().getAttribute('src')).toBe(FOTO.file_url);
+
+        rerender(<MediaGrid items={[{ ...FOTO, file_url: 'https://firmato.test/uploads/a.jpg?firma=nuova' }]} />);
+
+        expect(
+            nelVisore().getAttribute('src'),
+            'il ricarico dell’elenco ha cambiato l’immagine a visore aperto: sfarfalla e si riscarica mentre la si guarda',
+        ).toBe(FOTO.file_url);
     });
 });
 

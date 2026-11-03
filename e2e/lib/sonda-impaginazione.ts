@@ -107,7 +107,7 @@ export interface EsitoImpaginazione {
  * cioè esattamente dove stavano le tre pillole da cui questo crawler è nato.
  * Il perché è una regola del CSS: un asse `visible` accanto a un asse che non lo è
  * computa ad `auto`. Quindi `absolute inset-0 overflow-y-auto` (il contenitore del
- * visore, `MediaGrid.tsx:746`) ha `overflow-x: auto` senza che nessuno l'abbia
+ * visore, `VisoreMedia.tsx`; il 2026-09-12 era `MediaGrid.tsx:746`) ha `overflow-x: auto` senza che nessuno l'abbia
  * scritto, ritaglia, e il suo rettangolo È il viewport — perché sta dentro un
  * `fixed inset-0`. Misura su una pagina che riproduce quella struttura, identica
  * sui due motori:

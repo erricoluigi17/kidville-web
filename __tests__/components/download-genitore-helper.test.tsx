@@ -283,7 +283,7 @@ function messaggioConDocumento(): ChatMessage {
 describe('allegati della chat', () => {
   it('nell’app: anteprima con l’helper, etichetta della chat', () => {
     h.nativo = true
-    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" />)
+    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" azioniFoto="genitore" />)
     const link = screen.getByRole('link', { name: new RegExp(itChat.documentAttachment) })
 
     expect(fireEvent.click(link)).toBe(false)
@@ -297,7 +297,7 @@ describe('allegati della chat', () => {
   it('nell’app, il documento che non si apre lo DICE nella bolla', async () => {
     h.nativo = true
     h.apri.mockResolvedValueOnce({ esito: 'non-riuscito', motivo: 'foglio-file-non-aperto' })
-    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" />)
+    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" azioniFoto="genitore" />)
     fireEvent.click(screen.getByRole('link', { name: new RegExp(itChat.documentAttachment) }))
     expect(await screen.findByRole('alert')).toHaveTextContent(itShared.documentoNonAperto)
   })
@@ -305,7 +305,7 @@ describe('allegati della chat', () => {
   it('nell’app col binario 1.0: la bolla dice di AGGIORNARE, non di riprovare', async () => {
     h.nativo = true
     h.apri.mockResolvedValueOnce(BINARIO_1_0)
-    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" />)
+    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" azioniFoto="genitore" />)
     fireEvent.click(screen.getByRole('link', { name: new RegExp(itChat.documentAttachment) }))
     const avviso = await screen.findByRole('alert')
     expect(avviso).toHaveTextContent(itShared.documentoAppDaAggiornare)
@@ -314,7 +314,7 @@ describe('allegati della chat', () => {
 
   it('nell’app, un’anteprima aperta non inventa nessun avviso nella bolla', async () => {
     h.nativo = true
-    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" />)
+    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" azioniFoto="genitore" />)
     fireEvent.click(screen.getByRole('link', { name: new RegExp(itChat.documentAttachment) }))
     await waitFor(() => expect(h.apri).toHaveBeenCalledTimes(1))
     await act(async () => {
@@ -324,7 +324,7 @@ describe('allegati della chat', () => {
   })
 
   it('sul web: nessun helper', () => {
-    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" />)
+    render(<ChatMessageArea messages={[messaggioConDocumento()]} currentUserId="gen-1" otherUserName="Maestra" azioniFoto="genitore" />)
     const link = screen.getByRole('link', { name: new RegExp(itChat.documentAttachment) })
     expect(clicSulWeb(link)).toBe(false)
     expect(h.apri).not.toHaveBeenCalled()

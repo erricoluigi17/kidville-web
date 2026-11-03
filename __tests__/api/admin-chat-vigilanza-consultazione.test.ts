@@ -111,6 +111,28 @@ describe('GET /api/admin/chat/vigilanza — il registro, solo alla Direzione', (
     expect(await idsRestituiti(await GET(req('azione=ricerca')))).toEqual(['v2'])
   })
 
+  it('filtra per azione «scarico»: 200, e il filtro arriva alla query (restano solo gli scarichi)', async () => {
+    // Lo scarico di una foto dalla supervisione è una riga del registro come le altre: la riga si
+    // aggiunge qui, non in `dbBase`, così gli altri test dell'elenco non cambiano.
+    h.db.chat_vigilanza_accessi.push({
+      id: 'v4', operatore_id: SEGRETARIA, operatore_ruolo: 'segreteria', azione: 'scarico', esito: 'ok',
+      thread_id: 't1', alunno_id: 'a1', scuola_id: SEDE_A, n_messaggi: 1, termine: null, ip: '203.0.113.9',
+      letto_il: '2026-09-10T11:00:00.000Z',
+    })
+
+    const res = await GET(req('azione=scarico'))
+    expect(res.status).toBe(200)
+    // Il filtro `azione` è arrivato alla query: `v1` (lettura) e `v2` (ricerca) della stessa sede non ci sono.
+    expect(await idsRestituiti(res)).toEqual(['v4'])
+  })
+
+  it('un\'azione fuori dall\'elenco è 400 dalla validazione, e il registro non si legge', async () => {
+    const res = await GET(req('azione=altro'))
+    expect(res.status).toBe(400)
+    expect(h.tabelle).not.toContain('chat_vigilanza_accessi')
+    expect(h.tabelle).toEqual([])
+  })
+
   it('l\'estremo destro del periodo comprende tutto il giorno indicato', async () => {
     // `v2` è delle 08:00 del 9 settembre: con un confronto a mezzanotte sparirebbe.
     expect(await idsRestituiti(await GET(req('da=2026-09-09&a=2026-09-09')))).toEqual(['v2'])

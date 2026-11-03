@@ -47,11 +47,21 @@ import path from 'node:path';
  * garanzia che non dà: un antenato del visore che crei un CONTESTO
  * D'IMPILAMENTO (un `opacity < 1`, un `transform`, un `will-change`) clampa il
  * livello del visore rispetto ai suoi fratelli, e allora nessun numero scritto
- * qui basta. `MediaGrid` è montata dentro un `motion.div` che anima l'opacità:
- * a riposo framer-motion lascia `opacity: 1` e togle `will-change`, quindi il
- * contesto NON si crea — ma è una proprietà del comportamento di una libreria,
- * non di questo file. La prova che conta resta quella sul dispositivo, ed è
- * scritta sopra con la data.
+ * qui basta. Prima del 2026-11-03 il visore stava dentro `MediaGrid`, montata a sua
+ * volta in un `motion.div` che anima l'opacità (a riposo framer-motion la lascia a 1
+ * e toglie `will-change`, quindi il contesto NON si creava — ma era una proprietà di
+ * una libreria). In chat la conversazione mobile è un `fixed inset-0 z-[60]`, un
+ * contesto vero. Per questo `VisoreMedia` si rende con `createPortal` su
+ * `document.body`: fuori da ogni antenato, il numero scritto sulla radice torna a
+ * valere. UNICA ECCEZIONE, il cockpit della Direzione/Segreteria: lì il portale va
+ * nell'area contenuto (`[data-cockpit-content]`), perché la regola di `globals.css`
+ * che fa partire gli overlay dopo binario e sidebar vale solo lì dentro; e l'area
+ * contenuto non crea contesti d'impilamento, cosa che il lock
+ * `visore-rispetta-la-cornice-del-cockpit` verifica sulle classi del layout. Questo
+ * lock non misura l'albero (legge classi): lo misura
+ * `__tests__/components/VisoreMedia.test.tsx` («il dialog vive in document.body ed è
+ * a z-[115]», e il gruppo sul cockpit). La prova che conta resta quella sul
+ * dispositivo, scritta sopra con la data.
  *
  * ⚠️ PROVATO A ROMPERSI: riportando la radice del visore a `z-50` questo test
  * diventa rosso su tutte e tre le bottom-nav. Un lock mai visto fallire non è
@@ -60,7 +70,12 @@ import path from 'node:path';
 
 const RADICE = process.cwd();
 
-const VISORE = 'src/components/features/gallery/MediaGrid.tsx';
+/**
+ * Dove sta la radice del visore. Fino al 2026-11-03 stava in `MediaGrid.tsx`; adesso è
+ * `VisoreMedia`, il visore unico di galleria e chat. Il lock legge lei, e `MediaGrid` non
+ * ha più nessuna radice `fixed`: se ne tornasse una, sarebbe un secondo visore.
+ */
+const VISORE = 'src/components/features/media/VisoreMedia.tsx';
 
 /**
  * Il chrome fisso che galleggia sopra la pagina, con il perché di ognuno.
@@ -109,7 +124,7 @@ function classiDichiarate(src: string): string[] {
 }
 
 /**
- * La radice del visore: l'unico `className` di `MediaGrid` che sia insieme
+ * La radice del visore: l'unico `className` di `VisoreMedia` che sia insieme
  * `fixed`, `inset-0` e `focus:outline-none` — cioè il `div` con
  * `role="dialog"`, che è anche il solo a prendere il fuoco.
  *

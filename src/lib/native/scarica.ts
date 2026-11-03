@@ -3,7 +3,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp } from '@/lib/push/native-register'
-import { condividiFileLocale, condividiLink } from './share'
+import { condividiFileLocale, condividiFileWeb, condividiLink, type EsitoFileWeb } from './share'
 
 /**
  * SCARICARE UN FILE DALL'APP — e perché non è un `<a download>`.
@@ -544,13 +544,20 @@ function blobInBase64(blob: Blob): Promise<string> {
  * L'HELPER UNICO DELL'APP 1.1 — media in Galleria, file nel foglio, anteprima
  * ════════════════════════════════════════════════════════════════════════════
  *
- * Tre gesti, un posto solo, e sul WEB lo stesso comportamento di prima:
+ * Quattro gesti, un posto solo, e sul WEB lo stesso comportamento di prima
+ * (tranne `condividiMedia`, che sul web è nuovo):
  *
  *  • `scaricaMedia`     foto/video → nativo: `FileTransfer` in Cache (i byte non
  *                       passano dal bridge in base64) e salvataggio DIRETTO in
  *                       Galleria con il plugin `Media` — iOS nel Rullino col solo
  *                       permesso di AGGIUNTA (nessun `albumIdentifier`), Android
  *                       nell'album «Kidville», creato se manca.
+ *  • `condividiMedia`   foto/video → il FILE nel foglio di condivisione (mai il
+ *                       link firmato, che scade in 10 minuti e arriva al
+ *                       destinatario già morto): nativo `fileInCache` +
+ *                       `condividiFileLocale`, web `fetch` → `File` →
+ *                       `navigator.share({ files })`. Sul binario 1.0 NON ripiega
+ *                       sul link: dice «aggiorna l'app».
  *  • `scaricaDocumento` PDF, XLSX, CSV… → nativo: file in Cache e foglio di
  *                       condivisione con il FILE («Salva su File»).
  *  • `apriDocumento`    nativo: file in Cache e ANTEPRIMA di sistema dentro l'app
@@ -574,11 +581,12 @@ function blobInBase64(blob: Blob): Promise<string> {
  * risultato `binarioDaAggiornare: true`, che serve all'avviso «aggiorna l'app».
  *
  * ─── I LOG ──────────────────────────────────────────────────────────────────
- * A differenza di `scarica()`, questi tre LOGGANO DA SÉ l'esito, successo compreso,
+ * A differenza di `scarica()`, questi quattro LOGGANO DA SÉ l'esito, successo compreso,
  * con la forma già in uso in `app_log`: `<etichetta>-scarico-riuscito:<esito>`,
  * `<etichetta>-scarico-ripiego-condivisione: <motivo>`, `<etichetta>-scarico-non-
- * riuscito: <motivo>` (per l'apertura `-apertura-riuscita` / `-non-riuscita`).
- * Chi chiama NON rilogga. `etichetta` è un token (`gallery`, `fattura`, `pagella`…):
+ * riuscito: <motivo>` (per l'apertura `-apertura-riuscita` / `-non-riuscita`; per la
+ * condivisione `-condivisione-riuscita:<esito>`, `-annullata`, `-gesto-scaduto`,
+ * `-non-riuscita: <motivo>`). Chi chiama NON rilogga. `etichetta` è un token (`gallery`, `fattura`, `pagella`…):
  * un valore fuori forma diventa quello predefinito, perché da qui si va dritti in
  * `app_log` — e nel log non entrano MAI URL, nome del file o testo dell'errore.
  */
@@ -987,6 +995,245 @@ async function scaricaMediaSenzaLog(input: ScaricaMediaInput): Promise<Risultato
   // La copia in Cache non serve più: quella vera sta in Galleria.
   await pulisciFileAnnullato(pluginNativo<FilesystemMinimo>(NOME_PLUGIN), nomeFile)
   return { esito: 'nativo-galleria' }
+}
+
+/* ─── Media → foglio di condivisione: il FILE, mai il link ────────────────── */
+
+/**
+ * COME È ANDATA LA CONDIVISIONE. Elenco chiuso: chi chiama decide cosa dire all'utente.
+ *
+ *  - `nativo-foglio`      app 1.1: il FILE è nel foglio di sistema;
+ *  - `web-foglio`         web: il FILE è nel foglio del browser (`annullata` se l'utente lo ha chiuso);
+ *  - `web-gesto-scaduto`  web: il browser ha rifiutato per gesto scaduto, il file è PRONTO
+ *                         per la stessa `chiave` — va detto di toccare di nuovo «Condividi»;
+ *  - `app-da-aggiornare`  app 1.0: mancano i plugin nuovi. Niente link di ripiego;
+ *  - `non-supportato`     web senza condivisione di file: il pulsante non dovrebbe esserci;
+ *  - `non-riuscita`       niente file nel foglio (il `motivo` dice perché, come TOKEN).
+ */
+export type EsitoCondivisioneMedia =
+  | 'nativo-foglio'
+  | 'web-foglio'
+  | 'web-gesto-scaduto'
+  | 'app-da-aggiornare'
+  | 'non-supportato'
+  | 'non-riuscita'
+
+export interface RisultatoCondivisioneMedia {
+  esito: EsitoCondivisioneMedia
+  /** Il perché, in forma di TOKEN (`http-403`, `plugin-assenti:…`): mai URL, mai testo d'errore. */
+  motivo?: string
+  /**
+   * Web: l'utente ha chiuso il foglio senza condividere. Il foglio si è aperto, quindi
+   * l'esito resta `web-foglio`: NON è un guasto e non va mostrato niente.
+   *
+   * Un gesto ritirato da chi chiama (segnale interrotto) è un'altra cosa e porta lo
+   * stesso verdetto di `scaricaMedia`: `{ esito: 'non-riuscita', motivo: 'annullato' }`.
+   */
+  annullata?: boolean
+}
+
+export interface CondividiMediaInput extends ScaricaMediaInput {
+  /** Identità STABILE del media (id del messaggio o del media): l'URL cambia a ogni rifirma. */
+  chiave: string
+}
+
+/** Vera dopo la prima segnalazione di `puoCondividereFileMedia`: una riga per caricamento del modulo. */
+let canShareGiaSegnalato = false
+
+/**
+ * Può questo dispositivo condividere un FILE? Decide se il pulsante «Condividi» esiste.
+ *
+ *  - nell'app SEMPRE `true`, anche sul binario 1.0: il pulsante c'è e, se mancano i
+ *    plugin, avvisa («aggiorna l'app») invece di sparire — un pulsante che sparisce
+ *    senza dire perché è un guasto muto;
+ *  - sul web solo se `navigator.canShare` ammette davvero un file immagine (Safari,
+ *    Chrome Android). Firefox desktop e simili no: lì resta «Scarica», perché un
+ *    «Condividi» che manda un link da 10 minuti è il difetto che si toglie, e uno che
+ *    scarica dicendo «Condividi» mentirebbe.
+ */
+export function puoCondividereFileMedia(): boolean {
+  if (isNativeApp()) return true
+  try {
+    return (
+      typeof navigator !== 'undefined' &&
+      navigator.canShare?.({ files: [new File([''], 'kidville-foto.jpg', { type: 'image/jpeg' })] }) === true
+    )
+  } catch (e) {
+    // L'errore è ignorabile (§6 di AGENTS.md): un `canShare` che lancia significa «questo
+    // browser non sa condividere file», e `false` (= non condividere) è la risposta giusta,
+    // non un guasto da nascondere. Ma non passa in silenzio: si segnala UNA volta sola per
+    // caricamento del modulo, perché il predicato si valuta a ogni render e una riga per
+    // render sarebbe rumore. Nel messaggio solo il NOME della classe d'errore, come fa
+    // `ComandiMedia` (`media-comando-lanciato: <Nome>`): mai il testo, mai dati.
+    // (`logClient` ha solo `warn` ed `error`: `warn` è il livello più basso che esiste lato client.)
+    if (!canShareGiaSegnalato) {
+      canShareGiaSegnalato = true
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `media-condivisione-canshare-non-disponibile: ${nomeErrore(e)}`,
+      })
+    }
+    return false
+  }
+}
+
+/**
+ * IL FILE PRONTO per il secondo tocco (web). Un posto solo, di proposito: tiene al più UNA
+ * foto in memoria, e si svuota appena viene condivisa.
+ *
+ * Esiste per Safari: rifiuta `navigator.share` con `NotAllowedError` se fra il tocco e la
+ * chiamata c'è stata una `fetch` lunga (gesto utente scaduto). Il file è già scaricato,
+ * quindi lo si tiene e il tocco successivo su QUELLA foto condivide subito, nello stesso
+ * gesto, senza rete. La chiave è l'identità del media, NON l'URL: a ogni rifirma l'URL
+ * cambia, e col visore aperto a lungo il secondo tocco arriva con un indirizzo nuovo.
+ */
+let fileInAttesa: { chiave: string; file: File } | null = null
+
+/**
+ * Manda a un'altra app il FILE di una foto o di un video. Mai il link: il link firmato
+ * scade in 10 minuti, e chi lo riceve mezz'ora dopo trova un 403. Non lancia mai, e
+ * logga da sé l'esito (successo compreso), con la forma di `registraEsito`.
+ */
+export async function condividiMedia(input: CondividiMediaInput): Promise<RisultatoCondivisioneMedia> {
+  const etichetta = etichettaSicura(input.etichetta, 'gallery')
+  let risultato: RisultatoCondivisioneMedia
+  try {
+    risultato = await condividiMediaSenzaLog(input)
+  } catch (e) {
+    // Rete di sicurezza: nessuna strada prevista dovrebbe lanciare (il `File` stesso
+    // può farlo), e il gesto non deve morire in silenzio.
+    risultato = input.signal?.aborted ? condivisioneAnnullata() : { esito: 'non-riuscita', motivo: nomeErrore(e) }
+  }
+  registraCondivisione(etichetta, risultato)
+  return risultato
+}
+
+async function condividiMediaSenzaLog(input: CondividiMediaInput): Promise<RisultatoCondivisioneMedia> {
+  if (input.signal?.aborted) return condivisioneAnnullata()
+  // Stesso nome di `scaricaMediaSenzaLog`: sempre con estensione (è idempotente, quindi un
+  // nome già ripulito dal chiamante, o una stringa vuota, vanno bene). Il nome del file
+  // finisce dentro il foglio, e per un nome mancante `nomeFileScarico` ne ricava uno
+  // neutro dal percorso.
+  const nomeFile = nomeFileScarico(input.nomeFile, input.url, input.tipo)
+  return isNativeApp() ? condividiMediaNativo(input, nomeFile) : condividiMediaWeb(input, nomeFile)
+}
+
+function condivisioneAnnullata(): RisultatoCondivisioneMedia {
+  return { esito: 'non-riuscita', motivo: 'annullato' }
+}
+
+/**
+ * App: file in Cache → foglio di sistema col FILE.
+ *
+ * La copia in Cache NON si cancella dopo il foglio: su Android la promessa di
+ * `Share.share` si risolve PRIMA che l'app di destinazione abbia letto il file (è lo
+ * stesso motivo per cui `foglioConFile` non pulisce). `Cache` è la cartella che il
+ * sistema ripulisce da sé.
+ */
+async function condividiMediaNativo(input: CondividiMediaInput, nomeFile: string): Promise<RisultatoCondivisioneMedia> {
+  // Il binario 1.0 non ha né Filesystem né FileTransfer: NIENTE ripiego sul link, che è il
+  // difetto da cui nasce questa funzione. L'utente deve saperlo.
+  const mancanti = pluginMancanti([NOME_PLUGIN, PLUGIN_FILE_TRANSFER, PLUGIN_SHARE])
+  if (mancanti.length) return { esito: 'app-da-aggiornare', motivo: motivoPluginAssenti(mancanti) }
+
+  const file = await fileInCache(input.url, nomeFile, input.signal)
+  if (!file.ok) {
+    return file.motivo === 'annullato' ? condivisioneAnnullata() : { esito: 'non-riuscita', motivo: file.motivo }
+  }
+
+  // Un gesto ritirato prima del foglio non lascia il file in Cache (ultimo cancello
+  // prima dell'unico effetto che non si ritira: il foglio di sistema).
+  if (input.signal?.aborted) {
+    await pulisciFileAnnullato(pluginNativo<FilesystemMinimo>(NOME_PLUGIN), nomeFile)
+    return condivisioneAnnullata()
+  }
+  if (await foglioConFile(file.valore, input.titolo, input.signal)) return { esito: 'nativo-foglio' }
+  if (input.signal?.aborted) {
+    await pulisciFileAnnullato(pluginNativo<FilesystemMinimo>(NOME_PLUGIN), nomeFile)
+    return condivisioneAnnullata()
+  }
+  return { esito: 'non-riuscita', motivo: 'foglio-file-non-aperto' }
+}
+
+/** Web: file già pronto per questa `chiave`, oppure `fetch` → `File` → `navigator.share`. */
+async function condividiMediaWeb(input: CondividiMediaInput, nomeFile: string): Promise<RisultatoCondivisioneMedia> {
+  if (!puoCondividereFileMedia()) return { esito: 'non-supportato', motivo: 'condivisione-file-assente' }
+
+  // Il secondo tocco: il file c'è già, e la chiamata a `navigator.share` avviene SUBITO,
+  // senza `await` di rete fra il tocco e il foglio — è questo che salva il gesto. Il posto
+  // si svuota qui: se il browser rifiuta di nuovo, `esitoCondivisioneWeb` lo rimette.
+  const pronto = fileInAttesa
+  if (pronto && pronto.chiave === input.chiave) {
+    fileInAttesa = null
+    return esitoCondivisioneWeb(input, pronto.file, await condividiFileWeb(pronto.file, input.titolo, input.signal))
+  }
+
+  let file: File
+  try {
+    const risposta = await fetchScarico({
+      url: input.url,
+      nomeFile,
+      ...(input.signal ? { signal: input.signal } : {}),
+    })
+    if (input.signal?.aborted) return condivisioneAnnullata()
+    // La firma scaduta arriva qui come 403: `http-403` nel verdetto, l'URL mai nel log.
+    if (!risposta.ok) return { esito: 'non-riuscita', motivo: `http-${risposta.status}` }
+    const blob = await risposta.blob()
+    if (input.signal?.aborted) return condivisioneAnnullata()
+    file = new File([blob], nomeFile, { type: blob.type || (input.tipo === 'video' ? 'video/mp4' : 'image/jpeg') })
+  } catch (e) {
+    if (input.signal?.aborted) return condivisioneAnnullata()
+    return { esito: 'non-riuscita', motivo: nomeErrore(e) }
+  }
+  return esitoCondivisioneWeb(input, file, await condividiFileWeb(file, input.titolo, input.signal))
+}
+
+function esitoCondivisioneWeb(
+  input: CondividiMediaInput,
+  file: File,
+  esito: EsitoFileWeb,
+): RisultatoCondivisioneMedia {
+  // Il foglio si è aperto e il file è partito: vale anche se nel frattempo il segnale è
+  // stato interrotto (non si ritira un effetto già avvenuto).
+  if (esito === 'foglio') return { esito: 'web-foglio' }
+  // Gesto ritirato: niente file «pronto» per un'azione che l'utente non vuole più.
+  if (input.signal?.aborted) return condivisioneAnnullata()
+  if (esito === 'annullato') return { esito: 'web-foglio', annullata: true }
+  if (esito === 'gesto-scaduto') {
+    fileInAttesa = { chiave: input.chiave, file }
+    return { esito: 'web-gesto-scaduto' }
+  }
+  return { esito: 'non-riuscita', motivo: 'foglio-file-non-aperto' }
+}
+
+/**
+ * UNA riga per gesto, successo compreso, con la forma di `registraEsito`:
+ *  - `<etichetta>-condivisione-riuscita:<esito>`  → `warn`
+ *  - `<etichetta>-condivisione-annullata`         → `warn` (foglio chiuso dall'utente, o gesto ritirato)
+ *  - `<etichetta>-condivisione-gesto-scaduto`     → `warn` (il file è pronto: basta un secondo tocco)
+ *  - `<etichetta>-condivisione-non-riuscita: <motivo>` → `error`, ANCHE per `app-da-aggiornare` e
+ *    `non-supportato`: l'utente ha premuto «Condividi» e non ha ottenuto niente.
+ *
+ * Nel log MAI l'URL (porta il token di firma), il nome del file o il testo dell'errore.
+ */
+function registraCondivisione(etichetta: string, risultato: RisultatoCondivisioneMedia): void {
+  const campi = { esito: risultato.esito, operazione: 'condivisione', piattaforma: piattaforma() }
+  const base = `${etichetta}-condivisione`
+  if (risultato.annullata || risultato.motivo === 'annullato') {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${base}-annullata`, campi })
+    return
+  }
+  if (risultato.esito === 'nativo-foglio' || risultato.esito === 'web-foglio') {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${base}-riuscita:${risultato.esito}`, campi })
+    return
+  }
+  if (risultato.esito === 'web-gesto-scaduto') {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${base}-gesto-scaduto`, campi })
+    return
+  }
+  const coda = risultato.motivo ? `: ${risultato.motivo}` : ''
+  logClient({ livello: 'error', evento: 'fetch', messaggio: `${base}-non-riuscita${coda}`, campi })
 }
 
 /* ─── Documenti → foglio o anteprima ──────────────────────────────────────── */

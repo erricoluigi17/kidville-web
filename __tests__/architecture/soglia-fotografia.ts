@@ -323,7 +323,23 @@ export function posterioriCheContengono(
 // delle FK verso `utenti` (+5: `votazioni.creata_da` e `.aggiornata_da`, `votazioni_candidati.utente_id`,
 // `votazioni_voti.elettore_id` e `.candidato_id`, da censire in `tracce-docente-voci.ts` come «blocca»).
 // Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+//
+// 2026-11-03 · FOTO DELLA CHAT A TUTTO SCHERMO, compito 5: `20261103131803_chat_vigilanza_azione_scarico.sql`
+// toglie e rimette il CHECK `chat_vigilanza_accessi_azione_check` con un valore in più (`scarico`). Nessuna
+// tabella, nessun indice, nessuna policy, nessuna chiave esterna: l'unica guardia che la vede è quella delle FK
+// verso `utenti`, per le parole `drop constraint` / `add constraint` (il filtro è largo di proposito: cambiare
+// una `ON DELETE` si fa SOLO così). Nessuna FK cambia davvero: dopo il merge cambia solo la fotografia delle
+// migrazioni (+1 riga), le altre sette solo l'istante dello scatto. Si toglie nella PR-B, il primo commit della
+// sessione che apre dopo il merge, rigenerando le fotografie dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261103131803_chat_vigilanza_azione_scarico.sql':
+        'Foto della chat, compito 5: la migrazione toglie e rimette il solo CHECK ' +
+        '`chat_vigilanza_accessi_azione_check` perché il registro di vigilanza ammetta anche `scarico` ' +
+        '(`DROP CONSTRAINT IF EXISTS` + `ADD CONSTRAINT`: è la forma che la guardia delle FK verso `utenti` vede, ' +
+        'ma nessuna chiave esterna cambia). La applica l\'integrazione Supabase al merge, con la version del file, ' +
+        'mai a mano; finché non è in produzione la fotografia delle migrazioni non può contenerla. La voce si ' +
+        'toglie nella PR-B, dopo il merge: si rigenerano le fotografie dalla produzione (cambia davvero solo ' +
+        'quella delle migrazioni).',
     '20261102100040_votazioni_rappresentanti.sql':
         'Votazioni dei rappresentanti, PR-A: la migrazione crea quattro tabelle nuove `votazioni*`, tutte con ' +
         '`scuola_id`, chiave primaria e UNIQUE (compreso un UNIQUE NULLS NOT DISTINCT sul voto), FK verso ' +

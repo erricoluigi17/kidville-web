@@ -299,6 +299,7 @@ function TeacherChatContent() {
                                 loading={chat.caricamentoMessaggi}
                                 firstUnreadId={chat.primoNonLettoId}
                                 onMarkRead={chat.segnaLetti}
+                                azioniFoto="staff"
                                 {...precedenti}
                             />
                             {erroreQui && (
@@ -373,6 +374,7 @@ function TeacherChatContent() {
                             loading={chat.caricamentoMessaggi}
                             firstUnreadId={chat.primoNonLettoId}
                             onMarkRead={chat.segnaLetti}
+                            azioniFoto="staff"
                             {...precedenti}
                         />
                         {erroreQui && (

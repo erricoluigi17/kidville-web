@@ -3509,6 +3509,24 @@ export const CODICI_ERRORE = {
     VOTAZIONE_CANDIDATO_NON_VALIDO: 'erroreVotazioneCandidatoNonValido',
     VOTO_ELETTORE_NON_AMMESSO: 'erroreVotoElettoreNonAmmesso',
     VOTAZIONE_OPERAZIONE_NON_RIUSCITA: 'erroreVotazioneOperazioneNonRiuscita',
+    /**
+     * Lo scarico di una foto dalla supervisione della chat (03/11/2026,
+     * `src/app/api/admin/chat/messages/scarico/route.ts`). La route scrive la riga `scarico` nel registro di
+     * vigilanza PRIMA di firmare l'indirizzo, e risponde con:
+     *  · 400 `ALLEGATO_NON_FOTO` — il messaggio non ha una foto (è un documento, o non ha allegato): dalla
+     *    supervisione si scaricano solo le foto;
+     *  · 404 `CHAT_MESSAGGIO_NON_TROVATO` / `CHAT_CONVERSAZIONE_NON_TROVATA` — il messaggio, o la conversazione
+     *    a cui appartiene, non esistono (più);
+     *  · 503 `FIRMA_NON_RIUSCITA` — la riga di registro c'è ma lo Storage non ha firmato l'indirizzo: il file
+     *    non è partito. Il dettaglio è nel log della firma, mai nella risposta;
+     *  · 503 `VIGILANZA_NON_TRACCIABILE` — la riga non si è potuta scrivere (codice già dichiarato sopra).
+     * Nessuno dei quattro nuovi riusa un codice vicino: `ALLEGATO_NON_VALIDO` parla di un file CARICATO, e
+     * `ALUNNO_NON_TROVATO` di un'anagrafica.
+     */
+    ALLEGATO_NON_FOTO: 'erroreAllegatoNonFoto',
+    CHAT_MESSAGGIO_NON_TROVATO: 'erroreChatMessaggioNonTrovato',
+    CHAT_CONVERSAZIONE_NON_TROVATA: 'erroreChatConversazioneNonTrovata',
+    FIRMA_NON_RIUSCITA: 'erroreFirmaNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

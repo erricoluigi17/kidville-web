@@ -311,7 +311,7 @@ export function posterioriCheContengono(
 // `crm_settimane` «blocca»), `crm_settimane` e `crm_fasce` al posto di `crm_disponibilita` nella RLS e nelle
 // tabelle con `scuola_id` (91); bucket e schema delle candidature solo l'istante dello scatto.
 //
-// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261102130156_form_submissions_senza_policy_browser.sql`
+// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261103162210_form_submissions_senza_policy_browser.sql`
 // toglie le tre policy `fs_*` di `form_submissions` e revoca i grant di `anon`/`authenticated`. La guardia
 // della RLS la vede per `policy`. Cambieranno davvero la fotografia della RLS (−3 policy, la tabella resta
 // in `tabelle_rls_attiva`) e quella delle migrazioni; nessun indice, nessuna FK, nessuna colonna. Si toglie
@@ -319,7 +319,8 @@ export function posterioriCheContengono(
 // (era `20261031195836_…`): le fotografie della #282 sono state scattate alle 13:47:44Z del 01/11, dopo
 // l'istante che il file dichiarava, e non la contengono perché non è ancora applicata. RINOMINATA di nuovo il
 // 02/11/2026 (era `20261101161401_…`): la #284 ha portato in produzione `20261102100040_…`, e una migrazione
-// con una version anteriore all'ultima applicata `supabase db push` la rifiuta.
+// con una version anteriore all'ultima applicata `supabase db push` la rifiuta. RINOMINATA una terza volta il
+// 03/11/2026 (era `20261102130156_…`), per la stessa ragione: la #285 ha applicato `20261103131803_…`.
 //
 // 2026-11-02 · VOTAZIONI DEI RAPPRESENTANTI, PR-A: `20261102100040_votazioni_rappresentanti.sql` crea quattro
 // tabelle `votazioni*` (`votazioni`, `votazioni_classi`, `votazioni_candidati`, `votazioni_voti`), tutte con
@@ -333,10 +334,26 @@ export function posterioriCheContengono(
 // delle FK verso `utenti` (+5: `votazioni.creata_da` e `.aggiornata_da`, `votazioni_candidati.utente_id`,
 // `votazioni_voti.elettore_id` e `.candidato_id`, da censire in `tracce-docente-voci.ts` come «blocca»).
 // Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+//
+// 2026-11-03 · FOTO DELLA CHAT A TUTTO SCHERMO, compito 5: `20261103131803_chat_vigilanza_azione_scarico.sql`
+// toglie e rimette il CHECK `chat_vigilanza_accessi_azione_check` con un valore in più (`scarico`). Nessuna
+// tabella, nessun indice, nessuna policy, nessuna chiave esterna: l'unica guardia che la vede è quella delle FK
+// verso `utenti`, per le parole `drop constraint` / `add constraint` (il filtro è largo di proposito: cambiare
+// una `ON DELETE` si fa SOLO così). Nessuna FK cambia davvero: dopo il merge cambia solo la fotografia delle
+// migrazioni (+1 riga), le altre sette solo l'istante dello scatto. Si toglie nella PR-B, il primo commit della
+// sessione che apre dopo il merge, rigenerando le fotografie dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261102130156_form_submissions_senza_policy_browser.sql':
+    '20261103162210_form_submissions_senza_policy_browser.sql':
         'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
         'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
+    '20261103131803_chat_vigilanza_azione_scarico.sql':
+        'Foto della chat, compito 5: la migrazione toglie e rimette il solo CHECK ' +
+        '`chat_vigilanza_accessi_azione_check` perché il registro di vigilanza ammetta anche `scarico` ' +
+        '(`DROP CONSTRAINT IF EXISTS` + `ADD CONSTRAINT`: è la forma che la guardia delle FK verso `utenti` vede, ' +
+        'ma nessuna chiave esterna cambia). La applica l\'integrazione Supabase al merge, con la version del file, ' +
+        'mai a mano; finché non è in produzione la fotografia delle migrazioni non può contenerla. La voce si ' +
+        'toglie nella PR-B, dopo il merge: si rigenerano le fotografie dalla produzione (cambia davvero solo ' +
+        'quella delle migrazioni).',
     '20261102100040_votazioni_rappresentanti.sql':
         'Votazioni dei rappresentanti, PR-A: la migrazione crea quattro tabelle nuove `votazioni*`, tutte con ' +
         '`scuola_id`, chiave primaria e UNIQUE (compreso un UNIQUE NULLS NOT DISTINCT sul voto), FK verso ' +

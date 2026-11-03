@@ -17,6 +17,15 @@
  * questa funzione non decide — RIFERISCE se ha tracciato, e la route sceglie.
  * `admin/chat/messages:GET` sceglie di non far uscire il contenuto.
  *
+ * ─── CHI SCRIVE COSA ────────────────────────────────────────────────────────
+ * `lettura`: `admin/chat/messages:GET` (apre una conversazione), `admin/chat/rettifica:PATCH`
+ * e `admin/chat/docenti-senza-push:GET` (solo conteggi, senza thread). `ricerca`:
+ * `admin/chat/ricerca:GET`. `scarico` (dal 2026-11-03): `admin/chat/messages/scarico:POST`,
+ * la supervisione che scarica una FOTO di una conversazione dalla scheda «Tutti» — la riga
+ * si scrive PRIMA di firmare l'indirizzo e, se non si scrive, il file non parte
+ * (`VIGILANZA_NON_TRACCIABILE`). Portarsi via un file è più grave che leggerlo, e il
+ * `CHECK` di `azione` ammette il valore da `20261103131803_chat_vigilanza_azione_scarico.sql`.
+ *
  * ─── L'UNICA ECCEZIONE: LO SCHEMA ASSENTE ───────────────────────────────────
  * Il DB E2E della CI non è migrato. Se la tabella non c'è (42P01/PGRST205) si
  * ritorna `tracciato: true` e si va avanti: altrimenti la CI diventerebbe rossa
@@ -34,7 +43,7 @@ import type { AppUser } from '@/lib/auth/require-staff'
 import { logEvento } from '@/lib/logging/logger'
 import { schemaAssente } from '@/lib/news/schema-assente'
 
-export type AzioneVigilanza = 'lettura' | 'ricerca'
+export type AzioneVigilanza = 'lettura' | 'ricerca' | 'scarico'
 export type EsitoVigilanza = 'ok' | 'fuori-scope'
 
 export interface AccessoVigilanza {

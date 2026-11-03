@@ -24,7 +24,7 @@ import { schemaAssente } from '@/lib/news/schema-assente';
 const getQuerySchema = z.object({
   operatoreId: zOpzionale(zUuid),
   threadId: zOpzionale(zUuid),
-  azione: zOpzionale(z.enum(['lettura', 'ricerca'])),
+  azione: zOpzionale(z.enum(['lettura', 'ricerca', 'scarico'])),
   da: zOpzionale(zDataYMD),
   a: zOpzionale(zDataYMD),
   scuolaId: zOpzionale(zUuid),

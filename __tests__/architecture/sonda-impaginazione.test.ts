@@ -28,7 +28,8 @@ import { sondaImpaginazione } from '../../e2e/lib/sonda-impaginazione';
  * Qui dentro NON si misura nessun layout: jsdom non ne ha. La geometria arriva come
  * DATO — rettangoli, `scrollWidth`, valori di `overflow` — e sono i numeri
  * MISURATI il 2026-09-12 in Chromium e in WebKit su una pagina che riproduce la
- * struttura del visore di `MediaGrid.tsx` (righe 714-967). Ciò che si prova qui è
+ * struttura del visore (allora in `MediaGrid.tsx`, righe 714-967; dal 2026-11-03 è
+ * `VisoreMedia.tsx`). Ciò che si prova qui è
  * la DECISIONE che la sonda prende davanti a quei numeri, che è aritmetica di
  * rettangoli. Che il browser produca quei numeri l'ha detto il browser.
  *

@@ -1179,7 +1179,7 @@ describe('CodiciFiscaliDaVerificare · dopo la scrittura, con l’hook vero', ()
     })
 
     it('la rilettura si ANNUNCIA, invece di sostituire la schermata', async () => {
-        let sblocca: ((v: unknown) => void) | null = null
+        const inVolo: ((v: unknown) => void)[] = []
         armaLaRete()
         render(<PannelloVero />)
         await screen.findByText('Bianchi Anna')
@@ -1189,7 +1189,7 @@ describe('CodiciFiscaliDaVerificare · dopo la scrittura, con l’hook vero', ()
             if (init?.method === 'PATCH') {
                 return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) })
             }
-            return new Promise((res) => { sblocca = res })
+            return new Promise((res) => { inVolo.push(res) })
         })
         await scriviIlCodice()
 
@@ -1207,8 +1207,18 @@ describe('CodiciFiscaliDaVerificare · dopo la scrittura, con l’hook vero', ()
         expect(avviso.getAttribute('role')).toBeNull()
         expect(screen.getByRole('table')).toBeInTheDocument()
 
+        // ⚠️ L'avviso compare PRIMA che la rilettura parta: `ricarica()` accende
+        // `ricaricando` nel render, la fetch la lancia l'EFFETTO che segue. Sul
+        // runner della CI (03/11/2026, PR #285) `findByText` è tornato in mezzo:
+        // nessuna lettura ancora in volo, la risposta non arrivava a nessuno e
+        // l'avviso restava a schermo fino al timeout. Si aspetta che la lettura
+        // sia PARTITA, e si risponde a tutte quelle in volo (la guardia
+        // dell'epoca scarta da sé le sorpassate).
+        await waitFor(() => expect(inVolo.length).toBeGreaterThan(0))
         await act(async () => {
-            sblocca?.({ ok: true, status: 200, json: async () => ({ righe: [], totale: 0, troncato: false }) })
+            for (const sblocca of inVolo) {
+                sblocca({ ok: true, status: 200, json: async () => ({ righe: [], totale: 0, troncato: false }) })
+            }
         })
         await waitFor(() =>
             expect(screen.queryByText('Aggiornamento dell’elenco in corso…')).not.toBeInTheDocument(),

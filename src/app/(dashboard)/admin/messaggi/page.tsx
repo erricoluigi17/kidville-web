@@ -10,8 +10,13 @@ import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/feat
 import { RegistroVigilanza } from '@/components/features/admin/messaggi/RegistroVigilanza';
 import { DocentiSenzaNotifiche } from '@/components/features/admin/messaggi/DocentiSenzaNotifiche';
 import { segnalaChatLetta } from '@/components/features/chat/contatore-non-letti';
+import { DocumentoAllegatoChat } from '@/components/features/chat/DocumentoAllegatoChat';
+import { FotoAllegatoChat } from '@/components/features/chat/FotoAllegatoChat';
+import { VisoreFotoChat } from '@/components/features/chat/VisoreFotoChat';
+import { useAzioniMedia } from '@/components/features/media/useAzioniMedia';
+import { allegatoMostrabile } from '@/lib/chat/stato-conversazione';
 import { formattaIstante } from '@/i18n/config';
-import { logClient, nomeErrore } from '@/lib/logging/client';
+import { logClient, nomeErrore, type CampoValore } from '@/lib/logging/client';
 import { RettificaMessaggio, type RettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
 import { LinkStorici } from '@/components/features/admin/storici/LinkStorici';
 
@@ -24,7 +29,16 @@ interface OversightThread {
   sospensione: SospensioneInfo | null;
 }
 interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: string; nome: string }[]; classi: string[] }
-interface Msg extends RettificaChat { id: string; sender_id: string; content: string; created_at: string }
+/**
+ * Un messaggio com'è in lista. `attachment_url` è un indirizzo FIRMATO a dieci minuti (dalla
+ * `chat/messages:GET` per «Con i genitori», dalla `admin/chat/messages:GET` per «Tutti»: tutte e due
+ * passano da `firmaAllegatiChat`), oppure `null` se non c'è allegato o la firma non è riuscita.
+ * `attachment_type` è `'image'` o `'document'`.
+ */
+interface Msg extends RettificaChat {
+  id: string; sender_id: string; content: string; created_at: string;
+  attachment_url: string | null; attachment_type: string | null;
+}
 interface RisultatoRicerca {
   messaggio_id: string;
   thread_id: string;
@@ -41,6 +55,29 @@ function fmtWhen(iso: string | null, locale: string) {
   catch { return ''; }
 }
 
+/**
+ * L'ALLEGATO DI UNA BOLLA, sopra il testo — lo stesso disegno delle chat di genitore e docente
+ * (`ChatMessageArea`), perché è lo stesso pezzo: la foto è un comando (apre il visore a tutto
+ * schermo), il documento un chip apribile. Prima di questo la segreteria non vedeva dell'allegato
+ * nemmeno il segnaposto.
+ *
+ * Una foto il cui indirizzo non è `http(s)` (la firma non è riuscita, e `firmaAllegatiChat` risponde
+ * `null`) non si disegna: sarebbe un'immagine rotta, e non è nemmeno fra le foto del visore.
+ * `suSfondoScuro`: la bolla è verde col testo bianco (la propria, in «Con i genitori»).
+ */
+function AllegatoBolla({ m, suSfondoScuro, onApriFoto }: { m: Msg; suSfondoScuro: boolean; onApriFoto: (messaggioId: string) => void }) {
+  return (
+    <>
+      {m.attachment_type === 'image' && allegatoMostrabile(m.attachment_url) && (
+        <FotoAllegatoChat url={m.attachment_url!} onApri={() => onApriFoto(m.id)} />
+      )}
+      {m.attachment_url && m.attachment_type === 'document' && (
+        <DocumentoAllegatoChat url={m.attachment_url} suSfondoScuro={suSfondoScuro} />
+      )}
+    </>
+  );
+}
+
 function MessaggiInner() {
   const t = useTranslations('adminComunicazioni');
   const locale = useLocale();
@@ -55,6 +92,7 @@ function MessaggiInner() {
   const sospesaLabel = t('messaggiSospesa');
   const conversazioneNonApertaLabel = t('messaggiConversazioneNonAperta');
   const cercaErroreLabel = t('messaggiCercaErrore');
+  const scaricoNonRegistratoLabel = t('messaggiScaricoNonRegistrato');
   // Rubrica multi-sede: il plesso si scrive accanto al contatto SOLO quando le
   // sedi accessibili sono più d'una (con una sola ripeterebbe la stessa parola
   // su ogni riga). Senza, «Rossi Anna · Alfa Rossi · 2 ANNI» può essere due
@@ -304,6 +342,64 @@ function MessaggiInner() {
     } finally { setSending(false); }
   };
 
+  // ── Le foto a tutto schermo: UN visore per scheda (spec 2026-11-03) ──
+  // Lo stato è l'id del MESSAGGIO la cui foto è aperta; `onChiudi` stabile perché il visore lo tiene
+  // fra le dipendenze di un effetto (chiude da sé se il messaggio sparisce, per esempio cambiando
+  // conversazione).
+  const [fotoGenitori, setFotoGenitori] = useState<string | null>(null);
+  const chiudiFotoGenitori = useCallback(() => setFotoGenitori(null), []);
+  const [fotoTutti, setFotoTutti] = useState<string | null>(null);
+  const chiudiFotoTutti = useCallback(() => setFotoTutti(null), []);
+
+  // ── Lo scarico di una foto dalla SUPERVISIONE (scheda «Tutti») ──
+  // La supervisione è silenziosa: i due interlocutori non vedono niente, e il registro di vigilanza è
+  // l'unico contrappeso. Quindi un file non esce se prima la route non ha scritto la sua riga
+  // (`azione: 'scarico'`): si chiede QUI alla route e si scarica con l'indirizzo FRESCO che risponde,
+  // mai con quello della bolla. Se la route rifiuta — registro guasto (503), conversazione fuori sede,
+  // rete giù — l'utente lo sa a schermo e il file non parte.
+  //
+  // L'etichetta `chat-vigilanza` (e quindi le righe `chat-vigilanza-…` di `app_log`) è di QUESTO hook,
+  // quello di pagina: il suo `scarica` fa da guardia, avvisi d'esito e log dell'helper. Il doppio
+  // tocco lo ferma già il pulsante di `ComandiMedia` (spento finché questa promessa non si risolve).
+  //
+  // Un rifiuto è UNA riga a `warn`, e con il solo `stato` della risposta (0 = nessuna risposta: rete
+  // giù o corpo illeggibile, e allora anche il NOME della classe d'errore): mai l'indirizzo, il
+  // percorso o il testo dell'errore, che può riecheggiarli. `alert` dopo il log: blocca il thread.
+  const { scarica: scaricaDaVigilanza } = useAzioniMedia({ etichetta: 'chat-vigilanza' });
+  const scaricaRegistrato = useCallback(async (messaggioId: string) => {
+    let url: string | null = null;
+    let stato = 0;
+    let errore: string | null = null;
+    try {
+      const res = await fetch('/api/admin/chat/messages/scarico', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messaggioId }),
+      });
+      stato = res.status;
+      if (res.ok) {
+        const corpo = (await res.json()) as { url?: unknown };
+        if (typeof corpo.url === 'string' && corpo.url !== '') url = corpo.url;
+      }
+    } catch (e) {
+      // Nessuna risposta utile: si registra solo il nome della classe, nella riga qui sotto.
+      errore = nomeErrore(e);
+    }
+    if (url === null) {
+      const campi: Record<string, CampoValore> = errore === null ? { stato } : { stato, error_code: errore };
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: 'chat-vigilanza-scarico-rifiutato',
+        route: '/admin/messaggi',
+        campi,
+      });
+      alert(scaricoNonRegistratoLabel);
+      return;
+    }
+    await scaricaDaVigilanza({ id: messaggioId, url, tipo: 'foto', nomeFile: null });
+  }, [scaricaDaVigilanza, scaricoNonRegistratoLabel]);
+
   const selLabels = useMemo(() => {
     if (!selThread) return { teacher: '', parent: '' };
     return { teacher: selThread.teacher?.id ?? '', parent: selThread.parent?.id ?? '' };
@@ -376,6 +472,7 @@ function MessaggiInner() {
                     const mine = m.sender_id === userId;
                     return (
                       <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${mine ? 'ml-auto bg-kidville-green text-white' : 'bg-kidville-cream text-kidville-ink'}`}>
+                        <AllegatoBolla m={m} suSfondoScuro={mine} onApriFoto={setFotoGenitori} />
                         <p>{m.content}</p>
                         <RettificaMessaggio messaggio={m} onSaved={r => setChatMsgs(v => v.map(x => x.id === m.id ? { ...x, ...r } : x))} />
                         <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-kidville-muted'}`}>{fmtWhen(m.created_at, locale)}</p>
@@ -400,6 +497,17 @@ function MessaggiInner() {
                     {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   </button>
                 </div>
+                {/* «Con i genitori»: la segreteria scrive e legge come una maestra, e dalla foto a
+                    tutto schermo ha il solo «Scarica» (che scarica l'indirizzo della bolla: questa
+                    scheda non ha polling, e una firma scaduta dopo dieci minuti è il normale
+                    «scaricamento non riuscito» — si riapre la conversazione). */}
+                <VisoreFotoChat
+                  messaggi={chatMsgs}
+                  apertoId={fotoGenitori}
+                  onCambia={setFotoGenitori}
+                  onChiudi={chiudiFotoGenitori}
+                  azioni="staff"
+                />
               </>
             )}
           </div>
@@ -538,6 +646,7 @@ function MessaggiInner() {
                       return (
                         <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${fromTeacher ? 'ml-auto bg-kidville-info-soft text-kidville-ink' : 'bg-kidville-cream text-kidville-ink'}`}>
                           <p className="text-[10px] font-bold text-kidville-muted mb-0.5">{fromTeacher ? (selThread.teacher?.nome ?? t('messaggiRuoloInsegnante')) : (selThread.parent?.nome ?? t('messaggiRuoloGenitore'))}</p>
+                          <AllegatoBolla m={m} suSfondoScuro={false} onApriFoto={setFotoTutti} />
                           <p>{m.content}</p>
                           <RettificaMessaggio messaggio={m} onSaved={r => setOversightMsgs(v => v.map(x => x.id === m.id ? { ...x, ...r } : x))} />
                           <p className="text-[10px] mt-1 text-kidville-muted">{fmtWhen(m.created_at, locale)}</p>
@@ -545,6 +654,18 @@ function MessaggiInner() {
                       );
                     })}
                   </div>
+                  {/* «Tutti» (supervisione): dalla foto a tutto schermo il solo «Scarica», e SOLO
+                      attraverso la vigilanza — la route scrive la riga di registro e consegna un
+                      indirizzo fresco; se rifiuta, il file non parte e l'avviso è a schermo. Senza
+                      `onScaricaVigilanza` il visore non avrebbe nemmeno il pulsante. */}
+                  <VisoreFotoChat
+                    messaggi={oversightMsgs}
+                    apertoId={fotoTutti}
+                    onCambia={setFotoTutti}
+                    onChiudi={chiudiFotoTutti}
+                    azioni="vigilanza"
+                    onScaricaVigilanza={scaricaRegistrato}
+                  />
                 </>
               )}
             </div>

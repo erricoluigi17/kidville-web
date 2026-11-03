@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { Loader2, Eye, Search, ListChecks } from 'lucide-react';
+import { Loader2, Eye, Search, ListChecks, Download } from 'lucide-react';
 import { CockpitSelect } from '@/components/ui/cockpit';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -22,7 +22,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 interface RigaRegistro {
   id: string;
   lettoIl: string;
-  azione: 'lettura' | 'ricerca' | string;
+  azione: 'lettura' | 'ricerca' | 'scarico' | string;
   esito: 'ok' | 'fuori-scope' | string;
   operatore: { id: string; nome: string; ruolo: string };
   threadId: string | null;
@@ -35,9 +35,10 @@ interface RigaRegistro {
 /**
  * UNA RIGA CHE NON È UNA CONVERSAZIONE APERTA.
  *
- * `chat_vigilanza_accessi.azione` ammette due valori — `CHECK (azione IN
- * ('lettura','ricerca'))` — quindi anche chi guarda soltanto dei CONTEGGI scrive
- * `lettura`. Senza distinguerla, quella riga si leggeva «Ha aperto una
+ * `chat_vigilanza_accessi.azione` ammette tre valori — `CHECK (azione IN
+ * ('lettura','ricerca','scarico'))`, il terzo dal 2026-11-03: lo scarico di una foto dalla
+ * supervisione, che ha il suo valore proprio e non passa da qui — quindi anche chi guarda
+ * soltanto dei CONTEGGI scrive `lettura`. Senza distinguerla, quella riga si leggeva «Ha aperto una
  * conversazione · Su che cosa: — · Quanti: 137»: tre righe per apertura con tre
  * sedi, e l'impressione che qualcuno avesse letto centotrentasette messaggi di
  * famiglie. Un registro che racconta più di quello che è successo è peggio di un
@@ -139,6 +140,7 @@ export function RegistroVigilanza() {
             { value: '', label: t('registroFiltroTutteAzioni') },
             { value: 'lettura', label: t('registroAzioneLettura') },
             { value: 'ricerca', label: t('registroAzioneRicerca') },
+            { value: 'scarico', label: t('registroAzioneScarico') },
           ]}
         />
         <label className="font-maven text-xs text-kidville-sub">
@@ -193,12 +195,14 @@ export function RegistroVigilanza() {
                     </td>
                     <td className="px-2 py-2 font-maven text-xs text-kidville-ink">
                       <span className="inline-flex items-center gap-1">
-                        {r.azione === 'ricerca' ? <Search size={12} /> : soloConteggi(r) ? <ListChecks size={12} /> : <Eye size={12} />}
+                        {r.azione === 'ricerca' ? <Search size={12} /> : r.azione === 'scarico' ? <Download size={12} /> : soloConteggi(r) ? <ListChecks size={12} /> : <Eye size={12} />}
                         {r.azione === 'ricerca'
                           ? t('registroAzioneRicerca')
-                          : soloConteggi(r)
-                            ? t('registroAzioneElencoNotifiche')
-                            : t('registroAzioneLettura')}
+                          : r.azione === 'scarico'
+                            ? t('registroAzioneScarico')
+                            : soloConteggi(r)
+                              ? t('registroAzioneElencoNotifiche')
+                              : t('registroAzioneLettura')}
                       </span>
                       {r.esito === 'fuori-scope' && (
                         <span className="ml-1 inline-flex items-center rounded-full bg-kidville-warn-soft px-2 py-0.5 font-barlow text-[9px] font-bold uppercase tracking-wide text-kidville-warn">

@@ -82,11 +82,20 @@ describe('MediaGrid — title dal namespace shared', () => {
       caption: null, tag_students: [], is_broadcast: false,
       created_at: new Date().toISOString(), uploader_name: 'Staff',
     }
-    render(<MediaGrid items={[item]} showActions />)
-    // Il mock next-intl risolve `shared.mediaScarica` → "Scarica": se la chiave
-    // manca o il componente non è cablato, il title sarebbe "shared.mediaScarica".
-    expect(screen.getAllByTitle('Scarica').length).toBeGreaterThan(0)
-    expect(screen.getAllByTitle('Condividi').length).toBeGreaterThan(0)
+    // «Condividi» consegna il FILE e compare solo su un dispositivo che sa condividerne uno
+    // (`navigator.canShare({ files })`, che jsdom non ha): qui il dispositivo lo sa, perché la
+    // misura è sulla CHIAVE del `title`, non sul quando il pulsante c'è (lo dicono i test della
+    // griglia). Senza questa riga il pulsante non verrebbe reso e l'asserzione non misurerebbe niente.
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true })
+    try {
+      render(<MediaGrid items={[item]} showActions />)
+      // Il mock next-intl risolve `shared.mediaScarica` → "Scarica": se la chiave
+      // manca o il componente non è cablato, il title sarebbe "shared.mediaScarica".
+      expect(screen.getAllByTitle('Scarica').length).toBeGreaterThan(0)
+      expect(screen.getAllByTitle('Condividi').length).toBeGreaterThan(0)
+    } finally {
+      delete (navigator as { canShare?: unknown }).canShare
+    }
   })
 })
 

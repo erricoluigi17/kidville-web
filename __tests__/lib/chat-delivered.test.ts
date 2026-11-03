@@ -273,6 +273,7 @@ describe('ChatMessageArea — tre stati della spunta', () => {
                 currentUserId: 'me',
                 otherUserName: 'Maestra',
                 firstUnreadId: null,
+                azioniFoto: 'genitore',
                 // niente onMarkRead: evita l'IntersectionObserver (assente in jsdom)
             }),
         );
@@ -294,6 +295,7 @@ describe('ChatMessageArea — tre stati della spunta', () => {
                 currentUserId: 'me',
                 otherUserName: 'Maestra',
                 firstUnreadId: null,
+                azioniFoto: 'genitore',
             }),
         );
 

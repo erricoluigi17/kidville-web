@@ -8,8 +8,10 @@ import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
 import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
-import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
 import { NotaRettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
+import { DocumentoAllegatoChat } from '@/components/features/chat/DocumentoAllegatoChat';
+import { FotoAllegatoChat } from '@/components/features/chat/FotoAllegatoChat';
+import { VisoreFotoChat } from '@/components/features/chat/VisoreFotoChat';
 
 /**
  * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
@@ -39,6 +41,16 @@ interface Props {
     /** L'ultimo tentativo non è riuscito: l'avviso resta finché non si riprova a mano. */
     errorePrecedenti?: boolean;
     onCaricaPrecedenti?: () => void;
+    /**
+     * Chi sta guardando la conversazione, cioè quali comandi ha una foto aperta a tutto schermo
+     * (spec 2026-11-03): `genitore` — Scarica e Condividi (il file); `staff` — solo Scarica. OBBLIGATORIA
+     * di proposito: una pagina nuova che monta la chat deve DIRE chi è, invece di ereditare in
+     * silenzio il default che dà o toglie un pulsante. Le due schede della segreteria non passano da
+     * qui: la pagina Messaggi ha il suo elenco di bolle (`AllegatoBolla`) e monta `VisoreFotoChat` per
+     * conto suo — `azioni="staff"` in «Con i genitori», `azioni="vigilanza"` in «Tutti» (la
+     * supervisione). Il chip del documento, invece, è lo stesso pezzo (`DocumentoAllegatoChat`).
+     */
+    azioniFoto: 'genitore' | 'staff';
 }
 
 /**
@@ -160,16 +172,10 @@ export function offriTraduzione(
 }
 
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
-function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+function MessageBubble({ msg, isMine, currentUserId, onApriFoto }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onApriFoto: (messaggioId: string) => void }) {
     const locale = useLocale();
     const t = useTranslations('parentChat');
-    const ts = useTranslations('shared');
     const [translated, setTranslated] = useState<string | null>(null);
-    // Nell'app, l'ultimo tocco sul documento allegato non ha mostrato niente (anteprima non
-    // aperta, condivisione fallita, copia muta negli appunti): lo si dice nella bolla.
-    // Il valore è il TIPO d'avviso: sul binario 1.0 (`'aggiorna'`) riprovare non riuscirà
-    // mai, e il testo lo deve dire invece di «riprova fra qualche minuto».
-    const [allegatoNonAperto, setAllegatoNonAperto] = useState<AvvisoDocumento | null>(null);
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
 
@@ -212,47 +218,17 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                     : '0 1px 2px rgba(0,84,75,.05), 0 8px 22px -20px rgba(0,84,75,.3)',
             }}
         >
-            {/* Attachment preview */}
+            {/* Attachment preview. La foto è un comando (2026-11-03): il tocco la apre a tutto
+                schermo in `VisoreFotoChat`. Con il percorso GREZZO (messaggio arrivato dal realtime,
+                non ancora firmato) `allegatoMostrabile` è falso: né miniatura né tocco, e la foto
+                non è nemmeno fra quelle del visore finché il polling non porta il link firmato. */}
             {msg.attachment_type === 'image' && allegatoMostrabile(msg.attachment_url) && (
-                <div className="mb-2 rounded-xl overflow-hidden">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.attachment_url!} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
-                </div>
+                <FotoAllegatoChat url={msg.attachment_url!} onApri={() => onApriFoto(msg.id)} />
             )}
+            {/* Il documento: il chip e il suo avviso stanno in `DocumentoAllegatoChat` (dal 2026-11-03,
+                condiviso con la pagina Messaggi della segreteria); qui si decide solo SE c'è. */}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                allegatoMostrabile(msg.attachment_url) ? (
-                    <a
-                        href={msg.attachment_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        // L'allegato è da GUARDARE (spec 2026-09-24, NAT3c): sul web il
-                        // collegamento resta com'è; nell'app 1.1 `suNativo` apre l'anteprima
-                        // di sistema dentro l'app. Il log lo scrive l'helper.
-                        onClick={suNativo(
-                            'apri',
-                            () => ({
-                                sorgente: msg.attachment_url as string,
-                                nomeFile: nomeDocumentoDa(null, msg.attachment_url as string, 'kidville-allegato'),
-                                etichetta: 'allegato-chat',
-                            }),
-                            (esito) => setAllegatoNonAperto(avvisoDocumento(esito)),
-                        )}
-                        className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
-                    >
-                        📎 {t('documentAttachment')}
-                    </a>
-                ) : (
-                    // URL con schema non-http (es. javascript:) salvato via API:
-                    // niente link, solo il chip inerte com'era prima.
-                    <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
-                        📎 {t('documentAttachment')}
-                    </div>
-                )
-            )}
-            {msg.attachment_url && msg.attachment_type === 'document' && allegatoNonAperto && (
-                <p role="alert" className={`mb-2 font-maven text-xs ${isMine ? 'font-semibold text-white' : 'text-kidville-error'}`}>
-                    {ts(allegatoNonAperto === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonAperto')}
-                </p>
+                <DocumentoAllegatoChat url={msg.attachment_url} suSfondoScuro={isMine} />
             )}
 
             {/* Text (design: Maven 13.5px, interlinea 1.42)
@@ -333,7 +309,45 @@ function messaggioNelContenitore(contenitore: HTMLElement, id: string): HTMLElem
     return contenitore.querySelector<HTMLElement>(`[data-msg-id="${id}"]`);
 }
 
-export function ChatMessageArea({
+/**
+ * L'AREA DEI MESSAGGI DI UNA CONVERSAZIONE, con il visore delle sue foto.
+ *
+ * Il visore (`VisoreFotoChat`) è UNO per conversazione e lo stato «quale foto è aperta»
+ * (`fotoAperta`, l'id di un MESSAGGIO) sta qui e non nelle bolle: le frecce scorrono fra le foto di
+ * tutta la conversazione, e un tocco su una bolla deve poter aprire quella e le altre.
+ *
+ * ⚠️ IL VISORE È MONTATO ANCHE CON LO SPINNER E CON LA LISTA VUOTA, ed è per questo che l'area vera
+ * è `CorpoChat` e qui sta solo il guscio. Quando la conversazione cambia la lista si svuota e compare
+ * lo spinner: se il visore sparisse con lei, `fotoAperta` resterebbe impostata e alla prima risposta
+ * (che riporta gli stessi id) la foto si riaprirebbe da sola. Montato, vede la lista vuota e chiama
+ * `onChiudi`: lo stato si azzera, e riaprire è di nuovo un gesto di chi guarda.
+ *
+ * ⚠️ DUE ISTANZE PER PAGINA (desktop e mobile a schermo intero, entrambe nel DOM): ognuna ha il suo
+ * `fotoAperta`, quindi un tocco apre UN visore solo — quello dell'istanza in cui si è toccato — e il
+ * tasto Indietro di Android, che chiude l'overlay in cima al registro, chiude quello. L'altra
+ * istanza ha `apertoId` nullo: non rende niente e non si iscrive al registro.
+ */
+export function ChatMessageArea({ azioniFoto, ...resto }: Props) {
+    const [fotoAperta, setFotoAperta] = useState<string | null>(null);
+    // Stabile: il visore la tiene fra le dipendenze di un effetto, e non deve dipendere da argomenti
+    // (`onClick={onChiudi}` gli passa il MouseEvent).
+    const chiudiFoto = useCallback(() => setFotoAperta(null), []);
+
+    return (
+        <>
+            <CorpoChat {...resto} onApriFoto={setFotoAperta} />
+            <VisoreFotoChat
+                messaggi={resto.messages}
+                apertoId={fotoAperta}
+                onCambia={setFotoAperta}
+                onChiudi={chiudiFoto}
+                azioni={azioniFoto}
+            />
+        </>
+    );
+}
+
+function CorpoChat({
     messages,
     currentUserId,
     otherUserName,
@@ -344,7 +358,8 @@ export function ChatMessageArea({
     caricandoPrecedenti,
     errorePrecedenti,
     onCaricaPrecedenti,
-}: Props) {
+    onApriFoto,
+}: Omit<Props, 'azioniFoto'> & { onApriFoto: (messaggioId: string) => void }) {
     const locale = useLocale();
     const tCommon = useTranslations('common');
     const t = useTranslations('parentChat');
@@ -633,7 +648,7 @@ export function ChatMessageArea({
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}
                                     >
-                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} />
+                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} onApriFoto={onApriFoto} />
                                     </motion.div>
                                 </div>
                             );

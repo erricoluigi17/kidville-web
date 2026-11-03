@@ -86,7 +86,7 @@ function geometria(contenitore: HTMLElement, g: { scrollHeight: number; clientHe
 }
 
 function area(props: Partial<Parameters<typeof ChatMessageArea>[0]> & { messages: ChatMessage[] }) {
-    return <ChatMessageArea currentUserId={IO} otherUserName="Dora" firstUnreadId={null} {...props} />;
+    return <ChatMessageArea currentUserId={IO} otherUserName="Dora" firstUnreadId={null} azioniFoto="genitore" {...props} />;
 }
 
 /* ── Il pulsante ────────────────────────────────────────────────────────────── */

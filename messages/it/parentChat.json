@@ -73,5 +73,7 @@
   "invioNonRiuscitoRete": "Il messaggio non è partito: connessione assente. È rimasto qui, riprova quando torni online.",
   "invioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account è sospeso. Contatta la segreteria.",
   "threadsNonCaricatiTitolo": "Conversazioni non caricate",
-  "threadsNonCaricatiCorpo": "Non è stato possibile caricare le conversazioni. Controlla la connessione e riprova."
+  "threadsNonCaricatiCorpo": "Non è stato possibile caricare le conversazioni. Controlla la connessione e riprova.",
+  "chatApriFoto": "Apri la foto a tutto schermo",
+  "chatFotoConversazione": "Foto {n} di {totale} della conversazione"
 }

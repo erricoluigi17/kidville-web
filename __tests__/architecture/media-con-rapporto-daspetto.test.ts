@@ -96,6 +96,10 @@ const SRC = path.join(RADICE, 'src');
  * `TaskCard`); misurati uno per uno, TRE sono conformi e non entrano qui:
  *  · `ChatMessageArea.tsx:210` — `w-full h-auto max-h-48 object-cover`: il tetto
  *    c'è (`max-h-48`) e l'`object-fit` c'è. È la forma giusta, non un'eccezione.
+ *    (Dal 2026-11-03 quell'`<img>` non sta più in `ChatMessageArea.tsx`: la miniatura è
+ *    `FotoAllegatoChat.tsx`, un `<button>` che si apre a tutto schermo, e l'immagine ha le
+ *    STESSE classi. La riga qui sopra è la misura storica del 2026-09-11; il lock, che
+ *    scandisce tutto `src/`, vede l'`<img>` nel file nuovo e lo vuole conforme.)
  *  · `TaskCard.tsx:241` — `w-full h-full object-cover` dentro un quadrato
  *    `w-9 h-9`: l'altezza è quella del padre, che è dichiarata.
  *  · `InstagramEmbed.tsx` — non contiene nessun `<img>` né `<video>`: è un
@@ -193,8 +197,9 @@ const STYLE_OPACITY_MINIMI = 1;
  * capo (così i numeri di riga restano quelli veri).
  *
  * NON è un di più: in questo repo i commenti CITANO le classi di cui parlano.
- * `MediaGrid.tsx` cita `w-full max-h-[55vh]` per spiegare com'era il visore prima
- * della correzione, e cita `style={{ opacity: 1 }}` accanto a
+ * `VisoreMedia.tsx` (dove sta il visore dal 2026-11-03; prima era in `MediaGrid.tsx`)
+ * cita `w-full max-h-[55vh]` per spiegare com'era il visore prima della correzione,
+ * e `MediaGrid.tsx` cita `style={{ opacity: 1 }}` accanto a
  * `opacity-0 group-hover:opacity-100` per spiegare il difetto che il secondo lock
  * qui sotto sorveglia. Senza questa maschera il lock sarebbe rosso ESATTAMENTE sul
  * commento che racconta la correzione — e chi lo vedesse rosso imparerebbe a non

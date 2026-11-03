@@ -323,6 +323,11 @@ export function posterioriCheContengono(
 // delle FK verso `utenti` (+5: `votazioni.creata_da` e `.aggiornata_da`, `votazioni_candidati.utente_id`,
 // `votazioni_voti.elettore_id` e `.candidato_id`, da censire in `tracce-docente-voci.ts` come «blocca»).
 // Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+// SVUOTATA il 03/11/2026 (PR-B dopo il merge di #284 e #285, `ccd386d8`): applicata dall'integrazione, una
+// riga sola nel registro (250 migrazioni con quella della #285); le otto fotografie rigenerate dalla produzione
+// cambiano come previsto qui sopra — indici unici +6 (262), RLS e tabelle con `scuola_id` +4 (95), FK di sede
+// +4, FK verso `utenti` +5 (83, tutte «blocca», censite in `tracce-docente-voci.ts`); bucket e schema delle
+// candidature solo l'istante dello scatto.
 //
 // 2026-11-03 · FOTO DELLA CHAT A TUTTO SCHERMO, compito 5: `20261103131803_chat_vigilanza_azione_scarico.sql`
 // toglie e rimette il CHECK `chat_vigilanza_accessi_azione_check` con un valore in più (`scarico`). Nessuna
@@ -331,24 +336,10 @@ export function posterioriCheContengono(
 // una `ON DELETE` si fa SOLO così). Nessuna FK cambia davvero: dopo il merge cambia solo la fotografia delle
 // migrazioni (+1 riga), le altre sette solo l'istante dello scatto. Si toglie nella PR-B, il primo commit della
 // sessione che apre dopo il merge, rigenerando le fotografie dalla produzione.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261103131803_chat_vigilanza_azione_scarico.sql':
-        'Foto della chat, compito 5: la migrazione toglie e rimette il solo CHECK ' +
-        '`chat_vigilanza_accessi_azione_check` perché il registro di vigilanza ammetta anche `scarico` ' +
-        '(`DROP CONSTRAINT IF EXISTS` + `ADD CONSTRAINT`: è la forma che la guardia delle FK verso `utenti` vede, ' +
-        'ma nessuna chiave esterna cambia). La applica l\'integrazione Supabase al merge, con la version del file, ' +
-        'mai a mano; finché non è in produzione la fotografia delle migrazioni non può contenerla. La voce si ' +
-        'toglie nella PR-B, dopo il merge: si rigenerano le fotografie dalla produzione (cambia davvero solo ' +
-        'quella delle migrazioni).',
-    '20261102100040_votazioni_rappresentanti.sql':
-        'Votazioni dei rappresentanti, PR-A: la migrazione crea quattro tabelle nuove `votazioni*`, tutte con ' +
-        '`scuola_id`, chiave primaria e UNIQUE (compreso un UNIQUE NULLS NOT DISTINCT sul voto), FK verso ' +
-        '`schools`, `sections` e `utenti`, e la RLS accesa senza policy. La applica l\'integrazione Supabase al ' +
-        'merge, con la version del file, mai a mano; finché non è in produzione nessuna fotografia può contenerla. ' +
-        'La voce si toglie nella PR-B, dopo il merge: si rigenerano le fotografie dalla produzione (migrazioni, ' +
-        'indici unici, RLS, FK di sede, FK verso `utenti`, tabelle con `scuola_id`) e si censiscono le tracce di ' +
-        '`utenti` in `src/lib/personale/tracce-docente-voci.ts`.',
-}
+// SVUOTATA il 03/11/2026 (PR-B dopo il merge di #285, `ccd386d8`): applicata dall'integrazione, una riga sola
+// nel registro con la version del file; il CHECK in produzione ammette `lettura`, `ricerca`, `scarico`. Delle
+// otto fotografie cambia per lei solo quella delle migrazioni, come previsto.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

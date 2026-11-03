@@ -134,7 +134,13 @@ Una funzione nuova accanto a `scaricaMedia` (stesso modulo, perché riusa `fileI
 la scelta dei plugin), che consegna il FILE al foglio di condivisione:
 
 - **App 1.1** (Filesystem + FileTransfer presenti): file in cache con `fileInCache` →
-  `condividiFileLocale` → pulizia della cache.
+  `condividiFileLocale`. **La copia in Cache NON si cancella dopo il foglio** (la prima
+  stesura di questa riga diceva «→ pulizia della cache»; corretta a lavoro fatto, 03/11):
+  su Android la promessa di `Share.share` si risolve appena il foglio si apre, **prima** che
+  l'app di destinazione abbia letto il file, quindi cancellarlo subito rompe la condivisione
+  proprio dove deve funzionare (è lo stesso motivo per cui `foglioConFile` non pulisce). Un
+  file in Cache per ogni condivisione è il prezzo; la Cache la sgombera il sistema. Si toglie
+  solo la copia di un gesto ritirato prima che il foglio si apra.
 - **App 1.0** (plugin nuovi assenti): avviso «aggiorna l'app», mai il link (vedi sotto).
 - **Web con condivisione di file** (`navigator.canShare({ files })` vero: Safari,
   Chrome Android): `fetch` → `File` → `navigator.share({ files, title })`.
@@ -146,8 +152,13 @@ la scelta dei plugin), che consegna il FILE al foglio di condivisione:
   pronto e l'utente viene avvisato di toccare di nuovo «Condividi», che allora parte
   subito. (Scelta dell'assistente; niente pre-scaricamento all'apertura del visore.)
 - Annullare il foglio non è un errore (`annullatoDallUtente`).
-- Mentre il file si prepara il pulsante lo mostra (disabilitato + testo/indicatore), e
-  vale la stessa guardia «un'azione alla volta» di Scarica.
+- Mentre il file si prepara il pulsante lo mostra, e vale la stessa guardia «un'azione alla
+  volta» di Scarica. **Nel visore** (riga dei comandi): pulsante disabilitato con `aria-busy`
+  e «Preparo…», e l'altro pulsante si spegne. **Sulla card di Foto**: indicatore (`aria-busy`,
+  spinner, «Preparo…» per lo screen reader) **senza** `disabled`: un secondo tocco deve
+  arrivare alla guardia, che lo scarta e lo registra (`gallery-scarico-gia-in-corso` per
+  Scarica, `<etichetta>-azione-gia-in-corso` per il resto), e il test esistente che lo
+  pretende non si indebolisce. (La prima stesura diceva «disabilitato» per entrambi.)
 - **Log**: una riga per gesto, stesso schema di `registraEsito` con una nuova operazione
   `condivisione` (`<etichetta>-condivisione-riuscita:<esito>`, `-annullata`,
   `-non-riuscita: <motivo>`), etichetta `gallery` in Foto e `chat` in chat.
@@ -160,7 +171,11 @@ la scelta dei plugin), che consegna il FILE al foglio di condivisione:
   cronologico, e si apre su quella toccata; l'identità di una foto è l'id del messaggio.
 - **URL che cambia a ogni polling**: l'immagine a schermo non si ricarica finché il
   visore resta su quella foto; Scarica e Condividi usano l'URL **più recente** (quello
-  vecchio può essere scaduto dopo 10 minuti di visore aperto).
+  vecchio può essere scaduto dopo 10 minuti di visore aperto). Come è fatto: si tiene
+  fermo **un solo** indirizzo, quello della foto a schermo, e lo si rilascia al cambio di
+  foto e alla chiusura. Tornando su una foto già vista l'immagine riparte dall'indirizzo
+  corrente (si riscarica, ma non dalla firma di dieci minuti prima, che sarebbe scaduta):
+  la prima stesura del piano parlava di un indirizzo «per id fino alla chiusura».
 - Se la conversazione cambia o il messaggio sparisce mentre il visore è aperto, il
   visore si chiude.
 - Nome del file scaricato: `nomeFileScarico(null, url, 'foto')` ricava il nome dal
@@ -208,7 +223,13 @@ contrappeso» (`src/lib/chat/vigilanza-audit.ts`). Oggi ammette solo `lettura` e
   polling, quindi l'URL fresco chiude anche il problema della firma scaduta in quella
   scheda.
 - Solo **foto** (`attachment_type = 'image'`); un documento dalla supervisione resta
-  com'è oggi (non è in perimetro).
+  com'è oggi (non è in perimetro). Precisazione a lavoro fatto: nella scheda «Tutti» il
+  chip del documento **si vede e si apre** (con l'indirizzo che la GET di supervisione,
+  già registrata come `lettura`, ha consegnato), ma aprirlo **non lascia una riga
+  `scarico`**: la route traccia solo le foto e per un documento risponde 400
+  `ALLEGATO_NON_FOTO` senza scrivere nel registro. Il visore della supervisione, poi,
+  senza il gestore dello scarico registrato **non mostra «Scarica»** (nessun file esce
+  senza una riga nel registro, nemmeno per una dimenticanza di chi lo usa).
 - Il registro letto dalla Direzione (`RegistroVigilanza`, `/api/admin/chat/vigilanza`)
   deve mostrare e filtrare anche la nuova azione.
 
@@ -247,7 +268,11 @@ tocco avvisa di aggiornare l'app (come già fanno i documenti con
 - Nome, cartella e firma esatta del visore e dell'hook.
 - Come garantire `z-[115]` da dentro la conversazione a `z-[60]` (portale su
   `document.body` o altro), purché il lock sul livello resti vero e i test di
-  `MediaGrid` restino verdi.
+  `MediaGrid` restino verdi. *Scelto (03/11):* portale su `document.body`, **salvo nel
+  cockpit della segreteria**, dove si monta dentro `[data-cockpit-content]`: la regola di
+  `globals.css` che da 744 px lascia scoperti binario e sidebar vale per i discendenti nel
+  DOM, e col portale su `body` il visore (e la conferma «Elimina» che ospita) li avrebbe
+  coperti, cosa che prima non faceva (lock `visore-rispetta-la-cornice-del-cockpit`).
 - Testi esatti dei messaggi nuovi (in italiano, in `messages/it/shared.json` e nelle
   altre lingue presenti).
 - Come aggiornare i lock che citano percorsi o righe spostate, senza allentarli.

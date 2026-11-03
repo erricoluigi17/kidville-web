@@ -110,6 +110,40 @@ test.describe('lato genitore', () => {
     // quindi niente toBeVisible sull'immagine stessa).
     await expect(page.getByText('📎 Allegato').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByAltText('Allegato').first()).toBeAttached();
+
+    // ── LA FOTO SI APRE A TUTTO SCHERMO (2026-11-03) ─────────────────────────
+    //
+    // Fino a ieri toccare la miniatura non faceva niente. Ora è un pulsante («Apri la foto a
+    // tutto schermo») che apre `VisoreFotoChat`: un dialogo a tutto schermo con «Scarica» (e,
+    // per il genitore, «Condividi»).
+    //
+    // `.first()` sul pulsante regge perché `ChatMessageArea` è montata DUE volte (pannello
+    // desktop `hidden md:flex` e conversazione mobile `md:hidden`) ma `getByRole` NON vede
+    // l'elemento nascosto con `display: none`: a 1280 px resta solo la miniatura del desktop,
+    // a un telefono solo quella del mobile. Mai due visibili insieme, quindi `.first()` non può
+    // cadere su quella sbagliata (e il tocco apre comunque un visore solo).
+    await page
+      .getByRole('button', { name: 'Apri la foto a tutto schermo' })
+      .first()
+      .click({ timeout: 15_000 });
+
+    // Il dialogo si cerca per NOME («Foto 1 di 1 della conversazione»), non per solo ruolo:
+    // `getByRole('dialog')` nudo fallirebbe in modalità stretta alla prima altra finestra di
+    // dialogo che la pagina dovesse avere (un avviso, un consenso), e il test direbbe «due
+    // elementi» invece di «il visore non si è aperto». Il nome è quello che il visore dà da sé
+    // (`chatFotoConversazione`), mai il nome del mittente.
+    const visore = page.getByRole('dialog', { name: /della conversazione/ });
+    await expect(visore).toBeVisible({ timeout: 15_000 });
+    await expect(visore.getByRole('button', { name: /Scarica/i })).toBeVisible();
+
+    // «Condividi» NON si asserisce: Chromium headless su Linux non condivide file
+    // (`navigator.canShare({ files })` è falso) e in quel caso il pulsante non compare, per
+    // scelta del progetto. Qui si prova ciò che c'è su qualunque browser: aprire e poter
+    // scaricare. Condividi lo coprono i test di unità (`condividi-media`, `useAzioniMedia`).
+
+    // Escape chiude il visore e la conversazione resta lì.
+    await page.keyboard.press('Escape');
+    await expect(visore).toBeHidden();
   });
 });
 

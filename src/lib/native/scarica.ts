@@ -1037,6 +1037,9 @@ export interface CondividiMediaInput extends ScaricaMediaInput {
   chiave: string
 }
 
+/** Vera dopo la prima segnalazione di `puoCondividereFileMedia`: una riga per caricamento del modulo. */
+let canShareGiaSegnalato = false
+
 /**
  * Può questo dispositivo condividere un FILE? Decide se il pulsante «Condividi» esiste.
  *
@@ -1055,12 +1058,22 @@ export function puoCondividereFileMedia(): boolean {
       typeof navigator !== 'undefined' &&
       navigator.canShare?.({ files: [new File([''], 'kidville-foto.jpg', { type: 'image/jpeg' })] }) === true
     )
-  } catch {
-    // IL SILENZIO È AMMESSO QUI (§6 di AGENTS.md): è un predicato che si valuta a ogni
-    // render, e un `canShare` che lancia significa «questo browser non sa condividere
-    // file» — cioè `false`, la risposta giusta, non un guasto da nascondere. Se qualcuno
-    // premesse comunque «Condividi», `condividiMedia` risponderebbe `non-supportato` e
-    // lo scriverebbe come `error`.
+  } catch (e) {
+    // L'errore è ignorabile (§6 di AGENTS.md): un `canShare` che lancia significa «questo
+    // browser non sa condividere file», e `false` (= non condividere) è la risposta giusta,
+    // non un guasto da nascondere. Ma non passa in silenzio: si segnala UNA volta sola per
+    // caricamento del modulo, perché il predicato si valuta a ogni render e una riga per
+    // render sarebbe rumore. Nel messaggio solo il NOME della classe d'errore, come fa
+    // `ComandiMedia` (`media-comando-lanciato: <Nome>`): mai il testo, mai dati.
+    // (`logClient` ha solo `warn` ed `error`: `warn` è il livello più basso che esiste lato client.)
+    if (!canShareGiaSegnalato) {
+      canShareGiaSegnalato = true
+      logClient({
+        livello: 'warn',
+        evento: 'fetch',
+        messaggio: `media-condivisione-canshare-non-disponibile: ${nomeErrore(e)}`,
+      })
+    }
     return false
   }
 }

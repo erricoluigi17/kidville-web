@@ -346,6 +346,31 @@ describe('puoCondividereFileMedia', () => {
     })
     expect(puoCondividereFileMedia()).toBe(false)
   })
+
+  it('web: canShare che lancia → false, e il log parte UNA volta sola per caricamento del modulo, col solo nome dell\'errore', async () => {
+    // Il flag «già segnalato» è una variabile di MODULO: per partire da zero si ricarica il modulo
+    // con `resetModules`. Niente funzione di reset esportata solo per i test. Il logger finto lo si
+    // rilegge dopo il ricaricamento, senza dare per scontato che sia lo stesso di prima.
+    vi.resetModules()
+    const fresco = await import('@/lib/native/scarica')
+    const logFresco = vi.mocked((await import('@/lib/logging/client')).logClient)
+    stubNavigator('canShare', () => {
+      throw new TypeError('testo-riservato-dell-errore')
+    })
+
+    expect(fresco.puoCondividereFileMedia()).toBe(false)
+    expect(fresco.puoCondividereFileMedia()).toBe(false)
+
+    const righe = logFresco.mock.calls.filter((c) => c[0].messaggio.startsWith('media-condivisione-canshare-non-disponibile'))
+    expect(righe).toHaveLength(1)
+    expect(righe[0][0]).toMatchObject({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'media-condivisione-canshare-non-disponibile: TypeError',
+    })
+    // Né il testo dell'errore né altro: solo il nome della classe.
+    expect(JSON.stringify(logFresco.mock.calls)).not.toContain('testo-riservato')
+  })
 })
 
 describe('condividiMedia — web', () => {

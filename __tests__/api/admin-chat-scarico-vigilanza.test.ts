@@ -139,6 +139,27 @@ describe('POST /api/admin/chat/messages/scarico — il registro prima del file',
     expect(operazione).toBe('admin/chat/messages/scarico:POST')
   })
 
+  it('la guardia di sede riceve l\'ALUNNO del thread del messaggio, nella stessa forma della GET: (client, operatore, alunno)', async () => {
+    const res = await POST(req())
+    expect(res.status).toBe(200)
+
+    // È il confine di isolamento fra sedi: `message_id` viene dalla richiesta, e se la guardia
+    // ricevesse un altro uuid (il thread, il messaggio, l'operatore) il test dei 403 resterebbe
+    // verde col mock che risponde come vuole. Qui si pinna COSA le viene passato.
+    expect(h.assertAlunnoInScope).toHaveBeenCalledTimes(1)
+    expect(h.assertAlunnoInScope).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: OPERATORE, role: 'segreteria', scuola_id: SEDE_A },
+      STUDENT,
+    )
+
+    // Il terzo argomento è l'alunno e nient'altro: gli uuid del thread, del messaggio e
+    // dell'operatore sono tutti diversi da lui, quindi lo scambio non passerebbe inosservato.
+    const alunnoPassato = h.assertAlunnoInScope.mock.calls[0][2]
+    expect([THREAD, MSG_FOTO, OPERATORE]).not.toContain(alunnoPassato)
+    expect(alunnoPassato).toBe(h.db.chat_threads[0].student_id)
+  })
+
   it('registro non scrivibile: 503 VIGILANZA_NON_TRACCIABILE e nessuna firma', async () => {
     h.errori = { 'chat_vigilanza_accessi:insert': { code: '23502', message: 'null value' } }
     const res = await POST(req())

@@ -80,10 +80,11 @@ export interface VoceTraccia {
 }
 
 /**
- * IL REGISTRO — tutte e 77 le FK verso `utenti(id)`, misurate da `pg_constraint`
+ * IL REGISTRO — tutte e 83 le FK verso `utenti(id)`, misurate da `pg_constraint`
  * il 2026-09-20 (56) e il 2026-09-25 (+2: i due `eliminato_da` del cestino del
- * registro e del fascicolo), poi il 2026-10-15 (+5 per gli storici) e il
- * 2026-10-31 (+14 per il CRM della segreteria). Non dai file di migrazione: ricostruirle dai `.sql`
+ * registro e del fascicolo), poi il 2026-10-15 (+5 per gli storici), il
+ * 2026-10-31 (+14 per il CRM della segreteria), il 2026-11-01 (+1 netta per le
+ * settimane del CRM) e il 2026-11-03 (+5 per le votazioni dei rappresentanti). Non dai file di migrazione: ricostruirle dai `.sql`
  * ne trova ~46, e le dieci che mancano sono esattamente quelle che nessuno si
  * ricorda.
  */
@@ -679,6 +680,53 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     azioneFk: 'blocca',
     pesa: true,
     chiave: 'tracciaDocenteCrmAssenzeInserite',
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // VOTAZIONI DEI RAPPRESENTANTI — censite il 2026-11-03 (PR-B dopo il merge di #284 e
+  // #285), dalla fotografia rigenerata. Tutte e 5 `blocca` (NO ACTION) e tutte PESANO, per
+  // la regola scritta nella migrazione (`20261102100040_votazioni_rappresentanti.sql`,
+  // punto 7): un utente con righe di votazioni non si cancella senza decidere prima che ne
+  // è di quelle righe, e la procedura di cancellazione non tocca le tabelle `votazioni*`.
+  // Le tre lato famiglia (candidatura, voto dato, voto ricevuto) contano per i docenti che
+  // sono anche genitori: senza, l'anteprima direbbe «si cancella» e Postgres rifiuterebbe.
+  // Il voto non è segreto (decisione del titolare del 02/11/2026): dire che c'è un voto
+  // non rivela niente che la segreteria non veda già.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    tabella: 'votazioni',
+    colonna: 'creata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteVotazioniAperte',
+  },
+  {
+    tabella: 'votazioni',
+    colonna: 'aggiornata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteVotazioniModificate',
+  },
+  {
+    tabella: 'votazioni_candidati',
+    colonna: 'utente_id',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteVotazioniCandidature',
+  },
+  {
+    tabella: 'votazioni_voti',
+    colonna: 'elettore_id',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteVotazioniVotiDati',
+  },
+  {
+    tabella: 'votazioni_voti',
+    colonna: 'candidato_id',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteVotazioniVotiRicevuti',
   },
 ]
 

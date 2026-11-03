@@ -193,8 +193,9 @@ const STYLE_OPACITY_MINIMI = 1;
  * capo (così i numeri di riga restano quelli veri).
  *
  * NON è un di più: in questo repo i commenti CITANO le classi di cui parlano.
- * `MediaGrid.tsx` cita `w-full max-h-[55vh]` per spiegare com'era il visore prima
- * della correzione, e cita `style={{ opacity: 1 }}` accanto a
+ * `VisoreMedia.tsx` (dove sta il visore dal 2026-11-03; prima era in `MediaGrid.tsx`)
+ * cita `w-full max-h-[55vh]` per spiegare com'era il visore prima della correzione,
+ * e `MediaGrid.tsx` cita `style={{ opacity: 1 }}` accanto a
  * `opacity-0 group-hover:opacity-100` per spiegare il difetto che il secondo lock
  * qui sotto sorveglia. Senza questa maschera il lock sarebbe rosso ESATTAMENTE sul
  * commento che racconta la correzione — e chi lo vedesse rosso imparerebbe a non

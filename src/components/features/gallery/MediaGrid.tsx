@@ -7,11 +7,11 @@ import { logClient } from '@/lib/logging/client';
 // `scaricaMedia` sua (il `useCallback` con la guardia «uno alla volta»).
 import { nomeFileScarico, scaricaMedia as scaricaNelDispositivo, type TipoMedia } from '@/lib/native/scarica';
 import { condividiLink } from '@/lib/native/share';
-import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { Download, Share2, Play, ImageOff } from 'lucide-react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { DialogoEliminaMedia } from '@/components/features/gallery/DialogoEliminaMedia';
-import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
+import { VisoreMedia, type MediaVisore } from '@/components/features/media/VisoreMedia';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
 type Traduttore = ReturnType<typeof useTranslations>;
@@ -219,6 +219,21 @@ function tipoMedia(fileType: string): TipoMedia {
     return (fileType ?? '').trim().toLowerCase() === 'video' ? 'video' : 'foto';
 }
 
+/**
+ * Ciò che il visore chiede di un media: id, indirizzo, tipo e testo alternativo.
+ * Il tipo è `video` SOLO per `file_type === 'video'`, alla lettera, come la card e come il
+ * visore di prima: `tipoMedia` qui sopra è più largo (taglia gli spazi, ignora le maiuscole)
+ * e farebbe aprire come video un media che la miniatura mostra come foto.
+ */
+function mediaDelVisore(item: MediaItem, t: Traduttore): MediaVisore {
+    return {
+        id: item.id,
+        url: item.file_url,
+        tipo: item.file_type === 'video' ? 'video' : 'foto',
+        alt: item.caption ?? t('galleryAltFoto'),
+    };
+}
+
 function timeAgo(iso: string, t: Traduttore): string {
     const diff = Date.now() - new Date(iso).getTime();
     const hrs = Math.floor(diff / 3600000);
@@ -267,6 +282,11 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
      * restava e chi aveva premuto non vedeva niente. Lo stesso silenzio per cui il
      * dialogo esiste invece di un `confirm()`, rientrato dalla porta di servizio.
      *
+     * (Dal 2026-11-03 le strade dirette sono QUATTRO: il visore è `VisoreMedia`, che per
+     * ✕, tocco sullo scroller, `Escape` e tasto Indietro di Android chiama la `onChiudi`
+     * che riceve da qui — `handleCloseLightbox`, con la sua guardia. La guardia non è
+     * cambiata: sono arrivate due strade nuove, e passano dallo stesso imbuto.)
+     *
      * Sono anche le DUE STRADE CHE RESTANO RAGGIUNGIBILI col dialogo aperto su iOS
      * 15.0–15.4: `inert` è di Safari 15.5, `IPHONEOS_DEPLOYMENT_TARGET` è 15.0,
      * quindi `rendiInerteFuoriDa` ripiega su `aria-hidden`, che non blocca i click.
@@ -296,52 +316,6 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
      * già, ed è lo spinner sul bottone della conferma.
      */
     const eliminaInVolo = useRef(false);
-
-    /**
-     * IL VISORE È UNA FINESTRA MODALE, E ADESSO SI COMPORTA COME TALE.
-     *
-     * ─── COSA MANCAVA, misurato il 2026-09-11 ────────────────────────────────
-     * Rendere la card un comando da tastiera (WCAG 2.1.1) senza portarci il fuoco
-     * ha spostato il difetto, non l'ha chiuso: premendo Invio il visore si apriva,
-     * il fuoco restava sulla card — che da quell'istante sta DIETRO un velo opaco a
-     * tutto schermo — e per raggiungere «Elimina Media» bisognava tabulare
-     * attraverso l'intera griglia, perché il visore è reso DOPO di lei nel DOM: 30
-     * tappe con 10 foto, 120 con 40. Sono WCAG 2.4.3 (ordine del fuoco) e 2.4.11
-     * (fuoco non coperto) al posto di quella che si stava chiudendo.
-     *
-     * ─── PERCHÉ NON BASTA `aria-modal="true"` ────────────────────────────────
-     * Perché su un `div` non esclude NIENTE: Chromium lo onora solo per il top
-     * layer (`<dialog>` + `showModal()`). È scritto per esteso in testa a
-     * `@/lib/accessibility/inerti`, e misurato su Android il 2026-07-31 — col dump
-     * dell'albero di accessibilità che mostrava ancora i comandi della pagina sotto
-     * la modale. L'attributo senza l'inerzia dello sfondo è decorazione.
-     *
-     * ─── IL PEZZO NON SI RISCRIVE: È GIÀ IN CASA ─────────────────────────────
-     * `rendiInerteFuoriDaConFocus` è lo stesso di `Modal` e di `PageLoader` (e il
-     * registro dei nodi marcati è CONDIVISO, che è ciò che regge il caso «visore
-     * aperto mentre parte una navigazione»). Fa tre cose in una: marca `inert` tutto
-     * fuori dal visore — da cui il contenimento del Tab, gratis e senza trappola
-     * scritta a mano —, ricorda chi aveva il fuoco e glielo restituisce alla
-     * chiusura, e non lo ruba se nel frattempo è finito altrove.
-     *
-     * ⚠️ LA DIPENDENZA È «È APERTO», NON «QUALE MEDIA». Con `[lightbox]` ogni
-     * freccia avanti/indietro rifarebbe girare l'effetto e strapperebbe il fuoco
-     * dalla freccia appena premuta, a ogni foto.
-     */
-    const visoreRef = useRef<HTMLDivElement>(null);
-    const visoreAperto = lightbox !== null;
-
-    useEffect(() => {
-        const radice = visoreRef.current;
-        if (!radice) return;
-        const ripristina = rendiInerteFuoriDaConFocus(radice);
-        // Il fuoco va sul CONTENITORE `role="dialog"` (che ha `tabIndex={-1}`, quindi
-        // riceve il fuoco ma non è una tappa del ciclo): così l'annuncio è il nome
-        // del dialogo — «Foto: Laboratorio dei colori, finestra di dialogo» — e non
-        // il primo bottone che capita, che sarebbe una «✕» senza contesto.
-        radice.focus();
-        return ripristina;
-    }, [visoreAperto]);
 
     /**
      * LO SCARICO, IN UN POSTO SOLO — ed è metà della correzione.
@@ -492,8 +466,8 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
          * riapertura di un ALTRO media la conferma ricompare da sé NOMINANDO quello
          * di prima — si legge la didascalia di una foto e si cancella un'altra.
          *
-         * Non è un caso di scuola: lo scroller porta `onClick={handleCloseLightbox}`
-         * e col dialogo aperto dovrebbe essere coperto da `inert`, ma `inert` è di
+         * Non è un caso di scuola: lo scroller del visore chiama `handleCloseLightbox`
+         * (è la sua `onChiudi`) e col dialogo aperto dovrebbe essere coperto da `inert`, ma `inert` è di
          * Safari 15.5 e `IPHONEOS_DEPLOYMENT_TARGET` è 15.0 — su iOS 15.0–15.4
          * `rendiInerteFuoriDa` ripiega su `aria-hidden`, che NON blocca i click (sta
          * scritto nel commento di `@/lib/accessibility/inerti`). Lo stesso vale per
@@ -526,55 +500,39 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
      */
     const eliminaIlMedia = daEliminare && onDelete ? () => onDelete(daEliminare.id) : null;
 
-    const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
     // Indirizzo firmato del media aperto nel visore, in una const: `null` quando la
     // firma non è riuscita (bucket privato → link a tempo generato dalla GET).
     const urlVisore = lightbox?.file_url ?? null;
 
-    const handlePrev = useCallback((e?: React.MouseEvent) => {
-        e?.stopPropagation();
-        if (currentIndex > 0) {
-            const prevItem = items[currentIndex - 1];
-            setLightbox(prevItem);
-            setEditMode(false);
-            setTempTagged(prevItem.tag_students ?? []);
-        }
-    }, [currentIndex, items]);
+    /**
+     * I MEDIA DEL VISORE: le card della griglia, nell'ordine in cui si scorrono.
+     *
+     * Due scelte che servono a lasciare il visore COM'ERA quando era qui dentro:
+     *
+     *  · il media APERTO si legge da `lightbox` (lo stato) e non da `items`: `lightbox`
+     *    porta i tag appena salvati e, soprattutto, l'indirizzo firmato con cui il visore
+     *    si è aperto. Se la pagina ricarica l'elenco a visore aperto (gli indirizzi
+     *    vengono ri-firmati) l'immagine a schermo non cambia sotto gli occhi di chi la
+     *    guarda, come prima;
+     *  · se `lightbox` non è più in `items` (il ricarico dopo un'eliminazione arriva PRIMA
+     *    della chiusura, e la conferma deve restare montata fino all'esito) lo si mette in
+     *    testa: il visore resta aperto sul suo media, senza ‹, con › verso il primo
+     *    dell'elenco — quello che faceva con l'indice a -1.
+     */
+    const elementiVisore = useMemo<MediaVisore[]>(() => {
+        const elenco = items.map((item) => mediaDelVisore(lightbox && lightbox.id === item.id ? lightbox : item, t));
+        if (lightbox && !items.some((item) => item.id === lightbox.id)) elenco.unshift(mediaDelVisore(lightbox, t));
+        return elenco;
+    }, [items, lightbox, t]);
 
-    const handleNext = useCallback((e?: React.MouseEvent) => {
-        e?.stopPropagation();
-        if (currentIndex < items.length - 1) {
-            const nextItem = items[currentIndex + 1];
-            setLightbox(nextItem);
-            setEditMode(false);
-            setTempTagged(nextItem.tag_students ?? []);
-        }
-    }, [currentIndex, items]);
-
-    useEffect(() => {
-        /**
-         * ⚠️ `|| daEliminare` NON È UNA RIFINITURA. Con la conferma aperta, `Escape`
-         * lo gestisce già `Modal` (che fa `stopPropagation()` su `document`, cioè
-         * prima che l'evento arrivi a questo listener su `window`), ma le FRECCE no:
-         * arrivavano fin qui e cambiavano il media dietro al dialogo. Il dialogo
-         * nomina e cancella quello che ha catturato all'apertura — quindi da quel
-         * momento si sarebbe letta una didascalia e cancellata un'altra foto.
-         */
-        if (!lightbox || daEliminare) return;
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'ArrowLeft') {
-                handlePrev();
-            } else if (e.key === 'ArrowRight') {
-                handleNext();
-            } else if (e.key === 'Escape') {
-                handleCloseLightbox();
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-        // handlePrev/handleNext sono memoizzate su [currentIndex, items] (già dipendenze):
-        // l'effect gira esattamente quando girava prima.
-    }, [lightbox, daEliminare, currentIndex, items, handlePrev, handleNext]);
+    /** Le frecce ‹ › e i tasti ← →: il visore chiede un media, qui lo si apre. */
+    const cambiaMedia = useCallback((id: string) => {
+        const item = items.find((i) => i.id === id);
+        if (!item) return;
+        setLightbox(item);
+        setEditMode(false);
+        setTempTagged(item.tag_students ?? []);
+    }, [items]);
 
     if (items.length === 0) {
         return (
@@ -755,388 +713,37 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
             </div>
 
             {/*
-              IL VISORE — TRE NODI, E OGNUNO CHIUDE UN DIFETTO MISURATO.
-
-              ─── COM'ERA, E COSA COSTAVA ─────────────────────────────────────────
-              Un nodo solo: `fixed inset-0` + `backdrop-blur-xl` + `flex
-              justify-center` + `overflow-hidden`. Su iPhone 14 (390×844, meno le aree
-              di sicurezza = 763 px utili) la colonna misura ~840 px — immagine 464 +
-              didascalia 52 + pannello dei taggati 200 + «Elimina Media» 52 + margini
-              72. Mancano ~80 px e l'ultimo figlio è proprio il bottone: finiva sotto
-              il bordo, senza barra di scorrimento perché `overflow-hidden` non scorre
-              e senza nessun gesto per raggiungerlo. Il titolare, dall'app, ha
-              riferito che «Elimina non esiste». Esisteva.
-
-              ─── (a) IL CONTENITORE è nudo ───────────────────────────────────────
-              Solo posizione e z-index. Frecce e chiusura sono suoi figli diretti,
-              FUORI dallo scroller: così non scorrono via col contenuto.
-
-              ─── (b) IL VELO È UN FRATELLO, e non è estetica ─────────────────────
-              Sulla WebView Chromium di Android un antenato con `backdrop-filter`
-              CANCELLA l'intero sottoalbero dall'albero di accessibilità: col velo sul
-              contenitore, `uiautomator dump` restituiva 120 nodi e nessuno era della
-              modale — per TalkBack la finestra non esisteva. È una lezione già pagata
-              in questo repo: sta scritta per esteso in `src/components/ui/Modal.tsx`,
-              che per questo mette la sfocatura su un div fratello `aria-hidden`.
-
-              ─── (c) LO SCROLLER ────────────────────────────────────────────────
-              `absolute inset-0 overflow-y-auto overscroll-contain`, e dentro un
-              `flex min-h-full items-center justify-center`: centrato quando il
-              contenuto ci sta, ancorato in alto e scorrevole quando non ci sta —
-              cosa che `items-center` da solo non fa (taglia il bordo di sopra).
-              `overscroll-contain` perché su iOS, arrivati a fine corsa, il gesto
-              proseguirebbe trascinando la pagina sotto.
-              Il riempimento ingloba `env(safe-area-inset-*)`: nel browser e su
-              Android valgono 0, su iPhone sono la Dynamic Island e la barra di casa.
-
-              La chiusura al click fuori sta sullo SCROLLER e non sul velo: il velo
-              gli è sotto, quindi nessun tocco lo raggiunge. La colonna ferma la
-              propagazione, come prima.
+              IL VISORE È `VisoreMedia` (`../media/VisoreMedia`), lo stesso della chat: qui
+              restano solo i suoi extra, passati come figli — didascalia, tag, Scarica /
+              Condividi / Segnala, Elimina — e il dialogo di conferma, passato come
+              `sovrapposti`. La struttura a tre nodi, il livello `z-[115]`, il portale su
+              `body`, il fuoco, l'inerzia dello sfondo e le frecce sono spiegati lì.
             */}
             {lightbox && (
-                <div
-                    ref={visoreRef}
-                    role="dialog"
-                    aria-modal="true"
+                <VisoreMedia
+                    elementi={elementiVisore}
+                    apertoId={lightbox.id}
+                    onCambia={cambiaMedia}
+                    /* La guardia sulla chiusura è QUESTA funzione, non il visore: ✕, tocco
+                       fuori, `Escape` e il tasto Indietro di Android passano tutti da
+                       `handleCloseLightbox`, che con l'eliminazione in volo non chiude. */
+                    onChiudi={handleCloseLightbox}
                     /* Il nome del dialogo è quello del media aperto: la STESSA funzione
                        che nomina la card, così l'annuncio all'apertura combacia con
                        quello del comando che si è premuto. */
-                    aria-label={etichettaCard(lightbox, t)}
-                    tabIndex={-1}
-                    /* `z-[115]` E NON `z-50` — vedi il commento del dialogo di
-                       eliminazione qui sotto, che questa riga chiude: misurato il
-                       2026-09-12 su iPhone 16e, a pari livello la bottom-nav
-                       (dichiarata DOPO `<main>`) dipingeva sopra il visore e
-                       teneva l'ultimo comando della colonna sotto di sé, a
-                       scroller finito. 115 è il livello che `ui/cockpit.tsx` usa
-                       già per stare sopra tutto il chrome (topbar e sidebar
-                       `z-[105]`, foglio «Menu» `z-[110]`, filtri `z-[112]`).
-                       Lock: `__tests__/architecture/visore-media-sopra-la-bottom-nav`. */
-                    className="fixed inset-0 z-[115] focus:outline-none"
-                >
-                    <motion.div
-                        aria-hidden="true"
-                        data-testid="visore-velo"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="absolute inset-0 bg-white/70 backdrop-blur-xl"
-                    />
-
-                    {/* Navigation Arrows */}
-                    {currentIndex > 0 && (
-                        <button
-                            onClick={handlePrev}
-                            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-20 cursor-pointer border border-kidville-line"
-                            title={t('mediaPrecedente')}
-                        >
-                            <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
-                        </button>
-                    )}
-                    {currentIndex < items.length - 1 && (
-                        <button
-                            onClick={handleNext}
-                            className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-20 cursor-pointer border border-kidville-line"
-                            title={t('mediaSuccessiva')}
-                        >
-                            <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
-                        </button>
-                    )}
-
-                    <div
-                        data-testid="visore-scorrimento"
-                        className="absolute inset-0 overflow-y-auto overscroll-contain z-10"
-                        onClick={handleCloseLightbox}
-                    >
-                    {/* ⚠️ I DUE INVOLUCRI QUI SOTTO NON SONO RIENTRATI DI PROPOSITO: rientrarli
-                        vorrebbe dire spostare di quattro spazi le ~200 righe della colonna, e un
-                        diff di 200 righe di spazi nasconde le tre che contano. La chiusura è
-                        marcata in fondo. */}
-                    <div className="flex min-h-full items-center justify-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
-                    <div data-testid="visore-colonna" className="relative max-w-2xl w-full" onClick={e => e.stopPropagation()}>
-                        <div className="relative bg-white rounded-2xl overflow-hidden shadow-xl p-3 border border-kidville-green/10">
-                            {!urlVisore ? (
-                                /* Firma non riuscita: si dice, non si mostra un riquadro rotto. */
-                                <div className="w-full min-h-[35svh] rounded-xl bg-kidville-cream flex flex-col items-center justify-center gap-2 px-6 text-center">
-                                    <ImageOff size={32} className="text-kidville-green/70" strokeWidth={1.5} />
-                                    <span className="font-maven text-sm text-kidville-green/70">
-                                        {t('galleryAnteprimaNonDisponibile')}
-                                    </span>
-                                </div>
-                            ) : lightbox.file_type === 'video' ? (
-                                /*
-                                  VIDEO E IMMAGINE HANNO LA STESSA REGOLA, ed è un invariante:
-                                  due media aperti nello stesso visore non possono comportarsi
-                                  in due modi. Il video aveva `w-full max-h-[55vh]` e nessun
-                                  rapporto d'aspetto — un video verticale (cioè tutti quelli
-                                  girati col telefono) veniva allargato alla colonna e
-                                  guarnito di due fasce nere ai lati.
-                                  `w-auto max-w-full` lascia decidere al rapporto d'aspetto;
-                                  `object-contain` non taglia niente.
-                                  `svh` E NON `vh`: su Safari iOS `vh` è il viewport GRANDE,
-                                  quello senza la barra degli indirizzi, quindi `70vh` vale più
-                                  del 70% di ciò che si vede — di nuovo contenuto fuori campo.
-                                  `playsInline` perché senza di lui iOS apre il video a schermo
-                                  pieno da solo, `preload="metadata"` perché senza la WebView
-                                  può tirarsi giù l'intero file.
-                                  `bg-black` resta: è il letterbox di un player, ed è il caso
-                                  che il lock `palette-di-serie` dichiara legittimo per scritto.
-                                */
-                                <video src={urlVisore} controls playsInline preload="metadata"
-                                    className="mx-auto max-h-[70svh] w-auto max-w-full object-contain rounded-xl bg-black" />
-                            ) : (
-                                /* eslint-disable-next-line @next/next/no-img-element */
-                                <img src={urlVisore} alt={lightbox.caption ?? t('galleryAltFoto')}
-                                    className="mx-auto max-h-[70svh] w-auto max-w-full object-contain rounded-xl" />
-                            )}
-                        </div>
-
-                        {/* Caption */}
-                        {lightbox.caption && (
-                            <p className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide text-center mt-4 mb-2">{lightbox.caption}</p>
-                        )}
-
-                        {/* Tagged Students Info (Teacher Side) */}
-                        {students && students.length > 0 && (
-                            <div className="mt-3 bg-kidville-cream/40 border border-kidville-green/10 rounded-2xl p-4 text-kidville-green">
-                                <div className="flex items-center justify-between mb-2 pb-2 border-b border-kidville-green/10">
-                                    <h3 className="font-barlow font-bold text-xs uppercase tracking-wide text-kidville-green/70">
-                                        {t('galleryTaggatiTitolo')}
-                                    </h3>
-                                    {onUpdateTags && !editMode && (
-                                        <button
-                                            onClick={() => {
-                                                setEditMode(true);
-                                                setTempTagged(lightbox.tag_students ?? []);
-                                            }}
-                                            className="px-3 py-1 bg-kidville-green/10 hover:bg-kidville-green/20 text-kidville-green rounded-lg text-xs font-semibold tracking-wide transition-colors"
-                                        >
-                                            ✏️ {t('galleryModificaTag')}
-                                        </button>
-                                    )}
-                                </div>
-
-                                {editMode ? (
-                                    <div className="space-y-3">
-                                        {/* Una colonna sul telefono, due quando c'è spazio: in
-                                            vista di sede i nomi sono «Nome Cognome — SEZIONE» e
-                                            in mezza colonna da 358 px non ci stanno. `max-h-40`
-                                            invece di `max-h-32` perché con 32 si vedevano due
-                                            righe e mezzo, e la mezza riga sembra la fine
-                                            dell'elenco. */}
-                                        <div data-testid="taggati-elenco" className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                                            {students.map((student) => {
-                                                const isTagged = tempTagged.includes(student.id);
-                                                return (
-                                                    /* `min-w-0` sulla label: un figlio di flex/grid non
-                                                       scende sotto la larghezza del proprio contenuto, e
-                                                       senza di questo il `truncate` sul nome non ha
-                                                       nessun effetto — il chip sfonda comunque. */
-                                                    <label
-                                                        key={student.id}
-                                                        className={`flex min-w-0 items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
-                                                            isTagged
-                                                                ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
-                                                                : 'bg-white border-kidville-line text-kidville-sub hover:bg-kidville-cream'
-                                                        }`}
-                                                    >
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isTagged}
-                                                            onChange={() => {
-                                                                setTempTagged((prev) =>
-                                                                    prev.includes(student.id)
-                                                                        ? prev.filter((id) => id !== student.id)
-                                                                        : [...prev, student.id]
-                                                                );
-                                                            }}
-                                                            className="hidden"
-                                                        />
-                                                        <span className="truncate" title={`${student.nome} ${student.cognome}`}>
-                                                            {student.nome} {student.cognome}
-                                                        </span>
-                                                    </label>
-                                                );
-                                            })}
-                                        </div>
-                                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-kidville-green/10">
-                                            <button
-                                                onClick={() => setEditMode(false)}
-                                                className="px-3 py-1 bg-kidville-neutral-soft hover:bg-kidville-cream-dark rounded-lg text-xs font-semibold text-kidville-sub transition-colors"
-                                            >
-                                                {t('galleryAnnulla')}
-                                            </button>
-                                            <button
-                                                onClick={async () => {
-                                                    setSavingTags(true);
-                                                    try {
-                                                        await onUpdateTags?.(lightbox.id, tempTagged);
-                                                        setLightbox({ ...lightbox, tag_students: tempTagged });
-                                                        setEditMode(false);
-                                                    } catch {
-                                                        logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-salva-tag-fallito', route: '/gallery' });
-                                                    } finally {
-                                                        setSavingTags(false);
-                                                    }
-                                                }}
-                                                disabled={savingTags}
-                                                className="px-3 py-1 bg-kidville-success hover:opacity-90 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
-                                            >
-                                                {savingTags ? t('gallerySalvataggio') : t('gallerySalva')}
-                                            </button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {(lightbox.tag_students ?? []).length === 0 ? (
-                                            <span className="text-xs text-kidville-sub italic">{t('galleryNessunTaggato')}</span>
-                                        ) : (
-                                            (lightbox.tag_students ?? []).map((id) => {
-                                                const student = students.find((s) => s.id === id);
-                                                if (!student) return null;
-                                                return (
-                                                    /* `max-w-full truncate` + `title`: nella vista di
-                                                       sede il nome è «Nome Cognome — SEZIONE», e un chip
-                                                       senza tetto di larghezza sfonda la colonna. Il
-                                                       nome intero resta leggibile al passaggio. */
-                                                    <span
-                                                        key={id}
-                                                        title={`${student.nome} ${student.cognome}`}
-                                                        className="px-2.5 py-1 bg-kidville-green/10 border border-kidville-green/20 rounded-full text-xs font-semibold max-w-full truncate"
-                                                    >
-                                                        {student.nome} {student.cognome}
-                                                    </span>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Actions.
-                            `flex-wrap` e gap più stretto: le tre etichette italiane
-                            («Scarica» ~126 px, «Condividi» ~144, «Segnala foto/video» ~200)
-                            più i gap fanno ~494 px in 358 disponibili sul telefono, e con
-                            `justify-center` l'eccesso si divide fra i due lati — ~68 px
-                            tagliati a sinistra e ~68 a destra, cioè metà della prima pillola
-                            e metà dell'ultima. Andare a capo costa una riga in più; non
-                            andarci costa due comandi. */}
-                        {/* Col solo `scaricabile` e senza indirizzo firmato non resterebbe
-                            nessun comando: niente riga vuota da `mt-4` in mezzo al visore. */}
-                        {(showActions || (scaricabile && urlVisore)) && (
-                            <div data-testid="visore-comandi" className="flex flex-wrap items-center justify-center gap-2 mt-4">
-                                {/* Gli STESSI due gesti della card, e nient'altro: la
-                                    duplicazione fra questi due punti è ciò che aveva
-                                    lasciato la card senza nemmeno un log. */}
-                                {urlVisore && <button
-                                    onClick={() => { void scaricaMedia(lightbox, urlVisore); }}
-                                    className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                    <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
-                                </button>}
-                                {showActions && urlVisore && <button
-                                    onClick={() => { void condividiMedia(lightbox, urlVisore, t('mediaLinkCopiatoLungo')); }}
-                                    className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                    <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
-                                </button>}
-                                {/* Segnalazione contenuto (C5 §2): sempre etichettata, SOLO lato
-                                    genitore — con `scaricabile` (staff) non compare. */}
-                                {showActions && <SegnalaContenuto
-                                    tipoOggetto="media_galleria"
-                                    oggettoId={lightbox.id}
-                                    label={t('mediaSegnala')}
-                                    variant="pill"
-                                />}
-                            </div>
-                        )}
-
-                        {/*
-                          ELIMINA — E IL COMANDO RESTA SOLO QUI, non sulla miniatura.
-                          Una tessera da 171 px ha già due bersagli in un angolo
-                          (Scarica, Condividi): un terzo, DISTRUTTIVO, significa
-                          cancellare la foto di un minore con un pollice. Il gesto sta
-                          dove si è già scelto di guardare quella foto.
-
-                          E adesso non elimina: CHIEDE. Prima faceva
-                          `onDelete(id); handleCloseLightbox();` — due righe di cui la
-                          seconda non aspetta la prima.
-                        */}
-                        {puoEliminare(lightbox) && (
-                            <button onClick={() => setDaEliminare(lightbox)}
-                                className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-kidville-error hover:opacity-90 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
-                                🗑️ {t('galleryEliminaMedia')}
-                            </button>
-                        )}
-                    </div>{/* /visore-colonna */}
-                    </div>{/* /involucro flex centrante */}
-                    </div>{/* /visore-scorrimento */}
-
-                    {/* Close button. Fuori dallo scroller — non scorre via — e con la
-                        safe-area in cima: a `top-4` fisso, su iPhone finisce sotto la
-                        Dynamic Island. */}
-                    <button onClick={handleCloseLightbox}
-                        className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 w-10 h-10 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center hover:bg-kidville-green/20 transition-colors shadow-sm font-bold z-20">
-                        ✕
-                    </button>
-
-                    {/*
-                      LA CONFERMA È FIGLIA DEL VISORE, E FRATELLA DELLO SCROLLER —
-                      non un nipote. Due ragioni misurate, non estetiche:
-
-                      · lo scroller porta `onClick={handleCloseLightbox}` («clic
-                        fuori = chiudi»). Un dialogo reso DENTRO di lui farebbe
-                        risalire ogni clic sul proprio velo fin lì: il visore si
-                        chiuderebbe portandosi via la conferma, cioè l'annullamento
-                        per distrazione che `closeOnBackdrop={false}` esiste per
-                        impedire;
-                      · dentro il visore e non fuori perché l'effetto del visore
-                        marca `inert` tutto ciò che gli sta FUORI: un dialogo là
-                        nascerebbe inerte, cioè con i suoi due comandi
-                        irraggiungibili. Il registro di `inerti` conta per elemento,
-                        quindi l'inerzia che `Modal` aggiunge sopra si somma e si
-                        sottrae senza scoprire lo sfondo del visore.
-
-                      ⚠️ IL `z-[120]` DI `Modal`, ANNIDATO QUI, È CLAMPATO — va
-                      saputo prima di fidarsene, e resta vero anche adesso. Il
-                      visore è `fixed inset-0 z-[115]`: posizione più `z-index`
-                      diverso da `auto` creano un CONTESTO D'IMPILAMENTO, quindi
-                      il `z-[120]` del Modal si risolve DENTRO quel contesto e non
-                      può superare il livello del visore rispetto ai suoi
-                      FRATELLI. Non è un difetto: là dentro gli basta stare sopra
-                      i figli del visore (`z-10` lo scroller, `z-20` le frecce e
-                      la ✕), e ci sta.
-
-                      ─── LA MISURA È ARRIVATA, E LA RIGA È STATA SCRITTA ────────
-                      Questo commento, fino al 2026-09-12, diceva: «il visore è
-                      `z-50`, la bottom-nav è `fixed bottom-0 … z-50` e nel layout
-                      viene DOPO `<main>{children}</main>`, cioè stesso livello e
-                      più avanti nel DOM — dipinge sopra il visore. NON È CORRETTO
-                      A OCCHIO DI PROPOSITO: una sovrapposizione vera dei bottoni
-                      non è dimostrata ai formati comuni, e jsdom non ha layout.
-                      Si misura nel browser vero. Se la misura dirà che c'è, la
-                      correzione è una riga: da `z-50` a `z-[115]`».
-
-                      **La misura ha detto che c'è.** Simulatore iPhone 16e
-                      (390×844, iOS 26.2), app nativa contro `app.kidville.it`, un
-                      video VERTICALE aperto nel visore: lo scroller arriva a fine
-                      corsa — due schermate dopo due gesti risultavano identiche
-                      al byte — e di «Elimina Media» restava una striscia rossa di
-                      ~4 px sotto la pastiglia della barra. Non era «non
-                      dimostrata ai formati comuni»: era invisibile al formato più
-                      comune che esista, un filmato ripreso col telefono in
-                      verticale. Ciò che la nascondeva non era il dialogo compatto
-                      di cui parla il paragrafo qui sopra — era la COLONNA del
-                      visore, che con un video a `max-h-[70svh]` più didascalia,
-                      taggati e comando supera l'altezza utile.
-
-                      La riga è scritta (vedi il `className` della radice del
-                      visore) e adesso la misura ha un lock che la tiene:
-                      `__tests__/architecture/visore-media-sopra-la-bottom-nav`.
-                      Effetto collaterale voluto: `rendiInerteFuoriDaConFocus`
-                      marca inerte tutto ciò che sta FUORI dal visore, la barra
-                      compresa — prima era inerte ma visibile e sopra, cioè il
-                      peggio dei due mondi.
-                    */}
-                    {daEliminare && eliminaIlMedia && (
+                    etichetta={(m) => (m.id === lightbox.id ? etichettaCard(lightbox, t) : m.alt)}
+                    /* ⚠️ `daEliminare` NON È UNA RIFINITURA: col dialogo di conferma aperto le
+                       frecce non devono cambiare il media dietro di lui. Il dialogo nomina e
+                       cancella quello che ha catturato all'apertura. */
+                    tastiBloccati={daEliminare !== null}
+                    /*
+                      LA CONFERMA È FIGLIA DEL VISORE E FRATELLA DEL SUO SCROLLER (per questo
+                      passa da qui e non sta tra i figli): il perché — il clic fuori che
+                      chiuderebbe anche lei, `inert` che la renderebbe irraggiungibile, il
+                      `z-[120]` di `Modal` clampato dal contesto d'impilamento del visore —
+                      sta scritto per esteso in `VisoreMedia`, sul punto in cui li rende.
+                    */
+                    sovrapposti={daEliminare && eliminaIlMedia ? (
                         <DialogoEliminaMedia
                             tipoMedia={daEliminare.file_type}
                             didascalia={daEliminare.caption}
@@ -1167,8 +774,185 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
                                sta sulla sua dichiarazione. */
                             onInVolo={(inVolo) => { eliminaInVolo.current = inVolo; }}
                         />
+                    ) : null}
+                >
+                    {/* Caption */}
+                    {lightbox.caption && (
+                        <p className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide text-center mt-4 mb-2">{lightbox.caption}</p>
                     )}
-                </div>
+
+                    {/* Tagged Students Info (Teacher Side) */}
+                    {students && students.length > 0 && (
+                        <div className="mt-3 bg-kidville-cream/40 border border-kidville-green/10 rounded-2xl p-4 text-kidville-green">
+                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-kidville-green/10">
+                                <h3 className="font-barlow font-bold text-xs uppercase tracking-wide text-kidville-green/70">
+                                    {t('galleryTaggatiTitolo')}
+                                </h3>
+                                {onUpdateTags && !editMode && (
+                                    <button
+                                        onClick={() => {
+                                            setEditMode(true);
+                                            setTempTagged(lightbox.tag_students ?? []);
+                                        }}
+                                        className="px-3 py-1 bg-kidville-green/10 hover:bg-kidville-green/20 text-kidville-green rounded-lg text-xs font-semibold tracking-wide transition-colors"
+                                    >
+                                        ✏️ {t('galleryModificaTag')}
+                                    </button>
+                                )}
+                            </div>
+
+                            {editMode ? (
+                                <div className="space-y-3">
+                                    {/* Una colonna sul telefono, due quando c'è spazio: in
+                                        vista di sede i nomi sono «Nome Cognome — SEZIONE» e
+                                        in mezza colonna da 358 px non ci stanno. `max-h-40`
+                                        invece di `max-h-32` perché con 32 si vedevano due
+                                        righe e mezzo, e la mezza riga sembra la fine
+                                        dell'elenco. */}
+                                    <div data-testid="taggati-elenco" className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                                        {students.map((student) => {
+                                            const isTagged = tempTagged.includes(student.id);
+                                            return (
+                                                /* `min-w-0` sulla label: un figlio di flex/grid non
+                                                   scende sotto la larghezza del proprio contenuto, e
+                                                   senza di questo il `truncate` sul nome non ha
+                                                   nessun effetto — il chip sfonda comunque. */
+                                                <label
+                                                    key={student.id}
+                                                    className={`flex min-w-0 items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
+                                                        isTagged
+                                                            ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
+                                                            : 'bg-white border-kidville-line text-kidville-sub hover:bg-kidville-cream'
+                                                    }`}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isTagged}
+                                                        onChange={() => {
+                                                            setTempTagged((prev) =>
+                                                                prev.includes(student.id)
+                                                                    ? prev.filter((id) => id !== student.id)
+                                                                    : [...prev, student.id]
+                                                            );
+                                                        }}
+                                                        className="hidden"
+                                                    />
+                                                    <span className="truncate" title={`${student.nome} ${student.cognome}`}>
+                                                        {student.nome} {student.cognome}
+                                                    </span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-kidville-green/10">
+                                        <button
+                                            onClick={() => setEditMode(false)}
+                                            className="px-3 py-1 bg-kidville-neutral-soft hover:bg-kidville-cream-dark rounded-lg text-xs font-semibold text-kidville-sub transition-colors"
+                                        >
+                                            {t('galleryAnnulla')}
+                                        </button>
+                                        <button
+                                            onClick={async () => {
+                                                setSavingTags(true);
+                                                try {
+                                                    await onUpdateTags?.(lightbox.id, tempTagged);
+                                                    setLightbox({ ...lightbox, tag_students: tempTagged });
+                                                    setEditMode(false);
+                                                } catch {
+                                                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-salva-tag-fallito', route: '/gallery' });
+                                                } finally {
+                                                    setSavingTags(false);
+                                                }
+                                            }}
+                                            disabled={savingTags}
+                                            className="px-3 py-1 bg-kidville-success hover:opacity-90 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
+                                        >
+                                            {savingTags ? t('gallerySalvataggio') : t('gallerySalva')}
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {(lightbox.tag_students ?? []).length === 0 ? (
+                                        <span className="text-xs text-kidville-sub italic">{t('galleryNessunTaggato')}</span>
+                                    ) : (
+                                        (lightbox.tag_students ?? []).map((id) => {
+                                            const student = students.find((s) => s.id === id);
+                                            if (!student) return null;
+                                            return (
+                                                /* `max-w-full truncate` + `title`: nella vista di
+                                                   sede il nome è «Nome Cognome — SEZIONE», e un chip
+                                                   senza tetto di larghezza sfonda la colonna. Il
+                                                   nome intero resta leggibile al passaggio. */
+                                                <span
+                                                    key={id}
+                                                    title={`${student.nome} ${student.cognome}`}
+                                                    className="px-2.5 py-1 bg-kidville-green/10 border border-kidville-green/20 rounded-full text-xs font-semibold max-w-full truncate"
+                                                >
+                                                    {student.nome} {student.cognome}
+                                                </span>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Actions.
+                        `flex-wrap` e gap più stretto: le tre etichette italiane
+                        («Scarica» ~126 px, «Condividi» ~144, «Segnala foto/video» ~200)
+                        più i gap fanno ~494 px in 358 disponibili sul telefono, e con
+                        `justify-center` l'eccesso si divide fra i due lati — ~68 px
+                        tagliati a sinistra e ~68 a destra, cioè metà della prima pillola
+                        e metà dell'ultima. Andare a capo costa una riga in più; non
+                        andarci costa due comandi. */}
+                    {/* Col solo `scaricabile` e senza indirizzo firmato non resterebbe
+                        nessun comando: niente riga vuota da `mt-4` in mezzo al visore. */}
+                    {(showActions || (scaricabile && urlVisore)) && (
+                        <div data-testid="visore-comandi" className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                            {/* Gli STESSI due gesti della card, e nient'altro: la
+                                duplicazione fra questi due punti è ciò che aveva
+                                lasciato la card senza nemmeno un log. */}
+                            {urlVisore && <button
+                                onClick={() => { void scaricaMedia(lightbox, urlVisore); }}
+                                className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
+                                <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
+                            </button>}
+                            {showActions && urlVisore && <button
+                                onClick={() => { void condividiMedia(lightbox, urlVisore, t('mediaLinkCopiatoLungo')); }}
+                                className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
+                                <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
+                            </button>}
+                            {/* Segnalazione contenuto (C5 §2): sempre etichettata, SOLO lato
+                                genitore — con `scaricabile` (staff) non compare. */}
+                            {showActions && <SegnalaContenuto
+                                tipoOggetto="media_galleria"
+                                oggettoId={lightbox.id}
+                                label={t('mediaSegnala')}
+                                variant="pill"
+                            />}
+                        </div>
+                    )}
+
+                    {/*
+                      ELIMINA — E IL COMANDO RESTA SOLO QUI, non sulla miniatura.
+                      Una tessera da 171 px ha già due bersagli in un angolo
+                      (Scarica, Condividi): un terzo, DISTRUTTIVO, significa
+                      cancellare la foto di un minore con un pollice. Il gesto sta
+                      dove si è già scelto di guardare quella foto.
+
+                      E adesso non elimina: CHIEDE. Prima faceva
+                      `onDelete(id); handleCloseLightbox();` — due righe di cui la
+                      seconda non aspetta la prima.
+                    */}
+                    {puoEliminare(lightbox) && (
+                        <button onClick={() => setDaEliminare(lightbox)}
+                            className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-kidville-error hover:opacity-90 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
+                            🗑️ {t('galleryEliminaMedia')}
+                        </button>
+                    )}
+                </VisoreMedia>
             )}
         </>
     );

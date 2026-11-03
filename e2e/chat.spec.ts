@@ -110,6 +110,51 @@ test.describe('lato genitore', () => {
     // quindi niente toBeVisible sull'immagine stessa).
     await expect(page.getByText('📎 Allegato').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByAltText('Allegato').first()).toBeAttached();
+
+    // ── LA FOTO SI APRE A TUTTO SCHERMO (2026-11-03) ─────────────────────────
+    //
+    // Fino a ieri toccare la miniatura non faceva niente. Ora è un pulsante («Apri la foto a
+    // tutto schermo») che apre `VisoreFotoChat`: un dialogo a tutto schermo con «Scarica» (e,
+    // per il genitore, «Condividi»).
+    //
+    // `.first()` sul pulsante regge perché `ChatMessageArea` è montata DUE volte (pannello
+    // desktop `hidden md:flex` e conversazione mobile `md:hidden`) ma `getByRole` NON vede
+    // l'elemento nascosto con `display: none`: a 1280 px resta solo la miniatura del desktop,
+    // a un telefono solo quella del mobile. Mai due visibili insieme, quindi `.first()` non può
+    // cadere su quella sbagliata (e il tocco apre comunque un visore solo).
+    //
+    // ⚠️ `dispatchEvent('click')` E NON `click()`, ed è la stessa ragione del `toBeAttached` che
+    // sta sull'immagine poche righe sopra: il PNG di test 1×1 può avere un box VUOTO, e il
+    // pulsante-miniatura contiene solo quell'immagine, quindi ne erediterebbe il box vuoto. Un
+    // `click()` fa i controlli di azionabilità di Playwright (visibile, stabile, riceve gli
+    // eventi) e su un box vuoto scadrebbe in CI: il titolare si troverebbe la CI rossa per la
+    // dimensione di una fixture, non per un difetto del prodotto. `getByRole` non scarta
+    // l'elemento per la sola dimensione zero (lo scarta se è nascosto con `display: none`,
+    // `visibility` o `aria-hidden`), quindi qui basta aspettare che il pulsante sia ALLEGATO al
+    // DOM e consegnargli l'evento. Il vero tocco di un utente (mouse, Tab + Invio/Spazio) lo
+    // coprono i test di unità (`chat-visore-foto`); questo E2E prova l'integrazione: pulsante →
+    // dialogo con «Scarica» → Escape lo chiude.
+    const apriLaFoto = page.getByRole('button', { name: 'Apri la foto a tutto schermo' }).first();
+    await expect(apriLaFoto).toBeAttached({ timeout: 15_000 });
+    await apriLaFoto.dispatchEvent('click');
+
+    // Il dialogo si cerca per NOME («Foto 1 di 1 della conversazione»), non per solo ruolo:
+    // `getByRole('dialog')` nudo fallirebbe in modalità stretta alla prima altra finestra di
+    // dialogo che la pagina dovesse avere (un avviso, un consenso), e il test direbbe «due
+    // elementi» invece di «il visore non si è aperto». Il nome è quello che il visore dà da sé
+    // (`chatFotoConversazione`), mai il nome del mittente.
+    const visore = page.getByRole('dialog', { name: /della conversazione/ });
+    await expect(visore).toBeVisible({ timeout: 15_000 });
+    await expect(visore.getByRole('button', { name: /Scarica/i })).toBeVisible();
+
+    // «Condividi» NON si asserisce: Chromium headless su Linux non condivide file
+    // (`navigator.canShare({ files })` è falso) e in quel caso il pulsante non compare, per
+    // scelta del progetto. Qui si prova ciò che c'è su qualunque browser: aprire e poter
+    // scaricare. Condividi lo coprono i test di unità (`condividi-media`, `useAzioniMedia`).
+
+    // Escape chiude il visore e la conversazione resta lì.
+    await page.keyboard.press('Escape');
+    await expect(visore).toBeHidden();
   });
 });
 

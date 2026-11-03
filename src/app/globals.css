@@ -432,11 +432,21 @@ body {
 /* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (binario o sidebar) non
    deve MAI essere coperta da un overlay/modal a tutto schermo. Da 744 px gli
-   overlay `fixed inset-0` dentro l'area contenuto partono DOPO la navigazione,
-   larga `--kv-rail-w`: 88 px col binario del tablet in verticale (744–1023),
-   16rem con la sidebar piena (≥1024, ogni iPad in orizzontale). Prima del
-   2026-10-18 la regola valeva da 1024 px e diceva `16rem` a mano. Regola NON-layered (Tailwind v4) -> vince sulle utility
+   overlay `fixed inset-0` dentro l'area contenuto (`[data-cockpit-content]`)
+   partono DOPO la navigazione, larga `--kv-rail-w`: 88 px col binario del tablet
+   in verticale (744–1023), 16rem con la sidebar piena (≥1024, ogni iPad in
+   orizzontale). Prima del 2026-10-18 la regola valeva da 1024 px e diceva
+   `16rem` a mano. Regola NON-layered (Tailwind v4) -> vince sulle utility
    `inset-0` senza !important.
+   ⚠️ «DENTRO L'AREA CONTENUTO» VUOL DIRE NEL DOM, e il visore dei media
+   (`VisoreMedia`) è un portale: fuori dal cockpit si monta su `body`, ma nel
+   cockpit sceglie PROPRIO `[data-cockpit-content]` come contenitore, altrimenti
+   uscirebbe da questa regola e coprirebbe binario, sidebar e topbar (trovato in
+   revisione il 2026-11-03). Da lì dentro la regola copre sia la radice del
+   visore sia il `Modal` di conferma che il visore ospita, entrambi
+   `fixed inset-0`. Chi sposta o rinomina `data-cockpit-content`, o aggiunge un
+   altro portale a tutto schermo nel cockpit, deve rispettare questo patto: lo
+   tiene il lock `visore-rispetta-la-cornice-del-cockpit`.
    ============================================================================= */
 [data-kv-guscio-admin] {
   --kv-rail-w: 0px;

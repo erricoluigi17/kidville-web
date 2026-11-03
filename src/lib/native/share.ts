@@ -106,7 +106,8 @@ export async function condividi(input: CondivisioneInput): Promise<void> {
  * Passa al foglio di sistema un FILE GIÀ PRESENTE sul dispositivo (`file://…`).
  * Solo nativo: sul web non esiste un equivalente che valga la pena fingere
  * (`navigator.share` vuole oggetti `File`, non percorsi), e chi chiama ha già la
- * sua strada — l'ancora `download` su un `blob:`.
+ * sua strada — l'ancora `download` su un `blob:`, oppure `condividiFileWeb` qui
+ * sotto quando il `File` c'è davvero.
  *
  * PERCHÉ STA QUI e non dentro `scarica.ts`: `@capacitor/share` si importa in un
  * posto solo. Due import dello stesso plugin sono due comportamenti che
@@ -133,6 +134,65 @@ export async function condividiFileLocale(
   } catch (e) {
     if (signal?.aborted) return false
     return annullatoDallUtente(e)
+  }
+}
+
+/**
+ * Che cosa è successo quando un FILE è stato offerto al foglio del browser.
+ *
+ * Quattro esiti, perché a chi chiama servono quattro reazioni diverse:
+ *  - `foglio`        il foglio si è aperto e il file è partito;
+ *  - `annullato`     l'utente ha chiuso il foglio: il meccanismo ha funzionato, non è un guasto;
+ *  - `gesto-scaduto` il browser ha rifiutato per mancanza di gesto utente (`NotAllowedError`):
+ *                    il file è valido e basta un SECONDO tocco, quindi chi chiama lo tiene pronto;
+ *  - `non-riuscita`  niente foglio e niente da riprovare (Web Share assente, tipo non ammesso,
+ *                    gesto ritirato da chi chiama).
+ */
+export type EsitoFileWeb = 'foglio' | 'annullato' | 'gesto-scaduto' | 'non-riuscita'
+
+/**
+ * Offre un FILE alla Web Share API (`navigator.share({ files })`). Solo web: nell'app il
+ * file passa da `condividiFileLocale`, che lavora su un percorso del dispositivo.
+ *
+ * PERCHÉ STA QUI: `navigator.share` si chiama in un posto solo, come `@capacitor/share`.
+ * Due chiamate sparse sono due modi di leggere gli errori, e il modo in cui si legge
+ * `NotAllowedError` è tutta la differenza fra «riprova» e «guasto».
+ *
+ * ⚠️ IL GESTO UTENTE. Safari (e Chrome dopo qualche secondo) accetta `navigator.share`
+ * solo dentro un'attivazione utente recente. Fra il tocco su «Condividi» e questa
+ * chiamata c'è stata la `fetch` del file: se è stata lenta l'attivazione è scaduta e il
+ * rifiuto è `NotAllowedError`. NON è un errore dell'utente né un file sbagliato: è
+ * `gesto-scaduto`, e il file già scaricato serve al tocco successivo.
+ *
+ * Il segnale ritira il gesto: con il segnale interrotto l'esito è sempre `non-riuscita`,
+ * qualunque errore abbia portato il rifiuto (chi chiama non deve tenere pronto un file
+ * per un'azione che l'utente non vuole più).
+ */
+export async function condividiFileWeb(
+  file: File,
+  titolo?: string,
+  signal?: AbortSignal,
+): Promise<EsitoFileWeb> {
+  if (signal?.aborted) return 'non-riuscita'
+  if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return 'non-riuscita'
+  try {
+    await navigator.share({ files: [file], ...(titolo ? { title: titolo } : {}) })
+    return 'foglio'
+  } catch (e) {
+    if (signal?.aborted) return 'non-riuscita'
+    if (gestoUtenteScaduto(e)) return 'gesto-scaduto'
+    return annullatoDallUtente(e) ? 'annullato' : 'non-riuscita'
+  }
+}
+
+/** `NotAllowedError`: il browser non ha riconosciuto un gesto utente recente. */
+function gestoUtenteScaduto(e: unknown): boolean {
+  try {
+    return (e as { name?: unknown } | null | undefined)?.name === 'NotAllowedError'
+  } catch {
+    // Getter ostile sull'errore: nel dubbio non è un gesto scaduto, e chi chiama
+    // lo registra come `non-riuscita` (error nel log), non lo nasconde.
+    return false
   }
 }
 

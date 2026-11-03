@@ -2627,7 +2627,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `resolveScuolaScrittura` (scritture), con `scuola_id` nella stessa query; le due parent leggono
             // le votazioni con `.in('scuola_id', <sedi dei figli>)` e scrivono il voto con lo `scuola_id`
             // della votazione.
-            routeConServiceRole: 384,
+            // 384 → 385 il 2026-11-03 (foto della chat, compito 5): entra `admin/chat/messages/scarico`
+            // (POST, lo scarico di una foto dalla supervisione). CONTROLLATA, nessuna esenzione: gate
+            // `requireStaff`, e la sede del bambino passa da `assertAlunnoInScope` PRIMA di scrivere la riga
+            // di vigilanza e PRIMA di firmare l'indirizzo del file (fuori sede: riga `fuori-scope` e risposta
+            // del gate). Misurato rieseguendo il lock: 384 → 385.
+            routeConServiceRole: 385,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2950,7 +2955,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 586 → 594 il 2026-11-02 (votazioni dei rappresentanti, vedi `routeConServiceRole`): admin
             // GET+POST, `[id]` GET+PATCH+DELETE, `genitori` GET, parent GET, `[id]/voto` POST = +8.
             // `handlerEsentati` non cambia. Misurato rieseguendo il lock: 586 → 594.
-            handlerControllati: 594,
+            // 594 → 595 il 2026-11-03 (foto della chat, compito 5): `admin/chat/messages/scarico:POST` (vedi
+            // `routeConServiceRole`). Un handler solo, CONTROLLATO da `assertAlunnoInScope`; `handlerEsentati`
+            // resta a 109: nessuna voce in AMMESSE. Misurato rieseguendo il lock: 594 → 595.
+            handlerControllati: 595,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

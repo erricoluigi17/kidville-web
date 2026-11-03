@@ -308,5 +308,6 @@
   "docentiSenzaPushColRicevuti": "{giorni, plural, one {Messages from parents (# day)} other {Messages from parents (# days)}}",
   "docentiSenzaPushColNonLetti": "Unread (all time)",
   "registroAzioneElencoNotifiche": "Looked at the list of teachers without notifications (counts only)",
-  "registroQuantiConteggiati": "{n, plural, one {# message counted} other {# messages counted}}"
+  "registroQuantiConteggiati": "{n, plural, one {# message counted} other {# messages counted}}",
+  "registroAzioneScarico": "Downloaded a photo"
 }

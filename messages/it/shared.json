@@ -793,5 +793,9 @@
   "mediaInPreparazione": "Preparo…",
   "mediaCondividiToccaDiNuovo": "Il file è pronto: tocca di nuovo «Condividi».",
   "mediaCondividiAppDaAggiornare": "Per condividere il file aggiorna l’app Kidville dallo store.",
-  "mediaCondivisioneNonRiuscita": "Condivisione non riuscita. Riprova fra qualche minuto."
+  "mediaCondivisioneNonRiuscita": "Condivisione non riuscita. Riprova fra qualche minuto.",
+  "erroreAllegatoNonFoto": "Questo allegato non è una foto: dalla supervisione si scaricano solo le foto.",
+  "erroreChatMessaggioNonTrovato": "Il messaggio non è stato trovato. Riapri la conversazione e riprova.",
+  "erroreChatConversazioneNonTrovata": "La conversazione non è stata trovata. Riaprila e riprova.",
+  "erroreFirmaNonRiuscita": "Non è stato possibile preparare il file. Riprova fra qualche minuto."
 }

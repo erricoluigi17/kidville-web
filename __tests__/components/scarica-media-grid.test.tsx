@@ -404,6 +404,87 @@ describe('MediaGrid — lo scarico lato genitore', () => {
     })
   })
 
+  /** L'indicatore «in preparazione» sulla card: spinner al posto dell'icona + `aria-busy` + testo per chi non vede. */
+  function indicatore(bottone: HTMLElement) {
+    return {
+      occupato: bottone.getAttribute('aria-busy') === 'true',
+      spinner: bottone.querySelector('svg.animate-spin') !== null,
+      testo: within(bottone).queryByText('Preparo…') !== null,
+    }
+  }
+
+  it('sulla card Condividi mostra «in preparazione» mentre il file si prepara, SENZA spegnersi: il secondo tocco arriva alla guardia', async () => {
+    // Per un video sono parecchi secondi: senza un segnale la card sembra rotta, ed è il difetto
+    // da cui nasce questo lavoro. Il pulsante NON è `disabled` (né `aria-disabled` con il click
+    // ignorato): la guardia dell'hook resta l'unica a scartare il secondo tocco, e a loggarlo.
+    let risolviCondivisione!: () => void
+    const lavoro = new Promise<{ esito: string }>((risolvi) => {
+      risolviCondivisione = () => risolvi({ esito: 'nativo-foglio' })
+    })
+    condividiMediaMock.mockReturnValue(lavoro)
+    const seconda: MediaItem = { ...VOCE, id: 'm3', caption: 'Orto in giardino' }
+    render(<MediaGrid items={[VOCE, seconda]} showActions />)
+
+    const [primaCard, secondaCard] = screen.getAllByTitle('Condividi')
+    expect(indicatore(primaCard)).toEqual({ occupato: false, spinner: false, testo: false })
+
+    fireEvent.click(primaCard)
+    await waitFor(() => expect(indicatore(primaCard).occupato).toBe(true))
+    expect(indicatore(primaCard)).toEqual({ occupato: true, spinner: true, testo: true })
+    expect(primaCard).not.toBeDisabled()
+    expect(primaCard.getAttribute('aria-disabled')).toBeNull()
+    // Il `title` resta quello di sempre (l'individuano i test e chi passa il mouse), e solo la
+    // card che lavora cambia: le altre non si accorgono di niente.
+    expect(primaCard.getAttribute('title')).toBe('Condividi')
+    expect(indicatore(secondaCard)).toEqual({ occupato: false, spinner: false, testo: false })
+
+    // Il secondo tocco SULLA STESSA card passa alla guardia: nessuna seconda condivisione, una riga.
+    fireEvent.click(primaCard)
+    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    expect(condividiMediaMock).toHaveBeenCalledTimes(1)
+    expect(logClientMock).toHaveBeenCalledWith({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'gallery-azione-gia-in-corso',
+    })
+    // E la pressione scartata NON spegne l'indicatore della prima, che sta ancora lavorando.
+    expect(indicatore(primaCard)).toEqual({ occupato: true, spinner: true, testo: true })
+
+    // Finito il lavoro l'indicatore sparisce, e il pulsante è quello di prima.
+    risolviCondivisione()
+    await waitFor(() => expect(indicatore(primaCard).occupato).toBe(false))
+    expect(indicatore(primaCard)).toEqual({ occupato: false, spinner: false, testo: false })
+  })
+
+  it('anche Scarica sulla card mostra l’indicatore, senza spegnersi, e il secondo tocco si logga come sempre', async () => {
+    let risolviScarico!: () => void
+    scaricaMediaMock.mockReturnValue(new Promise<{ esito: string }>((risolvi) => {
+      risolviScarico = () => risolvi({ esito: 'web-blob' })
+    }))
+    render(<MediaGrid items={[VOCE]} showActions />)
+
+    const bottone = screen.getByTitle('Scarica')
+    fireEvent.click(bottone)
+    await waitFor(() => expect(indicatore(bottone).occupato).toBe(true))
+    expect(indicatore(bottone)).toEqual({ occupato: true, spinner: true, testo: true })
+    expect(bottone).not.toBeDisabled()
+    // Condividi, sulla stessa card, non dice «Preparo…»: non è lui che lavora.
+    expect(indicatore(screen.getByTitle('Condividi'))).toEqual({ occupato: false, spinner: false, testo: false })
+
+    fireEvent.click(bottone)
+    await waitFor(() => expect(logClientMock).toHaveBeenCalledTimes(1))
+    expect(scaricaMediaMock).toHaveBeenCalledTimes(1)
+    expect(logClientMock).toHaveBeenCalledWith({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'gallery-scarico-gia-in-corso',
+    })
+    expect(indicatore(bottone).occupato).toBe(true)
+
+    risolviScarico()
+    await waitFor(() => expect(indicatore(bottone).occupato).toBe(false))
+  })
+
   it('senza condivisione di file (web senza canShare) Condividi non c’è né sulla card né nel visore; Scarica sì', () => {
     // Un «Condividi» che manda un link da 10 minuti è il difetto che si toglie, e uno che
     // scarica dicendo «Condividi» mentirebbe: il pulsante non compare.

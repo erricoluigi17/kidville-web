@@ -4,10 +4,11 @@ import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
 import type { TipoMedia } from '@/lib/native/scarica';
-import { Download, Share2, Play, ImageOff } from 'lucide-react';
+import { Play, ImageOff } from 'lucide-react';
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { DialogoEliminaMedia } from '@/components/features/gallery/DialogoEliminaMedia';
+import { PulsantiCardMedia } from '@/components/features/gallery/PulsantiCardMedia';
 import { ComandiMedia } from '@/components/features/media/ComandiMedia';
 import { useAzioniMedia, type MediaAzionabile } from '@/components/features/media/useAzioniMedia';
 import { VisoreMedia, type MediaVisore } from '@/components/features/media/VisoreMedia';
@@ -553,55 +554,16 @@ export function MediaGrid({ items, showActions, scaricabile, onDelete, eliminabi
                             </div>
                         )}
 
-                        {/* Pulsanti Download e Condividi diretti sulla card.
+                        {/* Pulsanti Download e Condividi diretti sulla card (`PulsantiCardMedia`: lì
+                            stanno lo stato «Preparo…» e il perché dei 36 px e del «sempre visibili»).
                             Senza indirizzo firmato non possono fare nulla: si tolgono,
                             invece di offrire un bottone che scarica un errore. */}
                         {conScarica && url && (
-                            /*
-                              SEMPRE VISIBILI, E ADESSO C'È SCRITTO.
-
-                              Qui c'erano `opacity-0 group-hover:opacity-100
-                              md:group-hover:opacity-100` e, sullo stesso elemento, uno
-                              `style={{ opacity: 1 }}` inline. Lo stile inline VINCE su
-                              qualunque classe: le tre classi erano codice morto, e l'unico
-                              posto dove si leggeva l'intenzione era il commento dentro
-                              l'oggetto di stile. Su touch l'hover non esiste, quindi la
-                              scelta è giusta — ma va dichiarata dove un lettore la cerca.
-
-                              I bottoni passano da 28 a 36 px: 28 è sotto il minimo di WCAG
-                              2.5.8 (24 px) solo di poco e ben sotto i 44 di Apple, e sono
-                              due bersagli a 6 px di distanza in un angolo da 170 px.
-                            */
-                            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10 pointer-events-auto">
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        void azioni.scarica(mediaAzionabile(item, url));
-                                    }}
-                                    className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
-                                    title={t('mediaScarica')}
-                                >
-                                    <Download size={14} strokeWidth={2.5} />
-                                </button>
-                                {/* Condividi resta del GENITORE (`showActions`): a docenti e
-                                    Segreteria la spec dà il solo «Scarica». E c'è solo se il
-                                    dispositivo sa condividere un FILE (`puoCondividere`): sul web
-                                    senza `navigator.canShare` resta «Scarica», perché un
-                                    «Condividi» che manda un link da 10 minuti è il difetto che si
-                                    toglie. La card NON mostra lo stato «Preparo…» (lo fa la riga
-                                    del visore): il secondo tocco arriva alla guardia dell'hook,
-                                    che lo scarta e lo logga. */}
-                                {showActions && azioni.puoCondividere && <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        void azioni.condividi(mediaAzionabile(item, url));
-                                    }}
-                                    className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
-                                    title={t('mediaCondividi')}
-                                >
-                                    <Share2 size={14} strokeWidth={2.5} />
-                                </button>}
-                            </div>
+                            <PulsantiCardMedia
+                                media={mediaAzionabile(item, url)}
+                                azioni={azioni}
+                                conCondividi={Boolean(showActions && azioni.puoCondividere)}
+                            />
                         )}
                     </motion.div>
                     );

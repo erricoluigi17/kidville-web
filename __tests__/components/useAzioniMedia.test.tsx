@@ -578,8 +578,10 @@ describe('ComandiMedia', () => {
   })
 
   it('un onScarica che lancia non lascia il pulsante incagliato: si logga e si ripristina', async () => {
+    // Una classe d'errore con un nome RICONOSCIBILE: è l'unica informazione che il log porta.
+    class ErroreDiProva extends Error {}
     const onScarica = vi.fn(async () => {
-      throw new Error('imprevisto')
+      throw new ErroreDiProva('imprevisto: https://esempio.supabase.co/sign/x?token=segreto')
     })
     render(<ComandiMedia media={FOTO} azioni={azioniFinte()} conScarica conCondividi={false} onScarica={onScarica} />)
 
@@ -589,10 +591,19 @@ describe('ComandiMedia', () => {
 
     expect(screen.getByRole('button', { name: 'Scarica' })).not.toBeDisabled()
     expect(h.logClient).toHaveBeenCalledTimes(1)
-    expect(h.logClient).toHaveBeenCalledWith(
-      expect.objectContaining({ livello: 'error', evento: 'fetch', messaggio: 'media-comando-lanciato' }),
-    )
-    // Il testo dell'errore non finisce nel log: solo il nome.
-    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('imprevisto')
+    // Il NOME della classe sta nel `messaggio`: un campo `errore` non è fra le chiavi in chiaro
+    // di `redact.ts` e lato server uscirebbe `[redatto:str/N]`, cioè illeggibile. Gli altri
+    // chiamanti fanno lo stesso (`accesso non completato — … errore=${nomeErrore(e)}`).
+    expect(h.logClient).toHaveBeenCalledWith({
+      livello: 'error',
+      evento: 'fetch',
+      messaggio: 'media-comando-lanciato: ErroreDiProva',
+      campi: { operazione: 'scarica' },
+    })
+    // Né il testo dell'errore né l'indirizzo firmato che il testo riecheggia: da nessuna parte.
+    const scritto = JSON.stringify(h.logClient.mock.calls)
+    expect(scritto).not.toContain('imprevisto')
+    expect(scritto).not.toContain('token=')
+    expect(scritto).not.toContain('esempio.supabase.co')
   })
 })

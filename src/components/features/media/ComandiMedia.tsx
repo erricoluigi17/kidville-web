@@ -52,7 +52,8 @@ type Comando = 'scarica' | 'condividi';
  * dell'hook lo scarterebbe comunque, e un pulsante premibile che non fa niente (e non dice
  * perché) è il difetto da cui nasce tutto questo lavoro.
  *
- * ⚠️ LA CARD DI FOTO NON HA QUESTO STATO, e non è una svista: le sue due icone restano premibili
+ * ⚠️ LA CARD DI FOTO HA LO STESSO SEGNALE MA NON LO STESSO STATO (`PulsantiCardMedia`): spinner e
+ * `aria-busy` mentre la sua azione lavora, però SENZA `disabled`. Le sue due icone restano premibili
  * e il secondo tocco arriva alla guardia, che lo scarta e lo logga (`gallery-scarico-gia-in-corso`,
  * un nome già contato in `app_log` che i test della griglia fissano).
  *
@@ -77,12 +78,15 @@ export function ComandiMedia({ media, azioni, conScarica, conCondividi, onScaric
         } catch (e) {
             // Le azioni dell'hook non lanciano; un `onScarica` di chi usa il visore potrebbe. Non si
             // lascia il pulsante incagliato su «Preparo…» e non si perde l'errore: si logga, solo
-            // il NOME (mai il testo, che può riecheggiare un indirizzo firmato).
+            // il NOME della classe (mai il testo, che può riecheggiare un indirizzo firmato).
+            // ⚠️ Il nome sta nel `messaggio` e NON in un campo `errore`: quella chiave non è fra
+            // `CHIAVI_IN_CHIARO` di `redact.ts`, e lato server uscirebbe `[redatto:str/N]` — cioè
+            // l'unica informazione del log, illeggibile. Come fanno gli altri chiamanti.
             logClient({
                 livello: 'error',
                 evento: 'fetch',
-                messaggio: 'media-comando-lanciato',
-                campi: { operazione: comando, errore: nomeErrore(e) },
+                messaggio: `media-comando-lanciato: ${nomeErrore(e)}`,
+                campi: { operazione: comando },
             });
         } finally {
             setAlLavoro(null);

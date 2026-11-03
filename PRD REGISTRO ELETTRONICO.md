@@ -90,6 +90,8 @@
 - Safari non dà il fuoco al `<button>` al clic: alla chiusura del visore il fuoco non torna sulla miniatura (limite di `rendiInerteFuoriDaConFocus`, come in Foto).
 - Un messaggio il cui allegato non si è potuto firmare resta una bolla senza allegato né segnaposto (come per genitore e docente).
 
+**Un test instabile corretto lungo la strada** (03/11, prima CI della PR #285): `CodiciFiscaliDaVerificare.test.tsx` › «la rilettura si ANNUNCIA» rispondeva alla rilettura appena vedeva l'avviso, ma la fetch la lancia l'effetto che viene dopo: sul runner lento la risposta non arrivava a nessuno e il test scadeva. Ora aspetta che la lettura sia partita e risponde a tutte quelle in volo; nessuna asserzione cambia (provato col morso: senza `setRicaricando(false)` diventa rosso). Niente cambia nel componente.
+
 **Passi del titolare:**
 1. il merge della PR;
 2. dopo il merge: `SELECT` su `pg_constraint` per `chat_vigilanza_accessi_azione_check` e `get_advisors` a 0 ERROR;

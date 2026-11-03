@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-01",
-  "generato_alle": "2026-11-01T13:47:44Z",
-  "sha256": "79e8b8d2fccb94dfbc5151de6678fc65e906d49764cc478815bb52228d83898d",
+  "generato_il": "2026-11-03",
+  "generato_alle": "2026-11-03T16:25:23Z",
+  "sha256": "7263832ea453d95e2f88cde2c4a3a695881efff8cd728c6a5fbbf26893759512",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -2931,6 +2931,78 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
+      ]
+    },
+    {
+      "tabella": "votazioni",
+      "indice": "votazioni_id_scuola_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "votazioni",
+      "indice": "votazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "votazioni_candidati",
+      "indice": "votazioni_candidati_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "utente_id",
+        "votazione_id"
+      ]
+    },
+    {
+      "tabella": "votazioni_classi",
+      "indice": "votazioni_classi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "section_id",
+        "votazione_id"
+      ]
+    },
+    {
+      "tabella": "votazioni_voti",
+      "indice": "votazioni_voti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "votazioni_voti",
+      "indice": "votazioni_voti_votazione_id_ambito_section_id_elettore_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": true,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "ambito",
+        "elettore_id",
+        "section_id",
+        "votazione_id"
       ]
     }
   ]

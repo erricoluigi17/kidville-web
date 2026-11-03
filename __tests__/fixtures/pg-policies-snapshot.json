@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-01",
-  "generato_alle": "2026-11-01T13:47:44Z",
-  "sha256": "0b03bc369b84268a652218185395cde7cfe0cfc430152430e8d01f6c5b9089de",
+  "generato_il": "2026-11-03",
+  "generato_alle": "2026-11-03T16:25:27Z",
+  "sha256": "415c9e7bcdeed2b292cddcd99eceb5570ff6f7f6528f8da2ce472c32cc6d63e5",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -570,7 +570,11 @@
     "utenti",
     "utenti_scuole",
     "video_intents",
-    "video_jobs"
+    "video_jobs",
+    "votazioni",
+    "votazioni_candidati",
+    "votazioni_classi",
+    "votazioni_voti"
   ],
   "tabelle_rls_attiva": [
     "admin_settings",
@@ -731,6 +735,10 @@
     "valutazioni",
     "video_intents",
     "video_jobs",
-    "video_outbox"
+    "video_outbox",
+    "votazioni",
+    "votazioni_candidati",
+    "votazioni_classi",
+    "votazioni_voti"
   ]
 }

@@ -309,5 +309,6 @@
   "docentiSenzaPushColNonLetti": "Unread (all time)",
   "registroAzioneElencoNotifiche": "Looked at the list of teachers without notifications (counts only)",
   "registroQuantiConteggiati": "{n, plural, one {# message counted} other {# messages counted}}",
-  "registroAzioneScarico": "Downloaded a photo"
+  "registroAzioneScarico": "Downloaded a photo",
+  "messaggiScaricoNonRegistrato": "The download could not be recorded, so it did not start. Please try again in a few minutes."
 }

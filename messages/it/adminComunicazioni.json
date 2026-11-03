@@ -309,5 +309,6 @@
   "docentiSenzaPushColNonLetti": "Da leggere (in tutto)",
   "registroAzioneElencoNotifiche": "Ha consultato l’elenco delle maestre senza notifiche (solo conteggi)",
   "registroQuantiConteggiati": "{n, plural, one {# messaggio conteggiato} other {# messaggi conteggiati}}",
-  "registroAzioneScarico": "Ha scaricato una foto"
+  "registroAzioneScarico": "Ha scaricato una foto",
+  "messaggiScaricoNonRegistrato": "Lo scarico non si è potuto registrare, quindi non è partito. Riprova fra qualche minuto."
 }

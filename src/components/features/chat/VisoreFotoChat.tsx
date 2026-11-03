@@ -27,10 +27,11 @@ export interface VisoreFotoChatProps {
      */
     azioni: 'genitore' | 'staff' | 'vigilanza';
     /**
-     * Solo con `azioni="vigilanza"` (Compito 6): riceve l'id del messaggio e fa tutto da sé — chiede
-     * al server di registrare lo scarico, scarica con l'indirizzo fresco che riceve, avvisa a schermo
-     * se il registro rifiuta. Se manca, dalla supervisione Scarica NON compare: un file che esce
-     * senza riga nel registro di vigilanza è esattamente ciò che questa scheda deve impedire.
+     * Solo con `azioni="vigilanza"` (la scheda «Tutti» di `admin/messaggi`): riceve l'id del messaggio
+     * e fa tutto da sé — chiede al server di registrare lo scarico, scarica con l'indirizzo fresco che
+     * riceve, avvisa a schermo se il registro rifiuta. Se manca, dalla supervisione Scarica NON
+     * compare: un file che esce senza riga nel registro di vigilanza è esattamente ciò che questa
+     * scheda deve impedire.
      */
     onScaricaVigilanza?: (messaggioId: string) => Promise<void>;
 }

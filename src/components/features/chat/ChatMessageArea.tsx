@@ -8,8 +8,8 @@ import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
 import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
-import { avvisoDocumento, nomeDocumentoDa, suNativo, type AvvisoDocumento } from '@/lib/native/documento-genitore';
 import { NotaRettificaChat } from '@/components/features/admin/storici/RettificaMessaggio';
+import { DocumentoAllegatoChat } from '@/components/features/chat/DocumentoAllegatoChat';
 import { FotoAllegatoChat } from '@/components/features/chat/FotoAllegatoChat';
 import { VisoreFotoChat } from '@/components/features/chat/VisoreFotoChat';
 
@@ -45,8 +45,10 @@ interface Props {
      * Chi sta guardando la conversazione, cioè quali comandi ha una foto aperta a tutto schermo
      * (spec 2026-11-03): `genitore` — Scarica e Condividi (il file); `staff` — solo Scarica. OBBLIGATORIA
      * di proposito: una pagina nuova che monta la chat deve DIRE chi è, invece di ereditare in
-     * silenzio il default che dà o toglie un pulsante. La supervisione della segreteria non passa da
-     * qui: monta `VisoreFotoChat` per conto suo (`azioni="vigilanza"`).
+     * silenzio il default che dà o toglie un pulsante. Le due schede della segreteria non passano da
+     * qui: la pagina Messaggi ha il suo elenco di bolle (`AllegatoBolla`) e monta `VisoreFotoChat` per
+     * conto suo — `azioni="staff"` in «Con i genitori», `azioni="vigilanza"` in «Tutti» (la
+     * supervisione). Il chip del documento, invece, è lo stesso pezzo (`DocumentoAllegatoChat`).
      */
     azioniFoto: 'genitore' | 'staff';
 }
@@ -173,13 +175,7 @@ export function offriTraduzione(
 function MessageBubble({ msg, isMine, currentUserId, onApriFoto }: { msg: ChatMessage; isMine: boolean; currentUserId: string; onApriFoto: (messaggioId: string) => void }) {
     const locale = useLocale();
     const t = useTranslations('parentChat');
-    const ts = useTranslations('shared');
     const [translated, setTranslated] = useState<string | null>(null);
-    // Nell'app, l'ultimo tocco sul documento allegato non ha mostrato niente (anteprima non
-    // aperta, condivisione fallita, copia muta negli appunti): lo si dice nella bolla.
-    // Il valore è il TIPO d'avviso: sul binario 1.0 (`'aggiorna'`) riprovare non riuscirà
-    // mai, e il testo lo deve dire invece di «riprova fra qualche minuto».
-    const [allegatoNonAperto, setAllegatoNonAperto] = useState<AvvisoDocumento | null>(null);
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
 
@@ -229,40 +225,10 @@ function MessageBubble({ msg, isMine, currentUserId, onApriFoto }: { msg: ChatMe
             {msg.attachment_type === 'image' && allegatoMostrabile(msg.attachment_url) && (
                 <FotoAllegatoChat url={msg.attachment_url!} onApri={() => onApriFoto(msg.id)} />
             )}
+            {/* Il documento: il chip e il suo avviso stanno in `DocumentoAllegatoChat` (dal 2026-11-03,
+                condiviso con la pagina Messaggi della segreteria); qui si decide solo SE c'è. */}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                allegatoMostrabile(msg.attachment_url) ? (
-                    <a
-                        href={msg.attachment_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        // L'allegato è da GUARDARE (spec 2026-09-24, NAT3c): sul web il
-                        // collegamento resta com'è; nell'app 1.1 `suNativo` apre l'anteprima
-                        // di sistema dentro l'app. Il log lo scrive l'helper.
-                        onClick={suNativo(
-                            'apri',
-                            () => ({
-                                sorgente: msg.attachment_url as string,
-                                nomeFile: nomeDocumentoDa(null, msg.attachment_url as string, 'kidville-allegato'),
-                                etichetta: 'allegato-chat',
-                            }),
-                            (esito) => setAllegatoNonAperto(avvisoDocumento(esito)),
-                        )}
-                        className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
-                    >
-                        📎 {t('documentAttachment')}
-                    </a>
-                ) : (
-                    // URL con schema non-http (es. javascript:) salvato via API:
-                    // niente link, solo il chip inerte com'era prima.
-                    <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
-                        📎 {t('documentAttachment')}
-                    </div>
-                )
-            )}
-            {msg.attachment_url && msg.attachment_type === 'document' && allegatoNonAperto && (
-                <p role="alert" className={`mb-2 font-maven text-xs ${isMine ? 'font-semibold text-white' : 'text-kidville-error'}`}>
-                    {ts(allegatoNonAperto === 'aggiorna' ? 'documentoAppDaAggiornare' : 'documentoNonAperto')}
-                </p>
+                <DocumentoAllegatoChat url={msg.attachment_url} suSfondoScuro={isMine} />
             )}
 
             {/* Text (design: Maven 13.5px, interlinea 1.42)

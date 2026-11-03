@@ -130,7 +130,11 @@ describe('il visore dei media rispetta la cornice del cockpit', () => {
 
   it('il layout admin dichiara l’area contenuto sul <main>, dentro il guscio che porta `--kv-rail-w`', () => {
     const layout = leggi('src/app/(dashboard)/admin/layout.tsx');
-    const guscio = layout.indexOf('data-kv-guscio-admin');
+    // Il guscio è il `<div …>` vero, NON la prima occorrenza della parola: il commento di testa del
+    // layout (riga 20) cita `data-kv-guscio-admin` ben prima di qualunque elemento, e con
+    // `indexOf` il confronto «il <main> sta a valle del guscio» era vero per costruzione, anche
+    // con il <main> fuori dal guscio (corretto il 2026-11-03, revisione del Compito 2).
+    const guscio = layout.search(/<div[^>]*data-kv-guscio-admin/);
     const main = layout.search(/<main[^>]*data-cockpit-content/);
     expect(guscio, 'manca `data-kv-guscio-admin` nel layout admin').toBeGreaterThan(-1);
     expect(main, 'il <main> del layout admin non dichiara più `data-cockpit-content`').toBeGreaterThan(-1);

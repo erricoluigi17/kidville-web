@@ -122,10 +122,21 @@ test.describe('lato genitore', () => {
     // l'elemento nascosto con `display: none`: a 1280 px resta solo la miniatura del desktop,
     // a un telefono solo quella del mobile. Mai due visibili insieme, quindi `.first()` non può
     // cadere su quella sbagliata (e il tocco apre comunque un visore solo).
-    await page
-      .getByRole('button', { name: 'Apri la foto a tutto schermo' })
-      .first()
-      .click({ timeout: 15_000 });
+    //
+    // ⚠️ `dispatchEvent('click')` E NON `click()`, ed è la stessa ragione del `toBeAttached` che
+    // sta sull'immagine poche righe sopra: il PNG di test 1×1 può avere un box VUOTO, e il
+    // pulsante-miniatura contiene solo quell'immagine, quindi ne erediterebbe il box vuoto. Un
+    // `click()` fa i controlli di azionabilità di Playwright (visibile, stabile, riceve gli
+    // eventi) e su un box vuoto scadrebbe in CI: il titolare si troverebbe la CI rossa per la
+    // dimensione di una fixture, non per un difetto del prodotto. `getByRole` non scarta
+    // l'elemento per la sola dimensione zero (lo scarta se è nascosto con `display: none`,
+    // `visibility` o `aria-hidden`), quindi qui basta aspettare che il pulsante sia ALLEGATO al
+    // DOM e consegnargli l'evento. Il vero tocco di un utente (mouse, Tab + Invio/Spazio) lo
+    // coprono i test di unità (`chat-visore-foto`); questo E2E prova l'integrazione: pulsante →
+    // dialogo con «Scarica» → Escape lo chiude.
+    const apriLaFoto = page.getByRole('button', { name: 'Apri la foto a tutto schermo' }).first();
+    await expect(apriLaFoto).toBeAttached({ timeout: 15_000 });
+    await apriLaFoto.dispatchEvent('click');
 
     // Il dialogo si cerca per NOME («Foto 1 di 1 della conversazione»), non per solo ruolo:
     // `getByRole('dialog')` nudo fallirebbe in modalità stretta alla prima altra finestra di

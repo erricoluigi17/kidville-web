@@ -854,12 +854,24 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     let updErr: { code?: string; message: string } | null = null
     if (storica) {
       if (voce.storico_versione === undefined) return storicoIndisponibile()
-      const azioni: AzioneStorica[] = [{ tabella: 'valutazioni', operazione: 'update', filtro: { id, section_id: sectionId }, valori }]
-      if (scelta.ids !== null) {
-        azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'delete', filtro: { valutazione_id: id } })
-        for (const obiettivo_id of scelta.ids) azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'insert', valori: { valutazione_id: id, obiettivo_id } })
+      const azioniCon = (campi: Record<string, unknown>): AzioneStorica[] => {
+        const azioni: AzioneStorica[] = [{ tabella: 'valutazioni', operazione: 'update', filtro: { id, section_id: sectionId }, valori: campi }]
+        if (scelta.ids !== null) {
+          azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'delete', filtro: { valutazione_id: id } })
+          for (const obiettivo_id of scelta.ids) azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'insert', valori: { valutazione_id: id, obiettivo_id } })
+        }
+        return azioni
       }
-      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(materia.scuola_id), alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno: giornoOriginale, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni })
+      const rettificaCon = (campi: Record<string, unknown>, ripiegoSchema: boolean) => applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(materia.scuola_id), alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno: giornoOriginale, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni: azioniCon(campi), ripiegoSchema })
+      // DB non migrato (la CI E2E): la RPC costruisce l'UPDATE dalle chiavi di `valori`, e senza `periodo_id` torna
+      // `42703`. Come sull'update semplice: UNA ripetizione senza, con il log `info`; la seconda prova non ha ripiego.
+      let rettifica = await rettificaCon(valori, 'periodo_id' in valori)
+      if ('response' in rettifica && rettifica.schemaIndietro) {
+        logSchemaIndietro(operazione, rettifica.schemaIndietro, 1)
+        const { periodo_id: _periodo, ...senzaPeriodo } = valori
+        void _periodo
+        rettifica = await rettificaCon(senzaPeriodo, false)
+      }
       if ('response' in rettifica) return rettifica.response
       aggiornate = rettifica.righe[0]
     } else {

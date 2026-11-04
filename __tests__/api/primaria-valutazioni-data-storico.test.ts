@@ -543,6 +543,68 @@ describe('PATCH e DELETE', () => {
   })
 })
 
+describe('PATCH della segreteria su una data passata, con il database non migrato', () => {
+  // La RPC `storici_applica_rettifica` costruisce l'UPDATE dalle chiavi di `valori`: senza la colonna `periodo_id`
+  // torna 42703. Il ripiego è lo stesso dell'update semplice: UNA ripetizione senza, con il log `info` e senza il
+  // log `error` della rettifica (non è un guasto, è un ripiego previsto).
+  const SCHEMA = { data: null, error: { code: '42703', message: 'colonna inesistente' } }
+  const logErroreRettifica = () =>
+    h.logEvento.mock.calls.filter(([, livello, campi]) => livello === 'error' && campi?.esito === 'rettifica-non-applicata')
+  const azioniDellaChiamata = (rettifica: ReturnType<typeof vi.fn>, n: number) =>
+    rettifica.mock.calls[n][0].azioni as Array<{ tabella: string; valori: Riga }>
+
+  beforeEach(() => {
+    utente(SEGRETERIA, 'segreteria')
+    h.db.valutazioni = [voto({ periodo_id: null })]
+  })
+
+  it('42703 → ripete una volta senza periodo_id, 200, log info e nessun log error di rettifica', async () => {
+    const rettifica = vi.fn().mockResolvedValueOnce(SCHEMA).mockResolvedValueOnce({ data: [{ righe: [voto()] }], error: null })
+    h.opzioni = { scritture, rpc: { storici_applica_rettifica: rettifica } } satisfies OpzioniFinto
+
+    const res = await patch({ ...CORPO_MODIFICA, data: '2026-10-05' })
+
+    expect(res.status).toBe(200)
+    expect(rettifica).toHaveBeenCalledTimes(2)
+    const prima = azioniDellaChiamata(rettifica, 0).find((a) => a.tabella === 'valutazioni')?.valori
+    const seconda = azioniDellaChiamata(rettifica, 1).find((a) => a.tabella === 'valutazioni')?.valori
+    expect(prima).toMatchObject({ data_evento: '2026-10-05', periodo_id: P1 })
+    expect(seconda).toMatchObject({ data_evento: '2026-10-05' })
+    expect(seconda).not.toHaveProperty('periodo_id')
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }),
+      expect.objectContaining({ code: '42703' }),
+    )
+    expect(logErroreRettifica()).toHaveLength(0)
+  })
+
+  it('anche la seconda prova fallisce → 503 STORICO_NON_DISPONIBILE, una sola ripetizione e il log error di oggi', async () => {
+    const rettifica = vi.fn().mockResolvedValue(SCHEMA)
+    h.opzioni = { scritture, rpc: { storici_applica_rettifica: rettifica } } satisfies OpzioniFinto
+
+    const res = await patch({ ...CORPO_MODIFICA, data: '2026-10-05' })
+
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('STORICO_NON_DISPONIBILE')
+    expect(rettifica).toHaveBeenCalledTimes(2)
+    // Solo la seconda prova, quella senza ripiego, lascia il log error.
+    expect(logErroreRettifica()).toHaveLength(1)
+  })
+
+  it('senza periodo_id nei valori (data invariata) non c’è ripiego: 503 subito, log error', async () => {
+    const rettifica = vi.fn().mockResolvedValue(SCHEMA)
+    h.opzioni = { scritture, rpc: { storici_applica_rettifica: rettifica } } satisfies OpzioniFinto
+
+    const res = await patch(CORPO_MODIFICA)
+
+    expect(res.status).toBe(503)
+    expect(rettifica).toHaveBeenCalledTimes(1)
+    expect(logErroreRettifica()).toHaveLength(1)
+  })
+})
+
 describe('GET', () => {
   it('ordine per data della prova e poi per salvataggio, autore e propria', async () => {
     h.db.valutazioni = [

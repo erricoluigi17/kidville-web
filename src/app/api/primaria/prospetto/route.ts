@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
+import { assertMateriaDelDocente, materieVisibili } from '@/lib/auth/materie-docente'
 import { mediaGiudizi, giudiziSintetici, MODALITA_CON_GIUDIZIO, type ScalaVoce } from '@/lib/primaria/media'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -51,6 +52,14 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
     // media usciva nulla («nessuna media») senza una riga di log. Ci si ferma.
     const { data: alunno, error: errAlunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
     if (errAlunno) return rispostaGuastoDb(OP, 'db:alunni', errAlunno)
+
+    // D19: un'insegnante legge il prospetto solo nelle materie che in QUELLA classe le sono
+    // assegnate. Con `materiaId` la coppia (classe, materia) si verifica qui, prima di ogni altra
+    // lettura: un alunno senza classe non ha coppia, e per l'insegnante è 403 (lo staff passa).
+    // Senza `materiaId` `assertMateriaDelDocente` non legge niente: la panoramica si filtra sotto.
+    const materiaErr = await assertMateriaDelDocente(supabase, auth.user, alunno?.section_id ?? '', materiaId)
+    if (materiaErr) return materiaErr
+
     let scala: ScalaVoce[] = []
     if (alunno?.section_id) {
       const { data: sez, error: errSez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).maybeSingle()
@@ -70,8 +79,21 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
       const sectionId = alunno?.section_id
       if (!sectionId) return NextResponse.json({ error: 'Sezione non trovata per questo alunno' }, { status: 400 })
 
+      // D19: la panoramica mostra solo le materie visibili a chi guarda. Un'insegnante senza
+      // materie in questa classe riceve 200 e una panoramica vuota (non più il prospetto della
+      // classe: voluto). Un guasto delle assegnazioni è 500, mai «nessuna materia».
+      const visibili = await materieVisibili(supabase, auth.user, sectionId)
+      if (!visibili.ok) return visibili.response
+      if (!visibili.tutte && visibili.materie.size === 0) {
+        return NextResponse.json({ success: true, panoramica: [] })
+      }
+
+      // La panoramica ha una riga per materia: chi non ha una materia non ne vede la riga.
+      let qMaterie = supabase.from('materie').select('id, nome').eq('section_id', sectionId).eq('attiva', true)
+      if (!visibili.tutte) qMaterie = qMaterie.in('id', [...visibili.materie])
+
       const [{ data: materie, error: errMaterie }, { data: valutazioni, error: errValutazioni }] = await Promise.all([
-        supabase.from('materie').select('id, nome').eq('section_id', sectionId).eq('attiva', true).order('ordine'),
+        qMaterie.order('ordine'),
         supabase
           .from('valutazioni')
           .select('materia_id, giudizio_sintetico')

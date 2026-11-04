@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import type { DBFinto, Scrittura, ErrorePostgrest } from '../fixtures/finto-supabase'
 
@@ -50,6 +50,11 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, ErrorePostgrest>,
   /** Simula il DB E2E della CI, NON migrato: la colonna `tipo` non esiste. */
   senzaColonnaTipo: false,
+  /** Colonne che il DB «non migrato» non ha: una INSERT/UPDATE che le porta torna `PGRST204`. */
+  colonneAssenti: [] as string[],
+  /** Ogni INSERT/UPDATE su `giustifiche_didattiche`, anche quelle respinte: le chiavi del payload, nell'ordine. */
+  tentativi: [] as { operazione: string; chiavi: string[] }[],
+  logEvento: vi.fn(),
   /** Eseguito fra la lettura della route e la sua scrittura condizionata. */
   primaDellaScrittura: null as null | (() => void),
 }))
@@ -66,13 +71,17 @@ vi.mock('@/lib/alunni/attivo', () => ({ verificaAlunnoAttivo: async () => 'attiv
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
 vi.mock('@/lib/sezioni/docenti', () => ({ docentiDiSezione: h.docentiDiSezione }))
+vi.mock('@/lib/logging/logger', async (originale) => ({
+  ...(await originale<typeof import('@/lib/logging/logger')>()),
+  logEvento: (...a: unknown[]) => h.logEvento(...a),
+}))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   // Una query che nomina `tipo` su un DB senza la colonna risponde come PostgREST:
   // 42703 in lettura, PGRST204 in scrittura. Il resto della catena si accetta e si
   // ignora (la risposta è comunque l'errore), come fa il server vero.
-  const rifiuto = (code: string) => {
-    const risposta = { data: null, error: { code, message: 'colonna tipo inesistente' } }
+  const rifiuto = (code: string, colonna = 'tipo') => {
+    const risposta = { data: null, error: { code, message: `colonna ${colonna} inesistente` } }
     const catena: Record<string, unknown> = {}
     const proxy: unknown = new Proxy(catena, {
       get: (_t, prop) =>
@@ -92,12 +101,20 @@ vi.mock('@/lib/supabase/server-client', async () => {
         return Object.assign(Object.create(b), {
           select: (col?: string, ...r: unknown[]) =>
             h.senzaColonnaTipo && /\btipo\b/.test(col ?? '') ? rifiuto('42703') : b.select(col as string, ...(r as [])),
-          insert: (v: Record<string, unknown>, ...r: unknown[]) =>
-            h.senzaColonnaTipo && v && 'tipo' in v ? rifiuto('PGRST204') : b.insert(v, ...(r as [])),
+          insert: (v: Record<string, unknown>, ...r: unknown[]) => {
+            h.tentativi.push({ operazione: 'insert', chiavi: Object.keys(v ?? {}) })
+            if (h.senzaColonnaTipo && v && 'tipo' in v) return rifiuto('PGRST204')
+            const assente = h.colonneAssenti.find((k) => v && k in v)
+            return assente ? rifiuto('PGRST204', assente) : b.insert(v, ...(r as []))
+          },
           // La corsa fra la lettura della route e la sua scrittura: il gancio gira
           // quando la route costruisce l'update/delete, cioè DOPO la sua lettura.
           update: (...r: unknown[]) => {
             h.primaDellaScrittura?.()
+            const v = r[0] as Record<string, unknown> | undefined
+            h.tentativi.push({ operazione: 'update', chiavi: Object.keys(v ?? {}) })
+            const assente = h.colonneAssenti.find((k) => v && k in v)
+            if (assente) return rifiuto('PGRST204', assente)
             return (b.update as (...a: unknown[]) => unknown)(...r)
           },
           delete: (...r: unknown[]) => {
@@ -160,6 +177,9 @@ const dbBase = (): DBFinto => ({
     { id: MAT_ALTRA_CLASSE, nome: 'Storia', section_id: SEZ_ALTRA, attiva: true, ordine: 1 },
   ],
   admin_settings: [{ scuola_id: SEDE, notif_buffer_valutazioni_min: 10 }],
+  // Il quadrimestre della data si legge da qui (D12): vuoti = configurazione mancante, e l'impreparato entra senza periodo.
+  scrutinio_periodi: [],
+  scrutini: [],
   valutazioni: [],
   giustifiche_didattiche: [
     dichiarazione(G_FUTURA, { data: DOMANI }),
@@ -198,6 +218,8 @@ beforeEach(() => {
   h.scritture = []
   h.errori = {}
   h.senzaColonnaTipo = false
+  h.colonneAssenti = []
+  h.tentativi = []
   h.primaDellaScrittura = null
   comeGenitore()
   h.legame.mockResolvedValue('si')
@@ -545,5 +567,255 @@ describe('DB E2E della CI non migrato (senza la colonna `tipo`): si degrada, non
     const { impreparati } = (await res.json()) as { impreparati: Array<Record<string, unknown>> }
     expect(impreparati.find((i) => i.id === G_FUTURA)?.tipo).toBe('giustificato')
     expect(impreparati.find((i) => i.id === G_DOCENTE_VECCHIA)?.tipo).toBe('impreparato')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spec D12 (Ruling 13): ogni impreparato porta `periodo_id`, scritto all'inserimento e a ogni cambio di data — anche
+// quelli del GENITORE. Spec D10: al genitore non si applicano né il congelamento dello scrutinio chiuso né la materia
+// assegnata, quindi qui non ci sono 403 né 423: serve solo il periodo. Lettura fallita: 500 e niente scritto.
+// L'orologio finto è solo `Date` (i `setTimeout` della route restano veri).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const P1 = '21212121-0000-4000-8000-000000000001'
+const P2 = '21212121-0000-4000-8000-000000000002'
+const ADESSO_FINTO = new Date('2026-11-04T10:00:00Z') // le 11:00 del 4/11 a Roma
+const IN_P1 = '2026-11-10'
+const IN_P1_ALTRA = '2026-12-01'
+const IN_P2 = '2027-02-15'
+const FUORI_DAI_PERIODI = '2027-07-01'
+
+const periodoRiga = (id: string, nome: string, ordine: number, inizio: string, fine: string) => ({
+  id, scuola_id: SEDE, anno_scolastico: '2026/2027', nome, ordine, data_inizio: inizio, data_fine: fine, attivo: true,
+})
+
+const ripiegiDiSchema = () =>
+  h.logEvento.mock.calls.filter(([, , campi]) => campi?.esito === 'colonne-nuove-non-disponibili-schema')
+const inserimenti = () => h.scritture.filter((s) => s.tabella === 'giustifiche_didattiche' && s.operazione === 'insert')
+const aggiornamenti = () => h.scritture.filter((s) => s.tabella === 'giustifiche_didattiche' && s.operazione === 'update')
+
+describe('periodo_id — il quadrimestre della data (D12, Ruling 13)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(ADESSO_FINTO)
+    h.db.scrutinio_periodi = [
+      periodoRiga(P1, 'Primo quadrimestre', 1, '2026-09-15', '2027-01-31'),
+      periodoRiga(P2, 'Secondo quadrimestre', 2, '2027-02-01', '2027-06-10'),
+    ]
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  describe('POST', () => {
+    it.each([
+      ['il primo quadrimestre', IN_P1, P1],
+      ['il secondo quadrimestre', IN_P2, P2],
+    ])('la data cade nel %s: l’impreparato porta il suo periodo_id', async (_nome, data, periodo) => {
+      const res = await post({ studentId: ALUNNO, data })
+      expect(res.status).toBe(201)
+      expect(inserimenti()).toHaveLength(1)
+      expect(inserimenti()[0].valori[0]).toMatchObject({ tipo: 'giustificato', origine: 'genitore', periodo_id: periodo })
+      expect((await res.json()).data.periodo_id).toBe(periodo)
+    })
+
+    it('nessun periodo copre la data: periodo_id null, scritto esplicitamente, e 201', async () => {
+      const res = await post({ studentId: ALUNNO, data: FUORI_DAI_PERIODI })
+      expect(res.status).toBe(201)
+      expect(inserimenti()[0].valori[0]).toHaveProperty('periodo_id', null)
+    })
+
+    it('periodi non configurati (D4, fail-open): 201 senza periodo', async () => {
+      h.db.scrutinio_periodi = []
+      const res = await post({ studentId: ALUNNO, data: IN_P1 })
+      expect(res.status).toBe(201)
+      expect(inserimenti()[0].valori[0]).toHaveProperty('periodo_id', null)
+    })
+
+    it('scrutinio di quel quadrimestre CHIUSO per la classe: il genitore dichiara lo stesso (D10), niente 423', async () => {
+      h.db.scrutini = [{ id: 's-chiuso', section_id: SEZ, periodo_id: P1, stato: 'chiuso' }]
+      const res = await post({ studentId: ALUNNO, data: IN_P1, materiaId: MAT })
+      expect(res.status).toBe(201)
+      expect(inserimenti()[0].valori[0]).toMatchObject({ periodo_id: P1, origine: 'genitore' })
+      expect(h.notificaEvento).toHaveBeenCalledTimes(1)
+    })
+
+    for (const chiave of ['scrutinio_periodi:select', 'scrutini:select'] as const) {
+      it(`${chiave} in errore: 500 LETTURA_FALLITA, niente scritto, nessuna notifica`, async () => {
+        h.errori = { [chiave]: { code: '57014', message: 'SEGRETO-DEL-DATABASE' } }
+        const res = await post({ studentId: ALUNNO, data: IN_P1 })
+        expect(res.status).toBe(500)
+        const corpo = await res.json()
+        expect(corpo.codice).toBe('LETTURA_FALLITA')
+        expect(JSON.stringify(corpo)).not.toContain('SEGRETO-DEL-DATABASE')
+        expect(h.tentativi).toEqual([])
+        expect(inserimenti()).toEqual([])
+        expect(h.logScrittura).not.toHaveBeenCalled()
+        expect(h.notificaEvento).not.toHaveBeenCalled()
+      })
+    }
+
+    it('DB non migrato, manca solo periodo_id: UNA ripetizione senza, `tipo` resta scritto, log tentativo 1', async () => {
+      h.colonneAssenti = ['periodo_id']
+      const res = await post({ studentId: ALUNNO, data: IN_P1 })
+      expect(res.status).toBe(201)
+      expect(h.tentativi).toHaveLength(2)
+      expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['tipo', 'periodo_id']))
+      expect(h.tentativi[1].chiavi).toContain('tipo')
+      expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
+      expect(inserimenti()).toHaveLength(1)
+      expect(inserimenti()[0].valori[0]).toMatchObject({ tipo: 'giustificato', origine: 'genitore' })
+      expect(inserimenti()[0].valori[0]).not.toHaveProperty('periodo_id')
+      expect(ripiegiDiSchema()).toHaveLength(1)
+      expect(h.logEvento).toHaveBeenCalledWith(
+        'registro',
+        'info',
+        expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }),
+        expect.objectContaining({ code: 'PGRST204' }),
+      )
+      // Il log di successo dice la verità: la dichiarazione è entrata SENZA periodo.
+      expect(h.logEvento).toHaveBeenCalledWith(
+        'registro',
+        'info',
+        expect.objectContaining({ esito: 'impreparato-dichiarato', periodo_assegnato: false }),
+        undefined,
+        expect.anything(),
+      )
+    })
+
+    it('DB non migrato, mancano tipo e periodo_id (la CI): tre prove, la terza senza nessuna delle due, log 1 e 2', async () => {
+      h.colonneAssenti = ['tipo', 'periodo_id']
+      const res = await post({ studentId: ALUNNO, data: IN_P1 })
+      expect(res.status).toBe(201)
+      expect(h.tentativi).toHaveLength(3)
+      expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['tipo', 'periodo_id']))
+      expect(h.tentativi[1].chiavi).toContain('tipo')
+      expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
+      expect(h.tentativi[2].chiavi).not.toContain('tipo')
+      expect(h.tentativi[2].chiavi).not.toContain('periodo_id')
+      expect(inserimenti()).toHaveLength(1)
+      expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
+    })
+
+    it('anche l’ultima ripetizione fallisce: 500 IMPREPARATO_NON_SALVATO, due soli ripiegi, nessuna notifica', async () => {
+      h.errori = { 'giustifiche_didattiche:insert': { code: 'PGRST204', message: 'colonna inesistente' } }
+      const res = await post({ studentId: ALUNNO, data: IN_P1 })
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
+      expect(h.tentativi).toHaveLength(3)
+      expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
+      expect(h.notificaEvento).not.toHaveBeenCalled()
+    })
+
+    it('il successo dice se il periodo è stato assegnato', async () => {
+      await post({ studentId: ALUNNO, data: IN_P1 })
+      await post({ studentId: ALUNNO, data: FUORI_DAI_PERIODI })
+      const riuscite = h.logEvento.mock.calls
+        .filter(([, , campi]) => campi?.esito === 'impreparato-dichiarato')
+        .map(([, , campi]) => campi.periodo_assegnato)
+      expect(riuscite).toEqual([true, false])
+    })
+  })
+
+  describe('PATCH', () => {
+    /** La dichiarazione futura del genitore, con una data e un periodo noti. */
+    const conData = (data: string, periodoId: string | null) =>
+      Object.assign(riga(G_FUTURA)!, { data, periodo_id: periodoId })
+
+    it('data spostata in un altro quadrimestre: periodo_id nuovo, insieme alla data', async () => {
+      conData(IN_P1, P1)
+      const res = await patch({ id: G_FUTURA, data: IN_P2 })
+      expect(res.status).toBe(200)
+      expect(riga(G_FUTURA)).toMatchObject({ data: IN_P2, periodo_id: P2 })
+      expect(aggiornamenti()[0].valori[0]).toMatchObject({ data: IN_P2, periodo_id: P2 })
+    })
+
+    it('data spostata dove nessun periodo copre: periodo_id torna null', async () => {
+      conData(IN_P1, P1)
+      const res = await patch({ id: G_FUTURA, data: FUORI_DAI_PERIODI })
+      expect(res.status).toBe(200)
+      expect(riga(G_FUTURA)).toMatchObject({ data: FUORI_DAI_PERIODI, periodo_id: null })
+    })
+
+    it('data spostata dentro lo stesso quadrimestre: periodo_id si ricalcola anche su una riga che non l’aveva', async () => {
+      conData(IN_P1, null)
+      const res = await patch({ id: G_FUTURA, data: IN_P1_ALTRA })
+      expect(res.status).toBe(200)
+      expect(riga(G_FUTURA)).toMatchObject({ data: IN_P1_ALTRA, periodo_id: P1 })
+    })
+
+    it('data NON cambiata (solo il motivo): periodo_id non si tocca e i periodi non si leggono', async () => {
+      conData(IN_P1, P1)
+      const res = await patch({ id: G_FUTURA, motivo: 'altro' })
+      expect(res.status).toBe(200)
+      expect(aggiornamenti()[0].valori[0]).not.toHaveProperty('periodo_id')
+      expect(riga(G_FUTURA)?.periodo_id).toBe(P1)
+      expect(h.tabelle).not.toContain('scrutinio_periodi')
+    })
+
+    it('la stessa data scritta di nuovo non è un cambio di data: periodo_id non si tocca', async () => {
+      conData(IN_P1, P1)
+      const res = await patch({ id: G_FUTURA, data: IN_P1, motivo: 'altro' })
+      expect(res.status).toBe(200)
+      expect(aggiornamenti()[0].valori[0]).not.toHaveProperty('periodo_id')
+      expect(h.tabelle).not.toContain('scrutinio_periodi')
+    })
+
+    it('verso un quadrimestre con lo scrutinio CHIUSO: il genitore sposta lo stesso (D10), niente 423', async () => {
+      conData(IN_P1, P1)
+      h.db.scrutini = [{ id: 's-chiuso', section_id: SEZ, periodo_id: P2, stato: 'chiuso' }]
+      const res = await patch({ id: G_FUTURA, data: IN_P2 })
+      expect(res.status).toBe(200)
+      expect(riga(G_FUTURA)).toMatchObject({ data: IN_P2, periodo_id: P2 })
+    })
+
+    for (const chiave of ['scrutinio_periodi:select', 'scrutini:select'] as const) {
+      it(`${chiave} in errore: 500 LETTURA_FALLITA, la riga resta com’è e nessuna notifica si riscrive`, async () => {
+        conData(IN_P1, P1)
+        const prima = { ...riga(G_FUTURA) }
+        h.errori = { [chiave]: { code: '57014', message: 'SEGRETO-DEL-DATABASE' } }
+        const res = await patch({ id: G_FUTURA, data: IN_P2 })
+        expect(res.status).toBe(500)
+        const corpo = await res.json()
+        expect(corpo.codice).toBe('LETTURA_FALLITA')
+        expect(JSON.stringify(corpo)).not.toContain('SEGRETO-DEL-DATABASE')
+        expect(riga(G_FUTURA)).toEqual(prima)
+        expect(h.tentativi).toEqual([])
+        expect(h.scritture.filter((s) => s.operazione === 'update')).toEqual([])
+        expect(h.logScrittura).not.toHaveBeenCalled()
+      })
+    }
+
+    it('DB non migrato: UNA ripetizione senza periodo_id, la data si salva, log tentativo 1', async () => {
+      h.colonneAssenti = ['periodo_id']
+      conData(IN_P1, null)
+      delete riga(G_FUTURA)!.periodo_id
+      const res = await patch({ id: G_FUTURA, data: IN_P2 })
+      expect(res.status).toBe(200)
+      expect(h.tentativi).toHaveLength(2)
+      expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['data', 'periodo_id']))
+      expect(h.tentativi[1].chiavi).toEqual(['data'])
+      expect(riga(G_FUTURA)?.data).toBe(IN_P2)
+      expect(riga(G_FUTURA)).not.toHaveProperty('periodo_id')
+      expect(ripiegiDiSchema()).toHaveLength(1)
+      expect(h.logEvento).toHaveBeenCalledWith(
+        'registro',
+        'info',
+        expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }),
+        expect.objectContaining({ code: 'PGRST204' }),
+      )
+    })
+
+    it('anche la ripetizione fallisce: 500 IMPREPARATO_NON_SALVATO, un solo ripiego, riga intatta', async () => {
+      conData(IN_P1, P1)
+      const prima = { ...riga(G_FUTURA) }
+      h.errori = { 'giustifiche_didattiche:update': { code: 'PGRST204', message: 'colonna inesistente' } }
+      const res = await patch({ id: G_FUTURA, data: IN_P2 })
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
+      expect(h.tentativi).toHaveLength(2)
+      expect(ripiegiDiSchema()).toHaveLength(1)
+      expect(riga(G_FUTURA)).toEqual(prima)
+    })
   })
 })

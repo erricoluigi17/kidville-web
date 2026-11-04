@@ -37,16 +37,23 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
   const [dataFine, setDataFine] = useState('');
   const [msg, setMsg] = useState('');
   const [mostraArchiviati, setMostraArchiviati] = useState(false);
+  // Spec D4: per questa sede e questo anno non c'è un periodo attivo, o ne manca una data. Il server lo calcola solo
+  // se la richiesta dichiara sede E anno (la GET qui sotto li manda entrambi) e risponde `null` altrimenti: solo
+  // `true` accende il promemoria, `false` e `null` lo spengono.
+  const [dateMancanti, setDateMancanti] = useState(false);
 
   const load = useCallback(async () => {
     let next: Periodo[] | null = null;
+    let mancanti = false;
     try {
       const archiviati = mostraArchiviati ? '&archiviati=si' : '';
       const r = await fetch(`/api/admin/primaria/scrutinio-periodi?scuolaId=${scuolaId}&annoScolastico=${anno}&userId=${userId}${archiviati}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
-      if (d.success) next = d.data;
+      if (d.success) { next = d.data; mancanti = d.dateMancanti === true; }
     } finally {
-      if (next) setPeriodi(next);
+      // Elenco e promemoria si aggiornano insieme, e solo se la risposta è buona: una GET fallita non deve
+      // spegnere né accendere il promemoria che c'era.
+      if (next) { setPeriodi(next); setDateMancanti(mancanti); }
     }
   }, [scuolaId, anno, userId, mostraArchiviati]);
 
@@ -134,6 +141,10 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
 
       {msg && (
         <p role="alert" className="font-maven mb-4 rounded-card bg-kidville-error/10 px-4 py-2 text-sm text-kidville-error">{msg}</p>
+      )}
+
+      {dateMancanti && (
+        <p role="status" className="font-maven mb-4 rounded-card bg-kidville-warn-soft px-4 py-2 text-sm text-kidville-warn-strong">{t('periodiPromemoriaDate')}</p>
       )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

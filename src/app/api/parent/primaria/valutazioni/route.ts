@@ -6,6 +6,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { dataRomaDi } from '@/lib/primaria/timelock'
+import { ordinaPerCompetenza } from '@/lib/primaria/periodo'
 import {
   leggiBufferVisibilita,
   sogliaVisibilita,
@@ -143,9 +144,17 @@ export const GET = withRoute('parent/primaria/valutazioni:GET', async (request: 
       (r) => r.origine === 'genitore' || visibileAlGenitore(r.creato_il, soglia),
     )
 
+    // Dal più recente: per la DATA DELLA PROVA (`data_evento`, altrimenti il giorno del salvataggio), poi per istante di
+    // salvataggio. La lettura qui sopra ordina per `creato_il`, che con le date retroattive non è più l'ordine che la
+    // famiglia si aspetta. La SOGLIA di visibilità resta sul salvataggio (`.lte('creato_il', soglia)`, D18): la
+    // finestra in cui la docente può correggere non si sposta perché la prova è di tre settimane fa.
+    const inOrdine = ordinaPerCompetenza(
+      (valutazioni ?? []) as unknown as Array<{ materia_id: string; data_evento?: string | null; creato_il?: string | null }>,
+    )
+
     // Raggruppa per materia. Nessuna media: è riservata al docente (vedi nota in testa).
     const perMateria = new Map<string, { valutazioni: unknown[] }>()
-    for (const v of (valutazioni ?? []) as unknown as Array<{ materia_id: string }>) {
+    for (const v of inOrdine) {
       const entry = perMateria.get(v.materia_id) ?? { valutazioni: [] }
       entry.valutazioni.push(v)
       perMateria.set(v.materia_id, entry)

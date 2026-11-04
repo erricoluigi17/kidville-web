@@ -120,8 +120,13 @@ manca. Non esiste lo stato «per intenzione».
 |---|---|---|---|
 | `diary/students` | CHIUSA | `aa12fea` 2026-07-30 (PR #59) · `fb20145` 2026-07-31 | Ramo `?id=` senza gate: `note_mediche` di un minore ed email dei genitori a chiunque, senza credenziali. Verificato in produzione: HTTP 200 |
 | `notes` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | `?alunnoId=` libero; senza parametro **tutte** le note disciplinari di tutte le sedi. Il POST inseriva note su `alunnoIds` arbitrari e notificava i genitori |
-| `grades` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | Idem su `valutazioni` |
 | `educator-sections` | CHIUSA | `2484a2f` 2026-07-30 · `26cf931` 2026-07-31 | Il ramo manager elencava le sezioni di tutte le sedi |
+
+La riga `grades` stava in questo elenco fino al 2026-11-04, quando la route legacy `/api/grades`
+(GET e POST su `valutazioni`) è stata cancellata: nessuna pagina la chiamava più, e lasciava una
+porta attorno alle regole per materia di `primaria/valutazioni`. La voce è uscita perché il file
+non esiste più — non perché il presidio di sede sia stato tolto — e il lock accanto all'inventario
+rifiuta le voci che nominano una route inesistente.
 
 ### Anagrafica e credenziali
 

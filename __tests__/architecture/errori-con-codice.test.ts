@@ -223,8 +223,12 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * 🔻 264 → 262 il 2026-10-25, branch `robustezza2/lotto2-b-s06-s13` (robustezza, seconda serie,
  * sessione 13). Le voci di `notes/route.ts` e di `parent/competenze/route.ts` sono arrivate a ZERO e sono
  * uscite dall'elenco: vedi il paragrafo gemello su `MAX_OCCORRENZE`.
+ *
+ * 🔻 262 → 261 il 2026-11-04, branch `feat/voti-data-storico` (D21): esce la voce di
+ * `grades/route.ts`, perché la route legacy `grades` (GET e POST) è stata CANCELLATA. Debito cancellato col
+ * codice, non convertito: vedi il paragrafo gemello su `MAX_OCCORRENZE`.
  */
-const MAX_FILE = 262;
+const MAX_FILE = 261;
 /**
  * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
  * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
@@ -430,8 +434,12 @@ const MAX_FILE = 262;
  * altre risposte senza codice dei file toccati: `notes` 4 → 0, `parent/competenze` 1 → 0,
  * `admin/competenze/download` 3 → 1, `forms/submit` 7 → 3, `iscrizione` 7 → 4, `iscrizione/sedi`
  * 2 → 1, `public/forms/[token]/submit` 8 → 4 (la voce era già larga di uno: se ne misuravano 7).
+ *
+ * 🔻 1331 → 1327 il 2026-11-04, branch `feat/voti-data-storico` (D21). La route legacy `grades`
+ * portava 4 risposte senza codice e viene cancellata insieme al suo file: nessuna risposta è stata
+ * convertita, e nessuna è stata spostata altrove.
  */
-const MAX_OCCORRENZE = 1331;
+const MAX_OCCORRENZE = 1327;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

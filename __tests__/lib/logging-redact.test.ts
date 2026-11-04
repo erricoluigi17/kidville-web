@@ -124,7 +124,7 @@ describe('redact — lista bianca', () => {
     it('la valutazione di un minore è redatta anche quando è un NUMERO', () => {
         // La lista bianca chiude le stringhe, non i numeri: senza le radici sensibili
         // questi passerebbero tutti in chiaro accanto a un alunno_id. Sono chiavi REALI:
-        // voto_numerico (api/grades), media (api/primaria/prospetto: media per materia).
+        // voto_numerico (colonna di `valutazioni`), media (api/primaria/prospetto: media per materia).
         const out = redact({
             alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
             voto_numerico: 7,

@@ -8,7 +8,6 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }));
 
 import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
-import * as grades from '@/app/api/grades/route';
 import * as notes from '@/app/api/notes/route';
 import * as attDaily from '@/app/api/attendance/daily/route';
 import * as attMonthly from '@/app/api/attendance/monthly/route';
@@ -37,8 +36,6 @@ describe('P0/S3 — gate wiring sugli endpoint docente', () => {
   });
 
   const cases: Array<[string, () => Promise<Response>]> = [
-    ['grades GET', () => grades.GET(req())],
-    ['grades POST', () => grades.POST(req())],
     ['notes GET', () => notes.GET(req())],
     ['notes POST', () => notes.POST(req())],
     ['attendance/daily GET', () => attDaily.GET(req() as never)],

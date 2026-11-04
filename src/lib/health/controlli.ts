@@ -401,6 +401,12 @@ export const JOB_CRON: readonly JobCron[] = [
     // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
     // (misura della sessione 7). Finestra di 26 ore come gli altri giornalieri.
     { nome: 'fascicolo-audit-ip-retention', finestraMs: 26 * ORA },
+    // Notturno di sola SQL (`41 3 * * *`, funzione `cron_storico_purge`, sessione 8 della seconda
+    // serie): tiene 14 giorni di `cron.job_run_details`. Battito `cron:cron-storico-purge`. Fino al
+    // 2026-11-04 stava in `JOB_CRON_NON_SORVEGLIATI` «in attesa del primo battito»: la migrazione
+    // l'ha applicata l'integrazione al merge della #269, e in `app_log` ci sono 10 battiti `ok` in
+    // 10 notti (dal 26/10 al 04/11, sempre alle 03:41 UTC), nessun errore, letti con SELECT.
+    { nome: 'cron-storico-purge', finestraMs: 26 * ORA },
     // Ogni 10 minuti (`4,14,24,34,44,54 * * * *`, funzione `cron_esiti` della sessione 6): legge
     // gli esiti di tutti gli altri job. Se si ferma, il controllo `cron-esiti` diventa cieco (e lo
     // dice: «cron-esiti fermo da N min»); il suo battito qui è la seconda guardia. 40 minuti =
@@ -470,19 +476,6 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
             'per consensi-retention, audit-docente-retention e app-log-bonifica-pii. Li sorveglia ' +
             'tutti `cron-esiti` (cron_ultimo_esito) con la finestra della loro cadenza.',
-    },
-    // `cron-storico-purge` (`41 3 * * *`, funzione SQL `cron_storico_purge`, sessione 8 della
-    // seconda serie): tiene 14 giorni di `cron.job_run_details`. È giornaliero e il suo battito ha la
-    // forma che `controlloBattitoCron` legge (`BATTITI_DA_LEGGERE`): il suo posto è `JOB_CRON`, con
-    // `finestraMs: 26 * ORA`. Sta qui per un vincolo di SEQUENZA: la migrazione la applica
-    // l'integrazione al merge, e fino ad allora `cron-sorvegliato-e-applicato` vieta di sorvegliarla.
-    {
-        nome: 'cron-storico-purge',
-        perche:
-            'IN ATTESA DEL PRIMO BATTITO: la migrazione che lo installa la applica l’integrazione ' +
-            'Supabase al merge della PR della sessione 8 della seconda serie. Dopo il primo battito ' +
-            '`ok` in app_log (impronta `cron:cron-storico-purge`) e la fotografia delle migrazioni ' +
-            'rigenerata, passa in `JOB_CRON` con `finestraMs: 26 * ORA`.',
     },
 ]
 

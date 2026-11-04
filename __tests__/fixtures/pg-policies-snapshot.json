@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-03",
-  "generato_alle": "2026-11-03T16:25:27Z",
-  "sha256": "415c9e7bcdeed2b292cddcd99eceb5570ff6f7f6528f8da2ce472c32cc6d63e5",
+  "generato_il": "2026-11-04",
+  "generato_alle": "2026-11-04T10:54:08Z",
+  "sha256": "8c69efc79a8335c8e7f85a74c14220d658b3680eda834cdb0ad69408b21df2c9",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -103,39 +103,6 @@
       ],
       "using_expr": "(is_active = true)",
       "check_expr": ""
-    },
-    {
-      "tabella": "form_submissions",
-      "policy": "fs_insert_authenticated",
-      "cmd": "INSERT",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "",
-      "check_expr": "((( SELECT auth.uid() AS uid) IS NOT NULL) AND ((user_id = ( SELECT auth.uid() AS uid)) OR (user_id IS NULL)))"
-    },
-    {
-      "tabella": "form_submissions",
-      "policy": "fs_select_owner",
-      "cmd": "SELECT",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "(user_id = ( SELECT auth.uid() AS uid))",
-      "check_expr": ""
-    },
-    {
-      "tabella": "form_submissions",
-      "policy": "fs_update_owner",
-      "cmd": "UPDATE",
-      "permissive": "PERMISSIVE",
-      "ruoli": [
-        "authenticated"
-      ],
-      "using_expr": "(user_id = ( SELECT auth.uid() AS uid))",
-      "check_expr": "(user_id = ( SELECT auth.uid() AS uid))"
     },
     {
       "tabella": "galleria_media_v2",

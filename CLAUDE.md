@@ -125,13 +125,14 @@ ferma gli sbagli, non chi lo vuole aggirare. Fermato vuol dire **mostrare l'istr
 che la esegue dall'editor SQL, non cercare un'altra via: SQL da `Bash` (`psql`, `supabase db query`,
 `DATABASE_URL`) il freno non lo vede. Via di fuga: `KIDVILLE_FRENO_SQL_SPENTO=1`.
 
-🟥 **Le quattro aggiunte alla decisione T3 non le ha confermate il titolare.** A (interruttori di
-registri e scatola nera), B (`session_replication_role`), C (`DISABLE TRIGGER`), D (in dubbio si
-ferma): le ha decise l'assistente il 25/10/2026 **in assenza del titolare**, che aveva chiesto di non
-essere interpellato. Sono quattro «sì» — la scelta più severa — e si possono togliere una per una
-(tabella del Compito 1, passo 5 del piano `docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md`).
-**Da confermare.** Prova del freno in una sessione nuova dopo il merge: **da fare** (la scrive la
-sessione dopo, nel suo primo commit).
+🟩 **Le quattro aggiunte alla decisione T3 le ha confermate il titolare il 2026-11-04**, una per una:
+A (interruttori di registri e scatola nera), B (`session_replication_role`), C (`DISABLE TRIGGER`),
+D (in dubbio si ferma) — **tutte e quattro sì**. Le aveva decise l'assistente il 25/10/2026 in sua
+assenza; la tabella per toglierne una resta nel Compito 1, passo 5 del piano
+`docs/superpowers/plans/2026-10-20-robustezza2-s02-sql-arbitrario-e-freno.md`.
+**Il freno è stato visto fermare** il 2026-11-03: due `DELETE` su `execute_sql` negati, due righe
+`FRENO SQL esito=negato categoria=DELETE` in `.claude/.permessi-auto.log`. Dopo un cambio di CLI la
+prova si rifà con `EXPLAIN DELETE FROM public.app_log WHERE false` (vedi la storia dei permessi).
 
 ⚠️ Il blocco `autoMode` va in **`~/.claude/settings.json`**, mai in `.claude/settings.json`: ha scope
 «User or managed», e da un file di progetto viene ignorato **in silenzio**. È stato nel posto

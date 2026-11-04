@@ -447,6 +447,12 @@ migrazione, e richiude la funzione ad `anon` e `authenticated`.
 `FRENO SQL	esito=negato` e una `FRENO SQL	esito=passato`. L'istruzione di prova è innocua anche se il
 freno non scattasse: `EXPLAIN` senza `ANALYZE` non esegue niente.
 
+**Visto fermare il 03/11/2026.** La prova del 25/10 (CLI 2.1.259) non l'aveva visto scattare. Il 03/11,
+durante il lavoro vero, il freno ha negato due `DELETE` mandati con `execute_sql`: in
+`.claude/.permessi-auto.log` ci sono due righe `FRENO SQL	esito=negato	strumento=mcp__supabase__execute_sql
+categoria=DELETE`, alle 12:47 e alle 12:49 (ora del Mac). Dopo un cambio di CLI la prova da rifare resta
+quella con `EXPLAIN DELETE … WHERE false`.
+
 **Come si torna indietro**, in ordine di reversibilità: `export KIDVILLE_FRENO_SQL_SPENTO=1` (una
 sessione) → togliere la voce del freno da `hooks.PreToolUse` in `.claude/settings.json` (il file resta
 su disco). Poi **riavviare**.

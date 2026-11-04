@@ -838,7 +838,10 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
       .getAllByRole('alert')
       .find((n) => n.textContent?.includes(itPublic.candErroreInvioTitolo))
     expect(pannello, 'il pannello d’errore d’invio deve essere in pagina').toBeDefined()
-    expect(document.activeElement).toBe(pannello)
+    // Il fuoco lo sposta un `useEffect`, che gira DOPO il commit, e il rifiuto
+    // arriva dopo la `fetch`, cioè fuori da `act`: il `waitFor` sul testo può
+    // risolvere in mezzo (01/11/2026). Si aspetta la PRESENZA del fuoco.
+    await waitFor(() => expect(document.activeElement).toBe(pannello))
     // Raggiungibile col fuoco, MAI col Tab: non si aggiunge una tappa alla
     // tabulazione di chi non ha perso niente.
     expect(pannello).toHaveAttribute('tabindex', '-1')

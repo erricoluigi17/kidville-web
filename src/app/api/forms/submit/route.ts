@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
@@ -20,6 +21,8 @@ import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.type
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
   modelId: zUuid,
+  // Ammesso solo perché il wizard lo manda ancora: deve COINCIDERE con la
+  // sessione, altrimenti 403. Non decide mai chi è l'intestatario.
   userId: zUuid.nullish(),
   // Pass-through jsonb { field_id → valore }: oggi è accettato qualsiasi
   // valore truthy (vecchio guard `!data`), nessun vincolo sul contenuto.
@@ -30,6 +33,14 @@ const postBodySchema = z.object({
 // Sostituisce l'insert client-side del wizard (rotto: il client browser è anon e
 // la RLS di `form_submissions` richiede sessione Supabase Auth). Service-role +
 // scoping app, coerente con `send-otp`. Registra lo snapshot consensi (DL-029).
+//
+// L'INTESTATARIO È LA SESSIONE (S-1, 31/10). Fino a quel giorno `userId` veniva
+// dal corpo e nessuno guardava la sessione: chiunque, anche senza account,
+// faceva nascere una compilazione `completed` a nome di qualunque genitore — e
+// con lo stesso id falso sceglieva la sospensione da controllare (un genitore in
+// regola) e la sede della riga (quella di un altro genitore). Il modulo davvero
+// pubblico non passa da qui: è `/api/public/forms/[token]/submit`, anonimo, che
+// scrive `user_id: null` e non accetta identità dal corpo.
 
 export const POST = withRoute('forms/submit:POST', async (request: Request) => {
   const rl = await rateLimit(`forms-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
@@ -41,20 +52,39 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
   }
 
   try {
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const { modelId, userId } = b.data
+    const { modelId } = b.data
     const data = b.data.data as FormSubmissionData
+
+    // Un `userId` diverso dalla sessione è un tentativo di intestare il modulo a
+    // un altro: si rifiuta PRIMA di ogni lettura, così non sceglie nemmeno quale
+    // sospensione o quale sede guardare. Vale anche per lo staff: lo sportello
+    // che compila per un genitore passa dalla firma (`send-otp`), non da qui.
+    // `warn` → finisce in tabella: è un evento di sicurezza. Solo uuid e ruolo.
+    if (b.data.userId && b.data.userId !== auth.user.id) {
+      logEvento('modulistica', 'warn', {
+        operazione: 'forms/submit:POST', esito: 'intestatario-non-proprio',
+        utente: auth.user.id, ruolo: auth.user.role,
+      })
+      return NextResponse.json(
+        { error: 'Accesso negato: puoi inviare un modulo solo a tuo nome', codice: 'MODULO_INTESTATARIO_NON_PROPRIO' },
+        { status: 403 }
+      )
+    }
+    const userId = auth.user.id
 
     const supabase = await createAdminClient()
 
     // Sospensione moroso (DL-021): inibisce nuove compilazioni di moduli, salvo
-    // i moduli essenziali (sempre_firmabile: salute/sicurezza).
-    if (userId) {
-      const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', modelId)
-      const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, userId, { sempreFirmabile })
-      if (sospesoErr) return sospesoErr
-    }
+    // i moduli essenziali (sempre_firmabile: salute/sicurezza). Niente più
+    // `if (userId)`: prima, ometterlo dal corpo saltava il controllo.
+    const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', modelId)
+    const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, userId, { sempreFirmabile })
+    if (sospesoErr) return sospesoErr
 
     // Carica lo schema del modello per snapshot consensi + guard server-side.
     // `scuola_id` serve a dare una sede alla compilazione quando chi compila non
@@ -107,18 +137,15 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
     // filtrano con `.in('scuola_id', plessi)` e `NULL IN (…)` in SQL vale NULL —
     // quella compilazione non la vedeva NESSUNO. Ora una sede non risolvibile è
     // un rifiuto esplicito, non una riga che sparisce.
-    let sedeUtente: string | null = null
-    if (userId) {
-      const { data: u, error: erroreUtente } = await supabase
-        .from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
-      if (erroreUtente) {
-        logEvento('modulistica', 'error', {
-          operazione: 'forms/submit:POST', esito: 'utente-non-letto',
-        }, erroreUtente)
-        return rispostaGuastoGiaRegistrato()
-      }
-      sedeUtente = (u?.scuola_id as string | undefined) ?? null
+    const { data: u, error: erroreUtente } = await supabase
+      .from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
+    if (erroreUtente) {
+      logEvento('modulistica', 'error', {
+        operazione: 'forms/submit:POST', esito: 'utente-non-letto',
+      }, erroreUtente)
+      return rispostaGuastoGiaRegistrato()
     }
+    const sedeUtente = (u?.scuola_id as string | undefined) ?? null
     const sede = await risolviSedeCompilazione(
       supabase,
       [sedeUtente, (model as { scuola_id?: string | null } | null)?.scuola_id],
@@ -134,7 +161,7 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
 
     const rigaInvio: Record<string, unknown> = {
       model_id: modelId,
-      user_id: userId ?? null,
+      user_id: userId,
       data,
       status: 'completed',
       consents_log: consents_log.length > 0 ? consents_log : null,

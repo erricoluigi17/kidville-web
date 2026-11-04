@@ -311,6 +311,19 @@ export function posterioriCheContengono(
 // `crm_settimane` «blocca»), `crm_settimane` e `crm_fasce` al posto di `crm_disponibilita` nella RLS e nelle
 // tabelle con `scuola_id` (91); bucket e schema delle candidature solo l'istante dello scatto.
 //
+// 2026-10-31 · S-1 «compilazioni a nome di un altro»: `20261103172513_form_submissions_senza_policy_browser.sql`
+// toglie le tre policy `fs_*` di `form_submissions` e revoca i grant di `anon`/`authenticated`. La guardia
+// della RLS la vede per `policy`. Cambieranno davvero la fotografia della RLS (−3 policy, la tabella resta
+// in `tabelle_rls_attiva`) e quella delle migrazioni; nessun indice, nessuna FK, nessuna colonna. Si toglie
+// con la PR-B dopo il merge, rigenerando le due fotografie dalla produzione. RINOMINATA il 01/11/2026
+// (era `20261031195836_…`): le fotografie della #282 sono state scattate alle 13:47:44Z del 01/11, dopo
+// l'istante che il file dichiarava, e non la contengono perché non è ancora applicata. RINOMINATA di nuovo il
+// 02/11/2026 (era `20261101161401_…`): la #284 ha portato in produzione `20261102100040_…`, e una migrazione
+// con una version anteriore all'ultima applicata `supabase db push` la rifiuta. RINOMINATA una terza volta il
+// 03/11/2026 (era `20261102130156_…`), per la stessa ragione: la #285 ha applicato `20261103131803_…`. E una
+// quarta il 03/11/2026 (era `20261103162210_…`): la #286 ha rigenerato le fotografie alle 16:25:22Z, dopo
+// quell'istante.
+//
 // 2026-11-02 · VOTAZIONI DEI RAPPRESENTANTI, PR-A: `20261102100040_votazioni_rappresentanti.sql` crea quattro
 // tabelle `votazioni*` (`votazioni`, `votazioni_classi`, `votazioni_candidati`, `votazioni_voti`), tutte con
 // `scuola_id`, PRIMARY KEY, `UNIQUE (id, scuola_id)` per la chiave composta delle figlie e un
@@ -339,7 +352,11 @@ export function posterioriCheContengono(
 // SVUOTATA il 03/11/2026 (PR-B dopo il merge di #285, `ccd386d8`): applicata dall'integrazione, una riga sola
 // nel registro con la version del file; il CHECK in produzione ammette `lettura`, `ricerca`, `scarico`. Delle
 // otto fotografie cambia per lei solo quella delle migrazioni, come previsto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261103172513_form_submissions_senza_policy_browser.sql':
+        'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
+        'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

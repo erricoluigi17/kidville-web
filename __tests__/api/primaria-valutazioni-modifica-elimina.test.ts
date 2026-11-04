@@ -16,11 +16,15 @@ const h = vi.hoisted(() => {
   }
   const state = {
     risposte: {} as Record<string, Array<{ data: unknown; error: unknown }>>,
+    // Risposte che valgono OGNI volta, quando la coda della chiave è vuota: per le letture che una richiesta
+    // fa a prescindere dal caso provato (le materie assegnate alla docente), e che altrimenti andrebbero
+    // ripetute in coda a ogni test, una volta per richiesta.
+    fisse: {} as Record<string, { data: unknown; error: unknown }>,
     chiamate: [] as Chiamata[],
   }
   function take(key: string) {
     const q = state.risposte[key]
-    return q && q.length > 0 ? q.shift()! : { data: null, error: null }
+    return q && q.length > 0 ? q.shift()! : (state.fisse[key] ?? { data: null, error: null })
   }
   function makeClient() {
     return {
@@ -143,6 +147,9 @@ const CORPO = { id: VAL, modalita: 'sintetico', giudizioSintetico: 'Ottimo', arg
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.risposte = {}
+  // Ogni docente ha la materia di questi voti in questa classe: il caso della materia tolta è provato in
+  // `primaria-valutazioni-data-storico.test.ts`, con le righe vere di `utenti_sezioni_materie`.
+  h.state.fisse = { 'utenti_sezioni_materie:select': { data: [{ section_id: SEZ, materia_id: MAT }], error: null } }
   h.state.chiamate = []
   utente(AUTORE, 'educator')
   m.assertSezioneInScope.mockResolvedValue(null)
@@ -279,6 +286,8 @@ describe('PATCH /api/primaria/valutazioni', () => {
     expect(chiamate('admin_settings', 'select')).toHaveLength(0)
     expect(chiamate('sblocchi_audit', 'select')).toHaveLength(0)
     expect(chiamate('utenti_sezioni', 'select')).toHaveLength(0)
+    // Né le materie: lo scope viene prima.
+    expect(chiamate('utenti_sezioni_materie', 'select')).toHaveLength(0)
   })
 
   it('400 con codice sugli obiettivi: mancanti o non validi', async () => {
@@ -580,5 +589,56 @@ describe('spostamento della competenza della valutazione', () => {
     const [upd] = chiamate('valutazioni', 'update')
     expect(upd.payload).toMatchObject({ data_evento: '2020-04-02' })
     expect(filtro(upd, 'eq', 'id')?.[2]).toBe(VAL)
+  })
+
+  // DB non migrato (la CI E2E): `periodo_id` può mancare. La PATCH ripete UNA volta senza e lo dice al log; se
+  // torna ancora un codice di schema con la data da spostare, è 503 come prima.
+  const PGRST204 = { data: null, error: { code: 'PGRST204', message: 'colonna sconosciuta' } }
+  const leggiIPeriodiDueVolte = () => {
+    // Una volta per il permesso (congelamento della data nuova), una per il ricalcolo di `periodo_id`.
+    coda('scrutinio_periodi:select', { data: [Q2_2020], error: null }, { data: [Q2_2020], error: null })
+    coda('scrutini:select', { data: [], error: null }, { data: [], error: null })
+  }
+
+  it('database non migrato: update con PGRST204 → si ripete senza periodo_id, 200 e log', async () => {
+    coda('valutazioni:select', { data: riga(), error: null })
+    leggiIPeriodiDueVolte()
+    coda('valutazioni:update', PGRST204, { data: [{ ...riga(), data_evento: '2020-04-02' }], error: null })
+
+    const res = await PATCH(patch({ ...CORPO, data: '2020-04-02' }))
+
+    expect(res.status).toBe(200)
+    const aggiornamenti = chiamate('valutazioni', 'update')
+    expect(aggiornamenti).toHaveLength(2)
+    expect(aggiornamenti[0].payload).toMatchObject({ data_evento: '2020-04-02', periodo_id: Q2_2020.id })
+    expect(aggiornamenti[1].payload).toMatchObject({ data_evento: '2020-04-02' })
+    expect(aggiornamenti[1].payload).not.toHaveProperty('periodo_id')
+    expect(m.logEvento).toHaveBeenCalledWith('registro', 'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }), expect.anything())
+  })
+
+  it('database non migrato anche per data_evento: dopo la ripetizione è 503 STORICO_NON_DISPONIBILE', async () => {
+    coda('valutazioni:select', { data: riga(), error: null })
+    leggiIPeriodiDueVolte()
+    coda('valutazioni:update', PGRST204, PGRST204)
+
+    const res = await PATCH(patch({ ...CORPO, data: '2020-04-02' }))
+
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('STORICO_NON_DISPONIBILE')
+    expect(chiamate('valutazioni', 'update')).toHaveLength(2)
+  })
+
+  it('periodi illeggibili al ricalcolo (staff): 500 LETTURA_FALLITA, nessuna scrittura', async () => {
+    utente(ALTRA, 'segreteria')
+    coda('valutazioni:select', { data: riga(), error: null })
+    coda('scrutinio_periodi:select', { data: null, error: { code: '57014', message: 'timeout' } })
+
+    const res = await PATCH(patch({ ...CORPO, data: '2020-04-02' }))
+
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(chiamate('valutazioni', 'update')).toHaveLength(0)
+    expect(chiamate('storici_applica_rettifica', 'rpc')).toHaveLength(0)
   })
 })

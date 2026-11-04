@@ -3541,6 +3541,12 @@ export const CODICI_ERRORE = {
      * `LETTURA_FALLITA`. Non è `VOCE_BLOCCATA`, che è il termine scaduto e porta `giorniLimite`.
      */
     QUADRIMESTRE_CHIUSO: 'erroreQuadrimestreChiuso',
+    /**
+     * La data della prova è dopo oggi (04/11/2026, `primaria/valutazioni` POST e PATCH). Risponde 422, prima di
+     * qualunque lettura. «Oggi» è il giorno di Roma del server, non quello del telefono: alla mezzanotte di Roma
+     * il 5 è già ammesso anche se a Greenwich è ancora il 4.
+     */
+    DATA_FUTURA: 'erroreDataFutura',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

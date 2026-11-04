@@ -53,7 +53,11 @@ vi.mock('@/lib/competenze/certificato-store', () => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   const crea = () =>
-    creaFintoSupabase(h.db, h.tabelle, { scritture: h.scritture as never })
+    creaFintoSupabase(h.db, h.tabelle, {
+      scritture: h.scritture as never,
+      // Il ricalcolo dei voti dopo una modifica delle date di un periodo.
+      rpc: { primaria_ricalcola_periodi: () => ({ data: { valutazioni: 0, impreparati: 0 }, error: null }) },
+    })
   return { createAdminClient: async () => crea(), createClient: async () => crea() }
 })
 

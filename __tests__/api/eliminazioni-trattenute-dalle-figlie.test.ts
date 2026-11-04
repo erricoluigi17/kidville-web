@@ -46,7 +46,12 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   const crea = () =>
-    creaFintoSupabase(h.db, [], { scritture: h.scritture as never, ...(h.errori ? { errori: h.errori } : {}) })
+    creaFintoSupabase(h.db, [], {
+      scritture: h.scritture as never,
+      // Il ricalcolo dei voti dopo l'eliminazione di un periodo con le date.
+      rpc: { primaria_ricalcola_periodi: () => ({ data: { valutazioni: 0, impreparati: 0 }, error: null }) },
+      ...(h.errori ? { errori: h.errori } : {}),
+    })
   return { createAdminClient: async () => crea(), createClient: async () => crea() }
 })
 

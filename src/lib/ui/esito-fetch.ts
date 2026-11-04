@@ -3533,6 +3533,14 @@ export const CODICI_ERRORE = {
      * non è soggetto al controllo. Risponde 403; un guasto della lettura NON è questo codice: è `LETTURA_FALLITA`.
      */
     MATERIA_NON_ASSEGNATA: 'erroreMateriaNonAssegnata',
+    /**
+     * Il quadrimestre di una data ha lo scrutinio chiuso (04/11/2026, `src/lib/primaria/permesso-voce.ts` e le
+     * route di valutazioni e impreparati). Risponde 423. In scrittura nuova (POST) il voto non entra: per
+     * inserire nel quadrimestre chiuso ci si rivolge alla segreteria; in modifica o eliminazione (PATCH e DELETE)
+     * serve lo sblocco della Direzione. Un guasto nella lettura di periodi o scrutini NON è questo codice: è
+     * `LETTURA_FALLITA`. Non è `VOCE_BLOCCATA`, che è il termine scaduto e porta `giorniLimite`.
+     */
+    QUADRIMESTRE_CHIUSO: 'erroreQuadrimestreChiuso',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

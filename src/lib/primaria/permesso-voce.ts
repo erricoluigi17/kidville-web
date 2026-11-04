@@ -3,6 +3,7 @@ import { puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { haRuolo, haUnRuolo, type AppRole, type AppUser } from '@/lib/auth/predicati-ruolo'
 import { logEvento } from '@/lib/logging/logger'
+import { chiusoIn, leggiQuadrimestri, type QuadrimestriLetti } from '@/lib/primaria/quadrimestre'
 import {
   calcolaScadenza,
   dataRomaDi,
@@ -15,26 +16,52 @@ import {
 /**
  * CHI PUÒ MODIFICARE O ELIMINARE UNA VOCE DELLA PRIMARIA, E FINO A QUANDO.
  *
- * Le regole (spec 2026-09-24, «2 Primaria» + «Convenzioni di esecuzione»):
+ * Le regole (spec 2026-09-24, «2 Primaria» + «Convenzioni di esecuzione»; per voti e
+ * impreparati, spec 2026-11-04 `voti-data-storico-design`):
  *
  *  · CHI — l'autore della voce (l'id lo passa il chiamante: `maestra_id`,
  *    `creato_da`, `caricato_da`…), oppure Segreteria e Direzione
  *    (`segreteria`/`admin`/`coordinator`). Un impreparato dichiarato dal GENITORE
  *    lo può togliere anche qualunque docente della classe (`utenti_sezioni`).
- *  · FINO A QUANDO — il termine di `timelock.ts` sulla DATA DI ROMA dell'evento:
- *    2 giorni, 15 per le prove scritte/pratiche, valori per sede da
- *    `admin_settings`. Segreteria e Direzione possono correggere senza scadenza, dopo il gate di sede.
- *  · OLTRE IL TERMINE — solo con uno sblocco in `sblocchi_audit`: per la VOCE
+ *  · FINO A QUANDO — il termine di `timelock.ts`: 2 giorni, 15 per le prove
+ *    scritte/pratiche, valori per sede da `admin_settings`. Segreteria e Direzione
+ *    possono correggere senza scadenza, dopo il gate di sede. Da quale giorno si conta
+ *    dipende dalla voce:
+ *      – VALUTAZIONE e IMPREPARATO DELLA DOCENTE (`contaDalSalvataggio`): dal giorno di
+ *        Roma in cui sono state SALVATE (`giornoSalvataggio`, cioè `creato_il`; se manca,
+ *        `dataEvento`). La data della prova la sceglie la docente e può essere
+ *        retrodatata: se contasse il termine su quella, una prova di tre settimane fa
+ *        nascerebbe già bloccata e un voto «datato ieri» si potrebbe ritoccare per mesi;
+ *      – TUTTO IL RESTO (registro, firma, nota, allegato, impreparato del genitore): la
+ *        DATA DI ROMA dell'evento, come sempre. Su queste voci il modulo non legge i periodi.
+ *  · CONGELAMENTO — solo per le voci che contano dal salvataggio: se una delle loro date
+ *    (la data dell'evento e, se la modifica la sposta, la nuova) cade in un quadrimestre
+ *    il cui scrutinio è CHIUSO per la loro classe, la voce non si tocca nemmeno dentro il
+ *    termine: 423 `QUADRIMESTRE_CHIUSO`. Spostare un voto da un quadrimestre aperto a uno
+ *    chiuso, o all'inverso, vale come toccarlo. Un guasto nella lettura dei periodi o degli
+ *    scrutini è 500 `LETTURA_FALLITA`, mai un 423 né un via libera. Periodi assenti o senza
+ *    date non congelano niente (configurazione mancante: la voce resta come prima).
+ *  · OLTRE IL TERMINE o CONGELATA — solo con uno sblocco in `sblocchi_audit`: per la VOCE
  *    (`entita_tipo` = tipo, `entita_id` = id) oppure per il GIORNO della classe
  *    (`entita_tipo` = 'giorno', `section_id`, `data`). Per registro e firma vale
  *    anche lo sblocco per SLOT (`entita_tipo` = 'registro', sezione + data + ora),
- *    lo stesso che legge `primaria/registro:POST`. Lo sblocco per VOCE copre
- *    solo la sua `dataEvento`: una `nuovaDataEvento` oltre il termine chiede in
- *    più lo sblocco del giorno (o dello slot) di quella data.
+ *    lo stesso che legge `primaria/registro:POST`.
+ *      – Per le voci che contano dal salvataggio lo sblocco per VOCE copre TUTTO: termine,
+ *        congelamento e anche la data spostata; quello per GIORNO vale se è il giorno del
+ *        SALVATAGGIO (non quello della prova) e riapre anche il congelamento;
+ *      – per le altre lo sblocco per VOCE copre solo la sua `dataEvento`: una
+ *        `nuovaDataEvento` oltre il termine chiede in più lo sblocco del giorno (o dello
+ *        slot) di quella data.
+ *    Se nessuno sblocco copre, il rifiuto è `QUADRIMESTRE_CHIUSO` per una voce congelata
+ *    (vince anche quando è pure oltre il termine), altrimenti `VOCE_BLOCCATA`.
  *
  * ⚠️ QUESTO MODULO NON VERIFICA LA SEDE. Lo scope (`assertSezioneInScope`) resta
  * al chiamante, PRIMA di chiamare qui: «è Segreteria» non vuol dire «è Segreteria
  * di quella classe».
+ *
+ * ⚠️ NON VALIDA LE DATE. Il chiamante passa `dataEvento`, `nuovaDataEvento` e
+ * `giornoSalvataggio` già in forma `YYYY-MM-DD` (zod nella route): una data in un'altra
+ * forma non cade in nessun periodo e si leggerebbe come «non congelata».
  */
 
 export type TipoVoce = 'registro' | 'firma' | 'valutazione' | 'nota' | 'impreparato' | 'allegato'
@@ -65,8 +92,17 @@ export interface VocePrimaria {
    * data di Roma di `creato_il` (vedi `dataEventoDaIstante`).
    */
   dataEvento: string
-  /** Se la modifica SPOSTA la data, anche la nuova: il termine si controlla su entrambe. */
+  /**
+   * Se la modifica SPOSTA la data, anche la nuova. Il termine delle voci che non contano dal
+   * salvataggio si controlla su entrambe; il congelamento (valutazioni e impreparati della
+   * docente) guarda entrambe le date.
+   */
   nuovaDataEvento?: string | null
+  /**
+   * Solo valutazioni e impreparati della docente: il giorno di Roma di `creato_il`, da cui corre
+   * il termine. Assente ⇒ si usa `dataEvento` (il comportamento di prima).
+   */
+  giornoSalvataggio?: string | null
   /** `scritto_pratico` = 15 giorni (predefinito). Assente = `classe_orale`. */
   lockTipo?: LockTipo
   /** Solo impreparati: `'genitore'` apre la rimozione ai docenti della classe. */
@@ -78,6 +114,7 @@ export interface VocePrimaria {
 export type EsitoNegato =
   | { ok: false; stato: 403; codice: 'VOCE_NON_AUTORE' }
   | { ok: false; stato: 423; codice: 'VOCE_BLOCCATA'; giorniLimite: number }
+  | { ok: false; stato: 423; codice: 'QUADRIMESTRE_CHIUSO' }
   | { ok: false; stato: 500; codice: 'LETTURA_FALLITA' }
 
 export type EsitoPermessoVoce = { ok: true } | EsitoNegato
@@ -90,6 +127,11 @@ export interface StatoVoce {
   bloccata: boolean
   /** Il limite in giorni che si applica alla voce (per il testo «oltre N giorni»). */
   giorniLimite: number
+  /**
+   * Solo per le voci che contano dal salvataggio: la voce cade in un quadrimestre con lo scrutinio
+   * chiuso e nessuno sblocco la riapre. Implica `bloccata`; la UI la distingue dal termine scaduto.
+   */
+  congelata?: boolean
 }
 
 export type EsitoBatch =
@@ -121,6 +163,30 @@ function dateDi(voce: VocePrimaria): string[] {
   const date = [voce.dataEvento]
   if (voce.nuovaDataEvento && voce.nuovaDataEvento !== voce.dataEvento) date.push(voce.nuovaDataEvento)
   return date
+}
+
+/**
+ * Il termine corre dal giorno in cui la voce è stata SALVATA, e la voce si può congelare: le
+ * valutazioni e gli impreparati segnati dalla docente. L'impreparato dichiarato dal genitore
+ * resta come prima (la data è quella del giorno che dichiara, non una scelta della docente).
+ */
+export function contaDalSalvataggio(voce: VocePrimaria): boolean {
+  return voce.tipo === 'valutazione' || (voce.tipo === 'impreparato' && voce.origine !== 'genitore')
+}
+
+/** Il giorno da cui corre il termine di una voce che conta dal salvataggio. */
+function giornoDelTermine(voce: VocePrimaria): string {
+  return voce.giornoSalvataggio ?? voce.dataEvento
+}
+
+/** Le date su cui cercare uno sblocco: il giorno del salvataggio, o le date oltre il termine. */
+function dateDaSbloccare(voce: VocePrimaria, oltre: readonly string[]): string[] {
+  return contaDalSalvataggio(voce) ? [giornoDelTermine(voce)] : [...oltre]
+}
+
+/** Una delle date della voce cade in un quadrimestre con lo scrutinio chiuso per la sua classe (prima degli sblocchi). */
+function cadeInQuadrimestreChiuso(letti: QuadrimestriLetti, voce: VocePrimaria): boolean {
+  return dateDi(voce).some((d) => chiusoIn(letti, voce.scuolaId, voce.sectionId, d))
 }
 
 // ─── I pezzi, ciascuno con UNA lettura al massimo per tutto il lotto ─────────
@@ -174,12 +240,12 @@ async function terminiPerSede(
 
 interface Oltre {
   voce: VocePrimaria
-  /** Le date della voce che superano il termine. */
+  /** Le date da coprire con uno sblocco (vedi `dateDaSbloccare`). */
   date: string[]
 }
 
 /**
- * Le voci oltre il termine che uno sblocco copre. Due letture al massimo:
+ * Le voci oltre il termine, o congelate, che uno sblocco copre. Due letture al massimo:
  * per entità (`entita_id in …`) e per giorno/slot (`section_id`+`data in …`).
  */
 async function sbloccate(
@@ -209,6 +275,9 @@ async function sbloccate(
   // va coperta a parte (giorno, o slot per registro/firma): altrimenti un solo
   // sblocco del 07/09 basterebbe a riscrivere la voce su un giorno di tre mesi
   // prima. Stessa regola del passo 2: OGNI data oltre il termine è coperta.
+  // Fanno eccezione le voci che contano dal salvataggio (D9): il loro termine non
+  // dipende dalle date dell'evento, quindi lo sblocco per voce copre anche la data
+  // spostata, e non resta niente da coprire a parte.
   const restanti: Oltre[] = []
   for (const o of oltre) {
     const k = chiaveVoce(o.voce.tipo, o.voce.id)
@@ -216,7 +285,7 @@ async function sbloccate(
       restanti.push(o)
       continue
     }
-    const residue = o.date.filter((d) => d !== o.voce.dataEvento)
+    const residue = contaDalSalvataggio(o.voce) ? [] : o.date.filter((d) => d !== o.voce.dataEvento)
     if (residue.length === 0) chiavi.set(k, 'voce')
     else restanti.push({ voce: o.voce, date: residue })
   }
@@ -274,11 +343,18 @@ async function sbloccate(
   return { ok: true, chiavi }
 }
 
-/** Il calcolo del termine di una voce: le date oltre, e il limite. */
+/**
+ * Il calcolo del termine di una voce: le date oltre, e il limite. Per le voci che contano dal
+ * salvataggio la sola data che conta è il giorno del salvataggio (`[giorno]` se scaduto, altrimenti `[]`).
+ */
 function oltreTermine(voce: VocePrimaria, termini: Deadlines, adesso: Date): { date: string[]; giorniLimite: number } {
   const giorniLimite = limitePer(termini, voce.lockTipo ?? 'classe_orale')
-  const date = dateDi(voce).filter((d) => calcolaScadenza(d, giorniLimite, adesso).locked)
-  return { date, giorniLimite }
+  const scaduta = (d: string) => calcolaScadenza(d, giorniLimite, adesso).locked
+  if (contaDalSalvataggio(voce)) {
+    const giorno = giornoDelTermine(voce)
+    return { date: scaduta(giorno) ? [giorno] : [], giorniLimite }
+  }
+  return { date: dateDi(voce).filter(scaduta), giorniLimite }
 }
 
 // ─── Le due porte ────────────────────────────────────────────────────────────
@@ -286,7 +362,8 @@ function oltreTermine(voce: VocePrimaria, termini: Deadlines, adesso: Date): { d
 /**
  * Può `utente` modificare/eliminare questa voce ADESSO?
  *
- * L'ordine conta: prima CHI (403, senza leggere sblocchi), poi il TERMINE (423).
+ * L'ordine conta: prima CHI (403, senza leggere sblocchi), poi lo staff (passa prima di ogni
+ * lettura di termini e periodi), poi il TERMINE e il CONGELAMENTO (423).
  * Un guasto di lettura è 500 `LETTURA_FALLITA`, mai un 423 travestito: dire
  * «bloccata, chiedi lo sblocco» su una voce che il dirigente ha già sbloccato è
  * il guasto che `primaria/registro:POST` ha già pagato una volta.
@@ -313,10 +390,20 @@ export async function verificaPermessoVoce(
 
   const ter = await terminiPerSede(supabase, [voce])
   if (!ter.ok) return LETTURA_FALLITA
-  const { date, giorniLimite } = oltreTermine(voce, ter.perSede.get(voce.scuolaId ?? '') as Deadlines, adesso)
-  if (date.length === 0) return { ok: true }
+  const dalSalvataggio = contaDalSalvataggio(voce)
+  const { date: oltre, giorniLimite } = oltreTermine(voce, ter.perSede.get(voce.scuolaId ?? '') as Deadlines, adesso)
 
-  const sb = await sbloccate(supabase, [{ voce, date }])
+  // Il congelamento riguarda solo le voci che contano dal salvataggio, e si legge solo per loro.
+  // Senza sede non c'è dove cercare i periodi: la voce resta come prima.
+  let congelata = false
+  if (dalSalvataggio && voce.scuolaId) {
+    const q = await leggiQuadrimestri(supabase, { scuolaIds: [voce.scuolaId], sectionIds: [voce.sectionId] })
+    if (!q.ok) return LETTURA_FALLITA
+    congelata = cadeInQuadrimestreChiuso(q.letti, voce)
+  }
+  if (oltre.length === 0 && !congelata) return { ok: true }
+
+  const sb = await sbloccate(supabase, [{ voce, date: dateDaSbloccare(voce, oltre) }])
   if (!sb.ok) return LETTURA_FALLITA
   const via = sb.chiavi.get(chiaveVoce(voce.tipo, voce.id))
   if (via) {
@@ -324,15 +411,25 @@ export async function verificaPermessoVoce(
     // da «sbloccata e passata».
     logEvento('registro', 'info', {
       operazione: 'primaria/permesso-voce',
-      esito: 'voce-oltre-termine-autorizzata',
+      esito: congelata ? 'voce-congelata-autorizzata' : 'voce-oltre-termine-autorizzata',
       azione: via,
       ...campi,
     })
     return { ok: true }
   }
+  if (congelata) {
+    logEvento('registro', 'info', {
+      operazione: 'primaria/permesso-voce',
+      esito: 'voce-congelata',
+      error_code: 'QUADRIMESTRE_CHIUSO',
+      ...campi,
+    })
+    return { ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO' }
+  }
   logEvento('registro', 'info', {
     operazione: 'primaria/permesso-voce',
     esito: 'voce-bloccata',
+    error_code: 'VOCE_BLOCCATA',
     giorni_limite: giorniLimite,
     ...campi,
   })
@@ -340,9 +437,10 @@ export async function verificaPermessoVoce(
 }
 
 /**
- * La variante per gli ELENCHI: per ogni voce `{ modificabile, bloccata }`, con
- * al più una lettura dei termini per sede, una di `utenti_sezioni` e due di
- * `sblocchi_audit` per tutto il lotto — non N per voce.
+ * La variante per gli ELENCHI: per ogni voce `{ modificabile, bloccata }` (e `congelata`
+ * per quelle che contano dal salvataggio), con al più una lettura dei termini per sede,
+ * una di `utenti_sezioni`, una dei periodi e una degli scrutini (tutte le sedi e le classi
+ * del lotto insieme) e due di `sblocchi_audit` per tutto il lotto — non N per voce.
  */
 export async function statoVoci(
   supabase: SupabaseClient,
@@ -363,25 +461,44 @@ export async function statoVoci(
   const ter = await terminiPerSede(supabase, voci)
   if (!ter.ok) return LETTURA_FALLITA
 
-  const oltre: Oltre[] = []
-  const limiti = new Map<string, number>()
-  for (const v of voci) {
-    const { date, giorniLimite } = oltreTermine(v, ter.perSede.get(v.scuolaId ?? '') as Deadlines, adesso)
-    limiti.set(chiaveVoce(v.tipo, v.id), giorniLimite)
-    if (date.length > 0) oltre.push({ voce: v, date })
+  // Una sola lettura dei quadrimestri per tutto il lotto. `chiusoIn` su una sede che non è stata
+  // letta darebbe `false` in silenzio, quindi si passano TUTTE le sedi e TUTTE le classi delle voci
+  // che contano dal salvataggio.
+  let letti: QuadrimestriLetti | null = null
+  const dalSalvataggio = voci.filter(contaDalSalvataggio)
+  if (dalSalvataggio.length > 0) {
+    const scuolaIds = [...new Set(dalSalvataggio.flatMap((v) => (v.scuolaId ? [v.scuolaId] : [])))]
+    const sectionIds = [...new Set(dalSalvataggio.map((v) => v.sectionId))]
+    const q = await leggiQuadrimestri(supabase, { scuolaIds, sectionIds })
+    if (!q.ok) return LETTURA_FALLITA
+    letti = q.letti
   }
-  const sb = await sbloccate(supabase, oltre)
-  if (!sb.ok) return LETTURA_FALLITA
 
-  const inOltre = new Set(oltre.map((o) => chiaveVoce(o.voce.tipo, o.voce.id)))
+  const daSbloccare: Oltre[] = []
+  const limiti = new Map<string, number>()
+  const congelateGrezze = new Set<string>()
   for (const v of voci) {
     const k = chiaveVoce(v.tipo, v.id)
-    const bloccata = inOltre.has(k) && !sb.chiavi.has(k)
-    esiti.set(k, {
+    const { date: oltre, giorniLimite } = oltreTermine(v, ter.perSede.get(v.scuolaId ?? '') as Deadlines, adesso)
+    limiti.set(k, giorniLimite)
+    const congelata = letti != null && contaDalSalvataggio(v) && cadeInQuadrimestreChiuso(letti, v)
+    if (congelata) congelateGrezze.add(k)
+    if (oltre.length > 0 || congelata) daSbloccare.push({ voce: v, date: dateDaSbloccare(v, oltre) })
+  }
+  const sb = await sbloccate(supabase, daSbloccare)
+  if (!sb.ok) return LETTURA_FALLITA
+
+  const inDaSbloccare = new Set(daSbloccare.map((o) => chiaveVoce(o.voce.tipo, o.voce.id)))
+  for (const v of voci) {
+    const k = chiaveVoce(v.tipo, v.id)
+    const bloccata = inDaSbloccare.has(k) && !sb.chiavi.has(k)
+    const stato: StatoVoce = {
       modificabile: aut.chiavi.has(k) && !bloccata,
       bloccata,
       giorniLimite: limiti.get(k) as number,
-    })
+    }
+    if (contaDalSalvataggio(v)) stato.congelata = congelateGrezze.has(k) && !sb.chiavi.has(k)
+    esiti.set(k, stato)
   }
   return { ok: true, esiti }
 }
@@ -398,6 +515,16 @@ export function rispostaPermessoNegato(esito: EsitoNegato): NextResponse {
     )
   }
   if (esito.stato === 423) {
+    if (esito.codice === 'QUADRIMESTRE_CHIUSO') {
+      return NextResponse.json(
+        {
+          error: 'Il quadrimestre di questa data ha lo scrutinio chiuso: serve lo sblocco della Direzione.',
+          codice: 'QUADRIMESTRE_CHIUSO',
+          locked: true,
+        },
+        { status: 423 },
+      )
+    }
     return NextResponse.json(
       {
         error: `Voce bloccata: superato il termine di ${esito.giorniLimite} giorni. Serve lo sblocco della Direzione.`,

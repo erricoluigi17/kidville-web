@@ -799,5 +799,6 @@
   "erroreChatMessaggioNonTrovato": "The message was not found. Reopen the conversation and try again.",
   "erroreChatConversazioneNonTrovata": "The conversation was not found. Reopen it and try again.",
   "erroreFirmaNonRiuscita": "The file could not be prepared. Please try again in a few minutes.",
-  "erroreMateriaNonAssegnata": "This subject is not assigned to you in this class."
+  "erroreMateriaNonAssegnata": "This subject is not assigned to you in this class.",
+  "erroreQuadrimestreChiuso": "The term assessment for this date is closed: ask the school office to add an entry; the Management must unlock it before it can be changed."
 }

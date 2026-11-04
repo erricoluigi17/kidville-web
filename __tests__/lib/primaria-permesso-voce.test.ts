@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { creaFintoSupabase, type DBFinto, type OpzioniFinto } from '../fixtures/finto-supabase'
-import { SEDE_A } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 
 // =============================================================================
@@ -21,6 +21,7 @@ vi.mock('@/lib/logging/logger', async (originale) => ({
 
 import {
   chiaveVoce,
+  contaDalSalvataggio,
   dataEventoDaIstante,
   rispostaPermessoNegato,
   statoVoci,
@@ -38,12 +39,18 @@ const SEZ_B = 'bbbb2222-0000-4000-8000-0000000000b2'
 const VOCE_1 = 'e9157200-0000-4000-8000-000000000001'
 const VOCE_2 = 'e9157200-0000-4000-8000-000000000002'
 const VOCE_3 = 'e9157200-0000-4000-8000-000000000003'
+const VOCE_4 = 'e9157200-0000-4000-8000-000000000004'
+const P_ESTATE = '9e710001-0000-4000-8000-0000000000e1'
+const P1 = '9e710002-0000-4000-8000-0000000000e2'
+const P1_SEDE_B = '9e710003-0000-4000-8000-0000000000e3'
 
 /** 12:00 del 10/09/2026 a Roma. */
 const ADESSO = new Date('2026-09-10T10:00:00Z')
 const IERI = '2026-09-09' // 1 giorno: entro il termine di 2
 const LUNEDI = '2026-09-07' // 3 giorni: oltre il termine di 2
 const MARTEDI = '2026-09-08' // 2 giorni: ancora entro
+const VENERDI = '2026-09-04' // 6 giorni: oltre
+const ESTATE = '2026-06-15' // nel periodo estivo (P_ESTATE), il cui scrutinio si chiude nei test di congelamento
 
 const maestra: AppUser = { id: MAESTRA, role: 'educator' }
 const collega: AppUser = { id: COLLEGA, role: 'educator' }
@@ -108,6 +115,8 @@ beforeEach(() => {
       { utente_id: ESTRANEA, section_id: SEZ_B },
     ],
     sblocchi_audit: [],
+    scrutinio_periodi: [],
+    scrutini: [],
   }
 })
 
@@ -215,12 +224,14 @@ describe('FINO A QUANDO — il termine vale per i docenti', () => {
     expect(esito).toMatchObject({ stato: 423 })
   })
 
+  // Le NOTE: per loro il termine conta ancora sulle date dell'evento (valutazioni e
+  // impreparati della docente contano dal salvataggio: vedi «TERMINE DAL SALVATAGGIO»).
   it('se la modifica SPOSTA la data, si controllano entrambe', async () => {
     // Dalla data di ieri (buona) a lunedì (oltre): bloccata.
-    const verso = voce({ dataEvento: IERI, nuovaDataEvento: LUNEDI })
+    const verso = voce({ tipo: 'nota', dataEvento: IERI, nuovaDataEvento: LUNEDI })
     expect(await verificaPermessoVoce(client(), maestra, verso, ADESSO)).toMatchObject({ stato: 423 })
     // Da lunedì (oltre) a ieri: bloccata lo stesso.
-    const da = voce({ dataEvento: LUNEDI, nuovaDataEvento: IERI })
+    const da = voce({ tipo: 'nota', dataEvento: LUNEDI, nuovaDataEvento: IERI })
     expect(await verificaPermessoVoce(client(), maestra, da, ADESSO)).toMatchObject({ stato: 423 })
   })
 
@@ -274,7 +285,7 @@ describe('OLTRE IL TERMINE — lo sblocco della Direzione', () => {
   })
 
   it('data spostata: ogni data oltre il termine va sbloccata', async () => {
-    const spostata = voce({ dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })
+    const spostata = voce({ tipo: 'nota', dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })
     db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', section_id: SEZ_A, data: LUNEDI }]
     expect(await verificaPermessoVoce(client(), maestra, spostata, ADESSO)).toMatchObject({ stato: 423 })
     db.sblocchi_audit.push({ id: 's2', entita_tipo: 'giorno', section_id: SEZ_A, data: '2026-09-04' })
@@ -282,8 +293,8 @@ describe('OLTRE IL TERMINE — lo sblocco della Direzione', () => {
   })
 
   it('lo sblocco della VOCE copre solo la sua data: spostarla su un’altra data oltre il termine chiede lo sblocco di quel giorno', async () => {
-    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1 }]
-    const spostata = voce({ dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'nota', entita_id: VOCE_1 }]
+    const spostata = voce({ tipo: 'nota', dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })
     // Solo lo sblocco della voce: la nuova data resta scoperta.
     expect(await verificaPermessoVoce(client(), maestra, spostata, ADESSO)).toEqual({
       ok: false, stato: 423, codice: 'VOCE_BLOCCATA', giorniLimite: 2,
@@ -314,13 +325,13 @@ describe('OLTRE IL TERMINE — lo sblocco della Direzione', () => {
   })
 
   it('statoVoci: una voce sbloccata per voce ma spostata su una data scoperta resta bloccata', async () => {
-    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1 }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'nota', entita_id: VOCE_1 }]
     const r = await statoVoci(
-      client(), maestra, [voce({ dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })], ADESSO,
+      client(), maestra, [voce({ tipo: 'nota', dataEvento: LUNEDI, nuovaDataEvento: '2026-09-04' })], ADESSO,
     )
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({ modificabile: false, bloccata: true, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('nota', VOCE_1))).toEqual({ modificabile: false, bloccata: true, giorniLimite: 2 })
   })
 
   it('lo sblocco NON scavalca il CHI: una collega resta 403 anche su una voce sbloccata', async () => {
@@ -362,10 +373,10 @@ describe('statoVoci — la variante per gli elenchi', () => {
     const r = await statoVoci(client(), maestra, voci, ADESSO)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({ modificabile: true, bloccata: false, giorniLimite: 2 })
-    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({ modificabile: false, bloccata: true, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({ modificabile: true, bloccata: false, congelata: false, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({ modificabile: false, bloccata: true, congelata: false, giorniLimite: 2 })
     // Sbloccata, ma non è mia: non modificabile, e nemmeno «bloccata».
-    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_3))).toEqual({ modificabile: false, bloccata: false, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_3))).toEqual({ modificabile: false, bloccata: false, congelata: false, giorniLimite: 2 })
   })
 
   it('poche query per tutto il lotto: termini una volta per sede, sblocchi al più due', async () => {
@@ -409,6 +420,328 @@ describe('statoVoci — la variante per gli elenchi', () => {
   })
 })
 
+describe('TERMINE DAL SALVATAGGIO — valutazioni e impreparati della docente', () => {
+  it('contaDalSalvataggio: la valutazione e l’impreparato NON del genitore', () => {
+    expect(contaDalSalvataggio(voce({ tipo: 'valutazione' }))).toBe(true)
+    expect(contaDalSalvataggio(voce({ tipo: 'impreparato', origine: 'docente' }))).toBe(true)
+    expect(contaDalSalvataggio(voce({ tipo: 'impreparato' }))).toBe(true)
+    expect(contaDalSalvataggio(voce({ tipo: 'impreparato', origine: 'genitore' }))).toBe(false)
+    for (const tipo of ['nota', 'registro', 'firma', 'allegato'] as const) {
+      expect(contaDalSalvataggio(voce({ tipo })), tipo).toBe(false)
+    }
+  })
+
+  it('retrodatato di tre settimane, salvato ieri: si modifica', async () => {
+    const v = voce({ dataEvento: '2026-08-20', giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('datato ieri ma salvato tre giorni fa: 423 VOCE_BLOCCATA 2', async () => {
+    const v = voce({ dataEvento: IERI, giornoSalvataggio: LUNEDI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'VOCE_BLOCCATA', giorniLimite: 2,
+    })
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-bloccata', error_code: 'VOCE_BLOCCATA' }),
+    )
+  })
+
+  it('impreparato della docente: stesse due regole', async () => {
+    const impreparato = (extra: Partial<VocePrimaria>) => voce({ tipo: 'impreparato', origine: 'docente', ...extra })
+    expect(
+      await verificaPermessoVoce(client(), maestra, impreparato({ dataEvento: '2026-08-20', giornoSalvataggio: IERI }), ADESSO),
+    ).toEqual({ ok: true })
+    expect(
+      await verificaPermessoVoce(client(), maestra, impreparato({ dataEvento: IERI, giornoSalvataggio: LUNEDI }), ADESSO),
+    ).toEqual({ ok: false, stato: 423, codice: 'VOCE_BLOCCATA', giorniLimite: 2 })
+  })
+
+  it('senza giornoSalvataggio si usa dataEvento', async () => {
+    expect(await verificaPermessoVoce(client(), maestra, voce({ dataEvento: LUNEDI }), ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'VOCE_BLOCCATA', giorniLimite: 2,
+    })
+    expect(await verificaPermessoVoce(client(), maestra, voce({ dataEvento: LUNEDI, giornoSalvataggio: null }), ADESSO))
+      .toMatchObject({ stato: 423, codice: 'VOCE_BLOCCATA' })
+    expect(await verificaPermessoVoce(client(), maestra, voce({ dataEvento: IERI }), ADESSO)).toEqual({ ok: true })
+  })
+
+  it('impreparato del genitore: flusso di prima, periodi mai letti', async () => {
+    const dalGenitore = (extra: Partial<VocePrimaria>) =>
+      voce({ tipo: 'impreparato', origine: 'genitore', autoreId: 'fa311100-0000-4000-8000-000000000009', ...extra })
+    // Il termine conta sulla data dell'evento (lunedì), non sul salvataggio (ieri): la collega prende 423.
+    expect(
+      await verificaPermessoVoce(client(), collega, dalGenitore({ dataEvento: LUNEDI, giornoSalvataggio: IERI }), ADESSO),
+    ).toMatchObject({ ok: false, stato: 423, codice: 'VOCE_BLOCCATA' })
+    // E all'inverso passa: ieri per la data, lunedì per il salvataggio che qui non conta.
+    expect(
+      await verificaPermessoVoce(client(), collega, dalGenitore({ dataEvento: IERI, giornoSalvataggio: LUNEDI }), ADESSO),
+    ).toEqual({ ok: true })
+    expect(tabelle).not.toContain('scrutinio_periodi')
+    expect(tabelle).not.toContain('scrutini')
+  })
+
+  it.each(['nota', 'registro', 'firma', 'allegato'] as const)(
+    '%s: termine sulla data dell’evento, giornoSalvataggio ignorato',
+    async (tipo) => {
+      expect(
+        await verificaPermessoVoce(client(), maestra, voce({ tipo, dataEvento: LUNEDI, giornoSalvataggio: IERI }), ADESSO),
+      ).toMatchObject({ ok: false, stato: 423, codice: 'VOCE_BLOCCATA' })
+      expect(
+        await verificaPermessoVoce(client(), maestra, voce({ tipo, dataEvento: IERI, giornoSalvataggio: LUNEDI }), ADESSO),
+      ).toEqual({ ok: true })
+      expect(tabelle).not.toContain('scrutinio_periodi')
+      expect(tabelle).not.toContain('scrutini')
+    },
+  )
+
+  it('sblocco del giorno: conta il giorno del salvataggio, non quello della prova', async () => {
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: LUNEDI }]
+    // Salvata lunedì, prova del 1° settembre: lo sblocco di lunedì la riapre.
+    expect(
+      await verificaPermessoVoce(client(), maestra, voce({ dataEvento: '2026-09-01', giornoSalvataggio: LUNEDI }), ADESSO),
+    ).toEqual({ ok: true })
+    // Prova di lunedì ma salvata il 4/9: lo sblocco di lunedì non c'entra.
+    expect(
+      await verificaPermessoVoce(client(), maestra, voce({ dataEvento: LUNEDI, giornoSalvataggio: VENERDI }), ADESSO),
+    ).toMatchObject({ ok: false, stato: 423, codice: 'VOCE_BLOCCATA' })
+  })
+
+  it('statoVoci: il termine conta dal salvataggio, lo sblocco del giorno è quello del salvataggio', async () => {
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: LUNEDI }]
+    const r = await statoVoci(
+      client(),
+      maestra,
+      [
+        voce({ id: VOCE_1, dataEvento: '2026-08-20', giornoSalvataggio: IERI }), // vecchia ma salvata ieri
+        voce({ id: VOCE_2, dataEvento: IERI, giornoSalvataggio: VENERDI }), // recente ma salvata il 4/9
+        voce({ id: VOCE_3, dataEvento: '2026-09-01', giornoSalvataggio: LUNEDI }), // salvata lunedì, giorno sbloccato
+      ],
+      ADESSO,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({ modificabile: true, bloccata: false, congelata: false, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({ modificabile: false, bloccata: true, congelata: false, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_3))).toEqual({ modificabile: true, bloccata: false, congelata: false, giorniLimite: 2 })
+  })
+})
+
+describe('CONGELAMENTO — scrutinio chiuso', () => {
+  const periodo = (extra: Record<string, unknown>) => ({
+    scuola_id: SEDE_A, nome: 'Quadrimestre', attivo: true, ...extra,
+  })
+  beforeEach(() => {
+    db.scrutinio_periodi = [
+      periodo({ id: P_ESTATE, anno_scolastico: '2025/2026', ordine: 2, data_inizio: '2026-06-01', data_fine: '2026-08-31' }),
+      periodo({ id: P1, anno_scolastico: '2026/2027', ordine: 1, data_inizio: '2026-09-01', data_fine: '2027-01-31' }),
+    ]
+    // Chiuso lo scrutinio del periodo estivo per SEZ_A; quello di P1 è aperto (nessuna riga).
+    db.scrutini = [{ id: 'sc1', section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso' }]
+  })
+
+  it('quadrimestre chiuso: 423 QUADRIMESTRE_CHIUSO anche dentro il termine', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-congelata', error_code: 'QUADRIMESTRE_CHIUSO' }),
+    )
+    expect(h.logEvento).not.toHaveBeenCalledWith('registro', 'info', expect.objectContaining({ esito: 'voce-bloccata' }))
+  })
+
+  it('congelata E oltre il termine: vince QUADRIMESTRE_CHIUSO', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: LUNEDI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+  })
+
+  it('l’impreparato della docente si congela come la valutazione', async () => {
+    const v = voce({ tipo: 'impreparato', origine: 'docente', dataEvento: ESTATE, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+  })
+
+  it('un quadrimestre APERTO non congela: P1 dentro il termine passa', async () => {
+    const v = voce({ dataEvento: '2026-09-02', giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+    expect(letturaSblocchi()).toBe(0)
+  })
+
+  it.each([
+    ['da aperto a chiuso', IERI, ESTATE],
+    ['da chiuso ad aperto', ESTATE, IERI],
+  ])('spostare %s: 423 QUADRIMESTRE_CHIUSO', async (_nome, dataEvento, nuovaDataEvento) => {
+    const v = voce({ dataEvento, nuovaDataEvento, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+  })
+
+  it('uno sblocco per voce riapre termine e congelamento, anche spostando la data', async () => {
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1 }]
+    // Evento e nuova data stanno tutte e due nel periodo chiuso, e il salvataggio è oltre il termine.
+    const v = voce({ dataEvento: ESTATE, nuovaDataEvento: '2026-06-10', giornoSalvataggio: '2026-08-01' })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-congelata-autorizzata', azione: 'voce' }),
+    )
+    expect(h.logEvento).not.toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-oltre-termine-autorizzata' }),
+    )
+    // Anche da un quadrimestre aperto a uno chiuso, salvata ieri (dentro il termine): la voce è sbloccata, vale tutto.
+    const verso = voce({ dataEvento: IERI, nuovaDataEvento: ESTATE, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, verso, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('lo sblocco del giorno del salvataggio riapre anche il congelamento', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: '2026-08-01' })
+    // Lo sblocco del giorno della PROVA non basta: conta il giorno in cui il voto è stato salvato.
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: ESTATE }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+    // Quello della classe giusta e del giorno del salvataggio sì.
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01' }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-congelata-autorizzata', azione: 'giorno' }),
+    )
+    // Lo sblocco del giorno di un'ALTRA classe no.
+    db.sblocchi_audit = [{ id: 's3', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_B, data: '2026-08-01' }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+  })
+
+  it('un’altra classe non è congelata dallo scrutinio di SEZ_A', async () => {
+    const v = voce({ sectionId: SEZ_B, dataEvento: ESTATE, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('le voci che non contano dal salvataggio non si congelano e non leggono i periodi', async () => {
+    for (const v of [
+      voce({ tipo: 'nota', dataEvento: ESTATE }),
+      voce({ tipo: 'impreparato', origine: 'genitore', autoreId: MAESTRA, dataEvento: ESTATE }),
+    ]) {
+      // Fuori dal termine ma NON congelate: serve lo sblocco, e l'errore è quello di sempre.
+      expect(await verificaPermessoVoce(client(), maestra, v, ADESSO), v.tipo).toMatchObject({ codice: 'VOCE_BLOCCATA' })
+    }
+    expect(tabelle).not.toContain('scrutinio_periodi')
+    expect(tabelle).not.toContain('scrutini')
+  })
+
+  it('lo staff passa senza leggere periodi né scrutini', async () => {
+    for (const u of [segreteria, dirigente]) {
+      expect(await verificaPermessoVoce(client(), u, voce({ dataEvento: ESTATE, giornoSalvataggio: LUNEDI }), ADESSO))
+        .toEqual({ ok: true })
+    }
+    expect(tabelle).not.toContain('scrutinio_periodi')
+    expect(tabelle).not.toContain('scrutini')
+  })
+
+  it('guasto su scrutinio_periodi o scrutini: 500 LETTURA_FALLITA', async () => {
+    const v = voce({ dataEvento: IERI, giornoSalvataggio: IERI })
+    for (const chiave of ['scrutinio_periodi:select', 'scrutini:select']) {
+      h.logEvento.mockClear()
+      opzioni = { errori: { [chiave]: { code: '57014', message: 'timeout' } } }
+      expect(await verificaPermessoVoce(client(), maestra, v, ADESSO), chiave).toEqual({
+        ok: false, stato: 500, codice: 'LETTURA_FALLITA',
+      })
+      // Mai un 423 né un'autorizzazione inventati, e nessuna lettura di sblocchi che non si sa a cosa servano.
+      expect(h.logEvento).not.toHaveBeenCalledWith('registro', 'info', expect.objectContaining({ esito: 'voce-congelata' }))
+      expect(h.logEvento).toHaveBeenCalledWith('registro', 'error', expect.anything(), expect.anything())
+    }
+    expect(letturaSblocchi()).toBe(0)
+  })
+
+  it('statoVoci: una lettura dei periodi e una degli scrutini per tutto il lotto', async () => {
+    const r = await statoVoci(
+      client(),
+      maestra,
+      [
+        voce({ id: VOCE_1, dataEvento: IERI, giornoSalvataggio: IERI }), // in P1, aperto
+        voce({ id: VOCE_2, dataEvento: ESTATE, giornoSalvataggio: IERI }), // in P_ESTATE, chiuso
+        voce({ id: VOCE_3, tipo: 'nota', dataEvento: IERI }), // non conta dal salvataggio
+      ],
+      ADESSO,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({ modificabile: true, bloccata: false, congelata: false, giorniLimite: 2 })
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({ modificabile: false, bloccata: true, congelata: true, giorniLimite: 2 })
+    const nota = r.esiti.get(chiaveVoce('nota', VOCE_3))
+    expect(nota).toEqual({ modificabile: true, bloccata: false, giorniLimite: 2 })
+    expect(nota).not.toHaveProperty('congelata')
+    expect(tabelle.filter((t) => t === 'scrutinio_periodi')).toHaveLength(1)
+    expect(tabelle.filter((t) => t === 'scrutini')).toHaveLength(1)
+  })
+
+  it('statoVoci: lo sblocco riapre la voce congelata, e la UI smette di vederla congelata', async () => {
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_2 }]
+    const r = await statoVoci(
+      client(), maestra, [voce({ id: VOCE_2, dataEvento: ESTATE, giornoSalvataggio: IERI })], ADESSO,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({
+      modificabile: true, bloccata: false, congelata: false, giorniLimite: 2,
+    })
+  })
+
+  it('statoVoci: lotto su DUE sedi, ognuna col suo scrutinio', async () => {
+    // SEDE_B ha un solo periodo, d'autunno, già chiuso per SEZ_B; d'estate non ne ha nessuno.
+    db.scrutinio_periodi.push(
+      periodo({
+        id: P1_SEDE_B, scuola_id: SEDE_B, anno_scolastico: '2026/2027', ordine: 1,
+        data_inizio: '2026-09-01', data_fine: '2027-01-31',
+      }),
+    )
+    db.scrutini.push({ id: 'sc2', section_id: SEZ_B, periodo_id: P1_SEDE_B, stato: 'chiuso' })
+    const r = await statoVoci(
+      client(),
+      maestra,
+      [
+        voce({ id: VOCE_1, dataEvento: ESTATE, giornoSalvataggio: IERI }), // SEDE_A, estate chiusa: congelata
+        voce({ id: VOCE_2, sectionId: SEZ_B, scuolaId: SEDE_B, dataEvento: '2026-09-02', giornoSalvataggio: IERI }), // SEDE_B, autunno chiuso: congelata
+        voce({ id: VOCE_3, sectionId: SEZ_B, scuolaId: SEDE_B, dataEvento: ESTATE, giornoSalvataggio: IERI }), // SEDE_B, estate senza periodo: aperta
+        voce({ id: VOCE_4, dataEvento: '2026-09-02', giornoSalvataggio: IERI }), // SEDE_A, autunno aperto
+      ],
+      ADESSO,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const congelata = (id: string) => (r.esiti.get(chiaveVoce('valutazione', id)) as { congelata?: boolean }).congelata
+    expect(congelata(VOCE_1)).toBe(true)
+    expect(congelata(VOCE_2)).toBe(true)
+    expect(congelata(VOCE_3)).toBe(false)
+    expect(congelata(VOCE_4)).toBe(false)
+    expect(tabelle.filter((t) => t === 'scrutinio_periodi')).toHaveLength(1)
+    expect(tabelle.filter((t) => t === 'scrutini')).toHaveLength(1)
+  })
+
+  it('statoVoci: lo staff resta nel cortocircuito, senza congelata e senza leggere i periodi', async () => {
+    const r = await statoVoci(client(), segreteria, [voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })], ADESSO)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const esito = r.esiti.get(chiaveVoce('valutazione', VOCE_1))
+    expect(esito).toEqual({ modificabile: true, bloccata: false, giorniLimite: 0 })
+    expect(esito).not.toHaveProperty('congelata')
+    expect(tabelle).not.toContain('scrutinio_periodi')
+  })
+
+  it('statoVoci: guasto sui periodi o sugli scrutini è LETTURA_FALLITA per tutto il lotto', async () => {
+    for (const chiave of ['scrutinio_periodi:select', 'scrutini:select']) {
+      opzioni = { errori: { [chiave]: { code: '57014', message: 'timeout' } } }
+      expect(await statoVoci(client(), maestra, [voce({ dataEvento: IERI })], ADESSO), chiave).toEqual({
+        ok: false, stato: 500, codice: 'LETTURA_FALLITA',
+      })
+    }
+  })
+
+  it('statoVoci: un lotto senza voci dal salvataggio non legge i periodi', async () => {
+    const r = await statoVoci(client(), maestra, [voce({ tipo: 'nota', dataEvento: IERI })], ADESSO)
+    expect(r.ok).toBe(true)
+    expect(tabelle).not.toContain('scrutinio_periodi')
+  })
+})
+
 describe('contorno', () => {
   it('dataEventoDaIstante: la data di Roma di `creato_il`', () => {
     expect(dataEventoDaIstante('2026-09-06T22:30:00Z')).toBe('2026-09-07')
@@ -428,5 +761,15 @@ describe('contorno', () => {
     const r500 = rispostaPermessoNegato({ ok: false, stato: 500, codice: 'LETTURA_FALLITA' })
     expect(r500.status).toBe(500)
     expect(await r500.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+  })
+
+  it('rispostaPermessoNegato: QUADRIMESTRE_CHIUSO', async () => {
+    const r = rispostaPermessoNegato({ ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+    expect(r.status).toBe(423)
+    const corpo = await r.json()
+    expect(corpo).toMatchObject({ codice: 'QUADRIMESTRE_CHIUSO', locked: true })
+    expect(corpo.error).toContain('scrutinio chiuso')
+    // Non è un termine scaduto: nessun limite in giorni nel corpo.
+    expect(corpo).not.toHaveProperty('giorniLimite')
   })
 })

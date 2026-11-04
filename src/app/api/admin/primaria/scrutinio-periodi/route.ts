@@ -93,7 +93,7 @@ function rifiutoPeriodoRovesciato(operazione: string, scuolaId: string): NextRes
 function rifiutoPeriodiSovrapposti(operazione: string, scuolaId: string): NextResponse {
   logEvento('registro', 'info', { operazione, esito: 'periodi-sovrapposti', scuola_id: scuolaId, error_code: 'PERIODI_SOVRAPPOSTI' })
   return NextResponse.json(
-    { error: 'Le date si sovrappongono a un altro periodo dello stesso anno scolastico.', codice: 'PERIODI_SOVRAPPOSTI' },
+    { error: 'Le date si sovrappongono a un altro periodo di questa sede.', codice: 'PERIODI_SOVRAPPOSTI' },
     { status: 422 },
   )
 }

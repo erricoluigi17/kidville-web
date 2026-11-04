@@ -803,6 +803,6 @@
   "erroreQuadrimestreChiuso": "The term assessment for this date is closed: ask the school office to add an entry; the Management must unlock it before it can be changed.",
   "erroreDataFutura": "The date cannot be in the future.",
   "errorePeriodoDateIncomplete": "Enter both dates of the period, or neither.",
-  "errorePeriodiSovrapposti": "The dates overlap another period of the same school year.",
+  "errorePeriodiSovrapposti": "The dates overlap another period of this location.",
   "errorePeriodoConScrutiniChiusi": "The period has a closed assessment: reopen it before moving its dates."
 }

@@ -214,7 +214,7 @@ describe('POST · sovrapposizioni (stessa sede, qualunque anno)', () => {
     expect(res.status).toBe(422)
     const corpo = await res.json()
     expect(corpo.codice).toBe('PERIODI_SOVRAPPOSTI')
-    expect(corpo.error).toBe('Le date si sovrappongono a un altro periodo dello stesso anno scolastico.')
+    expect(corpo.error).toBe('Le date si sovrappongono a un altro periodo di questa sede.')
     expect(scritte('insert')).toHaveLength(0)
     expect(h.db.scrutinio_periodi).toHaveLength(2)
     expect(h.rpc).not.toHaveBeenCalled()

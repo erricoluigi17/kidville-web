@@ -803,6 +803,6 @@
   "erroreQuadrimestreChiuso": "Lo scrutinio del quadrimestre di questa data è chiuso: per inserire rivolgiti alla segreteria, per modificare serve lo sblocco della Direzione.",
   "erroreDataFutura": "La data non può essere nel futuro.",
   "errorePeriodoDateIncomplete": "Indica entrambe le date del periodo, oppure nessuna.",
-  "errorePeriodiSovrapposti": "Le date si sovrappongono a un altro periodo dello stesso anno scolastico.",
+  "errorePeriodiSovrapposti": "Le date si sovrappongono a un altro periodo di questa sede.",
   "errorePeriodoConScrutiniChiusi": "Il periodo ha uno scrutinio chiuso: per spostarne le date va prima riaperto."
 }

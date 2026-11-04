@@ -42,7 +42,22 @@ function paginaCorrente(): string | undefined {
 export default function ValutazioniPage() {
   const t = useTranslations('teacherPrimaria');
   const f = useDateFormat();
-  const [dataCompetenza, setDataCompetenza] = useState(oggiRoma);
+  /**
+   * La data della prova, per il voto e per l'impreparato. `null` = nessuno l'ha scelta: vale
+   * OGGI a Roma, e `oggi` si riallinea quando la pagina torna visibile (vedi l'effetto sotto) e
+   * al momento dell'invio. Una volta scelta, resta quella per tutta la sessione di lavoro (anche
+   * cambiando alunno o materia): è la docente che registra, in fila, le prove di venerdì.
+   */
+  const [dataScelta, setDataScelta] = useState<string | null>(null);
+  const [oggi, setOggi] = useState(oggiRoma);
+  const dataCompetenza = dataScelta ?? oggi;
+  /** La data da mandare ADESSO: la scelta, altrimenti oggi a Roma di questo istante, non quello del montaggio. */
+  const dataDaInviare = () => {
+    if (dataScelta !== null) return dataScelta;
+    const adesso = oggiRoma();
+    setOggi(adesso);
+    return adesso;
+  };
   const [docenteId, setDocenteId] = useState('');
   const params = useParams();
   const search = useSearchParams();
@@ -265,6 +280,20 @@ export default function ValutazioniPage() {
   const ricaricaSelezioneAttuale = useCallback(() => { ricaricaRef.current(); }, []);
 
   useEffect(() => { loadScala(); }, [loadScala]);
+
+  // La pagina aperta la sera, o l'app riaperta dal background il mattino dopo, non deve proporre
+  // ancora «ieri»: finché la data non è scelta a mano segue oggi (a Roma) ogni volta che la pagina
+  // torna visibile o la finestra riprende il focus. Con lo stesso valore React non ridisegna.
+  useEffect(() => {
+    const riallinea = () => setOggi(oggiRoma());
+    const alCambioDiVisibilita = () => { if (document.visibilityState !== 'hidden') riallinea(); };
+    document.addEventListener('visibilitychange', alCambioDiVisibilita);
+    window.addEventListener('focus', riallinea);
+    return () => {
+      document.removeEventListener('visibilitychange', alCambioDiVisibilita);
+      window.removeEventListener('focus', riallinea);
+    };
+  }, []);
   useEffect(() => { ricaricaRecenti(); }, [ricaricaRecenti]);
 
   // Il ruolo serve solo a mostrare «Sblocca» alla Direzione: senza risposta non
@@ -312,7 +341,7 @@ export default function ValutazioniPage() {
           sectionId,
           alunnoId: alunnoInviato,
           materiaId: materiaId || undefined,
-          data: dataCompetenza,
+          data: dataDaInviare(),
           tipo: tipoNuovoImpreparato,
           motivo: motivo || undefined,
         }),
@@ -388,7 +417,7 @@ export default function ValutazioniPage() {
         body: JSON.stringify({
           alunnoId, sectionId, materiaId, tipoProva, modalita,
           // La data della prova vale per tutte; il docente titolare lo sceglie solo lo staff.
-          data: dataCompetenza,
+          data: dataDaInviare(),
           ...(gestioneStorica ? { docenteId } : {}),
           dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
           giudizioSintetico,
@@ -484,9 +513,9 @@ export default function ValutazioniPage() {
 
         {/* La data della prova è di tutte; allo staff si aggiunge solo la scelta del docente titolare. */}
         <div className="mb-3">
-          <DataVoce valore={dataCompetenza} onCambia={setDataCompetenza} avvisoStorico={gestioneStorica} />
+          <DataVoce id="valutazione-data" valore={dataCompetenza} onCambia={setDataScelta} avvisoStorico={gestioneStorica} />
         </div>
-        <CompetenzaStorica attiva={gestioneStorica} conData={false} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataCompetenza} docenteId={docenteId} onDocente={setDocenteId} />
+        <CompetenzaStorica attiva={gestioneStorica} conData={false} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataScelta} docenteId={docenteId} onDocente={setDocenteId} />
 
         {obiettivi.length > 0 && (
           <div className="mb-3 rounded-card border border-kidville-green/20 bg-kidville-cream/40 p-3">
@@ -708,9 +737,13 @@ export default function ValutazioniPage() {
       {/* «Segna impreparato»: solo la creazione. L'elenco sta nelle «Valutazioni
           recenti» (alunno e materia scelti), con Modifica/Elimina: un secondo
           elenco qui sarebbe un doppione. */}
-      <div className="rounded-card bg-white p-5 shadow-sm md:col-span-2">
-        <h3 className="font-barlow text-base font-bold text-kidville-ink">{t('valutazioniImpreparatiTitolo')}</h3>
+      <section aria-labelledby="impreparati-titolo" className="rounded-card bg-white p-5 shadow-sm md:col-span-2">
+        <h3 id="impreparati-titolo" className="font-barlow text-base font-bold text-kidville-ink">{t('valutazioniImpreparatiTitolo')}</h3>
         <p className="mt-0.5 mb-3 font-maven text-xs text-kidville-sub">{t('valutazioniImpreparatiHint')}</p>
+        {/* La data che parte si vede dove si agisce: è la stessa del modulo del voto (stesso stato). */}
+        <div className="mb-3">
+          <DataVoce id="impreparato-data" valore={dataCompetenza} onCambia={setDataScelta} avvisoStorico={gestioneStorica} />
+        </div>
         <p className="mb-1 font-maven text-xs text-kidville-sub">{t('valutazioniImpreparatoTipoLabel')}</p>
         <SceltaTipoImpreparato
           valore={tipoNuovoImpreparato}
@@ -744,7 +777,7 @@ export default function ValutazioniPage() {
         >
           {segnando ? t('comuneSalvataggio') : t('valutazioniSegnaImpreparato')}
         </button>
-      </div>
+      </section>
     </div>
   );
 }

@@ -213,6 +213,14 @@ async function svuotaCoda() {
   });
 }
 
+/**
+ * I DUE campi «Data della prova» della pagina: quello del modulo di creazione del voto (il primo
+ * nel DOM) e quello della card «Segna un impreparato». Condividono lo stesso stato.
+ */
+const campoDataModulo = () => screen.getAllByLabelText('Data della prova')[0] as HTMLInputElement;
+const cardImpreparato = () => screen.getByRole('region', { name: 'Segna un impreparato' });
+const campoDataImpreparato = () => within(cardImpreparato()).getByLabelText('Data della prova') as HTMLInputElement;
+
 /** Il giudizio sintetico del modulo di creazione (fuori dalla modale). */
 function scegliGiudizio(valore: string) {
   fireEvent.change(screen.getByLabelText('Giudizio sintetico'), { target: { value: valore } });
@@ -889,7 +897,7 @@ describe('nuova valutazione staff con competenza storica', () => {
     ruolo = 'segreteria';
     await montaEScegli();
     await screen.findByRole('option', { name: 'Fittizia Ada' });
-    fireEvent.change(screen.getByLabelText('Data della prova'), { target: { value: '2020-04-02' } });
+    fireEvent.change(campoDataModulo(), { target: { value: '2020-04-02' } });
     fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
     scegliGiudizio('Buono');
     fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Argomento fittizio' } });
@@ -962,7 +970,7 @@ describe('(j) data della prova e storico', () => {
     it('la docente vede la data, già con oggi; la POST porta data e non docenteId', async () => {
       rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
       await montaEScegli();
-      const campo = screen.getByLabelText('Data della prova') as HTMLInputElement;
+      const campo = campoDataModulo();
       expect(campo.value).toBe(OGGI_ROMA);
       expect(campo.max).toBe(OGGI_ROMA);
       // La scelta del docente titolare è dello staff: alla docente non si offre.
@@ -988,12 +996,16 @@ describe('(j) data della prova e storico', () => {
       await montaEScegli();
       // L'elenco dei docenti arriva solo a ruolo letto: è la PRESENZA che dice che lo staff è attivo.
       await screen.findByRole('option', { name: 'Fittizia Ada' });
-      const campo = screen.getByLabelText('Data della prova') as HTMLInputElement;
+      const campo = campoDataModulo();
       expect(campo.value).toBe(OGGI_ROMA);
       // Un campo data solo: quello di CompetenzaStorica è spento.
       expect(screen.queryByLabelText('Data di competenza')).toBeNull();
       fireEvent.change(campo, { target: { value: '2026-10-30' } });
-      expect(screen.getByRole('status').textContent).toContain('senza inviare avvisi alla famiglia');
+      // L'avviso lo vede lo staff dove agisce: sul modulo del voto e sulla card dell'impreparato.
+      const avvisi = screen.getAllByRole('status');
+      expect(avvisi).toHaveLength(2);
+      for (const avviso of avvisi) expect(avviso.textContent).toContain('senza inviare avvisi alla famiglia');
+      expect(within(cardImpreparato()).getByRole('status').textContent).toContain('senza inviare avvisi alla famiglia');
       fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
       const corpo = await salvaUnVoto();
       expect(corpo).toMatchObject({ data: '2026-10-30', docenteId: DOCENTE });
@@ -1002,7 +1014,7 @@ describe('(j) data della prova e storico', () => {
     it('l’impreparato parte con la stessa data scelta', async () => {
       rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuovo' } } };
       await montaEScegli();
-      fireEvent.change(screen.getByLabelText('Data della prova'), { target: { value: '2026-10-30' } });
+      fireEvent.change(campoDataModulo(), { target: { value: '2026-10-30' } });
       fireEvent.click(screen.getByRole('button', { name: 'Segna impreparato' }));
       expect(await screen.findByText('Impreparato segnato ✓')).toBeTruthy();
       const post = chiamate('POST', '/api/primaria/giustifiche-didattiche');
@@ -1015,6 +1027,125 @@ describe('(j) data della prova e storico', () => {
       await montaEScegli();
       await salvaUnVoto();
       expect(await screen.findByText('La data non può essere nel futuro.')).toBeTruthy();
+    });
+  });
+
+  /**
+   * La card dell'impreparato non promette più «oggi»: registra la data del modulo, e il campo
+   * è lì, dove si agisce (sul telefono il modulo del voto sta due card più su).
+   */
+  describe('la card «Segna un impreparato» mostra la data che parte', () => {
+    it('titolo e spiegazione non dicono «oggi» né «valutazioni recenti»', async () => {
+      await montaEScegli();
+      expect(await screen.findByRole('heading', { name: 'Segna un impreparato' })).toBeTruthy();
+      expect(screen.queryByText(/\(oggi\)/)).toBeNull();
+      expect(within(cardImpreparato()).queryByText(/valutazioni recenti/i)).toBeNull();
+      expect(within(cardImpreparato()).getByText(/Gli impreparati compaiono tra i voti dell’alunno/)).toBeTruthy();
+    });
+
+    it('il campo è quello del modulo: cambiandolo lì cambia anche il primo, e la POST dell’impreparato lo porta', async () => {
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuovo' } } };
+      await montaEScegli();
+      // Parte con la data del modulo (oggi), con lo stesso massimo.
+      expect(campoDataImpreparato().value).toBe(OGGI_ROMA);
+      expect(campoDataImpreparato().max).toBe(OGGI_ROMA);
+      // Scelta nel modulo del voto → si vede nella card.
+      fireEvent.change(campoDataModulo(), { target: { value: '2026-10-30' } });
+      expect(campoDataImpreparato().value).toBe('2026-10-30');
+      // Scelta nella card → si vede nel modulo, e la POST la porta.
+      fireEvent.change(campoDataImpreparato(), { target: { value: '2026-10-28' } });
+      expect(campoDataModulo().value).toBe('2026-10-28');
+      fireEvent.click(screen.getByRole('button', { name: 'Segna impreparato' }));
+      expect(await screen.findByText('Impreparato segnato ✓')).toBeTruthy();
+      expect(corpoDi(chiamate('POST', '/api/primaria/giustifiche-didattiche')[0]!)).toMatchObject({ data: '2026-10-28' });
+    });
+
+    it('la docente non vede l’avviso alla famiglia nemmeno sulla card, per un giorno passato', async () => {
+      await montaEScegli();
+      fireEvent.change(campoDataImpreparato(), { target: { value: '2026-10-28' } });
+      expect(campoDataModulo().value).toBe('2026-10-28');
+      expect(within(cardImpreparato()).queryByRole('status')).toBeNull();
+    });
+  });
+
+  /**
+   * La data proposta è «oggi» finché nessuno la sceglie: non quella del montaggio. Una pagina
+   * aperta la sera e usata dopo la mezzanotte (o l'app riaperta dal background il mattino dopo)
+   * non deve salvare sul giorno prima — il 31/1 → 1/2 sarebbe il quadrimestre sbagliato.
+   * Orologio: 22:50 UTC del 4/11 = 23:50 a Roma; 23:10 UTC = 00:10 del 5/11.
+   */
+  describe('la data non resta ferma a ieri', () => {
+    const PRIMA_DELLA_MEZZANOTTE = '2026-11-04T22:50:00Z';
+    const DOPO_LA_MEZZANOTTE = '2026-11-04T23:10:00Z';
+
+    beforeEach(() => {
+      vi.setSystemTime(new Date(PRIMA_DELLA_MEZZANOTTE));
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+    });
+
+    it('montata il 4/11 alle 23:50, salvata il 5/11 alle 00:10: la POST del voto porta il 5/11', async () => {
+      await montaEScegli();
+      expect(campoDataModulo().value).toBe('2026-11-04');
+      vi.setSystemTime(new Date(DOPO_LA_MEZZANOTTE));
+      expect(await salvaUnVoto()).toMatchObject({ data: '2026-11-05' });
+      // Salvando, anche il campo si allinea a ciò che è partito: a schermo non resta «ieri».
+      expect(campoDataModulo().value).toBe('2026-11-05');
+    });
+
+    it('lo stesso per l’impreparato', async () => {
+      await montaEScegli();
+      vi.setSystemTime(new Date(DOPO_LA_MEZZANOTTE));
+      fireEvent.click(screen.getByRole('button', { name: 'Segna impreparato' }));
+      expect(await screen.findByText('Impreparato segnato ✓')).toBeTruthy();
+      expect(corpoDi(chiamate('POST', '/api/primaria/giustifiche-didattiche')[0]!)).toMatchObject({ data: '2026-11-05' });
+    });
+
+    it('data scelta a mano e poi mezzanotte passata: resta quella scelta, anche cambiando alunno', async () => {
+      await montaEScegli();
+      fireEvent.change(campoDataModulo(), { target: { value: '2026-10-30' } });
+      vi.setSystemTime(new Date(DOPO_LA_MEZZANOTTE));
+      fireEvent(document, new Event('visibilitychange'));
+      fireEvent(window, new Event('focus'));
+      expect(campoDataModulo().value).toBe('2026-10-30');
+      // Cambiare alunno non azzera la scelta: la data vale per la sessione di lavoro.
+      fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: ALUNNO_B.id } });
+      await waitFor(() => expect(vociASchermo().length).toBeGreaterThan(0));
+      expect(campoDataModulo().value).toBe('2026-10-30');
+      expect(await salvaUnVoto()).toMatchObject({ data: '2026-10-30' });
+    });
+
+    it('visibilitychange dopo la mezzanotte: il campo mostra il giorno nuovo (in tutti e due i punti)', async () => {
+      await montaEScegli();
+      expect(campoDataImpreparato().value).toBe('2026-11-04');
+      vi.setSystemTime(new Date(DOPO_LA_MEZZANOTTE));
+      // Finché nessun evento lo dice, a schermo resta il giorno del montaggio.
+      expect(campoDataModulo().value).toBe('2026-11-04');
+      fireEvent(document, new Event('visibilitychange'));
+      expect(campoDataModulo().value).toBe('2026-11-05');
+      expect(campoDataImpreparato().value).toBe('2026-11-05');
+      expect(campoDataModulo().max).toBe('2026-11-05');
+    });
+
+    it('anche il focus della finestra riallinea il campo', async () => {
+      await montaEScegli();
+      vi.setSystemTime(new Date(DOPO_LA_MEZZANOTTE));
+      fireEvent(window, new Event('focus'));
+      expect(campoDataModulo().value).toBe('2026-11-05');
+    });
+
+    it('uscendo dalla pagina gli ascoltatori vengono tolti', async () => {
+      const daDocument = vi.spyOn(document, 'removeEventListener');
+      const daWindow = vi.spyOn(window, 'removeEventListener');
+      const { unmount } = render(<ValutazioniPage />);
+      await screen.findByRole('option', { name: 'Rossi Mario' });
+      const ascoltatore = (spia: typeof daDocument, evento: string) =>
+        spia.mock.calls.filter(([e]) => e === evento).length;
+      const prima = { visibilita: ascoltatore(daDocument, 'visibilitychange'), focus: ascoltatore(daWindow, 'focus') };
+      unmount();
+      expect(ascoltatore(daDocument, 'visibilitychange')).toBeGreaterThan(prima.visibilita);
+      expect(ascoltatore(daWindow, 'focus')).toBeGreaterThan(prima.focus);
+      daDocument.mockRestore();
+      daWindow.mockRestore();
     });
   });
 

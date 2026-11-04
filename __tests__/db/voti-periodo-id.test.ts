@@ -30,27 +30,30 @@ const G_B = '66666666-6666-4666-8666-6666666666bb'
 const file = readdirSync('supabase/migrations').find((f) => f.endsWith('_voti_periodo_id.sql'))
 const MIGRAZIONE = file ? `supabase/migrations/${file}` : null
 
+/** Il minimo che la migrazione tocca: ruoli, periodi, classi, voti, giustifiche. */
+const SCHEMA_BASE = `
+  CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;
+  CREATE ROLE service_role NOLOGIN BYPASSRLS;
+  CREATE TABLE public.scrutinio_periodi (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL, anno_scolastico text, nome text,
+    ordine int DEFAULT 0, data_inizio date, data_fine date, attivo boolean DEFAULT true
+  );
+  CREATE TABLE public.sections (id uuid PRIMARY KEY, scuola_id uuid);
+  CREATE TABLE public.valutazioni (
+    id uuid PRIMARY KEY, section_id uuid, modalita text, data_evento date,
+    creato_il timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.giustifiche_didattiche (
+    id uuid PRIMARY KEY, section_id uuid, data date NOT NULL
+  );
+`
+
 let db: PGlite
 
 beforeAll(async () => {
   db = new PGlite()
-  await db.exec(`
-    CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;
-    CREATE ROLE service_role NOLOGIN BYPASSRLS;
-    CREATE TABLE public.scrutinio_periodi (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      scuola_id uuid NOT NULL, anno_scolastico text, nome text,
-      ordine int DEFAULT 0, data_inizio date, data_fine date, attivo boolean DEFAULT true
-    );
-    CREATE TABLE public.sections (id uuid PRIMARY KEY, scuola_id uuid);
-    CREATE TABLE public.valutazioni (
-      id uuid PRIMARY KEY, section_id uuid, modalita text, data_evento date,
-      creato_il timestamptz DEFAULT now()
-    );
-    CREATE TABLE public.giustifiche_didattiche (
-      id uuid PRIMARY KEY, section_id uuid, data date NOT NULL
-    );
-  `)
+  await db.exec(SCHEMA_BASE)
   if (!MIGRAZIONE) throw new Error('manca supabase/migrations/*_voti_periodo_id.sql')
   await db.exec(readFileSync(MIGRAZIONE, 'utf8'))
 })
@@ -202,5 +205,94 @@ describe('voti primaria · periodo_id e ricalcolo · SQL eseguito in PostgreSQL 
               has_function_privilege('authenticated', $1, 'EXECUTE') u,
               has_function_privilege('service_role', $1, 'EXECUTE') s`, [firma])
     expect(rows[0]).toEqual({ a: false, u: false, s: true })
+  })
+})
+
+// ─── La migrazione eseguita su righe che ESISTONO GIA ────────────────────────
+// La migrazione gira al merge, che non ha una data: i periodi potrebbero gia essere
+// stati configurati. Ogni caso ha il suo database, con i dati messi PRIMA della
+// migrazione, e la funzione non si chiama a mano. Un trigger di prova imita
+// `storici_prima_mutazione` (alza `storico_versione` a ogni UPDATE): una riga
+// «toccata» si vede perche la sua versione sale.
+
+const SEDE_C = '22222222-2222-4222-8222-22222222222c'
+const CLASSE_C = '33333333-3333-4333-8333-33333333333c'
+const V_FUORI = '55555555-5555-4555-8555-555555555504'
+const V_C = '55555555-5555-4555-8555-5555555555cc'
+
+async function migraSu(datiPrima: string): Promise<PGlite> {
+  const d = new PGlite()
+  await d.exec(SCHEMA_BASE)
+  await d.exec(`
+    ALTER TABLE public.valutazioni ADD COLUMN storico_versione int NOT NULL DEFAULT 1;
+    ALTER TABLE public.giustifiche_didattiche ADD COLUMN storico_versione int NOT NULL DEFAULT 1;
+    CREATE FUNCTION public.prova_sale_versione() RETURNS trigger LANGUAGE plpgsql AS $f$
+    BEGIN NEW.storico_versione := OLD.storico_versione + 1; RETURN NEW; END $f$;
+    CREATE TRIGGER prova_sale_versione BEFORE UPDATE ON public.valutazioni
+      FOR EACH ROW EXECUTE FUNCTION public.prova_sale_versione();
+    CREATE TRIGGER prova_sale_versione BEFORE UPDATE ON public.giustifiche_didattiche
+      FOR EACH ROW EXECUTE FUNCTION public.prova_sale_versione();
+  `)
+  await d.exec(datiPrima)
+  if (!MIGRAZIONE) throw new Error('manca supabase/migrations/*_voti_periodo_id.sql')
+  await d.exec(readFileSync(MIGRAZIONE, 'utf8'))
+  return d
+}
+async function stato(d: PGlite, tabella: 'valutazioni' | 'giustifiche_didattiche') {
+  const q = await d.query<{ id: string; periodo_id: string | null; storico_versione: number }>(
+    `SELECT id, periodo_id, storico_versione FROM public.${tabella} ORDER BY id`)
+  return Object.fromEntries(q.rows.map((r) => [r.id, { periodo: r.periodo_id, versione: r.storico_versione }]))
+}
+
+describe('voti primaria · la migrazione su dati preesistenti · PGlite', () => {
+  it('con periodi già configurati assegna il periodo alle righe esistenti, senza chiamare la funzione', async () => {
+    const d = await migraSu(`
+      INSERT INTO public.sections(id, scuola_id) VALUES
+        ('${CLASSE_A}', '${SEDE_A}'), ('${CLASSE_B}', '${SEDE_B}'), ('${CLASSE_C}', '${SEDE_C}');
+      INSERT INTO public.scrutinio_periodi(id, scuola_id, anno_scolastico, nome, ordine, data_inizio, data_fine) VALUES
+        ('${QA}', '${SEDE_A}', '2025/2026', 'Primo quadrimestre', 1, '2025-09-01', '2026-01-31'),
+        ('${QB}', '${SEDE_A}', '2025/2026', 'Secondo quadrimestre', 2, '2026-02-01', '2026-06-30'),
+        ('${PB}', '${SEDE_B}', '2025/2026', 'Periodo a meta', 1, '2025-09-01', NULL);
+      INSERT INTO public.valutazioni(id, section_id, modalita, data_evento, creato_il) VALUES
+        ('${V1}', '${CLASSE_A}', 'sintetico', '2025-10-15', now()),
+        ('${V2}', '${CLASSE_A}', 'sintetico', NULL, '2026-01-31T23:30:00Z'),
+        ('${V_FUORI}', '${CLASSE_A}', 'sintetico', '2027-01-01', now()),
+        ('${V_B}', '${CLASSE_B}', 'sintetico', '2025-10-15', now()),
+        ('${V_C}', '${CLASSE_C}', 'sintetico', '2025-10-15', now());
+      INSERT INTO public.giustifiche_didattiche(id, section_id, data) VALUES
+        ('${G1}', '${CLASSE_A}', '2026-03-02'),
+        ('${G_B}', '${CLASSE_B}', '2025-10-15');
+    `)
+    try {
+      expect(await stato(d, 'valutazioni')).toEqual({
+        [V1]: { periodo: QA, versione: 2 },
+        [V2]: { periodo: QB, versione: 2 },
+        // Fuori da ogni periodo, e le sedi senza periodi completi: mai toccate.
+        [V_FUORI]: { periodo: null, versione: 1 },
+        [V_B]: { periodo: null, versione: 1 },
+        [V_C]: { periodo: null, versione: 1 },
+      })
+      expect(await stato(d, 'giustifiche_didattiche')).toEqual({
+        [G1]: { periodo: QB, versione: 2 },
+        [G_B]: { periodo: null, versione: 1 },
+      })
+    } finally { await d.close() }
+  })
+
+  it('con 0 periodi non tocca nessuna riga', async () => {
+    const d = await migraSu(`
+      INSERT INTO public.sections(id, scuola_id) VALUES ('${CLASSE_A}', '${SEDE_A}'), ('${CLASSE_B}', '${SEDE_B}');
+      INSERT INTO public.valutazioni(id, section_id, modalita, data_evento, creato_il) VALUES
+        ('${V1}', '${CLASSE_A}', 'sintetico', '2025-10-15', now()),
+        ('${V_B}', '${CLASSE_B}', 'sintetico', NULL, '2026-01-31T23:30:00Z');
+      INSERT INTO public.giustifiche_didattiche(id, section_id, data) VALUES ('${G1}', '${CLASSE_A}', '2026-03-02');
+    `)
+    try {
+      expect(await stato(d, 'valutazioni')).toEqual({
+        [V1]: { periodo: null, versione: 1 },
+        [V_B]: { periodo: null, versione: 1 },
+      })
+      expect(await stato(d, 'giustifiche_didattiche')).toEqual({ [G1]: { periodo: null, versione: 1 } })
+    } finally { await d.close() }
   })
 })

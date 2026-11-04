@@ -42,12 +42,21 @@
 --    configurazione mancante, non un errore: il voto entra comunque;
 --  · le valutazioni con `modalita` NULL non si toccano (non sono voti di primaria).
 --
--- ─── NIENTE BACKFILL ────────────────────────────────────────────────────────
--- In produzione i periodi di scrutinio sono 0 e gli scrutini 0 (ricontati il
--- 04/11/2026 con sole letture): non c'e nessuna riga da assegnare, e la funzione
--- non viene chiamata dalla migrazione. Le righe nuove prenderanno il periodo alla
--- scrittura; quelle esistenti, se un giorno servira, con una chiamata alla funzione
--- per sede.
+-- ─── IL BACKFILL E L'ULTIMA ISTRUZIONE DEL FILE ─────────────────────────────
+-- La migrazione gira al merge, e il merge non ha una data: lo stato dei periodi
+-- che trovera non lo sa nessuno oggi. Per questo in CODA al file c'e un ricalcolo
+-- per ogni sede che ha almeno un periodo con entrambe le date. Cosi la migrazione
+-- e corretta qualunque sia lo stato al merge:
+--  · oggi, 04/11/2026, in produzione i periodi di scrutinio sono 0 e gli scrutini 0
+--    (ricontati con sole letture): il ricalcolo non trova nessuna sede e non tocca
+--    niente;
+--  · se al merge la segreteria avra gia configurato i quadrimestri, il ricalcolo
+--    assegna il periodo ai voti e agli «impreparato» esistenti di quelle sedi, e non
+--    resta nessun voto «senza periodo» (che non si congelerebbe allo scrutinio) in
+--    attesa che qualcuno tocchi le date. Quelle righe vengono aggiornate davvero:
+--    i trigger dello storico e della scatola nera scattano come per ogni altra
+--    modifica, e `storico_versione` sale solo sulle righe che cambiano periodo.
+-- Le righe scritte dopo il merge prendono il periodo alla scrittura.
 --
 -- ─── ATTENZIONE: IL TRIGGER DELLE RETTIFICHE ────────────────────────────────
 -- Il trigger `storici_prima_mutazione` aumenta `storico_versione` su OGNI riga
@@ -70,7 +79,8 @@
 -- questo file come testo e le prenderebbe per una migrazione che cancella dati.
 --
 -- IDEMPOTENTE: ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, CREATE OR
--- REPLACE FUNCTION, COMMENT riscritti uguali, GRANT/REVOKE ripetibili.
+-- REPLACE FUNCTION, COMMENT riscritti uguali, GRANT/REVOKE ripetibili; il ricalcolo
+-- finale, rieseguito, non cambia niente (IS DISTINCT FROM).
 --
 -- La applica l'integrazione GitHub di Supabase al merge, con la version del file:
 -- mai a mano.
@@ -161,3 +171,9 @@ COMMENT ON FUNCTION public.primaria_ricalcola_periodi(uuid) IS
 
 REVOKE ALL ON FUNCTION public.primaria_ricalcola_periodi(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.primaria_ricalcola_periodi(uuid) TO service_role;
+
+-- ─── 3. Backfill: le sedi che hanno gia dei periodi con entrambe le date ─────
+-- Con 0 periodi (stato di produzione al 04/11/2026) non fa niente.
+SELECT public.primaria_ricalcola_periodi(s.scuola_id)
+  FROM (SELECT DISTINCT scuola_id FROM public.scrutinio_periodi
+         WHERE data_inizio IS NOT NULL AND data_fine IS NOT NULL) s;

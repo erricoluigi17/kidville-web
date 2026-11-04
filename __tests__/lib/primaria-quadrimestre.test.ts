@@ -20,6 +20,7 @@ vi.mock('@/lib/logging/logger', async (originale) => ({
 
 import {
   chiusoIn,
+  chiusureIn,
   leggiPeriodi,
   leggiQuadrimestri,
   ricalcolaPeriodiSede,
@@ -149,6 +150,28 @@ describe('chiusoIn', () => {
     if (!r.ok) return
     expect(chiusoIn(r.letti, SEDE_A, SEZ_A, '2027-01-20')).toBe(true)
     expect(chiusoIn(r.letti, SEDE_A, SEZ_A, '2027-02-20')).toBe(false) // qui copre solo il periodo aperto
+  })
+
+  it('chiusureIn: quando ogni scrutinio chiuso che copre la data è stato chiuso (null se la riga non lo dice)', async () => {
+    db.scrutinio_periodi = [
+      P_Q1_A,
+      periodo({ id: Q1BIS_A, ordine: 0, data_inizio: '2027-01-15', data_fine: '2027-03-01' }),
+    ]
+    db.scrutini = [
+      { section_id: SEZ_A, periodo_id: Q1_A, stato: 'chiuso', chiuso_il: '2027-02-05T08:00:00Z' },
+      { section_id: SEZ_A, periodo_id: Q1BIS_A, stato: 'chiuso' }, // chiuso senza data
+      { section_id: SEZ_B, periodo_id: Q1_A, stato: 'aperto', chiuso_il: null },
+    ]
+    const r = await leggiQuadrimestri(client(), { scuolaIds: [SEDE_A], sectionIds: [SEZ_A, SEZ_B] })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_A, '2026-10-01')).toEqual(['2027-02-05T08:00:00Z']) // solo Q1
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_A, '2027-01-20')).toHaveLength(2) // Q1 e il suo bis
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_A, '2027-01-20')).toEqual(expect.arrayContaining([null, '2027-02-05T08:00:00Z']))
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_A, '2027-02-20')).toEqual([null]) // solo il bis
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_B, '2026-10-01')).toEqual([]) // lo scrutinio della 2B è aperto
+    expect(chiusureIn(r.letti, SEDE_A, SEZ_A, '2027-07-15')).toEqual([]) // nessun periodo copre quel giorno
+    expect(chiusureIn(r.letti, null, SEZ_A, '2026-10-01')).toEqual([])
   })
 
   it('la chiusura vale per la sede della classe: una sede senza periodi, o scuolaId null, non è chiusa', async () => {

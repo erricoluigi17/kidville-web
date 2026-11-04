@@ -25,6 +25,12 @@ export interface QuadrimestriLetti {
   periodi: Map<string, PeriodoScrutinio[]>
   /** Gli scrutini chiusi, con chiave `${sectionId}:${periodoId}`. */
   chiusi: Set<string>
+  /**
+   * Quando ciascuno scrutinio chiuso è stato chiuso (`scrutini.chiuso_il`), con la stessa chiave di `chiusi`.
+   * `null` se la riga è `chiuso` ma senza data: lo scrive solo `scrutinio/chiudi`, insieme allo stato, e `riapri`
+   * lo azzera insieme allo stato, quindi non dovrebbe capitare; se capita, nessuno sblocco potrà superare quella chiusura.
+   */
+  chiusiIl: Map<string, string | null>
 }
 
 export async function leggiPeriodi(
@@ -46,6 +52,7 @@ export async function leggiQuadrimestri(
 ): Promise<{ ok: true; letti: QuadrimestriLetti } | { ok: false }> {
   const periodi = new Map<string, PeriodoScrutinio[]>()
   const chiusi = new Set<string>()
+  const chiusiIl = new Map<string, string | null>()
   // Senza sedi `leggiPeriodi` non legge e non restituisce periodi: di conseguenza nemmeno gli scrutini.
   const lettiPeriodi = await leggiPeriodi(supabase, input.scuolaIds)
   if (!lettiPeriodi.ok) {
@@ -60,11 +67,11 @@ export async function leggiQuadrimestri(
 
   // Senza un periodo con entrambe le date nessuno scrutinio può congelare niente.
   const idConDate = lettiPeriodi.periodi.filter((p) => p.data_inizio && p.data_fine).map((p) => p.id)
-  if (idConDate.length === 0) return { ok: true, letti: { periodi, chiusi } }
+  if (idConDate.length === 0) return { ok: true, letti: { periodi, chiusi, chiusiIl } }
 
   const { data, error } = await supabase
     .from('scrutini')
-    .select('section_id, periodo_id')
+    .select('section_id, periodo_id, chiuso_il')
     .in('section_id', [...input.sectionIds])
     .in('periodo_id', idConDate)
     .eq('stato', 'chiuso')
@@ -72,17 +79,35 @@ export async function leggiQuadrimestri(
     logEvento('registro', 'error', { operazione: 'primaria/quadrimestre', esito: 'scrutini-non-letti' }, error)
     return { ok: false }
   }
-  for (const r of (data ?? []) as unknown as { section_id: string; periodo_id: string }[]) {
-    chiusi.add(`${r.section_id}:${r.periodo_id}`)
+  for (const r of (data ?? []) as unknown as { section_id: string; periodo_id: string; chiuso_il?: string | null }[]) {
+    const chiave = `${r.section_id}:${r.periodo_id}`
+    chiusi.add(chiave)
+    chiusiIl.set(chiave, r.chiuso_il ?? null)
   }
-  return { ok: true, letti: { periodi, chiusi } }
+  return { ok: true, letti: { periodi, chiusi, chiusiIl } }
+}
+
+/**
+ * Le chiusure degli scrutini che coprono `data` per quella classe: una per ogni periodo coprente con lo scrutinio chiuso,
+ * e il suo valore è `chiuso_il` (`null` = chiuso senza data). Vuoto se nessuno scrutinio è chiuso. `scuolaId` null: vuoto.
+ */
+export function chiusureIn(
+  letti: QuadrimestriLetti,
+  scuolaId: string | null,
+  sectionId: string,
+  data: string,
+): (string | null)[] {
+  if (!scuolaId) return []
+  const { coprenti } = periodoPerData(letti.periodi.get(scuolaId) ?? [], data)
+  return coprenti
+    .map((periodoId) => `${sectionId}:${periodoId}`)
+    .filter((chiave) => letti.chiusi.has(chiave))
+    .map((chiave) => letti.chiusiIl.get(chiave) ?? null)
 }
 
 /** `true` se almeno uno dei periodi che coprono `data` ha lo scrutinio chiuso per quella classe. `scuolaId` null: `false`. */
 export function chiusoIn(letti: QuadrimestriLetti, scuolaId: string | null, sectionId: string, data: string): boolean {
-  if (!scuolaId) return false
-  const { coprenti } = periodoPerData(letti.periodi.get(scuolaId) ?? [], data)
-  return coprenti.some((periodoId) => letti.chiusi.has(`${sectionId}:${periodoId}`))
+  return chiusureIn(letti, scuolaId, sectionId, data).length > 0
 }
 
 export type StatoQuadrimestre =

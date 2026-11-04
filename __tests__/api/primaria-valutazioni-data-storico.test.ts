@@ -40,6 +40,14 @@ const V1 = '0a100000-0000-4000-8000-000000000001'
 const V2 = '0a100000-0000-4000-8000-000000000002'
 const V3 = '0a100000-0000-4000-8000-000000000003'
 
+/**
+ * Lo scrutinio dell'estate si è chiuso il 10/10 per la 2A. Uno sblocco della Direzione riapre un voto CONGELATO solo se è stato
+ * dato dopo quell'istante: uno di prima l'ha dato per altro (per esempio correggere il registro di quel giorno).
+ */
+const CHIUSO_IL = '2026-10-10T08:00:00Z'
+const SBLOCCO_PRIMA = '2026-10-05T08:00:00Z'
+const SBLOCCO_DOPO = '2026-10-20T08:00:00Z'
+
 /** Una sede usata SOLO dal test sul log delle date mancanti: il registro «una riga al giorno per sede» è in memoria del processo. */
 const SEDE_SOLO_MEMO = SEDE_C
 
@@ -128,7 +136,7 @@ const dbBase = (): DBFinto => ({
     periodo(P_ESTATE, 'Secondo quadrimestre', 2, '2025/2026', '2026-06-01', '2026-08-31', false),
   ],
   // Lo scrutinio dell'estate è chiuso per la 2A e per nessun'altra classe.
-  scrutini: [{ section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso' }],
+  scrutini: [{ section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso', chiuso_il: CHIUSO_IL }],
   legame_genitori_alunni: [{ alunno_id: ALUNNO_A, genitore_id: GENITORE }],
   valutazioni: [],
   valutazione_obiettivi: [],
@@ -452,10 +460,83 @@ describe('PATCH e DELETE', () => {
     expect((await patch(corpo)).status).toBe(423)
     expect(aggiornamenti()).toHaveLength(0)
 
-    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1 }]
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_DOPO }]
     const res = await patch(corpo)
     expect(res.status).toBe(200)
     expect(aggiornamenti()[0].valori[0]).toMatchObject({ data_evento: '2026-10-05', periodo_id: P1 })
+  })
+
+  it('congelata: uno sblocco per voce dato PRIMA della chiusura non la riapre (423), uno DOPO sì (200)', async () => {
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE })]
+    const corpo = { ...CORPO_MODIFICA, data: '2026-10-05' }
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_PRIMA }]
+    const vecchio = await patch(corpo)
+    expect(vecchio.status).toBe(423)
+    expect((await vecchio.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
+    expect(aggiornamenti()).toHaveLength(0)
+
+    h.db.sblocchi_audit.push({ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_DOPO })
+    expect((await patch(corpo)).status).toBe(200)
+    expect(aggiornamenti()).toHaveLength(1)
+  })
+
+  it('congelata: lo sblocco del GIORNO in cui è stata salvata, dato PRIMA della chiusura, non la riapre; dato DOPO sì', async () => {
+    // Salvata il 1° ottobre con la prova del 15/06, quando lo scrutinio dell'estate era ancora aperto; chiuso il 10/10.
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE, creato_il: '2026-10-01T09:00:00Z' })]
+    const giorno = (sbloccato_il: string) => ({
+      entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-10-01', sbloccato_il,
+    })
+
+    h.db.sblocchi_audit = [giorno(SBLOCCO_PRIMA)]
+    const vecchio = await patch(CORPO_MODIFICA)
+    expect(vecchio.status).toBe(423)
+    expect((await vecchio.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
+    expect(aggiornamenti()).toHaveLength(0)
+
+    h.db.sblocchi_audit = [giorno(SBLOCCO_DOPO)]
+    expect((await patch(CORPO_MODIFICA)).status).toBe(200)
+    expect(aggiornamenti()).toHaveLength(1)
+  })
+
+  it('spostare la data dentro il quadrimestre chiuso con uno sblocco vecchio → 423; con uno nuovo → 200', async () => {
+    h.db.valutazioni = [voto()] // aperto: prova del 20/10, salvata ieri
+    const corpo = { ...CORPO_MODIFICA, data: '2026-06-15' }
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_PRIMA }]
+    const vecchio = await patch(corpo)
+    expect(vecchio.status).toBe(423)
+    expect((await vecchio.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
+    expect(aggiornamenti()).toHaveLength(0)
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_DOPO }]
+    expect((await patch(corpo)).status).toBe(200)
+    expect(aggiornamenti()[0].valori[0]).toMatchObject({ data_evento: '2026-06-15', periodo_id: P_ESTATE })
+  })
+
+  it('congelata: nemmeno l’eliminazione passa con uno sblocco vecchio (DELETE); con uno nuovo sì', async () => {
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE })]
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_PRIMA }]
+    const vecchio = await elimina(V1)
+    expect(vecchio.status).toBe(423)
+    expect((await vecchio.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
+    expect(cancellazioni()).toHaveLength(0)
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_DOPO }]
+    expect((await elimina(V1)).status).toBe(200)
+    expect(cancellazioni()).toHaveLength(1)
+  })
+
+  it('un guasto nella lettura degli sblocchi di una voce congelata → 500 LETTURA_FALLITA, non un 423', async () => {
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE })]
+    h.opzioni = { scritture, errori: { 'sblocchi_audit:select': { code: '57014' } } } satisfies OpzioniFinto
+
+    const res = await patch({ ...CORPO_MODIFICA, data: '2026-10-05' })
+
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('LETTURA_FALLITA')
+    expect(aggiornamenti()).toHaveLength(0)
   })
 
   it('un voto fermo nel quadrimestre chiuso non si elimina nemmeno entro il termine (DELETE)', async () => {
@@ -716,6 +797,34 @@ describe('GET', () => {
       expect.objectContaining({ esito: 'periodi-non-letti', ripiego: true }),
       expect.anything(),
     )
+  })
+
+  it('voto congelato: lo sblocco del giorno dato PRIMA della chiusura non cambia nulla; dato DOPO la riapre (congelata/modificabile)', async () => {
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE, creato_il: '2026-10-01T09:00:00Z' })]
+    const giorno = (sbloccato_il: string) => ({
+      entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-10-01', sbloccato_il,
+    })
+    const stato = async () => (await (await elenco(ALUNNO_A, MAT_ITA_A)).json()).data[0]
+
+    h.db.sblocchi_audit = []
+    expect(await stato()).toMatchObject({ congelata: true, bloccata: true, modificabile: false })
+
+    h.db.sblocchi_audit = [giorno(SBLOCCO_PRIMA)]
+    expect(await stato()).toMatchObject({ congelata: true, bloccata: true, modificabile: false })
+
+    h.db.sblocchi_audit = [giorno(SBLOCCO_DOPO)]
+    expect(await stato()).toMatchObject({ congelata: false, bloccata: false, modificabile: true })
+  })
+
+  it('voto congelato: lo sblocco per voce dato DOPO la chiusura lo riapre sulla GET, quello di prima no', async () => {
+    h.db.valutazioni = [voto({ data_evento: '2026-06-15', periodo_id: P_ESTATE })]
+    const stato = async () => (await (await elenco(ALUNNO_A, MAT_ITA_A)).json()).data[0]
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(await stato()).toMatchObject({ congelata: true, modificabile: false })
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'valutazione', entita_id: V1, sbloccato_il: SBLOCCO_DOPO }]
+    expect(await stato()).toMatchObject({ congelata: false, modificabile: true })
   })
 
   it('lo staff vede tutte le materie', async () => {

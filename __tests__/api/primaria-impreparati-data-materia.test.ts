@@ -38,6 +38,10 @@ const ALUNNO_B = 'a1a10000-0000-4000-8000-0000000000b1'
 const ALUNNO_C = 'a1a10000-0000-4000-8000-0000000000c1'
 const P1 = '9e710000-0000-4000-8000-000000000001'
 const P_ESTATE = '9e710000-0000-4000-8000-000000000002'
+/** Lo scrutinio dell'estate si è chiuso il 10/10; uno sblocco riapre un impreparato congelato solo se è stato dato dopo. */
+const CHIUSO_IL = '2026-10-10T08:00:00Z'
+const SBLOCCO_PRIMA = '2026-10-05T08:00:00Z'
+const SBLOCCO_DOPO = '2026-10-20T08:00:00Z'
 const I1 = '1a100000-0000-4000-8000-000000000001'
 const I2 = '1a100000-0000-4000-8000-000000000002'
 const I3 = '1a100000-0000-4000-8000-000000000003'
@@ -202,7 +206,7 @@ const dbBase = (): DBFinto => ({
     periodo(P_ESTATE, 'Secondo quadrimestre', 2, '2025/2026', '2026-06-01', '2026-08-31', false),
   ],
   // Lo scrutinio dell'estate è chiuso per la 2A e per nessun'altra classe.
-  scrutini: [{ section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso' }],
+  scrutini: [{ section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso', chiuso_il: CHIUSO_IL }],
   giustifiche_didattiche: [],
   notifiche: [],
   sblocchi_audit: [],
@@ -570,7 +574,12 @@ describe('PATCH e DELETE', () => {
     expect((await patch({ id: I2, data: '2026-10-05' })).status).toBe(423)
     expect(aggiornamenti()).toHaveLength(0)
 
-    h.db.sblocchi_audit = [{ entita_tipo: 'impreparato', entita_id: I2 }]
+    // Uno sblocco dato prima della chiusura dello scrutinio non lo riapre.
+    h.db.sblocchi_audit = [{ entita_tipo: 'impreparato', entita_id: I2, sbloccato_il: SBLOCCO_PRIMA }]
+    expect((await patch({ id: I2, data: '2026-10-05' })).status).toBe(423)
+    expect(aggiornamenti()).toHaveLength(0)
+
+    h.db.sblocchi_audit = [{ entita_tipo: 'impreparato', entita_id: I2, sbloccato_il: SBLOCCO_DOPO }]
     const res = await patch({ id: I2, data: '2026-10-05' })
     expect(res.status).toBe(200)
     expect(aggiornamenti()[0].valori[0]).toMatchObject({ data: '2026-10-05', periodo_id: P1 })

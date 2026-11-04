@@ -51,6 +51,11 @@ const LUNEDI = '2026-09-07' // 3 giorni: oltre il termine di 2
 const MARTEDI = '2026-09-08' // 2 giorni: ancora entro
 const VENERDI = '2026-09-04' // 6 giorni: oltre
 const ESTATE = '2026-06-15' // nel periodo estivo (P_ESTATE), il cui scrutinio si chiude nei test di congelamento
+/** Lo scrutinio dell'estate è chiuso il 31/08: la sua riga porta `chiuso_il`, ed è da lì che uno sblocco «vale» o no. */
+const CHIUSO_IL = '2026-08-31T18:00:00Z'
+/** Uno sblocco dato PRIMA di quella chiusura (per tutt'altro motivo) e uno dato DOPO. */
+const SBLOCCO_PRIMA = '2026-07-15T09:00:00Z'
+const SBLOCCO_DOPO = '2026-09-02T09:00:00Z'
 
 const maestra: AppUser = { id: MAESTRA, role: 'educator' }
 const collega: AppUser = { id: COLLEGA, role: 'educator' }
@@ -536,7 +541,7 @@ describe('CONGELAMENTO — scrutinio chiuso', () => {
       periodo({ id: P1, anno_scolastico: '2026/2027', ordine: 1, data_inizio: '2026-09-01', data_fine: '2027-01-31' }),
     ]
     // Chiuso lo scrutinio del periodo estivo per SEZ_A; quello di P1 è aperto (nessuna riga).
-    db.scrutini = [{ id: 'sc1', section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso' }]
+    db.scrutini = [{ id: 'sc1', section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso', chiuso_il: CHIUSO_IL }]
   })
 
   it('quadrimestre chiuso: 423 QUADRIMESTRE_CHIUSO anche dentro il termine', async () => {
@@ -579,7 +584,7 @@ describe('CONGELAMENTO — scrutinio chiuso', () => {
   })
 
   it('uno sblocco per voce riapre termine e congelamento, anche spostando la data', async () => {
-    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1 }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
     // Evento e nuova data stanno tutte e due nel periodo chiuso, e il salvataggio è oltre il termine.
     const v = voce({ dataEvento: ESTATE, nuovaDataEvento: '2026-06-10', giornoSalvataggio: '2026-08-01' })
     expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
@@ -597,17 +602,146 @@ describe('CONGELAMENTO — scrutinio chiuso', () => {
   it('lo sblocco del giorno del salvataggio riapre anche il congelamento', async () => {
     const v = voce({ dataEvento: ESTATE, giornoSalvataggio: '2026-08-01' })
     // Lo sblocco del giorno della PROVA non basta: conta il giorno in cui il voto è stato salvato.
-    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: ESTATE }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: ESTATE, sbloccato_il: SBLOCCO_DOPO }]
     expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
     // Quello della classe giusta e del giorno del salvataggio sì.
-    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01' }]
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01', sbloccato_il: SBLOCCO_DOPO }]
     expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
     expect(h.logEvento).toHaveBeenCalledWith(
       'registro', 'info', expect.objectContaining({ esito: 'voce-congelata-autorizzata', azione: 'giorno' }),
     )
     // Lo sblocco del giorno di un'ALTRA classe no.
-    db.sblocchi_audit = [{ id: 's3', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_B, data: '2026-08-01' }]
+    db.sblocchi_audit = [{ id: 's3', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_B, data: '2026-08-01', sbloccato_il: SBLOCCO_DOPO }]
     expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+  })
+
+  // ── Uno sblocco riapre una voce CONGELATA solo se è dato DOPO la chiusura che la congela ───────────
+  // Il filtro di tempo vale per il congelamento e basta: il termine (2/15 giorni) e le voci che non si
+  // congelano restano come prima, con qualunque sblocco.
+
+  it('sblocco per VOCE dato PRIMA della chiusura: non scongela; dato DOPO sì', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'voce-congelata', error_code: 'QUADRIMESTRE_CHIUSO' }),
+    )
+    db.sblocchi_audit.push({ id: 's2', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('sblocco del GIORNO del salvataggio dato PRIMA della chiusura: non scongela; dato DOPO sì', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: '2026-08-01' })
+    db.sblocchi_audit = [
+      { id: 's1', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01', sbloccato_il: SBLOCCO_PRIMA },
+    ]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+    db.sblocchi_audit = [
+      { id: 's2', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01', sbloccato_il: SBLOCCO_DOPO },
+    ]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it.each([
+    ['da aperto a chiuso', IERI, ESTATE],
+    ['da chiuso ad aperto', ESTATE, IERI],
+  ])('spostare %s con uno sblocco VECCHIO: 423; con uno nuovo: ok', async (_nome, dataEvento, nuovaDataEvento) => {
+    const v = voce({ dataEvento, nuovaDataEvento, giornoSalvataggio: IERI })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('due quadrimestri chiusi (data attuale e data nuova): ognuno chiede uno sblocco dopo la PROPRIA chiusura', async () => {
+    // P1 chiude il 09/09, dopo l'estate: lo sblocco del 02/09 è dopo la prima chiusura e prima della seconda.
+    db.scrutini.push({ id: 'sc2', section_id: SEZ_A, periodo_id: P1, stato: 'chiuso', chiuso_il: '2026-09-09T08:00:00Z' })
+    const v = voce({ dataEvento: ESTATE, nuovaDataEvento: IERI, giornoSalvataggio: IERI })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: '2026-09-09T09:00:00Z' }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('congelata E oltre il termine: serve comunque uno sblocco dopo la chiusura', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: LUNEDI })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('l’impreparato della docente: stesso filtro del voto', async () => {
+    const v = voce({ tipo: 'impreparato', origine: 'docente', dataEvento: ESTATE, giornoSalvataggio: IERI })
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'impreparato', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toMatchObject({ stato: 423, codice: 'QUADRIMESTRE_CHIUSO' })
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'impreparato', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('uno sblocco senza `sbloccato_il`, o con una data illeggibile, non scongela mai', async () => {
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })
+    for (const sbloccato_il of [null, 'ieri mattina']) {
+      db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il }]
+      expect(await verificaPermessoVoce(client(), maestra, v, ADESSO), String(sbloccato_il)).toMatchObject({
+        stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+      })
+    }
+  })
+
+  it('una chiusura senza `chiuso_il`: nessuno sblocco la supera (fail-closed), senza leggerli, e lo dice a livello info', async () => {
+    db.scrutini = [{ id: 'sc1', section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso', chiuso_il: null }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    const v = voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })
+    expect(await verificaPermessoVoce(client(), maestra, v, ADESSO)).toEqual({
+      ok: false, stato: 423, codice: 'QUADRIMESTRE_CHIUSO',
+    })
+    expect(letturaSblocchi()).toBe(0)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'scrutinio-chiuso-senza-data', sezione: SEZ_A }),
+    )
+    // Lo staff modifica comunque, senza guardare niente.
+    expect(await verificaPermessoVoce(client(), segreteria, v, ADESSO)).toEqual({ ok: true })
+  })
+
+  it('il termine non cambia: fuori da un quadrimestre chiuso qualunque sblocco, anche vecchio, riapre', async () => {
+    // Valutazione in P1 (aperto), salvata lunedì (oltre il termine): lo sblocco di luglio basta.
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    expect(
+      await verificaPermessoVoce(client(), maestra, voce({ dataEvento: '2026-09-02', giornoSalvataggio: LUNEDI }), ADESSO),
+    ).toEqual({ ok: true })
+    // Una nota nel periodo chiuso non si congela mai: oltre il termine basta uno sblocco senza data.
+    db.sblocchi_audit = [{ id: 's2', entita_tipo: 'nota', entita_id: VOCE_1 }]
+    expect(await verificaPermessoVoce(client(), maestra, voce({ tipo: 'nota', dataEvento: ESTATE }), ADESSO)).toEqual({ ok: true })
+  })
+
+  it('legge `sbloccato_il` dagli sblocchi e `chiuso_il` dagli scrutini', async () => {
+    const colonne: Record<string, string[]> = {}
+    const vero = client() as unknown as { from: (t: string) => Record<string, unknown> }
+    const spia = {
+      from(tabella: string) {
+        const qb = vero.from(tabella)
+        const selectVero = qb.select as (c: string) => unknown
+        qb.select = (c: string) => {
+          ;(colonne[tabella] ??= []).push(c)
+          return selectVero.call(qb, c)
+        }
+        return qb
+      },
+    } as unknown as SupabaseClient
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA }]
+    await verificaPermessoVoce(spia, maestra, voce({ dataEvento: ESTATE, giornoSalvataggio: IERI }), ADESSO)
+    expect(colonne.scrutini).toHaveLength(1)
+    expect(colonne.scrutini[0]).toContain('chiuso_il')
+    // Uno sblocco per voce non basta (è vecchio): si legge anche per giorno, e tutte e due le letture portano la data.
+    expect(colonne.sblocchi_audit).toHaveLength(2)
+    for (const c of colonne.sblocchi_audit) expect(c).toContain('sbloccato_il')
   })
 
   it('un’altra classe non è congelata dallo scrutinio di SEZ_A', async () => {
@@ -674,7 +808,7 @@ describe('CONGELAMENTO — scrutinio chiuso', () => {
   })
 
   it('statoVoci: lo sblocco riapre la voce congelata, e la UI smette di vederla congelata', async () => {
-    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_2 }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_2, sbloccato_il: SBLOCCO_DOPO }]
     const r = await statoVoci(
       client(), maestra, [voce({ id: VOCE_2, dataEvento: ESTATE, giornoSalvataggio: IERI })], ADESSO,
     )
@@ -683,6 +817,50 @@ describe('CONGELAMENTO — scrutinio chiuso', () => {
     expect(r.esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual({
       modificabile: true, bloccata: false, congelata: false, giorniLimite: 2,
     })
+  })
+
+  it('statoVoci: uno sblocco dato PRIMA della chiusura lascia la voce congelata, uno DOPO la riapre (per voce e per giorno)', async () => {
+    const voci = [
+      voce({ id: VOCE_1, dataEvento: ESTATE, giornoSalvataggio: IERI }), // sblocco per voce
+      voce({ id: VOCE_2, dataEvento: ESTATE, giornoSalvataggio: '2026-08-01' }), // sblocco del giorno del salvataggio
+    ]
+    const stato = async () => {
+      const r = await statoVoci(client(), maestra, voci, ADESSO)
+      expect(r.ok).toBe(true)
+      return r.ok ? r.esiti : new Map()
+    }
+    db.sblocchi_audit = [
+      { id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_PRIMA },
+      { id: 's2', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01', sbloccato_il: SBLOCCO_PRIMA },
+    ]
+    let esiti = await stato()
+    const chiuso = { modificabile: false, bloccata: true, congelata: true, giorniLimite: 2 }
+    expect(esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual(chiuso)
+    expect(esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual(chiuso)
+
+    db.sblocchi_audit = [
+      { id: 's3', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO },
+      { id: 's4', entita_tipo: 'giorno', entita_id: null, section_id: SEZ_A, data: '2026-08-01', sbloccato_il: SBLOCCO_DOPO },
+    ]
+    esiti = await stato()
+    const aperto = { modificabile: true, bloccata: false, congelata: false, giorniLimite: 2 }
+    expect(esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual(aperto)
+    expect(esiti.get(chiaveVoce('valutazione', VOCE_2))).toEqual(aperto)
+  })
+
+  it('statoVoci: una chiusura senza `chiuso_il` resta congelata per tutti e non legge gli sblocchi', async () => {
+    db.scrutini = [{ id: 'sc1', section_id: SEZ_A, periodo_id: P_ESTATE, stato: 'chiuso', chiuso_il: null }]
+    db.sblocchi_audit = [{ id: 's1', entita_tipo: 'valutazione', entita_id: VOCE_1, sbloccato_il: SBLOCCO_DOPO }]
+    const r = await statoVoci(client(), maestra, [voce({ dataEvento: ESTATE, giornoSalvataggio: IERI })], ADESSO)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.esiti.get(chiaveVoce('valutazione', VOCE_1))).toEqual({
+      modificabile: false, bloccata: true, congelata: true, giorniLimite: 2,
+    })
+    expect(letturaSblocchi()).toBe(0)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro', 'info', expect.objectContaining({ esito: 'scrutinio-chiuso-senza-data', n: 1 }),
+    )
   })
 
   it('statoVoci: lotto su DUE sedi, ognuna col suo scrutinio', async () => {

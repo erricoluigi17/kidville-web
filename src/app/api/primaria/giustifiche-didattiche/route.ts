@@ -682,7 +682,8 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
 // del GENITORE, anche i docenti della classe — con la materia ancora assegnata. Per
 // quello della docente: entro il termine, che corre dal giorno del SALVATAGGIO, e con
 // la data — la vecchia e la nuova — fuori da un quadrimestre chiuso; lo sblocco per
-// voce toglie sia il termine sia il congelamento. Per quello del genitore: entro il
+// voce toglie sia il termine sia il congelamento (questo solo se dato DOPO la chiusura
+// dello scrutinio). Per quello del genitore: entro il
 // termine su entrambe le date se `data` cambia, oppure con lo sblocco. `data` non è
 // mai nel futuro, e se cambia `periodo_id` si ricalcola sulla data nuova (con la data
 // invariata non si tocca). Se cambia la materia, la nuova deve essere una assegnata

@@ -276,7 +276,8 @@ function rispostaQuadrimestreNonLetto(): NextResponse {
  * CONGELAMENTO. Se la data della prova, la vecchia o la nuova, cade in un
  * quadrimestre il cui scrutinio è chiuso per la classe, la docente riceve 423
  * `QUADRIMESTRE_CHIUSO` anche dentro il termine; lo sblocco per voce toglie il
- * congelamento insieme al termine. La materia si controlla PRIMA del permesso:
+ * congelamento insieme al termine, ma solo se è stato dato DOPO la chiusura dello
+ * scrutinio (uno di prima non scongela). La materia si controlla PRIMA del permesso:
  * chi è stata tolta da una materia perde anche i voti che vi aveva scritto.
  */
 async function voceAutorizzata(

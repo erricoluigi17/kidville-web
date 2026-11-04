@@ -8,9 +8,11 @@
 -- Il voto di una prova ha una data (`valutazioni.data_evento`), e la data decide in
 -- quale quadrimestre cade: lo scrutinio chiuso di un quadrimestre congela i voti di
 -- quel quadrimestre e solo quelli. Finora il periodo si ricavava ogni volta
--- confrontando la data con `scrutinio_periodi`; ora lo si scrive sulla riga, cosi lo
--- storico per alunno e materia, il blocco dopo lo scrutinio e le stampe leggono la
--- stessa risposta e non la rifanno ciascuno a modo suo.
+-- confrontando la data con `scrutinio_periodi`; ora lo si scrive anche sulla riga.
+-- ATTENZIONE: oggi `periodo_id` e scritto e non letto. Il congelamento dopo lo
+-- scrutinio, lo storico per alunno e materia e le stampe ricalcolano dalle date
+-- (`periodoPerData`) e non guardano questa colonna: nessuna decisione dipende da lei.
+-- E pronta per chi vorra leggerla invece di rifare il confronto.
 --
 -- ─── COSA FA ────────────────────────────────────────────────────────────────
 -- 1. `valutazioni.periodo_id` e `giustifiche_didattiche.periodo_id`: uuid NULL, con
@@ -22,8 +24,8 @@
 --    riassegna `periodo_id` su tutti i suoi voti e su tutti i suoi «impreparato» con
 --    un solo aggiornamento per tabella, e risponde
 --    `{ "valutazioni": <righe cambiate>, "impreparati": <righe cambiate> }`.
---    La chiama il server (`ricalcolaPeriodiSede`) quando la segreteria crea o sposta
---    le date di un periodo. Sta in SQL e non nel server perche: un solo
+--    La chiama il server (`ricalcolaPeriodiSede`) quando la segreteria crea, sposta o
+--    cancella un periodo. Sta in SQL e non nel server perche: un solo
 --    aggiornamento con FROM invece di N richieste; mai un aggiornamento senza WHERE
 --    (qui il filtro e la sede, piu «solo le righe che cambiano»); e la regola di
 --    copertura ha una sola formulazione, provata su Postgres vero
@@ -40,7 +42,10 @@
 --    `data_inizio`, poi `id`: il risultato non dipende dall'ordine di lettura;
 --  · nessun periodo copre il giorno: `periodo_id` resta (o torna) NULL. E la
 --    configurazione mancante, non un errore: il voto entra comunque;
---  · le valutazioni con `modalita` NULL non si toccano (non sono voti di primaria).
+--  · le valutazioni con `modalita` NULL non si toccano (non sono voti di primaria);
+--  · le righe con `section_id` NULL sono escluse dal ricalcolo, voti e «impreparato»:
+--    la sede si ricava dalla classe (JOIN su `sections`), e senza classe non c'e sede.
+--    Restano con il periodo che hanno (di solito NULL).
 --
 -- ─── IL BACKFILL E L'ULTIMA ISTRUZIONE DEL FILE ─────────────────────────────
 -- La migrazione gira al merge, e il merge non ha una data: lo stato dei periodi
@@ -52,8 +57,9 @@
 --    niente;
 --  · se al merge la segreteria avra gia configurato i quadrimestri, il ricalcolo
 --    assegna il periodo ai voti e agli «impreparato» esistenti di quelle sedi, e non
---    resta nessun voto «senza periodo» (che non si congelerebbe allo scrutinio) in
---    attesa che qualcuno tocchi le date. Quelle righe vengono aggiornate davvero:
+--    resta nessun voto «senza periodo» in attesa che qualcuno tocchi le date (il
+--    congelamento allo scrutinio non dipende da questa colonna, ma dalle date: la
+--    colonna serve a tenere la riga coerente con esse). Quelle righe vengono aggiornate davvero:
 --    i trigger dello storico e della scatola nera scattano come per ogni altra
 --    modifica, e `storico_versione` sale solo sulle righe che cambiano periodo.
 -- Le righe scritte dopo il merge prendono il periodo alla scrittura.

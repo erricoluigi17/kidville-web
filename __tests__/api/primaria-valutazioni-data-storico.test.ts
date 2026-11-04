@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextRequest } from 'next/server'
-import { SEDE_A, SEDE_C } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B, SEDE_C } from '../fixtures/sedi'
 import type { DBFinto, OpzioniFinto, Riga, Scrittura } from '../fixtures/finto-supabase'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 
@@ -324,6 +324,24 @@ describe('POST', () => {
     expect(lista.data[0]).toMatchObject({ congelata: true, modificabile: false, bloccata: true, propria: true })
   })
 
+  it('i quadrimestri si cercano nella sede della CLASSE, non in quella della materia (come la PATCH)', async () => {
+    // La materia porta una sede diversa da quella della classe: i periodi (e il loro scrutinio chiuso) sono della sede A.
+    h.db.materie = h.db.materie.map((m) => (m.id === MAT_ITA_A ? { ...m, scuola_id: SEDE_B } : m))
+
+    const chiuso = await post({ ...CORPO, data: '2026-06-15' })
+    expect(chiuso.status).toBe(423)
+    expect((await chiuso.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
+    expect(inserimenti()).toHaveLength(0)
+
+    const aperto = await post({ ...CORPO, data: '2026-10-05' })
+    expect(aperto.status).toBe(201)
+    expect(inserimenti()[0].valori[0]).toMatchObject({ periodo_id: P1 })
+    // Nessun log di «date mancanti» per la sede della materia: non è lei che si interroga.
+    expect(h.logEvento).not.toHaveBeenCalledWith(
+      'config', 'error', expect.objectContaining({ scuola_id: SEDE_B }),
+    )
+  })
+
   it('materia della collega → 403 MATERIA_NON_ASSEGNATA, prima di leggere obiettivi e periodi', async () => {
     const res = await post({ ...CORPO, materiaId: MAT_MAT_A })
 
@@ -548,6 +566,21 @@ describe('PATCH e DELETE', () => {
     expect((await res.json()).codice).toBe('QUADRIMESTRE_CHIUSO')
     expect(cancellazioni()).toHaveLength(0)
   })
+
+  it.each(['PGRST204', '42703'])(
+    'database non migrato (%s anche dopo il ripiego): una PATCH con la data è 503 STORICO_NON_DISPONIBILE, senza data è un errore qualunque',
+    async (code) => {
+      h.db.valutazioni = [voto({ periodo_id: null })]
+      h.opzioni = { scritture, errori: { 'valutazioni:update': { code, message: 'colonna sconosciuta' } } } satisfies OpzioniFinto
+
+      const conData = await patch({ ...CORPO_MODIFICA, data: '2026-10-05' })
+      expect(conData.status).toBe(503)
+      expect((await conData.json()).codice).toBe('STORICO_NON_DISPONIBILE')
+
+      const senzaData = await patch(CORPO_MODIFICA)
+      expect(senzaData.status).toBe(500)
+    },
+  )
 
   it('salvata tre giorni fa con la data di ieri → 423 VOCE_BLOCCATA (il termine corre dal salvataggio)', async () => {
     h.db.valutazioni = [voto({ creato_il: '2026-11-01T09:00:00Z', data_evento: '2026-11-03' })]

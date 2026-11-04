@@ -18,6 +18,7 @@ import { logSchemaIndietro, scriviConRipiegoSchema, type RipiegoSchema } from '@
 import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
 import { giornoDiRoma } from '@/lib/primaria/periodo'
 import { statoQuadrimestre } from '@/lib/primaria/quadrimestre'
+import { scuolaDiSezione } from '@/lib/primaria/sede-classe'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 import {
   chiaveVoce,
@@ -278,20 +279,6 @@ function vocePrimaria(r: RigaVoce, opz: { nuovaData?: string | null } = {}): Voc
     // `modificabile` dell'elenco devono dire la stessa cosa.
     origine: r.origine,
   }
-}
-
-/** La sede della classe (la tabella non ha `scuola_id`). `undefined` = lettura fallita. */
-async function scuolaDiSezione(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  sectionId: string,
-  operazione: string,
-): Promise<string | null | undefined> {
-  const { data, error } = await supabase.from('sections').select('scuola_id').eq('id', sectionId).maybeSingle()
-  if (error) {
-    logErrore({ operazione, stato: 500, evento: 'db' }, error)
-    return undefined
-  }
-  return ((data as { scuola_id?: string | null } | null)?.scuola_id ?? null) as string | null
 }
 
 /**

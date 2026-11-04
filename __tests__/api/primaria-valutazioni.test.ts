@@ -97,7 +97,8 @@ beforeEach(() => {
 function seedMateriaAndInsert() {
   h.state.queues.utenti_sezioni_materie = [{ data: [{ section_id: BASE.sectionId, materia_id: BASE.materiaId }], error: null }]
   h.state.queues.materie = [{ data: { nome: 'Matematica', codice: 'matematica', scuola_id: 'sc-1', section_id: '0e20e2e2-0e2e-40e2-8e2e-0e2e2e2e2e21' }, error: null }]
-  h.state.queues.sections = [{ data: { name: '1A' }, error: null }]
+  // Due letture di `sections`, in quest'ordine: il nome (il livello, per gli obiettivi), poi la sede della classe (per i quadrimestri).
+  h.state.queues.sections = [{ data: { name: '1A' }, error: null }, { data: { scuola_id: 'sc-1' }, error: null }]
   h.state.queues.valutazioni = [{ data: { id: 'v-1', alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }, error: null }]
   h.state.queues.admin_settings = [{ data: { notif_buffer_valutazioni_min: 10 }, error: null }]
 }

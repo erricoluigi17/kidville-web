@@ -16,11 +16,12 @@ import { scriviConRipiegoSchema } from '@/lib/db/colonna-assente'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
+// `data` è un giorno YYYY-MM-DD che esiste nel calendario, come nella PATCH: il quadrimestre si cerca e il giorno si
+// confronta con «oggi» come TESTO, e una stringa qualunque non cadrebbe in nessun periodo (voce senza quadrimestre, in silenzio);
 // `motivo` permissivo: oggi qualunque tipo è accettato (i non-string diventano null).
 const postBodySchema = z.object({
   studentId: zUuid,
-  data: z.string().min(1),
+  data: zDataYMD,
   motivo: z.unknown().optional(),
   materiaId: zUuid.nullable().optional(),
 })

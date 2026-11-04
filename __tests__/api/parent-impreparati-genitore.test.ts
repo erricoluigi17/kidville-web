@@ -275,6 +275,20 @@ describe('POST — la dichiarazione del genitore', () => {
     expect(JSON.stringify(h.logScrittura.mock.calls[0][1])).not.toContain('visita')
   })
 
+  it.each(['domani', '2026-02-30', '04/11/2026', `${DOMANI}T10:00:00`, ' '])(
+    'data malformata «%s»: 400 «Dati non validi» sul campo `data`, nessuna lettura e nessuna scrittura',
+    async (data) => {
+      const res = await post({ studentId: ALUNNO, data })
+      expect(res.status).toBe(400)
+      const corpo = await res.json()
+      expect(corpo.error).toBe('Dati non validi')
+      expect(corpo.details.map((d: { path: string }) => d.path)).toContain('data')
+      expect(h.scritture).toHaveLength(0)
+      expect(h.tabelle).toEqual([])
+      expect(h.notificaEvento).not.toHaveBeenCalled()
+    },
+  )
+
   it('un insert rifiutato risponde con un codice, mai col messaggio grezzo del database', async () => {
     h.errori = { 'giustifiche_didattiche:insert': { code: '23514', message: 'SEGRETO-DEL-DATABASE' } }
     const res = await post({ studentId: ALUNNO, data: DOMANI })

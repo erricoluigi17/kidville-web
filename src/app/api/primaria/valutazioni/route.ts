@@ -22,6 +22,7 @@ import { colonnaNuovaAssente, logSchemaIndietro, scriviConRipiegoSchema } from '
 import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
 import { dataDiCompetenza, giornoDiRoma, ordinaPerCompetenza } from '@/lib/primaria/periodo'
 import { leggiPeriodi, statoQuadrimestre } from '@/lib/primaria/quadrimestre'
+import { scuolaDiSezione } from '@/lib/primaria/sede-classe'
 import {
   chiaveVoce,
   rispostaPermessoNegato,
@@ -554,8 +555,11 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     // congelamento: se lo scrutinio di quel quadrimestre è chiuso per la classe, la docente non inserisce
     // (lo staff sì, a nome del docente titolare). Una lettura fallita non vale né «aperto» né «chiuso»: 500.
     // Periodi assenti o senza date sono configurazione mancante: il voto entra senza periodo (D4).
+    // I quadrimestri si cercano nella sede della CLASSE (come la PATCH e il ricalcolo SQL), non in quella della materia.
     const lockTipo = lockTipoDaTipo(tipoProva)
-    const quadrimestre = await statoQuadrimestre(supabase, materia.scuola_id, sectionId, eventDate)
+    const sedeClasse = await scuolaDiSezione(supabase, sectionId, operazione)
+    if (sedeClasse === undefined) return rispostaQuadrimestreNonLetto()
+    const quadrimestre = await statoQuadrimestre(supabase, sedeClasse, sectionId, eventDate)
     if (!quadrimestre.ok) return rispostaQuadrimestreNonLetto()
     if (quadrimestre.chiuso && !puoCorreggereStorico(auth.user)) {
       logEvento('registro', 'info', {
@@ -883,7 +887,7 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     }
     if (updErr) {
       logEvento('registro', 'error', { operazione, esito: 'valutazione-non-aggiornata', valutazione_id: id }, updErr)
-      if (b.data.data !== undefined && ['42703', 'PGRST204'].includes(updErr.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
+      if (b.data.data !== undefined && colonnaNuovaAssente(updErr)) return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
       return NON_SALVATA()
     }
     const val = ((aggiornate ?? []) as Record<string, unknown>[])[0]

@@ -131,8 +131,11 @@ export function periodoPerData(periodi: readonly PeriodoScrutinio[], data: strin
  * date, che non coprono niente. Come la copertura, non guarda `attivo`. Se ce n'è più
  * d'uno risponde il primo nell'ordine dello spareggio, così la risposta è stabile.
  *
- * Passare solo i periodi della stessa sede e dello stesso anno scolastico è compito di
- * chi chiama: il candidato non porta con sé l'anno.
+ * Chi chiama passa i periodi della stessa sede, di OGNI anno scolastico, non solo quelli
+ * dell'anno del candidato (la route admin lo fa apposta): la copertura di un giorno
+ * (`periodoPerData` e il ricalcolo SQL) sceglie il periodo per sede e date, senza guardare
+ * l'anno, quindi un periodo salvato con l'anno sbagliato ruberebbe i voti a un altro. Due
+ * anni scolastici veri non condividono giorni, e il candidato non porta con sé l'anno.
  */
 export function sovrapposto(
   candidato: { id?: string; data_inizio: string; data_fine: string },

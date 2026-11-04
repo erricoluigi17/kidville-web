@@ -2,23 +2,30 @@
 
 import { oggiRoma } from '@/lib/storici/retroattivita';
 import { CompetenzaStorica } from '@/components/features/primaria/CompetenzaStorica';
+import { DataVoce } from '@/components/features/primaria/DataVoce';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Star, Check, Lock } from 'lucide-react';
-import { dataCivile } from '@/i18n/config';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { suggerisciGiudizio } from '@/lib/primaria/suggerimento';
+import { nomeCompleto } from '@/lib/format/nome';
+import type { PeriodoScrutinio } from '@/lib/primaria/periodo';
 import { logClient } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
 import type { ScalaVoce } from '@/lib/primaria/media';
 import {
+  AutoreVoceRiga,
   AzioniVoce,
+  FILTRO_VOCI_INIZIALE,
+  FiltriVoci,
   SceltaTipoImpreparato,
+  filtraVociRecenti,
   tipoImpreparato,
   unisciVociRecenti,
+  type FiltroVoci,
   type ImpreparatoRecente,
   type TipoImpreparato,
   type ValutazioneRecente,
@@ -59,6 +66,13 @@ export default function ValutazioniPage() {
   const [recenti, setRecenti] = useState<ValutazioneRecente[]>([]);
   /** Gli impreparati dell'alunno: quelli della materia scelta più quelli senza materia. */
   const [impreparati, setImpreparati] = useState<ImpreparatoRecente[]>([]);
+  /**
+   * I quadrimestri con le date delle sedi dei voti letti (la GET dei voti; quella degli impreparati
+   * non li porta). `[]` = la sede non li ha: il filtro per quadrimestre non si offre.
+   */
+  const [periodi, setPeriodi] = useState<PeriodoScrutinio[]>([]);
+  /** I filtri dello storico: valgono per l'alunno e la materia a schermo, e tornano «Tutti» cambiandoli. */
+  const [filtro, setFiltro] = useState<FiltroVoci>(FILTRO_VOCI_INIZIALE);
   /** `false` = il server ha dato l'elenco ma non i permessi: si vede, senza bottoni. */
   const [permessiDisponibili, setPermessiDisponibili] = useState(true);
   /** Una delle due letture delle «recenti» non è riuscita: l'elenco a schermo non è completo. */
@@ -200,6 +214,7 @@ export default function ValutazioniPage() {
       const okG = rg.ok && dg?.success === true;
       setRecenti(okV ? (dv.data ?? []) : []);
       setImpreparati(okG ? (dg.data ?? []) : []);
+      setPeriodi(okV && Array.isArray(dv.periodi) ? dv.periodi : []);
       setRecentiDi(selezione);
       setPermessiDisponibili((!okV || dv.statoVociDisponibile !== false) && (!okG || dg.statoVociDisponibile !== false));
       setRecentiIncomplete(!okV || !okG);
@@ -226,6 +241,7 @@ export default function ValutazioniPage() {
       if (mia !== richiestaRecenti.current) return;
       setRecenti([]);
       setImpreparati([]);
+      setPeriodi([]);
       setRecentiDi(selezione);
       setRecentiIncomplete(true);
     });
@@ -275,8 +291,9 @@ export default function ValutazioniPage() {
     ricaricaSelezioneAttuale();
   }, [ricaricaSelezioneAttuale]);
 
-  // Il docente segna l'alunno selezionato impreparato OGGI (data di Roma), col
-  // tipo scelto e il motivo facoltativo; la materia è quella selezionata, se c'è.
+  // Il docente segna l'alunno selezionato impreparato nel giorno scelto nel modulo (oggi, a Roma,
+  // se non lo cambia: è la stessa data del voto), col tipo scelto e il motivo facoltativo;
+  // la materia è quella selezionata, se c'è.
   const segnaImpreparato = async () => {
     if (segnando) return;
     // L'alunno al momento del clic: se a schermo cambia mentre la POST è in volo,
@@ -295,7 +312,7 @@ export default function ValutazioniPage() {
           sectionId,
           alunnoId: alunnoInviato,
           materiaId: materiaId || undefined,
-          data: gestioneStorica ? dataCompetenza : dataCivile(),
+          data: dataCompetenza,
           tipo: tipoNuovoImpreparato,
           motivo: motivo || undefined,
         }),
@@ -337,6 +354,12 @@ export default function ValutazioniPage() {
   const selezioneCorrente = `${alunnoId}|${materiaId}`;
   const recentiDellaSelezione = recentiDi === selezioneCorrente;
   const vociRecenti = recentiDellaSelezione ? unisciVociRecenti(recenti, impreparati) : [];
+  // Un quadrimestre scelto che questa lettura non ha (altra sede) non filtra: sarebbe un elenco vuoto senza motivo.
+  const filtroAttivo: FiltroVoci = { ...filtro, periodoId: periodi.some((p) => p.id === filtro.periodoId) ? filtro.periodoId : null };
+  const vociVisibili = filtraVociRecenti(vociRecenti, filtroAttivo, periodi);
+  // Il titolo porta i nomi della selezione a schermo: niente lettura in più.
+  const alunnoScelto = alunni.find((a) => a.id === alunnoId);
+  const materiaScelta = materie.find((m) => m.id === materiaId);
   // L'esito («Valutazione eliminata ✓») resta per la rilettura che lo segue, ma
   // non sotto un altro alunno o un'altra materia.
   const esitoVisibile = esitoElenco?.selezione === selezioneCorrente ? esitoElenco : null;
@@ -364,7 +387,9 @@ export default function ValutazioniPage() {
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({
           alunnoId, sectionId, materiaId, tipoProva, modalita,
-          ...(gestioneStorica ? { data: dataCompetenza, docenteId } : {}),
+          // La data della prova vale per tutte; il docente titolare lo sceglie solo lo staff.
+          data: dataCompetenza,
+          ...(gestioneStorica ? { docenteId } : {}),
           dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
           giudizioSintetico,
           giudizioTesto: giudizioTesto || undefined,
@@ -445,19 +470,23 @@ export default function ValutazioniPage() {
 
         <div className={`grid gap-2 mb-3 ${classe === 'ok' && materie.length === 0 ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {/* min-w-0: senza, il min-content delle option lunghe sfonda la grid a 320px */}
-          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+          <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setFiltro(FILTRO_VOCI_INIZIALE); }} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">{t('comuneAlunnoPlaceholder')}</option>
             {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
           </select>
           {!(classe === 'ok' && materie.length === 0) && (
-            <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+            <select value={materiaId} onChange={(e) => { setMateriaId(e.target.value); setFiltro(FILTRO_VOCI_INIZIALE); }} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
               <option value="">{t('valutazioniMateriaPlaceholder')}</option>
               {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
             </select>
           )}
         </div>
 
-        <CompetenzaStorica attiva={gestioneStorica} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataCompetenza} docenteId={docenteId} onDocente={setDocenteId} />
+        {/* La data della prova è di tutte; allo staff si aggiunge solo la scelta del docente titolare. */}
+        <div className="mb-3">
+          <DataVoce valore={dataCompetenza} onCambia={setDataCompetenza} avvisoStorico={gestioneStorica} />
+        </div>
+        <CompetenzaStorica attiva={gestioneStorica} conData={false} sectionId={sectionId} userId={userId} data={dataCompetenza} onData={setDataCompetenza} docenteId={docenteId} onDocente={setDocenteId} />
 
         {obiettivi.length > 0 && (
           <div className="mb-3 rounded-card border border-kidville-green/20 bg-kidville-cream/40 p-3">
@@ -584,7 +613,11 @@ export default function ValutazioniPage() {
       </div>
 
       <div className="rounded-card bg-white p-5 shadow-sm">
-        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">{t('valutazioniRecentiTitolo')}</h3>
+        {alunnoScelto && materiaScelta && (
+          <h3 className="mb-3 break-words font-barlow text-base font-bold text-kidville-ink">
+            {t('valutazioniStoricoTitolo', { alunno: nomeCompleto(alunnoScelto.nome, alunnoScelto.cognome), materia: materiaScelta.nome })}
+          </h3>
+        )}
         {!alunnoId || !materiaId ? (
           <p className="font-maven text-sm text-kidville-muted">{t('valutazioniRecentiVuoto')}</p>
         ) : (
@@ -603,8 +636,9 @@ export default function ValutazioniPage() {
                 {esitoVisibile.testo}
               </p>
             )}
+            {vociRecenti.length > 0 && <FiltriVoci filtro={filtroAttivo} onCambia={setFiltro} periodi={periodi} />}
             <ul className="divide-y divide-kidville-line">
-              {vociRecenti.map((voce) => {
+              {vociVisibili.map((voce) => {
                 const azioni = (
                   <AzioniVoce
                     voce={voce}
@@ -635,6 +669,7 @@ export default function ValutazioniPage() {
                         <span className="text-xs text-kidville-sub">{f.dataBreve(g.data)}</span>
                       </div>
                       {g.motivo && <p className="font-maven text-xs text-kidville-sub mt-0.5">{g.motivo}</p>}
+                      <AutoreVoceRiga autore={g.autore} />
                       {azioni}
                     </li>
                   );
@@ -642,7 +677,7 @@ export default function ValutazioniPage() {
                 const v = voce.voce;
                 return (
                   <li key={`valutazione-${v.id}`} className="py-2.5" data-testid={`voce-valutazione-${v.id}`}>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-maven text-sm font-semibold text-kidville-green">
                         {v.giudizio_sintetico || (v.modalita === 'dimensioni' ? t('valutazioniPerDimensioni') : '—')}
                       </span>
@@ -659,11 +694,12 @@ export default function ValutazioniPage() {
                     </div>
                     {v.argomento && <p className="font-maven text-xs text-kidville-ink mt-0.5"><span className="text-kidville-sub">{t('valutazioniArgomentoRecente')}</span> {v.argomento}</p>}
                     {v.giudizio_testo && <p className="font-maven text-xs text-kidville-sub mt-0.5">{v.giudizio_testo}</p>}
+                    <AutoreVoceRiga autore={v.autore} />
                     {azioni}
                   </li>
                 );
               })}
-              {vociRecenti.length === 0 && <li className="py-2 font-maven text-sm text-kidville-sub">{t('valutazioniNessunaValutazione')}</li>}
+              {vociVisibili.length === 0 && <li className="py-2 font-maven text-sm text-kidville-sub">{t('valutazioniNessunaValutazione')}</li>}
             </ul>
           </>
         )}

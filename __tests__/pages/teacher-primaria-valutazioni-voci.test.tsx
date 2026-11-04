@@ -53,6 +53,8 @@ vi.mock('next/navigation', () => ({
 }));
 
 import ValutazioniPage from '@/app/(dashboard)/teacher/primaria/[sectionId]/valutazioni/page';
+import type { PeriodoScrutinio } from '@/lib/primaria/periodo';
+import { SEDE_A } from '../fixtures/sedi';
 import {
   bozzaDaImpreparato,
   bozzaDaValutazione,
@@ -60,11 +62,13 @@ import {
   corpoModificaValutazione,
   conCambioDimensioni,
   dimensioniCambiate,
+  filtraVociRecenti,
   tipoImpreparato,
   unisciVociRecenti,
   valutazioneCambiata,
   type ImpreparatoRecente,
   type ValutazioneRecente,
+  type VoceRecente,
 } from '@/components/features/primaria/VociValutazioni';
 
 const VAL_ID = 'v0000001-0000-4000-8000-000000000001';
@@ -115,6 +119,8 @@ const fetchMock = vi.fn();
 let valutazioni: ValutazioneRecente[] = [];
 let impreparati: ImpreparatoRecente[] = [];
 let statoVociDisponibile = true;
+/** I periodi con le date che la GET dei voti restituisce (D16): `[]` = la sede non li ha. */
+let periodiSede: PeriodoScrutinio[] = [];
 let ruolo = 'educator';
 let rispostaMutazione: { status: number; corpo: unknown } = { status: 200, corpo: { success: true } };
 /** La lettura della classe: `null` = la risposta normale, con due materie. */
@@ -151,6 +157,7 @@ beforeEach(() => {
     }),
   ];
   statoVociDisponibile = true;
+  periodiSede = [];
   ruolo = 'educator';
   rispostaMutazione = { status: 200, corpo: { success: true } };
   letturaB = null;
@@ -183,7 +190,7 @@ beforeEach(() => {
     if (url.startsWith('/api/primaria/sblocca') && metodo === 'POST') return risposta(200, { success: true });
     if (metodo === 'GET' && letturaB && url.includes(`alunnoId=${ALUNNO_B.id}`)) return letturaB(url);
     if (url.startsWith('/api/primaria/valutazioni') && metodo === 'GET') {
-      return risposta(200, { success: true, data: valutazioni, statoVociDisponibile });
+      return risposta(200, { success: true, data: valutazioni, statoVociDisponibile, autoriDisponibili: true, periodi: periodiSede });
     }
     if (url.startsWith('/api/primaria/giustifiche-didattiche') && metodo === 'GET') {
       return risposta(200, { success: true, data: impreparati, statoVociDisponibile });
@@ -882,7 +889,7 @@ describe('nuova valutazione staff con competenza storica', () => {
     ruolo = 'segreteria';
     await montaEScegli();
     await screen.findByRole('option', { name: 'Fittizia Ada' });
-    fireEvent.change(screen.getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+    fireEvent.change(screen.getByLabelText('Data della prova'), { target: { value: '2020-04-02' } });
     fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
     scegliGiudizio('Buono');
     fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Argomento fittizio' } });
@@ -902,8 +909,374 @@ it('la modale staff può cambiare solo la data della valutazione', async () => {
   await montaEScegli();
   fireEvent.click(await screen.findByRole('button', { name: /^Modifica la valutazione/ }));
   const dialogo = await screen.findByRole('dialog');
-  fireEvent.change(within(dialogo).getByLabelText('Data di competenza'), { target: { value: '2020-04-02' } });
+  fireEvent.change(within(dialogo).getByLabelText('Data della prova'), { target: { value: '2020-04-02' } });
   fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
   await waitFor(() => expect(chiamate('PATCH', '/api/primaria/valutazioni')).toHaveLength(1));
   expect(corpoDi(chiamate('PATCH', '/api/primaria/valutazioni')[0]!)).toMatchObject({ data: '2020-04-02' });
+});
+
+
+/**
+ * (j) LA DATA DELLA PROVA E LO STORICO DELL'ALUNNO NELLA MATERIA
+ * (spec 2026-11-04, D1 · D15-D17).
+ *
+ * La docente registra oggi l'interrogazione di venerdì con la data di venerdì, poi apre lo
+ * storico dell'alunno nella materia e vede ogni voto — il suo e quello della collega di prima —
+ * in ordine di data, con chi l'ha messo. I voti della collega sono in sola lettura (nessun
+ * Modifica/Elimina, anche se la GET li desse `modificabile`); l'appunto numerico resta
+ * visibile. Filtri per tipo di prova e per quadrimestre (solo se la sede ha i periodi con le date).
+ */
+describe('(j) data della prova e storico', () => {
+  const IO = { id: DOCENTE, nome: 'Ada', cognome: 'Fittizia' };
+  const COLLEGA = { id: 'c0110000-0000-4000-8000-0000000000c1', nome: 'Bianca', cognome: 'Verdi' };
+  const VAL_COLLEGA = 'v0000009-0000-4000-8000-000000000009';
+  const VAL_SCRITTO = 'v0000002-0000-4000-8000-000000000002';
+  const VAL_PRATICO = 'v0000003-0000-4000-8000-000000000003';
+  const OGGI_ROMA = '2026-11-04';
+
+  const periodo = (id: string, nome: string, ordine: number, data_inizio: string | null, data_fine: string | null): PeriodoScrutinio => ({
+    id, scuola_id: SEDE_A, anno_scolastico: '2025/2026', nome, ordine, data_inizio, data_fine, attivo: true,
+  });
+  const P1 = periodo('p0000001-0000-4000-8000-000000000001', 'Primo quadrimestre', 1, '2025-09-01', '2026-01-31');
+  const P2 = periodo('p0000002-0000-4000-8000-000000000002', 'Secondo quadrimestre', 2, '2026-02-01', '2026-06-30');
+
+  /** I data-testid delle voci a schermo, nell'ordine. `query`: l'elenco può essere vuoto. */
+  const vociASchermo = () =>
+    screen.queryAllByTestId(/^voce-(valutazione|impreparato)-/).map((el) => el.getAttribute('data-testid'));
+
+  beforeEach(() => {
+    // 09:00 UTC del 4/11 = 10:00 a Roma: «oggi» è il 4 novembre. Solo Date è finto.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-04T09:00:00Z'));
+  });
+
+  async function salvaUnVoto() {
+    fireEvent.change(screen.getByPlaceholderText('Es. Le tabelline del 7, La comprensione del testo…'), { target: { value: 'Le frazioni' } });
+    scegliGiudizio('Buono');
+    fireEvent.click(screen.getByRole('button', { name: 'Salva valutazione' }));
+    await waitFor(() => expect(chiamate('POST', '/api/primaria/valutazioni')).toHaveLength(1));
+    return corpoDi(chiamate('POST', '/api/primaria/valutazioni')[0]!);
+  }
+
+  describe('la data nel modulo', () => {
+    it('la docente vede la data, già con oggi; la POST porta data e non docenteId', async () => {
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+      await montaEScegli();
+      const campo = screen.getByLabelText('Data della prova') as HTMLInputElement;
+      expect(campo.value).toBe(OGGI_ROMA);
+      expect(campo.max).toBe(OGGI_ROMA);
+      // La scelta del docente titolare è dello staff: alla docente non si offre.
+      expect(screen.queryByLabelText('Docente titolare')).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
+      fireEvent.change(campo, { target: { value: '2026-10-30' } });
+      // Nemmeno per un giorno passato la docente vede l'avviso riservato allo staff.
+      expect(screen.queryByText(/senza inviare avvisi alla famiglia/)).toBeNull();
+      const corpo = await salvaUnVoto();
+      expect(corpo).toMatchObject({ data: '2026-10-30', alunnoId: ALUNNO.id, materiaId: MATERIA });
+      expect(corpo).not.toHaveProperty('docenteId');
+    });
+
+    it('senza toccare il campo, la POST porta la data di oggi a Roma', async () => {
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+      await montaEScegli();
+      expect(await salvaUnVoto()).toMatchObject({ data: OGGI_ROMA });
+    });
+
+    it('la segreteria vede data e docente; la POST li porta tutti e due', async () => {
+      ruolo = 'segreteria';
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuova' } } };
+      await montaEScegli();
+      // L'elenco dei docenti arriva solo a ruolo letto: è la PRESENZA che dice che lo staff è attivo.
+      await screen.findByRole('option', { name: 'Fittizia Ada' });
+      const campo = screen.getByLabelText('Data della prova') as HTMLInputElement;
+      expect(campo.value).toBe(OGGI_ROMA);
+      // Un campo data solo: quello di CompetenzaStorica è spento.
+      expect(screen.queryByLabelText('Data di competenza')).toBeNull();
+      fireEvent.change(campo, { target: { value: '2026-10-30' } });
+      expect(screen.getByRole('status').textContent).toContain('senza inviare avvisi alla famiglia');
+      fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: DOCENTE } });
+      const corpo = await salvaUnVoto();
+      expect(corpo).toMatchObject({ data: '2026-10-30', docenteId: DOCENTE });
+    });
+
+    it('l’impreparato parte con la stessa data scelta', async () => {
+      rispostaMutazione = { status: 201, corpo: { success: true, data: { id: 'nuovo' } } };
+      await montaEScegli();
+      fireEvent.change(screen.getByLabelText('Data della prova'), { target: { value: '2026-10-30' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Segna impreparato' }));
+      expect(await screen.findByText('Impreparato segnato ✓')).toBeTruthy();
+      const post = chiamate('POST', '/api/primaria/giustifiche-didattiche');
+      expect(post).toHaveLength(1);
+      expect(corpoDi(post[0]!)).toMatchObject({ data: '2026-10-30', alunnoId: ALUNNO.id, materiaId: MATERIA });
+    });
+
+    it('un rifiuto per la data (DATA_FUTURA) si mostra tradotto dal catalogo', async () => {
+      rispostaMutazione = { status: 422, corpo: { error: 'Frase del server', codice: 'DATA_FUTURA' } };
+      await montaEScegli();
+      await salvaUnVoto();
+      expect(await screen.findByText('La data non può essere nel futuro.')).toBeTruthy();
+    });
+  });
+
+  describe('lo storico: titolo, autore, sola lettura', () => {
+    it('titolo «Tutti i voti di <alunno> in <materia>»', async () => {
+      await montaEScegli();
+      expect(await screen.findByRole('heading', { name: 'Tutti i voti di Mario Rossi in Matematica' })).toBeTruthy();
+      // Il vecchio titolo non c'è più.
+      expect(screen.queryByText('Valutazioni recenti')).toBeNull();
+    });
+
+    it('senza alunno e materia non c’è titolo, solo l’invito a sceglierli', async () => {
+      render(<ValutazioniPage />);
+      await screen.findByRole('option', { name: 'Rossi Mario' });
+      expect(screen.getByText('Seleziona alunno e materia.')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: /^Tutti i voti di/ })).toBeNull();
+    });
+
+    it('voto della collega: niente Modifica né Elimina, l’appunto numerico si vede, c’è «Messo da»', async () => {
+      valutazioni = [
+        // `modificabile: true` di proposito: la regola D17 della pagina vale anche se la GET sbagliasse.
+        valutazione({ id: VAL_COLLEGA, maestra_id: COLLEGA.id, propria: false, autore: COLLEGA, annotazione_numerica: 7.5, argomento: 'Le frazioni', creato_il: '2026-09-21T08:00:00Z', modificabile: true }),
+        valutazione({ propria: true, autore: IO }),
+      ];
+      impreparati = [];
+      await montaEScegli();
+      const collega = screen.getByTestId(`voce-valutazione-${VAL_COLLEGA}`);
+      expect(within(collega).getByText('Messo da Bianca Verdi')).toBeTruthy();
+      expect(within(collega).getByText('✎ 7,5')).toBeTruthy();
+      expect(within(collega).queryByRole('button')).toBeNull();
+      const mia = screen.getByTestId(`voce-valutazione-${VAL_ID}`);
+      expect(within(mia).getByText('Messo da Ada Fittizia')).toBeTruthy();
+      expect(within(mia).getByRole('button', { name: /^Modifica la valutazione/ })).toBeTruthy();
+      expect(within(mia).getByRole('button', { name: /^Elimina la valutazione/ })).toBeTruthy();
+    });
+
+    it('lo staff vede Modifica ed Elimina anche sul voto della collega', async () => {
+      ruolo = 'segreteria';
+      valutazioni = [valutazione({ maestra_id: COLLEGA.id, propria: false, autore: COLLEGA })];
+      impreparati = [];
+      await montaEScegli();
+      const riga = screen.getByTestId(`voce-valutazione-${VAL_ID}`);
+      // Il ruolo arriva da /me, un giro dopo la lista: findBy, non getBy.
+      expect(await within(riga).findByRole('button', { name: /^Modifica la valutazione/ })).toBeTruthy();
+      expect(within(riga).getByRole('button', { name: /^Elimina la valutazione/ })).toBeTruthy();
+      expect(within(riga).getByText('Messo da Bianca Verdi')).toBeTruthy();
+    });
+
+    it('impreparati: quello della collega è di sola lettura, quello del genitore resta azionabile', async () => {
+      valutazioni = [valutazione({ propria: true, autore: IO })];
+      impreparati = [
+        impreparato({ propria: false, autore: COLLEGA }),
+        impreparato({ id: IMP_GEN, materia_id: null, data: '2026-09-18', origine: 'genitore', tipo: 'giustificato', motivo: 'Febbre', creato_il: '2026-09-17T18:00:00Z', propria: false, autore: null }),
+      ];
+      await montaEScegli();
+      const collega = screen.getByTestId(`voce-impreparato-${IMP_DOC}`);
+      expect(within(collega).getByText('Messo da Bianca Verdi')).toBeTruthy();
+      expect(within(collega).queryByRole('button')).toBeNull();
+      const genitore = screen.getByTestId(`voce-impreparato-${IMP_GEN}`);
+      expect(within(genitore).getByRole('button', { name: /^Modifica l’impreparato/ })).toBeTruthy();
+      expect(within(genitore).getByRole('button', { name: /^Elimina l’impreparato/ })).toBeTruthy();
+      expect(within(genitore).queryByText(/^Messo da/)).toBeNull();
+    });
+  });
+
+  describe('voto congelato', () => {
+    beforeEach(() => {
+      valutazioni = [valutazione({ modificabile: false, bloccata: true, congelata: true, giorniLimite: 2, propria: true, autore: IO })];
+    });
+
+    it('alla docente: il messaggio dello scrutinio chiuso al posto di «bloccata», niente bottoni', async () => {
+      await montaEScegli();
+      const riga = screen.getByTestId(`voce-bloccata-${VAL_ID}`);
+      expect(riga.textContent).toContain('Scrutinio chiuso: per modificarlo serve lo sblocco della Direzione.');
+      expect(riga.textContent).not.toContain('Bloccata: superato il termine');
+      expect(screen.queryByRole('button', { name: /Modifica la valutazione/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Sblocca/ })).toBeNull();
+    });
+
+    it('alla Direzione: lo stesso messaggio, e «Sblocca» resta', async () => {
+      ruolo = 'admin';
+      await montaEScegli();
+      expect(await screen.findByRole('button', { name: 'Sblocca la valutazione del 20/09/2026 (Le tabelline)' })).toBeTruthy();
+      expect(screen.getByTestId(`voce-bloccata-${VAL_ID}`).textContent).toContain('Scrutinio chiuso');
+    });
+  });
+
+  describe('Modifica del proprio voto e data', () => {
+    beforeEach(() => {
+      valutazioni = [valutazione({ propria: true, autore: IO })];
+    });
+
+    async function apriModificaVoto() {
+      await montaEScegli();
+      fireEvent.click(screen.getByRole('button', { name: 'Modifica la valutazione del 20/09/2026 (Le tabelline)' }));
+      return screen.findByRole('dialog');
+    }
+
+    it('modifica del proprio voto: la docente vede il campo data e la PATCH porta data solo se cambiata', async () => {
+      const dialogo = await apriModificaVoto();
+      const campo = within(dialogo).getByLabelText('Data della prova') as HTMLInputElement;
+      expect(campo.value).toBe('2026-09-20');
+      expect(campo.max).toBe(OGGI_ROMA);
+      // Cambia solo il giudizio: la data non parte.
+      fireEvent.change(within(dialogo).getByLabelText('Giudizio sintetico'), { target: { value: 'Ottimo' } });
+      fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+      expect(await screen.findByText('Valutazione modificata ✓')).toBeTruthy();
+      const corpo = corpoDi(chiamate('PATCH', '/api/primaria/valutazioni')[0]!);
+      expect(corpo).toMatchObject({ id: VAL_ID, giudizioSintetico: 'Ottimo' });
+      expect(corpo).not.toHaveProperty('data');
+    });
+
+    it('cambiando SOLO la data, la PATCH parte con la data (e basta quella)', async () => {
+      const dialogo = await apriModificaVoto();
+      fireEvent.change(within(dialogo).getByLabelText('Data della prova'), { target: { value: '2026-09-18' } });
+      fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+      expect(await screen.findByText('Valutazione modificata ✓')).toBeTruthy();
+      const patch = chiamate('PATCH', '/api/primaria/valutazioni');
+      expect(patch).toHaveLength(1);
+      expect(corpoDi(patch[0]!)).toMatchObject({ id: VAL_ID, data: '2026-09-18' });
+    });
+
+    it('senza cambi non parte niente', async () => {
+      const dialogo = await apriModificaVoto();
+      fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+      expect(await within(dialogo).findByText('Non hai cambiato niente.')).toBeTruthy();
+      expect(chiamate('PATCH', '/api/primaria/valutazioni')).toHaveLength(0);
+    });
+
+    it('un rifiuto per il quadrimestre chiuso (423) si mostra tradotto, sopra l’elenco', async () => {
+      rispostaMutazione = { status: 423, corpo: { error: 'Frase del server', codice: 'QUADRIMESTRE_CHIUSO' } };
+      const dialogo = await apriModificaVoto();
+      fireEvent.change(within(dialogo).getByLabelText('Data della prova'), { target: { value: '2025-10-01' } });
+      fireEvent.click(within(dialogo).getByRole('button', { name: 'Salva' }));
+      const avviso = await screen.findByRole('alert');
+      expect(avviso.textContent).toContain('Lo scrutinio del quadrimestre di questa data è chiuso');
+    });
+
+    it('la data dell’impreparato in modifica non supera oggi', async () => {
+      await montaEScegli();
+      fireEvent.click(screen.getByRole('button', { name: 'Modifica l’impreparato del 22/09/2026' }));
+      const dialogo = await screen.findByRole('dialog');
+      expect((within(dialogo).getByLabelText('Data') as HTMLInputElement).max).toBe(OGGI_ROMA);
+    });
+  });
+
+  describe('filtri', () => {
+    beforeEach(() => {
+      valutazioni = [
+        valutazione({ id: VAL_ID, tipo: 'orale', data_evento: '2026-09-20' }),
+        valutazione({ id: VAL_SCRITTO, tipo: 'scritto', data_evento: '2026-09-19', creato_il: '2026-09-19T08:00:00Z' }),
+        valutazione({ id: VAL_PRATICO, tipo: 'pratico', data_evento: '2026-09-17', creato_il: '2026-09-17T08:00:00Z' }),
+      ];
+    });
+
+    it('filtro per tipo: solo gli scritti', async () => {
+      await montaEScegli();
+      const tipo = await screen.findByRole('combobox', { name: 'Tipo di prova' });
+      expect(vociASchermo()).toHaveLength(5);
+      fireEvent.change(tipo, { target: { value: 'scritto' } });
+      expect(vociASchermo()).toEqual([`voce-valutazione-${VAL_SCRITTO}`]);
+      fireEvent.change(tipo, { target: { value: 'impreparato' } });
+      expect(vociASchermo()).toEqual([`voce-impreparato-${IMP_DOC}`, `voce-impreparato-${IMP_GEN}`]);
+      fireEvent.change(tipo, { target: { value: 'tutti' } });
+      expect(vociASchermo()).toHaveLength(5);
+    });
+
+    it('il filtro per tipo offre «Tutti», i tre tipi della prova e gli impreparati', async () => {
+      await montaEScegli();
+      const tipo = await screen.findByRole('combobox', { name: 'Tipo di prova' });
+      expect(within(tipo).getAllByRole('option').map((o) => o.textContent)).toEqual(['Tutti', 'Orale', 'Scritto', 'Pratico', 'Impreparati']);
+    });
+
+    it('un filtro che non lascia niente lo dice, e non nasconde i filtri', async () => {
+      valutazioni = [valutazione({ id: VAL_ID, tipo: 'orale', data_evento: '2026-09-20' })];
+      await montaEScegli();
+      const tipo = await screen.findByRole('combobox', { name: 'Tipo di prova' });
+      fireEvent.change(tipo, { target: { value: 'pratico' } });
+      expect(screen.getByText('Nessuna valutazione.')).toBeTruthy();
+      expect(vociASchermo()).toEqual([]);
+      expect(screen.getByRole('combobox', { name: 'Tipo di prova' })).toBeTruthy();
+    });
+
+    it('cambiando alunno il filtro torna su «Tutti»', async () => {
+      await montaEScegli();
+      fireEvent.change(await screen.findByRole('combobox', { name: 'Tipo di prova' }), { target: { value: 'scritto' } });
+      expect(vociASchermo()).toHaveLength(1);
+      fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: ALUNNO_B.id } });
+      // PRESENZA prima: le voci del secondo alunno sono tornate tutte.
+      await waitFor(() => expect(vociASchermo()).toHaveLength(5));
+      expect((screen.getByRole('combobox', { name: 'Tipo di prova' }) as HTMLSelectElement).value).toBe('tutti');
+    });
+
+    it('filtro quadrimestre: assente con periodi vuoti', async () => {
+      periodiSede = [];
+      await montaEScegli();
+      // PRESENZA prima (il filtro per tipo c'è, quindi l'elenco è stato letto), poi l'assenza.
+      expect(await screen.findByRole('combobox', { name: 'Tipo di prova' })).toBeTruthy();
+      expect(screen.queryByRole('combobox', { name: 'Quadrimestre' })).toBeNull();
+    });
+
+    it('filtro quadrimestre: presente e funzionante con due periodi', async () => {
+      periodiSede = [P1, P2];
+      valutazioni = [
+        valutazione({ id: VAL_ID, tipo: 'orale', data_evento: '2025-10-10' }),
+        valutazione({ id: VAL_SCRITTO, tipo: 'scritto', data_evento: '2026-03-05', creato_il: '2026-03-05T09:00:00Z' }),
+      ];
+      impreparati = [impreparato({ data: '2026-03-10' })];
+      await montaEScegli();
+      const quadrimestre = await screen.findByRole('combobox', { name: 'Quadrimestre' });
+      expect(within(quadrimestre).getAllByRole('option').map((o) => o.textContent)).toEqual(['Tutti', 'Primo quadrimestre', 'Secondo quadrimestre']);
+      expect(vociASchermo()).toHaveLength(3);
+      fireEvent.change(quadrimestre, { target: { value: P1.id } });
+      expect(vociASchermo()).toEqual([`voce-valutazione-${VAL_ID}`]);
+      // L'impreparato (10/3) cade nel secondo periodo: il filtro vale anche per lui.
+      fireEvent.change(quadrimestre, { target: { value: P2.id } });
+      expect(vociASchermo()).toEqual([`voce-impreparato-${IMP_DOC}`, `voce-valutazione-${VAL_SCRITTO}`]);
+      // Insieme al tipo.
+      fireEvent.change(screen.getByRole('combobox', { name: 'Tipo di prova' }), { target: { value: 'scritto' } });
+      expect(vociASchermo()).toEqual([`voce-valutazione-${VAL_SCRITTO}`]);
+      fireEvent.change(quadrimestre, { target: { value: '' } });
+      expect(vociASchermo()).toEqual([`voce-valutazione-${VAL_SCRITTO}`]);
+    });
+  });
+
+  describe('filtraVociRecenti (puro)', () => {
+    const voci = () => unisciVociRecenti(
+      [
+        valutazione({ id: 'a', tipo: 'orale', data_evento: '2025-10-10' }),
+        valutazione({ id: 'b', tipo: 'scritto', data_evento: '2025-12-05' }),
+        valutazione({ id: 'c', tipo: 'scritto', data_evento: '2026-03-05' }),
+      ],
+      [impreparato({ id: 'i', data: '2026-03-10' })],
+    );
+    const ids = (v: readonly VoceRecente[]) => v.map((x) => x.voce.id);
+    const periodi = [P1, P2];
+
+    it('senza filtri restituisce tutte le voci, nello stesso ordine', () => {
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'tutti', periodoId: null }, periodi))).toEqual(['i', 'c', 'b', 'a']);
+    });
+
+    it('per tipo', () => {
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'scritto', periodoId: null }, periodi))).toEqual(['c', 'b']);
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'orale', periodoId: null }, periodi))).toEqual(['a']);
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'pratico', periodoId: null }, periodi))).toEqual([]);
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'impreparato', periodoId: null }, periodi))).toEqual(['i']);
+    });
+
+    it('per periodo (il giorno della voce, non il momento in cui è stata scritta)', () => {
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'tutti', periodoId: P1.id }, periodi))).toEqual(['b', 'a']);
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'tutti', periodoId: P2.id }, periodi))).toEqual(['i', 'c']);
+    });
+
+    it('tipo e periodo insieme; un periodo sconosciuto non copre niente', () => {
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'scritto', periodoId: P2.id }, periodi))).toEqual(['c']);
+      expect(ids(filtraVociRecenti(voci(), { tipo: 'tutti', periodoId: P1.id }, []))).toEqual([]);
+    });
+
+    it('non muta l’elenco ricevuto', () => {
+      const elenco = voci();
+      filtraVociRecenti(elenco, { tipo: 'scritto', periodoId: P1.id }, periodi);
+      expect(ids(elenco)).toEqual(['i', 'c', 'b', 'a']);
+    });
+  });
 });

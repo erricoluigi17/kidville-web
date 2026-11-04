@@ -30,4 +30,19 @@ describe('competenze storiche nella pagina condivisa admin/docente', () => {
     expect(p.onDocente).toHaveBeenCalledWith('maestra')
     expect(screen.getByRole('status')).toHaveTextContent('senza inviare avvisi alla famiglia')
   })
+  it('conData={false}: niente campo data, resta la scelta del docente', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, assigned: [
+      { id: 'maestra', nome: 'Ada', cognome: 'Fittizia', ruolo: 'educator' },
+    ] }) })))
+    const p = props()
+    // La data è nel passato: con il campo spento non si vede nemmeno l'avviso (lo dà `DataVoce`).
+    render(<CompetenzaStorica {...p} conData={false} />)
+    expect(await screen.findByRole('option', { name: 'Fittizia Ada' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Docente titolare')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Data di competenza')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Docente titolare'), { target: { value: 'maestra' } })
+    expect(p.onDocente).toHaveBeenCalledWith('maestra')
+    expect(p.onData).not.toHaveBeenCalled()
+  })
 })

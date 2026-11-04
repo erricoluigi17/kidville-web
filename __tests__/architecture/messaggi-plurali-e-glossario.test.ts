@@ -825,6 +825,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['teacherPresenze.pdfPiePagina', 'forma «pagina N di M»: posizione in una sequenza'],
         ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
         ['parentChat.chatFotoConversazione', 'forma «foto N di M»: posizione in una sequenza'],
+        ['teacherPrimaria.valutazioniStoricoTitolo', 'nome e cognome dell’alunno e nome della materia: titolo «Tutti i voti di {alunno} in {materia}»'],
 
         // (c) FRAZIONE `n/tot`: il sostantivo concorda con il totale, non con il
         //     numeratore. «1/20 presenti» è corretto e «1/20 presente» sarebbe
@@ -1004,7 +1005,16 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // scatta perché dopo il segnaposto viene «di»/«of»; cambiare la preposizione o scrivere
         // «{n}/{totale}» per schivarlo è la frase piegata al lock già scartata più volte, qui sopra.
         // Un messaggio nuovo, un'eccezione dichiarata: il tetto sale di uno e non di più.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(43)
+        //
+        // 2026-11-04 · 43 → 44. `teacherPrimaria.valutazioniStoricoTitolo` («Tutti i voti di
+        // {alunno} in {materia}» / «All assessments of {alunno} in {materia}») è il titolo dello
+        // storico di un alunno nella sua materia (spec «voti con data», D15): dice DI CHI e IN CHE
+        // MATERIA sono i voti elencati sotto. Categoria (a), gemella di `detailPageRiattivato`:
+        // `{alunno}` è un nome e un cognome, `{materia}` il nome della materia, e «in» è la
+        // preposizione che li lega — nessun sostantivo concorda con un numero. Il riconoscitore
+        // scatta perché dopo il segnaposto viene «in»; riscrivere il titolo per schivarlo è la
+        // frase piegata al lock già scartata più volte, qui sopra.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(44)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

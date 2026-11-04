@@ -3527,6 +3527,12 @@ export const CODICI_ERRORE = {
     CHAT_MESSAGGIO_NON_TROVATO: 'erroreChatMessaggioNonTrovato',
     CHAT_CONVERSAZIONE_NON_TROVATA: 'erroreChatConversazioneNonTrovata',
     FIRMA_NON_RIUSCITA: 'erroreFirmaNonRiuscita',
+    /**
+     * Le materie della docente (04/11/2026, `src/lib/auth/materie-docente.ts`): un'insegnante agisce solo sulle
+     * materie che le sono assegnate IN QUELLA CLASSE (la coppia classe-materia, non la sola materia). Lo staff
+     * non è soggetto al controllo. Risponde 403; un guasto della lettura NON è questo codice: è `LETTURA_FALLITA`.
+     */
+    MATERIA_NON_ASSEGNATA: 'erroreMateriaNonAssegnata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

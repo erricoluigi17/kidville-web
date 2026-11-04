@@ -1,6 +1,6 @@
 import { eseguiRitiroGiornate } from '@/lib/primaria/ritiro-notifiche'
 import { applicaRettificaStorica, eRettificaStorica, storicoIndisponibile, versioniStoriche } from '@/lib/primaria/rettifica-storica'
-import { puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
+import { oggiRoma, puoCorreggereStorico, politicaNotificaOperazione } from '@/lib/storici/retroattivita'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -14,6 +14,9 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { linkVotiGenitore, nomeAlunnoPerNotifica } from '@/lib/primaria/notifica-voti-genitore'
 import { leggiBufferVisibilita } from '@/lib/primaria/visibilita-genitore'
+import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
+import { giornoDiRoma } from '@/lib/primaria/periodo'
+import { statoQuadrimestre } from '@/lib/primaria/quadrimestre'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 import {
   chiaveVoce,
@@ -36,10 +39,21 @@ import {
  *    cui il genitore comincia a VEDERE la voce: `visibilita-genitore`), e non
  *    parte se nel frattempo l'impreparato viene eliminato (la DELETE la ritira).
  *  · PATCH e DELETE — `permesso-voce`: autore (`creato_da`) o Segreteria e
- *    Direzione, entro il termine sulla `data` (su entrambe le date se cambia),
- *    oltre il termine solo con lo sblocco. Un impreparato del GENITORE lo possono
- *    modificare e togliere anche i docenti della classe (lo stesso permesso che la
- *    GET dichiara con `modificabile`); il suo tipo resta «giustificato».
+ *    Direzione. Per quello della docente il termine corre dal giorno del SALVATAGGIO
+ *    (`creato_il`), e la voce si CONGELA se la sua data — la vecchia o la nuova —
+ *    cade in un quadrimestre con lo scrutinio chiuso: 423 anche dentro il termine,
+ *    salvo lo sblocco della Direzione. Quello del GENITORE conserva il suo flusso:
+ *    termine sulla `data`, e lo possono modificare e togliere anche i docenti della
+ *    classe (lo stesso permesso che la GET dichiara con `modificabile`); il suo tipo
+ *    resta «giustificato».
+ *  · DATA E QUADRIMESTRE — la `data` mai nel futuro (422), e il quadrimestre che la
+ *    contiene decide `periodo_id` e, se il suo scrutinio è chiuso, chi può
+ *    inserire: la docente no (423), lo staff sì.
+ *  · MATERIE — la docente tocca solo gli impreparati senza materia e quelli delle
+ *    materie che ha in QUELLA classe (regola 19), anche se li ha scritti il genitore.
+ *    Senza materia (D20) li vede e li tocca tutta la classe. Lo staff vede tutto.
+ *  · GET — ogni voce porta `autore` (solo se l'ha scritta una docente), `propria` e
+ *    `congelata`; `creato_da` serve al permesso e non esce.
  */
 
 /** Colonna sconosciuta allo schema: il DB E2E della CI non ha `tipo` (non migrato). */
@@ -79,12 +93,12 @@ const getQuerySchema = z.object({
   materiaId: zUuid.or(z.literal('')).optional(),
 })
 
-// `data` della POST resta stringa permissiva (il DB accetta anche formati non
-// YYYY-MM-DD, come nella route gemella del genitore).
+// `data` è il giorno dell'impreparato, `YYYY-MM-DD` sul calendario: serve a dire in quale quadrimestre cade e se
+// è nel futuro, e una stringa in un'altra forma non cadrebbe in nessun periodo (come la PATCH).
 const postBodySchema = z.object({
   sectionId: zUuid,
   alunnoId: zUuid,
-  data: z.string().min(1),
+  data: zDataYMD,
   tipo: z.enum(TIPI).optional(),
   motivo: zMotivo,
   materiaId: zUuid.nullable().optional(),
@@ -176,6 +190,17 @@ function rispostaMateriaNonValida(): NextResponse {
   )
 }
 
+/** 422: la data dell'impreparato è dopo oggi (a Roma). Il rifiuto si logga, con il codice, e viene prima di ogni lettura. */
+function rispostaDataFutura(operazione: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'impreparato-data-futura', error_code: 'DATA_FUTURA' })
+  return NextResponse.json({ error: 'La data non può essere nel futuro.', codice: 'DATA_FUTURA' }, { status: 422 })
+}
+
+/** Il database non ha ancora le colonne nuove (la CI E2E non è migrata): si ripete la scrittura senza, e lo si dice. */
+function logSchemaIndietro(operazione: string, error: unknown): void {
+  logEvento('registro', 'info', { operazione, esito: 'colonne-nuove-non-disponibili-schema' }, error)
+}
+
 /**
  * Le colonne della voce per PATCH e DELETE: quelle del permesso (autore, classe,
  * sede, data, origine) e quelle della fotografia per l'audit. La sede è quella
@@ -247,6 +272,9 @@ function vocePrimaria(r: RigaVoce, opz: { nuovaData?: string | null } = {}): Voc
     scuolaId: scuolaDellaClasse(r),
     dataEvento: String(r.data ?? '').slice(0, 10),
     nuovaDataEvento: opz.nuovaData ?? null,
+    // Il termine di un impreparato della docente corre dal giorno in cui è stato SALVATO (`creato_il`), non dalla sua
+    // data: uno di tre settimane fa non nasce bloccato. Quello del genitore resta com'era (`contaDalSalvataggio`).
+    giornoSalvataggio: giornoDiRoma(r.creato_il) || null,
     // L'origine della RIGA, come nella GET (`statoVoci`): PATCH, DELETE e il
     // `modificabile` dell'elenco devono dire la stessa cosa.
     origine: r.origine,
@@ -321,6 +349,12 @@ async function voceAutorizzata(
   const scopeErr = await assertSezioneInScope(supabase, user, riga.section_id)
   if (scopeErr) return { response: scopeErr }
 
+  // La coppia (classe, materia) della voce deve essere ancora fra quelle assegnate alla docente (regola 19): vale
+  // anche per l'impreparato del GENITORE, che solo chi insegna quella materia vede e tocca. Senza materia passa da
+  // sé (D20); lo staff passa senza leggere; un guasto della lettura è 500, mai un 403.
+  const materiaErr = await assertMateriaDelDocente(supabase, user, riga.section_id, riga.materia_id)
+  if (materiaErr) return { response: materiaErr }
+
   const permesso = await verificaPermessoVoce(supabase, user, vocePrimaria(riga, opz))
   if (!permesso.ok) return { response: rispostaPermessoNegato(permesso) }
   return { riga }
@@ -328,10 +362,19 @@ async function voceAutorizzata(
 
 // ─── GET ─────────────────────────────────────────────────────────────────────
 
+/** L'autore di un impreparato, come lo vede chi legge l'elenco: lo stesso di un voto. */
+interface AutoreImpreparato {
+  id: string
+  nome: string | null
+  cognome: string | null
+}
+
 // GET /api/primaria/giustifiche-didattiche?sectionId=&data=&userId=
 // GET /api/primaria/giustifiche-didattiche?sectionId=&alunnoId=&materiaId=&userId=
 // Elenco degli impreparati, con `tipo`, `origine`, `motivo`, `data` e, per ogni
-// voce, `modificabile` / `bloccata` / `giorniLimite` (permesso-voce, variante batch).
+// voce, `modificabile` / `bloccata` / `giorniLimite` / `congelata` (permesso-voce, variante
+// batch), `propria` e `autore`. La docente vede solo quelli senza materia e quelli delle sue
+// materie in questa classe; con `materiaId` (il modulo per alunno) una materia non sua è 403.
 export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (request: NextRequest) => {
   const operazione = 'primaria/giustifiche-didattiche:GET'
   try {
@@ -344,6 +387,20 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
+
+    // Le materie che chi legge può vedere in QUESTA classe (lo staff: tutte, senza leggere niente).
+    const visibili = await materieVisibili(supabase, auth.user, sectionId)
+    if (!visibili.ok) return visibili.response
+    // `materiaId` vuoto vale «nessuna materia», come prima.
+    if (materiaId && !visibili.tutte && !visibili.materie.has(materiaId)) {
+      logEvento('auth', 'warn', {
+        operazione,
+        esito: 'materia-non-assegnata',
+        materia_id: materiaId,
+        error_code: 'MATERIA_NON_ASSEGNATA',
+      })
+      return rispostaMateriaNonAssegnata()
+    }
 
     const scuolaId = await scuolaDiSezione(supabase, sectionId, operazione)
     if (scuolaId === undefined) return rispostaLetturaFallita()
@@ -361,9 +418,16 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
         .eq('section_id', sectionId)
       if (data) q = q.eq('data', data)
       if (alunnoId) q = q.eq('alunno_id', alunnoId)
-      // Quelli di quella materia PIÙ quelli senza materia (spec: «stessa materia più
-      // quelli senza materia»). `materiaId` è un uuid validato: sicuro nel filtro.
+      // UN SOLO `.or()` per query. Quelli di quella materia PIÙ quelli senza materia (spec: «stessa materia più
+      // quelli senza materia»): `materiaId` è un uuid validato, ed è già una materia che chi legge può vedere.
+      // In ogni altra forma — l'elenco della classe, o una materia indicata senza l'alunno — la docente vede solo
+      // i senza materia e quelli delle sue materie (gli id vengono dal database, sono uuid). Lo staff vede tutto.
       if (alunnoId && materiaId) q = q.or(`materia_id.eq.${materiaId},materia_id.is.null`)
+      else if (!visibili.tutte) {
+        q = visibili.materie.size > 0
+          ? q.or(`materia_id.is.null,materia_id.in.(${[...visibili.materie].join(',')})`)
+          : q.is('materia_id', null)
+      }
       return q.order('data', { ascending: false }).order('creato_il', { ascending: false })
     }
 
@@ -382,6 +446,7 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
       data: string
       origine: string
       creato_da: string | null
+      creato_il: string | null
       tipo?: unknown
     })[]
     const voci: VocePrimaria[] = righe.map((r) => ({
@@ -391,6 +456,8 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
       sectionId,
       scuolaId,
       dataEvento: String(r.data ?? '').slice(0, 10),
+      // Lo stesso della PATCH: il termine corre dal salvataggio, e GET e PATCH devono dire la stessa cosa.
+      giornoSalvataggio: giornoDiRoma(r.creato_il) || null,
       origine: r.origine,
     }))
     const stato = await statoVoci(supabase, auth.user, voci)
@@ -399,8 +466,25 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
     // loggato permesso-voce.
     const esiti = stato.ok ? stato.esiti : null
     const versioni = puoCorreggereStorico(auth.user) ? await versioniStoriche(supabase, 'giustifiche_didattiche', righe.map(r => r.id)) : new Map<string, number>()
+
+    // Gli autori: SOLO di chi li ha scritti da docente (quello del genitore non ha un autore da mostrare), con una
+    // lettura sola per tutta la lista. Se fallisce l'elenco esce lo stesso, senza nomi. Il NOME non entra nei log:
+    // il log dice solo che la lettura è fallita.
+    const idAutori = [...new Set(righe.flatMap((r) => (r.origine === 'docente' && r.creato_da ? [r.creato_da] : [])))]
+    const autori = new Map<string, AutoreImpreparato>()
+    let autoriDisponibili = true
+    if (idAutori.length > 0) {
+      const { data: utenti, error: autoriErr } = await supabase.from('utenti').select('id, nome, cognome').in('id', idAutori)
+      if (autoriErr) {
+        autoriDisponibili = false
+        logEvento('registro', 'error', { operazione, esito: 'autori-non-letti', n: idAutori.length }, autoriErr)
+      } else {
+        for (const u of (utenti ?? []) as AutoreImpreparato[]) autori.set(u.id, { id: u.id, nome: u.nome ?? null, cognome: u.cognome ?? null })
+      }
+    }
+
     const elenco = righe.map((r) => {
-      // `creato_da` serve al permesso, non alla pagina.
+      // `creato_da` serve al permesso, non alla pagina: alla pagina servono `propria` e `autore`.
       const { creato_da: _autore, ...resto } = r
       void _autore
       const e = esiti?.get(chiaveVoce('impreparato', r.id))
@@ -411,9 +495,12 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
         modificabile: e?.modificabile ?? false,
         bloccata: e?.bloccata ?? false,
         giorniLimite: e?.giorniLimite ?? null,
+        congelata: e?.congelata ?? false,
+        propria: r.creato_da === auth.user.id,
+        autore: (r.origine === 'docente' && r.creato_da && autori.get(r.creato_da)) || null,
       }
     })
-    return NextResponse.json({ success: true, data: elenco, statoVociDisponibile: stato.ok })
+    return NextResponse.json({ success: true, data: elenco, statoVociDisponibile: stato.ok, autoriDisponibili })
   } catch (err) {
     logErrore({ operazione, stato: 500 }, err)
     return rispostaLetturaFallita()
@@ -424,7 +511,10 @@ export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (reque
 
 // POST /api/primaria/giustifiche-didattiche?userId=
 // body: { sectionId, alunnoId, data, tipo?, motivo?, materiaId? }
-// Il docente segna l'alunno impreparato (tipo predefinito «impreparato»).
+// Il docente segna l'alunno impreparato (tipo predefinito «impreparato»). `data` è il giorno dell'impreparato: mai nel
+// futuro, e il quadrimestre che la contiene decide `periodo_id` e, se il suo scrutinio è chiuso, chi può inserire (la
+// docente no, 423; lo staff sì). La docente inserisce solo nelle materie che ha in quella classe; senza materia, in ogni
+// caso.
 export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (request: NextRequest) => {
   const operazione = 'primaria/giustifiche-didattiche:POST'
   try {
@@ -437,11 +527,19 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
     const tipo: TipoImpreparato = b.data.tipo ?? 'impreparato'
     const motivo = motivoDelDocente(b.data.motivo)
 
+    // Nel futuro non si segna: il rifiuto viene PRIMA di qualunque lettura. «Oggi» è il giorno di Roma del server.
+    if (data > oggiRoma()) return rispostaDataFutura(operazione)
+
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
     const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
     if (alunnoErr) return alunnoErr
+
+    // La docente segna solo nelle materie che ha in QUESTA classe (la coppia, mai la sola materia). Senza materia
+    // non c'è niente da verificare (D20). Lo staff passa senza leggere; un guasto della lettura è 500, mai un 403.
+    const materiaDocenteErr = await assertMateriaDelDocente(supabase, auth.user, sectionId, materiaId ?? null)
+    if (materiaDocenteErr) return materiaDocenteErr
 
     const scuolaId = await scuolaDiSezione(supabase, sectionId, operazione)
     if (scuolaId === undefined) return rispostaLetturaFallita()
@@ -454,6 +552,29 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
       materiaNome = materia.nome
     }
 
+    // Il quadrimestre della data. Il termine NON si applica all'inserimento (uno di tre settimane fa si segna): si
+    // applica alla modifica, dal giorno del salvataggio. Si applica invece il congelamento: se lo scrutinio di quel
+    // quadrimestre è chiuso per la classe, la docente non inserisce (lo staff sì). Una lettura fallita non vale né
+    // «aperto» né «chiuso»: 500. Periodi assenti o senza date sono configurazione mancante: entra senza periodo (D4).
+    const quadrimestre = await statoQuadrimestre(supabase, scuolaId, sectionId, data)
+    if (!quadrimestre.ok) return rispostaLetturaFallita()
+    if (quadrimestre.chiuso && !puoCorreggereStorico(auth.user)) {
+      logEvento('registro', 'info', {
+        operazione,
+        esito: 'impreparato-quadrimestre-chiuso',
+        section_id: sectionId,
+        error_code: 'QUADRIMESTRE_CHIUSO',
+      })
+      return NextResponse.json(
+        {
+          error: 'Lo scrutinio del quadrimestre di questa data è chiuso: per inserire l’impreparato rivolgiti alla segreteria.',
+          codice: 'QUADRIMESTRE_CHIUSO',
+          locked: true,
+        },
+        { status: 423 },
+      )
+    }
+
     const riga = {
       alunno_id: alunnoId,
       section_id: sectionId,
@@ -463,15 +584,17 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
       origine: 'docente',
       creato_da: userId,
     }
+    let periodoScritto = quadrimestre.periodoId
     let esito = await supabase
       .from('giustifiche_didattiche')
-      .insert({ ...riga, tipo })
+      .insert({ ...riga, tipo, periodo_id: quadrimestre.periodoId })
       .select()
       .single()
     if (esito.error && COLONNA_ASSENTE.has(codiceDi(esito.error))) {
-      // DB non migrato (E2E della CI): la colonna `tipo` non c'è ancora, e senza
-      // la riga si scrive come prima. In produzione la migrazione c'è.
-      logEvento('registro', 'info', { operazione, esito: 'tipo-non-disponibile-schema' }, esito.error)
+      // DB non migrato (E2E della CI): le colonne `tipo` e `periodo_id` non ci sono ancora, e senza la riga si scrive
+      // come prima. UNA ripetizione, e lo si dice al log. In produzione la migrazione c'è.
+      logSchemaIndietro(operazione, esito.error)
+      periodoScritto = null
       esito = await supabase.from('giustifiche_didattiche').insert(riga).select().single()
     }
     if (esito.error) {
@@ -540,6 +663,7 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
       section_id: sectionId,
       tipo: salvatoTipo,
       con_motivo: motivo !== null,
+      periodo_assegnato: periodoScritto !== null,
       notifica_tentata: notificaAccodata,
     }, undefined, { distingui: ['giustifica_id'] })
 
@@ -555,8 +679,14 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
 // PATCH /api/primaria/giustifiche-didattiche?userId=
 // body: { id, tipo?, motivo?, materiaId?, data? }
 // Permesso: autore (`creato_da`) o Segreteria e Direzione — e, per un impreparato
-// del GENITORE, anche i docenti della classe — entro il termine su entrambe le
-// date se `data` cambia, oppure con lo sblocco. Nessun avviso nuovo
+// del GENITORE, anche i docenti della classe — con la materia ancora assegnata. Per
+// quello della docente: entro il termine, che corre dal giorno del SALVATAGGIO, e con
+// la data — la vecchia e la nuova — fuori da un quadrimestre chiuso; lo sblocco per
+// voce toglie sia il termine sia il congelamento. Per quello del genitore: entro il
+// termine su entrambe le date se `data` cambia, oppure con lo sblocco. `data` non è
+// mai nel futuro, e se cambia `periodo_id` si ricalcola sulla data nuova (con la data
+// invariata non si tocca). Se cambia la materia, la nuova deve essere una assegnata
+// alla docente (senza materia, sempre). Nessun avviso nuovo
 // al genitore (spec: «Nessun avviso al genitore quando si modifica o elimina»):
 // si riallinea solo la notifica ANCORA IN CODA, che altrimenti partirebbe col
 // tipo, la materia o il giorno di prima.
@@ -568,6 +698,9 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const { id, tipo, motivo, materiaId, data } = b.data
+
+    // L'impreparato non si sposta nel futuro: il rifiuto viene prima di leggere la voce.
+    if (data !== undefined && data > oggiRoma()) return rispostaDataFutura(operazione)
 
     const supabase = await createAdminClient()
     // Il permesso guarda l'origine della riga, come la DELETE e il `modificabile`
@@ -590,6 +723,24 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
       )
     }
 
+    // La materia NUOVA deve essere fra quelle assegnate alla docente in questa classe (la vecchia l'ha già verificata
+    // `voceAutorizzata`). Senza materia (`null`) passa da sé (D20). Prima di scrivere, e di leggere altro.
+    if (materiaId && materiaId !== voce.materia_id) {
+      const materiaNuovaErr = await assertMateriaDelDocente(supabase, auth.user, sectionId, materiaId)
+      if (materiaNuovaErr) return materiaNuovaErr
+    }
+
+    // Se la data cambia, l'impreparato passa al quadrimestre della data nuova. Il congelamento per la docente l'ha già
+    // deciso `voceAutorizzata` (su entrambe le date); qui si ricalcola solo `periodo_id`, anche per lo staff, che non
+    // è fermato dallo scrutinio chiuso. Con la data invariata `periodo_id` non si tocca. Lettura fallita: 500 prima di
+    // scrivere qualunque cosa.
+    let periodoNuovo: string | null | undefined
+    if (data !== undefined && data !== vocePrimaria(voce).dataEvento) {
+      const quadrimestre = await statoQuadrimestre(supabase, scuolaId, sectionId, data)
+      if (!quadrimestre.ok) return rispostaLetturaFallita()
+      periodoNuovo = quadrimestre.periodoId
+    }
+
     let materiaNome = materiaDellaRiga(voce)
     if (materiaId) {
       const materia = await materiaDellaClasse(supabase, materiaId, sectionId, operazione)
@@ -605,6 +756,7 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
     if (motivo !== undefined) patch.motivo = motivoDelDocente(motivo)
     if (materiaId !== undefined) patch.materia_id = materiaId
     if (data !== undefined) patch.data = data
+    if (periodoNuovo !== undefined) patch.periodo_id = periodoNuovo
 
     const scrivi = (p: Record<string, string | null>, colonne: string) =>
       supabase
@@ -617,16 +769,27 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
     let scritte: { data: unknown; error: { code?: string; message: string } | null } | null
     if (storica && Object.keys(patch).length > 0) {
       if (voce.storico_versione === undefined || !scuolaId) return storicoIndisponibile()
-      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, alunnoId: voce.alunno_id, sectionId, modulo: 'giustifiche-didattiche', giorno: voce.data, attese: [{ tabella: 'giustifiche_didattiche', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni: [{ tabella: 'giustifiche_didattiche', operazione: 'update', filtro: { id, section_id: sectionId }, valori: patch }] })
+      const rettificaCon = (valori: Record<string, string | null>, ripiegoSchema: boolean) => applicaRettificaStorica(supabase, { attore: auth.user, scuolaId, alunnoId: voce.alunno_id, sectionId, modulo: 'giustifiche-didattiche', giorno: voce.data, attese: [{ tabella: 'giustifiche_didattiche', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni: [{ tabella: 'giustifiche_didattiche', operazione: 'update', filtro: { id, section_id: sectionId }, valori }], ripiegoSchema })
+      // DB non migrato (la CI E2E): la RPC costruisce l'UPDATE dalle chiavi di `valori`, e senza `periodo_id` torna
+      // `42703`. Come sull'update semplice: UNA ripetizione senza, con il log `info`; la seconda prova non ha ripiego.
+      let rettifica = await rettificaCon(patch, 'periodo_id' in patch)
+      if ('response' in rettifica && rettifica.schemaIndietro) {
+        logSchemaIndietro(operazione, rettifica.schemaIndietro)
+        const { periodo_id: _periodo, ...senzaPeriodo } = patch
+        void _periodo
+        rettifica = await rettificaCon(senzaPeriodo, false)
+      }
       if ('response' in rettifica) return rettifica.response
       scritte = { data: rettifica.righe[0], error: null }
     } else scritte = Object.keys(patch).length > 0 ? await scrivi(patch, COLONNE_VOCE) : null
     if (scritte?.error && COLONNA_ASSENTE.has(codiceDi(scritte.error))) {
-      // DB non migrato (E2E della CI): senza la colonna `tipo` si scrive il resto.
-      logEvento('registro', 'info', { operazione, esito: 'tipo-non-disponibile-schema' }, scritte.error)
-      const { tipo: _t, ...senzaTipo } = patch
+      // DB non migrato (E2E della CI): senza le colonne `tipo` e `periodo_id` si scrive il resto. UNA ripetizione, e lo
+      // si dice al log.
+      logSchemaIndietro(operazione, scritte.error)
+      const { tipo: _t, periodo_id: _p, ...senzaColonneNuove } = patch
       void _t
-      scritte = Object.keys(senzaTipo).length > 0 ? await scrivi(senzaTipo, COLONNE_VOCE_SENZA_TIPO) : null
+      void _p
+      scritte = Object.keys(senzaColonneNuove).length > 0 ? await scrivi(senzaColonneNuove, COLONNE_VOCE_SENZA_TIPO) : null
     }
     if (scritte?.error) {
       logEvento('registro', 'error', { operazione, esito: 'impreparato-non-aggiornato', giustifica_id: id }, scritte.error)

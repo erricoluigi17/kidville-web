@@ -224,6 +224,10 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   // `expect.soft`: una riga sbagliata fa fallire il test ma non interrompe il journey, che deve
   // arrivare alle note e all'avviso gita (e chiudere il contesto) anche quando questo riscontro è rosso.
   const idRetro = (votoRetro.json as { data?: { id?: string } } | null)?.data?.id;
+  // Un voto retrodatato rifiutato (400/422/423) o senza `id` non è un'assenza da saltare in silenzio: è il difetto che
+  // questo passo deve far vedere. Senza queste due righe il test resterebbe verde senza aver provato niente.
+  expect.soft(httpOk(votoRetro.status), `D${n}: voto retrodatato salvato`).toBe(true);
+  expect.soft(idRetro, `D${n}: il voto retrodatato restituisce l'id`).toBeTruthy();
   if (httpOk(votoRetro.status) && idRetro) {
     const storico = await apiGet(page, `/api/primaria/valutazioni?alunnoId=${alunno}&materiaId=${mat.id}`);
     const righe = (storico.json as { data?: RigaStorico[] } | null)?.data ?? [];

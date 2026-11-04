@@ -112,7 +112,8 @@ test.describe('Adversarial & scoping cross-ruolo', () => {
   // Il seed assegna a docente1 Italiano, Storia e Geografia di TEST 1A; Matematica è di docente2.
   // Una docente su una materia che in quella classe non è sua: 403 MATERIA_NON_ASSEGNATA, sia a
   // scrivere sia a leggere lo storico. Se il gate mancasse la POST scriverebbe davvero un voto in
-  // produzione: l'argomento porta il TAG di collaudo, così si riconosce e si toglie.
+  // produzione: l'argomento porta il TAG di collaudo. Si riconosce dal TAG; toglierla in produzione è una
+  // cancellazione da mostrare al titolare.
   test.describe('docente su una materia non sua', () => {
     test.use({ storageState: storagePath('docente1') });
 

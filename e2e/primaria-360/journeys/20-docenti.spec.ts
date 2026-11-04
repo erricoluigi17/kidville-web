@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import { storagePath, TAG } from '../config/accounts';
 import { SECTION, ALUNNI, DOCENTE_MATERIA } from '../config/data';
-import { Recorder, visit, apiPost, readAppIds, writeState, fraGiorni } from '../lib/harness';
+import { Recorder, visit, apiGet, apiPost, httpOk, readAppIds, writeState, fraGiorni } from '../lib/harness';
 
 const ids = readAppIds();
 const today = new Date().toISOString().slice(0, 10);
@@ -155,6 +155,9 @@ async function pubblicaAvvisoGita(page: Page, rec: Recorder, appId: string): Pro
     return riga.id;
 }
 
+/** Della riga dello storico (GET /api/primaria/valutazioni) interessa solo ciò che il riscontro controlla. */
+type RigaStorico = { id?: string; data_evento?: string | null; autore?: { id?: string } | null; propria?: boolean };
+
 async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   const ctx = await browser.newContext({ storageState: storagePath(`docente${n}`), viewport: { width: 1366, height: 900 } });
   const page: Page = await ctx.newPage();
@@ -191,16 +194,54 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   }
 
   await visit(page, rec, { url: `/teacher/primaria/${SECTION}/valutazioni`, flusso: `docente${n}`, label: `D${n} · Valutazioni`, appId });
-  const voto = await apiPost(page, '/api/primaria/valutazioni', {
+  const corpoVoto = {
     alunnoId: alunno, sectionId: SECTION, materiaId: mat.id, modalita: 'sintetico', tipoProva: 'orale',
     giudizioSintetico: GIUDIZIO[n], argomento: `${TAG} Interrogazione ${mat.nome}`,
-  });
+  };
+  const voto = await apiPost(page, '/api/primaria/valutazioni', corpoVoto);
   rec.add({
     flusso: `docente${n}`, pagina: '/api/primaria/valutazioni', step: `D${n} · Voto interrogazione (Alunno${n}, ${GIUDIZIO[n]})`,
     gravita: voto.status < 400 ? 'ok' : 'grave', categoria: voto.status < 400 ? 'ok' : 'funzionale',
     atteso: 'Valutazione salvata (giudizio sintetico)',
     osservato: `HTTP ${voto.status}${voto.status >= 400 ? ' — ' + JSON.stringify(voto.json).slice(0, 160) : ''}`,
   });
+
+  // Lo STESSO voto con la data della prova di tre settimane fa: la docente può registrare una prova
+  // passata (mai futura), e lo storico dell'alunno nella materia la mostra con la data della prova e
+  // con l'autore. La data nasce da `fraGiorni` (cifre di Roma), mai scritta a mano: una data fissa
+  // prima o poi esce dal quadrimestre o finisce nel futuro, e il percorso continua a girare su altro.
+  const dataProva = fraGiorni(-21).slice(0, 10);
+  const votoRetro = await apiPost(page, '/api/primaria/valutazioni', { ...corpoVoto, data: dataProva });
+  rec.add({
+    flusso: `docente${n}`, pagina: '/api/primaria/valutazioni', step: `D${n} · Voto retrodatato di 21 giorni (Alunno${n}, ${GIUDIZIO[n]})`,
+    gravita: httpOk(votoRetro.status) ? 'ok' : 'grave', categoria: httpOk(votoRetro.status) ? 'ok' : 'funzionale',
+    atteso: `Valutazione salvata con la data della prova ${dataProva}`,
+    osservato: `HTTP ${votoRetro.status}${httpOk(votoRetro.status) ? '' : ' — ' + JSON.stringify(votoRetro.json).slice(0, 160)}`,
+  });
+
+  // Il riscontro: si rilegge lo storico dell'alunno nella materia e si guarda la riga di QUEL voto.
+  // Se il voto non è stato salvato non c'è niente da rileggere (il rilievo grave è già registrato sopra).
+  // `expect.soft`: una riga sbagliata fa fallire il test ma non interrompe il journey, che deve
+  // arrivare alle note e all'avviso gita (e chiudere il contesto) anche quando questo riscontro è rosso.
+  const idRetro = (votoRetro.json as { data?: { id?: string } } | null)?.data?.id;
+  if (httpOk(votoRetro.status) && idRetro) {
+    const storico = await apiGet(page, `/api/primaria/valutazioni?alunnoId=${alunno}&materiaId=${mat.id}`);
+    const righe = (storico.json as { data?: RigaStorico[] } | null)?.data ?? [];
+    const riga = righe.find((r) => r.id === idRetro);
+    expect.soft(riga, `D${n}: il voto retrodatato compare nello storico`).toBeDefined();
+    expect.soft(riga?.data_evento, `D${n}: data_evento della riga`).toBe(dataProva);
+    expect.soft(riga?.autore?.id, `D${n}: autore della riga`).toBeTruthy();
+    expect.soft(riga?.propria, `D${n}: propria della riga`).toBe(true);
+    const riscontroOk = riga?.data_evento === dataProva && Boolean(riga.autore?.id) && riga.propria === true;
+    rec.add({
+      flusso: `docente${n}`, pagina: '/api/primaria/valutazioni (GET)', step: `D${n} · Storico: data della prova, autore, propria`,
+      gravita: riscontroOk ? 'ok' : 'grave', categoria: riscontroOk ? 'ok' : 'funzionale',
+      atteso: `La riga del voto retrodatato ha data_evento ${dataProva}, un autore e propria=true`,
+      osservato:
+        `HTTP ${storico.status} · riga ${riga ? 'trovata' : 'NON trovata'} su ${righe.length}` +
+        ` · data_evento=${riga?.data_evento ?? '—'} · autore ${riga?.autore?.id ? 'presente' : 'ASSENTE'} · propria=${String(riga?.propria)}`,
+    });
+  }
 
   await visit(page, rec, { url: `/teacher/primaria/${SECTION}/note`, flusso: `docente${n}`, label: `D${n} · Note`, appId });
   const categorie: Array<{ c: string; t: string }> = [

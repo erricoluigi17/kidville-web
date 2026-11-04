@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { storagePath } from '../config/accounts';
-import { ALUNNI } from '../config/data';
+import { storagePath, TAG } from '../config/accounts';
+import { ALUNNI, MATERIE, SECTION } from '../config/data';
 import { Recorder, apiGet, apiPost, readAppIds, httpOk } from '../lib/harness';
 
 // FASE 6 — Adversarial & scoping. Verifica empirica dei controlli di accesso:
@@ -106,6 +106,57 @@ test.describe('Adversarial & scoping cross-ruolo', () => {
 
       rec.save();
       expect(violations, `Violazioni IDOR/scoping (genitore): ${violations.join(' | ')}`).toEqual([]);
+    });
+  });
+
+  // Il seed assegna a docente1 Italiano, Storia e Geografia di TEST 1A; Matematica è di docente2.
+  // Una docente su una materia che in quella classe non è sua: 403 MATERIA_NON_ASSEGNATA, sia a
+  // scrivere sia a leggere lo storico. Se il gate mancasse la POST scriverebbe davvero un voto in
+  // produzione: l'argomento porta il TAG di collaudo, così si riconosce e si toglie.
+  test.describe('docente su una materia non sua', () => {
+    test.use({ storageState: storagePath('docente1') });
+
+    test('POST e GET su Matematica (di docente2): 403 MATERIA_NON_ASSEGNATA', async ({ page }) => {
+      const rec = new Recorder('adversarial-materia-altrui', 'Adversarial (docente)');
+      const violations: string[] = [];
+      const alunno = ALUNNI[1];
+
+      const casi = [
+        {
+          pagina: '/api/primaria/valutazioni (POST)',
+          step: 'Docente1 scrive un voto su Matematica (materia di docente2)',
+          chiama: () => apiPost(page, '/api/primaria/valutazioni', {
+            alunnoId: alunno, sectionId: SECTION, materiaId: MATERIE.matematica, modalita: 'sintetico', tipoProva: 'orale',
+            giudizioSintetico: 'Base', argomento: `${TAG} Adversarial: voto su una materia non assegnata`,
+          }),
+        },
+        {
+          pagina: '/api/primaria/valutazioni (GET)',
+          step: 'Docente1 legge lo storico di Matematica (materia di docente2)',
+          chiama: () => apiGet(page, `/api/primaria/valutazioni?alunnoId=${alunno}&materiaId=${MATERIE.matematica}`),
+        },
+      ];
+
+      for (const c of casi) {
+        const res = await c.chiama();
+        const codice = (res.json as { codice?: string } | null)?.codice;
+        expect.soft(res.status, `${c.pagina}: status`).toBe(403);
+        expect.soft(codice, `${c.pagina}: codice`).toBe('MATERIA_NON_ASSEGNATA');
+        const rifiutata = res.status === 403 && codice === 'MATERIA_NON_ASSEGNATA';
+        if (!rifiutata) violations.push(`${c.pagina} materia altrui=${res.status} codice=${codice ?? '—'}`);
+        rec.add({
+          flusso: 'Scoping docente · materia non assegnata',
+          pagina: c.pagina,
+          step: c.step,
+          gravita: rifiutata ? 'ok' : (httpOk(res.status) ? 'bloccante' : 'grave'),
+          categoria: 'funzionale',
+          atteso: '403 con codice MATERIA_NON_ASSEGNATA (la coppia classe+materia non è assegnata alla docente)',
+          osservato: `status=${res.status} · codice=${codice ?? '—'}${httpOk(res.status) ? ' → MATERIA ALTRUI ACCESSIBILE' : ''}`,
+        });
+      }
+
+      rec.save();
+      expect(violations, `Violazioni materia non assegnata (docente1): ${violations.join(' | ')}`).toEqual([]);
     });
   });
 

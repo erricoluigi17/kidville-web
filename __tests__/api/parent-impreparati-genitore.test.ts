@@ -806,6 +806,16 @@ describe('periodo_id — il quadrimestre della data (D12, Ruling 13)', () => {
       )
     })
 
+    it('senza cambio di data non c’è niente da togliere: un errore di schema non ripete la scrittura, 500 e nessun ripiego', async () => {
+      conData(IN_P1, P1)
+      h.errori = { 'giustifiche_didattiche:update': { code: 'PGRST204', message: 'colonna inesistente' } }
+      const res = await patch({ id: G_FUTURA, motivo: 'altro' })
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
+      expect(h.tentativi).toHaveLength(1)
+      expect(ripiegiDiSchema()).toEqual([])
+    })
+
     it('anche la ripetizione fallisce: 500 IMPREPARATO_NON_SALVATO, un solo ripiego, riga intatta', async () => {
       conData(IN_P1, P1)
       const prima = { ...riga(G_FUTURA) }

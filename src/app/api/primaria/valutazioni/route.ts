@@ -18,7 +18,7 @@ import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
-import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
+import { colonnaNuovaAssente, logSchemaIndietro, scriviConRipiegoSchema } from '@/lib/db/colonna-assente'
 import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
 import { dataDiCompetenza, giornoDiRoma, ordinaPerCompetenza } from '@/lib/primaria/periodo'
 import { leggiPeriodi, statoQuadrimestre } from '@/lib/primaria/quadrimestre'
@@ -258,11 +258,6 @@ function rispostaQuadrimestreNonLetto(): NextResponse {
     { error: 'Verifica del quadrimestre non riuscita. Riprova.', codice: 'LETTURA_FALLITA' },
     { status: 500 },
   )
-}
-
-/** Il database non ha ancora una colonna nuova (la CI E2E non è migrata): si ripete la scrittura senza, e lo si dice. */
-function logSchemaIndietro(operazione: string, error: unknown, tentativo: number): void {
-  logEvento('registro', 'info', { operazione, esito: 'colonne-nuove-non-disponibili-schema', tentativo }, error)
 }
 
 /**
@@ -612,21 +607,20 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     // Se torna ancora un codice di schema la colonna mancante è `data_evento`: per un voto di oggi si
     // ripete anche senza (com'era prima), per una data diversa si rifiuta, perché scriverlo sarebbe
     // archiviarlo oggi.
-    let periodoScritto = quadrimestre.periodoId
-    let inserimento = await inserisci(riga)
-    if (inserimento.error && colonnaNuovaAssente(inserimento.error)) {
-      logSchemaIndietro(operazione, inserimento.error, 1)
-      const { periodo_id: _periodo, ...senzaPeriodo } = riga
-      void _periodo
-      periodoScritto = null
-      inserimento = await inserisci(senzaPeriodo)
-      if (inserimento.error && colonnaNuovaAssente(inserimento.error) && eventDate === oggi) {
-        logSchemaIndietro(operazione, inserimento.error, 2)
-        const { data_evento: _dataEvento, ...senzaData } = senzaPeriodo
-        void _dataEvento
-        inserimento = await inserisci(senzaData)
-      }
-    }
+    const { periodo_id: _periodo, ...senzaPeriodo } = riga
+    void _periodo
+    const { data_evento: _dataEvento, ...senzaData } = senzaPeriodo
+    void _dataEvento
+    const { esito: inserimento, stadio } = await scriviConRipiegoSchema(
+      operazione,
+      () => inserisci(riga),
+      [
+        { stadio: 1, scrivi: () => inserisci(senzaPeriodo) },
+        // Solo per un voto di OGGI: per una data diversa scrivere senza `data_evento` vorrebbe dire archiviarlo oggi.
+        ...(eventDate === oggi ? [{ stadio: 2, scrivi: () => inserisci(senzaData) }] : []),
+      ],
+    )
+    const periodoScritto = stadio === 0 ? quadrimestre.periodoId : null
     const { data: val, error: valErr } = inserimento
     if (valErr) {
       logErrore({ operazione, evento: 'db' }, valErr)
@@ -876,14 +870,14 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
       aggiornate = rettifica.righe[0]
     } else {
       const aggiorna = (campi: Record<string, unknown>) => supabase.from('valutazioni').update(campi).eq('id', id).eq('section_id', sectionId).select()
-      let esito = await aggiorna(valori)
       // DB non migrato (la CI E2E): se manca `periodo_id` si ripete UNA volta senza, e lo si dice al log.
-      if (esito.error && 'periodo_id' in valori && colonnaNuovaAssente(esito.error)) {
-        logSchemaIndietro(operazione, esito.error, 1)
-        const { periodo_id: _periodo, ...senzaPeriodo } = valori
-        void _periodo
-        esito = await aggiorna(senzaPeriodo)
-      }
+      const { periodo_id: _periodo, ...senzaPeriodo } = valori
+      void _periodo
+      const { esito } = await scriviConRipiegoSchema(
+        operazione,
+        () => aggiorna(valori),
+        'periodo_id' in valori ? [{ stadio: 1, scrivi: () => aggiorna(senzaPeriodo) }] : [],
+      )
       aggiornate = esito.data; updErr = esito.error
     }
     if (updErr) {

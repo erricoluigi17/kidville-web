@@ -12,7 +12,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { dataRomaDi } from '@/lib/primaria/timelock'
 import { statoQuadrimestre } from '@/lib/primaria/quadrimestre'
-import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
+import { scriviConRipiegoSchema } from '@/lib/db/colonna-assente'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -101,15 +101,6 @@ function rispostaNonSalvata(): NextResponse {
 
 function rispostaLetturaFallita(): NextResponse {
   return NextResponse.json({ error: 'Lettura non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 })
-}
-
-/**
- * Il database non ha ancora una colonna nuova (la CI E2E non è migrata): si ripete la scrittura senza, e lo si dice.
- * `tentativo` è lo STADIO del ripiego, come nella route della docente: 1 = senza `periodo_id` (la colonna nuova), 2 =
- * senza anche `tipo` (più vecchia: in produzione c'è, manca solo sul DB della CI, che non ha nessuna delle due).
- */
-function logSchemaIndietro(operazione: string, error: unknown, tentativo: number): void {
-  logEvento('registro', 'info', { operazione, esito: 'colonne-nuove-non-disponibili-schema', tentativo }, error)
 }
 
 /**
@@ -237,21 +228,19 @@ export const POST = withRoute('parent/giustifiche-didattiche:POST', async (reque
     }
     const inserisci = (campi: Record<string, unknown>) =>
       supabase.from('giustifiche_didattiche').insert(campi).select().single()
-    let periodoScritto = quadrimestre.periodoId
-    let esito = await inserisci({ ...riga, tipo: 'giustificato', periodo_id: quadrimestre.periodoId })
     // DB non migrato (E2E della CI). A degradare è la colonna NUOVA, una volta: `periodo_id`. Se lo schema risponde
     // ancora, ne manca anche una più vecchia, `tipo` (c'è in produzione da prima, non si butta se non è necessario):
     // ultima ripetizione senza — dove la colonna esiste, il trigger la mette comunque a «giustificato». Ogni stadio si
     // dice al log; se fallisce anche l'ultimo, l'errore è quello di sempre.
-    if (esito.error && colonnaNuovaAssente(esito.error)) {
-      logSchemaIndietro(operazione, esito.error, 1)
-      periodoScritto = null
-      esito = await inserisci({ ...riga, tipo: 'giustificato' })
-      if (esito.error && colonnaNuovaAssente(esito.error)) {
-        logSchemaIndietro(operazione, esito.error, 2)
-        esito = await inserisci(riga)
-      }
-    }
+    const { esito, stadio } = await scriviConRipiegoSchema(
+      operazione,
+      () => inserisci({ ...riga, tipo: 'giustificato', periodo_id: quadrimestre.periodoId }),
+      [
+        { stadio: 1, scrivi: () => inserisci({ ...riga, tipo: 'giustificato' }) },
+        { stadio: 2, scrivi: () => inserisci(riga) },
+      ],
+    )
+    const periodoScritto = stadio === 0 ? quadrimestre.periodoId : null
     const { data: inserted, error } = esito
 
     if (error) {
@@ -407,15 +396,15 @@ export const PATCH = withRoute('parent/giustifiche-didattiche:PATCH', async (req
         .eq('creato_da', user.id)
         .gte('data', oggi)
         .select(COLONNE_DICHIARAZIONE)
-    let esito = await scrivi(patch)
     // DB non migrato (E2E della CI): senza la colonna `periodo_id` l'UPDATE torna `PGRST204`. UNA ripetizione senza,
     // con il log `info`; il resto della modifica (data, materia, motivo) si scrive comunque.
-    if (esito.error && colonnaNuovaAssente(esito.error) && 'periodo_id' in patch) {
-      logSchemaIndietro(operazione, esito.error, 1)
-      const { periodo_id: _periodo, ...senzaPeriodo } = patch
-      void _periodo
-      esito = await scrivi(senzaPeriodo)
-    }
+    const { periodo_id: _periodo, ...senzaPeriodo } = patch
+    void _periodo
+    const { esito } = await scriviConRipiegoSchema(
+      operazione,
+      () => scrivi(patch),
+      'periodo_id' in patch ? [{ stadio: 1, scrivi: () => scrivi(senzaPeriodo) }] : [],
+    )
     const { data: scritte, error } = esito
     if (error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, error)

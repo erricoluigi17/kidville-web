@@ -9,9 +9,10 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
  * Ogni voto e ogni «impreparato» porta il `periodo_id` del quadrimestre che copre la sua data.
  * Quando la segreteria crea, sposta o elimina un periodo, il server riassegna `periodo_id` per
  * quella sede (RPC `primaria_ricalcola_periodi`). Qui si prova:
- *  · i rifiuti PRIMA di scrivere: una data sola, la fine prima dell'inizio, due periodi che si
- *    sovrappongono nella stessa sede e nello stesso anno, le date di un periodo con lo scrutinio
- *    chiuso (409);
+ *  · i rifiuti PRIMA di scrivere: una data che non è `YYYY-MM-DD` (400 di validazione), una data
+ *    sola, la fine prima dell'inizio, due periodi della stessa sede che si sovrappongono (di
+ *    QUALUNQUE anno: la copertura di un giorno non guarda l'anno), le date di un periodo con lo
+ *    scrutinio chiuso (409);
  *  · il ricalcolo: chiamato solo quando le date cambiano, mai annullato da un suo guasto;
  *  · il promemoria: `dateMancanti` nella GET.
  *
@@ -173,7 +174,41 @@ describe('POST · le date si danno entrambe o nessuna', () => {
   })
 })
 
-describe('POST · sovrapposizioni (stessa sede e stesso anno)', () => {
+describe('POST · la forma delle date', () => {
+  // I controlli confrontano stringhe: l'ordine lessicografico vale solo su `YYYY-MM-DD`. Con Q2 a
+  // 2027-02-01 / 2027-06-30, «2027-6-1» sta DOPO «2027-06-30» come testo e prima come giorno: senza
+  // validazione passerebbe il controllo di sovrapposizione e il database lo salverebbe sopra Q2.
+  for (const [nome, date] of [
+    ['senza zeri', { dataInizio: '2027-6-1', dataFine: '2027-6-20' }],
+    ['un istante ISO', { dataInizio: '2027-06-01T00:00:00Z', dataFine: '2027-06-20' }],
+    ['un giorno che non esiste', { dataInizio: '2027-02-30', dataFine: '2027-03-15' }],
+    ['una data scritta all’italiana', { dataInizio: '01/06/2027', dataFine: '20/06/2027' }],
+  ] as const) {
+    it(`una data ${nome} → 400 di validazione, nessun insert e nessun ricalcolo`, async () => {
+      const res = await post(nuovo(date))
+      expect(res.status).toBe(400)
+      expect(scritte('insert')).toHaveLength(0)
+      expect(h.db.scrutinio_periodi).toHaveLength(2)
+      expect(h.rpc).not.toHaveBeenCalled()
+    })
+  }
+
+  it('due campi data vuoti («») valgono «nessuna data»: 201 senza ricalcolo', async () => {
+    h.db.scrutinio_periodi = []
+    const res = await post(nuovo({ dataInizio: '', dataFine: '' }))
+    expect(res.status).toBe(201)
+    expect((await res.json()).ricalcolo).toBe('non-necessario')
+    expect(scritte('insert')[0].colpite[0]).toMatchObject({ data_inizio: null, data_fine: null })
+  })
+
+  it('una data vuota e una piena restano una data sola → 422 PERIODO_DATE_INCOMPLETE', async () => {
+    const res = await post(nuovo({ dataInizio: '2026-09-01', dataFine: '' }))
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('PERIODO_DATE_INCOMPLETE')
+  })
+})
+
+describe('POST · sovrapposizioni (stessa sede, qualunque anno)', () => {
   it('sovrapposto a un periodo della stessa sede e dello stesso anno → 422 PERIODI_SOVRAPPOSTI, nessun insert', async () => {
     const res = await post(nuovo({ nome: 'Terzo', dataInizio: '2027-01-15', dataFine: '2027-03-01' }))
     expect(res.status).toBe(422)
@@ -215,8 +250,26 @@ describe('POST · sovrapposizioni (stessa sede e stesso anno)', () => {
     expect(scritte('insert')[0].colpite[0].scuola_id).toBe(SEDE_B)
   })
 
-  it('le stesse date in un ALTRO ANNO scolastico → 201', async () => {
+  it('date che si sovrappongono a un periodo di un ALTRO anno della stessa sede → 422 (la copertura non guarda l’anno)', async () => {
+    // Un periodo salvato con l'anno sbagliato (pagina del 2025/2026, date del 2027) ruberebbe i voti a Q1 e Q2
+    // al ricalcolo successivo: l'anno non può restringere la ricerca.
     const res = await post(nuovo({ annoScolastico: '2025/2026', dataInizio: '2027-01-15', dataFine: '2027-03-01' }))
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('PERIODI_SOVRAPPOSTI')
+    expect(scritte('insert')).toHaveLength(0)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('un periodo non attivo di un altro anno conta lo stesso', async () => {
+    h.db.scrutinio_periodi.push(periodo('55555555-1111-4111-8111-aaaaaaaaaa09', SEDE_A, 1, '2025-09-01', '2026-01-31', {
+      anno_scolastico: '2025/2026', attivo: false,
+    }))
+    const res = await post(nuovo({ annoScolastico: '2026/2027', dataInizio: '2026-01-31', dataFine: '2026-02-15' }))
+    expect(res.status).toBe(422)
+  })
+
+  it('date di un altro anno che NON si sovrappongono a niente → 201', async () => {
+    const res = await post(nuovo({ annoScolastico: '2025/2026', dataInizio: '2025-09-01', dataFine: '2026-01-31' }))
     expect(res.status).toBe(201)
   })
 })
@@ -332,6 +385,42 @@ describe('PATCH · le date di un periodo', () => {
     expect(h.db.scrutinio_periodi.find((p) => p.id === Q1)!.data_fine).toBe('2027-01-30')
     expect(h.rpc).toHaveBeenCalledTimes(1)
     expect(h.rpc).toHaveBeenCalledWith({ p_scuola_id: SEDE_A })
+  })
+
+  it('una data non canonica nel corpo → 400 di validazione, nessun update', async () => {
+    for (const corpo of [{ dataInizio: '2027-6-1' }, { dataFine: '2027-06-30T00:00:00Z' }, { dataFine: '2027-02-30' }]) {
+      const res = await patch({ id: Q2, ...corpo })
+      expect(res.status).toBe(400)
+    }
+    expect(scritte('update')).toHaveLength(0)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('un campo data vuoto («») toglie la data: ne resta una sola → 422 PERIODO_DATE_INCOMPLETE', async () => {
+    const res = await patch({ id: Q1, dataFine: '' })
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('PERIODO_DATE_INCOMPLETE')
+    expect(scritte('update')).toHaveLength(0)
+  })
+
+  it('spostare le date sopra un periodo di un ALTRO anno della stessa sede → 422 PERIODI_SOVRAPPOSTI', async () => {
+    h.db.scrutinio_periodi.push(periodo('55555555-1111-4111-8111-aaaaaaaaaa09', SEDE_A, 1, '2025-09-01', '2026-01-31', {
+      anno_scolastico: '2025/2026',
+    }))
+    const res = await patch({ id: Q1, dataInizio: '2026-01-15' })
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('PERIODI_SOVRAPPOSTI')
+    expect(scritte('update')).toHaveLength(0)
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('un periodo di un altro anno che non tocca le nuove date non blocca lo spostamento → 200', async () => {
+    h.db.scrutinio_periodi.push(periodo('55555555-1111-4111-8111-aaaaaaaaaa09', SEDE_A, 1, '2025-09-01', '2026-01-31', {
+      anno_scolastico: '2025/2026',
+    }))
+    const res = await patch({ id: Q1, dataInizio: '2026-09-10' })
+    expect(res.status).toBe(200)
+    expect((await res.json()).ricalcolo).toBe('fatto')
   })
 
   it('spostare le date NON si sovrappone a sé stesso → 200', async () => {

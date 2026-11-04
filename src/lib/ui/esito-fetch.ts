@@ -3552,9 +3552,9 @@ export const CODICI_ERRORE = {
      * voto si decide dalle DATE del periodo, quindi le date si danno entrambe o nessuna:
      *  · 422 `PERIODO_DATE_INCOMPLETE` — ne è arrivata una sola (dopo l'unione con la riga, per la PATCH). Non è
      *    `PERIODO_ROVESCIATO`, che è la fine prima dell'inizio e risponde 400 con la sua frase;
-     *  · 422 `PERIODI_SOVRAPPOSTI` — le date toccano un altro periodo della stessa sede e dello stesso anno
-     *    scolastico (estremi inclusi, anche se l'altro è archiviato). Un periodo di un'altra sede o di un altro anno
-     *    non conta;
+     *  · 422 `PERIODI_SOVRAPPOSTI` — le date toccano un altro periodo della stessa sede, di qualunque anno
+     *    scolastico (estremi inclusi, anche se l'altro è archiviato): la copertura di un giorno non guarda l'anno.
+     *    Un periodo di un'altra sede non conta;
      *  · 409 `PERIODO_CON_SCRUTINI_CHIUSI` — il periodo ha uno scrutinio chiuso e si è provato a spostarne le date:
      *    va prima riaperto. Non è `PERIODO_CON_SCRUTINI`, che è l'eliminazione negata e parla di archiviare.
      * Un guasto nella lettura dei periodi o degli scrutini NON è nessuno dei tre: è `LETTURA_FALLITA`.

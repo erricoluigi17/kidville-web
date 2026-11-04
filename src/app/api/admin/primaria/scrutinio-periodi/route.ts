@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
@@ -28,6 +28,14 @@ import { ricalcolaPeriodiSede } from '@/lib/primaria/quadrimestre'
 
 /** '' equivale ad assente: il cockpit può mandare il parametro ancora vuoto. */
 const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
+
+/**
+ * Un campo data lasciato vuoto («») è una data TOLTA (`null`), non una stringa da mandare al database.
+ * Ogni data che resta passa da `zDataYMD` (`YYYY-MM-DD`, esistente nel calendario): i controlli sulle
+ * date confrontano stringhe, e l'ordine lessicografico vale solo sulla forma canonica — `2027-6-1` sta
+ * DOPO `2027-06-30` come testo e PRIMA come giorno, e Postgres l'avrebbe accettata lo stesso.
+ */
+const dataOVuota = z.preprocess((v) => (v === '' ? null : v), zDataYMD.nullish())
 
 /**
  * Archiviazione (fase 4 della robustezza, D3-C): un periodo chiuso esce dall'elenco senza che
@@ -110,20 +118,22 @@ function rifiutoSuLeDate(operazione: string, scuolaId: string, inizio: string | 
 }
 
 /**
- * Le date toccano un altro periodo della STESSA sede e dello STESSO anno? Si leggono tutti, `attivo` o no (un
- * periodo archiviato ha le sue date che valgono ancora per i voti di quegli anni), e `sovrapposto` salta sé
- * stesso per id. Una lettura fallita è 500: «non so se si sovrappone» non diventa un sì né un no.
+ * Le date toccano un altro periodo della STESSA sede, di QUALUNQUE anno scolastico? Si leggono tutti, `attivo`
+ * o no (un periodo archiviato ha le sue date che valgono ancora per i voti di quegli anni), e `sovrapposto`
+ * salta sé stesso per id. L'anno NON restringe la ricerca: la copertura di un giorno (`periodoPerData` e la
+ * funzione SQL del ricalcolo) sceglie il periodo per sede e date, senza guardare l'anno, quindi un periodo
+ * salvato con l'anno sbagliato ruberebbe i voti a un altro. Due anni scolastici non condividono giorni: nessun
+ * dato valido viene respinto. Una lettura fallita è 500: «non so se si sovrappone» non diventa un sì né un no.
  */
 async function rifiutoSuSovrapposizione(
   supabase: SupabaseClient,
   operazione: string,
-  candidato: { id?: string; scuolaId: string; anno: string; inizio: string; fine: string },
+  candidato: { id?: string; scuolaId: string; inizio: string; fine: string },
 ): Promise<NextResponse | null> {
   const { data, error } = await supabase
     .from('scrutinio_periodi')
     .select(COLONNE_PERIODO)
     .eq('scuola_id', candidato.scuolaId)
-    .eq('anno_scolastico', candidato.anno)
   if (error) return letturaFallita(operazione, 'periodi_sovrapposizione', error)
   const altri = (data ?? []) as unknown as PeriodoScrutinio[]
   if (sovrapposto({ id: candidato.id, data_inizio: candidato.inizio, data_fine: candidato.fine }, altri)) {
@@ -149,16 +159,16 @@ const postBodySchema = z.object({
   annoScolastico: z.string().min(1),
   nome: z.string().min(1),
   ordine: z.union([z.number(), z.string()]).nullish(),
-  dataInizio: z.string().nullish(),
-  dataFine: z.string().nullish(),
+  dataInizio: dataOVuota,
+  dataFine: dataOVuota,
 })
 
 const patchBodySchema = z.object({
   id: zUuid,
   nome: z.string().nullish(),
   ordine: z.union([z.number(), z.string()]).nullish(),
-  dataInizio: z.string().nullish(),
-  dataFine: z.string().nullish(),
+  dataInizio: dataOVuota,
+  dataFine: dataOVuota,
   attivo: z.boolean().nullish(),
   // true = archivia (e disattiva), false = ripristina nell'elenco.
   archiviato: z.boolean().nullish(),
@@ -239,16 +249,15 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
     const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
     if (sede.response) return sede.response
     const operazione = 'admin/primaria/scrutinio-periodi:POST'
-    // '' (un campo data lasciato vuoto) equivale ad assente.
-    const inizio = dataInizio || null
-    const fine = dataFine || null
+    const inizio = dataInizio ?? null
+    const fine = dataFine ?? null
 
-    // Prima di scrivere: date a metà o rovesciate, poi sovrapposizioni nella stessa sede e nello stesso anno.
+    // Prima di scrivere: date a metà o rovesciate, poi sovrapposizioni con gli altri periodi della sede.
     const rifiutoDate = rifiutoSuLeDate(operazione, sede.scuolaId!, inizio, fine)
     if (rifiutoDate) return rifiutoDate
     if (inizio && fine) {
       const rifiutoSovrapposto = await rifiutoSuSovrapposizione(supabase, operazione, {
-        scuolaId: sede.scuolaId!, anno: annoScolastico, inizio, fine,
+        scuolaId: sede.scuolaId!, inizio, fine,
       })
       if (rifiutoSovrapposto) return rifiutoSovrapposto
     }
@@ -285,7 +294,7 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
 // Le date si controllano sulla riga FINALE (quella salvata unita al corpo), non sul solo corpo: togliere la
 // data di fine a un periodo che ha anche l'inizio lascia una data sola. Se le date cambiano:
 //  · con uno scrutinio chiuso sul periodo → 409 (va prima riaperto);
-//  · se toccano un altro periodo della stessa sede e dello stesso anno → 422;
+//  · se toccano un altro periodo della stessa sede (di qualunque anno scolastico) → 422;
 //  · a scrittura riuscita i voti della sede si ricalcolano.
 // Cambiare solo nome, ordine o stato non sposta niente e non ricalcola.
 export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (request: NextRequest) => {
@@ -300,9 +309,9 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
     const patch: Record<string, unknown> = {}
     if (nome !== undefined) patch.nome = nome
     if (ordine !== undefined) patch.ordine = ordine
-    // '' (un campo data svuotato) equivale a null: la data si toglie, non si scrive una stringa vuota.
-    if (dataInizio !== undefined) patch.data_inizio = dataInizio || null
-    if (dataFine !== undefined) patch.data_fine = dataFine || null
+    // Una data svuotata («») è già `null` dallo schema: la data si toglie.
+    if (dataInizio !== undefined) patch.data_inizio = dataInizio
+    if (dataFine !== undefined) patch.data_fine = dataFine
     if (attivo !== undefined) patch.attivo = attivo
     if (archiviato === true) {
       // Un periodo archiviato non si compila più: si disattiva nella stessa scrittura.
@@ -348,7 +357,7 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
       if (chiusi && chiusi.length > 0) return rifiutoPeriodoConScrutiniChiusi(operazione, riga.scuola_id)
       if (inizio && fine) {
         const rifiutoSovrapposto = await rifiutoSuSovrapposizione(supabase, operazione, {
-          id, scuolaId: riga.scuola_id, anno: unita.anno_scolastico, inizio, fine,
+          id, scuolaId: riga.scuola_id, inizio, fine,
         })
         if (rifiutoSovrapposto) return rifiutoSovrapposto
       }

@@ -438,24 +438,58 @@ describe('POST', () => {
     expect(inserimenti()).toHaveLength(0)
   })
 
-  it('database non migrato: si ripete UNA volta senza `tipo` e senza `periodo_id`, 201 e log di ripiego', async () => {
+  // DB non migrato (la CI E2E). A degradare è la colonna NUOVA, una volta: `periodo_id`. `tipo` c'è in produzione da prima e
+  // non si butta: se lo schema risponde ancora (è il DB della CI, che non ha nessuna delle due) c'è un'ultima ripetizione
+  // senza. Ogni stadio lascia un log `info` con il numero dello stadio.
+  const ripiegiDiSchema = () =>
+    h.logEvento.mock.calls.filter(([, , campi]) => campi?.esito === 'colonne-nuove-non-disponibili-schema')
+
+  it('manca solo periodo_id: UNA ripetizione senza, e `tipo` resta scritto e restituito', async () => {
+    h.colonneAssenti = ['periodo_id']
+
+    const res = await post({ ...CORPO, data: '2026-10-14', tipo: 'giustificato' })
+
+    expect(res.status).toBe(201)
+    expect(h.tentativi).toHaveLength(2)
+    expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['tipo', 'periodo_id']))
+    expect(h.tentativi[1].chiavi).toContain('tipo')
+    expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
+    expect(inserimenti()).toHaveLength(1)
+    expect(inserimenti()[0].valori[0]).toMatchObject({ tipo: 'giustificato' })
+    expect(inserimenti()[0].valori[0]).not.toHaveProperty('periodo_id')
+    // Quello che si restituisce è quello che si è scritto davvero.
+    expect((await res.json()).data.tipo).toBe('giustificato')
+    expect(ripiegiDiSchema()).toHaveLength(1)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }),
+      expect.objectContaining({ code: 'PGRST204' }),
+    )
+    // Il log di successo dice la verità: l'impreparato è entrato SENZA periodo.
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'impreparato-segnato', tipo: 'giustificato', periodo_assegnato: false }),
+      undefined,
+      expect.anything(),
+    )
+  })
+
+  it('mancano tipo e periodo_id (il DB della CI): tre prove, la terza senza nessuna delle due, due log di ripiego', async () => {
     h.colonneAssenti = ['tipo', 'periodo_id']
 
     const res = await post({ ...CORPO, data: '2026-10-14' })
 
     expect(res.status).toBe(201)
-    expect(h.tentativi).toHaveLength(2)
+    expect(h.tentativi).toHaveLength(3)
     expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['tipo', 'periodo_id']))
-    expect(h.tentativi[1].chiavi).not.toContain('tipo')
+    expect(h.tentativi[1].chiavi).toContain('tipo')
     expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
+    expect(h.tentativi[2].chiavi).not.toContain('tipo')
+    expect(h.tentativi[2].chiavi).not.toContain('periodo_id')
     expect(inserimenti()).toHaveLength(1)
-    expect(h.logEvento).toHaveBeenCalledWith(
-      'registro',
-      'info',
-      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }),
-      expect.objectContaining({ code: 'PGRST204' }),
-    )
-    // Il log di successo dice la verità: l'impreparato è entrato SENZA periodo.
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
     expect(h.logEvento).toHaveBeenCalledWith(
       'registro',
       'info',
@@ -465,15 +499,14 @@ describe('POST', () => {
     )
   })
 
-  it('anche la ripetizione fallisce → 500 IMPREPARATO_NON_SALVATO, una sola ripetizione e nessuna notifica', async () => {
+  it('anche l’ultima ripetizione fallisce → 500 IMPREPARATO_NON_SALVATO, due soli ripiegi e nessuna notifica', async () => {
     h.opzioni = { scritture, errori: { 'giustifiche_didattiche:insert': { code: 'PGRST204' } } } satisfies OpzioniFinto
 
     const res = await post(CORPO)
 
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
-    const ripiegi = h.logEvento.mock.calls.filter(([, , campi]) => campi?.esito === 'colonne-nuove-non-disponibili-schema')
-    expect(ripiegi).toHaveLength(1)
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
     expect(h.accoda).not.toHaveBeenCalled()
   })
 })
@@ -677,43 +710,97 @@ describe('PATCH e DELETE', () => {
 })
 
 describe('PATCH con il database non migrato', () => {
-  it('update semplice: si ripete UNA volta senza periodo_id, 200 e log info colonne-nuove-non-disponibili-schema', async () => {
+  // L'update semplice è a due stadi come l'insert della POST: prima solo la colonna NUOVA (`periodo_id`), poi, se lo schema
+  // risponde ancora, anche `tipo`. Ogni stadio lascia un log `info` con il suo numero.
+  const ripiegiDiSchema = () =>
+    h.logEvento.mock.calls.filter(([, , campi]) => campi?.esito === 'colonne-nuove-non-disponibili-schema')
+
+  it('manca solo periodo_id: UNA ripetizione senza, `tipo` resta nei valori, 200 e log info', async () => {
     h.db.giustifiche_didattiche = [impreparato({ periodo_id: null })]
     h.colonneAssenti = ['periodo_id']
 
-    const res = await patch({ id: I2, data: '2026-10-05' })
+    const res = await patch({ id: I2, tipo: 'giustificato', data: '2026-10-05' })
 
     expect(res.status).toBe(200)
     expect(h.tentativi).toHaveLength(2)
-    expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['data', 'periodo_id']))
-    expect(h.tentativi[1].chiavi).toContain('data')
+    expect(h.tentativi[0].chiavi).toEqual(expect.arrayContaining(['tipo', 'data', 'periodo_id']))
+    expect(h.tentativi[1].chiavi).toEqual(expect.arrayContaining(['tipo', 'data']))
     expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
     expect(aggiornamenti()).toHaveLength(1)
-    expect(aggiornamenti()[0].valori[0]).toMatchObject({ data: '2026-10-05' })
+    expect(aggiornamenti()[0].valori[0]).toMatchObject({ tipo: 'giustificato', data: '2026-10-05' })
+    // Quello che si restituisce è quello che si è scritto davvero.
+    expect((await res.json()).data).toMatchObject({ tipo: 'giustificato', data: '2026-10-05' })
+    expect(ripiegiDiSchema()).toHaveLength(1)
     expect(h.logEvento).toHaveBeenCalledWith(
       'registro',
       'info',
-      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }),
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }),
       expect.objectContaining({ code: 'PGRST204' }),
     )
   })
 
-  it('update semplice: anche la ripetizione fallisce → 500 IMPREPARATO_NON_SALVATO, una sola ripetizione', async () => {
+  it('mancano tipo e periodo_id (il DB della CI): tre prove, la terza senza nessuna delle due, due log di ripiego', async () => {
+    h.db.giustifiche_didattiche = [impreparato({ periodo_id: null })]
+    h.colonneAssenti = ['tipo', 'periodo_id']
+
+    const res = await patch({ id: I2, tipo: 'giustificato', data: '2026-10-05' })
+
+    expect(res.status).toBe(200)
+    expect(h.tentativi).toHaveLength(3)
+    expect(h.tentativi[1].chiavi).toContain('tipo')
+    expect(h.tentativi[1].chiavi).not.toContain('periodo_id')
+    expect(h.tentativi[2].chiavi).toEqual(['data'])
+    expect(aggiornamenti()).toHaveLength(1)
+    expect(aggiornamenti()[0].valori[0]).toMatchObject({ data: '2026-10-05' })
+    expect(aggiornamenti()[0].valori[0]).not.toHaveProperty('tipo')
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
+  })
+
+  it('manca tipo e la PATCH non cambia la data: niente periodo_id da togliere, una sola ripetizione (stadio 2); se non resta niente, nessuna modifica', async () => {
+    h.db.giustifiche_didattiche = [impreparato()]
+    h.colonneAssenti = ['tipo']
+
+    const res = await patch({ id: I2, tipo: 'giustificato' })
+
+    expect(res.status).toBe(200)
+    expect(h.tentativi).toHaveLength(1)
+    expect(aggiornamenti()).toHaveLength(0)
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([2])
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'impreparato-nessuna-modifica' }),
+      undefined,
+      expect.anything(),
+    )
+  })
+
+  it('anche l’ultima ripetizione fallisce → 500 IMPREPARATO_NON_SALVATO, due soli ripiegi', async () => {
+    h.db.giustifiche_didattiche = [impreparato({ periodo_id: null })]
+    h.opzioni = { scritture, errori: { 'giustifiche_didattiche:update': { code: 'PGRST204' } } } satisfies OpzioniFinto
+
+    const res = await patch({ id: I2, tipo: 'giustificato', data: '2026-10-05' })
+
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1, 2])
+  })
+
+  it('senza `tipo` nei valori non c’è uno stadio 2: la ripetizione senza periodo_id che fallisce ancora → 500, un solo ripiego', async () => {
     h.db.giustifiche_didattiche = [impreparato({ periodo_id: null })]
     h.opzioni = { scritture, errori: { 'giustifiche_didattiche:update': { code: 'PGRST204' } } } satisfies OpzioniFinto
 
     const res = await patch({ id: I2, data: '2026-10-05' })
 
     expect(res.status).toBe(500)
-    expect((await res.json()).codice).toBe('IMPREPARATO_NON_SALVATO')
-    const ripiegi = h.logEvento.mock.calls.filter(([, , campi]) => campi?.esito === 'colonne-nuove-non-disponibili-schema')
-    expect(ripiegi).toHaveLength(1)
+    expect(ripiegiDiSchema().map(([, , campi]) => campi.tentativo)).toEqual([1])
   })
 
   describe('rettifica storica della segreteria su una data passata', () => {
     // La RPC `storici_applica_rettifica` costruisce l'UPDATE dalle chiavi di `valori`: senza la colonna `periodo_id`
-    // torna 42703. Il ripiego è lo stesso dell'update semplice: UNA ripetizione senza, con il log `info` e senza il
-    // log `error` della rettifica (non è un guasto, è un ripiego previsto).
+    // torna 42703. Il ripiego è il primo stadio dell'update semplice, e l'unico: UNA ripetizione senza `periodo_id`
+    // (`tipo` non si tocca), con il log `info` e senza il log `error` della rettifica (non è un guasto, è un ripiego
+    // previsto).
     const SCHEMA = { data: null, error: { code: '42703', message: 'colonna inesistente' } }
     const logErroreRettifica = () =>
       h.logEvento.mock.calls.filter(([, livello, campi]) => livello === 'error' && campi?.esito === 'rettifica-non-applicata')
@@ -739,7 +826,7 @@ describe('PATCH con il database non migrato', () => {
       expect(h.logEvento).toHaveBeenCalledWith(
         'registro',
         'info',
-        expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }),
+        expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }),
         expect.objectContaining({ code: '42703' }),
       )
       expect(logErroreRettifica()).toHaveLength(0)

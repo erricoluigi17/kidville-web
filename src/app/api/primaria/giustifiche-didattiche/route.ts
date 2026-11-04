@@ -14,6 +14,7 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { linkVotiGenitore, nomeAlunnoPerNotifica } from '@/lib/primaria/notifica-voti-genitore'
 import { leggiBufferVisibilita } from '@/lib/primaria/visibilita-genitore'
+import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
 import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
 import { giornoDiRoma } from '@/lib/primaria/periodo'
 import { statoQuadrimestre } from '@/lib/primaria/quadrimestre'
@@ -196,9 +197,13 @@ function rispostaDataFutura(operazione: string): NextResponse {
   return NextResponse.json({ error: 'La data non può essere nel futuro.', codice: 'DATA_FUTURA' }, { status: 422 })
 }
 
-/** Il database non ha ancora le colonne nuove (la CI E2E non è migrata): si ripete la scrittura senza, e lo si dice. */
-function logSchemaIndietro(operazione: string, error: unknown): void {
-  logEvento('registro', 'info', { operazione, esito: 'colonne-nuove-non-disponibili-schema' }, error)
+/**
+ * Il database non ha ancora una colonna nuova (la CI E2E non è migrata): si ripete la scrittura senza, e lo si dice.
+ * `tentativo` è lo STADIO del ripiego, come nella route dei voti: 1 = senza `periodo_id` (la colonna nuova di questo
+ * lavoro), 2 = senza anche `tipo` (più vecchia: in produzione c'è, manca solo sul DB della CI, che non ha nessuna delle due).
+ */
+function logSchemaIndietro(operazione: string, error: unknown, tentativo: number): void {
+  logEvento('registro', 'info', { operazione, esito: 'colonne-nuove-non-disponibili-schema', tentativo }, error)
 }
 
 /**
@@ -584,18 +589,21 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
       origine: 'docente',
       creato_da: userId,
     }
+    const inserisci = (campi: Record<string, unknown>) =>
+      supabase.from('giustifiche_didattiche').insert(campi).select().single()
     let periodoScritto = quadrimestre.periodoId
-    let esito = await supabase
-      .from('giustifiche_didattiche')
-      .insert({ ...riga, tipo, periodo_id: quadrimestre.periodoId })
-      .select()
-      .single()
-    if (esito.error && COLONNA_ASSENTE.has(codiceDi(esito.error))) {
-      // DB non migrato (E2E della CI): le colonne `tipo` e `periodo_id` non ci sono ancora, e senza la riga si scrive
-      // come prima. UNA ripetizione, e lo si dice al log. In produzione la migrazione c'è.
-      logSchemaIndietro(operazione, esito.error)
+    let esito = await inserisci({ ...riga, tipo, periodo_id: quadrimestre.periodoId })
+    // DB non migrato (E2E della CI). A degradare è la colonna NUOVA, una volta: `periodo_id`. Se lo schema risponde
+    // ancora, ne manca anche una più vecchia, `tipo` (c'è in produzione da prima, non si butta se non è necessario): ultima
+    // ripetizione senza. Ogni stadio si dice al log; se fallisce anche l'ultimo, l'errore è quello di sempre.
+    if (esito.error && colonnaNuovaAssente(esito.error)) {
+      logSchemaIndietro(operazione, esito.error, 1)
       periodoScritto = null
-      esito = await supabase.from('giustifiche_didattiche').insert(riga).select().single()
+      esito = await inserisci({ ...riga, tipo })
+      if (esito.error && colonnaNuovaAssente(esito.error)) {
+        logSchemaIndietro(operazione, esito.error, 2)
+        esito = await inserisci(riga)
+      }
     }
     if (esito.error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, esito.error)
@@ -774,7 +782,7 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
       // `42703`. Come sull'update semplice: UNA ripetizione senza, con il log `info`; la seconda prova non ha ripiego.
       let rettifica = await rettificaCon(patch, 'periodo_id' in patch)
       if ('response' in rettifica && rettifica.schemaIndietro) {
-        logSchemaIndietro(operazione, rettifica.schemaIndietro)
+        logSchemaIndietro(operazione, rettifica.schemaIndietro, 1)
         const { periodo_id: _periodo, ...senzaPeriodo } = patch
         void _periodo
         rettifica = await rettificaCon(senzaPeriodo, false)
@@ -782,14 +790,24 @@ export const PATCH = withRoute('primaria/giustifiche-didattiche:PATCH', async (r
       if ('response' in rettifica) return rettifica.response
       scritte = { data: rettifica.righe[0], error: null }
     } else scritte = Object.keys(patch).length > 0 ? await scrivi(patch, COLONNE_VOCE) : null
-    if (scritte?.error && COLONNA_ASSENTE.has(codiceDi(scritte.error))) {
-      // DB non migrato (E2E della CI): senza le colonne `tipo` e `periodo_id` si scrive il resto. UNA ripetizione, e lo
-      // si dice al log.
-      logSchemaIndietro(operazione, scritte.error)
-      const { tipo: _t, periodo_id: _p, ...senzaColonneNuove } = patch
-      void _t
-      void _p
-      scritte = Object.keys(senzaColonneNuove).length > 0 ? await scrivi(senzaColonneNuove, COLONNE_VOCE_SENZA_TIPO) : null
+    if (scritte?.error && colonnaNuovaAssente(scritte.error)) {
+      // DB non migrato (E2E della CI), a due stadi come l'insert della POST. Prima la colonna NUOVA: una ripetizione senza
+      // `periodo_id` (se la PATCH lo portava). Se lo schema risponde ancora, manca anche `tipo`: ultima ripetizione senza
+      // (il resto si scrive; se non resta niente, la voce resta com'è). Ogni stadio si dice al log.
+      let correnti = patch
+      if ('periodo_id' in correnti) {
+        logSchemaIndietro(operazione, scritte.error, 1)
+        const { periodo_id: _p, ...senzaPeriodo } = correnti
+        void _p
+        correnti = senzaPeriodo
+        scritte = await scrivi(correnti, COLONNE_VOCE)
+      }
+      if (scritte?.error && colonnaNuovaAssente(scritte.error) && 'tipo' in correnti) {
+        logSchemaIndietro(operazione, scritte.error, 2)
+        const { tipo: _t, ...senzaTipo } = correnti
+        void _t
+        scritte = Object.keys(senzaTipo).length > 0 ? await scrivi(senzaTipo, COLONNE_VOCE_SENZA_TIPO) : null
+      }
     }
     if (scritte?.error) {
       logEvento('registro', 'error', { operazione, esito: 'impreparato-non-aggiornato', giustifica_id: id }, scritte.error)

@@ -357,20 +357,23 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
   })
 
   it('DB senza la colonna `tipo` (PGRST204): riscrive senza, e non perde l’impreparato', async () => {
-    coda('giustifiche_didattiche:insert',
-      { data: null, error: { code: 'PGRST204', message: "Could not find the 'tipo' column" } },
-      { data: { id: IMP }, error: null },
-    )
+    // Il DB della CI non ha né `periodo_id` né `tipo`: prima si toglie la colonna NUOVA (`periodo_id`), poi, se lo schema
+    // risponde ancora, anche `tipo`. Tre prove, due log di ripiego.
+    const schema = { data: null, error: { code: 'PGRST204', message: "Could not find the 'tipo' column" } }
+    coda('giustifiche_didattiche:insert', schema, schema, { data: { id: IMP }, error: null })
     const res = await POST(conCorpo('POST', CORPO))
     expect(res.status).toBe(201)
-    const [prima, seconda] = chiamate('giustifiche_didattiche', 'insert')
+    const [prima, seconda, terza] = chiamate('giustifiche_didattiche', 'insert')
     expect(prima.payload).toHaveProperty('tipo')
     expect(prima.payload).toHaveProperty('periodo_id')
-    expect(seconda.payload).not.toHaveProperty('tipo')
-    // Il ripiego toglie anche `periodo_id`, e lo dice al log.
+    expect(seconda.payload).toHaveProperty('tipo')
     expect(seconda.payload).not.toHaveProperty('periodo_id')
+    expect(terza.payload).not.toHaveProperty('tipo')
+    expect(terza.payload).not.toHaveProperty('periodo_id')
     expect(m.logEvento).toHaveBeenCalledWith('registro', 'info',
-      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }), expect.anything())
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }), expect.anything())
+    expect(m.logEvento).toHaveBeenCalledWith('registro', 'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 2 }), expect.anything())
   })
 })
 

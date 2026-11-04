@@ -323,6 +323,10 @@ export function posterioriCheContengono(
 // 03/11/2026 (era `20261102130156_…`), per la stessa ragione: la #285 ha applicato `20261103131803_…`. E una
 // quarta il 03/11/2026 (era `20261103162210_…`): la #286 ha rigenerato le fotografie alle 16:25:22Z, dopo
 // quell'istante.
+// SVUOTATA il 04/11/2026 (PR-B dopo il merge di #275, `da0fee61`): applicata dall'integrazione, una riga sola
+// nel registro con la version del file (251 migrazioni); in produzione `form_submissions` ha 0 policy, nessun
+// grant per `anon`/`authenticated` e la RLS accesa. Cambiano, come previsto qui sopra, solo la fotografia della
+// RLS (43 → 40 policy, `tabelle_rls_attiva` invariata a 163) e quella delle migrazioni (+1 riga).
 //
 // 2026-11-02 · VOTAZIONI DEI RAPPRESENTANTI, PR-A: `20261102100040_votazioni_rappresentanti.sql` crea quattro
 // tabelle `votazioni*` (`votazioni`, `votazioni_classi`, `votazioni_candidati`, `votazioni_voti`), tutte con
@@ -352,11 +356,7 @@ export function posterioriCheContengono(
 // SVUOTATA il 03/11/2026 (PR-B dopo il merge di #285, `ccd386d8`): applicata dall'integrazione, una riga sola
 // nel registro con la version del file; il CHECK in produzione ammette `lettura`, `ricerca`, `scarico`. Delle
 // otto fotografie cambia per lei solo quella delle migrazioni, come previsto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261103172513_form_submissions_senza_policy_browser.sql':
-        'S-1: via le policy fs_* di form_submissions (−3 nella fotografia della RLS); la applica ' +
-        'l\'integrazione al merge, la voce si toglie con la PR-B rigenerando le fotografie',
-}
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

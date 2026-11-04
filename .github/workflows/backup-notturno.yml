@@ -253,6 +253,8 @@ jobs:
         run: |
           set -euo pipefail
           DEST="R2:${R2_BUCKET}/${PREFISSO_DB}"
+          # La riga finale riporta la dimensione del DUMP: l'ultimo giro del ciclo è il manifest.
+          DUMP_BYTES=0
           for f in "$RUNNER_TEMP/backup-db/$STAMPA.dump.age" "$RUNNER_TEMP/backup-db/$STAMPA.manifest.jsonl.age"; do
             nome="$(basename "$f")"
             rclone copyto "$f" "$DEST/$nome" --immutable --s3-upload-cutoff 200M --s3-chunk-size 64M
@@ -262,6 +264,7 @@ jobs:
               echo "::error::dimensione diversa dopo il caricamento ($locale in locale, $remoto su R2)"
               exit 1
             fi
+            if [ "$nome" = "$STAMPA.dump.age" ]; then DUMP_BYTES="$locale"; fi
           done
           # Il primo giro del mese lascia anche la copia mensile (tenuta 12 mesi dal lock).
           if [ "$MODALITA" = "completo" ] && [ "$(date -u +%d)" = "01" ]; then
@@ -271,7 +274,7 @@ jobs:
               rclone copyto "$DEST/$STAMPA.manifest.jsonl.age" "R2:${R2_BUCKET}/db/mensili/$MESE.manifest.jsonl.age" --immutable
             fi
           fi
-          echo "::notice::dump caricato ($locale byte l'ultimo file)"
+          echo "::notice::dump caricato ($DUMP_BYTES byte, stessa dimensione su R2)"
 
       # Lo specchio gira anche se il dump è fallito: un guasto del database non deve fermare la
       # copia dei file, e viceversa. Il giro resta rosso se uno dei due fallisce.

@@ -417,7 +417,10 @@ describe('«Valutazioni recenti»: valutazioni e impreparati insieme', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Elimina la valutazione del 20/09/2026 (Le tabelline)' }));
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Elimina' }));
     expect(await screen.findByText('Valutazione eliminata ✓')).toBeTruthy();
-    fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: ALUNNO_B.id } });
+    // La modale chiusa dalla risposta di rete sparisce subito, ma lo sfondo torna
+    // accessibile (inert tolto) solo nella pulizia dell'effetto, un giro dopo: un
+    // getAllByRole qui, sotto carico, non vede le select. findAllByRole aspetta.
+    fireEvent.change((await screen.findAllByRole('combobox'))[0]!, { target: { value: ALUNNO_B.id } });
     expect(await screen.findByText(/caricare tutte le voci/)).toBeTruthy();
     expect(screen.queryByTestId(`voce-valutazione-${VAL_ID}`)).toBeNull();
     expect(screen.queryByRole('button', { name: /^Elimina/ })).toBeNull();

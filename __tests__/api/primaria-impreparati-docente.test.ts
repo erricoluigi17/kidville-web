@@ -403,11 +403,47 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
   })
 
-  it('423 se la NUOVA data è oltre il termine: il termine vale su entrambe le date', async () => {
+  // La data nuova NON conta per il termine (che corre dal giorno del salvataggio, D6): conta solo per il
+  // congelamento (D8). Il quadrimestre di questi due casi copre la data nuova (10 giorni fa) e NON quella di
+  // oggi: se coprisse anche oggi, a congelare la voce sarebbe la sua data attuale e il test non distinguerebbe.
+  const quadrimestreDiDieciGiorniFa = () => ({
+    id: '9e710002-0000-4000-8000-0000000000d1', scuola_id: SEDE, anno_scolastico: '2026/2027', nome: 'Primo quadrimestre',
+    ordine: 1, data_inizio: giorniFa(20), data_fine: giorniFa(5), attivo: true,
+  })
+
+  it('la NUOVA data in un quadrimestre con lo scrutinio chiuso per la classe: 423 QUADRIMESTRE_CHIUSO, nessuna scrittura', async () => {
+    const periodo = quadrimestreDiDieciGiorniFa()
     coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(0) }), error: null })
+    coda('scrutinio_periodi:select', { data: [periodo], error: null })
+    coda('scrutini:select', { data: [{ section_id: SEZ, periodo_id: periodo.id }], error: null })
+
     const res = await PATCH(conCorpo('PATCH', { id: IMP, data: giorniFa(10) }))
+
     expect(res.status).toBe(423)
+    expect(await res.json()).toMatchObject({ codice: 'QUADRIMESTRE_CHIUSO', locked: true })
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
+    // Gli scrutini si cercano per LA CLASSE della voce e per il periodo letto, solo chiusi.
+    const [scrutini] = chiamate('scrutini', 'select')
+    expect(filtro(scrutini, 'in', 'section_id')?.[2]).toEqual([SEZ])
+    expect(filtro(scrutini, 'in', 'periodo_id')?.[2]).toEqual([periodo.id])
+    expect(filtro(scrutini, 'eq', 'stato')?.[2]).toBe('chiuso')
+  })
+
+  it('la NUOVA data oltre il vecchio termine, in un quadrimestre APERTO: passa e scrive la data', async () => {
+    const periodo = quadrimestreDiDieciGiorniFa()
+    const dieciGiorniFa = giorniFa(10)
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(0) }), error: null })
+    coda('scrutinio_periodi:select', { data: [periodo], error: null })
+    coda('scrutini:select', { data: [], error: null })
+    coda('giustifiche_didattiche:update', { data: [riga({ data: dieciGiorniFa })], error: null })
+    coda('alunni:select', { data: { nome: 'Marco' }, error: null })
+
+    const res = await PATCH(conCorpo('PATCH', { id: IMP, data: dieciGiorniFa }))
+
+    expect(res.status).toBe(200)
+    const [upd] = chiamate('giustifiche_didattiche', 'update')
+    expect(upd.payload).toMatchObject({ data: dieciGiorniFa })
+    expect(filtro(upd, 'eq', 'id')?.[2]).toBe(IMP)
   })
 
   it('oltre il termine con lo sblocco della voce si modifica', async () => {

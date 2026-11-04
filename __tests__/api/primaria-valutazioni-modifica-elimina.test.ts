@@ -546,9 +546,39 @@ describe('spostamento della competenza della valutazione', () => {
     expect(chiamate('notifiche', 'delete')).toHaveLength(1)
     expect(chiamate('notifiche', 'update')).toHaveLength(0)
   })
-  it('il docente resta vincolato al termine della data nuova', async () => {
+  // La data nuova NON conta per il termine (che corre dal giorno del salvataggio, D6): conta solo per il
+  // congelamento (D8). I periodi di questi due casi sono del 2020, con date fisse: nessuno dipende da
+  // quando il test gira.
+  const Q2_2020 = { id: '9e710002-0000-4000-8000-000000002020', scuola_id: SEDE, anno_scolastico: '2019/2020', nome: 'Secondo quadrimestre', ordine: 2, data_inizio: '2020-02-01', data_fine: '2020-06-30', attivo: false }
+
+  it('la data nuova in un quadrimestre con lo scrutinio chiuso per la classe: 423 QUADRIMESTRE_CHIUSO, nessuna scrittura', async () => {
     coda('valutazioni:select', { data: riga(), error: null })
-    expect((await PATCH(patch({ ...CORPO, data: '2020-04-02' }))).status).toBe(423)
+    coda('scrutinio_periodi:select', { data: [Q2_2020], error: null })
+    coda('scrutini:select', { data: [{ section_id: SEZ, periodo_id: Q2_2020.id }], error: null })
+
+    const res = await PATCH(patch({ ...CORPO, data: '2020-04-02' }))
+
+    expect(res.status).toBe(423)
+    expect(await res.json()).toMatchObject({ codice: 'QUADRIMESTRE_CHIUSO', locked: true })
     expect(chiamate('valutazioni', 'update')).toHaveLength(0)
+    // Gli scrutini si cercano per LA CLASSE della voce e per il periodo letto, solo chiusi.
+    const [scrutini] = chiamate('scrutini', 'select')
+    expect(filtro(scrutini, 'in', 'section_id')?.[2]).toEqual([SEZ])
+    expect(filtro(scrutini, 'in', 'periodo_id')?.[2]).toEqual([Q2_2020.id])
+    expect(filtro(scrutini, 'eq', 'stato')?.[2]).toBe('chiuso')
+  })
+
+  it('la data nuova oltre il vecchio termine, in un quadrimestre APERTO: passa e scrive la data', async () => {
+    coda('valutazioni:select', { data: riga(), error: null })
+    coda('scrutinio_periodi:select', { data: [Q2_2020], error: null })
+    coda('scrutini:select', { data: [], error: null })
+    coda('valutazioni:update', { data: [{ ...riga(), data_evento: '2020-04-02' }], error: null })
+
+    const res = await PATCH(patch({ ...CORPO, data: '2020-04-02' }))
+
+    expect(res.status).toBe(200)
+    const [upd] = chiamate('valutazioni', 'update')
+    expect(upd.payload).toMatchObject({ data_evento: '2020-04-02' })
+    expect(filtro(upd, 'eq', 'id')?.[2]).toBe(VAL)
   })
 })

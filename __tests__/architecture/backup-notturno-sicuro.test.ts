@@ -319,6 +319,12 @@ function violazioni(grezzo: string, cicd: string): string[] {
         if (/\brclone[ \t]+copyto\b/.test(riga) && !/--immutable/.test(riga)) v.push('rclone copyto senza --immutable')
     }
     if (!/postgresql-client-17/.test(c)) v.push('serve il client postgresql-client-17 (stesso major del server)')
+    // `head` chiude la pipe appena ha le sue righe: con `pipefail` il comando a monte, se sta ancora
+    // scrivendo, muore di SIGPIPE e il passo esce 141. Dipende da chi arriva prima, quindi passa per
+    // settimane e poi cade: il giro del 04/11/2026 è caduto su `rclone version | head -n 1`.
+    for (const riga of righe) {
+        if (!/^\s*#/.test(riga) && /\|\s*head\b/.test(riga)) v.push(`\`| head\` con pipefail: SIGPIPE, il passo esce 141 («${riga.trim().slice(0, 60)}»)`)
+    }
 
     // ── DUMP E SEGRETI NEI LOG ─────────────────────────────────────────────
     for (const riga of righe) {
@@ -437,7 +443,8 @@ describe('PROVE GEMELLE · il lock diventa rosso quando una regola si rompe', ()
         ['rclone latest', (s) => s.replace('PIN_RCLONE_VERSIONE: "1.75.1"', 'PIN_RCLONE_VERSIONE: "latest"'), /versione esatta mancante|latest/],
         ['una variabile RCLONE_VERSION (letta da rclone come --version)', (s) => s.replace('PIN_RCLONE_VERSIONE: "1.75.1"', 'RCLONE_VERSION: "1.75.1"'), /rclone legge ogni RCLONE_\* come un'opzione sua/],
         ['una variabile RCLONE_SHA256', (s) => s.replace('PIN_RCLONE_SHA256:', 'RCLONE_SHA256:'), /variabile RCLONE_SHA256/],
-        ['una RCLONE_* scritta nello script', (s) => s.replace('rclone version | head -n 1', 'RCLONE_QUIET=1 rclone version | head -n 1'), /variabile RCLONE_QUIET/],
+        ['una RCLONE_* scritta nello script', (s) => s.replace('rclone version | sed -n 1p', 'RCLONE_QUIET=1 rclone version | sed -n 1p'), /variabile RCLONE_QUIET/],
+        ['| head con pipefail', (s) => s.replace('rclone version | sed -n 1p', 'rclone version | head -n 1'), /SIGPIPE/],
         ['set -x', (s) => s.replace('          set -euo pipefail\n          sudo apt-get update', '          set -euxo pipefail\n          sudo apt-get update'), /set -x/],
         ['stampa un segreto', (s) => s.replace('echo "::notice::dump caricato', 'echo "$BACKUP_DB_URL"\n          echo "::notice::dump caricato'), /stampa un segreto/],
         ['pg_dump dal workflow', (s) => s.replace('      - name: Riepilogo', '      - run: pg_dump -f /tmp/dump.sql "$X"\n      - name: Riepilogo'), /pg_dump chiamato dal workflow/],

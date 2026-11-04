@@ -204,7 +204,9 @@ jobs:
           unzip -q "$RUNNER_TEMP/rclone.zip" -d "$RUNNER_TEMP"
           sudo install -m 0755 "$RUNNER_TEMP/rclone-v${PIN_RCLONE_VERSIONE}-linux-amd64/rclone" /usr/local/bin/rclone
           age --version
-          rclone version | head -n 1
+          # `sed` e non `head`: head chiude la pipe dopo la prima riga, e con pipefail rclone, se sta
+          # ancora scrivendo, muore di SIGPIPE e il passo esce 141. È caduto così il giro del 04/11/2026.
+          rclone version | sed -n 1p
           /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Prepara la cifratura dei file e le destinazioni

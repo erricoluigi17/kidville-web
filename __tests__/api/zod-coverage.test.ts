@@ -17,7 +17,6 @@ const GRUPPI_COPERTI: string[] = [
     'attendance',
     'avvisi',
     'diary',
-    'grades',
     'notes',
     'tasks',
     // M3.3 (zod 2/14)

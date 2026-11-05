@@ -199,5 +199,6 @@
   "periodiConfermaArchivia": "Archiviare il periodo? Esce dall’elenco e non si compila più. Scrutini e pagelle restano, e lo si può rimettere in elenco.",
   "periodiRipristina": "Rimetti in elenco",
   "periodiArchiviatoBadge": "archiviato",
-  "periodiMostraArchiviati": "Mostra anche gli archiviati"
+  "periodiMostraArchiviati": "Mostra anche gli archiviati",
+  "periodiPromemoriaDate": "Mancano le date dei quadrimestri di quest’anno: senza, i voti non si collegano al quadrimestre e lo scrutinio chiuso non li protegge."
 }

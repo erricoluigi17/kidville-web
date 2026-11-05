@@ -93,6 +93,8 @@ const GENITORE = 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2'
 const GIORNO = 86_400_000
 /** Data di ROMA di n giorni fa (`YYYY-MM-DD`): la data dell'evento di un impreparato. */
 const giorniFa = (n: number) => dataRomaDi(new Date(Date.now() - n * GIORNO))
+/** L'istante in cui l'impreparato è stato SALVATO, n giorni fa: da lì corre il termine di quello della docente. */
+const salvatoIl = (n: number) => new Date(Date.now() - n * GIORNO).toISOString()
 
 function riga(over: Record<string, unknown> = {}) {
   return {
@@ -106,6 +108,15 @@ function riga(over: Record<string, unknown> = {}) {
 
 function coda(key: string, ...r: Array<{ data: unknown; error: unknown }>) {
   h.state.risposte[key] = [...(h.state.risposte[key] ?? []), ...r]
+}
+
+/**
+ * Le materie che la docente ha in questa classe (`utenti_sezioni_materie`): ogni lettura del database ne consuma una
+ * risposta. Lo staff non ne legge. Una per ogni controllo che il flusso fa (la GET e la POST ne fanno uno, la PATCH e la
+ * DELETE uno per la materia della voce e, se la cambia, uno per la nuova).
+ */
+function haLeMaterie(...materie: string[]) {
+  coda('utenti_sezioni_materie:select', { data: materie.map((materia_id) => ({ section_id: SEZ, materia_id })), error: null })
 }
 
 function utente(id: string, role: string) {
@@ -155,6 +166,7 @@ describe('GET /api/primaria/giustifiche-didattiche — forma per alunno', () => 
     })
     // Il permesso della voce del genitore passa dai docenti della classe.
     coda('utenti_sezioni:select', { data: [{ section_id: SEZ }], error: null })
+    haLeMaterie(MAT)
 
     const res = await GET(get(`sectionId=${SEZ}&alunnoId=${ALU}&materiaId=${MAT}`))
     expect(res.status).toBe(200)
@@ -164,6 +176,8 @@ describe('GET /api/primaria/giustifiche-didattiche — forma per alunno', () => 
     expect(filtro(q, 'eq', 'section_id')?.[2]).toBe(SEZ)
     expect(filtro(q, 'eq', 'alunno_id')?.[2]).toBe(ALU)
     expect(q.filtri.find((f) => f[0] === 'or')?.[1]).toBe(`materia_id.eq.${MAT},materia_id.is.null`)
+    // UN SOLO `.or()` sulla query: due si sovrascrivono a vicenda in PostgREST.
+    expect(q.filtri.filter((f) => f[0] === 'or')).toHaveLength(1)
     expect(filtro(q, 'eq', 'data')).toBeUndefined()
     expect(q.cols).toContain('tipo')
     expect(q.cols).not.toContain('alunni(')
@@ -185,6 +199,7 @@ describe('GET /api/primaria/giustifiche-didattiche — forma per alunno', () => 
       error: null,
     })
     coda('utenti_sezioni:select', { data: [{ section_id: SEZ }], error: null })
+    haLeMaterie(MAT)
     const res = await GET(get(`sectionId=${SEZ}&alunnoId=${ALU}&materiaId=${MAT}`))
     expect(res.status).toBe(200)
     expect((await res.json()).data[0]).toMatchObject({ id: IMP, origine: 'genitore', modificabile: true, bloccata: false })
@@ -192,6 +207,7 @@ describe('GET /api/primaria/giustifiche-didattiche — forma per alunno', () => 
     // …e la PATCH dello stesso docente sulla stessa riga passa.
     coda('giustifiche_didattiche:select', { data: riga({ origine: 'genitore', tipo: 'giustificato', creato_da: GENITORE }), error: null })
     coda('utenti_sezioni:select', { data: [{ section_id: SEZ }], error: null })
+    haLeMaterie(MAT)
     coda('giustifiche_didattiche:update', { data: [riga({ origine: 'genitore', tipo: 'giustificato', creato_da: GENITORE, motivo: 'm' })], error: null })
     const patch = await PATCH(conCorpo('PATCH', { id: IMP, motivo: 'm' }))
     expect(patch.status).toBe(200)
@@ -199,6 +215,9 @@ describe('GET /api/primaria/giustifiche-didattiche — forma per alunno', () => 
   })
 
   it('la forma del GIORNO resta: filtro per data e nome dell’alunno', async () => {
+    // Come segreteria: lo staff vede tutto e non ha filtri per materia. Il filtro della docente sta in
+    // `primaria-impreparati-data-materia.test.ts`.
+    utente(ALTRA, 'segreteria')
     coda('sections:select', { data: { scuola_id: SEDE }, error: null })
     coda('giustifiche_didattiche:select', { data: [], error: null })
     const oggi = giorniFa(0)
@@ -244,6 +263,7 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
   beforeEach(() => {
     coda('sections:select', { data: { scuola_id: SEDE }, error: null })
     coda('materie:select', { data: { id: MAT, nome: 'Matematica' }, error: null })
+    haLeMaterie(MAT)
   })
 
   it('tipo predefinito «impreparato», il testo fisso storico NON si scrive come motivo, audit e notifica al genitore dopo 10′', async () => {
@@ -256,6 +276,8 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
     expect(ins.payload).toMatchObject({
       alunno_id: ALU, section_id: SEZ, materia_id: MAT, tipo: 'impreparato',
       motivo: null, origine: 'docente', creato_da: AUTORE,
+      // Nessun periodo configurato in questo test: la colonna c'è e vale `null`.
+      periodo_id: null,
     })
     // La materia si cerca DENTRO la classe.
     const [mat] = chiamate('materie', 'select')
@@ -335,15 +357,23 @@ describe('POST /api/primaria/giustifiche-didattiche', () => {
   })
 
   it('DB senza la colonna `tipo` (PGRST204): riscrive senza, e non perde l’impreparato', async () => {
-    coda('giustifiche_didattiche:insert',
-      { data: null, error: { code: 'PGRST204', message: "Could not find the 'tipo' column" } },
-      { data: { id: IMP }, error: null },
-    )
+    // Il DB della CI non ha né `periodo_id` né `tipo`: prima si toglie la colonna NUOVA (`periodo_id`), poi, se lo schema
+    // risponde ancora, anche `tipo`. Tre prove, due log di ripiego.
+    const schema = { data: null, error: { code: 'PGRST204', message: "Could not find the 'tipo' column" } }
+    coda('giustifiche_didattiche:insert', schema, schema, { data: { id: IMP }, error: null })
     const res = await POST(conCorpo('POST', CORPO))
     expect(res.status).toBe(201)
-    const [prima, seconda] = chiamate('giustifiche_didattiche', 'insert')
+    const [prima, seconda, terza] = chiamate('giustifiche_didattiche', 'insert')
     expect(prima.payload).toHaveProperty('tipo')
-    expect(seconda.payload).not.toHaveProperty('tipo')
+    expect(prima.payload).toHaveProperty('periodo_id')
+    expect(seconda.payload).toHaveProperty('tipo')
+    expect(seconda.payload).not.toHaveProperty('periodo_id')
+    expect(terza.payload).not.toHaveProperty('tipo')
+    expect(terza.payload).not.toHaveProperty('periodo_id')
+    expect(m.logEvento).toHaveBeenCalledWith('registro', 'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 1 }), expect.anything())
+    expect(m.logEvento).toHaveBeenCalledWith('registro', 'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema', tentativo: 2 }), expect.anything())
   })
 })
 
@@ -353,6 +383,7 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
   it('l’autore entro il termine cambia tipo, motivo e data; si allinea SOLO la notifica in coda', async () => {
     const ieri = giorniFa(1)
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    haLeMaterie(MAT)
     coda('giustifiche_didattiche:update', { data: [riga({ tipo: 'giustificato', motivo: 'visita', data: ieri })], error: null })
     coda('alunni:select', { data: { nome: 'Marco' }, error: null })
 
@@ -361,7 +392,8 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     expect(m.assertSezioneInScope).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: AUTORE }), SEZ)
 
     const [upd] = chiamate('giustifiche_didattiche', 'update')
-    expect(upd.payload).toEqual({ tipo: 'giustificato', motivo: 'visita', data: ieri })
+    // La data è cambiata: `periodo_id` si ricalcola (qui nessun periodo configurato, quindi `null`).
+    expect(upd.payload).toEqual({ tipo: 'giustificato', motivo: 'visita', data: ieri, periodo_id: null })
     expect(filtro(upd, 'eq', 'id')?.[2]).toBe(IMP)
     expect(filtro(upd, 'eq', 'section_id')?.[2]).toBe(SEZ)
 
@@ -389,6 +421,7 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
   it('403 VOCE_NON_AUTORE a un docente che non è l’autore: nessuna scrittura', async () => {
     utente(ALTRA, 'educator')
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    haLeMaterie(MAT)
     const res = await PATCH(conCorpo('PATCH', { id: IMP, tipo: 'giustificato' }))
     expect(res.status).toBe(403)
     expect((await res.json()).codice).toBe('VOCE_NON_AUTORE')
@@ -396,22 +429,63 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
   })
 
   it('423 VOCE_BLOCCATA oltre il termine (anche per l’autore)', async () => {
-    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(5) }), error: null })
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(5), creato_il: salvatoIl(5) }), error: null })
+    haLeMaterie(MAT)
     const res = await PATCH(conCorpo('PATCH', { id: IMP, motivo: 'x' }))
     expect(res.status).toBe(423)
     expect((await res.json()).codice).toBe('VOCE_BLOCCATA')
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
   })
 
-  it('423 se la NUOVA data è oltre il termine: il termine vale su entrambe le date', async () => {
+  // La data nuova NON conta per il termine (che corre dal giorno del salvataggio, D6): conta solo per il
+  // congelamento (D8). Il quadrimestre di questi due casi copre la data nuova (10 giorni fa) e NON quella di
+  // oggi: se coprisse anche oggi, a congelare la voce sarebbe la sua data attuale e il test non distinguerebbe.
+  const quadrimestreDiDieciGiorniFa = () => ({
+    id: '9e710002-0000-4000-8000-0000000000d1', scuola_id: SEDE, anno_scolastico: '2026/2027', nome: 'Primo quadrimestre',
+    ordine: 1, data_inizio: giorniFa(20), data_fine: giorniFa(5), attivo: true,
+  })
+
+  it('la NUOVA data in un quadrimestre con lo scrutinio chiuso per la classe: 423 QUADRIMESTRE_CHIUSO, nessuna scrittura', async () => {
+    const periodo = quadrimestreDiDieciGiorniFa()
     coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(0) }), error: null })
+    haLeMaterie(MAT)
+    coda('scrutinio_periodi:select', { data: [periodo], error: null })
+    coda('scrutini:select', { data: [{ section_id: SEZ, periodo_id: periodo.id }], error: null })
+
     const res = await PATCH(conCorpo('PATCH', { id: IMP, data: giorniFa(10) }))
+
     expect(res.status).toBe(423)
+    expect(await res.json()).toMatchObject({ codice: 'QUADRIMESTRE_CHIUSO', locked: true })
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
+    // Gli scrutini si cercano per LA CLASSE della voce e per il periodo letto, solo chiusi.
+    const [scrutini] = chiamate('scrutini', 'select')
+    expect(filtro(scrutini, 'in', 'section_id')?.[2]).toEqual([SEZ])
+    expect(filtro(scrutini, 'in', 'periodo_id')?.[2]).toEqual([periodo.id])
+    expect(filtro(scrutini, 'eq', 'stato')?.[2]).toBe('chiuso')
+  })
+
+  it('la NUOVA data oltre il vecchio termine, in un quadrimestre APERTO: passa e scrive la data', async () => {
+    const periodo = quadrimestreDiDieciGiorniFa()
+    const dieciGiorniFa = giorniFa(10)
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(0) }), error: null })
+    haLeMaterie(MAT)
+    // Due letture dei quadrimestri: una per il permesso (congelamento della data nuova), una per il ricalcolo di `periodo_id`.
+    coda('scrutinio_periodi:select', { data: [periodo], error: null }, { data: [periodo], error: null })
+    coda('scrutini:select', { data: [], error: null }, { data: [], error: null })
+    coda('giustifiche_didattiche:update', { data: [riga({ data: dieciGiorniFa })], error: null })
+    coda('alunni:select', { data: { nome: 'Marco' }, error: null })
+
+    const res = await PATCH(conCorpo('PATCH', { id: IMP, data: dieciGiorniFa }))
+
+    expect(res.status).toBe(200)
+    const [upd] = chiamate('giustifiche_didattiche', 'update')
+    expect(upd.payload).toMatchObject({ data: dieciGiorniFa, periodo_id: periodo.id })
+    expect(filtro(upd, 'eq', 'id')?.[2]).toBe(IMP)
   })
 
   it('oltre il termine con lo sblocco della voce si modifica', async () => {
-    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(5) }), error: null })
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(5), creato_il: salvatoIl(5) }), error: null })
+    haLeMaterie(MAT)
     coda('sblocchi_audit:select', { data: [{ entita_tipo: 'impreparato', entita_id: IMP }], error: null })
     coda('giustifiche_didattiche:update', { data: [riga({ data: giorniFa(5), motivo: 'x' })], error: null })
     const res = await PATCH(conCorpo('PATCH', { id: IMP, motivo: 'x' }))
@@ -423,6 +497,7 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     const delGenitore = riga({ origine: 'genitore', tipo: 'giustificato', creato_da: GENITORE })
     utente(ALTRA, 'educator')
     coda('giustifiche_didattiche:select', { data: delGenitore, error: null })
+    haLeMaterie(MAT)
     coda('utenti_sezioni:select', { data: [{ section_id: SEZ }], error: null })
     coda('giustifiche_didattiche:update', { data: [{ ...delGenitore, motivo: 'riscritto' }], error: null })
     const res = await PATCH(conCorpo('PATCH', { id: IMP, motivo: 'riscritto' }))
@@ -445,9 +520,12 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
     h.state.risposte = {}
     vi.clearAllMocks()
     coda('giustifiche_didattiche:select', { data: delGenitore, error: null })
+    // Insegna la materia, ma non è della classe: a fermarla è il permesso, non la materia.
+    haLeMaterie(MAT)
     coda('utenti_sezioni:select', { data: [], error: null })
     const res2 = await PATCH(conCorpo('PATCH', { id: IMP, motivo: 'riscritto' }))
     expect(res2.status).toBe(403)
+    expect((await res2.json()).codice).toBe('VOCE_NON_AUTORE')
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
     expect(m.logScrittura).not.toHaveBeenCalled()
   })
@@ -480,9 +558,13 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
   })
 
   it('400 IMPREPARATO_MATERIA_NON_VALIDA per una materia di un’altra classe', async () => {
+    const ALTRA_CLASSE = '9f9f9f9f-9f9f-49f9-89f9-9f9f9f9f9f9f'
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    // La materia attuale, poi la nuova: la docente le ha entrambe, e a fermare la PATCH è la validazione della classe.
+    haLeMaterie(MAT)
+    haLeMaterie(MAT, ALTRA_CLASSE)
     coda('materie:select', { data: null, error: null })
-    const res = await PATCH(conCorpo('PATCH', { id: IMP, materiaId: '9f9f9f9f-9f9f-49f9-89f9-9f9f9f9f9f9f' }))
+    const res = await PATCH(conCorpo('PATCH', { id: IMP, materiaId: ALTRA_CLASSE }))
     expect(res.status).toBe(400)
     expect((await res.json()).codice).toBe('IMPREPARATO_MATERIA_NON_VALIDA')
     expect(chiamate('giustifiche_didattiche', 'update')).toHaveLength(0)
@@ -513,6 +595,7 @@ describe('PATCH /api/primaria/giustifiche-didattiche', () => {
 describe('DELETE /api/primaria/giustifiche-didattiche', () => {
   it('l’autore elimina: cancellazione vera, ritiro della notifica ANCORA IN CODA, audit', async () => {
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    haLeMaterie(MAT)
     coda('giustifiche_didattiche:delete', { data: [{ id: IMP }], error: null })
     coda('notifiche:delete', { data: [{ id: 'n1' }], error: null })
 
@@ -542,6 +625,7 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
     const delGenitore = riga({ origine: 'genitore', tipo: 'giustificato', creato_da: GENITORE })
     utente(ALTRA, 'educator')
     coda('giustifiche_didattiche:select', { data: delGenitore, error: null })
+    haLeMaterie(MAT)
     coda('utenti_sezioni:select', { data: [{ section_id: SEZ }], error: null })
     coda('giustifiche_didattiche:delete', { data: [{ id: IMP }], error: null })
     expect((await DELETE(del(IMP))).status).toBe(200)
@@ -550,6 +634,7 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
 
     h.state.chiamate = []
     coda('giustifiche_didattiche:select', { data: delGenitore, error: null })
+    haLeMaterie(MAT)
     coda('utenti_sezioni:select', { data: [], error: null })
     const res = await DELETE(del(IMP))
     expect(res.status).toBe(403)
@@ -559,14 +644,17 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
   it('un impreparato del DOCENTE non lo toglie un collega della classe', async () => {
     utente(ALTRA, 'educator')
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    haLeMaterie(MAT)
     const res = await DELETE(del(IMP))
     expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('VOCE_NON_AUTORE')
     expect(chiamate('giustifiche_didattiche', 'delete')).toHaveLength(0)
   })
 
   it('423 oltre il termine per il docente: niente cancellazione, niente ritiro', async () => {
     utente(AUTORE, 'educator')
-    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(4) }), error: null })
+    coda('giustifiche_didattiche:select', { data: riga({ data: giorniFa(4), creato_il: salvatoIl(4) }), error: null })
+    haLeMaterie(MAT)
     const res = await DELETE(del(IMP))
     expect(res.status).toBe(423)
     expect(chiamate('giustifiche_didattiche', 'delete')).toHaveLength(0)
@@ -585,7 +673,8 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
 
   it('oltre il termine con lo sblocco del GIORNO della classe si elimina', async () => {
     const data = giorniFa(4)
-    coda('giustifiche_didattiche:select', { data: riga({ data }), error: null })
+    coda('giustifiche_didattiche:select', { data: riga({ data, creato_il: salvatoIl(4) }), error: null })
+    haLeMaterie(MAT)
     coda('sblocchi_audit:select',
       { data: [], error: null },
       { data: [{ entita_tipo: 'giorno', section_id: SEZ, data, ora_lezione: null }], error: null },
@@ -600,6 +689,7 @@ describe('DELETE /api/primaria/giustifiche-didattiche', () => {
     expect((await res.json()).codice).toBe('IMPREPARATO_NON_TROVATO')
 
     coda('giustifiche_didattiche:select', { data: riga(), error: null })
+    haLeMaterie(MAT)
     coda('giustifiche_didattiche:delete', { data: [], error: null })
     const res2 = await DELETE(del(IMP))
     expect(res2.status).toBe(404)

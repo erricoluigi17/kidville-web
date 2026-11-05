@@ -8,6 +8,9 @@ import { dataCivile } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Btn } from '@/components/ui/Btn';
 import { Modal } from '@/components/ui/Modal';
+import { nomeCompleto } from '@/lib/format/nome';
+import { periodoPerData, type PeriodoScrutinio } from '@/lib/primaria/periodo';
+import { DataVoce } from '@/components/features/primaria/DataVoce';
 import { logClient } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { MOTIVO_MAX_CARATTERI } from '@/lib/presenze/limiti-testo';
@@ -29,6 +32,13 @@ import { BottoneSblocca } from '@/components/features/primaria/BottoneSblocca';
  *    offre nemmeno (il server risponderebbe 400);
  *  · BLOCCATA → niente Modifica/Elimina, il messaggio «Bloccata: superato il
  *    termine» e, per la sola Direzione, «Sblocca» (`BottoneSblocca`, modo voce).
+ *    CONGELATA (lo scrutinio del suo quadrimestre è chiuso) è una bloccata con un
+ *    messaggio suo: il termine non c'entra, serve lo sblocco della Direzione;
+ *  · VOCE DELLA COLLEGA → sola lettura (D17): senza Modifica, Elimina né messaggio di
+ *    blocco, per chi non è staff. Fa eccezione l'impreparato dichiarato dal genitore,
+ *    che resta azionabile come prima. L'appunto numerico e «Messo da» si vedono sempre;
+ *  · DATA DELLA PROVA → `DataVoce` per tutte, mai oltre oggi a Roma; in Modifica parte
+ *    SOLO se cambia (come `tipoProva`).
  */
 
 export type TipoImpreparato = 'impreparato' | 'giustificato';
@@ -46,6 +56,13 @@ export interface MateriaSelezionabile {
 }
 
 type Embed<T> = T | T[] | null | undefined;
+
+/** Chi ha messo una voce: la GET lo dà se la lettura degli autori è riuscita (altrimenti `null`). */
+export interface AutoreVoce {
+  id: string;
+  nome: string | null;
+  cognome: string | null;
+}
 
 /** Una valutazione come la restituisce `GET /api/primaria/valutazioni`. */
 export interface ValutazioneRecente {
@@ -70,6 +87,11 @@ export interface ValutazioneRecente {
   /** Oltre il termine e senza sblocco. */
   bloccata?: boolean;
   giorniLimite?: number | null;
+  /** Lo scrutinio del quadrimestre della voce è chiuso e nessuno sblocco lo riapre (implica `bloccata`). */
+  congelata?: boolean;
+  /** L'ha messa chi guarda. Assente = non si sa: la sola lettura scatta solo con `false`. */
+  propria?: boolean;
+  autore?: AutoreVoce | null;
 }
 
 /** Un impreparato come lo restituisce `GET /api/primaria/giustifiche-didattiche` (forma per alunno). */
@@ -86,6 +108,10 @@ export interface ImpreparatoRecente {
   modificabile?: boolean;
   bloccata?: boolean;
   giorniLimite?: number | null;
+  congelata?: boolean;
+  propria?: boolean;
+  /** Solo per `origine = 'docente'`: quello del genitore non ha autore. */
+  autore?: AutoreVoce | null;
 }
 
 export type VoceRecente =
@@ -133,6 +159,36 @@ export function unisciVociRecenti(
     })),
   ];
   return voci.sort((a, b) => b.giorno.localeCompare(a.giorno) || b.istante - a.istante);
+}
+
+// ─── Filtri dello storico: tipo di prova e quadrimestre ──────────────────────
+
+export interface FiltroVoci {
+  tipo: 'tutti' | 'orale' | 'scritto' | 'pratico' | 'impreparato';
+  /** `null` = tutti i quadrimestri. */
+  periodoId: string | null;
+}
+
+export const FILTRO_VOCI_INIZIALE: FiltroVoci = { tipo: 'tutti', periodoId: null };
+
+export const TIPI_FILTRO: readonly FiltroVoci['tipo'][] = ['tutti', 'orale', 'scritto', 'pratico', 'impreparato'];
+
+/**
+ * Le voci che passano i filtri, nello stesso ordine e senza toccare l'array ricevuto.
+ * Il quadrimestre di una voce è quello che copre il suo GIORNO (`voce.giorno`, cioè
+ * `data_evento` o il giorno di Roma di `creato_il`): la stessa regola con cui il server
+ * assegna il periodo, e vale anche per gli impreparati, che non hanno un periodo salvato.
+ */
+export function filtraVociRecenti(
+  voci: readonly VoceRecente[],
+  filtro: FiltroVoci,
+  periodi: readonly PeriodoScrutinio[],
+): VoceRecente[] {
+  return voci.filter((v) => {
+    if (filtro.tipo === 'impreparato' && v.genere !== 'impreparato') return false;
+    if (filtro.tipo !== 'tutti' && filtro.tipo !== 'impreparato' && !(v.genere === 'valutazione' && v.voce.tipo === filtro.tipo)) return false;
+    return filtro.periodoId === null || periodoPerData(periodi, v.giorno).periodoId === filtro.periodoId;
+  });
 }
 
 // ─── Modifica della valutazione: bozza e corpo della PATCH ───────────────────
@@ -403,6 +459,68 @@ export function SceltaTipoImpreparato({
   );
 }
 
+// ─── Sopra l'elenco: i filtri; su ogni voce: chi l'ha messa ──────────────────
+
+/**
+ * Due `<select>` con la loro etichetta, impilati sul telefono (ognuno a tutta larghezza)
+ * e affiancati dallo schermo `sm` in su. Il quadrimestre c'è SOLO se la sede ha periodi
+ * con le date (`periodi` arriva già così dalla GET).
+ */
+export function FiltriVoci({ filtro, onCambia, periodi }: {
+  filtro: FiltroVoci;
+  onCambia: (f: FiltroVoci) => void;
+  periodi: readonly PeriodoScrutinio[];
+}) {
+  const t = useTranslations('teacherPrimaria');
+  const idBase = useId();
+  const classeSelect = 'font-maven mt-1 block min-h-11 w-full min-w-0 rounded-pill border border-kidville-line bg-white px-3 py-2 text-sm';
+  const classeCampo = 'w-full min-w-0 sm:w-auto sm:flex-1';
+  const nomiPeriodo = periodi.map((p) => p.nome);
+  const ordinati = [...periodi].sort((a, b) => b.anno_scolastico.localeCompare(a.anno_scolastico) || a.ordine - b.ordine);
+  const etichettaTipo = (tp: FiltroVoci['tipo']) =>
+    tp === 'tutti' ? t('valutazioniFiltroTutti') : tp === 'impreparato' ? t('valutazioniFiltroImpreparati') : t(`valutazioniProva_${tp}`);
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      <div className={classeCampo}>
+        <label htmlFor={`${idBase}-tipo`} className="block font-maven text-xs text-kidville-sub">{t('valutazioniFiltroTipo')}</label>
+        <select
+          id={`${idBase}-tipo`}
+          value={filtro.tipo}
+          onChange={(e) => onCambia({ ...filtro, tipo: TIPI_FILTRO.find((x) => x === e.target.value) ?? 'tutti' })}
+          className={classeSelect}
+        >
+          {TIPI_FILTRO.map((tp) => <option key={tp} value={tp}>{etichettaTipo(tp)}</option>)}
+        </select>
+      </div>
+      {periodi.length > 0 && (
+        <div className={classeCampo}>
+          <label htmlFor={`${idBase}-periodo`} className="block font-maven text-xs text-kidville-sub">{t('valutazioniFiltroQuadrimestre')}</label>
+          <select
+            id={`${idBase}-periodo`}
+            value={filtro.periodoId ?? ''}
+            onChange={(e) => onCambia({ ...filtro, periodoId: e.target.value || null })}
+            className={classeSelect}
+          >
+            <option value="">{t('valutazioniFiltroTutti')}</option>
+            {ordinati.map((p) => (
+              // Lo stesso nome in due anni scolastici: si distingue con l'anno, altrimenti basta il nome.
+              <option key={p.id} value={p.id}>{nomiPeriodo.filter((n) => n === p.nome).length > 1 ? `${p.nome} · ${p.anno_scolastico}` : p.nome}</option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** «Messo da <nome cognome>». Niente riga se la GET non ha dato l'autore o il suo nome. */
+export function AutoreVoceRiga({ autore }: { autore: AutoreVoce | null | undefined }) {
+  const t = useTranslations('teacherPrimaria');
+  const nome = nomeCompleto(autore?.nome, autore?.cognome);
+  if (!nome) return null;
+  return <p className="mt-0.5 font-maven text-xs text-kidville-sub">{t('valutazioniStoricoAutore', { nome })}</p>;
+}
+
 // ─── Le azioni di una voce ───────────────────────────────────────────────────
 
 export interface AzioniVoceProps {
@@ -445,6 +563,9 @@ export function AzioniVoce({
   // modale si smonta; `aperta` va azzerata subito, o la riaprirebbe da sola il
   // giorno in cui la voce torna azionabile (lo stesso accorgimento di AzioniNota).
   const v = voce.voce;
+  // «Staff» = i tre ruoli che la pagina conosce per `gestioneStorica` (la pagina li riduce a
+  // `ruolo` prima di passarlo qui, anche per un profilo storico).
+  const staff = ['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '');
   const azionabile = permessiDisponibili && !v.bloccata && !!v.modificabile;
   const [azionabilePrima, setAzionabilePrima] = useState(azionabile);
   if (azionabile !== azionabilePrima) {
@@ -453,6 +574,12 @@ export function AzioniVoce({
   }
 
   if (!permessiDisponibili) return null;
+
+  // D17: la voce della collega è in sola lettura — né Modifica, Elimina o «Sblocca», né il messaggio
+  // di blocco — anche se la GET la desse `modificabile`. Il server rifiuta comunque (`VOCE_NON_AUTORE`).
+  // Resta azionabile l'impreparato dichiarato dal genitore, e per lo staff ogni voce.
+  const delGenitore = voce.genere === 'impreparato' && voce.voce.origine === 'genitore';
+  if (!staff && v.propria === false && !delGenitore) return null;
 
   // I nomi accessibili dicono QUALE voce: nell'elenco ci sono più «Modifica».
   const nomi =
@@ -479,9 +606,11 @@ export function AzioniVoce({
       <div className="mt-1 flex flex-wrap items-center gap-2" data-testid={`voce-bloccata-${v.id}`}>
         <p className="flex items-center gap-1 font-maven text-xs text-kidville-warn">
           <Lock size={12} aria-hidden="true" />
-          {typeof v.giorniLimite === 'number'
-            ? t('valutazioniVoceBloccata', { giorni: v.giorniLimite })
-            : t('valutazioniVoceBloccataSenzaGiorni')}
+          {v.congelata
+            ? t('valutazioniVoceCongelata')
+            : typeof v.giorniLimite === 'number'
+              ? t('valutazioniVoceBloccata', { giorni: v.giorniLimite })
+              : t('valutazioniVoceBloccataSenzaGiorni')}
         </p>
         <BottoneSblocca
           bersaglio={{ modo: 'voce', entitaTipo: voce.genere, entitaId: v.id }}
@@ -515,7 +644,6 @@ export function AzioniVoce({
       {aperta === 'modifica' && voce.genere === 'valutazione' && (
         <ModaleModificaValutazione
           valutazione={voce.voce}
-          gestioneStorica={['admin', 'coordinator', 'segreteria'].includes(ruolo ?? '')}
           scala={scala}
           obiettivi={obiettivi}
           userId={userId}
@@ -605,7 +733,6 @@ function Scelta<T extends string | boolean>({
 
 function ModaleModificaValutazione({
   valutazione,
-  gestioneStorica,
   scala,
   obiettivi,
   userId,
@@ -614,7 +741,6 @@ function ModaleModificaValutazione({
   onEsito,
 }: ModaleBase & {
   valutazione: ValutazioneRecente;
-  gestioneStorica?: boolean;
   scala: readonly string[];
   obiettivi: readonly ObiettivoSelezionabile[];
 }) {
@@ -662,7 +788,10 @@ function ModaleModificaValutazione({
       setErrore(t('valutazioniCollegaObiettivo'));
       return;
     }
-    if (!valutazioneCambiata(valutazione, b) && !(gestioneStorica && dataCompetenza !== giornoOriginale)) {
+    // La data parte SOLO se è cambiata, per tutte: una modifica che non la tocca non deve
+    // rimettere in gioco il quadrimestre (e il suo scrutinio) di una voce storica.
+    const dataCambiata = dataCompetenza !== giornoOriginale;
+    if (!valutazioneCambiata(valutazione, b) && !dataCambiata) {
       setErrore(t('valutazioniNessunCambio'));
       return;
     }
@@ -672,7 +801,7 @@ function ModaleModificaValutazione({
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ ...corpoModificaValutazione(valutazione, b), versioneAttesa: valutazione.storico_versione, ...(gestioneStorica && dataCompetenza !== giornoOriginale ? { data: dataCompetenza } : {}) }),
+        body: JSON.stringify({ ...corpoModificaValutazione(valutazione, b), versioneAttesa: valutazione.storico_versione, ...(dataCambiata ? { data: dataCompetenza } : {}) }),
       },
       'valutazione-modifica',
       t('valutazioniErroreModifica'),
@@ -705,10 +834,9 @@ function ModaleModificaValutazione({
           {t('valutazioniModificaValutazioneTitolo')}
         </h2>
         <Errore testo={errore} />
-        {gestioneStorica && <label className="mt-3 block font-maven text-xs text-kidville-sub">
-          {t('storicoDataCompetenza')}
-          <input type="date" value={dataCompetenza} max={oggiRoma()} onChange={e => { if (e.target.value) setDataCompetenza(e.target.value); }} className="mt-1 block w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
-        </label>}
+        <div className="mt-3">
+          <DataVoce id={`${idBase}-data`} valore={dataCompetenza} onCambia={setDataCompetenza} />
+        </div>
 
         {opzioniObiettivi.length > 0 && (
           <fieldset className="mt-3">
@@ -985,6 +1113,7 @@ function ModaleModificaImpreparato({
         <input
           id={dataId}
           type="date"
+          max={oggiRoma()}
           value={b.data}
           onChange={(e) => set('data', e.target.value)}
           className="font-maven mt-1 rounded-pill border border-kidville-line px-3 py-2 text-sm"
@@ -1010,7 +1139,8 @@ function ModaleElimina({ voce, userId, onChiudi, onCambiato, onEsito }: ModaleBa
   const [errore, setErrore] = useState('');
   const [inVolo, setInVolo] = useState(false);
   const valutazione = voce.genere === 'valutazione';
-  const data = f.dataBreve(voce.genere === 'valutazione' ? voce.voce.creato_il : voce.voce.data);
+  // Il giorno della prova, come nell'elenco: un voto retrodatato non è «del giorno in cui è stato inserito».
+  const data = f.dataBreve(voce.genere === 'valutazione' ? voce.voce.data_evento ?? voce.voce.creato_il : voce.voce.data);
   const titolo = valutazione ? t('valutazioniEliminaValutazioneTitolo') : t('valutazioniEliminaImpreparatoTitolo');
 
   const chiudi = () => {

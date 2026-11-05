@@ -11,14 +11,17 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { dataRomaDi } from '@/lib/primaria/timelock'
+import { statoQuadrimestre } from '@/lib/primaria/quadrimestre'
+import { scriviConRipiegoSchema } from '@/lib/db/colonna-assente'
 import { MOTIVO_MAX_CARATTERI, motivoNormalizzato } from '@/lib/presenze/limiti-testo'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
+// `data` è un giorno YYYY-MM-DD che esiste nel calendario, come nella PATCH: il quadrimestre si cerca e il giorno si
+// confronta con «oggi» come TESTO, e una stringa qualunque non cadrebbe in nessun periodo (voce senza quadrimestre, in silenzio);
 // `motivo` permissivo: oggi qualunque tipo è accettato (i non-string diventano null).
 const postBodySchema = z.object({
   studentId: zUuid,
-  data: z.string().min(1),
+  data: zDataYMD,
   motivo: z.unknown().optional(),
   materiaId: zUuid.nullable().optional(),
 })
@@ -47,9 +50,6 @@ const deleteQuerySchema = z.object({ id: zUuid })
 /** Tipo della notifica che la dichiarazione manda ai docenti, e sua entità. */
 const TIPO_NOTIFICA = 'giustifica_ricevuta'
 const ENTITA_NOTIFICA = 'giustifica_didattica'
-
-/** Colonna sconosciuta allo schema: il DB E2E della CI non ha `tipo` (non migrato). */
-const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
 
 /**
  * La pagina dove il docente vede gli impreparati. Fino al 2026-09-25 il link
@@ -206,6 +206,18 @@ export const POST = withRoute('parent/giustifiche-didattiche:POST', async (reque
       return NextResponse.json({ error: 'Disponibile solo per la scuola primaria' }, { status: 403 })
     }
 
+    // Il quadrimestre della data (spec D12): ogni impreparato porta `periodo_id`, anche quello del genitore. A lui NON si
+    // applicano né il congelamento dello scrutinio chiuso né la materia assegnata (D10: la sua dichiarazione resta com'era,
+    // niente 403 e niente 423): del quadrimestre serve solo l'id. Una lettura fallita non vale «nessun periodo»: 500 prima
+    // di scrivere. Periodi assenti o senza date sono configurazione mancante (D4): la dichiarazione entra senza periodo.
+    const quadrimestre = await statoQuadrimestre(
+      supabase,
+      (alunno.scuola_id as string | null) ?? null,
+      alunno.section_id as string,
+      data,
+    )
+    if (!quadrimestre.ok) return rispostaLetturaFallita()
+
     const riga = {
       alunno_id: studentId,
       section_id: alunno.section_id,
@@ -215,18 +227,21 @@ export const POST = withRoute('parent/giustifiche-didattiche:POST', async (reque
       origine: 'genitore',
       creato_da: userId,
     }
-    let esito = await supabase
-      .from('giustifiche_didattiche')
-      .insert({ ...riga, tipo: 'giustificato' })
-      .select()
-      .single()
-    if (esito.error && COLONNA_ASSENTE.has((esito.error as { code?: string }).code ?? '')) {
-      // DB non migrato (E2E della CI): la colonna `tipo` non c'è ancora. Si
-      // scrive la dichiarazione senza: dove la colonna esiste, il trigger la
-      // mette comunque a «giustificato».
-      logEvento('registro', 'info', { operazione, esito: 'tipo-non-disponibile-schema' }, esito.error)
-      esito = await supabase.from('giustifiche_didattiche').insert(riga).select().single()
-    }
+    const inserisci = (campi: Record<string, unknown>) =>
+      supabase.from('giustifiche_didattiche').insert(campi).select().single()
+    // DB non migrato (E2E della CI). A degradare è la colonna NUOVA, una volta: `periodo_id`. Se lo schema risponde
+    // ancora, ne manca anche una più vecchia, `tipo` (c'è in produzione da prima, non si butta se non è necessario):
+    // ultima ripetizione senza — dove la colonna esiste, il trigger la mette comunque a «giustificato». Ogni stadio si
+    // dice al log; se fallisce anche l'ultimo, l'errore è quello di sempre.
+    const { esito, stadio } = await scriviConRipiegoSchema(
+      operazione,
+      () => inserisci({ ...riga, tipo: 'giustificato', periodo_id: quadrimestre.periodoId }),
+      [
+        { stadio: 1, scrivi: () => inserisci({ ...riga, tipo: 'giustificato' }) },
+        { stadio: 2, scrivi: () => inserisci(riga) },
+      ],
+    )
+    const periodoScritto = stadio === 0 ? quadrimestre.periodoId : null
     const { data: inserted, error } = esito
 
     if (error) {
@@ -276,6 +291,7 @@ export const POST = withRoute('parent/giustifiche-didattiche:POST', async (reque
       esito: 'impreparato-dichiarato',
       alunno_id: studentId,
       giustifica_id: insertedId,
+      periodo_assegnato: periodoScritto !== null,
     }, undefined, { distingui: ['alunno_id'] })
 
     return NextResponse.json({ success: true, data: inserted }, { status: 201 })
@@ -354,21 +370,43 @@ export const PATCH = withRoute('parent/giustifiche-didattiche:PATCH', async (req
       }
     }
 
+    // Se la data cambia, l'impreparato passa al quadrimestre della data nuova (D12). Niente congelamento né materia
+    // assegnata per il genitore (D10): serve solo l'id del periodo. Con la data invariata `periodo_id` non si tocca.
+    // Lettura fallita: 500 prima di scrivere qualunque cosa.
+    let periodoNuovo: string | null | undefined
+    if (data !== undefined && data !== riga.data) {
+      const quadrimestre = await statoQuadrimestre(supabase, sedeDi(riga), riga.section_id, data)
+      if (!quadrimestre.ok) return rispostaLetturaFallita()
+      periodoNuovo = quadrimestre.periodoId
+    }
+
     const patch: Record<string, string | null> = {}
     if (data !== undefined) patch.data = data
     if (materiaId !== undefined) patch.materia_id = materiaId
     if (motivo !== undefined) patch.motivo = motivoNormalizzato(motivo)
+    if (periodoNuovo !== undefined) patch.periodo_id = periodoNuovo
 
     // Le condizioni che hanno deciso, RIPETUTE nella scrittura: fra la lettura e
     // qui può scoccare la mezzanotte, o un docente della classe può averla tolta.
-    const { data: scritte, error } = await supabase
-      .from('giustifiche_didattiche')
-      .update(patch)
-      .eq('id', riga.id)
-      .eq('origine', 'genitore')
-      .eq('creato_da', user.id)
-      .gte('data', oggi)
-      .select(COLONNE_DICHIARAZIONE)
+    const scrivi = (campi: Record<string, string | null>) =>
+      supabase
+        .from('giustifiche_didattiche')
+        .update(campi)
+        .eq('id', riga.id)
+        .eq('origine', 'genitore')
+        .eq('creato_da', user.id)
+        .gte('data', oggi)
+        .select(COLONNE_DICHIARAZIONE)
+    // DB non migrato (E2E della CI): senza la colonna `periodo_id` l'UPDATE torna `PGRST204`. UNA ripetizione senza,
+    // con il log `info`; il resto della modifica (data, materia, motivo) si scrive comunque.
+    const { periodo_id: _periodo, ...senzaPeriodo } = patch
+    void _periodo
+    const { esito } = await scriviConRipiegoSchema(
+      operazione,
+      () => scrivi(patch),
+      'periodo_id' in patch ? [{ stadio: 1, scrivi: () => scrivi(senzaPeriodo) }] : [],
+    )
+    const { data: scritte, error } = esito
     if (error) {
       logErrore({ operazione, stato: 500, evento: 'db' }, error)
       return rispostaNonSalvata()
@@ -438,6 +476,7 @@ export const PATCH = withRoute('parent/giustifiche-didattiche:PATCH', async (req
       esito: 'impreparato-modificato',
       alunno_id: riga.alunno_id,
       giustifica_id: riga.id,
+      ...(periodoNuovo !== undefined && { periodo_assegnato: periodoNuovo !== null }),
     }, undefined, { distingui: ['alunno_id'] })
 
     return NextResponse.json({ success: true, data: { ...dopo, tipo: 'giustificato' } })

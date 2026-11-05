@@ -3527,6 +3527,41 @@ export const CODICI_ERRORE = {
     CHAT_MESSAGGIO_NON_TROVATO: 'erroreChatMessaggioNonTrovato',
     CHAT_CONVERSAZIONE_NON_TROVATA: 'erroreChatConversazioneNonTrovata',
     FIRMA_NON_RIUSCITA: 'erroreFirmaNonRiuscita',
+    /**
+     * Le materie della docente (04/11/2026, `src/lib/auth/materie-docente.ts`): un'insegnante agisce solo sulle
+     * materie che le sono assegnate IN QUELLA CLASSE (la coppia classe-materia, non la sola materia). Lo staff
+     * non è soggetto al controllo. Risponde 403; un guasto della lettura NON è questo codice: è `LETTURA_FALLITA`.
+     */
+    MATERIA_NON_ASSEGNATA: 'erroreMateriaNonAssegnata',
+    /**
+     * Il quadrimestre di una data ha lo scrutinio chiuso (04/11/2026, `src/lib/primaria/permesso-voce.ts` e le
+     * route di valutazioni e impreparati). Risponde 423. In scrittura nuova (POST) il voto non entra: per
+     * inserire nel quadrimestre chiuso ci si rivolge alla segreteria; in modifica o eliminazione (PATCH e DELETE)
+     * serve lo sblocco della Direzione. Un guasto nella lettura di periodi o scrutini NON è questo codice: è
+     * `LETTURA_FALLITA`. Non è `VOCE_BLOCCATA`, che è il termine scaduto e porta `giorniLimite`.
+     */
+    QUADRIMESTRE_CHIUSO: 'erroreQuadrimestreChiuso',
+    /**
+     * La data della prova è dopo oggi (04/11/2026, `primaria/valutazioni` POST e PATCH). Risponde 422, prima di
+     * qualunque lettura. «Oggi» è il giorno di Roma del server, non quello del telefono: alla mezzanotte di Roma
+     * il 5 è già ammesso anche se a Greenwich è ancora il 4.
+     */
+    DATA_FUTURA: 'erroreDataFutura',
+    /**
+     * I periodi di scrutinio (04/11/2026, `admin/primaria/scrutinio-periodi` POST e PATCH). Il quadrimestre di un
+     * voto si decide dalle DATE del periodo, quindi le date si danno entrambe o nessuna:
+     *  · 422 `PERIODO_DATE_INCOMPLETE` — ne è arrivata una sola (dopo l'unione con la riga, per la PATCH). Non è
+     *    `PERIODO_ROVESCIATO`, che è la fine prima dell'inizio e risponde 400 con la sua frase;
+     *  · 422 `PERIODI_SOVRAPPOSTI` — le date toccano un altro periodo della stessa sede, di qualunque anno
+     *    scolastico (estremi inclusi, anche se l'altro è archiviato): la copertura di un giorno non guarda l'anno.
+     *    Un periodo di un'altra sede non conta;
+     *  · 409 `PERIODO_CON_SCRUTINI_CHIUSI` — il periodo ha uno scrutinio chiuso e si è provato a spostarne le date:
+     *    va prima riaperto. Non è `PERIODO_CON_SCRUTINI`, che è l'eliminazione negata e parla di archiviare.
+     * Un guasto nella lettura dei periodi o degli scrutini NON è nessuno dei tre: è `LETTURA_FALLITA`.
+     */
+    PERIODO_DATE_INCOMPLETE: 'errorePeriodoDateIncomplete',
+    PERIODI_SOVRAPPOSTI: 'errorePeriodiSovrapposti',
+    PERIODO_CON_SCRUTINI_CHIUSI: 'errorePeriodoConScrutiniChiusi',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

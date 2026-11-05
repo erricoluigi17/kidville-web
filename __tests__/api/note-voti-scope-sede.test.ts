@@ -41,7 +41,6 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET as NOTE_GET, POST as NOTE_POST } from '@/app/api/notes/route'
-import { GET as VOTI_GET, POST as VOTI_POST } from '@/app/api/grades/route'
 
 const req = (url: string) => new NextRequest(`http://localhost${url}`)
 const post = (url: string, body: unknown) =>
@@ -125,31 +124,5 @@ describe('POST /api/notes — scrittura su un elenco di minori', () => {
     }))
     expect(res.status).toBe(403)
     expect(h.enqueueNotifichePerAlunni).not.toHaveBeenCalled()
-  })
-})
-
-describe('GET /api/grades — valutazioni', () => {
-  it('senza parametri: solo le valutazioni della propria sezione', async () => {
-    const res = await VOTI_GET(req('/api/grades'))
-    expect(res.status).toBe(200)
-    const corpo = await res.text()
-    expect(corpo).toContain('VOTO-ASSEGNATO')
-    expect(corpo).not.toContain('VOTO-ALTRA-SEDE')
-    expect(corpo).not.toContain('VOTO-ALTRA-CLASSE')
-  })
-
-  it('?alunnoId di un\'altra sede: 403, senza leggere le valutazioni', async () => {
-    const res = await VOTI_GET(req(`/api/grades?alunnoId=${ALU_B}`))
-    expect(res.status).toBe(403)
-    expect(h.tabelle).not.toContain('valutazioni')
-  })
-})
-
-describe('POST /api/grades — scrittura di una valutazione', () => {
-  it('403 su un alunno di un\'altra sede', async () => {
-    const res = await VOTI_POST(post('/api/grades', {
-      alunnoId: ALU_B, materia: 'Italiano', giudizioTesto: 'manomesso',
-    }))
-    expect(res.status).toBe(403)
   })
 })

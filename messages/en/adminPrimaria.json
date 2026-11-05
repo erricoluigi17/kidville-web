@@ -186,5 +186,6 @@
   "periodiConfermaArchivia": "Archive the period? It leaves the list and can no longer be filled in. Assessments and report cards stay, and it can be put back.",
   "periodiRipristina": "Put back in the list",
   "periodiArchiviatoBadge": "archived",
-  "periodiMostraArchiviati": "Show archived too"
+  "periodiMostraArchiviati": "Show archived too",
+  "periodiPromemoriaDate": "This year’s term dates are missing: without them, assessments are not linked to a term and a closed term assessment does not protect them."
 }

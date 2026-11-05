@@ -195,15 +195,16 @@ describe('VOCE: impreparato, firma e allegato', () => {
 })
 
 describe('Voce sbloccata e SPOSTATA su un’altra data', () => {
-  it('serve anche lo sblocco del giorno di arrivo; entro il termine no', async () => {
+  // D9: il termine di un impreparato della docente conta dal SALVATAGGIO, non dalla data
+  // della prova, quindi uno sblocco per voce copre anche la data spostata. La regola di prima
+  // («serve anche lo sblocco del giorno di arrivo») vale ancora per note e firme: è provata
+  // nel file unitario `primaria-permesso-voce.test.ts`.
+  it('impreparato della docente sbloccato per voce: si sposta anche su un giorno oltre il termine (D9)', async () => {
     expect((await sblocca({ entitaTipo: 'impreparato', entitaId: IMPREPARATO })).status).toBe(200)
 
     const spostata = voce({ tipo: 'impreparato', id: IMPREPARATO, nuovaDataEvento: VENERDI_PRIMA })
-    expect(await permesso(spostata)).toEqual(BLOCCATA)
-    expect(await permesso(voce({ tipo: 'impreparato', id: IMPREPARATO, nuovaDataEvento: IERI }))).toEqual({ ok: true })
-
-    expect((await SBLOCCA_GIORNO(SEZ_A, VENERDI_PRIMA)).status).toBe(200)
     expect(await permesso(spostata)).toEqual({ ok: true })
+    expect(await permesso(voce({ tipo: 'impreparato', id: IMPREPARATO, nuovaDataEvento: IERI }))).toEqual({ ok: true })
   })
 })
 

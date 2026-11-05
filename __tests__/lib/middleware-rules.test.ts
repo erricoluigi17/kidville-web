@@ -41,7 +41,7 @@ describe('middleware-rules', () => {
 
     it('treats the root, dashboard areas and data APIs as NOT public', () => {
       // La radice `/` è un instradatore autenticato, non una landing pubblica.
-      for (const p of ['/', '/parent', '/admin', '/teacher', '/segreteria', '/api/grades', '/api/pagamenti']) {
+      for (const p of ['/', '/parent', '/admin', '/teacher', '/segreteria', '/api/primaria/valutazioni', '/api/pagamenti']) {
         expect(isPublicPath(p), p).toBe(false);
       }
     });
@@ -60,7 +60,7 @@ describe('middleware-rules', () => {
 
   describe('isApiPath', () => {
     it('detects API routes', () => {
-      expect(isApiPath('/api/grades')).toBe(true);
+      expect(isApiPath('/api/primaria/valutazioni')).toBe(true);
       expect(isApiPath('/api')).toBe(true);
       expect(isApiPath('/parent')).toBe(false);
     });
@@ -80,7 +80,7 @@ describe('middleware-rules', () => {
       expect(shouldRedirect('/auth/login', false)).toBe(false);
     });
     it('never redirects API routes (the gate returns 401 JSON instead)', () => {
-      expect(shouldRedirect('/api/grades', false)).toBe(false);
+      expect(shouldRedirect('/api/primaria/valutazioni', false)).toBe(false);
     });
   });
 });

@@ -21,6 +21,8 @@ const h = vi.hoisted(() => ({
   /** Risposta della lettura: in funzione delle clausole (per simulare la colonna assente solo col filtro). */
   lettura: null as null | ((clausole: { tabella: string; metodo: string; argomenti: unknown[] }[]) => { data: unknown; error: unknown }),
   aggiornamento: { data: [{ id: '22222222-2222-4222-8222-222222222222' }], error: null } as { data: unknown; error: unknown },
+  /** La riga che la PATCH legge prima di scrivere (`maybeSingle`): il periodo com'è salvato. */
+  riga: null as unknown,
   eventi: [] as { evento: string; livello: string; campi: Record<string, unknown> }[],
 }))
 
@@ -43,6 +45,8 @@ vi.mock('@/lib/auth/scope', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // Il ricalcolo dei voti dopo uno spostamento di date: qui nessuna PATCH sposta date, ma la funzione c'è.
+    rpc: async () => ({ data: { valutazioni: 0, impreparati: 0 }, error: null }),
     from: (tabella: string) => {
       const clausole: Chiamata[] = []
       h.chiamate.push(clausole)
@@ -54,6 +58,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
           return qb
         }
       }
+      qb.maybeSingle = () => Promise.resolve({ data: h.riga, error: null })
       qb.update = (...argomenti: unknown[]) => {
         aggiorna = true
         clausole.push({ tabella, metodo: 'update', argomenti })
@@ -86,6 +91,10 @@ const scrittura = () => h.chiamate.flat().find((x) => x.metodo === 'update')?.ar
 beforeEach(() => {
   h.chiamate = []
   h.lettura = null
+  h.riga = {
+    id: PERIODO, scuola_id: SEDE, anno_scolastico: '2026/2027', nome: 'Primo quadrimestre', ordine: 1,
+    data_inizio: '2026-09-01', data_fine: '2027-01-31', attivo: true,
+  }
   h.aggiornamento = { data: [{ id: PERIODO }], error: null }
   h.eventi = []
 })

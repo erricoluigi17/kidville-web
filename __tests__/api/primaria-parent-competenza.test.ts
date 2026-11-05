@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 
@@ -65,5 +65,49 @@ describe('competenza visibile alle famiglie senza ulteriori dati privati', () =>
     expect((await v.json()).data[0].valutazioni).toHaveLength(1)
     expect(h.selezioni.filter(c => c.includes('data_evento'))).toHaveLength(2)
     expect(h.selezioni.filter(c => c.includes('creato_il') && !c.includes('data_evento')).length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// Spec D18: il genitore legge i voti nell'ordine della DATA DELLA PROVA, ma il ritardo di visibilità resta
+// calcolato sul momento del SALVATAGGIO (`creato_il`): la finestra in cui la docente può correggere non si sposta
+// perché la prova è di tre settimane fa.
+describe('voti del genitore: in ordine di data della prova, la soglia resta sul salvataggio', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-04T10:00:00Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const voto = (id: string, creatoIl: string, dataEvento?: string) => ({
+    id, alunno_id: ALUNNO, materia_id: 'materia', tipo: 'orale', modalita: 'sintetico', giudizio_sintetico: 'Buono',
+    giudizio_testo: null, argomento: 'Argomento fittizio', creato_il: creatoIl, ...(dataEvento && { data_evento: dataEvento }),
+  })
+
+  it('A creata ieri con data di tre settimane fa, B creata tre giorni fa con data di tre giorni fa: [B, A]; C dentro la soglia non compare', async () => {
+    h.db.valutazioni = [
+      voto('A', '2026-11-03T10:00:00Z', '2026-10-14'),
+      voto('B', '2026-11-01T10:00:00Z', '2026-11-01'),
+      // Salvata 5 minuti fa (il ritardo predefinito è 10): la famiglia non la vede ancora, qualunque sia la data della prova.
+      voto('C', '2026-11-04T09:55:00Z', '2026-10-01'),
+    ]
+    const res = await valutazioni(req())
+    expect(res.status).toBe(200)
+    const { data } = await res.json()
+    expect(data).toHaveLength(1)
+    expect(data[0].valutazioni.map((v: { id: string }) => v.id)).toEqual(['B', 'A'])
+  })
+
+  it('con lo schema precedente (senza data_evento) l’ordine resta quello del salvataggio', async () => {
+    h.schemaVecchio = true
+    h.db.valutazioni = [
+      voto('V1', '2026-10-20T10:00:00Z'),
+      voto('V2', '2026-11-02T10:00:00Z'),
+    ]
+    const res = await valutazioni(req())
+    expect(res.status).toBe(200)
+    const { data } = await res.json()
+    expect(data[0].valutazioni.map((v: { id: string }) => v.id)).toEqual(['V2', 'V1'])
   })
 })

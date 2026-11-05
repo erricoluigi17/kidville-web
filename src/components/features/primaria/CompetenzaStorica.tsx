@@ -8,10 +8,16 @@ import { nomeCompleto } from '@/lib/format/nome';
 
 interface Docente { id: string; nome: string; cognome: string; ruolo: string }
 
-/** Contesto della nuova voce amministrativa: autore docente esplicito e giorno civile. */
-export function CompetenzaStorica({ attiva, sectionId, userId, data, onData, docenteId, onDocente }: {
+/**
+ * Contesto della nuova voce amministrativa: autore docente esplicito e giorno civile.
+ *
+ * `conData={false}` spegne il campo data (e l'avviso che lo accompagna): la pagina dei voti
+ * ha il suo `DataVoce`, uguale per tutte, e qui resta solo la scelta del docente titolare.
+ * Le note non cambiano: per loro `conData` vale `true`.
+ */
+export function CompetenzaStorica({ attiva, sectionId, userId, data, onData, docenteId, onDocente, conData = true }: {
   attiva: boolean; sectionId: string; userId: string | null | undefined; data: string; onData: (v: string) => void;
-  docenteId: string; onDocente: (v: string) => void;
+  docenteId: string; onDocente: (v: string) => void; conData?: boolean;
 }) {
   const t = useTranslations('teacherPrimaria');
   const campo = useId();
@@ -37,13 +43,13 @@ export function CompetenzaStorica({ attiva, sectionId, userId, data, onData, doc
   }, [attiva, sectionId, userId, onDocente]);
   if (!attiva) return null;
   const elenco = risposta?.classe === sectionId ? risposta : null;
-  return <div className="mb-3 grid gap-3 rounded-card border border-kidville-line p-3 sm:grid-cols-2">
-    <label htmlFor={`${campo}-data`} className="font-maven text-xs text-kidville-sub">
+  return <div className={`mb-3 grid gap-3 rounded-card border border-kidville-line p-3 ${conData ? 'sm:grid-cols-2' : ''}`}>
+    {conData && <label htmlFor={`${campo}-data`} className="font-maven text-xs text-kidville-sub">
       {t('storicoDataCompetenza')}
       <input id={`${campo}-data`} type="date" required max={oggiRoma()} value={data}
         onChange={e => { if (e.target.value) onData(e.target.value); }}
         className="mt-1 block w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
-    </label>
+    </label>}
     <label htmlFor={`${campo}-docente`} className="font-maven text-xs text-kidville-sub">
       {t('firmaModalDocenteTitolare')}
       <select id={`${campo}-docente`} required value={docenteId} onChange={e => onDocente(e.target.value)}
@@ -52,9 +58,9 @@ export function CompetenzaStorica({ attiva, sectionId, userId, data, onData, doc
         {(elenco?.docenti ?? []).map(d => <option key={d.id} value={d.id}>{nomeCompleto(d.nome, d.cognome, 'cognome-nome')}</option>)}
       </select>
     </label>
-    <p className="font-maven text-xs text-kidville-sub sm:col-span-2">
+    <p className={`font-maven text-xs text-kidville-sub ${conData ? 'sm:col-span-2' : ''}`}>
       {elenco?.errore ? t('firmaModalDocentiNonCaricati') : elenco && elenco.docenti.length === 0 ? t('firmaModalNessunDocente') : t('firmaModalDocenteObbligatorio')}
     </p>
-    {data < oggiRoma() && <p role="status" className="font-maven text-xs text-kidville-sub sm:col-span-2">{t('storicoSenzaAvvisiFamiglia')}</p>}
+    {conData && data < oggiRoma() && <p role="status" className="font-maven text-xs text-kidville-sub sm:col-span-2">{t('storicoSenzaAvvisiFamiglia')}</p>}
   </div>;
 }

@@ -9,7 +9,6 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunnoInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
-import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { renderGiudizioDescrittivo, type Dimensioni } from '@/lib/primaria/giudizio'
 import { leggiObiettiviDisponibili, obiettiviDisponibili } from '@/lib/primaria/obiettivi'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -19,9 +18,13 @@ import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+import { colonnaNuovaAssente, logSchemaIndietro, scriviConRipiegoSchema } from '@/lib/db/colonna-assente'
+import { assertMateriaDelDocente, materieVisibili, rispostaMateriaNonAssegnata } from '@/lib/auth/materie-docente'
+import { dataDiCompetenza, giornoDiRoma, ordinaPerCompetenza } from '@/lib/primaria/periodo'
+import { leggiPeriodi, statoQuadrimestre } from '@/lib/primaria/quadrimestre'
+import { scuolaDiSezione } from '@/lib/primaria/sede-classe'
 import {
   chiaveVoce,
-  dataEventoDaIstante,
   rispostaPermessoNegato,
   statoVoci,
   verificaPermessoVoce,
@@ -223,9 +226,13 @@ function vocePrimaria(riga: RigaVoce, nuovaDataEvento?: string): VocePrimaria {
     autoreId: riga.maestra_id,
     sectionId: riga.section_id as string,
     scuolaId: scuolaDellaClasse(riga),
-    // Convenzione della spec: la data dell'evento di una valutazione è la data
-    // di ROMA di `creato_il`. Una data illeggibile è bloccata (fail-closed).
-    dataEvento: riga.data_evento ?? dataEventoDaIstante(String(riga.creato_il ?? '')),
+    // La data dell'evento è quella della PROVA: `data_evento` se la docente l'ha indicata, altrimenti il
+    // giorno di Roma di `creato_il` (le righe nate prima della colonna). Serve al congelamento dello
+    // scrutinio chiuso. Il TERMINE invece corre dal giorno del SALVATAGGIO (`giornoSalvataggio`): una
+    // prova di tre settimane fa non nasce bloccata, e un voto «datato ieri» non resta aperto per mesi.
+    // Una data illeggibile è bloccata (fail-closed).
+    dataEvento: dataDiCompetenza(riga),
+    giornoSalvataggio: giornoDiRoma(riga.creato_il) || null,
     lockTipo: lockTipoDiRiga(riga),
     nuovaDataEvento,
   }
@@ -237,17 +244,42 @@ const NON_TROVATA = () =>
     { status: 404 },
   )
 
+/** 422: la data della prova è dopo oggi (a Roma). Il rifiuto si logga, con il codice, e viene prima di ogni lettura. */
+function rispostaDataFutura(operazione: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'voto-data-futura', error_code: 'DATA_FUTURA' })
+  return NextResponse.json({ error: 'La data non può essere nel futuro.', codice: 'DATA_FUTURA' }, { status: 422 })
+}
+
+/**
+ * 500: periodi o scrutini non letti, quindi non si sa se il quadrimestre della data sia chiuso. Né un via libera
+ * né un 423 inventato. La riga di log la scrive già `statoQuadrimestre`.
+ */
+function rispostaQuadrimestreNonLetto(): NextResponse {
+  return NextResponse.json(
+    { error: 'Verifica del quadrimestre non riuscita. Riprova.', codice: 'LETTURA_FALLITA' },
+    { status: 500 },
+  )
+}
+
 /**
  * Legge la voce (solo primaria: `modalita` valorizzata) e verifica scope e
  * permesso. Restituisce la riga, oppure la risposta di rifiuto già pronta.
  *
  * Il termine è quello della voce COM'È ADESSO — lo stesso che la GET mostra
- * con `modificabile`/`bloccata`. Una PATCH che cambia il tipo della prova non
- * aggiunge un secondo controllo sul tipo nuovo: renderebbe incoerenti GET e
- * PATCH (una scritta di 10 giorni, «modificabile» per la GET, diventerebbe un
- * 423 «chiedi lo sblocco» che la Direzione non potrebbe mai dare, perché per la
- * GET la voce non è bloccata). La regola «su entrambe le date» della spec
- * riguarda la DATA, che una valutazione non sposta (è `creato_il`).
+ * con `modificabile`/`bloccata` — e corre dal giorno in cui è stata SALVATA, non
+ * dalla data della prova. Una PATCH che cambia il tipo della prova non aggiunge
+ * un secondo controllo sul tipo nuovo: renderebbe incoerenti GET e PATCH (una
+ * scritta di 10 giorni, «modificabile» per la GET, diventerebbe un 423 «chiedi
+ * lo sblocco» che la Direzione non potrebbe mai dare, perché per la GET la voce
+ * non è bloccata).
+ *
+ * La data nuova (`nuovaDataEvento`) non conta per il termine: conta per il
+ * CONGELAMENTO. Se la data della prova, la vecchia o la nuova, cade in un
+ * quadrimestre il cui scrutinio è chiuso per la classe, la docente riceve 423
+ * `QUADRIMESTRE_CHIUSO` anche dentro il termine; lo sblocco per voce toglie il
+ * congelamento insieme al termine, ma solo se è stato dato DOPO la chiusura dello
+ * scrutinio (uno di prima non scongela). La materia si controlla PRIMA del permesso:
+ * chi è stata tolta da una materia perde anche i voti che vi aveva scritto.
  */
 async function voceAutorizzata(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -282,13 +314,30 @@ async function voceAutorizzata(
   const scopeErr = await assertSezioneInScope(supabase, user, riga.section_id)
   if (scopeErr) return { response: scopeErr }
 
+  // La coppia (classe, materia) della voce deve essere ancora fra quelle assegnate alla docente (D19).
+  // Lo staff passa senza leggere; un guasto della lettura è 500, mai un 403.
+  const materiaErr = await assertMateriaDelDocente(supabase, user, riga.section_id, riga.materia_id)
+  if (materiaErr) return { response: materiaErr }
+
   const permesso = await verificaPermessoVoce(supabase, user, vocePrimaria(riga, nuovaDataEvento))
   if (!permesso.ok) return { response: rispostaPermessoNegato(permesso) }
   return { riga }
 }
 
+/** L'autore di un voto, come lo vede chi legge lo storico di un alunno in una materia. */
+interface AutoreVoto {
+  id: string
+  nome: string | null
+  cognome: string | null
+}
+
 // GET /api/primaria/valutazioni?alunnoId=&materiaId=&userId=
+// Lo STORICO di un alunno: tutti i voti delle materie che chi legge può vedere (le sue in ciascuna classe;
+// lo staff le vede tutte), da qualunque autore, ciascuno con l'autore e con `propria`. Ordine: per data della
+// prova, poi per salvataggio, dal più recente. `periodi` porta le date dei quadrimestri della sede, perché la
+// UI dica a quale appartiene ogni voto senza rifare il calcolo.
 export const GET = withRoute('primaria/valutazioni:GET', async (request: NextRequest) => {
+  const operazione = 'primaria/valutazioni:GET'
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -302,6 +351,24 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
     const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunnoId)
     if (scopeErr) return scopeErr
 
+    // Le materie che chi legge può vedere. Senza una classe l'insieme è l'unione delle sue classi: basta,
+    // perché `materie.section_id` è NOT NULL e quindi un `materia_id` appartiene a UNA classe sola.
+    const visibili = await materieVisibili(supabase, auth.user)
+    if (!visibili.ok) return visibili.response
+    if (materiaId && !visibili.tutte && !visibili.materie.has(materiaId)) {
+      logEvento('auth', 'warn', {
+        operazione,
+        esito: 'materia-non-assegnata',
+        materia_id: materiaId,
+        error_code: 'MATERIA_NON_ASSEGNATA',
+      })
+      return rispostaMateriaNonAssegnata()
+    }
+    // Una docente senza materie assegnate non vede nessun voto: si risponde senza leggere le valutazioni.
+    if (!materiaId && !visibili.tutte && visibili.materie.size === 0) {
+      return NextResponse.json({ success: true, data: [], statoVociDisponibile: true, autoriDisponibili: true, periodi: [] })
+    }
+
     let query = supabase
       .from('valutazioni')
       .select(`
@@ -313,13 +380,14 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
       .order('creato_il', { ascending: false })
       .eq('alunno_id', alunnoId)
     if (materiaId) query = query.eq('materia_id', materiaId)
+    else if (!visibili.tutte) query = query.in('materia_id', [...visibili.materie])
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // Per ogni voce: `modificabile` (Modifica/Elimina si mostrano) e `bloccata`
-    // (oltre il termine senza sblocco: la Direzione vede «Sblocca»). Variante
-    // BATCH di permesso-voce: una lettura per sede, non una per voce.
+    // Per ogni voce: `modificabile` (Modifica/Elimina si mostrano), `bloccata` (oltre il termine senza
+    // sblocco: la Direzione vede «Sblocca») e `congelata` (lo scrutinio del suo quadrimestre è chiuso).
+    // Variante BATCH di permesso-voce: una lettura per sede, non una per voce.
     const righe = (data ?? []) as unknown as RigaVoce[]
     const voci = righe.filter((r) => r.section_id).map((r) => vocePrimaria(r))
     const stato = await statoVoci(supabase, auth.user, voci)
@@ -327,6 +395,32 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
     // vedono lo stesso, ma senza bottoni (fail-closed) e con il flag che lo
     // dichiara — mai «bloccata» inventata. Il guasto l'ha già loggato permesso-voce.
     const esiti = stato.ok ? stato.esiti : null
+
+    // Gli autori: una lettura sola per tutti i voti. Se fallisce l'elenco esce lo stesso, senza nomi.
+    // Il NOME non entra nei log: il log dice solo che la lettura è fallita.
+    const idAutori = [...new Set(righe.flatMap((r) => (r.maestra_id ? [r.maestra_id] : [])))]
+    const autori = new Map<string, AutoreVoto>()
+    let autoriDisponibili = true
+    if (idAutori.length > 0) {
+      const { data: utenti, error: autoriErr } = await supabase.from('utenti').select('id, nome, cognome').in('id', idAutori)
+      if (autoriErr) {
+        autoriDisponibili = false
+        logEvento('registro', 'error', { operazione, esito: 'autori-non-letti', n: idAutori.length }, autoriErr)
+      } else {
+        for (const u of (utenti ?? []) as AutoreVoto[]) autori.set(u.id, { id: u.id, nome: u.nome ?? null, cognome: u.cognome ?? null })
+      }
+    }
+
+    // I quadrimestri delle sedi dei voti, solo quelli con entrambe le date (gli altri non coprono niente).
+    // Accessori: un guasto lascia l'elenco e dà `periodi: []`.
+    const sedi = [...new Set(righe.flatMap((r) => {
+      const sede = scuolaDellaClasse(r)
+      return sede ? [sede] : []
+    }))]
+    const lettiPeriodi = await leggiPeriodi(supabase, sedi)
+    if (!lettiPeriodi.ok) guastoLetturaAccessoria('registro', operazione, 'periodi-non-letti', lettiPeriodi.error)
+    const periodi = lettiPeriodi.ok ? lettiPeriodi.periodi.filter((p) => p.data_inizio && p.data_fine) : []
+
     const elenco = righe.map((r) => {
       const { sections: _s, ...resto } = r
       void _s
@@ -336,11 +430,20 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
         modificabile: e?.modificabile ?? false,
         bloccata: e?.bloccata ?? false,
         giorniLimite: e?.giorniLimite ?? null,
+        congelata: e?.congelata ?? false,
+        propria: r.maestra_id === auth.user.id,
+        autore: (r.maestra_id && autori.get(r.maestra_id)) || null,
       }
     })
-    return NextResponse.json({ success: true, data: elenco, statoVociDisponibile: stato.ok })
+    return NextResponse.json({
+      success: true,
+      data: ordinaPerCompetenza(elenco),
+      statoVociDisponibile: stato.ok,
+      autoriDisponibili,
+      periodi,
+    })
   } catch (err) {
-    logErrore({ operazione: 'primaria/valutazioni:GET', stato: 500 }, err)
+    logErrore({ operazione, stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
@@ -350,7 +453,12 @@ export const GET = withRoute('primaria/valutazioni:GET', async (request: NextReq
 // body: { alunnoId, sectionId, materiaId, tipoProva, modalita,
 //         dims:{autonomia,continuita,tipologia,risorse}, giudizioSintetico,
 //         giudizioTesto?, obiettiviIds[], data? }
+// `data` è il giorno della PROVA (mai nel futuro; senza, oggi a Roma) e si scrive sempre in `data_evento`. Il
+// quadrimestre che la contiene decide `periodo_id` e, se il suo scrutinio è chiuso, chi può inserire: la docente
+// no (423), lo staff sì, a nome del docente titolare. La docente inserisce solo nelle materie che le sono
+// assegnate in quella classe.
 export const POST = withRoute('primaria/valutazioni:POST', async (request: NextRequest) => {
+  const operazione = 'primaria/valutazioni:POST'
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -378,6 +486,12 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
       )
     }
 
+    // Il giorno della prova: quello indicato, o oggi. Nel futuro non si valuta: il rifiuto viene PRIMA di
+    // qualunque lettura. «Oggi» è il giorno di Roma del server, non quello del telefono.
+    const oggi = oggiRoma()
+    const eventDate = data ?? oggi
+    if (eventDate > oggi) return rispostaDataFutura(operazione)
+
     const supabase = await createAdminClient()
 
     // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
@@ -387,6 +501,12 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     // L'alunno valutato deve appartenere alla sezione asserita (no valutazioni cross-sezione).
     const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
     if (alunnoErr) return alunnoErr
+
+    // La docente valuta solo nelle materie che ha in QUESTA classe (la coppia, mai la sola materia). Prima di
+    // leggere obiettivi e periodi: chi non ha la materia non deve nemmeno sapere com'è configurata.
+    // Lo staff passa senza leggere; un guasto della lettura è 500 LETTURA_FALLITA, mai un 403.
+    const materiaDocenteErr = await assertMateriaDelDocente(supabase, auth.user, sectionId, materiaId)
+    if (materiaDocenteErr) return materiaDocenteErr
 
     // Autore della valutazione = docente (vincolo FEA). educator → sé stesso;
     // segreteria → docente titolare della MATERIA indicato in body.docenteId, altrimenti 422.
@@ -405,7 +525,7 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     if (errMateria) return rispostaGuastoDb('primaria/valutazioni:POST', 'db:materie', errMateria)
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
     // La materia deve essere del catalogo della sezione asserita: il suo scuola_id
-    // pilota timelock, template giudizio e audit — mai da un tenant estraneo.
+    // pilota periodi, template giudizio e audit — mai da un tenant estraneo.
     if (materia.section_id !== sectionId) {
       return NextResponse.json({ error: 'Materia non appartenente alla sezione' }, { status: 403 })
     }
@@ -430,14 +550,31 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     }
     const obiettiviCollegati = scelta.ids ?? []
 
-    // Vincolo temporale (scritto/pratico=15gg, orale=2gg). Data evento = data o oggi.
-    const eventDate = data ?? oggiRoma()
+    // Il quadrimestre della data della prova. Il termine NON si applica all'inserimento (una prova di tre
+    // settimane fa si registra): si applica alla modifica, dal giorno del salvataggio. Si applica invece il
+    // congelamento: se lo scrutinio di quel quadrimestre è chiuso per la classe, la docente non inserisce
+    // (lo staff sì, a nome del docente titolare). Una lettura fallita non vale né «aperto» né «chiuso»: 500.
+    // Periodi assenti o senza date sono configurazione mancante: il voto entra senza periodo (D4).
+    // I quadrimestri si cercano nella sede della CLASSE (come la PATCH e il ricalcolo SQL), non in quella della materia.
     const lockTipo = lockTipoDaTipo(tipoProva)
-    const lock = await isOltreScadenza(supabase, materia.scuola_id, eventDate, lockTipo)
-    if (lock.locked && !puoCorreggereStorico(auth.user)) {
+    const sedeClasse = await scuolaDiSezione(supabase, sectionId, operazione)
+    if (sedeClasse === undefined) return rispostaQuadrimestreNonLetto()
+    const quadrimestre = await statoQuadrimestre(supabase, sedeClasse, sectionId, eventDate)
+    if (!quadrimestre.ok) return rispostaQuadrimestreNonLetto()
+    if (quadrimestre.chiuso && !puoCorreggereStorico(auth.user)) {
+      logEvento('registro', 'info', {
+        operazione,
+        esito: 'voto-quadrimestre-chiuso',
+        section_id: sectionId,
+        error_code: 'QUADRIMESTRE_CHIUSO',
+      })
       return NextResponse.json(
-        { error: `Inserimento bloccato: superato il termine di ${lock.giorniLimite} giorni.`, locked: true },
-        { status: 423 }
+        {
+          error: 'Lo scrutinio del quadrimestre di questa data è chiuso: per inserire il voto rivolgiti alla segreteria.',
+          codice: 'QUADRIMESTRE_CHIUSO',
+          locked: true,
+        },
+        { status: 423 },
       )
     }
 
@@ -447,36 +584,63 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
       testo = await renderGiudizioDescrittivo(supabase, materia.scuola_id, dims)
     }
 
-    const { data: val, error: valErr } = await supabase
-      .from('valutazioni')
-      .insert({
-        alunno_id: alunnoId,
-        maestra_id: maestraId,
-        section_id: sectionId,
-        materia: materia.nome, // legacy NOT NULL
-        materia_id: materiaId,
-        argomento: argomento.trim(),
-        tipo: tipoProva,
-        modalita,
-        dim_autonomia: modalita === 'dimensioni' ? dims?.autonomia ?? null : null,
-        dim_continuita: modalita === 'dimensioni' ? dims?.continuita ?? null : null,
-        dim_tipologia: modalita === 'dimensioni' ? dims?.tipologia ?? null : null,
-        dim_risorse: modalita === 'dimensioni' ? dims?.risorse ?? null : null,
-        giudizio_sintetico: giudizio, // in entrambe le modalità: è il voto visibile
-        giudizio_testo: testo,
-        voto_numerico: null, // voto ufficiale numerico vietato alla primaria
-        annotazione_numerica: annNum, // appunto privato del docente (mai al genitore)
-        lock_tipo: lockTipo,
-        ...(eventDate !== oggiRoma() ? { data_evento: eventDate } : {}),
-        pubblicato: false, // buffer notifica (F1.8)
-      })
-      .select()
-      .single()
+    const riga = {
+      alunno_id: alunnoId,
+      maestra_id: maestraId,
+      section_id: sectionId,
+      materia: materia.nome, // legacy NOT NULL
+      materia_id: materiaId,
+      argomento: argomento.trim(),
+      tipo: tipoProva,
+      modalita,
+      dim_autonomia: modalita === 'dimensioni' ? dims?.autonomia ?? null : null,
+      dim_continuita: modalita === 'dimensioni' ? dims?.continuita ?? null : null,
+      dim_tipologia: modalita === 'dimensioni' ? dims?.tipologia ?? null : null,
+      dim_risorse: modalita === 'dimensioni' ? dims?.risorse ?? null : null,
+      giudizio_sintetico: giudizio, // in entrambe le modalità: è il voto visibile
+      giudizio_testo: testo,
+      voto_numerico: null, // voto ufficiale numerico vietato alla primaria
+      annotazione_numerica: annNum, // appunto privato del docente (mai al genitore)
+      lock_tipo: lockTipo,
+      data_evento: eventDate, // sempre: anche oggi (D11), così lo storico ha una sola regola
+      periodo_id: quadrimestre.periodoId,
+      pubblicato: false, // buffer notifica (F1.8)
+    }
+    const inserisci = (campi: Record<string, unknown>) => supabase.from('valutazioni').insert(campi).select().single()
+
+    // DB non migrato (la CI E2E): `periodo_id` può mancare. Si ripete UNA volta senza, e lo si dice al log.
+    // Se torna ancora un codice di schema la colonna mancante è `data_evento`: per un voto di oggi si
+    // ripete anche senza (com'era prima), per una data diversa si rifiuta, perché scriverlo sarebbe
+    // archiviarlo oggi.
+    const { periodo_id: _periodo, ...senzaPeriodo } = riga
+    void _periodo
+    const { data_evento: _dataEvento, ...senzaData } = senzaPeriodo
+    void _dataEvento
+    const { esito: inserimento, stadio } = await scriviConRipiegoSchema(
+      operazione,
+      () => inserisci(riga),
+      [
+        { stadio: 1, scrivi: () => inserisci(senzaPeriodo) },
+        // Solo per un voto di OGGI: per una data diversa scrivere senza `data_evento` vorrebbe dire archiviarlo oggi.
+        ...(eventDate === oggi ? [{ stadio: 2, scrivi: () => inserisci(senzaData) }] : []),
+      ],
+    )
+    const periodoScritto = stadio === 0 ? quadrimestre.periodoId : null
+    const { data: val, error: valErr } = inserimento
     if (valErr) {
-      logErrore({ operazione: 'primaria/valutazioni:POST', evento: 'db' }, valErr)
-      if (eventDate !== oggiRoma() && ['42703', 'PGRST204'].includes(valErr.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile: aggiornare lo schema.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
+      logErrore({ operazione, evento: 'db' }, valErr)
+      if (eventDate !== oggi && colonnaNuovaAssente(valErr)) return NextResponse.json({ error: 'Archivio storico non disponibile: aggiornare lo schema.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
       return NextResponse.json({ error: 'Valutazione non salvata' }, { status: 500 })
     }
+    // Il SUCCESSO si logga: senza, «nessun log» non distingue «tutto ok» da «non è partito niente».
+    logEvento('registro', 'info', {
+      operazione,
+      esito: 'valutazione-inserita',
+      valutazione_id: val.id,
+      section_id: sectionId,
+      retrodatata: eventDate < oggi,
+      periodo_assegnato: periodoScritto !== null,
+    }, undefined, { distingui: ['valutazione_id'] })
 
     // Righe di collegamento valutazione↔obiettivo (DL-015). Best-effort: l'eventuale
     // errore non annulla la valutazione già creata.
@@ -558,9 +722,13 @@ const NON_SALVATA = () =>
 // body: { id, tipoProva?, modalita, dims?, giudizioSintetico?, giudizioTesto?,
 //         argomento, annotazioneNumerica?, obiettiviIds? }
 // Stessi campi e stessa validazione della POST; gli obiettivi collegati si
-// SOSTITUISCONO. Permesso: autore (`maestra_id`) o Segreteria/Direzione, entro
-// il termine sulla data di Roma di `creato_il`, o con lo sblocco (permesso-voce).
-// Nessun avviso al genitore (spec 2026-09-24, «2 Primaria»).
+// SOSTITUISCONO. Permesso: autore (`maestra_id`) o Segreteria/Direzione, con la
+// materia ancora assegnata. Per la docente: entro il termine, che corre dal
+// giorno del SALVATAGGIO (`creato_il`), e con la data della prova — la vecchia
+// e la nuova — fuori da un quadrimestre chiuso; lo sblocco per voce toglie sia
+// il termine sia il congelamento (permesso-voce). `data` sposta la prova (mai nel
+// futuro): `periodo_id` si ricalcola sulla data nuova, e con la data invariata
+// non si tocca. Nessun avviso al genitore (spec 2026-09-24, «2 Primaria»).
 export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: NextRequest) => {
   const operazione = 'primaria/valutazioni:PATCH'
   try {
@@ -582,6 +750,9 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
       )
     }
 
+    // La prova non si sposta nel futuro: il rifiuto viene prima di leggere la voce.
+    if (b.data.data !== undefined && b.data.data > oggiRoma()) return rispostaDataFutura(operazione)
+
     const supabase = await createAdminClient()
 
     // `tipoProva` assente = il tipo resta quello salvato (vedi patchBodySchema).
@@ -592,6 +763,18 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     const sectionId = voce.section_id as string
     const tipo = tipoRichiesto === undefined ? voce.tipo : tipoRichiesto
     const lockTipo = tipoRichiesto === undefined ? lockTipoDiRiga(voce) : lockTipoDaTipo(tipoRichiesto)
+
+    // Se la prova cambia giorno, il voto passa al quadrimestre della data nuova. Il congelamento per la docente
+    // l'ha già deciso `voceAutorizzata` (su entrambe le date); qui si ricalcola solo `periodo_id`, anche per lo
+    // staff, che non è fermato dallo scrutinio chiuso. Con la data invariata `periodo_id` non si tocca.
+    // Lettura fallita: 500 prima di scrivere qualunque cosa.
+    const giornoOriginale = vocePrimaria(voce).dataEvento
+    let periodoNuovo: string | null | undefined
+    if (b.data.data !== undefined && b.data.data !== giornoOriginale) {
+      const quadrimestre = await statoQuadrimestre(supabase, scuolaDellaClasse(voce), sectionId, b.data.data)
+      if (!quadrimestre.ok) return rispostaQuadrimestreNonLetto()
+      periodoNuovo = quadrimestre.periodoId
+    }
 
     // La materia della voce: codice e sede per obiettivi e template del giudizio.
     const { data: materia, error: materiaErr } = await supabase
@@ -648,13 +831,13 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
       testo = await renderGiudizioDescrittivo(supabase, materia.scuola_id, dims)
     }
 
-    const giornoOriginale = vocePrimaria(voce).dataEvento
     const giornoNuovo = b.data.data ?? giornoOriginale
     const politicaModifica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: giornoNuovo, giornoOriginale })
     const storica = eRettificaStorica(auth.user, giornoNuovo, giornoOriginale)
-    const valori = {
+    const valori: Record<string, unknown> = {
         argomento: argomento.trim(),
         ...(b.data.data !== undefined ? { data_evento: b.data.data } : {}),
+        ...(periodoNuovo !== undefined ? { periodo_id: periodoNuovo } : {}),
         tipo,
         modalita,
         dim_autonomia: modalita === 'dimensioni' ? dims?.autonomia ?? null : null,
@@ -670,21 +853,41 @@ export const PATCH = withRoute('primaria/valutazioni:PATCH', async (request: Nex
     let updErr: { code?: string; message: string } | null = null
     if (storica) {
       if (voce.storico_versione === undefined) return storicoIndisponibile()
-      const azioni: AzioneStorica[] = [{ tabella: 'valutazioni', operazione: 'update', filtro: { id, section_id: sectionId }, valori }]
-      if (scelta.ids !== null) {
-        azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'delete', filtro: { valutazione_id: id } })
-        for (const obiettivo_id of scelta.ids) azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'insert', valori: { valutazione_id: id, obiettivo_id } })
+      const azioniCon = (campi: Record<string, unknown>): AzioneStorica[] => {
+        const azioni: AzioneStorica[] = [{ tabella: 'valutazioni', operazione: 'update', filtro: { id, section_id: sectionId }, valori: campi }]
+        if (scelta.ids !== null) {
+          azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'delete', filtro: { valutazione_id: id } })
+          for (const obiettivo_id of scelta.ids) azioni.push({ tabella: 'valutazione_obiettivi', operazione: 'insert', valori: { valutazione_id: id, obiettivo_id } })
+        }
+        return azioni
       }
-      const rettifica = await applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(materia.scuola_id), alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno: giornoOriginale, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni })
+      const rettificaCon = (campi: Record<string, unknown>, ripiegoSchema: boolean) => applicaRettificaStorica(supabase, { attore: auth.user, scuolaId: String(materia.scuola_id), alunnoId: voce.alunno_id, sectionId, modulo: 'valutazioni', giorno: giornoOriginale, attese: [{ tabella: 'valutazioni', filtro: { id, section_id: sectionId }, versione: b.data.versioneAttesa }], azioni: azioniCon(campi), ripiegoSchema })
+      // DB non migrato (la CI E2E): la RPC costruisce l'UPDATE dalle chiavi di `valori`, e senza `periodo_id` torna
+      // `42703`. Come sull'update semplice: UNA ripetizione senza, con il log `info`; la seconda prova non ha ripiego.
+      let rettifica = await rettificaCon(valori, 'periodo_id' in valori)
+      if ('response' in rettifica && rettifica.schemaIndietro) {
+        logSchemaIndietro(operazione, rettifica.schemaIndietro, 1)
+        const { periodo_id: _periodo, ...senzaPeriodo } = valori
+        void _periodo
+        rettifica = await rettificaCon(senzaPeriodo, false)
+      }
       if ('response' in rettifica) return rettifica.response
       aggiornate = rettifica.righe[0]
     } else {
-      const esito = await supabase.from('valutazioni').update(valori).eq('id', id).eq('section_id', sectionId).select()
+      const aggiorna = (campi: Record<string, unknown>) => supabase.from('valutazioni').update(campi).eq('id', id).eq('section_id', sectionId).select()
+      // DB non migrato (la CI E2E): se manca `periodo_id` si ripete UNA volta senza, e lo si dice al log.
+      const { periodo_id: _periodo, ...senzaPeriodo } = valori
+      void _periodo
+      const { esito } = await scriviConRipiegoSchema(
+        operazione,
+        () => aggiorna(valori),
+        'periodo_id' in valori ? [{ stadio: 1, scrivi: () => aggiorna(senzaPeriodo) }] : [],
+      )
       aggiornate = esito.data; updErr = esito.error
     }
     if (updErr) {
       logEvento('registro', 'error', { operazione, esito: 'valutazione-non-aggiornata', valutazione_id: id }, updErr)
-      if (b.data.data !== undefined && ['42703', 'PGRST204'].includes(updErr.code ?? '')) return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
+      if (b.data.data !== undefined && colonnaNuovaAssente(updErr)) return NextResponse.json({ error: 'Archivio storico non disponibile.', codice: 'STORICO_NON_DISPONIBILE' }, { status: 503 })
       return NON_SALVATA()
     }
     const val = ((aggiornate ?? []) as Record<string, unknown>[])[0]

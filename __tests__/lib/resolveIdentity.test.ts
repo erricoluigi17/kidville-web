@@ -147,13 +147,13 @@ describe('resolveIdentity (session-authoritative shim)', () => {
    */
   it('senza sessione, l\'identità arriva comunque dall\'header/query (osservabilità S13)', async () => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
-    const res = await resolveIdentity(new Request('http://localhost/api/grades?userId=hdr-1'));
+    const res = await resolveIdentity(new Request('http://localhost/api/primaria/valutazioni?userId=hdr-1'));
     expect(res).toEqual({ userId: 'hdr-1', source: 'header' });
   });
 
   it('il fallback dall\'header è un segnale di SICUREZZA: warn, quindi persistito', async () => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
-    await resolveIdentity(new Request('http://localhost/api/grades?userId=hdr-1'));
+    await resolveIdentity(new Request('http://localhost/api/primaria/valutazioni?userId=hdr-1'));
     // `tipo` e non `motivo`: `redact()` è a lista bianca PER CHIAVE e `motivo` non è in lista,
     // quindi in tabella la riga avrebbe detto `[redatto:str/15]` — il segnale sarebbe stato
     // persistito e illeggibile.
@@ -168,7 +168,7 @@ describe('resolveIdentity (session-authoritative shim)', () => {
   it('con una sessione valida NON logga il fallback (il contatore S13 non va gonfiato)', async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: 'staff-uid' } }, error: null });
     mocks.utentiMaybeSingle.mockResolvedValue({ data: { id: 'staff-uid' }, error: null });
-    const req = new Request('http://localhost/api/grades', { headers: { 'x-user-id': 'staff-uid' } });
+    const req = new Request('http://localhost/api/primaria/valutazioni', { headers: { 'x-user-id': 'staff-uid' } });
     await resolveIdentity(req);
     expect(logEvento).not.toHaveBeenCalled();
   });
@@ -249,11 +249,11 @@ describe('i gate depositano l\'identità nel contesto', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   const gate = (r: Request) => requireDocente(r);
-  const richiesta = () => new Request('http://localhost/api/grades', { headers: { 'x-user-id': 'u-1' } });
+  const richiesta = () => new Request('http://localhost/api/primaria/valutazioni', { headers: { 'x-user-id': 'u-1' } });
 
   it('uid, ruolo e sede finiscono nel contesto: da lì vanno in OGNI riga della richiesta', async () => {
     mocks.utentiSingle.mockResolvedValue({ data: UTENTE, error: null });
-    await conContesto({ requestId: 'r1', path: '/api/grades' }, async () => {
+    await conContesto({ requestId: 'r1', path: '/api/primaria/valutazioni' }, async () => {
       const auth = await gate(richiesta());
       expect(auth.user?.id).toBe('u-1');
       expect(contesto()).toMatchObject({ userId: 'u-1', ruolo: 'educator', scuolaId: 's-1' });
@@ -262,7 +262,7 @@ describe('i gate depositano l\'identità nel contesto', () => {
 
   it('scuola_id null non sporca il contesto (la colonna è opzionale)', async () => {
     mocks.utentiSingle.mockResolvedValue({ data: { ...UTENTE, scuola_id: null }, error: null });
-    await conContesto({ requestId: 'r1', path: '/api/grades' }, async () => {
+    await conContesto({ requestId: 'r1', path: '/api/primaria/valutazioni' }, async () => {
       await gate(richiesta());
       expect(contesto()?.scuolaId).toBeUndefined();
       expect(contesto()?.userId).toBe('u-1');
@@ -314,7 +314,7 @@ describe('i gate loggano i dinieghi — a INFO, per non affogare app_log', () =>
   });
 
   it('401 senza identità: nessun ruolo da riportare', async () => {
-    const auth = await requireDocente(new Request('http://localhost/api/grades'));
+    const auth = await requireDocente(new Request('http://localhost/api/primaria/valutazioni'));
     expect(auth.response?.status).toBe(401);
     expect(logEvento).toHaveBeenCalledWith('auth', 'info', {
       tipo: 'non-autenticato',
@@ -349,7 +349,7 @@ describe('i gate loggano i dinieghi — a INFO, per non affogare app_log', () =>
     const vero = await vi.importActual<typeof import('@/lib/logging/logger')>('@/lib/logging/logger');
     expect(vero.vaPersistito('info', 'auth')).toBe(false);
     // …e il livello che i gate usano davvero è proprio `info`.
-    await requireDocente(new Request('http://localhost/api/grades'));
+    await requireDocente(new Request('http://localhost/api/primaria/valutazioni'));
     expect(vi.mocked(logEvento).mock.calls.every((c) => c[1] === 'info')).toBe(true);
   });
 

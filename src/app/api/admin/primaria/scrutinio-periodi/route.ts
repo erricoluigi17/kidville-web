@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
+import { COLONNE_PERIODO, dateMancantiPerAnno, sovrapposto, type PeriodoScrutinio } from '@/lib/primaria/periodo'
+import { ricalcolaPeriodiSede } from '@/lib/primaria/quadrimestre'
 
 // ============================================================
 // Periodi di scrutinio, per sede.
@@ -27,12 +30,117 @@ import { figlieTrattengono } from '@/lib/db/figlie-trattengono'
 const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
 
 /**
+ * Un campo data lasciato vuoto («») è una data TOLTA (`null`), non una stringa da mandare al database.
+ * Ogni data che resta passa da `zDataYMD` (`YYYY-MM-DD`, esistente nel calendario): i controlli sulle
+ * date confrontano stringhe, e l'ordine lessicografico vale solo sulla forma canonica — `2027-6-1` sta
+ * DOPO `2027-06-30` come testo e PRIMA come giorno, e Postgres l'avrebbe accettata lo stesso.
+ */
+const dataOVuota = z.preprocess((v) => (v === '' ? null : v), zDataYMD.nullish())
+
+/**
  * Archiviazione (fase 4 della robustezza, D3-C): un periodo chiuso esce dall'elenco senza che
  * niente di ciò che vi è appeso venga toccato. Sul DB E2E della CI la colonna non c'è: in lettura
  * `42703` (si rilegge senza il filtro: là nessuno ha mai archiviato niente), in scrittura
  * `PGRST204`/`42703` (si risponde 503 e lo si dice).
  */
 const CODICI_COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
+/**
+ * Le date dei periodi decidono a quale quadrimestre appartiene ogni voto (`periodo_id`), quindi quando
+ * cambiano il server riassegna i voti della sede (`ricalcolaPeriodiSede`). Un ricalcolo che non riesce
+ * NON annulla la scrittura già fatta: la risposta riuscita lo dice, e il motivo è già nel log.
+ */
+type Ricalcolo = 'fatto' | 'non-necessario' | 'non-riuscito'
+
+async function ricalcola(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  operazione: string,
+): Promise<Ricalcolo> {
+  return (await ricalcolaPeriodiSede(supabase, scuolaId, operazione)) ? 'fatto' : 'non-riuscito'
+}
+
+/** Un periodo copre dei giorni solo con ENTRAMBE le date: con una sola (o nessuna) non c'è nulla da ricalcolare. */
+const haEntrambeLeDate = (p: { data_inizio?: string | null; data_fine?: string | null }) => Boolean(p.data_inizio && p.data_fine)
+
+/** Lettura fallita: 500 e NESSUNA scrittura. Mai un 201 o un 409 inventati su un «non so». */
+function letturaFallita(operazione: string, evento: string, err: unknown): NextResponse {
+  logErrore({ operazione, stato: 500, evento }, err)
+  return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
+}
+
+/** 404 unico: periodo inesistente OPPURE di un altro plesso, indistinguibili (niente oracolo di esistenza). */
+const periodoNonTrovato = () => NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
+
+// I rifiuti sulle date: ciascuno scrive il suo `error_code` nel log (info: è un errore di chi compila, non del
+// sistema) e porta il codice come LETTERALE, che è ciò che il lock `errori-con-codice` sa leggere.
+function rifiutoDateIncomplete(operazione: string, scuolaId: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'periodo-date-incomplete', scuola_id: scuolaId, error_code: 'PERIODO_DATE_INCOMPLETE' })
+  return NextResponse.json(
+    { error: 'Indica entrambe le date del periodo, oppure nessuna.', codice: 'PERIODO_DATE_INCOMPLETE' },
+    { status: 422 },
+  )
+}
+
+function rifiutoPeriodoRovesciato(operazione: string, scuolaId: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'periodo-rovesciato', scuola_id: scuolaId, error_code: 'PERIODO_ROVESCIATO' })
+  return NextResponse.json(
+    { error: 'La data di fine viene prima della data di inizio: controlla l’intervallo.', codice: 'PERIODO_ROVESCIATO' },
+    { status: 400 },
+  )
+}
+
+function rifiutoPeriodiSovrapposti(operazione: string, scuolaId: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'periodi-sovrapposti', scuola_id: scuolaId, error_code: 'PERIODI_SOVRAPPOSTI' })
+  return NextResponse.json(
+    { error: 'Le date si sovrappongono a un altro periodo di questa sede.', codice: 'PERIODI_SOVRAPPOSTI' },
+    { status: 422 },
+  )
+}
+
+function rifiutoPeriodoConScrutiniChiusi(operazione: string, scuolaId: string): NextResponse {
+  logEvento('registro', 'info', { operazione, esito: 'periodo-con-scrutini-chiusi', scuola_id: scuolaId, error_code: 'PERIODO_CON_SCRUTINI_CHIUSI' })
+  return NextResponse.json(
+    { error: 'Il periodo ha uno scrutinio chiuso: per spostarne le date va prima riaperto.', codice: 'PERIODO_CON_SCRUTINI_CHIUSI' },
+    { status: 409 },
+  )
+}
+
+/**
+ * La forma delle date: entrambe o nessuna, e la fine non prima dell'inizio. Si applica alla riga FINALE
+ * (per la PATCH, già unita a quella salvata). `null` = niente da rifiutare.
+ */
+function rifiutoSuLeDate(operazione: string, scuolaId: string, inizio: string | null, fine: string | null): NextResponse | null {
+  if (!inizio && !fine) return null
+  if (!inizio || !fine) return rifiutoDateIncomplete(operazione, scuolaId)
+  if (fine < inizio) return rifiutoPeriodoRovesciato(operazione, scuolaId)
+  return null
+}
+
+/**
+ * Le date toccano un altro periodo della STESSA sede, di QUALUNQUE anno scolastico? Si leggono tutti, `attivo`
+ * o no (un periodo archiviato ha le sue date che valgono ancora per i voti di quegli anni), e `sovrapposto`
+ * salta sé stesso per id. L'anno NON restringe la ricerca: la copertura di un giorno (`periodoPerData` e la
+ * funzione SQL del ricalcolo) sceglie il periodo per sede e date, senza guardare l'anno, quindi un periodo
+ * salvato con l'anno sbagliato ruberebbe i voti a un altro. Due anni scolastici non condividono giorni: nessun
+ * dato valido viene respinto. Una lettura fallita è 500: «non so se si sovrappone» non diventa un sì né un no.
+ */
+async function rifiutoSuSovrapposizione(
+  supabase: SupabaseClient,
+  operazione: string,
+  candidato: { id?: string; scuolaId: string; inizio: string; fine: string },
+): Promise<NextResponse | null> {
+  const { data, error } = await supabase
+    .from('scrutinio_periodi')
+    .select(COLONNE_PERIODO)
+    .eq('scuola_id', candidato.scuolaId)
+  if (error) return letturaFallita(operazione, 'periodi_sovrapposizione', error)
+  const altri = (data ?? []) as unknown as PeriodoScrutinio[]
+  if (sovrapposto({ id: candidato.id, data_inizio: candidato.inizio, data_fine: candidato.fine }, altri)) {
+    return rifiutoPeriodiSovrapposti(operazione, candidato.scuolaId)
+  }
+  return null
+}
 
 const getQuerySchema = z.object({
   annoScolastico: z.string().optional(),
@@ -51,16 +159,16 @@ const postBodySchema = z.object({
   annoScolastico: z.string().min(1),
   nome: z.string().min(1),
   ordine: z.union([z.number(), z.string()]).nullish(),
-  dataInizio: z.string().nullish(),
-  dataFine: z.string().nullish(),
+  dataInizio: dataOVuota,
+  dataFine: dataOVuota,
 })
 
 const patchBodySchema = z.object({
   id: zUuid,
   nome: z.string().nullish(),
   ordine: z.union([z.number(), z.string()]).nullish(),
-  dataInizio: z.string().nullish(),
-  dataFine: z.string().nullish(),
+  dataInizio: dataOVuota,
+  dataFine: dataOVuota,
   attivo: z.boolean().nullish(),
   // true = archivia (e disattiva), false = ripristina nell'elenco.
   archiviato: z.boolean().nullish(),
@@ -111,7 +219,14 @@ export const GET = withRoute('admin/primaria/scrutinio-periodi:GET', async (requ
       logErrore({ operazione: 'admin/primaria/scrutinio-periodi:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 })
     }
-    return NextResponse.json({ success: true, data: data ?? [] })
+    // Promemoria per la pagina: per quella sede e quell'anno non c'è nessun periodo attivo, o ne manca una
+    // data (e allora nessun voto trova il suo quadrimestre). Si calcola solo se la pagina dichiara sede E
+    // anno, e solo se la sede è accessibile: di una sede che non si vede non si dice che «mancano le date».
+    const dateMancanti =
+      scuolaId && anno && sedi.length > 0
+        ? dateMancantiPerAnno((data ?? []) as unknown as PeriodoScrutinio[], anno)
+        : null
+    return NextResponse.json({ success: true, data: data ?? [], dateMancanti })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -133,6 +248,20 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
     const supabase = await createAdminClient()
     const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
     if (sede.response) return sede.response
+    const operazione = 'admin/primaria/scrutinio-periodi:POST'
+    const inizio = dataInizio ?? null
+    const fine = dataFine ?? null
+
+    // Prima di scrivere: date a metà o rovesciate, poi sovrapposizioni con gli altri periodi della sede.
+    const rifiutoDate = rifiutoSuLeDate(operazione, sede.scuolaId!, inizio, fine)
+    if (rifiutoDate) return rifiutoDate
+    if (inizio && fine) {
+      const rifiutoSovrapposto = await rifiutoSuSovrapposizione(supabase, operazione, {
+        scuolaId: sede.scuolaId!, inizio, fine,
+      })
+      if (rifiutoSovrapposto) return rifiutoSovrapposto
+    }
+
     const { data, error } = await supabase
       .from('scrutinio_periodi')
       .insert({
@@ -140,13 +269,18 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
         anno_scolastico: annoScolastico,
         nome,
         ordine: ordine ?? 0,
-        data_inizio: dataInizio ?? null,
-        data_fine: dataFine ?? null,
+        data_inizio: inizio,
+        data_fine: fine,
       })
       .select()
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true, data }, { status: 201 })
+    logEvento('registro', 'info', {
+      operazione, esito: 'periodo-creato', scuola_id: sede.scuolaId!, periodo_id: data?.id ?? null, con_date: Boolean(inizio && fine),
+    })
+    // Un periodo con le date può coprire voti già scritti: la sede si ricalcola. Senza date non copre niente.
+    const ricalcolo: Ricalcolo = inizio && fine ? await ricalcola(supabase, sede.scuolaId!, operazione) : 'non-necessario'
+    return NextResponse.json({ success: true, data, ricalcolo }, { status: 201 })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -155,7 +289,14 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
 })
 
 // PATCH /api/admin/primaria/scrutinio-periodi?userId=
-// body: { id, nome?, ordine?, dataInizio?, dataFine?, attivo? }
+// body: { id, nome?, ordine?, dataInizio?, dataFine?, attivo?, archiviato? }
+//
+// Le date si controllano sulla riga FINALE (quella salvata unita al corpo), non sul solo corpo: togliere la
+// data di fine a un periodo che ha anche l'inizio lascia una data sola. Se le date cambiano:
+//  · con uno scrutinio chiuso sul periodo → 409 (va prima riaperto);
+//  · se toccano un altro periodo della stessa sede (di qualunque anno scolastico) → 422;
+//  · a scrittura riuscita i voti della sede si ricalcolano.
+// Cambiare solo nome, ordine o stato non sposta niente e non ricalcola.
 export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -168,6 +309,7 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
     const patch: Record<string, unknown> = {}
     if (nome !== undefined) patch.nome = nome
     if (ordine !== undefined) patch.ordine = ordine
+    // Una data svuotata («») è già `null` dallo schema: la data si toglie.
     if (dataInizio !== undefined) patch.data_inizio = dataInizio
     if (dataFine !== undefined) patch.data_fine = dataFine
     if (attivo !== undefined) patch.attivo = attivo
@@ -179,8 +321,48 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
       patch.archiviato_il = null
     }
 
+    const operazione = 'admin/primaria/scrutinio-periodi:PATCH'
     const supabase = await createAdminClient()
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+
+    // La riga com'è adesso, ristretta ai plessi in scope: inesistente e altrui sono la stessa risposta (404).
+    const { data: rigaLetta, error: errRiga } = await supabase
+      .from('scrutinio_periodi')
+      .select(COLONNE_PERIODO)
+      .eq('id', id)
+      .in('scuola_id', plessi)
+      .maybeSingle()
+    if (errRiga) return letturaFallita(operazione, 'periodo', errRiga)
+    if (!rigaLetta) return periodoNonTrovato()
+    const riga = rigaLetta as unknown as PeriodoScrutinio
+    const unita = { ...riga, ...patch } as PeriodoScrutinio
+    const inizio = unita.data_inizio || null
+    const fine = unita.data_fine || null
+    const cambiano = inizio !== (riga.data_inizio || null) || fine !== (riga.data_fine || null)
+
+    // Tutti i rifiuti PRIMA della scrittura, e solo se il corpo tocca le date: rinominare, riordinare o
+    // archiviare un periodo non può essere bloccato da date che il corpo non nomina.
+    if (dataInizio !== undefined || dataFine !== undefined) {
+      const rifiutoDate = rifiutoSuLeDate(operazione, riga.scuola_id, inizio, fine)
+      if (rifiutoDate) return rifiutoDate
+    }
+    if (cambiano) {
+      const { data: chiusi, error: errChiusi } = await supabase
+        .from('scrutini')
+        .select('id')
+        .eq('periodo_id', id)
+        .eq('stato', 'chiuso')
+        .limit(1)
+      if (errChiusi) return letturaFallita(operazione, 'guardia_scrutini', errChiusi)
+      if (chiusi && chiusi.length > 0) return rifiutoPeriodoConScrutiniChiusi(operazione, riga.scuola_id)
+      if (inizio && fine) {
+        const rifiutoSovrapposto = await rifiutoSuSovrapposizione(supabase, operazione, {
+          id, scuolaId: riga.scuola_id, inizio, fine,
+        })
+        if (rifiutoSovrapposto) return rifiutoSovrapposto
+      }
+    }
+
     const { data, error } = await supabase
       .from('scrutinio_periodi')
       .update(patch)
@@ -200,9 +382,8 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
       logErrore({ operazione: 'admin/primaria/scrutinio-periodi:PATCH', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore interno', codice: 'SCRITTURA_FALLITA' }, { status: 500 })
     }
-    // 0 righe = periodo inesistente OPPURE di un altro plesso: si risponde 404
-    // in entrambi i casi, così la risposta non diventa un oracolo di esistenza.
-    if (!data || data.length === 0) return NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
+    // 0 righe = il periodo è sparito fra la lettura e la scrittura (o non è del plesso): stesso 404.
+    if (!data || data.length === 0) return periodoNonTrovato()
     if (archiviato != null) {
       // Chi ha tolto (o rimesso) un periodo dall'elenco, e quando: è una scrittura su un
       // contenitore di documenti scolastici, e deve lasciare traccia anche quando riesce.
@@ -213,7 +394,12 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
         utente_id: auth.user.id,
       })
     }
-    return NextResponse.json({ success: true, data: data[0] })
+    let ricalcolo: Ricalcolo = 'non-necessario'
+    if (cambiano) {
+      logEvento('registro', 'info', { operazione, esito: 'periodo-date-modificate', scuola_id: riga.scuola_id, periodo_id: id })
+      ricalcolo = await ricalcola(supabase, riga.scuola_id, operazione)
+    }
+    return NextResponse.json({ success: true, data: data[0], ricalcolo })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -256,9 +442,10 @@ export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async
     // direbbe che esiste). I giudizi descrittivi del periodo NON trattengono: sono la
     // tabella dei livelli che la sede configura, non un documento di un alunno, e se ne
     // vanno col periodo come prima.
+    // Si leggono anche sede e date: se il periodo copriva dei giorni, dopo l'eliminazione i voti si ricalcolano.
     const { data: periodo, error: errPeriodo } = await supabase
       .from('scrutinio_periodi')
-      .select('id')
+      .select('id, scuola_id, data_inizio, data_fine')
       .eq('id', id)
       .in('scuola_id', plessi)
       .maybeSingle()
@@ -286,8 +473,13 @@ export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async
       return NextResponse.json({ error: 'Errore interno', codice: 'ELIMINAZIONE_NON_RIUSCITA' }, { status: 500 })
     }
     if (!data || data.length === 0) return NextResponse.json({ error: 'Periodo non trovato' }, { status: 404 })
-    logEvento('registro', 'info', { operazione: 'admin/primaria/scrutinio-periodi:DELETE', esito: 'periodo-eliminato', periodo_id: id })
-    return NextResponse.json({ success: true })
+    logEvento('registro', 'info', {
+      operazione: 'admin/primaria/scrutinio-periodi:DELETE', esito: 'periodo-eliminato', periodo_id: id, scuola_id: periodo.scuola_id,
+    })
+    const ricalcolo: Ricalcolo = haEntrambeLeDate(periodo)
+      ? await ricalcola(supabase, periodo.scuola_id, 'admin/primaria/scrutinio-periodi:DELETE')
+      : 'non-necessario'
+    return NextResponse.json({ success: true, ricalcolo })
   } catch (err) {
     logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'

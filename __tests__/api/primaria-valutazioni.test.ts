@@ -51,7 +51,6 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn().mockResolvedValu
 vi.mock('@/lib/audit/valutatore', () => ({
   risolviValutatore: vi.fn().mockResolvedValue({ valutatoreId: 'maestra-1', response: null }),
 }))
-vi.mock('@/lib/primaria/timelock', () => ({ isOltreScadenza: vi.fn().mockResolvedValue({ locked: false }) }))
 vi.mock('@/lib/primaria/giudizio', () => ({ renderGiudizioDescrittivo: vi.fn().mockResolvedValue('Giudizio auto') }))
 const notif = vi.hoisted(() => ({
   enqueueNotifichePerAlunni: vi.fn(),
@@ -93,10 +92,13 @@ beforeEach(() => {
   })
 })
 
-// Materia configurata + valutazione inserita con successo.
+// Materia configurata + valutazione inserita con successo. La docente ha la materia in quella classe
+// (`utenti_sezioni_materie`), e la sede non ha periodi: la data non cade in nessun quadrimestre chiuso.
 function seedMateriaAndInsert() {
+  h.state.queues.utenti_sezioni_materie = [{ data: [{ section_id: BASE.sectionId, materia_id: BASE.materiaId }], error: null }]
   h.state.queues.materie = [{ data: { nome: 'Matematica', codice: 'matematica', scuola_id: 'sc-1', section_id: '0e20e2e2-0e2e-40e2-8e2e-0e2e2e2e2e21' }, error: null }]
-  h.state.queues.sections = [{ data: { name: '1A' }, error: null }]
+  // Due letture di `sections`, in quest'ordine: il nome (il livello, per gli obiettivi), poi la sede della classe (per i quadrimestri).
+  h.state.queues.sections = [{ data: { name: '1A' }, error: null }, { data: { scuola_id: 'sc-1' }, error: null }]
   h.state.queues.valutazioni = [{ data: { id: 'v-1', alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }, error: null }]
   h.state.queues.admin_settings = [{ data: { notif_buffer_valutazioni_min: 10 }, error: null }]
 }
@@ -135,6 +137,75 @@ describe('POST /api/primaria/valutazioni — collegamento obiettivo (DL-015)', (
     const res = await POST(req({ ...BASE })) // niente obiettiviIds, ma nessun obiettivo configurato
     expect(res.status).toBe(201)
     expect((h.state.captured.insert as Array<{ table: string }>).some((c) => c.table === 'valutazione_obiettivi')).toBe(false)
+  })
+})
+
+// ── DB non migrato (la CI E2E): le colonne nuove possono mancare. ──
+// Un INSERT con una colonna sconosciuta torna PGRST204. La POST ripete UNA volta senza `periodo_id` e lo dice al
+// log; se torna di nuovo un codice di schema la colonna mancante è `data_evento`: per un voto di oggi si ripete
+// anche senza (com'era prima), per un'altra data si rifiuta con 503 (scriverlo sarebbe archiviarlo oggi).
+describe('POST /api/primaria/valutazioni — database non migrato', () => {
+  const PGRST204 = { data: null, error: { code: 'PGRST204', message: 'colonna sconosciuta' } }
+  const RIGA = { data: { id: 'v-1', alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }, error: null }
+  // Un quadrimestre che copre ogni data del test: così `periodo_id` c'è nel primo payload, qualunque sia l'orologio.
+  const PERIODO = { id: 'p-1', scuola_id: 'sc-1', anno_scolastico: '2026/2027', nome: 'Primo quadrimestre', ordine: 1, data_inizio: '2000-01-01', data_fine: '2099-12-31', attivo: true }
+
+  const inserimentiValutazioni = () =>
+    (h.state.captured.insert as Array<{ table: string; v: Record<string, unknown> }>).filter((c) => c.table === 'valutazioni').map((c) => c.v)
+
+  beforeEach(() => {
+    seedMateriaAndInsert()
+    h.state.queues.obiettivi_apprendimento = [{ data: [], error: null }]
+    h.state.queues.scrutinio_periodi = [{ data: [PERIODO], error: null }]
+  })
+
+  it('DB non migrato: insert con PGRST204 → si ripete senza periodo_id, 201 e log colonne-nuove-non-disponibili-schema', async () => {
+    h.state.queues.valutazioni = [PGRST204, RIGA]
+
+    const res = await POST(req({ ...BASE }))
+
+    expect(res.status).toBe(201)
+    const [primo, secondo] = inserimentiValutazioni()
+    expect(inserimentiValutazioni()).toHaveLength(2)
+    expect(primo).toMatchObject({ periodo_id: 'p-1' })
+    expect(secondo).not.toHaveProperty('periodo_id')
+    expect(secondo).toHaveProperty('data_evento')
+    expect(notif.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'colonne-nuove-non-disponibili-schema' }),
+      expect.anything(),
+    )
+    // Il log di successo dice la verità: il voto è entrato SENZA periodo.
+    expect(notif.logEvento).toHaveBeenCalledWith(
+      'registro',
+      'info',
+      expect.objectContaining({ esito: 'valutazione-inserita', periodo_assegnato: false }),
+      undefined,
+      expect.anything(),
+    )
+  })
+
+  it('manca anche data_evento e il voto è di oggi: terza prova senza, 201', async () => {
+    h.state.queues.valutazioni = [PGRST204, { data: null, error: { code: '42703', message: 'x' } }, RIGA]
+
+    const res = await POST(req({ ...BASE }))
+
+    expect(res.status).toBe(201)
+    const scritti = inserimentiValutazioni()
+    expect(scritti).toHaveLength(3)
+    expect(scritti[2]).not.toHaveProperty('periodo_id')
+    expect(scritti[2]).not.toHaveProperty('data_evento')
+  })
+
+  it('manca anche data_evento e il voto è di un altro giorno: 503 STORICO_NON_DISPONIBILE, mai archiviato oggi', async () => {
+    h.state.queues.valutazioni = [PGRST204, PGRST204, RIGA]
+
+    const res = await POST(req({ ...BASE, data: '2026-10-01' }))
+
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('STORICO_NON_DISPONIBILE')
+    expect(inserimentiValutazioni()).toHaveLength(2)
   })
 })
 

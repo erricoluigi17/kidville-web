@@ -104,3 +104,62 @@ test('appello: l\'ora d\'ingresso si corregge, e non cancella quella d\'uscita',
   await expect(page.locator(`#btn-orario-entrata-${IDS.A1}`)).toContainText('08:35', { timeout: RENDER });
   await expect(page.locator(`#btn-orario-uscita-${IDS.A1}`)).toHaveText(uscitaPrima, { timeout: AZIONE });
 });
+
+/**
+ * SUL TELEFONO UN TESTO LUNGO NON SPINGE I BOTTONI FUORI DALLO SCHERMO.
+ *
+ * Il 2026-11-05 una maestra di Giugliano ha aperto l'appello dall'iPhone e ha trovato soltanto i
+ * nomi: Presente / Ritardo / Assente non c'erano più. Un genitore aveva scritto un motivo d'assenza
+ * di 194 caratteri, e la riga del motivo è un `truncate` (`white-space: nowrap`). L'elenco era una
+ * griglia senza colonne dichiarate sotto `lg:`: la sua colonna `auto` si è allargata quanto il
+ * motivo su una riga sola (~1.200 px), e con lei tutte le 26 righe. I bottoni sono finiti oltre il
+ * bordo, tagliati dall'`overflow-hidden` della pagina. Ora la colonna è `grid-cols-1`
+ * (`minmax(0, 1fr)`, vedi `GRIGLIA_BAMBINI` in `src/lib/ui/larghezza-pagina.ts`).
+ *
+ * Nel DB della CI nessun genitore ha scritto un motivo così lungo: la riga si aggiunge dal browser,
+ * con le stesse classi della riga del motivo (`StudentAttendanceRow`). Inserimento e misura stanno
+ * nello STESSO `evaluate`, così React non può togliere la riga fra i due e far passare il test
+ * senza testo lungo. E si verifica che la riga sia davvero troncata (`scrollWidth > clientWidth`):
+ * se il testo non c'è, o non è lungo, il test è rosso. Non scrive niente sul database.
+ */
+test('appello: sul telefono un motivo lungo non spinge i bottoni fuori dallo schermo', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/teacher/attendance');
+
+  await expect(page.getByRole('heading', { name: 'Appello' })).toBeVisible({ timeout: RENDER });
+  await expect(page.locator(`#btn-presente-${IDS.A1}`)).toBeVisible({ timeout: RENDER });
+
+  const misura = await page.evaluate((idBottone) => {
+    const riga = document.getElementById(idBottone)?.closest('.kv-appello-row');
+    const nome = riga?.querySelector('h3');
+    if (!riga || !nome?.parentElement) return null;
+    const motivo = document.createElement('p');
+    motivo.className = 'mt-1 font-maven text-xs text-kidville-warn-strong bg-kidville-warn-soft rounded-xl px-2 py-1 truncate';
+    motivo.textContent = 'Giustificata dal genitore: ' + 'parola '.repeat(30);
+    nome.parentElement.appendChild(motivo);
+    const larghezzaSchermo = document.documentElement.clientWidth;
+    const bottoni = Array.from(document.querySelectorAll<HTMLElement>('[id^="btn-presente-"]')).map((b) => {
+      const r = b.getBoundingClientRect();
+      return { id: b.id, destra: Math.round(r.right) };
+    });
+    const esito = {
+      larghezzaSchermo,
+      larghezzaRiga: Math.round(riga.getBoundingClientRect().width),
+      motivoTroncato: motivo.scrollWidth > motivo.clientWidth,
+      bottoni,
+    };
+    motivo.remove();
+    return esito;
+  }, `btn-presente-${IDS.A1}`);
+
+  expect(misura, 'la riga di Aurora con il suo bottone Presente').not.toBeNull();
+  expect(misura!.bottoni.length).toBeGreaterThan(0);
+  for (const b of misura!.bottoni) {
+    expect(b.destra, `${b.id} dentro lo schermo`).toBeLessThanOrEqual(misura!.larghezzaSchermo);
+  }
+  expect(misura!.larghezzaRiga, 'la riga non è più larga dello schermo').toBeLessThanOrEqual(misura!.larghezzaSchermo);
+  // Ultimo di proposito: senza la correzione il motivo ci sta intero su una riga larga 1.200 px,
+  // e il messaggio giusto è quello sui bottoni qui sopra.
+  expect(misura!.motivoTroncato, 'il motivo lungo è nella riga e ci sta troncato').toBe(true);
+});

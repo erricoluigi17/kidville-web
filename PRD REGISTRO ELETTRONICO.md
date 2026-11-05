@@ -1,3 +1,22 @@
+## 🐞 Changelog — L'appello perdeva i bottoni sul telefono quando un genitore scriveva un motivo lungo — 2026-11-05 (branch `fix/appello-griglia-telefono`)
+
+**Stato:** 🟡 sul branch `fix/appello-griglia-telefono`, PR verso `main`; il merge lo fa il titolare. Tocca solo CSS e test: nessuna migrazione, nessuna route. L'app nativa carica il sito da `server.url`, quindi la correzione arriva sui telefoni senza una nuova versione dell'app.
+
+**Perché.** Il 05/11 alle 09:51 una maestra di Giugliano (Sez. Sogni) ha aperto l'appello dall'iPhone e ha visto solo i nomi dei bambini, senza i bottoni Presente / Ritardo / Assente. Quel mattino un genitore aveva comunicato un'assenza con un motivo di **194 caratteri**; il giorno prima nella sezione non c'erano motivi. La riga del motivo in `StudentAttendanceRow` è un `truncate` (`white-space: nowrap`). Dalla #240 (iPad, 18/10) l'elenco è una griglia `GRIGLIA_BAMBINI` che sotto `lg:` non dichiarava colonne, e la colonna implicita di una griglia è `auto`: non scende mai sotto il min-content delle schede. Così la colonna, e con lei tutte le 26 righe, si è allargata quanto il motivo su una riga sola (~1.200 px). I bottoni sono finiti oltre i 1.000 px, tagliati dall'`overflow-hidden` della pagina. Il commento della #240 diceva che «sotto `lg:` una griglia a una colonna è identica all'elenco impilato di prima»: con un testo che non va a capo non è vero.
+
+**Cosa cambia.**
+- `src/lib/ui/larghezza-pagina.ts`: `DUE_COLONNE` e `GRIGLIA_BAMBINI` dichiarano `grid-cols-1` (`minmax(0, 1fr)`) sotto `lg:`. La colonna resta larga quanto lo schermo e il motivo lungo mostra i puntini. Da 1024 px `lg:grid-cols-2` resta com'era: iPad e computer non cambiano. Insieme all'appello si correggono le altre schermate che usano le stesse costanti: gli editor del diario docente (pasti, attività, routine, eventi), gli avvisi del genitore e il feed delle news.
+- Il commento sopra le costanti ora spiega la trappola, con il caso del 05/11.
+
+**Prove.**
+- Riproduzione a 375 px con lo stesso CSS. Con la griglia di prima e un motivo di 194 caratteri la riga misura 1.193 px e i bottoni partono da x=945. Con `minmax(0,1fr)` la riga misura 343 px e i bottoni vanno a capo sotto il nome, com'erano prima della #240.
+- Lock `__tests__/ui/larghezza-pagina.test.ts`: fallisce se una delle due costanti torna a `grid` senza `grid-cols-1`. Provato rosso togliendo la classe, poi verde.
+- E2E `e2e/teacher-attendance.spec.ts`, «sul telefono un motivo lungo non spinge i bottoni fuori dallo schermo». A 375 px aggiunge alla riga di un bambino un motivo di ~200 caratteri, con le classi vere, e verifica che ogni bottone Presente stia dentro lo schermo e che il motivo sia troncato. Non scrive sul database.
+
+**Logging.** Nessuna route, integrazione o percorso d'errore nuovo: è una correzione di impaginazione, e un log non avrebbe visto niente. Lo scrivo qui perché non sembri una dimenticanza.
+
+**Per la maestra, fino al rilascio:** nell'appello si scorrono i filtri verso destra e si tocca **«Da registrare»**. Il bambino col motivo lungo è già registrato come assente, quindi esce dall'elenco e i bottoni degli altri ricompaiono.
+
 ## 🗓️ Changelog — Voti della primaria: la data della prova e lo storico per alunno e materia — 2026-11-04 (branch `feat/voti-data-storico`)
 
 **Stato:** 🟡 sul branch `feat/voti-data-storico`, PR verso `main`. Una migrazione nuova, `supabase/migrations/20261104173158_voti_periodo_id.sql`: la applica l'integrazione di Supabase al merge, con la version del file, e il merge lo fa il titolare. Nessuna tabella nuova, nessuna route nuova; una route tolta (`/api/grades`). Spec concordata con il titolare il 04/11: `docs/superpowers/specs/2026-11-04-voti-data-storico-design.md`; piano: `docs/superpowers/plans/2026-11-04-voti-data-storico.md`. Le decisioni della spec sono numerate D1-D21 e qui sotto si richiamano così.

@@ -55,10 +55,21 @@ describe('larghezza-pagina — le colonne di genitori e docenti', () => {
   });
 
   it('le due colonne si accendono solo da 1024 px, dove compare la sidebar', () => {
-    // Sotto `lg:` una griglia a una colonna con `gap` è l'elenco impilato di prima: il telefono
-    // non cambia. Se qualcuno sposta il punto a `tablet:` o `md:`, le colonne da ~330 px del
-    // binario stringono schede pensate per 390.
-    expect(DUE_COLONNE).toBe('grid gap-3 lg:grid-cols-2 lg:items-start');
-    expect(GRIGLIA_BAMBINI).toBe('grid gap-2 lg:grid-cols-2 lg:items-start');
+    // Se qualcuno sposta il punto a `tablet:` o `md:`, le colonne da ~330 px del binario
+    // stringono schede pensate per 390.
+    expect(DUE_COLONNE).toBe('grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start');
+    expect(GRIGLIA_BAMBINI).toBe('grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start');
+  });
+
+  it('sul telefono la colonna è DICHIARATA, non la colonna `auto` implicita della griglia', () => {
+    // Una colonna `auto` non scende sotto il min-content delle schede: il 2026-11-05 il motivo
+    // d'assenza di un genitore (194 caratteri, `truncate`) ha allargato a ~1.200 px tutte le righe
+    // dell'appello, e i bottoni Presente/Assente sono finiti fuori dallo schermo. `grid-cols-1` è
+    // `minmax(0, 1fr)`: il minimo è 0 e la scheda resta larga quanto lo schermo.
+    for (const griglia of [DUE_COLONNE, GRIGLIA_BAMBINI]) {
+      const classi = griglia.split(' ');
+      expect(classi).toContain('grid');
+      expect(classi).toContain('grid-cols-1');
+    }
   });
 });

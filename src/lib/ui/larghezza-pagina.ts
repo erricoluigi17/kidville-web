@@ -51,17 +51,25 @@ export function classeColonnaGenitore(pathname: string): string {
 
 /**
  * Due colonne da 1024 px, cioè dove compare la sidebar e lo spazio utile parte da 768 px: due
- * colonne da ~370. Sotto, una griglia a una colonna con `gap` è identica all'elenco impilato di
- * prima, quindi il telefono non cambia. `items-start`: una scheda corta non si stira sull'altezza
- * della vicina.
+ * colonne da ~370. `items-start`: una scheda corta non si stira sull'altezza della vicina.
+ *
+ * Sotto `lg:` la colonna è UNA e va DICHIARATA (`grid-cols-1`, cioè `minmax(0, 1fr)`). Fino al
+ * 2026-11-05 non lo era, e questo commento giurava che «una griglia a una colonna è identica
+ * all'elenco impilato di prima». Non lo è: la colonna implicita di una griglia è `auto`, e una
+ * colonna `auto` non scende mai sotto il min-content delle sue schede. Basta un `truncate`
+ * (`white-space: nowrap`) con un testo lungo perché la colonna, e con lei OGNI scheda, si allarghi
+ * quanto quel testo su una riga sola. È successo all'appello di Giugliano: il motivo d'assenza di
+ * un genitore, 194 caratteri, ha portato le 26 righe a ~1.200 px, e i bottoni Presente/Assente sono
+ * finiti oltre il bordo, tagliati dall'`overflow-hidden` della pagina. `minmax(0, …)` toglie quel
+ * minimo: la colonna resta larga quanto lo schermo e il `truncate` mette i puntini.
  *
  * Il punto è `lg:` e non `tablet:`: sul binario (744–1023) lo spazio utile è ~650 px, e due
  * colonne da 320 stringerebbero schede pensate per un telefono da 390.
  */
-export const DUE_COLONNE = 'grid gap-3 lg:grid-cols-2 lg:items-start';
+export const DUE_COLONNE = 'grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start';
 
 /** Le schede per bambino degli editor del diario docente: stessa regola, passo più stretto. */
-export const GRIGLIA_BAMBINI = 'grid gap-2 lg:grid-cols-2 lg:items-start';
+export const GRIGLIA_BAMBINI = 'grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start';
 
 const COLONNE_GALLERIA: Record<FormatoGuscio, 2 | 3 | 4> = { telefono: 2, binario: 3, sidebar: 4 };
 

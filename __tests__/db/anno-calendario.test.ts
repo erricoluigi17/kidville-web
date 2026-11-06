@@ -452,6 +452,8 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       'moduli_richiesti_tocca_frequenze', 'pagamenti_tocca_frequenze',
       // Compito 1.4a: il trigger generico, la sede di una riga e la data delle manopole.
       'anno_assegna_e_verifica', 'anno_calcola_della_riga', 'anno_sede_della_riga', 'anno_regole_marca_data',
+      // Compito 1.4b: la guardia dell'anno chiuso.
+      'anno_guardia_sede', 'anno_guardia_verifica',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })
@@ -463,7 +465,9 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       // Compito 1.3
       'frequenze', 'frequenze_moduli', 'listino_voci', 'moduli_richiesti', 'posti_autorizzati',
       // Compito 1.4a
-      'anno_regole', 'anno_tabelle']) {
+      'anno_regole', 'anno_tabelle',
+      // Compito 1.4b
+      'correzioni_anno_chiuso', 'correzioni_anno_chiuso_usi']) {
       for (const ruolo of ['anon', 'authenticated']) {
         for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
           expect(await una<boolean>('SELECT has_table_privilege($1, $2, $3)', [ruolo, `public.${t}`, p]), `${ruolo} ${p} ${t}`).toBe(false)

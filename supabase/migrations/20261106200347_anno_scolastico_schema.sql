@@ -1215,7 +1215,7 @@ SET CONSTRAINTS ALL DEFERRED;
 -- confronta; `madre`: lo eredita dalla riga madre), come si arriva alla sede, e se i controlli sono
 -- rigidi da subito. Un trigger solo, `trg_zz_anno_assegna_e_verifica`, attaccato dal registro a
 -- OGNI tabella che esiste (il DB della CI non le ha tutte: `to_regclass`). La guardia dell'anno
--- chiuso arriva nel Compito 1.4b e cambia solo la funzione; qui il DELETE passa e basta.
+-- chiuso (Compito 1.4b, più sotto) sta dentro la stessa funzione e gira dopo il calcolo.
 
 -- Le due manopole globali. UNA riga sola, garantita dalla chiave: `id` può essere solo `true`.
 -- Entrambe spente: con `controlli_rigidi` spento il trigger generico NON solleva mai sulle tabelle
@@ -1370,7 +1370,9 @@ $$;
 -- `rigida` della tabella): GIORNO_SENZA_ANNO, ANNO_NON_COERENTE, SEZIONE_DI_ALTRO_ANNO.
 -- UPDATE: si ricalcola e si verifica solo se cambia la colonna data (o la riserva), la via della
 -- sede, la madre, section_id o anno_id, oppure se anno_id è NULL: una riga vecchia incoerente non
--- deve bloccare una scrittura che con lei non c'entra. DELETE: nel 1.4a passa (OLD).
+-- deve bloccare una scrittura che con lei non c'entra. Questa uscita anticipata salta il RICALCOLO,
+-- non la guardia (1.4b): con la guardia accesa una scrittura su un anno chiuso passa sempre di lì.
+-- DELETE: nessun calcolo, solo la guardia (e solo se accesa).
 CREATE OR REPLACE FUNCTION public.anno_assegna_e_verifica()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1380,13 +1382,27 @@ AS $$
 DECLARE
   v_reg       public.anno_tabelle%ROWTYPE;
   v_rigidi    boolean;
+  v_ctrl      boolean;
+  v_guardia   boolean;
   v_n         jsonb;
   v_o         jsonb;
   v_attuale   uuid;
   v_calcolato uuid;
   v_sez_anno  uuid;
 BEGIN
+  -- L'UNICA lettura di `anno_regole` per riga: le due manopole insieme. Con la guardia spenta è anche
+  -- l'unico costo della guardia (R2: le scritture di oggi non cambiano).
+  SELECT r.controlli_rigidi, r.guardia_attiva INTO v_ctrl, v_guardia FROM public.anno_regole r;
+  v_ctrl := coalesce(v_ctrl, false);
+  v_guardia := coalesce(v_guardia, false);
+
   IF TG_OP = 'DELETE' THEN
+    IF v_guardia THEN
+      SELECT * INTO v_reg FROM public.anno_tabelle WHERE tabella = TG_TABLE_NAME;
+      IF FOUND THEN
+        PERFORM public.anno_guardia_verifica(v_reg, TG_OP, to_jsonb(OLD), NULL, NULL);
+      END IF;
+    END IF;
     RETURN OLD;
   END IF;
 
@@ -1406,11 +1422,15 @@ BEGIN
        AND (v_n ->> v_reg.via_sede)              IS NOT DISTINCT FROM (v_o ->> v_reg.via_sede)
        AND (v_n ->> v_reg.madre_colonna)         IS NOT DISTINCT FROM (v_o ->> v_reg.madre_colonna)
        AND (v_n ->> 'section_id')                IS NOT DISTINCT FROM (v_o ->> 'section_id') THEN
+      -- Niente ricalcolo, ma la guardia sì: un UPDATE estraneo all'anno su una riga di un anno chiuso.
+      IF v_guardia THEN
+        PERFORM public.anno_guardia_verifica(v_reg, TG_OP, v_o, v_n, NULL);
+      END IF;
       RETURN NEW;
     END IF;
   END IF;
 
-  v_rigidi := v_reg.rigida OR (SELECT r.controlli_rigidi FROM public.anno_regole r);
+  v_rigidi := v_reg.rigida OR v_ctrl;
 
   -- Il calcolo. RIGIDO: gli errori, i codici compresi, salgono. MORBIDO: una rete che non rifiuta
   -- mai una scrittura di oggi (R2): un guasto del calcolo (una colonna che non si converte, una madre
@@ -1457,6 +1477,13 @@ BEGIN
       RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
         USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'section_id', v_n ->> 'section_id')::text;
     END IF;
+  END IF;
+
+  -- La guardia dell'anno chiuso (§4.4.6), DOPO il calcolo (§4.21): guarda l'anno della riga prima
+  -- (OLD) e quello in cui finisce (NEW, e l'anno che dice la sua data).
+  IF v_guardia THEN
+    PERFORM public.anno_guardia_verifica(v_reg, TG_OP, CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END,
+                                         to_jsonb(NEW), v_calcolato);
   END IF;
 
   RETURN NEW;
@@ -1633,6 +1660,244 @@ GRANT EXECUTE ON FUNCTION public.anno_regole_marca_data()             TO service
 GRANT EXECUTE ON FUNCTION public.anno_sede_della_riga(text, jsonb)    TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_calcola_della_riga(public.anno_tabelle, jsonb, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_assegna_e_verifica()            TO service_role;
+
+-- ── 1.4b La guardia dell'anno chiuso e i gettoni di correzione (SPENTA di default) ─────────────
+-- Con `anno_regole.guardia_attiva` accesa, una scrittura su una riga di un anno `in_chiusura` o `chiuso`
+-- (o che porterebbe una riga in uno di quegli anni) passa solo con un gettone valido (§4.4.6). Il
+-- database non sa chi è l'utente (service-role): il gettone lo crea l'app, e la richiesta lo porta
+-- nell'header `x-kidville-correzione: <uuid>`, che PostgREST mette in `request.headers`.
+-- Due tabelle (R10): il gettone, e un USO per ogni riga scritta (un UPDATE su tre righe → tre usi).
+-- `utente_id` è un uuid SENZA chiave esterna verso `utenti` (R15): la storia deve sopravvivere.
+CREATE TABLE IF NOT EXISTS public.correzioni_anno_chiuso (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  utente_id     uuid,                       -- NULL solo per `oblio` (nessuna persona: una funzione)
+  ruolo         text,
+  anno_sede_id  uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  codice        text NOT NULL,
+  -- Testo libero: obbligatorio con `correzione`, e MAI in un log né in un messaggio d'errore.
+  motivo        text,
+  creata_il     timestamptz NOT NULL DEFAULT now(),
+  scade_il      timestamptz NOT NULL DEFAULT (now() + interval '10 minutes'),
+  CONSTRAINT correzioni_anno_chiuso_codice_check CHECK (codice IN ('agosto', 'correzione', 'oblio')),
+  CONSTRAINT correzioni_anno_chiuso_motivo_check
+    CHECK (codice <> 'correzione' OR (motivo IS NOT NULL AND btrim(motivo) <> '')),
+  CONSTRAINT correzioni_anno_chiuso_utente_check
+    CHECK (codice = 'oblio' OR (utente_id IS NOT NULL AND ruolo IS NOT NULL)),
+  CONSTRAINT correzioni_anno_chiuso_scadenza_check CHECK (scade_il > creata_il)
+);
+CREATE INDEX IF NOT EXISTS correzioni_anno_chiuso_anno_sede_idx
+  ON public.correzioni_anno_chiuso (anno_sede_id, creata_il);
+
+CREATE TABLE IF NOT EXISTS public.correzioni_anno_chiuso_usi (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  correzione_id  uuid NOT NULL REFERENCES public.correzioni_anno_chiuso(id) ON DELETE CASCADE,
+  usata_il       timestamptz NOT NULL DEFAULT now(),
+  -- La stessa espressione con cui la scatola nera scrive `scatola_nera.modifiche.transazione`
+  -- (20261019215733…sql:74): l'invariante 6 accoppia uso e modifica.
+  transazione    bigint NOT NULL DEFAULT txid_current(),
+  tabella        text NOT NULL,
+  riga_id        text                        -- NULL per le tabelle senza colonna `id` (utenti_sezioni)
+);
+CREATE INDEX IF NOT EXISTS correzioni_anno_chiuso_usi_correzione_idx
+  ON public.correzioni_anno_chiuso_usi (correzione_id);
+CREATE INDEX IF NOT EXISTS correzioni_anno_chiuso_usi_transazione_idx
+  ON public.correzioni_anno_chiuso_usi (transazione, tabella);
+
+-- La sede (`schools.id`) di una riga, risalendo alla madre quando la riga non ha una via diretta
+-- (`frequenze_moduli`, `pagamenti_quote`, `votazioni_voti`…). NULL se non si arriva a nessuna sede.
+CREATE OR REPLACE FUNCTION public.anno_guardia_sede(p_tabella text, p_riga jsonb, p_livello integer DEFAULT 0)
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_sede  uuid;
+  v_reg   public.anno_tabelle%ROWTYPE;
+  v_madre jsonb;
+BEGIN
+  v_sede := public.anno_sede_della_riga(p_tabella, p_riga);
+  IF v_sede IS NOT NULL OR p_livello >= 6 THEN
+    RETURN v_sede;
+  END IF;
+  SELECT * INTO v_reg FROM public.anno_tabelle WHERE tabella = p_tabella;
+  IF FOUND AND v_reg.modo = 'madre' AND (p_riga ->> v_reg.madre_colonna) IS NOT NULL THEN
+    EXECUTE format('SELECT to_jsonb(m) FROM public.%I m WHERE m.id = $1', v_reg.madre_tabella)
+       INTO v_madre USING (p_riga ->> v_reg.madre_colonna)::uuid;
+    IF v_madre IS NOT NULL THEN
+      RETURN public.anno_guardia_sede(v_reg.madre_tabella, v_madre, p_livello + 1);
+    END IF;
+  END IF;
+  RETURN NULL;
+END
+$$;
+
+-- La guardia. La chiama il trigger generico, SOLO con `guardia_attiva` accesa, dopo il calcolo.
+-- Anni guardati: quello di OLD (UPDATE e DELETE), quello di NEW e quello che dice la data di NEW
+-- (INSERT e UPDATE): una riga che entra in un anno chiuso, o ne esce, vuole il gettone. Se la sede o
+-- l'anno della riga non si conoscono, NON ferma (la PR 3 accende la guardia dopo il riempimento).
+-- Esenzioni, solo UPDATE e solo se NIENT'ALTRO cambia:
+--   · `pagamenti`: le colonne d'incasso (incassare una retta arretrata è cassa, non una correzione);
+--   · `frequenze`: le colonne derivate (ricalcoli del trigger, non scritture di una persona).
+-- Codici: il messaggio è il codice. DETAIL: solo tabella, anno_sede e stato; MAI il motivo.
+CREATE OR REPLACE FUNCTION public.anno_guardia_verifica(
+  p_reg public.anno_tabelle, p_op text, p_old jsonb, p_new jsonb, p_calcolato uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_sede_old  uuid;
+  v_sede_new  uuid;
+  v_sede      uuid;
+  v_anno      uuid;
+  v_as        uuid;
+  v_stato     text;
+  v_protetti  uuid[] := '{}';
+  v_stati     text[] := '{}';
+  v_i         integer;
+  v_ko        jsonb;
+  v_kn        jsonb;
+  v_chiavi    text[];
+  v_gettone   uuid;
+  v_testo     text;
+  v_trovato   uuid;
+  v_riga_id   text;
+BEGIN
+  IF p_old IS NOT NULL THEN v_sede_old := public.anno_guardia_sede(p_reg.tabella, p_old); END IF;
+  IF p_new IS NOT NULL THEN v_sede_new := public.anno_guardia_sede(p_reg.tabella, p_new); END IF;
+
+  FOR v_i IN 1..3 LOOP
+    v_anno := NULL;
+    IF v_i = 1 THEN
+      CONTINUE WHEN p_old IS NULL;
+      v_sede := v_sede_old;
+      v_anno := (p_old ->> 'anno_id')::uuid;
+      IF v_anno IS NULL THEN
+        -- Una riga vecchia senza anno: se la sua data lo dice, vale; se il calcolo si rompe, è sconosciuto.
+        BEGIN
+          v_anno := public.anno_calcola_della_riga(p_reg, p_old, false);
+        EXCEPTION WHEN OTHERS THEN
+          v_anno := NULL;
+        END;
+      END IF;
+    ELSIF v_i = 2 THEN
+      CONTINUE WHEN p_new IS NULL;
+      v_sede := v_sede_new;
+      v_anno := (p_new ->> 'anno_id')::uuid;
+    ELSE
+      CONTINUE WHEN p_new IS NULL;
+      v_sede := v_sede_new;
+      v_anno := p_calcolato;
+    END IF;
+    CONTINUE WHEN v_anno IS NULL OR v_sede IS NULL;
+
+    SELECT a.id, a.stato INTO v_as, v_stato
+      FROM public.anni_sede a WHERE a.scuola_id = v_sede AND a.anno_id = v_anno;
+    IF FOUND AND v_stato IN ('in_chiusura', 'chiuso') AND NOT (v_as = ANY (v_protetti)) THEN
+      v_protetti := v_protetti || v_as;
+      v_stati := v_stati || v_stato;
+    END IF;
+  END LOOP;
+
+  IF cardinality(v_protetti) = 0 THEN
+    RETURN;
+  END IF;
+
+  -- Le esenzioni: l'UPDATE cambia SOLO colonne che una persona non sta correggendo.
+  IF p_op = 'UPDATE' AND p_reg.tabella = 'pagamenti' THEN
+    v_chiavi := ARRAY['stato', 'importo_pagato', 'data_incasso', 'ultimo_sollecito_il', 'aggiornato_il'];
+    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_ko
+      FROM jsonb_each(p_old) e WHERE e.key <> ALL (v_chiavi) AND e.key NOT LIKE 'fattura\_%';
+    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_kn
+      FROM jsonb_each(p_new) e WHERE e.key <> ALL (v_chiavi) AND e.key NOT LIKE 'fattura\_%';
+    IF v_ko = v_kn THEN RETURN; END IF;
+  ELSIF p_op = 'UPDATE' AND p_reg.tabella = 'frequenze' THEN
+    -- I due flag li scrive il trigger della frequenza (R25): non sono mai una scrittura di una persona.
+    v_ko := p_old - 'moduli_completi' - 'quota_saldata';
+    v_kn := p_new - 'moduli_completi' - 'quota_saldata';
+    -- `stato`: solo le due transizioni automatiche, quelle che il trigger fa da sé coi flag.
+    IF (p_old ->> 'stato' = 'in_attesa' AND p_new ->> 'stato' = 'iscritto'
+          AND (p_new ->> 'moduli_completi')::boolean AND (p_new ->> 'quota_saldata')::boolean)
+       OR (p_old ->> 'stato' = 'iscritto' AND p_new ->> 'stato' = 'in_attesa'
+          AND p_new ->> 'origine' <> 'recupero'
+          AND NOT ((p_new ->> 'moduli_completi')::boolean AND (p_new ->> 'quota_saldata')::boolean)) THEN
+      v_ko := v_ko - 'stato';
+      v_kn := v_kn - 'stato';
+    END IF;
+    -- `quota_pagamento_id` → NULL: lo fa la chiave esterna quando la voce viene eliminata.
+    IF p_new ->> 'quota_pagamento_id' IS NULL THEN
+      v_ko := v_ko - 'quota_pagamento_id';
+      v_kn := v_kn - 'quota_pagamento_id';
+    END IF;
+    IF v_ko = v_kn THEN RETURN; END IF;
+  END IF;
+
+  v_riga_id := coalesce(p_new ->> 'id', p_old ->> 'id');
+
+  -- L'interruttore dell'oblio e della conservazione: passa, e lascia un gettone `oblio` (uno per anno
+  -- e per transazione) con un uso per riga scritta.
+  IF current_setting('anno_chiuso.oblio', true) = 'on' THEN
+    FOR v_i IN 1..cardinality(v_protetti) LOOP
+      v_gettone := NULL;
+      SELECT c.id INTO v_gettone FROM public.correzioni_anno_chiuso c
+       WHERE c.codice = 'oblio' AND c.anno_sede_id = v_protetti[v_i] AND c.creata_il = now()
+       LIMIT 1;
+      IF v_gettone IS NULL THEN
+        INSERT INTO public.correzioni_anno_chiuso (anno_sede_id, codice)
+        VALUES (v_protetti[v_i], 'oblio') RETURNING id INTO v_gettone;
+      END IF;
+      INSERT INTO public.correzioni_anno_chiuso_usi (correzione_id, tabella, riga_id)
+      VALUES (v_gettone, p_reg.tabella, v_riga_id);
+    END LOOP;
+    RETURN;
+  END IF;
+
+  -- Il gettone dell'header. Mancante, non JSON, o con un id che non è un uuid: «nessun gettone».
+  v_gettone := NULL;
+  BEGIN
+    v_testo := (nullif(current_setting('request.headers', true), '')::jsonb) ->> 'x-kidville-correzione';
+    IF v_testo ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      v_gettone := v_testo::uuid;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    v_gettone := NULL;
+  END;
+
+  FOR v_i IN 1..cardinality(v_protetti) LOOP
+    v_trovato := NULL;
+    IF v_gettone IS NOT NULL THEN
+      -- `in_chiusura` accetta `agosto` e `correzione`; `chiuso` solo `correzione`; `oblio` mai da qui.
+      SELECT c.id INTO v_trovato FROM public.correzioni_anno_chiuso c
+       WHERE c.id = v_gettone AND c.anno_sede_id = v_protetti[v_i] AND now() < c.scade_il
+         AND c.codice = ANY (CASE WHEN v_stati[v_i] = 'chiuso' THEN ARRAY['correzione']
+                                  ELSE ARRAY['agosto', 'correzione'] END);
+    END IF;
+    IF v_trovato IS NULL THEN
+      RAISE EXCEPTION 'ANNO_CHIUSO'
+        USING DETAIL = json_build_object('tabella', p_reg.tabella, 'anno_sede_id', v_protetti[v_i],
+                                         'stato', v_stati[v_i])::text;
+    END IF;
+    INSERT INTO public.correzioni_anno_chiuso_usi (correzione_id, tabella, riga_id)
+    VALUES (v_trovato, p_reg.tabella, v_riga_id);
+  END LOOP;
+END
+$$;
+
+-- Sicurezza (R13): come le altre tabelle nuove.
+ALTER TABLE public.correzioni_anno_chiuso      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.correzioni_anno_chiuso_usi  ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.correzioni_anno_chiuso     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.correzioni_anno_chiuso_usi FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.correzioni_anno_chiuso     TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.correzioni_anno_chiuso_usi TO service_role;
+
+REVOKE ALL ON FUNCTION public.anno_guardia_sede(text, jsonb, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_guardia_verifica(public.anno_tabelle, text, jsonb, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_guardia_sede(text, jsonb, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_guardia_verifica(public.anno_tabelle, text, jsonb, jsonb, uuid) TO service_role;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;

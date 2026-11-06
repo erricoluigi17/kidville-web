@@ -133,7 +133,13 @@ export const SCHEMA_BASE = `
     categoria_id uuid REFERENCES public.payment_categories(id),
     importo_pagato numeric(10,2) NOT NULL DEFAULT 0,
     periodo_competenza date,
-    creato_il timestamptz DEFAULT now()
+    creato_il timestamptz DEFAULT now(),
+    -- 1.4b: le colonne d'incasso che la guardia lascia passare senza gettone (nomi veri di produzione)
+    data_incasso date,
+    fattura_id uuid,
+    fattura_stato text,
+    ultimo_sollecito_il timestamptz,
+    aggiornato_il timestamptz
   );
 
   -- Le due funzioni di oggi sono FINTE (\`RETURN NEW\`): la migrazione le sostituisce con
@@ -187,6 +193,19 @@ export const SCHEMA_BASE = `
     section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
     creato_il timestamptz DEFAULT now(),
     PRIMARY KEY (utente_id, section_id)
+  );
+
+  -- ── Compito 1.4b: la scatola nera, solo le colonne che servono a provare la \`transazione\` ──
+  CREATE SCHEMA scatola_nera;
+  CREATE TABLE scatola_nera.modifiche (
+    id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    modificata_il  timestamptz NOT NULL DEFAULT clock_timestamp(),
+    transazione    bigint      NOT NULL DEFAULT txid_current(),
+    tabella        text        NOT NULL,
+    riga_id        text        NOT NULL,
+    prima          jsonb       NOT NULL,
+    cambiate       text[]      NOT NULL,
+    ruolo          text        NOT NULL
   );
 
   -- Il browser scrive \`presenze\` (e la chat, e syncEngine) sotto RLS: una policy aperta, come

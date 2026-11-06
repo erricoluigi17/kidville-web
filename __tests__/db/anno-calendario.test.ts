@@ -444,6 +444,8 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
     expect(nomi).toEqual([
       'anni_sede_controlla_continuita', 'anni_sede_crea_per_sede', 'anno_attivo', 'anno_di',
       'anno_sede_di', 'giorno_roma', 'schools_crea_anni',
+      // Compito 1.2: le tre funzioni di `sections` e `alunni` (trigger), chiuse allo stesso modo.
+      'propaga_rinomina_sezione', 'sections_anno_predefinito_transitorio', 'sync_alunno_section_id',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })

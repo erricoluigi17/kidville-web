@@ -50,11 +50,70 @@ export const SCHEMA_BASE = `
     creato_il timestamptz DEFAULT now(),
     operativa boolean NOT NULL DEFAULT true
   );
+
+  -- ── Compito 1.2: le sezioni, come sono oggi in produzione ──
+  CREATE TYPE public.school_type_enum AS ENUM ('nido', 'infanzia', 'primaria');
+
+  CREATE TABLE public.sections (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+    name varchar(50) NOT NULL,
+    school_type public.school_type_enum NOT NULL DEFAULT 'infanzia',
+    created_at timestamptz DEFAULT now()
+  );
+  -- I due indici unici di oggi: la migrazione li deve rifare davvero, con lo stesso nome.
+  CREATE UNIQUE INDEX sections_nome_per_sede ON public.sections (scuola_id, name);
+  CREATE UNIQUE INDEX sections_forma_normalizzata_per_sede
+    ON public.sections (scuola_id, lower(replace(name, ' ', '')));
+
+  -- Solo le colonne che leggono le due funzioni (in produzione ce ne sono molte di più).
+  CREATE TABLE public.alunni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    section_id uuid,
+    classe_sezione text
+  );
+  CREATE TABLE public.avvisi (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    target_classes text[]
+  );
+  CREATE TABLE public.app_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    giorno date NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::date,
+    livello text NOT NULL,
+    evento text NOT NULL,
+    sorgente text NOT NULL DEFAULT 'server',
+    messaggio text NOT NULL,
+    scuola_id uuid,
+    fingerprint text NOT NULL,
+    occorrenze int NOT NULL DEFAULT 1,
+    visto_l_ultima timestamptz NOT NULL DEFAULT now(),
+    contesto jsonb NOT NULL DEFAULT '{}'::jsonb
+  );
+  CREATE UNIQUE INDEX app_log_impronta_giorno_key ON public.app_log (fingerprint, giorno);
+
+  -- Le due funzioni di oggi sono FINTE (\`RETURN NEW\`): la migrazione le sostituisce con
+  -- CREATE OR REPLACE, e i test provano la versione della migrazione. I trigger sono quelli veri.
+  CREATE FUNCTION public.sync_alunno_section_id() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN RETURN NEW; END $f$;
+  CREATE TRIGGER trg_alunni_sync_section
+    BEFORE INSERT OR UPDATE OF classe_sezione, section_id, scuola_id ON public.alunni
+    FOR EACH ROW EXECUTE FUNCTION public.sync_alunno_section_id();
+
+  CREATE FUNCTION public.propaga_rinomina_sezione() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN RETURN NULL; END $f$;
+  CREATE TRIGGER trg_sections_propaga_rinomina
+    AFTER UPDATE OF name ON public.sections
+    FOR EACH ROW WHEN (NEW.name IS DISTINCT FROM OLD.name)
+    EXECUTE FUNCTION public.propaga_rinomina_sezione();
 `
 
 export interface OpzioniDbAnno {
   /** Sedi già presenti PRIMA della migrazione, come in produzione: la migrazione dà loro gli anni. */
   sediPrimaDellaMigrazione?: string[]
+  /** SQL eseguito PRIMA della migrazione (dopo le sedi): righe che in produzione esistono già, come le sezioni. */
+  codaPrima?: string
   /** SQL accodato alla migrazione NELLO STESSO exec, cioè nella stessa transazione (come fa una sezione successiva). */
   codaDopo?: string
 }
@@ -66,6 +125,7 @@ export async function creaDbAnno(opzioni: OpzioniDbAnno = {}): Promise<PGlite> {
   for (const id of opzioni.sediPrimaDellaMigrazione ?? []) {
     await db.query('INSERT INTO public.schools (id, nome) VALUES ($1, $2)', [id, 'Sede di prova'])
   }
+  if (opzioni.codaPrima) await db.exec(opzioni.codaPrima)
   await db.exec(readFileSync(fileMigrazioneAnno(), 'utf8') + '\n' + (opzioni.codaDopo ?? ''))
   return db
 }

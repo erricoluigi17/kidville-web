@@ -1360,6 +1360,29 @@ BEGIN
 END
 $$;
 
+-- La traccia di un guasto del calcolo dell'anno (la rete del ramo morbido del trigger, e quella della
+-- guardia): livello `error`, impronta per tabella e per giorno, contesto con SOLO tabella e SQLSTATE (il
+-- testo di un errore di Postgres può portarsi dietro valori). Fail-open: un guasto del registro non
+-- diventa un guasto della scrittura.
+CREATE OR REPLACE FUNCTION public.anno_log_guasto(
+  p_tabella text, p_esito text, p_operazione text, p_messaggio text, p_fingerprint text, p_sqlstate text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+  VALUES ('error', 'anno-scolastico', 'server', p_messaggio, p_fingerprint,
+          jsonb_build_object('esito', p_esito, 'operazione', p_operazione,
+                             'tabella', p_tabella, 'sqlstate', p_sqlstate))
+  ON CONFLICT (fingerprint, giorno) DO UPDATE
+    SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END
+$$;
+
 -- Il trigger generico. Una lettura del registro per riga, poi solo ricerche per chiave.
 --   · modo `data`: l'anno è quello che contiene il giorno (di ROMA) nella sede della riga;
 --   · modo `dichiarato`: l'anno lo scrive chi inserisce; se la tabella ha una data (pagamenti:
@@ -1443,19 +1466,9 @@ BEGIN
       v_calcolato := public.anno_calcola_della_riga(v_reg, v_n, false);
     EXCEPTION WHEN OTHERS THEN
       v_calcolato := NULL;
-      BEGIN
-        -- Nel contesto solo tabella e SQLSTATE: il testo di un errore di Postgres può portarsi dietro valori.
-        INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
-        VALUES ('error', 'anno-scolastico', 'server',
-                'calcolo dell''anno fallito: la scrittura è passata con anno_id NULL',
-                'db:anno-calcolo:' || TG_TABLE_NAME,
-                jsonb_build_object('esito', 'calcolo-anno-fallito', 'operazione', 'anno_assegna_e_verifica',
-                                   'tabella', TG_TABLE_NAME, 'sqlstate', SQLSTATE))
-        ON CONFLICT (fingerprint, giorno) DO UPDATE
-          SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
-      EXCEPTION WHEN OTHERS THEN
-        NULL;   -- fail-open: un guasto del registro non diventa un guasto della scrittura
-      END;
+      PERFORM public.anno_log_guasto(TG_TABLE_NAME, 'calcolo-anno-fallito', 'anno_assegna_e_verifica',
+                                     'calcolo dell''anno fallito: la scrittura è passata con anno_id NULL',
+                                     'db:anno-calcolo:' || TG_TABLE_NAME, SQLSTATE);
     END;
   END IF;
 
@@ -1653,6 +1666,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_regole  TO service_rol
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_tabelle TO service_role;
 
 REVOKE ALL ON FUNCTION public.anno_regole_marca_data()                FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_log_guasto(text, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_log_guasto(text, text, text, text, text, text) TO service_role;
 REVOKE ALL ON FUNCTION public.anno_sede_della_riga(text, jsonb)       FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_calcola_della_riga(public.anno_tabelle, jsonb, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_assegna_e_verifica()               FROM PUBLIC, anon, authenticated;
@@ -1765,6 +1780,7 @@ DECLARE
   v_testo     text;
   v_trovato   uuid;
   v_riga_id   text;
+  v_orfani    uuid[] := '{}';
 BEGIN
   IF p_old IS NOT NULL THEN v_sede_old := public.anno_guardia_sede(p_reg.tabella, p_old); END IF;
   IF p_new IS NOT NULL THEN v_sede_new := public.anno_guardia_sede(p_reg.tabella, p_new); END IF;
@@ -1780,7 +1796,11 @@ BEGIN
         BEGIN
           v_anno := public.anno_calcola_della_riga(p_reg, p_old, false);
         EXCEPTION WHEN OTHERS THEN
+          -- La guardia non sa che anno ha la riga e la lascia passare: mai in silenzio.
           v_anno := NULL;
+          PERFORM public.anno_log_guasto(p_reg.tabella, 'guardia-calcolo-fallito', 'anno_guardia_verifica',
+                                         'calcolo dell''anno fallito: la guardia ha lasciato passare la riga',
+                                         'db:anno-guardia:' || p_reg.tabella, SQLSTATE);
         END;
       END IF;
     ELSIF v_i = 2 THEN
@@ -1792,13 +1812,61 @@ BEGIN
       v_sede := v_sede_new;
       v_anno := p_calcolato;
     END IF;
-    CONTINUE WHEN v_anno IS NULL OR v_sede IS NULL;
+    CONTINUE WHEN v_anno IS NULL;
+    IF v_sede IS NULL THEN
+      -- Sede non trovabile ma anno noto: una figlia nella cascata del padre (il padre non c'è più).
+      IF NOT (v_anno = ANY (v_orfani)) THEN v_orfani := v_orfani || v_anno; END IF;
+      CONTINUE;
+    END IF;
 
     SELECT a.id, a.stato INTO v_as, v_stato
       FROM public.anni_sede a WHERE a.scuola_id = v_sede AND a.anno_id = v_anno;
     IF FOUND AND v_stato IN ('in_chiusura', 'chiuso') AND NOT (v_as = ANY (v_protetti)) THEN
       v_protetti := v_protetti || v_as;
       v_stati := v_stati || v_stato;
+    END IF;
+  END LOOP;
+
+  IF cardinality(v_protetti) = 0 AND cardinality(v_orfani) = 0 THEN
+    RETURN;
+  END IF;
+
+  v_riga_id := coalesce(p_new ->> 'id', p_old ->> 'id');
+
+  -- Il gettone dell'header (letto una volta). Mancante, non JSON, o con un id che non è un uuid: «nessun
+  -- gettone». Un input atteso: il blocco può restare muto.
+  v_gettone := NULL;
+  BEGIN
+    v_testo := (nullif(current_setting('request.headers', true), '')::jsonb) ->> 'x-kidville-correzione';
+    IF v_testo ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      v_gettone := v_testo::uuid;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    v_gettone := NULL;
+  END;
+
+  -- Le figlie nella cascata del padre: la sede non si trova (il padre è già stato cancellato), ma il
+  -- padre è stato controllato prima, quindi la riga PASSA; se c'è un gettone dello stesso anno (header,
+  -- o `oblio` di questa transazione) se ne registra l'uso, perché ogni riga scritta ha il suo (R10).
+  FOR v_i IN 1..cardinality(v_orfani) LOOP
+    v_trovato := NULL;
+    IF current_setting('anno_chiuso.oblio', true) = 'on' THEN
+      SELECT c.id INTO v_trovato
+        FROM public.correzioni_anno_chiuso c JOIN public.anni_sede a ON a.id = c.anno_sede_id
+       WHERE c.codice = 'oblio' AND c.creata_il = now() AND a.anno_id = v_orfani[v_i]
+         AND a.stato IN ('in_chiusura', 'chiuso')
+       LIMIT 1;
+    ELSIF v_gettone IS NOT NULL THEN
+      SELECT c.id INTO v_trovato
+        FROM public.correzioni_anno_chiuso c JOIN public.anni_sede a ON a.id = c.anno_sede_id
+       WHERE c.id = v_gettone AND a.anno_id = v_orfani[v_i] AND now() < c.scade_il
+         AND a.stato IN ('in_chiusura', 'chiuso')
+         AND c.codice = ANY (CASE WHEN a.stato = 'chiuso' THEN ARRAY['correzione']
+                                  ELSE ARRAY['agosto', 'correzione'] END);
+    END IF;
+    IF v_trovato IS NOT NULL THEN
+      INSERT INTO public.correzioni_anno_chiuso_usi (correzione_id, tabella, riga_id)
+      VALUES (v_trovato, p_reg.tabella, v_riga_id);
     END IF;
   END LOOP;
 
@@ -1835,8 +1903,6 @@ BEGIN
     IF v_ko = v_kn THEN RETURN; END IF;
   END IF;
 
-  v_riga_id := coalesce(p_new ->> 'id', p_old ->> 'id');
-
   -- L'interruttore dell'oblio e della conservazione: passa, e lascia un gettone `oblio` (uno per anno
   -- e per transazione) con un uso per riga scritta.
   IF current_setting('anno_chiuso.oblio', true) = 'on' THEN
@@ -1854,17 +1920,6 @@ BEGIN
     END LOOP;
     RETURN;
   END IF;
-
-  -- Il gettone dell'header. Mancante, non JSON, o con un id che non è un uuid: «nessun gettone».
-  v_gettone := NULL;
-  BEGIN
-    v_testo := (nullif(current_setting('request.headers', true), '')::jsonb) ->> 'x-kidville-correzione';
-    IF v_testo ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-      v_gettone := v_testo::uuid;
-    END IF;
-  EXCEPTION WHEN OTHERS THEN
-    v_gettone := NULL;
-  END;
 
   FOR v_i IN 1..cardinality(v_protetti) LOOP
     v_trovato := NULL;

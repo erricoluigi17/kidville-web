@@ -480,6 +480,21 @@ describe('giro 1 · la rete del ramo morbido e la validazione delle madri', () =
       await d.query('UPDATE public.anno_regole SET controlli_rigidi = true')
       await expect(scrivi()).rejects.toMatchObject({ code: '22007' })
     })
+
+    it('1.4b · un guasto nel calcolo DENTRO LA GUARDIA lascia una traccia in app_log (senza valori) e la riga passa', async () => {
+      await scrivi()   // anno_id resta NULL: alla guardia tocca ricalcolare l'anno di OLD, e il calcolo si rompe
+      await d.query('UPDATE public.anno_regole SET guardia_attiva = true')
+      try {
+        await d.query(`UPDATE public.prova_guasto SET giorno = 'non-una-data'`)
+      } finally { await d.query('UPDATE public.anno_regole SET guardia_attiva = false') }
+      const log = (await d.query<{ livello: string; contesto: Record<string, unknown> }>(
+        `SELECT livello, contesto FROM public.app_log WHERE fingerprint = 'db:anno-guardia:prova_guasto'`)).rows
+      expect(log).toHaveLength(1)
+      expect(log[0].livello).toBe('error')
+      expect(log[0].contesto).toEqual({ esito: 'guardia-calcolo-fallito', operazione: 'anno_guardia_verifica',
+                                         tabella: 'prova_guasto', sqlstate: '22007' })
+      expect(JSON.stringify(log[0])).not.toContain('non-una-data')
+    })
   })
 })
 
@@ -906,6 +921,69 @@ describe('1.4b · la guardia dell\'anno chiuso', () => {
       await guardia(true)
       expect(await messaggio(db.query(`UPDATE public.frequenze SET quota_pagamento_id = $2 WHERE id = $1`, [f, altra]))).toBe('ANNO_CHIUSO')
       expect(await messaggio(db.query(`UPDATE public.frequenze SET stato = 'ritirato' WHERE id = $1`, [f]))).toBe('ANNO_CHIUSO')
+    })
+  })
+
+  describe('la cascata del padre: ogni figlia cancellata ha il suo uso', () => {
+    async function frequenzaConSpunte() {
+      const as = await annoSede(A2526)
+      const inizio = await una<string>(`SELECT inizio::text FROM public.anni_sede WHERE id = $1`, [as])
+      const alunno = await una<string>(`INSERT INTO public.alunni (scuola_id) VALUES ($1) RETURNING id`, [SEDE])
+      const f = await una<string>(
+        `INSERT INTO public.frequenze (alunno_id, anno_sede_id, tipo, origine, data_ingresso)
+         VALUES ($1, $2, 'nuova', 'segreteria', $3) RETURNING id`, [alunno, as, inizio])
+      const spunte: string[] = []
+      for (const codice of ['c1', 'c2']) {
+        const m = await una<string>(
+          `INSERT INTO public.moduli_richiesti (anno_sede_id, lista, codice, titolo) VALUES ($1, 'nuova', $2, 'Modulo') RETURNING id`, [as, codice])
+        spunte.push(await una<string>(
+          `INSERT INTO public.frequenze_moduli (frequenza_id, modulo_id) VALUES ($1, $2) RETURNING id`, [f, m]))
+      }
+      return { f, spunte }
+    }
+
+    it('con il gettone: il DELETE del padre lascia un uso per il padre e uno per ogni figlia', async () => {
+      const { f, spunte } = await frequenzaConSpunte()
+      const g = await gettone()
+      await guardia(true)
+      expect(await messaggio(db.query(`DELETE FROM public.frequenze WHERE id = $1`, [f]))).toBe('ANNO_CHIUSO')
+      await inTx(conGettone(g), (tx) => tx.query(`DELETE FROM public.frequenze WHERE id = $1`, [f]))
+      expect(await una<number>(`SELECT count(*)::int FROM public.frequenze_moduli WHERE frequenza_id = $1`, [f])).toBe(0)
+      const u = await usi()
+      expect(u.filter((x) => x.tabella === 'frequenze').map((x) => x.riga_id)).toEqual([f])
+      expect(u.filter((x) => x.tabella === 'frequenze_moduli').map((x) => x.riga_id).sort()).toEqual([...spunte].sort())
+      expect(new Set(u.map((x) => x.correzione_id))).toEqual(new Set([g]))
+    })
+
+    it('con l\'oblio: lo stesso, sotto UN gettone oblio solo', async () => {
+      const { f, spunte } = await frequenzaConSpunte()
+      await guardia(true)
+      await inTx({ oblio: 'on' }, (tx) => tx.query(`DELETE FROM public.frequenze WHERE id = $1`, [f]))
+      const u = await usi()
+      expect(u.filter((x) => x.tabella === 'frequenze_moduli').map((x) => x.riga_id).sort()).toEqual([...spunte].sort())
+      expect(u).toHaveLength(3)
+      expect(await una<number>(`SELECT count(*)::int FROM public.correzioni_anno_chiuso WHERE codice = 'oblio'`)).toBe(1)
+    })
+
+    it('un gettone di un altro anno non registra niente per le figlie (e il padre è fermato)', async () => {
+      const { f } = await frequenzaConSpunte()
+      const g = await gettone({ anno: A2627 })
+      await guardia(true)
+      expect(await messaggio(inTx(conGettone(g), (tx) => tx.query(`DELETE FROM public.frequenze WHERE id = $1`, [f])))).toBe('ANNO_CHIUSO')
+      expect(await usi()).toHaveLength(0)
+    })
+
+    it('sezione → utenti_sezioni (tabella senza id): un uso per ogni figlia, con riga_id NULL', async () => {
+      const sez = await sezione('Sezione cascata', A2526)
+      for (const u of ['88888888-8888-4888-8888-888888888881', '88888888-8888-4888-8888-888888888882']) {
+        await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2)`, [u, sez])
+      }
+      const g = await gettone()
+      await guardia(true)
+      await inTx(conGettone(g), (tx) => tx.query(`DELETE FROM public.sections WHERE id = $1`, [sez]))
+      const u = await usi()
+      expect(u.filter((x) => x.tabella === 'sections').map((x) => x.riga_id)).toEqual([sez])
+      expect(u.filter((x) => x.tabella === 'utenti_sezioni')).toHaveLength(2)
     })
   })
 

@@ -453,7 +453,7 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       // Compito 1.4a: il trigger generico, la sede di una riga e la data delle manopole.
       'anno_assegna_e_verifica', 'anno_calcola_della_riga', 'anno_sede_della_riga', 'anno_regole_marca_data',
       // Compito 1.4b: la guardia dell'anno chiuso.
-      'anno_guardia_sede', 'anno_guardia_verifica',
+      'anno_guardia_sede', 'anno_guardia_verifica', 'anno_log_guasto',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })

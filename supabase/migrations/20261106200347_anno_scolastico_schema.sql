@@ -924,6 +924,7 @@ CREATE INDEX IF NOT EXISTS frequenze_moduli_modulo_id_idx ON public.frequenze_mo
 -- ── Il trigger della frequenza ──────────────────────────────────────────────
 -- BEFORE INSERT OR UPDATE. Si chiama in modo da venire PRIMA, in ordine alfabetico, di
 -- `trg_zz_anno_assegna_e_verifica` (Compito 1.4): la guardia gira dopo il calcolo.
+--   (1-3 solo alla nascita o se cambia una colonna validata; il «tocco» ricalcola soltanto il punto 4)
 --   1. copia `anno_id` e `scuola_id` da `anni_sede` (ANNO_NON_COERENTE se arrivano scritti e diversi);
 --   2. data_ingresso e data_uscita dentro il periodo (ANNO_NON_COERENTE);
 --   3. la sezione è della stessa sede (SEZIONE_DI_ALTRA_SEDE) e dello stesso anno (SEZIONE_DI_ALTRO_ANNO);
@@ -938,51 +939,69 @@ AS $$
 DECLARE
   v_as      public.anni_sede%ROWTYPE;
   v_sez     record;
+  v_valida  boolean;
   v_moduli  boolean;
   v_quota   boolean;
 BEGIN
-  SELECT * INTO v_as FROM public.anni_sede WHERE id = NEW.anno_sede_id;
-  IF NOT FOUND THEN
-    -- Un anno_sede che non c'è è una chiave esterna violata, non un NULL da lasciar passare.
-    RAISE EXCEPTION 'anno_sede inesistente'
-      USING ERRCODE = 'foreign_key_violation';
-  END IF;
+  -- Si rivalida SOLO se la riga nasce o cambia una colonna che si valida (anno_sede, sede, anno, sezione,
+  -- date, alunno, o lo stato scritto a mano). Un «tocco» che serve solo a ricalcolare i flag (voce della
+  -- quota pagata o eliminata, spunta, lista dei moduli) NON rivalida: una frequenza incoerente non deve
+  -- bloccare un'operazione su pagamenti o sulla lista dei moduli, e dopo il Compito 1.4 un tocco su un
+  -- anno chiuso non deve sollevare ANNO_CHIUSO.
+  v_valida := TG_OP = 'INSERT'
+    OR NEW.alunno_id    IS DISTINCT FROM OLD.alunno_id
+    OR NEW.anno_sede_id IS DISTINCT FROM OLD.anno_sede_id
+    OR NEW.anno_id      IS DISTINCT FROM OLD.anno_id
+    OR NEW.scuola_id    IS DISTINCT FROM OLD.scuola_id
+    OR NEW.section_id   IS DISTINCT FROM OLD.section_id
+    OR NEW.data_ingresso IS DISTINCT FROM OLD.data_ingresso
+    OR NEW.data_uscita  IS DISTINCT FROM OLD.data_uscita
+    OR NEW.stato        IS DISTINCT FROM OLD.stato;
 
-  -- 1 · Sede e anno. Alla nascita (o se la riga cambia anno_sede) si COPIANO; scritti e diversi
-  -- alla nascita sono un errore; in un UPDATE che non sposta l'anno_sede non si staccano.
-  IF TG_OP = 'INSERT' THEN
-    IF (NEW.anno_id IS NOT NULL AND NEW.anno_id <> v_as.anno_id)
-       OR (NEW.scuola_id IS NOT NULL AND NEW.scuola_id <> v_as.scuola_id) THEN
+  IF v_valida THEN
+    SELECT * INTO v_as FROM public.anni_sede WHERE id = NEW.anno_sede_id;
+    IF NOT FOUND THEN
+      -- Un anno_sede che non c'è è una chiave esterna violata, non un NULL da lasciar passare.
+      RAISE EXCEPTION 'anno_sede inesistente'
+        USING ERRCODE = 'foreign_key_violation';
+    END IF;
+
+    -- 1 · Sede e anno. Alla nascita (o se la riga cambia anno_sede) si COPIANO; scritti e diversi
+    -- alla nascita sono un errore; in un UPDATE che non sposta l'anno_sede non si staccano.
+    IF TG_OP = 'INSERT' THEN
+      IF (NEW.anno_id IS NOT NULL AND NEW.anno_id <> v_as.anno_id)
+         OR (NEW.scuola_id IS NOT NULL AND NEW.scuola_id <> v_as.scuola_id) THEN
+        RAISE EXCEPTION 'ANNO_NON_COERENTE'
+          USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id)::text;
+      END IF;
+      NEW.anno_id := v_as.anno_id;
+      NEW.scuola_id := v_as.scuola_id;
+    ELSIF NEW.anno_sede_id IS DISTINCT FROM OLD.anno_sede_id THEN
+      NEW.anno_id := v_as.anno_id;
+      NEW.scuola_id := v_as.scuola_id;
+    ELSIF NEW.anno_id IS DISTINCT FROM v_as.anno_id OR NEW.scuola_id IS DISTINCT FROM v_as.scuola_id THEN
       RAISE EXCEPTION 'ANNO_NON_COERENTE'
         USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id)::text;
     END IF;
-    NEW.anno_id := v_as.anno_id;
-    NEW.scuola_id := v_as.scuola_id;
-  ELSIF NEW.anno_sede_id IS DISTINCT FROM OLD.anno_sede_id THEN
-    NEW.anno_id := v_as.anno_id;
-    NEW.scuola_id := v_as.scuola_id;
-  ELSIF NEW.anno_id IS DISTINCT FROM v_as.anno_id OR NEW.scuola_id IS DISTINCT FROM v_as.scuola_id THEN
-    RAISE EXCEPTION 'ANNO_NON_COERENTE'
-      USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id)::text;
-  END IF;
 
-  -- 2 · Le date dentro il periodo (l'ordine fra le due lo dice il CHECK).
-  IF NOT (v_as.periodo @> NEW.data_ingresso)
-     OR (NEW.data_uscita IS NOT NULL AND NOT (v_as.periodo @> NEW.data_uscita)) THEN
-    RAISE EXCEPTION 'ANNO_NON_COERENTE'
-      USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id, 'campo', 'data')::text;
-  END IF;
+    -- 2 · Le date dentro il periodo (l'ordine fra le due lo dice il CHECK).
+    IF NOT (v_as.periodo @> NEW.data_ingresso)
+       OR (NEW.data_uscita IS NOT NULL AND NOT (v_as.periodo @> NEW.data_uscita)) THEN
+      RAISE EXCEPTION 'ANNO_NON_COERENTE'
+        USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id, 'campo', 'data')::text;
+    END IF;
 
-  -- 3 · La sezione: stessa sede, stesso anno. Se non esiste ci pensa la chiave esterna.
-  IF NEW.section_id IS NOT NULL THEN
-    SELECT s.scuola_id, s.anno_id INTO v_sez FROM public.sections s WHERE s.id = NEW.section_id;
-    IF FOUND THEN
-      IF v_sez.scuola_id <> NEW.scuola_id THEN
-        RAISE EXCEPTION 'SEZIONE_DI_ALTRA_SEDE'
-          USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
-      ELSIF v_sez.anno_id <> NEW.anno_id THEN
-        RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
-          USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
+    -- 3 · La sezione: stessa sede, stesso anno. Se non esiste ci pensa la chiave esterna.
+    IF NEW.section_id IS NOT NULL THEN
+      SELECT s.scuola_id, s.anno_id INTO v_sez FROM public.sections s WHERE s.id = NEW.section_id;
+      IF FOUND THEN
+        IF v_sez.scuola_id <> NEW.scuola_id THEN
+          RAISE EXCEPTION 'SEZIONE_DI_ALTRA_SEDE'
+            USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
+        ELSIF v_sez.anno_id <> NEW.anno_id THEN
+          RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
+            USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
+        END IF;
       END IF;
     END IF;
   END IF;

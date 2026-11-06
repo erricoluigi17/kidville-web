@@ -83,6 +83,9 @@ async function sezione(sede: string, nome: string, anno: string): Promise<string
   return una<string>(`INSERT INTO public.sections (scuola_id, name, anno_id) VALUES ($1, $2, $3) RETURNING id`, [sede, nome, anno])
 }
 
+const righeLog = (v: string) => una<number>(
+    `SELECT count(*)::int FROM public.app_log WHERE fingerprint = 'db:frequenze-ricalcolo:' || $1::text`, [v])
+
 beforeAll(async () => {
   db = await creaDbAnno()
   await db.query(`INSERT INTO public.schools (id, nome) VALUES ($1, 'Sede A'), ($2, 'Sede B')`, [SEDE, SEDE_B])
@@ -267,44 +270,115 @@ describe('trigger su pagamenti', () => {
     expect(await una<string>(`SELECT stato FROM public.pagamenti WHERE id = $1`, [v])).toBe('pagato')
   })
 
+  /** Un guasto qualunque nel trigger delle frequenze (qui ne aggiungiamo uno di prova): la rete di `pagamenti` lo deve inghiottire e registrare. */
+  async function conGuasto<T>(fn: () => Promise<T>): Promise<T> {
+    await db.exec(`CREATE FUNCTION public.zz_guasto_di_prova() RETURNS trigger LANGUAGE plpgsql AS $f$
+                   BEGIN RAISE EXCEPTION 'GUASTO_DI_PROVA'; END $f$;
+                   CREATE TRIGGER zz_guasto_di_prova BEFORE UPDATE ON public.frequenze
+                     FOR EACH ROW EXECUTE FUNCTION public.zz_guasto_di_prova();`)
+    try { return await fn() } finally {
+      await db.exec(`DROP TRIGGER zz_guasto_di_prova ON public.frequenze; DROP FUNCTION public.zz_guasto_di_prova();`)
+    }
+  }
+
   it('un errore su una frequenza non fa fallire l\'operazione su pagamenti: la riga resta scritta e l\'errore è nel log', async () => {
-    const as = await annoSedeAttivo()
     const v = await voce('da_pagare')
-    const sez = await sezione(SEDE, 'Girasoli', as.anno_id)
-    const f = await freq({ quota_pagamento_id: v, section_id: sez })
-    // la sezione cambia anno DOPO: la frequenza è ora incoerente e ogni suo ricalcolo solleverebbe
-    const prec = await annoSedePrecedente()
-    await db.query(`UPDATE public.sections SET anno_id = $2 WHERE id = $1`, [sez, prec.anno_id])
-    await expect(db.query(`UPDATE public.pagamenti SET stato = 'pagato' WHERE id = $1`, [v])).resolves.toBeDefined()
+    const f = await freq({ quota_pagamento_id: v })
+    await conGuasto(async () => {
+      await expect(db.query(`UPDATE public.pagamenti SET stato = 'pagato' WHERE id = $1`, [v])).resolves.toBeDefined()
+    })
     expect(await una<string>(`SELECT stato FROM public.pagamenti WHERE id = $1`, [v])).toBe('pagato')
     expect((await leggi(f)).quota_saldata).toBe(false)
     const log = await db.query<{ livello: string; contesto: Record<string, unknown> }>(
       `SELECT livello, contesto FROM public.app_log WHERE fingerprint = 'db:frequenze-ricalcolo:' || $1::text`, [v])
     expect(log.rows.length).toBe(1)
     expect(log.rows[0].livello).toBe('error')
-    expect(log.rows[0].contesto).toMatchObject({ codice: 'SEZIONE_DI_ALTRO_ANNO' })
+    expect(log.rows[0].contesto).toMatchObject({ codice: 'GUASTO_DI_PROVA' })
   })
 
   it('scatta anche quando cambia SOLO importo_pagato (la colonna è nell\'elenco del trigger)', async () => {
-    const as = await annoSedeAttivo()
     const v = await voce('da_pagare')
-    const sez = await sezione(SEDE, 'Girasoli', as.anno_id)
-    await freq({ quota_pagamento_id: v, section_id: sez })
-    const prec = await annoSedePrecedente()
-    await db.query(`UPDATE public.sections SET anno_id = $2 WHERE id = $1`, [sez, prec.anno_id])
-    await db.query(`UPDATE public.pagamenti SET importo_pagato = 40 WHERE id = $1`, [v])
-    expect(await una<number>(`SELECT count(*)::int FROM public.app_log WHERE fingerprint = 'db:frequenze-ricalcolo:' || $1::text`, [v])).toBe(1)
+    await freq({ quota_pagamento_id: v })
+    await conGuasto(() => db.query(`UPDATE public.pagamenti SET importo_pagato = 40 WHERE id = $1`, [v]))
+    expect(await righeLog(v)).toBe(1)
   })
 
   it('un aggiornamento che non cambia né stato né importo_pagato non tocca le frequenze', async () => {
-    const as = await annoSedeAttivo()
     const v = await voce('da_pagare')
+    await freq({ quota_pagamento_id: v })
+    await conGuasto(() => db.query(`UPDATE public.pagamenti SET descrizione = 'altra' WHERE id = $1`, [v]))
+    expect(await una<number>(`SELECT count(*)::int FROM public.app_log`)).toBe(0)
+  })
+})
+
+describe('una frequenza INCOERENTE non blocca nessun ricalcolo (giro 1)', () => {
+  /** La sezione cambia anno DOPO: la frequenza è incoerente, e una rivalidazione completa solleverebbe SEZIONE_DI_ALTRO_ANNO. */
+  async function incoerente(over: Campi = {}): Promise<{ f: string; sez: string }> {
+    const as = await annoSedeAttivo()
     const sez = await sezione(SEDE, 'Girasoli', as.anno_id)
-    await freq({ quota_pagamento_id: v, section_id: sez })
+    const f = await freq({ section_id: sez, ...over })
     const prec = await annoSedePrecedente()
     await db.query(`UPDATE public.sections SET anno_id = $2 WHERE id = $1`, [sez, prec.anno_id])
-    await db.query(`UPDATE public.pagamenti SET descrizione = 'altra' WHERE id = $1`, [v])
-    expect(await una<number>(`SELECT count(*)::int FROM public.app_log`)).toBe(0)
+    return { f, sez }
+  }
+
+  it('eliminare la voce della quota (review focus 5): nessun errore, quota_pagamento_id NULL, stato in_attesa', async () => {
+    const v = await voce('pagato')
+    const { f } = await incoerente({ quota_pagamento_id: v })
+    expect((await leggi(f)).stato).toBe('iscritto')
+    await expect(db.query(`DELETE FROM public.pagamenti WHERE id = $1`, [v])).resolves.toBeDefined()
+    expect(await leggi(f)).toMatchObject({ stato: 'in_attesa', quota_saldata: false, quota_pagamento_id: null })
+  })
+
+  it('la voce cambia stato: il ricalcolo passa senza passare dal log (nessun errore da inghiottire)', async () => {
+    const v = await voce('da_pagare')
+    const { f } = await incoerente({ quota_pagamento_id: v })
+    await db.query(`UPDATE public.pagamenti SET stato = 'pagato' WHERE id = $1`, [v])
+    expect(await leggi(f)).toMatchObject({ stato: 'iscritto', quota_saldata: true })
+    expect(await righeLog(v)).toBe(0)
+  })
+
+  it('spuntare e togliere un modulo: nessun errore, flag ricalcolati', async () => {
+    const m = await modulo('nuova', 'privacy')
+    const v = await voce('pagato')
+    const { f } = await incoerente({ quota_pagamento_id: v })
+    expect(await leggi(f)).toMatchObject({ stato: 'in_attesa', moduli_completi: false })
+    await spunta(f, m)
+    expect(await leggi(f)).toMatchObject({ stato: 'iscritto', moduli_completi: true })
+    await db.query(`DELETE FROM public.frequenze_moduli WHERE frequenza_id = $1`, [f])
+    expect(await leggi(f)).toMatchObject({ stato: 'in_attesa', moduli_completi: false })
+  })
+
+  it('modificare la lista dei moduli con una frequenza incoerente nell\'anno: nessun errore, e le altre frequenze si aggiornano', async () => {
+    const v = await voce('pagato')
+    await incoerente()
+    const sana = await freq({ quota_pagamento_id: v })
+    expect((await leggi(sana)).stato).toBe('iscritto')
+    const m = await modulo('nuova', 'nuova-liberatoria')
+    expect(await leggi(sana)).toMatchObject({ stato: 'in_attesa', moduli_completi: false })
+    await db.query(`UPDATE public.moduli_richiesti SET lista = 'conferma' WHERE id = $1`, [m])
+    expect((await leggi(sana)).stato).toBe('iscritto')
+    await db.query(`DELETE FROM public.moduli_richiesti WHERE id = $1`, [m])
+  })
+
+  it('un UPDATE che cambia DAVVERO una colonna validata solleva ancora', async () => {
+    const as = await annoSedeAttivo()
+    const { f, sez } = await incoerente()
+    const prima = (await db.query<{ d: string }>(`SELECT ($1::date - 1)::text AS d`, [as.inizio])).rows[0].d
+    expect(await errore(db.query(`UPDATE public.frequenze SET data_ingresso = $2 WHERE id = $1`, [f, prima]))).toBe('ANNO_NON_COERENTE')
+    const dopo = (await db.query<{ d: string }>(`SELECT ($1::date + 1)::text AS d`, [as.fine])).rows[0].d
+    expect(await errore(db.query(`UPDATE public.frequenze SET data_uscita = $2 WHERE id = $1`, [f, dopo]))).toBe('ANNO_NON_COERENTE')
+    // riassegnare la sezione incoerente (cambia section_id) o rimetterla uguale con un altro valore
+    const altra = await sezione(SEDE, 'Margherite', (await annoSedePrecedente()).anno_id)
+    expect(await errore(db.query(`UPDATE public.frequenze SET section_id = $2 WHERE id = $1`, [f, altra]))).toBe('SEZIONE_DI_ALTRO_ANNO')
+    expect(sez).toBeTruthy()
+    // lo stato scritto a mano si rivalida
+    expect(await errore(db.query(`UPDATE public.frequenze SET stato = 'ritirato' WHERE id = $1`, [f]))).toBe('SEZIONE_DI_ALTRO_ANNO')
+    // staccare la sede dall'anno_sede
+    expect(await errore(db.query(`UPDATE public.frequenze SET scuola_id = $2 WHERE id = $1`, [f, SEDE_B]))).toBe('ANNO_NON_COERENTE')
+    // spostare l'anno_sede
+    const prec = await annoSedePrecedente()
+    expect(await errore(db.query(`UPDATE public.frequenze SET anno_sede_id = $2 WHERE id = $1`, [f, prec.id]))).toBe('ANNO_NON_COERENTE')
   })
 })
 

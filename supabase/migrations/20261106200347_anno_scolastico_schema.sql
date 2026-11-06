@@ -267,8 +267,7 @@ GRANT EXECUTE ON FUNCTION public.anno_attivo(uuid)                        TO ser
 GRANT EXECUTE ON FUNCTION public.anni_sede_crea_per_sede(uuid, date)      TO service_role;
 GRANT EXECUTE ON FUNCTION public.schools_crea_anni()                      TO service_role;
 
--- Le sedi che ci sono già: stessi anni, stessa regola, nessun uuid scritto qui. In fondo, dopo gli
--- ALTER TABLE: con i trigger differiti ancora in coda Postgres rifiuta di alterare la tabella.
+-- Le sedi che ci sono già: stessi anni, stessa regola, nessun uuid scritto qui.
 DO $mig$
 DECLARE
   v_sede uuid;
@@ -278,3 +277,9 @@ BEGIN
   END LOOP;
 END
 $mig$;
+
+-- Scarica la coda dei trigger differiti (la continuità si verifica QUI): finché restano eventi
+-- pendenti, Postgres rifiuta ogni ALTER TABLE / CREATE TRIGGER su `anni_sede` nella stessa
+-- transazione, e le sezioni 1.2–1.5 sono appese sotto, nello stesso file.
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;

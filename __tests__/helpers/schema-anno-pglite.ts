@@ -35,6 +35,13 @@ export const SCHEMA_BASE = `
 
   CREATE SCHEMA extensions;
 
+  -- Come su Supabase: ogni oggetto nuovo di \`public\` nasce con i privilegi aperti ad anon e
+  -- authenticated. Senza, in PGlite quei ruoli non hanno mai niente e un REVOKE mancante nella
+  -- migrazione passerebbe inosservato (il test di sicurezza sarebbe verde anche senza il codice).
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES    TO anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+
   CREATE TABLE public.schools (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     nome text NOT NULL,
@@ -48,6 +55,8 @@ export const SCHEMA_BASE = `
 export interface OpzioniDbAnno {
   /** Sedi già presenti PRIMA della migrazione, come in produzione: la migrazione dà loro gli anni. */
   sediPrimaDellaMigrazione?: string[]
+  /** SQL accodato alla migrazione NELLO STESSO exec, cioè nella stessa transazione (come fa una sezione successiva). */
+  codaDopo?: string
 }
 
 /** Un PGlite con `btree_gist`, la base e l'intera migrazione dell'anno scolastico. */
@@ -57,6 +66,6 @@ export async function creaDbAnno(opzioni: OpzioniDbAnno = {}): Promise<PGlite> {
   for (const id of opzioni.sediPrimaDellaMigrazione ?? []) {
     await db.query('INSERT INTO public.schools (id, nome) VALUES ($1, $2)', [id, 'Sede di prova'])
   }
-  await db.exec(readFileSync(fileMigrazioneAnno(), 'utf8'))
+  await db.exec(readFileSync(fileMigrazioneAnno(), 'utf8') + '\n' + (opzioni.codaDopo ?? ''))
   return db
 }

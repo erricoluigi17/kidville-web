@@ -319,6 +319,59 @@ describe('una sede nuova riceve subito i suoi anni (trigger su schools)', () => 
   })
 })
 
+describe('una sede nuova riceve ANCHE gli anni che esistono già (remoti, passati, futuri)', () => {
+  const ANNI = (da: number, a: number) =>
+    Array.from({ length: a - da + 1 }, (_, i) => `(${da + i})`).join(', ')
+
+  it('con p_oggi fisso: il remoto e il precedente chiusi, il corrente corrente, il futuro in_preparazione', async () => {
+    await pulisci()
+    await db.query('INSERT INTO public.schools (id, nome) VALUES ($1, $2)', [SEDE, 'Sede di prova'])
+    await db.exec('DELETE FROM public.anni_sede_stati; DELETE FROM public.anni_sede; DELETE FROM public.anni_scolastici;')
+    await db.exec(`INSERT INTO public.anni_scolastici (anno_inizio) VALUES ${ANNI(2022, 2028)}`)
+    await db.query('SELECT public.anni_sede_crea_per_sede($1, $2::date)', [SEDE, '2026-11-06'])
+    expect(await statiDiSede(SEDE)).toEqual({
+      '2022/2023': 'chiuso', '2023/2024': 'chiuso', '2024/2025': 'chiuso', '2025/2026': 'chiuso',
+      '2026/2027': 'corrente', '2027/2028': 'in_preparazione', '2028/2029': 'in_preparazione',
+    })
+  })
+
+  it('passando dal trigger su schools: gli stati seguono il giorno di Roma di adesso', async () => {
+    await pulisci()
+    const oggi = await una<string>('SELECT public.giorno_roma(now())::text')
+    const anno = Number(oggi.slice(0, 4)) - (Number(oggi.slice(5, 7)) >= 9 ? 0 : 1)
+    // Gli anni esistono PRIMA della sede: remoto (-5), passati, quello di oggi, due futuri.
+    await db.exec(`INSERT INTO public.anni_scolastici (anno_inizio) VALUES ${ANNI(anno - 5, anno + 2)}`)
+    await db.query('INSERT INTO public.schools (id, nome) VALUES ($1, $2)', [SEDE, 'Sede nuova'])
+    const stati = await statiDiSede(SEDE)
+    const et = (a: number) => `${a}/${a + 1}`
+    expect(Object.keys(stati)).toHaveLength(8)
+    expect(stati[et(anno - 5)]).toBe('chiuso')
+    expect(stati[et(anno - 1)]).toBe('chiuso')
+    expect(stati[et(anno)]).toBe(oggi > `${anno + 1}-07-31` ? 'in_chiusura' : 'corrente')
+    expect(stati[et(anno + 1)]).toBe('in_preparazione')
+    expect(stati[et(anno + 2)]).toBe('in_preparazione')
+  })
+})
+
+describe('le sezioni dopo la migrazione stanno nella stessa transazione', () => {
+  it('un ALTER TABLE su anni_sede accodato alla migrazione passa (la coda differita è scaricata)', async () => {
+    // Con una sede già presente il blocco di recupero ha messo in coda i trigger differiti.
+    const dbCoda = await creaDbAnno({
+      sediPrimaDellaMigrazione: [SEDE_PRIMA],
+      codaDopo: 'ALTER TABLE public.anni_sede ADD COLUMN prova int; ALTER TABLE public.anni_sede_stati ADD COLUMN prova int;',
+    })
+    try {
+      const r = await dbCoda.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM information_schema.columns
+          WHERE table_name IN ('anni_sede', 'anni_sede_stati') AND column_name = 'prova'`,
+      )
+      expect(r.rows[0].n).toBe('2')
+    } finally {
+      await dbCoda.close()
+    }
+  })
+})
+
 describe('dopo la migrazione, la sede che c\'era già ha i suoi anni (relativo a oggi)', () => {
   it('l\'anno che contiene oggi è corrente (o in_chiusura ad agosto), quello prima è chiuso', async () => {
     // Un DB a parte: SEDE_PRIMA esiste PRIMA della migrazione, come in produzione, e gli altri test
@@ -373,6 +426,41 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
     await db.exec('SET ROLE service_role')
     await expect(db.query(sql)).resolves.toBeDefined()
     await db.exec('RESET ROLE')
+  })
+
+  it('TUTTE le funzioni di public: EXECUTE chiuso a anon, authenticated e PUBLIC, aperto a service_role', async () => {
+    // Con i DEFAULT PRIVILEGES di Supabase (nell'aiuto) un REVOKE dimenticato lascia la funzione aperta.
+    const r = await db.query<{ f: string; anon: boolean; auth: boolean; pubblico: boolean; servizio: boolean }>(
+      `SELECT p.oid::regprocedure::text AS f,
+              has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+              has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
+              coalesce(bool_or(a.grantee = 0), false) AS pubblico,
+              has_function_privilege('service_role', p.oid, 'EXECUTE') AS servizio
+         FROM pg_proc p LEFT JOIN LATERAL aclexplode(p.proacl) a ON true
+        WHERE p.pronamespace = 'public'::regnamespace
+        GROUP BY p.oid ORDER BY 1`,
+    )
+    const nomi = r.rows.map((x) => x.f.replace(/^public\./, '').replace(/\(.*/, '')).sort()
+    expect(nomi).toEqual([
+      'anni_sede_controlla_continuita', 'anni_sede_crea_per_sede', 'anno_attivo', 'anno_di',
+      'anno_sede_di', 'giorno_roma', 'schools_crea_anni',
+    ].sort())
+    for (const x of r.rows) {
+      expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })
+    }
+  })
+
+  it('TUTTE le tabelle nuove: nessun privilegio ad anon e authenticated, tutti a service_role', async () => {
+    for (const t of ['anni_scolastici', 'anni_sede', 'anni_sede_stati']) {
+      for (const ruolo of ['anon', 'authenticated']) {
+        for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+          expect(await una<boolean>('SELECT has_table_privilege($1, $2, $3)', [ruolo, `public.${t}`, p]), `${ruolo} ${p} ${t}`).toBe(false)
+        }
+      }
+      for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+        expect(await una<boolean>('SELECT has_table_privilege($1, $2, $3)', ['service_role', `public.${t}`, p]), `service_role ${p} ${t}`).toBe(true)
+      }
+    }
   })
 
   it('le tabelle non si toccano da anon e authenticated (permesso negato)', async () => {

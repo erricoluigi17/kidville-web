@@ -420,7 +420,7 @@ Vincoli e regole:
   dell'autorizzazione, non un dato personale. I posti servono solo come avviso (dec. 10).
 - Quando nasce, l'anno successivo copia listino, moduli e posti dell'anno corrente (dec. 3); poi la
   segreteria corregge.
-- Il catalogo dei moduli firmabili in app riceve un campo `durata` = `anno | fino_a_revoca`. Scheda
+- Il catalogo dei moduli firmabili in app riceve un campo `durata` = `anno | fino_a_revoca` (PR 4.4, non PR 1). Scheda
   sanitaria, farmaci e dieta nascono `fino_a_revoca` (risposta 10).
 
 #### 4.4.5 L'anno sulle tabelle di classe B

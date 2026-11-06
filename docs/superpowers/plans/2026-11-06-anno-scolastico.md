@@ -236,6 +236,19 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
   - il confronto con l'Excel per sezione: uno script locale che legge solo **il numero di righe** di ogni
     foglio e non stampa niente altro.
 
+**Consegne dalla PR 1** (decisioni prese costruendo lo schema, che spostano qui del lavoro):
+- Il conteggio dei «recupero» (invariante 4) va nel rapporto di riconciliazione: `anno_invarianti()` somma a
+  zero quando è pulita, quindi il numero non può stare lì.
+- Gli alunni senza frequenza nell'anno attivo li conta questa PR: l'invariante 11 della PR 1 confronta solo
+  chi la frequenza ce l'ha (nella PR 1 le frequenze sono vuote).
+- L'invariante «senza anno» (`anno_righe_senza_anno`, che nella PR 1 è solo un aiuto non collegato) entra in
+  `anno_invarianti()` insieme al `NOT NULL`: prima del riempimento tutte le righe vecchie sono senza anno.
+- Dopo il riempimento si misura di nuovo il costo del trigger generico: finché `anno_id` è NULL ogni UPDATE
+  rifà il calcolo completo (`to_jsonb` e fino a 5 ricerche), e nella PR 1 il costo non era misurabile.
+- La guardia non ferma una riga il cui anno è sconosciuto (`anno_id` NULL e non calcolabile): è voluto, perché
+  la guardia si accende solo dopo il riempimento e il `NOT NULL` di questa PR. Fino ad allora la copre
+  l'invariante «senza anno».
+
 ### PR 3 — Regola di scrittura, guardia, doppia scrittura, lock
 
 **Interfacce prodotte:**
@@ -256,6 +269,21 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
 
 **Migrazione**: `guardia_attiva = true`, e via la regola transitoria del Compito 1.2.
 
+**Consegne dalla PR 1:**
+- Si toglie il trigger `BEFORE INSERT` che mette l'anno attivo a una sezione senza `anno_id` (R8): serviva
+  perché un `DEFAULT` non può dipendere da `scuola_id`; da qui in poi la sezione senza anno è un 400, non un
+  anno indovinato.
+- `erroreAnno()` traduce anche `CALENDARIO_NON_CONTINUO` (un buco fra due anni, R14) in 422: non è né
+  `GIORNO_SENZA_ANNO` né un vincolo.
+- Prima di accendere `guardia_attiva`: l'invariante «senza anno» deve essere a zero (vedi PR 2), perché la
+  guardia non ferma le righe dall'anno sconosciuto.
+- Scollegare a mano la voce della quota (`quota_pagamento_id` → NULL) su una frequenza di un anno chiuso passa
+  senza gettone, e la transizione automatica che segue pure: i due casi non si distinguono senza
+  `pg_trigger_depth()`, che romperebbe il tocco. Nessuna route lo fa; si riporta alla revisione finale.
+- Un UPDATE che sposta una riga fra due anni protetti vuole due gettoni e l'header ne porta uno: risponde
+  sempre `ANNO_CHIUSO`. È una correzione straordinaria (DELETE e INSERT); questa PR può estendere l'header a
+  una lista di gettoni.
+
 ### PR 4.1 → 4.9 — Lettura dalla strada nuova
 
 Ogni PR si dettaglia in passi all'inizio, con lo stesso schema della PR 1: test prima, rosso, codice, verde,
@@ -272,11 +300,21 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
     la sezione «Anno scolastico» nelle impostazioni di sede, con `PATCH` su `sposta_confine_anno`;
   - test: anno predefinito = anno attivo; avviso quando l'anno scelto è un altro; cookie manomesso → 403
     come per la sede.
+  - consegne dalla PR 1: la route `PATCH` che chiama `sposta_confine_anno` logga **successo e rifiuto** (è un
+    evento critico, AGENTS.md punto 5): la funzione SQL non scrive nessun log; e salvare senza aver cambiato la
+    data non è un errore (la funzione risponde «nessun cambio»), perché l'interfaccia può farlo.
 - **4.3 Sezioni e docenti.**
   - `sezioni_visibili_docente()`; le liste delle sezioni filtrano per anno; migrazione della fase B (il
     trigger-specchio si inverte);
   - test: il docente non vede una sezione `iscrizioni_aperte`; vede in sola lettura quella dell'anno prima;
     invariante 8 completa.
+  - consegne dalla PR 1: le ricerche di una sezione per nome rimaste in `src/` vanno rese sensibili all'anno
+    (la stessa classe esiste in due anni): `src/lib/sezioni/risoluzione.ts`, `src/lib/auth/scope.ts`,
+    `src/lib/avvisi/classi-sede.ts`, `src/app/api/admin/sections/route.ts`, `src/app/api/admin/students/route.ts`,
+    `src/app/api/register/lessons/route.ts`, `src/app/api/locker/materials/route.ts`,
+    `src/app/api/agenda/route.ts`, `src/app/api/admin/search/route.ts`,
+    `src/lib/iscrizioni/import/esegui.ts` e `sezioni.ts` (le righe esatte si ricavano con `grep`, perché si
+    sono spostate).
 - **4.4 Visibilità del genitore.**
   - `figli_attivi()`, `media_visibili_genitore()`, `avvisi_visibili_genitore()`, `thread_visibili()`,
     `voci_visibili_genitore()`;
@@ -290,6 +328,10 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
     - la chat con l'ex docente è in sola lettura;
     - **il trasferito fra sedi vede solo la classe nuova** (review focus 4);
   - invariante 7 completa.
+  - consegna dalla PR 1: qui nasce la colonna `durata` (`anno | fino_a_revoca`) dei moduli firmabili, insieme
+    ai «moduli da rifirmare» del §4.10 e alla scheda sanitaria che scade il 31/07. È uscita dalla PR 1 perché il
+    catalogo dei prestampati è codice (`src/lib/prestampati/registro.ts`), non una tabella, e scheda sanitaria,
+    farmaci e dieta non hanno un codice stabile nel database.
 - **4.5 Iscrizioni all'anno prossimo.**
   - passo 1 di `anni_tick` (creazione, battito, `JOB_CRON`, `ESITI_BATTITO`);
   - «Apri le iscrizioni»;
@@ -318,6 +360,9 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
     - l'annullamento con una presenza nel nuovo anno → rifiutato con i conteggi;
     - dopo la conferma il docente vede la sezione nuova;
     - la conferma prima di `ultimo_giorno_aperto` → rifiutata.
+  - consegna dalla PR 1: `passaggi_anno_righe.eccezione` è un `boolean` (la riga è stata corretta dalla
+    segreteria), mai testo libero, perché sono dati di minori; se serve un motivo si aggiunge qui una colonna
+    codificata.
 - **4.9 Chiusura e correzioni.**
   - passo 2 di `anni_tick`, `409 PASSAGGIO_DA_FARE`, gli avvisi di salute, il dialogo «registra come
     correzione» con il motivo;

@@ -371,8 +371,14 @@ export function posterioriCheContengono(
 // policy) e cinque funzioni `SECURITY DEFINER`; un trigger nuovo su `pagamenti`.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261106200347_anno_scolastico_schema.sql':
-        'calendario dell\'anno scolastico (PR 1): la applica l\'integrazione al merge e la voce si toglie nella PR-B, '
-        + 'dopo aver rigenerato dalla produzione le fotografie di indici unici, RLS e FK di sede',
+        // 2026-11-06, compito 1.6: le guardie che leggono questa costante sono `rls-per-sede` (la migrazione accende
+        // la RLS e dichiara `scuola_id` su tabelle nuove), `onconflict-arbitro` (nuovi indici unici e chiavi primarie,
+        // fra cui uno parziale sullo stato `corrente`) e `tracce-docente-dichiarate` (molti `ADD CONSTRAINT`, anche
+        // se nessuna FK nuova punta a `utenti`). Cambieranno davvero, rigenerando dalla produzione: la fotografia
+        // delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con `scuola_id` e delle FK di sede.
+        'schema dell\'anno scolastico (PR 1): tabelle nuove con RLS e `scuola_id`, indici unici, FK di sede e '
+        + 'trigger su tabelle esistenti. La applica l\'integrazione al merge e la voce si toglie nella PR-B, '
+        + 'dopo aver rigenerato dalla produzione le fotografie di indici unici, RLS, tabelle con sede e FK',
 }
 
 /**

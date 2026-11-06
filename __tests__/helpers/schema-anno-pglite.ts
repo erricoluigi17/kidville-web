@@ -71,8 +71,12 @@ export const SCHEMA_BASE = `
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     scuola_id uuid,
     section_id uuid,
-    classe_sezione text
+    classe_sezione text,
+    -- 1.5: una colonna che alunni e frequenze hanno con lo stesso nome (l'invariante 11 la confronta)
+    usa_pannolino boolean NOT NULL DEFAULT false
   );
+  -- 1.5: gli insegnanti delle copie del passaggio d'anno puntano agli utenti (qui solo la chiave).
+  CREATE TABLE public.utenti (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
   CREATE TABLE public.avvisi (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     scuola_id uuid,

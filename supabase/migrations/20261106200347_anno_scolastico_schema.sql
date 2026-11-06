@@ -1718,6 +1718,25 @@ CREATE INDEX IF NOT EXISTS correzioni_anno_chiuso_usi_correzione_idx
 CREATE INDEX IF NOT EXISTS correzioni_anno_chiuso_usi_transazione_idx
   ON public.correzioni_anno_chiuso_usi (transazione, tabella);
 
+-- Le colonne che la guardia lascia cambiare senza gettone (la sola lista, riusata dalla guardia e dalla
+-- invariante 6, che non deve contare come difetto ciò che la guardia lascia passare apposta):
+--   · `pagamenti`: l'incasso (più ogni colonna `fattura_*`, che si riconosce dal prefisso);
+--   · `frequenze`: i due flag che scrive il trigger della frequenza (R25).
+-- Le transizioni di `stato` e `quota_pagamento_id` di `frequenze` sono esenti solo a certe condizioni:
+-- le giudica la guardia, che ha la riga nuova sotto gli occhi.
+CREATE OR REPLACE FUNCTION public.anno_colonne_esenti(p_tabella text)
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT CASE p_tabella
+           WHEN 'pagamenti' THEN ARRAY['stato', 'importo_pagato', 'data_incasso', 'ultimo_sollecito_il', 'aggiornato_il']
+           WHEN 'frequenze' THEN ARRAY['moduli_completi', 'quota_saldata']
+           ELSE ARRAY[]::text[]
+         END
+$$;
+
 -- La sede (`schools.id`) di una riga, risalendo alla madre quando la riga non ha una via diretta
 -- (`frequenze_moduli`, `pagamenti_quote`, `votazioni_voti`…). NULL se non si arriva a nessuna sede.
 CREATE OR REPLACE FUNCTION public.anno_guardia_sede(p_tabella text, p_riga jsonb, p_livello integer DEFAULT 0)
@@ -1876,7 +1895,7 @@ BEGIN
 
   -- Le esenzioni: l'UPDATE cambia SOLO colonne che una persona non sta correggendo.
   IF p_op = 'UPDATE' AND p_reg.tabella = 'pagamenti' THEN
-    v_chiavi := ARRAY['stato', 'importo_pagato', 'data_incasso', 'ultimo_sollecito_il', 'aggiornato_il'];
+    v_chiavi := public.anno_colonne_esenti('pagamenti');
     SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_ko
       FROM jsonb_each(p_old) e WHERE e.key <> ALL (v_chiavi) AND e.key NOT LIKE 'fattura\_%';
     SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_kn
@@ -1884,8 +1903,8 @@ BEGIN
     IF v_ko = v_kn THEN RETURN; END IF;
   ELSIF p_op = 'UPDATE' AND p_reg.tabella = 'frequenze' THEN
     -- I due flag li scrive il trigger della frequenza (R25): non sono mai una scrittura di una persona.
-    v_ko := p_old - 'moduli_completi' - 'quota_saldata';
-    v_kn := p_new - 'moduli_completi' - 'quota_saldata';
+    v_ko := p_old - public.anno_colonne_esenti('frequenze');
+    v_kn := p_new - public.anno_colonne_esenti('frequenze');
     -- `stato`: solo le due transizioni automatiche, quelle che il trigger fa da sé coi flag.
     IF (p_old ->> 'stato' = 'in_attesa' AND p_new ->> 'stato' = 'iscritto'
           AND (p_new ->> 'moduli_completi')::boolean AND (p_new ->> 'quota_saldata')::boolean)
@@ -1949,6 +1968,8 @@ REVOKE ALL ON TABLE public.correzioni_anno_chiuso_usi FROM PUBLIC, anon, authent
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.correzioni_anno_chiuso     TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.correzioni_anno_chiuso_usi TO service_role;
 
+REVOKE ALL ON FUNCTION public.anno_colonne_esenti(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_colonne_esenti(text) TO service_role;
 REVOKE ALL ON FUNCTION public.anno_guardia_sede(text, jsonb, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_guardia_verifica(public.anno_tabelle, text, jsonb, jsonb, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_guardia_sede(text, jsonb, integer) TO service_role;
@@ -2190,6 +2211,410 @@ REVOKE ALL ON FUNCTION public.anno_conta_righe_assegnate_nei_giorni(text, uuid, 
 REVOKE ALL ON FUNCTION public.sposta_confine_anno(uuid, date) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_conta_righe_assegnate_nei_giorni(text, uuid, uuid, date, date) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sposta_confine_anno(uuid, date) TO service_role;
+
+-- ── 1.5 Le tabelle del passaggio d'anno e le invarianti ─────────────────────────────────────────
+-- Le tre tabelle del passaggio (§4.9): solo lo schema. Nessun trigger e nessuna RPC del passaggio:
+-- arrivano con la PR 4.8. Gli utenti che hanno fatto una cosa (`creato_da`, `confermato_da`,
+-- `annullato_da`, `modificata_da`) sono uuid SENZA chiave esterna verso `utenti` (R15): la storia di un
+-- passaggio deve sopravvivere a chi l'ha fatto. I docenti copiati, invece, puntano a `utenti` e vanno
+-- con lui: una copia per un utente che non esiste più non serve a niente.
+-- `eccezione` è un booleano (la riga è stata corretta dalla segreteria), MAI un testo libero: sono dati
+-- di bambini.
+CREATE TABLE IF NOT EXISTS public.passaggi_anno (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  scuola_id        uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+  da_anno_sede_id  uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  a_anno_sede_id   uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  stato            text NOT NULL DEFAULT 'anteprima',
+  creato_da        uuid,
+  creato_il        timestamptz NOT NULL DEFAULT now(),
+  confermato_da    uuid,
+  confermato_il    timestamptz,
+  annullato_da     uuid,
+  annullato_il     timestamptz,
+  conteggi         jsonb NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT passaggi_anno_stato_check CHECK (stato IN ('anteprima', 'confermato', 'annullato')),
+  CONSTRAINT passaggi_anno_anni_diversi CHECK (da_anno_sede_id <> a_anno_sede_id),
+  CONSTRAINT passaggi_anno_confermato_ha_data CHECK (stato <> 'confermato' OR confermato_il IS NOT NULL),
+  CONSTRAINT passaggi_anno_annullato_ha_data CHECK (stato <> 'annullato' OR annullato_il IS NOT NULL)
+);
+-- Un solo passaggio NON annullato per coppia di anni. Indice parziale: si guarda `pg_indexes`.
+CREATE UNIQUE INDEX IF NOT EXISTS passaggi_anno_uno_per_coppia
+  ON public.passaggi_anno (da_anno_sede_id, a_anno_sede_id) WHERE stato <> 'annullato';
+CREATE INDEX IF NOT EXISTS passaggi_anno_scuola_id_idx       ON public.passaggi_anno (scuola_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_da_anno_sede_id_idx ON public.passaggi_anno (da_anno_sede_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_a_anno_sede_id_idx  ON public.passaggi_anno (a_anno_sede_id);
+
+-- Una riga per bambino. Le frequenze e le sezioni sparite diventano NULL (la riga racconta il passaggio,
+-- non lo regge); il bambino eliminato per davvero porta via la sua riga (come `frequenze`).
+CREATE TABLE IF NOT EXISTS public.passaggi_anno_righe (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  passaggio_id      uuid NOT NULL REFERENCES public.passaggi_anno(id) ON DELETE CASCADE,
+  alunno_id         uuid NOT NULL REFERENCES public.alunni(id) ON DELETE CASCADE,
+  frequenza_da_id   uuid REFERENCES public.frequenze(id) ON DELETE SET NULL,
+  frequenza_a_id    uuid REFERENCES public.frequenze(id) ON DELETE SET NULL,
+  sezione_da_id     uuid REFERENCES public.sections(id) ON DELETE SET NULL,
+  sezione_a_id      uuid REFERENCES public.sections(id) ON DELETE SET NULL,
+  esito             text NOT NULL,
+  eccezione         boolean NOT NULL DEFAULT false,
+  modificata_da     uuid,
+  CONSTRAINT passaggi_anno_righe_esito_check
+    CHECK (esito IN ('continua', 'cambia_grado', 'nuova', 'esce', 'non_risposto')),
+  CONSTRAINT passaggi_anno_righe_bambino_key UNIQUE (passaggio_id, alunno_id)
+);
+CREATE INDEX IF NOT EXISTS passaggi_anno_righe_alunno_id_idx       ON public.passaggi_anno_righe (alunno_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_righe_frequenza_da_id_idx ON public.passaggi_anno_righe (frequenza_da_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_righe_frequenza_a_id_idx  ON public.passaggi_anno_righe (frequenza_a_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_righe_sezione_da_id_idx   ON public.passaggi_anno_righe (sezione_da_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_righe_sezione_a_id_idx    ON public.passaggi_anno_righe (sezione_a_id);
+
+CREATE TABLE IF NOT EXISTS public.passaggi_anno_docenti (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  passaggio_id     uuid NOT NULL REFERENCES public.passaggi_anno(id) ON DELETE CASCADE,
+  utente_id        uuid NOT NULL REFERENCES public.utenti(id) ON DELETE CASCADE,
+  sezione_a_id     uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+  origine          text NOT NULL,
+  CONSTRAINT passaggi_anno_docenti_origine_check CHECK (origine IN ('copiata', 'aggiunta', 'tolta')),
+  CONSTRAINT passaggi_anno_docenti_una_volta_key UNIQUE (passaggio_id, utente_id, sezione_a_id)
+);
+CREATE INDEX IF NOT EXISTS passaggi_anno_docenti_utente_id_idx    ON public.passaggi_anno_docenti (utente_id);
+CREATE INDEX IF NOT EXISTS passaggi_anno_docenti_sezione_a_id_idx ON public.passaggi_anno_docenti (sezione_a_id);
+
+ALTER TABLE public.passaggi_anno         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.passaggi_anno_righe   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.passaggi_anno_docenti ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.passaggi_anno         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.passaggi_anno_righe   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.passaggi_anno_docenti FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.passaggi_anno         TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.passaggi_anno_righe   TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.passaggi_anno_docenti TO service_role;
+
+-- ── Gli aiuti delle invarianti: uno per tabella del registro, in SQL dinamico con format('%I') ────
+-- Una tabella che non è nel registro (o che nel database non c'è) è un ERRORE: contare «zero» in
+-- silenzio sarebbe un falso verde. Le righe senza `anno_id` non contano mai: le conta
+-- `anno_righe_senza_anno` (§4.17 10c), che NON fa parte di `anno_invarianti()` finché la PR 2 non ha
+-- riempito le righe vecchie.
+
+CREATE OR REPLACE FUNCTION public.anno_ha_colonna(p_tabella text, p_colonna text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (SELECT 1 FROM pg_attribute
+                  WHERE attrelid = to_regclass(format('public.%I', p_tabella))
+                    AND attname = p_colonna AND attnum > 0 AND NOT attisdropped)
+$$;
+
+-- Le righe di UNA tabella il cui giorno cade fuori dal periodo del loro anno. La «data di una riga» e la
+-- sede si trovano come dice il registro: è il mattone di `sposta_confine_anno`
+-- (`anno_conta_righe_assegnate_nei_giorni`), una volta per ogni anno di ogni sede, sui giorni che stanno
+-- prima dell'inizio e dopo la fine. È la rete della corsa che lo spostamento del confine non chiude
+-- (un INSERT concorrente nei giorni spostati): l'invariante 2.
+CREATE OR REPLACE FUNCTION public.anno_righe_fuori_periodo(p_tabella text)
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n bigint := 0;
+  a   record;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.anno_tabelle t WHERE t.tabella = p_tabella) THEN
+    RAISE EXCEPTION 'anno_righe_fuori_periodo: la tabella % non è nel registro', p_tabella;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'anno_id') THEN
+    RAISE EXCEPTION 'anno_righe_fuori_periodo: la tabella % non esiste o non ha la colonna anno_id', p_tabella;
+  END IF;
+  FOR a IN SELECT s.scuola_id, s.anno_id, s.inizio, s.fine FROM public.anni_sede s LOOP
+    v_n := v_n
+      + public.anno_conta_righe_assegnate_nei_giorni(p_tabella, a.anno_id, a.scuola_id, DATE '1900-01-01', a.inizio - 1)
+      + public.anno_conta_righe_assegnate_nei_giorni(p_tabella, a.anno_id, a.scuola_id, a.fine + 1, DATE '2200-01-01');
+  END LOOP;
+  RETURN v_n;
+END
+$$;
+
+-- Le righe CREATE DOPO l'accensione dei controlli rigidi (`controlli_rigidi_dal`) la cui sezione è di un
+-- altro anno rispetto a quello della riga. Con la manopola spenta (`_dal` NULL) conta zero: le righe
+-- vecchie in contrasto stanno nel rapporto di riconciliazione della PR 2. Una tabella senza
+-- `section_id` o senza la colonna di creazione del registro (le figlie senza data) non ha niente da
+-- contare: zero.
+CREATE OR REPLACE FUNCTION public.anno_righe_sezione_altro_anno(p_tabella text)
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_reg public.anno_tabelle%ROWTYPE;
+  v_dal timestamptz;
+  v_n   bigint;
+BEGIN
+  SELECT * INTO v_reg FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'anno_righe_sezione_altro_anno: la tabella % non è nel registro', p_tabella;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'anno_id') THEN
+    RAISE EXCEPTION 'anno_righe_sezione_altro_anno: la tabella % non esiste o non ha la colonna anno_id', p_tabella;
+  END IF;
+  IF v_reg.colonna_creazione IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'section_id') THEN
+    RETURN 0;
+  END IF;
+  SELECT r.controlli_rigidi_dal INTO v_dal FROM public.anno_regole r;
+  IF v_dal IS NULL THEN
+    RETURN 0;
+  END IF;
+  EXECUTE format(
+    'SELECT count(*) FROM public.%I t JOIN public.sections s ON s.id = t.section_id '
+    'WHERE t.anno_id IS NOT NULL AND s.anno_id <> t.anno_id AND t.%I >= $1',
+    p_tabella, v_reg.colonna_creazione)
+  INTO v_n USING v_dal;
+  RETURN v_n;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.anno_righe_senza_anno(p_tabella text)
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n bigint;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.anno_tabelle t WHERE t.tabella = p_tabella) THEN
+    RAISE EXCEPTION 'anno_righe_senza_anno: la tabella % non è nel registro', p_tabella;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'anno_id') THEN
+    RAISE EXCEPTION 'anno_righe_senza_anno: la tabella % non esiste o non ha la colonna anno_id', p_tabella;
+  END IF;
+  EXECUTE format('SELECT count(*) FROM public.%I t WHERE t.anno_id IS NULL', p_tabella) INTO v_n;
+  RETURN v_n;
+END
+$$;
+
+-- ── anno_invarianti() ────────────────────────────────────────────────────────────────────────────
+-- §4.17: le invarianti 1-6 e 9-11, di SOLA LETTURA, restituiscono solo uuid, date e conteggi: mai un
+-- nome, mai un codice fiscale. Una riga per invariante e, dove l'invariante è per tabella, una per
+-- tabella, con `righe = 0` quando è pulita: «pulito» vuol dire `sum(righe) = 0`, e una funzione che
+-- restituisse solo le violazioni non distinguerebbe «pulito» da «cieco» (R12). La 7 e la 8 dipendono
+-- dalle funzioni di visibilità delle PR 4.3/4.4 e non ci sono. Il file di riferimento
+-- docs/superpowers/specs/2026-11-06-anno-scolastico-invarianti.sql dice la stessa cosa: se cambia una,
+-- cambiano tutte e due nella stessa PR.
+--   1   un giorno senza anno, o in due anni (per sede, dal primo all'ultimo giorno)          · anni_sede
+--   2   righe di modo `data` fuori dal periodo del loro anno                                 · per tabella
+--   3   due frequenze vive per lo stesso bambino nello stesso anno                            · frequenze
+--   4   un «iscritto» senza moduli o senza quota, ricalcolato dalla verità (esclude `recupero`);
+--       e i flag `quota_saldata` che non dicono la verità                                    · frequenze, frequenze (flag)
+--   5   una competenza fuori dal periodo del suo anno                                         · pagamenti
+--   6   una modifica (scatola nera) di un anno in_chiusura/chiuso senza un uso di gettone nella stessa
+--       transazione, tabella e riga; conta solo dopo il PIÙ TARDO fra il cambio di stato dell'anno e
+--       `guardia_attiva_dal` (guardia spenta → zero); esclude le colonne che la guardia esenta
+--       (`anno_colonne_esenti`: incasso di pagamenti, flag di frequenze; per frequenze anche `stato` se
+--       cambia insieme a un flag e `quota_pagamento_id`)                                      · per tabella
+--       Senza `scatola_nera.modifiche` (il DB della CI): una riga `(scatola_nera assente)` con zero.
+--   9   righe create dopo `controlli_rigidi_dal` con una sezione di un altro anno             · per tabella
+--   10a una tabella del registro senza colonna `anno_id` o senza il trigger generico          · per tabella
+--       (una tabella del registro che nel database non c'è non è un difetto: il registro si compila con
+--       `to_regclass`, come il DB della CI)
+--   10b una tabella di `public` con `anno_id` che il registro non conosce (esclusa `anni_sede`, che è il
+--       calendario); una riga per tabella, o `(nessuna)` con zero
+--   11  la scheda alunno e la frequenza dell'anno attivo (solo chi ce l'ha) non dicono la stessa cosa:
+--       `section_id` e i campi con lo stesso nome e lo stesso tipo su `alunni` e `frequenze`     · alunni
+CREATE OR REPLACE FUNCTION public.anno_invarianti()
+RETURNS TABLE (invariante text, tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  r             public.anno_tabelle%ROWTYPE;
+  v_guardia_dal timestamptz;
+  v_mappa6      jsonb := '{}'::jsonb;
+  v_ha_nera     boolean;
+  v_ha_anno     boolean;
+  v_fuori       text[];
+  v_cond        text[];
+  v_col         text;
+  v_n           bigint;
+BEGIN
+  -- 1. Nessun giorno senza anno, nessun giorno in due anni.
+  SELECT count(*) INTO v_n FROM (
+    SELECT s.scuola_id, g::date
+      FROM (SELECT a.scuola_id, min(a.inizio) AS da, max(a.fine) AS al
+              FROM public.anni_sede a GROUP BY a.scuola_id) s
+     CROSS JOIN LATERAL generate_series(s.da::timestamp, s.al::timestamp, interval '1 day') g
+      LEFT JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND g::date <@ a.periodo
+     GROUP BY s.scuola_id, g::date
+    HAVING count(a.id) <> 1) x;
+  invariante := '1'; tabella := 'anni_sede'; righe := v_n; RETURN NEXT;
+
+  -- 6, prima parte: le violazioni di tutte le tabelle in una volta sola (poi si distribuiscono).
+  SELECT g.guardia_attiva_dal INTO v_guardia_dal FROM public.anno_regole g;
+  v_ha_nera := to_regclass('scatola_nera.modifiche') IS NOT NULL;
+  IF v_ha_nera AND v_guardia_dal IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT coalesce(jsonb_object_agg(x.tabella, x.n), '{}'::jsonb) FROM (
+        SELECT m.tabella, count(*) AS n
+          FROM scatola_nera.modifiche m
+          JOIN public.anno_tabelle t ON t.tabella = m.tabella
+         CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+          JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+         CROSS JOIN LATERAL (SELECT min(st.dal) AS dal FROM public.anni_sede_stati st
+                              WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')) ch
+         WHERE m.modificata_il >= $1
+           AND ch.dal IS NOT NULL
+           AND m.modificata_il >= ch.dal
+           -- le modifiche che la guardia lascia passare apposta non sono un difetto
+           AND NOT (
+             coalesce((SELECT bool_and(
+                         c = ANY (public.anno_colonne_esenti(m.tabella))
+                         OR (m.tabella = 'pagamenti' AND c LIKE 'fattura\_%')
+                         OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                         FROM unnest(m.cambiate) c), false)
+             AND (m.tabella <> 'frequenze'
+                  OR NOT ('stato' = ANY (m.cambiate))
+                  OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
+           AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+                            WHERE u.transazione = m.transazione AND u.tabella = m.tabella
+                              AND (u.riga_id IS NULL OR u.riga_id = m.riga_id))
+         GROUP BY m.tabella) x
+    $q$ INTO v_mappa6 USING v_guardia_dal;
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+    v_ha_anno := public.anno_ha_colonna(r.tabella, 'anno_id');
+
+    -- 2. Nessuna riga fuori dal suo anno (modo `data`).
+    IF r.modo = 'data' THEN
+      invariante := '2'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_fuori_periodo(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 6, seconda parte: una riga per tabella (se c'è la scatola nera).
+    IF v_ha_nera THEN
+      invariante := '6'; tabella := r.tabella; righe := coalesce((v_mappa6 ->> r.tabella)::bigint, 0);
+      RETURN NEXT;
+    END IF;
+
+    -- 9. Nessuna riga nuova con una sezione di un altro anno.
+    IF public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      invariante := '9'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_sezione_altro_anno(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 10a. La colonna e il trigger generico (una riga per tabella: 0, 1 o 2 difetti).
+    invariante := '10a'; tabella := r.tabella;
+    righe := (CASE WHEN v_ha_anno THEN 0 ELSE 1 END)
+           + (CASE WHEN EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc pr ON pr.oid = tg.tgfoid
+                                 WHERE tg.tgrelid = to_regclass(format('public.%I', r.tabella))
+                                   AND pr.proname = 'anno_assegna_e_verifica' AND NOT tg.tgisinternal)
+                   THEN 0 ELSE 1 END);
+    RETURN NEXT;
+  END LOOP;
+
+  IF NOT v_ha_nera THEN
+    invariante := '6'; tabella := '(scatola_nera assente)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno.
+  SELECT count(*) INTO v_n FROM (
+    SELECT f.alunno_id, f.anno_id FROM public.frequenze f
+     WHERE f.stato IN ('in_attesa', 'iscritto')
+     GROUP BY f.alunno_id, f.anno_id HAVING count(*) > 1) x;
+  invariante := '3'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+
+  -- 4. Nessun «iscritto» senza moduli o senza quota, ricalcolato dalla verità e non dai flag.
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.stato = 'iscritto' AND f.origine <> 'recupero'
+     AND (EXISTS (SELECT 1 FROM public.moduli_richiesti m
+                   WHERE m.anno_sede_id = f.anno_sede_id AND m.lista = f.tipo
+                     AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                                      WHERE fm.frequenza_id = f.id AND fm.modulo_id = m.id))
+          OR q.id IS NULL OR q.stato <> 'pagato');
+  invariante := '4'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+  --    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.quota_saldata IS DISTINCT FROM (q.id IS NOT NULL AND q.stato = 'pagato');
+  invariante := '4'; tabella := 'frequenze (flag)'; righe := v_n; RETURN NEXT;
+
+  -- 5. Nessuna competenza fuori dal periodo del suo anno.
+  v_n := 0;
+  IF to_regclass('public.pagamenti') IS NOT NULL AND public.anno_ha_colonna('pagamenti', 'anno_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pagamenti p '
+            'JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id '
+            'WHERE p.periodo_competenza IS NOT NULL AND NOT (p.periodo_competenza <@ a.periodo)'
+    INTO v_n;
+  END IF;
+  invariante := '5'; tabella := 'pagamenti'; righe := v_n; RETURN NEXT;
+
+  -- 10b. Una tabella con `anno_id` che il registro non conosce.
+  SELECT array_agg(c.relname::text ORDER BY c.relname) INTO v_fuori
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND at.attname = 'anno_id' AND at.attnum > 0 AND NOT at.attisdropped
+     AND c.relname <> 'anni_sede'
+     AND c.relname NOT IN (SELECT t.tabella FROM public.anno_tabelle t);
+  IF v_fuori IS NULL THEN
+    invariante := '10b'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  ELSE
+    FOREACH v_col IN ARRAY v_fuori LOOP
+      invariante := '10b'; tabella := v_col; righe := 1; RETURN NEXT;
+    END LOOP;
+  END IF;
+
+  -- 11. La scheda alunno e la frequenza dell'anno attivo dicono la stessa cosa (solo chi ha la frequenza).
+  --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
+  --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL THEN
+    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
+                  WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
+                    AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
+                    AND NOT x.attisdropped AND NOT y.attisdropped) THEN
+        v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
+      END IF;
+    END LOOP;
+    EXECUTE 'SELECT count(*) FROM public.alunni al '
+            'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
+            'WHERE ' || array_to_string(v_cond, ' OR ')
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
+
+  RETURN;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_ha_colonna(text, text)             FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_righe_fuori_periodo(text)          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_righe_sezione_altro_anno(text)     FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_righe_senza_anno(text)             FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_invarianti()                       FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_ha_colonna(text, text)          TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_righe_fuori_periodo(text)       TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_righe_sezione_altro_anno(text)  TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_righe_senza_anno(text)          TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_invarianti()                    TO service_role;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;

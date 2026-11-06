@@ -13,7 +13,14 @@
 --
 -- Restituiscono solo uuid, date e conteggi: mai un nome, mai un codice fiscale.
 -- Le invarianti 7 e 8 usano le funzioni di visibilità delle PR 4.3 e 4.4: prima
--- di quelle PR non si possono lanciare.
+-- di quelle PR non si possono lanciare, e anno_invarianti() non le restituisce.
+-- anno_invarianti() restituisce SEMPRE una riga per invariante (e per tabella,
+-- dove è per tabella), con righe = 0 quando è pulita: «pulito» vuol dire
+-- sum(righe) = 0. Le invarianti 6 e 9 sono sincronizzate con l'attivazione
+-- (guardia_attiva_dal, controlli_rigidi_dal): con le manopole spente contano zero,
+-- e dopo la migrazione su dati vecchi la funzione dà zero. Il numero di righe senza
+-- anno (10c, anno_righe_senza_anno) non fa parte della funzione finché la PR 2 non
+-- ha riempito le righe vecchie.
 -- =============================================================================
 
 
@@ -36,12 +43,15 @@ JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id
 WHERE NOT (p.data <@ a.periodo);
 
 --    La stessa regola su ogni tabella in modo «data» del registro: la sede e la
---    data si trovano come dice anno_tabelle (via_sede, colonna_data). Una riga del
---    risultato = una tabella con righe fuori anno, e quante sono.
+--    data si trovano come dice anno_tabelle (via_sede, colonna_data, riserva), le
+--    stesse regole di public.anno_conta_righe_assegnate_nei_giorni (il mattone di
+--    sposta_confine_anno): una riga già assegnata a un anno con la data fuori dal suo
+--    periodo. È la rete della corsa che lo spostamento del confine non chiude. Le
+--    righe senza anno_id non contano qui. La funzione restituisce una riga per tabella,
+--    con zero quando è pulita.
 SELECT t.tabella, public.anno_righe_fuori_periodo(t.tabella) AS righe
 FROM public.anno_tabelle t
-WHERE t.modo = 'data'
-  AND public.anno_righe_fuori_periodo(t.tabella) > 0;
+WHERE t.modo = 'data';
 
 
 -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno ---
@@ -74,7 +84,8 @@ WHERE f.stato = 'iscritto'
   AND f.origine <> 'recupero'
   AND (mancano.moduli_mancanti > 0 OR q.id IS NULL OR q.stato <> 'pagato');
 
---    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+--    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»). Nella
+--    funzione sono la riga 'frequenze (flag)' dell'invariante 4.
 SELECT f.id AS frequenza_id
 FROM public.frequenze f
 LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
@@ -94,26 +105,48 @@ WHERE p.periodo_competenza IS NOT NULL
 
 -- 6. Nessuna modifica di un anno chiuso senza la sua correzione --------------
 --    Ogni «com'era» della scatola nera su una riga di un anno in_chiusura o
---    chiuso, scritto dopo il cambio di stato, deve avere un uso di gettone nella
---    stessa transazione, sulla stessa tabella e sulla stessa riga.
---    public.anno_sede_della_riga(tabella, prima) legge la sede e l'anno dal JSON
---    della riga com'era (colonne scuola_id/anno_id, o via_sede del registro).
+--    chiuso deve avere un USO di gettone (public.correzioni_anno_chiuso_usi, una
+--    riga per riga toccata) nella stessa transazione, sulla stessa tabella e
+--    sulla stessa riga (se l'uso ha riga_id NULL, perché la tabella non ha una
+--    colonna id come utenti_sezioni: basta transazione e tabella).
+--    Conta solo dopo il PIÙ TARDO fra il cambio di stato dell'anno e
+--    anno_regole.guardia_attiva_dal: a guardia spenta (dal NULL) conta zero, e
+--    dopo la migrazione su dati vecchi la funzione dà zero.
+--    Esclude ciò che la guardia lascia passare apposta (public.anno_colonne_esenti):
+--      · pagamenti: le colonne d'incasso (stato, importo_pagato, data_incasso,
+--        ultimo_sollecito_il, aggiornato_il) e ogni fattura_*;
+--      · frequenze: moduli_completi e quota_saldata, `stato` solo se
+--        cambia insieme a uno dei due flag, e quota_pagamento_id (la chiave esterna).
+--    La sede si trova con public.anno_guardia_sede (risale alla madre per le figlie).
+--    Senza scatola_nera.modifiche (il DB della CI) la funzione restituisce una
+--    riga '(scatola_nera assente)' con zero.
 SELECT m.id AS modifica_id, m.tabella, m.riga_id, m.modificata_il
 FROM scatola_nera.modifiche m
 JOIN public.anno_tabelle t ON t.tabella = m.tabella
-JOIN public.anni_sede a ON a.id = public.anno_sede_della_riga(m.tabella, m.prima)
-JOIN LATERAL (
+CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+CROSS JOIN LATERAL (
   SELECT min(st.dal) AS dal
   FROM public.anni_sede_stati st
   WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')
-) chiusura ON chiusura.dal IS NOT NULL
-WHERE m.modificata_il >= chiusura.dal
+) chiusura
+WHERE chiusura.dal IS NOT NULL
+  AND m.modificata_il >= chiusura.dal
+  AND m.modificata_il >= (SELECT guardia_attiva_dal FROM public.anno_regole)
+  AND NOT (
+    coalesce((SELECT bool_and(
+                c = ANY (public.anno_colonne_esenti(m.tabella))
+                OR (m.tabella = 'pagamenti' AND c LIKE 'fattura\_%')
+                OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                FROM unnest(m.cambiate) c), false)
+    AND (m.tabella <> 'frequenze'
+         OR NOT ('stato' = ANY (m.cambiate))
+         OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
   AND NOT EXISTS (
-    SELECT 1 FROM public.correzioni_anno_chiuso c
-    WHERE c.transazione = m.transazione
-      AND c.tabella = m.tabella
-      AND c.riga_id = m.riga_id
-      AND c.usata_il IS NOT NULL
+    SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+    WHERE u.transazione = m.transazione
+      AND u.tabella = m.tabella
+      AND (u.riga_id IS NULL OR u.riga_id = m.riga_id)
   );
 
 
@@ -145,21 +178,26 @@ WHERE u.ruolo = 'educator'
 
 
 -- 9. Nessuna riga nuova con una sezione di un altro anno --------------------
---    Solo le righe create dopo l'attivazione dei controlli rigidi (PR 2): le
---    vecchie in contrasto stanno nel rapporto di riconciliazione, contate.
+--    Solo le righe CREATE (colonna_creazione del registro) dopo l'accensione dei
+--    controlli rigidi (anno_regole.controlli_rigidi_dal, PR 2): con la manopola
+--    spenta (dal NULL) conta zero; le vecchie in contrasto stanno nel rapporto di
+--    riconciliazione, contate. Una tabella senza section_id o senza colonna di
+--    creazione ha zero.
 SELECT p.id
 FROM public.presenze p
 JOIN public.sections s ON s.id = p.section_id
 WHERE s.anno_id <> p.anno_id
   AND p.created_at >= (SELECT controlli_rigidi_dal FROM public.anno_regole);
---    E lo stesso per ogni tabella del registro con section_id:
+--    E lo stesso per ogni tabella del registro con section_id (una riga per tabella):
 SELECT t.tabella, public.anno_righe_sezione_altro_anno(t.tabella) AS righe
 FROM public.anno_tabelle t
-WHERE public.anno_righe_sezione_altro_anno(t.tabella) > 0;
+WHERE public.anno_ha_colonna(t.tabella, 'section_id');
 
 
 -- 10. Il registro e lo schema dicono la stessa cosa -------------------------
 --     10a. Una tabella del registro senza colonna anno_id, o senza il trigger.
+--     La funzione restituisce una riga per tabella (0, 1 o 2 difetti). Una tabella del
+--     registro che nel database non c'è non è un difetto (to_regclass, come il DB della CI).
 SELECT t.tabella, 'senza colonna anno_id' AS difetto
 FROM public.anno_tabelle t
 WHERE to_regclass('public.' || t.tabella) IS NOT NULL
@@ -182,12 +220,21 @@ FROM information_schema.columns c
 WHERE c.table_schema = 'public' AND c.column_name = 'anno_id'
   AND c.table_name NOT IN (SELECT tabella FROM public.anno_tabelle)
   AND c.table_name NOT IN ('anni_sede');   -- anni_sede È il calendario
+--     (nella funzione: una riga per tabella trovata, oppure '(nessuna)' con zero)
 --     10c. In produzione (PR 2 in poi) nessuna riga senza anno: si conta con
 --          public.anno_righe_senza_anno(tabella) per ogni tabella del registro.
 
 
 -- 11. Durante la transizione (PR 3 → PR 5): la scheda alunno e la frequenza
 --     dell'anno attivo dicono la stessa cosa ------------------------------------
+--     Si confrontano solo gli alunni CHE HANNO una frequenza nell'anno attivo della
+--     loro sede, e solo i campi che esistono con lo stesso nome e lo stesso tipo su
+--     alunni e frequenze: section_id, retta_a_carico_di, gruppo_mensa_id,
+--     giorno_scadenza_pagamenti, usa_pannolino, retta_split_config,
+--     intestatario_fatture (la funzione costruisce il confronto dal catalogo). Lo
+--     stato e la retta hanno nomi e significati diversi e restano fuori; chi non ha
+--     ancora la frequenza lo conta il rapporto di riconciliazione della PR 2.
+--     Il blocco qui sotto è l'idea; per i campi esatti vale la funzione.
 SELECT al.id AS alunno_id
 FROM public.alunni al
 JOIN public.frequenze f

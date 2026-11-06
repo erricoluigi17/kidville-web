@@ -456,6 +456,10 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       'anno_guardia_sede', 'anno_guardia_verifica', 'anno_log_guasto',
       // Compito 1.4c: lo spostamento del confine e il mattone che conta le righe nei giorni spostati.
       'sposta_confine_anno', 'anno_conta_righe_assegnate_nei_giorni',
+      // Compito 1.5: la lista delle colonne esenti dalla guardia (riusata dall'invariante 6), gli aiuti
+      // per tabella delle invarianti e la funzione che le riunisce.
+      'anno_colonne_esenti', 'anno_ha_colonna', 'anno_righe_fuori_periodo', 'anno_righe_sezione_altro_anno',
+      'anno_righe_senza_anno', 'anno_invarianti',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })
@@ -469,7 +473,9 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       // Compito 1.4a
       'anno_regole', 'anno_tabelle',
       // Compito 1.4b
-      'correzioni_anno_chiuso', 'correzioni_anno_chiuso_usi']) {
+      'correzioni_anno_chiuso', 'correzioni_anno_chiuso_usi',
+      // Compito 1.5
+      'passaggi_anno', 'passaggi_anno_righe', 'passaggi_anno_docenti']) {
       for (const ruolo of ['anon', 'authenticated']) {
         for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
           expect(await una<boolean>('SELECT has_table_privilege($1, $2, $3)', [ruolo, `public.${t}`, p]), `${ruolo} ${p} ${t}`).toBe(false)

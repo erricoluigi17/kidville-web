@@ -1208,3 +1208,363 @@ GRANT EXECUTE ON FUNCTION public.pagamenti_tocca_frequenze()          TO service
 
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;
+
+-- ── 1.4a Registro delle tabelle, anno sulle tabelle B, trigger generico ─────
+-- Le tabelle che portano l'anno stanno in `anno_tabelle`: per ciascuna, come si ricava l'anno
+-- (`data`: dalla colonna data; `dichiarato`: lo scrive chi inserisce, e dove c'è una data la si
+-- confronta; `madre`: lo eredita dalla riga madre), come si arriva alla sede, e se i controlli sono
+-- rigidi da subito. Un trigger solo, `trg_zz_anno_assegna_e_verifica`, attaccato dal registro a
+-- OGNI tabella che esiste (il DB della CI non le ha tutte: `to_regclass`). La guardia dell'anno
+-- chiuso arriva nel Compito 1.4b e cambia solo la funzione; qui il DELETE passa e basta.
+
+-- Le due manopole globali. UNA riga sola, garantita dalla chiave: `id` può essere solo `true`.
+-- Entrambe spente: con `controlli_rigidi` spento il trigger generico NON solleva mai sulle tabelle
+-- che esistono già (R2), e le scritture di oggi passano tutte.
+CREATE TABLE IF NOT EXISTS public.anno_regole (
+  id                   boolean PRIMARY KEY DEFAULT true CONSTRAINT anno_regole_una_riga CHECK (id),
+  controlli_rigidi     boolean NOT NULL DEFAULT false,
+  controlli_rigidi_dal timestamptz,
+  guardia_attiva       boolean NOT NULL DEFAULT false,
+  guardia_attiva_dal   timestamptz
+);
+INSERT INTO public.anno_regole (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+
+-- Il `_dal` lo scrive il database: chi accende una manopola non può dimenticarlo, e le invarianti
+-- giudicano una scrittura dal momento in cui la manopola è stata accesa.
+CREATE OR REPLACE FUNCTION public.anno_regole_marca_data()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.controlli_rigidi AND NOT OLD.controlli_rigidi THEN
+    NEW.controlli_rigidi_dal := now();
+  ELSIF NOT NEW.controlli_rigidi THEN
+    NEW.controlli_rigidi_dal := NULL;
+  END IF;
+  IF NEW.guardia_attiva AND NOT OLD.guardia_attiva THEN
+    NEW.guardia_attiva_dal := now();
+  ELSIF NOT NEW.guardia_attiva THEN
+    NEW.guardia_attiva_dal := NULL;
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_anno_regole_marca_data ON public.anno_regole;
+CREATE TRIGGER trg_anno_regole_marca_data
+  BEFORE UPDATE ON public.anno_regole
+  FOR EACH ROW EXECUTE FUNCTION public.anno_regole_marca_data();
+
+CREATE TABLE IF NOT EXISTS public.anno_tabelle (
+  tabella              text PRIMARY KEY,
+  modo                 text NOT NULL,
+  colonna_data         text,           -- giorno o istante da cui si ricava l'anno
+  colonna_data_riserva text,           -- se la prima è NULL nella riga
+  via_sede             text,           -- la colonna che porta alla sede
+  madre_tabella        text,           -- modo `madre`: la tabella da cui si eredita l'anno...
+  madre_colonna        text,           -- ...e la colonna di questa che punta al suo `id`
+  colonna_creazione    text,           -- quando la riga è nata (la guardia e le invarianti)
+  rigida               boolean NOT NULL DEFAULT false,   -- true: controlli rigidi anche a `controlli_rigidi` spento
+  CONSTRAINT anno_tabelle_modo_check CHECK (modo IN ('data', 'dichiarato', 'madre')),
+  CONSTRAINT anno_tabelle_via_sede_check
+    CHECK (via_sede IS NULL OR via_sede IN ('scuola_id', 'section_id', 'alunno_id', 'student_id', 'thread_id')),
+  CONSTRAINT anno_tabelle_data_ha_colonna CHECK (modo <> 'data' OR (colonna_data IS NOT NULL AND via_sede IS NOT NULL)),
+  CONSTRAINT anno_tabelle_dichiarato_ha_sede CHECK (modo <> 'dichiarato' OR via_sede IS NOT NULL),
+  CONSTRAINT anno_tabelle_madre_ha_madre
+    CHECK ((modo = 'madre') = (madre_tabella IS NOT NULL AND madre_colonna IS NOT NULL)),
+  CONSTRAINT anno_tabelle_riserva_ha_data CHECK (colonna_data_riserva IS NULL OR colonna_data IS NOT NULL)
+);
+
+-- La sede (`schools.id`) a cui appartiene una riga, data come jsonb. Prima la colonna del registro,
+-- poi, se è NULL, le altre vie nell'ordine di R5: scuola_id, section_id, alunno_id / student_id,
+-- thread_id (conversazione → alunno). Ritorna la SEDE, non la riga di `anni_sede`: serve a
+-- `anno_di(sede, giorno)`. NULL se la riga non porta a nessuna sede. Solo letture per chiave.
+-- Ogni via è un'istruzione a parte (IF, non CASE): una tabella assente nel DB della CI non si pianifica
+-- finché la via non serve.
+CREATE OR REPLACE FUNCTION public.anno_sede_della_riga(p_tabella text, p_riga jsonb)
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_via    text;
+  v_col    text;
+  v_valore text;
+  v_sede   uuid;
+BEGIN
+  SELECT t.via_sede INTO v_via FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
+
+  FOREACH v_col IN ARRAY ARRAY[coalesce(v_via, 'scuola_id'), 'scuola_id', 'section_id', 'alunno_id', 'student_id', 'thread_id'] LOOP
+    v_valore := p_riga ->> v_col;
+    CONTINUE WHEN v_valore IS NULL;
+    v_sede := NULL;
+    IF v_col = 'scuola_id' THEN
+      v_sede := v_valore::uuid;
+    ELSIF v_col = 'section_id' THEN
+      SELECT s.scuola_id INTO v_sede FROM public.sections s WHERE s.id = v_valore::uuid;
+    ELSIF v_col IN ('alunno_id', 'student_id') THEN
+      SELECT a.scuola_id INTO v_sede FROM public.alunni a WHERE a.id = v_valore::uuid;
+    ELSIF v_col = 'thread_id' THEN
+      SELECT a.scuola_id INTO v_sede
+        FROM public.chat_threads t JOIN public.alunni a ON a.id = t.student_id
+       WHERE t.id = v_valore::uuid;
+    END IF;
+    EXIT WHEN v_sede IS NOT NULL;
+  END LOOP;
+  RETURN v_sede;
+END
+$$;
+
+-- Il trigger generico. Una lettura del registro per riga, poi solo ricerche per chiave.
+--   · modo `data`: l'anno è quello che contiene il giorno (di ROMA) nella sede della riga;
+--   · modo `dichiarato`: l'anno lo scrive chi inserisce; se la tabella ha una data (pagamenti:
+--     competenza, altrimenti scadenza) e anno_id manca, si ricava, e se c'è si confronta;
+--   · modo `madre`: l'anno è quello della riga madre.
+-- Controlli MORBIDI (default, e R2): mai un'eccezione. Anno non trovato → anno_id resta NULL;
+-- anno scritto e diverso → lasciato com'è (le invarianti lo contano). RIGIDI (`anno_regole`, o
+-- `rigida` della tabella): GIORNO_SENZA_ANNO, ANNO_NON_COERENTE, SEZIONE_DI_ALTRO_ANNO.
+-- UPDATE: si ricalcola e si verifica solo se cambia la colonna data (o la riserva), la via della
+-- sede, la madre, section_id o anno_id, oppure se anno_id è NULL: una riga vecchia incoerente non
+-- deve bloccare una scrittura che con lei non c'entra. DELETE: nel 1.4a passa (OLD).
+CREATE OR REPLACE FUNCTION public.anno_assegna_e_verifica()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_reg       public.anno_tabelle%ROWTYPE;
+  v_rigidi    boolean;
+  v_n         jsonb;
+  v_o         jsonb;
+  v_attuale   uuid;
+  v_calcolato uuid;
+  v_sede      uuid;
+  v_testo     text;
+  v_giorno    date;
+  v_sez_anno  uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+
+  SELECT * INTO v_reg FROM public.anno_tabelle WHERE tabella = TG_TABLE_NAME;
+  IF NOT FOUND THEN
+    RETURN NEW;
+  END IF;
+
+  v_n := to_jsonb(NEW);
+  v_attuale := (v_n ->> 'anno_id')::uuid;
+
+  IF TG_OP = 'UPDATE' AND v_attuale IS NOT NULL THEN
+    v_o := to_jsonb(OLD);
+    IF (v_n ->> 'anno_id')                       IS NOT DISTINCT FROM (v_o ->> 'anno_id')
+       AND (v_n ->> v_reg.colonna_data)          IS NOT DISTINCT FROM (v_o ->> v_reg.colonna_data)
+       AND (v_n ->> v_reg.colonna_data_riserva)  IS NOT DISTINCT FROM (v_o ->> v_reg.colonna_data_riserva)
+       AND (v_n ->> v_reg.via_sede)              IS NOT DISTINCT FROM (v_o ->> v_reg.via_sede)
+       AND (v_n ->> v_reg.madre_colonna)         IS NOT DISTINCT FROM (v_o ->> v_reg.madre_colonna)
+       AND (v_n ->> 'section_id')                IS NOT DISTINCT FROM (v_o ->> 'section_id') THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+
+  v_rigidi := v_reg.rigida OR (SELECT r.controlli_rigidi FROM public.anno_regole r);
+
+  IF v_reg.modo = 'madre' THEN
+    EXECUTE format('SELECT anno_id FROM public.%I WHERE id = $1', v_reg.madre_tabella)
+       INTO v_calcolato USING (v_n ->> v_reg.madre_colonna)::uuid;
+  ELSIF v_reg.colonna_data IS NOT NULL THEN
+    v_testo := coalesce(v_n ->> v_reg.colonna_data, v_n ->> v_reg.colonna_data_riserva);
+    IF v_testo IS NOT NULL THEN
+      -- un `date` esce come 'AAAA-MM-GG'; un istante porta l'ora: il giorno è quello di Roma
+      v_giorno := CASE WHEN length(v_testo) = 10 THEN v_testo::date
+                       ELSE public.giorno_roma(v_testo::timestamptz) END;
+    END IF;
+    v_sede := public.anno_sede_della_riga(TG_TABLE_NAME, v_n);
+    IF v_giorno IS NOT NULL AND v_sede IS NOT NULL THEN
+      v_calcolato := public.anno_di(v_sede, v_giorno);
+    END IF;
+    IF v_calcolato IS NULL AND v_rigidi
+       AND (v_reg.modo = 'data' OR (v_giorno IS NOT NULL AND v_sede IS NOT NULL)) THEN
+      RAISE EXCEPTION 'GIORNO_SENZA_ANNO'
+        USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'giorno', v_giorno,
+                                         'sede_nota', v_sede IS NOT NULL)::text;
+    END IF;
+  END IF;
+
+  IF v_calcolato IS NOT NULL THEN
+    IF v_attuale IS NULL THEN
+      NEW := jsonb_populate_record(NEW, jsonb_build_object('anno_id', v_calcolato));
+      v_attuale := v_calcolato;
+    ELSIF v_attuale <> v_calcolato AND v_rigidi THEN
+      RAISE EXCEPTION 'ANNO_NON_COERENTE'
+        USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'anno_id', v_attuale,
+                                         'anno_atteso', v_calcolato)::text;
+    END IF;
+  END IF;
+
+  -- La sezione della riga deve essere dello stesso anno (solo controlli rigidi).
+  IF v_rigidi AND v_attuale IS NOT NULL AND (v_n ->> 'section_id') IS NOT NULL THEN
+    SELECT s.anno_id INTO v_sez_anno FROM public.sections s WHERE s.id = (v_n ->> 'section_id')::uuid;
+    IF FOUND AND v_sez_anno <> v_attuale THEN
+      RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
+        USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'section_id', v_n ->> 'section_id')::text;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+-- Il registro. Una tabella entra SOLO se `to_regclass` la trova (e trova anche la sua madre): il DB
+-- E2E della CI non le ha tutte. `sections` e `frequenze` hanno trigger propri (1.2, 1.3) che girano
+-- prima; il generico gira per ultimo (R9). Le due rigide da subito sono nuove e vuote (R2).
+-- Le ultime otto righe sono le figlie che R5 nomina senza elencarle: colonna verso la madre letta
+-- dalla loro migrazione (baseline 20260704120000, votazioni_rappresentanti 20261102100040).
+INSERT INTO public.anno_tabelle
+  (tabella, modo, colonna_data, colonna_data_riserva, via_sede, madre_tabella, madre_colonna, colonna_creazione, rigida)
+SELECT v.*
+  FROM (VALUES
+    ('presenze',               'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'created_at', false),
+    ('eventi_diario',          'data', 'giorno_competenza', 'orario_inizio','alunno_id',  NULL, NULL, 'creato_il',  false),
+    ('valutazioni',            'data', 'data_evento',       'creato_il',    'alunno_id',  NULL, NULL, 'creato_il',  false),
+    ('note_disciplinari',      'data', 'data_evento',       'creato_il',    'alunno_id',  NULL, NULL, 'creato_il',  false),
+    ('registro_orario',        'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
+    ('giustifiche_didattiche', 'data', 'data',              NULL,           'alunno_id',  NULL, NULL, 'creato_il',  false),
+    ('eventi_agenda',          'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
+    ('armadietto',             'data', 'date',              NULL,           'scuola_id',  NULL, NULL, 'created_at', false),
+    ('armadietto_richieste',   'data', 'creato_il',         NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
+    ('mensa_prenotazioni',     'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
+    ('mensa_alternative',      'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'created_at', false),
+    ('galleria_media_v2',      'data', 'giorno_competenza', 'created_at',   'scuola_id',  NULL, NULL, 'created_at', false),
+    ('video_intents',          'data', 'giorno_competenza', 'created_at',   'scuola_id',  NULL, NULL, 'created_at', false),
+    ('avvisi',                 'data', 'giorno_competenza', 'created_at',   'scuola_id',  NULL, NULL, 'created_at', false),
+    ('forms_submissions',      'data', 'created_at',        NULL,           'student_id', NULL, NULL, 'created_at', false),
+    ('form_submissions',       'data', 'signed_at',         'created_at',   'scuola_id',  NULL, NULL, 'created_at', false),
+    ('chat_messages',          'data', 'created_at',        NULL,           'thread_id',  NULL, NULL, 'created_at', false),
+    ('student_documents',      'data', 'created_at',        NULL,           'student_id', NULL, NULL, 'created_at', false),
+    ('iscrizioni_servizi',     'data', 'dal',               NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
+    ('pagamenti',              'dichiarato', 'periodo_competenza', 'scadenza', 'scuola_id', NULL, NULL, 'creato_il', false),
+    ('enrollment_submissions', 'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'created_at', false),
+    ('crm_bambini',            'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'creata_il',  false),
+    ('votazioni',              'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'creata_il',  false),
+    ('scrutinio_periodi',      'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'creato_il',  false),
+    ('certificati_competenze', 'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'created_at', false),
+    ('iscrizioni_elenco_caricamenti', 'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'caricato_il', false),
+    ('sections',               'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'created_at', false),
+    ('frequenze',              'dichiarato', NULL, NULL, 'scuola_id', NULL, NULL, 'creata_il',  true),
+    ('utenti_sezioni',         'madre', NULL, NULL, NULL, 'sections',                     'section_id',    'creato_il',   false),
+    ('pagamenti_quote',        'madre', NULL, NULL, NULL, 'pagamenti',                    'pagamento_id',  'creato_il',   false),
+    ('scrutini',               'madre', NULL, NULL, NULL, 'scrutinio_periodi',            'periodo_id',    'creato_il',   false),
+    ('pagelle',                'madre', NULL, NULL, NULL, 'scrutini',                     'scrutinio_id',  'generata_il', false),
+    ('avvisi_risposte',        'madre', NULL, NULL, NULL, 'avvisi',                       'avviso_id',     NULL,          false),
+    ('gallery_photo_uploads',  'madre', NULL, NULL, NULL, 'galleria_media_v2',            'media_id',      NULL,          false),
+    ('video_jobs',             'madre', NULL, NULL, NULL, 'video_intents',                'intent_id',     'created_at',  false),
+    ('iscrizioni_elenco_righe','madre', NULL, NULL, NULL, 'iscrizioni_elenco_caricamenti','caricamento_id','creato_il',   false),
+    ('iscrizioni_decisioni',   'madre', NULL, NULL, NULL, 'enrollment_submissions',       'submission_id', 'decisa_il',   false),
+    ('frequenze_moduli',       'madre', NULL, NULL, NULL, 'frequenze',                    'frequenza_id',  'spuntato_il', true),
+    ('scrutinio_giudizi',      'madre', NULL, NULL, NULL, 'scrutini',                     'scrutinio_id',  'proposto_il', false),
+    ('scrutinio_comportamento','madre', NULL, NULL, NULL, 'scrutini',                     'scrutinio_id',  NULL,          false),
+    ('scrutinio_giudizio_descrittivo','madre', NULL, NULL, NULL, 'scrutinio_periodi',     'periodo_id',    'creato_il',   false),
+    ('pagella_ricezioni',      'madre', NULL, NULL, NULL, 'scrutini',                     'scrutinio_id',  'firmato_il',  false),
+    ('nota_ricezioni',         'madre', NULL, NULL, NULL, 'note_disciplinari',            'nota_id',       'firmato_il',  false),
+    ('valutazione_obiettivi',  'madre', NULL, NULL, NULL, 'valutazioni',                  'valutazione_id',NULL,          false),
+    ('votazioni_classi',       'madre', NULL, NULL, NULL, 'votazioni',                    'votazione_id',  NULL,          false),
+    ('votazioni_candidati',    'madre', NULL, NULL, NULL, 'votazioni',                    'votazione_id',  NULL,          false),
+    ('votazioni_voti',         'madre', NULL, NULL, NULL, 'votazioni',                    'votazione_id',  'votato_il',   false)
+  ) AS v(tabella, modo, colonna_data, colonna_data_riserva, via_sede, madre_tabella, madre_colonna, colonna_creazione, rigida)
+ WHERE to_regclass(format('public.%I', v.tabella)) IS NOT NULL
+   AND (v.madre_tabella IS NULL OR to_regclass(format('public.%I', v.madre_tabella)) IS NOT NULL)
+ON CONFLICT (tabella) DO UPDATE
+  SET modo = excluded.modo, colonna_data = excluded.colonna_data,
+      colonna_data_riserva = excluded.colonna_data_riserva, via_sede = excluded.via_sede,
+      madre_tabella = excluded.madre_tabella, madre_colonna = excluded.madre_colonna,
+      colonna_creazione = excluded.colonna_creazione, rigida = excluded.rigida;
+
+-- Il registro dice il vero, o la migrazione si ferma (e torna indietro tutta): una colonna scritta
+-- male non farebbe rumore, farebbe un `anno_id` NULL per sempre. E una madre fuori dal registro non
+-- trasmetterebbe nessun anno.
+DO $mig$
+DECLARE
+  r record;
+  c text;
+BEGIN
+  FOR r IN SELECT * FROM public.anno_tabelle LOOP
+    FOREACH c IN ARRAY array_remove(ARRAY[r.colonna_data, r.colonna_data_riserva, r.via_sede,
+                                          r.madre_colonna, r.colonna_creazione], NULL) LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                      WHERE attrelid = to_regclass(format('public.%I', r.tabella))
+                        AND attname = c AND attnum > 0 AND NOT attisdropped) THEN
+        RAISE EXCEPTION 'anno_tabelle: la tabella % non ha la colonna %', r.tabella, c;
+      END IF;
+    END LOOP;
+    IF r.madre_tabella IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM public.anno_tabelle m WHERE m.tabella = r.madre_tabella) THEN
+      RAISE EXCEPTION 'anno_tabelle: la madre % di % non è nel registro', r.madre_tabella, r.tabella;
+    END IF;
+  END LOOP;
+END
+$mig$;
+
+-- Per ogni tabella del registro: la colonna `anno_id` (NULL ammesso: la riempie il trigger, e la PR 2
+-- per i dichiarati), la chiave esterna (composta (scuola_id, anno_id) → anni_sede dove la tabella ha
+-- `scuola_id`: l'anno deve essere uno che la SUA sede ha; semplice → anni_scolastici altrove), il suo
+-- indice, e il trigger generico. `sections` e `frequenze` hanno già colonna, chiavi e indici (1.2, 1.3):
+-- ricevono solo il trigger.
+DO $mig$
+DECLARE
+  r        record;
+  v_nuova  boolean;
+  v_scuola boolean;
+BEGIN
+  FOR r IN SELECT tabella FROM public.anno_tabelle ORDER BY tabella LOOP
+    v_nuova := NOT EXISTS (SELECT 1 FROM pg_attribute
+                            WHERE attrelid = to_regclass(format('public.%I', r.tabella))
+                              AND attname = 'anno_id' AND attnum > 0 AND NOT attisdropped);
+    IF v_nuova THEN
+      EXECUTE format('ALTER TABLE public.%I ADD COLUMN anno_id uuid', r.tabella);
+      v_scuola := EXISTS (SELECT 1 FROM pg_attribute
+                           WHERE attrelid = to_regclass(format('public.%I', r.tabella))
+                             AND attname = 'scuola_id' AND attnum > 0 AND NOT attisdropped);
+      IF v_scuola THEN
+        EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I FOREIGN KEY (scuola_id, anno_id) REFERENCES public.anni_sede(scuola_id, anno_id)',
+                       r.tabella, r.tabella || '_scuola_anno_fkey');
+        EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON public.%I (scuola_id, anno_id)',
+                       r.tabella || '_scuola_anno_idx', r.tabella);
+      ELSE
+        EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I FOREIGN KEY (anno_id) REFERENCES public.anni_scolastici(id)',
+                       r.tabella, r.tabella || '_anno_id_fkey');
+        EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON public.%I (anno_id)',
+                       r.tabella || '_anno_id_idx', r.tabella);
+      END IF;
+    END IF;
+
+    -- «zz»: Postgres lancia i trigger BEFORE in ordine alfabetico, e la guardia gira dopo il calcolo.
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_zz_anno_assegna_e_verifica ON public.%I', r.tabella);
+    EXECUTE format('CREATE TRIGGER trg_zz_anno_assegna_e_verifica BEFORE INSERT OR UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.anno_assegna_e_verifica()',
+                   r.tabella);
+  END LOOP;
+END
+$mig$;
+
+-- Sicurezza (R13): come le altre tabelle nuove.
+ALTER TABLE public.anno_regole  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.anno_tabelle ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.anno_regole  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.anno_tabelle FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_regole  TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_tabelle TO service_role;
+
+REVOKE ALL ON FUNCTION public.anno_regole_marca_data()                FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_sede_della_riga(text, jsonb)       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_assegna_e_verifica()               FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_regole_marca_data()             TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_sede_della_riga(text, jsonb)    TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_assegna_e_verifica()            TO service_role;
+
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;

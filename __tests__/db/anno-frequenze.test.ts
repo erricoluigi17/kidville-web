@@ -518,7 +518,7 @@ describe('frequenze_moduli', () => {
     expect(await una<boolean>(`SELECT spuntato_il IS NOT NULL FROM public.frequenze_moduli WHERE frequenza_id = $1`, [f])).toBe(true)
     const colonne = await db.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='frequenze_moduli' ORDER BY 1`)
-    expect(colonne.rows.map((c) => c.column_name)).toEqual(['frequenza_id', 'id', 'modulo_id', 'spuntato_da', 'spuntato_il'])
+    expect(colonne.rows.map((c) => c.column_name)).toEqual(['anno_id', 'frequenza_id', 'id', 'modulo_id', 'spuntato_da', 'spuntato_il'])  // anno_id: l'aggiunge il 1.4a (R24), eredita dalla frequenza
   })
 
   it('eliminare la frequenza elimina le sue spunte, senza errori', async () => {
@@ -665,11 +665,11 @@ describe('configurazione dell\'anno (§4.4.4)', () => {
     }
   })
 
-  it('le tre tabelle non hanno anno_id (R9): appendono ad anno_sede_id', async () => {
+  it('le tre tabelle non hanno anno_id (R9): appendono ad anno_sede_id; frequenze_moduli sì (1.4a, R24)', async () => {
     const r = await db.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='anno_id'
           AND table_name IN ('listino_voci', 'moduli_richiesti', 'posti_autorizzati', 'frequenze_moduli')`)
-    expect(r.rows).toEqual([])
+    expect(r.rows).toEqual([{ table_name: 'frequenze_moduli' }])
   })
 })
 

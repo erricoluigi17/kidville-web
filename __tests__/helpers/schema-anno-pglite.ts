@@ -76,7 +76,10 @@ export const SCHEMA_BASE = `
   CREATE TABLE public.avvisi (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     scuola_id uuid,
-    target_classes text[]
+    target_classes text[],
+    -- 1.4a: le due colonne da cui il registro ricava l'anno (come in produzione)
+    giorno_competenza date,
+    created_at timestamptz DEFAULT now()
   );
   CREATE TABLE public.app_log (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -147,6 +150,49 @@ export const SCHEMA_BASE = `
     AFTER UPDATE OF name ON public.sections
     FOR EACH ROW WHEN (NEW.name IS DISTINCT FROM OLD.name)
     EXECUTE FUNCTION public.propaga_rinomina_sezione();
+
+  -- ── Compito 1.4a: alcune tabelle del registro, con i nomi veri delle colonne di produzione ──
+  -- Una per ogni modo: \`presenze\` e \`valutazioni\` (data, via scuola_id / alunno_id), \`chat_messages\`
+  -- (data, via thread → alunno), \`pagamenti\` (dichiarato, sopra), \`utenti_sezioni\` (madre). Il resto
+  -- del registro NON c'è: la migrazione lo salta con to_regclass, come sul DB della CI.
+  CREATE TABLE public.presenze (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    scuola_id uuid NOT NULL,
+    section_id uuid,
+    data date NOT NULL,
+    created_at timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.valutazioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    section_id uuid,
+    data_evento date,
+    creato_il timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.chat_threads (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    teacher_id uuid,
+    parent_id uuid,
+    student_id uuid,
+    created_at timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.chat_messages (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    thread_id uuid NOT NULL REFERENCES public.chat_threads(id) ON DELETE CASCADE,
+    created_at timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.utenti_sezioni (
+    utente_id uuid NOT NULL,
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    creato_il timestamptz DEFAULT now(),
+    PRIMARY KEY (utente_id, section_id)
+  );
+
+  -- Il browser scrive \`presenze\` (e la chat, e syncEngine) sotto RLS: una policy aperta, come
+  -- quelle vere, perché il test del trigger come \`authenticated\` (R13) abbia qualcosa da attraversare.
+  ALTER TABLE public.presenze ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY presenze_aperta ON public.presenze FOR ALL TO authenticated USING (true) WITH CHECK (true);
 `
 
 export interface OpzioniDbAnno {

@@ -414,3 +414,71 @@ describe('anno_sede_della_riga', () => {
     expect(await sede('presenze', {})).toBeNull()
   })
 })
+
+describe('giro 1 · la rete del ramo morbido e la validazione delle madri', () => {
+  const dbMadreSenza = (colonne: string) => creaDbAnno({
+    codaPrima: `
+      CREATE TABLE public.votazioni (${colonne}, scuola_id uuid, creata_il timestamptz DEFAULT now());
+      CREATE TABLE public.votazioni_classi (votazione_id uuid NOT NULL, scuola_id uuid);
+    `,
+  })
+
+  it('la migrazione si ferma se una madre non ha la colonna id', async () => {
+    await expect(dbMadreSenza('codice uuid')).rejects.toThrow(/la madre votazioni non ha una colonna id uuid/)
+  })
+
+  it('la migrazione si ferma se una madre ha un anno_id che non è uuid', async () => {
+    await expect(dbMadreSenza('id uuid PRIMARY KEY DEFAULT gen_random_uuid(), anno_id text'))
+      .rejects.toThrow(/la madre votazioni non ha una colonna anno_id uuid/)
+  })
+
+  it('con madri a posto la migrazione passa (la stessa tabella, fatta bene)', async () => {
+    const d = await dbMadreSenza('id uuid PRIMARY KEY DEFAULT gen_random_uuid()')
+    const n = (await d.query<{ n: string }>(`SELECT count(*)::text n FROM public.anno_tabelle WHERE tabella = 'votazioni_classi'`)).rows[0].n
+    expect(n).toBe('1')
+    await d.close()
+  })
+
+  describe('un guasto nel calcolo', () => {
+    let d: PGlite
+    const S = '22222222-2222-4222-8222-222222222299'
+    const scrivi = () => d.query<{ anno_id: string | null }>(
+      `INSERT INTO public.prova_guasto (scuola_id, giorno) VALUES ($1, 'non-una-data') RETURNING anno_id`, [S])
+    beforeAll(async () => {
+      d = await creaDbAnno({ sediPrimaDellaMigrazione: [S] })
+      // Una tabella di prova registrata apposta, con una colonna «data» che non si converte.
+      await d.exec(`
+        CREATE TABLE public.prova_guasto (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), scuola_id uuid NOT NULL, giorno text, anno_id uuid);
+        INSERT INTO public.anno_tabelle (tabella, modo, colonna_data, via_sede) VALUES ('prova_guasto', 'data', 'giorno', 'scuola_id');
+        CREATE TRIGGER trg_zz_anno_assegna_e_verifica BEFORE INSERT OR UPDATE OR DELETE ON public.prova_guasto
+          FOR EACH ROW EXECUTE FUNCTION public.anno_assegna_e_verifica();
+      `)
+    }, 60_000)
+    afterAll(async () => { await d.close() })
+    beforeEach(async () => { await d.query('UPDATE public.anno_regole SET controlli_rigidi = false') })
+
+    it('a controlli spenti la scrittura passa con anno_id NULL e lascia una riga in app_log', async () => {
+      expect((await scrivi()).rows[0].anno_id).toBeNull()
+      const log = (await d.query<{ livello: string; fingerprint: string; contesto: Record<string, unknown> }>(
+        `SELECT livello, fingerprint, contesto FROM public.app_log WHERE fingerprint LIKE 'db:anno-calcolo:%'`)).rows
+      expect(log).toHaveLength(1)
+      expect(log[0]).toMatchObject({ livello: 'error', fingerprint: 'db:anno-calcolo:prova_guasto' })
+      expect(log[0].contesto).toMatchObject({ tabella: 'prova_guasto', sqlstate: '22007' })
+      // nessun valore della riga nel log
+      expect(JSON.stringify(log[0].contesto)).not.toContain('non-una-data')
+    })
+
+    it('un secondo guasto lo stesso giorno non duplica la riga: conta le occorrenze', async () => {
+      await scrivi()
+      const r = (await d.query<{ occorrenze: number }>(
+        `SELECT occorrenze FROM public.app_log WHERE fingerprint = 'db:anno-calcolo:prova_guasto'`)).rows
+      expect(r).toHaveLength(1)
+      expect(r[0].occorrenze).toBeGreaterThanOrEqual(2)
+    })
+
+    it('a controlli accesi lo stesso guasto solleva ancora (la rete è solo del ramo morbido)', async () => {
+      await d.query('UPDATE public.anno_regole SET controlli_rigidi = true')
+      await expect(scrivi()).rejects.toMatchObject({ code: '22007' })
+    })
+  })
+})

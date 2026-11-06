@@ -451,7 +451,7 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       'frequenze_assegna_e_calcola', 'frequenze_moduli_verifica', 'frequenze_moduli_tocca_frequenza',
       'moduli_richiesti_tocca_frequenze', 'pagamenti_tocca_frequenze',
       // Compito 1.4a: il trigger generico, la sede di una riga e la data delle manopole.
-      'anno_assegna_e_verifica', 'anno_sede_della_riga', 'anno_regole_marca_data',
+      'anno_assegna_e_verifica', 'anno_calcola_della_riga', 'anno_sede_della_riga', 'anno_regole_marca_data',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })

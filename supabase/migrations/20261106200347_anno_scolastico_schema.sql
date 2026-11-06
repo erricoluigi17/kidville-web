@@ -1319,6 +1319,47 @@ BEGIN
 END
 $$;
 
+-- Il calcolo dell'anno di una riga, separato dal trigger perché il ramo morbido lo avvolge in una rete.
+-- Con `p_rigidi` falso non solleva MAI i codici d'errore (GIORNO_SENZA_ANNO); un guasto vero (cast,
+-- colonna inattesa) sale comunque, ed è la rete del trigger a prenderlo.
+CREATE OR REPLACE FUNCTION public.anno_calcola_della_riga(p_reg public.anno_tabelle, p_n jsonb, p_rigidi boolean)
+RETURNS uuid
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_calcolato uuid;
+  v_sede      uuid;
+  v_testo     text;
+  v_giorno    date;
+BEGIN
+  IF p_reg.modo = 'madre' THEN
+    EXECUTE format('SELECT anno_id FROM public.%I WHERE id = $1', p_reg.madre_tabella)
+       INTO v_calcolato USING (p_n ->> p_reg.madre_colonna)::uuid;
+  ELSIF p_reg.colonna_data IS NOT NULL THEN
+    v_testo := coalesce(p_n ->> p_reg.colonna_data, p_n ->> p_reg.colonna_data_riserva);
+    IF v_testo IS NOT NULL THEN
+      -- un `date` esce come 'AAAA-MM-GG'; un istante porta l'ora: il giorno è quello di Roma
+      v_giorno := CASE WHEN length(v_testo) = 10 THEN v_testo::date
+                       ELSE public.giorno_roma(v_testo::timestamptz) END;
+    END IF;
+    v_sede := public.anno_sede_della_riga(p_reg.tabella, p_n);
+    IF v_giorno IS NOT NULL AND v_sede IS NOT NULL THEN
+      v_calcolato := public.anno_di(v_sede, v_giorno);
+    END IF;
+    IF v_calcolato IS NULL AND p_rigidi
+       AND (p_reg.modo = 'data' OR (v_giorno IS NOT NULL AND v_sede IS NOT NULL)) THEN
+      RAISE EXCEPTION 'GIORNO_SENZA_ANNO'
+        USING DETAIL = json_build_object('tabella', p_reg.tabella, 'giorno', v_giorno,
+                                         'sede_nota', v_sede IS NOT NULL)::text;
+    END IF;
+  END IF;
+  RETURN v_calcolato;
+END
+$$;
+
 -- Il trigger generico. Una lettura del registro per riga, poi solo ricerche per chiave.
 --   · modo `data`: l'anno è quello che contiene il giorno (di ROMA) nella sede della riga;
 --   · modo `dichiarato`: l'anno lo scrive chi inserisce; se la tabella ha una data (pagamenti:
@@ -1343,9 +1384,6 @@ DECLARE
   v_o         jsonb;
   v_attuale   uuid;
   v_calcolato uuid;
-  v_sede      uuid;
-  v_testo     text;
-  v_giorno    date;
   v_sez_anno  uuid;
 BEGIN
   IF TG_OP = 'DELETE' THEN
@@ -1374,26 +1412,31 @@ BEGIN
 
   v_rigidi := v_reg.rigida OR (SELECT r.controlli_rigidi FROM public.anno_regole r);
 
-  IF v_reg.modo = 'madre' THEN
-    EXECUTE format('SELECT anno_id FROM public.%I WHERE id = $1', v_reg.madre_tabella)
-       INTO v_calcolato USING (v_n ->> v_reg.madre_colonna)::uuid;
-  ELSIF v_reg.colonna_data IS NOT NULL THEN
-    v_testo := coalesce(v_n ->> v_reg.colonna_data, v_n ->> v_reg.colonna_data_riserva);
-    IF v_testo IS NOT NULL THEN
-      -- un `date` esce come 'AAAA-MM-GG'; un istante porta l'ora: il giorno è quello di Roma
-      v_giorno := CASE WHEN length(v_testo) = 10 THEN v_testo::date
-                       ELSE public.giorno_roma(v_testo::timestamptz) END;
-    END IF;
-    v_sede := public.anno_sede_della_riga(TG_TABLE_NAME, v_n);
-    IF v_giorno IS NOT NULL AND v_sede IS NOT NULL THEN
-      v_calcolato := public.anno_di(v_sede, v_giorno);
-    END IF;
-    IF v_calcolato IS NULL AND v_rigidi
-       AND (v_reg.modo = 'data' OR (v_giorno IS NOT NULL AND v_sede IS NOT NULL)) THEN
-      RAISE EXCEPTION 'GIORNO_SENZA_ANNO'
-        USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'giorno', v_giorno,
-                                         'sede_nota', v_sede IS NOT NULL)::text;
-    END IF;
+  -- Il calcolo. RIGIDO: gli errori, i codici compresi, salgono. MORBIDO: una rete che non rifiuta
+  -- mai una scrittura di oggi (R2): un guasto del calcolo (una colonna che non si converte, una madre
+  -- con la chiave fatta diversamente) lascia `anno_id` NULL e lascia una traccia in `app_log`. La rete
+  -- copre SOLO il calcolo, e nel ramo morbido il calcolo non solleva i codici d'errore.
+  IF v_rigidi THEN
+    v_calcolato := public.anno_calcola_della_riga(v_reg, v_n, true);
+  ELSE
+    BEGIN
+      v_calcolato := public.anno_calcola_della_riga(v_reg, v_n, false);
+    EXCEPTION WHEN OTHERS THEN
+      v_calcolato := NULL;
+      BEGIN
+        -- Nel contesto solo tabella e SQLSTATE: il testo di un errore di Postgres può portarsi dietro valori.
+        INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+        VALUES ('error', 'anno-scolastico', 'server',
+                'calcolo dell''anno fallito: la scrittura è passata con anno_id NULL',
+                'db:anno-calcolo:' || TG_TABLE_NAME,
+                jsonb_build_object('esito', 'calcolo-anno-fallito', 'operazione', 'anno_assegna_e_verifica',
+                                   'tabella', TG_TABLE_NAME, 'sqlstate', SQLSTATE))
+        ON CONFLICT (fingerprint, giorno) DO UPDATE
+          SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
+      EXCEPTION WHEN OTHERS THEN
+        NULL;   -- fail-open: un guasto del registro non diventa un guasto della scrittura
+      END;
+    END;
   END IF;
 
   IF v_calcolato IS NOT NULL THEN
@@ -1551,6 +1594,29 @@ BEGIN
 END
 $mig$;
 
+-- Il trigger legge `id` e `anno_id` della madre: se una madre ha la chiave fatta diversamente, o un
+-- `anno_id` di un altro tipo, ogni scrittura della figlia fallirebbe (42703) o non erediterebbe nulla.
+DO $mig$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT DISTINCT madre_tabella FROM public.anno_tabelle WHERE madre_tabella IS NOT NULL LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                    WHERE attrelid = to_regclass(format('public.%I', r.madre_tabella))
+                      AND attname = 'id' AND attnum > 0 AND NOT attisdropped
+                      AND atttypid = 'uuid'::regtype) THEN
+      RAISE EXCEPTION 'anno_tabelle: la madre % non ha una colonna id uuid', r.madre_tabella;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                    WHERE attrelid = to_regclass(format('public.%I', r.madre_tabella))
+                      AND attname = 'anno_id' AND attnum > 0 AND NOT attisdropped
+                      AND atttypid = 'uuid'::regtype) THEN
+      RAISE EXCEPTION 'anno_tabelle: la madre % non ha una colonna anno_id uuid', r.madre_tabella;
+    END IF;
+  END LOOP;
+END
+$mig$;
+
 -- Sicurezza (R13): come le altre tabelle nuove.
 ALTER TABLE public.anno_regole  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.anno_tabelle ENABLE ROW LEVEL SECURITY;
@@ -1561,9 +1627,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_tabelle TO service_rol
 
 REVOKE ALL ON FUNCTION public.anno_regole_marca_data()                FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_sede_della_riga(text, jsonb)       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_calcola_della_riga(public.anno_tabelle, jsonb, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_assegna_e_verifica()               FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_regole_marca_data()             TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_sede_della_riga(text, jsonb)    TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_calcola_della_riga(public.anno_tabelle, jsonb, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_assegna_e_verifica()            TO service_role;
 
 SET CONSTRAINTS ALL IMMEDIATE;

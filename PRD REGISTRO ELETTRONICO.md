@@ -16,7 +16,7 @@
 
 **Cosa non fa.** Non riempie niente: l'assegnazione dell'anno alle righe esistenti, le frequenze e il NOT NULL sono la **PR 2**; le route e le schermate arrivano nelle PR 3 e 4.
 
-**Prove.** Quattro file in `__tests__/db/` (calendario, frequenze, registro e guardia, invarianti) su PGlite, più i casi del freno SQL per `anno_chiuso.oblio`. Il banco `__tests__/db/anno-banco.test.ts`, che gira solo con `KIDVILLE_BANCO_ANNO=1`, misura il costo del trigger generico e di `anno_invarianti()`.
+**Prove.** Sette file `__tests__/db/anno-*.test.ts` su PGlite: `anno-calendario`, `anno-sezioni`, `anno-frequenze`, `anno-registro-guardia`, `anno-confine` (`sposta_confine_anno`), `anno-invarianti` e il banco `anno-banco`, che gira solo con `KIDVILLE_BANCO_ANNO=1` e misura il costo del trigger generico e di `anno_invarianti()`; più i casi del freno SQL per `anno_chiuso.oblio` in `__tests__/architecture/freno-sql-distruttivo.test.ts`.
 
 **Logging.** Nessuna route o integrazione nuova: la guardia lascia traccia nel database dei guasti e dell'uso dei gettoni (`correzioni_anno_chiuso_usi`). Lo scrivo qui perché non sembri una dimenticanza.
 

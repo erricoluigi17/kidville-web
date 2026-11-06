@@ -362,8 +362,8 @@ export function posterioriCheContengono(
 // `UNIQUE (scuola_id, anno_id)`, un indice unico parziale sullo stato `corrente`, un vincolo `EXCLUDE` sui
 // periodi, `REFERENCES schools` e un trigger su `schools`; più le funzioni `giorno_roma`, `anno_di`,
 // `anno_sede_di`, `anno_attivo` e `anni_sede_crea_per_sede`, `SECURITY DEFINER` con `search_path` fisso. I compiti
-// 1.2–1.5 aggiungono sezioni allo STESSO file (sezioni, frequenze, registro, invarianti): il commento lo
-// completa il compito 1.6 con tutte le guardie che la vedono. Cambieranno davvero, rigenerando dalla produzione
+// 1.2–1.5 aggiungono sezioni allo STESSO file (sezioni, frequenze, registro, invarianti): le guardie che la
+// vedono sono quelle sotto indicate. Cambieranno davvero, rigenerando dalla produzione
 // dopo il merge: la fotografia delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con
 // `scuola_id` e delle FK di sede. Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
 // Compito 1.3 (stessa migrazione): `frequenze` (con `scuola_id`, FK di sede composta, due indici unici — uno

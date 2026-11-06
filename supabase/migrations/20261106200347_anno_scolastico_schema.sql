@@ -16,6 +16,13 @@
 -- anon/authenticated.
 -- =============================================================================
 
+-- Un tetto all'attesa dei lock, per questa transazione soltanto. La migrazione prende circa 47 lock
+-- ACCESS EXCLUSIVE (un ADD COLUMN e un trigger per ogni tabella del registro) e li tiene fino al
+-- COMMIT: ognuno aspetta ogni transazione aperta su quella tabella, e le letture e le scritture si
+-- accodano dietro. Meglio una migrazione che fallisce forte che una tabella calda ferma. Se scatta,
+-- l'errore è 55P03 (lock_not_available) e la migrazione si riapplica a un'ora quieta.
+SET LOCAL lock_timeout = '10s';
+
 CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions;
 
 -- ── 1.1 Calendario ──────────────────────────────────────────────────────────
@@ -484,36 +491,42 @@ BEGIN
   SELECT count(*) = 5 INTO v_ha_registro_orario
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.registro_orario')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'classe_sezione', 'section_id', 'data', 'ora_lezione');
 
   SELECT count(*) = 2 INTO v_ha_avvisi
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.avvisi')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'target_classes');
 
   SELECT count(*) = 2 INTO v_ha_news_posts
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.news_posts')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'target_classes');
 
   SELECT count(*) = 2 INTO v_ha_galleria_media_v2
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.galleria_media_v2')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'target_classes');
 
   SELECT count(*) = 2 INTO v_ha_forms_templates
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.forms_templates')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'target_classes');
 
   SELECT count(*) = 3 INTO v_ha_mensa_class_menu_assignment
     FROM pg_attribute
    WHERE attrelid = to_regclass('public.mensa_class_menu_assignment')
+     AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = attrelid AND c.relkind IN ('r', 'p'))
      AND attnum > 0 AND NOT attisdropped
      AND attname IN ('scuola_id', 'classe', 'attivo_dal');
 
@@ -1277,10 +1290,13 @@ CREATE TABLE IF NOT EXISTS public.anno_tabelle (
   CONSTRAINT anno_tabelle_riserva_ha_data CHECK (colonna_data_riserva IS NULL OR colonna_data IS NOT NULL)
 );
 
--- La sede (`schools.id`) a cui appartiene una riga, data come jsonb. Prima la colonna del registro,
--- poi, se è NULL, le altre vie nell'ordine di R5: scuola_id, section_id, alunno_id / student_id,
--- thread_id (conversazione → alunno). Ritorna la SEDE, non la riga di `anni_sede`: serve a
--- `anno_di(sede, giorno)`. NULL se la riga non porta a nessuna sede. Solo letture per chiave.
+-- La sede (`schools.id`) a cui appartiene una riga, data come jsonb. Se la riga ha una `scuola_id`
+-- non NULL, QUELLA è la sede della riga: è la colonna che usa la chiave esterna composta
+-- (scuola_id, anno_id) → anni_sede, e l'anno deve essere uno che la sede della chiave ha (un bambino
+-- trasferito con righe storiche può avere un alunno di un'altra sede). Solo se manca, si segue la via
+-- del registro e poi le altre nell'ordine di R5: section_id, alunno_id / student_id, thread_id
+-- (conversazione → alunno). Ritorna la SEDE, non la riga di `anni_sede`: serve a `anno_di(sede, giorno)`.
+-- NULL se la riga non porta a nessuna sede. Solo letture per chiave.
 -- Ogni via è un'istruzione a parte (IF, non CASE): una tabella assente nel DB della CI non si pianifica
 -- finché la via non serve.
 CREATE OR REPLACE FUNCTION public.anno_sede_della_riga(p_tabella text, p_riga jsonb)
@@ -1296,9 +1312,13 @@ DECLARE
   v_valore text;
   v_sede   uuid;
 BEGIN
+  IF p_riga ->> 'scuola_id' IS NOT NULL THEN
+    RETURN (p_riga ->> 'scuola_id')::uuid;
+  END IF;
+
   SELECT t.via_sede INTO v_via FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
 
-  FOREACH v_col IN ARRAY ARRAY[coalesce(v_via, 'scuola_id'), 'scuola_id', 'section_id', 'alunno_id', 'student_id', 'thread_id'] LOOP
+  FOREACH v_col IN ARRAY ARRAY[coalesce(v_via, 'scuola_id'), 'section_id', 'alunno_id', 'student_id', 'thread_id'] LOOP
     v_valore := p_riga ->> v_col;
     CONTINUE WHEN v_valore IS NULL;
     v_sede := NULL;
@@ -1503,8 +1523,8 @@ BEGIN
 END
 $$;
 
--- Il registro. Una tabella entra SOLO se `to_regclass` la trova (e trova anche la sua madre): il DB
--- E2E della CI non le ha tutte. `sections` e `frequenze` hanno trigger propri (1.2, 1.3) che girano
+-- Il registro. Una tabella entra SOLO se `to_regclass` la trova ed è una tabella vera, `relkind` r o p
+-- (non una vista), e così la sua madre: il DB E2E della CI non le ha tutte. `sections` e `frequenze` hanno trigger propri (1.2, 1.3) che girano
 -- prima; il generico gira per ultimo (R9). Le due rigide da subito sono nuove e vuote (R2).
 -- Le ultime otto righe sono le figlie che R5 nomina senza elencarle: colonna verso la madre letta
 -- dalla loro migrazione (baseline 20260704120000, votazioni_rappresentanti 20261102100040).
@@ -1560,8 +1580,9 @@ SELECT v.*
     ('votazioni_candidati',    'madre', NULL, NULL, NULL, 'votazioni',                    'votazione_id',  NULL,          false),
     ('votazioni_voti',         'madre', NULL, NULL, NULL, 'votazioni',                    'votazione_id',  'votato_il',   false)
   ) AS v(tabella, modo, colonna_data, colonna_data_riserva, via_sede, madre_tabella, madre_colonna, colonna_creazione, rigida)
- WHERE to_regclass(format('public.%I', v.tabella)) IS NOT NULL
-   AND (v.madre_tabella IS NULL OR to_regclass(format('public.%I', v.madre_tabella)) IS NOT NULL)
+ WHERE EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass(format('public.%I', v.tabella)) AND c.relkind IN ('r', 'p'))
+   AND (v.madre_tabella IS NULL
+        OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass(format('public.%I', v.madre_tabella)) AND c.relkind IN ('r', 'p')))
 ON CONFLICT (tabella) DO UPDATE
   SET modo = excluded.modo, colonna_data = excluded.colonna_data,
       colonna_data_riserva = excluded.colonna_data_riserva, via_sede = excluded.via_sede,
@@ -1729,6 +1750,7 @@ RETURNS text[]
 LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
+SET search_path = public, pg_temp
 AS $$
   SELECT CASE p_tabella
            WHEN 'pagamenti' THEN ARRAY['stato', 'importo_pagato', 'data_incasso', 'ultimo_sollecito_il', 'aggiornato_il']

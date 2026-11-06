@@ -9,6 +9,9 @@ import { creaDbAnno } from '../helpers/schema-anno-pglite'
  * le righe ci siano. PGlite non è Postgres in produzione (è WASM, un solo processo, niente disco):
  * i numeri valgono come ORDINE DI GRANDEZZA e come RAPPORTO fra le righe della tabella, non come
  * tempi assoluti. Solo uuid finti.
+ *
+ * Cosa NON misura: l'UPDATE di una riga con `anno_id` NULL, che fa il calcolo completo finché la PR 2 non
+ * riempie le righe vecchie, perché gli INSERT del banco assegnano già l'anno.
  */
 
 const SEDE = '22222222-2222-4222-8222-222222222222'

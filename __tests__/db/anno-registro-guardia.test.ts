@@ -1073,3 +1073,62 @@ describe('1.4b · la guardia dell\'anno chiuso', () => {
     })
   })
 })
+
+describe('la sede della riga è la sua scuola_id (revisione finale, I1)', () => {
+  const SEDE_B = '22222222-2222-4222-8222-222222222223'
+  let dbB: PGlite
+
+  beforeAll(async () => {
+    // `giustifiche_didattiche` (nel DB vero: scuola_id E alunno_id, via_sede = alunno_id) non è nello schema base.
+    dbB = await creaDbAnno({
+      sediPrimaDellaMigrazione: [SEDE, SEDE_B],
+      codaPrima: `CREATE TABLE public.giustifiche_didattiche (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, scuola_id uuid NOT NULL,
+        data date NOT NULL, creato_il timestamptz DEFAULT now());`,
+    })
+    for (const s of [SEDE, SEDE_B]) await dbB.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [s])
+    await dbB.exec(`
+      INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
+      INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
+      SELECT s.id, y.id, y.inizio_predefinito, y.fine_predefinita, 'in_preparazione', DATE '2028-07-31', y.inizio_predefinito
+        FROM public.schools s JOIN public.anni_scolastici y ON y.anno_inizio = 2027
+       WHERE NOT EXISTS (SELECT 1 FROM public.anni_sede x WHERE x.scuola_id = s.id AND x.anno_id = y.id);
+    `)
+    await dbB.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [ALUNNO, SEDE])
+  }, 60_000)
+  afterAll(async () => { await dbB.close() })
+
+  it('riga con scuola_id della sede B e alunno della sede A, confini diversi, controlli spenti: anno del calendario di B', async () => {
+    // La sede B chiude l'anno 2026/27 il 15/08/2027 (la A il 31/08): il 20/08/2027 è 2027/28 per B, 2026/27 per A.
+    const asB = await dbB.query<{ id: string }>(
+      `SELECT s.id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id
+        WHERE s.scuola_id = $1 AND y.anno_inizio = 2026`, [SEDE_B])
+    await dbB.query(`SELECT public.sposta_confine_anno($1, DATE '2027-08-15')`, [asB.rows[0].id])
+    const attesoB = await dbB.query<{ anno: string }>(`SELECT public.anno_di($1, DATE '2027-08-20') AS anno`, [SEDE_B])
+    const attesoA = await dbB.query<{ anno: string }>(`SELECT public.anno_di($1, DATE '2027-08-20') AS anno`, [SEDE])
+    expect(attesoB.rows[0].anno).not.toBe(attesoA.rows[0].anno)
+
+    await dbB.query('UPDATE public.anno_regole SET controlli_rigidi = false')
+    const r = await dbB.query<{ anno_id: string }>(
+      `INSERT INTO public.giustifiche_didattiche (scuola_id, alunno_id, data) VALUES ($1, $2, DATE '2027-08-20') RETURNING anno_id`,
+      [SEDE_B, ALUNNO])
+    expect(r.rows[0].anno_id).toBe(attesoB.rows[0].anno)
+  })
+})
+
+describe('solo tabelle vere nel registro (revisione finale, I2)', () => {
+  it('una vista con il nome di una tabella del registro non entra, e la migrazione passa', async () => {
+    const dbV = await creaDbAnno({
+      sediPrimaDellaMigrazione: [SEDE],
+      // Come se `eventi_agenda` fosse una vista, e `avvisi_risposte` (figlia di `avvisi`) pure.
+      codaPrima: `CREATE VIEW public.eventi_agenda AS SELECT 1 AS x;
+                  CREATE VIEW public.avvisi_risposte AS SELECT 1 AS avviso_id;
+                  CREATE VIEW public.madre_finta AS SELECT 1 AS id;`,
+    })
+    try {
+      const r = await dbV.query<{ tabella: string }>(
+        `SELECT tabella FROM public.anno_tabelle WHERE tabella IN ('eventi_agenda', 'avvisi_risposte', 'avvisi', 'presenze') ORDER BY 1`)
+      expect(r.rows.map((x) => x.tabella)).toEqual(['avvisi', 'presenze'])
+    } finally { await dbV.close() }
+  }, 60_000)
+})

@@ -49,9 +49,26 @@ import { senzaCommenti } from './soglia-fotografia'
 
 const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
 
-/** I file della migrazione che porta il rimedio. */
-const FILE = readdirSync(MIGRAZIONI).filter((f) => /propaga.*rinomina|rinomina.*propaga/i.test(f))
-const SQL = FILE.map((f) => readFileSync(join(MIGRAZIONI, f), 'utf8')).join('\n')
+/**
+ * LA DEFINIZIONE CHE CONTA È L'ULTIMA. `CREATE OR REPLACE FUNCTION` sostituisce la precedente, quindi
+ * il lock esamina la migrazione PIÙ RECENTE (in ordine di nome) che definisce
+ * `public.propaga_rinomina_sezione`, e di quel file legge SOLO il corpo della funzione: una
+ * migrazione grande (come quella dell'anno scolastico) ha anche altri UPDATE che non c'entrano.
+ * Leggere la prima definizione era un lock cieco: verde su una funzione già sostituita.
+ */
+const DEFINIZIONE = /create\s+or\s+replace\s+function\s+public\.propaga_rinomina_sezione\b/i
+const FILE_DEFINIZIONE = readdirSync(MIGRAZIONI)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .filter((f) => DEFINIZIONE.test(senzaCommenti(readFileSync(join(MIGRAZIONI, f), 'utf8'))))
+/** Il file esaminato: l'ultimo che la definisce. */
+const FILE_ESAMINATO = FILE_DEFINIZIONE.at(-1)
+const FILE = FILE_ESAMINATO ? [FILE_ESAMINATO] : []
+const TESTO_FILE = FILE.map((f) => readFileSync(join(MIGRAZIONI, f), 'utf8')).join('\n')
+const INIZIO_FN = TESTO_FILE.search(DEFINIZIONE)
+const FINE_FN = TESTO_FILE.indexOf('$function$;', TESTO_FILE.indexOf('$function$', INIZIO_FN) + 1)
+/** Solo il corpo della funzione, dal CREATE OR REPLACE al `$function$;` che la chiude. */
+const SQL = INIZIO_FN < 0 ? '' : TESTO_FILE.slice(INIZIO_FN, FINE_FN + '$function$;'.length)
 /**
  * Le sole ISTRUZIONI: niente commenti, stringhe intatte.
  *
@@ -130,6 +147,17 @@ function insertNelLog(): string {
 }
 
 describe('lock architettura · la rinomina di una sezione propaga ovunque, e solo nella sua sede', () => {
+  it('esamina la definizione PIÙ RECENTE della funzione (non una storica già sostituita)', () => {
+    expect(FILE_ESAMINATO, 'nessuna migrazione definisce propaga_rinomina_sezione').toBeDefined()
+    expect(
+      FILE_ESAMINATO,
+      'La definizione più recente di propaga_rinomina_sezione è cambiata: il lock ora esamina questo ' +
+        'file. Se ne è arrivata una più nuova, il lock la segue da solo; aggiorna qui il nome atteso.',
+    ).toBe('20261106200347_anno_scolastico_schema.sql')
+    expect(SQL.length, 'il corpo della funzione non è stato estratto').toBeGreaterThan(1000)
+    expect(SQL.trimEnd().endsWith('$function$;')).toBe(true)
+  })
+
   it('la migrazione esiste nel repo', () => {
     expect(
       FILE,

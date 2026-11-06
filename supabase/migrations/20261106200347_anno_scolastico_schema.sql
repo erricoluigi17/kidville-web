@@ -763,3 +763,429 @@ GRANT EXECUTE ON FUNCTION public.propaga_rinomina_sezione()              TO serv
 
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;
+
+-- ── 1.3 Frequenze e configurazione ──────────────────────────────────────────
+-- Una frequenza è un bambino, in un anno, in una sede (§4.4.3): prende il posto dei campi senza anno
+-- di `alunni`. Accanto, la configurazione di ogni anno (§4.4.4): listino, moduli richiesti, posti.
+-- Le tabelle nuove sono RIGIDE da subito (R2): sono vuote e nessuno ci scrive ancora, quindi i
+-- controlli sollevano sempre. I tipi dei campi che vengono da `alunni` sono gli stessi di `alunni`.
+
+CREATE TABLE IF NOT EXISTS public.frequenze (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Collegamenti. `anno_id` e `scuola_id` sono copie di `anni_sede`, tenute coerenti dal trigger
+  -- (R21): un trasferito ha frequenze in due sedi, quindi la sede NON si ricava da `alunni.scuola_id`.
+  alunno_id             uuid NOT NULL,
+  anno_sede_id          uuid NOT NULL,
+  anno_id               uuid NOT NULL,
+  scuola_id             uuid NOT NULL,
+  section_id            uuid,
+  continua_da           uuid,
+  domanda_id            uuid,
+  quota_pagamento_id    uuid,
+
+  -- Tipo e stato. I due flag li scrive il trigger, mai l'app (R25).
+  tipo                  text,
+  stato                 text NOT NULL DEFAULT 'in_attesa',
+  moduli_completi       boolean NOT NULL DEFAULT false,
+  quota_saldata         boolean NOT NULL DEFAULT false,
+  origine               text NOT NULL,
+
+  -- Date: dentro il periodo dell'anno (lo verifica il trigger: il periodo sta in un'altra tabella).
+  data_ingresso         date NOT NULL,
+  data_uscita           date,
+  -- Il «no» del cruscotto: un codice da un elenco chiuso (R23), mai testo libero.
+  non_rinnova_il        timestamptz,
+  non_rinnova_motivo    text,
+
+  -- Soldi. NULL = dal listino; lo zero non esiste (finisce la trappola NULLIF(…, 0) → 150).
+  retta_mensile         numeric(10,2),
+  retta_esente          boolean NOT NULL DEFAULT false,
+
+  -- Dalla scheda dell'alunno: stessi tipi di `alunni`.
+  retta_a_carico_di     uuid,
+  retta_split_config    jsonb,
+  intestatario_fatture  jsonb,
+  giorno_scadenza_pagamenti integer,
+  gruppo_mensa_id       uuid,
+  sospeso               boolean NOT NULL DEFAULT false,
+  sospeso_causa         text,
+  sospeso_motivo        text,
+  sospeso_il            timestamptz,
+  sospeso_da            uuid,
+  usa_pannolino         boolean NOT NULL DEFAULT false,
+
+  creata_il             timestamptz NOT NULL DEFAULT now(),
+
+  -- Come `presenze.alunno_id`: se l'alunno viene eliminato per davvero, le sue frequenze vanno con lui.
+  CONSTRAINT frequenze_alunno_id_fkey    FOREIGN KEY (alunno_id)    REFERENCES public.alunni(id) ON DELETE CASCADE,
+  CONSTRAINT frequenze_anno_sede_id_fkey FOREIGN KEY (anno_sede_id) REFERENCES public.anni_sede(id),
+  -- Composta: sede e anno della frequenza sono quelli del suo `anni_sede`.
+  CONSTRAINT frequenze_scuola_anno_fkey  FOREIGN KEY (scuola_id, anno_id) REFERENCES public.anni_sede(scuola_id, anno_id),
+  CONSTRAINT frequenze_section_id_fkey   FOREIGN KEY (section_id)   REFERENCES public.sections(id) ON DELETE SET NULL,
+  CONSTRAINT frequenze_continua_da_fkey  FOREIGN KEY (continua_da)  REFERENCES public.frequenze(id) ON DELETE SET NULL,
+  -- Le domande rifiutate si cancellano dopo 24 mesi: la frequenza resta.
+  CONSTRAINT frequenze_domanda_id_fkey   FOREIGN KEY (domanda_id)   REFERENCES public.enrollment_submissions(id) ON DELETE SET NULL,
+  -- Eliminare la voce della quota riporta la frequenza «in attesa» (il SET NULL fa scattare il trigger).
+  CONSTRAINT frequenze_quota_pagamento_id_fkey FOREIGN KEY (quota_pagamento_id) REFERENCES public.pagamenti(id) ON DELETE SET NULL,
+  -- Come `alunni.retta_a_carico_di` e `alunni.gruppo_mensa_id`.
+  CONSTRAINT frequenze_retta_a_carico_di_fkey FOREIGN KEY (retta_a_carico_di) REFERENCES public.alunni(id) ON DELETE SET NULL,
+  CONSTRAINT frequenze_gruppo_mensa_id_fkey   FOREIGN KEY (gruppo_mensa_id)   REFERENCES public.gruppi_mensa(id) ON DELETE SET NULL,
+
+  CONSTRAINT frequenze_tipo_check   CHECK (tipo IS NULL OR tipo IN ('conferma', 'nuova')),
+  CONSTRAINT frequenze_stato_check  CHECK (stato IN ('in_attesa', 'iscritto', 'ritirato', 'trasferito', 'uscito')),
+  CONSTRAINT frequenze_origine_check CHECK (origine IN ('domanda', 'conferma', 'segreteria', 'import', 'passaggio', 'recupero')),
+  -- `tipo` può mancare solo per le frequenze recuperate dallo storico.
+  CONSTRAINT frequenze_tipo_solo_recupero CHECK (tipo IS NOT NULL OR origine = 'recupero'),
+  CONSTRAINT frequenze_uscita_dopo_ingresso CHECK (data_uscita IS NULL OR data_uscita >= data_ingresso),
+  CONSTRAINT frequenze_non_rinnova_motivo_check
+    CHECK (non_rinnova_motivo IS NULL OR non_rinnova_motivo IN ('altra_scuola', 'trasloco', 'fine_ciclo', 'motivi_economici', 'altro')),
+  CONSTRAINT frequenze_retta_mensile_check CHECK (retta_mensile > 0),
+  CONSTRAINT frequenze_giorno_scadenza_check
+    CHECK (giorno_scadenza_pagamenti IS NULL OR giorno_scadenza_pagamenti BETWEEN 1 AND 28),
+  CONSTRAINT frequenze_sospeso_causa_check CHECK (sospeso_causa IN ('morosita', 'altro')),
+  -- La regola dell'iscritto (dec. 9): moduli e quota a posto, salvo chi viene dal recupero dello storico.
+  CONSTRAINT frequenze_iscritto_a_posto
+    CHECK (stato <> 'iscritto' OR (moduli_completi AND quota_saldata) OR origine = 'recupero'),
+  CONSTRAINT frequenze_alunno_anno_sede_key UNIQUE (alunno_id, anno_sede_id)
+);
+
+-- Una sola frequenza VIVA per bambino e per anno, anche fra sedi diverse. Una `trasferito` più una
+-- `iscritto` stanno insieme (review focus 4). Indice parziale: si guarda `pg_indexes`, non `pg_constraint`.
+CREATE UNIQUE INDEX IF NOT EXISTS frequenze_una_viva_per_anno
+  ON public.frequenze (alunno_id, anno_id) WHERE stato IN ('in_attesa', 'iscritto');
+
+-- Un indice per ogni chiave esterna (lock `fk-nuove-con-indice`); `alunno_id` è coperto dall'unico.
+CREATE INDEX IF NOT EXISTS frequenze_anno_sede_id_idx        ON public.frequenze (anno_sede_id);
+CREATE INDEX IF NOT EXISTS frequenze_scuola_anno_idx         ON public.frequenze (scuola_id, anno_id);
+CREATE INDEX IF NOT EXISTS frequenze_section_id_idx          ON public.frequenze (section_id);
+CREATE INDEX IF NOT EXISTS frequenze_continua_da_idx         ON public.frequenze (continua_da);
+CREATE INDEX IF NOT EXISTS frequenze_domanda_id_idx          ON public.frequenze (domanda_id);
+-- Questo serve anche al trigger su `pagamenti`, che deve costare zero quando nessuna frequenza punta alla voce.
+CREATE INDEX IF NOT EXISTS frequenze_quota_pagamento_id_idx  ON public.frequenze (quota_pagamento_id);
+CREATE INDEX IF NOT EXISTS frequenze_retta_a_carico_di_idx   ON public.frequenze (retta_a_carico_di);
+CREATE INDEX IF NOT EXISTS frequenze_gruppo_mensa_id_idx     ON public.frequenze (gruppo_mensa_id);
+
+-- La configurazione di ogni anno. Nessuna di queste tabelle ha `anno_id` (R9): appendono ad
+-- `anno_sede_id`, e quando un anno_sede sparisce (una sede eliminata) porta via la sua configurazione.
+CREATE TABLE IF NOT EXISTS public.listino_voci (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  anno_sede_id        uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  voce                text NOT NULL,
+  fascia              text,
+  payment_category_id uuid REFERENCES public.payment_categories(id),
+  -- NULL = non ancora deciso (ammesso solo finché l'anno è in preparazione: lo verifica l'apertura delle iscrizioni).
+  importo             numeric(10,2),
+  -- I mesi in cui la voce si genera (prendono il posto dei mesi cablati 9..12 + 1..6).
+  mesi                smallint[],
+  CONSTRAINT listino_voci_voce_check   CHECK (voce IN ('quota_conferma', 'quota_nuova', 'retta', 'servizio')),
+  CONSTRAINT listino_voci_fascia_check CHECK (fascia IS NULL OR fascia IN ('nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_bambini')),
+  CONSTRAINT listino_voci_importo_check CHECK (importo IS NULL OR importo > 0),
+  CONSTRAINT listino_voci_mesi_check   CHECK (mesi IS NULL OR mesi <@ ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]::smallint[]),
+  CONSTRAINT listino_voci_voce_key UNIQUE NULLS NOT DISTINCT (anno_sede_id, voce, fascia, payment_category_id)
+);
+CREATE INDEX IF NOT EXISTS listino_voci_payment_category_id_idx ON public.listino_voci (payment_category_id);
+
+CREATE TABLE IF NOT EXISTS public.moduli_richiesti (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  anno_sede_id  uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  lista         text NOT NULL,
+  codice        text NOT NULL,
+  titolo        text NOT NULL,
+  ordine        integer NOT NULL DEFAULT 0,
+  CONSTRAINT moduli_richiesti_lista_check CHECK (lista IN ('conferma', 'nuova')),
+  CONSTRAINT moduli_richiesti_codice_key UNIQUE (anno_sede_id, lista, codice)
+);
+
+CREATE TABLE IF NOT EXISTS public.posti_autorizzati (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  anno_sede_id  uuid NOT NULL REFERENCES public.anni_sede(id) ON DELETE CASCADE,
+  fascia        text NOT NULL,
+  posti         integer NOT NULL,
+  -- Il riferimento dell'autorizzazione: non è un dato personale.
+  fonte         text,
+  CONSTRAINT posti_autorizzati_fascia_check CHECK (fascia IN ('nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_bambini')),
+  CONSTRAINT posti_autorizzati_posti_check  CHECK (posti >= 0),
+  CONSTRAINT posti_autorizzati_fascia_key   UNIQUE (anno_sede_id, fascia)
+);
+
+-- Le spunte dei moduli: della segreteria, senza note libere e senza `anno_id` (R24: lo aggiunge il
+-- Compito 1.4 con le altre tabelle `madre` del registro). `spuntato_da` è un uuid senza FK (R24).
+CREATE TABLE IF NOT EXISTS public.frequenze_moduli (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  frequenza_id  uuid NOT NULL REFERENCES public.frequenze(id) ON DELETE CASCADE,
+  modulo_id     uuid NOT NULL REFERENCES public.moduli_richiesti(id) ON DELETE CASCADE,
+  spuntato_da   uuid,
+  spuntato_il   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT frequenze_moduli_coppia_key UNIQUE (frequenza_id, modulo_id)
+);
+CREATE INDEX IF NOT EXISTS frequenze_moduli_modulo_id_idx ON public.frequenze_moduli (modulo_id);
+
+-- ── Il trigger della frequenza ──────────────────────────────────────────────
+-- BEFORE INSERT OR UPDATE. Si chiama in modo da venire PRIMA, in ordine alfabetico, di
+-- `trg_zz_anno_assegna_e_verifica` (Compito 1.4): la guardia gira dopo il calcolo.
+--   1. copia `anno_id` e `scuola_id` da `anni_sede` (ANNO_NON_COERENTE se arrivano scritti e diversi);
+--   2. data_ingresso e data_uscita dentro il periodo (ANNO_NON_COERENTE);
+--   3. la sezione è della stessa sede (SEZIONE_DI_ALTRA_SEDE) e dello stesso anno (SEZIONE_DI_ALTRO_ANNO);
+--   4. ricalcola `moduli_completi` e `quota_saldata`, e applica le due transizioni di R25.
+-- Sempre rigido: non guarda `anno_regole`.
+CREATE OR REPLACE FUNCTION public.frequenze_assegna_e_calcola()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_as      public.anni_sede%ROWTYPE;
+  v_sez     record;
+  v_moduli  boolean;
+  v_quota   boolean;
+BEGIN
+  SELECT * INTO v_as FROM public.anni_sede WHERE id = NEW.anno_sede_id;
+  IF NOT FOUND THEN
+    -- Un anno_sede che non c'è è una chiave esterna violata, non un NULL da lasciar passare.
+    RAISE EXCEPTION 'anno_sede inesistente'
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  -- 1 · Sede e anno. Alla nascita (o se la riga cambia anno_sede) si COPIANO; scritti e diversi
+  -- alla nascita sono un errore; in un UPDATE che non sposta l'anno_sede non si staccano.
+  IF TG_OP = 'INSERT' THEN
+    IF (NEW.anno_id IS NOT NULL AND NEW.anno_id <> v_as.anno_id)
+       OR (NEW.scuola_id IS NOT NULL AND NEW.scuola_id <> v_as.scuola_id) THEN
+      RAISE EXCEPTION 'ANNO_NON_COERENTE'
+        USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id)::text;
+    END IF;
+    NEW.anno_id := v_as.anno_id;
+    NEW.scuola_id := v_as.scuola_id;
+  ELSIF NEW.anno_sede_id IS DISTINCT FROM OLD.anno_sede_id THEN
+    NEW.anno_id := v_as.anno_id;
+    NEW.scuola_id := v_as.scuola_id;
+  ELSIF NEW.anno_id IS DISTINCT FROM v_as.anno_id OR NEW.scuola_id IS DISTINCT FROM v_as.scuola_id THEN
+    RAISE EXCEPTION 'ANNO_NON_COERENTE'
+      USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id)::text;
+  END IF;
+
+  -- 2 · Le date dentro il periodo (l'ordine fra le due lo dice il CHECK).
+  IF NOT (v_as.periodo @> NEW.data_ingresso)
+     OR (NEW.data_uscita IS NOT NULL AND NOT (v_as.periodo @> NEW.data_uscita)) THEN
+    RAISE EXCEPTION 'ANNO_NON_COERENTE'
+      USING DETAIL = json_build_object('anno_sede_id', NEW.anno_sede_id, 'campo', 'data')::text;
+  END IF;
+
+  -- 3 · La sezione: stessa sede, stesso anno. Se non esiste ci pensa la chiave esterna.
+  IF NEW.section_id IS NOT NULL THEN
+    SELECT s.scuola_id, s.anno_id INTO v_sez FROM public.sections s WHERE s.id = NEW.section_id;
+    IF FOUND THEN
+      IF v_sez.scuola_id <> NEW.scuola_id THEN
+        RAISE EXCEPTION 'SEZIONE_DI_ALTRA_SEDE'
+          USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
+      ELSIF v_sez.anno_id <> NEW.anno_id THEN
+        RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
+          USING DETAIL = json_build_object('section_id', NEW.section_id)::text;
+      END IF;
+    END IF;
+  END IF;
+
+  -- 4 · I flag. Moduli: tutti quelli della lista del `tipo` per quell'anno_sede sono spuntati (lista
+  -- vuota = completi; `tipo` NULL, cioè il recupero, = non completi). Quota: la voce c'è ed è `pagato`.
+  IF NEW.tipo IS NULL THEN
+    v_moduli := false;
+  ELSE
+    v_moduli := NOT EXISTS (
+      SELECT 1 FROM public.moduli_richiesti m
+       WHERE m.anno_sede_id = NEW.anno_sede_id AND m.lista = NEW.tipo
+         AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                          WHERE fm.frequenza_id = NEW.id AND fm.modulo_id = m.id));
+  END IF;
+  v_quota := EXISTS (SELECT 1 FROM public.pagamenti p
+                      WHERE p.id = NEW.quota_pagamento_id AND p.stato = 'pagato');
+  NEW.moduli_completi := v_moduli;
+  NEW.quota_saldata   := v_quota;
+
+  -- Le uniche due transizioni automatiche (R25). Un `iscritto` scritto a mano con i flag falsi NON si
+  -- corregge: lo ferma il CHECK `frequenze_iscritto_a_posto`. Chi viene dal recupero non si declassa.
+  IF NEW.stato = 'in_attesa' AND v_moduli AND v_quota THEN
+    NEW.stato := 'iscritto';
+  ELSIF TG_OP = 'UPDATE' AND OLD.stato = 'iscritto' AND NEW.stato = 'iscritto'
+        AND NEW.origine <> 'recupero' AND NOT (v_moduli AND v_quota) THEN
+    NEW.stato := 'in_attesa';
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_frequenze_assegna_e_calcola ON public.frequenze;
+CREATE TRIGGER trg_frequenze_assegna_e_calcola
+  BEFORE INSERT OR UPDATE ON public.frequenze
+  FOR EACH ROW EXECUTE FUNCTION public.frequenze_assegna_e_calcola();
+
+-- Una spunta è coerente se il modulo è dello stesso anno_sede della frequenza (ANNO_NON_COERENTE) e
+-- della lista del suo `tipo` (MODULO_NON_RICHIESTO): sono gli errori che una route sbagliata produrrebbe in silenzio.
+CREATE OR REPLACE FUNCTION public.frequenze_moduli_verifica()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_f record;
+  v_m record;
+BEGIN
+  SELECT f.anno_sede_id, f.tipo INTO v_f FROM public.frequenze f WHERE f.id = NEW.frequenza_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;    -- ci pensa la chiave esterna
+  SELECT m.anno_sede_id, m.lista INTO v_m FROM public.moduli_richiesti m WHERE m.id = NEW.modulo_id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
+
+  IF v_m.anno_sede_id <> v_f.anno_sede_id THEN
+    RAISE EXCEPTION 'ANNO_NON_COERENTE'
+      USING DETAIL = json_build_object('frequenza_id', NEW.frequenza_id, 'modulo_id', NEW.modulo_id)::text;
+  END IF;
+  IF v_m.lista IS DISTINCT FROM v_f.tipo THEN
+    RAISE EXCEPTION 'MODULO_NON_RICHIESTO'
+      USING DETAIL = json_build_object('frequenza_id', NEW.frequenza_id, 'modulo_id', NEW.modulo_id)::text;
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_frequenze_moduli_verifica ON public.frequenze_moduli;
+CREATE TRIGGER trg_frequenze_moduli_verifica
+  BEFORE INSERT OR UPDATE ON public.frequenze_moduli
+  FOR EACH ROW EXECUTE FUNCTION public.frequenze_moduli_verifica();
+
+-- ── Il ricalcolo da fuori ───────────────────────────────────────────────────
+-- Tre tabelle cambiano e la frequenza deve accorgersene. Si «tocca» la riga con un UPDATE che non
+-- cambia niente: il trigger BEFORE UPDATE di `frequenze` scatta comunque e ricalcola.
+
+-- Una spunta nasce o sparisce.
+CREATE OR REPLACE FUNCTION public.frequenze_moduli_tocca_frequenza()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  UPDATE public.frequenze
+     SET quota_pagamento_id = quota_pagamento_id
+   WHERE id = CASE WHEN TG_OP = 'DELETE' THEN OLD.frequenza_id ELSE NEW.frequenza_id END;
+  RETURN NULL;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_frequenze_moduli_tocca ON public.frequenze_moduli;
+CREATE TRIGGER trg_frequenze_moduli_tocca
+  AFTER INSERT OR DELETE ON public.frequenze_moduli
+  FOR EACH ROW EXECUTE FUNCTION public.frequenze_moduli_tocca_frequenza();
+
+-- La lista dei moduli cambia: un modulo aggiunto riporta «in attesa» chi non l'ha, uno tolto (o
+-- spostato in un'altra lista) può completare chi aspettava solo quello. Senza, un modulo aggiunto
+-- dopo non toglierebbe mai l'«iscritto». Si toccano le frequenze di quell'anno_sede della lista (o
+-- delle liste) interessata, di qualunque stato: i flag restano sempre freschi.
+CREATE OR REPLACE FUNCTION public.moduli_richiesti_tocca_frequenze()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_as     uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.anno_sede_id ELSE NEW.anno_sede_id END;
+  v_lista1 text := CASE WHEN TG_OP = 'INSERT' THEN NEW.lista ELSE OLD.lista END;
+  v_lista2 text := CASE WHEN TG_OP = 'DELETE' THEN OLD.lista ELSE NEW.lista END;
+BEGIN
+  UPDATE public.frequenze
+     SET quota_pagamento_id = quota_pagamento_id
+   WHERE anno_sede_id = v_as AND tipo IN (v_lista1, v_lista2);
+  RETURN NULL;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_moduli_richiesti_tocca ON public.moduli_richiesti;
+CREATE TRIGGER trg_moduli_richiesti_tocca
+  AFTER INSERT OR DELETE OR UPDATE OF lista ON public.moduli_richiesti
+  FOR EACH ROW EXECUTE FUNCTION public.moduli_richiesti_tocca_frequenze();
+
+-- La voce della quota cambia stato o importo pagato. Costa ZERO quando nessuna frequenza punta alla
+-- voce (la maggior parte dei pagamenti: rette, mensa…): la prima istruzione è un indice. Se invece il
+-- ricalcolo di una frequenza solleva, il pagamento NON deve fallire — non c'entra con quell'errore:
+-- l'errore va nel registro (livello `error`, col codice) e l'operazione sulla cassa prosegue.
+CREATE OR REPLACE FUNCTION public.pagamenti_tocca_frequenze()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_codice text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.frequenze WHERE quota_pagamento_id = NEW.id) THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    UPDATE public.frequenze
+       SET quota_pagamento_id = quota_pagamento_id
+     WHERE quota_pagamento_id = NEW.id;
+  EXCEPTION WHEN OTHERS THEN
+    -- Nel contesto solo il codice (se è uno dei nostri, MAIUSCOLO_CON_TRATTINI) e lo SQLSTATE: il
+    -- testo di un errore di Postgres può portarsi dietro valori. Il logger non rompe mai il resto.
+    v_codice := CASE WHEN SQLERRM ~ '^[A-Z_]+$' THEN SQLERRM END;
+    BEGIN
+      INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, scuola_id, contesto)
+      VALUES ('error', 'iscrizioni', 'server',
+              'ricalcolo della frequenza fallito: la voce della quota è stata comunque aggiornata',
+              'db:frequenze-ricalcolo:' || NEW.id::text, NEW.scuola_id,
+              jsonb_build_object('esito', 'ricalcolo-frequenza-fallito',
+                                 'operazione', 'pagamenti_tocca_frequenze',
+                                 'pagamento_id', NEW.id,
+                                 'sqlstate', SQLSTATE,
+                                 'codice', v_codice))
+      ON CONFLICT (fingerprint, giorno) DO UPDATE
+        SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
+    EXCEPTION WHEN OTHERS THEN
+      NULL;   -- fail-open: un guasto del registro non diventa un guasto della cassa
+    END;
+  END;
+  RETURN NULL;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_pagamenti_tocca_frequenze ON public.pagamenti;
+CREATE TRIGGER trg_pagamenti_tocca_frequenze
+  AFTER UPDATE OF stato, importo_pagato ON public.pagamenti
+  FOR EACH ROW
+  WHEN (OLD.stato IS DISTINCT FROM NEW.stato OR OLD.importo_pagato IS DISTINCT FROM NEW.importo_pagato)
+  EXECUTE FUNCTION public.pagamenti_tocca_frequenze();
+
+-- ── Sicurezza (R13) ─────────────────────────────────────────────────────────
+ALTER TABLE public.frequenze         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.frequenze_moduli  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.listino_voci      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.moduli_richiesti  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.posti_autorizzati ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.frequenze         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.frequenze_moduli  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.listino_voci      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.moduli_richiesti  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.posti_autorizzati FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.frequenze         TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.frequenze_moduli  TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.listino_voci      TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.moduli_richiesti  TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.posti_autorizzati TO service_role;
+
+REVOKE ALL ON FUNCTION public.frequenze_assegna_e_calcola()        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.frequenze_moduli_verifica()          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.frequenze_moduli_tocca_frequenza()   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.moduli_richiesti_tocca_frequenze()   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pagamenti_tocca_frequenze()          FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.frequenze_assegna_e_calcola()        TO service_role;
+GRANT EXECUTE ON FUNCTION public.frequenze_moduli_verifica()          TO service_role;
+GRANT EXECUTE ON FUNCTION public.frequenze_moduli_tocca_frequenza()   TO service_role;
+GRANT EXECUTE ON FUNCTION public.moduli_richiesti_tocca_frequenze()   TO service_role;
+GRANT EXECUTE ON FUNCTION public.pagamenti_tocca_frequenze()          TO service_role;
+
+SET CONSTRAINTS ALL IMMEDIATE;
+SET CONSTRAINTS ALL DEFERRED;

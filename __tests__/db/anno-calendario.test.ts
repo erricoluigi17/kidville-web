@@ -410,6 +410,7 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       { relname: 'anni_sede', relrowsecurity: true },
       { relname: 'anni_sede_stati', relrowsecurity: true },
     ])
+    // (le tabelle del Compito 1.3 hanno il loro controllo in `anno-frequenze.test.ts`)
     expect(await una<string>(`SELECT count(*)::text FROM pg_policies WHERE tablename LIKE 'anni_%'`)).toBe('0')
   })
 
@@ -446,6 +447,9 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       'anno_sede_di', 'giorno_roma', 'schools_crea_anni',
       // Compito 1.2: le tre funzioni di `sections` e `alunni` (trigger), chiuse allo stesso modo.
       'propaga_rinomina_sezione', 'sections_anno_predefinito_transitorio', 'sync_alunno_section_id',
+      // Compito 1.3: i trigger delle frequenze e del loro ricalcolo (da `pagamenti`, spunte e moduli).
+      'frequenze_assegna_e_calcola', 'frequenze_moduli_verifica', 'frequenze_moduli_tocca_frequenza',
+      'moduli_richiesti_tocca_frequenze', 'pagamenti_tocca_frequenze',
     ].sort())
     for (const x of r.rows) {
       expect(x, x.f).toMatchObject({ anon: false, auth: false, pubblico: false, servizio: true })
@@ -453,7 +457,9 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
   })
 
   it('TUTTE le tabelle nuove: nessun privilegio ad anon e authenticated, tutti a service_role', async () => {
-    for (const t of ['anni_scolastici', 'anni_sede', 'anni_sede_stati']) {
+    for (const t of ['anni_scolastici', 'anni_sede', 'anni_sede_stati',
+      // Compito 1.3
+      'frequenze', 'frequenze_moduli', 'listino_voci', 'moduli_richiesti', 'posti_autorizzati']) {
       for (const ruolo of ['anon', 'authenticated']) {
         for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
           expect(await una<boolean>('SELECT has_table_privilege($1, $2, $3)', [ruolo, `public.${t}`, p]), `${ruolo} ${p} ${t}`).toBe(false)

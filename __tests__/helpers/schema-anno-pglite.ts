@@ -93,6 +93,46 @@ export const SCHEMA_BASE = `
   );
   CREATE UNIQUE INDEX app_log_impronta_giorno_key ON public.app_log (fingerprint, giorno);
 
+  -- ── Compito 1.3: le tabelle verso cui puntano le frequenze e il listino, con le colonne vere ──
+  CREATE TABLE public.gruppi_mensa (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    nome text NOT NULL,
+    attivo boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.enrollment_submissions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    data jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status text NOT NULL DEFAULT 'pending',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.payment_categories (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    nome text NOT NULL,
+    slug text,
+    attivo boolean NOT NULL DEFAULT true
+  );
+  -- \`stato\` è il CHECK che in produzione c'è dal 2026-10-19; \`importo_pagato\` e \`stato\` sono le due
+  -- colonne che il trigger sulle voci guarda.
+  CREATE TABLE public.pagamenti (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    scuola_id uuid,
+    descrizione text NOT NULL,
+    importo numeric(10,2) NOT NULL,
+    scadenza date NOT NULL,
+    stato varchar(20) DEFAULT 'da_pagare'
+      CHECK (stato IN ('da_pagare', 'parziale', 'pagato', 'scaduto')),
+    categoria_id uuid REFERENCES public.payment_categories(id),
+    importo_pagato numeric(10,2) NOT NULL DEFAULT 0,
+    periodo_competenza date,
+    creato_il timestamptz DEFAULT now()
+  );
+
   -- Le due funzioni di oggi sono FINTE (\`RETURN NEW\`): la migrazione le sostituisce con
   -- CREATE OR REPLACE, e i test provano la versione della migrazione. I trigger sono quelli veri.
   CREATE FUNCTION public.sync_alunno_section_id() RETURNS trigger LANGUAGE plpgsql AS $f$

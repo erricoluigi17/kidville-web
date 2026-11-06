@@ -366,6 +366,9 @@ export function posterioriCheContengono(
 // completa il compito 1.6 con tutte le guardie che la vedono. Cambieranno davvero, rigenerando dalla produzione
 // dopo il merge: la fotografia delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con
 // `scuola_id` e delle FK di sede. Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+// Compito 1.3 (stessa migrazione): `frequenze` (con `scuola_id`, FK di sede composta, due indici unici — uno
+// parziale), `frequenze_moduli`, `listino_voci`, `moduli_richiesti`, `posti_autorizzati` (RLS accesa, nessuna
+// policy) e cinque funzioni `SECURITY DEFINER`; un trigger nuovo su `pagamenti`.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261106200347_anno_scolastico_schema.sql':
         'calendario dell\'anno scolastico (PR 1): la applica l\'integrazione al merge e la voce si toglie nella PR-B, '

@@ -384,6 +384,41 @@ export const SCHEMA_PR2_RIEMPIMENTO = `
     SELECT TG_TABLE_NAME, v.id::text, to_jsonb(v), ARRAY[]::text[], current_user FROM vecchie v;
     RETURN NULL;
   END $f$;
+  -- madre e figlia con l'aggregato VERO di produzione (20261015183200_storici_versioni): quando si aggiorna una
+  -- ricezione, un AFTER fa \`UPDATE note_disciplinari SET storico_versione = storico_versione\`, che alza la
+  -- versione della nota. Nomi di colonna e di trigger come in produzione (il nome decide l'ordine dei BEFORE).
+  CREATE TABLE public.note_disciplinari (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    data_evento date,
+    creato_il timestamptz DEFAULT now(),
+    storico_versione bigint NOT NULL DEFAULT 0
+  );
+  CREATE TABLE public.nota_ricezioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    nota_id uuid NOT NULL REFERENCES public.note_disciplinari(id) ON DELETE CASCADE,
+    firmato_il timestamptz,
+    storico_versione bigint NOT NULL DEFAULT 0
+  );
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.note_disciplinari
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.nota_ricezioni
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE FUNCTION public.storici_versione_aggregato() RETURNS trigger LANGUAGE plpgsql AS $f$
+  DECLARE vecchia jsonb; nuova jsonb; chiave uuid;
+  BEGIN
+    IF TG_OP <> 'INSERT' THEN vecchia := to_jsonb(OLD); END IF;
+    IF TG_OP <> 'DELETE' THEN nuova := to_jsonb(NEW); END IF;
+    IF TG_TABLE_NAME = 'nota_ricezioni' THEN
+      FOR chiave IN SELECT DISTINCT x::uuid FROM (VALUES (vecchia->>'nota_id'), (nuova->>'nota_id')) v(x) WHERE x IS NOT NULL LOOP
+        UPDATE public.note_disciplinari SET storico_versione = storico_versione WHERE id = chiave;
+      END LOOP;
+    END IF;
+    RETURN NULL;
+  END $f$;
+  CREATE TRIGGER storici_versione_aggregato AFTER INSERT OR UPDATE OR DELETE ON public.nota_ricezioni
+    FOR EACH ROW EXECUTE FUNCTION public.storici_versione_aggregato();
+
   CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.presenze
     REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica();
   CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.pagamenti

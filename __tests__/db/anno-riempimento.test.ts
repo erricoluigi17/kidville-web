@@ -388,6 +388,24 @@ describe('gli effetti collaterali del riempimento', () => {
     expect(await invariato()).toBe(false)
   })
 
+  it('I-1: la versione della madre non si muove quando il riempimento riempie le figlie (aggregato vero)', async () => {
+    await db.exec(`DELETE FROM public.nota_ricezioni; DELETE FROM public.note_disciplinari`)
+    await alunno(1)
+    const nota = await senzaAnno(['note_disciplinari', 'nota_ricezioni'], async () => {
+      const n = await una<string>(
+        `INSERT INTO public.note_disciplinari (alunno_id, data_evento, storico_versione) VALUES ($1, DATE '2026-10-05', 2) RETURNING id`, [al(1)])
+      await db.query(`INSERT INTO public.nota_ricezioni (nota_id, firmato_il) VALUES ($1, now()), ($1, now())`, [n])
+      return n
+    })
+    const prima = await una<number>(`SELECT storico_versione::int FROM public.note_disciplinari WHERE id = $1`, [nota])
+    await riempi()
+    expect(await annoDi('nota_ricezioni', (await una<string>(`SELECT id FROM public.nota_ricezioni WHERE nota_id = $1 LIMIT 1`, [nota])))).toBe(A2627)
+    expect(await una<number>(`SELECT storico_versione::int FROM public.note_disciplinari WHERE id = $1`, [nota])).toBe(prima)
+    // controllo: fuori dal riempimento, lo stesso aggiornamento di una ricezione alza la versione della nota (l'aggregato vive)
+    await db.exec(`UPDATE public.nota_ricezioni SET firmato_il = now()`)
+    expect(await una<number>(`SELECT storico_versione::int FROM public.note_disciplinari WHERE id = $1`, [nota])).toBeGreaterThan(prima)
+  })
+
   it('le 194: una presenza di luglio con la sezione del 2026/27 viene riempita, contata, e un UPDATE a controlli rigidi passa', async () => {
     const p = await senzaAnno(['presenze'], () => una<string>(
       `INSERT INTO public.presenze (scuola_id, section_id, data) VALUES ($1, $2, DATE '2026-07-10') RETURNING id`, [S1, SEZ1]))

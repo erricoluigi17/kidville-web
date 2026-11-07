@@ -282,6 +282,19 @@ BEGIN
       IF v_guardia THEN
         PERFORM public.anno_guardia_verifica(v_reg, TG_OP, v_o, v_n, NULL);
       END IF;
+      -- Il riempimento tocca anche le madri che hanno già l'anno: l'aggregato AFTER delle figlie (storici_versione_aggregato)
+      -- fa `UPDATE madre SET storico_versione = storico_versione` quando F1 riempie una figlia, e `storici_prima_mutazione`
+      -- alza la versione. Questo trigger si chiama `trg_zz_…`: in ordine alfabetico viene DOPO `storici_prima_mutazione`
+      -- e `set_updated_at`, quindi rimettere qui i valori di OLD vince. Solo se la riga non cambia altro: un UPDATE vero,
+      -- anche dentro il riempimento, muove la versione.
+      IF current_setting('anno_scolastico.riempimento', true) = 'on'
+         AND (v_n - '{storico_versione,updated_at}'::text[]) = (v_o - '{storico_versione,updated_at}'::text[]) THEN
+        SELECT jsonb_object_agg(k, v_o -> k) INTO v_ripristino
+          FROM unnest(ARRAY['storico_versione', 'updated_at']) AS k WHERE v_o ? k;
+        IF v_ripristino IS NOT NULL THEN
+          NEW := jsonb_populate_record(NEW, v_ripristino);
+        END IF;
+      END IF;
       RETURN NEW;
     END IF;
   END IF;

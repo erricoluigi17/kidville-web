@@ -167,6 +167,20 @@ describe('anno_fotografa · lo stato di OGGI, prima del riempimento', () => {
     expect(await una<number>(`SELECT count(*)::int FROM public.riconciliazione_anno`)).toBe(0)
   })
 
+  it('m-1: due fotografie nella STESSA transazione hanno istanti diversi (la durata del riempimento si misura da qui)', async () => {
+    await db.exec('BEGIN')
+    try {
+      await foto('prima', ['presenze'])
+      await foto('dopo', ['presenze'])
+      const r = (await db.query<{ stessa: boolean; ordinate: boolean }>(
+        `SELECT count(DISTINCT transazione) = 1 AS stessa,
+                min(eseguita_il) FILTER (WHERE fase = 'prima') < min(eseguita_il) FILTER (WHERE fase = 'dopo') AS ordinate
+           FROM public.riconciliazione_anno WHERE tabella = 'presenze'`)).rows[0]
+      expect(r.stessa).toBe(true)
+      expect(r.ordinate).toBe(true)
+    } finally { await db.exec('ROLLBACK') }
+  })
+
   it('con un elenco di tabelle scrive solo quelle', async () => {
     await foto('prima', ['presenze'])
     const t = (await db.query<{ tabella: string }>(`SELECT DISTINCT tabella FROM public.riconciliazione_anno`)).rows

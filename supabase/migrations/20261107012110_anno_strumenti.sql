@@ -513,7 +513,9 @@ GRANT EXECUTE ON FUNCTION public.crm_bambini_anno_da_etichetta()          TO ser
 CREATE TABLE IF NOT EXISTS public.riconciliazione_anno (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   fase        text        NOT NULL CONSTRAINT riconciliazione_anno_fase_check CHECK (fase IN ('prima', 'dopo', 'finale')),
-  eseguita_il timestamptz NOT NULL DEFAULT now(),
+  -- clock_timestamp(), non now(): `prima` e `dopo` di F1 stanno nella stessa transazione e con now() avrebbero lo stesso istante
+  -- (la durata del riempimento si misura da qui).
+  eseguita_il timestamptz NOT NULL DEFAULT clock_timestamp(),
   transazione bigint      NOT NULL DEFAULT txid_current(),
   tabella     text        NOT NULL,
   -- sede cancellata → le righe del rapporto restano, con la sede NULL (il rapporto è storia, non si cancella con la sede)
@@ -619,8 +621,14 @@ BEGIN
     v_sede := public.anno_sede_sql(r.tabella, 't');
     v_prima := NULL;
     IF p_fase <> 'prima' THEN
-      SELECT max(x.eseguita_il) INTO v_prima
-        FROM public.riconciliazione_anno x WHERE x.fase = 'prima' AND x.tabella = r.tabella;
+      -- l'istante in cui l'ULTIMA fotografia `prima` di questa tabella ha cominciato a scrivere (con clock_timestamp()
+      -- le righe di una stessa fotografia hanno istanti diversi: il minimo della sua transazione, non il massimo di tutte)
+      SELECT min(x.eseguita_il) INTO v_prima
+        FROM public.riconciliazione_anno x
+       WHERE x.fase = 'prima' AND x.tabella = r.tabella
+         AND x.transazione = (SELECT y.transazione FROM public.riconciliazione_anno y
+                               WHERE y.fase = 'prima' AND y.tabella = r.tabella
+                               ORDER BY y.eseguita_il DESC, y.id DESC LIMIT 1);
     END IF;
     -- le righe nate dopo la fotografia `prima` di QUESTA tabella
     v_nuova := CASE WHEN v_prima IS NOT NULL AND r.colonna_creazione IS NOT NULL

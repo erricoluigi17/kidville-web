@@ -182,12 +182,15 @@ WHERE u.ruolo = 'educator'
 --    controlli rigidi (anno_regole.controlli_rigidi_dal, PR 2): con la manopola
 --    spenta (dal NULL) conta zero; le vecchie in contrasto stanno nel rapporto di
 --    riconciliazione, contate. Una tabella senza section_id o senza colonna di
---    creazione ha zero.
+--    creazione ha zero. Come la 13, NON conta le righe il cui anno non ha nessuna
+--    sezione nella sede della sezione (il 2025/26, e dal 01/09/2027 il 2027/28):
+--    il trigger le lascia passare e le conta con un avviso in app_log.
 SELECT p.id
 FROM public.presenze p
 JOIN public.sections s ON s.id = p.section_id
 WHERE s.anno_id <> p.anno_id
-  AND p.created_at >= (SELECT controlli_rigidi_dal FROM public.anno_regole);
+  AND p.created_at >= (SELECT controlli_rigidi_dal FROM public.anno_regole)
+  AND EXISTS (SELECT 1 FROM public.sections z WHERE z.scuola_id = s.scuola_id AND z.anno_id = p.anno_id);
 --    E lo stesso per ogni tabella del registro con section_id (una riga per tabella):
 SELECT t.tabella, public.anno_righe_sezione_altro_anno(t.tabella) AS righe
 FROM public.anno_tabelle t

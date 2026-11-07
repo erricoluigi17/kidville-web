@@ -232,6 +232,7 @@ DECLARE
   v_attuale   uuid;
   v_calcolato uuid;
   v_sez_anno  uuid;
+  v_sez_sede  uuid;
   v_senza     boolean;
   v_sede_o    uuid;
   v_sede_n    uuid;
@@ -415,10 +416,19 @@ BEGIN
 
   -- La sezione della riga deve essere dello stesso anno (solo controlli rigidi).
   IF v_rigidi AND v_attuale IS NOT NULL AND (v_n ->> 'section_id') IS NOT NULL THEN
-    SELECT s.anno_id INTO v_sez_anno FROM public.sections s WHERE s.id = (v_n ->> 'section_id')::uuid;
+    SELECT s.anno_id, s.scuola_id INTO v_sez_anno, v_sez_sede FROM public.sections s WHERE s.id = (v_n ->> 'section_id')::uuid;
     IF FOUND AND v_sez_anno <> v_attuale THEN
-      RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
-        USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'section_id', v_n ->> 'section_id')::text;
+      -- Stesso criterio del 2.3 («un anno senza sezioni nella sede non si controlla»): tutte le sezioni sono del 2026/27 e il
+      -- 2025/26 non ne ha, quindi la rettifica di una presenza estiva, un voto o una nota di giugno (sezione di oggi, data
+      -- di prima del 01/09/2026) è una scrittura legittima dell'app di oggi; e dal 01/09/2027 la stessa cosa varrebbe per
+      -- il 2027/28. Si rifiuta solo se l'anno della riga ha almeno una sezione nella sede della sezione; altrimenti passa e si conta.
+      IF EXISTS (SELECT 1 FROM public.sections z WHERE z.scuola_id = v_sez_sede AND z.anno_id = v_attuale) THEN
+        RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO'
+          USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'section_id', v_n ->> 'section_id')::text;
+      END IF;
+      PERFORM public.anno_log_avviso(TG_TABLE_NAME, 'sezione-in-anno-senza-sezioni', 'anno_assegna_e_verifica',
+                                     'riga con la sezione di un altro anno, in un anno che nella sede non ha sezioni: lasciata passare',
+                                     'db:anno-sezione-anno-senza-sezioni:' || TG_TABLE_NAME, 1);
     END IF;
   END IF;
 
@@ -443,8 +453,49 @@ BEGIN
 END
 $$;
 
+-- Invariante 9, allineata al trigger: una riga la cui sezione è di un altro anno conta SOLO se l'anno della riga ha almeno
+-- una sezione nella sede della sezione (come l'invariante 13). La definizione della PR 1 è in produzione e non si tocca:
+-- la si ridefinisce qui, con la stessa firma (privilegi invariati).
+CREATE OR REPLACE FUNCTION public.anno_righe_sezione_altro_anno(p_tabella text)
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_reg public.anno_tabelle%ROWTYPE;
+  v_dal timestamptz;
+  v_n   bigint;
+BEGIN
+  SELECT * INTO v_reg FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'anno_righe_sezione_altro_anno: la tabella % non è nel registro', p_tabella;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'anno_id') THEN
+    RAISE EXCEPTION 'anno_righe_sezione_altro_anno: la tabella % non esiste o non ha la colonna anno_id', p_tabella;
+  END IF;
+  IF v_reg.colonna_creazione IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'section_id') THEN
+    RETURN 0;
+  END IF;
+  SELECT r.controlli_rigidi_dal INTO v_dal FROM public.anno_regole r;
+  IF v_dal IS NULL THEN
+    RETURN 0;
+  END IF;
+  EXECUTE format(
+    'SELECT count(*) FROM public.%I t JOIN public.sections s ON s.id = t.section_id '
+    'WHERE t.anno_id IS NOT NULL AND s.anno_id <> t.anno_id AND t.%I >= $1 '
+    'AND EXISTS (SELECT 1 FROM public.sections z WHERE z.scuola_id = s.scuola_id AND z.anno_id = t.anno_id)',
+    p_tabella, v_reg.colonna_creazione)
+  INTO v_n USING v_dal;
+  RETURN v_n;
+END
+$$;
+REVOKE ALL ON FUNCTION public.anno_righe_sezione_altro_anno(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_righe_sezione_altro_anno(text) TO service_role;
+
 -- Funzioni: EXECUTE solo al service_role (i trigger non ne hanno bisogno).
-REVOKE ALL ON FUNCTION public.anno_assegna_e_verifica()                   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_assegna_e_verifica()                  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_assegna_e_verifica()                TO service_role;
 REVOKE ALL ON FUNCTION public.anni_sede_crea_successivo(uuid, date)       FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_dichiarato_transitorio(text, jsonb)    FROM PUBLIC, anon, authenticated;

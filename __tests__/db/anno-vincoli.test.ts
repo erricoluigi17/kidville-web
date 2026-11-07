@@ -158,6 +158,52 @@ describe('dopo V2: i controlli rigidi sono accesi e reggono', () => {
     expect(await codice(presenza(db, '2026-10-08', { sezione: SEZ26 }))).toBe('SEZIONE_DI_ALTRO_ANNO')
   })
 
+  it('I-3: in una sede SENZA sezioni 2025/26 la rettifica estiva con la sezione di oggi passa e si conta; con una sezione 2025/26 è rifiutata', async () => {
+    const sez = await una<string>(`INSERT INTO public.sections (scuola_id, name) VALUES ($1, 'Soli') RETURNING id`, [S2])
+    expect(await una<string>(`SELECT anno_id FROM public.sections WHERE id = $1`, [sez])).toBe(A2627)
+    const fp = 'db:anno-sezione-anno-senza-sezioni:presenze'
+    const avvisi = () => una<number>(`SELECT coalesce(sum(occorrenze), 0)::int FROM public.app_log WHERE fingerprint = $1`, [fp])
+    expect(await avvisi()).toBe(0)
+
+    // (1) una presenza nuova di luglio 2026 (anno 2025/26) con la sezione 2026/27
+    const id = await presenza(db, '2026-07-10', { sede: S2, sezione: sez })
+    expect(await una<string>(`SELECT anno_id FROM public.presenze WHERE id = $1`, [id])).toBe(A2526)
+    expect(await avvisi()).toBe(1)
+    const log = (await db.query<{ livello: string; contesto: Record<string, unknown> }>(
+      `SELECT livello, contesto FROM public.app_log WHERE fingerprint = $1`, [fp])).rows[0]
+    expect(log.livello).toBe('warn')
+    expect(log.contesto).toMatchObject({ tabella: 'presenze', conteggio: 1 })
+
+    // (3) l'upsert della presenza estiva (ON CONFLICT: il BEFORE INSERT gira sulla riga proposta)
+    await db.exec(`CREATE UNIQUE INDEX zz_presenze_prova ON public.presenze (alunno_id, data)`)
+    try {
+      const al = '55555555-5555-4555-8555-555555555555'
+      const up = () => db.query(
+        `INSERT INTO public.presenze (scuola_id, section_id, alunno_id, data) VALUES ($1, $2, $3, DATE '2026-07-11')
+         ON CONFLICT (alunno_id, data) DO UPDATE SET stato = 'presente'`, [S2, sez, al])
+      await up()
+      await up()
+      expect(await una<number>(`SELECT count(*)::int FROM public.presenze WHERE alunno_id = $1`, [al])).toBe(1)
+    } finally { await db.exec(`DROP INDEX public.zz_presenze_prova`) }
+
+    // (4) l'invariante 9 non conta questi casi (né una riga scritta a trigger spento: guarda la funzione, non il trigger)
+    await senzaTrigger('presenze', () => presenza(db, '2026-07-13', { sede: S2, sezione: sez, anno: A2526 }))
+    expect(await una<number>(
+      `SELECT righe::int FROM public.anno_invarianti() WHERE invariante = '9' AND tabella = 'presenze'`)).toBe(0)
+
+    // (2) la stessa riga, ma la sede ha una sezione 2025/26: rifiutata, e ora l'invariante la conterebbe
+    const vecchia = await una<string>(`INSERT INTO public.sections (scuola_id, name, anno_id) VALUES ($1, 'Vecchia S2', $2) RETURNING id`, [S2, A2526])
+    try {
+      expect(await codice(presenza(db, '2026-07-12', { sede: S2, sezione: sez }))).toBe('SEZIONE_DI_ALTRO_ANNO')
+      expect(await una<number>(`SELECT public.anno_righe_sezione_altro_anno('presenze')::int`)).toBeGreaterThan(0)
+    } finally {
+      // il DB è condiviso con gli altri test: via la sezione 2025/26 di S2 e le presenze estive
+      await db.query(`DELETE FROM public.sections WHERE id = $1`, [vecchia])
+      await db.query(`DELETE FROM public.presenze WHERE scuola_id = $1`, [S2])
+      await db.query(`DELETE FROM public.sections WHERE id = $1`, [sez])
+    }
+  })
+
   it('la riga vecchia in contrasto (presenza di luglio con sezione 2026/27) si aggiorna ancora, e l\'invariante 9 non la conta', async () => {
     expect(await una<string>(`SELECT anno_id FROM public.presenze WHERE id = $1`, [P_VECCHIA])).toBe(A2526)
     await db.query(`UPDATE public.presenze SET stato = 'presente' WHERE id = $1`, [P_VECCHIA])

@@ -6,8 +6,9 @@ import { logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from './rifiuto-sede'
 import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
+import { anniDellaSede, esitoSchemaIndietro, guastoAnno, type RigaAnnoSede } from '@/lib/anno/lettura'
 import { creaGettoni } from '@/lib/anno/gettone'
-import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
+import type { EsitoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
 // Scoping per tenant (plesso) e per classe delle funzioni docente.
@@ -432,29 +433,6 @@ function annoDalCookie(request: NextRequest): string | null {
   return raw && FORMA_UUID.test(raw) ? raw : null
 }
 
-type RigaAnnoSede = { id: string; anno_id: string; stato: StatoAnno; domande_aperte?: boolean | null }
-
-type AnniDellaSede = { righe: RigaAnnoSede[] } | { indietro: true } | { guasto: unknown }
-
-async function anniDellaSede(supabase: SupabaseClient, scuolaId: string): Promise<AnniDellaSede> {
-  const { data, error } = await supabase
-    .from('anni_sede')
-    .select('id, anno_id, stato, domande_aperte')
-    .eq('scuola_id', scuolaId)
-  if (error) return schemaAnnoIndietro(error) ? { indietro: true } : { guasto: error }
-  return { righe: (Array.isArray(data) ? data : []) as RigaAnnoSede[] }
-}
-
-function esitoSchemaIndietro(azione: string): EsitoAnno {
-  logEvento('anno-scolastico', 'info', { tipo: 'schema-anno-indietro', azione })
-  return { annoSedeId: null, annoId: null, stato: null, schemaIndietro: true }
-}
-
-function guastoAnno(azione: string, err: unknown): NextResponse {
-  logEvento('anno-scolastico', 'error', { tipo: 'anno-lettura-fallita', azione }, err)
-  return NextResponse.json({ error: 'Verifica di scope non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 })
-}
-
 function rifiutoAnno(codice: string, operazione: string): NextResponse {
   // `erroreAnno` conosce tutti i codici di questo file: `null` non può uscire.
   return erroreAnno({ message: codice }, operazione) as NextResponse
@@ -613,48 +591,6 @@ export async function annoDellaData(
   const riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === formaConfronto(data))
   if (!riga) return rifiutoAnno('GIORNO_SENZA_ANNO', azione)
   return esitoPerAnno(supabase, user, riga, opzioni, azione)
-}
-
-export type AnnoPubblico =
-  | { annoSedeId: string; annoId: string }
-  | { annoSedeId: null; annoId: null; schemaIndietro: true }
-  | { annoSedeId: null; annoId: null; senzaAnno: true }
-
-/**
- * L'anno per le porte SENZA utente (il modulo pubblico): l'anno `corrente` della sede, oppure
- * `opzioni.annoId` (un `anni_scolastici.id`) se la sede ce l'ha E ha `domande_aperte`. Mai un cookie,
- * mai un ruolo, mai un gettone: la funzione non riceve nemmeno `request`.
- *
- * Non rifiuta mai: la famiglia che compila il modulo non deve veder fallire l'invio per l'anno.
- * Se non c'è un `corrente` (agosto) o la lettura fallisce restituisce `senzaAnno: true`, e il chiamante
- * scrive senza `anno_id` (la riserva permanente di `enrollment_submissions` lo assegna).
- */
-export async function annoPerScritturaPubblica(
-  supabase: SupabaseClient,
-  scuolaId: string,
-  opzioni: { annoId?: string } = {},
-): Promise<AnnoPubblico> {
-  const azione = 'annoPerScritturaPubblica'
-  const anni = await anniDellaSede(supabase, scuolaId)
-  if ('indietro' in anni) {
-    const e = esitoSchemaIndietro(azione)
-    return { annoSedeId: null, annoId: null, schemaIndietro: e.schemaIndietro as true }
-  }
-  if ('guasto' in anni) {
-    guastoAnno(azione, anni.guasto)
-    return { annoSedeId: null, annoId: null, senzaAnno: true }
-  }
-  let riga: RigaAnnoSede | undefined
-  if (opzioni.annoId) {
-    const voluto = formaConfronto(opzioni.annoId)
-    riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === voluto && r.domande_aperte === true)
-  }
-  if (!riga) {
-    const correnti = anni.righe.filter((r) => r.stato === 'corrente')
-    if (correnti.length === 1) riga = correnti[0]
-  }
-  if (!riga) return { annoSedeId: null, annoId: null, senzaAnno: true }
-  return { annoSedeId: riga.id, annoId: riga.anno_id }
 }
 
 /**

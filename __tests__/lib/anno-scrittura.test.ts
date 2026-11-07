@@ -15,7 +15,8 @@ vi.mock('@/lib/logging/logger', () => logger)
 vi.mock('@/lib/sezioni/docenti', () => ({ sezioniDiUtente: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClientConHeader: vi.fn() }))
 
-import { resolveAnnoScrittura, annoDellaData, annoPerScritturaPubblica } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, annoDellaData } from '@/lib/auth/scope'
+import { annoPerScritturaPubblica } from '@/lib/anno/pubblico'
 import { conAnno, type EsitoAnno } from '@/lib/anno/tipi'
 import type { AppUser } from '@/lib/auth/require-staff'
 
@@ -407,7 +408,15 @@ describe('annoPerScritturaPubblica', () => {
     const { supabase: indietro } = finto({ indietro: true })
     expect(await annoPerScritturaPubblica(indietro, SEDE)).toEqual({ annoSedeId: null, annoId: null, schemaIndietro: true })
     const { supabase: agosto } = finto({ righe: righeAgosto() })
+    logger.logEvento.mockClear()
     expect(await annoPerScritturaPubblica(agosto, SEDE)).toEqual({ annoSedeId: null, annoId: null, senzaAnno: true })
+    // P18: senza il warn, ad agosto ogni domanda pubblica finirebbe senza anno e nessuno lo vedrebbe.
+    const w = logger.logEvento.mock.calls.find((c) => c[2]?.tipo === 'anno-pubblico-senza-corrente')
+    expect(w?.[0]).toBe('anno-scolastico')
+    expect(w?.[1]).toBe('warn')
+    expect(w?.[2].error_code).toBe('ANNO_DA_SPECIFICARE')
+    expect('codice' in w![2]).toBe(false)
+    expect(w?.[2].scuola_id).toBe(SEDE)
   })
 
   it('12c · non riceve `request`: nessun cookie può influire (la firma è (supabase, scuolaId, opzioni))', () => {

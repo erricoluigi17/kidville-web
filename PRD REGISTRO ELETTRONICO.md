@@ -1,3 +1,17 @@
+## 🐞 Changelog — Correzione urgente: la pubblicazione delle foto era rifiutata dopo la PR 2, e l'ultima migrazione si era fermata — 2026-11-07 (branch `fix/anno-foto-anti-doppione`)
+
+**Stato:** 🟡 in corso — PR verso `main`; il merge lo fa il titolare, la migrazione la applica l'integrazione al merge.
+
+**Che cosa è successo.** Dopo il merge della PR 2 (11:50 del 07/11) **dalle 11:52 nessuna foto si pubblicava dall'app**: la coda del telefono le tiene e le ritenta. La quarta migrazione della PR 2 (V2) si era inoltre fermata con `ANNO_RIEMPIMENTO_INCOMPLETO` e si era annullata tutta (le prime tre erano applicate), quindi i controlli rigidi dell'anno restavano spenti.
+
+**La causa.** `gallery_photo_uploads` è la chiave anti-doppione della pubblicazione delle foto: per costruzione sopravvive alla foto (nessuna FK verso il media, il cestino viene purgato). Il registro dell'anno la dichiarava invece figlia (`madre`) di `galleria_media_v2`. Due conseguenze: (1) poche chiavi (5 su circa 6.600) puntano a una foto che non esiste più, e il loro anno non si può calcolare, quindi V2 si ferma; (2) `gallery_publish_photo` scrive la chiave PRIMA della foto, il trigger generico non trova la madre e il `CHECK` messo da V1 rifiuta l'inserimento (`23514`).
+
+**La correzione.** Nuova migrazione `20261107023211_anno_foto_anti_doppione_fuori_registro.sql`, con la version scelta a mano FRA V1 e V2 perché giri prima che V2 riprovi: toglie il trigger dell'anno e la colonna `anno_id` dalla chiave (con la colonna se ne vanno il `CHECK`, la FK composta e l'indice) e la riga dal registro `anno_tabelle`. La chiave non ha un anno proprio: l'anno della foto sta già su `galleria_media_v2`. La RPC non cambia. Il registro passa da 47 a 46 tabelle. Ripetibile, nessun dato personale, nessuna riga di dati cancellata (esce solo la riga di `anno_tabelle`).
+
+**Prove.** `__tests__/db/anno-foto-anti-doppione.test.ts` (PGlite, RPC vera): senza la correzione la pubblicazione dà `23514` e V2 si ferma con una chiave orfana; con la correzione la foto si pubblica con il suo anno, il replay non la ricrea e V2 si applica con `controlli_rigidi = true`; la tabella non ha più colonna, vincoli, indici né trigger dell'anno; la migrazione è ripetibile. Fotografia `tabelle-anno.json` e sentinella a 46.
+
+**Prima del merge** (sola lettura): `SELECT count(*) FROM public.galleria_media_v2 WHERE politica_operazione ->> 'sopprimiGenitori' = 'true';` deve dare 0 (eseguita in sola lettura dallo strumento SQL di Supabase il 07/11 alle 12:33 di Roma: 0). **Da fare dopo il merge:** lo storico deve avere sia `20261107023211` sia `20261107023257`; una `SELECT` che ritrovi la migrazione e V2 applicate (`controlli_rigidi = true`), `get_advisors` a 0 ERROR, una pubblicazione di prova dall'app; poi le fotografie dalla produzione nella PR di pulizia.
+
 ## 🗓️ Changelog — Anno scolastico, PR 2: il riempimento, la riconciliazione e i vincoli — 2026-11-07 (branch `feat/anno-scolastico-riempimento`)
 
 **Stato:** 🟡 in corso — PR 2 sul branch `feat/anno-scolastico-riempimento`, PR verso `main`; il merge lo fa il titolare. **Per gli utenti non cambia niente**: nessun file in `src/`, nessuna route, nessuna schermata; a guardia spenta l'app di oggi si comporta come prima. Cambia il database: dà un anno a ogni riga esistente, crea le frequenze degli alunni, mette i vincoli.

@@ -284,6 +284,7 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
 **Migrazione**: `guardia_attiva = true`, e via la regola transitoria del Compito 1.2.
 
 **Consegne dalla PR 1:**
+- Ogni tabella `madre` del registro deve avere una FK verso la madre; una tabella senza FK (che può nascere prima della madre o sopravviverle) non è `madre` (lezione di `gallery_photo_uploads`, uscita dal registro il 07/11).
 - Si toglie il trigger `BEFORE INSERT` che mette l'anno attivo a una sezione senza `anno_id` (R8): serviva
   perché un `DEFAULT` non può dipendere da `scuola_id`; da qui in poi la sezione senza anno è un 400, non un
   anno indovinato.

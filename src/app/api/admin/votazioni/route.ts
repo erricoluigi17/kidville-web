@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope'
+import { conAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -102,6 +105,10 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   const sede = await resolveScuolaScrittura(request, supabase, auth.user, dati.scuolaId)
   if (sede.response) return sede.response
   const scuolaId = sede.scuolaId as string
+  // L'anno della votazione: dichiarato, o quello del cookie, o l'unico `corrente`. Le figlie (classi e
+  // candidati) sono in modo `madre`: l'anno lo prendono dalla testata e non lo scrivono.
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId })
+  if (esito instanceof NextResponse) return esito
   const operazione = 'admin/votazioni:POST'
   const guasto = (errore: unknown) => rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
 
@@ -149,7 +156,8 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   if (conflitto.valore === 'istituto') return rifiutoVotazione('VOTAZIONE_ISTITUTO_GIA_APERTA')
 
   // 11. La testata, poi le figlie.
-  const { data: creata, error: errTestata } = await supabase
+  const scrittura = await clientPerScrittura(supabase, esito)
+  const { data: creata, error: errTestata } = await scrittura
     .from('votazioni')
     .insert({
       scuola_id: scuolaId,
@@ -157,9 +165,14 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
       scadenza,
       rappresentante_istituto: dati.rappresentanteIstituto,
       creata_da: auth.user.id,
+      ...conAnno(esito),
     })
     .select('id')
     .single()
+  if (errTestata) {
+    const anno = erroreAnno(errTestata, operazione)
+    if (anno) return anno
+  }
   if (errTestata || !creata) return guasto(errTestata ?? new Error('votazioni:insert-senza-riga'))
   const id = (creata as { id: string }).id
 
@@ -223,5 +236,8 @@ async function annullaTestata(
       errRipristino,
     )
   }
-  return rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
+  return (
+    erroreAnno(errore as { code?: string; message?: string }, operazione) ??
+    rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
+  )
 }

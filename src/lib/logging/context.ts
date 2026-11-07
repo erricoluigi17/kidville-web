@@ -56,6 +56,15 @@ export interface ContestoRichiesta {
      */
     erroreLoggato?: boolean;
     /**
+     * "Il database ha rifiutato una scrittura di questa richiesta con un codice dell'anno
+     * scolastico" (`ANNO_CHIUSO`…): il PRIMO, mai sovrascritto. Lo alza il `fetch` strumentato
+     * dei client Supabase, che è l'unico a leggere il corpo dell'errore; lo legge `withRoute`, che
+     * trasforma il 500 generico della route in 409/422 (Compito 3.4, D4). `message` è sempre un
+     * elemento di `CODICI_ANNO` (un letterale nostro, mai testo del database); `code` quello di
+     * PostgREST (`P0001`, `23514`…).
+     */
+    erroreAnno?: { code: string; message: string };
+    /**
      * Payload già validato e GIÀ REDATTO da `impostaPayload`; stampato solo se la richiesta
      * fallisce. Chi lo emette NON deve ri-redigerlo: una seconda passata di `redact` rifarebbe
      * `[redatto:str/40]` su `[redatto:str/…]` e cancellerebbe i marcatori
@@ -204,6 +213,22 @@ export function segnalaErroreLoggato(): void {
 /** Vera se `logErrore` è già passato per questa richiesta. Fuori da una richiesta: falsa. */
 export function erroreGiaLoggato(): boolean {
     return als.getStore()?.erroreLoggato === true;
+}
+
+/**
+ * Segna che per questa richiesta il database ha rifiutato una scrittura con un codice dell'anno.
+ * Si tiene il PRIMO: i successivi non lo sovrascrivono (la prima causa è quella che l'utente deve
+ * vedere). Fuori da una richiesta è un no-op e non lancia, come `segnalaErroreLoggato`.
+ */
+export function segnalaErroreAnno(code: string, message: string): void {
+    const s = als.getStore();
+    if (!s) return;
+    if (s.erroreAnno === undefined) s.erroreAnno = { code, message };
+}
+
+/** L'errore dell'anno segnato per questa richiesta, se c'è. Fuori da una richiesta: `undefined`. */
+export function erroreAnnoDellaRichiesta(): { code: string; message: string } | undefined {
+    return als.getStore()?.erroreAnno;
 }
 
 /**

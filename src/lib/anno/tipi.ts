@@ -59,3 +59,20 @@ export const CODICI_ANNO = [
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]
+
+/**
+ * Il codice in testa a un messaggio d'errore: la prima parola MAIUSCOLA seguita da fine stringa,
+ * spazio o due punti (`ANNO_CHIUSO`, `ANNO_CHIUSO: dettaglio`). Una regola sola, in un modulo
+ * puro: la usano `errori.ts` (`erroreAnno`) e `supabase-fetch.ts` (la rete di `withRoute`), e
+ * quest'ultimo non può importare `errori.ts` (importa il logger, che importa il contesto: ciclo).
+ */
+export function codiceDaMessaggio(message: unknown): string | null {
+  const m = typeof message === 'string' ? /^\s*([A-Z][A-Z0-9_]+)(?=$|[\s:])/.exec(message) : null
+  return m ? m[1] : null
+}
+
+/** Il codice dell'anno contenuto nel messaggio, se è uno di `CODICI_ANNO`; altrimenti `null`. */
+export function codiceAnnoDa(message: unknown): CodiceAnno | null {
+  const c = codiceDaMessaggio(message)
+  return c !== null && (CODICI_ANNO as readonly string[]).includes(c) ? (c as CodiceAnno) : null
+}

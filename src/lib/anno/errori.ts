@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import it from '../../../messages/it/shared.json'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { codiceDaMessaggio } from '@/lib/anno/tipi'
 
 /**
  * `erroreAnno` — L'UNICO POSTO in cui i codici d'errore dei trigger dell'anno scolastico
@@ -39,8 +40,7 @@ function frase(codice: keyof typeof CODICI_ERRORE): string {
  * o i due punti: `ANNO_CHIUSO_ALTRO`, `ANNO_CHIUSO-x` e `ANNO_CHIUSO.x` non sono codici.
  */
 function codiceDa(error: { code?: string; message?: string } | null | undefined): string | null {
-  const m = typeof error?.message === 'string' ? /^\s*([A-Z][A-Z0-9_]+)(?=$|[\s:])/.exec(error.message) : null
-  return m ? m[1] : null
+  return codiceDaMessaggio(error?.message)
 }
 
 function avvisaRifiuto(codice: string, operazione: string | undefined): void {

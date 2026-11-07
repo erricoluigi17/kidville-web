@@ -1,5 +1,6 @@
 import { logEvento, type Livello, type Valore } from './logger';
-import { contesto, inLogger } from './context';
+import { contesto, inLogger, segnalaErroreAnno } from './context';
+import { codiceAnnoDa } from '@/lib/anno/tipi';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
@@ -618,11 +619,36 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
     // Il corpo si legge SOLO qui, mai sulle risposte ok: `storage.download()` passa da questo
     // wrapper, e leggerne il corpo distruggerebbe lo streaming e farebbe esplodere la memoria.
     const err = leggeIlCorpo(b.area) ? await erroreDalCorpo(res, s) : undefined;
+    riconosciErroreAnno(b.area, err);
     const livello = livelloDi(b.area, s, err);
 
     logEvento(b.area, livello, campiDi(b, { stato: s, ms }), err, {
         persisti: daPersistere(livello, b.area, s),
     });
+}
+
+/**
+ * LA RETE DELL'ANNO SCOLASTICO (Compito 3.4, D4). Se il database ha rifiutato una scrittura con un
+ * codice dell'anno (`ANNO_CHIUSO`…), lo si scrive nel contesto della richiesta: `withRoute` lo
+ * legge e trasforma il 500 generico della route in 409/422, senza toccare le 63 route che oggi
+ * rispondono 500. Il corpo è QUELLO GIÀ LETTO per il log (nessuna seconda lettura) e il confronto è
+ * con `CODICI_ANNO`, importato da un modulo puro: `errori.ts` non si può importare qui, perché
+ * importa il logger e il logger importa il contesto.
+ *
+ * Solo aree `db` e `rpc`. Il ramo `verràRitentato` non lo impedisce: ritenta solo GET/HEAD/OPTIONS
+ * con 503/520, e un `RAISE EXCEPTION` di PostgREST è un 400. Non lancia mai, e salva nel contesto
+ * il codice LETTERALE della lista, mai testo del database.
+ */
+function riconosciErroreAnno(area: Bersaglio['area'], err: unknown): void {
+    try {
+        if (area !== 'db' && area !== 'rpc') return;
+        const e = err as { message?: unknown; code?: unknown } | null | undefined;
+        const codice = codiceAnnoDa(e?.message);
+        if (codice === null) return;
+        segnalaErroreAnno(typeof e?.code === 'string' ? e.code : '', codice);
+    } catch {
+        // Fail-open: il riconoscimento è osservabilità, la risposta al chiamante resta intatta.
+    }
 }
 
 /**

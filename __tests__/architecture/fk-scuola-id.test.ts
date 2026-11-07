@@ -63,6 +63,9 @@ type Fotografia = {
 // un rilievo dell'audit — ma unificarla è una migrazione a sé: qui si CONGELA
 // l'elenco di chi punta al gemello, così una tabella NUOVA che sceglie `scuole`
 // non passa inosservata.
+//
+// La mappa ospita anche le tabelle la cui sede è garantita da una FK COMPOSTA verso una tabella
+// intermedia dichiarata (oggi solo `frequenze` → `anni_sede`, che a sua volta punta a `schools`).
 // ─────────────────────────────────────────────────────────────────────────────
 const FK_VERSO_SCUOLE: Record<string, string> = {
     cassa_categorie: 'modulo Cassa (2026-07-20): nato puntando a `scuole`, ON DELETE CASCADE',

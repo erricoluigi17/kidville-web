@@ -375,7 +375,8 @@ export function posterioriCheContengono(
 // produzione cambiano come previsto qui sopra: indici unici 262 → 289 (+27 delle tabelle nuove e di `sections`,
 // che ha cambiato i suoi tre), RLS accesa 163 → 178 (+15 tabelle, nessuna policy: 40 invariate), tabelle con
 // `scuola_id` 95 → 98 (`anni_sede`, `frequenze`, `passaggi_anno`) e FK di sede 95 → 98, con `frequenze` che ha
-// solo la composta `(scuola_id, anno_id)` verso `anni_sede` (dichiarata in `FK_VERSO_SCUOLE` di `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
+// solo la composta `(scuola_id, anno_id)` verso `anni_sede` (dichiarata in `FK_VERSO_SCUOLE` di
+// `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
 // come voleva R15), solo l'istante dello scatto. Le altre due (bucket, schema delle candidature) non si toccano.
 // Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}

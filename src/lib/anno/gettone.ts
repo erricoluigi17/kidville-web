@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClientConHeader } from '@/lib/supabase/server-client'
 import { logEvento } from '@/lib/logging/logger'
+import type { EsitoAnno } from '@/lib/anno/tipi'
 
 /**
  * I GETTONI DI CORREZIONE dell'anno protetto (specifica §4.4.6, Ruling D8/D9).
@@ -80,4 +81,16 @@ export async function conGettone(gettoni: string | string[]): Promise<SupabaseCl
   return (await createAdminClientConHeader({
     'x-kidville-correzione': lista.join(','),
   })) as unknown as SupabaseClient
+}
+
+/**
+ * Il client con cui una route dello staff fa la SCRITTURA dell'anno (Ruling P37): con i gettoni
+ * di `esito` nell'header se ce ne sono, altrimenti `supabase` invariato. Letture e log restano
+ * sul client di prima. Un gettone che non è un uuid fa lanciare, come `conGettone`.
+ */
+export async function clientPerScrittura(
+  supabase: SupabaseClient,
+  esito: EsitoAnno,
+): Promise<SupabaseClient> {
+  return esito.gettoni && esito.gettoni.length > 0 ? conGettone(esito.gettoni) : supabase
 }

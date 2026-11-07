@@ -17,7 +17,9 @@ vi.mock('@supabase/ssr', async (originale) => {
 })
 vi.mock('next/headers', () => ({ cookies: vi.fn() }))
 
-import { conGettone } from '@/lib/anno/gettone'
+import { conGettone, clientPerScrittura } from '@/lib/anno/gettone'
+import type { EsitoAnno } from '@/lib/anno/tipi'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const G1 = '11111111-aaaa-4aaa-8aaa-111111111111'
 const G2 = '22222222-aaaa-4aaa-8aaa-222222222222'
@@ -73,5 +75,43 @@ describe('conGettone', () => {
     await expect(conGettone([])).rejects.toThrow('GETTONE_NON_VALIDO')
     expect(creati.n).toBe(0)
     expect(chiamate.length).toBe(0)
+  })
+})
+
+describe('clientPerScrittura', () => {
+  const esito = (extra: Partial<EsitoAnno>): EsitoAnno => ({
+    annoSedeId: 'b2222222-2222-4222-8222-222222222222',
+    annoId: 'a2222222-2222-4222-8222-222222222222',
+    stato: 'corrente',
+    ...extra,
+  })
+  const base = { from: () => null } as unknown as SupabaseClient
+  const chiamate: Array<[unknown, RequestInit | undefined]> = []
+
+  beforeEach(() => {
+    chiamate.length = 0
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'chiave-finta-di-prova'
+    vi.stubGlobal('fetch', async (input: unknown, init?: RequestInit) => {
+      chiamate.push([input, init])
+      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('senza gettoni restituisce lo STESSO client', async () => {
+    expect(await clientPerScrittura(base, esito({}))).toBe(base)
+    expect(await clientPerScrittura(base, esito({ gettoni: [] }))).toBe(base)
+  })
+
+  it('con gettoni restituisce un client che porta l\'header', async () => {
+    const c = await clientPerScrittura(base, esito({ gettoni: [G1, G2] }))
+    expect(c).not.toBe(base)
+    await c.from('sections').select('id')
+    const init = chiamate[chiamate.length - 1][1]
+    expect(new Headers(init?.headers as HeadersInit | undefined).get('x-kidville-correzione')).toBe(`${G1},${G2}`)
+  })
+
+  it('un gettone che non è un uuid lancia, come conGettone', async () => {
+    await expect(clientPerScrittura(base, esito({ gettoni: ['no'] }))).rejects.toThrow('GETTONE_NON_VALIDO')
   })
 })

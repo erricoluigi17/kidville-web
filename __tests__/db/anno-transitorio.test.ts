@@ -499,3 +499,61 @@ describe('sicurezza delle funzioni nuove', () => {
     expect(t).toEqual(['trg_crm_bambini_anno_da_etichetta', 'trg_zz_anno_assegna_e_verifica'])
   })
 })
+
+describe('2.3 · i casi di segue_data e del riempimento che mancavano, e il CRM rigido', () => {
+  it('segue_data con la scadenza prima NULL: non solleva e l\'anno resta valido', async () => {
+    for (const r of [false, true]) {
+      await rigidi(r)
+      await db.query(`ALTER TABLE public.pagamenti ALTER COLUMN scadenza DROP NOT NULL`)
+      try {
+        const v = await pag({ scadenza: '2026-08-31', anno: A2526 })
+        await db.query(`UPDATE public.pagamenti SET scadenza = NULL WHERE id = $1`, [v.id])
+        // la scadenza sparisce: si ricade sulla data di creazione (oggi, 2026/27) e l'anno la segue
+        expect(await annoDellaVoce(v.id)).toBe(A2627)
+        // OLD.scadenza NULL: nessuna eccezione, si parte dalla data di creazione; l'anno resta valido
+        await db.query(`UPDATE public.pagamenti SET scadenza = DATE '2026-09-02' WHERE id = $1`, [v.id])
+        expect(await annoDellaVoce(v.id)).toBe(A2627)
+      } finally {
+        await db.query(`DELETE FROM public.pagamenti WHERE scadenza IS NULL`)
+        await db.query(`ALTER TABLE public.pagamenti ALTER COLUMN scadenza SET NOT NULL`)
+      }
+    }
+  })
+
+  it('la rete morbida di segue_data: un guasto lascia passare la scrittura e scrive la riga in app_log', async () => {
+    await rigidi(false)
+    const v = await pag({ scadenza: '2026-08-31' })
+    await db.query(`ALTER FUNCTION public.anno_di(uuid, date) RENAME TO anno_di_guasta`)
+    try {
+      await db.query(`UPDATE public.pagamenti SET scadenza = DATE '2026-09-01' WHERE id = $1`, [v.id])
+    } finally {
+      await db.query(`ALTER FUNCTION public.anno_di_guasta(uuid, date) RENAME TO anno_di`)
+    }
+    expect(await annoDellaVoce(v.id)).toBe(A2526)
+    const n = await una<string>(`SELECT count(*)::text FROM public.app_log WHERE fingerprint LIKE 'db:anno-segue-data:pagamenti%'`)
+    expect(Number(n)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('anno_riempi con guardia_attiva = true: RIEMPIMENTO_A_GUARDIA_ATTIVA e nessuna riga cambia', async () => {
+    await rigidi(false)
+    const prima = await una<string>(`SELECT count(*)::text FROM public.pagamenti WHERE anno_id IS NULL`)
+    await db.query(`UPDATE public.anno_regole SET guardia_attiva = true`)
+    try {
+      expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('RIEMPIMENTO_A_GUARDIA_ATTIVA')
+    } finally {
+      await db.query(`UPDATE public.anno_regole SET guardia_attiva = false`)
+    }
+    expect(await una<string>(`SELECT count(*)::text FROM public.pagamenti WHERE anno_id IS NULL`)).toBe(prima)
+  })
+
+  it('CRM: il trigger delle etichette rispetta anno_tabelle.rigida (errore anche a controlli_rigidi spenti)', async () => {
+    await rigidi(false)
+    await db.query(`UPDATE public.anno_tabelle SET rigida = true WHERE tabella = 'crm_bambini'`)
+    try {
+      expect(await messaggio(crm({ etichetta: 'prossimo', quota: 2035 }))).toBe('ANNO_NON_COERENTE')
+    } finally {
+      await db.query(`UPDATE public.anno_tabelle SET rigida = false WHERE tabella = 'crm_bambini'`)
+    }
+    expect((await crm({ etichetta: 'prossimo', quota: 2035 })).anno_id).toBeNull()
+  })
+})

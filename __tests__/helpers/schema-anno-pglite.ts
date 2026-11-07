@@ -471,3 +471,37 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
   for (const sede of sedi) await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [sede])
   await fissaCalendarioAnni(db)
 }
+
+export interface OpzioniDbPr2 {
+  sedi: string[]
+  /** Fin dove si applica la catena M1 → F1 → V1 → V2. */
+  fino: keyof typeof SUFFISSI_PR2
+  /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
+  completo?: boolean
+  /** SQL eseguito PRIMA della migrazione della PR 1 (dopo gli schemi della PR 2): tabelle che il registro deve trovare. */
+  codaPrima?: string
+  dopoM1?: (db: PGlite) => Promise<void>
+  dopoF1?: (db: PGlite) => Promise<void>
+  dopoV1?: (db: PGlite) => Promise<void>
+}
+
+/**
+ * Un PGlite con la CATENA della PR 2 applicata fino a `fino`, nell'ordine di produzione. Il calendario è quello
+ * fisso di `creaAnniFissi` (2025/26 chiuso, 2026/27 attivo; il 2027/28 lo crea F1). I ganci `dopoM1/F1/V1` servono ai
+ * test per scrivere righe «come oggi» fra un file e l'altro (stragglers, righe non riempibili).
+ */
+export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
+  const db = await creaDbAnno({
+    sediPrimaDellaMigrazione: o.sedi,
+    codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
+  })
+  await creaAnniFissi(db, o.sedi)
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'V2']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, V2: undefined } as const
+  for (const passo of ordine) {
+    await applicaPr2(db, passo)
+    await gancio[passo]?.(db)
+    if (passo === o.fino) break
+  }
+  return db
+}

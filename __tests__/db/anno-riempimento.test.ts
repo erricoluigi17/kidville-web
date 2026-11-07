@@ -40,7 +40,7 @@ async function senzaAnno<T>(tabelle: string[], f: () => Promise<T>): Promise<T> 
   }
 }
 async function riempi(tabelle: string[] | null = null): Promise<Record<string, number>> {
-  const r = await db.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi($1::text[]) AS r`, [tabelle])
+  const r = await db.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi($1::text[], DATE '2026-11-07') AS r`, [tabelle])
   return r.rows[0].r
 }
 /** Il contatore del rapporto: la somma della voce nell'ultima fotografia `dopo`, scattata ora. */
@@ -79,7 +79,7 @@ afterAll(async () => { await db.close() })
 
 beforeEach(async () => {
   await db.exec(`
-    UPDATE public.anno_regole SET controlli_rigidi = false, guardia_attiva = false;
+    UPDATE public.anno_regole SET controlli_rigidi = false, guardia_attiva = false, specchio_alunni_attivo = false;
     DROP TRIGGER IF EXISTS prova_fallimento ON public.valutazioni;
     DELETE FROM public.riconciliazione_anno;
     DELETE FROM scatola_nera.modifiche;
@@ -343,7 +343,7 @@ describe('gli effetti collaterali del riempimento', () => {
     expect(await una<number>(`SELECT count(*)::int FROM scatola_nera.modifiche`)).toBe(120)
     // a chiamata finita, dentro la stessa transazione, gli interruttori sono spenti
     await db.exec('BEGIN')
-    await db.query(`SELECT public.anno_riempi()`)
+    await db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`)
     const dopo = (await db.query<{ a: string; b: string }>(
       `SELECT current_setting('scatola_nera.senza_storico', true) AS a, current_setting('anno_scolastico.riempimento', true) AS b`)).rows[0]
     await db.exec('COMMIT')
@@ -361,7 +361,7 @@ describe('gli effetti collaterali del riempimento', () => {
         FOR EACH ROW EXECUTE FUNCTION public.prova_fallimento();`)
     await db.exec('BEGIN')
     await db.exec('SAVEPOINT s')
-    expect(await messaggio(db.query(`SELECT public.anno_riempi()`))).toBe('BOOM')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('BOOM')
     await db.exec('ROLLBACK TO s')
     const dopo = (await db.query<{ a: string | null; b: string | null }>(
       `SELECT current_setting('scatola_nera.senza_storico', true) AS a, current_setting('anno_scolastico.riempimento', true) AS b`)).rows[0]
@@ -414,14 +414,14 @@ describe('le precondizioni, l\'atomicità, l\'ordine', () => {
     const id = await seme()
     await alunno(1)
     await db.exec(`UPDATE public.anno_regole SET controlli_rigidi = true`)
-    expect(await messaggio(db.query(`SELECT public.anno_riempi()`))).toBe('RIEMPIMENTO_A_CONTROLLI_RIGIDI')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('RIEMPIMENTO_A_CONTROLLI_RIGIDI')
     await nulla(id)
   })
 
   it('a guardia accesa: RIEMPIMENTO_A_GUARDIA_ATTIVA', async () => {
     const id = await seme()
     await db.exec(`UPDATE public.anno_regole SET guardia_attiva = true`)
-    expect(await messaggio(db.query(`SELECT public.anno_riempi()`))).toBe('RIEMPIMENTO_A_GUARDIA_ATTIVA')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('RIEMPIMENTO_A_GUARDIA_ATTIVA')
     await nulla(id)
   })
 
@@ -429,12 +429,12 @@ describe('le precondizioni, l\'atomicità, l\'ordine', () => {
     const id = await seme()
     await senzaAnno(['galleria_media_v2'], () => db.query(
       `INSERT INTO public.galleria_media_v2 (scuola_id, giorno_competenza, politica_operazione) VALUES ($1, DATE '2026-10-05', '{"sopprimiGenitori": true}')`, [S1]))
-    expect(await messaggio(db.query(`SELECT public.anno_riempi()`))).toBe('RIEMPIMENTO_GALLERIA_SOPPRIMI')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('RIEMPIMENTO_GALLERIA_SOPPRIMI')
     await nulla(id)
   })
 
   it('un nome di tabella sconosciuto: TABELLA_NON_NEL_RIEMPIMENTO', async () => {
-    expect(await messaggio(db.query(`SELECT public.anno_riempi(ARRAY['pagamenti', 'non_esiste'])`))).toBe('TABELLA_NON_NEL_RIEMPIMENTO')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(ARRAY['pagamenti', 'non_esiste'], DATE '2026-11-07')`))).toBe('TABELLA_NON_NEL_RIEMPIMENTO')
   })
 
   it('atomicità: se una tabella fallisce, nessuna delle precedenti resta riempita (né l\'anno creato)', async () => {
@@ -448,7 +448,7 @@ describe('le precondizioni, l\'atomicità, l\'ordine', () => {
         FOR EACH ROW EXECUTE FUNCTION public.prova_fallimento();`)
     await db.exec('BEGIN')
     await db.exec('SAVEPOINT s')
-    expect(await messaggio(db.query(`SELECT public.anno_riempi()`))).toBe('BOOM')
+    expect(await messaggio(db.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`))).toBe('BOOM')
     await db.exec('ROLLBACK TO s')
     await db.exec('COMMIT')
     await nulla(id)
@@ -486,10 +486,10 @@ describe('il primo riempimento crea l\'anno successivo (database nuovo)', () => 
       const conta = () => una<number>(
         `SELECT count(*)::int FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE y.anno_inizio = 2027 AND s.stato = 'in_preparazione'`, [], d)
       expect(await conta()).toBe(0)
-      const r = await d.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi() AS r`)
+      const r = await d.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi(NULL, DATE '2026-11-07') AS r`)
       expect(r.rows[0].r.anni_sede_creati).toBe(2)
       expect(await conta()).toBe(2)
-      const r2 = await d.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi() AS r`)
+      const r2 = await d.query<{ r: Record<string, number> }>(`SELECT public.anno_riempi(NULL, DATE '2026-11-07') AS r`)
       expect(r2.rows[0].r.anni_sede_creati).toBe(0)
     } finally { await d.close() }
   }, 60_000)

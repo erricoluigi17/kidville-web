@@ -164,8 +164,10 @@ DECLARE
 BEGIN
   IF NEW.anno_id IS NOT DISTINCT FROM OLD.anno_id
      AND (NEW.anno_ingresso IS DISTINCT FROM OLD.anno_ingresso OR NEW.quota_anno IS DISTINCT FROM OLD.quota_anno) THEN
+    -- rigido come il trigger generico: la manopola globale O la `rigida` della tabella nel registro
     SELECT r.controlli_rigidi INTO v_rigidi FROM public.anno_regole r;
-    v_rigidi := coalesce(v_rigidi, false);
+    v_rigidi := coalesce(v_rigidi, false)
+                OR coalesce((SELECT t.rigida FROM public.anno_tabelle t WHERE t.tabella = 'crm_bambini'), false);
     BEGIN
       v_anno := public.anno_dichiarato_transitorio('crm_bambini', to_jsonb(NEW));
     EXCEPTION WHEN OTHERS THEN
@@ -200,7 +202,7 @@ BEGIN
 END
 $mig$;
 
--- Il trigger generico, in tre punti rispetto alla PR 1 (il resto è com'era):
+-- Il trigger generico, in quattro punti rispetto alla PR 1 (il resto è com'era):
 --   (a) `segue_data` (solo `pagamenti`): in un UPDATE di una voce SENZA competenza, se `anno_id` non è toccato e
 --       la scadenza cambia, l'anno segue la nuova scadenza SOLO se prima la seguiva (l'anno di OLD era quello
 --       della vecchia scadenza). Un anno dichiarato diverso dalla scadenza resta dov'è e non dà mai errore;
@@ -209,7 +211,9 @@ $mig$;
 --       morbido NULL. Una riga la cui sede non si ricava resta senza anno, senza errori (colonna-sede
 --       facoltativa). Come il calcolo, in morbido è avvolto in una rete: un guasto lascia NULL e una riga in app_log;
 --   (c) `anno_scolastico.riempimento = 'on'` (solo nella transazione del riempimento): una riga che nasce senza
---       anno e viene riempita non muove `storico_versione` né `updated_at`.
+--       anno e viene riempita non muove `storico_versione` né `updated_at`;
+--   (d) a controlli rigidi, una tabella `sede_facoltativa` con la sede NON ricavabile non solleva GIORNO_SENZA_ANNO:
+--       lascia l'anno com'è (NULL se non scritto).
 -- Tutto resta dentro i rami dell'anno NULL o dell'UPDATE di una data: gli UPDATE estranei escono prima, come oggi.
 CREATE OR REPLACE FUNCTION public.anno_assegna_e_verifica()
 RETURNS trigger
@@ -321,7 +325,12 @@ BEGIN
   -- mai una scrittura di oggi (R2): un guasto del calcolo (una colonna che non si converte, una madre
   -- con la chiave fatta diversamente) lascia `anno_id` NULL e lascia una traccia in `app_log`. La rete
   -- copre SOLO il calcolo, e nel ramo morbido il calcolo non solleva i codici d'errore.
-  IF v_rigidi THEN
+  IF v_rigidi AND v_reg.sede_facoltativa AND public.anno_sede_della_riga(TG_TABLE_NAME, v_n) IS NULL THEN
+    -- (d) Una tabella con la chiave della sede facoltativa e la riga SENZA sede (un avviso per tutte le sedi, la
+    -- firma di un OTP che non porta la scuola): non c'è un calendario con cui calcolare. L'anno resta quello
+    -- scritto, o NULL: lo ammette il `CHECK` dei vincoli (`anno_id IS NOT NULL OR <sede> IS NULL`).
+    v_calcolato := NULL;
+  ELSIF v_rigidi THEN
     v_calcolato := public.anno_calcola_della_riga(v_reg, v_n, true);
   ELSE
     BEGIN
@@ -1085,6 +1094,8 @@ $$;
 -- IL RIEMPIMENTO. Esiste solo fra i file di riempimento e V2, che la elimina: accende due interruttori e non deve
 -- restare una funzione chiamabile. Lascia calcolare l'anno al trigger generico (`UPDATE … SET anno_id = anno_id
 -- WHERE anno_id IS NULL`): una sola fonte di verità, il riempimento prova il trigger sui dati veri.
+--   · `p_oggi` NULL = il giorno di Roma di oggi: lo passa ad `anni_sede_crea_successivo`. I test passano una data
+--     fissa, perché dal 01/09/2027 un test che usa l'orologio creerebbe anche il 2028/29 e scadrebbe col calendario.
 --   · `p_tabelle` NULL = tutto; altrimenti solo le tabelle date (un nome sconosciuto → TABELLA_NON_NEL_RIEMPIMENTO).
 --     Il lavoro «di sede» (anni successivi, frequenze, listino, copia dell'anno) si fa con NULL o con 'frequenze'.
 --   · Precondizioni, prima di toccare niente: controlli morbidi (194 righe vecchie hanno anno e sezione di anni
@@ -1095,7 +1106,7 @@ $$;
 --   · Ordine: anni successivi, frequenze, listino, copia; poi per profondità di madre (le madri prima delle figlie),
 --     i dichiarati prima delle tabelle `data`, le piccole prima.
 -- Restituisce {tabella: righe a cui ha dato l'anno}; rieseguita dà zero ovunque.
-CREATE OR REPLACE FUNCTION public.anno_riempi(p_tabelle text[] DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.anno_riempi(p_tabelle text[] DEFAULT NULL, p_oggi date DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1120,6 +1131,7 @@ DECLARE
   v_sede_id uuid;
   v_cat     uuid;
   v_ex_ok   boolean;
+  v_oggi    date := coalesce(p_oggi, public.giorno_roma(now()));
 BEGIN
   -- 1 · le precondizioni: nessuna modifica
   IF to_regproc('public.anno_di') IS NULL OR to_regclass('public.anni_sede') IS NULL THEN
@@ -1159,7 +1171,7 @@ BEGIN
       -- nient'altro, così il riempimento non crea mai anni da sé quando lo si rilancia a settembre 2027.
       FOR v_sede_id IN SELECT s.scuola_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id
                         GROUP BY s.scuola_id HAVING max(y.anno_inizio) = 2026 ORDER BY 1 LOOP
-        v_n := v_n + public.anni_sede_crea_successivo(v_sede_id);
+        v_n := v_n + public.anni_sede_crea_successivo(v_sede_id, v_oggi);
       END LOOP;
       v_res := v_res || jsonb_build_object('anni_sede_creati', v_n);
 
@@ -1322,7 +1334,329 @@ $$;
 
 REVOKE ALL ON FUNCTION public.anno_traduci_classi(uuid, text[])        FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_copia_configurazione(uuid, uuid)    FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.anno_riempi(text[])                      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_riempi(text[], date)                FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_traduci_classi(uuid, text[])     TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_copia_configurazione(uuid, uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.anno_riempi(text[])                   TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_riempi(text[], date)             TO service_role;
+
+-- ── 2.3 · Lo specchio `alunni` → `frequenze` (fase A, §4.19) ─────────────────────────────────────
+-- Finché l'app scrive la scheda dell'alunno e non la frequenza (la PR 3 le affianca, la 4.3 le inverte, la 5 toglie
+-- lo specchio), ogni scrittura su `alunni` che cambia una colonna copiata si riflette nella frequenza dell'anno
+-- ATTIVO della sede: mai negli altri anni. La frequenza nasce con origine `recupero` (lo ammette il CHECK senza moduli
+-- né quota), `tipo` NULL, `retta_mensile` NULL se l'importo è zero (lo zero non esiste più).
+--   · nuova: `data_ingresso` = il giorno di Roma di oggi, portato dentro il periodo dell'anno;
+--   · già presente: si aggiornano le colonne copiate; stato e `data_uscita` solo se è una frequenza `recupero`
+--     (una frequenza nata da una domanda ha un suo ciclo di vita). Lo stato viene da `archiviato_il`, come nel
+--     riempimento: archiviato → `ritirato` con uscita nel giorno di Roma dell'archiviazione (dentro [ingresso, fine]);
+--   · cambio di sede: la frequenza viva della sede vecchia diventa `trasferito` (con uscita), e ne nasce una nella nuova;
+--   · FAIL-OPEN: qualunque errore (una sezione di un altro anno, un CHECK…) lascia la scrittura di `alunni` com'è
+--     e una riga in `app_log` (`esito specchio-fallito`, solo tabella e SQLSTATE: mai un valore);
+--   · interruttore: `anno_regole.specchio_alunni_attivo`.
+-- Le colonne di `alunni` si leggono da jsonb: un database che non ne ha qualcuna (la CI) non fa fallire il trigger.
+CREATE OR REPLACE FUNCTION public.alunni_specchio_frequenza()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_attivo   boolean;
+  v_n        jsonb := to_jsonb(NEW);
+  v_oggi     date  := public.giorno_roma(now());
+  v_as       public.anni_sede%ROWTYPE;
+  v_old      public.anni_sede%ROWTYPE;
+  v_arch     timestamptz;
+  v_retta    numeric;
+  v_giorno   integer;
+  v_ingresso date;
+BEGIN
+  SELECT r.specchio_alunni_attivo INTO v_attivo FROM public.anno_regole r;
+  IF NOT coalesce(v_attivo, false) THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    IF NEW.scuola_id IS NULL THEN
+      RETURN NULL;
+    END IF;
+
+    -- la sede cambia: la frequenza viva della sede vecchia si chiude come `trasferito`
+    IF TG_OP = 'UPDATE' AND OLD.scuola_id IS NOT NULL AND OLD.scuola_id IS DISTINCT FROM NEW.scuola_id THEN
+      SELECT s.* INTO v_old FROM public.anni_sede s WHERE s.id = public.anno_attivo(OLD.scuola_id);
+      IF FOUND THEN
+        UPDATE public.frequenze f
+           SET stato = 'trasferito', data_uscita = least(greatest(v_oggi, f.data_ingresso), v_old.fine)
+         WHERE f.alunno_id = NEW.id AND f.anno_sede_id = v_old.id AND f.stato IN ('in_attesa', 'iscritto');
+      END IF;
+    END IF;
+
+    SELECT s.* INTO v_as FROM public.anni_sede s WHERE s.id = public.anno_attivo(NEW.scuola_id);
+    IF NOT FOUND THEN
+      RETURN NULL;
+    END IF;
+
+    v_arch := (v_n ->> 'archiviato_il')::timestamptz;
+    v_retta := (v_n ->> 'importo_retta_mensile')::numeric;
+    v_giorno := (v_n ->> 'giorno_scadenza_pagamenti')::integer;
+    v_ingresso := least(greatest(v_oggi, v_as.inizio), v_as.fine);
+
+    INSERT INTO public.frequenze
+      (alunno_id, anno_sede_id, section_id, origine, tipo, stato, data_ingresso, data_uscita, retta_mensile,
+       retta_a_carico_di, retta_split_config, intestatario_fatture, giorno_scadenza_pagamenti, gruppo_mensa_id,
+       sospeso, sospeso_causa, sospeso_motivo, sospeso_il, sospeso_da, usa_pannolino)
+    VALUES
+      (NEW.id, v_as.id, NEW.section_id, 'recupero', NULL,
+       CASE WHEN v_arch IS NULL THEN 'iscritto' ELSE 'ritirato' END,
+       v_ingresso,
+       CASE WHEN v_arch IS NULL THEN NULL ELSE least(greatest(public.giorno_roma(v_arch), v_ingresso), v_as.fine) END,
+       CASE WHEN v_retta > 0 THEN v_retta END,
+       (v_n ->> 'retta_a_carico_di')::uuid,
+       nullif(v_n -> 'retta_split_config', 'null'::jsonb),
+       nullif(v_n -> 'intestatario_fatture', 'null'::jsonb),
+       CASE WHEN v_giorno BETWEEN 1 AND 28 THEN v_giorno END,
+       (v_n ->> 'gruppo_mensa_id')::uuid,
+       coalesce((v_n ->> 'sospeso')::boolean, false), v_n ->> 'sospeso_causa', v_n ->> 'sospeso_motivo',
+       (v_n ->> 'sospeso_il')::timestamptz, (v_n ->> 'sospeso_da')::uuid,
+       coalesce((v_n ->> 'usa_pannolino')::boolean, false))
+    ON CONFLICT (alunno_id, anno_sede_id) DO UPDATE SET
+      section_id = excluded.section_id,
+      retta_mensile = excluded.retta_mensile,
+      retta_a_carico_di = excluded.retta_a_carico_di,
+      retta_split_config = excluded.retta_split_config,
+      intestatario_fatture = excluded.intestatario_fatture,
+      giorno_scadenza_pagamenti = excluded.giorno_scadenza_pagamenti,
+      gruppo_mensa_id = excluded.gruppo_mensa_id,
+      sospeso = excluded.sospeso, sospeso_causa = excluded.sospeso_causa, sospeso_motivo = excluded.sospeso_motivo,
+      sospeso_il = excluded.sospeso_il, sospeso_da = excluded.sospeso_da,
+      usa_pannolino = excluded.usa_pannolino,
+      stato = CASE WHEN public.frequenze.origine = 'recupero' THEN excluded.stato ELSE public.frequenze.stato END,
+      data_uscita = CASE WHEN public.frequenze.origine <> 'recupero' THEN public.frequenze.data_uscita
+                         WHEN v_arch IS NULL THEN NULL
+                         ELSE least(greatest(public.giorno_roma(v_arch), public.frequenze.data_ingresso), v_as.fine) END;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM public.anno_log_guasto('alunni', 'specchio-fallito', 'alunni_specchio_frequenza',
+                                   'specchio alunni → frequenze fallito: la scrittura di alunni è passata',
+                                   'db:anno-specchio:alunni', SQLSTATE);
+  END;
+  RETURN NULL;
+END
+$$;
+
+-- Due trigger (in un INSERT il `WHEN` non può nominare OLD): l'INSERT sempre, l'UPDATE solo se cambia una delle
+-- colonne copiate. PostgREST rimanda la riga intera a ogni PATCH: il `WHEN` evita il lavoro quando non è cambiato niente.
+DO $mig$
+DECLARE
+  v_cols text[];
+  v_old  text;
+  v_new  text;
+BEGIN
+  IF NOT (EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.alunni') AND c.relkind IN ('r', 'p'))
+          AND to_regclass('public.frequenze') IS NOT NULL) THEN
+    RETURN;
+  END IF;
+  SELECT array_agg(c ORDER BY c) INTO v_cols
+    FROM unnest(ARRAY['scuola_id', 'section_id', 'archiviato_il', 'importo_retta_mensile', 'retta_a_carico_di',
+                      'retta_split_config', 'intestatario_fatture', 'giorno_scadenza_pagamenti', 'gruppo_mensa_id',
+                      'sospeso', 'sospeso_causa', 'sospeso_motivo', 'sospeso_il', 'sospeso_da', 'usa_pannolino']) AS c
+   WHERE public.anno_ha_colonna('alunni', c);
+  SELECT string_agg(format('OLD.%I', c), ', '), string_agg(format('NEW.%I', c), ', ')
+    INTO v_old, v_new FROM unnest(v_cols) AS c;
+
+  DROP TRIGGER IF EXISTS trg_alunni_specchio_frequenza_ins ON public.alunni;
+  CREATE TRIGGER trg_alunni_specchio_frequenza_ins
+    AFTER INSERT ON public.alunni
+    FOR EACH ROW EXECUTE FUNCTION public.alunni_specchio_frequenza();
+
+  DROP TRIGGER IF EXISTS trg_alunni_specchio_frequenza ON public.alunni;
+  EXECUTE format(
+    'CREATE TRIGGER trg_alunni_specchio_frequenza AFTER UPDATE OF %s ON public.alunni FOR EACH ROW '
+    || 'WHEN (ROW(%s) IS DISTINCT FROM ROW(%s)) EXECUTE FUNCTION public.alunni_specchio_frequenza()',
+    (SELECT string_agg(format('%I', c), ', ') FROM unnest(v_cols) AS c), v_old, v_new);
+END
+$mig$;
+
+-- ── 2.3 · I nomi di classe → uuid, a ogni scrittura (e le righe che non tornano) ─────────────────
+
+-- Un avviso che NON è un guasto: livello `warn`, contesto con tabella e conteggio. Mai un nome di classe.
+CREATE OR REPLACE FUNCTION public.anno_log_avviso(
+  p_tabella text, p_esito text, p_operazione text, p_messaggio text, p_fingerprint text, p_conteggio integer)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+  VALUES ('warn', 'anno-scolastico', 'server', p_messaggio, p_fingerprint,
+          jsonb_build_object('esito', p_esito, 'operazione', p_operazione, 'tabella', p_tabella, 'conteggio', p_conteggio))
+  ON CONFLICT (fingerprint, giorno) DO UPDATE
+    SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END
+$$;
+
+-- Il trigger: `TG_ARGV` = colonna dei nomi, colonna degli uuid, 'array' o 'scalare'. I NOMI vincono (fino alla PR 4.4
+-- sono la fonte): nomi e uuid insieme e divergenti → gli uuid si ricalcolano dai nomi. Nomi NULL → gli uuid restano
+-- come scritti. Sede non ricavabile → niente da tradurre. Un nome che nessuna sezione dell'anno ATTIVO ha resta nei
+-- nomi, e una riga `warn` dice quanti (non quali). FAIL-OPEN: un guasto lascia la riga com'è e lo scrive in `app_log`.
+-- La traduzione vera è `anno_traduci_classi()`: qui nessuna logica duplicata.
+CREATE OR REPLACE FUNCTION public.anno_traduci_classi_trg()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n      jsonb := to_jsonb(NEW);
+  v_nomi   text[];
+  v_sede   uuid;
+  v_ids    uuid[];
+  v_dist   integer;
+  v_manca  integer;
+BEGIN
+  BEGIN
+    IF v_n -> TG_ARGV[0] IS NULL OR jsonb_typeof(v_n -> TG_ARGV[0]) = 'null' THEN
+      RETURN NEW;
+    END IF;
+    v_sede := public.anno_sede_della_riga(TG_TABLE_NAME, v_n);
+    IF v_sede IS NULL THEN
+      RETURN NEW;
+    END IF;
+
+    IF TG_ARGV[2] = 'array' THEN
+      SELECT coalesce(array_agg(x), '{}'::text[]) INTO v_nomi FROM jsonb_array_elements_text(v_n -> TG_ARGV[0]) AS x;
+      v_ids := public.anno_traduci_classi(v_sede, v_nomi);
+      SELECT count(DISTINCT lower(replace(x, ' ', ''))) INTO v_dist FROM unnest(v_nomi) AS x;
+      v_manca := v_dist - coalesce(cardinality(v_ids), 0);
+      NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], to_jsonb(v_ids)));
+    ELSE
+      v_ids := public.anno_traduci_classi(v_sede, ARRAY[v_n ->> TG_ARGV[0]]);
+      v_manca := CASE WHEN v_ids[1] IS NULL THEN 1 ELSE 0 END;
+      NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], v_ids[1]));
+    END IF;
+
+    IF v_manca > 0 THEN
+      PERFORM public.anno_log_avviso(TG_TABLE_NAME, 'classe-non-abbinata', 'anno_traduci_classi_trg',
+                                     'nomi di classe che nessuna sezione dell''anno attivo ha: restano nei nomi',
+                                     'db:anno-classe-non-abbinata:' || TG_TABLE_NAME, v_manca);
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM public.anno_log_guasto(TG_TABLE_NAME, 'traduzione-classi-fallita', 'anno_traduci_classi_trg',
+                                   'traduzione dei nomi di classe fallita: la scrittura è passata com''è',
+                                   'db:anno-classi:' || TG_TABLE_NAME, SQLSTATE);
+  END;
+  RETURN NEW;
+END
+$$;
+
+DO $mig$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', 'target_section_ids', 'array'),
+      ('galleria_media_v2', 'target_classes', 'target_section_ids', 'array'),
+      ('news_posts', 'target_classes', 'target_section_ids', 'array'),
+      ('forms_templates', 'target_classes', 'target_section_ids', 'array'),
+      ('video_intents', 'classi_destinatarie', 'classi_destinatarie_section_ids', 'array'),
+      ('mensa_class_menu_assignment', 'classe', 'section_id', 'scalare')) AS v(t, src, dst, tipo) LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass(format('public.%I', r.t)) AND k.relkind IN ('r', 'p'))
+               OR NOT public.anno_ha_colonna(r.t, r.src) OR NOT public.anno_ha_colonna(r.t, r.dst);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', 'trg_' || r.t || '_traduci_classi', r.t);
+    EXECUTE format(
+      'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %I ON public.%I FOR EACH ROW '
+      || 'EXECUTE FUNCTION public.anno_traduci_classi_trg(%L, %L, %L)',
+      'trg_' || r.t || '_traduci_classi', r.src, r.t, r.src, r.dst, r.tipo);
+  END LOOP;
+END
+$mig$;
+
+-- Le righe in cui nomi e uuid non dicono la stessa cosa (anno ATTIVO della sede): per tabella, anche a zero. Un uuid
+-- senza nome, un nome senza uuid (anche perché nessuna sezione lo ha) o due insiemi diversi. Le righe senza sede
+-- non si possono tradurre e non contano. L'insieme degli uuid si confronta ordinato e senza doppioni.
+CREATE OR REPLACE FUNCTION public.anno_target_divergenti()
+RETURNS TABLE (tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r      record;
+  v_sede text;
+  v_cond text;
+  v_n    bigint;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', 'target_section_ids', true),
+      ('galleria_media_v2', 'target_classes', 'target_section_ids', true),
+      ('news_posts', 'target_classes', 'target_section_ids', true),
+      ('forms_templates', 'target_classes', 'target_section_ids', true),
+      ('video_intents', 'classi_destinatarie', 'classi_destinatarie_section_ids', true),
+      ('mensa_class_menu_assignment', 'classe', 'section_id', false)) AS v(t, src, dst, e_array)
+    ORDER BY 1 LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass(format('public.%I', r.t)) AND k.relkind IN ('r', 'p'))
+               OR NOT public.anno_ha_colonna(r.t, r.src) OR NOT public.anno_ha_colonna(r.t, r.dst);
+    v_sede := public.anno_sede_sql(r.t, 't');
+    IF r.e_array THEN
+      -- gli uuid non sono quelli che i nomi danno, OPPURE c'è un nome che nessuna sezione ha (resta nei nomi)
+      v_cond := format(
+        '((SELECT coalesce(array_agg(DISTINCT x ORDER BY x), %1$L::uuid[]) FROM unnest(coalesce(t.%2$I, %1$L::uuid[])) AS x) '
+        || 'IS DISTINCT FROM coalesce(public.anno_traduci_classi(%3$s, t.%4$I), %1$L::uuid[]) '
+        || 'OR (SELECT count(DISTINCT lower(replace(n, %5$L, %6$L))) FROM unnest(coalesce(t.%4$I, %1$L::text[])) AS n) '
+        || '<> cardinality(coalesce(public.anno_traduci_classi(%3$s, t.%4$I), %1$L::uuid[])))',
+        '{}', r.dst, v_sede, r.src, ' ', '');
+    ELSE
+      v_cond := format('(t.%1$I IS DISTINCT FROM (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I]))[1] '
+                       || 'OR (t.%3$I IS NOT NULL AND (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I]))[1] IS NULL))',
+                       r.dst, v_sede, r.src);
+    END IF;
+    EXECUTE format('SELECT count(*) FROM public.%I t WHERE %s IS NOT NULL AND %s', r.t, v_sede, v_cond) INTO v_n;
+    tabella := r.t; righe := v_n;
+    RETURN NEXT;
+  END LOOP;
+  RETURN;
+END
+$$;
+
+-- ── 2.3 · Le righe senza anno (invariante 12 e controllo di V2) ──────────────────────────────────
+
+-- Le righe con `anno_id` NULL e una sede da cui calcolarlo: tutte, se la colonna-sede della tabella non può mancare;
+-- altrimenti (`sede_facoltativa`) solo quelle la cui colonna-sede non è NULL. È ESATTAMENTE il predicato del `CHECK`
+-- `<tabella>_anno_id_presente` (V1): zero vuol dire che la convalida passa.
+CREATE OR REPLACE FUNCTION public.anno_righe_senza_anno_con_sede(p_tabella text)
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_reg public.anno_tabelle%ROWTYPE;
+  v_n   bigint;
+BEGIN
+  SELECT * INTO v_reg FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'anno_righe_senza_anno_con_sede: la tabella % non è nel registro', p_tabella;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NULL OR NOT public.anno_ha_colonna(p_tabella, 'anno_id') THEN
+    RAISE EXCEPTION 'anno_righe_senza_anno_con_sede: la tabella % non esiste o non ha la colonna anno_id', p_tabella;
+  END IF;
+  EXECUTE format('SELECT count(*) FROM public.%I t WHERE t.anno_id IS NULL%s', p_tabella,
+                 CASE WHEN v_reg.sede_facoltativa THEN format(' AND t.%I IS NOT NULL', v_reg.via_sede) ELSE '' END)
+    INTO v_n;
+  RETURN v_n;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.alunni_specchio_frequenza()                            FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_log_avviso(text, text, text, text, text, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_traduci_classi_trg()                              FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_target_divergenti()                               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_righe_senza_anno_con_sede(text)                   FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.alunni_specchio_frequenza()                            TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_log_avviso(text, text, text, text, text, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_traduci_classi_trg()                              TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_target_divergenti()                               TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_righe_senza_anno_con_sede(text)                   TO service_role;

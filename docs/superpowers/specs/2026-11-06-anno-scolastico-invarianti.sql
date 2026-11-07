@@ -245,8 +245,25 @@ WHERE al.section_id IS DISTINCT FROM f.section_id
    OR COALESCE(NULLIF(al.importo_retta_mensile, 0), -1)
       IS DISTINCT FROM COALESCE(f.retta_mensile, -1)
    OR al.retta_a_carico_di IS DISTINCT FROM f.retta_a_carico_di;
---     11-bis. Nomi e uuid delle classi destinatarie dicono la stessa cosa
---     (galleria, avvisi): public.anno_target_divergenti() li conta per tabella.
+--     11-bis. Un alunno con la sede e senza frequenza nell'anno attivo (la riga
+--     «alunni (senza frequenza)» di anno_invarianti(), definita da V2).
+SELECT al.id AS alunno_id
+FROM public.alunni al
+WHERE al.scuola_id IS NOT NULL
+  AND al.archiviato_il IS NULL
+  AND NOT EXISTS (SELECT 1 FROM public.frequenze f
+                   WHERE f.alunno_id = al.id
+                     AND f.anno_sede_id = public.anno_attivo(al.scuola_id));
+
+
+-- 12. Dopo V2 nessuna riga con la sede e senza anno ---------------------------
+--     Una riga per tabella del registro (anno_invarianti(), invariante 12):
+--     public.anno_righe_senza_anno_con_sede(tabella). Una riga senza sede non conta.
+
+
+-- 13. Nomi e uuid delle classi destinatarie dicono la stessa cosa ---------------
+--     (galleria, avvisi, mensa): public.anno_target_divergenti() li conta per
+--     tabella (invariante 13, definita da V2).
 
 
 -- =============================================================================

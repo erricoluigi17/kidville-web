@@ -395,6 +395,13 @@ export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
         '(FK verso `sections`, con indice). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
         'produzione nella PR-B. F1 (`_anno_riempimento_1`, compito 2.2) contiene solo chiamate a funzioni di M1: ' +
         'nessuna tabella, nessuna colonna, nessuna voce propria qui.',
+    '20261107023143_anno_vincoli_1.sql':
+        'PR 2 anno scolastico, V1 (compito 2.3): solo `ADD CONSTRAINT <tab>_anno_id_presente CHECK (...) NOT VALID` ' +
+        'sulle tabelle del registro `anno_tabelle`. Nessuna FK verso `utenti`, nessuna ON DELETE, nessuna tabella ' +
+        'nuova: il filtro largo (`add constraint`) la nomina ma non cambia la fotografia. Applicata dall\'integrazione al merge; la voce si toglie nella PR-B.',
+    '20261107023257_anno_vincoli_2.sql':
+        'PR 2 anno scolastico, V2 (compito 2.3): `VALIDATE CONSTRAINT`, `SET NOT NULL` e `DROP CONSTRAINT` dei soli ' +
+        'CHECK `<tab>_anno_id_presente` di V1; nessuna FK verso `utenti`, nessuna ON DELETE. Applicata dall\'integrazione al merge; la voce si toglie nella PR-B.',
 }
 
 /**

@@ -91,6 +91,8 @@ beforeAll(async () => {
   db = await creaDbAnno({ sediPrimaDellaMigrazione: [S1], codaPrima: SCHEMA_PR2 + SCHEMA_RICONCILIAZIONE })
   await creaAnniFissi(db, [S1])
   await applicaPr2(db, 'M1')
+  // Lo specchio alunni → frequenze (2.3) non è l'oggetto di questo file: il seme degli alunni nasce senza frequenze.
+  await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
   await db.query(`SELECT public.anni_sede_crea_successivo($1, DATE '2026-11-06')`, [S1])
   A2627 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2026`)
   AS2627 = await una<string>(`SELECT id FROM public.anni_sede WHERE scuola_id = $1 AND anno_id = $2`, [S1, A2627])
@@ -393,6 +395,7 @@ describe('da capo a fondo: fotografia prima → anno_riempi() → fotografia dop
     try {
       await creaAnniFissi(d, [S1])
       await applicaPr2(d, 'M1')
+      await d.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
       for (const t of ['pagamenti', 'presenze', 'enrollment_submissions']) {
         await d.exec(`ALTER TABLE public.${t} DISABLE TRIGGER trg_zz_anno_assegna_e_verifica`)
       }
@@ -408,7 +411,7 @@ describe('da capo a fondo: fotografia prima → anno_riempi() → fotografia dop
       }
 
       await d.query(`SELECT public.anno_fotografa('prima')`)
-      await d.query(`SELECT public.anno_riempi()`)
+      await d.query(`SELECT public.anno_riempi(NULL, DATE '2026-11-07')`)
       await d.query(`SELECT public.anno_fotografa('dopo')`)
 
       const somma = async (fase: string, voce: string, tabella: string) => Number((await d.query<{ v: string }>(

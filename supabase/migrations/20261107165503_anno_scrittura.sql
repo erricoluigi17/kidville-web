@@ -860,13 +860,14 @@ $$;
 --   · eventi_diario           update  id         {dettagli}                             esegui.ts (valore delle routine a testo)
 --   · presenze                update  alunno_id  {giustificazione_testo, note_appello}  esegui.ts (bonifica presenze)
 --   · student_documents       delete  id                                                esegui.ts (oblio, `obliaFileDaTabella`: nessuna cintura)
+--   · pagelle                 delete  id                                                esegui.ts (oblio, obliaPagelleAlunno → obliaFileDaTabella: nessuna cintura)
 --   · student_documents       delete_cestino id                                         retention-cestino-registro (cintura: eliminato_il IS NOT NULL
 --                                                                                       AND eliminato_il < p_prima_di; `p_prima_di` obbligatorio)
 --   · forms_submissions       delete  id                                                moduli-genitori.ts (cintura: signature_log->>'_archive_erasure_pending' = 'true')
 -- Le CINTURE «compare-and-set» (Ruling P35/P38) stanno nell'SQL della coppia, mai nel chiamante: una riga ripristinata fra
 -- la SELECT e la DELETE non si cancella. `delete_cestino` è l'azione della purga; `delete` quella dell'oblio, che deve
 -- vedere anche le righe vive. `p_prima_di` è ammesso SOLO con `delete_cestino|student_documents|id`.
--- (`pagelle`: nessun sito di oblio le cancella, quindi non c'è.) Il filtro è sempre su colonne `uuid`: `p_valori` è un
+-- Il filtro è sempre su colonne `uuid`: `p_valori` è un
 -- elenco di testi convertito in `uuid[]`. Un UPDATE tocca solo le righe che cambierebbero davvero (così il conteggio dice
 -- quante righe avevano il dato). Qualunque altra coppia, colonna del filtro o chiave del `set` → `OBLIO_NON_AMMESSO`.
 -- Accende l'interruttore, scrive, lo spegne; la guardia lascia un gettone `oblio` per anno-sede con un uso per riga.
@@ -899,6 +900,7 @@ BEGIN
     WHEN 'update|eventi_diario|id'          THEN ARRAY['dettagli']
     WHEN 'update|presenze|alunno_id'        THEN ARRAY['giustificazione_testo', 'note_appello']
     WHEN 'delete|student_documents|id'      THEN ARRAY[]::text[]
+    WHEN 'delete|pagelle|id'                THEN ARRAY[]::text[]
     WHEN 'delete_cestino|student_documents|id' THEN ARRAY[]::text[]
     WHEN 'delete|forms_submissions|id'      THEN ARRAY[]::text[]
     ELSE NULL

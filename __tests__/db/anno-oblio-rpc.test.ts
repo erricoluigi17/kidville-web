@@ -28,6 +28,7 @@ const CODA_PRIMA = `
   ALTER TABLE public.enrollment_submissions ADD COLUMN consents_log jsonb;
   CREATE TABLE public.student_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now(), eliminato_il timestamptz);
   CREATE TABLE public.forms_submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now(), signature_log jsonb);
+  CREATE TABLE public.pagelle (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, file_url text);
 `
 
 let db: PGlite
@@ -68,7 +69,7 @@ beforeEach(async () => {
                  DELETE FROM public.frequenze; DELETE FROM public.presenze; DELETE FROM public.alunni;
                  DELETE FROM public.eventi_diario; DELETE FROM public.chat_messages; DELETE FROM public.chat_threads;
                  DELETE FROM public.galleria_media_v2; DELETE FROM public.enrollment_submissions;
-                 DELETE FROM public.student_documents; DELETE FROM public.forms_submissions;
+                 DELETE FROM public.student_documents; DELETE FROM public.forms_submissions; DELETE FROM public.pagelle;
                  DELETE FROM public.correzioni_anno_chiuso_usi; DELETE FROM public.correzioni_anno_chiuso;
                  DELETE FROM public.app_log; DELETE FROM public.anno_guardia_osservazioni;
                  UPDATE public.anni_sede SET stato = 'chiuso' WHERE anno_id = '${A2526}';
@@ -172,6 +173,7 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     ['update', 'eventi_diario', 'id', { dettagli: { risposta: 'testo', valore: null } }],
     ['update', 'presenze', 'alunno_id', { giustificazione_testo: null, note_appello: null }],
     ['delete', 'student_documents', 'id', null],
+    ['delete', 'pagelle', 'id', null],
     ['delete', 'forms_submissions', 'id', null],
   ]
   for (const [azione, tabella, colonna, set] of SET_AMMESSI) {
@@ -195,7 +197,8 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     ['un update senza `set`', 'update', 'presenze', 'alunno_id', null],
     ['un update con un `set` vuoto', 'update', 'presenze', 'alunno_id', {}],
     ['una delete con un `set`', 'delete', 'forms_submissions', 'id', { x: 1 }],
-    ['pagelle (nessun sito di oblio le cancella)', 'delete', 'pagelle', 'id', null],
+    ['update su `pagelle` (si cancella, non si riscrive)', 'update', 'pagelle', 'id', { file_url: null }],
+    ['`delete_cestino` su `pagelle`', 'delete_cestino', 'pagelle', 'id', null],
     ['un\'azione inventata', 'truncate', 'presenze', 'alunno_id', null],
     ['un\'azione `delete_qualsiasi`', 'delete_qualsiasi', 'galleria_media_v2', 'id', null],
     ['`delete_cestino` su una tabella senza cintura (enrollment_submissions)', 'delete_cestino', 'enrollment_submissions', 'id', null],
@@ -225,6 +228,12 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
       await db.exec('COMMIT')
     } catch (e) { await db.exec('ROLLBACK'); throw e }
     expect(dopo).not.toBe('on')
+  })
+
+  it('P42 · delete|pagelle|id cancella la riga (anche viva, senza cintura) di un anno chiuso e restituisce 1', async () => {
+    const p = await seme(async () => una<string>(`INSERT INTO public.pagelle (alunno_id, file_url) VALUES ($1, 'x') RETURNING id`, [ALUNNO]))
+    expect(String((await scrivi('delete', 'pagelle', 'id', [p])).rows[0].n)).toBe('1')
+    expect(await una<string>(`SELECT count(*)::text FROM public.pagelle`)).toBe('0')
   })
 
   it('scrive davvero sulle altre coppie, anche su righe di un anno chiuso (diario, chat, galleria, domanda, fascicolo, moduli)', async () => {

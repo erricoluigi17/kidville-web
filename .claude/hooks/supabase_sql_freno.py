@@ -12,7 +12,7 @@ COSA FERMA (risposta ``deny``):
     ``UPDATE`` senza ``WHERE`` al suo stesso livello, e gli interruttori che spengono la scatola
     nera, i registri o i trigger (``registri.manutenzione``, ``scatola_nera.manutenzione``,
     ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``anno_scolastico.riempimento``, ``session_replication_role``,
-    ``DISABLE TRIGGER``), e ogni scrittura (``UPDATE``, ``INSERT``, ``MERGE``) su ``anno_regole`` e
+    ``DISABLE TRIGGER``, e per nome le quattro funzioni dell'oblio ``anno_oblio_attiva``/``spegni``/``scrivi``/``svuota``), e ogni scrittura (``UPDATE``, ``INSERT``, ``MERGE``) su ``anno_regole`` e
     ``anno_tabelle``, le manopole dell'anno scolastico;
   · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
   · oltre il piano (25/10/2026): le stesse categorie dentro una stringa che viene ESEGUITA
@@ -102,6 +102,10 @@ INTERRUTTORI = re.compile(
     r"|SESSION_REPLICATION_ROLE)\b"
     r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"
     r"|\bDISABLE\s+TRIGGER\b"
+    # Le quattro funzioni dell'oblio (PR 3 dell'anno scolastico, Ruling P33): accendono l'interruttore
+    # ``anno_chiuso.oblio`` o scrivono con lui acceso. Chiamarle a mano è una scrittura in produzione da
+    # mostrare al titolare, anche se la funzione ha l'allowlist dentro. Per nome, con o senza schema e virgolette.
+    r"|\bANNO_OBLIO_(?:ATTIVA|SPEGNI|SCRIVI|SVUOTA)(?![A-Z0-9_$])"
 )
 
 # Ogni SCRITTURA su ``anno_regole`` (le manopole: ``controlli_rigidi``, ``guardia_attiva``,

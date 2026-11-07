@@ -20,6 +20,8 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { codiceAnnoDa } from '@/lib/anno/tipi'
 import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
 import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
@@ -560,15 +562,34 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
     let insRes = await supabase.from('form_submissions').insert(rigaSubmission).select('id').single()
     // DB della CI non migrato: la colonna `scuola_id` non c'è (PGRST204/42703). Si riprova senza,
     // dichiarandolo: quel database ha una sede sola, quindi non c'è nessun isolamento da riaprire.
-    if (insRes.error && scuolaId && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
-      logEvento('modulistica', 'info', {
-        operazione: 'forms/send-otp:POST', esito: 'colonna-sede-assente-degrado',
-      })
+    //
+    // `GIORNO_SENZA_ANNO` (nessun anno copre il giorno) è l'unico codice dell'anno che NON si traduce
+    // in un rifiuto: una famiglia non perde il modulo per un buco del calendario. Si riscrive senza
+    // `scuola_id`, e `erroreAnno` lascia l'UNICA riga `error` (il buco è un incidente e si deve vedere).
+    const buco = codiceAnnoDa((insRes.error as { message?: string } | null)?.message) === 'GIORNO_SENZA_ANNO'
+    if (
+      insRes.error &&
+      scuolaId &&
+      (buco || ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? ''))
+    ) {
+      if (buco) {
+        erroreAnno(insRes.error as { code?: string; message?: string }, 'forms/send-otp:POST')
+      } else {
+        logEvento('modulistica', 'info', {
+          operazione: 'forms/send-otp:POST', esito: 'colonna-sede-assente-degrado',
+        })
+      }
       delete rigaSubmission.scuola_id
       insRes = await supabase.from('form_submissions').insert(rigaSubmission).select('id').single()
     }
     const { data: submission, error: insertErr } = insRes
 
+    // Un codice dell'anno (409 `ANNO_CHIUSO`, 422 …) ha la sua risposta, sul primo `insert` e su quello
+    // di ripiego; il resto è un guasto.
+    if (insertErr) {
+      const anno = erroreAnno(insertErr as { code?: string; message?: string }, 'forms/send-otp:POST')
+      if (anno) return anno
+    }
     if (insertErr || !submission) {
       return erroreInterno('forms/send-otp:POST', insertErr ?? new Error('Creazione submission fallita'))
     }

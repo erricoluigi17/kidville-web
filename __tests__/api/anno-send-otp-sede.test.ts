@@ -17,8 +17,13 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, { code: string; message?: string }>,
   // se vero, l'insert che porta `scuola_id` risponde PGRST204 (DB della CI non migrato)
   sedeAssenteNelDb: false,
+  // errore da restituire alla N-esima chiamata di `insert` su `form_submissions` (0 = la prima)
+  erroriInsert: [] as ({ code: string; message?: string } | null)[],
+  chiamateInsert: 0,
   scritture: [] as unknown[],
   logEvento: vi.fn(),
+  logErrore: vi.fn(),
+  invioEmail: vi.fn(),
   GENITORE: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa11',
 }))
 
@@ -32,6 +37,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return {
           ...b,
           insert(riga: Riga) {
+            const guasto = h.erroriInsert[h.chiamateInsert++] ?? null
+            if (guasto) return { select: () => ({ single: async () => ({ data: null, error: guasto }) }) }
             if (h.sedeAssenteNelDb && 'scuola_id' in riga) {
               return { select: () => ({ single: async () => ({ data: null, error: { code: 'PGRST204', message: 'colonna assente' } }) }) }
             }
@@ -45,7 +52,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn().mockResolvedValue(true),
-  sendEmailDetailed: vi.fn().mockResolvedValue({ ok: true, error: null }),
+  sendEmailDetailed: (...a: unknown[]) => {
+    h.invioEmail(...a)
+    return Promise.resolve({ ok: true, error: null })
+  },
 }))
 vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn(async () => ({ user: { id: h.GENITORE, role: 'genitore', scuola_id: null } })),
@@ -60,7 +70,7 @@ vi.mock('@/lib/pagamenti/sospensione', () => ({
 }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
   const vero = await importActual<typeof import('@/lib/logging/logger')>()
-  return { ...vero, logEvento: h.logEvento }
+  return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
 })
 
 import { POST } from '@/app/api/forms/send-otp/route'
@@ -84,6 +94,10 @@ const avvisiSede = () =>
 beforeEach(() => {
   h.errori = {}
   h.sedeAssenteNelDb = false
+  h.erroriInsert = []
+  h.chiamateInsert = 0
+  h.invioEmail.mockClear()
+  h.logErrore.mockClear()
   h.scritture = []
   h.logEvento.mockClear()
   h.db = {
@@ -154,5 +168,35 @@ describe('POST /api/forms/send-otp · la sede della compilazione', () => {
     h.errori = { 'form_submissions:insert': { code: '57014', message: 'timeout' } }
     const res = await invia()
     expect(res.status).toBe(500)
+  })
+
+  it('(c) ANNO_CHIUSO sull\'insert → 409 ANNO_CHIUSO, nessuna OTP inviata', async () => {
+    h.erroriInsert = [{ code: 'P0001', message: 'ANNO_CHIUSO' }]
+    const res = await invia()
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+    expect(h.invioEmail).not.toHaveBeenCalled()
+  })
+
+  it('(c) ANNO_CHIUSO sull\'insert di ripiego (dopo PGRST204) → 409 ANNO_CHIUSO', async () => {
+    h.erroriInsert = [{ code: 'PGRST204' }, { code: 'P0001', message: 'ANNO_CHIUSO' }]
+    const res = await invia()
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+    expect(h.invioEmail).not.toHaveBeenCalled()
+  })
+
+  it('GIORNO_SENZA_ANNO sul primo insert: si riscrive senza scuola_id, la richiesta riesce, UNA riga error', async () => {
+    h.erroriInsert = [{ code: 'P0001', message: 'GIORNO_SENZA_ANNO' }]
+    const res = await invia()
+    expect(res.status).toBe(200)
+    expect(inserimenti()).toHaveLength(1)
+    expect(inserimenti()[0].valori[0]).not.toHaveProperty('scuola_id')
+    const errori = [
+      ...h.logErrore.mock.calls,
+      ...h.logEvento.mock.calls.filter((c) => c[1] === 'error'),
+    ]
+    expect(errori).toHaveLength(1)
+    expect(h.invioEmail).toHaveBeenCalled()
   })
 })

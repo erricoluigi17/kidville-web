@@ -1,6 +1,23 @@
+## 🧹 Changelog — Pulizia dopo la PR 3 dell'anno scolastico: fotografie dalla produzione, elenco vuoto — 2026-11-08 (branch `chore/anno-pulizia-pr3`)
+
+**Stato:** 🟡 PR verso `main`. Nessuna migrazione e nessun file in `src/`: per gli utenti non cambia niente.
+
+**Fotografie rigenerate dalla produzione** dopo M3, leggendo soltanto i cataloghi. Ne cambiano davvero tre:
+- migrazioni applicate, da 258 a 259 (`20261107165503_anno_scrittura`);
+- indici unici, da 290 a 292: le chiavi primarie di `anno_guardia_osservazioni` e `anno_transitorio_usi`;
+- tabelle con la RLS accesa, da 179 a 181: le stesse due tabelle, nessuna policy nuova.
+
+Le altre fotografie (FK di sede, FK verso `utenti`, tabelle con `scuola_id`, `tabelle-anno.json`, funzioni che scrivono nel registro, schema delle candidature, bucket) cambiano al più nell'istante dello scatto.
+
+Per indici, RLS, FK di sede e funzioni, un'impronta md5 calcolata dal database è stata confrontata con quella della fotografia; si sono riscaricati soltanto i pezzi diversi. Dopo la rigenerazione le impronte coincidono.
+
+`MIGRAZIONI_ATTESE_AL_MERGE` torna vuoto. Nella voce della PR 3, qui sotto, ci sono le verifiche fatte dopo il merge, compreso il falso allarme dell'invariante 14.
+
+**Prove.** eslint, tsc, vitest e build in locale; E2E in CI.
+
 ## 🗓️ Changelog — Anno scolastico, PR 3: la regola di scrittura, i gettoni, la guardia in osservazione e il lock — 2026-11-07 (branch `feat/anno-scolastico-scrittura`)
 
-**Stato:** 🟡 PR verso `main`. Una migrazione, M3 (`supabase/migrations/20261107165503_anno_scrittura.sql`): la applica l'integrazione di Supabase al merge, con la version del file. **Per gli utenti cambia poco, e di proposito.** La guardia dell'anno chiuso resta **spenta** e passa in **osservazione**: dove avrebbe rifiutato una scrittura, scrive un contatore e lascia passare (Ruling D1). La accende la PR 3-B, **non prima del 02/12/2026**, dopo che sono girati i job mensili del 1° dicembre. M3 è compatibile con il codice vecchio: non tocca `guardia_attiva` né `dichiarato_transitorio`, quindi nella finestra fra migrazione e deploy le istanze vecchie continuano a funzionare.
+**Stato:** ✅ in produzione (#298, `d1440305`, 08/11 alle 00:34 di Roma; verifiche dopo il merge in fondo a questa voce). Una migrazione, M3 (`supabase/migrations/20261107165503_anno_scrittura.sql`), applicata dall'integrazione di Supabase al merge, alle 00:37. **Per gli utenti cambia poco, e di proposito.** La guardia dell'anno chiuso resta **spenta** e passa in **osservazione**: dove avrebbe rifiutato una scrittura, scrive un contatore e lascia passare (Ruling D1). La accende la PR 3-B, **non prima del 02/12/2026**, dopo che sono girati i job mensili del 1° dicembre. M3 è compatibile con il codice vecchio: non tocca `guardia_attiva` né `dichiarato_transitorio`, quindi nella finestra fra migrazione e deploy le istanze vecchie continuano a funzionare.
 
 **Perché.** Dalla PR 2 ogni riga ha il suo anno, ma nessuna route lo dichiara: lo mette il trigger. Per accendere la guardia serve che (1) le route dicano in quale anno scrivono, (2) una correzione voluta in un anno chiuso abbia un modo formale per passare, (3) le scritture che non devono mai fallire (oblio, incassi, firme di presa visione) abbiano la loro strada. In produzione ci sono 65 funzioni SQL che scrivono il registro (fotografia `funzioni-scrivono-registro.json`) e girano 34 job `pg_cron`, alcuni mensili: nessun test PGlite li può eseguire. Per saperlo si guardano passare in osservazione, e per questo la guardia non si accende nella stessa PR.
 
@@ -45,7 +62,20 @@
 
 **Logging.** Evento `anno-scolastico` (nuovo in `EVENTI_NOTI`): `info` `correzione-registrata` per ogni uso di un gettone, `warn` per i rifiuti attesi (`ANNO_CHIUSO`, `PASSAGGIO_DA_FARE`), `error` per i guasti di configurazione (`GIORNO_SENZA_ANNO`) e per i guasti della guardia e dei contatori (`anno_log_guasto`). `warn` `anno-scrittura-ambigua` (400 `ANNO_DA_SPECIFICARE`), `warn` `anno-scrittura-ingoiata` (la rete di `withRoute`), `warn` sulla variante `senzaAnno` della porta pubblica, `info` per il riepilogo di ogni chiamata dell'oblio (conteggi per tabella), `warn` `anno-chiuso-osservato` (P48), e il ripiego dell'oblio su `PGRST202` va a `error` dove ci sono sedi reali (`info` sul DB della CI). Gli errori dell'anno già gestiti da una scrittura fail-open (`scriviFrequenza`) non vengono tradotti dalla rete di `withRoute`. I contatori dell'osservazione e della regola transitoria stanno in tabella: giorno, tabella, operazione, stato, nome della route. Il codice va in `error_code`, mai in `codice` (può portare un codice fiscale). Nessun nome, nessun dato personale.
 
-<!-- verifiche dopo il merge -->
+**Verificato dopo il merge** (08/11, 00:37-00:45 di Roma, solo `SELECT`).
+- `Supabase Preview` e Vercel sono verdi su `d1440305`.
+- Nello storico ci sono sette version dell'anno scolastico, `20261107165503` una volta sola.
+- `anno_regole`: `guardia_attiva = false`, `guardia_osserva = true`, `dichiarato_transitorio = true`, `controlli_rigidi = true`.
+- Ci sono le cinque funzioni `anno_oblio_*`, cioè le quattro RPC più l'aiutante che scrive il riepilogo nel log, e una sola firma di `anno_guardia_verifica`.
+- `get_advisors`: 0 `ERROR`. Le due tabelle contatore compaiono fra le `INFO` «RLS accesa senza policy», come previsto.
+- In `app_log`, dopo il merge, c'è solo l'errore già noto di `/lavora-con-noi`, che non viene da questa PR.
+- I contatori dell'osservazione e i gettoni sono a zero, com'è normale a mezzanotte.
+- **`anno_invarianti()` dà tre righe**, tutte dell'invariante nuova 14 («madre ⇒ FK»), su `votazioni_candidati`, `votazioni_classi` e `votazioni_voti`. **È un falso allarme dell'invariante, non un dato rotto.**
+  - Le tre tabelle hanno la chiave esterna verso `votazioni`, ma composta: `(votazione_id, scuola_id) → votazioni(id, scuola_id)`, con entrambe le colonne `NOT NULL`. Quindi la votazione madre esiste sempre.
+  - L'invariante accetta solo chiavi di una colonna, e lo schema di prova su PGlite non aveva la chiave composta.
+  - Si corregge con la prossima migrazione del piano, con un test a chiave composta. Fino ad allora quelle tre righe sono attese.
+  - Nessun job e nessuna route leggono oggi `anno_invarianti()`: non scatta nessun allarme.
+- 740 domande di iscrizione, prima e dopo.
 
 ## 🧹 Changelog — Pulizia dopo la PR 2 dell'anno scolastico: fotografie dalla produzione, elenco vuoto, l'attesa della CI — 2026-11-07 (branch `chore/anno-pulizia-pr2`)
 

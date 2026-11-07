@@ -10,6 +10,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
+import { erroreAnno } from '@/lib/anno/errori'
 import {
   normalizzaMetodiAmmessi,
   sonoTuttiIMetodi,
@@ -37,7 +38,7 @@ const getQuerySchema = z.object({
 const rataSchema = z.object({
   // gli importi possono arrivare come numero o stringa numerica (come incassi)
   importo: z.coerce.number(),
-  scadenza: z.string(),
+  scadenza: z.string().min(1, 'Ogni rata richiede importo e scadenza'),
 })
 
 const postBodySchema = z.object({
@@ -271,6 +272,9 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
           insPadre = await supabase.from('pagamenti').insert(rigaPadre).select('id').single()
         }
         const { data: padre, error: pErr } = insPadre
+        // Anno chiuso: vale per ogni alunno (stesse date), quindi si ferma qui con 409 invece di saltarli uno a uno.
+        const annoPadre = erroreAnno(pErr, 'pagamenti/genera:POST')
+        if (annoPadre) return annoPadre
         // L'alunno si SALTA e si prosegue con gli altri (comportamento invariato), ma
         // lo si dice: senza questa riga la segreteria leggeva «generati: 1» su due e
         // nessuno poteva sapere quale alunno mancasse, né perché. Solo uuid e codice.
@@ -295,6 +299,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
           insRate = await supabase.from('pagamenti').insert(figlie.map(senzaMetodi))
         }
         if (insRate.error) {
+          const annoRate = erroreAnno(insRate.error, 'pagamenti/genera:POST')
           logEvento('pagamento', 'error', {
             operazione: 'pagamenti/genera:POST',
             esito: 'rate-non-create',
@@ -313,6 +318,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
               pagamento_id: padre.id,
             }, del.error)
           }
+          if (annoRate) return annoRate
           continue
         }
         generati += 1
@@ -331,6 +337,8 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
         ins = await supabase.from('pagamenti').insert(records.map(senzaMetodi)).select('id')
       }
       if (ins.error) {
+        const annoSingole = erroreAnno(ins.error, 'pagamenti/genera:POST')
+        if (annoSingole) return annoSingole
         logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, ins.error)
         return NextResponse.json({ error: 'Errore nella generazione', details: ins.error.message }, { status: 500 })
       }

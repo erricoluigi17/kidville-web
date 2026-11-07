@@ -8,6 +8,7 @@ import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
+import { erroreAnno } from '@/lib/anno/errori'
 import {
   normalizzaMetodiAmmessi,
   sonoTuttiIMetodi,
@@ -143,6 +144,8 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
     }
     const { data: padre, error: pErr } = insPadre
     if (pErr || !padre) {
+      const annoPadre = erroreAnno(pErr, 'pagamenti/rate:POST')
+      if (annoPadre) return annoPadre
       logEvento('pagamento', 'error', {
         operazione: 'pagamenti/rate:POST',
         esito: 'padre-non-creato',
@@ -165,6 +168,7 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
     }
     const { data: created, error: rErr } = insRate
     if (rErr) {
+      const annoRate = erroreAnno(rErr, 'pagamenti/rate:POST')
       logEvento('pagamento', 'error', {
         operazione: 'pagamenti/rate:POST',
         esito: 'rate-non-create',
@@ -182,6 +186,7 @@ export const POST = withRoute('pagamenti/rate:POST', async (request: Request) =>
           pagamento_id: padre.id,
         }, del.error)
       }
+      if (annoRate) return annoRate
       return NextResponse.json({ error: 'Errore creazione rate', details: rErr.message }, { status: 500 })
     }
 

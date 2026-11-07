@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message: string }>,
     scritture: [] as unknown[],
+    /** Un guasto su UNA categoria di righe di `pagamenti` (es. solo le figlie): guarda il CONTENUTO dell'insert. */
+    guasto: null as null | { colpisce: (r: Record<string, unknown>) => boolean; errore: { code: string; message: string } },
     tabelleLette: [] as string[],
     logEvento: vi.fn(),
     logErrore: vi.fn(),
@@ -46,8 +48,38 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: async () => {} }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: async () => {} }))
 vi.mock('@/lib/supabase/server-client', () => ({
-    createAdminClient: async () =>
-        creaFintoSupabase(h.db as DBFinto, h.tabelleLette, { errori: h.errori, scritture: h.scritture as Scrittura[] }),
+    createAdminClient: async () => {
+        const c = creaFintoSupabase(h.db as DBFinto, h.tabelleLette, { errori: h.errori, scritture: h.scritture as Scrittura[] })
+        if (!h.guasto) return c
+        const g = h.guasto
+        return new Proxy(c, {
+            get(t, prop, rec) {
+                const v = Reflect.get(t, prop, rec)
+                if (prop !== 'from') return v
+                return (tabella: string) => {
+                    const q = (v as (x: string) => object)(tabella)
+                    if (tabella !== 'pagamenti') return q
+                    return new Proxy(q, {
+                        get(qt, qp, qr) {
+                            const m = Reflect.get(qt, qp, qr)
+                            if (qp !== 'insert') return m
+                            return (valori: Record<string, unknown> | Record<string, unknown>[], ...resto: unknown[]) => {
+                                const righe = Array.isArray(valori) ? valori : [valori]
+                                if (!righe.some(g.colpisce)) return (m as (...a: unknown[]) => unknown)(valori, ...resto)
+                                const r = { data: null, error: { details: null, hint: null, ...g.errore }, count: null, status: 409, statusText: 'Conflict' }
+                                const f: Record<string, unknown> = {}
+                                f.select = () => f
+                                f.single = async () => r
+                                f.maybeSingle = async () => r
+                                f.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(r).then(ok, ko)
+                                return f
+                            }
+                        },
+                    })
+                }
+            },
+        })
+    },
 }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/logging/logger')>()
@@ -59,6 +91,8 @@ import { POST as POST_GENERA } from '@/app/api/pagamenti/genera/route'
 import { POST as POST_RATE } from '@/app/api/pagamenti/rate/route'
 import { POST as POST_MERCH } from '@/app/api/admin/merch/ordini/route'
 
+const CHIUSO = { code: 'P0001', message: 'ANNO_CHIUSO' }
+const GUASTO = { code: '23503', message: 'violates foreign key' }
 const ART = 'c0000000-0000-4000-8000-000000000001'
 
 const post = (url: string, corpo: unknown) =>
@@ -87,6 +121,7 @@ function ognunaHaUnaData(attese: number) {
 beforeEach(() => {
     vi.clearAllMocks()
     h.errori = {}
+    h.guasto = null
     h.scritture = []
     h.tabelleLette = []
     h.db = {
@@ -129,7 +164,7 @@ describe('pagamenti · voce manuale', () => {
         ognunaHaUnaData(1)
     })
 
-    it('con il solo periodo_competenza oltre alla scadenza obbligatoria: portano entrambe', async () => {
+    it('scadenza e periodo_competenza insieme: la riga le porta entrambe', async () => {
         const res = await POST_MANUALE(post('/api/pagamenti', corpo({ periodo_competenza: '2026-10' })))
         expect(res.status).toBe(201)
         expect(righeInserite()[0]).toMatchObject({ scadenza: '2026-10-30', periodo_competenza: '2026-10' })
@@ -179,6 +214,89 @@ describe('pagamenti/genera', () => {
         // 2 alunni × (1 padre + 2 rate)
         ognunaHaUnaData(6)
         expect(righeInserite().filter((r) => r.tipo === 'padre').map((r) => r.scadenza)).toEqual(['2026-11-30', '2026-11-30'])
+    })
+})
+
+describe('pagamenti/genera · anno chiuso', () => {
+    const singole = { descrizione: 'Gita', importo: 10, scadenza: '2024-10-30', alunno_ids: [AL_1, AL_2] }
+    const piano = {
+        descrizione: 'Corso',
+        alunno_ids: [AL_1],
+        rate: [
+            { importo: 60, scadenza: '2024-10-31' },
+            { importo: 40, scadenza: '2024-11-30' },
+        ],
+    }
+    const url = '/api/pagamenti/genera'
+
+    it('voci singole: ANNO_CHIUSO → 409', async () => {
+        h.errori = { 'pagamenti:insert': CHIUSO }
+        const res = await POST_GENERA(post(url, singole))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+    })
+    it('voci singole: altro errore → 500', async () => {
+        h.errori = { 'pagamenti:insert': GUASTO }
+        expect((await POST_GENERA(post(url, singole))).status).toBe(500)
+    })
+    it('piano rateale, errore sul padre: 409', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: CHIUSO }
+        const res = await POST_GENERA(post(url, piano))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+    })
+    it('piano rateale, errore sulle figlie: 409 e il padre non resta orfano', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'rata', errore: CHIUSO }
+        const res = await POST_GENERA(post(url, piano))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+        expect(h.db.pagamenti).toHaveLength(0)
+    })
+    it('piano rateale, altro errore sul padre o sulle figlie: non è un 409', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: GUASTO }
+        expect((await POST_GENERA(post(url, piano))).status).not.toBe(409)
+        h.guasto = { colpisce: (r) => r.tipo === 'rata', errore: GUASTO }
+        expect((await POST_GENERA(post(url, piano))).status).not.toBe(409)
+    })
+    it('una rata con scadenza vuota → 400, nessuna scrittura', async () => {
+        const res = await POST_GENERA(
+            post(url, { ...piano, rate: [{ importo: 60, scadenza: '' }, { importo: 40, scadenza: '2024-11-30' }] }),
+        )
+        expect(res.status).toBe(400)
+        expect(righeInserite()).toHaveLength(0)
+    })
+})
+
+describe('pagamenti/rate · anno chiuso', () => {
+    const piano = {
+        alunno_id: AL_1,
+        descrizione: 'Corso di nuoto',
+        importo_totale: 100,
+        rate: [
+            { importo: 60, scadenza: '2024-10-31' },
+            { importo: 40, scadenza: '2024-11-30' },
+        ],
+    }
+    const url = '/api/pagamenti/rate'
+
+    it('errore sul padre: 409', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: CHIUSO }
+        const res = await POST_RATE(post(url, piano))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+    })
+    it('errore sulle figlie: 409 e il padre viene tolto', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'rata', errore: CHIUSO }
+        const res = await POST_RATE(post(url, piano))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+        expect(h.db.pagamenti).toHaveLength(0)
+    })
+    it('altro errore sul padre o sulle figlie: resta 500', async () => {
+        h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: GUASTO }
+        expect((await POST_RATE(post(url, piano))).status).toBe(500)
+        h.guasto = { colpisce: (r) => r.tipo === 'rata', errore: GUASTO }
+        expect((await POST_RATE(post(url, piano))).status).toBe(500)
     })
 })
 

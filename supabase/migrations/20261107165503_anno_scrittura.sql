@@ -10,6 +10,8 @@
 
 SET LOCAL lock_timeout = '10s';
 
+-- distruttiva approvata: nessuna riga cancellata alla migrazione; le `DELETE FROM` stanno nel corpo di funzioni (le RPC dell'oblio e `elimina_alunno_definitivo`, ridefinita col suo stesso testo più l'interruttore) che girano solo quando qualcuno le chiama
+
 -- ── (1) Manopole e tabelle contatore ────────────────────────────────────────
 
 -- `guardia_osserva`: con `guardia_attiva = false`, la guardia calcola e, dove avrebbe rifiutato, conta e lascia
@@ -114,10 +116,15 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_giorno  date := public.giorno_roma(now());
-  v_origine text := public.anno_origine_richiesta();
-  v_segnale text := 'anno_osserva.k' || md5(v_giorno::text || '|' || p_tabella || '|' || p_op || '|' || p_stato || '|' || v_origine);
+  -- Nessun valore nel DECLARE: un'espressione valutata qui sta FUORI dal blocco `EXCEPTION` della funzione, e un suo
+  -- errore salirebbe fino alla scrittura. Si assegna dentro `BEGIN`, dove il fail-open la copre.
+  v_giorno  date;
+  v_origine text;
+  v_segnale text;
 BEGIN
+  v_giorno  := public.giorno_roma(now());
+  v_origine := public.anno_origine_richiesta();
+  v_segnale := 'anno_osserva.k' || md5(v_giorno::text || '|' || p_tabella || '|' || p_op || '|' || p_stato || '|' || v_origine);
   IF current_setting(v_segnale, true) = txid_current()::text THEN
     RETURN;
   END IF;
@@ -144,9 +151,15 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_giorno  date := public.giorno_roma(now());
-  v_origine text := public.anno_origine_richiesta();
-  v_regola  text := CASE p_tabella
+  -- Come sopra: niente valori nel DECLARE, si assegna dentro `BEGIN` (fail-open).
+  v_giorno  date;
+  v_origine text;
+  v_regola  text;
+  v_segnale text;
+BEGIN
+  v_giorno  := public.giorno_roma(now());
+  v_origine := public.anno_origine_richiesta();
+  v_regola  := CASE p_tabella
             WHEN 'pagamenti'                     THEN 'pagamenti/creazione'
             WHEN 'enrollment_submissions'        THEN 'enrollment/anno-attivo'
             WHEN 'votazioni'                     THEN 'votazioni/anno-attivo'
@@ -156,8 +169,6 @@ DECLARE
             WHEN 'certificati_competenze'        THEN 'certificato/etichetta-o-anno-attivo'
             ELSE p_tabella
           END;
-  v_segnale text;
-BEGIN
   v_segnale := 'anno_transitorio.k' || md5(v_giorno::text || '|' || p_tabella || '|' || v_regola || '|' || v_origine);
   IF current_setting(v_segnale, true) = txid_current()::text THEN
     RETURN;
@@ -717,7 +728,12 @@ BEGIN
         v_attuale := v_trans;
         v_n := to_jsonb(NEW);
         -- Ogni uso della regola si conta (fail-open): è la misura che dice quando il 3-B è sicuro.
-        PERFORM public.anno_transitorio_conta(TG_TABLE_NAME);
+        -- (il contatore ha già il suo `EXCEPTION`; il blocco copre anche un guasto del log del guasto)
+        BEGIN
+          PERFORM public.anno_transitorio_conta(TG_TABLE_NAME);
+        EXCEPTION WHEN OTHERS THEN
+          NULL;
+        END;
       ELSIF v_rigidi THEN
         -- c'è un'etichetta (quota_anno, anno_scolastico) e nessun anno della sede la ha: non si indovina
         IF (v_n ->> 'quota_anno') IS NOT NULL OR (v_n ->> 'anno_scolastico') IS NOT NULL THEN
@@ -777,10 +793,829 @@ $$;
 
 -- ── (4) RPC dell'oblio: Compito 3.3-3 ───────────────────────────────────────
 
--- ── (5) elimina_alunno_definitivo e job: Compito 3.3-3 ──────────────────────
+-- L'interruttore dell'oblio, locale alla transazione: `anno_chiuso.oblio` lo legge la guardia (PR 1). Si accende e si
+-- spegne SOLO da queste funzioni e dalle funzioni di oblio ridefinite più sotto; nessuna route lo imposta con un header.
+CREATE OR REPLACE FUNCTION public.anno_oblio_attiva()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  PERFORM set_config('anno_chiuso.oblio', 'on', true);
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.anno_oblio_spegni()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  PERFORM set_config('anno_chiuso.oblio', 'off', true);
+END
+$$;
+
+-- Il riepilogo di una chiamata (Ruling P24): UNA riga `app_log` per chiamata, livello `info`, evento `anno-scolastico`,
+-- esito `oblio-eseguito`, contesto SOLO { tabella, azione, righe, op }. Mai i valori del filtro, mai il `set`.
+-- `op` è il nome della route/dell'operazione che chiama: si accetta solo se ha la forma di un pattern (la stessa regola
+-- di `anno_origine_richiesta`), altrimenti `op-non-valida`; mancante: `op-assente`. Fail-open come ogni log.
+CREATE OR REPLACE FUNCTION public.anno_oblio_riepilogo(p_tabella text, p_azione text, p_righe bigint, p_op text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_op text;
+BEGIN
+  v_op := CASE
+            WHEN p_op IS NULL OR btrim(p_op) = '' THEN 'op-assente'
+            WHEN p_op !~* '^[a-z0-9/_\-\[\]:.]+$' THEN 'op-non-valida'
+            ELSE left(p_op, 120)
+          END;
+  INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+  VALUES ('info', 'anno-scolastico', 'server', 'oblio eseguito',
+          'db:anno-oblio:' || gen_random_uuid()::text,
+          jsonb_build_object('esito', 'oblio-eseguito', 'tabella', p_tabella, 'azione', p_azione,
+                             'righe', p_righe, 'op', v_op))
+  ON CONFLICT (fingerprint, giorno) DO UPDATE
+    SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now();
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END
+$$;
+
+-- La scrittura dell'oblio, con l'ALLOWLIST DENTRO LA FUNZIONE (D5): un `CASE`, non una tabella, quindi si cambia solo
+-- con una migrazione. Ogni coppia è un sito del codice di oggi (chiave `azione|tabella|colonna del filtro`, valore:
+-- le colonne che il `set` può scrivere; `{}` per la delete):
+--   · chat_messages           update  id         {attachment_url, attachment_type}      src/lib/gdpr/esegui.ts (allegati)
+--   · enrollment_submissions  update  id         {data, updated_at, consents_log}       src/lib/gdpr/esegui.ts (patch GDPR)
+--   · enrollment_submissions  delete  id                                                src/app/api/gdpr/retention-iscrizioni/route.ts
+--   · galleria_media_v2       update  id         {tag_students, file_rimosso_il}        esegui.ts (sgancio tag) · retention-galleria (timbro del ritiro)
+--   · galleria_media_v2       delete  id                                                esegui.ts · retention-galleria
+--   · eventi_diario           update  alunno_id  {nota_bambino, nota_libera}            esegui.ts (note del bambino)
+--   · eventi_diario           update  id         {dettagli}                             esegui.ts (valore delle routine a testo)
+--   · presenze                update  alunno_id  {giustificazione_testo, note_appello}  esegui.ts (bonifica presenze)
+--   · student_documents       delete  id                                                retention-cestino-registro
+--   · forms_submissions       delete  id                                                src/lib/gdpr/moduli-genitori.ts
+-- (`pagelle`: nessun sito di oblio le cancella, quindi non c'è.) Il filtro è sempre su colonne `uuid`: `p_valori` è un
+-- elenco di testi convertito in `uuid[]`. Un UPDATE tocca solo le righe che cambierebbero davvero (così il conteggio dice
+-- quante righe avevano il dato). Qualunque altra coppia, colonna del filtro o chiave del `set` → `OBLIO_NON_AMMESSO`.
+-- Accende l'interruttore, scrive, lo spegne; la guardia lascia un gettone `oblio` per anno-sede con un uso per riga.
+CREATE OR REPLACE FUNCTION public.anno_oblio_scrivi(
+  p_azione text, p_tabella text, p_colonna text, p_valori text[], p_set jsonb DEFAULT NULL, p_op text DEFAULT NULL)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ammessi text[];
+  v_chiavi  text[];
+  v_righe   bigint := 0;
+  v_cambia  text;
+  v_assegna text;
+BEGIN
+  v_ammessi := CASE coalesce(p_azione, '') || '|' || coalesce(p_tabella, '') || '|' || coalesce(p_colonna, '')
+    WHEN 'update|chat_messages|id'          THEN ARRAY['attachment_url', 'attachment_type']
+    WHEN 'update|enrollment_submissions|id' THEN ARRAY['data', 'updated_at', 'consents_log']
+    WHEN 'delete|enrollment_submissions|id' THEN ARRAY[]::text[]
+    WHEN 'update|galleria_media_v2|id'      THEN ARRAY['tag_students', 'file_rimosso_il']
+    WHEN 'delete|galleria_media_v2|id'      THEN ARRAY[]::text[]
+    WHEN 'update|eventi_diario|alunno_id'   THEN ARRAY['nota_bambino', 'nota_libera']
+    WHEN 'update|eventi_diario|id'          THEN ARRAY['dettagli']
+    WHEN 'update|presenze|alunno_id'        THEN ARRAY['giustificazione_testo', 'note_appello']
+    WHEN 'delete|student_documents|id'      THEN ARRAY[]::text[]
+    WHEN 'delete|forms_submissions|id'      THEN ARRAY[]::text[]
+    ELSE NULL
+  END;
+  IF v_ammessi IS NULL OR p_valori IS NULL THEN
+    RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
+      USING DETAIL = json_build_object('azione', left(coalesce(p_azione, ''), 20), 'tabella', left(coalesce(p_tabella, ''), 63))::text;
+  END IF;
+
+  IF p_azione = 'update' THEN
+    IF p_set IS NULL OR jsonb_typeof(p_set) <> 'object' THEN
+      RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
+        USING DETAIL = json_build_object('azione', p_azione, 'tabella', p_tabella)::text;
+    END IF;
+    SELECT array_agg(k ORDER BY k) INTO v_chiavi FROM jsonb_object_keys(p_set) AS k;
+    IF v_chiavi IS NULL OR NOT (v_chiavi <@ v_ammessi) THEN
+      RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
+        USING DETAIL = json_build_object('azione', p_azione, 'tabella', p_tabella)::text;
+    END IF;
+  ELSIF p_set IS NOT NULL AND p_set <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
+      USING DETAIL = json_build_object('azione', p_azione, 'tabella', p_tabella)::text;
+  END IF;
+
+  IF cardinality(p_valori) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  PERFORM set_config('anno_chiuso.oblio', 'on', true);
+  IF p_azione = 'delete' THEN
+    EXECUTE format('DELETE FROM public.%I t WHERE t.%I = ANY ($1::uuid[])', p_tabella, p_colonna) USING p_valori;
+  ELSE
+    SELECT string_agg(format('%I = r.%I', k, k), ', '), string_agg(format('t.%I', k), ', ')
+      INTO v_assegna, v_cambia
+      FROM unnest(v_chiavi) AS k;
+    EXECUTE format(
+      'UPDATE public.%1$I t SET %2$s FROM jsonb_populate_record(NULL::public.%1$I, $2) r '
+      'WHERE t.%3$I = ANY ($1::uuid[]) AND (%4$s) IS DISTINCT FROM (%5$s)',
+      p_tabella, v_assegna, p_colonna, v_cambia,
+      (SELECT string_agg(format('r.%I', k), ', ') FROM unnest(v_chiavi) AS k))
+      USING p_valori, p_set;
+  END IF;
+  GET DIAGNOSTICS v_righe = ROW_COUNT;
+  PERFORM set_config('anno_chiuso.oblio', 'off', true);
+
+  PERFORM public.anno_oblio_riepilogo(p_tabella, p_azione, v_righe, p_op);
+  RETURN v_righe;
+END
+$$;
+
+-- Lo svuotamento del wipe (`admin/wipe`): SOLO i nomi dell'elenco di quella route (23 tabelle più `alunni`, `parents`,
+-- `adults`). Cancella tutte le righe della tabella, con l'interruttore acceso; una tabella che nel database non c'è
+-- (l'elenco è storico) vale 0 righe. Qualunque altro nome → `OBLIO_NON_AMMESSO`.
+CREATE OR REPLACE FUNCTION public.anno_oblio_svuota(p_tabella text, p_op text DEFAULT NULL)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_ok    boolean;
+  v_righe bigint := 0;
+BEGIN
+  v_ok := CASE coalesce(p_tabella, '')
+    WHEN 'student_parents' THEN true WHEN 'legame_genitori_alunni' THEN true WHEN 'student_adults' THEN true
+    WHEN 'delegates' THEN true WHEN 'delegati' THEN true WHEN 'student_documents' THEN true
+    WHEN 'educator_sections' THEN true WHEN 'eventi_diario' THEN true WHEN 'valutazioni' THEN true
+    WHEN 'galleria_media' THEN true WHEN 'armadietto' THEN true WHEN 'locker_inventory' THEN true
+    WHEN 'locker_requests' THEN true WHEN 'locker_loads' THEN true WHEN 'ticket_mensa' THEN true
+    WHEN 'pagamenti' THEN true WHEN 'registro_modifiche' THEN true WHEN 'firme_documenti' THEN true
+    WHEN 'daily_routines' THEN true WHEN 'presenze' THEN true WHEN 'firme_docenti' THEN true
+    WHEN 'registro_orario' THEN true WHEN 'note_disciplinari' THEN true
+    WHEN 'alunni' THEN true WHEN 'parents' THEN true WHEN 'adults' THEN true
+    ELSE false
+  END;
+  IF NOT v_ok THEN
+    RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
+      USING DETAIL = json_build_object('azione', 'svuota', 'tabella', left(coalesce(p_tabella, ''), 63))::text;
+  END IF;
+  IF to_regclass(format('public.%I', p_tabella)) IS NOT NULL THEN
+    PERFORM set_config('anno_chiuso.oblio', 'on', true);
+    EXECUTE format('DELETE FROM public.%I', p_tabella);
+    GET DIAGNOSTICS v_righe = ROW_COUNT;
+    PERFORM set_config('anno_chiuso.oblio', 'off', true);
+  END IF;
+  PERFORM public.anno_oblio_riepilogo(p_tabella, 'svuota', v_righe, p_op);
+  RETURN v_righe;
+END
+$$;
+
+-- ── (5) elimina_alunno_definitivo e le funzioni di oblio ────────────────────
+
+-- Le 8 funzioni di classe `oblio` della fotografia (Ruling P32) e la via con cui passano la guardia ACCESA:
+--   (i)  senza bisogno: `video_retention_scadenze`, `video_retention_uscita_rimossa`, `video_retention_originale_rimosso`
+--        scrivono solo `video_jobs` (`guardia = 'nessuna'`); `video_intenti_minimizza` e `video_intent_oblio_alunno` fanno
+--        UPDATE su `video_intents` (`solo_contenuto`) e su `video_jobs`: nessuna delete, nessun insert.
+--   (ii) ridefinite qui con l'interruttore acceso in testa e spento prima di OGNI `RETURN` (la funzione può girare dentro
+--        una transazione più grande): `elimina_alunno_definitivo` (9 `RETURN`), `iscrizioni_sanitari_tick` (1),
+--        `presenze_giustificazioni_retention_tick` (2). Il job `presenze-giustificazioni-retention` chiama
+--        `scatola_nera.retention_presenze_senza_storico()` → il tick: coperto. Il comando di `pg_cron` non si riscrive,
+--        quindi nessun `jobid` e nessun `cron.alter_job`.
+-- Ognuna dentro `to_regprocedure`: il database della CI non le ha, e un `CREATE OR REPLACE` le creerebbe senza i
+-- `REVOKE` (EXECUTE a PUBLIC). Il testo è quello dell'ultima definizione (identico, tolto l'interruttore).
+
+DO $do$
+BEGIN
+  IF to_regprocedure('public.elimina_alunno_definitivo(uuid,boolean,boolean)') IS NOT NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.elimina_alunno_definitivo(p_alunno uuid, p_con_pagamenti boolean DEFAULT false, p_solo_verifica boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_alunno    record;
+  v_pagamenti int;
+  v_bloccati  int;
+  v_ricevute  int;
+  v_n         int;
+  v_righe     jsonb := '{}'::jsonb;
+begin
+  -- Anno scolastico (M3): l'oblio è l'unica scrittura che può toccare un anno chiuso senza gettone.
+  perform set_config('anno_chiuso.oblio', 'on', true);
+  if p_alunno is null then
+    raise exception 'elimina_alunno_definitivo: p_alunno obbligatorio';
+  end if;
+
+  select id, stato, section_id, anonimizzato_il
+    into v_alunno
+    from public.alunni
+   where id = p_alunno
+   for update;
+
+  if not found then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'non_trovato');
+  end if;
+  if v_alunno.anonimizzato_il is not null then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'gia_anonimizzato');
+  end if;
+  -- Elenco chiuso degli stati, mai la negazione di 'iscritto'. `stato` è
+  -- nullable (DEFAULT 'iscritto') e un NULL non è un ritiro (`eNonPiuIscritto`):
+  -- senza il coalesce `NULL = any(…)` darebbe NULL, `not (NULL or false)` NULL,
+  -- e l'if NON scatterebbe — cioè lascerebbe eliminare chi frequenta.
+  if not (coalesce(v_alunno.stato = any(public.stati_alunno_non_piu_iscritto()), false)
+          or v_alunno.section_id is null) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'frequentante');
+  end if;
+
+  -- IL SECONDO LOCK: i pagamenti del bambino, PRIMA di controllarli.
+  -- Il `for update` sulla scheda ferma solo chi scrive su `alunni` (o inserisce
+  -- un pagamento nuovo per lui). Non ferma chi scrive una riga FIGLIA di un
+  -- pagamento P che esiste già: un incasso, un abbinamento, la quota di un
+  -- fratello, una voce in fatture_coda. Se quella transazione non ha ancora
+  -- confermato quando i controlli qui sotto guardano P, la sua riga è invisibile:
+  -- il controllo dice «pulito», la delete di P aspetta che l'altra confermi, e poi
+  -- porta via in CASCADE l'incasso appena registrato — rispondendo ok: true.
+  -- Chi inserisce una riga figlia prende sul padre, per il controllo della FK, un
+  -- lock FOR KEY SHARE; FOR UPDATE è in conflitto con quello. Da qui in poi chi
+  -- scrive o ha già confermato (e i controlli lo vedono), o aspetta la fine di
+  -- questa transazione e fallisce con 23503 perché P non c'è più.
+  perform 1 from public.pagamenti where alunno_id = p_alunno for update;
+
+  -- registro-primaria:inizio
+  if exists (select 1 from public.valutazioni where alunno_id = p_alunno)
+     or exists (select 1 from public.pagelle where alunno_id = p_alunno)
+     or exists (select 1 from public.scrutinio_giudizi where alunno_id = p_alunno)
+     or exists (select 1 from public.scrutinio_comportamento where alunno_id = p_alunno)
+     or exists (select 1 from public.note_disciplinari where alunno_id = p_alunno)
+     or exists (select 1 from public.certificati_competenze where alunno_id = p_alunno) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'registro_primaria');
+  end if;
+  -- registro-primaria:fine
+
+  -- La ricevuta di una pagella (fase 7): registro della primaria come la pagella,
+  -- fuori dai marcatori perché l'elenco qui sopra è la copia di quello in TS.
+  if exists (select 1 from public.pagella_ricezioni where alunno_id = p_alunno) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'registro_primaria');
+  end if;
+
+  select count(*) into v_pagamenti from public.pagamenti where alunno_id = p_alunno;
+  select count(*) into v_ricevute from public.ricevute_emesse where alunno_id = p_alunno;
+
+  if v_pagamenti > 0 or v_ricevute > 0 then
+    if not coalesce(p_con_pagamenti, false) then
+      perform set_config('anno_chiuso.oblio', 'off', true);
+      return jsonb_build_object('ok', false, 'code', 'ha_pagamenti', 'pagamenti', v_pagamenti);
+    end if;
+    -- Un pagamento è contabilità vera se ha una ricevuta, una fattura, un
+    -- bonifico abbinato, un incasso, quote di un ALTRO alunno appese a lui
+    -- (la cascata su parent_payment_id le porterebbe via), oppure una voce
+    -- ancora viva in fatture_coda (vedi il commento di testa della migrazione
+    -- 20261008220540).
+    select count(*) into v_bloccati
+      from public.pagamenti p
+     where p.alunno_id = p_alunno
+       and (exists (select 1 from public.ricevute_emesse r where r.pagamento_id = p.id)
+         or exists (select 1 from public.fatture_emesse f where f.pagamento_id = p.id)
+         or exists (select 1 from public.riconciliazione_movimenti m where m.pagamento_id = p.id)
+         or exists (select 1 from public.incassi i where i.pagamento_id = p.id)
+         or exists (select 1 from public.pagamenti c
+                     where c.parent_payment_id = p.id
+                       and c.alunno_id is distinct from p_alunno)
+         or exists (select 1 from public.fatture_coda q
+                     where q.pagamento_id = p.id
+                       and q.stato <> 'tolta'));
+    if v_bloccati > 0 or v_ricevute > 0 then
+      perform set_config('anno_chiuso.oblio', 'off', true);
+      return jsonb_build_object('ok', false, 'code', 'pagamenti_non_cancellabili',
+                                'bloccati', v_bloccati, 'ricevute', v_ricevute);
+    end if;
+  end if;
+
+  -- La sola verifica si ferma QUI: dopo ogni controllo (e ogni lock) qui sopra,
+  -- prima della prima cancellazione qui sotto.
+  if coalesce(p_solo_verifica, false) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', true, 'code', 'ammissibile');
+  end if;
+
+  -- Le cancellazioni: prima ciò che bloccherebbe la DELETE finale, poi la scheda.
+  delete from public.solleciti where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('solleciti', v_n);
+
+  delete from public.pagamenti where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('pagamenti', v_n);
+
+  delete from public.eventi_diario where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('diario', v_n);
+
+  delete from public.legame_genitori_alunni where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('legami', v_n);
+
+  delete from public.armadietto where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('armadietto', v_n);
+
+  delete from public.ticket_mensa where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('ticket_mensa', v_n);
+
+  delete from public.forms_submissions where student_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('moduli', v_n);
+
+  -- Certificati medici e fascicolo: i FILE li ha già tolti la route; qui va via
+  -- l'indice. Prima della fase 7 lo faceva la cascata senza dirlo.
+  delete from public.certificati_medici where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('certificati_medici', v_n);
+
+  delete from public.student_documents where student_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('fascicolo', v_n);
+
+  update public.galleria_media
+     set tag_alunni = array_remove(tag_alunni, p_alunno)
+   where p_alunno = any(tag_alunni);
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('tag_galleria', v_n);
+
+  -- Copia di sicurezza del diario creata a mano il 2026-09-08, senza migrazione:
+  -- esiste solo in produzione, quindi la si nomina solo se c'è.
+  if to_regclass('public.backup_diario_vuote_20260908') is not null then
+    execute 'delete from public.backup_diario_vuote_20260908 where alunno_id = $1' using p_alunno;
+    get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('backup_diario', v_n);
+  end if;
+
+  -- Il resto (presenze, deleghe, chat, servizi, registro_destinatari, ...) segue
+  -- in CASCADE: nessuna di quelle catene ha un freno RESTRICT. retta_a_carico_di
+  -- dei fratelli va a NULL da sé.
+  delete from public.alunni where id = p_alunno;
+
+  perform set_config('anno_chiuso.oblio', 'off', true);
+  return jsonb_build_object('ok', true, 'code', 'eliminato', 'righe', v_righe);
+end;
+$function$;
+    $def$;
+  END IF;
+END
+$do$;
+
+DO $do$
+BEGIN
+  IF to_regprocedure('public.iscrizioni_sanitari_tick()') IS NOT NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.iscrizioni_sanitari_tick()
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_domande    int := 0;
+  v_conservati int := 0;
+BEGIN
+  -- Anno scolastico (M3): l'oblio è l'unica scrittura che può toccare un anno chiuso senza gettone.
+  PERFORM set_config('anno_chiuso.oblio', 'on', true);
+  WITH figli AS (
+    SELECT e.id, e.scuola_id, x.ord, x.c,
+           -- `<> ''` e non «IS NOT NULL»: una stringa vuota non è un dato, e
+           -- senza questo il lavoro riscriverebbe ogni notte le stesse domande.
+           (COALESCE(btrim(x.c->>'allergies'), '') <> ''
+             OR COALESCE(btrim(x.c->>'note_mediche'), '') <> '') AS ha_sanitari
+      FROM public.enrollment_submissions e
+     CROSS JOIN LATERAL jsonb_array_elements(
+             CASE WHEN jsonb_typeof(e.data->'children') = 'array'
+                  THEN e.data->'children' ELSE '[]'::jsonb END
+           ) WITH ORDINALITY AS x(c, ord)
+     WHERE e.status = 'approved'
+       AND e.imported_at IS NOT NULL
+  ), decisi AS (
+    SELECT f.*,
+           CASE WHEN NOT f.ha_sanitari THEN NULL ELSE EXISTS (
+             SELECT 1
+               FROM public.alunni a
+               -- Normalizzazione: spazi compressi PRIMA del btrim (che toglie solo
+               -- lo spazio), poi minuscole. Stessa cosa del `trim().replace(/\s+/g,' ')`.
+               CROSS JOIN LATERAL (SELECT
+                 lower(btrim(regexp_replace(COALESCE(a.allergies, ''), '\s+', ' ', 'g'), ' '))    AS s_all,
+                 lower(btrim(regexp_replace(COALESCE(a.note_mediche, ''), '\s+', ' ', 'g'), ' ')) AS s_note,
+                 lower(btrim(regexp_replace(COALESCE(f.c->>'allergies', ''), '\s+', ' ', 'g'), ' '))    AS d_all,
+                 lower(btrim(regexp_replace(COALESCE(f.c->>'note_mediche', ''), '\s+', ' ', 'g'), ' ')) AS d_note
+               ) n
+              WHERE a.scuola_id = f.scuola_id
+                AND a.anonimizzato_il IS NULL
+                AND (
+                      (NULLIF(btrim(f.c->>'codice_fiscale'), '') IS NOT NULL
+                        AND upper(btrim(a.codice_fiscale)) = upper(btrim(f.c->>'codice_fiscale')))
+                   OR (NULLIF(btrim(f.c->>'codice_fiscale'), '') IS NULL
+                        AND a.nome = f.c->>'nome'
+                        AND a.cognome = f.c->>'cognome'
+                        AND a.data_nascita::text = f.c->>'data_nascita')
+                    )
+                AND (n.d_all = '' OR position(n.d_all IN n.s_all) > 0)
+                AND (n.d_note = '' OR position(n.d_note IN n.s_note) > 0)
+           ) END AS copia_presente
+      FROM figli f
+  ), nuove AS (
+    SELECT d.id,
+           jsonb_agg(
+             CASE WHEN d.copia_presente
+                  THEN d.c || jsonb_build_object(
+                                'allergies', NULL,
+                                'note_mediche', NULL,
+                                'sanitari_rimossi_il', to_jsonb(now()))
+                  ELSE d.c
+             END
+             ORDER BY d.ord
+           ) AS children,
+           COALESCE(bool_or(d.copia_presente), false)      AS da_riscrivere,
+           count(*) FILTER (WHERE d.copia_presente IS FALSE) AS conservati
+      FROM decisi d
+     GROUP BY d.id
+  ), aggiornate AS (
+    UPDATE public.enrollment_submissions e
+       SET data = jsonb_set(e.data, '{children}', n.children), updated_at = now()
+      FROM nuove n
+     WHERE e.id = n.id
+       AND n.da_riscrivere
+    RETURNING 1
+  )
+  SELECT (SELECT count(*)::int FROM aggiornate),
+         (SELECT COALESCE(sum(conservati), 0)::int FROM nuove)
+    INTO v_domande, v_conservati;
+
+  -- Il successo si scrive SEMPRE (regola 5): «nessuna riga» non deve voler dire
+  -- insieme «tutto a posto» e «non è mai partito». Solo conteggi.
+  INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+  VALUES (
+    'info', 'gdpr', 'server', 'dati sanitari rimossi dalle domande gia accolte (solo con copia in scheda)',
+    'cron:iscrizioni-sanitari',
+    jsonb_build_object('esito', 'sanitari-rimossi-da-domanda', 'n_domande', v_domande, 'n_conservati', v_conservati)
+  )
+  ON CONFLICT (fingerprint, giorno) DO UPDATE
+    SET occorrenze = public.app_log.occorrenze + 1,
+        visto_l_ultima = now(),
+        contesto = excluded.contesto;
+
+  IF v_conservati > 0 THEN
+    INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+    VALUES (
+      'warn', 'gdpr', 'server', 'dati sanitari rimasti nella domanda: nella scheda del bambino non ci sono',
+      'cron:iscrizioni-sanitari-conservati',
+      jsonb_build_object('esito', 'sanitari-conservati-nella-domanda', 'n_conservati', v_conservati)
+    )
+    ON CONFLICT (fingerprint, giorno) DO UPDATE
+      SET occorrenze = public.app_log.occorrenze + 1,
+          visto_l_ultima = now(),
+          contesto = excluded.contesto;
+  END IF;
+
+  PERFORM set_config('anno_chiuso.oblio', 'off', true);
+  RETURN v_domande;
+END $$;
+    $def$;
+  END IF;
+END
+$do$;
+
+DO $do$
+BEGIN
+  IF to_regprocedure('public.presenze_giustificazioni_retention_tick()') IS NOT NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.presenze_giustificazioni_retention_tick()
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  -- IL TERMINE, in un posto solo. Dichiarato anche nell'informativa: il lock
+  -- `informativa-conservazione-dichiarata.test.ts` confronta i due numeri.
+  v_mesi   constant int := 12;
+  -- L'INTERRUTTORE: oltre questo numero di righe in una notte non si tocca niente.
+  -- Il giorno normale ne azzera poche (le assenze di un giorno di un anno fa, i
+  -- motivi di un bambino ritirato); centinaia insieme sono un'anomalia da guardare.
+  v_soglia constant int := 200;
+  v_forza  boolean := COALESCE(current_setting('app.conservazione_forza', true), '') = 'on';
+  v_ids    uuid[];
+  v_righe  int := 0;
+BEGIN
+  -- Anno scolastico (M3): l'oblio è l'unica scrittura che può toccare un anno chiuso senza gettone.
+  PERFORM set_config('anno_chiuso.oblio', 'on', true);
+  SELECT COALESCE(array_agg(p.id), '{}')
+    INTO v_ids
+    FROM public.presenze AS p
+   -- Solo le righe che hanno davvero qualcosa da togliere.
+   WHERE (p.giustificazione_testo IS NOT NULL OR p.note_appello IS NOT NULL)
+     AND (
+           p.data < current_date - make_interval(months => v_mesi)
+        -- La riga ORFANA: l'alunno non e piu in anagrafica, nessuna iscrizione la trattiene.
+        OR NOT EXISTS (
+             SELECT 1 FROM public.alunni a WHERE a.id = p.alunno_id
+           )
+        -- L'ALLOWLIST degli stati, e da almeno sette giorni (alunno_uscita_consolidata
+        -- chiama public.stati_alunno_non_piu_iscritto()): un ritiro di ieri non cancella.
+        OR EXISTS (
+             SELECT 1
+               FROM public.alunni a
+              WHERE a.id = p.alunno_id
+                AND public.alunno_uscita_consolidata(a.stato, a.stato_cambiato_il)
+           )
+         );
+
+  IF cardinality(v_ids) > v_soglia AND NOT v_forza THEN
+    -- Niente battito stanotte: il campanello vede il job muto E la riga d'errore.
+    INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+    VALUES (
+      'error', 'cron', 'server',
+      format('retention motivo assenza FERMATA dall''interruttore: %s righe oltre la soglia di %s, nessuna toccata', cardinality(v_ids), v_soglia),
+      'cron:presenze-giustificazioni-retention:interruttore',
+      jsonb_build_object(
+        'campi', jsonb_build_object(
+          'operazione',  'presenze-giustificazioni-retention',
+          'esito',       'interruttore',
+          'n_candidate', cardinality(v_ids),
+          'soglia',      v_soglia
+        )
+      )
+    )
+    ON CONFLICT (fingerprint, giorno) DO UPDATE
+      SET occorrenze = public.app_log.occorrenze + 1,
+          visto_l_ultima = now(),
+          contesto = excluded.contesto;
+    PERFORM set_config('anno_chiuso.oblio', 'off', true);
+    RETURN 0;
+  END IF;
+
+  UPDATE public.presenze AS p
+     SET giustificazione_testo = NULL,
+         note_appello          = NULL
+   WHERE p.id = ANY (v_ids);
+  GET DIAGNOSTICS v_righe = ROW_COUNT;
+
+  -- Un lavoro che cancella dati di famiglie deve dire ANCHE quando non cancella
+  -- niente. Solo conteggi - nessun nome, nessun uuid, nessun testo.
+  INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+  VALUES (
+    'info', 'cron', 'server',
+    format('retention motivo assenza e note appello (%s mesi o fine iscrizione da 7 giorni)', v_mesi),
+    'cron:presenze-giustificazioni-retention',
+    jsonb_build_object(
+      'campi', jsonb_build_object(
+        'operazione', 'presenze-giustificazioni-retention',
+        'esito',      'ok',
+        'azione',     'retention-presenze-giustificazioni',
+        'n_righe',    v_righe,
+        'mesi',       v_mesi,
+        'forzata',    v_forza
+      )
+    )
+  )
+  ON CONFLICT (fingerprint, giorno) DO UPDATE
+    SET occorrenze = public.app_log.occorrenze + 1,
+        visto_l_ultima = now(),
+        contesto = excluded.contesto;
+
+  PERFORM set_config('anno_chiuso.oblio', 'off', true);
+  RETURN v_righe;
+END $$;
+    $def$;
+  END IF;
+END
+$do$;
+
+-- ── (5b) anno_invarianti: la definizione di `20261107023257_anno_vincoli_2.sql`, con due cambi (Ruling P31 e P5) ──
+--   · la 6 non conta più `fattura\_%` (le esenzioni sono PER NOME in `anno_colonne_esenti`) e salta le tabelle con
+--     `guardia` diversa da `piena` (gli UPDATE non si guardano: non sono scritture non guardate);
+--   · la 14 è nuova: «madre ⇒ FK».
+CREATE OR REPLACE FUNCTION public.anno_invarianti()
+RETURNS TABLE (invariante text, tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  r             public.anno_tabelle%ROWTYPE;
+  v_guardia_dal timestamptz;
+  v_mappa6      jsonb := '{}'::jsonb;
+  v_ha_nera     boolean;
+  v_ha_anno     boolean;
+  v_fuori       text[];
+  v_cond        text[];
+  v_col         text;
+  v_n           bigint;
+  v_trovata     boolean := false;
+  d             record;
+BEGIN
+  -- 1. Nessun giorno senza anno, nessun giorno in due anni.
+  SELECT count(*) INTO v_n FROM (
+    SELECT s.scuola_id, g::date
+      FROM (SELECT a.scuola_id, min(a.inizio) AS da, max(a.fine) AS al
+              FROM public.anni_sede a GROUP BY a.scuola_id) s
+     CROSS JOIN LATERAL generate_series(s.da::timestamp, s.al::timestamp, interval '1 day') g
+      LEFT JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND g::date <@ a.periodo
+     GROUP BY s.scuola_id, g::date
+    HAVING count(a.id) <> 1) x;
+  invariante := '1'; tabella := 'anni_sede'; righe := v_n; RETURN NEXT;
+
+  -- 6, prima parte: le violazioni di tutte le tabelle in una volta sola (poi si distribuiscono).
+  SELECT g.guardia_attiva_dal INTO v_guardia_dal FROM public.anno_regole g;
+  v_ha_nera := to_regclass('scatola_nera.modifiche') IS NOT NULL;
+  IF v_ha_nera AND v_guardia_dal IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT coalesce(jsonb_object_agg(x.tabella, x.n), '{}'::jsonb) FROM (
+        SELECT m.tabella, count(*) AS n
+          FROM scatola_nera.modifiche m
+          -- `nessuna` e `solo_contenuto` non guardano gli UPDATE (la scatola nera registra solo UPDATE): non sono un difetto
+          JOIN public.anno_tabelle t ON t.tabella = m.tabella AND t.guardia = 'piena'
+         CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+          JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+         CROSS JOIN LATERAL (SELECT min(st.dal) AS dal FROM public.anni_sede_stati st
+                              WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')) ch
+         WHERE m.modificata_il >= $1
+           AND ch.dal IS NOT NULL
+           AND m.modificata_il >= ch.dal
+           -- le modifiche che la guardia lascia passare apposta non sono un difetto
+           AND NOT (
+             coalesce((SELECT bool_and(
+                         c = ANY (public.anno_colonne_esenti(m.tabella))
+                         OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                         FROM unnest(m.cambiate) c), false)
+             AND (m.tabella <> 'frequenze'
+                  OR NOT ('stato' = ANY (m.cambiate))
+                  OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
+           AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+                            WHERE u.transazione = m.transazione AND u.tabella = m.tabella
+                              AND (u.riga_id IS NULL OR u.riga_id = m.riga_id))
+         GROUP BY m.tabella) x
+    $q$ INTO v_mappa6 USING v_guardia_dal;
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+    v_ha_anno := public.anno_ha_colonna(r.tabella, 'anno_id');
+
+    -- 2. Nessuna riga fuori dal suo anno (modo `data`).
+    IF r.modo = 'data' THEN
+      invariante := '2'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_fuori_periodo(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 6, seconda parte: una riga per tabella (se c'è la scatola nera).
+    IF v_ha_nera THEN
+      invariante := '6'; tabella := r.tabella; righe := coalesce((v_mappa6 ->> r.tabella)::bigint, 0);
+      RETURN NEXT;
+    END IF;
+
+    -- 9. Nessuna riga nuova con una sezione di un altro anno.
+    IF public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      invariante := '9'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_sezione_altro_anno(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 10a. La colonna e il trigger generico (una riga per tabella: 0, 1 o 2 difetti).
+    invariante := '10a'; tabella := r.tabella;
+    righe := (CASE WHEN v_ha_anno THEN 0 ELSE 1 END)
+           + (CASE WHEN EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc pr ON pr.oid = tg.tgfoid
+                                 WHERE tg.tgrelid = to_regclass(format('public.%I', r.tabella))
+                                   AND pr.proname = 'anno_assegna_e_verifica' AND NOT tg.tgisinternal)
+                   THEN 0 ELSE 1 END);
+    RETURN NEXT;
+
+    -- 12. Nessuna riga senza anno e con una sede da cui ricavarlo.
+    invariante := '12'; tabella := r.tabella;
+    righe := CASE WHEN v_ha_anno THEN public.anno_righe_senza_anno_con_sede(r.tabella) ELSE 0 END;
+    RETURN NEXT;
+
+    -- 14. «madre ⇒ FK» (Ruling P5): ogni tabella `madre` ha una chiave esterna vera, di UNA colonna, dalla colonna
+    --     `madre_colonna` alla tabella madre. Senza, l'anno della figlia seguirebbe un padre che può sparire o non esistere.
+    IF r.modo = 'madre' THEN
+      invariante := '14'; tabella := r.tabella;
+      righe := CASE WHEN EXISTS (
+                 SELECT 1 FROM pg_constraint c
+                   JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = c.conkey[1]
+                  WHERE c.contype = 'f' AND cardinality(c.conkey) = 1
+                    AND c.conrelid = to_regclass(format('public.%I', r.tabella))
+                    AND c.confrelid = to_regclass(format('public.%I', r.madre_tabella))
+                    AND at.attname = r.madre_colonna) THEN 0 ELSE 1 END;
+      RETURN NEXT;
+    END IF;
+  END LOOP;
+
+  IF NOT v_ha_nera THEN
+    invariante := '6'; tabella := '(scatola_nera assente)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno.
+  SELECT count(*) INTO v_n FROM (
+    SELECT f.alunno_id, f.anno_id FROM public.frequenze f
+     WHERE f.stato IN ('in_attesa', 'iscritto')
+     GROUP BY f.alunno_id, f.anno_id HAVING count(*) > 1) x;
+  invariante := '3'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+
+  -- 4. Nessun «iscritto» senza moduli o senza quota, ricalcolato dalla verità e non dai flag.
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.stato = 'iscritto' AND f.origine <> 'recupero'
+     AND (EXISTS (SELECT 1 FROM public.moduli_richiesti m
+                   WHERE m.anno_sede_id = f.anno_sede_id AND m.lista = f.tipo
+                     AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                                      WHERE fm.frequenza_id = f.id AND fm.modulo_id = m.id))
+          OR q.id IS NULL OR q.stato <> 'pagato');
+  invariante := '4'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+  --    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.quota_saldata IS DISTINCT FROM (q.id IS NOT NULL AND q.stato = 'pagato');
+  invariante := '4'; tabella := 'frequenze (flag)'; righe := v_n; RETURN NEXT;
+
+  -- 5. Nessuna competenza fuori dal periodo del suo anno.
+  v_n := 0;
+  IF to_regclass('public.pagamenti') IS NOT NULL AND public.anno_ha_colonna('pagamenti', 'anno_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pagamenti p '
+            'JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id '
+            'WHERE p.periodo_competenza IS NOT NULL AND NOT (p.periodo_competenza <@ a.periodo)'
+    INTO v_n;
+  END IF;
+  invariante := '5'; tabella := 'pagamenti'; righe := v_n; RETURN NEXT;
+
+  -- 10b. Una tabella con `anno_id` che il registro non conosce.
+  SELECT array_agg(c.relname::text ORDER BY c.relname) INTO v_fuori
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND at.attname = 'anno_id' AND at.attnum > 0 AND NOT at.attisdropped
+     AND c.relname NOT IN ('anni_sede', 'riconciliazione_anno')
+     AND c.relname NOT IN (SELECT t.tabella FROM public.anno_tabelle t);
+  IF v_fuori IS NULL THEN
+    invariante := '10b'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  ELSE
+    FOREACH v_col IN ARRAY v_fuori LOOP
+      invariante := '10b'; tabella := v_col; righe := 1; RETURN NEXT;
+    END LOOP;
+  END IF;
+
+  -- 11. La scheda alunno e la frequenza dell'anno attivo dicono la stessa cosa (solo chi ha la frequenza).
+  --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
+  --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL THEN
+    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
+                  WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
+                    AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
+                    AND NOT x.attisdropped AND NOT y.attisdropped) THEN
+        v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
+      END IF;
+    END LOOP;
+    EXECUTE 'SELECT count(*) FROM public.alunni al '
+            'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
+            'WHERE ' || array_to_string(v_cond, ' OR ')
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
+
+  --     11-bis. Un alunno con una sede deve avere la frequenza dell'anno attivo (lo specchio la crea).
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL AND to_regclass('public.frequenze') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.alunni al WHERE al.scuola_id IS NOT NULL '
+            'AND public.anno_attivo(al.scuola_id) IS NOT NULL '
+            'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = al.id '
+            'AND f.anno_sede_id = public.anno_attivo(al.scuola_id))'
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni (senza frequenza)'; righe := v_n; RETURN NEXT;
+
+  -- 13. I nomi di classe e gli uuid di sezione dicono la stessa cosa (una riga per tabella che ha le due colonne).
+  FOR d IN SELECT x.tabella AS t, x.righe AS n FROM public.anno_target_divergenti() x LOOP
+    v_trovata := true;
+    invariante := '13'; tabella := d.t; righe := d.n; RETURN NEXT;
+  END LOOP;
+  IF NOT v_trovata THEN
+    invariante := '13'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  RETURN;
+END
+$$;
 
 -- ── (6) GRANT/REVOKE (R13) ──────────────────────────────────────────────────
--- Funzioni nuove o con firma nuova di questo file (le oblio le aggiunge il Compito 3.3-3).
+-- Funzioni nuove o con firma nuova di questo file.
 REVOKE ALL ON FUNCTION public.anno_guardia_verifica(public.anno_tabelle, text, jsonb, jsonb, uuid, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_guardia_osserva_conta(text, text, text)                                  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_log_uso_gettone(uuid, text, text, text)                                  FROM PUBLIC, anon, authenticated;
@@ -799,3 +1634,18 @@ GRANT EXECUTE ON FUNCTION public.anno_origine_richiesta()                       
 GRANT EXECUTE ON FUNCTION public.anno_transitorio_conta(text)                                                     TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_guardia_osserva_sicura(public.anno_tabelle, text, jsonb, jsonb, uuid)      TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_colonne_esenti(text)                                                        TO service_role;
+
+-- Compito 3.3-3: le funzioni nuove dell'oblio. Anche `anno_invarianti` resta com'era (CREATE OR REPLACE conserva i
+-- permessi), ma si ripete: una sola sezione dice chi può eseguire cosa.
+REVOKE ALL ON FUNCTION public.anno_oblio_attiva()                                              FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_oblio_spegni()                                              FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_oblio_riepilogo(text, text, bigint, text)                   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text)         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_oblio_svuota(text, text)                                    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_invarianti()                                                FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_attiva()                                           TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_spegni()                                           TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_riepilogo(text, text, bigint, text)                TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text)      TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_svuota(text, text)                                 TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_invarianti()                                             TO service_role;

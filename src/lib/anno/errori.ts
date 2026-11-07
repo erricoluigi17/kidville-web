@@ -153,4 +153,5 @@ export const CODICI_INTERNI = [
   'RIEMPIMENTO_SENZA_SCHEMA_ANNO', // 20261107012110_anno_strumenti.sql
   'TABELLA_NON_NEL_RIEMPIMENTO', // 20261107012110_anno_strumenti.sql
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
+  'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
 ] as const

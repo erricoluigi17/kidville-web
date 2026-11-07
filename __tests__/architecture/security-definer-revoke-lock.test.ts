@@ -83,6 +83,14 @@ const AMMESSE = new Map<string, readonly string[]>([
     '20260712220000_cron_config_vault.sql',
     ['notifiche_dispatch_tick', 'notifiche_promemoria_tick', 'mensa_check_allergie_giornaliero', 'fatture_sdi_sync_tick'],
   ],
+  // `CREATE OR REPLACE` (dentro `to_regprocedure`) di tre funzioni di oblio **già esistenti** per aggiungere
+  // l'interruttore `anno_chiuso.oblio` (Anno scolastico, PR 3, M3). L'ACL non cambia: `elimina_alunno_definitivo` è
+  // revocata ad anon/authenticated da 20261008220540, i due `*_tick` dalle migrazioni che li hanno creati. Il blocco
+  // `DO` non crea nulla dove la funzione non c'è (il database della CI), quindi non nasce mai aperta.
+  [
+    '20261107165503_anno_scrittura.sql',
+    ['elimina_alunno_definitivo', 'iscrizioni_sanitari_tick', 'presenze_giustificazioni_retention_tick'],
+  ],
 ])
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')

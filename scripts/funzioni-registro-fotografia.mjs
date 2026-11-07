@@ -24,11 +24,21 @@
  * che il catalogo non ha piu': cosi' una funzione nuova non entra senza che qualcuno la giudichi.
  * Nella fotografia finiscono solo nomi: mai sorgenti. Il `motivo` resta qui, nel generatore.
  *
- *   corrente          scrive solo righe di oggi o future
- *   esente-colonne    tocca solo colonne di `anno_colonne_esenti` (o che la PR 3 ci aggiunge)
+ *   corrente          la funzione passa dalla guardia come ogni scrittura: su un anno protetto serve un
+ *                     gettone, altrimenti 409. Comprende le scritture con una data passata dal chiamante e
+ *                     i ricalcoli fatti nella stessa transazione di una scrittura guardata, perche' il
+ *                     gettone vale per tutta la transazione (Ruling P15).
+ *   esente-colonne    scrive solo colonne che sono esenti oggi o che M3 rendera' esenti; il motivo nomina
+ *                     quelle colonne
  *   oblio             cancella/anonimizza: retention, GDPR, eliminazione
  *   macchina-a-stati  pipeline video e simili: stato, non contenuto
- *   dichiara          crea righe di tabelle `dichiarato` (l'anno lo dichiara chi scrive) o riceve la data dal chiamante
+ *   dichiara          INSERT su una tabella di modo `dichiarato` (l'anno lo dichiara chi scrive)
+ *
+ * ─── LIMITI DELLA QUERY (falsi negativi possibili) ─────────────────────────────
+ * E' una scansione di testo del corpo: non vede SQL dinamico (`execute '…'`), scritture indirette
+ * (`PERFORM f()`), tabelle di schema diverso da `public`, i commenti a blocchi (slash-asterisco: non vengono tolti, possono
+ * dare falsi positivi), un `--` dentro una stringa (taglierebbe il resto della riga), le funzioni
+ * `BEGIN ATOMIC` (hanno `prosrc` vuoto), `TRUNCATE` e `MERGE`.
  *
  * ─── COME SI RIGENERA ──────────────────────────────────────────────────────────
  * 1. Esegui sul DB di produzione la query che stampa `node scripts/funzioni-registro-fotografia.mjs --sql`
@@ -57,13 +67,14 @@ f AS (
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname IN ('public', 'scatola_nera') AND p.prokind = 'f'
     AND p.proname NOT LIKE 'anno\\_%' AND p.proname NOT LIKE 'frequenze\\_%'
-    AND p.proname <> 'alunni_specchio_frequenza' AND p.proname NOT LIKE '%\\_tocca\\_frequenze'
+    AND p.proname <> 'alunni_specchio_frequenza' AND p.proname NOT IN ('pagamenti_tocca_frequenze', 'moduli_richiesti_tocca_frequenze')
 ),
 m AS (
   SELECT DISTINCT f.proname, t.tabella
   FROM f JOIN t ON f.s ~* ('\\m(update|delete\\s+from|insert\\s+into)\\s+(only\\s+)?("?public"?\\.)?"?' || t.tabella || '"?(?![a-z0-9_])')
 )
 SELECT json_build_object(
+  'registro', (SELECT coalesce(json_agg(tabella ORDER BY tabella COLLATE "C"), '[]'::json) FROM t),
   'funzioni', (
     SELECT coalesce(json_agg(json_build_object('funzione', proname, 'tabelle', tabelle) ORDER BY proname COLLATE "C"), '[]'::json)
     FROM (SELECT proname, array_agg(tabella ORDER BY tabella COLLATE "C") AS tabelle FROM m GROUP BY proname) x
@@ -84,7 +95,7 @@ export const CLASSI = {
     _video_originale_applica: VIDEO,
     video_galleria_flusso_vecchio_revoca: VIDEO,
     video_galleria_intent_apri: VIDEO,
-    video_galleria_intent_apri_storico: C('dichiara', 'imposta giorno_competenza ricevuto dal chiamante: puo\' cadere in un anno chiuso'),
+    video_galleria_intent_apri_storico: C('corrente', 'scrive video_intents (modo data) con giorno_competenza passato dal chiamante'),
     video_galleria_pubblica: VIDEO,
     video_intent_add_job: VIDEO,
     video_intent_confirm: VIDEO,
@@ -113,18 +124,18 @@ export const CLASSI = {
     video_retention_uscita_rimossa: VIDEO_OBLIO,
     video_rinnovo_usa: VIDEO,
     // ── cassa (pagamenti e quote) ──
-    aggiorna_quote_pagamento: C('corrente', 'rifa le quote di una voce viva; scrive anche pagamenti.tipo, che NON e\' tra le colonne esenti'),
+    aggiorna_quote_pagamento: C('corrente', 'scrive pagamenti.tipo, che non e\' esente, e rifa le quote: su un anno chiuso serve un gettone'),
     crea_quote_da_config: C('corrente', 'crea le quote di una voce appena creata'),
     elimina_voce_ricarica_ticket: C('corrente', 'toglie una voce di ricarica ticket appena fatta'),
     genera_rette_mensili: C('dichiara', 'crea voci di pagamenti: l\'anno lo dichiara la scadenza/competenza della voce'),
     genera_servizi_mensili: C('dichiara', 'crea voci di pagamenti per i servizi del mese'),
     genera_solleciti: C('esente-colonne', 'scrive solo stato, aggiornato_il e ultimo_sollecito_il di pagamenti, tutte esenti'),
-    registra_incasso_voce: C('esente-colonne', 'registra l\'incasso (colonne esenti) ma scrive anche sconto e sconto_motivo, oggi NON esenti'),
+    registra_incasso_voce: C('corrente', 'scrive sconto e sconto_motivo, non esenti: un abbuono su un anno chiuso e\' una correzione; senza abbuono cambia solo aggiornato_il, esente'),
     registra_transazione_contabile: C('dichiara', 'inserisce voci di pagamenti con scadenza/competenza dichiarate'),
     ricalcola_stato_padre: C('esente-colonne', 'scrive importo_pagato, stato, aggiornato_il di pagamenti: tutte esenti'),
     ricalcola_stato_pagamento: C('esente-colonne', 'scrive importo_pagato, data_incasso, stato, aggiornato_il di pagamenti: tutte esenti'),
     ricarica_ticket_mensa: C('dichiara', 'inserisce una voce di pagamenti per la ricarica dei ticket'),
-    ricarica_ticket_mensa_storico: C('dichiara', 'imposta la scadenza ricevuta dal chiamante: puo\' cadere in un anno chiuso'),
+    ricarica_ticket_mensa_storico: C('dichiara', 'inserisce in pagamenti (tabella dichiarato) con la scadenza passata dal chiamante'),
     crm_quota_passa: C('dichiara', 'inserisce la voce di pagamenti della quota di iscrizione'),
     crm_quota_segna: C('corrente', 'aggiorna lo stato della quota di una scheda CRM viva'),
     crm_quota_togli: C('corrente', 'azzera la quota di una scheda CRM viva'),
@@ -138,15 +149,15 @@ export const CLASSI = {
     avviso_adesione_gestisci: C('corrente', 'gestisce una risposta ad un avviso vivo (posti, coda)'),
     avviso_adesione_registra: C('corrente', 'registra la risposta di un genitore ad un avviso vivo'),
     gallery_publish_photo: C('corrente', 'pubblica una foto nuova, di oggi'),
-    gallery_publish_photo_storico: C('dichiara', 'imposta giorno_competenza ricevuto dal chiamante: puo\' cadere in un anno chiuso'),
+    gallery_publish_photo_storico: C('corrente', 'scrive galleria_media_v2 (modo data) con giorno_competenza passato dal chiamante'),
     note_modifica: C('corrente', 'modifica note disciplinari e le loro ricezioni'),
-    primaria_ricalcola_periodi: C('macchina-a-stati', 'ricalcolo di periodo_id (colonna derivata) su valutazioni e giustifiche'),
+    primaria_ricalcola_periodi: C('corrente', 'ricalcola periodo_id nella stessa transazione della scrittura guardata sui periodi'),
     propaga_rinomina_sezione: C('esente-colonne', 'trigger: riscrive target_classes e classe_sezione (testi derivati dal nome) -- non ancora in anno_colonne_esenti'),
     riaccredita_ticket_e_disdici: C('corrente', 'disdice una prenotazione mensa'),
     salva_comportamento_scrutinio: C('corrente', 'salva il giudizio di comportamento di uno scrutinio aperto'),
     salva_giudizi_scrutinio: C('corrente', 'salva i giudizi di uno scrutinio aperto'),
     scala_ticket_e_prenota: C('corrente', 'crea una prenotazione mensa'),
-    storici_versione_aggregato: C('macchina-a-stati', 'trigger: bump di storico_versione (UPDATE a se\' stesso) su note, orario, valutazioni'),
+    storici_versione_aggregato: C('esente-colonne', 'trigger: incrementa solo storico_versione, contatore tecnico che M3 rendera\' esente sulle tabelle che tocca'),
     // ── oblio ──
     elimina_alunno_definitivo: C('oblio', 'cancella l\'alunno e il suo registro (diario, pagamenti, moduli, fascicolo)'),
     presenze_giustificazioni_retention_tick: C('oblio', 'job notturno: toglie giustificazione_testo e note_appello dalle presenze'),
@@ -167,8 +178,23 @@ const confronta = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** Normalizzazione: ordine "C" per nome, tabelle ordinate, classe presa da CLASSI. */
 export function normalizza(f) {
+    const registro = new Set((f.registro ?? []).map(String))
+    if (registro.size === 0) throw new Error('Manca `registro` nella risposta: rilancia la query di --sql.')
+    const CLASSI_VALIDE = ['corrente', 'esente-colonne', 'oblio', 'macchina-a-stati', 'dichiara']
+    for (const [nome, { classe }] of Object.entries(CLASSI)) {
+        if (!CLASSI_VALIDE.includes(classe)) {
+            throw new Error(`Classe «${classe}» non valida per ${nome}: ammesse ${CLASSI_VALIDE.join(', ')}.`)
+        }
+    }
+    for (const x of f.funzioni) {
+        for (const t of x.tabelle) {
+            if (!registro.has(String(t))) {
+                throw new Error(`La tabella «${t}» della funzione ${x.funzione} non sta nel registro (anno_tabelle).`)
+            }
+        }
+    }
     const nomi = f.funzioni.map((x) => String(x.funzione))
-    const senzaClasse = nomi.filter((n) => !(n in CLASSI))
+    const senzaClasse = nomi.filter((n) => !Object.hasOwn(CLASSI, n))
     if (senzaClasse.length > 0) {
         throw new Error(`Funzioni senza classe in CLASSI: ${senzaClasse.join(', ')}. Giudicale e aggiungile.`)
     }

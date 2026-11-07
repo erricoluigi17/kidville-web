@@ -24,6 +24,7 @@ const registro = new Set(
     leggi<{ tabelle: { tabella: string }[] }>('tabelle-anno.json').tabelle.map((t) => t.tabella),
 )
 
+// Da aggiornare quando si rigenera la fotografia: blocca le cancellazioni silenziose.
 const FUNZIONI_ATTESE = 65 // misurate in produzione il 07/11/2026 (il piano ne scriveva 58, vedi il report del 3.0)
 const CLASSI = ['corrente', 'esente-colonne', 'oblio', 'macchina-a-stati', 'dichiara']
 

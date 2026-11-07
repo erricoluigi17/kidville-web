@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/funzioni-registro-fotografia.mjs --sql | (esegui su prod) ; node scripts/funzioni-registro-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T16:03:13Z",
-  "sha256": "baaf9ecd1a066ed5e378f366426bdfaabd3db23e5f8719d56637f57d82781b63",
+  "generato_alle": "2026-11-07T16:12:31Z",
+  "sha256": "004d105dc6a78a54ddcf4f143b3e488622b96909fb89312318b0fad4b5410ad2",
   "funzioni": [
     {
       "funzione": "_video_originale_applica",
@@ -99,7 +99,7 @@
       "tabelle": [
         "galleria_media_v2"
       ],
-      "classe": "dichiara"
+      "classe": "corrente"
     },
     {
       "funzione": "genera_rette_mensili",
@@ -171,7 +171,7 @@
         "giustifiche_didattiche",
         "valutazioni"
       ],
-      "classe": "macchina-a-stati"
+      "classe": "corrente"
     },
     {
       "funzione": "propaga_rinomina_sezione",
@@ -187,7 +187,7 @@
       "tabelle": [
         "pagamenti"
       ],
-      "classe": "esente-colonne"
+      "classe": "corrente"
     },
     {
       "funzione": "registra_transazione_contabile",
@@ -259,7 +259,7 @@
         "registro_orario",
         "valutazioni"
       ],
-      "classe": "macchina-a-stati"
+      "classe": "esente-colonne"
     },
     {
       "funzione": "video_galleria_flusso_vecchio_revoca",
@@ -281,7 +281,7 @@
       "tabelle": [
         "video_intents"
       ],
-      "classe": "dichiara"
+      "classe": "corrente"
     },
     {
       "funzione": "video_galleria_pubblica",

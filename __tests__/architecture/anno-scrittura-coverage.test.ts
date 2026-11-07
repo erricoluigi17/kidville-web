@@ -38,7 +38,10 @@ import { COPPIE_OBLIO_AMMESSE } from '@/lib/gdpr/oblio-registro'
  *  - una scrittura fatta su un client salvato in una variabile (`const q = supabase.from('t'); q.insert(…)`): la
  *    scansione cerca `.from(…)` seguito SUBITO da `.insert|upsert|update|delete(`;
  *  - una data piena scritta a mano (`'2027-08-01'`): è una data, non un confine calcolato (sezione 5);
- *  - una `rpc` che scrive il registro: ci pensano la guardia in database e la sezione 6.
+ *  - una `rpc` che scrive il registro: ci pensano la guardia in database e la sezione 6;
+ *  - `getMonth()` conta solo se confrontato DIRETTAMENTE con 7, 8 o 9: `const m = d.getMonth(); if (m >= 8)` e
+ *    `getUTCMonth()` sfuggono (li chiude la PR 4.1, che toglie tutto il calcolo a mano);
+ *  - nella finestra dei `pagamenti` basta che `scadenza` o `periodo_competenza` siano NOMINATE, anche in una stringa.
  */
 
 const CWD = process.cwd()
@@ -96,7 +99,7 @@ function costantiStringa(m: SorgenteMascherato): Map<string, string> {
 
 const RE_FROM = /\.\s*from\s*\(/g
 // `.from(x).insert(` e anche `(supabase.from(x) as unknown as T).insert(` (la forma del ripiego di oblio-registro.ts)
-const RE_OP = /^(?:\s+as\s+[\w$.<>[\]|, ]+?\))?\s*\.\s*(insert|upsert|update|delete)\s*\(/
+const RE_OP = /^(?:\s*as\s+[\w$.<>[\]|, ]+?\))?\s*\.\s*(insert|upsert|update|delete)\s*\(/
 
 /**
  * Tutte le `.from(<x>).insert|upsert|update|delete(` del file. L'analisi è sul testo `struttura` (nessuna parentesi
@@ -111,13 +114,16 @@ function analizza(percorso: string, sorgente: string): Analisi {
   while ((hit = RE_FROM.exec(m.struttura)) !== null) {
     const apertura = hit.index + hit[0].length - 1
     const fine = fineParentesi(m.struttura, apertura)
-    const op = RE_OP.exec(m.struttura.slice(fine, fine + 60))
+    // si salta il bianco (i commenti sono già spazi, anche lunghi) prima di cercare il metodo
+    let dopo = fine
+    while (dopo < m.struttura.length && /\s/.test(m.struttura[dopo])) dopo++
+    const op = RE_OP.exec(m.struttura.slice(dopo, dopo + 80))
     if (!op) continue
     const arg = m.senzaCommenti.slice(apertura + 1, fine - 1).trim()
     const lett = /^(['"`])([A-Za-z_][A-Za-z0-9_]*)\1$/.exec(arg)
     // `const TABELLA = 'armadietto_richieste'` e poi `.from(TABELLA)`: la tabella è leggibile lo stesso
     const viaCostante = !lett && /^[A-Za-z_$][\w$]*$/.test(arg) ? (costanti.get(arg) ?? null) : null
-    const aperturaOp = fine + op[0].length - 1
+    const aperturaOp = dopo + op[0].length - 1
     const fineOp = fineParentesi(m.struttura, aperturaOp)
     scritture.push({
       tabella: lett ? lett[2] : viaCostante,
@@ -175,6 +181,19 @@ const RICEVONO_L_ESITO: Record<string, string> = {
 }
 const SCRIVE_ANNO_ID = /\banno_id\b|\bconAnno\s*\(|\bannoDelBambino\s*\(/
 
+/**
+ * `anno_id` NELLA chiamata: nell'oggetto, oppure via uno spread `...nome` dove `nome` è dichiarato nel file con
+ * `anno_id` sulla stessa riga (`const dichiaraAnno = pubblico.annoId ? { anno_id: … } : {}`, come in iscrizione/route.ts).
+ */
+function scriveAnnoNellaChiamata(a: Analisi, argomento: string): boolean {
+  if (SCRIVE_ANNO_ID.test(argomento)) return true
+  for (const sp of argomento.matchAll(/\.\.\.\s*([A-Za-z_$][\w$]*)\s*[,}\n)]/g)) {
+    const decl = new RegExp(`\\b(?:const|let|var)\\s+${sp[1].replace(/\$/g, '\\$')}\\b[^\\n]*\\banno_id\\b`)
+    if (decl.test(senzaImport(a))) return true
+  }
+  return false
+}
+
 function violazioniDichiarate(files: Analisi[], inVariabile: { file: string }[] = TABELLE_IN_VARIABILE): string[] {
   const out: string[] = []
   // i file con una tabella in variabile DICHIARATA li controlla `violazioniNonLeggibili` (tetto, tabelle non dichiarate)
@@ -185,7 +204,8 @@ function violazioniDichiarate(files: Analisi[], inVariabile: { file: string }[] 
     const haHelper =
       [...HELPER_ANNO, ...Object.keys(HELPER_INDIRETTI)].some((h) => new RegExp(`\\b${h}\\s*\\(`).test(a.m.struttura)) ||
       (a.percorso in RICEVONO_L_ESITO && /\bEsitoAnno\b/.test(imp))
-    const scriveAnnoId = SCRIVE_ANNO_ID.test(senzaImport(a))
+    // `anno_id` come PROPRIETÀ di oggetto (non in una stringa tipo `.select('anno_id')`), per le variabili nude
+    const annoIdNelFile = /\banno_id\s*:|\bconAnno\s*\(|\bannoDelBambino\s*\(/.test(senzaImport(a))
     const righe = a.m.senzaCommenti.split('\n')
     for (const s of a.scritture) {
       if (s.op !== 'insert' && s.op !== 'upsert') continue
@@ -212,7 +232,9 @@ function violazioniDichiarate(files: Analisi[], inVariabile: { file: string }[] 
       }
       if (!haHelper) {
         out.push(`${a.percorso}:${s.riga} — ${s.op} su \`${s.tabella}\` in un file che non chiama ${HELPER_ANNO.join(' | ')}`)
-      } else if (!scriveAnnoId) {
+      } else if (!(/^\s*[{[]/.test(s.argomento) ? scriveAnnoNellaChiamata(a, s.argomento) : annoIdNelFile)) {
+        // oggetto/array letterale: `anno_id` deve stare NELLA chiamata (un altro insert del file non lo copre);
+        // variabile nuda (`.insert(record)`): ripiego sul file, ma solo `anno_id:` / conAnno(, non una stringa
         out.push(`${a.percorso}:${s.riga} — ${s.op} su \`${s.tabella}\`: il file ricava l'anno ma non scrive \`anno_id\` (manca \`...conAnno(esito)\`)`)
       }
     }
@@ -331,9 +353,12 @@ function haElencoLetteraleDiRegistro(a: Analisi): boolean {
 function violazioniOblio(files: Analisi[]): string[] {
   const out: string[] = []
   for (const a of files) {
-    if (!inZonaOblio(a.percorso) || a.percorso in ECCEZIONI_ZONA_OBLIO) continue
+    if (!inZonaOblio(a.percorso)) continue
+    const eccezione = a.percorso in ECCEZIONI_ZONA_OBLIO
     const elenco = haElencoLetteraleDiRegistro(a)
     for (const s of a.scritture) {
+      // l'eccezione copre SOLO i `.from(variabile)` del ripiego; una `.from('presenze').update` letterale resta rossa
+      if (eccezione && s.tabella === null) continue
       if (s.tabella === null) {
         if (!elenco) {
           out.push(`${a.percorso}:${s.riga} — \`.from(variabile).${s.op}\` nella zona oblio senza un elenco letterale di tabelle di registro nel file`)
@@ -726,6 +751,37 @@ describe('anno-scrittura-coverage — 1. lo scanner, provato su sorgenti finti',
     expect(v[0]).toContain('anno_id')
   })
 
+  it('due insert su tabelle dichiarate nello stesso file: quello con conAnno non copre quello senza', () => {
+    const v = violazioniDichiarate([
+      finto(
+        'src/app/api/x/route.ts',
+        `import { resolveAnnoScrittura } from '@/lib/auth/scope'
+         import { conAnno } from '@/lib/anno/tipi'
+         const esito = await resolveAnnoScrittura(request, supabase, user, scuolaId)
+         await supabase.from('sections').insert({ name: 'A', ...conAnno(esito) })
+         await supabase.from('votazioni').insert({ titolo: 'x' })`,
+      ),
+    ])
+    expect(v).toHaveLength(1)
+    expect(v[0]).toContain('votazioni')
+    // e `anno_id` in una stringa (`.select('anno_id')`) non è una scrittura di `anno_id`
+    const inStringa = violazioniDichiarate([
+      finto(
+        'src/app/api/x/route.ts',
+        `const e = await resolveAnnoScrittura(request, supabase, user, scuolaId)
+         await supabase.from('sections').select('anno_id').eq('anno_id', 1)
+         await supabase.from('sections').insert({ name: 'A' })`,
+      ),
+    ])
+    expect(inStringa).toHaveLength(1)
+  })
+
+  it('un commento lungo fra `.from(…)` e `.insert(` non nasconde la scrittura', () => {
+    const commento = '// ' + 'x'.repeat(200)
+    const a = finto('src/app/api/x/route.ts', `await supabase.from('sections')\n  ${commento}\n  .insert({ name: 'A' })`)
+    expect(a.scritture).toEqual([expect.objectContaining({ tabella: 'sections', op: 'insert' })])
+  })
+
   it('un insert dentro un commento o dentro una stringa è ignorato', () => {
     const a = finto(
       'src/app/api/x/route.ts',
@@ -805,8 +861,11 @@ describe('anno-scrittura-coverage — 1. lo scanner, provato su sorgenti finti',
   it('zona oblio: un update diretto su una tabella del registro è segnalato; il ripiego dichiarato no; `.from(variabile)` solo con elenco letterale', () => {
     const diretto = finto('src/lib/gdpr/esegui.ts', "await supabase.from('presenze').update({ nota: null }).eq('alunno_id', id)")
     expect(violazioniOblio([diretto])).toHaveLength(1)
-    const ripiego = finto('src/lib/gdpr/oblio-registro.ts', "await supabase.from('presenze').update({ nota: null })")
+    const ripiego = finto('src/lib/gdpr/oblio-registro.ts', "await supabase.from(o.tabella).update({ nota: null })")
     expect(violazioniOblio([ripiego])).toEqual([])
+    // l'eccezione del ripiego vale per i `.from(variabile)`, non per tutto il file: un letterale resta rosso
+    const letteraleNelRipiego = finto('src/lib/gdpr/oblio-registro.ts', "await supabase.from('presenze').update({ nota: null })")
+    expect(violazioniOblio([letteraleNelRipiego])).toHaveLength(1)
     const fuoriZona = finto('src/lib/altro/x.ts', "await supabase.from('presenze').update({ nota: null })")
     expect(violazioniOblio([fuoriZona])).toEqual([])
     const nonRegistro = finto('src/lib/gdpr/y.ts', "await supabase.from('certificati_medici').delete().in('id', ids)")

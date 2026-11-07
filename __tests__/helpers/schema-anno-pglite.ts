@@ -434,6 +434,8 @@ const SUFFISSI_PR2 = {
   // Correzione del 07/11: `gallery_photo_uploads` esce dal registro. Sta FRA V1 e V2 (la sua version è scelta apposta).
   FOTO: '_anno_foto_anti_doppione_fuori_registro.sql',
   V2: '_anno_vincoli_2.sql',
+  // PR 3: la regola di scrittura (gettoni, osservazione, esenzioni, oblio). Dopo V2.
+  M3: '_anno_scrittura.sql',
 } as const
 
 export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
@@ -511,7 +513,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -533,8 +535,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

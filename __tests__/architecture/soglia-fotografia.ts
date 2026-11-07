@@ -381,7 +381,14 @@ export function posterioriCheContengono(
 // Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
 // 2026-11-07 · PR di pulizia dopo la PR 2 «anno scolastico»: M1, V1 e V2 sono applicate in produzione e le fotografie
 // sono rigenerate dal database (migrazioni 258, indici unici 290, RLS accesa 179, tabelle con `scuola_id` 99). L'elenco torna vuoto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+// 2026-11-07 · PR 3 «anno scolastico» (Compito 3.3, M3): `20261107165503_anno_scrittura.sql` è dentro la PR e la applica
+// l'integrazione al merge. Aggiunge `anno_regole.guardia_osserva`, la tabella `anno_guardia_osservazioni` (RLS accesa, nessuna
+// policy), tre funzioni `SECURITY DEFINER` (contatore, log dell'uso, guardia con la firma nuova) e ridefinisce il trigger
+// generico `anno_assegna_e_verifica`: le fotografie del catalogo (indici unici, RLS accesa) si rigenerano dopo il merge.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261107165503_anno_scrittura.sql':
+        'PR 3 anno scolastico, M3: gettoni a lista, osservazione della guardia e le sue tabelle contatore; applicata dall\'integrazione al merge; la voce si toglie nella PR-B (pulizia dopo il merge, quando le fotografie sono rigenerate)',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -11,8 +11,9 @@ COSA FERMA (risposta ``deny``):
   · in ``execute_sql``: ``DELETE FROM``, ``DROP`` (anche ``ALTER … DROP``), ``TRUNCATE``,
     ``UPDATE`` senza ``WHERE`` al suo stesso livello, e gli interruttori che spengono la scatola
     nera, i registri o i trigger (``registri.manutenzione``, ``scatola_nera.manutenzione``,
-    ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``session_replication_role``,
-    ``DISABLE TRIGGER``);
+    ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``anno_scolastico.riempimento``, ``session_replication_role``,
+    ``DISABLE TRIGGER``), e ogni scrittura (``UPDATE``, ``INSERT``, ``MERGE``) su ``anno_regole`` e
+    ``anno_tabelle``, le manopole dell'anno scolastico;
   · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
   · oltre il piano (25/10/2026): le stesse categorie dentro una stringa che viene ESEGUITA
     (``EXECUTE`` di PL/pgSQL anche con ``format()`` o ``||``, ``cron.schedule``/``alter_job``,
@@ -97,9 +98,22 @@ INTERRUTTORI = re.compile(
     r"(?:SET_CONFIG\s*\(\s*(?:E|U&)?'?\s*|\bSET\s+(?:LOCAL\s+|SESSION\s+)?)\"?"
     r"(?:(?:REGISTRI|SCATOLA_NERA)\"?\s*\.\s*\"?(?:MANUTENZIONE|SENZA_STORICO)"
     r"|ANNO_CHIUSO\"?\s*\.\s*\"?OBLIO"
+    r"|ANNO_SCOLASTICO\"?\s*\.\s*\"?RIEMPIMENTO"
     r"|SESSION_REPLICATION_ROLE)\b"
     r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"
     r"|\bDISABLE\s+TRIGGER\b"
+)
+
+# Ogni SCRITTURA su ``anno_regole`` (le manopole: ``controlli_rigidi``, ``guardia_attiva``,
+# ``dichiarato_transitorio``, ``specchio_alunni_attivo``) e su ``anno_tabelle`` (le colonne che guidano
+# il trigger: ``modo``, ``rigida``, ``sede_facoltativa``, ``segue_data``): un ``UPDATE anno_tabelle SET
+# rigida = false`` spegne i controlli di una tabella come un interruttore (PR 2 dell'anno scolastico,
+# compito 2.4). Anche con un WHERE, con o senza schema e virgolette; si cerca nel ``testo``, quindi anche
+# dentro le stringhe eseguite. Un ``SELECT`` passa. Conseguenza voluta: il letterale ``UPDATE anno_regole``
+# dentro una stringa di una SELECT si ferma ugualmente (come gli interruttori: in dubbio si ferma).
+SCRITTURA_ANNO_SCOLASTICO = re.compile(
+    r"\b(?:UPDATE|INSERT\s+INTO|MERGE\s+INTO)\s+(?:ONLY\s+)?"
+    r"(?:\"?PUBLIC\"?\s*\.\s*)?\"?ANNO_(?:REGOLE|TABELLE)\"?(?![A-Z0-9_$])"
 )
 
 # La sicurezza a livello di riga SPENTA su una tabella (ritocco dalla revisione, 25/10/2026). Si
@@ -363,6 +377,8 @@ def classifica(sql: str, livello: int = 0) -> list[str]:
     trovate: list[str] = []
     if INTERRUTTORI.search(testo):
         trovate.append("interruttore della scatola nera, dei registri o dei trigger")
+    if SCRITTURA_ANNO_SCOLASTICO.search(testo):
+        trovate.append("scrittura su anno_regole o anno_tabelle (le manopole dell'anno scolastico)")
     if RLS_SPENTA.search(testo):
         trovate.append("sicurezza a livello di riga spenta (DISABLE o NO FORCE ROW LEVEL SECURITY)")
     prossima = 0

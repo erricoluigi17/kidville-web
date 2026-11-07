@@ -182,12 +182,15 @@ WHERE u.ruolo = 'educator'
 --    controlli rigidi (anno_regole.controlli_rigidi_dal, PR 2): con la manopola
 --    spenta (dal NULL) conta zero; le vecchie in contrasto stanno nel rapporto di
 --    riconciliazione, contate. Una tabella senza section_id o senza colonna di
---    creazione ha zero.
+--    creazione ha zero. Come la 13, NON conta le righe il cui anno non ha nessuna
+--    sezione nella sede della sezione (il 2025/26, e dal 01/09/2027 il 2027/28):
+--    il trigger le lascia passare e le conta con un avviso in app_log.
 SELECT p.id
 FROM public.presenze p
 JOIN public.sections s ON s.id = p.section_id
 WHERE s.anno_id <> p.anno_id
-  AND p.created_at >= (SELECT controlli_rigidi_dal FROM public.anno_regole);
+  AND p.created_at >= (SELECT controlli_rigidi_dal FROM public.anno_regole)
+  AND EXISTS (SELECT 1 FROM public.sections z WHERE z.scuola_id = s.scuola_id AND z.anno_id = p.anno_id);
 --    E lo stesso per ogni tabella del registro con section_id (una riga per tabella):
 SELECT t.tabella, public.anno_righe_sezione_altro_anno(t.tabella) AS righe
 FROM public.anno_tabelle t
@@ -245,8 +248,26 @@ WHERE al.section_id IS DISTINCT FROM f.section_id
    OR COALESCE(NULLIF(al.importo_retta_mensile, 0), -1)
       IS DISTINCT FROM COALESCE(f.retta_mensile, -1)
    OR al.retta_a_carico_di IS DISTINCT FROM f.retta_a_carico_di;
---     11-bis. Nomi e uuid delle classi destinatarie dicono la stessa cosa
---     (galleria, avvisi): public.anno_target_divergenti() li conta per tabella.
+--     11-bis. Un alunno con la sede e senza frequenza nell'anno attivo (la riga
+--     «alunni (senza frequenza)» di anno_invarianti(), definita da V2).
+SELECT al.id AS alunno_id
+FROM public.alunni al
+WHERE al.scuola_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM public.frequenze f
+                   WHERE f.alunno_id = al.id
+                     AND f.anno_sede_id = public.anno_attivo(al.scuola_id));
+
+
+-- 12. Dopo V2 nessuna riga con la sede e senza anno ---------------------------
+--     Una riga per tabella del registro (anno_invarianti(), invariante 12):
+--     public.anno_righe_senza_anno_con_sede(tabella). Una riga senza sede non conta.
+
+
+-- 13. Nomi e uuid delle classi destinatarie dicono la stessa cosa ---------------
+--     (galleria, avvisi, mensa): public.anno_target_divergenti() li conta per
+--     tabella (invariante 13, definita da V2). Non conta le righe il cui anno non ha
+--     NESSUNA sezione nella sede (gli avvisi dell'estate 2026, nel 2025/26): le conta
+--     anno_fotografa come ambiguo:classi_in_anno_senza_sezioni:<tabella>.
 
 
 -- =============================================================================

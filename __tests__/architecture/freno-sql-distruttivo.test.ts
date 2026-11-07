@@ -107,6 +107,35 @@ const FERMATE: ReadonlyArray<readonly [string, string, string]> = [
   ['anno_chiuso.oblio con SET', "SET anno_chiuso.oblio = 'on'", 'interruttore'],
   ['anno_chiuso.oblio con SET LOCAL … TO', 'SET LOCAL anno_chiuso.oblio TO on', 'interruttore'],
   ['anno_chiuso.oblio dentro un DO', "DO $$ BEGIN PERFORM set_config('anno_chiuso.oblio', 'on', true); END $$", 'interruttore'],
+  // Anno scolastico, PR 2 compito 2.4: le varianti rimaste senza test nel 1.6 (virgolette doppie, SESSION).
+  ['anno_chiuso.oblio con le virgolette doppie', `SELECT set_config('"anno_chiuso"."oblio"','on',true)`, 'interruttore'],
+  ['anno_chiuso.oblio con SET SESSION', "SET SESSION anno_chiuso.oblio = 'on'", 'interruttore'],
+  ['anno_chiuso.oblio con SET LOCAL e le virgolette doppie', 'SET LOCAL "anno_chiuso"."oblio" = on', 'interruttore'],
+  // Anno scolastico, PR 2 compito 2.4: l'interruttore del riempimento.
+  ['anno_scolastico.riempimento con set_config', "SELECT set_config('anno_scolastico.riempimento','on',true)", 'interruttore'],
+  ['anno_scolastico.riempimento con SET', "SET anno_scolastico.riempimento = 'on'", 'interruttore'],
+  ['anno_scolastico.riempimento con SET LOCAL … TO', 'SET LOCAL anno_scolastico.riempimento TO on', 'interruttore'],
+  ['anno_scolastico.riempimento con SET SESSION', "SET SESSION anno_scolastico.riempimento = 'on'", 'interruttore'],
+  ['anno_scolastico.riempimento con le virgolette doppie', 'SET LOCAL "anno_scolastico"."riempimento" = on', 'interruttore'],
+  ['anno_scolastico.riempimento dentro un DO', "DO $$ BEGIN PERFORM set_config('anno_scolastico.riempimento', 'on', true); END $$", 'interruttore'],
+  // Anno scolastico, PR 2 compito 2.4: ogni scrittura sulle manopole e sulla mappa delle tabelle.
+  ['UPDATE anno_regole con WHERE (la manopola)', `UPDATE public.anno_regole SET controlli_rigidi = false WHERE id = '${UUID}'`, 'anno_regole'],
+  ['UPDATE anno_regole senza schema, minuscolo', `update anno_regole set guardia_attiva = false where id = '${UUID}'`, 'anno_regole'],
+  ['UPDATE anno_regole con le virgolette doppie', `UPDATE "public"."anno_regole" SET dichiarato_transitorio = false WHERE id = '${UUID}'`, 'anno_regole'],
+  ['UPDATE ONLY anno_regole con alias', `UPDATE ONLY public.anno_regole AS r SET specchio_alunni_attivo = false WHERE r.id = '${UUID}'`, 'anno_regole'],
+  ['INSERT in anno_regole', 'INSERT INTO public.anno_regole (controlli_rigidi) VALUES (false)', 'anno_regole'],
+  ['INSERT in anno_regole ON CONFLICT DO UPDATE', 'INSERT INTO anno_regole (id, controlli_rigidi) VALUES (1, false) ON CONFLICT (id) DO UPDATE SET controlli_rigidi = excluded.controlli_rigidi', 'anno_regole'],
+  ['MERGE in anno_regole', 'MERGE INTO public.anno_regole t USING (SELECT 1 AS id) s ON t.id = s.id WHEN MATCHED THEN UPDATE SET controlli_rigidi = false', 'anno_regole'],
+  ['UPDATE anno_tabelle (spegne i controlli di una tabella)', "UPDATE public.anno_tabelle SET rigida = false WHERE tabella = 'presenze'", 'anno_tabelle'],
+  ['UPDATE anno_tabelle con le virgolette doppie', `UPDATE "anno_tabelle" SET modo = 'dichiarato' WHERE true`, 'anno_tabelle'],
+  ['INSERT in anno_tabelle', "INSERT INTO public.anno_tabelle (tabella, modo) VALUES ('x', 'data')", 'anno_tabelle'],
+  ['MERGE in anno_tabelle', 'MERGE INTO anno_tabelle t USING (SELECT 1) s ON true WHEN MATCHED THEN UPDATE SET segue_data = true', 'anno_tabelle'],
+  ['UPDATE anno_regole dentro un DO', "DO $$ BEGIN UPDATE public.anno_regole SET controlli_rigidi = false WHERE true; END $$", 'anno_regole'],
+  ['UPDATE anno_regole dentro un EXECUTE', "DO $$ BEGIN EXECUTE 'UPDATE public.anno_regole SET guardia_attiva = false WHERE true'; END $$", 'anno_regole'],
+  ['UPDATE anno_tabelle dentro un EXECUTE format()', "DO $$ BEGIN EXECUTE format('UPDATE public.anno_tabelle SET rigida = %L WHERE true', false); END $$", 'anno_tabelle'],
+  // Comportamento VOLUTO: la regola cerca nel testo, anche nelle stringhe, quindi un letterale «UPDATE anno_regole» in una SELECT si ferma (in dubbio si ferma).
+  ['una SELECT che contiene il letterale UPDATE anno_regole si ferma', "SELECT 'UPDATE public.anno_regole SET guardia_attiva = false' AS testo", 'anno_regole'],
+  ['UPDATE anno_regole dentro una CTE', 'WITH u AS (UPDATE public.anno_regole SET guardia_attiva = false WHERE true RETURNING id) SELECT count(*) FROM u', 'anno_regole'],
 ]
 
 /** [perché, query] — il freno non sa dove finisce l'istruzione: in dubbio si ferma. */
@@ -138,6 +167,13 @@ const PASSANO: ReadonlyArray<readonly [string, string]> = [
   ["lettura dell'interruttore, non scrittura", "SELECT current_setting('scatola_nera.manutenzione', true)"],
   ["lettura del gettone dell'oblio, non scrittura", "SELECT current_setting('anno_chiuso.oblio', true)"],
   ['più letture nella stessa stringa', 'SELECT 1; SELECT 2;'],
+  // Anno scolastico, PR 2 compito 2.4: leggere le manopole non è scriverle.
+  ['SELECT su anno_regole', 'SELECT controlli_rigidi, guardia_attiva, dichiarato_transitorio, specchio_alunni_attivo FROM public.anno_regole'],
+  ['SELECT su anno_tabelle con WHERE', "SELECT tabella, modo, rigida FROM public.anno_tabelle WHERE modo = 'dichiarato'"],
+  ['SELECT su anno_regole con le virgolette doppie', 'SELECT * FROM "public"."anno_regole"'],
+  ['lettura del riempimento, non scrittura', "SELECT current_setting('anno_scolastico.riempimento', true)"],
+  ['una tabella che comincia come anno_regole', "UPDATE public.anno_regole_storico SET n = 1 WHERE id = '" + UUID + "'"],
+  ['INSERT … SELECT da anno_tabelle in un’altra tabella', 'INSERT INTO public.prova_freno (n) SELECT 1 FROM public.anno_tabelle'],
 ]
 
 describe('freno SQL — le istruzioni distruttive si fermano', () => {

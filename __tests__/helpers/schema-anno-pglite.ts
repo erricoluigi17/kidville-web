@@ -218,6 +218,229 @@ export const SCHEMA_BASE = `
   CREATE POLICY presenze_aperta ON public.presenze FOR ALL TO authenticated USING (true) WITH CHECK (true);
 `
 
+/**
+ * PR 2: le tabelle che la PR 2 tocca e che la PR 1 non conosce, con le colonne che leggono il registro e la
+ * regola transitoria. Va passato a `creaDbAnno({ codaPrima })` PRIMA della migrazione della PR 1, così le
+ * tabelle ricevono `anno_id` e il trigger generico. I test della PR 1 NON lo passano.
+ * Più i due trigger finti di produzione che muovono `storico_versione` e `updated_at` a ogni UPDATE
+ * (`storici_prima_mutazione`, `set_updated_at`), per provare l'interruttore del riempimento.
+ */
+export const SCHEMA_PR2 = `
+  CREATE TABLE public.crm_bambini (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_ingresso text NOT NULL DEFAULT 'in_corso',
+    quota_anno integer,
+    creata_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.votazioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    creata_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.scrutinio_periodi (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_scolastico text,
+    creato_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.certificati_competenze (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_scolastico text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.iscrizioni_elenco_caricamenti (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    caricato_il timestamptz NOT NULL DEFAULT now()
+  );
+
+  ALTER TABLE public.enrollment_submissions ADD COLUMN storico_versione integer NOT NULL DEFAULT 0;
+  CREATE FUNCTION public.storici_prima_mutazione() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN NEW.storico_versione := OLD.storico_versione + 1; RETURN NEW; END $f$;
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.enrollment_submissions
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE FUNCTION public.set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN NEW.updated_at := OLD.updated_at + interval '1 second'; RETURN NEW; END $f$;
+  CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.enrollment_submissions
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+  -- il browser scrive la domanda sotto RLS: una policy aperta, perché il test come authenticated (R13)
+  -- abbia qualcosa da attraversare
+  ALTER TABLE public.enrollment_submissions ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY enrollment_aperta ON public.enrollment_submissions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+`
+
+/**
+ * PR 2, compito 2.2: le tabelle del riempimento. Va passato DOPO `SCHEMA_PR2` (usa le sue funzioni finte
+ * `storici_prima_mutazione` e `set_updated_at`) e PRIMA della migrazione della PR 1. Aggiunge le colonne di
+ * `alunni` che la frequenza copia, le tabelle grandi (`eventi_diario`…), i trigger finti di bookkeeping
+ * (`storico_versione`, `updated_at`) e una scatola nera finta che CONTA le righe (e rispetta l'interruttore
+ * `scatola_nera.senza_storico` come la vera). Solo dati finti.
+ */
+export const SCHEMA_PR2_RIEMPIMENTO = `
+  ALTER TABLE public.alunni
+    ADD COLUMN archiviato_il timestamptz,
+    ADD COLUMN importo_retta_mensile numeric(10,2) DEFAULT 0,
+    ADD COLUMN retta_a_carico_di uuid,
+    ADD COLUMN retta_split_config jsonb,
+    ADD COLUMN intestatario_fatture jsonb,
+    ADD COLUMN giorno_scadenza_pagamenti integer,
+    ADD COLUMN gruppo_mensa_id uuid,
+    ADD COLUMN sospeso boolean NOT NULL DEFAULT false,
+    ADD COLUMN sospeso_causa text,
+    ADD COLUMN sospeso_motivo text,
+    ADD COLUMN sospeso_il timestamptz,
+    ADD COLUMN sospeso_da uuid;
+
+  CREATE TABLE public.admin_settings (
+    scuola_id uuid PRIMARY KEY,
+    retta_default_importo numeric(10,2) DEFAULT 150
+  );
+  CREATE TABLE public.alunni_classi_storico (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid NOT NULL,
+    scuola_id uuid,
+    dal date NOT NULL,
+    al date
+  );
+  CREATE TABLE public.eventi_diario (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    orario_inizio timestamptz NOT NULL,
+    creato_il timestamptz DEFAULT now(),
+    storico_versione integer NOT NULL DEFAULT 0
+  );
+  CREATE TABLE public.mensa_prenotazioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    data date NOT NULL,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.galleria_media_v2 (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    giorno_competenza date,
+    created_at timestamptz DEFAULT now(),
+    target_classes text[],
+    politica_operazione jsonb
+  );
+  CREATE TABLE public.gallery_photo_uploads (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    media_id uuid NOT NULL REFERENCES public.galleria_media_v2(id) ON DELETE CASCADE
+  );
+  CREATE TABLE public.video_intents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    giorno_competenza date,
+    created_at timestamptz DEFAULT now(),
+    classi_destinatarie text[]
+  );
+  CREATE TABLE public.avvisi_risposte (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    avviso_id uuid NOT NULL REFERENCES public.avvisi(id) ON DELETE CASCADE,
+    parent_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    student_id uuid NOT NULL DEFAULT gen_random_uuid()
+  );
+  CREATE TABLE public.iscrizioni_decisioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    submission_id uuid NOT NULL REFERENCES public.enrollment_submissions(id) ON DELETE CASCADE,
+    decisa_il timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.news_posts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    target_classes text[]
+  );
+  CREATE TABLE public.forms_templates (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    target_classes text[] DEFAULT '{}'
+  );
+  CREATE TABLE public.mensa_class_menu_assignment (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    classe text NOT NULL,
+    attivo_dal date NOT NULL DEFAULT DATE '2026-09-01'
+  );
+  INSERT INTO public.payment_categories (scuola_id, nome, slug) VALUES (NULL, 'Retta', 'retta');
+  ALTER TABLE public.crm_bambini ADD COLUMN quota_pagamento_id uuid;
+  ALTER TABLE public.presenze ADD COLUMN stato text;
+
+  -- il bookkeeping di produzione: la versione di concorrenza e la data di modifica si muovono a OGNI UPDATE
+  ALTER TABLE public.presenze ADD COLUMN storico_versione integer NOT NULL DEFAULT 0;
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.presenze
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.mensa_prenotazioni
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+  -- la scatola nera finta: copia il «com'era» di ogni riga toccata, salvo l'interruttore del riempimento
+  CREATE FUNCTION scatola_nera.registra_modifica() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN
+    IF current_setting('scatola_nera.senza_storico', true) = 'on' THEN RETURN NULL; END IF;
+    INSERT INTO scatola_nera.modifiche (tabella, riga_id, prima, cambiate, ruolo)
+    SELECT TG_TABLE_NAME, v.id::text, to_jsonb(v), ARRAY[]::text[], current_user FROM vecchie v;
+    RETURN NULL;
+  END $f$;
+  -- madre e figlia con l'aggregato VERO di produzione (20261015183200_storici_versioni): quando si aggiorna una
+  -- ricezione, un AFTER fa \`UPDATE note_disciplinari SET storico_versione = storico_versione\`, che alza la
+  -- versione della nota. Nomi di colonna e di trigger come in produzione (il nome decide l'ordine dei BEFORE).
+  CREATE TABLE public.note_disciplinari (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    data_evento date,
+    creato_il timestamptz DEFAULT now(),
+    storico_versione bigint NOT NULL DEFAULT 0
+  );
+  CREATE TABLE public.nota_ricezioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    nota_id uuid NOT NULL REFERENCES public.note_disciplinari(id) ON DELETE CASCADE,
+    firmato_il timestamptz,
+    storico_versione bigint NOT NULL DEFAULT 0
+  );
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.note_disciplinari
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.nota_ricezioni
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE FUNCTION public.storici_versione_aggregato() RETURNS trigger LANGUAGE plpgsql AS $f$
+  DECLARE vecchia jsonb; nuova jsonb; chiave uuid;
+  BEGIN
+    IF TG_OP <> 'INSERT' THEN vecchia := to_jsonb(OLD); END IF;
+    IF TG_OP <> 'DELETE' THEN nuova := to_jsonb(NEW); END IF;
+    IF TG_TABLE_NAME = 'nota_ricezioni' THEN
+      FOR chiave IN SELECT DISTINCT x::uuid FROM (VALUES (vecchia->>'nota_id'), (nuova->>'nota_id')) v(x) WHERE x IS NOT NULL LOOP
+        UPDATE public.note_disciplinari SET storico_versione = storico_versione WHERE id = chiave;
+      END LOOP;
+    END IF;
+    RETURN NULL;
+  END $f$;
+  CREATE TRIGGER storici_versione_aggregato AFTER INSERT OR UPDATE OR DELETE ON public.nota_ricezioni
+    FOR EACH ROW EXECUTE FUNCTION public.storici_versione_aggregato();
+
+  CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.presenze
+    REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica();
+  CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.pagamenti
+    REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica();
+`
+
+/** Le migrazioni della PR 2, trovate per suffisso come `fileMigrazioneAnno` (la version è l'istante di creazione). */
+const SUFFISSI_PR2 = {
+  M1: '_anno_strumenti.sql',
+  // F2 e F3 (le tre tabelle grandi) si sono fuse in F1: il banco ha dato meno di 15 s (compito 2.2).
+  F1: '_anno_riempimento_1.sql',
+  V1: '_anno_vincoli_1.sql',
+  V2: '_anno_vincoli_2.sql',
+} as const
+
+export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
+  const suffisso = SUFFISSI_PR2[quale]
+  const f = readdirSync(CARTELLA).find((x) => x.endsWith(suffisso))
+  if (!f) throw new Error(`manca supabase/migrations/*${suffisso}`)
+  await db.exec(readFileSync(join(CARTELLA, f), 'utf8'))
+}
+
 export interface OpzioniDbAnno {
   /** Sedi già presenti PRIMA della migrazione, come in produzione: la migrazione dà loro gli anni. */
   sediPrimaDellaMigrazione?: string[]
@@ -282,4 +505,38 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
   await db.exec('DELETE FROM public.anni_sede_stati; DELETE FROM public.anni_sede; DELETE FROM public.anni_scolastici;')
   for (const sede of sedi) await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [sede])
   await fissaCalendarioAnni(db)
+}
+
+export interface OpzioniDbPr2 {
+  sedi: string[]
+  /** Fin dove si applica la catena M1 → F1 → V1 → V2. */
+  fino: keyof typeof SUFFISSI_PR2
+  /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
+  completo?: boolean
+  /** SQL eseguito PRIMA della migrazione della PR 1 (dopo gli schemi della PR 2): tabelle che il registro deve trovare. */
+  codaPrima?: string
+  dopoM1?: (db: PGlite) => Promise<void>
+  dopoF1?: (db: PGlite) => Promise<void>
+  dopoV1?: (db: PGlite) => Promise<void>
+}
+
+/**
+ * Un PGlite con la CATENA della PR 2 applicata fino a `fino`, nell'ordine di produzione. Il calendario è quello
+ * fisso di `creaAnniFissi` (2025/26 chiuso, 2026/27 attivo; il 2027/28 lo crea F1). I ganci `dopoM1/F1/V1` servono ai
+ * test per scrivere righe «come oggi» fra un file e l'altro (stragglers, righe non riempibili).
+ */
+export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
+  const db = await creaDbAnno({
+    sediPrimaDellaMigrazione: o.sedi,
+    codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
+  })
+  await creaAnniFissi(db, o.sedi)
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'V2']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, V2: undefined } as const
+  for (const passo of ordine) {
+    await applicaPr2(db, passo)
+    await gancio[passo]?.(db)
+    if (passo === o.fino) break
+  }
+  return db
 }

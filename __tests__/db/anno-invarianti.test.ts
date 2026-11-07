@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnno } from '../helpers/schema-anno-pglite'
+import { creaDbAnno, creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
 
 /**
  * COMPITO 1.5 · LE TABELLE DEL PASSAGGIO E `anno_invarianti()`.
@@ -614,5 +614,89 @@ describe('le tabelle del passaggio d\'anno', () => {
       await db.query(`DELETE FROM public.passaggi_anno WHERE id = $1`, [p])
       expect(await una<string>(`SELECT count(*)::text FROM public.passaggi_anno_docenti`)).toBe('0')
     })
+  })
+})
+
+/**
+ * PR 2 · COMPITO 2.3 · LE INVARIANTI 12, 13 E LA RIGA `alunni (senza frequenza)` (la 11-bis), definite da V2.
+ *
+ * Un database a parte, con la catena M1 → F1 → V1 → V2 applicata sul banco minimo della PR 1 (il registro è lo stesso
+ * di `REGISTRO_PROVA`). Ogni invariante ha la sua PROVA DEL ROSSO: un seme rotto apposta la porta sopra zero e il test
+ * controlla che salga SOLO quella. Date FISSE; solo uuid finti.
+ */
+describe('anno_invarianti · le invarianti della PR 2 (12, 13, 11-bis)', () => {
+  const S = '22222222-2222-4222-8222-222222222222'
+  const FINTO = '99999999-9999-4999-8999-999999999999'
+  let d: PGlite
+  let SEZ_P2: string
+  let AL_P2: string
+
+  const q = async <T,>(sql: string, params: unknown[] = []): Promise<T> => {
+    const r = await d.query<Record<string, T>>(sql, params)
+    return Object.values(r.rows[0])[0] as T
+  }
+  const rige = async (): Promise<Riga[]> => {
+    const r = await d.query<{ invariante: string; tabella: string; righe: string }>(
+      `SELECT invariante, tabella, righe::text FROM public.anno_invarianti() ORDER BY invariante, tabella`)
+    return r.rows.map((x) => ({ ...x, righe: Number(x.righe) }))
+  }
+  const soprazero = async () => (await rige()).filter((x) => x.righe > 0).map((x) => `${x.invariante}:${x.tabella}=${x.righe}`)
+  const rollback = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    await d.exec('BEGIN')
+    try { return await fn() } finally { await d.exec('ROLLBACK') }
+  }
+
+  beforeAll(async () => {
+    d = await creaDbAnnoPr2({ sedi: [S], fino: 'V2' })
+    SEZ_P2 = await q<string>(`INSERT INTO public.sections (scuola_id, name) VALUES ($1, 'Girasoli') RETURNING id`, [S])
+    // lo specchio crea la frequenza dell'alunno (origine recupero) con la stessa sezione
+    AL_P2 = await q<string>(`INSERT INTO public.alunni (scuola_id, section_id) VALUES ($1, $2) RETURNING id`, [S, SEZ_P2])
+    await d.query(`INSERT INTO public.presenze (scuola_id, alunno_id, section_id, data) VALUES ($1, $2, $3, DATE '2026-10-05')`, [S, AL_P2, SEZ_P2])
+    await d.query(`INSERT INTO public.avvisi (scuola_id, giorno_competenza, target_classes) VALUES ($1, DATE '2026-10-05', ARRAY['Girasoli'])`, [S])
+  }, 120_000)
+  afterAll(async () => { await d.close() })
+
+  prova('seme pulito: tutto a zero, e l\'insieme restituito è quello atteso (una riga per invariante, anche a zero)', async () => {
+    expect(await soprazero()).toEqual([])
+    const atteso = [
+      '1:anni_sede',
+      ...CON_DATA.map((t) => `2:${t}`),
+      '3:frequenze', '4:frequenze', '4:frequenze (flag)', '5:pagamenti',
+      ...REGISTRO_PROVA.map((t) => `6:${t}`),
+      ...CON_SEZIONE.map((t) => `9:${t}`),
+      ...REGISTRO_PROVA.map((t) => `10a:${t}`),
+      '10b:(nessuna)', '11:alunni', '11:alunni (senza frequenza)',
+      ...REGISTRO_PROVA.map((t) => `12:${t}`),
+      '13:avvisi',
+    ].sort()
+    expect((await rige()).map((x) => `${x.invariante}:${x.tabella}`).sort()).toEqual(atteso)
+  })
+
+  prova('12 · avvisi con la sede e senza anno (CHECK tolto, trigger spento nel seme) → sale SOLO 12:avvisi; senza sede non conta', async () => {
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.avvisi DROP CONSTRAINT avvisi_anno_id_presente`)
+      await d.exec(`ALTER TABLE public.avvisi DISABLE TRIGGER trg_zz_anno_assegna_e_verifica`)
+      await d.query(`INSERT INTO public.avvisi (scuola_id, giorno_competenza) VALUES (NULL, DATE '2026-10-05')`)
+      expect(await soprazero()).toEqual([])                       // senza sede: il CHECK lo ammette, la 12 non lo conta
+      await d.query(`INSERT INTO public.avvisi (scuola_id, giorno_competenza) VALUES ($1, DATE '2026-10-05')`, [S])
+      expect(await soprazero()).toEqual(['12:avvisi=1'])
+    })
+    expect(await soprazero()).toEqual([])
+  })
+
+  prova('13 · un uuid in target_section_ids senza il nome corrispondente → sale SOLO 13:avvisi', async () => {
+    await rollback(async () => {
+      await d.query(`INSERT INTO public.avvisi (scuola_id, giorno_competenza, target_section_ids) VALUES ($1, DATE '2026-10-05', ARRAY[$2]::uuid[])`, [S, FINTO])
+      expect(await soprazero()).toEqual(['13:avvisi=1'])
+    })
+    expect(await soprazero()).toEqual([])
+  })
+
+  prova('11-bis · un alunno con sede e senza frequenza nell\'anno attivo → sale SOLO 11:alunni (senza frequenza)', async () => {
+    await rollback(async () => {
+      await d.query(`DELETE FROM public.frequenze WHERE alunno_id = $1`, [AL_P2])
+      expect(await soprazero()).toEqual(['11:alunni (senza frequenza)=1'])
+    })
+    expect(await soprazero()).toEqual([])
   })
 })

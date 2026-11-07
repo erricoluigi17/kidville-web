@@ -49,8 +49,10 @@ async function presenza(data: string, extra: { anno?: string | null; sezione?: s
 
 beforeAll(async () => {
   db = await creaDbAnno({ sediPrimaDellaMigrazione: [SEDE] })
-  // Anni fissi: 2025/26 e 2026/27 con date e stati di sempre. Gli stati li ha dati la migrazione con il
-  // giorno in cui il test gira: si reimpostano, perché il risultato non dipenda da oggi.
+  // Anni fissi: 2025/26 e 2026/27 con date e stati di sempre. La migrazione crea il calendario con il
+  // giorno in cui il test gira, quindi `creaAnniFissi` lo SVUOTA e lo RICREA (anni, anni delle sedi e
+  // storico degli stati) con `anni_sede_crea_per_sede` a una data fissa, poi ne fissa date e stati: il
+  // risultato non dipende da oggi.
   await creaAnniFissi(db, [SEDE])
   A2526 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2025`)
   A2627 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2026`)

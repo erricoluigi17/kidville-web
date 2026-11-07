@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T15:45:43Z",
-  "sha256": "47ae64203cf67393cc9ccd4824d277a96b9abae98bf9eea1de9cd3e63a7746b4",
+  "generato_alle": "2026-11-07T23:45:02Z",
+  "sha256": "f29a7d33117cf09550e37fbd2bc4883eb0fd7bfaff031adbef17c8ee2aabcbb6",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -556,8 +556,10 @@
     "anni_scolastici",
     "anni_sede",
     "anni_sede_stati",
+    "anno_guardia_osservazioni",
     "anno_regole",
     "anno_tabelle",
+    "anno_transitorio_usi",
     "app_log",
     "armadietto",
     "armadietto_richieste",

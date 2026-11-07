@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node scripts/funzioni-registro-fotografia.mjs --sql | (esegui su prod) ; node scripts/funzioni-registro-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T16:12:31Z",
+  "generato_alle": "2026-11-07T23:46:00Z",
   "sha256": "004d105dc6a78a54ddcf4f143b3e488622b96909fb89312318b0fad4b5410ad2",
   "funzioni": [
     {

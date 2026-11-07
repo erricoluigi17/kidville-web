@@ -4,6 +4,10 @@ import type { AppUser } from './require-staff'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from './rifiuto-sede'
+import { erroreAnno } from '@/lib/anno/errori'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
+import { creaGettoni } from '@/lib/anno/gettone'
+import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
 // Scoping per tenant (plesso) e per classe delle funzioni docente.
@@ -402,6 +406,255 @@ export async function resolveScuolaScrittura(
     accessibili: accessibili.length, attive: attive.length,
   })
   return { response: rifiutoSede('SEDE_DA_SPECIFICARE') }
+}
+
+// =============================================================================
+// L'ANNO SCOLASTICO nelle scritture (PR 3, Compito 3.2): il gemello di `resolveScuolaScrittura`.
+//
+// ⚠️ DUE UUID CHE NON SI SCAMBIANO.
+//  · `anni_scolastici.id` — l'anno, uguale per tutte le sedi. È ciò che il client dichiara
+//    (`anno_id`), ciò che sta nel cookie `anno_attivo`, ciò che `anno_di` restituisce, ciò che
+//    `conAnno()` scrive nel payload (`EsitoAnno.annoId`).
+//  · `anni_sede.id` — l'anno DI UNA SEDE. È ciò a cui si legano i gettoni di correzione
+//    (`correzioni_anno_chiuso.anno_sede_id`) e ciò che restituisce `anno_attivo` (`EsitoAnno.annoSedeId`).
+// Dal primo si arriva al secondo con la sede (`anni_sede.scuola_id + anno_id`), mai il contrario a occhio.
+//
+// Qui non si legge MAI la data di oggi per scegliere un anno: l'anno si dichiara, si sceglie (cookie)
+// o è l'unico `corrente` della sede. In agosto, senza `corrente`, la risposta è 400 ANNO_DA_SPECIFICARE.
+// =============================================================================
+
+const COOKIE_ANNO = 'anno_attivo'
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Il cookie `anno_attivo` (lo crea la PR 4.2): un valore che non è un uuid si ignora, come se mancasse. */
+function annoDalCookie(request: NextRequest): string | null {
+  const raw = request.cookies?.get?.(COOKIE_ANNO)?.value?.trim()
+  return raw && FORMA_UUID.test(raw) ? raw : null
+}
+
+type RigaAnnoSede = { id: string; anno_id: string; stato: StatoAnno; domande_aperte?: boolean | null }
+
+type AnniDellaSede = { righe: RigaAnnoSede[] } | { indietro: true } | { guasto: unknown }
+
+async function anniDellaSede(supabase: SupabaseClient, scuolaId: string): Promise<AnniDellaSede> {
+  const { data, error } = await supabase
+    .from('anni_sede')
+    .select('id, anno_id, stato, domande_aperte')
+    .eq('scuola_id', scuolaId)
+  if (error) return schemaAnnoIndietro(error) ? { indietro: true } : { guasto: error }
+  return { righe: (Array.isArray(data) ? data : []) as RigaAnnoSede[] }
+}
+
+function esitoSchemaIndietro(azione: string): EsitoAnno {
+  logEvento('anno-scolastico', 'info', { tipo: 'schema-anno-indietro', azione })
+  return { annoSedeId: null, annoId: null, stato: null, schemaIndietro: true }
+}
+
+function guastoAnno(azione: string, err: unknown): NextResponse {
+  logEvento('anno-scolastico', 'error', { tipo: 'anno-lettura-fallita', azione }, err)
+  return NextResponse.json({ error: 'Verifica di scope non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 })
+}
+
+function rifiutoAnno(codice: string, operazione: string): NextResponse {
+  // `erroreAnno` conosce tutti i codici di questo file: `null` non può uscire.
+  return erroreAnno({ message: codice }, operazione) as NextResponse
+}
+
+export type OpzioniAnnoScrittura = {
+  /** `anni_scolastici.id` dichiarato dal client (corpo o query), già validato da zod. */
+  dichiarato?: string
+  /** Solo per Direzione e segreteria su un anno `chiuso`. Il motivo non esce mai in un log. */
+  correzione?: { motivo: string }
+  /** Quanti gettoni creare (default 1, massimo 10): un gettone vale una sola transazione. */
+  usi?: number
+}
+
+/**
+ * Le regole sullo STATO dell'anno (specifica §4.5), comuni a `resolveAnnoScrittura` e `annoDellaData`.
+ *
+ * | stato                                  | staff                          | tutti gli altri     |
+ * |----------------------------------------|--------------------------------|---------------------|
+ * | `in_preparazione`/`iscrizioni_aperte`  | passa                          | 403 ANNO_NON_VISIBILE |
+ * | `corrente`                             | passa                          | passa               |
+ * | `in_chiusura`                          | gettone `agosto`               | 409 ANNO_CHIUSO     |
+ * | `chiuso`                               | 409, o gettone `correzione`    | 409 ANNO_CHIUSO     |
+ *
+ * «Staff» è `vedeTutteLeClassi` (Direzione e segreteria): un docente con `correzione` non ottiene mai
+ * un gettone. `utente_id` del gettone è `AppUser.id` (= `utenti.id` = `auth.users.id` per lo staff).
+ */
+async function esitoPerAnno(
+  supabase: SupabaseClient,
+  user: AppUser,
+  riga: RigaAnnoSede,
+  opzioni: OpzioniAnnoScrittura,
+  azione: string,
+): Promise<EsitoAnno | NextResponse> {
+  const base: EsitoAnno = { annoSedeId: riga.id, annoId: riga.anno_id, stato: riga.stato }
+  const staff = vedeTutteLeClassi(user)
+  let codice: 'agosto' | 'correzione'
+  let motivo: string | undefined
+
+  switch (riga.stato) {
+    case 'corrente':
+      return base
+    case 'in_preparazione':
+    case 'iscrizioni_aperte':
+      if (staff) return base
+      logEvento('anno-scolastico', 'warn', {
+        tipo: 'anno-non-visibile', azione, error_code: 'ANNO_NON_VISIBILE', utente: user.id, ruolo: user.role,
+      })
+      return rifiutoAnno('ANNO_NON_VISIBILE', azione)
+    case 'in_chiusura':
+      if (!staff) return rifiutoAnno('ANNO_CHIUSO', azione)
+      codice = 'agosto'
+      break
+    case 'chiuso': {
+      if (!staff || !opzioni.correzione) return rifiutoAnno('ANNO_CHIUSO', azione)
+      motivo = typeof opzioni.correzione.motivo === 'string' ? opzioni.correzione.motivo.trim() : ''
+      if (!motivo) return rifiutoAnno('MOTIVO_OBBLIGATORIO', azione)
+      codice = 'correzione'
+      break
+    }
+    default:
+      // Uno stato che questo codice non conosce: si chiude, non si apre.
+      return rifiutoAnno('ANNO_CHIUSO', azione)
+  }
+
+  const ids = await creaGettoni(supabase, {
+    annoSedeId: riga.id, utenteId: user.id, ruolo: user.role, codice, motivo, usi: opzioni.usi,
+  })
+  if (!ids) {
+    // Già loggato da `creaGettoni` (solo il codice di Postgres: il motivo non esce mai).
+    return NextResponse.json({ error: 'Verifica di scope non riuscita', codice: 'SCRITTURA_FALLITA' }, { status: 500 })
+  }
+  return { ...base, gettone: ids[0], gettoni: ids }
+}
+
+/**
+ * L'anno a cui appartiene una SCRITTURA. Ordine: (1) `opzioni.dichiarato`; (2) il cookie
+ * `anno_attivo`; (3) l'UNICO anno `corrente` della sede (l'indice `anni_sede_un_corrente_per_sede`
+ * ne garantisce al massimo uno). Non «l'unico non chiuso»: dalla PR 2 ogni sede ha sempre un
+ * `in_preparazione`, e «non chiuso» darebbe due anni dal giorno del merge (Ruling D2).
+ *
+ * Nessuna delle tre → 400 `ANNO_DA_SPECIFICARE` + `warn` `anno-scrittura-ambigua`. In agosto (il
+ * vecchio è `in_chiusura`, il nuovo `in_preparazione`, nessun `corrente`) è voluto: la PR 4.2 mette
+ * di default il cookie `anno_attivo` PRIMA del 01/08/2027.
+ *
+ * Un anno dichiarato (o nel cookie) che la sede non ha → 400 `ANNO_NON_DELLA_SEDE` + `warn`.
+ * Gli uuid si confrontano senza distinzione di maiuscole (`formaConfronto`) e escono in forma
+ * canonica, quella del database.
+ *
+ * Sul database senza lo schema dell'anno (CI) risponde `{ annoSedeId: null, … schemaIndietro: true }`:
+ * il chiamante scrive il payload con `conAnno(esito)`.
+ */
+export async function resolveAnnoScrittura(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  scuolaId: string,
+  opzioni: OpzioniAnnoScrittura = {},
+): Promise<EsitoAnno | NextResponse> {
+  const azione = 'resolveAnnoScrittura'
+  const anni = await anniDellaSede(supabase, scuolaId)
+  if ('indietro' in anni) return esitoSchemaIndietro(azione)
+  if ('guasto' in anni) return guastoAnno(azione, anni.guasto)
+  const { righe } = anni
+  const perAnno = new Map(righe.map((r) => [formaConfronto(String(r.anno_id)), r]))
+
+  const richiesto = opzioni.dichiarato?.trim() || annoDalCookie(request)
+  let riga: RigaAnnoSede | undefined
+  if (richiesto) {
+    riga = perAnno.get(formaConfronto(richiesto))
+    if (!riga) {
+      logEvento('anno-scolastico', 'warn', {
+        tipo: 'anno-non-della-sede', azione, error_code: 'ANNO_NON_DELLA_SEDE',
+        utente: user.id, ruolo: user.role,
+      })
+      return rifiutoAnno('ANNO_NON_DELLA_SEDE', azione)
+    }
+  } else {
+    const correnti = righe.filter((r) => r.stato === 'corrente')
+    if (correnti.length === 1) riga = correnti[0]
+    else {
+      logEvento('anno-scolastico', 'warn', {
+        tipo: 'anno-scrittura-ambigua', azione, error_code: 'ANNO_DA_SPECIFICARE',
+        utente: user.id, ruolo: user.role,
+        anni_candidati: righe.filter((r) => r.stato !== 'chiuso').length,
+      })
+      return rifiutoAnno('ANNO_DA_SPECIFICARE', azione)
+    }
+  }
+  return esitoPerAnno(supabase, user, riga, opzioni, azione)
+}
+
+/**
+ * L'anno di una scrittura con una DATA (le tabelle in modo `data`: l'anno lo calcola il database).
+ * `giorno` è `AAAA-MM-GG`. Stesse regole sullo stato di `resolveAnnoScrittura`; non legge mai il
+ * cookie. `anno_di` restituisce `anni_scolastici.id` e NULL se nessun anno copre il giorno: allora
+ * 500 `GIORNO_SENZA_ANNO` (con `logErrore`, da `erroreAnno`).
+ */
+export async function annoDellaData(
+  supabase: SupabaseClient,
+  user: AppUser,
+  scuolaId: string,
+  giorno: string,
+  opzioni: Pick<OpzioniAnnoScrittura, 'correzione' | 'usi'> = {},
+): Promise<EsitoAnno | NextResponse> {
+  const azione = 'annoDellaData'
+  const { data, error } = await supabase.rpc('anno_di', { p_scuola: scuolaId, p_giorno: giorno })
+  if (error) {
+    if (schemaAnnoIndietro(error)) return esitoSchemaIndietro(azione)
+    return erroreAnno(error, azione) ?? guastoAnno(azione, error)
+  }
+  if (typeof data !== 'string' || !data) return rifiutoAnno('GIORNO_SENZA_ANNO', azione)
+  const anni = await anniDellaSede(supabase, scuolaId)
+  if ('indietro' in anni) return esitoSchemaIndietro(azione)
+  if ('guasto' in anni) return guastoAnno(azione, anni.guasto)
+  const riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === formaConfronto(data))
+  if (!riga) return rifiutoAnno('GIORNO_SENZA_ANNO', azione)
+  return esitoPerAnno(supabase, user, riga, opzioni, azione)
+}
+
+export type AnnoPubblico =
+  | { annoSedeId: string; annoId: string }
+  | { annoSedeId: null; annoId: null; schemaIndietro: true }
+  | { annoSedeId: null; annoId: null; senzaAnno: true }
+
+/**
+ * L'anno per le porte SENZA utente (il modulo pubblico): l'anno `corrente` della sede, oppure
+ * `opzioni.annoId` (un `anni_scolastici.id`) se la sede ce l'ha E ha `domande_aperte`. Mai un cookie,
+ * mai un ruolo, mai un gettone: la funzione non riceve nemmeno `request`.
+ *
+ * Non rifiuta mai: la famiglia che compila il modulo non deve veder fallire l'invio per l'anno.
+ * Se non c'è un `corrente` (agosto) o la lettura fallisce restituisce `senzaAnno: true`, e il chiamante
+ * scrive senza `anno_id` (la riserva permanente di `enrollment_submissions` lo assegna).
+ */
+export async function annoPerScritturaPubblica(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  opzioni: { annoId?: string } = {},
+): Promise<AnnoPubblico> {
+  const azione = 'annoPerScritturaPubblica'
+  const anni = await anniDellaSede(supabase, scuolaId)
+  if ('indietro' in anni) {
+    const e = esitoSchemaIndietro(azione)
+    return { annoSedeId: null, annoId: null, schemaIndietro: e.schemaIndietro as true }
+  }
+  if ('guasto' in anni) {
+    guastoAnno(azione, anni.guasto)
+    return { annoSedeId: null, annoId: null, senzaAnno: true }
+  }
+  let riga: RigaAnnoSede | undefined
+  if (opzioni.annoId) {
+    const voluto = formaConfronto(opzioni.annoId)
+    riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === voluto && r.domande_aperte === true)
+  }
+  if (!riga) {
+    const correnti = anni.righe.filter((r) => r.stato === 'corrente')
+    if (correnti.length === 1) riga = correnti[0]
+  }
+  if (!riga) return { annoSedeId: null, annoId: null, senzaAnno: true }
+  return { annoSedeId: riga.id, annoId: riga.anno_id }
 }
 
 /**

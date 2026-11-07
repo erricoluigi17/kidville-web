@@ -38,6 +38,12 @@ export interface ContestoRichiesta {
      * interrogabile in SQL "quante volte ha fallito QUESTA route". Non rimuoverlo.
      */
     path: string;
+    /**
+     * Il NOME della route, quello passato a `withRoute` (es. `admin/sections:POST`): un letterale
+     * del codice, mai un dato. Lo legge `supabase-fetch` per l'header `x-kidville-route`.
+     * Diverso da `path`, che `redigiPath` riduce a `[tok]`.
+     */
+    route?: string;
     userId?: string;
     ruolo?: string;
     scuolaId?: string;

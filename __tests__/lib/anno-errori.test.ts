@@ -42,6 +42,8 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['ANNO_DA_SPECIFICARE', 400, 'Scegli l’anno scolastico a cui si riferisce questa operazione.'],
     ['ANNO_NON_DELLA_SEDE', 400, 'L’anno scolastico scelto non appartiene a questa sede.'],
     ['GIORNO_SENZA_ANNO', 500, 'Nessun anno scolastico copre questo giorno: avvisa l’assistenza.'],
+    ['ANNO_NON_VISIBILE', 403, 'Questo anno scolastico non è ancora disponibile per te.'],
+    ['MOTIVO_OBBLIGATORIO', 400, 'Indica il motivo.'],
   ]
 
   it.each(TABELLA)('%s → %i con messaggio e codice', async (codice, stato, messaggio) => {

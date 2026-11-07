@@ -110,6 +110,18 @@ export function erroreAnno(
         { error: frase('ANNO_NON_DELLA_SEDE'), codice: 'ANNO_NON_DELLA_SEDE' },
         { status: 400 },
       )
+    case 'ANNO_NON_VISIBILE':
+      // Un docente su un anno ancora in preparazione: lo logga chi decide (`resolveAnnoScrittura`).
+      return NextResponse.json(
+        { error: frase('ANNO_NON_VISIBILE'), codice: 'ANNO_NON_VISIBILE' },
+        { status: 403 },
+      )
+    case 'MOTIVO_OBBLIGATORIO':
+      // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
+      return NextResponse.json(
+        { error: frase('MOTIVO_OBBLIGATORIO'), codice: 'MOTIVO_OBBLIGATORIO' },
+        { status: 400 },
+      )
     case 'GIORNO_SENZA_ANNO':
       // Nessun anno copre il giorno: non è un errore di chi scrive, è la configurazione della
       // sede. Il messaggio dell'eccezione è solo il codice: niente da redigere nel log.

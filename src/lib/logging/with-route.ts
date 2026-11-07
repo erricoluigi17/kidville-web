@@ -179,7 +179,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         // plausibile. Due vantaggi: la logica anti-forgiatura sta in un posto solo, e non
         // serve `crypto.randomUUID()`, che non è garantito ovunque (sotto jsdom il repo lo
         // polyfilla a mano su `window`) e che qui sarebbe un throw del wrapper.
-        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]) }, esegui);
+        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]), route: nome }, esegui);
     };
 }
 

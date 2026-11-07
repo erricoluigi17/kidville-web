@@ -6,7 +6,6 @@
  * `annoSedeId`, `annoId` e `stato` sono `null` SOLO con `schemaIndietro: true`, cioè sul
  * database della CI, che non ha ancora lo schema dell'anno.
  *
- * `conAnno(esito)` — le tre righe pure su questo tipo — arriva col Compito 3.2.
  */
 export type StatoAnno =
   | 'in_preparazione'
@@ -25,11 +24,22 @@ export type EsitoAnno = {
 }
 
 /**
+ * Il pezzo di payload che dichiara l'anno: `{ anno_id }`, oppure `{}` sul database senza lo schema
+ * dell'anno (`schemaIndietro`), dove la colonna non c'è e un `anno_id` farebbe `PGRST204`.
+ * `anno_id` è `anni_scolastici.id`, non `anni_sede.id`.
+ */
+export function conAnno(esito: EsitoAnno): { anno_id?: string } {
+  return esito.schemaIndietro || !esito.annoId ? {} : { anno_id: esito.annoId }
+}
+
+/**
  * I codici che i trigger dell'anno sollevano e che `erroreAnno` traduce in HTTP.
  * Lista LETTERALE: la riusa `supabase-fetch.ts` (Compito 3.4) per riconoscere un errore
  * dell'anno senza importare la funzione che costruisce la risposta.
  * `ANNO_DA_SPECIFICARE` e `ANNO_NON_DELLA_SEDE` li solleva anche l'app
  * (`resolveAnnoScrittura`); il primo lo solleva già il trigger della PR 2.
+ * `ANNO_NON_VISIBILE` e `MOTIVO_OBBLIGATORIO` li solleva SOLO l'app (Compito 3.2): sono qui perché
+ * `erroreAnno` è l'unico posto in cui un codice dell'anno diventa una risposta.
  */
 export const CODICI_ANNO = [
   'ANNO_CHIUSO',
@@ -44,6 +54,8 @@ export const CODICI_ANNO = [
   'CONFINE_CON_RIGHE',
   'CALENDARIO_NON_CONTINUO',
   'GIORNO_SENZA_ANNO',
+  'ANNO_NON_VISIBILE',
+  'MOTIVO_OBBLIGATORIO',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]

@@ -816,5 +816,6 @@
   "erroreConfineNonValido": "The school year dates are not valid.",
   "erroreConfineConRighe": "The date cannot be moved: records already exist on the days that would change school year.",
   "erroreCalendarioNonContinuo": "A location’s school years must follow one another with no gaps or overlaps.",
-  "erroreGiornoSenzaAnno": "No school year covers this day: please contact support."
+  "erroreGiornoSenzaAnno": "No school year covers this day: please contact support.",
+  "erroreAnnoNonVisibile": "This school year is not available to you yet."
 }

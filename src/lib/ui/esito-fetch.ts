@@ -3567,7 +3567,8 @@ export const CODICI_ERRORE = {
      * 409 `ANNO_CHIUSO` · 409 `PASSAGGIO_DA_FARE` · 409 `CONFINE_CON_RIGHE` ·
      * 422 `SEZIONE_DI_ALTRO_ANNO` · 422 `SEZIONE_DI_ALTRA_SEDE` · 422 `ANNO_NON_COERENTE` ·
      * 422 `MODULO_NON_RICHIESTO` · 422 `CONFINE_NON_VALIDO` · 422 `CALENDARIO_NON_CONTINUO` ·
-     * 400 `ANNO_DA_SPECIFICARE` · 400 `ANNO_NON_DELLA_SEDE` · 500 `GIORNO_SENZA_ANNO`.
+     * 400 `ANNO_DA_SPECIFICARE` · 400 `ANNO_NON_DELLA_SEDE` · 403 `ANNO_NON_VISIBILE` ·
+     * 400 `MOTIVO_OBBLIGATORIO` (già del CRM) · 500 `GIORNO_SENZA_ANNO`.
      */
     ANNO_CHIUSO: 'erroreAnnoChiuso',
     PASSAGGIO_DA_FARE: 'errorePassaggioDaFare',
@@ -3581,6 +3582,7 @@ export const CODICI_ERRORE = {
     CONFINE_CON_RIGHE: 'erroreConfineConRighe',
     CALENDARIO_NON_CONTINUO: 'erroreCalendarioNonContinuo',
     GIORNO_SENZA_ANNO: 'erroreGiornoSenzaAnno',
+    ANNO_NON_VISIBILE: 'erroreAnnoNonVisibile',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

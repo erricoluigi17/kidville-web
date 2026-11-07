@@ -816,5 +816,6 @@
   "erroreConfineNonValido": "Le date dell’anno scolastico non sono valide.",
   "erroreConfineConRighe": "Non si può spostare la data: ci sono già dati registrati nei giorni che cambierebbero anno.",
   "erroreCalendarioNonContinuo": "Gli anni scolastici di una sede devono susseguirsi senza buchi né sovrapposizioni.",
-  "erroreGiornoSenzaAnno": "Nessun anno scolastico copre questo giorno: avvisa l’assistenza."
+  "erroreGiornoSenzaAnno": "Nessun anno scolastico copre questo giorno: avvisa l’assistenza.",
+  "erroreAnnoNonVisibile": "Questo anno scolastico non è ancora disponibile per te."
 }

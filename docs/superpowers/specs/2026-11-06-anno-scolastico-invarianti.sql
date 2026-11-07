@@ -250,7 +250,6 @@ WHERE al.section_id IS DISTINCT FROM f.section_id
 SELECT al.id AS alunno_id
 FROM public.alunni al
 WHERE al.scuola_id IS NOT NULL
-  AND al.archiviato_il IS NULL
   AND NOT EXISTS (SELECT 1 FROM public.frequenze f
                    WHERE f.alunno_id = al.id
                      AND f.anno_sede_id = public.anno_attivo(al.scuola_id));
@@ -263,7 +262,9 @@ WHERE al.scuola_id IS NOT NULL
 
 -- 13. Nomi e uuid delle classi destinatarie dicono la stessa cosa ---------------
 --     (galleria, avvisi, mensa): public.anno_target_divergenti() li conta per
---     tabella (invariante 13, definita da V2).
+--     tabella (invariante 13, definita da V2). Non conta le righe il cui anno non ha
+--     NESSUNA sezione nella sede (gli avvisi dell'estate 2026, nel 2025/26): le conta
+--     anno_fotografa come ambiguo:classi_in_anno_senza_sezioni:<tabella>.
 
 
 -- =============================================================================

@@ -506,9 +506,9 @@ describe('2.3 · i casi di segue_data e del riempimento che mancavano, e il CRM 
       await rigidi(r)
       await db.query(`ALTER TABLE public.pagamenti ALTER COLUMN scadenza DROP NOT NULL`)
       try {
-        const v = await pag({ scadenza: '2026-08-31', anno: A2526 })
+        const v = await pag({ scadenza: '2026-08-31', anno: A2526, creato: '2026-10-05T10:00:00Z' })
         await db.query(`UPDATE public.pagamenti SET scadenza = NULL WHERE id = $1`, [v.id])
-        // la scadenza sparisce: si ricade sulla data di creazione (oggi, 2026/27) e l'anno la segue
+        // la scadenza sparisce: si ricade sulla data di creazione (fissa: 05/10/2026, 2026/27) e l'anno la segue
         expect(await annoDellaVoce(v.id)).toBe(A2627)
         // OLD.scadenza NULL: nessuna eccezione, si parte dalla data di creazione; l'anno resta valido
         await db.query(`UPDATE public.pagamenti SET scadenza = DATE '2026-09-02' WHERE id = $1`, [v.id])

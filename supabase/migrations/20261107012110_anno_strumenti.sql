@@ -452,6 +452,7 @@ CREATE TABLE IF NOT EXISTS public.riconciliazione_anno (
   eseguita_il timestamptz NOT NULL DEFAULT now(),
   transazione bigint      NOT NULL DEFAULT txid_current(),
   tabella     text        NOT NULL,
+  -- sede cancellata → le righe del rapporto restano, con la sede NULL (il rapporto è storia, non si cancella con la sede)
   scuola_id   uuid REFERENCES public.schools(id) ON DELETE SET NULL,
   anno_id     uuid,
   voce        text        NOT NULL,
@@ -699,6 +700,30 @@ BEGIN
              v_cond, ' ', '', ' ', ''));
   END LOOP;
 
+  -- Le righe con nomi di classe il cui anno non ha NESSUNA sezione nella sede (es. gli avvisi dell'estate 2026, nel 2025/26): gli uuid
+  -- sono quelli del riempimento e non si possono ricalcolare. Lo stesso anno della riga che usa `anno_target_divergenti`.
+  FOR c IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', true), ('forms_templates', 'target_classes', true),
+      ('galleria_media_v2', 'target_classes', true), ('news_posts', 'target_classes', true),
+      ('video_intents', 'classi_destinatarie', true), ('mensa_class_menu_assignment', 'classe', false)
+    ) AS v(tab, col, e_array) LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (c.tab = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', c.tab)) IS NULL OR NOT public.anno_ha_colonna(c.tab, c.col);
+    v_sede := public.anno_sede_sql(c.tab, 't');
+    v_cond := CASE
+      WHEN public.anno_ha_colonna(c.tab, 'anno_id') THEN 't.anno_id'
+      WHEN public.anno_ha_colonna(c.tab, 'attivo_dal') THEN format('public.anno_di(%s, t.attivo_dal)', v_sede)
+      WHEN public.anno_ha_colonna(c.tab, 'created_at') THEN format('public.anno_di(%s, public.giorno_roma(t.created_at::timestamptz))', v_sede)
+      ELSE 'NULL::uuid' END;
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, c.tab, 'ambiguo:classi_in_anno_senza_sezioni:' || c.tab,
+      format('SELECT %1$s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.%2$I t '
+             || 'WHERE %1$s IS NOT NULL AND %3$s IS NOT NULL AND %4$s '
+             || 'AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = %1$s AND s.anno_id = %3$s) GROUP BY 1',
+             v_sede, c.tab, v_cond,
+             CASE WHEN c.e_array THEN format('cardinality(coalesce(t.%I, %L::text[])) > 0', c.col, '{}')
+                  ELSE format('t.%I IS NOT NULL', c.col) END));
+  END LOOP;
+
   -- Gli incassi non hanno anno (anno solare): solo il totale per sede, via la voce di pagamento.
   IF (p_tabelle IS NULL OR 'incassi' = ANY (p_tabelle))
      AND to_regclass('public.incassi') IS NOT NULL AND to_regclass('public.pagamenti') IS NOT NULL THEN
@@ -730,7 +755,7 @@ END
 $$;
 
 -- Le tabelle CONSERVATE in cui l'ultima fotografia `prima` e l'ultima `dopo` (o `finale`) non tornano:
--- `dopo − prima − nuove <> 0`, per `righe` ed euro, al centesimo. Vuota = conservato. Sono escluse
+-- `dopo − prima − nuove <> 0`, per `righe` ed `euro_importo`, al centesimo. Vuota = conservato. Sono escluse
 -- `frequenze` e `frequenze_moduli`, che nascono vuote; si confrontano solo le tabelle fotografate in entrambe
 -- le fasi. «Ultima» = la fotografia (la transazione) dell'ultima riga scritta per quella tabella e fase.
 -- Le tabelle senza una colonna di creazione propria (avvisi_risposte, gallery_photo_uploads,
@@ -1109,6 +1134,8 @@ $$;
 --   · Ordine: anni successivi, frequenze, listino, copia; poi per profondità di madre (le madri prima delle figlie),
 --     i dichiarati prima delle tabelle `data`, le piccole prima.
 -- Restituisce {tabella: righe a cui ha dato l'anno}; rieseguita dà zero ovunque.
+-- La firma a un solo parametro (bozza della PR) non deve restare accanto a quella a due: sarebbe una chiamata ambigua.
+DROP FUNCTION IF EXISTS public.anno_riempi(text[]);
 CREATE OR REPLACE FUNCTION public.anno_riempi(p_tabelle text[] DEFAULT NULL, p_oggi date DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -1328,6 +1355,8 @@ BEGIN
     PERFORM set_config('anno_scolastico.riempimento', 'off', true);
     RETURN v_res;
   EXCEPTION WHEN OTHERS THEN
+    -- Ridondante: entrando qui la sotto-transazione del blocco si annulla e con lei i `set_config(…, true)` fatti dentro. Resta
+    -- per chiarezza: chi legge vede che gli interruttori escono spenti anche sull'errore.
     PERFORM set_config('scatola_nera.senza_storico', 'off', true);
     PERFORM set_config('anno_scolastico.riempimento', 'off', true);
     RAISE;
@@ -1543,6 +1572,14 @@ BEGIN
       END IF;
     END IF;
 
+    -- Un anno che nella sede non ha NESSUNA sezione (gli avvisi di luglio e agosto 2026 stanno nel 2025/26): in UPDATE gli uuid
+    -- restano come sono, perché ricalcolarli darebbe `{}` e butterebbe via quelli del riempimento (le righe non sono divergenti,
+    -- vedi `anno_target_divergenti`). In INSERT si traduce sull'anno attivo, come sempre.
+    IF TG_OP = 'UPDATE' AND v_anno IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno) THEN
+      RETURN NEW;
+    END IF;
+
     IF TG_ARGV[2] = 'array' THEN
       SELECT coalesce(array_agg(x), '{}'::text[]) INTO v_nomi FROM jsonb_array_elements_text(v_n -> TG_ARGV[0]) AS x;
       v_ids := public.anno_traduci_classi(v_sede, v_nomi, v_anno);
@@ -1619,8 +1656,8 @@ BEGIN
     CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass(format('public.%I', r.t)) AND k.relkind IN ('r', 'p'))
                OR NOT public.anno_ha_colonna(r.t, r.src) OR NOT public.anno_ha_colonna(r.t, r.dst);
     v_sede := public.anno_sede_sql(r.t, 't');
-    -- L'anno con cui tradurre è quello DELLA RIGA: \`anno_id\` dove la tabella ce l'ha; altrimenti l'anno della sua data
-    -- (\`attivo_dal\`, o la creazione). Una tabella senza nessuna delle due (o una riga fuori da ogni anno) usa l'anno attivo.
+    -- L'anno con cui tradurre è quello DELLA RIGA: `anno_id` dove la tabella ce l'ha; altrimenti l'anno della sua data
+    -- (`attivo_dal`, o la creazione). Una tabella senza nessuna delle due (o una riga fuori da ogni anno) usa l'anno attivo.
     v_anno := CASE
       WHEN public.anno_ha_colonna(r.t, 'anno_id') THEN 't.anno_id'
       WHEN public.anno_ha_colonna(r.t, 'attivo_dal') THEN format('public.anno_di(%s, t.attivo_dal)', v_sede)
@@ -1639,7 +1676,11 @@ BEGIN
                        || 'OR (t.%3$I IS NOT NULL AND (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I], %4$s))[1] IS NULL))',
                        r.dst, v_sede, r.src, v_anno);
     END IF;
-    EXECUTE format('SELECT count(*) FROM public.%I t WHERE %s IS NOT NULL AND %s', r.t, v_sede, v_cond) INTO v_n;
+    -- Le righe il cui anno non ha NESSUNA sezione nella sede non contano (non c'è nulla da abbinare): le conta `anno_fotografa`
+    -- come `ambiguo:classi_in_anno_senza_sezioni:<tabella>`. Un nome senza sezione in un anno che ne ha resta divergente.
+    EXECUTE format('SELECT count(*) FROM public.%I t WHERE %s IS NOT NULL AND %s '
+                   || 'AND (%s IS NULL OR EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = %s AND s.anno_id = %s))',
+                   r.t, v_sede, v_cond, v_anno, v_sede, v_anno) INTO v_n;
     tabella := r.t; righe := v_n;
     RETURN NEXT;
   END LOOP;

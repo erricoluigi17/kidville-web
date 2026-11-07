@@ -216,3 +216,47 @@ describe('dopo il passaggio d\'anno: la traduzione guarda l\'anno DELLA RIGA, no
     } finally { await tornaAl2627() }
   })
 })
+
+describe('un anno senza sezioni nella sede (gli avvisi di luglio e agosto 2026 stanno nel 2025/26)', () => {
+  const ESTATE = '2026-07-10'
+  /** Un avviso dell'estate: l'anno è il 2025/26, che non ha nessuna sezione; gli uuid sono quelli del 2026/27 (anno attivo). */
+  async function avvisoEstivo(): Promise<string> {
+    return await una<string>(
+      `INSERT INTO public.avvisi (scuola_id, target_classes, giorno_competenza) VALUES ($1, ARRAY['Girasoli'], DATE '${ESTATE}') RETURNING id`, [S1])
+  }
+
+  it('il seme: l\'avviso cade nel 2025/26, che non ha sezioni, con gli uuid del 2026/27', async () => {
+    const id = await avvisoEstivo()
+    expect(await una<number>(`SELECT y.anno_inizio FROM public.avvisi a JOIN public.anni_scolastici y ON y.id = a.anno_id WHERE a.id = $1`, [id])).toBe(2025)
+    expect(await una<number>(
+      `SELECT count(*)::int FROM public.sections s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2025`, [S1])).toBe(0)
+    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([GIRASOLI])
+  })
+
+  it('(a) la riga di un anno senza sezioni non è divergente', async () => {
+    await avvisoEstivo()
+    expect((await divergenti()).avvisi).toBe(0)
+  })
+
+  it('(a) un nome senza sezione in un anno che ne HA resta divergente', async () => {
+    await inserisci(ARRAY_TABELLE[0], ['Delfini'])
+    expect((await divergenti()).avvisi).toBe(1)
+  })
+
+  it('(b) un UPDATE dei nomi lascia gli uuid come sono, invece di svuotarli', async () => {
+    const id = await avvisoEstivo()
+    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Girasoli', 'Margherite'] WHERE id = $1`, [id])
+    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([GIRASOLI])
+    expect((await divergenti()).avvisi).toBe(0)
+  })
+
+  it('(c) anno_fotografa conta la riga come ambiguo:classi_in_anno_senza_sezioni:avvisi, e un avviso normale no', async () => {
+    await avvisoEstivo()
+    await inserisci(ARRAY_TABELLE[0], ['Girasoli'])
+    await db.exec(`DELETE FROM public.riconciliazione_anno`)
+    await db.query(`SELECT public.anno_fotografa('prima', ARRAY['avvisi'])`)
+    const v = await una<number>(
+      `SELECT coalesce(sum(valore), 0)::float8 FROM public.riconciliazione_anno WHERE fase = 'prima' AND voce = 'ambiguo:classi_in_anno_senza_sezioni:avvisi'`)
+    expect(v).toBe(1)
+  })
+})

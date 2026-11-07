@@ -60,11 +60,11 @@ BEGIN
 END
 $mig$;
 
--- 3 + 4 · Convalida e NOT NULL, in DUE giri. \`SET NOT NULL\` prende \`ACCESS EXCLUSIVE\` e lo tiene fino al commit della
--- migrazione: se stesse nello stesso giro dei \`VALIDATE\` (scansioni complete), le tabelle già bloccate non servirebbero
--- nemmeno le letture mentre si scandiscono quelle dopo. Giro 1: tutte le convalide (\`SHARE UPDATE EXCLUSIVE\`, le
--- scritture e le letture passano). Giro 2, breve: \`SET NOT NULL\` (senza scansione, il CHECK convalidato lo dimostra) e
--- \`DROP CONSTRAINT\`.
+-- 3 + 4 · Convalida e NOT NULL, in DUE giri. `SET NOT NULL` prende `ACCESS EXCLUSIVE` e lo tiene fino al commit della
+-- migrazione: se stesse nello stesso giro dei `VALIDATE` (scansioni complete), le tabelle già bloccate non servirebbero
+-- nemmeno le letture mentre si scandiscono quelle dopo. Giro 1: tutte le convalide (`SHARE UPDATE EXCLUSIVE`, le
+-- scritture e le letture passano). Giro 2, breve: `SET NOT NULL` (senza scansione, il CHECK convalidato lo dimostra) e
+-- `DROP CONSTRAINT`.
 DO $mig$
 DECLARE
   r       record;

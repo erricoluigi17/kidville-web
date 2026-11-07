@@ -34,7 +34,10 @@ function frase(codice: keyof typeof CODICI_ERRORE): string {
   return CATALOGO_IT[CODICI_ERRORE[codice]]
 }
 
-/** Il messaggio è il codice stesso, eventualmente seguito da altro testo. */
+/**
+ * Il messaggio è il codice stesso. Dopo il codice si ammettono solo la fine del messaggio, uno spazio
+ * o i due punti: `ANNO_CHIUSO_ALTRO`, `ANNO_CHIUSO-x` e `ANNO_CHIUSO.x` non sono codici.
+ */
 function codiceDa(error: { code?: string; message?: string } | null | undefined): string | null {
   const m = typeof error?.message === 'string' ? /^\s*([A-Z][A-Z0-9_]+)(?=$|[\s:])/.exec(error.message) : null
   return m ? m[1] : null

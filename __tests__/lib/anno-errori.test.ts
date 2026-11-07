@@ -62,7 +62,7 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     expect(TABELLA.map((t) => t[0]).concat('ANNO_CHIUSO').sort()).toEqual([...CODICI_ANNO].sort())
   })
 
-  it('ANNO_CHIUSO e PASSAGGIO_DA_FARE: un warn con le sole chiavi tipo, codice, operazione', () => {
+  it('ANNO_CHIUSO e PASSAGGIO_DA_FARE: un warn con le sole chiavi tipo, error_code, operazione', () => {
     for (const codice of ['ANNO_CHIUSO', 'PASSAGGIO_DA_FARE']) {
       logEvento.mockClear()
       erroreAnno({ code: 'P0001', message: codice }, 'admin/sections:POST')
@@ -77,7 +77,7 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     }
   })
 
-  it('senza operazione il warn porta solo tipo e codice', () => {
+  it('senza operazione il warn porta solo tipo e error_code', () => {
     erroreAnno({ message: 'ANNO_CHIUSO' })
     const campi = logEvento.mock.calls[0][2]
     expect(Object.keys(campi).sort()).toEqual(['error_code', 'tipo'])

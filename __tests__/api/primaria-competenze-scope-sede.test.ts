@@ -49,6 +49,8 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/competenze/certificato-store', () => ({
   generaCertificato: h.generaCertificato,
   seedCertificato: h.seedCertificato,
+  // La route legge l'etichetta dello scrutinio una volta per sezione (P49): qui non c'è scrutinio, l'anno è il `corrente`.
+  validaScrutinioFinaleClasseQuinta: vi.fn(async () => ({ error: 'Nessuno scrutinio finale chiuso per la sezione', status: 409 })),
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')

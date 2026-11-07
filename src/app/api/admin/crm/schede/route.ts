@@ -4,6 +4,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
+import { clientPerScrittura } from '@/lib/anno/gettone'
+import { erroreAnno } from '@/lib/anno/errori'
+import { annoDelBambino, risolviAnniBambini } from '@/lib/crm/anno-bambini'
 import { requireCrm } from '@/lib/crm/accesso'
 import { contattiNormalizzati, normalizzaEmail, normalizzaTelefono } from '@/lib/crm/contatti'
 import { rispostaErroreDb } from '@/lib/crm/errori'
@@ -348,6 +351,11 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
     }
   }
 
+  // L'anno di ogni bambino, PRIMA di scrivere qualsiasi cosa: senza un `corrente` la scheda non nasce.
+  // Sul registro si scrive con una sola richiesta (i bambini), quindi basta un gettone.
+  const anni = await risolviAnniBambini(request, supabase, auth.user, scuolaId, b.bambini.map((f) => f.annoIngresso))
+  if (anni instanceof NextResponse) return anni
+
   const { data: creata, error: erroreScheda } = await supabase
     .from('crm_schede')
     .insert({
@@ -371,7 +379,8 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
   if (erroreScheda || !creata) return rispostaErroreDb(erroreScheda ?? {}, OPERAZIONE_POST)
   const schedaId = creata.id as string
 
-  const { data: figli, error: erroreFigli } = await supabase
+  const scrittura = await clientPerScrittura(supabase, anni.scrittura)
+  const { data: figli, error: erroreFigli } = await scrittura
     .from('crm_bambini')
     .insert(
       b.bambini.map((f) => ({
@@ -380,6 +389,7 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
         nome: f.nome,
         data_nascita: f.dataNascita ?? null,
         anno_ingresso: f.annoIngresso,
+        ...annoDelBambino(anni, f.annoIngresso),
       })),
     )
     .select('id')
@@ -389,7 +399,7 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
     if (erroreTolta) {
       logErrore({ operazione: OPERAZIONE_POST, stato: 500, evento: 'scheda-orfana' }, erroreTolta)
     }
-    return rispostaErroreDb(erroreFigli ?? {}, OPERAZIONE_POST)
+    return erroreAnno(erroreFigli, OPERAZIONE_POST) ?? rispostaErroreDb(erroreFigli ?? {}, OPERAZIONE_POST)
   }
 
   // Lo storico è un di più rispetto al gesto: se non si scrive, `registraEvento` lo dice nel log e la

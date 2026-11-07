@@ -218,6 +218,77 @@ export const SCHEMA_BASE = `
   CREATE POLICY presenze_aperta ON public.presenze FOR ALL TO authenticated USING (true) WITH CHECK (true);
 `
 
+/**
+ * PR 2: le tabelle che la PR 2 tocca e che la PR 1 non conosce, con le colonne che leggono il registro e la
+ * regola transitoria. Va passato a `creaDbAnno({ codaPrima })` PRIMA della migrazione della PR 1, così le
+ * tabelle ricevono `anno_id` e il trigger generico. I test della PR 1 NON lo passano.
+ * Più i due trigger finti di produzione che muovono `storico_versione` e `updated_at` a ogni UPDATE
+ * (`storici_prima_mutazione`, `set_updated_at`), per provare l'interruttore del riempimento.
+ */
+export const SCHEMA_PR2 = `
+  CREATE TABLE public.crm_bambini (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_ingresso text NOT NULL DEFAULT 'in_corso',
+    quota_anno integer,
+    creata_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.votazioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    creata_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.scrutinio_periodi (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_scolastico text,
+    creato_il timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.certificati_competenze (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    anno_scolastico text,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.iscrizioni_elenco_caricamenti (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    caricato_il timestamptz NOT NULL DEFAULT now()
+  );
+
+  ALTER TABLE public.enrollment_submissions ADD COLUMN storico_versione integer NOT NULL DEFAULT 0;
+  CREATE FUNCTION public.storici_prima_mutazione() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN NEW.storico_versione := OLD.storico_versione + 1; RETURN NEW; END $f$;
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.enrollment_submissions
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE FUNCTION public.set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN NEW.updated_at := OLD.updated_at + interval '1 second'; RETURN NEW; END $f$;
+  CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.enrollment_submissions
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+  -- il browser scrive la domanda sotto RLS: una policy aperta, perché il test come authenticated (R13)
+  -- abbia qualcosa da attraversare
+  ALTER TABLE public.enrollment_submissions ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY enrollment_aperta ON public.enrollment_submissions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+`
+
+/** Le migrazioni della PR 2, trovate per suffisso come `fileMigrazioneAnno` (la version è l'istante di creazione). */
+const SUFFISSI_PR2 = {
+  M1: '_anno_strumenti.sql',
+  F1: '_anno_riempimento_1.sql',
+  F2: '_anno_riempimento_2.sql',
+  F3: '_anno_riempimento_3.sql',
+  V1: '_anno_vincoli_1.sql',
+  V2: '_anno_vincoli_2.sql',
+} as const
+
+export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
+  const suffisso = SUFFISSI_PR2[quale]
+  const f = readdirSync(CARTELLA).find((x) => x.endsWith(suffisso))
+  if (!f) throw new Error(`manca supabase/migrations/*${suffisso}`)
+  await db.exec(readFileSync(join(CARTELLA, f), 'utf8'))
+}
+
 export interface OpzioniDbAnno {
   /** Sedi già presenti PRIMA della migrazione, come in produzione: la migrazione dà loro gli anni. */
   sediPrimaDellaMigrazione?: string[]

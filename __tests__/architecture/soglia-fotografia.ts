@@ -379,6 +379,11 @@ export function posterioriCheContengono(
 // `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
 // come voleva R15), solo l'istante dello scatto. Le altre due (bucket, schema delle candidature) non si toccano.
 // Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
+// PR 2 «anno scolastico» (07/11/2026), M1 `20261107012110_anno_strumenti`: NON entra qui. Aggiunge colonne a
+// `anno_regole` e `anno_tabelle`, tre funzioni `SECURITY DEFINER` nuove e un trigger su `crm_bambini`, e riscrive
+// `anno_assegna_e_verifica`: nessuna tabella, FK, indice unico o policy nuovi, quindi nessuna delle tre guardie la
+// segnala e la prova gemella «nessuna voce morta» rifiuta una dichiarazione che non serve (provato il 07/11/2026).
+// Le voci per le migrazioni della PR 2 che toccano le fotografie arrivano con i compiti che le scrivono.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

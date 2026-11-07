@@ -86,7 +86,7 @@ describe('3.3-1 (b) · l\'osservazione conta e lascia passare', () => {
     expect(r[0].n).toBe('2')
   })
 
-  it('un UPDATE di tre righe nello stesso statement conta tre (una per riga guardata), sempre in una riga sola', async () => {
+  it('un UPDATE di DUE righe nello stesso statement conta due (una per riga guardata), sempre in una riga sola', async () => {
     const ids = [await presenzaChiusa()]
     ids.push(await una<string>(`INSERT INTO public.presenze (alunno_id, scuola_id, data) VALUES ($1, $2, $3) RETURNING id`, [ALUNNO, SEDE, D2526]))
     await db.exec('DELETE FROM public.anno_guardia_osservazioni')
@@ -226,13 +226,90 @@ describe('3.3-1 (b) · sicurezza delle cose nuove', () => {
   it('authenticated non legge il contatore e non esegue le funzioni nuove', async () => {
     await expect(db.exec('SET ROLE authenticated; SELECT * FROM public.anno_guardia_osservazioni')).rejects.toThrow()
     await db.exec('RESET ROLE')
+    await expect(db.exec('SET ROLE authenticated; SELECT * FROM public.anno_transitorio_usi')).rejects.toThrow()
+    await db.exec('RESET ROLE')
     for (const f of [
       'public.anno_guardia_osserva_conta(text,text,text)',
       'public.anno_log_uso_gettone(uuid,text,text,text)',
+      'public.anno_origine_richiesta()',
+      'public.anno_transitorio_conta(text)',
+      'public.anno_guardia_osserva_sicura(public.anno_tabelle,text,jsonb,jsonb,uuid)',
     ]) {
       expect(await una<boolean>(`SELECT has_function_privilege('authenticated', $1, 'EXECUTE')`, [f]), f).toBe(false)
       expect(await una<boolean>(`SELECT has_function_privilege('service_role', $1, 'EXECUTE')`, [f]), f).toBe(true)
     }
     expect(await una<number>(`SELECT count(*)::int FROM pg_proc WHERE proname = 'anno_guardia_verifica'`)).toBe(1)
+  })
+})
+
+describe('3.3-2 · P25: in osservazione l\'interruttore `oblio` non lascia nessuna traccia', () => {
+  it('con `anno_chiuso.oblio = on` e l\'osservazione accesa: la scrittura su un anno chiuso passa, zero contatori, zero gettoni `oblio`, zero usi', async () => {
+    const id = await presenzaChiusa()
+    await manopole(false, true)
+    await db.transaction(async (tx) => {
+      await tx.query(`SELECT set_config('anno_chiuso.oblio', 'on', true)`)
+      await tocca(tx, id)
+    })
+    expect(await una<string>(`SELECT count(*)::text FROM public.anno_guardia_osservazioni`)).toBe('0')
+    expect(await una<string>(`SELECT count(*)::text FROM public.correzioni_anno_chiuso WHERE codice = 'oblio'`)).toBe('0')
+    expect(await una<string>(`SELECT count(*)::text FROM public.correzioni_anno_chiuso_usi`)).toBe('0')
+  })
+})
+
+describe('3.3-2 · P27: l\'osservazione non rifiuta MAI una scrittura', () => {
+  const GUASTO = 'guasto di prova'
+  /** Una guardia resa difettosa apposta: `anno_guardia_sede` (la prima cosa che la guardia chiama) solleva sempre. */
+  async function guastaLaGuardia() {
+    await db.exec(`
+      ALTER FUNCTION public.anno_guardia_sede(text, jsonb, integer) RENAME TO anno_guardia_sede_orig;
+      CREATE FUNCTION public.anno_guardia_sede(p_tabella text, p_riga jsonb, p_livello integer DEFAULT 0)
+      RETURNS uuid LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION '${GUASTO}' USING ERRCODE = 'XX001'; END $f$;`)
+  }
+  async function riparaLaGuardia() {
+    await db.exec(`
+      DROP FUNCTION public.anno_guardia_sede(text, jsonb, integer);
+      ALTER FUNCTION public.anno_guardia_sede_orig(text, jsonb, integer) RENAME TO anno_guardia_sede;`)
+  }
+
+  it('una guardia difettosa, con l\'osservazione accesa: la scrittura PASSA e lascia un guasto (solo SQLSTATE e tabella)', async () => {
+    const id = await presenzaChiusa()
+    await manopole(false, true)
+    await guastaLaGuardia()
+    try {
+      await tocca(db, id)
+      await db.query(`INSERT INTO public.presenze (alunno_id, scuola_id, data) VALUES ($1, $2, $3)`, [ALUNNO, SEDE, D2526])
+      await db.query(`DELETE FROM public.presenze WHERE id = $1`, [id])
+    } finally {
+      await riparaLaGuardia()
+    }
+    expect(await una<string>(`SELECT count(*)::text FROM public.presenze`)).toBe('1')
+    const log = (await db.query<{ livello: string; occorrenze: number; contesto: Record<string, unknown> }>(
+      `SELECT livello, occorrenze, contesto FROM public.app_log WHERE evento = 'anno-scolastico'`)).rows
+    expect(log).toHaveLength(1)
+    expect(log[0].livello).toBe('error')
+    expect(log[0].occorrenze).toBe(3)
+    expect(log[0].contesto).toEqual({
+      esito: 'osservazione-guardia-fallita', operazione: 'anno_guardia_osserva_sicura', tabella: 'presenze', sqlstate: 'XX001' })
+    expect(JSON.stringify(log[0].contesto)).not.toContain(GUASTO)
+  })
+
+  it('la stessa guardia difettosa con la guardia ACCESA: la scrittura CADE (gli errori restano errori)', async () => {
+    const id = await presenzaChiusa()
+    await manopole(true, false)
+    await guastaLaGuardia()
+    try {
+      expect(await messaggio(tocca(db, id))).toBe(GUASTO)
+    } finally {
+      await riparaLaGuardia()
+    }
+    expect(await una<string>(`SELECT count(*)::text FROM public.app_log WHERE evento = 'anno-scolastico'`)).toBe('0')
+  })
+
+  it('senza difetti, l\'osservazione continua a contare come prima (il guasto è un\'eccezione, non la regola)', async () => {
+    const id = await presenzaChiusa()
+    await manopole(false, true)
+    await tocca(db, id)
+    expect((await osservazioni()).map((x) => x.n)).toEqual(['1'])
+    expect(await una<string>(`SELECT count(*)::text FROM public.app_log WHERE evento = 'anno-scolastico'`)).toBe('0')
   })
 })

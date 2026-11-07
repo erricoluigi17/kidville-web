@@ -259,7 +259,15 @@ function makeFake(cfg: Cfg) {
       }),
     },
     // L'oblio dei video in volo (`video_intent_oblio_alunno`): niente da togliere. Vedi `makeFakeBucket`.
-    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+    // Dal 3.6 le scritture del registro dell'anno passano da `anno_oblio_scrivi`: il finto le registra come prima.
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'anno_oblio_scrivi') {
+        if (args.p_azione === 'delete') deleted.push({ table: String(args.p_tabella), ids: args.p_valori })
+        if (args.p_azione === 'update') updates.push({ table: args.p_tabella, ...(args.p_set as object) })
+        return { data: (args.p_valori as unknown[]).length, error: null }
+      }
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }
   return { client, updates, deleted, removed }
 }
@@ -445,7 +453,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }),
     },
     // L'oblio dei video in volo (`video_intent_oblio_alunno`): niente da togliere.
-    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+    // Dal 3.6 la UPDATE della domanda passa da `anno_oblio_scrivi`: il finto la registra in `updates` come prima.
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'anno_oblio_scrivi') {
+        if (args.p_azione === 'update') h.updates.push({ table: args.p_tabella, ...(args.p_set as object) })
+        return { data: (args.p_valori as unknown[]).length, error: null }
+      }
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }),
 }))
 
@@ -678,6 +693,13 @@ function makeFakeBucket(cfg: CfgB) {
     // prova il passo per intero, con la funzione vera.
     rpc: async (nome: string, argomenti: Record<string, unknown>) => {
       rpcChiamate.push({ nome, argomenti })
+      // Dal 3.6 le scritture del registro dell'anno passano da `anno_oblio_scrivi`: il finto le registra come
+      // prima (`deleted` con gli id, `updates` con tabella + set).
+      if (nome === 'anno_oblio_scrivi') {
+        if (argomenti.p_azione === 'delete') deleted.push({ table: String(argomenti.p_tabella), ids: argomenti.p_valori })
+        if (argomenti.p_azione === 'update') updates.push({ table: argomenti.p_tabella, ...(argomenti.p_set as object) })
+        return { data: (argomenti.p_valori as unknown[]).length, error: null }
+      }
       return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
     },
   }

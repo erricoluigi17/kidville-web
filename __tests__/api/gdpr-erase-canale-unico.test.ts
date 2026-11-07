@@ -139,7 +139,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }),
     },
     // L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre; qui non c'è niente da togliere.
-    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+    // Dal 3.6 le scritture del registro dell'anno passano da `anno_oblio_scrivi`: la UPDATE si registra in `updates`
+    // come prima (tabella + set), il numero di righe è 0 (il finto non ha righe di presenza).
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'anno_oblio_scrivi') {
+        if (args.p_azione === 'update') h.updates.push({ table: args.p_tabella, ...(args.p_set as object) })
+        return { data: 0, error: null }
+      }
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }),
 }))
 

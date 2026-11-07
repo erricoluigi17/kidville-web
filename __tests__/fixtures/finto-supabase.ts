@@ -834,7 +834,8 @@ export function creaFintoSupabase(
       payload = Array.isArray(righe) ? righe : [righe]
       return proxy
     }
-    b.update = (patch: Riga) => {
+    b.update = (patch: Riga, opts?: { count?: string }) => {
+      if (opts?.count) conteggio = opts.count
       operazione = 'update'
       payload = [patch]
       return proxy
@@ -845,7 +846,8 @@ export function creaFintoSupabase(
       if (opts?.onConflict) chiaviConflitto = opts.onConflict.split(',').map((c) => c.trim())
       return proxy
     }
-    b.delete = () => {
+    b.delete = (opts?: { count?: string }) => {
+      if (opts?.count) conteggio = opts.count
       operazione = 'delete'
       return proxy
     }

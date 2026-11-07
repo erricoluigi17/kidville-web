@@ -170,10 +170,17 @@ describe('scriviOblio · il ripiego (PGRST202) riproduce la cintura dell\'SQL', 
   })
 
   it('un errore del ripiego → { ok: false, codice } e logErrore', async () => {
+    const { client } = finto(() => ({ error: MANCA }), { error: { code: '57014' } })
+    const r = await scriviOblio(client, { azione: 'delete', tabella: 'pagelle', colonnaFiltro: 'id', valoriFiltro: [ID], op: 'x/y:POST' })
+    expect(r).toEqual({ ok: false, codice: '57014' })
+    expect(logErrore).toHaveBeenCalledTimes(1)
+  })
+
+  it('schema assente (tabella che non c\'è nel DB della CI) → ok:false ma solo `info`, come facevano i siti', async () => {
     const { client } = finto(() => ({ error: MANCA }), { error: { code: '42P01' } })
     const r = await scriviOblio(client, { azione: 'delete', tabella: 'pagelle', colonnaFiltro: 'id', valoriFiltro: [ID], op: 'x/y:POST' })
     expect(r).toEqual({ ok: false, codice: '42P01' })
-    expect(logErrore).toHaveBeenCalledTimes(1)
+    expect(logErrore).not.toHaveBeenCalled()
   })
 
   it('450 valori nel ripiego → 3 catene, righe sommate', async () => {

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ARCHIVE_ERASURE } from '@/lib/forms/signed-path'
 import { aBlocchi } from '@/lib/db/blocchi'
+import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 /**
@@ -80,6 +81,18 @@ function errorePulito(codice: string | undefined): Error {
   return new Error(codice ?? 'errore-oblio')
 }
 
+/**
+ * Un errore dell'RPC o del ripiego. Sullo schema assente (DB della CI non migrato: tabella o colonna che non c'è) si
+ * tace a livello `info`, come facevano i siti con `schemaAssente`; su tutto il resto è `logErrore` con l'`op`.
+ */
+function segnalaErrore(op: string, evento: string, codice: string | undefined): void {
+  if (schemaAssente({ code: codice })) {
+    logEvento('gdpr', 'info', { operazione: op, esito: 'oblio-schema-assente', evento, error_code: codice ?? '' })
+    return
+  }
+  logErrore({ operazione: op, evento }, errorePulito(codice))
+}
+
 function ripiegoDiretto(supabase: SupabaseClient, o: OpzioniOblio, blocco: string[]): Costruttore {
   const t = supabase.from(o.tabella) as unknown as TabellaDiretta
   if (o.azione === 'update') {
@@ -130,7 +143,7 @@ export async function scriviOblio(supabase: SupabaseClient, o: OpzioniOblio): Pr
         const codice = error.message === 'OBLIO_NON_AMMESSO' || (error.message ?? '').startsWith('OBLIO_NON_AMMESSO')
           ? 'OBLIO_NON_AMMESSO'
           : error.code
-        logErrore({ operazione: o.op, evento: `oblio_${o.tabella}_${o.azione}` }, errorePulito(codice))
+        segnalaErrore(o.op, `oblio_${o.tabella}_${o.azione}`, codice)
         return { ok: false, ...(codice ? { codice } : {}) }
       }
       // PGRST202: la funzione non c'è (DB della CI non migrato) → si ripiega, una volta per chiamata.
@@ -148,12 +161,12 @@ export async function scriviOblio(supabase: SupabaseClient, o: OpzioniOblio): Pr
       !COPPIE_OBLIO_AMMESSE.includes(chiave) ||
       (o.azione === 'delete_cestino' && o.tabella === 'student_documents' && !o.primaDi)
     ) {
-      logErrore({ operazione: o.op, evento: `oblio_${o.tabella}_${o.azione}` }, errorePulito('OBLIO_NON_AMMESSO'))
+      segnalaErrore(o.op, `oblio_${o.tabella}_${o.azione}`, 'OBLIO_NON_AMMESSO')
       return { ok: false, codice: 'OBLIO_NON_AMMESSO' }
     }
     const { count, error } = await ripiegoDiretto(supabase, o, blocco)
     if (error) {
-      logErrore({ operazione: o.op, evento: `oblio_${o.tabella}_${o.azione}` }, errorePulito(error.code))
+      segnalaErrore(o.op, `oblio_${o.tabella}_${o.azione}`, error.code)
       return { ok: false, ...(error.code ? { codice: error.code } : {}) }
     }
     righe += count ?? 0
@@ -179,7 +192,7 @@ export async function svuotaOblio(supabase: SupabaseClient, tabella: string, op:
   if (!error) return { ok: true, righe: Number(data ?? 0), via: 'rpc' }
   if (error.code !== 'PGRST202') {
     const codice = (error.message ?? '').startsWith('OBLIO_NON_AMMESSO') ? 'OBLIO_NON_AMMESSO' : error.code
-    logErrore({ operazione: op, evento: `oblio_svuota_${tabella}` }, errorePulito(codice))
+    segnalaErrore(op, `oblio_svuota_${tabella}`, codice)
     return { ok: false, ...(codice ? { codice } : {}), errori: [error] }
   }
   logEvento('gdpr', 'info', {

@@ -13,6 +13,8 @@ import { logEvento } from '@/lib/logging/logger'
 import { creaFetchStrumentato } from '@/lib/logging/supabase-fetch'
 import { conContesto, erroreAnnoDellaRichiesta, segnalaErroreAnno } from '@/lib/logging/context'
 import { withRoute } from '@/lib/logging/with-route'
+import { scriviFrequenza } from '@/lib/anno/frequenze'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const URL_DB = 'https://x.supabase.co/rest/v1/sections'
 
@@ -198,5 +200,61 @@ describe('contesto: erroreAnno', () => {
       segnalaErroreAnno('P0001', 'PASSAGGIO_DA_FARE')
       expect(erroreAnnoDellaRichiesta()).toEqual({ code: 'P0001', message: 'ANNO_CHIUSO' })
     })
+  })
+})
+
+describe('withRoute: gli errori dell\'anno già gestiti da una scrittura fail-open (Minor 7)', () => {
+  const ALUNNO = '44444444-4444-4444-8444-444444444441'
+  const ANNO_SEDE = 'b1111111-1111-4111-8111-111111111111'
+
+  /** Un client la cui prima lettura passa dal `fetch` strumentato (alza il campo) e restituisce l'errore dell'anno. */
+  const clientCheRifiuta = (f: ReturnType<typeof fetchDb>, message: string) =>
+    ({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => {
+              await f(URL_DB, { method: 'GET' })
+              return { data: null, error: { code: 'P0001', message } }
+            },
+          }),
+        }),
+      }),
+    }) as unknown as SupabaseClient
+  const campi = { stato: 'ritirato' } as unknown as Parameters<typeof scriviFrequenza>[1]['campi']
+
+  it('scriviFrequenza fallita per un errore dell\'anno, poi 500 per altro: resta 500 (non diventa 409)', async () => {
+    const f = fetchDb(corpoDb('ANNO_CHIUSO'))
+    const route = withRoute('t/gestito500:POST', async () => {
+      const r = await scriviFrequenza(clientCheRifiuta(f, 'ANNO_CHIUSO'), { alunnoId: ALUNNO, annoSedeId: ANNO_SEDE, campi })
+      expect(r).toEqual({ ok: false, codice: 'ANNO_CHIUSO' })
+      return risposta500()
+    })
+    const res = await route(req())
+    expect(res.status).toBe(500)
+    expect(warnIngoiati()).toHaveLength(0)
+  })
+
+  it('scriviFrequenza fallita e la route risponde 200: nessun warn anno-scrittura-ingoiata per quell\'errore', async () => {
+    const f = fetchDb(corpoDb('ANNO_CHIUSO'))
+    const route = withRoute('t/gestito200:POST', async () => {
+      await scriviFrequenza(clientCheRifiuta(f, 'ANNO_CHIUSO'), { alunnoId: ALUNNO, annoSedeId: ANNO_SEDE, campi })
+      return Response.json({ ok: true })
+    })
+    expect((await route(req())).status).toBe(200)
+    expect(warnIngoiati()).toHaveLength(0)
+  })
+
+  it('un errore dell\'anno NON gestito che arriva dopo quello gestito si traduce ancora', async () => {
+    const f1 = fetchDb(corpoDb('ANNO_CHIUSO'))
+    const f2 = fetchDb(corpoDb('PASSAGGIO_DA_FARE'))
+    const route = withRoute('t/dopo:POST', async () => {
+      await scriviFrequenza(clientCheRifiuta(f1, 'ANNO_CHIUSO'), { alunnoId: ALUNNO, annoSedeId: ANNO_SEDE, campi })
+      await f2(URL_DB, { method: 'PATCH' })
+      return risposta500()
+    })
+    const res = await route(req())
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('PASSAGGIO_DA_FARE')
   })
 })

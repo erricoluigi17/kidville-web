@@ -11,6 +11,11 @@ vi.mock('@/lib/logging/logger', () => ({
   logOk: vi.fn(),
 }))
 
+const sedi = vi.hoisted(() => ({ reali: [] as Array<{ id: string; nome: string }>, error: null as null | { code: string } }))
+vi.mock('@/lib/scuole/reali', () => ({
+  sediReali: async () => ({ tutte: sedi.reali, reali: sedi.reali, attivaDegradata: false, ...(sedi.error ? { error: sedi.error } : {}) }),
+}))
+
 import { scriviOblio, svuotaOblio, COPPIE_OBLIO_AMMESSE, BLOCCO_OBLIO } from '@/lib/gdpr/oblio-registro'
 
 /**
@@ -45,7 +50,7 @@ function finto(rispostaRpc: (nome: string, args: Record<string, unknown>) => { d
 
 const MANCA = { code: 'PGRST202', message: 'Could not find the function' }
 
-beforeEach(() => { logErrore.mockClear(); logEvento.mockClear() })
+beforeEach(() => { logErrore.mockClear(); logEvento.mockClear(); sedi.reali = []; sedi.error = null })
 
 describe('scriviOblio · via RPC', () => {
   it('chiama anno_oblio_scrivi con i parametri giusti e restituisce { ok, righe, via: rpc }', async () => {
@@ -231,5 +236,33 @@ describe('l\'allowlist TypeScript (ripiego) coincide con il CASE di anno_oblio_s
   it('stesse coppie, né una in più né una in meno', () => {
     expect(nelCase.length).toBeGreaterThan(10)
     expect([...COPPIE_OBLIO_AMMESSE].sort()).toEqual(nelCase)
+  })
+})
+
+describe('il livello del log del ripiego su PGRST202 (Minor 2)', () => {
+  const ripiego = () => logEvento.mock.calls.filter((c) => c[2]?.esito === 'oblio-ripiego-diretto')
+  const opzioni = { azione: 'delete', tabella: 'galleria_media_v2', colonnaFiltro: 'id', valoriFiltro: [ID], op: 'prova' } as unknown as Parameters<typeof scriviOblio>[1]
+
+  it('senza sedi reali (DB della CI) → info, e il ripiego scrive lo stesso', async () => {
+    const { client: supabase } = finto(() => ({ error: MANCA }))
+    await scriviOblio(supabase, opzioni)
+    await svuotaOblio(supabase, 'alunni', 'prova')
+    expect(ripiego().map((c) => c[1])).toEqual(['info', 'info'])
+  })
+
+  it('con sedi reali → error, e il ripiego scrive lo stesso', async () => {
+    sedi.reali = [{ id: ID, nome: 'Sede vera' }]
+    const { client: supabase } = finto(() => ({ error: MANCA }))
+    const r = await scriviOblio(supabase, opzioni)
+    await svuotaOblio(supabase, 'alunni', 'prova')
+    expect(r.ok).toBe(true)
+    expect(ripiego().map((c) => c[1])).toEqual(['error', 'error'])
+  })
+
+  it('sedi non leggibili → error (non si sa che ambiente sia)', async () => {
+    sedi.error = { code: 'XX000' }
+    const { client: supabase } = finto(() => ({ error: MANCA }))
+    await svuotaOblio(supabase, 'alunni', 'prova')
+    expect(ripiego().map((c) => c[1])).toEqual(['error'])
   })
 })

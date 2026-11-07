@@ -1037,9 +1037,12 @@ export const POST = withRoute('gdpr/retention-galleria:POST', async (request: Ne
         // ── IL TIMBRO, fra il file e la riga ────────────────────────────────
         //
         // `file_rimosso_il` si scrive PRIMA della `delete`, e non dopo: è il solo
-        // ordine in cui un guasto a metà lascia uno stato recuperabile. Il filtro
-        // di `soloNelCestino` sull'UPDATE è una cintura: non si timbra mai una
-        // riga viva, nemmeno se gli id arrivassero da una lettura sbagliata.
+        // ordine in cui un guasto a metà lascia uno stato recuperabile. Il timbro
+        // (`update|galleria_media_v2|id`) NON ha più la cintura `soloNelCestino`:
+        // gli id vengono dalla lettura del cestino qui sopra, e una lettura
+        // sbagliata potrebbe timbrare una riga viva. La cintura vera sta dopo, sulla
+        // `delete`: la DELETE in SQL (`delete_cestino`) cancella solo righe con
+        // `eliminato_il` valorizzato, quindi una riga viva non si cancella mai.
         //
         // ⚠️ A LOTTI DI `LOTTO_SCRITTURA`, e un lotto che fallisce trattiene SOLO le
         // sue righe: è la regola 1 di questo file («per riga, non per lotto»)

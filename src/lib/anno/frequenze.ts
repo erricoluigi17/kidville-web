@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { giornoDiRoma } from '@/lib/primaria/periodo'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa } from '@/lib/anno/tipi'
@@ -112,7 +113,10 @@ function esitoDaErrore(error: ErrorePg, passo: string): EsitoFrequenza {
   if (schemaAnnoIndietro(error)) return { ok: true, saltata: 'schema-indietro' }
   const codice = codiceAnnoDa(error?.message)
   if (codice) {
-    logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-non-scritta', error_code: codice, operazione: OPERAZIONE, passo })
+    // Il `passo` sta in `operazione`: una chiave `passo` non è nella lista bianca dei log e uscirebbe redatta.
+    logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-non-scritta', error_code: codice, operazione: `${OPERAZIONE}:${passo}` })
+    // Gestito qui, fail-open: la rete di `withRoute` non deve tradurlo se la route risponde 500 per altro (Minor 7).
+    segnalaErroreAnnoGestito(codice)
     return { ok: false, codice }
   }
   // Solo il codice di Postgres: il messaggio di un CHECK riporta la riga intera (sospeso_motivo compreso).

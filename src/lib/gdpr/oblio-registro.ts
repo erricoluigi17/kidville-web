@@ -3,6 +3,7 @@ import { ARCHIVE_ERASURE } from '@/lib/forms/signed-path'
 import { aBlocchi } from '@/lib/db/blocchi'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { sediReali } from '@/lib/scuole/reali'
 
 /**
  * L'OBLIO E LA RETENTION SCRIVONO IL REGISTRO DELL'ANNO SOLO DA QUI (Compito 3.6).
@@ -118,6 +119,18 @@ function ripiegoDiretto(supabase: SupabaseClient, o: OpzioniOblio, blocco: strin
   return q
 }
 
+/**
+ * Il livello del log del ripiego su `PGRST202` (la funzione `anno_oblio_*` non c'è). Sul database della CI, che ha
+ * solo la sede finta, è la condizione normale: `info`. Dove ci sono sedi REALI vuol dire che la migrazione M3 manca
+ * o che la cache dello schema è vecchia, cioè configurazione mancante: `error` (AGENTS.md, regola 4). Se le sedi
+ * non si leggono non si sa che ambiente sia: `error`, perché «non lo so» non è «sono in CI». Il ripiego scrive lo
+ * stesso, in entrambi i casi.
+ */
+async function livelloRipiego(supabase: SupabaseClient, op: string): Promise<'error' | 'info'> {
+  const { reali, error } = await sediReali(supabase, op)
+  return error || reali.length > 0 ? 'error' : 'info'
+}
+
 export async function scriviOblio(supabase: SupabaseClient, o: OpzioniOblio): Promise<EsitoOblio> {
   const chiave = `${o.azione}|${o.tabella}|${o.colonnaFiltro}`
   if (o.valoriFiltro.length === 0) return { ok: true, righe: 0, via: 'rpc' }
@@ -149,7 +162,7 @@ export async function scriviOblio(supabase: SupabaseClient, o: OpzioniOblio): Pr
       }
       // PGRST202: la funzione non c'è (DB della CI non migrato) → si ripiega, una volta per chiamata.
       diretta = true
-      logEvento('gdpr', 'info', {
+      logEvento('gdpr', await livelloRipiego(supabase, o.op), {
         operazione: o.op,
         esito: 'oblio-ripiego-diretto',
         azione: o.azione,
@@ -196,7 +209,7 @@ export async function svuotaOblio(supabase: SupabaseClient, tabella: string, op:
     segnalaErrore(op, `oblio_svuota_${tabella}`, codice)
     return { ok: false, ...(codice ? { codice } : {}), errori: [error] }
   }
-  logEvento('gdpr', 'info', {
+  logEvento('gdpr', await livelloRipiego(supabase, op), {
     operazione: op,
     esito: 'oblio-ripiego-diretto',
     azione: 'svuota',

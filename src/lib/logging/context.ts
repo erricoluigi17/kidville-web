@@ -63,7 +63,7 @@ export interface ContestoRichiesta {
      * elemento di `CODICI_ANNO` (un letterale nostro, mai testo del database); `code` quello di
      * PostgREST (`P0001`, `23514`…).
      */
-    erroreAnno?: { code: string; message: string };
+    erroreAnno?: { code: string; message: string; gestito?: true };
     /**
      * Payload già validato e GIÀ REDATTO da `impostaPayload`; stampato solo se la richiesta
      * fallisce. Chi lo emette NON deve ri-redigerlo: una seconda passata di `redact` rifarebbe
@@ -223,12 +223,27 @@ export function erroreGiaLoggato(): boolean {
 export function segnalaErroreAnno(code: string, message: string): void {
     const s = als.getStore();
     if (!s) return;
-    if (s.erroreAnno === undefined) s.erroreAnno = { code, message };
+    // Un errore già GESTITO da una scrittura fail-open (`segnalaErroreAnnoGestito`) non occupa il posto: il
+    // primo errore NON gestito è quello che la rete di `withRoute` deve tradurre.
+    if (s.erroreAnno === undefined || s.erroreAnno.gestito) s.erroreAnno = { code, message };
+}
+
+/**
+ * Segna come GESTITO l'errore dell'anno già registrato per `message` (un codice di `CODICI_ANNO`): lo chiama
+ * una scrittura fail-open (`scriviFrequenza`) che l'ha loggato ed è andata avanti. La rete di `withRoute` lo
+ * ignora: se la route risponde poi 500 per un'altra ragione, quel 500 non diventa il 409/422 di questo errore.
+ * Non tocca un errore diverso (il primo non gestito resta). Fuori da una richiesta: no-op.
+ */
+export function segnalaErroreAnnoGestito(message: string): void {
+    const s = als.getStore();
+    if (!s?.erroreAnno || s.erroreAnno.gestito) return;
+    if (s.erroreAnno.message === message) s.erroreAnno.gestito = true;
 }
 
 /** L'errore dell'anno segnato per questa richiesta, se c'è. Fuori da una richiesta: `undefined`. */
 export function erroreAnnoDellaRichiesta(): { code: string; message: string } | undefined {
-    return als.getStore()?.erroreAnno;
+    const e = als.getStore()?.erroreAnno;
+    return e && !e.gestito ? e : undefined;
 }
 
 /**

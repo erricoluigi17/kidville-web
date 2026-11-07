@@ -241,6 +241,6 @@ export const ESENTI: readonly { file: string; motivo: string }[] = [
   {
     file: 'src/lib/gdpr/esegui.ts',
     motivo:
-      "Oblio: patchAlunno azzera intestatario_fatture e retta_split_config. Lo specchio le copia nella frequenza dell'anno attivo. Le frequenze degli altri anni le pulisce l'oblio con scriviOblio (compito 3.6-2).",
+      "Oblio: patchAlunno azzera intestatario_fatture, retta_split_config e sospeso_motivo, ma non chiama scriviFrequenza (scrive un anno solo e non passa la guardia dell'anno chiuso): le frequenze di TUTTI gli anni le pulisce l'oblio con scriviOblio subito dopo (3.6-2).",
   },
 ]

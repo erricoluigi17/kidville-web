@@ -43,6 +43,7 @@ export const COPPIE_OBLIO_AMMESSE: readonly string[] = [
   'update|eventi_diario|alunno_id',
   'update|eventi_diario|id',
   'update|presenze|alunno_id',
+  'update|frequenze|alunno_id',
   'delete|student_documents|id',
   'delete_cestino|student_documents|id',
   'delete|pagelle|id',

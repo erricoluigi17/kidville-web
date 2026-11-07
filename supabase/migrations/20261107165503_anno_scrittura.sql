@@ -859,6 +859,7 @@ $$;
 --   · eventi_diario           update  alunno_id  {nota_bambino, nota_libera}            esegui.ts (note del bambino)
 --   · eventi_diario           update  id         {dettagli}                             esegui.ts (valore delle routine a testo)
 --   · presenze                update  alunno_id  {giustificazione_testo, note_appello}  esegui.ts (bonifica presenze)
+--   · frequenze               update  alunno_id  {intestatario_fatture, retta_split_config, sospeso_motivo}  esegui.ts (oblio: le frequenze di TUTTI gli anni, nessuna cintura)
 --   · student_documents       delete  id                                                esegui.ts (oblio, `obliaFileDaTabella`: nessuna cintura)
 --   · pagelle                 delete  id                                                esegui.ts (oblio, obliaPagelleAlunno → obliaFileDaTabella: nessuna cintura)
 --   · student_documents       delete_cestino id                                         retention-cestino-registro (cintura: eliminato_il IS NOT NULL
@@ -899,6 +900,7 @@ BEGIN
     WHEN 'update|eventi_diario|alunno_id'   THEN ARRAY['nota_bambino', 'nota_libera']
     WHEN 'update|eventi_diario|id'          THEN ARRAY['dettagli']
     WHEN 'update|presenze|alunno_id'        THEN ARRAY['giustificazione_testo', 'note_appello']
+    WHEN 'update|frequenze|alunno_id'       THEN ARRAY['intestatario_fatture', 'retta_split_config', 'sospeso_motivo']
     WHEN 'delete|student_documents|id'      THEN ARRAY[]::text[]
     WHEN 'delete|pagelle|id'                THEN ARRAY[]::text[]
     WHEN 'delete_cestino|student_documents|id' THEN ARRAY[]::text[]

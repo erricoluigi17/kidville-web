@@ -172,6 +172,7 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     ['update', 'eventi_diario', 'alunno_id', { nota_libera: null }],
     ['update', 'eventi_diario', 'id', { dettagli: { risposta: 'testo', valore: null } }],
     ['update', 'presenze', 'alunno_id', { giustificazione_testo: null, note_appello: null }],
+    ['update', 'frequenze', 'alunno_id', { intestatario_fatture: null, retta_split_config: null, sospeso_motivo: null }],
     ['delete', 'student_documents', 'id', null],
     ['delete', 'pagelle', 'id', null],
     ['delete', 'forms_submissions', 'id', null],
@@ -199,6 +200,10 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     ['una delete con un `set`', 'delete', 'forms_submissions', 'id', { x: 1 }],
     ['update su `pagelle` (si cancella, non si riscrive)', 'update', 'pagelle', 'id', { file_url: null }],
     ['`delete_cestino` su `pagelle`', 'delete_cestino', 'pagelle', 'id', null],
+    ['frequenze con una colonna fuori elenco (`retta_mensile`)', 'update', 'frequenze', 'alunno_id', { retta_mensile: null }],
+    ['frequenze con una chiave fuori elenco insieme a una ammessa', 'update', 'frequenze', 'alunno_id', { sospeso_motivo: null, sospeso: false }],
+    ['delete su `frequenze`', 'delete', 'frequenze', 'alunno_id', null],
+    ['frequenze filtrate per `id`', 'update', 'frequenze', 'id', { sospeso_motivo: null }],
     ['un\'azione inventata', 'truncate', 'presenze', 'alunno_id', null],
     ['un\'azione `delete_qualsiasi`', 'delete_qualsiasi', 'galleria_media_v2', 'id', null],
     ['`delete_cestino` su una tabella senza cintura (enrollment_submissions)', 'delete_cestino', 'enrollment_submissions', 'id', null],
@@ -482,5 +487,55 @@ describe('3.3-3 (ii) · le tre funzioni di oblio ridefinite da M3 (sul TESTO: in
   it('i due job SQL restano com\'erano: nessun `cron.alter_job` e nessun `jobid` in M3 (le funzioni sono nel repo, via (ii))', () => {
     const codice = M3.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n')
     expect(codice).not.toMatch(/alter_job|jobid/i)
+  })
+})
+
+describe('3.6-2 · l\'oblio azzera le frequenze di TUTTI gli anni, anche quello chiuso', () => {
+  const INTESTATARIO = { nome: SEGNALE }
+  const SPLIT = { quote: [{ parente: SEGNALE, percentuale: 100 }] }
+
+  async function frequenzaConDati(alunno: string, annoSede: string, inizio: string): Promise<string> {
+    return seme(async () => una<string>(
+      `INSERT INTO public.frequenze (alunno_id, anno_sede_id, tipo, origine, data_ingresso,
+                                     intestatario_fatture, retta_split_config, sospeso, sospeso_causa, sospeso_motivo)
+       VALUES ($1, $2, 'nuova', 'segreteria', $3::date, $4::jsonb, $5::jsonb, true, 'morosita', $6)
+       -- lo specchio alunni → frequenze ha già creato la riga dell'anno attivo: la si completa
+       ON CONFLICT (alunno_id, anno_sede_id) DO UPDATE SET intestatario_fatture = EXCLUDED.intestatario_fatture,
+         retta_split_config = EXCLUDED.retta_split_config, sospeso = true, sospeso_causa = 'morosita', sospeso_motivo = EXCLUDED.sospeso_motivo
+       RETURNING id`,
+      [alunno, annoSede, inizio, JSON.stringify(INTESTATARIO), JSON.stringify(SPLIT), SEGNALE]))
+  }
+
+  it('con la guardia accesa azzera le due frequenze (anno chiuso e corrente), restituisce 2, lascia il fatto amministrativo e non tocca un altro alunno', async () => {
+    const corrente = (await db.query<{ id: string; inizio: string }>(
+      `SELECT id, inizio::text FROM public.anni_sede WHERE id = public.anno_attivo($1)`, [SEDE])).rows[0]
+    const chiuso = (await db.query<{ inizio: string }>(`SELECT inizio::text FROM public.anni_sede WHERE id = $1`, [AS2526])).rows[0]
+    expect(corrente.id).not.toBe(AS2526)
+    const fChiusa = await frequenzaConDati(ALUNNO, AS2526, chiuso.inizio)
+    const fCorrente = await frequenzaConDati(ALUNNO, corrente.id, corrente.inizio)
+    const fAltro = await frequenzaConDati(ALTRO, AS2526, chiuso.inizio)
+    // Controllo positivo: senza RPC, la stessa UPDATE sull'anno chiuso è fermata dalla guardia.
+    expect(await messaggio(db.query(`UPDATE public.frequenze SET sospeso_motivo = NULL WHERE id = $1`, [fChiusa]))).toBe('ANNO_CHIUSO')
+
+    const set = { intestatario_fatture: null, retta_split_config: null, sospeso_motivo: null }
+    expect(String((await scrivi('update', 'frequenze', 'alunno_id', [ALUNNO], set)).rows[0].n)).toBe('2')
+
+    for (const f of [fChiusa, fCorrente]) {
+      const r = (await db.query<Record<string, unknown>>(
+        `SELECT intestatario_fatture, retta_split_config, sospeso_motivo, sospeso, sospeso_causa FROM public.frequenze WHERE id = $1`, [f])).rows[0]
+      expect(r.intestatario_fatture).toBeNull()
+      expect(r.retta_split_config).toBeNull()
+      expect(r.sospeso_motivo).toBeNull()
+      expect(r.sospeso).toBe(true)
+      expect(r.sospeso_causa).toBe('morosita')
+    }
+    const altro = (await db.query<Record<string, unknown>>(
+      `SELECT intestatario_fatture, retta_split_config, sospeso_motivo FROM public.frequenze WHERE id = $1`, [fAltro])).rows[0]
+    expect(altro.intestatario_fatture).toEqual(INTESTATARIO)
+    expect(altro.retta_split_config).toEqual(SPLIT)
+    expect(altro.sospeso_motivo).toBe(SEGNALE)
+    // Un gettone `oblio` per l'anno chiuso, e la seconda chiamata non ha più niente da togliere.
+    expect(await una<string>(`SELECT count(*)::text FROM public.correzioni_anno_chiuso WHERE codice = 'oblio' AND anno_sede_id = $1`, [AS2526])).toBe('1')
+    expect(String((await scrivi('update', 'frequenze', 'alunno_id', [ALUNNO], set)).rows[0].n)).toBe('0')
   })
 })

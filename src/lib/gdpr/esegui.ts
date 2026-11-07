@@ -2758,6 +2758,8 @@ export async function anonimizzaAlunno(
   fotoRimosse: number
   fotoSganciate: number
   presenzeBonificate: number
+  /** Righe di `frequenze` (di tutti gli anni) da cui sono usciti intestatario, ripartizione e motivo di sospensione. */
+  frequenzeBonificate: number
   /** Righe di `eventi_diario` il cui testo libero (note, routine a testo) è stato tolto. */
   diarioBonificate: number
   /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
@@ -2813,6 +2815,23 @@ export async function anonimizzaAlunno(
   // 1. Anonimizza l'anagrafica dell'alunno. La SUA riga si azzera comunque, chiavi condivise o no.
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
   if (e1) logErrore({ operazione: op, evento: 'patch_alunno' }, e1)
+
+  // 1-bis. LE FREQUENZE DI OGNI ANNO. Intestatario delle fatture, ripartizione della retta e motivo della sospensione
+  //    vivono anche in `frequenze` (una riga per anno): lo specchio `alunni → frequenze` aggiorna SOLO l'anno attivo,
+  //    quindi senza questo passo gli anni chiusi li conserverebbero dopo l'oblio. Si fa solo se la patch di `alunni`
+  //    è riuscita; `sospeso` e `sospeso_causa` restano (fatto amministrativo, non testo libero). `scriviOblio` logga da sé.
+  let frequenzeBonificate = 0
+  if (!e1) {
+    const esitoFrequenze = await scriviOblio(supabase, {
+      azione: 'update',
+      tabella: 'frequenze',
+      colonnaFiltro: 'alunno_id',
+      valoriFiltro: [alunno.id],
+      set: { intestatario_fatture: null, retta_split_config: null, sospeso_motivo: null },
+      op,
+    })
+    if (esitoFrequenze.ok) frequenzeBonificate = esitoFrequenze.righe
+  }
 
   // 2. IL REGISTRO DELLE PRESENZE — il motivo dell'assenza e le note d'appello.
   //
@@ -3121,6 +3140,7 @@ export async function anonimizzaAlunno(
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
+    frequenzeBonificate,
     diarioBonificate: diario.bonificate,
     notificheRimosse: tracce.notificheRimosse,
     videoIntentiTrattati: videoIntenti.intenti,

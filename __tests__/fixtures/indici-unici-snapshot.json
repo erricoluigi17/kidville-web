@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T01:06:11Z",
-  "sha256": "b0a46b9b13cbc3856bad567d6841a606675a9e6260ef50498170b43094ac3080",
+  "generato_alle": "2026-11-07T15:43:52Z",
+  "sha256": "b8289868dbc8a472d456b015ef7f76035b82f1a8e24fcb1fb1c4f5703b087fcf",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -2554,6 +2554,17 @@
     {
       "tabella": "richieste_cancellazione",
       "indice": "richieste_cancellazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "riconciliazione_anno",
+      "indice": "riconciliazione_anno_pkey",
       "parziale": false,
       "con_espressioni": false,
       "nulls_not_distinct": false,

@@ -1,6 +1,14 @@
+## 🧹 Changelog — Pulizia dopo la PR 2 dell'anno scolastico: fotografie dalla produzione, elenco vuoto, l'attesa della CI — 2026-11-07 (branch `chore/anno-pulizia-pr2`)
+
+**Stato:** 🟡 PR verso `main`. Nessuna migrazione, nessun file in `src/`: per gli utenti non cambia niente.
+
+**Le fotografie dello schema**, rigenerate dal database di produzione dopo l'applicazione di M1, F1, V1, della correzione delle foto e di V2 (07/11 alle 16:42-16:46 di Roma, solo `SELECT` sui cataloghi): migrazioni applicate da 253 a 258; `riconciliazione_anno` entra nelle tabelle con `scuola_id` (99), nelle FK di sede, nella RLS (179 tabelle, nessuna policy nuova) e negli indici unici (290, la sua chiave primaria); `tabelle-anno.json` resta a 46 righe senza `gallery_photo_uploads` ed è ora figlia del generatore; FK verso `utenti`, bucket e schema delle candidature invariati (cambia solo l'istante). `MIGRAZIONI_ATTESE_AL_MERGE` torna vuoto.
+
+**`scripts/ci/attendi-controlli.sh`.** Il 07/11 la correzione urgente (#296) è rimasta ferma quattro ore con la CI già verde: il monitor dell'app risveglia la sessione dell'assistente solo sui fallimenti. Lo script aspetta i controlli nominati di un commit (check-run di GitHub, e lo stato «Vercel») ed esce da solo: 0 verde, 2 rosso o annullato, 3 al tetto di minuti. Lanciato in background, è la sua uscita che porta avanti il lavoro. Provato sul commit della PR 2 (esce 2: l'integrazione Supabase era `failure`) e su uno verde (esce 0). Non scrive niente.
+
 ## 🐞 Changelog — Correzione urgente: la pubblicazione delle foto era rifiutata dopo la PR 2, e l'ultima migrazione si era fermata — 2026-11-07 (branch `fix/anno-foto-anti-doppione`)
 
-**Stato:** 🟡 in corso — PR verso `main`; il merge lo fa il titolare, la migrazione la applica l'integrazione al merge.
+**Stato:** ✅ in produzione dal 07/11 alle 16:35 (#296, `93bcf589`). L'integrazione Supabase ha applicato questa migrazione e poi **V2**, alle 16:37 (verifiche dopo il merge in fondo a questa voce).
 
 **Che cosa è successo.** Dopo il merge della PR 2 (11:50 del 07/11) **dalle 11:52 nessuna foto si pubblicava dall'app**: la coda del telefono le tiene e le ritenta. La quarta migrazione della PR 2 (V2) si era inoltre fermata con `ANNO_RIEMPIMENTO_INCOMPLETO` e si era annullata tutta (le prime tre erano applicate), quindi i controlli rigidi dell'anno restavano spenti.
 
@@ -12,9 +20,11 @@
 
 **Prima del merge** (sola lettura): `SELECT count(*) FROM public.galleria_media_v2 WHERE politica_operazione ->> 'sopprimiGenitori' = 'true';` deve dare 0 (eseguita in sola lettura dallo strumento SQL di Supabase il 07/11 alle 12:33 di Roma: 0). **Da fare dopo il merge:** lo storico deve avere sia `20261107023211` sia `20261107023257`; una `SELECT` che ritrovi la migrazione e V2 applicate (`controlli_rigidi = true`), `get_advisors` a 0 ERROR, una pubblicazione di prova dall'app; poi le fotografie dalla produzione nella PR di pulizia.
 
+**Verificato dopo il merge** (07/11, 16:38-16:45 di Roma, solo `SELECT` dallo strumento SQL di Supabase): lo storico ha le sei version dell'anno scolastico, ciascuna una volta (PR 1, M1, F1, V1, questa correzione, V2); `controlli_rigidi = true`, `guardia_attiva = false`; `gallery_photo_uploads` non è più nel registro e non ha la colonna `anno_id`. Una foto pubblicata dall'app alle 13:43, dopo lo sblocco a mano, e nessun errore della galleria in `app_log` da allora. `get_advisors`: 0 `ERROR` (solo gli `INFO`/`WARN` che c'erano già).
+
 ## 🗓️ Changelog — Anno scolastico, PR 2: il riempimento, la riconciliazione e i vincoli — 2026-11-07 (branch `feat/anno-scolastico-riempimento`)
 
-**Stato:** 🟡 in corso — PR 2 sul branch `feat/anno-scolastico-riempimento`, PR verso `main`; il merge lo fa il titolare. **Per gli utenti non cambia niente**: nessun file in `src/`, nessuna route, nessuna schermata; a guardia spenta l'app di oggi si comporta come prima. Cambia il database: dà un anno a ogni riga esistente, crea le frequenze degli alunni, mette i vincoli.
+**Stato:** ✅ in produzione (#294, `b01c38a1`, 07/11 alle 11:50). M1, F1 e V1 sono state applicate al merge; **V2 si è fermata** sulla chiave anti-doppione delle foto ed è stata applicata alle 16:37, dopo la correzione urgente (#296, voce qui sopra). **Verificato dopo** (07/11 alle 16:40, solo `SELECT`): `anno_invarianti()` senza righe; `anno_riconciliazione_differenze()` vuota; 811 frequenze (794 `iscritto`, 17 `ritirato`); su 46 tabelle del registro nessuna riga senza anno, 36 con `NOT NULL` e 10 a sede facoltativa con il `CHECK`; nessun `error`/`warn` in `app_log` dopo il merge; 0 avvisi `db:anno-sezione-anno-senza-sezioni`. Il confronto con l'Excel di classe della primaria (solo numeri di righe): a Cesa le 5 classi coincidono; a Giugliano coincidono IV e V, mentre I, II e III hanno ciascuna un bambino in più, entrato dopo la data del foglio. **Per gli utenti non cambia niente**: nessun file in `src/`, nessuna route, nessuna schermata; a guardia spenta l'app di oggi si comporta come prima. Cambia il database: dà un anno a ogni riga esistente, crea le frequenze degli alunni, mette i vincoli.
 
 **Le quattro migrazioni, nell'ordine** (le applica l'integrazione di Supabase al merge, con la version del file; si merge in un'ora quieta, a scuole chiuse):
 1. **M1** `20261107012110_anno_strumenti.sql`: gli strumenti, senza toccare i dati esistenti (regola transitoria dei «dichiarati», rapporto di riconciliazione `riconciliazione_anno`, traduzione dei nomi di classe in uuid di sezione, copia della configurazione, specchio alunni → frequenze, funzioni di controllo).
@@ -47,7 +57,7 @@
 
 ## 🗓️ Changelog — Anno scolastico, PR 1: lo schema dei due anni per sede, spento — 2026-11-06 (branch `feat/anno-scolastico-schema`)
 
-**Stato:** 🟡 in corso — PR 1 schema, sul branch `feat/anno-scolastico-schema`, PR verso `main`; il merge lo fa il titolare. Una migrazione sola, `supabase/migrations/20261106200347_anno_scolastico_schema.sql`: la applica l'integrazione di Supabase al merge, con la version del file. Nessuna route, nessun codice dell'app. Specifica: `docs/superpowers/specs/2026-11-06-anno-scolastico-design.md`; piano: `docs/superpowers/plans/2026-11-06-anno-scolastico.md`.
+**Stato:** ✅ in produzione (#293, `4d22488c`, 07/11). Una migrazione sola, `supabase/migrations/20261106200347_anno_scolastico_schema.sql`: la applica l'integrazione di Supabase al merge, con la version del file. Nessuna route, nessun codice dell'app. Specifica: `docs/superpowers/specs/2026-11-06-anno-scolastico-design.md`; piano: `docs/superpowers/plans/2026-11-06-anno-scolastico.md`.
 
 **Perché.** L'app non sa che esistono due anni scolastici contemporaneamente: il 2026/27 in corso e il 2027/28 da preparare. Senza un anno scritto nei dati, il passaggio di classe di settembre 2027 sarebbe un'operazione fatta a mano su tabelle che non distinguono un anno dall'altro.
 

@@ -379,30 +379,9 @@ export function posterioriCheContengono(
 // `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
 // come voleva R15), solo l'istante dello scatto. Le altre due (bucket, schema delle candidature) non si toccano.
 // Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
-// PR 2 «anno scolastico» (07/11/2026), M1 `20261107012110_anno_strumenti`, compiti 2.0 e 2.1. Il 2.0 non muoveva
-// nessuna fotografia (colonne a `anno_regole` e `anno_tabelle`, funzioni `SECURITY DEFINER`, un trigger su
-// `crm_bambini`). Il 2.1 aggiunge `riconciliazione_anno`: la fotografia dei conteggi, con `scuola_id` (FK
-// verso `schools`, `ON DELETE SET NULL`: la vuole `fk-scuola-id`) e `anno_id` senza chiave esterna di proposito (un
-// anno che sparisce non deve toglierle il senso), RLS accesa senza policy e una `PRIMARY KEY`. Cambieranno davvero, rigenerando dalla produzione dopo il merge: la fotografia delle
-// migrazioni (+1 riga), degli indici unici (+1, la chiave primaria), della RLS (+1 tabella, nessuna policy) e delle
-// tabelle con `scuola_id` (+1) e delle FK di sede (+1, `riconciliazione_anno_scuola_id_fkey`).
-// Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge. Le quattro migrazioni della PR 2 sono
-// M1, F1 (esclusa a ragione: chiama solo funzioni di M1), V1 e V2 (compiti 2.0-2.3), tutte qui sotto salvo F1.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261107012110_anno_strumenti.sql':
-        'PR 2 anno scolastico, M1 (compiti 2.0-2.3): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
-        '`scuola_id` con FK verso `schools`); colonne `target_section_ids` e `mensa_class_menu_assignment.section_id` ' +
-        '(FK verso `sections`, con indice). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
-        'produzione nella PR-B. F1 (`_anno_riempimento_1`, compito 2.2) contiene solo chiamate a funzioni di M1: ' +
-        'nessuna tabella, nessuna colonna, nessuna voce propria qui.',
-    '20261107023143_anno_vincoli_1.sql':
-        'PR 2 anno scolastico, V1 (compito 2.3): solo `ADD CONSTRAINT <tab>_anno_id_presente CHECK (...) NOT VALID` ' +
-        'sulle tabelle del registro `anno_tabelle`. Nessuna FK verso `utenti`, nessuna ON DELETE, nessuna tabella ' +
-        'nuova: il filtro largo (`add constraint`) la nomina ma non cambia la fotografia. Applicata dall\'integrazione al merge; la voce si toglie nella PR-B.',
-    '20261107023257_anno_vincoli_2.sql':
-        'PR 2 anno scolastico, V2 (compito 2.3): `VALIDATE CONSTRAINT`, `SET NOT NULL` e `DROP CONSTRAINT` dei soli ' +
-        'CHECK `<tab>_anno_id_presente` di V1; nessuna FK verso `utenti`, nessuna ON DELETE. Applicata dall\'integrazione al merge; la voce si toglie nella PR-B.',
-}
+// 2026-11-07 · PR di pulizia dopo la PR 2 «anno scolastico»: M1, V1 e V2 sono applicate in produzione e le fotografie
+// sono rigenerate dal database (migrazioni 258, indici unici 290, RLS accesa 179, tabelle con `scuola_id` 99). L'elenco torna vuoto.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

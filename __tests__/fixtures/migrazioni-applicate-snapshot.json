@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T01:07:58Z",
-  "sha256": "05c849b8bc0ea9cb12bf05f3b290b3824b057df177e8d4f60e7cd26f58e2e768",
+  "generato_alle": "2026-11-07T15:42:32Z",
+  "sha256": "f00d0fb14bd536ca9fd2412e7fdce8e2c2e2ec4a4e6d5df8be72c7e69d828055",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -1015,6 +1015,26 @@
     {
       "version": "20261106200347",
       "name": "anno_scolastico_schema"
+    },
+    {
+      "version": "20261107012110",
+      "name": "anno_strumenti"
+    },
+    {
+      "version": "20261107021612",
+      "name": "anno_riempimento_1"
+    },
+    {
+      "version": "20261107023143",
+      "name": "anno_vincoli_1"
+    },
+    {
+      "version": "20261107023211",
+      "name": "anno_foto_anti_doppione_fuori_registro"
+    },
+    {
+      "version": "20261107023257",
+      "name": "anno_vincoli_2"
     }
   ]
 }

@@ -10,7 +10,7 @@
 
 **Prove.** `__tests__/db/anno-foto-anti-doppione.test.ts` (PGlite, RPC vera): senza la correzione la pubblicazione dà `23514` e V2 si ferma con una chiave orfana; con la correzione la foto si pubblica con il suo anno, il replay non la ricrea e V2 si applica con `controlli_rigidi = true`; la tabella non ha più colonna, vincoli, indici né trigger dell'anno; la migrazione è ripetibile. Fotografia `tabelle-anno.json` e sentinella a 46.
 
-**Prima del merge** (sola lettura): `SELECT count(*) FROM public.galleria_media_v2 WHERE politica_operazione ->> 'sopprimiGenitori' = 'true';` deve dare 0 (il 07/11 alle 12:30 di Roma: 0). **Da fare dopo il merge:** lo storico deve avere sia `20261107023211` sia `20261107023257`; una `SELECT` che ritrovi la migrazione e V2 applicate (`controlli_rigidi = true`), `get_advisors` a 0 ERROR, una pubblicazione di prova dall'app; poi le fotografie dalla produzione nella PR di pulizia.
+**Prima del merge** (sola lettura): `SELECT count(*) FROM public.galleria_media_v2 WHERE politica_operazione ->> 'sopprimiGenitori' = 'true';` deve dare 0 (eseguita in sola lettura dallo strumento SQL di Supabase il 07/11 alle 12:33 di Roma: 0). **Da fare dopo il merge:** lo storico deve avere sia `20261107023211` sia `20261107023257`; una `SELECT` che ritrovi la migrazione e V2 applicate (`controlli_rigidi = true`), `get_advisors` a 0 ERROR, una pubblicazione di prova dall'app; poi le fotografie dalla produzione nella PR di pulizia.
 
 ## 🗓️ Changelog — Anno scolastico, PR 2: il riempimento, la riconciliazione e i vincoli — 2026-11-07 (branch `feat/anno-scolastico-riempimento`)
 

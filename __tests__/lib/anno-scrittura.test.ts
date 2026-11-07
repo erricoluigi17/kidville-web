@@ -55,7 +55,12 @@ function righeAgosto(): Riga[] {
   return r
 }
 
-type Opzioni = { righe?: Riga[]; indietro?: boolean; inserimentoFallisce?: boolean }
+// `guardia`: il valore di `anno_regole.guardia_attiva` (default: accesa, così i 409 restano 409);
+// `regoleErrore`: la lettura di `anno_regole` fallisce con quel codice.
+type Opzioni = {
+  righe?: Riga[]; indietro?: boolean; inserimentoFallisce?: boolean
+  guardia?: boolean; regoleErrore?: string
+}
 
 function finto(o: Opzioni = {}) {
   const righe = o.righe ?? righeNormali()
@@ -70,6 +75,7 @@ function finto(o: Opzioni = {}) {
       const b = {
         select() { return b },
         eq(col: string, val: unknown) { filtri.push([col, val]); return b },
+        limit() { return b },
         insert(nuove: Array<Record<string, unknown>>) {
           if (o.inserimentoFallisce) {
             return { select: async () => ({ data: null, error: { code: '23514', message: 'Failing row contains (segreto)' } }) }
@@ -80,6 +86,10 @@ function finto(o: Opzioni = {}) {
         },
         then(ok: (v: unknown) => unknown) {
           if (o.indietro) return Promise.resolve({ data: null, error: errIndietro }).then(ok)
+          if (tabella === 'anno_regole') {
+            if (o.regoleErrore) return Promise.resolve({ data: null, error: { code: o.regoleErrore, message: 'x' } }).then(ok)
+            return Promise.resolve({ data: [{ guardia_attiva: o.guardia ?? true }], error: null }).then(ok)
+          }
           const dati = tabella === 'anni_sede'
             ? righe.filter((r) => filtri.every(([c, v]) => (r as Record<string, unknown>)[c] === v))
             : []
@@ -423,6 +433,67 @@ describe('annoPerScritturaPubblica', () => {
     expect(annoPerScritturaPubblica.length).toBeLessThanOrEqual(3)
     // Un cookie nel processo non cambia niente: la funzione non ha modo di leggerlo.
     expect(annoPerScritturaPubblica.toString()).not.toMatch(/cookie/i)
+  })
+})
+
+describe('P48 · finché la guardia è spenta un anno chiuso non si rifiuta: si osserva', () => {
+  const osservati = () => logger.logEvento.mock.calls.filter((c) => c[2]?.tipo === 'anno-chiuso-osservato')
+
+  it('chiuso dichiarato senza correzione: guardia spenta → osservato (conAnno = {}), un warn; accesa → 409; lettura in errore → osservato', async () => {
+    const spenta = finto({ guardia: false })
+    const o = esito(await resolveAnnoScrittura(richiesta(), spenta.supabase, SEGRETERIA, SEDE, { dichiarato: A1 }))
+    expect(o.osservato).toBe(true)
+    expect(o.annoId).toBeNull()
+    expect(o.gettone).toBeUndefined()
+    expect(conAnno(o)).toEqual({})
+    expect(spenta.scritture).toHaveLength(0)
+    expect(osservati()).toHaveLength(1)
+    const w = osservati()[0]
+    expect(w[0]).toBe('anno-scolastico')
+    expect(w[1]).toBe('warn')
+    expect(w[2]).toMatchObject({ azione: 'resolveAnnoScrittura', error_code: 'ANNO_CHIUSO', anno_sede_id: S1 })
+    expect('codice' in w[2]).toBe(false)
+    expect('motivo' in w[2]).toBe(false)
+
+    const accesa = finto({ guardia: true })
+    const r = await leggi(await resolveAnnoScrittura(richiesta(), accesa.supabase, SEGRETERIA, SEDE, { dichiarato: A1 }))
+    expect(r.status).toBe(409)
+    expect(r.body.codice).toBe('ANNO_CHIUSO')
+
+    logger.logEvento.mockClear()
+    for (const codice of ['XX000', 'PGRST205']) {
+      const rotta = finto({ regoleErrore: codice })
+      const e = esito(await resolveAnnoScrittura(richiesta(), rotta.supabase, SEGRETERIA, SEDE, { dichiarato: A1 }))
+      expect(e.osservato).toBe(true)
+      expect(conAnno(e)).toEqual({})
+    }
+    expect(osservati()).toHaveLength(2)
+  })
+
+  it('in_chiusura, docente: stessa regola (guardia spenta → osservato; accesa → 409); lo staff riceve ancora il gettone', async () => {
+    const spenta = finto({ righe: righeAgosto(), guardia: false })
+    const o = esito(await resolveAnnoScrittura(richiesta(), spenta.supabase, DOCENTE, SEDE, { dichiarato: A2 }))
+    expect(o.osservato).toBe(true)
+    expect(conAnno(o)).toEqual({})
+    expect(osservati()).toHaveLength(1)
+    const accesa = finto({ righe: righeAgosto(), guardia: true })
+    expect((await leggi(await resolveAnnoScrittura(richiesta(), accesa.supabase, DOCENTE, SEDE, { dichiarato: A2 }))).status).toBe(409)
+    const staff = esito(await resolveAnnoScrittura(richiesta(), spenta.supabase, SEGRETERIA, SEDE, { dichiarato: A2 }))
+    expect(staff.osservato).toBeUndefined()
+    expect(staff.gettone).toBeDefined()
+  })
+
+  it('il ramo con correzione e ANNO_NON_VISIBILE non cambiano; annoDellaData applica la stessa regola', async () => {
+    const f = finto({ guardia: false })
+    const c = esito(await resolveAnnoScrittura(richiesta(), f.supabase, SEGRETERIA, SEDE, { dichiarato: A1, correzione: { motivo: 'rettifica' } }))
+    expect(c.osservato).toBeUndefined()
+    expect(c.gettone).toBeDefined()
+    expect((await leggi(await resolveAnnoScrittura(richiesta(), f.supabase, DOCENTE, SEDE, { dichiarato: A3 }))).status).toBe(403)
+    const d = esito(await annoDellaData(f.supabase, SEGRETERIA, SEDE, '2026-03-10'))
+    expect(d.osservato).toBe(true)
+    expect(conAnno(d)).toEqual({})
+    const acc = finto({ guardia: true })
+    expect((await leggi(await annoDellaData(acc.supabase, SEGRETERIA, SEDE, '2026-03-10'))).status).toBe(409)
   })
 })
 

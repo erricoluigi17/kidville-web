@@ -3,9 +3,11 @@
  *
  * `StatoAnno` è lo stato di `anni_sede.stato` (CHECK della migrazione della PR 1).
  * `EsitoAnno` è ciò che `resolveAnnoScrittura` / `annoDellaData` restituiscono (Compito 3.2):
- * `annoSedeId`, `annoId` e `stato` sono `null` SOLO con `schemaIndietro: true`, cioè sul
- * database della CI, che non ha ancora lo schema dell'anno.
- *
+ * `annoSedeId` e `stato` sono `null` SOLO con `schemaIndietro: true`, cioè sul database della CI,
+ * che non ha ancora lo schema dell'anno. `annoId` è `null` con `schemaIndietro: true` e con
+ * `osservato: true`: in quel caso l'anno è `in_chiusura`/`chiuso`, la guardia è spenta e la scrittura
+ * NON dichiara l'anno (lo assegna la regola transitoria del database, come prima della PR 3).
+ * Un esito osservato non è un anno dichiarato: `annoId` è `null`, `conAnno` dà `{}`.
  */
 export type StatoAnno =
   | 'in_preparazione'
@@ -21,6 +23,8 @@ export type EsitoAnno = {
   gettone?: string
   gettoni?: string[]
   schemaIndietro?: true
+  /** Anno chiuso/in chiusura con la guardia spenta: la scrittura passa senza dichiarare l'anno. */
+  osservato?: true
 }
 
 /**
@@ -29,7 +33,7 @@ export type EsitoAnno = {
  * `anno_id` è `anni_scolastici.id`, non `anni_sede.id`.
  */
 export function conAnno(esito: EsitoAnno): { anno_id?: string } {
-  return esito.schemaIndietro || !esito.annoId ? {} : { anno_id: esito.annoId }
+  return esito.schemaIndietro || esito.osservato || !esito.annoId ? {} : { anno_id: esito.annoId }
 }
 
 /**

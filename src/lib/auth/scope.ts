@@ -460,6 +460,32 @@ export type OpzioniAnnoScrittura = {
  * «Staff» è `vedeTutteLeClassi` (Direzione e segreteria): un docente con `correzione` non ottiene mai
  * un gettone. `utente_id` del gettone è `AppUser.id` (= `utenti.id` = `auth.users.id` per lo staff).
  */
+/**
+ * Un anno `in_chiusura`/`chiuso` senza gettone (Ruling P48). Finché la guardia è spenta
+ * (`anno_regole.guardia_attiva = false`) nessuna scrittura che oggi passa va rifiutata (D1): l'esito
+ * NON dichiara l'anno (`osservato`), la regola transitoria del database lo assegna come prima, e un
+ * `warn` `anno-chiuso-osservato` la conta. Guardia accesa → 409 `ANNO_CHIUSO`, come sempre.
+ * Lettura fallita o schema assente → si osserva: con la guardia accesa decide comunque il trigger.
+ * La lettura avviene solo in questo ramo. La 3-B toglie il ramo insieme alla guardia spenta.
+ */
+async function rifiutoOsservandoLaGuardia(
+  supabase: SupabaseClient,
+  riga: RigaAnnoSede,
+  azione: string,
+): Promise<EsitoAnno | NextResponse> {
+  const { data, error } = await supabase.from('anno_regole').select('guardia_attiva').limit(1)
+  if (!error) {
+    const attiva = (Array.isArray(data) ? data[0] : null) as { guardia_attiva?: boolean } | null
+    if (attiva?.guardia_attiva === true) return rifiutoAnno('ANNO_CHIUSO', azione)
+  } else if (!schemaAnnoIndietro(error)) {
+    logEvento('anno-scolastico', 'warn', { tipo: 'guardia-non-letta', azione, error_code: error.code ?? 'sconosciuto' })
+  }
+  logEvento('anno-scolastico', 'warn', {
+    tipo: 'anno-chiuso-osservato', azione, error_code: 'ANNO_CHIUSO', anno_sede_id: riga.id,
+  })
+  return { annoSedeId: riga.id, annoId: null, stato: riga.stato, osservato: true }
+}
+
 async function esitoPerAnno(
   supabase: SupabaseClient,
   user: AppUser,
@@ -483,11 +509,11 @@ async function esitoPerAnno(
       })
       return rifiutoAnno('ANNO_NON_VISIBILE', azione)
     case 'in_chiusura':
-      if (!staff) return rifiutoAnno('ANNO_CHIUSO', azione)
+      if (!staff) return rifiutoOsservandoLaGuardia(supabase, riga, azione)
       codice = 'agosto'
       break
     case 'chiuso': {
-      if (!staff || !opzioni.correzione) return rifiutoAnno('ANNO_CHIUSO', azione)
+      if (!staff || !opzioni.correzione) return rifiutoOsservandoLaGuardia(supabase, riga, azione)
       motivo = typeof opzioni.correzione.motivo === 'string' ? opzioni.correzione.motivo.trim() : ''
       if (!motivo) return rifiutoAnno('MOTIVO_OBBLIGATORIO', azione)
       codice = 'correzione'

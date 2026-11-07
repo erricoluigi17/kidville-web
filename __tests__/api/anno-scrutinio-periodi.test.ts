@@ -159,4 +159,36 @@ describe('POST /api/admin/primaria/scrutinio-periodi · l\'anno', () => {
         expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
         expect(h.scritture).toEqual([])
     })
+
+    // P48: «2025/2026» è l'anno chiuso di ogni sede. Con la guardia spenta la segretaria che lo digita scrive
+    // come oggi (la regola transitoria assegna l'anno): niente anno_id nel payload, un warn la conta.
+    describe('anno chiuso digitato a mano (P48)', () => {
+        const A1 = 'a1111111-1111-4111-8111-111111111111'
+        const S1 = 'b1111111-1111-4111-8111-111111111111'
+        const chiuso = () => {
+            h.db.anni_scolastici.push({ id: A1, etichetta: '2025/2026', etichetta_breve: '2025/26' })
+            h.db.anni_sede.push({ id: S1, scuola_id: SEDE_A, anno_id: A1, stato: 'chiuso', domande_aperte: false })
+        }
+
+        it('guardia spenta → 201, nessun anno_id, warn anno-chiuso-osservato', async () => {
+            chiuso()
+            h.db.anno_regole = [{ guardia_attiva: false }]
+            const res = await post(corpo({ annoScolastico: '2025/2026' }))
+            expect(res.status).toBe(201)
+            expect(inserimenti()[0].valori[0]).not.toHaveProperty('anno_id')
+            expect(inserimenti()[0].valori[0]).toMatchObject({ anno_scolastico: '2025/2026' })
+            const w = h.logEvento.mock.calls.find((c) => c[2]?.tipo === 'anno-chiuso-osservato')
+            expect(w?.[1]).toBe('warn')
+            expect(w?.[2]).toMatchObject({ error_code: 'ANNO_CHIUSO', anno_sede_id: S1 })
+        })
+
+        it('guardia accesa → 409 ANNO_CHIUSO e 0 scritture', async () => {
+            chiuso()
+            h.db.anno_regole = [{ guardia_attiva: true }]
+            const res = await post(corpo({ annoScolastico: '2025/2026' }))
+            expect(res.status).toBe(409)
+            expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+            expect(h.scritture).toEqual([])
+        })
+    })
 })

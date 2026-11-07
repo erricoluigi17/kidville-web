@@ -258,6 +258,9 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
 - (F9c) Gli interruttori di `anno_regole` (`controlli_rigidi`, `guardia_attiva`) entrano nel freno SQL
   (`supabase_sql_freno.py`) quando questa PR accende i controlli rigidi: oggi un `UPDATE anno_regole …` li
   spegne senza che il freno lo veda.
+- (revisione Opus, Minor 2) L'anno preso dalla scadenza di una voce di `pagamenti` senza competenza resta
+  «appiccicoso» se la scadenza cambia (dopo F2 la scadenza non si confronta più con un anno dichiarato o già
+  assegnato): va seguito con la regola `segue_data` e contato da un'invariante.
 
 ### PR 3 — Regola di scrittura, guardia, doppia scrittura, lock
 
@@ -301,6 +304,9 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
   (utente, un uso) prima di accendere la guardia.
 - (F10d) `anno_di` restituisce `anni_scolastici.id`, `anno_attivo` restituisce `anni_sede.id`: dirlo dove le PR 3
   e 4 li usano, perché i due non si scambiano.
+- (revisione Opus, Minor 4) «`anno_id` uguale a OLD» vale come non toccato: su UPDATE in modo `data`/`madre`
+  una route che riscrive l'anno a ogni UPDATE non riceve `ANNO_NON_COERENTE`, la riga si riallinea alla data.
+  In un anno chiuso la guardia ferma comunque.
 
 ### PR 4.1 → 4.9 — Lettura dalla strada nuova
 
@@ -324,6 +330,9 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
   - (revisione Opus, F11) Prima di esporre `sposta_confine_anno` alla segreteria, `anno_conta_righe_assegnate_nei_giorni`
     va resa selettiva: oggi filtra solo `anno_id` e scansiona per intero ~45 tabelle. Dove la tabella ha
     `scuola_id` si usa `(scuola_id, anno_id)`, che ha il suo indice.
+  - (revisione Opus, Minor 3) `sposta_confine_anno` conta ancora la scadenza delle voci dichiarate: dopo F2 deve
+    usare la stessa regola del trigger (la scadenza serve solo ad assegnare), altrimenti rifiuta spostamenti
+    legittimi.
 - **4.3 Sezioni e docenti.**
   - `sezioni_visibili_docente()`; le liste delle sezioni filtrano per anno; migrazione della fase B (il
     trigger-specchio si inverte);

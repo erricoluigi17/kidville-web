@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnno, fissaCalendarioAnni } from '../helpers/schema-anno-pglite'
+import { creaDbAnno, creaAnniFissi } from '../helpers/schema-anno-pglite'
 
 /**
  * COMPITO 1.4a · REGISTRO DELLE TABELLE, ANNO SULLE TABELLE B, TRIGGER GENERICO.
@@ -8,8 +8,10 @@ import { creaDbAnno, fissaCalendarioAnni } from '../helpers/schema-anno-pglite'
  * nel 1.4b e nel 1.4c. Solo uuid finti.
  *
  * Gli anni sono fissi: creati con `p_oggi` fisso E con gli stati reimpostati da `fissaCalendarioAnni`
- * (la migrazione dà alle sedi già presenti gli stati di OGGI, che dal 01/08/2027 cambierebbero esito).
- * Nessun test dipende da oggi, tranne quello che scrive «oggi» di proposito.
+ * (la migrazione dà alle sedi già presenti gli stati di OGGI: dal 01/08/2027 il 2026/27 sarebbe
+ * `in_chiusura`, dal 01/09/2027 il 2027/28 sarebbe già `corrente`). L'helper riporta tutto al calendario
+ * di sempre; il 2027/28 del describe «F2» si toglie solo se l'ha creato il test. Nessun test dipende da
+ * oggi, tranne quello che scrive «oggi» di proposito.
  */
 
 const SEDE = '22222222-2222-4222-8222-222222222222'
@@ -50,8 +52,7 @@ beforeAll(async () => {
   db = await creaDbAnno({ sediPrimaDellaMigrazione: [SEDE] })
   // Anni fissi: 2025/26 e 2026/27 con date e stati di sempre. Gli stati li ha dati la migrazione con il
   // giorno in cui il test gira: si reimpostano, perché il risultato non dipenda da oggi.
-  await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [SEDE])
-  await fissaCalendarioAnni(db)
+  await creaAnniFissi(db, [SEDE])
   A2526 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2025`)
   A2627 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2026`)
   await db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [ALUNNO, SEDE])
@@ -253,7 +254,10 @@ describe('modo dichiarato (pagamenti)', () => {
 
   describe('con il 2027/28 creato (F2)', () => {
     let A2728: string
+    // Dal 01/09/2027 il 2027/28 lo crea già la migrazione: si toglie solo quello creato qui.
+    let creatoQui = false
     beforeAll(async () => {
+      creatoQui = (await una<number>(`SELECT count(*)::int FROM public.anni_scolastici WHERE anno_inizio = 2027`)) === 0
       await db.exec(`
         INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
         INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
@@ -264,6 +268,7 @@ describe('modo dichiarato (pagamenti)', () => {
     })
     afterAll(async () => {
       await db.query(`DELETE FROM public.pagamenti WHERE anno_id = $1`, [A2728])
+      if (!creatoQui) return
       await db.query(`DELETE FROM public.anni_sede_stati WHERE anno_sede_id IN (SELECT id FROM public.anni_sede WHERE anno_id = $1)`, [A2728])
       await db.query(`DELETE FROM public.anni_sede WHERE anno_id = $1`, [A2728])
       await db.query(`DELETE FROM public.anni_scolastici WHERE id = $1`, [A2728])
@@ -1168,8 +1173,7 @@ describe('la sede della riga è la sua scuola_id (revisione finale, I1)', () => 
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, scuola_id uuid NOT NULL,
         data date NOT NULL, creato_il timestamptz DEFAULT now());`,
     })
-    for (const s of [SEDE, SEDE_B]) await dbB.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [s])
-    await fissaCalendarioAnni(dbB)
+    await creaAnniFissi(dbB, [SEDE, SEDE_B])
     await dbB.exec(`
       INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
       INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
@@ -1229,8 +1233,7 @@ describe('eventi_diario: la data è orario_inizio, non la colonna generata (revi
         creato_il timestamptz DEFAULT now());`,
     })
     try {
-      await dbE.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [SEDE])
-      await fissaCalendarioAnni(dbE)
+      await creaAnniFissi(dbE, [SEDE])
       await dbE.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [ALUNNO, SEDE])
       const anni = await dbE.query<{ anno_inizio: number; id: string }>(`SELECT anno_inizio, id FROM public.anni_scolastici`)
       const a2526 = anni.rows.find((x) => x.anno_inizio === 2025)!.id

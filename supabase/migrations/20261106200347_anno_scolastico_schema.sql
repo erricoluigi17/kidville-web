@@ -1420,12 +1420,18 @@ $$;
 
 -- Il trigger generico. Una lettura del registro per riga, poi solo ricerche per chiave.
 --   · modo `data`: l'anno è quello che contiene il giorno (di ROMA) nella sede della riga;
---   · modo `dichiarato`: l'anno lo scrive chi inserisce; se la tabella ha una data (pagamenti:
---     competenza, altrimenti scadenza) e anno_id manca, si ricava, e se c'è si confronta;
+--   · modo `dichiarato`: l'anno lo scrive chi inserisce; se anno_id manca si ricava dalla data
+--     (pagamenti: competenza, altrimenti scadenza). Si CONFRONTA solo la colonna principale
+--     (la competenza): la data di riserva (la scadenza) serve ad assegnare, mai a smentire un anno
+--     dichiarato;
 --   · modo `madre`: l'anno è quello della riga madre.
 -- Controlli MORBIDI (default, e R2): mai un'eccezione. Anno non trovato → anno_id resta NULL;
--- anno scritto e diverso → lasciato com'è (le invarianti lo contano). RIGIDI (`anno_regole`, o
--- `rigida` della tabella): GIORNO_SENZA_ANNO, ANNO_NON_COERENTE, SEZIONE_DI_ALTRO_ANNO.
+-- anno scritto e diverso → lasciato com'è (le invarianti lo contano), TRANNE su UPDATE in modo
+-- `data`/`madre` quando `anno_id` è uguale a quello di OLD: chi corregge la data (o la madre) senza
+-- cambiare l'anno vuole che la riga segua, e la riga si riallinea all'anno calcolato (anche in modo
+-- morbido; la guardia vede ancora OLD e NEW). RIGIDI (`anno_regole`, o `rigida` della tabella):
+-- GIORNO_SENZA_ANNO, ANNO_NON_COERENTE (solo per un `anno_id` scritto diverso da OLD e dal calcolato),
+-- SEZIONE_DI_ALTRO_ANNO.
 -- UPDATE: si ricalcola e si verifica solo se cambia la colonna data (o la riserva), la via della
 -- sede, la madre, section_id o anno_id, oppure se anno_id è NULL: una riga vecchia incoerente non
 -- deve bloccare una scrittura che con lei non c'entra. Questa uscita anticipata salta il RICALCOLO,

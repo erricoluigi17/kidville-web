@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnno } from '../helpers/schema-anno-pglite'
+import { creaDbAnno, creaAnniFissi } from '../helpers/schema-anno-pglite'
 
 /**
  * COMPITO 1.4c · `sposta_confine_anno`: lo spostamento del confine fra due anni di una sede,
@@ -69,19 +69,26 @@ async function ripristina() {
     DELETE FROM public.avvisi;
     DELETE FROM public.chat_messages;
     DELETE FROM public.pagamenti;
+    -- due UPDATE: l'indice unico del corrente non è differibile (prima fuori ogni anno che non è il 2026/27)
     UPDATE public.anni_sede s
        SET inizio = y.inizio_predefinito, fine = y.fine_predefinita,
-           stato = CASE y.anno_inizio WHEN 2025 THEN 'chiuso' WHEN 2026 THEN 'corrente' ELSE 'in_preparazione' END,
+           stato = CASE WHEN y.anno_inizio < 2026 THEN 'chiuso' ELSE 'in_preparazione' END,
            ultimo_giorno_aperto = make_date(y.anno_inizio + 1, 7, 31),
            prepara_successivo_dal = y.inizio_predefinito
       FROM public.anni_scolastici y
-     WHERE y.id = s.anno_id AND y.anno_inizio IN (2025, 2026, 2027);
+     WHERE y.id = s.anno_id AND y.anno_inizio <> 2026;
+    UPDATE public.anni_sede s
+       SET inizio = y.inizio_predefinito, fine = y.fine_predefinita, stato = 'corrente',
+           ultimo_giorno_aperto = make_date(y.anno_inizio + 1, 7, 31),
+           prepara_successivo_dal = y.inizio_predefinito
+      FROM public.anni_scolastici y
+     WHERE y.id = s.anno_id AND y.anno_inizio = 2026;
   `)
 }
 
 beforeAll(async () => {
   db = await creaDbAnno({ sediPrimaDellaMigrazione: [SEDE, ALTRA_SEDE] })
-  for (const sede of [SEDE, ALTRA_SEDE]) await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [sede])
+  await creaAnniFissi(db, [SEDE, ALTRA_SEDE])
   await db.exec(`
     INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
     INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)

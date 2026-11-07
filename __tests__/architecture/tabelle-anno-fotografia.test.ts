@@ -6,8 +6,9 @@
  * la PR 3: qui si prova solo che la fotografia esista, non sia vuota, non sia stata scritta a mano
  * e porti tutto cio' che il lock futuro leggera'.
  *
- * Il numero delle tabelle (47) e' quello misurato in produzione il 07/11/2026: le 45 tabelle che
- * esistevano prima dell'anno scolastico, piu' `frequenze` e `frequenze_moduli`, che nascono con
+ * Il numero delle tabelle (46) e' quello misurato in produzione il 07/11/2026, meno `gallery_photo_uploads`
+ * (uscita dal registro con la correzione del 07/11: la chiave anti-doppione delle foto sopravvive alla foto e non ha
+ * una madre): le 44 tabelle che esistevano prima dell'anno scolastico, piu' `frequenze` e `frequenze_moduli`, che nascono con
  * `anno_id` insieme alla migrazione. Se la tabella cresce, si RIGENERA la fotografia e si aggiorna
  * il numero qui accanto: il numero in questo file e' la sentinella, non una descrizione.
  */
@@ -33,7 +34,7 @@ const foto: Foto = JSON.parse(
     readFileSync(join(process.cwd(), '__tests__', 'fixtures', 'tabelle-anno.json'), 'utf8'),
 )
 
-const TABELLE_ATTESE = 47
+const TABELLE_ATTESE = 46 // era 47: `gallery_photo_uploads` e' uscita dal registro (correzione del 07/11)
 const MODI = ['data', 'madre', 'dichiarato']
 
 describe('fotografia di anno_tabelle', () => {

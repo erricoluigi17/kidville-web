@@ -431,6 +431,8 @@ const SUFFISSI_PR2 = {
   // F2 e F3 (le tre tabelle grandi) si sono fuse in F1: il banco ha dato meno di 15 s (compito 2.2).
   F1: '_anno_riempimento_1.sql',
   V1: '_anno_vincoli_1.sql',
+  // Correzione del 07/11: `gallery_photo_uploads` esce dal registro. Sta FRA V1 e V2 (la sua version è scelta apposta).
+  FOTO: '_anno_foto_anti_doppione_fuori_registro.sql',
   V2: '_anno_vincoli_2.sql',
 } as const
 
@@ -509,7 +511,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → V2. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -518,6 +520,8 @@ export interface OpzioniDbPr2 {
   dopoM1?: (db: PGlite) => Promise<void>
   dopoF1?: (db: PGlite) => Promise<void>
   dopoV1?: (db: PGlite) => Promise<void>
+  /** Salta la correzione `FOTO`: riproduce la catena che in produzione si è fermata in V2 (il 07/11). */
+  senzaFoto?: boolean
 }
 
 /**
@@ -531,9 +535,10 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'V2']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, V2: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined } as const
   for (const passo of ordine) {
+    if (passo === 'FOTO' && o.senzaFoto) continue
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)
     if (passo === o.fino) break

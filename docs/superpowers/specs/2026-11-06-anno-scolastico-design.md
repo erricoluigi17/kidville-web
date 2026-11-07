@@ -160,7 +160,7 @@ Classi: **A** anagrafica permanente · **B** per anno scolastico · **C** per an
 | `alunni_classi_storico` (20.137) | dalla sezione | resta la storia *dentro* l'anno (trasferimenti fra sezioni) |
 | `presenze` (30.807), `eventi_diario` (65.352), `valutazioni` (840), `note_disciplinari`, `giustifiche_didattiche`, `registro_orario` (1.455), `eventi_agenda`, `armadietto`, `armadietto_richieste`, `mensa_prenotazioni` (2.458), `mensa_alternative` | dalla **data** nel calendario della sede, controllata contro la sezione | eventi dentro un anno |
 | `scrutini`, `scrutinio_giudizi`, `scrutinio_comportamento`, `scrutinio_giudizio_descrittivo`, `pagelle`, `pagella_ricezioni`, `nota_ricezioni`, `valutazione_obiettivi`, `certificati_competenze` (`anno_scolastico` testo → FK) | dal periodo/sezione | valutazione dell'anno |
-| `galleria_media_v2` (10.540), `gallery_photo_uploads`, `video_intents`, `video_jobs` | data + **sezione** (oggi la classe è un nome) | visibilità per classe e per periodo (dec. 16-17) |
+| `galleria_media_v2` (10.540), `video_intents`, `video_jobs` | data + **sezione** (oggi la classe è un nome) | visibilità per classe e per periodo (dec. 16-17) |
 | `avvisi` (274), `avvisi_risposte`, `forms_submissions` (autorizzazioni gita) | data + sezioni bersaglio (oggi nomi) | |
 | `votazioni*` (4 tabelle) | `anno_id` | rappresentanti di classe e d'istituto sono per anno |
 | `pagamenti` (3.434) | `anno_id` (+ `periodo_competenza` dentro l'anno) | la voce appartiene a un anno; la fattura no (C) |
@@ -195,7 +195,7 @@ un incasso del 2027 su una voce del 2027/28.
 `app_log`, `notifiche`, `registro_modifiche`, `audit_scritture_docente`, `fascicolo_accessi_audit`,
 `fea_audit_log`, `fea_signatures`, `firme_docenti`, `firme_documenti`, `chat_vigilanza_accessi`, `cron_*` (3),
 `otp_ticket_consumati`, `news_visualizzazioni`, `news_posts`, `solleciti`, `sblocchi_audit`, `storici_*` (3),
-`video_outbox`, `segnalazioni`, `richieste_cancellazione`, `task_interni`, `crm_appuntamenti`, `crm_azioni`,
+`video_outbox`, `gallery_photo_uploads` (la chiave anti-doppione delle foto: sopravvive alla foto purgata e viene scritta prima di lei, quindi non ha una madre né un anno proprio; l'anno sta su `galleria_media_v2`; uscita dal registro il 07/11/2026), `segnalazioni`, `richieste_cancellazione`, `task_interni`, `crm_appuntamenti`, `crm_azioni`,
 `crm_eventi`, `crm_indisponibilita`, `crm_settimane`, `crm_fasce`, `iscrizioni_retention_esecuzioni`,
 `iscrizioni_import_tentativi`, `iscrizioni_inviti_credenziali`, `password_cambi`, `consensi_accettazioni`,
 `mensa_ticket_movimenti`, `certificati_medici` (ha già `data_inizio`/`data_fine`), `divise_ordini`,
@@ -434,7 +434,7 @@ ciascuna trova l'anno. Lo leggono i trigger, le invarianti, il controllo notturn
 
 | modo | da dove viene l'anno | tabelle |
 |---|---|---|
-| `data` | dalla data dell'evento, presa come giorno civile di Roma, nel calendario della sede | `presenze.data`, `eventi_diario.giorno_competenza`, `valutazioni.data_evento`, `note_disciplinari.data_evento`, `registro_orario.data`, `giustifiche_didattiche`, `eventi_agenda`, `armadietto*`, `mensa_prenotazioni.data`, `mensa_alternative`, `galleria_media_v2.giorno_competenza`, `gallery_photo_uploads`, `video_*`, `avvisi.giorno_competenza`, `avvisi_risposte`, `forms_submissions`, `form_submissions` (dalla firma), `chat_messages.created_at`, `student_documents` (quelli annuali), `iscrizioni_servizi.dal` |
+| `data` | dalla data dell'evento, presa come giorno civile di Roma, nel calendario della sede | `presenze.data`, `eventi_diario.giorno_competenza`, `valutazioni.data_evento`, `note_disciplinari.data_evento`, `registro_orario.data`, `giustifiche_didattiche`, `eventi_agenda`, `armadietto*`, `mensa_prenotazioni.data`, `mensa_alternative`, `galleria_media_v2.giorno_competenza`, `video_*`, `avvisi.giorno_competenza`, `avvisi_risposte`, `forms_submissions`, `form_submissions` (dalla firma), `chat_messages.created_at`, `student_documents` (quelli annuali), `iscrizioni_servizi.dal` |
 | `dichiarato` | lo dice chi scrive (`resolveAnnoScrittura`, §4.5) | `frequenze`, `sections`, `enrollment_submissions` (anno di **destinazione**), `pagamenti` (con verifica della competenza), `crm_bambini`, `votazioni`, il listino, i moduli e i posti, `scrutinio_periodi`, `certificati_competenze`, `iscrizioni_decisioni`, `iscrizioni_elenco_caricamenti` |
 | `madre` | dalla riga a cui appartiene | `utenti_sezioni` (dalla sezione), `pagamenti_quote` (dalla voce), `scrutini*` e `pagelle` (dal periodo), `votazioni_*`, `iscrizioni_elenco_righe`, `frequenze_moduli` |
 

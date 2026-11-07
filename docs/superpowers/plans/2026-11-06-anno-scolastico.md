@@ -374,6 +374,12 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
     - `p_oggi` su una sede vera → errore;
     - **una conferma 2027/28 non cambia la classe di oggi**;
     - il genitore vede solo la voce della quota.
+  - consegna dalla PR 2 (**scadenza 01/09/2027**): da quel giorno il 2027/28 è l'anno di ogni data nuova. Senza
+    sezioni 2027/28 il controllo `SEZIONE_DI_ALTRO_ANNO` lascia passare (e lo conta in `app_log`); il CRM con
+    `quota_anno` 2028 o una competenza `2028-09-01` richiede il 2028/29, che crea **solo**
+    `anni_sede_crea_successivo`. La creazione automatica deve quindi essere in produzione prima di agosto 2027,
+    e va messo un **allarme ad agosto 2027** (anno successivo mancante). Una competenza o una data prima del
+    01/09/2025, o dopo l'ultimo anno creato, dà `GIORNO_SENZA_ANNO` (un arretrato importato, non l'interfaccia).
 - **4.6 Rette e servizi.**
   - `genera_rette_*` con `anno_sede_id`, importo e mesi dal listino;
   - test: nessuna voce da 150 € inventata; gli «esenti» non hanno voci; le «senza importo» vengono contate

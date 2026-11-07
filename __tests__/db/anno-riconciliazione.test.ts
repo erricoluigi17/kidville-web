@@ -358,6 +358,25 @@ describe('anno_riconciliazione_differenze · le tabelle madre', () => {
     await db.exec(`DELETE FROM public.avvisi_risposte`)
   })
 
+  it('una madre non confrontabile che PERDE righe (avvisi_risposte 2 → 1) compare; se ne guadagna (1 → 2) no', async () => {
+    const avviso = await una<string>(`SELECT id FROM public.avvisi LIMIT 1`)
+    const nuova = () => db.query(`INSERT INTO public.avvisi_risposte (avviso_id, parent_id, student_id) VALUES ($1, gen_random_uuid(), gen_random_uuid())`, [avviso])
+    await db.exec(`DELETE FROM public.avvisi_risposte`)
+    await nuova(); await nuova()
+    await foto('prima')
+    await db.exec(`DELETE FROM public.avvisi_risposte WHERE ctid = (SELECT ctid FROM public.avvisi_risposte LIMIT 1)`)
+    await foto('dopo')
+    expect((await differenze()).filter((d) => d.tabella === 'avvisi_risposte')).toEqual([
+      { tabella: 'avvisi_risposte', scuola_id: null, voce: 'righe', prima: 2, dopo: 1, nuove: 0 },
+    ])
+    await db.exec('DELETE FROM public.riconciliazione_anno')
+    await foto('prima')
+    await nuova()
+    await foto('dopo')
+    expect((await differenze()).filter((d) => d.tabella === 'avvisi_risposte')).toEqual([])
+    await db.exec(`DELETE FROM public.avvisi_risposte`)
+  })
+
   it('le tabelle con una colonna di creazione non sono mai tra le non confrontabili', async () => {
     await foto('prima')
     const t = (await db.query<{ tabella: string }>(
@@ -366,6 +385,43 @@ describe('anno_riconciliazione_differenze · le tabelle madre', () => {
       `SELECT tabella FROM public.anno_tabelle WHERE colonna_creazione IS NULL ORDER BY 1`)).rows.map((x) => x.tabella)
     expect(t).toEqual(senza)
   })
+})
+
+describe('da capo a fondo: fotografia prima → anno_riempi() → fotografia dopo', () => {
+  it('con le frequenze create davvero dal riempimento le differenze sono vuote (recuperi = alunni con sede, nessun alunno senza frequenza)', async () => {
+    const d = await creaDbAnno({ sediPrimaDellaMigrazione: [S1], codaPrima: SCHEMA_PR2 + SCHEMA_RICONCILIAZIONE })
+    try {
+      await creaAnniFissi(d, [S1])
+      await applicaPr2(d, 'M1')
+      for (const t of ['pagamenti', 'presenze', 'enrollment_submissions']) {
+        await d.exec(`ALTER TABLE public.${t} DISABLE TRIGGER trg_zz_anno_assegna_e_verifica`)
+      }
+      for (const a of ALUNNI) await d.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [a, S1])
+      await d.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, NULL)`, [ALUNNO_SENZA_SEDE])
+      await d.query(
+        `INSERT INTO public.pagamenti (scuola_id, descrizione, importo, importo_pagato, scadenza, periodo_competenza)
+         VALUES ($1, 'a', 150, 150, DATE '2026-10-05', DATE '2026-10-01'), ($1, 'b', 99.90, 0, DATE '2026-12-05', NULL)`, [S1])
+      await d.query(`INSERT INTO public.presenze (scuola_id, data) VALUES ($1, DATE '2026-10-05'), ($1, DATE '2026-07-10')`, [S1])
+      await d.query(`INSERT INTO public.enrollment_submissions (scuola_id, created_at) VALUES ($1, TIMESTAMPTZ '2026-09-10 10:00:00+00')`, [S1])
+      for (const t of ['pagamenti', 'presenze', 'enrollment_submissions']) {
+        await d.exec(`ALTER TABLE public.${t} ENABLE TRIGGER trg_zz_anno_assegna_e_verifica`)
+      }
+
+      await d.query(`SELECT public.anno_fotografa('prima')`)
+      await d.query(`SELECT public.anno_riempi()`)
+      await d.query(`SELECT public.anno_fotografa('dopo')`)
+
+      const somma = async (fase: string, voce: string, tabella: string) => Number((await d.query<{ v: string }>(
+        `SELECT coalesce(sum(valore), 0)::text AS v FROM public.riconciliazione_anno WHERE fase = $1 AND voce = $2 AND tabella = $3`,
+        [fase, voce, tabella])).rows[0].v)
+      expect((await d.query(`SELECT * FROM public.anno_riconciliazione_differenze()`)).rows).toEqual([])
+      expect(await somma('prima', 'alunni_senza_frequenza', 'alunni')).toBe(5)
+      expect(await somma('dopo', 'alunni_senza_frequenza', 'alunni')).toBe(0)
+      expect(await somma('dopo', 'recuperi', 'frequenze')).toBe(5)
+      expect(await somma('dopo', 'righe_senza_anno', 'pagamenti')).toBe(0)
+      expect(await somma('dopo', 'euro_importo', 'pagamenti')).toBe(249.9)
+    } finally { await d.close() }
+  }, 60_000)
 })
 
 describe('sicurezza', () => {

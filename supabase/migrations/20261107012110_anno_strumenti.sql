@@ -643,11 +643,18 @@ BEGIN
                v_t, 'recupero'));
       v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_da_listino',
         format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.retta_mensile IS NULL GROUP BY 1', v_t));
-      -- sedi senza `retta_default_importo`: la retta senza fascia diventa 150 € (come fa oggi la generazione)
-      IF public.anno_ha_colonna('schools', 'retta_default_importo') THEN
+      -- sedi senza `retta_default_importo`: la retta senza fascia diventa 150 € (come fa oggi la generazione).
+      -- Il valore sta in `admin_settings` (una riga per sede); il ripiego sulla colonna di `schools` resta per i
+      -- database che hanno quella forma.
+      v_cond := NULL;
+      IF to_regclass('public.admin_settings') IS NOT NULL AND public.anno_ha_colonna('admin_settings', 'retta_default_importo') THEN
+        v_cond := 'NOT EXISTS (SELECT 1 FROM public.admin_settings x WHERE x.scuola_id = t.scuola_id AND x.retta_default_importo > 0)';
+      ELSIF public.anno_ha_colonna('schools', 'retta_default_importo') THEN
+        v_cond := 'EXISTS (SELECT 1 FROM public.schools s WHERE s.id = t.scuola_id AND s.retta_default_importo IS NULL)';
+      END IF;
+      IF v_cond IS NOT NULL THEN
         v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_default_assente_150',
-          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
-                 || 'WHERE EXISTS (SELECT 1 FROM public.schools s WHERE s.id = t.scuola_id AND s.retta_default_importo IS NULL) GROUP BY 1', v_t));
+          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_t, v_cond));
       END IF;
       -- ingresso/uscita che il riempimento ha dovuto portare all'inizio dell'anno
       IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
@@ -715,11 +722,12 @@ $$;
 
 -- Le tabelle CONSERVATE in cui l'ultima fotografia `prima` e l'ultima `dopo` (o `finale`) non tornano:
 -- `dopo − prima − nuove <> 0`, per `righe` ed euro, al centesimo. Vuota = conservato. Sono escluse
--- `frequenze` e `frequenze_moduli`, che nascono vuote, e le tabelle senza una colonna di creazione propria
--- (avvisi_risposte, gallery_photo_uploads, scrutinio_comportamento, valutazione_obiettivi, votazioni_candidati,
--- votazioni_classi: `righe_nuove` non si puo calcolare e ogni riga nata sul database vivo sembrerebbe un difetto;
--- le conta la voce `non_confrontabili` della fotografia); si confrontano solo le tabelle fotografate in entrambe
+-- `frequenze` e `frequenze_moduli`, che nascono vuote; si confrontano solo le tabelle fotografate in entrambe
 -- le fasi. «Ultima» = la fotografia (la transazione) dell'ultima riga scritta per quella tabella e fase.
+-- Le tabelle senza una colonna di creazione propria (avvisi_risposte, gallery_photo_uploads,
+-- scrutinio_comportamento, valutazione_obiettivi, votazioni_candidati, votazioni_classi) non hanno `righe_nuove`:
+-- una riga nata sul database vivo sembrerebbe un difetto, quindi un AUMENTO non si segnala (le conta la voce
+-- `non_confrontabili`). Un CALO sì: le righe nuove sono >= 0, quindi `dopo < prima` e per forza una cancellazione.
 CREATE OR REPLACE FUNCTION public.anno_riconciliazione_differenze()
 RETURNS TABLE (tabella text, scuola_id uuid, voce text, prima numeric, dopo numeric, nuove numeric)
 LANGUAGE sql
@@ -752,16 +760,40 @@ AS $$
      WHERE r.tabella IN (SELECT c.tabella FROM complete c)
        AND r.voce IN ('righe', 'euro_importo', 'righe_nuove', 'euro_nuove')
        AND NOT (r.fase = 'prima' AND r.voce IN ('righe_nuove', 'euro_nuove'))
+  ),
+  confrontabili AS (
+    SELECT m.tabella, m.scuola_id, m.voce,
+           coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0) AS prima,
+           coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) AS dopo,
+           coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) AS nuove
+      FROM marcate m
+     GROUP BY m.tabella, m.scuola_id, m.voce
+    HAVING coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) - coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0)
+           - coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) <> 0
+  ),
+  complete_nc AS (
+    SELECT u.tabella FROM ultime u
+     WHERE u.tabella IN (SELECT t.tabella FROM public.anno_tabelle t
+                          WHERE t.tabella NOT IN ('frequenze', 'frequenze_moduli')
+                            AND t.colonna_creazione IS NULL)
+     GROUP BY u.tabella HAVING count(*) = 2
+  ),
+  totali_nc AS (
+    SELECT r.tabella,
+           coalesce(sum(r.valore) FILTER (WHERE r.fase = 'prima'), 0) AS prima,
+           coalesce(sum(r.valore) FILTER (WHERE r.fase <> 'prima'), 0) AS dopo
+      FROM public.riconciliazione_anno r
+      JOIN ultime u ON u.tabella = r.tabella AND u.transazione = r.transazione AND u.e_prima = (r.fase = 'prima')
+     WHERE r.tabella IN (SELECT c.tabella FROM complete_nc c) AND r.voce = 'righe_totale'
+     GROUP BY r.tabella
   )
-  SELECT m.tabella, m.scuola_id, m.voce,
-         coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0) AS prima,
-         coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) AS dopo,
-         coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) AS nuove
-    FROM marcate m
-   GROUP BY m.tabella, m.scuola_id, m.voce
-  HAVING coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) - coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0)
-         - coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) <> 0
-   ORDER BY m.tabella, m.scuola_id, m.voce
+  SELECT x.tabella, x.scuola_id, x.voce, x.prima, x.dopo, x.nuove
+    FROM (
+      SELECT c.tabella, c.scuola_id, c.voce, c.prima, c.dopo, c.nuove FROM confrontabili c
+      UNION ALL
+      SELECT n.tabella, NULL::uuid, 'righe'::text, n.prima, n.dopo, 0::numeric FROM totali_nc n WHERE n.dopo < n.prima
+    ) x
+   ORDER BY x.tabella, x.scuola_id, x.voce
 $$;
 
 REVOKE ALL ON FUNCTION public.anno_sede_sql(text, text)                          FROM PUBLIC, anon, authenticated;
@@ -956,3 +988,341 @@ $$;
 
 REVOKE ALL ON FUNCTION public.anno_invarianti() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_invarianti() TO service_role;
+
+-- ── 2.2 · Il riempimento: i nomi di classe, la copia dell'anno, `anno_riempi()` ─────────────
+
+-- I nomi di classe (testo) diventano uuid di sezione, accanto ai nomi che restano (vincono i nomi, §4.10).
+-- La colonna nuova non cambia nessuna scrittura di oggi: la riempiono il riempimento e, dal Compito 2.3, il trigger.
+DO $mig$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('avvisi', 'target_section_ids'), ('galleria_media_v2', 'target_section_ids'),
+      ('news_posts', 'target_section_ids'), ('forms_templates', 'target_section_ids'),
+      ('video_intents', 'classi_destinatarie_section_ids')) AS v(t, c) LOOP
+    IF EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass(format('public.%I', r.t)) AND k.relkind IN ('r', 'p')) THEN
+      EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS %I uuid[]', r.t, r.c);
+    END IF;
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass('public.mensa_class_menu_assignment') AND k.relkind IN ('r', 'p')) THEN
+    ALTER TABLE public.mensa_class_menu_assignment
+      ADD COLUMN IF NOT EXISTS section_id uuid REFERENCES public.sections(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS mensa_class_menu_assignment_section_id_idx
+      ON public.mensa_class_menu_assignment (section_id);
+  END IF;
+END
+$mig$;
+
+-- I nomi di classe → gli uuid delle sezioni DELL'ANNO ATTIVO della sede. Si abbina sul nome normalizzato
+-- `lower(replace(x, ' ', ''))` (la forma di `sections_forma_normalizzata_per_sede`): «gira soli» e «Girasoli» sono
+-- la stessa sezione. Toglie i doppioni; un nome che nessuna sezione ha non produce niente (resta nei nomi).
+-- NULL → NULL; array vuoto → '{}'; sede NULL → '{}'. Il Compito 2.3 la chiama dai trigger per tabella.
+CREATE OR REPLACE FUNCTION public.anno_traduci_classi(p_scuola uuid, p_nomi text[])
+RETURNS uuid[]
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN p_nomi IS NULL THEN NULL
+    ELSE coalesce((
+      SELECT array_agg(DISTINCT s.id ORDER BY s.id)
+        FROM public.sections s
+       WHERE s.scuola_id = p_scuola
+         AND s.anno_id = (SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(p_scuola))
+         AND lower(replace(s.name::text, ' ', '')) IN (SELECT lower(replace(n, ' ', '')) FROM unnest(p_nomi) AS n)
+    ), '{}'::uuid[])
+  END
+$$;
+
+-- La configurazione di un anno di sede (listino, moduli richiesti, posti) copiata in un altro DELLA STESSA sede.
+-- Idempotente: ciò che c'è già nell'anno di arrivo non si tocca, due chiamate non copiano due volte. La chiamerà
+-- il job (PR 4.5) quando crea l'anno successivo. Restituisce quante righe ha copiato per tabella.
+CREATE OR REPLACE FUNCTION public.anno_copia_configurazione(p_da uuid, p_a uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_sede_da uuid;
+  v_sede_a  uuid;
+  v_l       bigint;
+  v_m       bigint;
+  v_p       bigint;
+BEGIN
+  SELECT s.scuola_id INTO v_sede_da FROM public.anni_sede s WHERE s.id = p_da;
+  SELECT s.scuola_id INTO v_sede_a  FROM public.anni_sede s WHERE s.id = p_a;
+  IF v_sede_da IS NULL OR v_sede_a IS NULL OR v_sede_da <> v_sede_a OR p_da = p_a THEN
+    RAISE EXCEPTION 'COPIA_ANNO_NON_VALIDA';
+  END IF;
+
+  INSERT INTO public.listino_voci (anno_sede_id, voce, fascia, payment_category_id, importo, mesi)
+  SELECT p_a, l.voce, l.fascia, l.payment_category_id, l.importo, l.mesi
+    FROM public.listino_voci l WHERE l.anno_sede_id = p_da
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_l = ROW_COUNT;
+
+  INSERT INTO public.moduli_richiesti (anno_sede_id, lista, codice, titolo, ordine)
+  SELECT p_a, m.lista, m.codice, m.titolo, m.ordine
+    FROM public.moduli_richiesti m WHERE m.anno_sede_id = p_da
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_m = ROW_COUNT;
+
+  INSERT INTO public.posti_autorizzati (anno_sede_id, fascia, posti, fonte)
+  SELECT p_a, x.fascia, x.posti, x.fonte
+    FROM public.posti_autorizzati x WHERE x.anno_sede_id = p_da
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_p = ROW_COUNT;
+
+  RETURN jsonb_build_object('listino_voci', v_l, 'moduli_richiesti', v_m, 'posti_autorizzati', v_p);
+END
+$$;
+
+-- IL RIEMPIMENTO. Esiste solo fra i file di riempimento e V2, che la elimina: accende due interruttori e non deve
+-- restare una funzione chiamabile. Lascia calcolare l'anno al trigger generico (`UPDATE … SET anno_id = anno_id
+-- WHERE anno_id IS NULL`): una sola fonte di verità, il riempimento prova il trigger sui dati veri.
+--   · `p_tabelle` NULL = tutto; altrimenti solo le tabelle date (un nome sconosciuto → TABELLA_NON_NEL_RIEMPIMENTO).
+--     Il lavoro «di sede» (anni successivi, frequenze, listino, copia dell'anno) si fa con NULL o con 'frequenze'.
+--   · Precondizioni, prima di toccare niente: controlli morbidi (194 righe vecchie hanno anno e sezione di anni
+--     diversi), guardia spenta, nessuna galleria con `sopprimiGenitori` (la modifica manderebbe notifiche alle famiglie).
+--   · Interruttori, solo con `set_config(…, true)`: `scatola_nera.senza_storico` (niente copie del «com'era» di ogni
+--     riga) e `anno_scolastico.riempimento` (il trigger rimette `storico_versione` e `updated_at`). In uscita sempre
+--     `off`, anche dopo un errore. NON si accende `registri.manutenzione`: nessun trigger di queste tabelle lo legge.
+--   · Ordine: anni successivi, frequenze, listino, copia; poi per profondità di madre (le madri prima delle figlie),
+--     i dichiarati prima delle tabelle `data`, le piccole prima.
+-- Restituisce {tabella: righe a cui ha dato l'anno}; rieseguita dà zero ovunque.
+CREATE OR REPLACE FUNCTION public.anno_riempi(p_tabelle text[] DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_extra   text[] := ARRAY['mensa_class_menu_assignment', 'news_posts', 'forms_templates'];
+  v_rigidi  boolean;
+  v_guardia boolean;
+  v_x       text;
+  v_n       bigint;
+  v_res     jsonb := '{}'::jsonb;
+  r         record;
+  v_prima   bigint;
+  v_dopo    bigint;
+  v_sede    text;
+  v_cs      text;
+  v_cd      text;
+  v_expr    text;
+  v_set     text;
+  v_cond    text;
+  v_sede_id uuid;
+  v_cat     uuid;
+  v_ex_ok   boolean;
+BEGIN
+  -- 1 · le precondizioni: nessuna modifica
+  IF to_regproc('public.anno_di') IS NULL OR to_regclass('public.anni_sede') IS NULL THEN
+    RAISE EXCEPTION 'RIEMPIMENTO_SENZA_SCHEMA_ANNO';
+  END IF;
+  SELECT g.controlli_rigidi, g.guardia_attiva INTO v_rigidi, v_guardia FROM public.anno_regole g;
+  IF coalesce(v_rigidi, false) THEN
+    RAISE EXCEPTION 'RIEMPIMENTO_A_CONTROLLI_RIGIDI';
+  END IF;
+  IF coalesce(v_guardia, false) THEN
+    RAISE EXCEPTION 'RIEMPIMENTO_A_GUARDIA_ATTIVA';
+  END IF;
+  IF to_regclass('public.galleria_media_v2') IS NOT NULL AND public.anno_ha_colonna('galleria_media_v2', 'politica_operazione') THEN
+    EXECUTE 'SELECT count(*) FROM public.galleria_media_v2 WHERE politica_operazione ->> ''sopprimiGenitori'' = ''true'''
+       INTO v_n;
+    IF v_n > 0 THEN
+      RAISE EXCEPTION 'RIEMPIMENTO_GALLERIA_SOPPRIMI';
+    END IF;
+  END IF;
+  IF p_tabelle IS NOT NULL THEN
+    FOREACH v_x IN ARRAY p_tabelle LOOP
+      IF NOT EXISTS (SELECT 1 FROM public.anno_tabelle t WHERE t.tabella = v_x) AND NOT (v_x = ANY (v_extra)) THEN
+        RAISE EXCEPTION 'TABELLA_NON_NEL_RIEMPIMENTO';
+      END IF;
+    END LOOP;
+  END IF;
+
+  BEGIN
+    -- 2 · gli interruttori, solo in questa transazione
+    PERFORM set_config('scatola_nera.senza_storico', 'on', true);
+    PERFORM set_config('anno_scolastico.riempimento', 'on', true);
+
+    -- 3 · il lavoro di sede: anno successivo, frequenze, listino, copia
+    IF p_tabelle IS NULL OR 'frequenze' = ANY (p_tabelle) THEN
+      v_n := 0;
+      -- Solo le sedi il cui ultimo anno è il 2026/27: serve il 2027/28 (2 voci e 9 schede del CRM ci puntano già) e
+      -- nient'altro, così il riempimento non crea mai anni da sé quando lo si rilancia a settembre 2027.
+      FOR v_sede_id IN SELECT s.scuola_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id
+                        GROUP BY s.scuola_id HAVING max(y.anno_inizio) = 2026 ORDER BY 1 LOOP
+        v_n := v_n + public.anni_sede_crea_successivo(v_sede_id);
+      END LOOP;
+      v_res := v_res || jsonb_build_object('anni_sede_creati', v_n);
+
+      -- Le frequenze: una per alunno, nell'anno attivo della sede (origine `recupero`). Le colonne che l'alunno può
+      -- non avere (database diversi) si leggono solo se ci sono.
+      v_cs := CASE WHEN public.anno_ha_colonna('alunni', 'archiviato_il') THEN 'a.archiviato_il' ELSE 'NULL::timestamptz' END;
+      v_cd := CASE WHEN to_regclass('public.alunni_classi_storico') IS NOT NULL
+                   THEN '(SELECT min(h.dal) FROM public.alunni_classi_storico h WHERE h.alunno_id = a.id)'
+                   ELSE 'NULL::date' END;
+      EXECUTE format($q$
+        WITH base AS (
+          SELECT a.id AS alunno_id, s.id AS anno_sede_id, s.inizio, s.fine,
+                 CASE WHEN EXISTS (SELECT 1 FROM public.sections z WHERE z.id = a.section_id
+                                    AND z.scuola_id = s.scuola_id AND z.anno_id = s.anno_id)
+                      THEN a.section_id END AS section_id,
+                 %1$s AS archiviato, %2$s AS dal,
+                 %3$s AS retta, %4$s AS carico, %5$s AS split, %6$s AS intest, %7$s AS giorno,
+                 %8$s AS mensa, %9$s AS sospeso, %10$s AS causa, %11$s AS motivo, %12$s AS sospeso_il,
+                 %13$s AS sospeso_da, %14$s AS pannolino
+            FROM public.alunni a
+            JOIN public.anni_sede s ON s.id = public.anno_attivo(a.scuola_id)
+           WHERE a.scuola_id IS NOT NULL
+        ), dd AS (
+          SELECT b.*, least(greatest(coalesce(b.dal, b.inizio), b.inizio), b.fine) AS ingresso FROM base b
+        )
+        INSERT INTO public.frequenze
+          (alunno_id, anno_sede_id, section_id, origine, tipo, stato, data_ingresso, data_uscita, retta_mensile,
+           retta_a_carico_di, retta_split_config, intestatario_fatture, giorno_scadenza_pagamenti, gruppo_mensa_id,
+           sospeso, sospeso_causa, sospeso_motivo, sospeso_il, sospeso_da, usa_pannolino)
+        SELECT d.alunno_id, d.anno_sede_id, d.section_id, 'recupero', NULL,
+               CASE WHEN d.archiviato IS NULL THEN 'iscritto' ELSE 'ritirato' END,
+               d.ingresso,
+               CASE WHEN d.archiviato IS NULL THEN NULL
+                    ELSE least(greatest(public.giorno_roma(d.archiviato), d.ingresso), d.fine) END,
+               CASE WHEN d.retta > 0 THEN d.retta END,
+               d.carico, d.split, d.intest,
+               CASE WHEN d.giorno BETWEEN 1 AND 28 THEN d.giorno END,
+               d.mensa, coalesce(d.sospeso, false), d.causa, d.motivo, d.sospeso_il, d.sospeso_da,
+               coalesce(d.pannolino, false)
+          FROM dd d
+        ON CONFLICT (alunno_id, anno_sede_id) DO NOTHING$q$,
+        v_cs, v_cd,
+        CASE WHEN public.anno_ha_colonna('alunni', 'importo_retta_mensile') THEN 'a.importo_retta_mensile' ELSE 'NULL::numeric' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'retta_a_carico_di') THEN 'a.retta_a_carico_di' ELSE 'NULL::uuid' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'retta_split_config') THEN 'a.retta_split_config' ELSE 'NULL::jsonb' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'intestatario_fatture') THEN 'a.intestatario_fatture' ELSE 'NULL::jsonb' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'giorno_scadenza_pagamenti') THEN 'a.giorno_scadenza_pagamenti' ELSE 'NULL::integer' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'gruppo_mensa_id') THEN 'a.gruppo_mensa_id' ELSE 'NULL::uuid' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'sospeso') THEN 'a.sospeso' ELSE 'NULL::boolean' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'sospeso_causa') THEN 'a.sospeso_causa' ELSE 'NULL::text' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'sospeso_motivo') THEN 'a.sospeso_motivo' ELSE 'NULL::text' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'sospeso_il') THEN 'a.sospeso_il' ELSE 'NULL::timestamptz' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'sospeso_da') THEN 'a.sospeso_da' ELSE 'NULL::uuid' END,
+        CASE WHEN public.anno_ha_colonna('alunni', 'usa_pannolino') THEN 'a.usa_pannolino' ELSE 'NULL::boolean' END);
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_res := v_res || jsonb_build_object('frequenze_create', v_n);
+
+      -- Il listino 2026/27: la retta senza fascia, `retta_default_importo` della sede o i 150 € di oggi
+      -- (`genera-rette/route.ts`). La categoria `retta` si cerca per slug, la globale prima.
+      SELECT c.id INTO v_cat FROM public.payment_categories c WHERE c.slug = 'retta' ORDER BY (c.scuola_id IS NULL) DESC, c.id LIMIT 1;
+      v_ex_ok := to_regclass('public.admin_settings') IS NOT NULL AND public.anno_ha_colonna('admin_settings', 'retta_default_importo');
+      EXECUTE format($q$
+        INSERT INTO public.listino_voci (anno_sede_id, voce, fascia, payment_category_id, importo, mesi)
+        SELECT s.id, 'retta', NULL, $1, coalesce(%s, 150), NULL
+          FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id
+         WHERE y.anno_inizio = 2026
+        ON CONFLICT DO NOTHING$q$,
+        CASE WHEN v_ex_ok
+             THEN '(SELECT x.retta_default_importo FROM public.admin_settings x WHERE x.scuola_id = s.scuola_id AND x.retta_default_importo > 0 LIMIT 1)'
+             ELSE 'NULL::numeric' END)
+        USING v_cat;
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_res := v_res || jsonb_build_object('listino_voci', v_n);
+
+      -- La configurazione del 2026/27 copiata nel 2027/28 di ogni sede.
+      v_n := 0;
+      FOR r IN SELECT a.id AS da, b.id AS a
+                 FROM public.anni_sede a
+                 JOIN public.anni_scolastici ya ON ya.id = a.anno_id AND ya.anno_inizio = 2026
+                 JOIN public.anni_sede b ON b.scuola_id = a.scuola_id
+                 JOIN public.anni_scolastici yb ON yb.id = b.anno_id AND yb.anno_inizio = 2027 LOOP
+        v_n := v_n + coalesce((SELECT sum(e.value::bigint) FROM jsonb_each_text(public.anno_copia_configurazione(r.da, r.a)) e), 0);
+      END LOOP;
+      v_res := v_res || jsonb_build_object('configurazione_copiata', v_n);
+    END IF;
+
+    -- 4 · le tabelle del registro: le madri prima delle figlie, i dichiarati prima dei `data`, le piccole prima
+    FOR r IN
+      WITH RECURSIVE prof(tabella, d) AS (
+        SELECT t.tabella, 0 FROM public.anno_tabelle t WHERE t.madre_tabella IS NULL
+        UNION ALL
+        SELECT t.tabella, p.d + 1 FROM public.anno_tabelle t JOIN prof p ON p.tabella = t.madre_tabella
+      )
+      SELECT t.tabella, p.d
+        FROM public.anno_tabelle t
+        JOIN prof p ON p.tabella = t.tabella
+        LEFT JOIN pg_class c ON c.oid = to_regclass(format('public.%I', t.tabella))
+       ORDER BY p.d, (t.modo <> 'dichiarato'), c.reltuples NULLS FIRST, t.tabella
+    LOOP
+      CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (r.tabella = ANY (p_tabelle));
+      CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL OR NOT public.anno_ha_colonna(r.tabella, 'anno_id');
+
+      -- i nomi di classe di questa tabella, tradotti nella STESSA UPDATE che dà l'anno (una riga che nasce senza
+      -- anno e viene riempita non muove versione né data di modifica)
+      v_cs := NULL; v_cd := NULL;
+      IF r.tabella IN ('avvisi', 'galleria_media_v2') THEN
+        v_cs := 'target_classes'; v_cd := 'target_section_ids';
+      ELSIF r.tabella = 'video_intents' THEN
+        v_cs := 'classi_destinatarie'; v_cd := 'classi_destinatarie_section_ids';
+      END IF;
+      v_set := ''; v_cond := '';
+      IF v_cs IS NOT NULL AND public.anno_ha_colonna(r.tabella, v_cs) AND public.anno_ha_colonna(r.tabella, v_cd) THEN
+        v_sede := public.anno_sede_sql(r.tabella, 't');
+        v_expr := format('(CASE WHEN t.%I IS NULL OR %s IS NULL THEN NULL ELSE public.anno_traduci_classi(%s, t.%I) END)',
+                         v_cs, v_sede, v_sede, v_cs);
+        v_set := format(', %I = %s', v_cd, v_expr);
+        v_cond := format(' OR t.%I IS DISTINCT FROM %s', v_cd, v_expr);
+      END IF;
+
+      EXECUTE format('SELECT count(*) FROM public.%I WHERE anno_id IS NULL', r.tabella) INTO v_prima;
+      IF v_prima > 0 OR v_cond <> '' THEN
+        EXECUTE format('UPDATE public.%I t SET anno_id = t.anno_id%s WHERE t.anno_id IS NULL%s', r.tabella, v_set, v_cond);
+      END IF;
+      EXECUTE format('SELECT count(*) FROM public.%I WHERE anno_id IS NULL', r.tabella) INTO v_dopo;
+      v_res := v_res || jsonb_build_object(r.tabella, v_prima - v_dopo);
+    END LOOP;
+
+    -- 5 · i nomi di classe delle tabelle che il registro non conosce
+    FOR r IN SELECT * FROM (VALUES
+        ('news_posts', 'target_classes', 'target_section_ids', true),
+        ('forms_templates', 'target_classes', 'target_section_ids', true),
+        ('mensa_class_menu_assignment', 'classe', 'section_id', false)) AS v(tab, src, dst, e_array) LOOP
+      CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (r.tab = ANY (p_tabelle));
+      CONTINUE WHEN to_regclass(format('public.%I', r.tab)) IS NULL
+                 OR NOT public.anno_ha_colonna(r.tab, r.src) OR NOT public.anno_ha_colonna(r.tab, r.dst);
+      v_sede := public.anno_sede_sql(r.tab, 't');
+      IF r.e_array THEN
+        v_expr := format('(CASE WHEN t.%I IS NULL OR %s IS NULL THEN NULL ELSE public.anno_traduci_classi(%s, t.%I) END)',
+                         r.src, v_sede, v_sede, r.src);
+      ELSE
+        v_expr := format('(CASE WHEN t.%I IS NULL OR %s IS NULL THEN NULL ELSE (public.anno_traduci_classi(%s, ARRAY[t.%I]))[1] END)',
+                         r.src, v_sede, v_sede, r.src);
+      END IF;
+      EXECUTE format('UPDATE public.%I t SET %I = %s WHERE t.%I IS DISTINCT FROM %s', r.tab, r.dst, v_expr, r.dst, v_expr);
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      v_res := v_res || jsonb_build_object('classi:' || r.tab, v_n);
+    END LOOP;
+
+    -- 6 · gli interruttori tornano spenti
+    PERFORM set_config('scatola_nera.senza_storico', 'off', true);
+    PERFORM set_config('anno_scolastico.riempimento', 'off', true);
+    RETURN v_res;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM set_config('scatola_nera.senza_storico', 'off', true);
+    PERFORM set_config('anno_scolastico.riempimento', 'off', true);
+    RAISE;
+  END;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_traduci_classi(uuid, text[])        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_copia_configurazione(uuid, uuid)    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_riempi(text[])                      FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_traduci_classi(uuid, text[])     TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_copia_configurazione(uuid, uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_riempi(text[])                   TO service_role;

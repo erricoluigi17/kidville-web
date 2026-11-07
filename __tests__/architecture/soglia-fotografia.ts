@@ -390,9 +390,11 @@ export function posterioriCheContengono(
 // arrivano con i compiti che le scrivono.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261107012110_anno_strumenti.sql':
-        'PR 2 anno scolastico, M1 (compiti 2.0-2.1): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
-        '`scuola_id` con FK verso `schools`). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
-        'produzione nella PR-B.',
+        'PR 2 anno scolastico, M1 (compiti 2.0-2.2): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
+        '`scuola_id` con FK verso `schools`); colonne `target_section_ids` e `mensa_class_menu_assignment.section_id` ' +
+        '(FK verso `sections`, con indice). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
+        'produzione nella PR-B. F1 (`_anno_riempimento_1`, compito 2.2) contiene solo chiamate a funzioni di M1: ' +
+        'nessuna tabella, nessuna colonna, nessuna voce propria qui.',
 }
 
 /**

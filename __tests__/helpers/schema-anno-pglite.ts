@@ -272,12 +272,129 @@ export const SCHEMA_PR2 = `
   CREATE POLICY enrollment_aperta ON public.enrollment_submissions FOR ALL TO authenticated USING (true) WITH CHECK (true);
 `
 
+/**
+ * PR 2, compito 2.2: le tabelle del riempimento. Va passato DOPO `SCHEMA_PR2` (usa le sue funzioni finte
+ * `storici_prima_mutazione` e `set_updated_at`) e PRIMA della migrazione della PR 1. Aggiunge le colonne di
+ * `alunni` che la frequenza copia, le tabelle grandi (`eventi_diario`…), i trigger finti di bookkeeping
+ * (`storico_versione`, `updated_at`) e una scatola nera finta che CONTA le righe (e rispetta l'interruttore
+ * `scatola_nera.senza_storico` come la vera). Solo dati finti.
+ */
+export const SCHEMA_PR2_RIEMPIMENTO = `
+  ALTER TABLE public.alunni
+    ADD COLUMN archiviato_il timestamptz,
+    ADD COLUMN importo_retta_mensile numeric(10,2) DEFAULT 0,
+    ADD COLUMN retta_a_carico_di uuid,
+    ADD COLUMN retta_split_config jsonb,
+    ADD COLUMN intestatario_fatture jsonb,
+    ADD COLUMN giorno_scadenza_pagamenti integer,
+    ADD COLUMN gruppo_mensa_id uuid,
+    ADD COLUMN sospeso boolean NOT NULL DEFAULT false,
+    ADD COLUMN sospeso_causa text,
+    ADD COLUMN sospeso_motivo text,
+    ADD COLUMN sospeso_il timestamptz,
+    ADD COLUMN sospeso_da uuid;
+
+  CREATE TABLE public.admin_settings (
+    scuola_id uuid PRIMARY KEY,
+    retta_default_importo numeric(10,2) DEFAULT 150
+  );
+  CREATE TABLE public.alunni_classi_storico (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid NOT NULL,
+    scuola_id uuid,
+    dal date NOT NULL,
+    al date
+  );
+  CREATE TABLE public.eventi_diario (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid,
+    orario_inizio timestamptz NOT NULL,
+    creato_il timestamptz DEFAULT now(),
+    storico_versione integer NOT NULL DEFAULT 0
+  );
+  CREATE TABLE public.mensa_prenotazioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    data date NOT NULL,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  );
+  CREATE TABLE public.galleria_media_v2 (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    giorno_competenza date,
+    created_at timestamptz DEFAULT now(),
+    target_classes text[],
+    politica_operazione jsonb
+  );
+  CREATE TABLE public.gallery_photo_uploads (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    media_id uuid NOT NULL REFERENCES public.galleria_media_v2(id) ON DELETE CASCADE
+  );
+  CREATE TABLE public.video_intents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid,
+    giorno_competenza date,
+    created_at timestamptz DEFAULT now(),
+    classi_destinatarie text[]
+  );
+  CREATE TABLE public.avvisi_risposte (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    avviso_id uuid NOT NULL REFERENCES public.avvisi(id) ON DELETE CASCADE,
+    parent_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    student_id uuid NOT NULL DEFAULT gen_random_uuid()
+  );
+  CREATE TABLE public.iscrizioni_decisioni (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    submission_id uuid NOT NULL REFERENCES public.enrollment_submissions(id) ON DELETE CASCADE,
+    decisa_il timestamptz DEFAULT now()
+  );
+  CREATE TABLE public.news_posts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    target_classes text[]
+  );
+  CREATE TABLE public.forms_templates (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    target_classes text[] DEFAULT '{}'
+  );
+  CREATE TABLE public.mensa_class_menu_assignment (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL,
+    classe text NOT NULL,
+    attivo_dal date NOT NULL DEFAULT DATE '2026-09-01'
+  );
+  INSERT INTO public.payment_categories (scuola_id, nome, slug) VALUES (NULL, 'Retta', 'retta');
+  ALTER TABLE public.crm_bambini ADD COLUMN quota_pagamento_id uuid;
+  ALTER TABLE public.presenze ADD COLUMN stato text;
+
+  -- il bookkeeping di produzione: la versione di concorrenza e la data di modifica si muovono a OGNI UPDATE
+  ALTER TABLE public.presenze ADD COLUMN storico_versione integer NOT NULL DEFAULT 0;
+  CREATE TRIGGER storici_prima_mutazione BEFORE UPDATE ON public.presenze
+    FOR EACH ROW EXECUTE FUNCTION public.storici_prima_mutazione();
+  CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.mensa_prenotazioni
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+  -- la scatola nera finta: copia il «com'era» di ogni riga toccata, salvo l'interruttore del riempimento
+  CREATE FUNCTION scatola_nera.registra_modifica() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN
+    IF current_setting('scatola_nera.senza_storico', true) = 'on' THEN RETURN NULL; END IF;
+    INSERT INTO scatola_nera.modifiche (tabella, riga_id, prima, cambiate, ruolo)
+    SELECT TG_TABLE_NAME, v.id::text, to_jsonb(v), ARRAY[]::text[], current_user FROM vecchie v;
+    RETURN NULL;
+  END $f$;
+  CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.presenze
+    REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica();
+  CREATE TRIGGER scatola_nera_modifiche AFTER UPDATE ON public.pagamenti
+    REFERENCING OLD TABLE AS vecchie FOR EACH STATEMENT EXECUTE FUNCTION scatola_nera.registra_modifica();
+`
+
 /** Le migrazioni della PR 2, trovate per suffisso come `fileMigrazioneAnno` (la version è l'istante di creazione). */
 const SUFFISSI_PR2 = {
   M1: '_anno_strumenti.sql',
+  // F2 e F3 (le tre tabelle grandi) si sono fuse in F1: il banco ha dato meno di 15 s (compito 2.2).
   F1: '_anno_riempimento_1.sql',
-  F2: '_anno_riempimento_2.sql',
-  F3: '_anno_riempimento_3.sql',
   V1: '_anno_vincoli_1.sql',
   V2: '_anno_vincoli_2.sql',
 } as const

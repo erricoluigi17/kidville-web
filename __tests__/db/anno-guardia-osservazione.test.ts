@@ -337,3 +337,41 @@ describe('3.3-2 · P27: l\'osservazione non rifiuta MAI una scrittura', () => {
     expect(await una<string>(`SELECT count(*)::text FROM public.app_log WHERE evento = 'anno-scolastico'`)).toBe('0')
   })
 })
+
+describe('3.3-3 (punto 10) · il segnale per transazione', () => {
+  it('due chiavi diverse nella stessa transazione (un UPDATE e un DELETE) danno n = 1 ciascuna', async () => {
+    const a = await presenzaChiusa()
+    const b = await presenzaChiusa()
+    await manopole(false, true)
+    await db.exec('BEGIN')
+    try {
+      await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [a])
+      await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [b])   // stessa chiave: non conta ancora
+      await db.query(`DELETE FROM public.presenze WHERE id = $1`, [b])
+      await db.exec('COMMIT')
+    } catch (e) { await db.exec('ROLLBACK'); throw e }
+    expect((await osservazioni()).map((x) => `${x.op}:${x.n}`)).toEqual(['DELETE:1', 'UPDATE:1'])
+  })
+
+  it('un savepoint annullato dopo che il segnale si è acceso non fa perdere il conteggio di una scrittura fatta dopo', async () => {
+    const a = await presenzaChiusa()
+    await manopole(false, true)
+    await db.exec('BEGIN')
+    try {
+      await db.exec('SAVEPOINT s1')
+      await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [a])   // accende il segnale e conta
+      await db.exec('ROLLBACK TO s1')                                                     // ... e il contatore torna com'era
+      await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [a])   // la stessa chiave, dopo
+      await db.exec('COMMIT')
+    } catch (e) { await db.exec('ROLLBACK'); throw e }
+    expect((await osservazioni()).map((x) => `${x.op}:${x.n}`)).toEqual(['UPDATE:1'])
+  })
+
+  it('due transazioni = due conteggi (n è «quante transazioni sarebbero state rifiutate»)', async () => {
+    const a = await presenzaChiusa()
+    await manopole(false, true)
+    await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [a])
+    await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = $1`, [a])
+    expect((await osservazioni()).map((x) => `${x.op}:${x.n}`)).toEqual(['UPDATE:2'])
+  })
+})

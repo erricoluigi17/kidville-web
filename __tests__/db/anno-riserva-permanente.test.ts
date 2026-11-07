@@ -163,3 +163,28 @@ describe('3.3-2 (e) · con dichiarato_transitorio = true (lo stato di oggi, per 
     }
   })
 })
+
+describe('3.3-3 (punto 10) · il contatore transitorio è fail-open', () => {
+  it('un guasto del contatore (tabella resa illeggibile) lascia passare la scrittura, con l\'anno, e lascia `anno_log_guasto`', async () => {
+    await regole(false)
+    await db.exec(`BEGIN; ALTER TABLE public.anno_transitorio_usi RENAME TO anno_transitorio_usi_guasta`)
+    try {
+      const id = await una<string>(`INSERT INTO public.enrollment_submissions (scuola_id) VALUES ($1) RETURNING id`, [SEDE])
+      expect(await una<string>(`SELECT anno_id FROM public.enrollment_submissions WHERE id = $1`, [id])).toBe(A2627)
+      expect(await una<string>(
+        `SELECT count(*)::text FROM public.app_log WHERE contesto ->> 'esito' = 'transitorio-conta-fallito'`)).toBe('1')
+    } finally { await db.exec('ROLLBACK') }
+    expect(await usi()).toEqual([])
+  })
+
+  it('anche un guasto di `anno_origine_richiesta()` (valutata prima nel DECLARE) lascia passare la scrittura', async () => {
+    await regole(false)
+    await db.exec(`BEGIN; CREATE OR REPLACE FUNCTION public.anno_origine_richiesta() RETURNS text LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'guasto di prova'; END $$`)
+    try {
+      const id = await una<string>(`INSERT INTO public.enrollment_submissions (scuola_id) VALUES ($1) RETURNING id`, [SEDE])
+      expect(await una<string>(`SELECT anno_id FROM public.enrollment_submissions WHERE id = $1`, [id])).toBe(A2627)
+      expect(await una<string>(
+        `SELECT count(*)::text FROM public.app_log WHERE contesto ->> 'esito' = 'transitorio-conta-fallito'`)).toBe('1')
+    } finally { await db.exec('ROLLBACK') }
+  })
+})

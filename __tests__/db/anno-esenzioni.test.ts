@@ -21,7 +21,8 @@ const CODA_PRIMA = `
   ALTER TABLE public.galleria_media_v2 ADD COLUMN caption text;
   ALTER TABLE public.pagamenti
     ADD COLUMN fattura_aruba_id varchar(255), ADD COLUMN fattura_pdf_path text, ADD COLUMN fattura_emessa_il timestamptz,
-    ADD COLUMN fattura_causale text, ADD COLUMN sconto numeric(10,2) NOT NULL DEFAULT 0;
+    ADD COLUMN fattura_causale text, ADD COLUMN sconto numeric(10,2) NOT NULL DEFAULT 0,
+    ADD COLUMN sconto_motivo text, ADD COLUMN tipo text;
 
   -- Come in produzione: le colonne che il registro e la propagazione leggono, e il trigger che alza la versione.
   CREATE TABLE public.registro_orario (
@@ -195,7 +196,7 @@ describe('3.3-2 (c) · pagamenti', () => {
     expect(await messaggio(db.query(`UPDATE public.pagamenti SET ${set} WHERE id = $1`, [id]))).toBe(OK)
   })
 
-  for (const [colonna, valore] of [['sconto', '5'], ['importo', '90'], ['descrizione', `'altro'`]] as const) {
+  for (const [colonna, valore] of [['sconto', '5'], ['sconto_motivo', `'abbuono'`], ['tipo', `'altro'`], ['importo', '90'], ['descrizione', `'altro'`]] as const) {
     it(`\`${colonna}\` NON è esente → ANNO_CHIUSO (anche insieme a una colonna d'incasso)`, async () => {
       const id = await voce()
       expect(await messaggio(db.query(`UPDATE public.pagamenti SET ${colonna} = ${valore} WHERE id = $1`, [id]))).toBe('ANNO_CHIUSO')

@@ -309,7 +309,24 @@ describe('V2 rieseguita, CHECK doppi, funzioni', () => {
               has_function_privilege('service_role', oid, 'EXECUTE') AS s
          FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = ANY ($1::text[])`, [nomi])
     expect(r.rows.map((x) => x.proname).sort()).toEqual([...nomi].sort())
-    for (const x of r.rows) expect({ f: x.proname, anon: x.a, auth: x.u, svc: x.s }).toEqual({ f: x.proname, anon: false, auth: false, svc: true })
+    // m-4: anno_fotografa_scrivi esegue come proprietario un testo SQL: dopo V2 non la può chiamare nessuno tranne anno_fotografa
+    for (const x of r.rows) {
+      expect({ f: x.proname, anon: x.a, auth: x.u, svc: x.s })
+        .toEqual({ f: x.proname, anon: false, auth: false, svc: x.proname !== 'anno_fotografa_scrivi' })
+    }
+  })
+
+  it('m-4: dopo V2 il service_role non può eseguire anno_fotografa_scrivi, ma anno_fotografa (definer) continua a scrivere il rapporto', async () => {
+    const ultimo = await una<number>(`SELECT coalesce(max(id), 0)::int FROM public.riconciliazione_anno`)
+    await db.exec('SET ROLE service_role')
+    try {
+      expect(await codice(db.query(`SELECT public.anno_fotografa_scrivi('prima', 'presenze', 'x', 'SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, 1::numeric AS valore')`)))
+        .toBe('42501')
+      await db.query(`SELECT public.anno_fotografa('dopo', ARRAY['presenze'])`)
+    } finally { await db.exec('RESET ROLE') }
+    expect(await una<number>(`SELECT count(*)::int FROM public.riconciliazione_anno WHERE id > $1`, [ultimo])).toBeGreaterThan(0)
+    // il DB è condiviso: via solo le righe di questa prova, la fotografia finale e le differenze degli altri test restano
+    await db.query(`DELETE FROM public.riconciliazione_anno WHERE id > $1`, [ultimo])
   })
 
   it('la fotografia finale c\'è nel rapporto, e le differenze prima → finale sono vuote', async () => {

@@ -907,6 +907,7 @@ REVOKE ALL ON FUNCTION public.anno_fotografa_scrivi(text, text, text, text)     
 REVOKE ALL ON FUNCTION public.anno_fotografa(text, text[])                       FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_riconciliazione_differenze()                  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_sede_sql(text, text)                       TO service_role;
+-- (anno_fotografa_scrivi esegue come proprietario il testo di una SELECT: il GRANT serve solo a M1/F1/V1, e V2 lo toglie.)
 GRANT EXECUTE ON FUNCTION public.anno_fotografa_scrivi(text, text, text, text)   TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_fotografa(text, text[])                    TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_riconciliazione_differenze()               TO service_role;

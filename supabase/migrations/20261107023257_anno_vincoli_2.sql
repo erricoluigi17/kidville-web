@@ -330,6 +330,11 @@ GRANT EXECUTE ON FUNCTION public.anno_invarianti() TO service_role;
 -- 7 · `anno_riempi` non c'è più.
 DROP FUNCTION IF EXISTS public.anno_riempi(text[], date);
 
+-- 7b · `anno_fotografa_scrivi` esegue COME PROPRIETARIO il testo `p_select` che le si passa: chiunque potesse chiamarla
+-- (anche il service_role, che per i default privileges di Supabase la riceve alla creazione) scriverebbe nel rapporto con
+-- i privilegi del proprietario. La chiama solo `anno_fotografa`, che è SECURITY DEFINER e resta tale: serve solo al proprietario.
+REVOKE ALL ON FUNCTION public.anno_fotografa_scrivi(text, text, text, text) FROM PUBLIC, anon, authenticated, service_role;
+
 -- 8 · La fotografia FINALE del rapporto: `anno_riconciliazione_differenze()` la confronta con la `prima`.
 DO $mig$
 BEGIN

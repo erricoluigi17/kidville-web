@@ -86,15 +86,39 @@ describe('3.3-1 (b) · l\'osservazione conta e lascia passare', () => {
     expect(r[0].n).toBe('2')
   })
 
-  it('un UPDATE di DUE righe nello stesso statement conta due (una per riga guardata), sempre in una riga sola', async () => {
+  it('un UPDATE di PIÙ righe nella stessa transazione → n = 1 (conta le transazioni che sarebbero state rifiutate, non le righe)', async () => {
     const ids = [await presenzaChiusa()]
+    ids.push(await una<string>(`INSERT INTO public.presenze (alunno_id, scuola_id, data) VALUES ($1, $2, $3) RETURNING id`, [ALUNNO, SEDE, D2526]))
     ids.push(await una<string>(`INSERT INTO public.presenze (alunno_id, scuola_id, data) VALUES ($1, $2, $3) RETURNING id`, [ALUNNO, SEDE, D2526]))
     await db.exec('DELETE FROM public.anno_guardia_osservazioni')
     await manopole(false, true)
     await db.query(`UPDATE public.presenze SET section_id = NULL WHERE id = ANY($1::uuid[])`, [ids])
     const r = await osservazioni()
     expect(r).toHaveLength(1)
-    expect(r[0].n).toBe('2')
+    expect(r[0].n).toBe('1')
+  })
+
+  it('due UPDATE nella stessa transazione esplicita (BEGIN … COMMIT) → n = 1; una terza in un\'altra transazione → n = 2', async () => {
+    const id = await presenzaChiusa()
+    await manopole(false, true)
+    await db.transaction(async (tx) => {
+      await tocca(tx, id)
+      await tocca(tx, id)
+    })
+    expect((await osservazioni()).map((x) => x.n)).toEqual(['1'])
+    await tocca(db, id)
+    expect((await osservazioni()).map((x) => x.n)).toEqual(['2'])
+  })
+
+  it('un ROLLBACK annulla anche il contatore, e la transazione dopo conta di nuovo', async () => {
+    const id = await presenzaChiusa()
+    await manopole(false, true)
+    await db.exec('BEGIN')
+    await tocca(db, id)
+    await db.exec('ROLLBACK')
+    expect(await osservazioni()).toEqual([])
+    await tocca(db, id)
+    expect((await osservazioni()).map((x) => x.n)).toEqual(['1'])
   })
 
   it('INSERT e DELETE su un anno chiuso si contano con la loro `op`', async () => {

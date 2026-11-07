@@ -99,17 +99,33 @@ $$;
 
 -- Il contatore. Fail-open: un guasto del contatore NON blocca la scrittura e lascia `anno_log_guasto`.
 -- L'`origine` la dà `anno_origine_richiesta()`.
+-- CONTA UNA VOLTA PER TRANSAZIONE E PER CHIAVE `(giorno, tabella, op, stato, origine)`: `n` è «quante transazioni
+-- sarebbero state rifiutate». Il perché: a guardia accesa una transazione rifiutata è UN 409, qualunque sia il numero
+-- di righe che toccava, e questa è la misura che serve al 3-B. Contare ogni riga aggiornava ogni volta la STESSA
+-- riga del contatore: 10.000 righe di un anno chiuso in un solo UPDATE costavano 31 s (crescita quadratica, le
+-- versioni della riga si accumulano), con il contatore spento 0,6 s. Il segnale è LOCALE alla transazione
+-- (`set_config(…, true)`): `anno_osserva.k<md5 della chiave>` (la «k» perché il nome di un parametro non può cominciare con una cifra) = `txid_current()`; se è già acceso per questa
+-- transazione non si scrive niente. Il segnale si accende solo DOPO la scrittura riuscita, quindi un guasto non lo
+-- accende. Un ROLLBACK riporta il segnale com'era, insieme al contatore.
 CREATE OR REPLACE FUNCTION public.anno_guardia_osserva_conta(p_tabella text, p_op text, p_stato text)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_giorno  date := public.giorno_roma(now());
+  v_origine text := public.anno_origine_richiesta();
+  v_segnale text := 'anno_osserva.k' || md5(v_giorno::text || '|' || p_tabella || '|' || p_op || '|' || p_stato || '|' || v_origine);
 BEGIN
+  IF current_setting(v_segnale, true) = txid_current()::text THEN
+    RETURN;
+  END IF;
   INSERT INTO public.anno_guardia_osservazioni (giorno, tabella, op, stato, origine)
-  VALUES (public.giorno_roma(now()), p_tabella, p_op, p_stato, public.anno_origine_richiesta())
+  VALUES (v_giorno, p_tabella, p_op, p_stato, v_origine)
   ON CONFLICT (giorno, tabella, op, stato, origine)
   DO UPDATE SET n = public.anno_guardia_osservazioni.n + 1, ultima_il = now();
+  PERFORM set_config(v_segnale, txid_current()::text, true);
 EXCEPTION WHEN OTHERS THEN
   PERFORM public.anno_log_guasto(p_tabella, 'osservazione-fallita', 'anno_guardia_osserva_conta',
                                  'contatore dell''osservazione fallito: la scrittura è passata',
@@ -117,7 +133,9 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
--- Il contatore della regola transitoria, stessa forma: una riga per chiave, `ON CONFLICT … DO UPDATE`, fail-open.
+-- Il contatore della regola transitoria, stessa forma e STESSA regola: una volta per transazione e per chiave
+-- `(giorno, tabella, regola, origine)`, con il segnale locale `anno_transitorio.k<md5>`. Una scrittura in blocco senza
+-- `anno_id` (10.000 righe in un INSERT) farebbe crescere la stessa riga allo stesso modo: misurato 30,5 s.
 -- `regola` dice quale ramo di `anno_dichiarato_transitorio` ha dato l'anno (un nome per tabella: il ramo è uno).
 CREATE OR REPLACE FUNCTION public.anno_transitorio_conta(p_tabella text)
 RETURNS void
@@ -125,10 +143,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-BEGIN
-  INSERT INTO public.anno_transitorio_usi (giorno, tabella, regola, origine)
-  VALUES (public.giorno_roma(now()), p_tabella,
-          CASE p_tabella
+DECLARE
+  v_giorno  date := public.giorno_roma(now());
+  v_origine text := public.anno_origine_richiesta();
+  v_regola  text := CASE p_tabella
             WHEN 'pagamenti'                     THEN 'pagamenti/creazione'
             WHEN 'enrollment_submissions'        THEN 'enrollment/anno-attivo'
             WHEN 'votazioni'                     THEN 'votazioni/anno-attivo'
@@ -137,10 +155,18 @@ BEGIN
             WHEN 'scrutinio_periodi'             THEN 'scrutinio/etichetta-o-anno-attivo'
             WHEN 'certificati_competenze'        THEN 'certificato/etichetta-o-anno-attivo'
             ELSE p_tabella
-          END,
-          public.anno_origine_richiesta())
+          END;
+  v_segnale text;
+BEGIN
+  v_segnale := 'anno_transitorio.k' || md5(v_giorno::text || '|' || p_tabella || '|' || v_regola || '|' || v_origine);
+  IF current_setting(v_segnale, true) = txid_current()::text THEN
+    RETURN;
+  END IF;
+  INSERT INTO public.anno_transitorio_usi (giorno, tabella, regola, origine)
+  VALUES (v_giorno, p_tabella, v_regola, v_origine)
   ON CONFLICT (giorno, tabella, regola, origine)
   DO UPDATE SET n = public.anno_transitorio_usi.n + 1, ultima_il = now();
+  PERFORM set_config(v_segnale, txid_current()::text, true);
 EXCEPTION WHEN OTHERS THEN
   PERFORM public.anno_log_guasto(p_tabella, 'transitorio-conta-fallito', 'anno_transitorio_conta',
                                  'contatore della regola transitoria fallito: la scrittura è passata',

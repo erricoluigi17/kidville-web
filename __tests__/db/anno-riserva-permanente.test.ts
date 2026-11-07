@@ -141,6 +141,15 @@ describe('3.3-2 (e) · con dichiarato_transitorio = true (lo stato di oggi, per 
     })
   }
 
+  it('un INSERT di PIÙ righe senza anno_id in una transazione → n = 1 (e le righe ricevono tutte l\'anno)', async () => {
+    await regole(true)
+    await db.query(`INSERT INTO public.enrollment_submissions (scuola_id) SELECT $1 FROM generate_series(1, 5)`, [SEDE])
+    expect(await una<string>(`SELECT count(*)::text FROM public.enrollment_submissions WHERE anno_id = $1`, [A2627])).toBe('5')
+    expect((await usi()).map((x) => x.n)).toEqual(['1'])
+    await db.query(`INSERT INTO public.enrollment_submissions (scuola_id) VALUES ($1)`, [SEDE])
+    expect((await usi()).map((x) => x.n)).toEqual(['2'])
+  })
+
   it('un guasto del contatore non blocca la scrittura e lascia `anno_log_guasto`', async () => {
     await regole(true)
     await db.exec(`ALTER TABLE public.anno_transitorio_usi RENAME TO anno_transitorio_usi_rotta`)

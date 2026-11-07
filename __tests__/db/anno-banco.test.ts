@@ -108,10 +108,10 @@ describe.runIf(attivo)('banco anno · trigger generico e anno_invarianti()', () 
     await db.exec(`INSERT INTO public.presenze (scuola_id, data)
                    SELECT '${SEDE}', DATE '2026-08-31' FROM generate_series(1, ${N}) g`)
     await manopole(false, false, true)
-    await tempo(`UPDATE ${N} su un anno CHIUSO, osservazione (ogni riga conta)`, () =>
+    await tempo(`UPDATE ${N} su un anno CHIUSO, osservazione (una volta per transazione)`, () =>
       db.exec(`UPDATE public.presenze SET uscita_anticipata = '11:30'`))
     expect(Number((await db.query<{ n: string }>(
-      'SELECT coalesce(sum(n), 0)::text AS n FROM public.anno_guardia_osservazioni')).rows[0].n)).toBe(N)
+      'SELECT coalesce(sum(n), 0)::text AS n FROM public.anno_guardia_osservazioni')).rows[0].n)).toBe(1) // una transazione = un 409: conta UNA volta, non N
     await svuota()
     await manopole(false, false, false)
     await db.exec(`INSERT INTO public.presenze (scuola_id, data)

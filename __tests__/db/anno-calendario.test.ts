@@ -494,4 +494,14 @@ describe('sicurezza: tabelle e funzioni chiuse a anon e authenticated', () => {
       await db.exec('RESET ROLE')
     }
   })
+
+  it('nessuna FK della migrazione punta a utenti: un utente si elimina e la storia del passaggio resta (R15, F6)', async () => {
+    const r = await db.query<{ tabella: string; azione: string }>(
+      `SELECT c.conrelid::regclass::text AS tabella, c.confdeltype::text AS azione
+         FROM pg_constraint c
+        WHERE c.contype = 'f' AND c.confrelid = 'public.utenti'::regclass
+          AND c.conrelid::regclass::text IN ('passaggi_anno', 'passaggi_anno_righe', 'passaggi_anno_docenti',
+                                             'anni_sede', 'anni_sede_stati', 'correzioni_anno_chiuso')`)
+    expect(r.rows).toEqual([])
+  })
 })

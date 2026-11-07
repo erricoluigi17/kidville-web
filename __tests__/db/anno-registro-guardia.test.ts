@@ -1,14 +1,15 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnno } from '../helpers/schema-anno-pglite'
+import { creaDbAnno, fissaCalendarioAnni } from '../helpers/schema-anno-pglite'
 
 /**
  * COMPITO 1.4a · REGISTRO DELLE TABELLE, ANNO SULLE TABELLE B, TRIGGER GENERICO.
  * La guardia dell'anno chiuso (gettoni, header, oblio) e `sposta_confine_anno` NON sono qui: arrivano
  * nel 1.4b e nel 1.4c. Solo uuid finti.
  *
- * Gli anni sono fissi (2025/26 e 2026/27, creati con `p_oggi` fisso): nessun test dipende da oggi,
- * tranne quello che scrive «oggi» di proposito.
+ * Gli anni sono fissi: creati con `p_oggi` fisso E con gli stati reimpostati da `fissaCalendarioAnni`
+ * (la migrazione dà alle sedi già presenti gli stati di OGGI, che dal 01/08/2027 cambierebbero esito).
+ * Nessun test dipende da oggi, tranne quello che scrive «oggi» di proposito.
  */
 
 const SEDE = '22222222-2222-4222-8222-222222222222'
@@ -47,8 +48,10 @@ async function presenza(data: string, extra: { anno?: string | null; sezione?: s
 
 beforeAll(async () => {
   db = await creaDbAnno({ sediPrimaDellaMigrazione: [SEDE] })
-  // Anni fissi: 2025/26 e 2026/27 con le date di sempre, qualunque sia il giorno in cui gira il test.
+  // Anni fissi: 2025/26 e 2026/27 con date e stati di sempre. Gli stati li ha dati la migrazione con il
+  // giorno in cui il test gira: si reimpostano, perché il risultato non dipenda da oggi.
   await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [SEDE])
+  await fissaCalendarioAnni(db)
   A2526 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2025`)
   A2627 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2026`)
   await db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [ALUNNO, SEDE])
@@ -238,9 +241,48 @@ describe('modo dichiarato (pagamenti)', () => {
     expect(await pagamento({ competenza: '2026-10-05', scadenza: '2026-10-05', anno: A2627 })).toBe(A2627)
   })
 
-  it('RIGIDO: una scadenza senza anno dà GIORNO_SENZA_ANNO anche se l\'anno è dichiarato', async () => {
+  it('RIGIDO: con l\'anno dichiarato la data di riserva senza anno non solleva niente: serve solo ad assegnare (F2)', async () => {
     await rigidi(true)
-    expect(await messaggio(pagamento({ competenza: null, scadenza: '2010-01-01', anno: A2627 }))).toBe('GIORNO_SENZA_ANNO')
+    expect(await pagamento({ competenza: null, scadenza: '2010-01-01', anno: A2627 })).toBe(A2627)
+  })
+
+  it('RIGIDO: senza anno dichiarato e con una scadenza senza anno → GIORNO_SENZA_ANNO', async () => {
+    await rigidi(true)
+    expect(await messaggio(pagamento({ competenza: null, scadenza: '2010-01-01' }))).toBe('GIORNO_SENZA_ANNO')
+  })
+
+  describe('con il 2027/28 creato (F2)', () => {
+    let A2728: string
+    beforeAll(async () => {
+      await db.exec(`
+        INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
+        INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
+        SELECT s.id, y.id, y.inizio_predefinito, y.fine_predefinita, 'in_preparazione', DATE '2028-07-31', y.inizio_predefinito
+          FROM public.schools s JOIN public.anni_scolastici y ON y.anno_inizio = 2027
+         WHERE NOT EXISTS (SELECT 1 FROM public.anni_sede x WHERE x.scuola_id = s.id AND x.anno_id = y.id);`)
+      A2728 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2027`)
+    })
+    afterAll(async () => {
+      await db.query(`DELETE FROM public.pagamenti WHERE anno_id = $1`, [A2728])
+      await db.query(`DELETE FROM public.anni_sede_stati WHERE anno_sede_id IN (SELECT id FROM public.anni_sede WHERE anno_id = $1)`, [A2728])
+      await db.query(`DELETE FROM public.anni_sede WHERE anno_id = $1`, [A2728])
+      await db.query(`DELETE FROM public.anni_scolastici WHERE id = $1`, [A2728])
+    })
+
+    it('RIGIDO: dichiarata 2027/28 con scadenza 15/02/2027 e senza competenza → passa e resta 2027/28', async () => {
+      await rigidi(true)
+      expect(await pagamento({ competenza: null, scadenza: '2027-02-15', anno: A2728 })).toBe(A2728)
+    })
+
+    it('RIGIDO: la stessa con competenza 01/09/2026 (2026/27) → ANNO_NON_COERENTE', async () => {
+      await rigidi(true)
+      expect(await messaggio(pagamento({ competenza: '2026-09-01', scadenza: '2027-02-15', anno: A2728 }))).toBe('ANNO_NON_COERENTE')
+    })
+
+    it('RIGIDO: senza anno dichiarato e senza competenza → l\'anno viene dalla scadenza', async () => {
+      await rigidi(true)
+      expect(await pagamento({ competenza: null, scadenza: '2027-02-15' })).toBe(A2627)
+    })
   })
 })
 
@@ -298,10 +340,50 @@ describe('UPDATE: ricalcola solo se cambia qualcosa che c\'entra', () => {
     expect(await una<string>(`SELECT anno_id FROM public.presenze WHERE id = $1`, [p.id])).toBe(A2526)
   })
 
-  it('ma se cambia la data, la riga si riverifica', async () => {
+  it('ma se cambia la data, la riga si riverifica: l\'anno incoerente che c\'era si corregge, non si rifiuta (F1)', async () => {
     const p = await presenza('2026-10-05', { anno: A2526 })
     await rigidi(true)
-    expect(await messaggio(db.query(`UPDATE public.presenze SET data = DATE '2026-10-06' WHERE id = $1`, [p.id]))).toBe('ANNO_NON_COERENTE')
+    await db.query(`UPDATE public.presenze SET data = DATE '2026-10-06' WHERE id = $1`, [p.id])
+    expect(await una<string>(`SELECT anno_id FROM public.presenze WHERE id = $1`, [p.id])).toBe(A2627)
+  })
+
+  describe('una data corretta oltre il confine sposta la riga nell\'anno nuovo (F1)', () => {
+    const p3108 = async () => (await presenza('2026-08-31')).id          // ultimo giorno del 2025/26
+    const anno = (id: string) => una<string>(`SELECT anno_id FROM public.presenze WHERE id = $1`, [id])
+    const sposta = (id: string, extra = '') =>
+      db.query(`UPDATE public.presenze SET data = DATE '2026-09-01'${extra} WHERE id = $1`, [id])
+
+    it('MORBIDO: 31/08 → 01/09, la riga passa al 2026/27', async () => {
+      const id = await p3108()
+      expect(await anno(id)).toBe(A2526)
+      await sposta(id)
+      expect(await anno(id)).toBe(A2627)
+    })
+
+    it('RIGIDO: idem, nessun errore', async () => {
+      const id = await p3108()
+      await rigidi(true)
+      await sposta(id)
+      expect(await anno(id)).toBe(A2627)
+    })
+
+    it('RIGIDO: chi scrive anche un anno_id nuovo e diverso da quello calcolato riceve ANNO_NON_COERENTE', async () => {
+      // Nel trigger «scrivere lo stesso valore di OLD» e «non scrivere» sono indistinguibili: il caso è
+      // quindi una riga nata nel 2026/27 (a controlli morbidi), la cui data e il cui anno vengono
+      // corretti insieme, e l'anno scritto (2025/26) non è né l'attuale né quello della nuova data.
+      const id = (await presenza('2026-08-31', { anno: A2627 })).id
+      await rigidi(true)
+      expect(await messaggio(sposta(id, `, anno_id = '${A2526}'`))).toBe('ANNO_NON_COERENTE')
+    })
+
+    it('a guardia accesa, la stessa correzione su una riga del 2025/26 chiuso, senza gettone → ANNO_CHIUSO', async () => {
+      const id = await p3108()
+      await guardia(true)
+      try {
+        expect(await messaggio(sposta(id))).toBe('ANNO_CHIUSO')
+      } finally { await guardia(false) }
+      expect(await anno(id)).toBe(A2526)
+    })
   })
 
   it('una riga con anno_id NULL (giorno senza anno) si ricalcola a ogni UPDATE', async () => {
@@ -503,8 +585,8 @@ describe('giro 1 · la rete del ramo morbido e la validazione delle madri', () =
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 const UTENTE = '77777777-7777-4777-8777-777777777771'
-const D2526 = '2025-10-15'   // dentro il 2025/26 (chiuso dopo la migrazione)
-const D2627 = '2026-10-15'   // dentro il 2026/27 (corrente)
+const D2526 = '2025-10-15'   // dentro il 2025/26 (chiuso: lo stato lo fissa fissaCalendarioAnni)
+const D2627 = '2026-10-15'   // dentro il 2026/27 (corrente: idem)
 
 type Tx = Pick<PGlite, 'query'>
 
@@ -1087,6 +1169,7 @@ describe('la sede della riga è la sua scuola_id (revisione finale, I1)', () => 
         data date NOT NULL, creato_il timestamptz DEFAULT now());`,
     })
     for (const s of [SEDE, SEDE_B]) await dbB.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [s])
+    await fissaCalendarioAnni(dbB)
     await dbB.exec(`
       INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
       INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
@@ -1130,5 +1213,40 @@ describe('solo tabelle vere nel registro (revisione finale, I2)', () => {
         `SELECT tabella FROM public.anno_tabelle WHERE tabella IN ('eventi_agenda', 'avvisi_risposte', 'avvisi', 'presenze') ORDER BY 1`)
       expect(r.rows.map((x) => x.tabella)).toEqual(['avvisi', 'presenze'])
     } finally { await dbV.close() }
+  }, 60_000)
+})
+
+describe('eventi_diario: la data è orario_inizio, non la colonna generata (revisione Opus, F5)', () => {
+  it('un UPDATE che non tocca orario_inizio non ricalcola; uno che lo sposta oltre il confine sì', async () => {
+    // In un trigger BEFORE `giorno_competenza` (generata, STORED) vale NULL in NEW: confrontata con OLD
+    // sembrava sempre cambiata e l'uscita anticipata non scattava mai. La data registrata è l'istante.
+    const dbE = await creaDbAnno({
+      sediPrimaDellaMigrazione: [SEDE],
+      codaPrima: `CREATE TABLE public.eventi_diario (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, tipo_evento text,
+        orario_inizio timestamptz NOT NULL,
+        giorno_competenza date GENERATED ALWAYS AS ((orario_inizio AT TIME ZONE 'Europe/Rome')::date) STORED,
+        creato_il timestamptz DEFAULT now());`,
+    })
+    try {
+      await dbE.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [SEDE])
+      await fissaCalendarioAnni(dbE)
+      await dbE.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [ALUNNO, SEDE])
+      const anni = await dbE.query<{ anno_inizio: number; id: string }>(`SELECT anno_inizio, id FROM public.anni_scolastici`)
+      const a2526 = anni.rows.find((x) => x.anno_inizio === 2025)!.id
+      const a2627 = anni.rows.find((x) => x.anno_inizio === 2026)!.id
+      // scritta a controlli morbidi con un anno incoerente (2025/26 per un giorno del 2026/27)
+      const id = (await dbE.query<{ id: string }>(
+        `INSERT INTO public.eventi_diario (alunno_id, tipo_evento, orario_inizio, anno_id)
+         VALUES ($1, 'pasto', TIMESTAMPTZ '2026-10-05 10:00:00+02', $2) RETURNING id`, [ALUNNO, a2526])).rows[0].id
+      await dbE.query(`UPDATE public.anno_regole SET controlli_rigidi = true`)
+      // un'altra colonna: non blocca (era ANNO_NON_COERENTE)
+      await dbE.query(`UPDATE public.eventi_diario SET tipo_evento = 'sonno' WHERE id = $1`, [id])
+      const anno = async () => (await dbE.query<{ anno_id: string }>(`SELECT anno_id FROM public.eventi_diario WHERE id = $1`, [id])).rows[0].anno_id
+      expect(await anno()).toBe(a2526)
+      // l'istante cambia: la riga si riverifica e segue la data (le 00:30 romane del 01/09 sono del 2026/27)
+      await dbE.query(`UPDATE public.eventi_diario SET orario_inizio = TIMESTAMPTZ '2026-09-01 00:30:00+02' WHERE id = $1`, [id])
+      expect(await anno()).toBe(a2627)
+    } finally { await dbE.close() }
   }, 60_000)
 })

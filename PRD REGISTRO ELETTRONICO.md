@@ -14,7 +14,7 @@
 
 **A controlli e guardia spenti il comportamento dell'app non cambia.** Le colonne `anno_id` ammettono NULL; `controlli_rigidi` e `guardia_attiva` partono spenti; con i controlli spenti i trigger non rifiutano niente, salvo su `frequenze` e `frequenze_moduli`, che sono tabelle nuove e vuote e che nessun codice scrive ancora. Tutte le tabelle nuove hanno la RLS accesa e nessun accesso per `anon` e `authenticated`: solo `service_role`.
 
-**Cosa non fa.** Non riempie niente: l'assegnazione dell'anno alle righe esistenti, le frequenze e il NOT NULL sono la **PR 2**; le route e le schermate arrivano nelle PR 3 e 4.
+**Cosa non fa.** Non riempie in blocco le righe esistenti: la migrazione riempie soltanto `sections.anno_id`; per le altre tabelle il trigger assegna l'anno a ogni riga nuova e al primo UPDATE di quelle vecchie, e quel primo UPDATE compare nella scatola nera. Il riempimento completo, le frequenze e il NOT NULL sono la **PR 2**; le route e le schermate arrivano nelle PR 3 e 4.
 
 **Prove.** Sette file `__tests__/db/anno-*.test.ts` su PGlite: `anno-calendario`, `anno-sezioni`, `anno-frequenze`, `anno-registro-guardia`, `anno-confine` (`sposta_confine_anno`), `anno-invarianti` e il banco `anno-banco`, che gira solo con `KIDVILLE_BANCO_ANNO=1` e misura il costo del trigger generico e di `anno_invarianti()`; più i casi del freno SQL per `anno_chiuso.oblio` in `__tests__/architecture/freno-sql-distruttivo.test.ts`.
 

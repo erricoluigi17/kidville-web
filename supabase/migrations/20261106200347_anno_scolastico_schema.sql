@@ -471,7 +471,8 @@ BEGIN
   -- I nomi in testo (`classe_sezione`, `target_classes`, `classe` della mensa) descrivono la classe
   -- dell'anno attivo. Una sezione di un altro anno (la prossima, in preparazione; o una passata)
   -- può avere lo stesso nome di una dell'anno attivo: rinominarla non deve riscrivere quei testi.
-  -- Tutto il resto della funzione è quello di 20260904094442, parola per parola.
+  -- Tutto il resto della funzione è quello di 20260904094442, parola per parola, tranne il filtro per
+  -- `anno_id` sulle tabelle del registro dell'anno (vedi più sotto).
   IF NOT EXISTS (
        SELECT 1
          FROM public.anni_sede a
@@ -483,6 +484,10 @@ BEGIN
   v_forma_vecchia := lower(replace(OLD.name::text, ' ', ''));
   v_forma_nuova   := lower(replace(NEW.name::text, ' ', ''));
 
+  -- Le tabelle del registro dell'anno (registro_orario, avvisi, galleria_media_v2) hanno `anno_id`: la
+  -- propagazione tocca solo le righe dell'anno della sezione o senza anno. Una riga di un ALTRO anno (il
+  -- 2025/26 chiuso) parla di un'altra «Girasoli» e il suo nome non va riscritto. Le tabelle senza
+  -- `anno_id` (news, moduli, menu di mensa, alunni) restano come prima.
   -- ─── Le guardie: la tabella c'è, e ha le colonne che servono ────────────────
   -- Si legge `pg_attribute` e non `information_schema`: quest'ultimo nasconde le
   -- colonne su cui il ruolo corrente non ha privilegi, e una guardia che dice
@@ -564,6 +569,7 @@ BEGIN
     SELECT count(*) INTO v_registro_attese
       FROM public.registro_orario r
      WHERE r.scuola_id = NEW.scuola_id
+       AND (r.anno_id IS NULL OR r.anno_id = NEW.anno_id)
        AND (r.section_id = NEW.id
             OR (r.section_id IS NULL
                 AND lower(replace(r.classe_sezione::text, ' ', '')) = v_forma_vecchia))
@@ -573,6 +579,7 @@ BEGIN
       SELECT DISTINCT ON (r.data, r.ora_lezione) r.id
         FROM public.registro_orario r
        WHERE r.scuola_id = NEW.scuola_id
+       AND (r.anno_id IS NULL OR r.anno_id = NEW.anno_id)
          AND (r.section_id = NEW.id
               OR (r.section_id IS NULL
                   AND lower(replace(r.classe_sezione::text, ' ', '')) = v_forma_vecchia))
@@ -605,6 +612,7 @@ BEGIN
                       ORDER BY u.o)
                FROM unnest(t.target_classes) WITH ORDINALITY AS u(e, o))
      WHERE t.scuola_id = NEW.scuola_id
+       AND (t.anno_id IS NULL OR t.anno_id = NEW.anno_id)
        AND t.target_classes IS NOT NULL
        AND EXISTS (SELECT 1 FROM unnest(t.target_classes) AS v(e)
                     WHERE lower(replace(v.e, ' ', '')) = v_forma_vecchia
@@ -639,6 +647,7 @@ BEGIN
                       ORDER BY u.o)
                FROM unnest(t.target_classes) WITH ORDINALITY AS u(e, o))
      WHERE t.scuola_id = NEW.scuola_id
+       AND (t.anno_id IS NULL OR t.anno_id = NEW.anno_id)
        AND t.target_classes IS NOT NULL
        AND EXISTS (SELECT 1 FROM unnest(t.target_classes) AS v(e)
                     WHERE lower(replace(v.e, ' ', '')) = v_forma_vecchia
@@ -1359,7 +1368,13 @@ BEGIN
     EXECUTE format('SELECT anno_id FROM public.%I WHERE id = $1', p_reg.madre_tabella)
        INTO v_calcolato USING (p_n ->> p_reg.madre_colonna)::uuid;
   ELSIF p_reg.colonna_data IS NOT NULL THEN
-    v_testo := coalesce(p_n ->> p_reg.colonna_data, p_n ->> p_reg.colonna_data_riserva);
+    -- La data di riserva serve AD ASSEGNARE l'anno quando manca, mai a smentire un anno dichiarato:
+    -- nel modo `dichiarato` con `anno_id` già scritto si guarda solo la colonna principale
+    -- (pagamenti: la competenza). Nel modo `data` la riserva è semplicemente la data di ripiego.
+    v_testo := p_n ->> p_reg.colonna_data;
+    IF v_testo IS NULL AND NOT (p_reg.modo = 'dichiarato' AND (p_n ->> 'anno_id') IS NOT NULL) THEN
+      v_testo := p_n ->> p_reg.colonna_data_riserva;
+    END IF;
     IF v_testo IS NOT NULL THEN
       -- un `date` esce come 'AAAA-MM-GG'; un istante porta l'ora: il giorno è quello di Roma
       v_giorno := CASE WHEN length(v_testo) = 10 THEN v_testo::date
@@ -1496,6 +1511,14 @@ BEGIN
     IF v_attuale IS NULL THEN
       NEW := jsonb_populate_record(NEW, jsonb_build_object('anno_id', v_calcolato));
       v_attuale := v_calcolato;
+    ELSIF v_attuale <> v_calcolato
+          AND TG_OP = 'UPDATE' AND v_reg.modo IN ('data', 'madre')
+          AND v_attuale IS NOT DISTINCT FROM (to_jsonb(OLD) ->> 'anno_id')::uuid THEN
+      -- Chi corregge la data (o la madre) senza toccare `anno_id` vuole che la riga segua: l'anno si
+      -- ASSEGNA, non si confronta (una data portata oltre il confine dell'anno non resta nel vecchio).
+      -- La guardia, più sotto, vede ancora OLD e NEW: uscire da un anno chiuso, o entrarci, chiede il gettone.
+      NEW := jsonb_populate_record(NEW, jsonb_build_object('anno_id', v_calcolato));
+      v_attuale := v_calcolato;
     ELSIF v_attuale <> v_calcolato AND v_rigidi THEN
       RAISE EXCEPTION 'ANNO_NON_COERENTE'
         USING DETAIL = json_build_object('tabella', TG_TABLE_NAME, 'anno_id', v_attuale,
@@ -1526,14 +1549,17 @@ $$;
 -- Il registro. Una tabella entra SOLO se `to_regclass` la trova ed è una tabella vera, `relkind` r o p
 -- (non una vista), e così la sua madre: il DB E2E della CI non le ha tutte. `sections` e `frequenze` hanno trigger propri (1.2, 1.3) che girano
 -- prima; il generico gira per ultimo (R9). Le due rigide da subito sono nuove e vuote (R2).
--- Le ultime otto righe sono le figlie che R5 nomina senza elencarle: colonna verso la madre letta
+-- Le ultime nove righe sono le figlie che R5 nomina senza elencarle: colonna verso la madre letta
 -- dalla loro migrazione (baseline 20260704120000, votazioni_rappresentanti 20261102100040).
 INSERT INTO public.anno_tabelle
   (tabella, modo, colonna_data, colonna_data_riserva, via_sede, madre_tabella, madre_colonna, colonna_creazione, rigida)
 SELECT v.*
   FROM (VALUES
     ('presenze',               'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'created_at', false),
-    ('eventi_diario',          'data', 'giorno_competenza', 'orario_inizio','alunno_id',  NULL, NULL, 'creato_il',  false),
+    -- `giorno_competenza` è GENERATA ((orario_inizio AT TIME ZONE 'Europe/Rome')::date, 20261015183200): in un
+    -- BEFORE vale NULL in NEW, e confrontata con OLD faceva sembrare cambiata ogni riga. È esattamente il
+    -- giorno di Roma dell'istante, quindi la data registrata è l'istante (il calcolo lo converte con giorno_roma).
+    ('eventi_diario',          'data', 'orario_inizio',    NULL,           'alunno_id',  NULL, NULL, 'creato_il',  false),
     ('valutazioni',            'data', 'data_evento',       'creato_il',    'alunno_id',  NULL, NULL, 'creato_il',  false),
     ('note_disciplinari',      'data', 'data_evento',       'creato_il',    'alunno_id',  NULL, NULL, 'creato_il',  false),
     ('registro_orario',        'data', 'data',              NULL,           'scuola_id',  NULL, NULL, 'creato_il',  false),
@@ -2293,7 +2319,12 @@ CREATE INDEX IF NOT EXISTS passaggi_anno_righe_sezione_a_id_idx    ON public.pas
 CREATE TABLE IF NOT EXISTS public.passaggi_anno_docenti (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   passaggio_id     uuid NOT NULL REFERENCES public.passaggi_anno(id) ON DELETE CASCADE,
-  utente_id        uuid NOT NULL REFERENCES public.utenti(id) ON DELETE CASCADE,
+  -- Senza chiave esterna verso `utenti` (R15, come `anni_sede.creato_da` e `passaggi_anno_righe.modificata_da`):
+  -- un utente si può eliminare per davvero, e la storia di chi insegnava dove nel passaggio d'anno non
+  -- deve sparire con lui (con `ON DELETE CASCADE` la sua riga se ne andava in silenzio). Resta un uuid;
+  -- così la tabella non entra nel censimento delle FK verso `utenti` e `tracce-docente-dichiarate` non
+  -- ha niente da dichiarare quando la PR 1-B rigenera la fotografia dalla produzione.
+  utente_id        uuid NOT NULL,
   sezione_a_id     uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
   origine          text NOT NULL,
   CONSTRAINT passaggi_anno_docenti_origine_check CHECK (origine IN ('copiata', 'aggiunta', 'tolta')),

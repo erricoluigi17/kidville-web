@@ -248,6 +248,16 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
 - La guardia non ferma una riga il cui anno è sconosciuto (`anno_id` NULL e non calcolabile): è voluto, perché
   la guardia si accende solo dopo il riempimento e il `NOT NULL` di questa PR. Fino ad allora la copre
   l'invariante «senza anno».
+- (revisione Opus, F9a) Si contano, tabella per tabella, le righe la cui sede non si ricava (solo `count(*)`,
+  mai le righe): per quelle l'anno non si assegna. E la route `src/app/api/forms/send-otp/route.ts:509-517`
+  scrive la sede: oggi `form_submissions` nasce senza `scuola_id`. Misura del 07/11: 0 righe senza sede negli
+  ultimi 30 giorni, ma il percorso esiste.
+- (F9b) Il `NOT NULL` sulle tabelle in modo `dichiarato` richiede una regola transitoria nel trigger finché la
+  PR 3 non scrive l'anno: fino ad allora una riga nuova di quelle tabelle nasce senza `anno_id` e il vincolo la
+  rifiuterebbe.
+- (F9c) Gli interruttori di `anno_regole` (`controlli_rigidi`, `guardia_attiva`) entrano nel freno SQL
+  (`supabase_sql_freno.py`) quando questa PR accende i controlli rigidi: oggi un `UPDATE anno_regole …` li
+  spegne senza che il freno lo veda.
 
 ### PR 3 — Regola di scrittura, guardia, doppia scrittura, lock
 
@@ -283,6 +293,14 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
 - Un UPDATE che sposta una riga fra due anni protetti vuole due gettoni e l'header ne porta uno: risponde
   sempre `ANNO_CHIUSO`. È una correzione straordinaria (DELETE e INSERT); questa PR può estendere l'header a
   una lista di gettoni.
+- (revisione Opus, F10a) L'oblio GDPR (`src/lib/gdpr/esegui.ts` righe 111, 742, 1470, 1598, 1648;
+  `src/app/api/admin/wipe/route.ts:81`) passa da PostgREST e non può impostare `anno_chiuso.oblio`: prima di
+  `guardia_attiva = true` va portato dentro una RPC che accende l'interruttore nella sua transazione.
+- (F10b) L'header deve poter portare più gettoni (oggi uno solo).
+- (F10c) Il gettone oggi non è legato all'utente né a un uso solo, e il browser può mandare l'header: va legato
+  (utente, un uso) prima di accendere la guardia.
+- (F10d) `anno_di` restituisce `anni_scolastici.id`, `anno_attivo` restituisce `anni_sede.id`: dirlo dove le PR 3
+  e 4 li usano, perché i due non si scambiano.
 
 ### PR 4.1 → 4.9 — Lettura dalla strada nuova
 
@@ -303,6 +321,9 @@ commit, revisione, PR. Qui ci sono i file, le interfacce e i test che la definis
   - consegne dalla PR 1: la route `PATCH` che chiama `sposta_confine_anno` logga **successo e rifiuto** (è un
     evento critico, AGENTS.md punto 5): la funzione SQL non scrive nessun log; e salvare senza aver cambiato la
     data non è un errore (la funzione risponde «nessun cambio»), perché l'interfaccia può farlo.
+  - (revisione Opus, F11) Prima di esporre `sposta_confine_anno` alla segreteria, `anno_conta_righe_assegnate_nei_giorni`
+    va resa selettiva: oggi filtra solo `anno_id` e scansiona per intero ~45 tabelle. Dove la tabella ha
+    `scuola_id` si usa `(scuola_id, anno_id)`, che ha il suo indice.
 - **4.3 Sezioni e docenti.**
   - `sezioni_visibili_docente()`; le liste delle sezioni filtrano per anno; migrazione della fase B (il
     trigger-specchio si inverte);

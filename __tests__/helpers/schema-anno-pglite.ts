@@ -238,3 +238,21 @@ export async function creaDbAnno(opzioni: OpzioniDbAnno = {}): Promise<PGlite> {
   await db.exec(readFileSync(fileMigrazioneAnno(), 'utf8') + '\n' + (opzioni.codaDopo ?? ''))
   return db
 }
+
+/**
+ * Riporta gli anni di TUTTE le sedi a un calendario fisso, indipendente dal giorno in cui gira il test:
+ * 2025/26 chiuso, 2026/27 corrente, 2027/28 in preparazione (se esiste). La migrazione dà alle sedi che
+ * già c'erano gli stati di OGGI: dal 01/08/2027 il 2026/27 sarebbe `in_chiusura` e i casi cambierebbero
+ * esito. Va chiamata dopo `anni_sede_crea_per_sede(sede, '2026-11-06')`, che completa gli anni mancanti.
+ */
+export async function fissaCalendarioAnni(db: PGlite): Promise<void> {
+  await db.exec(`
+    UPDATE public.anni_sede s
+       SET inizio = y.inizio_predefinito, fine = y.fine_predefinita,
+           stato = CASE y.anno_inizio WHEN 2025 THEN 'chiuso' WHEN 2026 THEN 'corrente' ELSE 'in_preparazione' END,
+           ultimo_giorno_aperto = make_date(y.anno_inizio + 1, 7, 31),
+           prepara_successivo_dal = y.inizio_predefinito
+      FROM public.anni_scolastici y
+     WHERE y.id = s.anno_id AND y.anno_inizio IN (2025, 2026, 2027);
+  `)
+}

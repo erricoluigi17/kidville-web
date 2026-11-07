@@ -252,4 +252,25 @@ describe('Compito 1.2 · propaga_rinomina_sezione tocca solo l\'anno attivo', ()
     const log = await db.query<{ livello: string }>(`SELECT livello FROM public.app_log WHERE fingerprint = $1`, [`db:rinomina-sezione:${att}`])
     expect(log.rows).toEqual([{ livello: 'info' }])
   })
+
+  it('la propagazione tocca solo le righe dell\'anno della sezione o senza anno, non quelle di un altro anno (F3)', async () => {
+    // Un avviso del 2025/26 (anno scritto), uno senza anno (data fuori da ogni anno), uno dell'anno attivo.
+    await db.exec('DELETE FROM public.avvisi')
+    await db.query(
+      `INSERT INTO public.avvisi (scuola_id, target_classes, anno_id) VALUES ($1, ARRAY['Girasoli', 'Api'], $2)`,
+      [SEDE, await annoPrecedente()])
+    await db.query(
+      `INSERT INTO public.avvisi (scuola_id, target_classes, created_at) VALUES ($1, ARRAY['Girasoli', 'Api'], TIMESTAMPTZ '2010-01-01 12:00:00+00')`,
+      [SEDE])
+    await db.query(`INSERT INTO public.avvisi (scuola_id, target_classes) VALUES ($1, ARRAY['Girasoli', 'Api'])`, [SEDE])
+    expect(await una<number>(`SELECT count(*)::int FROM public.avvisi WHERE anno_id IS NULL`)).toBe(1)
+
+    await db.query(`UPDATE public.sections SET name='Farfalle' WHERE id=$1`, [att])
+
+    const per = async (cond: string) =>
+      (await db.query<{ target_classes: string[] }>(`SELECT target_classes FROM public.avvisi WHERE ${cond}`)).rows.map((r) => r.target_classes)
+    expect(await per(`anno_id = '${await annoPrecedente()}'`)).toEqual([['Girasoli', 'Api']])
+    expect(await per(`anno_id IS NULL`)).toEqual([['Farfalle', 'Api']])
+    expect(await per(`anno_id = '${await annoAttivo()}'`)).toEqual([['Farfalle', 'Api']])
+  })
 })

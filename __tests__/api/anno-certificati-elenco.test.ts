@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
     ruolo: 'admin' as string,
     utente: '' as string,
     attive: [] as string[],
+    saltaScopeSezione: false,
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message?: string }>,
     scritture: [] as unknown[],
@@ -39,7 +40,13 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/auth/scope', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/auth/scope')>()
-    return { ...vero, resolveScuoleAttive: async () => [...h.attive] }
+    return {
+        ...vero,
+        resolveScuoleAttive: async () => [...h.attive],
+        // solo per il test del guasto di `sedeDellaSezione`: il gate di scope legge la stessa tabella e cadrebbe prima
+        assertSezioneInScope: async (...a: Parameters<typeof vero.assertSezioneInScope>) =>
+            h.saltaScopeSezione ? null : vero.assertSezioneInScope(...a),
+    }
 })
 // Ogni client scrive nell'accumulatore comune MARCANDO la scrittura con l'header del gettone che porta
 // (`null` per il client senza): così un test sa da quale client è passata ogni scrittura.
@@ -115,6 +122,7 @@ beforeEach(() => {
     h.utente = ADM
     h.attive = [SEDE_A]
     h.errori = {}
+    h.saltaScopeSezione = false
     h.scritture = []
     h.usiChiesti = []
     h.nRighe = 1
@@ -188,6 +196,15 @@ describe('POST /api/admin/competenze · l\'anno del certificato', () => {
         expect(res.status).toBe(200)
         expect(scritte('certificati_competenze')).toHaveLength(2)
         for (const s of scritte('certificati_competenze')) expect(s.valori[0]).toMatchObject({ anno_id: A2 })
+    })
+
+    it('la sede della sezione non si legge (guasto su `sections`): 500 e NESSUNA scrittura su certificati_competenze', async () => {
+        h.saltaScopeSezione = true
+        h.errori = { 'sections:select': { code: '57014', message: 'canceling statement' } }
+        const res = await postCompetenze({ sectionId: SEZ_A })
+        expect(res.status).toBe(500)
+        expect(scritte('certificati_competenze')).toHaveLength(0)
+        expect(h.db.certificati_competenze).toHaveLength(0)
     })
 
     it('con `anni_sede` che risponde PGRST205 la riga NON ha anno_id e la risposta è 2xx (b)', async () => {

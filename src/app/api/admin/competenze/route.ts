@@ -4,7 +4,6 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, resolveAnnoScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
-import type { EsitoAnno } from '@/lib/anno/tipi'
 import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -116,6 +115,11 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     const fuoriScopePost = await assertSezioneInScope(supabase, auth.user, body.sectionId)
     if (fuoriScopePost) return fuoriScopePost
     const scuolaSezione = await sedeDellaSezione(supabase, body.sectionId)
+    // Senza la sede non c'è anno da dichiarare: scrivere un certificato così lo lascerebbe senza `anno_id`. È un
+    // guasto di lettura (la sezione è già in scope), già registrato a `error` da `sedeDellaSezione`: nessun secondo log.
+    if (!scuolaSezione) {
+      return NextResponse.json({ error: 'Impossibile leggere la sede della classe: nessun certificato creato. Riprova.', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
 
     let alunniIds: string[] = []
     if (body.alunnoId) alunniIds = [body.alunnoId]
@@ -132,16 +136,12 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     for (const alunnoId of alunniIds) {
       // L'anno del certificato: l'unico `corrente` della sede DELLA SEZIONE (mai quella dell'operatore).
       // Un esito per alunno, perché un gettone vale una sola transazione e ogni certificato è una scrittura.
-      let esito: EsitoAnno | undefined
-      if (scuolaSezione) {
-        const risolto = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione)
-        if (risolto instanceof NextResponse) {
-          const rifiuto = (await risolto.json()) as { error?: string; codice?: string }
-          errori.push({ alunnoId, error: rifiuto.error, status: risolto.status, codice: rifiuto.codice })
-          firstErrStatus = firstErrStatus ?? risolto.status
-          continue
-        }
-        esito = risolto
+      const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione)
+      if (esito instanceof NextResponse) {
+        const rifiuto = (await esito.json()) as { error?: string; codice?: string }
+        errori.push({ alunnoId, error: rifiuto.error, status: esito.status, codice: rifiuto.codice })
+        firstErrStatus = firstErrStatus ?? esito.status
+        continue
       }
       const r = await seedCertificato(supabase, body.sectionId, alunnoId, esito)
       if (r.error) {

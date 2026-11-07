@@ -194,6 +194,38 @@ function scriveAnnoNellaChiamata(a: Analisi, argomento: string): boolean {
   return false
 }
 
+/** Le chiamate `nome(…)` (non la definizione `function nome(`) con il numero di argomenti al livello più esterno. */
+function chiamate(a: Analisi, nome: string): { riga: number; argomenti: number }[] {
+  const out: { riga: number; argomenti: number }[] = []
+  const re = new RegExp(`(?<!function\\s)\\b${nome}\\s*\\(`, 'g')
+  const st = a.m.struttura
+  let h: RegExpExecArray | null
+  while ((h = re.exec(st)) !== null) {
+    const ap = h.index + h[0].length - 1
+    const fine = fineParentesi(st, ap)
+    const corpo = st.slice(ap + 1, fine - 1)
+    let liv = 0
+    let n = corpo.trim() === '' ? 0 : 1
+    for (const c of corpo) {
+      if ('([{'.includes(c)) liv++
+      else if (')]}'.includes(c)) liv--
+      else if (c === ',' && liv === 0) n++
+    }
+    if (corpo.trim().endsWith(',')) n-- // virgola finale
+    out.push({ riga: riga(a.m.originale, h.index), argomenti: n })
+  }
+  return out
+}
+const contaChiamate = (a: Analisi, nome: string) => chiamate(a, nome).length
+function chiamateSenzaEsito(files: Analisi[], nome: string, minimoArgomenti: number): { testo: string }[] {
+  const out: { testo: string }[] = []
+  for (const a of files) {
+    if (a.percorso === 'src/lib/competenze/certificato-store.ts') continue // la definizione
+    for (const c of chiamate(a, nome)) if (c.argomenti < minimoArgomenti) out.push({ testo: `${a.percorso}:${c.riga} — ${nome}( con ${c.argomenti} argomenti` })
+  }
+  return out
+}
+
 function violazioniDichiarate(files: Analisi[], inVariabile: { file: string }[] = TABELLE_IN_VARIABILE): string[] {
   const out: string[] = []
   // i file con una tabella in variabile DICHIARATA li controlla `violazioniNonLeggibili` (tetto, tabelle non dichiarate)
@@ -776,6 +808,15 @@ describe('anno-scrittura-coverage — 1. lo scanner, provato su sorgenti finti',
     expect(inStringa).toHaveLength(1)
   })
 
+  it('una chiamata a seedCertificato senza esito è segnalata, con esito no', () => {
+    const senza = finto('src/app/api/x/route.ts', 'await seedCertificato(supabase, sectionId, alunnoId)')
+    expect(chiamateSenzaEsito([senza], 'seedCertificato', 4)).toHaveLength(1)
+    const con = finto('src/app/api/x/route.ts', 'await seedCertificato(supabase, body.sectionId, alunnoId, esito)')
+    expect(chiamateSenzaEsito([con], 'seedCertificato', 4)).toEqual([])
+    const annidata = finto('src/app/api/x/route.ts', 'await seedCertificato(supabase, f(a, b), alunnoId)')
+    expect(chiamateSenzaEsito([annidata], 'seedCertificato', 4)).toHaveLength(1)
+  })
+
   it('un commento lungo fra `.from(…)` e `.insert(` non nasconde la scrittura', () => {
     const commento = '// ' + 'x'.repeat(200)
     const a = finto('src/app/api/x/route.ts', `await supabase.from('sections')\n  ${commento}\n  .insert({ name: 'A' })`)
@@ -967,6 +1008,16 @@ describe('anno-scrittura-coverage — 2. le scritture dichiarate portano l’ann
       expect(/\bEsitoAnno\b/.test(importi(a!)), `${file} non importa più EsitoAnno`).toBe(true)
       expect(a!.scritture.some((s) => s.tabella && DICHIARATE.has(s.tabella) && (s.op === 'insert' || s.op === 'upsert')), `${file} non scrive più una tabella dichiarata`).toBe(true)
     }
+  })
+
+  it('`seedCertificato` ha `esito` OBBLIGATORIO nel tipo e ogni chiamata in src/ passa l’argomento dell’esito', () => {
+    const def = PER_PERCORSO.get('src/lib/competenze/certificato-store.ts')!
+    expect(/\besito\s*:\s*EsitoAnno\b/.test(def.m.struttura), 'in certificato-store.ts `esito` deve essere `esito: EsitoAnno` (non `esito?:`)').toBe(true)
+    expect(/\besito\s*\?\s*:/.test(def.m.struttura)).toBe(false)
+    const mancanti = chiamateSenzaEsito(ANALISI, 'seedCertificato', 4)
+    expect(mancanti, 'chiamate a seedCertificato senza il 4° argomento (esito):' + elenco(mancanti.map((m) => m.testo))).toEqual([])
+    const chiamate = ANALISI.reduce((n, a) => n + contaChiamate(a, 'seedCertificato'), 0)
+    expect(chiamate, 'nessuna chiamata a seedCertificato trovata: il controllo sarebbe cieco').toBeGreaterThanOrEqual(1)
   })
 
   it('le tabelle in variabile sono tutte dichiarate, con il loro tetto, e nessuna è una dichiarata', () => {

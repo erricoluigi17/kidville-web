@@ -95,19 +95,18 @@ export async function validaScrutinioFinaleClasseQuinta(
  *
  * `esito` è l'anno della scrittura (`resolveAnnoScrittura` della route, per la sede della sezione):
  * il PRIMO upsert lo dichiara (`conAnno`) e passa dal client col gettone, se l'esito ne ha. Il secondo
- * (`certificato_competenza_livelli`) non è nel registro dell'anno e non lo scrive. Senza `esito` si scrive
- * come prima. Un rifiuto dell'anno (`ANNO_CHIUSO`…) esce col suo `status` e `codice`.
+ * (`certificato_competenza_livelli`) non è nel registro dell'anno e non lo scrive. Un rifiuto dell'anno (`ANNO_CHIUSO`…) esce col suo `status` e `codice`.
  */
 export async function seedCertificato(
   supabase: SupabaseClient,
   sectionId: string,
   alunnoId: string,
-  esito?: EsitoAnno,
+  esito: EsitoAnno,
 ): Promise<{ certificatoId?: string; error?: string; status?: number; codice?: string }> {
   const v = await validaScrutinioFinaleClasseQuinta(supabase, sectionId)
   if (!v.ok) return { error: v.error, status: v.status }
 
-  const scrittura = esito ? await clientPerScrittura(supabase, esito) : supabase
+  const scrittura = await clientPerScrittura(supabase, esito)
   const { data: cert, error: certErr } = await scrittura
     .from('certificati_competenze')
     .upsert(
@@ -118,7 +117,7 @@ export async function seedCertificato(
         scrutinio_id: v.scrutinioId,
         anno_scolastico: v.annoScolastico,
         stato: 'bozza',
-        ...(esito ? conAnno(esito) : {}),
+        ...conAnno(esito),
       },
       { onConflict: 'alunno_id,anno_scolastico' }
     )

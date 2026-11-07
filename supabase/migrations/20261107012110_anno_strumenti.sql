@@ -554,6 +554,16 @@ BEGIN
 
     v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe',
       format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+    -- Il totale, SEMPRE una riga (un aggregato senza GROUP BY): una tabella svuotata o riempita da zero deve
+    -- comparire nella fotografia, o la differenza non la vedrebbe (`righe` per sede, a tabella vuota, non scrive niente).
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_totale',
+      format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t', v_t));
+    -- Senza una colonna di creazione propria le righe nuove non si distinguono dalle perse: la tabella non e
+    -- confrontabile (`anno_riconciliazione_differenze` la salta) e il suo conteggio resta qui, visibile.
+    IF r.colonna_creazione IS NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'non_confrontabili',
+        format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t', v_t));
+    END IF;
     v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_per_anno',
       format('SELECT %s AS scuola_id, t.anno_id AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_id IS NOT NULL GROUP BY 1, 2', v_sede, v_t));
     v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_senza_anno',
@@ -705,7 +715,10 @@ $$;
 
 -- Le tabelle CONSERVATE in cui l'ultima fotografia `prima` e l'ultima `dopo` (o `finale`) non tornano:
 -- `dopo − prima − nuove <> 0`, per `righe` ed euro, al centesimo. Vuota = conservato. Sono escluse
--- `frequenze` e `frequenze_moduli`, che nascono vuote; si confrontano solo le tabelle fotografate in entrambe
+-- `frequenze` e `frequenze_moduli`, che nascono vuote, e le tabelle senza una colonna di creazione propria
+-- (avvisi_risposte, gallery_photo_uploads, scrutinio_comportamento, valutazione_obiettivi, votazioni_candidati,
+-- votazioni_classi: `righe_nuove` non si puo calcolare e ogni riga nata sul database vivo sembrerebbe un difetto;
+-- le conta la voce `non_confrontabili` della fotografia); si confrontano solo le tabelle fotografate in entrambe
 -- le fasi. «Ultima» = la fotografia (la transazione) dell'ultima riga scritta per quella tabella e fase.
 CREATE OR REPLACE FUNCTION public.anno_riconciliazione_differenze()
 RETURNS TABLE (tabella text, scuola_id uuid, voce text, prima numeric, dopo numeric, nuove numeric)
@@ -722,7 +735,9 @@ AS $$
   ),
   complete AS (
     SELECT u.tabella FROM ultime u
-     WHERE u.tabella IN (SELECT t.tabella FROM public.anno_tabelle t WHERE t.tabella NOT IN ('frequenze', 'frequenze_moduli'))
+     WHERE u.tabella IN (SELECT t.tabella FROM public.anno_tabelle t
+                          WHERE t.tabella NOT IN ('frequenze', 'frequenze_moduli')
+                            AND t.colonna_creazione IS NOT NULL)
      GROUP BY u.tabella HAVING count(*) = 2
   ),
   marcate AS (

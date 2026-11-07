@@ -36,6 +36,14 @@ const SCHEMA_RICONCILIAZIONE = `
     dal date NOT NULL,
     al date
   );
+  -- una madre SENZA colonna di creazione propria (come in produzione): le righe nuove non si distinguono dalle perse
+  CREATE TABLE public.avvisi_risposte (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    avviso_id uuid NOT NULL REFERENCES public.avvisi(id) ON DELETE CASCADE,
+    parent_id uuid NOT NULL,
+    student_id uuid NOT NULL,
+    risposto_il timestamptz
+  );
   -- nasce senza sede (src/app/api/forms/send-otp/route.ts): la scuola_id è nullable
   CREATE TABLE public.form_submissions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -314,6 +322,49 @@ describe('anno_riconciliazione_differenze · il rosso apposta', () => {
       .catch(() => undefined)
     await foto('dopo')
     expect((await differenze()).filter((d) => d.tabella === 'frequenze')).toEqual([])
+  })
+})
+
+describe('anno_riconciliazione_differenze · le tabelle madre', () => {
+  it('una madre svuotata fra prima e dopo (1 riga → 0) compare: righe 1→0', async () => {
+    await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES (gen_random_uuid(), $1)`, [SEZ])
+    await foto('prima')
+    await db.exec(`DELETE FROM public.utenti_sezioni`)
+    await foto('dopo')
+    expect((await differenze()).filter((d) => d.tabella === 'utenti_sezioni')).toEqual([
+      { tabella: 'utenti_sezioni', scuola_id: null, voce: 'righe', prima: 1, dopo: 0, nuove: 0 },
+    ])
+  })
+
+  it('una madre riempita da zero (0 → 1) compare come differenza se la riga non e nuova', async () => {
+    await foto('prima')
+    // creato_il nel passato: la riga non conta come «nuova», quindi la differenza deve restare visibile
+    await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id, creato_il) VALUES (gen_random_uuid(), $1, TIMESTAMPTZ '2026-01-01 00:00:00+00')`, [SEZ])
+    await foto('dopo')
+    expect((await differenze()).filter((d) => d.tabella === 'utenti_sezioni')).toEqual([
+      { tabella: 'utenti_sezioni', scuola_id: null, voce: 'righe', prima: 0, dopo: 1, nuove: 0 },
+    ])
+    await db.exec(`DELETE FROM public.utenti_sezioni`)
+  })
+
+  it('una madre senza colonna di creazione (avvisi_risposte) non e confrontabile: nessun falso allarme, e il conteggio resta nel rapporto', async () => {
+    const avviso = await una<string>(`SELECT id FROM public.avvisi LIMIT 1`)
+    await foto('prima')
+    await db.query(`INSERT INTO public.avvisi_risposte (avviso_id, parent_id, student_id) VALUES ($1, gen_random_uuid(), gen_random_uuid())`, [avviso])
+    await foto('dopo')
+    expect((await differenze()).filter((d) => d.tabella === 'avvisi_risposte')).toEqual([])
+    expect(await voce('non_confrontabili', { fase: 'prima', tabella: 'avvisi_risposte' })).toBe(0)
+    expect(await voce('non_confrontabili', { fase: 'dopo', tabella: 'avvisi_risposte' })).toBe(1)
+    await db.exec(`DELETE FROM public.avvisi_risposte`)
+  })
+
+  it('le tabelle con una colonna di creazione non sono mai tra le non confrontabili', async () => {
+    await foto('prima')
+    const t = (await db.query<{ tabella: string }>(
+      `SELECT DISTINCT tabella FROM public.riconciliazione_anno WHERE voce = 'non_confrontabili' ORDER BY 1`)).rows.map((x) => x.tabella)
+    const senza = (await db.query<{ tabella: string }>(
+      `SELECT tabella FROM public.anno_tabelle WHERE colonna_creazione IS NULL ORDER BY 1`)).rows.map((x) => x.tabella)
+    expect(t).toEqual(senza)
   })
 })
 

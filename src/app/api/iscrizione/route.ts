@@ -9,6 +9,8 @@ import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { annoPerScritturaPubblica } from '@/lib/anno/pubblico'
+import { erroreAnno } from '@/lib/anno/errori'
 import { rispostaErroreInterno } from '@/lib/api/errore-interno'
 import { CONSENSI_FIELDS } from '@/lib/forms/enrollment-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
@@ -398,6 +400,13 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
       return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })
     }
 
+    // L'anno della domanda: il `corrente` della sede, mai un cookie (la porta non ha utente) e mai un
+    // rifiuto: se la lettura fallisce o non c'è un `corrente`, la funzione lo dice nei log e la domanda si
+    // scrive SENZA `anno_id` (la riserva permanente del database lo assegna). Una famiglia non perde la
+    // domanda per l'anno. Il primo tentativo e quello di ripiego scrivono lo STESSO `anno_id`.
+    const pubblico = await annoPerScritturaPubblica(supabase, scuolaId)
+    const dichiaraAnno: { anno_id?: string } = pubblico.annoId ? { anno_id: pubblico.annoId } : {}
+
     const { data: row, error } = await supabase
       .from('enrollment_submissions')
       .insert({
@@ -405,11 +414,14 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         data: dataNormalizzata as EnrollmentSubmissionData,
         status: 'pending',
         consents_log: consentsLog,
+        ...dichiaraAnno,
       })
       .select('id')
       .single()
 
     if (error) {
+      const anno = erroreAnno(error, OPERAZIONE)
+      if (anno) return anno
       // Colonna assente sul DB E2E non migrato: si RIPROVA senza la prova, ma
       // NON in silenzio. Un'iscrizione persa perché manca una colonna sarebbe
       // peggio; una prova non registrata senza che nessuno lo sappia, pure.
@@ -424,10 +436,13 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
             scuola_id: scuolaId,
             data: dataNormalizzata as EnrollmentSubmissionData,
             status: 'pending',
+            ...dichiaraAnno,
           })
           .select('id')
           .single()
         if (retry.error) {
+          const annoRetry = erroreAnno(retry.error, OPERAZIONE)
+          if (annoRetry) return annoRetry
           return rispostaGuastoDb(OPERAZIONE, 'db:enrollment_submissions', retry.error, 'scrittura')
         }
         // La ricevuta parte ANCHE su questa strada. È il ramo che gira sul DB

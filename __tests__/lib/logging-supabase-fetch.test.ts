@@ -752,6 +752,9 @@ describe('lock: ogni factory è strumentato, tranne quello dei log', () => {
         expect(new Set(nomi)).toEqual(new Set([
             'createClient', 'createSessionClient', 'createParentReadClient',
             'createAdminClient', 'createLogClient',
+            // `createAdminClientConHeader` (2026-11-07, anno scolastico PR 3.2) — l'admin con header
+            // fissi (`x-kidville-correzione`). Stesso `fetchStrumentato`: il lock sopra lo verifica.
+            'createAdminClientConHeader',
             // `createVerificaClient` (2026-09-01) — il SESTO, e il primo aggiunto da quando
             // questo elenco esiste. Serve a un caso solo: verificare che chi chiede il cambio
             // password conosca quella ATTUALE, tentando un accesso vero

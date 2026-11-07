@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope'
+import { conAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -102,6 +105,14 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   const sede = await resolveScuolaScrittura(request, supabase, auth.user, dati.scuolaId)
   if (sede.response) return sede.response
   const scuolaId = sede.scuolaId as string
+  // L'anno della votazione: dichiarato, o quello del cookie, o l'unico `corrente`. Le figlie (classi e
+  // candidati) sono in modo `madre`: l'anno lo prendono dalla testata e non lo scrivono.
+  // Un gettone vale UNA richiesta di scrittura: testata, classi (se ci sono), candidati (se ci sono) e, se una
+  // figlia cade, il disfacimento della testata. Tutte tabelle del registro (`dichiarato` o `madre`).
+  const candidatiDaScrivere = dati.rappresentanteIstituto ? dati.candidatiIstituto : []
+  const usi = 1 + (dati.sectionIds.length > 0 ? 1 : 0) + (candidatiDaScrivere.length > 0 ? 1 : 0) + 1
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId, usi })
+  if (esito instanceof NextResponse) return esito
   const operazione = 'admin/votazioni:POST'
   const guasto = (errore: unknown) => rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
 
@@ -127,7 +138,7 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
 
   // 7. e 8. I candidati d'istituto: almeno uno, e tutti genitori della sede con un account attivo. I candidati
   //    mandati con l'istituto spento si ignorano (non si scrivono e non si validano).
-  const candidati = dati.rappresentanteIstituto ? dati.candidatiIstituto : []
+  const candidati = candidatiDaScrivere
   if (dati.rappresentanteIstituto && candidati.length === 0) {
     return rifiutoVotazione('VOTAZIONE_CANDIDATI_MANCANTI')
   }
@@ -149,7 +160,8 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   if (conflitto.valore === 'istituto') return rifiutoVotazione('VOTAZIONE_ISTITUTO_GIA_APERTA')
 
   // 11. La testata, poi le figlie.
-  const { data: creata, error: errTestata } = await supabase
+  const scrittura = await clientPerScrittura(supabase, esito)
+  const { data: creata, error: errTestata } = await scrittura
     .from('votazioni')
     .insert({
       scuola_id: scuolaId,
@@ -157,23 +169,28 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
       scadenza,
       rappresentante_istituto: dati.rappresentanteIstituto,
       creata_da: auth.user.id,
+      ...conAnno(esito),
     })
     .select('id')
     .single()
+  if (errTestata) {
+    const anno = erroreAnno(errTestata, operazione)
+    if (anno) return anno
+  }
   if (errTestata || !creata) return guasto(errTestata ?? new Error('votazioni:insert-senza-riga'))
   const id = (creata as { id: string }).id
 
   if (dati.sectionIds.length > 0) {
-    const { error } = await supabase
+    const { error } = await scrittura
       .from('votazioni_classi')
       .insert(dati.sectionIds.map((section_id) => ({ votazione_id: id, scuola_id: scuolaId, section_id })))
-    if (error) return annullaTestata(supabase, id, scuolaId, error, operazione)
+    if (error) return annullaTestata(scrittura, id, scuolaId, error, operazione)
   }
   if (candidati.length > 0) {
-    const { error } = await supabase
+    const { error } = await scrittura
       .from('votazioni_candidati')
       .insert(candidati.map((utente_id) => ({ votazione_id: id, scuola_id: scuolaId, utente_id })))
-    if (error) return annullaTestata(supabase, id, scuolaId, error, operazione)
+    if (error) return annullaTestata(scrittura, id, scuolaId, error, operazione)
   }
 
   // 12. L'audit (senza il titolo: testo libero) e il battito di successo.
@@ -223,5 +240,8 @@ async function annullaTestata(
       errRipristino,
     )
   }
-  return rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
+  return (
+    erroreAnno(errore as { code?: string; message?: string }, operazione) ??
+    rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
+  )
 }

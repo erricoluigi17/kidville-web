@@ -543,6 +543,41 @@ function validaChiaviErrori(errori: Record<string, ErrorePostgrest> | undefined,
 }
 
 /**
+ * `anno_oblio_scrivi` (M3, Compito 3.6): dal 3.6 l'oblio e la retention scrivono il registro dell'anno DA questa RPC.
+ * Il finto la emula come fa la funzione SQL, cioè con una UPDATE/DELETE sulla stessa tabella: la scrittura passa dal
+ * builder (quindi finisce in `scritture`, muta `db` e rispetta gli errori iniettati per `"<tabella>:update|delete"`),
+ * con le STESSE cinture dell'SQL. L'errore del builder torna come errore di RPC. Una RPC passata in `opzioni.rpc` vince.
+ */
+async function oblioScriviFinta(from: (tabella: string) => unknown, args: Riga): Promise<RispostaRpc> {
+  const azione = String(args.p_azione)
+  const tabella = String(args.p_tabella)
+  const colonna = String(args.p_colonna)
+  const valori = (args.p_valori as string[]) ?? []
+  const t = from(tabella) as Record<string, (...a: unknown[]) => Record<string, (...a: unknown[]) => unknown>>
+  let q: Record<string, (...a: unknown[]) => unknown>
+  if (azione === 'update') {
+    const set = (args.p_set ?? {}) as Riga
+    const chiavi = Object.keys(set)
+    q = t.update(set, { count: 'exact' }).in(colonna, valori) as typeof q
+    // `IS DISTINCT FROM` dell'SQL: con un `set` che azzera, solo le righe che hanno ancora il dato.
+    if (chiavi.length > 0 && chiavi.every((k) => set[k] === null)) {
+      q = q.or(chiavi.map((k) => `${k}.not.is.null`).join(',')) as typeof q
+    }
+  } else {
+    q = t.delete({ count: 'exact' }).in(colonna, valori) as typeof q
+    if (azione === 'delete_cestino') {
+      q = q.not('eliminato_il', 'is', null) as typeof q
+      if (tabella === 'student_documents') q = q.lt('eliminato_il', args.p_prima_di) as typeof q
+    } else if (tabella === 'forms_submissions') {
+      q = q.eq('signature_log->>_archive_erasure_pending', true) as typeof q
+    }
+  }
+  const r = (await q) as unknown as { count: number | null; error: ErrorePostgrest | null }
+  if (r.error) return { data: null, error: r.error } as RispostaRpc
+  return { data: r.count ?? 0, error: null } as RispostaRpc
+}
+
+/**
  * Le sole RPC che il finto emula SENZA che il test le passi. È un'eccezione alla
  * regola «una RPC non emulata lancia», e va tenuta stretta.
  *
@@ -799,7 +834,8 @@ export function creaFintoSupabase(
       payload = Array.isArray(righe) ? righe : [righe]
       return proxy
     }
-    b.update = (patch: Riga) => {
+    b.update = (patch: Riga, opts?: { count?: string }) => {
+      if (opts?.count) conteggio = opts.count
       operazione = 'update'
       payload = [patch]
       return proxy
@@ -810,7 +846,8 @@ export function creaFintoSupabase(
       if (opts?.onConflict) chiaviConflitto = opts.onConflict.split(',').map((c) => c.trim())
       return proxy
     }
-    b.delete = () => {
+    b.delete = (opts?: { count?: string }) => {
+      if (opts?.count) conteggio = opts.count
       operazione = 'delete'
       return proxy
     }
@@ -932,6 +969,7 @@ export function creaFintoSupabase(
     from,
     rpc: async (nome: string, args: Riga = {}) => {
       if (nome === 'storici_applica_rettifica' && !opzioni.rpc?.[nome]) return rettificaStoricaFinta(db, args, opzioni)
+      if (nome === 'anno_oblio_scrivi' && !opzioni.rpc?.[nome]) return await oblioScriviFinta(from, args)
       const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]
       if (!impl) {
         throw new Error(

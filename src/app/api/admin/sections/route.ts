@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
+import { resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
+import { conAnno } from '@/lib/anno/tipi';
+import { erroreAnno } from '@/lib/anno/errori';
+import { clientPerScrittura } from '@/lib/anno/gettone';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -27,6 +30,8 @@ const postBodySchema = z.object({
     // Grado scuola validato (niente valori spazzatura); se assente → 'infanzia' nel codice.
     school_type: z.preprocess(vuotoComeAssente, z.enum(['nido', 'infanzia', 'primaria']).nullish()),
     scuola_id: z.preprocess(vuotoComeAssente, zUuid.nullish()), // default sede principale nel codice
+    // `anni_scolastici.id` dichiarato dal client; assente → l'anno `corrente` (o quello del cookie).
+    anno_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
 });
 
 // ⚠️ ALLOWLIST ESPLICITA — niente `.loose()`, e la ragione è la più grave del
@@ -71,12 +76,17 @@ async function nomeGiaUsatoNellaSede(
     scuolaId: string,
     nome: string,
     escludiId?: string,
+    annoId?: string | null,
 ): Promise<{ occupato: boolean } | { response: NextResponse }> {
-    const { data, error } = await supabase
+    // Dalla PR 1 l'indice unico è per (scuola_id, anno_id): lo stesso nome in due anni è ammesso.
+    // Con lo schema dell'anno indietro (`annoId` assente) il controllo resta per sede, come prima.
+    let query = supabase
         .from('sections')
         .select('id')
         .eq('scuola_id', scuolaId)
         .eq('name', nome);
+    if (annoId) query = query.eq('anno_id', annoId);
+    const { data, error } = await query;
     if (error) {
         logEvento('db', 'error', { operazione: 'admin/sections', esito: 'controllo-omonimia-fallito' }, error);
         return { response: NextResponse.json({ error: 'Verifica del nome della classe non riuscita' }, { status: 500 }) };
@@ -136,13 +146,17 @@ export const POST = withRoute('admin/sections:POST', async (request: NextRequest
     try {
         const supabase = await createAdminClient();
 
-        const { name, school_type, scuola_id } = b.data;
+        const { name, school_type, scuola_id, anno_id } = b.data;
 
         const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
         if (sw.response) return sw.response;
         const sede = sw.scuolaId as string;
 
-        const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, name);
+        // L'anno della sezione: dichiarato, o quello del cookie, o l'unico `corrente`.
+        const esito = await resolveAnnoScrittura(request, supabase, auth.user, sede, { dichiarato: anno_id });
+        if (esito instanceof NextResponse) return esito;
+
+        const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, name, undefined, esito.annoId);
         if ('response' in omonimia) return omonimia.response;
         if (omonimia.occupato) {
             logEvento('multi_sede', 'warn', {
@@ -158,15 +172,20 @@ export const POST = withRoute('admin/sections:POST', async (request: NextRequest
             name,
             school_type: school_type || 'infanzia',
             scuola_id: sede,
+            ...conAnno(esito),
         };
 
-        const { data, error } = await supabase
+        // La scrittura dell'anno porta il gettone, se l'esito ne ha; letture e log restano sul client di prima.
+        const scrittura = await clientPerScrittura(supabase, esito);
+        const { data, error } = await scrittura
             .from('sections')
             .insert(record)
             .select()
             .single();
 
         if (error) {
+            const anno = erroreAnno(error, 'admin/sections:POST');
+            if (anno) return anno;
             // La corsa fra due click arriva fin qui: il controllo preventivo non
             // vede nulla, l'indice unico sì. Un 409 leggibile, non uno SQLSTATE.
             if (violazioneUnicita(error)) {
@@ -256,7 +275,7 @@ export const PATCH = withRoute('admin/sections:PATCH', async (request: NextReque
         // Rinomina: il nome resta unico DENTRO la sede della classe (mai quella
         // di chi scrive: le due possono differire per un admin multi-plesso).
         if (typeof updates.name === 'string' && updates.name !== prima.name) {
-            const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, updates.name, id);
+            const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, updates.name, id, (prima.anno_id as string | null | undefined) ?? null);
             if ('response' in omonimia) return omonimia.response;
             if (omonimia.occupato) {
                 logEvento('multi_sede', 'warn', {
@@ -277,6 +296,8 @@ export const PATCH = withRoute('admin/sections:PATCH', async (request: NextReque
             .single();
 
         if (error) {
+            const anno = erroreAnno(error, 'admin/sections:PATCH');
+            if (anno) return anno;
             if (violazioneUnicita(error)) {
                 logEvento('multi_sede', 'warn', {
                     operazione: 'admin/sections:PATCH',

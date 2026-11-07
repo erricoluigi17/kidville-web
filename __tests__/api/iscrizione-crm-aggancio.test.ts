@@ -106,6 +106,15 @@ vi.mock('@/lib/supabase/server-client', () => {
       b.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(risultato).then(ok, ko)
       return b
     }
+    if (table === 'anni_sede') {
+      // Il modulo pubblico legge l'anno della sede: qui nessuna riga, quindi la domanda si scrive senza `anno_id`.
+      const anni: Record<string, unknown> = {}
+      anni.select = () => anni
+      anni.eq = () => anni
+      anni.then = (ok: (x: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null }).then(ok, ko)
+      return anni
+    }
     if (table === 'form_models') {
       b.select = () => b
       b.eq = () => b
@@ -117,7 +126,7 @@ vi.mock('@/lib/supabase/server-client', () => {
     b.single = async () => h.inserimenti.shift() ?? { data: { id: 'sub-1' }, error: null }
     return b
   }
-  const LETTURE_PRELIMINARI = ['schools', 'scuole', 'form_models']
+  const LETTURE_PRELIMINARI = ['schools', 'scuole', 'form_models', 'anni_sede']
   return {
     createAdminClient: async () => ({
       from: (table: string) => {

@@ -273,3 +273,9 @@ describe('import iscrizioni — legame runtime oltre a student_parents', () => {
     expect(legami()[legami().length - 1].payload).not.toHaveProperty('intestatario_fattura')
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

@@ -23,6 +23,7 @@ import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legam
 import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pagamenti/aging'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { logEvento } from '@/lib/logging/logger'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
 
 /**
  * IL RIFIUTO PER MOROSITÀ — e perché il log sta QUI e non nelle rotte (rilievo Q6).
@@ -363,10 +364,13 @@ export async function verificaRevocaSospensioneMorosita(
     const daRevocare = ((sel.data ?? []) as { id: string; scuola_id?: string | null; sospeso_causa?: string | null }[])
       .filter((a) => a.sospeso_causa === 'morosita')
 
+    // Fase A (§4.19): un anno attivo per sede, letto una volta per chiamata.
+    const cacheAnno = new Map<string, string | null>()
     for (const a of daRevocare) {
+      const patchRevoca = { sospeso: false, sospeso_motivo: null, sospeso_il: null }
       const { error } = await supabase
         .from('alunni')
-        .update({ sospeso: false, sospeso_motivo: null, sospeso_il: null })
+        .update(patchRevoca)
         .eq('id', a.id)
       if (error) {
         logEvento('db', 'error', {
@@ -376,6 +380,10 @@ export async function verificaRevocaSospensioneMorosita(
         continue
       }
       revocati.push(a.id)
+
+      // `alunni` è scritto: ora la frequenza dell'anno attivo della sua sede (fail-open; l'esito non cambia).
+      const annoSedeId = await annoAttivoDiSede(supabase, (a.scuola_id as string | null | undefined) ?? null, cacheAnno)
+      if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: a.id, annoSedeId, campi: campiFrequenzaDaAlunno(patchRevoca) })
 
       // Audit immutabile (utente_id null = sistema). PostgREST non lancia → { error }.
       const { error: auditErr } = await supabase.from('registro_modifiche').insert({

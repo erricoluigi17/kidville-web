@@ -194,6 +194,26 @@ export async function createAdminClient() {
 }
 
 /**
+ * Come `createAdminClient`, con header fissi su OGNI richiesta del client (`global.headers`).
+ * Lo usa `conGettone` (`src/lib/anno/gettone.ts`) per `x-kidville-correzione`: un client
+ * supabase-js non cambia gli header dopo la creazione, quindi il gettone si dà qui.
+ * Stesso `fetchStrumentato`: i log e `x-kidville-route` restano.
+ */
+export async function createAdminClientConHeader(headers: Record<string, string>) {
+  return createServerClient(
+    SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      global: { fetch: fetchStrumentato, headers },
+      cookies: {
+        getAll() { return [] },
+        setAll() { },
+      },
+    }
+  )
+}
+
+/**
  * Client dedicato alla scrittura dei LOG. È l'unico SENZA fetch strumentato: se lo avesse, un
  * errore di scrittura su `app_log` genererebbe un log di errore che tenta di scrivere su
  * `app_log` → ricorsione infinita.

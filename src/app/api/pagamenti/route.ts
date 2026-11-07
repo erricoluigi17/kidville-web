@@ -13,6 +13,7 @@ import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
+import { erroreAnno } from '@/lib/anno/errori'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
 // `causaleBonifico`, NON `renderCausale`: è l'unica porta che applica `conCodiceVoce`,
@@ -684,6 +685,9 @@ export const POST = withRoute('pagamenti:POST', async (request: Request) => {
 
     const { data, error } = await supabase.from('pagamenti').insert(record).select(SELECT).single()
     if (error) {
+      // Una voce per il mese di un anno chiuso: il database risponde ANNO_CHIUSO → 409, non 500.
+      const rispostaAnno = erroreAnno(error, 'pagamenti:POST')
+      if (rispostaAnno) return rispostaAnno
       logErrore({ operazione: 'pagamenti:POST', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nella creazione del pagamento', details: error.message }, { status: 500 })
     }

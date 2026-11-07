@@ -155,6 +155,11 @@ beforeEach(() => {
         votazioni_voti: [],
         audit_scritture_docente: [],
         utenti_scuole: [],
+        // Dal 3.5-1 la votazione nasce con l'anno: ogni sede ha il suo `corrente` (`anni_scolastici.id`).
+        anni_sede: [
+            { id: 'b2222222-2222-4222-8222-aaaaaaaaaaaa', scuola_id: SEDE_A, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+            { id: 'b2222222-2222-4222-8222-bbbbbbbbbbbb', scuola_id: SEDE_B, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+        ],
         sections: [
             { id: C_1, scuola_id: SEDE_A, name: '2 ANNI', school_type: 'infanzia' },
             { id: C_2, scuola_id: SEDE_A, name: '3 ANNI', school_type: 'infanzia' },

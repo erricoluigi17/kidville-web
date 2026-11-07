@@ -24,6 +24,10 @@ describe('patchAlunno', () => {
     expect(patch.codice_fiscale).toBeNull()
     expect(patch.note_mediche).toBeNull()
     expect(patch.documento_path).toBeNull()
+    // testo libero del motivo di sospensione (Ruling P44); `sospeso`/`sospeso_causa` restano fuori dalla patch
+    expect(patch.sospeso_motivo).toBeNull()
+    expect('sospeso' in patch).toBe(false)
+    expect('sospeso_causa' in patch).toBe(false)
     expect(patch.anonimizzato_il).toBe(at)
   })
 })

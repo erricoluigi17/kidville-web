@@ -67,6 +67,13 @@ function makeFake(righe: Riga[]) {
       }
       return b
     },
+    // Dal 3.6 la UPDATE della domanda passa da `anno_oblio_scrivi` (una chiamata per riga, filtro per `id`): il finto
+    // la registra come faceva `.update(row).eq('id', id)`.
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome !== 'anno_oblio_scrivi') return { data: null, error: null }
+      updates.push({ id: String((args.p_valori as unknown[])[0]), row: args.p_set as Record<string, unknown> })
+      return { data: 1, error: null }
+    },
   }
   return { client, updates }
 }

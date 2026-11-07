@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, resolveAnnoScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { seedCertificato } from '@/lib/competenze/certificato-store'
+import { annoDaEtichetta } from '@/lib/anno/etichetta'
+import { erroreAnno } from '@/lib/anno/errori'
+import { seedCertificato, validaScrutinioFinaleClasseQuinta } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -115,6 +117,11 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     const fuoriScopePost = await assertSezioneInScope(supabase, auth.user, body.sectionId)
     if (fuoriScopePost) return fuoriScopePost
     const scuolaSezione = await sedeDellaSezione(supabase, body.sectionId)
+    // Senza la sede non c'è anno da dichiarare: scrivere un certificato così lo lascerebbe senza `anno_id`. È un
+    // guasto di lettura (la sezione è già in scope), già registrato a `error` da `sedeDellaSezione`: nessun secondo log.
+    if (!scuolaSezione) {
+      return NextResponse.json({ error: 'Impossibile leggere la sede della classe: nessun certificato creato. Riprova.', codice: 'LETTURA_FALLITA' }, { status: 500 })
+    }
 
     let alunniIds: string[] = []
     if (body.alunnoId) alunniIds = [body.alunnoId]
@@ -125,13 +132,41 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
       alunniIds = ((alunni ?? []) as { id: string }[]).map((a) => a.id)
     }
 
+    // L'anno del certificato è quello della sua ETICHETTA (Ruling P49): l'`anno_scolastico` del periodo
+    // dell'ultimo scrutinio finale chiuso, che è anche metà della chiave `(alunno_id, anno_scolastico)`.
+    // Letta UNA volta per sezione, prima del ciclo. Senza scrutinio valido niente cambia: l'anno è il
+    // `corrente` e l'errore di validazione lo restituisce `seedCertificato` per ogni alunno, come prima.
+    const operazione = 'admin/competenze:POST'
+    const validato = await validaScrutinioFinaleClasseQuinta(supabase, body.sectionId)
+    let dichiarato: string | undefined
+    if (validato.ok && validato.annoScolastico) {
+      const daEtichetta = await annoDaEtichetta(supabase, validato.annoScolastico, operazione)
+      if ('guasto' in daEtichetta) return daEtichetta.guasto
+      if (!('indietro' in daEtichetta)) {
+        if (daEtichetta.annoId === null) {
+          logEvento('anno-scolastico', 'warn', { tipo: 'etichetta-non-di-un-anno', azione: operazione })
+          return erroreAnno({ message: 'ANNO_NON_DELLA_SEDE' }, operazione) as NextResponse
+        }
+        dichiarato = daEtichetta.annoId
+      }
+    }
+
     let creati = 0
-    const errori: { alunnoId: string; error?: string; status?: number }[] = []
+    const errori: { alunnoId: string; error?: string; status?: number; codice?: string }[] = []
     let firstErrStatus: number | undefined
     for (const alunnoId of alunniIds) {
-      const r = await seedCertificato(supabase, body.sectionId, alunnoId)
+      // L'anno del certificato: quello della sua etichetta, nella sede DELLA SEZIONE (mai quella dell'operatore).
+      // Un esito per alunno, perché un gettone vale una sola transazione e ogni certificato è una scrittura.
+      const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione, { dichiarato })
+      if (esito instanceof NextResponse) {
+        const rifiuto = (await esito.json()) as { error?: string; codice?: string }
+        errori.push({ alunnoId, error: rifiuto.error, status: esito.status, codice: rifiuto.codice })
+        firstErrStatus = firstErrStatus ?? esito.status
+        continue
+      }
+      const r = await seedCertificato(supabase, body.sectionId, alunnoId, esito, validato)
       if (r.error) {
-        errori.push({ alunnoId, error: r.error, status: r.status })
+        errori.push({ alunnoId, error: r.error, status: r.status, codice: r.codice })
         firstErrStatus = firstErrStatus ?? r.status
       } else {
         creati++
@@ -146,6 +181,7 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
       }
     }
     // Se nessun certificato è stato creato e c'è un errore di guard, propaga lo status.
+    // Il codice di un rifiuto dell'anno (`ANNO_CHIUSO`…) sta in `errori[].codice`, per alunno.
     if (creati === 0 && firstErrStatus) return NextResponse.json({ error: errori[0].error, errori }, { status: firstErrStatus })
     return NextResponse.json({ success: true, creati, totale: alunniIds.length, errori })
   } catch (err) {

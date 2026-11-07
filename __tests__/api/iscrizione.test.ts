@@ -37,6 +37,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
           Promise.resolve(risultato).then(res, rej)
         return b
       }
+      if (table === 'anni_sede') {
+        // Il modulo pubblico legge l'anno della sede: qui nessuna riga, quindi la domanda si scrive senza `anno_id`.
+        const anni: Record<string, unknown> = {}
+        anni.select = () => anni
+        anni.eq = () => anni
+        anni.then = (ok: (x: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(ok, ko)
+        return anni
+      }
       if (table === 'form_models') {
         const b: Record<string, unknown> = {}
         b.select = () => b

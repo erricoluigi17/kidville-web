@@ -36,6 +36,8 @@ const h = vi.hoisted(() => ({
      * cancellazione per conservazione.
      */
     errori: {} as Record<string, unknown>,
+    /** Le chiamate a `anno_oblio_scrivi` (Compito 3.6): la purga del fascicolo passa da lì. */
+    rpcOblio: [] as Record<string, unknown>[],
     /** Eseguito dopo la lettura delle scadute di una tabella (per simulare un ripristino concorrente). */
     dopoLettura: null as null | ((tabella: string, tipo: string) => void),
     sequenza: [] as { tipo: 'select' | 'remove' | 'delete'; dove: string; valore: unknown }[],
@@ -187,7 +189,28 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 }
             },
         }
-        return { from: builder, storage }
+        // `anno_oblio_scrivi` come l'SQL di M3: `delete_cestino|student_documents|id` cancella per id SOLO le righe
+        // nel cestino scadute prima di `p_prima_di` (la cintura sta nella funzione, non nel chiamante).
+        const rpc = async (nome: string, args: Record<string, unknown>) => {
+            if (nome !== 'anno_oblio_scrivi') throw new Error(`rpc non prevista: ${nome}`)
+            h.rpcOblio.push(args)
+            const tabella = String(args.p_tabella)
+            const err = h.errori[`${tabella}:delete`]
+            h.sequenza.push({ tipo: 'delete', dove: tabella, valore: null })
+            if (err) return { data: null, error: err }
+            const righe = h.tabelle[tabella] ?? []
+            const valori = (args.p_valori as string[]) ?? []
+            const via = righe.filter(
+                (r) =>
+                    valori.includes(r.id as string) &&
+                    typeof r.eliminato_il === 'string' &&
+                    Date.parse(r.eliminato_il) < Date.parse(String(args.p_prima_di)),
+            )
+            h.tabelle[tabella] = righe.filter((r) => !via.includes(r))
+            h.sequenza[h.sequenza.length - 1].valore = via.map((r) => r.id)
+            return { data: via.length, error: null }
+        }
+        return { from: builder, storage, rpc }
     },
 }))
 
@@ -256,9 +279,41 @@ beforeEach(() => {
     h.errori = {}
     h.dopoLettura = null
     h.sequenza = []
+    h.rpcOblio = []
     h.eventi = []
     h.staffNegato = null
     h.clientCreati = 0
+})
+
+describe('POST /api/gdpr/retention-cestino-registro — 3.6: il fascicolo si cancella dall\'RPC dell\'oblio', () => {
+    it('le righe scadute passano da anno_oblio_scrivi con delete_cestino e la soglia; il log di successo c\'è ancora', async () => {
+        semina([], [documento(11, scaduta()), documento(15, giovane()), documento(13, null)])
+        const res = await chiama()
+        expect(res.status).toBe(200)
+        const chiamate = h.rpcOblio.filter((a) => a.p_tabella === 'student_documents')
+        expect(chiamate).toHaveLength(1)
+        expect(chiamate[0]).toMatchObject({
+            p_azione: 'delete_cestino',
+            p_colonna: 'id',
+            p_valori: [uuid(11)],
+            p_op: 'gdpr/retention-cestino-registro:POST',
+        })
+        // la soglia è quella della purga: una data ISO nel passato di 7 giorni
+        expect(Date.parse(String(chiamate[0].p_prima_di))).toBeLessThan(Date.now() - (GIORNI_CESTINO_REGISTRO - 1) * GIORNO)
+        expect(ids('student_documents')).toEqual([uuid(13), uuid(15)])
+        // regola 5 di AGENTS.md: il successo si logga
+        expect(battito()?.campi.n_fascicolo_righe).toBe(1)
+    })
+
+    it('righe = 0 (una riga ripristinata fra la lettura e la cancellazione) → NON conta come cancellata', async () => {
+        semina([], [documento(11, scaduta())])
+        h.dopoLettura = (tabella) => {
+            if (tabella === 'student_documents') h.tabelle.student_documents[0].eliminato_il = null
+        }
+        await chiama()
+        expect(ids('student_documents')).toEqual([uuid(11)])
+        expect(battito()?.campi.n_fascicolo_righe).toBe(0)
+    })
 })
 
 describe('POST /api/gdpr/retention-cestino-registro — la purga', () => {
@@ -889,9 +944,11 @@ describe('i bucket della purga sono quelli in cui si CARICA', () => {
         // Il lock del fascicolo (`@/lib/primaria/cestino-fascicolo`) pretende un
         // marcatore su ogni `from('student_documents')`: la purga legge NEL cestino
         // (scadute, cancellazione) e ANCHE nel cestino (reclami), mai «solo vive».
+        // Dal 3.6 la CANCELLAZIONE non è più una `from('student_documents')`: passa da `anno_oblio_scrivi`
+        // (`delete_cestino`, con la cintura nell'SQL). Restano le due letture (scadute e reclami).
         const blocchi = purga.split("from('student_documents')").slice(1)
-        expect(blocchi.length).toBe(3)
-        expect(purga.match(/fascicoloNelCestino\(\s*s\.from\('student_documents'\)/g)?.length).toBe(2)
+        expect(blocchi.length).toBe(2)
+        expect(purga.match(/fascicoloNelCestino\(\s*s\.from\('student_documents'\)/g)?.length).toBe(1)
         expect(purga).toMatch(/fascicoloAncheNelCestino\(\s*s\.from\('student_documents'\)/)
         expect(purga).not.toMatch(/fascicoloVivo\(/)
     })

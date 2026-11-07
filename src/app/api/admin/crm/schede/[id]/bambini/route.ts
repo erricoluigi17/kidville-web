@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { clientPerScrittura } from '@/lib/anno/gettone'
+import { erroreAnno } from '@/lib/anno/errori'
+import { annoDelBambino, risolviAnniBambini } from '@/lib/crm/anno-bambini'
 import { assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
@@ -39,7 +42,12 @@ export const POST = withRoute('admin/crm/schede/[id]/bambini:POST', async (reque
   if ('response' in ambito) return ambito.response
   const { id: schedaId, scuola_id: scuolaId } = ambito.scheda
 
-  const { data, error } = await supabase
+  // L'anno del bambino, nella sede della scheda. Una sola scrittura sul registro: un gettone.
+  const anni = await risolviAnniBambini(request, supabase, auth.user, scuolaId, [body.data.annoIngresso])
+  if (anni instanceof NextResponse) return anni
+
+  const scrittura = await clientPerScrittura(supabase, anni.scrittura)
+  const { data, error } = await scrittura
     .from('crm_bambini')
     .insert({
       scuola_id: scuolaId,
@@ -47,10 +55,11 @@ export const POST = withRoute('admin/crm/schede/[id]/bambini:POST', async (reque
       nome: body.data.nome,
       data_nascita: body.data.dataNascita ?? null,
       anno_ingresso: body.data.annoIngresso,
+      ...annoDelBambino(anni, body.data.annoIngresso),
     })
     .select('id')
     .single()
-  if (error || !data) return rispostaErroreDb(error ?? {}, OPERAZIONE)
+  if (error || !data) return erroreAnno(error, OPERAZIONE) ?? rispostaErroreDb(error ?? {}, OPERAZIONE)
   const bambinoId = data.id as string
 
   await registraEvento(supabase, {

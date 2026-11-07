@@ -10,6 +10,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { classeEsisteInOgniSede } from '../route';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
 
 // ============================================================================
 // RIPORTA UN ALUNNO FRA GLI ISCRITTI — il ritorno, che è metà del modello.
@@ -280,6 +281,14 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                 { error: 'Il bambino non è stato riportato fra gli iscritti: la scheda è rimasta com\'era.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
                 { status: 500 },
             );
+        }
+
+        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
+        // `archiviato_il` NULL → `iscritto` senza uscita; `section_id` lo risolve il trigger BEFORE e lo copia lo specchio.
+        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        if (Object.keys(campiFreq).length > 0) {
+            const annoSedeId = await annoAttivoDiSede(supabase, sede);
+            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFreq });
         }
 
         await logScrittura(supabase, {

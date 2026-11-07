@@ -5,6 +5,9 @@ import { suggerisciLivello, type GiudizioPerMateria } from './livello-mapping'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { logEvento } from '@/lib/logging/logger'
+import { conAnno, type EsitoAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 
 export const CERTIFICATI_BUCKET = 'certificati-competenze'
 
@@ -26,7 +29,7 @@ function guastoDb(operazione: string, esito: string, error: unknown, tipo: 'lett
   }
 }
 
-interface ValidaResult {
+export interface ValidaResult {
   ok?: boolean
   scrutinioId?: string
   scuolaId?: string | null
@@ -89,16 +92,25 @@ export async function validaScrutinioFinaleClasseQuinta(
  * upsert idempotente su `(alunno_id, anno_scolastico)` + 8 righe competenza
  * precompilate dai giudizi di scrutinio (suggerimento sovrascrivibile) + riga
  * libera per le competenze significative.
+ *
+ * `esito` è l'anno della scrittura (`resolveAnnoScrittura` della route, per la sede della sezione):
+ * il PRIMO upsert lo dichiara (`conAnno`) e passa dal client col gettone, se l'esito ne ha. Il secondo
+ * (`certificato_competenza_livelli`) non è nel registro dell'anno e non lo scrive. Un rifiuto dell'anno (`ANNO_CHIUSO`…) esce col suo `status` e `codice`.
  */
 export async function seedCertificato(
   supabase: SupabaseClient,
   sectionId: string,
-  alunnoId: string
-): Promise<{ certificatoId?: string; error?: string; status?: number }> {
-  const v = await validaScrutinioFinaleClasseQuinta(supabase, sectionId)
+  alunnoId: string,
+  esito: EsitoAnno,
+  validato?: ValidaResult,
+): Promise<{ certificatoId?: string; error?: string; status?: number; codice?: string }> {
+  // `validato`: la validazione già fatta dalla route, una volta per sezione (da lì viene l'etichetta che dà
+  // l'anno, P49). Senza, si valida qui, come prima.
+  const v = validato?.ok ? validato : await validaScrutinioFinaleClasseQuinta(supabase, sectionId)
   if (!v.ok) return { error: v.error, status: v.status }
 
-  const { data: cert, error: certErr } = await supabase
+  const scrittura = await clientPerScrittura(supabase, esito)
+  const { data: cert, error: certErr } = await scrittura
     .from('certificati_competenze')
     .upsert(
       {
@@ -108,11 +120,19 @@ export async function seedCertificato(
         scrutinio_id: v.scrutinioId,
         anno_scolastico: v.annoScolastico,
         stato: 'bozza',
+        ...conAnno(esito),
       },
       { onConflict: 'alunno_id,anno_scolastico' }
     )
     .select('id')
     .single()
+  if (certErr) {
+    const anno = erroreAnno(certErr, 'competenze/seed')
+    if (anno) {
+      const corpo = (await anno.json()) as { error: string; codice: string }
+      return { error: corpo.error, status: anno.status, codice: corpo.codice }
+    }
+  }
   if (certErr || !cert) return { error: certErr?.message ?? 'Creazione certificato fallita', status: 500 }
 
   // Giudizi di scrutinio → codici materia per il suggerimento livello.

@@ -7,6 +7,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { tabellaMancante } from '@/lib/db/tolleranza-schema';
+import { svuotaOblio } from '@/lib/gdpr/oblio-registro';
 
 const querySchema = z.object({}); // nessun parametro in ingresso
 
@@ -35,21 +36,17 @@ export const POST = withRoute('admin/wipe:POST', async (request: Request) => {
         ];
 
         // ─── UNA TABELLA È PULITA SE ALMENO UNA DELLE DUE DELETE È RIUSCITA ─────────
-        // Le due forme esistono perché non tutte le tabelle hanno sia `id` sia `created_at`:
-        // su una delle due il filtro può cadere su una colonna che non c'è, ed è atteso. Ma
-        // PostgREST NON lancia: fino al 2026-10-19 il risultato si buttava, il `catch` sotto
-        // non scattava mai e la risposta diceva «Wipe completed» anche a righe rimaste.
-        // Ora una tabella che nessuna delle due ha svuotato finisce in `nonPulite` e la
-        // risposta è 500. La sola tabella ASSENTE (l'elenco è storico) resta «saltata», `info`.
+        // Dal 3.6 lo svuotamento passa da `svuotaOblio` (RPC `anno_oblio_svuota`, con la lista
+        // delle 26 tabelle ammesse); il ripiego diretto, sul DB della CI senza la funzione, tiene le
+        // due forme di prima (per `id` e per `created_at`): non tutte le tabelle hanno entrambe le
+        // colonne, e su una delle due il filtro può cadere su una colonna che non c'è, ed è atteso.
+        // PostgREST NON lancia: una tabella che nessuna forma ha svuotato finisce in `nonPulite` e
+        // la risposta è 500. La sola tabella ASSENTE (l'elenco è storico) resta «saltata», `info`.
         const nonPulite: string[] = [];
-        const svuota = async (table: string, tentativi: Array<() => PromiseLike<{ error: unknown }>>) => {
-            // Tutte e due, sempre, come prima: la seconda forma prende anche ciò che la prima lascia.
-            const errori: unknown[] = [];
-            for (const t of tentativi) {
-                const { error } = await t();
-                if (error) errori.push(error);
-            }
-            if (errori.length < tentativi.length) return;
+        const svuota = async (table: string) => {
+            const esito = await svuotaOblio(supabase, table, 'admin/wipe:POST');
+            if (esito.ok) return;
+            const errori = esito.errori;
             if (errori.some((e) => tabellaMancante(e as { code?: string } | null))) {
                 logEvento('db', 'info', { operazione: 'admin/wipe:POST', esito: 'tabella-saltata', tabella: table }, errori[0]);
                 return;
@@ -60,10 +57,7 @@ export const POST = withRoute('admin/wipe:POST', async (request: Request) => {
 
         for (const table of tablesToClear) {
             try {
-                await svuota(table, [
-                    () => supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-                    () => supabase.from(table).delete().not('created_at', 'is', null),
-                ]);
+                await svuota(table);
             } catch (e) {
                 // Un'eccezione vera (rete, tempo scaduto) non è una tabella assente: la tabella
                 // resta da svuotare, e la risposta lo dice.
@@ -78,9 +72,9 @@ export const POST = withRoute('admin/wipe:POST', async (request: Request) => {
 
         // Tre chiamate scritte per esteso, non un ciclo: il nome della tabella resta un letterale
         // che i lock di sede sanno leggere.
-        await svuota('alunni', [() => supabase.from('alunni').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
-        await svuota('parents', [() => supabase.from('parents').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
-        await svuota('adults', [() => supabase.from('adults').delete().neq('id', '00000000-0000-0000-0000-000000000000')]);
+        await svuota('alunni');
+        await svuota('parents');
+        await svuota('adults');
 
         if (nonPulite.length > 0) {
             // `tabelle` porta i soli NOMI delle tabelle rimaste sporche: nessun dato di persona.

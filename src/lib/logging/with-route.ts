@@ -1,5 +1,6 @@
 import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
-import { conContesto, contesto, erroreGiaLoggato } from './context';
+import { conContesto, contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato } from './context';
+import { erroreAnno } from '@/lib/anno/errori';
 import { logErrore, logEvento, logOk } from './logger';
 
 /**
@@ -127,8 +128,19 @@ export function withRoute<A extends [Request, ...unknown[]]>(
                 // non decide. `senzaLanciare` perché un logger che esplode non deve poter
                 // sostituire l'errore della route con il proprio.
                 senzaLanciare(() => logErrore({ operazione: nome, ms: Date.now() - t0, stato: 500 }, err));
+                // La rete dell'anno vale anche qui: un'eccezione dopo una scrittura rifiutata
+                // dal database con `ANNO_CHIUSO` è il 500 che la tabella in `retiAnno` traduce.
+                const tradotta = retiAnno(undefined, nome);
+                if (tradotta) {
+                    senzaLanciare(() => rifletti(tradotta, rid));
+                    return tradotta;
+                }
                 throw err;
             }
+
+            // LA RETE DELL'ANNO (Compito 3.4, D4): prima di registrare l'esito, perché la riga
+            // deve dire lo stato che il client vedrà (409), non il 500 che la route ha costruito.
+            res = retiAnno(res, nome) ?? res;
 
             // Si registra il valore VERO, quello che l'handler ha davvero restituito:
             // è `registraEsito` a riconoscere «senza Response» e a scriverne la riga.
@@ -179,7 +191,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         // plausibile. Due vantaggi: la logica anti-forgiatura sta in un posto solo, e non
         // serve `crypto.randomUUID()`, che non è garantito ovunque (sotto jsdom il repo lo
         // polyfilla a mano su `window`) e che qui sarebbe un throw del wrapper.
-        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]) }, esegui);
+        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]), route: nome }, esegui);
     };
 }
 
@@ -203,6 +215,53 @@ function rispostaSenzaHandler(rid: string | undefined): Response {
             },
         },
     );
+}
+
+/**
+ * LA RETE DELL'ANNO SCOLASTICO (Compito 3.4, D4): `ANNO_CHIUSO` e gli altri codici dell'anno
+ * diventano 409/422 qui, in un punto solo, invece che in 63 route che oggi rispondono 500.
+ * `supabase-fetch` ha scritto nel contesto il PRIMO errore dell'anno che il database ha sollevato
+ * in questa richiesta; `res` è la risposta finale (`undefined` = l'handler ha lanciato, e Next
+ * manderebbe un 500). Ritorna la risposta sostituita, o `null` se non si cambia niente.
+ *
+ *   stato finale | errore anno nel contesto | cosa succede
+ *   500          | sì                       | `erroreAnno(…)`, se sa tradurlo (il `warn` lo scrive lui)
+ *   < 400        | sì                       | invariata + UN warn `anno-scrittura-ingoiata`: il silenzio
+ *                |                          | non diventa un successo travestito, ma non lo si cambia
+ *   4xx, 502-504 | sì                       | invariata (la route ha già detto no / il gateway è giù)
+ *   qualsiasi    | no                       | invariata
+ *
+ * Non lancia mai: un guasto qui deve lasciare la risposta della route com'è. Nella risposta
+ * tradotta si copiano i `set-cookie` dell'originale; `x-request-id` lo rimette `rifletti`.
+ */
+function retiAnno(res: unknown, nome: string): Response | null {
+    try {
+        const c = erroreAnnoDellaRichiesta();
+        if (!c) return null;
+        // Senza una Response lo stato che il client vedrà è 500 (vedi `rispostaSenzaHandler`).
+        const stato = statoDi(res) ?? 500;
+        if (stato === 500) {
+            const tradotta = erroreAnno(c, nome);
+            if (!tradotta) return null;
+            copiaSetCookie(res, tradotta);
+            return tradotta;
+        }
+        if (stato < 400) {
+            logEvento('anno-scolastico', 'warn', {
+                tipo: 'anno-scrittura-ingoiata',
+                error_code: c.message,
+                operazione: nome,
+            });
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function copiaSetCookie(da: unknown, a: Response): void {
+    const headers = (da as { headers?: { getSetCookie?: () => string[] } } | null | undefined)?.headers;
+    for (const cookie of headers?.getSetCookie?.() ?? []) a.headers.append('set-cookie', cookie);
 }
 
 /** L'osservabilità non può rompere la risposta che sta osservando. */

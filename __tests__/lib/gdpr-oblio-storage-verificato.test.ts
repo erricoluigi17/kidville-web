@@ -132,7 +132,16 @@ function fakeArchivio(cfg: ArchivioCfg) {
       }),
     },
     // L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre; qui non c'è niente da togliere.
-    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+    // Dal 3.6 le scritture del registro dell'anno passano da `anno_oblio_scrivi`: il finto le registra come prima
+    // (`deleted` con gli id, `updates` con tabella + set).
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'anno_oblio_scrivi') {
+        if (args.p_azione === 'delete') deleted.push({ table: String(args.p_tabella), ids: args.p_valori })
+        if (args.p_azione === 'update') updates.push({ table: args.p_tabella, ...(args.p_set as object) })
+        return { data: (args.p_valori as unknown[]).length, error: null }
+      }
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }
   return { client, updates, deleted, removed, archivio }
 }

@@ -369,11 +369,20 @@ const COPERTI_ATTESI: Record<string, number> = {
     // invisibile proprio il caso che qui conta — una lettura aggiunta di nascosto
     // in un file che distrugge foto. Le SCOPERTE restano zero, ed è quella la metà
     // che dice che non c'è un difetto: sette lette, sette dichiarate.
-    'src/app/api/gdpr/retention-galleria/route.ts': 7,
+    // 2026-11-07 (Compito 3.6), sceso da 7 a 5: il TIMBRO (`soloNelCestino`) e la CANCELLAZIONE (`ancheNelCestino`)
+    // passano da `anno_oblio_scrivi` (`update` e `delete_cestino` su `galleria_media_v2`; la cintura della delete,
+    // `eliminato_il IS NOT NULL`, sta nell'SQL) e non sono più una `.from('galleria_media_v2')` in questo file.
+    // Restano le cinque LETTURE dichiarate. Non è una resa: le due occorrenze uscite sono scritture che hanno
+    // cambiato strada, e le SCOPERTE restano zero.
+    'src/app/api/gdpr/retention-galleria/route.ts': 5,
     'src/app/api/tasks/route.ts': 1,
     'src/app/api/segnalazioni/route.ts': 1,
     'src/app/api/educator-sections/route.ts': 1,
-    'src/lib/gdpr/esegui.ts': 4,
+    // 2026-11-07 (Compito 3.6), sceso da 4 a 2: le DUE scritture dichiarate (sgancio del tag e cancellazione
+    // definitiva) passano ora dall'RPC `anno_oblio_scrivi` (`update|delete galleria_media_v2|id`, senza cintura sul
+    // cestino) e non sono più una `.from('galleria_media_v2')` in questo file. Restano le due LETTURE dichiarate.
+    // Non è una resa: le due occorrenze uscite sono scritture che hanno cambiato strada, e le SCOPERTE restano zero.
+    'src/lib/gdpr/esegui.ts': 2,
     'src/lib/gdpr/cosa-distrugge.ts': 1,
     'src/lib/alunni/libera-spazio.ts': 1,
 }

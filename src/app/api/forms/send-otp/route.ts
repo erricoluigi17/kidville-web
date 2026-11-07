@@ -20,6 +20,10 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { codiceAnnoDa } from '@/lib/anno/tipi'
+import { risolviSedeCompilazione } from '@/lib/forms/sede-compilazione'
+import { colonnaSedeAssente } from '@/lib/forms/degrado-sede'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
@@ -474,11 +478,20 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
     // un `modelId` inesistente è un errore del CLIENT (404), e prima lo si
     // scopriva soltanto facendo sbattere la INSERT contro la foreign key — che
     // rispondeva 500 raccontando il nome del vincolo.
-    const { data: model, error: modelErr } = await supabase
-      .from('form_models')
-      .select('schema')
-      .eq('id', modelId)
-      .maybeSingle()
+    // `scuola_id` serve a dare una sede alla compilazione quando chi compila non ne ha una propria
+    // (come `forms/submit`). Sul DB della CI, non migrato, la colonna può mancare: secondo tentativo senza.
+    const caricaModello = async (conSede: boolean) => {
+      const res = conSede
+        ? await supabase.from('form_models').select('schema, scuola_id').eq('id', modelId).maybeSingle()
+        : await supabase.from('form_models').select('schema').eq('id', modelId).maybeSingle()
+      return {
+        data: res.data as { schema?: unknown; scuola_id?: string | null } | null,
+        error: res.error,
+      }
+    }
+    let modelRes = await caricaModello(true)
+    if (colonnaSedeAssente(modelRes.error)) modelRes = await caricaModello(false)
+    const { data: model, error: modelErr } = modelRes
     if (modelErr) return erroreInterno('forms/send-otp:POST', modelErr)
     if (!model) {
       return NextResponse.json({ error: 'Modulo non trovato' }, { status: 404 })
@@ -505,27 +518,14 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
     }
     const consents_log = estraiConsensi(pages, data as Record<string, unknown>, new Date().toISOString())
 
-    // 1. Crea la submission in stato pending_signature
-    const { data: submission, error: insertErr } = await supabase
-      .from('form_submissions')
-      .insert({
-        model_id: modelId,
-        user_id: intestatario,
-        data,
-        status: 'pending_signature',
-        consents_log: consents_log.length > 0 ? consents_log : null,
-      })
-      .select('id')
-      .single()
-
-    if (insertErr || !submission) {
-      return erroreInterno('forms/send-otp:POST', insertErr ?? new Error('Creazione submission fallita'))
-    }
-
-    // 2. Recupera l'email dell'intestatario (che è chi firma)
+    // La sede della COMPILAZIONE, con la stessa regola di `forms/submit`: la sede di chi compila → quella
+    // del modello → l'unica sede reale. La tabella è in modo `data`: l'anno lo calcola il database dalla
+    // sede, quindi qui NON si scrive `anno_id`. Una sede non risolvibile non rifiuta la firma (come
+    // prima di oggi): la riga nasce senza `scuola_id` e lo si dice nei log.
+    // L'utente si legge UNA volta: lo stesso select dà la sede (qui) e l'indirizzo del codice (sotto).
     const { data: parent, error: emailErr } = await supabase
       .from('utenti')
-      .select('email')
+      .select('email, scuola_id')
       .eq('id', intestatario)
       .maybeSingle()
     if (emailErr) {
@@ -534,6 +534,67 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
       }, emailErr)
     }
     const email: string | null = parent?.email ?? null
+    const sede = await risolviSedeCompilazione(
+      supabase,
+      [(parent as { scuola_id?: string | null } | null)?.scuola_id, model.scuola_id],
+      'forms/send-otp:POST',
+    )
+    const scuolaId = sede.ambigua ? null : sede.scuolaId
+    if (!scuolaId) {
+      logEvento('modulistica', 'warn', {
+        operazione: 'forms/send-otp:POST',
+        esito: 'compilazione-senza-sede',
+        entita_tipo: 'modulo',
+        entita_id: modelId,
+        error_code: 'SEDE_NON_DETERMINABILE',
+      })
+    }
+
+    // 1. Crea la submission in stato pending_signature
+    const rigaSubmission: Record<string, unknown> = {
+      model_id: modelId,
+      user_id: intestatario,
+      data,
+      status: 'pending_signature',
+      consents_log: consents_log.length > 0 ? consents_log : null,
+      ...(scuolaId ? { scuola_id: scuolaId } : {}),
+    }
+    let insRes = await supabase.from('form_submissions').insert(rigaSubmission).select('id').single()
+    // DB della CI non migrato: la colonna `scuola_id` non c'è (PGRST204/42703). Si riprova senza,
+    // dichiarandolo: quel database ha una sede sola, quindi non c'è nessun isolamento da riaprire.
+    //
+    // `GIORNO_SENZA_ANNO` (nessun anno copre il giorno) è l'unico codice dell'anno che NON si traduce
+    // in un rifiuto: una famiglia non perde il modulo per un buco del calendario. Si riscrive senza
+    // `scuola_id`, e `erroreAnno` lascia l'UNICA riga `error` (il buco è un incidente e si deve vedere).
+    const buco = codiceAnnoDa((insRes.error as { message?: string } | null)?.message) === 'GIORNO_SENZA_ANNO'
+    if (
+      insRes.error &&
+      scuolaId &&
+      (buco || ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? ''))
+    ) {
+      if (buco) {
+        erroreAnno(insRes.error as { code?: string; message?: string }, 'forms/send-otp:POST')
+      } else {
+        logEvento('modulistica', 'info', {
+          operazione: 'forms/send-otp:POST', esito: 'colonna-sede-assente-degrado',
+        })
+      }
+      delete rigaSubmission.scuola_id
+      insRes = await supabase.from('form_submissions').insert(rigaSubmission).select('id').single()
+    }
+    const { data: submission, error: insertErr } = insRes
+
+    // Un codice dell'anno (409 `ANNO_CHIUSO`, 422 …) ha la sua risposta, sul primo `insert` e su quello
+    // di ripiego; il resto è un guasto.
+    if (insertErr) {
+      const anno = erroreAnno(insertErr as { code?: string; message?: string }, 'forms/send-otp:POST')
+      if (anno) return anno
+    }
+    if (insertErr || !submission) {
+      return erroreInterno('forms/send-otp:POST', insertErr ?? new Error('Creazione submission fallita'))
+    }
+
+    // 2. L'email dell'intestatario (che è chi firma) è già stata letta sopra.
 
     // 3. Genera codice a 6 cifre, salva l'hash, invia
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0')

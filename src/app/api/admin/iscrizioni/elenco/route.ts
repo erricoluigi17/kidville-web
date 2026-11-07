@@ -36,7 +36,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
+import { conAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 import { parseMultipart, parseData, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
@@ -209,6 +212,21 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
   const nomiSezioni = await leggiNomiSezioni(supabase, scuolaId)
   letto.anomalie.push(...anomalieClassiSenzaSezione(letto.perClasse, nomiSezioni))
 
+  // ── 5ter. IN QUALE ANNO ─────────────────────────────────────────────────
+  // L'elenco di classe appartiene all'anno `corrente` della sede (o a quello del cookie): mai indovinato,
+  // e prima di caricare il foglio nello Storage, così un rifiuto non lascia niente da ritirare. Le righe
+  // (`iscrizioni_elenco_righe`) sono in modo `madre`: l'anno lo prendono dal caricamento.
+  //
+  // Un gettone vale UNA richiesta di scrittura su una tabella del registro: lo spegnimento dell'elenco
+  // precedente (1), il caricamento (1), un blocco per ogni BLOCCO di righe e, se un blocco cade, il
+  // disfacimento del caricamento (1). Per questo l'anno si risolve DOPO la lettura del foglio: il numero
+  // di blocchi si conosce solo da lì. (`usi` ha il tetto di 10: oltre ~1.600 righe i blocchi eccedono.)
+  const BLOCCO = 200
+  const usi = 1 + 1 + Math.ceil(letto.righe.length / BLOCCO) + 1
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { usi })
+  if (esito instanceof NextResponse) return esito
+  const scrittura = await clientPerScrittura(supabase, esito)
+
   // ── 6. IL BUCKET PRIVATO ────────────────────────────────────────────────
   // Il percorso lo genera il SERVER: un nome scelto dal client permetterebbe di
   // sovrascrivere l'elenco di un'altra sede. Il nome originale resta nella riga
@@ -251,7 +269,7 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
   // `(scuola_id) where attivo` rifiuterebbe il secondo con un 23505, e un solo
   // elenco vivo per sede è precisamente ciò che impedisce al giro di scegliere
   // da solo quale delle due classi valga.
-  const { error: erroreSpegni } = await supabase
+  const { error: erroreSpegni } = await scrittura
     .from('iscrizioni_elenco_caricamenti')
     .update({ attivo: false })
     .eq('scuola_id', scuolaId)
@@ -270,7 +288,7 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
     )
   }
 
-  const { data: caricamento, error: erroreCaricamento } = await supabase
+  const { data: caricamento, error: erroreCaricamento } = await scrittura
     .from('iscrizioni_elenco_caricamenti')
     .insert({
       scuola_id: scuolaId,
@@ -280,11 +298,14 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       anomalie: letto.anomalie,
       caricato_da: auth.user.id,
       attivo: true,
+      ...conAnno(esito),
     })
     .select('id, caricato_il')
     .single()
   if (erroreCaricamento || !caricamento) {
     await ritira()
+    const anno = erroreAnno(erroreCaricamento, OPERAZIONE_POST)
+    if (anno) return anno
     logEvento('db', 'error', {
       operazione: OPERAZIONE_POST,
       esito: 'elenco-non-registrato',
@@ -302,7 +323,6 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
   // ── 8. LE RIGHE ─────────────────────────────────────────────────────────
   // A blocchi: 338 righe in un solo INSERT passano, 900 in tre sedi no, e il
   // limite non si scopre in produzione il giorno del caricamento vero.
-  const BLOCCO = 200
   const righeDb: RigaElencoDb[] = letto.righe.map((r) => ({
     classe: r.classe,
     nome: r.nome,
@@ -312,7 +332,7 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
     retta_testo: r.rettaTesto,
   }))
   for (let i = 0; i < righeDb.length; i += BLOCCO) {
-    const { error } = await supabase
+    const { error } = await scrittura
       .from('iscrizioni_elenco_righe')
       .insert(righeDb.slice(i, i + BLOCCO).map((r) => ({ ...r, caricamento_id: caricamentoId, scuola_id: scuolaId })))
     if (error) {
@@ -320,7 +340,7 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       // peggio di nessun elenco — il giro di domani assegnerebbe le classi che
       // conosce e manderebbe alla segreteria tutto il resto, senza che il
       // motivo vero (un INSERT caduto) compaia da nessuna parte.
-      const { error: erroreDisfa } = await supabase.from('iscrizioni_elenco_caricamenti').delete().eq('id', caricamentoId)
+      const { error: erroreDisfa } = await scrittura.from('iscrizioni_elenco_caricamenti').delete().eq('id', caricamentoId)
       // Se non si disfa, l'elenco a metà resta ATTIVO: la riga lo dice con il suo id.
       if (erroreDisfa) guastoSecondario('iscrizione', OPERAZIONE_POST, 'elenco-parziale-non-rimosso', erroreDisfa)
       await ritira()

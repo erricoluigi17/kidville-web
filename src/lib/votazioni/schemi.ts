@@ -38,6 +38,8 @@ function senzaDoppioni(ids: string[]): string[] {
 /** Il body di `POST /api/admin/votazioni`. */
 export const creaVotazioneSchema = z.object({
   scuolaId: zUuid.optional(),
+  // `anni_scolastici.id` dichiarato; assente → l'anno del cookie o l'unico `corrente` della sede.
+  annoId: zUuid.optional(),
   titolo: z.string().trim().min(1).max(TITOLO_MAX),
   scadenza: zDataOraLocale,
   // Può essere vuoto: la route risponde 400 VOTAZIONE_SENZA_SCHEDE se non c’è nemmeno l’istituto.

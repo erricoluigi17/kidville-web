@@ -1,5 +1,6 @@
 import { logEvento, type Livello, type Valore } from './logger';
-import { contesto, inLogger } from './context';
+import { contesto, inLogger, segnalaErroreAnno } from './context';
+import { codiceAnnoDa } from '@/lib/anno/tipi';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
@@ -315,6 +316,44 @@ export interface OpzioniStrumento {
 }
 
 /**
+ * `x-kidville-route` — il NOME della route (quello passato a `withRoute`, es. `admin/sections:POST`)
+ * su ogni richiesta PostgREST (tabelle e RPC). Il database lo legge da `request.headers` e lo scrive
+ * nei contatori di osservazione della guardia dell'anno: senza, un contatore direbbe «una scrittura
+ * su un anno chiuso» e non QUALE route (Ruling D14/P11).
+ *
+ * Il valore è un letterale del codice, mai un dato: si accetta solo se rispetta una lista stretta di
+ * caratteri (altrimenti niente header, mai un testo libero) e si tronca a 120. Fuori da un contesto
+ * di richiesta, niente header. Fail-open: qualunque eccezione lascia l'`init` com'era.
+ */
+const ROUTE_AMMESSA = /^[a-z0-9/_\-[\]:.]+$/i;
+const ROUTE_MAX = 120;
+
+export function conRoute(init: RequestInit | undefined, area: string): RequestInit | undefined {
+    try {
+        if (area !== 'db' && area !== 'rpc') return init;
+        const route = contesto()?.route;
+        if (typeof route !== 'string' || route === '') return init;
+        const valore = route.slice(0, ROUTE_MAX);
+        if (!ROUTE_AMMESSA.test(valore)) return init;
+        const h = init?.headers;
+        if (h !== undefined && h !== null && typeof (h as Headers).get === 'function') {
+            const copia = new Headers(h as Headers);
+            copia.set('x-kidville-route', valore);
+            return { ...init, headers: copia };
+        }
+        if (Array.isArray(h)) {
+            return {
+                ...init,
+                headers: [...h.filter((c) => String(c?.[0]).toLowerCase() !== 'x-kidville-route'), ['x-kidville-route', valore]],
+            };
+        }
+        return { ...init, headers: { ...((h as Record<string, string> | undefined) ?? {}), 'x-kidville-route': valore } };
+    } catch {
+        return init;
+    }
+}
+
+/**
  * `base` è iniettabile per i test. Il default NON è `= fetch` (che catturerebbe il globale al
  * CARICAMENTO del modulo): Next 16 patcha `globalThis.fetch` per il proprio caching, e non c'è
  * garanzia che l'abbia già fatto quando questo modulo viene importato. Con la lambda, il fetch
@@ -349,7 +388,7 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
             // supabase-js; l'unica aggiunta è una scadenza, e solo quando il chiamante non ne
             // governa già una di sua (vedi `conTetto`). Senza, una connessione accettata e muta
             // teneva appesa la route per sempre — misurato: 150 secondi, senza eccezione.
-            res = await chiama(input, conTetto(input, init, tetto));
+            res = await chiama(input, conTetto(input, conRoute(init, b.area), tetto));
         } catch (err) {
             const ms = Date.now() - t0;
             const scaduto = eTimeout(err);
@@ -580,11 +619,36 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
     // Il corpo si legge SOLO qui, mai sulle risposte ok: `storage.download()` passa da questo
     // wrapper, e leggerne il corpo distruggerebbe lo streaming e farebbe esplodere la memoria.
     const err = leggeIlCorpo(b.area) ? await erroreDalCorpo(res, s) : undefined;
+    riconosciErroreAnno(b.area, err);
     const livello = livelloDi(b.area, s, err);
 
     logEvento(b.area, livello, campiDi(b, { stato: s, ms }), err, {
         persisti: daPersistere(livello, b.area, s),
     });
+}
+
+/**
+ * LA RETE DELL'ANNO SCOLASTICO (Compito 3.4, D4). Se il database ha rifiutato una scrittura con un
+ * codice dell'anno (`ANNO_CHIUSO`…), lo si scrive nel contesto della richiesta: `withRoute` lo
+ * legge e trasforma il 500 generico della route in 409/422, senza toccare le 63 route che oggi
+ * rispondono 500. Il corpo è QUELLO GIÀ LETTO per il log (nessuna seconda lettura) e il confronto è
+ * con `CODICI_ANNO`, importato da un modulo puro: `errori.ts` non si può importare qui, perché
+ * importa il logger e il logger importa il contesto.
+ *
+ * Solo aree `db` e `rpc`. Il ramo `verràRitentato` non lo impedisce: ritenta solo GET/HEAD/OPTIONS
+ * con 503/520, e un `RAISE EXCEPTION` di PostgREST è un 400. Non lancia mai, e salva nel contesto
+ * il codice LETTERALE della lista, mai testo del database.
+ */
+function riconosciErroreAnno(area: Bersaglio['area'], err: unknown): void {
+    try {
+        if (area !== 'db' && area !== 'rpc') return;
+        const e = err as { message?: unknown; code?: unknown } | null | undefined;
+        const codice = codiceAnnoDa(e?.message);
+        if (codice === null) return;
+        segnalaErroreAnno(typeof e?.code === 'string' ? e.code : '', codice);
+    } catch {
+        // Fail-open: il riconoscimento è osservabilità, la risposta al chiamante resta intatta.
+    }
 }
 
 /**

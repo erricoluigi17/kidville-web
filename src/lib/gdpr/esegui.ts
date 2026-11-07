@@ -20,6 +20,7 @@ import { dimenticaNellaScatolaNera } from '@/lib/gdpr/scatola-nera'
 import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { obliaModuliGenitori } from './moduli-genitori'
+import { scriviOblio } from './oblio-registro'
 import { obliaCrmAlunno } from '@/lib/crm/oblio'
 
 // =============================================================================
@@ -630,6 +631,31 @@ export interface EsitoTabellaOblio {
 }
 
 /**
+ * Le tabelle del REGISTRO DELL'ANNO che `obliaFileDaTabella` può ricevere (Compito 3.6, Ruling P42), UN ELENCO LETTERALE:
+ * chiamante per chiamante, `obliaPagelleAlunno` → `pagelle`, il fascicolo → `student_documents`. Passano da
+ * `scriviOblio` (delete). `certificati_medici` NON è nel registro: resta la scrittura diretta di sempre. Un test
+ * confronta questo elenco con `__tests__/fixtures/tabelle-anno.json`: una tabella che entra nel registro e viene
+ * passata a questa funzione deve comparire qui, e nell'allowlist di `anno_oblio_scrivi`.
+ */
+export const TABELLE_OBLIO_REGISTRO: ReadonlySet<string> = new Set(['pagelle', 'student_documents'])
+
+/** La cancellazione per `id` di una tabella FUORI dal registro dell'anno (la guardia non la riguarda). */
+async function cancellaDiretta(
+  supabase: SupabaseClient,
+  tabella: string,
+  ids: string[],
+  op: string,
+  evento: string,
+): Promise<{ ok: boolean }> {
+  const { error } = await supabase.from(tabella).delete().in('id', ids)
+  if (error) {
+    if (!schemaAssente(error)) logErrore({ operazione: op, evento }, error)
+    return { ok: false }
+  }
+  return { ok: true }
+}
+
+/**
  * Toglie i file di UN bucket agganciati all'interessato da UNA tabella-indice,
  * e cancella le righe che li indicizzavano.
  *
@@ -737,15 +763,18 @@ async function obliaFileDaTabella(
   const nonRimossi = esito.nonRimossi + illeggibili
   if (cancellabili.length === 0) return { rimossi: esito.rimossi, nonRimossi, righe: 0, letto: true }
 
-  const { error: errDel } = await supabase
-    .from(tabella)
-    .delete()
-    .in('id', cancellabili.map((m) => m.id))
-  if (errDel) {
+  const idDaCancellare = cancellabili.map((m) => m.id)
+  // Le tabelle del registro dell'anno passano dall'RPC dell'oblio (con l'interruttore, senza gettone); le altre
+  // (`certificati_medici`) restano la scrittura diretta di oggi, perché la guardia non le riguarda.
+  const esitoDel = TABELLE_OBLIO_REGISTRO.has(tabella)
+    ? await scriviOblio(supabase, {
+        azione: 'delete', tabella, colonnaFiltro: 'id', valoriFiltro: idDaCancellare, op,
+      })
+    : await cancellaDiretta(supabase, tabella, idDaCancellare, op, `${evento}_delete`)
+  if (!esitoDel.ok) {
     // I file sono già usciti: qui resta un indice che punta al vuoto — visibile,
-    // e da correggere. Non si tace: `certificati_medici` porta anche `note` e
-    // `nota_validazione`, testo libero scritto da un genitore.
-    if (!schemaAssente(errDel)) logErrore({ operazione: op, evento: `${evento}_delete` }, errDel)
+    // e da correggere (l'errore l'ha già registrato chi ha scritto). Non si tace:
+    // `certificati_medici` porta anche `note` e `nota_validazione`, testo libero scritto da un genitore.
     return { rimossi: esito.rimossi, nonRimossi, righe: 0, letto: true }
   }
 
@@ -1008,13 +1037,15 @@ export async function obliaAllegatiChat(
   const fermi = mappa.filter((m) => m.percorso === null || esito.fermi.has(m.percorso)).map((m) => m.id)
   if (azzerabili.length === 0) return { rimossi: esito.rimossi, nonRimossi, fermi, letto: true }
 
-  const { error: errUpd } = await supabase
-    .from('chat_messages')
-    .update({ attachment_url: null, attachment_type: null })
-    .in('id', azzerabili.map((m) => m.id))
-  if (errUpd) {
-    if (!schemaAssente(errUpd)) logErrore({ operazione: op, evento: 'oblio_chat_allegati_update' }, errUpd)
-  }
+  // L'errore lo registra già `scriviOblio` (con l'`op`); qui il trattamento resta quello di prima: si prosegue.
+  await scriviOblio(supabase, {
+    azione: 'update',
+    tabella: 'chat_messages',
+    colonnaFiltro: 'id',
+    valoriFiltro: azzerabili.map((m) => m.id),
+    set: { attachment_url: null, attachment_type: null },
+    op,
+  })
 
   return { rimossi: esito.rimossi, nonRimossi, fermi, letto: true }
 }
@@ -1226,14 +1257,18 @@ export async function obliaIscrizioni(
     // apposta per conservare sulle 93 domande raccolte prima dell'informativa.
     const senzaRete = consentsLogSenzaRete(riga.consentsLog)
     if (senzaRete !== undefined) patch.consents_log = senzaRete
-    const { error: errUpd } = await supabase
-      .from('enrollment_submissions')
-      .update(patch)
-      .eq('id', id)
-    if (errUpd) {
+    const esitoUpd = await scriviOblio(supabase, {
+      azione: 'update',
+      tabella: 'enrollment_submissions',
+      colonnaFiltro: 'id',
+      valoriFiltro: [id],
+      set: patch,
+      op,
+    })
+    if (!esitoUpd.ok) {
       // Non si tace: questa è la riga che conserva il codice fiscale e i dati
-      // sanitari di un minore. Se l'UPDATE non passa, l'oblio è parziale.
-      logErrore({ operazione: op, evento: 'oblio_iscrizioni_update' }, errUpd)
+      // sanitari di un minore. Se l'UPDATE non passa, l'oblio è parziale
+      // (l'errore l'ha già registrato `scriviOblio`).
       continue
     }
     domandeScrubbate++
@@ -1416,23 +1451,19 @@ export async function obliaFotoAlunno(
       trattenute.push(sorte.id)
       continue
     }
-    // `ancheNelCestino` su una SCRITTURA: la riga è già stata letta qui sopra e
-    // si riscrive per `id`. La dichiarazione non aggiunge un filtro — dice che
-    // questa `update` non deve curarsi dello stato del cestino, ed è vero per una
-    // ragione precisa: togliere il tag di un bambino da una foto di gruppo va
-    // fatto anche se la foto è cestinata, perché fra i 30 giorni della purga e un
-    // eventuale ripristino quel collegamento identificante tornerebbe a vivere.
-    const { error: errU } = await ancheNelCestino(
-      supabase
-        .from('galleria_media_v2')
-        .update({ tag_students: sorte.altri })
-        .eq('id', r.id),
-      'sgancio del tag su foto di gruppo: va fatto anche se la foto è nel cestino, ' +
-        'altrimenti un ripristino entro i 30 giorni farebbe tornare in vita il legame ' +
-        'identificante «questo è X» che l\'oblio doveva togliere.',
-    )
-    if (errU) logErrore({ operazione: op, evento: 'oblio_galleria_untag' }, errU)
-    else fotoSganciate++
+    // Togliere il tag di un bambino da una foto di gruppo va fatto anche se la foto è cestinata, perché fra i 30
+    // giorni della purga e un eventuale ripristino quel collegamento identificante tornerebbe a vivere.
+    // `update|galleria_media_v2|id` non ha nessuna cintura sul cestino (apposta): la dichiarazione `ancheNelCestino`
+    // di prima non serve più, l'RPC non filtra. L'errore l'ha già registrato `scriviOblio`.
+    const sgancio = await scriviOblio(supabase, {
+      azione: 'update',
+      tabella: 'galleria_media_v2',
+      colonnaFiltro: 'id',
+      valoriFiltro: [r.id],
+      set: { tag_students: sorte.altri },
+      op,
+    })
+    if (sgancio.ok) fotoSganciate++
   }
 
   let fotoRimosse = 0
@@ -1464,17 +1495,16 @@ export async function obliaFotoAlunno(
       (m) => !(m.percorso !== null && esito.fermi.has(m.percorso)),
     )
     if (cancellabili.length > 0) {
-      const { error: errDel } = await ancheNelCestino(
-        supabase
-          .from('galleria_media_v2')
-          .delete()
-          .in('id', cancellabili.map((m) => m.id)),
-        'cancellazione definitiva delle righe il cui file è già uscito dal bucket: gli ' +
-          'id vengono dalla lettura qui sopra, che il cestino lo vede, e una riga cestinata ' +
-          'il cui file non c\'è più sarebbe un puntatore a niente che nessuno ritroverebbe.',
-      )
-      if (errDel) logErrore({ operazione: op, evento: 'oblio_galleria_delete' }, errDel)
-      else fotoRimosse = cancellabili.length
+      // `delete|galleria_media_v2|id`: l'oblio cancella anche le foto vive e quelle nel cestino (nessuna cintura): una
+      // riga cestinata il cui file non c'è più sarebbe un puntatore a niente che nessuno ritroverebbe.
+      const cancellate = await scriviOblio(supabase, {
+        azione: 'delete',
+        tabella: 'galleria_media_v2',
+        colonnaFiltro: 'id',
+        valoriFiltro: cancellabili.map((m) => m.id),
+        op,
+      })
+      if (cancellate.ok) fotoRimosse = cancellabili.length
     }
   }
   return { fotoRimosse, fotoSganciate, fileNonRimossi, letto: true }
@@ -1856,33 +1886,61 @@ async function bonificaDiarioAlunno(
   let completo = true
   const toccate = new Set<string>()
 
-  // a) Le note, con UN update filtrato come per le presenze: si scrive solo dove c'è testo, e
-  //    nessun elenco di id finisce nell'URL (la nota di sezione è su centinaia di righe).
+  // L'RPC dell'oblio restituisce un conteggio, non gli id: per non contare due volte una riga che ha una nota E un
+  // valore di routine a testo (il conteggio è per riga, come prima) gli id delle righe con una nota si leggono PRIMA di
+  // azzerarle, a pagine (PostgREST tronca a 1000). La lettura non ferma la bonifica: se fallisce, il numero è per difetto.
+  const PAGINA_NOTE = 1000
+  const idConNota = async (colonne: string[]): Promise<{ ids: string[]; codice?: string }> => {
+    const ids: string[] = []
+    for (let da = 0; ; da += PAGINA_NOTE) {
+      const { data, error } = await supabase
+        .from('eventi_diario')
+        .select('id')
+        .eq('alunno_id', alunnoId)
+        .or(colonne.map((c) => `${c}.not.is.null`).join(','))
+        .order('id')
+        .range(da, da + PAGINA_NOTE - 1)
+      if (error) return { ids, codice: (error as { code?: string }).code ?? 'errore' }
+      const pagina = (data ?? []) as { id: string }[]
+      ids.push(...pagina.map((r) => r.id))
+      if (pagina.length < PAGINA_NOTE) break
+    }
+    return { ids }
+  }
+  let conNota = await idConNota(['nota_bambino', 'nota_libera'])
+  if (conNota.codice && ['42703', 'PGRST204'].includes(conNota.codice)) conNota = await idConNota(['nota_libera'])
+  if (conNota.codice && !schemaAssente({ code: conNota.codice })) {
+    logEvento('gdpr', 'warn', { operazione: op, esito: 'oblio-diario-note-non-contate', error_code: conNota.codice })
+  }
+
+  // a) Le note, con UN update filtrato come per le presenze: si scrive solo dove c'è testo (l'RPC tocca solo le
+  //    righe che cambiano), e nessun elenco di id finisce nell'URL (la nota di sezione è su centinaia di righe).
   //    Sul DB E2E non migrato `nota_bambino` non c'è (42703/PGRST204): si ritenta con la sola
   //    nota di sezione invece di saltare tutto — prima la bonifica si arrendeva e diceva «completo».
-  const note = await supabase
-    .from('eventi_diario')
-    .update({ nota_bambino: null, nota_libera: null })
-    .eq('alunno_id', alunnoId)
-    .or('nota_bambino.not.is.null,nota_libera.not.is.null')
-    .select('id')
-  let esitoNote: { data: unknown; error: unknown } = note
-  if (note.error && ['42703', 'PGRST204'].includes((note.error as { code?: string }).code ?? '')) {
+  let esitoNote = await scriviOblio(supabase, {
+    azione: 'update',
+    tabella: 'eventi_diario',
+    colonnaFiltro: 'alunno_id',
+    valoriFiltro: [alunnoId],
+    set: { nota_bambino: null, nota_libera: null },
+    op,
+  })
+  if (!esitoNote.ok && ['42703', 'PGRST204'].includes(esitoNote.codice ?? '')) {
     logEvento('gdpr', 'info', { operazione: op, esito: 'oblio-diario-senza-nota-bambino' })
-    esitoNote = await supabase
-      .from('eventi_diario')
-      .update({ nota_libera: null })
-      .eq('alunno_id', alunnoId)
-      .not('nota_libera', 'is', null)
-      .select('id')
+    esitoNote = await scriviOblio(supabase, {
+      azione: 'update',
+      tabella: 'eventi_diario',
+      colonnaFiltro: 'alunno_id',
+      valoriFiltro: [alunnoId],
+      set: { nota_libera: null },
+      op,
+    })
   }
-  if (esitoNote.error) {
-    if (!schemaAssente(esitoNote.error)) {
-      logErrore({ operazione: op, evento: 'oblio_diario_note' }, esitoNote.error)
-      completo = false
-    }
+  if (!esitoNote.ok) {
+    // L'errore l'ha già registrato `scriviOblio`; lo schema assente (CI) non rende la bonifica incompleta.
+    if (!schemaAssente({ code: esitoNote.codice })) completo = false
   } else {
-    for (const r of (esitoNote.data ?? []) as { id: string }[]) toccate.add(r.id)
+    for (const id of conNota.ids) toccate.add(id)
   }
 
   // b) Il valore delle routine della scuola a testo libero. Si legge A PAGINE: PostgREST tronca
@@ -1923,17 +1981,21 @@ async function bonificaDiarioAlunno(
   const BLOCCO = 100
   for (const g of gruppi.values()) {
     for (let i = 0; i < g.ids.length; i += BLOCCO) {
-      const { data, error } = await supabase
-        .from('eventi_diario')
-        .update({ dettagli: g.dettagli })
-        .in('id', g.ids.slice(i, i + BLOCCO))
-        .select('id')
-      if (error) {
-        logErrore({ operazione: op, evento: 'oblio_diario_routine' }, error)
+      const esitoRoutine = await scriviOblio(supabase, {
+        azione: 'update',
+        tabella: 'eventi_diario',
+        colonnaFiltro: 'id',
+        valoriFiltro: g.ids.slice(i, i + BLOCCO),
+        set: { dettagli: g.dettagli },
+        op,
+      })
+      if (!esitoRoutine.ok) {
+        // L'errore l'ha già registrato `scriviOblio`.
         completo = false
         continue
       }
-      for (const r of (data ?? []) as { id: string }[]) toccate.add(r.id)
+      // Ogni id del blocco aveva un valore a testo (la lettura qui sopra li sceglie così): l'RPC li ha cambiati tutti.
+      for (const id of g.ids.slice(i, i + BLOCCO)) toccate.add(id)
     }
   }
   return { bonificate: toccate.size, completo }
@@ -2696,6 +2758,8 @@ export async function anonimizzaAlunno(
   fotoRimosse: number
   fotoSganciate: number
   presenzeBonificate: number
+  /** Righe di `frequenze` (di tutti gli anni) da cui sono usciti intestatario, ripartizione e motivo di sospensione. */
+  frequenzeBonificate: number
   /** Righe di `eventi_diario` il cui testo libero (note, routine a testo) è stato tolto. */
   diarioBonificate: number
   /** Righe di `notifiche` che nominavano il bambino, rimosse (art. 17). */
@@ -2752,6 +2816,23 @@ export async function anonimizzaAlunno(
   const { error: e1 } = await supabase.from('alunni').update(patchAlunno(alunno.id, at)).eq('id', alunno.id)
   if (e1) logErrore({ operazione: op, evento: 'patch_alunno' }, e1)
 
+  // 1-bis. LE FREQUENZE DI OGNI ANNO. Intestatario delle fatture, ripartizione della retta e motivo della sospensione
+  //    vivono anche in `frequenze` (una riga per anno): lo specchio `alunni → frequenze` aggiorna SOLO l'anno attivo,
+  //    quindi senza questo passo gli anni chiusi li conserverebbero dopo l'oblio. Si fa solo se la patch di `alunni`
+  //    è riuscita; `sospeso` e `sospeso_causa` restano (fatto amministrativo, non testo libero). `scriviOblio` logga da sé.
+  let frequenzeBonificate = 0
+  if (!e1) {
+    const esitoFrequenze = await scriviOblio(supabase, {
+      azione: 'update',
+      tabella: 'frequenze',
+      colonnaFiltro: 'alunno_id',
+      valoriFiltro: [alunno.id],
+      set: { intestatario_fatture: null, retta_split_config: null, sospeso_motivo: null },
+      op,
+    })
+    if (esitoFrequenze.ok) frequenzeBonificate = esitoFrequenze.righe
+  }
+
   // 2. IL REGISTRO DELLE PRESENZE — il motivo dell'assenza e le note d'appello.
   //
   //    È il gemello esatto di ciò che `patchAlunno` fa con `note_mediche`, e fino
@@ -2774,21 +2855,19 @@ export async function anonimizzaAlunno(
   //    per non togliere niente, e il conteggio che finisce nel log direbbe un
   //    numero che non è quello dei dati davvero rimossi.
   let presenzeBonificate = 0
-  const { data: presBonificate, error: errPresenze } = await supabase
-    .from('presenze')
-    .update({ giustificazione_testo: null, note_appello: null })
-    .eq('alunno_id', alunno.id)
-    .or('giustificazione_testo.not.is.null,note_appello.not.is.null')
-    .select('id')
-  if (errPresenze) {
-    // PostgREST non lancia: senza questo controllo un guasto diventerebbe
-    // «nessuna riga da bonificare», cioè un oblio dichiarato e non fatto.
-    if (!schemaAssente(errPresenze)) {
-      logErrore({ operazione: op, evento: 'oblio_presenze_giustificazioni' }, errPresenze)
-    }
-  } else {
-    presenzeBonificate = (presBonificate ?? []).length
-  }
+  //    (Dal 3.6 il filtro è dentro l'RPC: `IS DISTINCT FROM` tocca solo le righe che hanno ancora il testo,
+  //    e il ripiego sul DB della CI conserva lo stesso `.or(…not.is.null)`.)
+  const esitoPresenze = await scriviOblio(supabase, {
+    azione: 'update',
+    tabella: 'presenze',
+    colonnaFiltro: 'alunno_id',
+    valoriFiltro: [alunno.id],
+    set: { giustificazione_testo: null, note_appello: null },
+    op,
+  })
+  // PostgREST non lancia: senza questo controllo un guasto diventerebbe «nessuna riga da bonificare», cioè un
+  // oblio dichiarato e non fatto. L'errore l'ha già registrato `scriviOblio` (lo schema assente solo a `info`).
+  if (esitoPresenze.ok) presenzeBonificate = esitoPresenze.righe
 
   // 2-ter. IL TESTO DEL DIARIO (2026-09-28). Il gemello di quello delle presenze: le note
   //    (`nota_bambino`, `nota_libera`) e il valore delle routine della scuola a testo libero.
@@ -3061,6 +3140,7 @@ export async function anonimizzaAlunno(
     fotoRimosse: foto.fotoRimosse,
     fotoSganciate: foto.fotoSganciate,
     presenzeBonificate,
+    frequenzeBonificate,
     diarioBonificate: diario.bonificate,
     notificheRimosse: tracce.notificheRimosse,
     videoIntentiTrattati: videoIntenti.intenti,

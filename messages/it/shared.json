@@ -804,5 +804,18 @@
   "erroreDataFutura": "La data non può essere nel futuro.",
   "errorePeriodoDateIncomplete": "Indica entrambe le date del periodo, oppure nessuna.",
   "errorePeriodiSovrapposti": "Le date si sovrappongono a un altro periodo di questa sede.",
-  "errorePeriodoConScrutiniChiusi": "Il periodo ha uno scrutinio chiuso: per spostarne le date va prima riaperto."
+  "errorePeriodoConScrutiniChiusi": "Il periodo ha uno scrutinio chiuso: per spostarne le date va prima riaperto.",
+  "erroreAnnoChiuso": "Anno scolastico chiuso: servono i permessi di correzione.",
+  "errorePassaggioDaFare": "Il passaggio all’anno nuovo non è ancora stato fatto: completalo prima di continuare.",
+  "erroreSezioneDiAltroAnno": "La classe scelta appartiene a un altro anno scolastico.",
+  "erroreSezioneDiAltraSede": "La classe scelta appartiene a un’altra sede.",
+  "erroreAnnoNonCoerente": "I dati non sono coerenti con l’anno scolastico scelto.",
+  "erroreAnnoDaSpecificare": "Scegli l’anno scolastico a cui si riferisce questa operazione.",
+  "erroreAnnoNonDellaSede": "L’anno scolastico scelto non appartiene a questa sede.",
+  "erroreModuloNonRichiesto": "Questo modulo non è richiesto per questo tipo di iscrizione.",
+  "erroreConfineNonValido": "Le date dell’anno scolastico non sono valide.",
+  "erroreConfineConRighe": "Non si può spostare la data: ci sono già dati registrati nei giorni che cambierebbero anno.",
+  "erroreCalendarioNonContinuo": "Gli anni scolastici di una sede devono susseguirsi senza buchi né sovrapposizioni.",
+  "erroreGiornoSenzaAnno": "Nessun anno scolastico copre questo giorno: avvisa l’assistenza.",
+  "erroreAnnoNonVisibile": "Questo anno scolastico non è ancora disponibile per te."
 }

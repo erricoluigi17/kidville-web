@@ -43,6 +43,7 @@ import {
   type SchedaGenitoreGemella,
 } from '@/lib/iscrizioni/doppioni'
 import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -1759,6 +1760,19 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     const dataDomanda = new Date((sub as { created_at?: string | null }).created_at ?? Date.now())
 
     /**
+     * Fase A (§4.19): `alunni` è appena stato scritto, ora la frequenza dell'anno attivo della sede (fail-open: la
+     * risposta non cambia). La sede è `scuolaId`, quella su cui si scrive `alunni` (la domanda può venire da un'altra
+     * sede, ma l'alunno è sempre scritto qui). Un anno per sede, letto una volta per richiesta.
+     */
+    const cacheAnno = new Map<string, string | null>()
+    const frequenzaDopoAlunni = async (alunnoId: string, patch: Record<string, unknown>) => {
+      const campi = campiFrequenzaDaAlunno(patch)
+      if (Object.keys(campi).length === 0) return
+      const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
+      if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi })
+    }
+
+    /**
      * Aggiorna una scheda che ESISTE GIÀ (re-iscrizione): classe, retta e, se la
      * domanda li porta, i dati sanitari. Fino al 2026-10-09 i sanitari non c'erano,
      * e un attimo dopo uscivano dalla domanda: il dato dichiarato dalla famiglia non
@@ -1777,6 +1791,9 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'update-bambino-esistente-fallito', entita: 'bambino', indice: ci + 1, campo: d.campo, codice: d.codice })
         return
       }
+      // ⚠️ Oggi la re-iscrizione sposta il bambino nella classe nuova scrivendo `classe_sezione` su `alunni`: difetto noto,
+      // lo chiude la PR 4.5. Qui non cambia: la frequenza dell'anno attivo segue `alunni`, come lo specchio.
+      await frequenzaDopoAlunni(alunnoId, daScrivere)
       if (scheda && copiaSanitariPresente({ ...scheda, ...sanitari }, c)) sanitariInScheda.add(ci)
       if (scheda && (Object.keys(sanitari) as CampoSanitario[]).some((k) => normalizzaSanitario(scheda[k]) !== '')) {
         sanitariAggiuntiAScheda++
@@ -1909,6 +1926,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         studentId = newChild.id
         createdStudents.push({ id: newChild.id, nome: newChild.nome })
+        await frequenzaDopoAlunni(newChild.id, childRecord)
         // Scheda nuova: i sanitari sono entrati con l'insert — a meno che il degrado
         // di colonna (DB E2E) non li abbia tolti dal record, e allora restano nella domanda.
         if (copiaSanitariPresente(childRecord as SanitariScheda, c)) sanitariInScheda.add(ci)
@@ -2075,6 +2093,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         )
       } else {
         aCaricoScritti++
+        await frequenzaDopoAlunni(figlioId, { retta_a_carico_di: fratelloId })
       }
     }
     if (aCaricoScritti > 0 || aCaricoFalliti > 0) {

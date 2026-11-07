@@ -151,3 +151,9 @@ describe("l'import scrive il nome canonico della classe", () => {
     expect(righe, 'una lettura caduta deve lasciare una riga, non passare in silenzio').toHaveLength(1)
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

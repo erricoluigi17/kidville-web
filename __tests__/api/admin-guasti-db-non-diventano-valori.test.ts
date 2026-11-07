@@ -240,6 +240,8 @@ describe('SIDI — un flusso verso il Ministero non parte con un pezzo letto vuo
 
 describe('manutenzione — anche qui un risultato non si butta', () => {
   it('wipe: una tabella che non si svuota → 500 con il suo NOME, non «Wipe completed»', async () => {
+    // Il DB della CI non ha ancora `anno_oblio_svuota` (PGRST202): il wipe ripiega sulle due DELETE dirette.
+    h.rpc.anno_oblio_svuota = { error: { code: 'PGRST202' } }
     h.guasti['pagamenti:delete'] = { code: '23503', message: 'violazione di chiave esterna' }
     const res = await wipe(json('http://localhost/api/admin/wipe', 'POST'))
     expect(res.status).toBe(500)
@@ -249,6 +251,7 @@ describe('manutenzione — anche qui un risultato non si butta', () => {
   })
 
   it('wipe: una tabella ASSENTE (elenco storico) resta «saltata» a livello info, e il wipe riesce', async () => {
+    h.rpc.anno_oblio_svuota = { error: { code: 'PGRST202' } }
     h.guasti['locker_requests:delete'] = { code: '42P01', message: 'relation does not exist' }
     const res = await wipe(json('http://localhost/api/admin/wipe', 'POST'))
     expect(res.status).toBe(200)

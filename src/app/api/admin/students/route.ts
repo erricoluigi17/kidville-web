@@ -19,6 +19,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { HEADER_TOTALE } from '@/lib/api/paginazione';
 import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -448,6 +449,13 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
+        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo della sede (fail-open).
+        const campiFreqNuovo = campiFrequenzaDaAlunno(record);
+        if (data?.id && Object.keys(campiFreqNuovo).length > 0) {
+            const annoSedeId = await annoAttivoDiSede(supabase, (data.scuola_id as string | null) ?? (record.scuola_id as string));
+            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: data.id as string, annoSedeId, campi: campiFreqNuovo });
+        }
+
         await logScrittura(supabase, {
             attore: auth.user,
             entitaTipo: 'alunni',
@@ -745,6 +753,8 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 .select();
 
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            // Nessuna `scriviFrequenza`: la patch non nomina colonne copiate (`section_id` lo calcola il trigger BEFORE da
+            // `classe_sezione` e lo specchio lo copia nella frequenza dell'anno attivo).
             // Audit: una riga per alunno riassegnato (DL-037).
             for (const alunnoId of bersagli.ids) {
                 await logScrittura(supabase, {
@@ -783,6 +793,14 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 .in('scuola_id', plessi)
                 .select();
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            // Fase A (§4.19): la frequenza dell'anno attivo di ciascuna sede (fail-open), un anno per sede.
+            const campiMensa = campiFrequenzaDaAlunno({ gruppo_mensa_id: gruppoMensaId });
+            const annoPerSede = new Map<string, string | null>();
+            // Solo le righe che l'UPDATE ha davvero toccato (`data`), non gli id richiesti.
+            for (const riga of (data ?? []) as { id: string; scuola_id?: string | null }[]) {
+                const annoSedeId = await annoAttivoDiSede(supabase, riga.scuola_id ?? bersagli.sedePerId.get(riga.id), annoPerSede);
+                if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: riga.id, annoSedeId, campi: campiMensa });
+            }
             for (const alunnoId of bersagli.ids) {
                 await logScrittura(supabase, {
                     attore: auth.user,
@@ -1312,6 +1330,14 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
                 }
                 if (error) throw new Error(error.message);
+
+                // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
+                // Su un trasferimento l'anno è quello della sede NUOVA: la vecchia frequenza la chiude lo specchio.
+                const campiFreq = campiFrequenzaDaAlunno(updates);
+                if (Object.keys(campiFreq).length > 0) {
+                    const annoSedeId = await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale);
+                    if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: id as string, annoSedeId, campi: campiFreq });
+                }
 
                 // "Giorno di paga" cambiato → riallinea le scadenze delle rette
                 // aperte future (best-effort, vedi lib/pagamenti/scadenze).

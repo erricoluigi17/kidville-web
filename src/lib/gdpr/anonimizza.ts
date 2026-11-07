@@ -33,6 +33,8 @@ export function patchAlunno(id: string, at: string): Record<string, unknown> {
     invoice_holder_details: null,
     intestatario_fatture: null,
     retta_split_config: null,
+    // Testo libero (il motivo di una sospensione): si toglie qui e, con l'oblio, nelle frequenze di ogni anno.
+    sospeso_motivo: null,
     anonimizzato_il: at,
   }
 }

@@ -180,3 +180,9 @@ describe('iscrizioni import — province + semantica esito', () => {
     expect(h.updates.some((u) => u.row?.status === 'approved')).toBe(false)
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

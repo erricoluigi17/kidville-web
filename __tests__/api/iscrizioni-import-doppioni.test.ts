@@ -430,3 +430,9 @@ describe('import a mano — il codice fiscale che non supera il carattere di con
     expect(json.warnings.filter((w: string) => /^Bambino 1: .*codice fiscale/.test(w))).toEqual([])
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

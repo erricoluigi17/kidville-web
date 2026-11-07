@@ -41,6 +41,13 @@ vi.mock('@/lib/crm/collegamento', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // Dal 3.6 la cancellazione passa da `anno_oblio_scrivi` (`delete|enrollment_submissions|id`).
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome !== 'anno_oblio_scrivi' || args.p_azione !== 'delete') throw new Error(`rpc non prevista: ${nome}`)
+      h.sequenza.push({ tipo: 'delete', valore: args.p_valori })
+      if (h.erroreDelete) return { data: null, error: h.erroreDelete }
+      return { data: (args.p_valori as unknown[]).length, error: null }
+    },
     from: () => {
       const qb: Record<string, unknown> = {}
       for (const m of ['select', 'in', 'lt', 'eq', 'order', 'limit']) qb[m] = () => qb

@@ -1,0 +1,483 @@
+{
+  "_come_si_rigenera": "node scripts/funzioni-registro-fotografia.mjs --sql | (esegui su prod) ; node scripts/funzioni-registro-fotografia.mjs < risposta.json",
+  "generato_il": "2026-11-07",
+  "generato_alle": "2026-11-07T16:12:31Z",
+  "sha256": "004d105dc6a78a54ddcf4f143b3e488622b96909fb89312318b0fad4b5410ad2",
+  "funzioni": [
+    {
+      "funzione": "_video_originale_applica",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "aggiorna_quote_pagamento",
+      "tabelle": [
+        "pagamenti",
+        "pagamenti_quote"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "avviso_adesione_gestisci",
+      "tabelle": [
+        "avvisi_risposte"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "avviso_adesione_registra",
+      "tabelle": [
+        "avvisi_risposte"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "crea_quote_da_config",
+      "tabelle": [
+        "pagamenti_quote"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "crm_aggancia_alunno",
+      "tabelle": [
+        "crm_bambini"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "crm_quota_passa",
+      "tabelle": [
+        "crm_bambini",
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "crm_quota_segna",
+      "tabelle": [
+        "crm_bambini"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "crm_quota_togli",
+      "tabelle": [
+        "crm_bambini"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "elimina_alunno_definitivo",
+      "tabelle": [
+        "armadietto",
+        "eventi_diario",
+        "forms_submissions",
+        "pagamenti",
+        "student_documents"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "elimina_voce_ricarica_ticket",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "gallery_publish_photo",
+      "tabelle": [
+        "galleria_media_v2"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "gallery_publish_photo_storico",
+      "tabelle": [
+        "galleria_media_v2"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "genera_rette_mensili",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "genera_servizi_mensili",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "genera_solleciti",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "esente-colonne"
+    },
+    {
+      "funzione": "iscrizioni_annulla",
+      "tabelle": [
+        "enrollment_submissions"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "iscrizioni_chiudi",
+      "tabelle": [
+        "enrollment_submissions"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "iscrizioni_rinvia",
+      "tabelle": [
+        "enrollment_submissions"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "iscrizioni_sanitari_tick",
+      "tabelle": [
+        "enrollment_submissions"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "note_modifica",
+      "tabelle": [
+        "nota_ricezioni",
+        "note_disciplinari"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "presenze_giustificazioni_retention_tick",
+      "tabelle": [
+        "presenze"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "primaria_ricalcola_periodi",
+      "tabelle": [
+        "giustifiche_didattiche",
+        "valutazioni"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "propaga_rinomina_sezione",
+      "tabelle": [
+        "avvisi",
+        "galleria_media_v2",
+        "registro_orario"
+      ],
+      "classe": "esente-colonne"
+    },
+    {
+      "funzione": "registra_incasso_voce",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "registra_transazione_contabile",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "riaccredita_ticket_e_disdici",
+      "tabelle": [
+        "mensa_prenotazioni"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "ricalcola_stato_padre",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "esente-colonne"
+    },
+    {
+      "funzione": "ricalcola_stato_pagamento",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "esente-colonne"
+    },
+    {
+      "funzione": "ricarica_ticket_mensa",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "ricarica_ticket_mensa_storico",
+      "tabelle": [
+        "pagamenti"
+      ],
+      "classe": "dichiara"
+    },
+    {
+      "funzione": "salva_comportamento_scrutinio",
+      "tabelle": [
+        "scrutinio_comportamento"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "salva_giudizi_scrutinio",
+      "tabelle": [
+        "scrutinio_giudizi"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "scala_ticket_e_prenota",
+      "tabelle": [
+        "mensa_prenotazioni"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "storici_versione_aggregato",
+      "tabelle": [
+        "note_disciplinari",
+        "registro_orario",
+        "valutazioni"
+      ],
+      "classe": "esente-colonne"
+    },
+    {
+      "funzione": "video_galleria_flusso_vecchio_revoca",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_galleria_intent_apri",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_galleria_intent_apri_storico",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "video_galleria_pubblica",
+      "tabelle": [
+        "galleria_media_v2",
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_add_job",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_confirm",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_esito_segna",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_finalize",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_oblio_alunno",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "video_intent_open",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "video_intent_pubblicazione_fallita",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_pubblicazione_riprova",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_revoke",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_scadi_non_pubblicato",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intent_supersede",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_intenti_minimizza",
+      "tabelle": [
+        "video_intents"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "video_job_cancel",
+      "tabelle": [
+        "video_intents",
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_claim",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_diagnosi",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_fail",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_heartbeat",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_ready",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_retry",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_sorveglianza_prendi",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_sorveglianza_rilascia",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_job_uploaded",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    },
+    {
+      "funzione": "video_retention_originale_rimosso",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "video_retention_scadenze",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "video_retention_uscita_rimossa",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "oblio"
+    },
+    {
+      "funzione": "video_rinnovo_usa",
+      "tabelle": [
+        "video_jobs"
+      ],
+      "classe": "macchina-a-stati"
+    }
+  ]
+}

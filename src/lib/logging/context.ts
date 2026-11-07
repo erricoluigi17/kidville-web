@@ -38,6 +38,12 @@ export interface ContestoRichiesta {
      * interrogabile in SQL "quante volte ha fallito QUESTA route". Non rimuoverlo.
      */
     path: string;
+    /**
+     * Il NOME della route, quello passato a `withRoute` (es. `admin/sections:POST`): un letterale
+     * del codice, mai un dato. Lo legge `supabase-fetch` per l'header `x-kidville-route`.
+     * Diverso da `path`, che `redigiPath` riduce a `[tok]`.
+     */
+    route?: string;
     userId?: string;
     ruolo?: string;
     scuolaId?: string;
@@ -49,6 +55,15 @@ export interface ContestoRichiesta {
      * delle righe, e il budget dichiarato è "1-2 righe per richiesta, non dieci".
      */
     erroreLoggato?: boolean;
+    /**
+     * "Il database ha rifiutato una scrittura di questa richiesta con un codice dell'anno
+     * scolastico" (`ANNO_CHIUSO`…): il PRIMO, mai sovrascritto. Lo alza il `fetch` strumentato
+     * dei client Supabase, che è l'unico a leggere il corpo dell'errore; lo legge `withRoute`, che
+     * trasforma il 500 generico della route in 409/422 (Compito 3.4, D4). `message` è sempre un
+     * elemento di `CODICI_ANNO` (un letterale nostro, mai testo del database); `code` quello di
+     * PostgREST (`P0001`, `23514`…).
+     */
+    erroreAnno?: { code: string; message: string; gestito?: true };
     /**
      * Payload già validato e GIÀ REDATTO da `impostaPayload`; stampato solo se la richiesta
      * fallisce. Chi lo emette NON deve ri-redigerlo: una seconda passata di `redact` rifarebbe
@@ -198,6 +213,37 @@ export function segnalaErroreLoggato(): void {
 /** Vera se `logErrore` è già passato per questa richiesta. Fuori da una richiesta: falsa. */
 export function erroreGiaLoggato(): boolean {
     return als.getStore()?.erroreLoggato === true;
+}
+
+/**
+ * Segna che per questa richiesta il database ha rifiutato una scrittura con un codice dell'anno.
+ * Si tiene il PRIMO: i successivi non lo sovrascrivono (la prima causa è quella che l'utente deve
+ * vedere). Fuori da una richiesta è un no-op e non lancia, come `segnalaErroreLoggato`.
+ */
+export function segnalaErroreAnno(code: string, message: string): void {
+    const s = als.getStore();
+    if (!s) return;
+    // Un errore già GESTITO da una scrittura fail-open (`segnalaErroreAnnoGestito`) non occupa il posto: il
+    // primo errore NON gestito è quello che la rete di `withRoute` deve tradurre.
+    if (s.erroreAnno === undefined || s.erroreAnno.gestito) s.erroreAnno = { code, message };
+}
+
+/**
+ * Segna come GESTITO l'errore dell'anno già registrato per `message` (un codice di `CODICI_ANNO`): lo chiama
+ * una scrittura fail-open (`scriviFrequenza`) che l'ha loggato ed è andata avanti. La rete di `withRoute` lo
+ * ignora: se la route risponde poi 500 per un'altra ragione, quel 500 non diventa il 409/422 di questo errore.
+ * Non tocca un errore diverso (il primo non gestito resta). Fuori da una richiesta: no-op.
+ */
+export function segnalaErroreAnnoGestito(message: string): void {
+    const s = als.getStore();
+    if (!s?.erroreAnno || s.erroreAnno.gestito) return;
+    if (s.erroreAnno.message === message) s.erroreAnno.gestito = true;
+}
+
+/** L'errore dell'anno segnato per questa richiesta, se c'è. Fuori da una richiesta: `undefined`. */
+export function erroreAnnoDellaRichiesta(): { code: string; message: string } | undefined {
+    const e = als.getStore()?.erroreAnno;
+    return e && !e.gestito ? e : undefined;
 }
 
 /**

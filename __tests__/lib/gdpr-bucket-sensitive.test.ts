@@ -171,7 +171,20 @@ function makeFake(cfg: Cfg) {
       }),
     },
     // L'oblio dei video in volo (`video_intent_oblio_alunno`, 2026-10-02): `anonimizzaAlunno` la chiama sempre; qui non c'è niente da togliere.
-    rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+    // Dal 3.6 la cancellazione delle righe del registro passa da `anno_oblio_scrivi` (azione `delete`): il finto la
+    // applica come faceva `delete().in('id', …)`, registrando gli id in `rimosseDaTabella`.
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome === 'anno_oblio_scrivi') {
+        if (args.p_azione !== 'delete') return { data: 0, error: null }
+        const tabella = String(args.p_tabella)
+        const ids = (args.p_valori as unknown[]).map(String)
+        rimosseDaTabella.push({ tabella, ids })
+        const prima = tabelle[tabella]?.length ?? 0
+        if (tabelle[tabella]) tabelle[tabella] = tabelle[tabella].filter((r) => !ids.includes(String(r.id)))
+        return { data: prima - (tabelle[tabella]?.length ?? 0), error: null }
+      }
+      return { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+    },
   }
   return { client, archivio, tabelle, rimosseDaTabella }
 }

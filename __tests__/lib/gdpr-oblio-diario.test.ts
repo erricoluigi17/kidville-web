@@ -138,7 +138,13 @@ describe('anonimizzaAlunno — il diario di un anno intero, e le colonne che man
         upsert: () => catena(() => ({ data: [], error: null })),
       }),
       storage: { from: () => ({ remove: async () => ({ data: [], error: null }), list: async () => ({ data: [], error: null }) }) },
-      rpc: async () => ({ data: { ok: true, intenti: 0, revocati: 0 }, error: null }),
+      // Questo finto È il DB della CI non migrato: l'RPC dell'oblio (M3) non c'è (`PGRST202`) e `scriviOblio` ripiega
+      // sulla scrittura diretta, che è quella che il finto sa contare (la colonna `nota_bambino` manca: 42703).
+      rpc: async (nome: string) => (
+        nome === 'anno_oblio_scrivi'
+          ? { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }
+          : { data: { ok: true, intenti: 0, revocati: 0 }, error: null }
+      ),
     } as unknown as Parameters<typeof anonimizzaAlunno>[0]
     await anonimizzaAlunno(client, { id: NOSTRO }, AT, 'test')
     expect(riga.nota_libera, 'la nota di sezione è rimasta').toBeNull()

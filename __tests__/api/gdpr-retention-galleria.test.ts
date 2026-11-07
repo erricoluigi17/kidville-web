@@ -104,6 +104,8 @@ const h = vi.hoisted(() => ({
     erroreLottoB: null as unknown,
     erroreTimbro: null as unknown,
     erroreDelete: null as unknown,
+    /** Le chiamate a `anno_oblio_scrivi` (Compito 3.6). */
+    rpcOblio: [] as Record<string, unknown>[],
     erroreSegnalazioni: null as unknown,
     /** Il `count` che PostgREST restituisce sulla `delete` delle righe. */
     countDelete: undefined as number | undefined,
@@ -300,8 +302,25 @@ vi.mock('@/lib/supabase/server-client', () => ({
             return qb
         }
 
+        // `anno_oblio_scrivi` (3.6): il timbro (`update`) e la cancellazione (`delete_cestino`) passano da qui. Il
+        // doppio registra la chiamata in `h.rpcOblio` e ripete in `h.sequenza` ciò che prima faceva il builder
+        // (stessi esiti iniettati). La CINTURA della delete sta nell'SQL: qui la si prova dall'azione richiesta.
+        const rpc = async (nome: string, args: Record<string, unknown>) => {
+            if (nome !== 'anno_oblio_scrivi') throw new Error(`rpc non prevista: ${nome}`)
+            h.rpcOblio.push(args)
+            const tabella = String(args.p_tabella)
+            const ids = (args.p_valori as string[]) ?? []
+            if (args.p_azione === 'update') {
+                h.sequenza.push({ tipo: 'update', tabella, valore: { patch: args.p_set, ids } })
+                return { data: h.erroreTimbro ? null : ids.length, error: h.erroreTimbro }
+            }
+            h.sequenza.push({ tipo: 'delete', tabella, valore: ids })
+            return { data: h.erroreDelete ? null : (h.countDelete ?? ids.length), error: h.erroreDelete }
+        }
+
         return {
             from: builder,
+            rpc,
             storage: {
                 from: () => ({
                     remove: (percorsi: string[]) => {
@@ -455,6 +474,7 @@ const clausoleDellaQuery = (ordinale: number) => h.clausole.filter((c) => c.ordi
 beforeEach(() => {
     vi.clearAllMocks()
     h.sequenza = []
+    h.rpcOblio = []
     h.select = []
     h.clausole = []
     h.query = []
@@ -623,31 +643,27 @@ describe('POST /api/gdpr/retention-galleria — prima il file, poi il timbro, po
         h.righeConFile = [riga('m1', 'a.jpg')]
         h.righeSenzaFile = [{ id: 'm9', eliminato_il: giorniFa(GIORNI_CESTINO_GALLERIA + 5) }]
         await chiama()
-        const cancellazioni = queryDi('delete')
-        expect(cancellazioni.length, 'nessuna `delete`: la prova non misurerebbe niente').toBeGreaterThan(0)
-        for (const q of cancellazioni) {
+        // ⚠️ DAL 3.6 la cintura non è più una clausola del chiamante: sta DENTRO `anno_oblio_scrivi`
+        // (`delete_cestino|galleria_media_v2|id` aggiunge `eliminato_il IS NOT NULL` nella stessa DELETE, provata su
+        // Postgres in `__tests__/db/anno-oblio-rpc.test.ts`). Quello che il chiamante deve garantire è l'AZIONE: con
+        // `delete` (l'azione dell'OBLIO, che vede anche le foto vive) la purga distruggerebbe una foto che nessuno ha
+        // messo nel cestino. Nessuna `delete` diretta sulla tabella, e ogni cancellazione è `delete_cestino`.
+        expect(queryDi('delete'), 'una `delete` diretta su `galleria_media_v2`: la cintura non c\'è più').toHaveLength(0)
+        const cancellazioni = h.rpcOblio.filter((a) => a.p_azione !== 'update')
+        expect(cancellazioni.length, 'nessuna cancellazione: la prova non misurerebbe niente').toBeGreaterThan(0)
+        for (const a of cancellazioni) {
             expect(
-                clausoleDellaQuery(q.ordinale).filter(
-                    (c) =>
-                        c.metodo === 'not' &&
-                        c.argomenti[0] === 'eliminato_il' &&
-                        c.argomenti[1] === 'is' &&
-                        c.argomenti[2] === null,
-                ),
-                'una `delete` su `galleria_media_v2` senza `eliminato_il IS NOT NULL`: basta un `id` ' +
-                    'arrivato da una lettura col verso sbagliato e distrugge una foto viva',
-            ).toHaveLength(1)
+                { azione: a.p_azione, tabella: a.p_tabella, colonna: a.p_colonna },
+                'la purga deve cancellare con `delete_cestino`, non con `delete` (che vede le foto vive)',
+            ).toEqual({ azione: 'delete_cestino', tabella: 'galleria_media_v2', colonna: 'id' })
         }
-        // E il TIMBRO porta la sua, per la stessa ragione: non si scrive
-        // `file_rimosso_il` su una riga che nessuno ha messo nel cestino.
-        for (const q of queryDi('update')) {
-            const sue = clausoleDellaQuery(q.ordinale)
-            expect(
-                sue.some(
-                    (c) => c.metodo === 'not' && c.argomenti[0] === 'eliminato_il' && c.argomenti[2] === null,
-                ),
-                'il timbro può cadere su una riga VIVA',
-            ).toBe(true)
+        // Il TIMBRO passa dall'RPC con la sola chiave `file_rimosso_il`. (Prima portava anche `soloNelCestino`: la
+        // funzione SQL non ha quella cintura, scelta dell'audit del 3.3-3, riga 5.)
+        const timbri = h.rpcOblio.filter((a) => a.p_azione === 'update')
+        expect(timbri.length).toBeGreaterThan(0)
+        for (const a of timbri) {
+            expect(Object.keys(a.p_set as object)).toEqual(['file_rimosso_il'])
+            expect(a.p_op).toBe('gdpr/retention-galleria:POST')
         }
     })
 
@@ -1135,11 +1151,15 @@ describe('POST /api/gdpr/retention-galleria — il battito', () => {
         expect(eventiDi('warn').some((e) => e.campi.esito === 'lotto-pieno')).toBe(true)
     })
 
-    it('`conteggio_verificato` distingue la MISURA dall’intenzione', async () => {
-        h.righeConFile = [riga('m1', 'a.jpg')]
-        h.countAssente = true
-        await chiama()
-        expect(battiti()[0].campi.conteggio_verificato).toBe(false)
+    it('`conteggio_verificato` è la MISURA dell\'RPC, non l\'intenzione', async () => {
+        // Dal 3.6 il numero delle righe cancellate lo restituisce `anno_oblio_scrivi` (un `bigint`, sempre presente):
+        // il caso «PostgREST non restituisce il conteggio» (`countAssente`) non è più rappresentabile per la `delete`
+        // delle righe. Quello che si prova è che il conteggio sia verificato, e che sia quello dell'RPC.
+        h.righeConFile = [riga('m1', 'a.jpg'), riga('m2', 'b.jpg')]
+        h.countDelete = 2
+        const corpo = await (await chiama()).json()
+        expect(battiti()[0].campi.conteggio_verificato).toBe(true)
+        expect(corpo.righe).toBe(2)
     })
 
     it('un conteggio DISCORDE si dichiara col numero vero, e resta un `warn`', async () => {

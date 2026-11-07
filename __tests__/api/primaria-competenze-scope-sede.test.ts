@@ -49,6 +49,8 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/competenze/certificato-store', () => ({
   generaCertificato: h.generaCertificato,
   seedCertificato: h.seedCertificato,
+  // La route legge l'etichetta dello scrutinio una volta per sezione (P49): qui non c'è scrutinio, l'anno è il `corrente`.
+  validaScrutinioFinaleClasseQuinta: vi.fn(async () => ({ error: 'Nessuno scrutinio finale chiuso per la sezione', status: 409 })),
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
@@ -137,6 +139,12 @@ const dbBase = (): DBFinto => ({
     { id: OB_B, scuola_id: SEDE_B, materia_codice: 'ITA', livello: 1, descrizione: 'OBIETTIVO-BETA' },
   ],
   audit_scritture_docente: [],
+  // Dal 3.5-1 il certificato e il periodo nascono con l'anno: ogni sede ha il suo `corrente` (2025/2026).
+  anni_scolastici: [{ id: 'a2222222-2222-4222-8222-222222222222', etichetta: '2025/2026', etichetta_breve: '2025/26' }],
+  anni_sede: [
+    { id: 'b2222222-2222-4222-8222-aaaaaaaaaaaa', scuola_id: SEDE_A, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+    { id: 'b2222222-2222-4222-8222-bbbbbbbbbbbb', scuola_id: SEDE_B, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+  ],
 })
 
 /** L'admin mono-plesso: la sola SEDE_A. */

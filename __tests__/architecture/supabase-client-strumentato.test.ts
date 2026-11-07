@@ -338,7 +338,7 @@ describe('lock — i client Supabase lato server nascono tutti dal factory strum
         const nudi = [...blocchi.entries()]
             .filter(([nome, corpo]) => nome !== 'createLogClient'
                 && corpo.includes('createServerClient(')
-                && !/global:\s*\{\s*fetch:\s*fetchStrumentato\s*\}/.test(corpo))
+                && !/global:\s*\{\s*fetch:\s*fetchStrumentato\s*(,\s*headers\s*)?\}/.test(corpo))
             .map(([nome]) => nome);
 
         expect(

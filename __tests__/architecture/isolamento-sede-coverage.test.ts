@@ -1129,7 +1129,6 @@ const AMMESSE: Record<string, string> = {
     // sono più qui: cancellate il 2026-07-31 perché cablavano l uuid di una sede
     // e `.env.local` punta al database di PRODUZIONE — il sigillo guarda
     // NODE_ENV, non il database.)
-    'admin/wipe:POST': 'sealDangerous: 404 in produzione',
     'admin/check-schema:GET': 'sealDangerous',
     'admin/test-relations:GET': 'sealDangerous',
     'admin/debug-mensa-auth:GET': 'sealDangerous',
@@ -3353,7 +3352,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // il risultato di un gate di file fino agli argomenti di una RPC. È un pezzo di
             // sorveglianza tolto, non di protezione: il motivo per esteso sta accanto alla voce.
             // Decisione dell'assistente in assenza del titolare: da confermare.
-            handlerEsentati: 109,
+            // ── 109 → 108 il 2026-11-07 (PR 3, 3.6): SCENDE, ed è il verso giusto ──
+            // `admin/wipe:POST` esce dall'allowlist: non scrive più con `.from(...).delete()` ma da
+            // `svuotaOblio` (RPC `anno_oblio_svuota`), e il lock non ha più nulla da esentare lì.
+            handlerEsentati: 108,
         })
     })
 })

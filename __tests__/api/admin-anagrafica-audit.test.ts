@@ -30,10 +30,29 @@ vi.mock('@/lib/auth/scope', async (importOriginal) => ({
   assertUtenteInScope: vi.fn(async () => null),
 }))
 
+// uuid finti: `anni_sede.id` e `anni_scolastici.id` dell'unico anno `corrente` della sede.
+const ANNO_SEDE_ID = 'b2222222-2222-4222-8222-222222222222'
+const ANNO_ID = 'a2222222-2222-4222-8222-222222222222'
+
 // Builder chainable: registra le mutazioni e restituisce dati plausibili.
 function makeClient() {
   return {
     from(table: string) {
+      // L'anno della sede (3.5-1): `POST /api/admin/sections` lo risolve con
+      // `resolveAnnoScrittura`, che legge `anni_sede` filtrando per sede e AWAITA il
+      // builder. Il finto generico non è thenable, quindi la lettura tornava vuota e la
+      // route rispondeva 400 `ANNO_DA_SPECIFICARE`. Qui la sede ha un solo anno `corrente`.
+      if (table === 'anni_sede') {
+        const a: Record<string, unknown> = {}
+        a.select = () => a
+        a.eq = () => a
+        a.then = (resolve: (v: unknown) => unknown) =>
+          resolve({
+            data: [{ id: ANNO_SEDE_ID, anno_id: ANNO_ID, stato: 'corrente', domande_aperte: false }],
+            error: null,
+          })
+        return a
+      }
       const b: Record<string, unknown> = { _table: table }
       b.select = () => b
       b.eq = () => b
@@ -206,3 +225,9 @@ describe('P0 anagrafica — audit immutabile su ogni mutazione (DL-037)', () => 
     )
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

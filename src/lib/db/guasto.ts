@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { erroreAnno } from '@/lib/anno/errori'
 import { colonnaNuovaAssente } from '@/lib/db/colonna-assente'
 
 /**
@@ -45,6 +46,12 @@ export function rispostaGuastoDb(
   error: unknown,
   tipo: TipoGuasto = 'lettura',
 ): NextResponse {
+  // Un rifiuto dell'anno non e' un guasto: 409/422 e niente riga `error` (la `warn` la scrive
+  // `erroreAnno`). Solo per le scritture; una lettura non solleva codici dell'anno.
+  if (tipo === 'scrittura') {
+    const anno = erroreAnno(error as { code?: string; message?: string } | null | undefined, operazione)
+    if (anno) return anno
+  }
   logErrore({ operazione, stato: 500, evento }, error)
   return rispostaGuastoGiaRegistrato(tipo)
 }

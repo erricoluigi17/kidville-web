@@ -10,6 +10,8 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
+import { erroreAnno } from '@/lib/anno/errori'
+import { codiceDaMessaggio } from '@/lib/anno/tipi'
 import {
   normalizzaMetodiAmmessi,
   sonoTuttiIMetodi,
@@ -37,7 +39,7 @@ const getQuerySchema = z.object({
 const rataSchema = z.object({
   // gli importi possono arrivare come numero o stringa numerica (come incassi)
   importo: z.coerce.number(),
-  scadenza: z.string(),
+  scadenza: z.string().min(1, 'Ogni rata richiede importo e scadenza'),
 })
 
 const postBodySchema = z.object({
@@ -247,6 +249,11 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
 
     let generati = 0
     const alunniGenerati: string[] = []
+    // L'anno è per SEDE e una richiesta può toccarne più d'una: chiuso per un alunno, aperto per un altro.
+    // Un alunno col suo anno chiuso si salta come ogni altro errore del ramo (si conta, e si dice a fine ciclo).
+    const saltatiAnnoChiuso: string[] = []
+    const eAnnoChiuso = (e: { message?: string } | null | undefined): boolean =>
+      codiceDaMessaggio(e?.message) === 'ANNO_CHIUSO'
 
     if (rate) {
       // valida che la somma delle rate coincida col totale
@@ -271,6 +278,10 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
           insPadre = await supabase.from('pagamenti').insert(rigaPadre).select('id').single()
         }
         const { data: padre, error: pErr } = insPadre
+        if (eAnnoChiuso(pErr)) {
+          saltatiAnnoChiuso.push(aId)
+          continue
+        }
         // L'alunno si SALTA e si prosegue con gli altri (comportamento invariato), ma
         // lo si dice: senza questa riga la segreteria leggeva «generati: 1» su due e
         // nessuno poteva sapere quale alunno mancasse, né perché. Solo uuid e codice.
@@ -313,6 +324,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
               pagamento_id: padre.id,
             }, del.error)
           }
+          if (eAnnoChiuso(insRate.error)) saltatiAnnoChiuso.push(aId)
           continue
         }
         generati += 1
@@ -331,11 +343,29 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: NextReque
         ins = await supabase.from('pagamenti').insert(records.map(senzaMetodi)).select('id')
       }
       if (ins.error) {
+        const annoSingole = erroreAnno(ins.error, 'pagamenti/genera:POST')
+        if (annoSingole) return annoSingole
         logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, ins.error)
         return NextResponse.json({ error: 'Errore nella generazione', details: ins.error.message }, { status: 500 })
       }
       generati = ins.data?.length ?? 0
       alunniGenerati.push(...alunnoIds)
+    }
+
+    if (saltatiAnnoChiuso.length > 0) {
+      // Nessuno generato e almeno uno fermato dall'anno chiuso: la richiesta è respinta per quel motivo.
+      if (generati === 0) {
+        const chiuso = erroreAnno({ message: 'ANNO_CHIUSO' }, 'pagamenti/genera:POST')
+        if (chiuso) return chiuso
+      }
+      // Risposta parziale: una riga sola, solo conteggi (la risposta non ha un campo per i saltati).
+      logEvento('anno-scolastico', 'warn', {
+        tipo: 'anno-protetto',
+        error_code: 'ANNO_CHIUSO',
+        operazione: 'pagamenti/genera:POST',
+        saltati_anno_chiuso: saltatiAnnoChiuso.length,
+        generati,
+      })
     }
 
     // `.then(() => {}, () => {})` scartava sia il successo sia il rifiuto. E

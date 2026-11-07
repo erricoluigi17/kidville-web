@@ -316,6 +316,8 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
     let emailQuestoGiro = ripresi
     /** Le email uscite oggi in tutto: è questo che il tetto misura. */
     let emailOggi = emailGiaOggi + ripresi
+    // Fase A (§4.19): l'anno attivo di ogni sede si legge una volta sola per richiesta (`eseguiDomanda` → `scriviFrequenza`).
+    const cacheAnno = new Map<string, string | null>()
 
     // Le sedi da lavorare: quelle che hanno un elenco di classe attivo. Senza
     // elenco non c'è niente da cui leggere la classe, e si tacerebbe.
@@ -696,6 +698,7 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           (grezzoPerId.get(id) ?? {}) as never,
           decisione.assegnazioni,
           scuolaId,
+          cacheAnno,
         )
         emailOggi += esito.emailSpedite
         emailQuestoGiro += esito.emailSpedite

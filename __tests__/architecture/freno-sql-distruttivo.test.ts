@@ -118,6 +118,19 @@ const FERMATE: ReadonlyArray<readonly [string, string, string]> = [
   ['anno_scolastico.riempimento con SET SESSION', "SET SESSION anno_scolastico.riempimento = 'on'", 'interruttore'],
   ['anno_scolastico.riempimento con le virgolette doppie', 'SET LOCAL "anno_scolastico"."riempimento" = on', 'interruttore'],
   ['anno_scolastico.riempimento dentro un DO', "DO $$ BEGIN PERFORM set_config('anno_scolastico.riempimento', 'on', true); END $$", 'interruttore'],
+  // Anno scolastico, PR 3 compito 3.3-3: NESSUN interruttore nuovo per l'osservazione. `guardia_osserva` vive in
+  // `anno_regole`, che il freno già ferma: spegnerla (o accenderla) a mano è una scrittura sulle manopole.
+  ['UPDATE anno_regole SET guardia_osserva = false (la manopola dell\'osservazione)', `UPDATE public.anno_regole SET guardia_osserva = false WHERE id = '${UUID}'`, 'anno_regole'],
+  ['UPDATE anno_regole SET guardia_osserva = true', "UPDATE anno_regole SET guardia_osserva = true WHERE id = true", 'anno_regole'],
+  // Anno scolastico, PR 3 compito 3.3-3 (Ruling P33): le quattro funzioni dell'oblio si fermano per nome.
+  ['anno_oblio_attiva() a mano', 'SELECT public.anno_oblio_attiva()', 'interruttore'],
+  ['anno_oblio_spegni() a mano', 'SELECT public.anno_oblio_spegni()', 'interruttore'],
+  ['anno_oblio_scrivi() a mano', "SELECT public.anno_oblio_scrivi('update', 'presenze', 'alunno_id', ARRAY['" + UUID + "'], '{\"note_appello\":null}'::jsonb)", 'interruttore'],
+  ['anno_oblio_svuota() a mano', "SELECT public.anno_oblio_svuota('presenze')", 'interruttore'],
+  ['anno_oblio_scrivi senza schema e in minuscolo', "select anno_oblio_scrivi('delete', 'forms_submissions', 'id', ARRAY[]::text[])", 'interruttore'],
+  ['anno_oblio_svuota con le virgolette doppie', 'SELECT "public"."anno_oblio_svuota"(\'alunni\')', 'interruttore'],
+  ['anno_oblio_attiva dentro un DO', 'DO $$ BEGIN PERFORM public.anno_oblio_attiva(); END $$', 'interruttore'],
+  ['anno_oblio_scrivi dentro una stringa eseguita', "DO $$ BEGIN EXECUTE 'SELECT public.anno_oblio_svuota(''presenze'')'; END $$", 'interruttore'],
   // Anno scolastico, PR 2 compito 2.4: ogni scrittura sulle manopole e sulla mappa delle tabelle.
   ['UPDATE anno_regole con WHERE (la manopola)', `UPDATE public.anno_regole SET controlli_rigidi = false WHERE id = '${UUID}'`, 'anno_regole'],
   ['UPDATE anno_regole senza schema, minuscolo', `update anno_regole set guardia_attiva = false where id = '${UUID}'`, 'anno_regole'],
@@ -172,6 +185,10 @@ const PASSANO: ReadonlyArray<readonly [string, string]> = [
   ['SELECT su anno_tabelle con WHERE', "SELECT tabella, modo, rigida FROM public.anno_tabelle WHERE modo = 'dichiarato'"],
   ['SELECT su anno_regole con le virgolette doppie', 'SELECT * FROM "public"."anno_regole"'],
   ['lettura del riempimento, non scrittura', "SELECT current_setting('anno_scolastico.riempimento', true)"],
+  // PR 3 compito 3.3-3: un SELECT qualunque passa ancora; e un nome che SOLO comincia come una funzione dell'oblio non è lei.
+  ['SELECT qualunque su una tabella del registro', 'SELECT count(*) FROM public.presenze'],
+  ['SELECT di un\'altra funzione anno_*', "SELECT public.anno_di('" + UUID + "', DATE '2026-03-10')"],
+  ['una funzione che comincia come anno_oblio_scrivi', 'SELECT public.anno_oblio_scrivi_storico(1)'],
   ['una tabella che comincia come anno_regole', "UPDATE public.anno_regole_storico SET n = 1 WHERE id = '" + UUID + "'"],
   ['INSERT … SELECT da anno_tabelle in un’altra tabella', 'INSERT INTO public.prova_freno (n) SELECT 1 FROM public.anno_tabelle'],
 ]

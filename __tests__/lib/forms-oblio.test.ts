@@ -115,6 +115,22 @@ describe('oblio moduli genitori: file ed evidenza originale', () => {
     expect(await obliaModuliGenitori(f.client, { studentId: STUDENT }, 'test')).toMatchObject({ letto: false, righe: 0, rimossi: 0 })
     expect(f.objects.size).toBe(1); expect(f.db.forms_submissions).toHaveLength(1)
   })
+  it('3.6 — con la funzione presente la riga esce da `anno_oblio_scrivi` (delete|forms_submissions|id), non da una DELETE diretta', async () => {
+    const { obliaModuliGenitori } = await subject()
+    const f = signedFormsClient(); await ensureSignedSubmissionPdf(f.client, SUBMISSION)
+    const chiamate: Record<string, unknown>[] = []
+    ;(f.client as unknown as { rpc: unknown }).rpc = async (nome: string, args: Record<string, unknown>) => {
+      expect(nome).toBe('anno_oblio_scrivi'); chiamate.push(args)
+      f.db.forms_submissions = []
+      return { data: 1, error: null }
+    }
+    const dirette = () => f.actions.filter((a) => a.table === 'forms_submissions' && a.action === 'delete')
+    const result = await obliaModuliGenitori(f.client, { studentId: STUDENT }, 'test')
+    expect(result).toMatchObject({ rimossi: 1, nonRimossi: 0, righe: 1, letto: true })
+    expect(chiamate).toHaveLength(1)
+    expect(chiamate[0]).toMatchObject({ p_azione: 'delete', p_tabella: 'forms_submissions', p_colonna: 'id', p_valori: [SUBMISSION], p_op: 'test' })
+    expect(dirette(), 'nessuna DELETE diretta').toEqual([])
+  })
   it('gli alias nel solo lotto di oblio non trattengono una scansione rimasta senza soggetto', async () => {
     const { obliaModuliGenitori } = await subject()
     const f = signedFormsClient(); Object.assign(f.db.forms_submissions[0], { origine: 'cartaceo', pdf_path: 'scansioni/condivisa.pdf' })

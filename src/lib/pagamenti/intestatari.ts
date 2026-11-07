@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno, getGenitoriDiAlunnoEsito } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
 import { formaConfronto } from '@/lib/auth/scope'
 import {
   anagraficaDaIntestatarioAltro,
@@ -217,19 +218,45 @@ export interface RisultatoRicorda {
   error: unknown
 }
 
+/**
+ * Fase A (§4.19): `alunni.intestatario_fatture` è appena stato scritto, ora la frequenza dell'anno attivo della sede
+ * del bambino (fail-open: l'esito di chi chiama non cambia). Senza sede in mano non si chiama niente e si lascia un
+ * `warn` con l'uuid. `cacheAnno` (una `Map` per richiesta, facoltativa) evita di rileggere l'anno della stessa sede.
+ */
+async function frequenzaDopoIntestatario(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  scuolaId: string | null | undefined,
+  intestatario: unknown,
+  cacheAnno?: Map<string, string | null>,
+): Promise<void> {
+  if (!scuolaId) {
+    logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-senza-sede', operazione: 'pagamenti/intestatari', alunno: alunnoId })
+    return
+  }
+  const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
+  if (annoSedeId) {
+    await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFrequenzaDaAlunno({ intestatario_fatture: intestatario }) })
+  }
+}
+
 export async function ricordaIntestatarioSullaScheda(
   supabase: SupabaseClient,
   alunnoId: string,
   adultId: string,
+  cacheAnno?: Map<string, string | null>,
 ): Promise<RisultatoRicorda> {
+  const intestatario = { tipo: 'adult', adult_id: adultId }
   const { data, error } = await supabase
     .from('alunni')
-    .update({ intestatario_fatture: { tipo: 'adult', adult_id: adultId } })
+    .update({ intestatario_fatture: intestatario })
     .eq('id', alunnoId)
     .is('intestatario_fatture', null)
-    .select('id')
+    .select('id, scuola_id')
   if (error) return { esito: 'non_salvato', error }
-  return { esito: (data?.length ?? 0) > 0 ? 'salvato' : 'gia_impostato', error: null }
+  if ((data?.length ?? 0) === 0) return { esito: 'gia_impostato', error: null }
+  await frequenzaDopoIntestatario(supabase, alunnoId, (data?.[0] as { scuola_id?: string | null } | undefined)?.scuola_id, intestatario, cacheAnno)
+  return { esito: 'salvato', error: null }
 }
 
 /** La scheda com'era PRIMA della sostituzione: la vuole il registro immodificabile (consegna 2b, T4). */
@@ -268,6 +295,7 @@ export async function ricordaPersonaSullaScheda(
   alunnoId: string,
   dati: Record<string, string>,
   sedi: readonly string[],
+  cacheAnno?: Map<string, string | null>,
 ): Promise<
   | { esito: 'salvato'; error: null; prima: SchedaPrimaDellaPersona }
   | { esito: 'non_salvato'; error: unknown }
@@ -285,13 +313,15 @@ export async function ricordaPersonaSullaScheda(
   if (!prima.scuola_id || !ammesse.has(formaConfronto(prima.scuola_id))) {
     return { esito: 'fuori_sede', error: null }
   }
+  const intestatario = { tipo: 'altro', dati }
   const { data, error } = await supabase
     .from('alunni')
-    .update({ intestatario_fatture: { tipo: 'altro', dati } })
+    .update({ intestatario_fatture: intestatario })
     .eq('id', alunnoId)
     .select('id')
   if (error) return { esito: 'non_salvato', error }
   if ((data?.length ?? 0) === 0) return { esito: 'non_salvato', error: null }
+  await frequenzaDopoIntestatario(supabase, alunnoId, prima.scuola_id, intestatario, cacheAnno)
   return { esito: 'salvato', error: null, prima }
 }
 

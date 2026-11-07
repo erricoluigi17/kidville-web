@@ -59,6 +59,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
             scritture: h.scritture as Scrittura[],
             errori: h.errori as Record<string, ErrorePostgrest>,
             maxRighe: h.maxRighe,
+            // `anno_di`: l'anno che copre il giorno (serve ai bambini `prossimo`, Compito 3.5-2)
+            rpc: {
+                anno_di: ({ p_scuola, p_giorno }) => {
+                    const riga = (h.db.anni_sede ?? []).find(
+                        (r) => r.scuola_id === p_scuola && String(r.inizio) <= String(p_giorno) && String(p_giorno) <= String(r.fine),
+                    )
+                    return { data: riga ? riga.anno_id : null, error: null }
+                },
+            },
         })
         if (!h.prima) return vero
         // Un osservatore sul punto in cui parte una scrittura: serve a simulare chi cambia la riga
@@ -199,6 +208,13 @@ beforeEach(() => {
     h.logErrore.mockClear()
     h.logOk.mockClear()
     h.db = {
+        // Gli anni della sede A (Compito 3.5-2): il `corrente` 2026/27 e il 2027/28 in preparazione.
+        anni_sede: [
+            { id: 'b2222222-2222-4222-8222-222222222222', scuola_id: SEDE_A, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false, inizio: '2026-09-01', fine: '2027-08-31' },
+            { id: 'b3333333-3333-4333-8333-333333333333', scuola_id: SEDE_A, anno_id: 'a3333333-3333-4333-8333-333333333333', stato: 'in_preparazione', domande_aperte: false, inizio: '2027-09-01', fine: '2028-08-31' },
+            { id: 'b4444444-4444-4444-8444-444444444444', scuola_id: SEDE_B, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false, inizio: '2026-09-01', fine: '2027-08-31' },
+            { id: 'b5555555-5555-4555-8555-555555555555', scuola_id: SEDE_B, anno_id: 'a3333333-3333-4333-8333-333333333333', stato: 'in_preparazione', domande_aperte: false, inizio: '2027-09-01', fine: '2028-08-31' },
+        ],
         utenti: [
             { id: SEG_A, nome: 'Anna', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_A, archiviato_il: null },
             { id: SEG_B, nome: 'Elena', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },

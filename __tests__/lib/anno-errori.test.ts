@@ -5,6 +5,7 @@ import path from 'node:path'
 const { logEvento, logErrore } = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn() }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento, logErrore }))
 
+import { redact } from '@/lib/logging/redact'
 import { erroreAnno, CODICI_INTERNI } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { CODICI_ANNO } from '@/lib/anno/tipi'
@@ -24,23 +25,23 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     const r = await corpo(erroreAnno({ code: 'P0001', message: 'ANNO_CHIUSO' }))
     expect(r.stato).toBe(409)
     expect(r.body).toEqual({
-      error: 'Anno scolastico chiuso: servono i permessi di correzione',
+      error: 'Anno scolastico chiuso: servono i permessi di correzione.',
       codice: 'ANNO_CHIUSO',
     })
   })
 
   const TABELLA: [string, number, string][] = [
-    ['PASSAGGIO_DA_FARE', 409, 'Il passaggio all’anno nuovo non è ancora stato fatto: completalo prima di continuare'],
-    ['CONFINE_CON_RIGHE', 409, 'Non si può spostare la data: ci sono già dati registrati nei giorni che cambierebbero anno'],
-    ['SEZIONE_DI_ALTRO_ANNO', 422, 'La classe scelta appartiene a un altro anno scolastico'],
-    ['SEZIONE_DI_ALTRA_SEDE', 422, 'La classe scelta appartiene a un’altra sede'],
-    ['ANNO_NON_COERENTE', 422, 'I dati non sono coerenti con l’anno scolastico scelto'],
-    ['MODULO_NON_RICHIESTO', 422, 'Questo modulo non è richiesto per questo tipo di iscrizione'],
-    ['CONFINE_NON_VALIDO', 422, 'Le date dell’anno scolastico non sono valide'],
-    ['CALENDARIO_NON_CONTINUO', 422, 'Gli anni scolastici di una sede devono susseguirsi senza buchi né sovrapposizioni'],
-    ['ANNO_DA_SPECIFICARE', 400, 'Scegli l’anno scolastico a cui si riferisce questa operazione'],
-    ['ANNO_NON_DELLA_SEDE', 400, 'L’anno scolastico scelto non appartiene a questa sede'],
-    ['GIORNO_SENZA_ANNO', 500, 'Nessun anno scolastico copre questo giorno: avvisa l’assistenza'],
+    ['PASSAGGIO_DA_FARE', 409, 'Il passaggio all’anno nuovo non è ancora stato fatto: completalo prima di continuare.'],
+    ['CONFINE_CON_RIGHE', 409, 'Non si può spostare la data: ci sono già dati registrati nei giorni che cambierebbero anno.'],
+    ['SEZIONE_DI_ALTRO_ANNO', 422, 'La classe scelta appartiene a un altro anno scolastico.'],
+    ['SEZIONE_DI_ALTRA_SEDE', 422, 'La classe scelta appartiene a un’altra sede.'],
+    ['ANNO_NON_COERENTE', 422, 'I dati non sono coerenti con l’anno scolastico scelto.'],
+    ['MODULO_NON_RICHIESTO', 422, 'Questo modulo non è richiesto per questo tipo di iscrizione.'],
+    ['CONFINE_NON_VALIDO', 422, 'Le date dell’anno scolastico non sono valide.'],
+    ['CALENDARIO_NON_CONTINUO', 422, 'Gli anni scolastici di una sede devono susseguirsi senza buchi né sovrapposizioni.'],
+    ['ANNO_DA_SPECIFICARE', 400, 'Scegli l’anno scolastico a cui si riferisce questa operazione.'],
+    ['ANNO_NON_DELLA_SEDE', 400, 'L’anno scolastico scelto non appartiene a questa sede.'],
+    ['GIORNO_SENZA_ANNO', 500, 'Nessun anno scolastico copre questo giorno: avvisa l’assistenza.'],
   ]
 
   it.each(TABELLA)('%s → %i con messaggio e codice', async (codice, stato, messaggio) => {
@@ -69,8 +70,8 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
       const [evento, livello, campi] = logEvento.mock.calls[0]
       expect(evento).toBe('anno-scolastico')
       expect(livello).toBe('warn')
-      expect(Object.keys(campi).sort()).toEqual(['codice', 'operazione', 'tipo'])
-      expect(campi.codice).toBe(codice)
+      expect(Object.keys(campi).sort()).toEqual(['error_code', 'operazione', 'tipo'])
+      expect(campi.error_code).toBe(codice)
       expect(logEvento.mock.calls[0]).toHaveLength(3) // niente errore allegato, niente details
       expect(logErrore).not.toHaveBeenCalled()
     }
@@ -79,7 +80,31 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
   it('senza operazione il warn porta solo tipo e codice', () => {
     erroreAnno({ message: 'ANNO_CHIUSO' })
     const campi = logEvento.mock.calls[0][2]
-    expect(Object.keys(campi).sort()).toEqual(['codice', 'tipo'])
+    expect(Object.keys(campi).sort()).toEqual(['error_code', 'tipo'])
+  })
+
+  it('il warn passa dalla VERA redact: il codice resta in chiaro e i due codici si distinguono', () => {
+    const viste: unknown[] = []
+    for (const codice of ['ANNO_CHIUSO', 'PASSAGGIO_DA_FARE']) {
+      logEvento.mockClear()
+      erroreAnno({ message: codice }, 'admin/sections:POST')
+      viste.push(redact(logEvento.mock.calls[0][2]))
+    }
+    expect(viste).toEqual([
+      { tipo: 'anno-protetto', error_code: 'ANNO_CHIUSO', operazione: 'admin/sections:POST' },
+      { tipo: 'anno-protetto', error_code: 'PASSAGGIO_DA_FARE', operazione: 'admin/sections:POST' },
+    ])
+  })
+
+  it('i prefissi e i suffissi strani non sono codici', () => {
+    for (const m of ['ANNO_CHIUSO_ALTRO', 'PREFISSO ANNO_CHIUSO', 'ANNO_CHIUSO-x', 'ANNO_CHIUSO.x']) {
+      expect(erroreAnno({ message: m }), m).toBeNull()
+    }
+    expect(erroreAnno({ code: '23505', message: 'duplicate key value violates unique constraint "x"' })).toBeNull()
+  })
+
+  it('ANNO_CHIUSO: testo resta 409', () => {
+    expect(erroreAnno({ message: 'ANNO_CHIUSO: testo' })?.status).toBe(409)
   })
 
   it('GIORNO_SENZA_ANNO: logErrore una volta, nessun warn', () => {
@@ -137,7 +162,7 @@ function fileMigrazioniAnno(): string[] {
 
 /** Codici `[A-Z][A-Z_]+` dopo `RAISE EXCEPTION '…'` o `RAISE EXCEPTION USING MESSAGE = '…'`. */
 export function codiciSollevati(sql: string): string[] {
-  const re = /RAISE\s+EXCEPTION\s+(?:USING\s+MESSAGE\s*=\s*)?'([A-Z][A-Z_]+)'/g
+  const re = /RAISE\s+EXCEPTION\s+(?:USING\s+MESSAGE\s*=\s*)?'([A-Z][A-Z_]+)(?=['\s:%])/g
   return [...sql.matchAll(re)].map((m) => m[1])
 }
 
@@ -147,8 +172,9 @@ describe('codiciSollevati — la lettura', () => {
       RAISE EXCEPTION 'CODICE_UNO' USING DETAIL = 'x';
       RAISE EXCEPTION USING MESSAGE = 'CODICE_DUE';
       RAISE EXCEPTION 'messaggio libero % ok', 1;
+      RAISE EXCEPTION 'CODICE_TRE: %', x;
     `
-    expect(codiciSollevati(sql)).toEqual(['CODICE_UNO', 'CODICE_DUE'])
+    expect(codiciSollevati(sql)).toEqual(['CODICE_UNO', 'CODICE_DUE', 'CODICE_TRE'])
   })
 })
 

@@ -25,7 +25,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  * ha fatto scattare il trigger esce nella risposta o nel log (il `DETAIL` contiene uuid).
  *
  * Log: `ANNO_CHIUSO` e `PASSAGGIO_DA_FARE` sono un rifiuto atteso ma da vedere (una scrittura
- * su un anno protetto): `warn` con le sole chiavi `tipo`, `codice`, `operazione`.
+ * su un anno protetto): `warn` con le sole chiavi `tipo`, `error_code`, `operazione`.
  * `GIORNO_SENZA_ANNO` è un guasto di configurazione (nessun anno copre il giorno): `logErrore`.
  */
 const CATALOGO_IT = it as Record<string, string>
@@ -36,12 +36,14 @@ function frase(codice: keyof typeof CODICI_ERRORE): string {
 
 /** Il messaggio è il codice stesso, eventualmente seguito da altro testo. */
 function codiceDa(error: { code?: string; message?: string } | null | undefined): string | null {
-  const m = typeof error?.message === 'string' ? /^\s*([A-Z][A-Z0-9_]+)\b/.exec(error.message) : null
+  const m = typeof error?.message === 'string' ? /^\s*([A-Z][A-Z0-9_]+)(?=$|[\s:])/.exec(error.message) : null
   return m ? m[1] : null
 }
 
 function avvisaRifiuto(codice: string, operazione: string | undefined): void {
-  const campi: Record<string, string> = { tipo: 'anno-protetto', codice }
+  // `error_code` e non `codice`: è la chiave in chiaro della lista bianca di `redact`, e il
+  // logger la porta nella colonna `app_log.codice`. `codice` verrebbe redatta (può portare un CF).
+  const campi: Record<string, string> = { tipo: 'anno-protetto', error_code: codice }
   if (operazione) campi.operazione = operazione
   logEvento('anno-scolastico', 'warn', campi)
 }

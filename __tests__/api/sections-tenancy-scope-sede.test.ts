@@ -66,11 +66,17 @@ const richiesta = (metodo: string, corpo: unknown, url = 'http://localhost/api/a
 
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) })
 
+// Dal 3.5-1 una sezione nasce con l'anno: ogni sede ha il suo `corrente` (`anni_scolastici.id`, uguale per tutte).
+const ANNO_CORRENTE = 'a2222222-2222-4222-8222-222222222222'
 const dbBase = (): DBFinto => ({
+  anni_sede: [
+    { id: 'b2222222-2222-4222-8222-aaaaaaaaaaaa', scuola_id: SEDE_A, anno_id: ANNO_CORRENTE, stato: 'corrente', domande_aperte: false },
+    { id: 'b2222222-2222-4222-8222-bbbbbbbbbbbb', scuola_id: SEDE_B, anno_id: ANNO_CORRENTE, stato: 'corrente', domande_aperte: false },
+  ],
   sections: [
-    { id: SEC_A1, scuola_id: SEDE_A, name: '2 ANNI', school_type: 'infanzia' },
-    { id: SEC_A2, scuola_id: SEDE_A, name: '3 ANNI', school_type: 'infanzia' },
-    { id: SEC_B1, scuola_id: SEDE_B, name: '2 ANNI', school_type: 'infanzia' },
+    { id: SEC_A1, scuola_id: SEDE_A, anno_id: ANNO_CORRENTE, name: '2 ANNI', school_type: 'infanzia' },
+    { id: SEC_A2, scuola_id: SEDE_A, anno_id: ANNO_CORRENTE, name: '3 ANNI', school_type: 'infanzia' },
+    { id: SEC_B1, scuola_id: SEDE_B, anno_id: ANNO_CORRENTE, name: '2 ANNI', school_type: 'infanzia' },
   ],
   utenti: [
     { id: DOC_A, nome: 'Maestra', cognome: 'Alfa', ruolo: 'educator', scuola_id: SEDE_A },

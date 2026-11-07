@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
 import { TABELLE_REGISTRO_PRIMARIA } from '@/lib/alunni/registro-primaria'
+import { creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
 
 /**
  * ELIMINAZIONE DEFINITIVA DI UN ALUNNO · LA MIGRAZIONE PROVATA SU UN POSTGRES VERO.
@@ -109,26 +110,46 @@ async function sentinellaIntatta(alunno: string): Promise<void> {
   ).toBe(1)
 }
 
+/**
+ * Lo schema su cui girano le migrazioni. M3 (anno scolastico, 07/11) ridefinisce la funzione ma è UN SOLO file che
+ * altera `anno_regole`, i registri e il resto dell'anno: non si applica su quattro tabelle. La base è quindi la
+ * catena di produzione dell'anno (helper delle prove PGlite dell'anno: M1 → F1 → V1 → FOTO → V2, tutto TRANNE M3),
+ * poi si completano le tabelle e le FK che la funzione cancella. M3 e le due definizioni di ottobre si applicano
+ * dopo, in ordine, da `applicaTutte`: la definizione provata resta l'ultima.
+ */
+async function creaDb(): Promise<PGlite> {
+  const conn = await creaDbAnnoPr2({ sedi: [SEDE], fino: 'V2', completo: true })
+  await schemaMinimo(conn)
+  return conn
+}
+
 async function schemaMinimo(conn: PGlite) {
   await conn.exec(`
-    CREATE ROLE anon NOLOGIN;
-    CREATE ROLE authenticated NOLOGIN;
-    CREATE ROLE service_role NOLOGIN BYPASSRLS;
-    GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
-
     CREATE FUNCTION public.stati_alunno_non_piu_iscritto() RETURNS text[]
       LANGUAGE sql IMMUTABLE AS $$ SELECT ARRAY['ritirato']::text[] $$;
 
-    CREATE TABLE public.alunni (
-      id uuid PRIMARY KEY,
-      scuola_id uuid,
-      stato varchar,
-      section_id uuid,
-      classe_sezione varchar,
-      anonimizzato_il timestamptz,
-      retta_a_carico_di uuid REFERENCES public.alunni(id) ON DELETE SET NULL
-    );
+    -- Le tabelle che la catena dell'anno ha già, con meno colonne e senza FK: si completano.
+    ALTER TABLE public.alunni
+      ADD COLUMN IF NOT EXISTS stato varchar,
+      ADD COLUMN IF NOT EXISTS anonimizzato_il timestamptz,
+      ADD CONSTRAINT alunni_retta_a_carico_di_fk FOREIGN KEY (retta_a_carico_di) REFERENCES public.alunni(id) ON DELETE SET NULL;
+    ALTER TABLE public.presenze ADD CONSTRAINT presenze_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id) ON DELETE CASCADE;
+    ALTER TABLE public.eventi_diario ADD CONSTRAINT eventi_diario_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id);
+    ALTER TABLE public.valutazioni ADD CONSTRAINT valutazioni_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id);
+    ALTER TABLE public.note_disciplinari ADD CONSTRAINT note_disciplinari_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id);
+    ALTER TABLE public.certificati_competenze
+      ADD COLUMN alunno_id uuid,
+      ALTER COLUMN scuola_id DROP NOT NULL,
+      ADD CONSTRAINT certificati_competenze_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id) ON DELETE RESTRICT;
+    -- Il test inserisce righe con la sola chiave dell'alunno: le colonne obbligatorie della catena dell'anno si rilassano.
+    ALTER TABLE public.presenze ALTER COLUMN scuola_id DROP NOT NULL, ALTER COLUMN data SET DEFAULT current_date;
+    ALTER TABLE public.eventi_diario ALTER COLUMN orario_inizio SET DEFAULT now();
+    ALTER TABLE public.pagamenti
+      ALTER COLUMN descrizione DROP NOT NULL, ALTER COLUMN importo DROP NOT NULL, ALTER COLUMN scadenza DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS parent_payment_id uuid,
+      ADD CONSTRAINT pagamenti_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id),
+      ADD CONSTRAINT pagamenti_parent_fk FOREIGN KEY (parent_payment_id) REFERENCES public.pagamenti(id) ON DELETE CASCADE;
+
     CREATE TABLE public.parents (id uuid PRIMARY KEY);
     CREATE TABLE public.student_parents (
       student_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE,
@@ -139,14 +160,11 @@ async function schemaMinimo(conn: PGlite) {
       alunno_id uuid REFERENCES public.alunni(id),
       parent_id uuid
     );
-    CREATE TABLE public.presenze (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE CASCADE);
-    CREATE TABLE public.eventi_diario (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
     CREATE TABLE public.armadietto (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
     CREATE TABLE public.ticket_mensa (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
     CREATE TABLE public.forms_submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid);
     CREATE TABLE public.galleria_media (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tag_alunni uuid[]);
 
-    CREATE TABLE public.valutazioni (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
     -- I FRENI DELLA FASE 7. In produzione, prima della PR 2 della fase 7, queste FK
     -- erano CASCADE; la PR 2 le porta a RESTRICT. Lo schema del test le dichiara già
     -- RESTRICT: la funzione deve reggere con i freni accesi (e con la cascata, che
@@ -154,17 +172,10 @@ async function schemaMinimo(conn: PGlite) {
     CREATE TABLE public.pagelle (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.scrutinio_giudizi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.scrutinio_comportamento (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
-    CREATE TABLE public.note_disciplinari (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id));
-    CREATE TABLE public.certificati_competenze (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.pagella_ricezioni (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.certificati_medici (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
     CREATE TABLE public.student_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid REFERENCES public.alunni(id) ON DELETE RESTRICT);
 
-    CREATE TABLE public.pagamenti (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      alunno_id uuid REFERENCES public.alunni(id),
-      parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE
-    );
     CREATE TABLE public.incassi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE RESTRICT);
     CREATE TABLE public.ricevute_emesse (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), alunno_id uuid, pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE SET NULL);
     CREATE TABLE public.fatture_emesse (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid REFERENCES public.pagamenti(id) ON DELETE RESTRICT);
@@ -177,15 +188,17 @@ async function schemaMinimo(conn: PGlite) {
     -- Copia del diario creata a mano in produzione il 2026-09-08, senza
     -- migrazione: la funzione la nomina solo se c'è (SQL dinamico).
     CREATE TABLE public.backup_diario_vuote_20260908 (alunno_id uuid);
+
+    -- La sezione dei frequentanti: il trigger della catena dell'anno risolve \`section_id\` dalla sezione vera.
+    INSERT INTO public.sections (id, scuola_id, name) VALUES ('${SEZ}', '${SEDE}', 'SEZIONE A');
   `)
 }
 
 beforeAll(async () => {
-  db = new PGlite()
-  await schemaMinimo(db)
+  db = await creaDb()
   await applicaTutte(db)
   await applicaTutte(db) // la seconda volta è la prova dell'idempotenza
-})
+}, 120_000)
 
 afterAll(async () => {
   await db.close()
@@ -546,9 +559,8 @@ describe('elimina_alunno_definitivo — certificati medici e fascicolo, con i fr
   it('la definizione di PRIMA (08/10), con gli stessi freni, cadeva con 23503: è il guasto che questa migrazione evita', async () => {
     // La prova che il test qui sopra misura il cambio e non lo schema: stessa
     // scheda, stesso certificato, la definizione senza cancellazioni esplicite.
-    const vecchio = new PGlite()
+    const vecchio = await creaDb()
     try {
-      await schemaMinimo(vecchio)
       await vecchio.exec(PRIMA_DEFINIZIONE)
       await vecchio.exec(`
         INSERT INTO public.alunni (id, stato) VALUES ('${DOPPIONE}', 'ritirato');

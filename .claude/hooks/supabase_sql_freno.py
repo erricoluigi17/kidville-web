@@ -109,7 +109,8 @@ INTERRUTTORI = re.compile(
 # il trigger: ``modo``, ``rigida``, ``sede_facoltativa``, ``segue_data``): un ``UPDATE anno_tabelle SET
 # rigida = false`` spegne i controlli di una tabella come un interruttore (PR 2 dell'anno scolastico,
 # compito 2.4). Anche con un WHERE, con o senza schema e virgolette; si cerca nel ``testo``, quindi anche
-# dentro le stringhe eseguite. Un ``SELECT`` passa.
+# dentro le stringhe eseguite. Un ``SELECT`` passa. Conseguenza voluta: il letterale ``UPDATE anno_regole``
+# dentro una stringa di una SELECT si ferma ugualmente (come gli interruttori: in dubbio si ferma).
 SCRITTURA_ANNO_SCOLASTICO = re.compile(
     r"\b(?:UPDATE|INSERT\s+INTO|MERGE\s+INTO)\s+(?:ONLY\s+)?"
     r"(?:\"?PUBLIC\"?\s*\.\s*)?\"?ANNO_(?:REGOLE|TABELLE)\"?(?![A-Z0-9_$])"

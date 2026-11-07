@@ -218,6 +218,7 @@ describe('dopo il passaggio d\'anno: la traduzione guarda l\'anno DELLA RIGA, no
 })
 
 describe('un anno senza sezioni nella sede (gli avvisi di luglio e agosto 2026 stanno nel 2025/26)', () => {
+  // Data letterale ma non scadente: `creaAnniFissi` ricrea SEMPRE il calendario 2025/26 (chiuso) e 2026/27 (corrente), qualunque sia oggi.
   const ESTATE = '2026-07-10'
   /** Un avviso dell'estate: l'anno è il 2025/26, che non ha nessuna sezione; gli uuid sono quelli del 2026/27 (anno attivo). */
   async function avvisoEstivo(): Promise<string> {

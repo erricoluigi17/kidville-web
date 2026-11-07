@@ -133,6 +133,8 @@ const FERMATE: ReadonlyArray<readonly [string, string, string]> = [
   ['UPDATE anno_regole dentro un DO', "DO $$ BEGIN UPDATE public.anno_regole SET controlli_rigidi = false WHERE true; END $$", 'anno_regole'],
   ['UPDATE anno_regole dentro un EXECUTE', "DO $$ BEGIN EXECUTE 'UPDATE public.anno_regole SET guardia_attiva = false WHERE true'; END $$", 'anno_regole'],
   ['UPDATE anno_tabelle dentro un EXECUTE format()', "DO $$ BEGIN EXECUTE format('UPDATE public.anno_tabelle SET rigida = %L WHERE true', false); END $$", 'anno_tabelle'],
+  // Comportamento VOLUTO: la regola cerca nel testo, anche nelle stringhe, quindi un letterale «UPDATE anno_regole» in una SELECT si ferma (in dubbio si ferma).
+  ['una SELECT che contiene il letterale UPDATE anno_regole si ferma', "SELECT 'UPDATE public.anno_regole SET guardia_attiva = false' AS testo", 'anno_regole'],
   ['UPDATE anno_regole dentro una CTE', 'WITH u AS (UPDATE public.anno_regole SET guardia_attiva = false WHERE true RETURNING id) SELECT count(*) FROM u', 'anno_regole'],
 ]
 

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { PGlite } from '@electric-sql/pglite'
+import { ARCHIVE_ERASURE } from '@/lib/forms/signed-path'
 import { creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
 
 /**
@@ -23,10 +24,10 @@ const CODA_PRIMA = `
   ALTER TABLE public.presenze ADD CONSTRAINT presenze_alunno_fk FOREIGN KEY (alunno_id) REFERENCES public.alunni(id) ON DELETE CASCADE;
   ALTER TABLE public.eventi_diario ADD COLUMN nota_bambino text, ADD COLUMN nota_libera text, ADD COLUMN dettagli jsonb;
   ALTER TABLE public.chat_messages ADD COLUMN attachment_url text, ADD COLUMN attachment_type text;
-  ALTER TABLE public.galleria_media_v2 ADD COLUMN tag_students uuid[], ADD COLUMN file_rimosso_il timestamptz;
+  ALTER TABLE public.galleria_media_v2 ADD COLUMN tag_students uuid[], ADD COLUMN file_rimosso_il timestamptz, ADD COLUMN IF NOT EXISTS eliminato_il timestamptz;
   ALTER TABLE public.enrollment_submissions ADD COLUMN consents_log jsonb;
-  CREATE TABLE public.student_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now());
-  CREATE TABLE public.forms_submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now());
+  CREATE TABLE public.student_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now(), eliminato_il timestamptz);
+  CREATE TABLE public.forms_submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), student_id uuid, created_at timestamptz DEFAULT now(), signature_log jsonb);
 `
 
 let db: PGlite
@@ -52,9 +53,9 @@ async function seme<T>(fn: () => Promise<T>): Promise<T> {
     await db.query(`UPDATE public.anno_regole SET guardia_attiva = true, guardia_osserva = false`)
   }
 }
-const scrivi = (azione: string, tabella: string, colonna: string, valori: string[], set: unknown = null, op: string | null = 'test/oblio:POST') =>
-  db.query<{ n: unknown }>(`SELECT public.anno_oblio_scrivi($1, $2, $3, $4::text[], $5::jsonb, $6) AS n`,
-    [azione, tabella, colonna, valori, set === null ? null : JSON.stringify(set), op])
+const scrivi = (azione: string, tabella: string, colonna: string, valori: string[], set: unknown = null, op: string | null = 'test/oblio:POST', prima: string | null = null) =>
+  db.query<{ n: unknown }>(`SELECT public.anno_oblio_scrivi($1, $2, $3, $4::text[], $5::jsonb, $6, $7::timestamptz) AS n`,
+    [azione, tabella, colonna, valori, set === null ? null : JSON.stringify(set), op, prima])
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({ sedi: [SEDE], fino: 'M3', completo: true, codaPrima: CODA_PRIMA })
@@ -196,6 +197,9 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     ['una delete con un `set`', 'delete', 'forms_submissions', 'id', { x: 1 }],
     ['pagelle (nessun sito di oblio le cancella)', 'delete', 'pagelle', 'id', null],
     ['un\'azione inventata', 'truncate', 'presenze', 'alunno_id', null],
+    ['un\'azione `delete_qualsiasi`', 'delete_qualsiasi', 'galleria_media_v2', 'id', null],
+    ['`delete_cestino` su una tabella senza cintura (enrollment_submissions)', 'delete_cestino', 'enrollment_submissions', 'id', null],
+    ['`delete_cestino` su forms_submissions', 'delete_cestino', 'forms_submissions', 'id', null],
   ]
   for (const [nome, azione, tabella, colonna, set] of NON_AMMESSI) {
     it(`non ammessa → OBLIO_NON_AMMESSO: ${nome}`, async () => {
@@ -235,7 +239,7 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
       const e = await una<string>(`INSERT INTO public.enrollment_submissions (scuola_id, data, created_at)
                                    VALUES ($1, '{"x":1}', TIMESTAMPTZ '2026-03-10 10:00:00+01') RETURNING id`, [SEDE])
       const d = await una<string>(`INSERT INTO public.student_documents (student_id) VALUES ($1) RETURNING id`, [ALUNNO])
-      const f = await una<string>(`INSERT INTO public.forms_submissions (student_id) VALUES ($1) RETURNING id`, [ALUNNO])
+      const f = await una<string>(`INSERT INTO public.forms_submissions (student_id, signature_log) VALUES ($1, '{"_archive_erasure_pending": true}') RETURNING id`, [ALUNNO])
       return { m, g, e, d, f }
     })
     const n = async (r: Promise<{ rows: Array<{ n: unknown }> }>) => String((await r).rows[0].n)
@@ -252,6 +256,65 @@ describe('3.3-3 (d) · l\'allowlist dentro la funzione', () => {
     expect(await n(scrivi('delete', 'student_documents', 'id', [t.d]))).toBe('1')
     expect(await n(scrivi('delete', 'forms_submissions', 'id', [t.f]))).toBe('1')
     expect(await una<string>(`SELECT count(*)::text FROM public.enrollment_submissions`)).toBe('0')
+  })
+})
+
+describe('3.3-3 giro 1 · le cinture compare-and-set stanno nell\'SQL della coppia (Ruling P35/P38)', () => {
+  const n = async (r: Promise<{ rows: Array<{ n: unknown }> }>) => String((await r).rows[0].n)
+  const conta = (t: string) => una<string>(`SELECT count(*)::text FROM public.${t}`)
+  const GIORNO = '2026-10-10'
+
+  it('galleria: la foto VIVA passata a `delete_cestino` non si cancella, passata a `delete` (oblio) sì', async () => {
+    const g = await una<string>(`INSERT INTO public.galleria_media_v2 (scuola_id, giorno_competenza, tag_students)
+                                 VALUES ($1, DATE '${GIORNO}', ARRAY[$2::uuid]) RETURNING id`, [SEDE, ALUNNO])
+    expect(await n(scrivi('delete_cestino', 'galleria_media_v2', 'id', [g]))).toBe('0')
+    expect(await conta('galleria_media_v2')).toBe('1')
+    expect(await n(scrivi('delete', 'galleria_media_v2', 'id', [g]))).toBe('1')
+    expect(await conta('galleria_media_v2')).toBe('0')
+  })
+
+  it('galleria: la foto nel cestino si cancella con `delete_cestino`', async () => {
+    const g = await una<string>(`INSERT INTO public.galleria_media_v2 (scuola_id, giorno_competenza, eliminato_il)
+                                 VALUES ($1, DATE '${GIORNO}', now()) RETURNING id`, [SEDE])
+    expect(await n(scrivi('delete_cestino', 'galleria_media_v2', 'id', [g]))).toBe('1')
+  })
+
+  it('fascicolo: vivo, nel cestino da meno della soglia, nel cestino da più della soglia', async () => {
+    const vivo = await una<string>(`INSERT INTO public.student_documents (student_id) VALUES ($1) RETURNING id`, [ALUNNO])
+    const fresco = await una<string>(`INSERT INTO public.student_documents (student_id, eliminato_il) VALUES ($1, TIMESTAMPTZ '2026-03-20 10:00:00+00') RETURNING id`, [ALUNNO])
+    const scaduto = await una<string>(`INSERT INTO public.student_documents (student_id, eliminato_il) VALUES ($1, TIMESTAMPTZ '2026-02-01 10:00:00+00') RETURNING id`, [ALUNNO])
+    const SOGLIA = '2026-03-01T00:00:00Z'
+    expect(await n(scrivi('delete_cestino', 'student_documents', 'id', [vivo, fresco], null, 'test/oblio:POST', SOGLIA))).toBe('0')
+    expect(await conta('student_documents')).toBe('3')
+    expect(await n(scrivi('delete_cestino', 'student_documents', 'id', [vivo, fresco, scaduto], null, 'test/oblio:POST', SOGLIA))).toBe('1')
+    expect(await una<string>(`SELECT count(*)::text FROM public.student_documents WHERE id = $1`, [scaduto])).toBe('0')
+  })
+
+  it('fascicolo: `delete` (oblio) cancella anche il vivo, senza soglia', async () => {
+    const vivo = await una<string>(`INSERT INTO public.student_documents (student_id) VALUES ($1) RETURNING id`, [ALUNNO])
+    expect(await n(scrivi('delete', 'student_documents', 'id', [vivo]))).toBe('1')
+  })
+
+  it('`p_prima_di` è obbligatorio per delete_cestino|student_documents e vietato altrove', async () => {
+    expect(await messaggio(scrivi('delete_cestino', 'student_documents', 'id', [ALUNNO]))).toBe('OBLIO_NON_AMMESSO')
+    expect(await messaggio(scrivi('delete', 'student_documents', 'id', [ALUNNO], null, 'test/oblio:POST', '2026-03-01T00:00:00Z'))).toBe('OBLIO_NON_AMMESSO')
+    expect(await messaggio(scrivi('delete_cestino', 'galleria_media_v2', 'id', [ALUNNO], null, 'test/oblio:POST', '2026-03-01T00:00:00Z'))).toBe('OBLIO_NON_AMMESSO')
+    expect(await messaggio(scrivi('update', 'presenze', 'alunno_id', [ALUNNO], { note_appello: null }, 'test/oblio:POST', '2026-03-01T00:00:00Z'))).toBe('OBLIO_NON_AMMESSO')
+  })
+
+  it('moduli: si cancella solo la riga col flag `_archive_erasure_pending` = true', async () => {
+    const senza = await una<string>(`INSERT INTO public.forms_submissions (student_id, signature_log) VALUES ($1, '{}') RETURNING id`, [ALUNNO])
+    const falso = await una<string>(`INSERT INTO public.forms_submissions (student_id, signature_log) VALUES ($1, '{"_archive_erasure_pending": false}') RETURNING id`, [ALUNNO])
+    const con = await una<string>(`INSERT INTO public.forms_submissions (student_id, signature_log) VALUES ($1, '{"_archive_erasure_pending": true}') RETURNING id`, [ALUNNO])
+    expect(await n(scrivi('delete', 'forms_submissions', 'id', [senza, falso]))).toBe('0')
+    expect(await conta('forms_submissions')).toBe('3')
+    expect(await n(scrivi('delete', 'forms_submissions', 'id', [senza, falso, con]))).toBe('1')
+    expect(await una<string>(`SELECT count(*)::text FROM public.forms_submissions WHERE id = $1`, [con])).toBe('0')
+  })
+
+  it('la chiave del flag nella migrazione è la costante `ARCHIVE_ERASURE` di signed-path.ts', () => {
+    const m = fs.readFileSync(path.resolve(__dirname, '../../supabase/migrations/20261107165503_anno_scrittura.sql'), 'utf8')
+    expect(m).toContain(`'${ARCHIVE_ERASURE}'`)
   })
 })
 
@@ -322,7 +385,7 @@ describe('3.3-3 · GRANT/REVOKE: nessuna funzione nuova di M3 è eseguibile da `
   const NUOVE: Array<[string, string]> = [
     ['anno_oblio_attiva', ''], ['anno_oblio_spegni', ''],
     ['anno_oblio_riepilogo', 'text, text, bigint, text'],
-    ['anno_oblio_scrivi', 'text, text, text, text[], jsonb, text'],
+    ['anno_oblio_scrivi', 'text, text, text, text[], jsonb, text, timestamptz'],
     ['anno_oblio_svuota', 'text, text'],
     ['anno_guardia_verifica', 'public.anno_tabelle, text, jsonb, jsonb, uuid, boolean'],
     ['anno_guardia_osserva_conta', 'text, text, text'],

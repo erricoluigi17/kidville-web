@@ -854,18 +854,25 @@ $$;
 --   · enrollment_submissions  update  id         {data, updated_at, consents_log}       src/lib/gdpr/esegui.ts (patch GDPR)
 --   · enrollment_submissions  delete  id                                                src/app/api/gdpr/retention-iscrizioni/route.ts
 --   · galleria_media_v2       update  id         {tag_students, file_rimosso_il}        esegui.ts (sgancio tag) · retention-galleria (timbro del ritiro)
---   · galleria_media_v2       delete  id                                                esegui.ts · retention-galleria
+--   · galleria_media_v2       delete  id                                                esegui.ts (oblio: anche le foto VIVE, nessuna cintura)
+--   · galleria_media_v2       delete_cestino id                                         retention-galleria (cintura: eliminato_il IS NOT NULL)
 --   · eventi_diario           update  alunno_id  {nota_bambino, nota_libera}            esegui.ts (note del bambino)
 --   · eventi_diario           update  id         {dettagli}                             esegui.ts (valore delle routine a testo)
 --   · presenze                update  alunno_id  {giustificazione_testo, note_appello}  esegui.ts (bonifica presenze)
---   · student_documents       delete  id                                                retention-cestino-registro
---   · forms_submissions       delete  id                                                src/lib/gdpr/moduli-genitori.ts
+--   · student_documents       delete  id                                                esegui.ts (oblio, `obliaFileDaTabella`: nessuna cintura)
+--   · student_documents       delete_cestino id                                         retention-cestino-registro (cintura: eliminato_il IS NOT NULL
+--                                                                                       AND eliminato_il < p_prima_di; `p_prima_di` obbligatorio)
+--   · forms_submissions       delete  id                                                moduli-genitori.ts (cintura: signature_log->>'_archive_erasure_pending' = 'true')
+-- Le CINTURE «compare-and-set» (Ruling P35/P38) stanno nell'SQL della coppia, mai nel chiamante: una riga ripristinata fra
+-- la SELECT e la DELETE non si cancella. `delete_cestino` è l'azione della purga; `delete` quella dell'oblio, che deve
+-- vedere anche le righe vive. `p_prima_di` è ammesso SOLO con `delete_cestino|student_documents|id`.
 -- (`pagelle`: nessun sito di oblio le cancella, quindi non c'è.) Il filtro è sempre su colonne `uuid`: `p_valori` è un
 -- elenco di testi convertito in `uuid[]`. Un UPDATE tocca solo le righe che cambierebbero davvero (così il conteggio dice
 -- quante righe avevano il dato). Qualunque altra coppia, colonna del filtro o chiave del `set` → `OBLIO_NON_AMMESSO`.
 -- Accende l'interruttore, scrive, lo spegne; la guardia lascia un gettone `oblio` per anno-sede con un uso per riga.
 CREATE OR REPLACE FUNCTION public.anno_oblio_scrivi(
-  p_azione text, p_tabella text, p_colonna text, p_valori text[], p_set jsonb DEFAULT NULL, p_op text DEFAULT NULL)
+  p_azione text, p_tabella text, p_colonna text, p_valori text[], p_set jsonb DEFAULT NULL, p_op text DEFAULT NULL,
+  p_prima_di timestamptz DEFAULT NULL)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -877,24 +884,37 @@ DECLARE
   v_righe   bigint := 0;
   v_cambia  text;
   v_assegna text;
+  v_cintura text := '';
+  v_chiave  text;
 BEGIN
+  v_chiave := coalesce(p_azione, '') || '|' || coalesce(p_tabella, '') || '|' || coalesce(p_colonna, '');
   v_ammessi := CASE coalesce(p_azione, '') || '|' || coalesce(p_tabella, '') || '|' || coalesce(p_colonna, '')
     WHEN 'update|chat_messages|id'          THEN ARRAY['attachment_url', 'attachment_type']
     WHEN 'update|enrollment_submissions|id' THEN ARRAY['data', 'updated_at', 'consents_log']
     WHEN 'delete|enrollment_submissions|id' THEN ARRAY[]::text[]
     WHEN 'update|galleria_media_v2|id'      THEN ARRAY['tag_students', 'file_rimosso_il']
     WHEN 'delete|galleria_media_v2|id'      THEN ARRAY[]::text[]
+    WHEN 'delete_cestino|galleria_media_v2|id' THEN ARRAY[]::text[]
     WHEN 'update|eventi_diario|alunno_id'   THEN ARRAY['nota_bambino', 'nota_libera']
     WHEN 'update|eventi_diario|id'          THEN ARRAY['dettagli']
     WHEN 'update|presenze|alunno_id'        THEN ARRAY['giustificazione_testo', 'note_appello']
     WHEN 'delete|student_documents|id'      THEN ARRAY[]::text[]
+    WHEN 'delete_cestino|student_documents|id' THEN ARRAY[]::text[]
     WHEN 'delete|forms_submissions|id'      THEN ARRAY[]::text[]
     ELSE NULL
   END;
-  IF v_ammessi IS NULL OR p_valori IS NULL THEN
+  IF v_ammessi IS NULL OR p_valori IS NULL
+     OR (v_chiave = 'delete_cestino|student_documents|id' AND p_prima_di IS NULL)
+     OR (v_chiave <> 'delete_cestino|student_documents|id' AND p_prima_di IS NOT NULL) THEN
     RAISE EXCEPTION 'OBLIO_NON_AMMESSO'
       USING DETAIL = json_build_object('azione', left(coalesce(p_azione, ''), 20), 'tabella', left(coalesce(p_tabella, ''), 63))::text;
   END IF;
+  v_cintura := CASE v_chiave
+    WHEN 'delete_cestino|galleria_media_v2|id' THEN ' AND t.eliminato_il IS NOT NULL'
+    WHEN 'delete_cestino|student_documents|id' THEN ' AND t.eliminato_il IS NOT NULL AND t.eliminato_il < $2'
+    WHEN 'delete|forms_submissions|id'         THEN ' AND (t.signature_log->>''_archive_erasure_pending'') = ''true'''
+    ELSE ''
+  END;
 
   IF p_azione = 'update' THEN
     IF p_set IS NULL OR jsonb_typeof(p_set) <> 'object' THEN
@@ -916,8 +936,9 @@ BEGIN
   END IF;
 
   PERFORM set_config('anno_chiuso.oblio', 'on', true);
-  IF p_azione = 'delete' THEN
-    EXECUTE format('DELETE FROM public.%I t WHERE t.%I = ANY ($1::uuid[])', p_tabella, p_colonna) USING p_valori;
+  IF p_azione IN ('delete', 'delete_cestino') THEN
+    EXECUTE format('DELETE FROM public.%I t WHERE t.%I = ANY ($1::uuid[])', p_tabella, p_colonna) || v_cintura
+      USING p_valori, p_prima_di;
   ELSE
     SELECT string_agg(format('%I = r.%I', k, k), ', '), string_agg(format('t.%I', k), ', ')
       INTO v_assegna, v_cambia
@@ -1640,12 +1661,12 @@ GRANT EXECUTE ON FUNCTION public.anno_colonne_esenti(text)                      
 REVOKE ALL ON FUNCTION public.anno_oblio_attiva()                                              FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_oblio_spegni()                                              FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_oblio_riepilogo(text, text, bigint, text)                   FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text)         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text, timestamptz) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_oblio_svuota(text, text)                                    FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_invarianti()                                                FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_oblio_attiva()                                           TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_oblio_spegni()                                           TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_oblio_riepilogo(text, text, bigint, text)                TO service_role;
-GRANT EXECUTE ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text)      TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_oblio_scrivi(text, text, text, text[], jsonb, text, timestamptz) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_oblio_svuota(text, text)                                 TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_invarianti()                                             TO service_role;

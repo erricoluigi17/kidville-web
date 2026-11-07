@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { creaFintoSupabase, type DBFinto, type Riga, type Scrittura } from '../fixtures/finto-supabase'
-import { SEDE_A } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 /**
  * Anno scolastico · PR 3, compito 3.8 — i pagamenti non cambiano payload (Ruling D3).
@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
 const SEG = '20000000-0000-4000-8000-000000000001'
 const AL_1 = 'b0000000-0000-4000-8000-000000000001'
 const AL_2 = 'b0000000-0000-4000-8000-000000000002'
+const AL_B = 'b0000000-0000-4000-8000-0000000000b1' // di un'altra sede
 
 vi.mock('@/lib/auth/require-staff', () => ({
     requireStaff: () => Promise.resolve({ user: { id: SEG, role: 'segreteria', scuola_id: SEDE_A } }),
@@ -41,7 +42,7 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
     return {
         ...vero,
         assertAlunnoInScope: async () => null,
-        resolveScuoleAttive: async () => [SEDE_A],
+        resolveScuoleAttive: async () => [SEDE_A, SEDE_B],
         scuoleDiUtente: async () => [SEDE_A],
     }
 })
@@ -128,6 +129,7 @@ beforeEach(() => {
         alunni: [
             { id: AL_1, scuola_id: SEDE_A, classe_sezione: '3 ANNI', section_id: 'sez-1', stato: 'iscritto' },
             { id: AL_2, scuola_id: SEDE_A, classe_sezione: '3 ANNI', section_id: 'sez-1', stato: 'iscritto' },
+            { id: AL_B, scuola_id: SEDE_B, classe_sezione: '3 ANNI', section_id: 'sez-b', stato: 'iscritto' },
         ],
         pagamenti: [],
         registro_modifiche: [],
@@ -252,11 +254,53 @@ describe('pagamenti/genera · anno chiuso', () => {
         expect((await res.json()).codice).toBe('ANNO_CHIUSO')
         expect(h.db.pagamenti).toHaveLength(0)
     })
-    it('piano rateale, altro errore sul padre o sulle figlie: non è un 409', async () => {
+    it('piano rateale, altro errore sul padre: l’alunno si salta, 201 con generati 0', async () => {
         h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: GUASTO }
-        expect((await POST_GENERA(post(url, piano))).status).not.toBe(409)
+        const res = await POST_GENERA(post(url, piano))
+        expect(res.status).toBe(201)
+        expect((await res.json()).data).toEqual({ generati: 0 })
+        expect(h.db.pagamenti).toHaveLength(0)
+    })
+    it('piano rateale, altro errore sulle figlie: padre tolto, 201 con generati 0', async () => {
         h.guasto = { colpisce: (r) => r.tipo === 'rata', errore: GUASTO }
-        expect((await POST_GENERA(post(url, piano))).status).not.toBe(409)
+        const res = await POST_GENERA(post(url, piano))
+        expect(res.status).toBe(201)
+        expect((await res.json()).data).toEqual({ generati: 0 })
+        expect(h.db.pagamenti).toHaveLength(0)
+    })
+
+    describe('due sedi: l’anno è chiuso per una sola', () => {
+        const due = { ...piano, alunno_ids: [AL_1, AL_B] }
+        const pagamentiDi = (alunno: string) => (h.db.pagamenti as Riga[]).filter((r) => r.alunno_id === alunno)
+
+        it('anno chiuso sul padre del secondo: generati 1, righe del primo in tabella, risposta non 409', async () => {
+            h.guasto = { colpisce: (r) => r.alunno_id === AL_B && r.tipo === 'padre', errore: CHIUSO }
+            const res = await POST_GENERA(post(url, due))
+            expect(res.status).toBe(201)
+            expect((await res.json()).data).toEqual({ generati: 1 })
+            expect(pagamentiDi(AL_1)).toHaveLength(3)
+            expect(pagamentiDi(AL_B)).toHaveLength(0)
+            const avvisi = h.logEvento.mock.calls.filter((c) => (c[2] as { saltati_anno_chiuso?: number })?.saltati_anno_chiuso)
+            expect(avvisi).toHaveLength(1)
+            expect(avvisi[0][2]).toMatchObject({ saltati_anno_chiuso: 1, generati: 1 })
+        })
+
+        it('anno chiuso sulle figlie del secondo: il suo padre è tolto, il primo resta', async () => {
+            h.guasto = { colpisce: (r) => r.alunno_id === AL_B && r.tipo === 'rata', errore: CHIUSO }
+            const res = await POST_GENERA(post(url, due))
+            expect(res.status).toBe(201)
+            expect((await res.json()).data).toEqual({ generati: 1 })
+            expect(pagamentiDi(AL_1)).toHaveLength(3)
+            expect(pagamentiDi(AL_B)).toHaveLength(0)
+        })
+
+        it('anno chiuso per tutti: nessuno generato → 409 ANNO_CHIUSO', async () => {
+            h.guasto = { colpisce: (r) => r.tipo === 'padre', errore: CHIUSO }
+            const res = await POST_GENERA(post(url, due))
+            expect(res.status).toBe(409)
+            expect((await res.json()).codice).toBe('ANNO_CHIUSO')
+            expect(h.db.pagamenti).toHaveLength(0)
+        })
     })
     it('una rata con scadenza vuota → 400, nessuna scrittura', async () => {
         const res = await POST_GENERA(

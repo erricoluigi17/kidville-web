@@ -3562,6 +3562,25 @@ export const CODICI_ERRORE = {
     PERIODO_DATE_INCOMPLETE: 'errorePeriodoDateIncomplete',
     PERIODI_SOVRAPPOSTI: 'errorePeriodiSovrapposti',
     PERIODO_CON_SCRUTINI_CHIUSI: 'errorePeriodoConScrutiniChiusi',
+    /**
+     * I CODICI DELL'ANNO SCOLASTICO (PR 3), tradotti da `erroreAnno` (`src/lib/anno/errori.ts`):
+     * 409 `ANNO_CHIUSO` · 409 `PASSAGGIO_DA_FARE` · 409 `CONFINE_CON_RIGHE` ·
+     * 422 `SEZIONE_DI_ALTRO_ANNO` · 422 `SEZIONE_DI_ALTRA_SEDE` · 422 `ANNO_NON_COERENTE` ·
+     * 422 `MODULO_NON_RICHIESTO` · 422 `CONFINE_NON_VALIDO` · 422 `CALENDARIO_NON_CONTINUO` ·
+     * 400 `ANNO_DA_SPECIFICARE` · 400 `ANNO_NON_DELLA_SEDE` · 500 `GIORNO_SENZA_ANNO`.
+     */
+    ANNO_CHIUSO: 'erroreAnnoChiuso',
+    PASSAGGIO_DA_FARE: 'errorePassaggioDaFare',
+    SEZIONE_DI_ALTRO_ANNO: 'erroreSezioneDiAltroAnno',
+    SEZIONE_DI_ALTRA_SEDE: 'erroreSezioneDiAltraSede',
+    ANNO_NON_COERENTE: 'erroreAnnoNonCoerente',
+    ANNO_DA_SPECIFICARE: 'erroreAnnoDaSpecificare',
+    ANNO_NON_DELLA_SEDE: 'erroreAnnoNonDellaSede',
+    MODULO_NON_RICHIESTO: 'erroreModuloNonRichiesto',
+    CONFINE_NON_VALIDO: 'erroreConfineNonValido',
+    CONFINE_CON_RIGHE: 'erroreConfineConRighe',
+    CALENDARIO_NON_CONTINUO: 'erroreCalendarioNonContinuo',
+    GIORNO_SENZA_ANNO: 'erroreGiornoSenzaAnno',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

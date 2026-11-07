@@ -89,7 +89,7 @@ export const EVENTI_NOTI = new Set([
     // ancora nulla) e non è `anagrafica`, che in questo repo indica le note tecniche
     // sull'identità di genitori e alunni: tre canali sulla stessa etichetta renderebbero
     // impossibile la sola query che conta, «quante anagrafiche del personale sono arrivate?».
-    'agenda', 'anagrafica', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
+    'agenda', 'anagrafica', 'anno-scolastico', 'audit', 'avvisi', 'candidatura', 'cassa', 'chat', 'competenze',
     'credenziali', 'crm', 'diary', 'fascicolo', 'fattura', 'fea', 'fiscale', 'galleria', 'gdpr',
     'iscrizione', 'mensa', 'modulistica', 'multi_sede', 'news', 'notifica', 'otp', 'pagamento',
     'pagella', 'personale', 'protocolli', 'registro', 'segnalazione', 'sidi', 'votazioni',

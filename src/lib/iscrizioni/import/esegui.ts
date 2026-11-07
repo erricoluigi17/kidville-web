@@ -77,6 +77,7 @@ import { sanitariDaScrivere, type SanitariScheda } from '@/lib/iscrizioni/sanita
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -299,6 +300,23 @@ async function conDegradoDiColonna<T extends { error: { code?: string; message?:
 }
 
 /**
+ * Fase A (§4.19): `alunni` è appena stato scritto, ora la frequenza dell'anno attivo della sede su cui è scritto
+ * (fail-open: l'esito dell'import non cambia). `cacheAnno` tiene l'anno della sede per tutta l'esecuzione.
+ */
+async function frequenzaDopoAlunni(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  scuolaId: string,
+  patch: Record<string, unknown>,
+  cacheAnno?: Map<string, string | null>,
+): Promise<void> {
+  const campi = campiFrequenzaDaAlunno(patch)
+  if (Object.keys(campi).length === 0) return
+  const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
+  if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi })
+}
+
+/**
  * Trova un `alunno` per codice fiscale nella sede, oppure lo crea.
  *
  * Esportata per il collaudo (`__tests__/api/iscrizioni-import-nome-canonico.test.ts`,
@@ -313,6 +331,7 @@ export async function alunnoDiRiferimento(
   assegnazione: AssegnazioneBambino,
   scuolaId: string,
   submissionId: string,
+  cacheAnno?: Map<string, string | null>,
 ): Promise<{ id: string } | { errore: string }> {
   const cf = campo(grezzo, 'codice_fiscale')?.toUpperCase() ?? null
   // Il nome della sezione com'è in anagrafica, non com'è nel foglio.
@@ -363,6 +382,9 @@ export async function alunnoDiRiferimento(
         supabase.from('alunni').update(rec).eq('id', trovato.id),
       )
       if (errUp) return { errore: `alunno non aggiornato: ${errUp.message}` }
+      // ⚠️ Oggi l'import sposta il bambino nella classe nuova scrivendo `classe_sezione` su `alunni`: difetto noto, lo chiude
+      // la PR 4.5. Qui non cambia: la frequenza dell'anno attivo segue `alunni`, come lo specchio.
+      await frequenzaDopoAlunni(supabase, trovato.id, scuolaId, patch, cacheAnno)
       return { id: trovato.id }
     }
   }
@@ -406,6 +428,7 @@ export async function alunnoDiRiferimento(
   if (error || !data) return { errore: `alunno non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id
+  await frequenzaDopoAlunni(supabase, id, scuolaId, record, cacheAnno)
   const { error: errSegna } = await supabase.rpc('iscrizioni_segna_creato', {
     p_submission_id: submissionId,
     p_tipo: 'alunno',
@@ -425,6 +448,7 @@ export async function eseguiDomanda(
   dati: DatiGrezzi,
   assegnazioni: AssegnazioneBambino[],
   scuolaId: string,
+  cacheAnno: Map<string, string | null> = new Map(),
 ): Promise<EsitoEsecuzione> {
   const bambiniGrezzi = Array.isArray(dati.children) ? dati.children : []
   const adultiGrezzi = Array.isArray(dati.adults) ? dati.adults : []
@@ -516,7 +540,7 @@ export async function eseguiDomanda(
   const figliAlunni: { figlio: number; alunnoId: string }[] = []
   for (const ass of assegnazioni) {
     const grezzo = bambiniGrezzi[ass.indice]
-    const esito = await alunnoDiRiferimento(supabase, grezzo, ass, scuolaId, domanda.id)
+    const esito = await alunnoDiRiferimento(supabase, grezzo, ass, scuolaId, domanda.id, cacheAnno)
     if ('errore' in esito) return fallisci(esito.errore)
     alunnoPerNome.set(normalizzaNome(`${ass.cognome} ${ass.nome}`), esito.id)
     figliAlunni.push({ figlio: ass.indice, alunnoId: esito.id })
@@ -552,6 +576,7 @@ export async function eseguiDomanda(
       .update({ retta_a_carico_di: fratelloId })
       .eq('id', mio)
     if (error) return fallisci(`collegamento della retta non scritto: ${error.message}`)
+    await frequenzaDopoAlunni(supabase, mio, scuolaId, { retta_a_carico_di: fratelloId }, cacheAnno)
   }
 
   const alunniDellaDomanda = [...alunnoPerNome.values()]

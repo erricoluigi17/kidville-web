@@ -102,6 +102,11 @@ const FERMATE: ReadonlyArray<readonly [string, string, string]> = [
   ['accende la manutenzione dei registri', "SET LOCAL registri.manutenzione = 'on'", 'interruttore'],
   ['spegne i trigger della sessione', 'SET session_replication_role = replica', 'interruttore'],
   ['spegne i trigger di una tabella', 'ALTER TABLE public.alunni DISABLE TRIGGER ALL', 'interruttore'],
+  // Anno scolastico, compito 1.6: il gettone dell'oblio apre la guardia dell'anno chiuso.
+  ['anno_chiuso.oblio con set_config', "SELECT set_config('anno_chiuso.oblio','on',true)", 'interruttore'],
+  ['anno_chiuso.oblio con SET', "SET anno_chiuso.oblio = 'on'", 'interruttore'],
+  ['anno_chiuso.oblio con SET LOCAL … TO', 'SET LOCAL anno_chiuso.oblio TO on', 'interruttore'],
+  ['anno_chiuso.oblio dentro un DO', "DO $$ BEGIN PERFORM set_config('anno_chiuso.oblio', 'on', true); END $$", 'interruttore'],
 ]
 
 /** [perché, query] — il freno non sa dove finisce l'istruzione: in dubbio si ferma. */
@@ -131,6 +136,7 @@ const PASSANO: ReadonlyArray<readonly [string, string]> = [
   ['colonne che cominciano come una parola distruttiva', 'SELECT deleted_at, dropped, truncated FROM public.prova_freno'],
   ['identificatore fra virgolette', 'SELECT "delete" FROM public.prova_freno'],
   ["lettura dell'interruttore, non scrittura", "SELECT current_setting('scatola_nera.manutenzione', true)"],
+  ["lettura del gettone dell'oblio, non scrittura", "SELECT current_setting('anno_chiuso.oblio', true)"],
   ['più letture nella stessa stringa', 'SELECT 1; SELECT 2;'],
 ]
 

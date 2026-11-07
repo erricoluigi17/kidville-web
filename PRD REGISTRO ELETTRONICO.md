@@ -1,3 +1,25 @@
+## 🗓️ Changelog — Anno scolastico, PR 1: lo schema dei due anni per sede, spento — 2026-11-06 (branch `feat/anno-scolastico-schema`)
+
+**Stato:** 🟡 in corso — PR 1 schema, sul branch `feat/anno-scolastico-schema`, PR verso `main`; il merge lo fa il titolare. Una migrazione sola, `supabase/migrations/20261106200347_anno_scolastico_schema.sql`: la applica l'integrazione di Supabase al merge, con la version del file. Nessuna route, nessun codice dell'app. Specifica: `docs/superpowers/specs/2026-11-06-anno-scolastico-design.md`; piano: `docs/superpowers/plans/2026-11-06-anno-scolastico.md`.
+
+**Perché.** L'app non sa che esistono due anni scolastici contemporaneamente: il 2026/27 in corso e il 2027/28 da preparare. Senza un anno scritto nei dati, il passaggio di classe di settembre 2027 sarebbe un'operazione fatta a mano su tabelle che non distinguono un anno dall'altro.
+
+**Cosa aggiunge.**
+- **Anni e calendario per sede:** `anni_scolastici`, `anni_sede` (le date di ogni sede) e `anni_sede_stati`, con le funzioni `giorno_roma`, `anno_di`, `anno_sede_di` e `anno_attivo`. Anno e stato seguono il giorno di Roma, non quello UTC.
+- **Sezioni con l'anno** e le tabelle per anno: `frequenze` e `frequenze_moduli` (a quale classe sta un bambino in un anno e con quali moduli), `listino_voci`, `moduli_richiesti`, `posti_autorizzati` (la configurazione per anno). `anno_regole` è una riga sola con i due interruttori, `controlli_rigidi` e `guardia_attiva`, entrambi spenti.
+- **Registro delle tabelle con l'anno** (`anno_tabelle`) e **guardia dell'anno chiuso**: un trigger generico che assegna l'anno alla riga e, a guardia accesa, rifiuta di scrivere in un anno chiuso salvo un gettone di correzione (`correzioni_anno_chiuso`). L'interruttore dell'oblio è fermato anche dal freno SQL.
+- **`sposta_confine_anno`:** sposta la fine di un anno solo se nei giorni spostati non ci sono righe; altrimenti rifiuta e dice quante.
+- **Tabelle del passaggio d'anno** (`passaggi_anno`, `passaggi_anno_righe`, `passaggi_anno_docenti`), ancora vuote.
+- **`anno_invarianti()`:** il controllo che conta le righe fuori periodo, con la sezione di un altro anno o senza anno. A regime deve restituire zero.
+
+**A controlli e guardia spenti il comportamento dell'app non cambia.** Le colonne `anno_id` ammettono NULL; `controlli_rigidi` e `guardia_attiva` partono spenti; con i controlli spenti i trigger non rifiutano niente, salvo su `frequenze` e `frequenze_moduli`, che sono tabelle nuove e vuote e che nessun codice scrive ancora. Tutte le tabelle nuove hanno la RLS accesa e nessun accesso per `anon` e `authenticated`: solo `service_role`.
+
+**Cosa non fa.** Non riempie in blocco le righe esistenti: la migrazione riempie soltanto `sections.anno_id`; per le altre tabelle il trigger assegna l'anno a ogni riga nuova e al primo UPDATE di quelle vecchie, e quel primo UPDATE compare nella scatola nera. Il riempimento completo, le frequenze e il NOT NULL sono la **PR 2**; le route e le schermate arrivano nelle PR 3 e 4.
+
+**Prove.** Sette file `__tests__/db/anno-*.test.ts` su PGlite: `anno-calendario`, `anno-sezioni`, `anno-frequenze`, `anno-registro-guardia`, `anno-confine` (`sposta_confine_anno`), `anno-invarianti` e il banco `anno-banco`, che gira solo con `KIDVILLE_BANCO_ANNO=1` e misura il costo del trigger generico e di `anno_invarianti()`; più i casi del freno SQL per `anno_chiuso.oblio` in `__tests__/architecture/freno-sql-distruttivo.test.ts`.
+
+**Logging.** Nessuna route o integrazione nuova: la guardia lascia traccia nel database dei guasti e dell'uso dei gettoni (`correzioni_anno_chiuso_usi`). Lo scrivo qui perché non sembri una dimenticanza.
+
 ## 🐞 Changelog — L'appello perdeva i bottoni sul telefono quando un genitore scriveva un motivo lungo — 2026-11-05 (branch `fix/appello-griglia-telefono`)
 
 **Stato:** 🟡 sul branch `fix/appello-griglia-telefono`, PR verso `main`; il merge lo fa il titolare. Tocca solo CSS e test: nessuna migrazione, nessuna route. L'app nativa carica il sito da `server.url`, quindi la correzione arriva sui telefoni senza una nuova versione dell'app.
@@ -97,7 +119,7 @@ Le ha decise l'assistente nella spec, da confermare o cambiare:
 
 ### Cose aperte
 
-- **Anni scolastici e passaggio di classe: da decidere entro settembre 2027.** Il quadrimestre di un voto si decide dalle sole date, senza guardare l'anno scolastico, e l'app non ha ancora un modo definito per far passare gli alunni alla classe dell'anno dopo né per ripartire con i quadrimestri nuovi. Fuori da questo lavoro, per scelta della spec; va deciso prima dell'inizio dell'anno scolastico 2027/28.
+- **Anni scolastici e passaggio di classe: in corso.** Lo schema è la PR 1 (changelog del 2026-11-06 in cima a questo file); il riempimento dei dati è la PR 2, le route e le schermate le PR 3 e 4. Specifica `docs/superpowers/specs/2026-11-06-anno-scolastico-design.md`, piano `docs/superpowers/plans/2026-11-06-anno-scolastico.md`. Resta da fare prima dell'inizio dell'anno scolastico 2027/28.
 - **Nessuna interfaccia per cambiare le date di un quadrimestre già creato.** Dalla pagina si può creare, eliminare, archiviare e attivare. Il promemoria può dire «mancano le date», ma per rimediare oggi si deve eliminare e ricreare il quadrimestre, e non si può se ha già degli scrutini. La modifica delle date esiste sulla route (con tutti i controlli sopra), manca il pulsante; la spec non lo chiedeva e il piano non l'ha aggiunto.
 - **Nessun vincolo nel database contro due quadrimestri sovrapposti** salvati nello stesso istante: il controllo c'è solo nell'app (legge e poi scrive), quindi due richieste concorrenti potrebbero passare entrambe. Se capitasse, vale la regola dell'`ordine` più basso e del blocco con uno scrutinio chiuso.
 - **Sbloccare un voto congelato.** Sulla pagina Valutazioni lo staff non vede mai «Sblocca», perché per lo staff il termine non esiste e il voto risulta sempre modificabile. Chi deve riaprire un voto congelato di un'insegnante ha due strade: la Direzione dà lo sblocco del «giorno» del salvataggio dalla pagina del registro **dopo la chiusura dello scrutinio** (uno sblocco dato prima non vale), oppure lo staff lo modifica direttamente. **La prima strada non sempre esiste**: se quel giorno era già stato sbloccato prima della chiusura (per esempio per correggere il registro), la pagina del registro mostra «giorno già sbloccato» e non offre più «Sblocca giorno», perché considera il giorno sbloccato per qualunque sblocco senza guardare la data; il voto resta congelato e, in quel caso, la pagina non permette di dare lo sblocco nuovo, quindi il voto lo corregge direttamente la segreteria o la Direzione.

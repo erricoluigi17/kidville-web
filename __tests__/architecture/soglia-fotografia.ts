@@ -356,7 +356,31 @@ export function posterioriCheContengono(
 // SVUOTATA il 03/11/2026 (PR-B dopo il merge di #285, `ccd386d8`): applicata dall'integrazione, una riga sola
 // nel registro con la version del file; il CHECK in produzione ammette `lettura`, `ricerca`, `scarico`. Delle
 // otto fotografie cambia per lei solo quella delle migrazioni, come previsto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+//
+// 2026-11-06 · ANNO SCOLASTICO, PR 1 (schema), compito 1.1: `20261106200347_anno_scolastico_schema.sql` crea
+// `anni_scolastici`, `anni_sede` e `anni_sede_stati` (RLS accesa, nessuna policy, solo `service_role`), con
+// `UNIQUE (scuola_id, anno_id)`, un indice unico parziale sullo stato `corrente`, un vincolo `EXCLUDE` sui
+// periodi, `REFERENCES schools` e un trigger su `schools`; più le funzioni `giorno_roma`, `anno_di`,
+// `anno_sede_di`, `anno_attivo` e `anni_sede_crea_per_sede`, `SECURITY DEFINER` con `search_path` fisso. I compiti
+// 1.2–1.5 aggiungono sezioni allo STESSO file (sezioni, frequenze, registro, invarianti): le guardie che la
+// vedono sono quelle sotto indicate. Cambieranno davvero, rigenerando dalla produzione
+// dopo il merge: la fotografia delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con
+// `scuola_id` e delle FK di sede. Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge.
+// Compito 1.3 (stessa migrazione): `frequenze` (con `scuola_id`, FK di sede composta, due indici unici — uno
+// parziale), `frequenze_moduli`, `listino_voci`, `moduli_richiesti`, `posti_autorizzati` (RLS accesa, nessuna
+// policy) e cinque funzioni `SECURITY DEFINER`; un trigger nuovo su `pagamenti`.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261106200347_anno_scolastico_schema.sql':
+        // 2026-11-06, compito 1.6: le guardie che leggono questa costante sono `rls-per-sede` (la migrazione accende
+        // la RLS e dichiara `scuola_id` su tabelle nuove), `onconflict-arbitro` (nuovi indici unici e chiavi primarie,
+        // fra cui uno parziale sullo stato `corrente`) e `tracce-docente-dichiarate` (molti `ADD CONSTRAINT`: la
+        // guardia li vede tutti; nessuna FK nuova punta a `utenti`, perché `passaggi_anno_docenti.utente_id` è un uuid
+        // senza chiave, come vuole R15). Cambieranno davvero, rigenerando dalla produzione: la fotografia
+        // delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con `scuola_id` e delle FK di sede.
+        'schema dell\'anno scolastico (PR 1): tabelle nuove con RLS e `scuola_id`, indici unici, FK di sede e '
+        + 'trigger su tabelle esistenti. La applica l\'integrazione al merge e la voce si toglie nella PR-B, '
+        + 'dopo aver rigenerato dalla produzione le fotografie di indici unici, RLS, tabelle con sede e FK',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

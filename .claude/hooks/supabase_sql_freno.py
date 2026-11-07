@@ -11,7 +11,8 @@ COSA FERMA (risposta ``deny``):
   · in ``execute_sql``: ``DELETE FROM``, ``DROP`` (anche ``ALTER … DROP``), ``TRUNCATE``,
     ``UPDATE`` senza ``WHERE`` al suo stesso livello, e gli interruttori che spengono la scatola
     nera, i registri o i trigger (``registri.manutenzione``, ``scatola_nera.manutenzione``,
-    ``scatola_nera.senza_storico``, ``session_replication_role``, ``DISABLE TRIGGER``);
+    ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``session_replication_role``,
+    ``DISABLE TRIGGER``);
   · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
   · oltre il piano (25/10/2026): le stesse categorie dentro una stringa che viene ESEGUITA
     (``EXECUTE`` di PL/pgSQL anche con ``format()`` o ``||``, ``cron.schedule``/``alter_job``,
@@ -95,6 +96,7 @@ DELIMITATORE_DOLLARO = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 INTERRUTTORI = re.compile(
     r"(?:SET_CONFIG\s*\(\s*(?:E|U&)?'?\s*|\bSET\s+(?:LOCAL\s+|SESSION\s+)?)\"?"
     r"(?:(?:REGISTRI|SCATOLA_NERA)\"?\s*\.\s*\"?(?:MANUTENZIONE|SENZA_STORICO)"
+    r"|ANNO_CHIUSO\"?\s*\.\s*\"?OBLIO"
     r"|SESSION_REPLICATION_ROLE)\b"
     r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"
     r"|\bDISABLE\s+TRIGGER\b"

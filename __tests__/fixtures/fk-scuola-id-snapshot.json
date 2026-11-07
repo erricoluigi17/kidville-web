@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-03",
-  "generato_alle": "2026-11-03T16:25:28Z",
-  "sha256": "ada9e2f63f634111c9d1393e95ecfaea0c9eb4efa3403af2d0e13acebc1e4bb8",
+  "generato_il": "2026-11-07",
+  "generato_alle": "2026-11-07T01:07:58Z",
+  "sha256": "66906224a336d03e8f551ac9a3448c70b5aaf97eceb72bc9e9475b072c3cf9ea",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -20,6 +20,12 @@
       "tabella": "alunni_classi_storico",
       "not_null": true,
       "fk_nome": "alunni_classi_storico_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "anni_sede",
+      "not_null": true,
+      "fk_nome": "anni_sede_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {
@@ -221,6 +227,12 @@
       "fk_verso": "schools"
     },
     {
+      "tabella": "frequenze",
+      "not_null": true,
+      "fk_nome": "frequenze_scuola_anno_fkey",
+      "fk_verso": "anni_sede"
+    },
+    {
       "tabella": "galleria_media",
       "not_null": false,
       "fk_nome": "galleria_media_scuola_id_fkey",
@@ -386,6 +398,12 @@
       "tabella": "pagamenti_transazioni",
       "not_null": true,
       "fk_nome": "pagamenti_transazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "passaggi_anno",
+      "not_null": true,
+      "fk_nome": "passaggi_anno_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

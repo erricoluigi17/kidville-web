@@ -369,18 +369,16 @@ export function posterioriCheContengono(
 // Compito 1.3 (stessa migrazione): `frequenze` (con `scuola_id`, FK di sede composta, due indici unici — uno
 // parziale), `frequenze_moduli`, `listino_voci`, `moduli_richiesti`, `posti_autorizzati` (RLS accesa, nessuna
 // policy) e cinque funzioni `SECURITY DEFINER`; un trigger nuovo su `pagamenti`.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261106200347_anno_scolastico_schema.sql':
-        // 2026-11-06, compito 1.6: le guardie che leggono questa costante sono `rls-per-sede` (la migrazione accende
-        // la RLS e dichiara `scuola_id` su tabelle nuove), `onconflict-arbitro` (nuovi indici unici e chiavi primarie,
-        // fra cui uno parziale sullo stato `corrente`) e `tracce-docente-dichiarate` (molti `ADD CONSTRAINT`: la
-        // guardia li vede tutti; nessuna FK nuova punta a `utenti`, perché `passaggi_anno_docenti.utente_id` è un uuid
-        // senza chiave, come vuole R15). Cambieranno davvero, rigenerando dalla produzione: la fotografia
-        // delle migrazioni (+1 riga), degli indici unici, della RLS, delle tabelle con `scuola_id` e delle FK di sede.
-        'schema dell\'anno scolastico (PR 1): tabelle nuove con RLS e `scuola_id`, indici unici, FK di sede e '
-        + 'trigger su tabelle esistenti. La applica l\'integrazione al merge e la voce si toglie nella PR-B, '
-        + 'dopo aver rigenerato dalla produzione le fotografie di indici unici, RLS, tabelle con sede e FK',
-}
+// SVUOTATA il 07/11/2026 (PR 2, compito 2.-1, dopo il merge di #293 `4d22488c`): la migrazione è applicata
+// dall'integrazione il 07/11 alle 01:01 UTC, una riga sola nel registro con la version del file (253 migrazioni,
+// con `20261104173158_voti_periodo_id`, rimasta fuori dall'ultimo scatto). Le sei fotografie rigenerate dalla
+// produzione cambiano come previsto qui sopra: indici unici 262 → 289 (+27 delle tabelle nuove e di `sections`,
+// che ha cambiato i suoi tre), RLS accesa 163 → 178 (+15 tabelle, nessuna policy: 40 invariate), tabelle con
+// `scuola_id` 95 → 98 (`anni_sede`, `frequenze`, `passaggi_anno`) e FK di sede 95 → 98, con `frequenze` che ha
+// solo la composta `(scuola_id, anno_id)` verso `anni_sede` (dichiarata in `FK_VERSO_SCUOLE` di `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
+// come voleva R15), solo l'istante dello scatto. Le altre due (bucket, schema delle candidature) non si toccano.
+// Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-03",
-  "generato_alle": "2026-11-03T16:25:23Z",
-  "sha256": "7263832ea453d95e2f88cde2c4a3a695881efff8cd728c6a5fbbf26893759512",
+  "generato_il": "2026-11-07",
+  "generato_alle": "2026-11-07T01:06:11Z",
+  "sha256": "b0a46b9b13cbc3856bad567d6841a606675a9e6260ef50498170b43094ac3080",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -95,6 +95,95 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "utente_id"
+      ]
+    },
+    {
+      "tabella": "anni_scolastici",
+      "indice": "anni_scolastici_anno_inizio_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "anno_inizio"
+      ]
+    },
+    {
+      "tabella": "anni_scolastici",
+      "indice": "anni_scolastici_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "anni_sede",
+      "indice": "anni_sede_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "anni_sede",
+      "indice": "anni_sede_scuola_anno_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "anno_id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "anni_sede",
+      "indice": "anni_sede_un_corrente_per_sede",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "anni_sede_stati",
+      "indice": "anni_sede_stati_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "anno_regole",
+      "indice": "anno_regole_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "anno_tabelle",
+      "indice": "anno_tabelle_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "tabella"
       ]
     },
     {
@@ -461,6 +550,28 @@
     {
       "tabella": "conversazioni_sospensioni",
       "indice": "conversazioni_sospensioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "correzioni_anno_chiuso",
+      "indice": "correzioni_anno_chiuso_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "correzioni_anno_chiuso_usi",
+      "indice": "correzioni_anno_chiuso_usi_pkey",
       "parziale": false,
       "con_espressioni": false,
       "nulls_not_distinct": false,
@@ -1022,6 +1133,64 @@
       ]
     },
     {
+      "tabella": "frequenze",
+      "indice": "frequenze_alunno_anno_sede_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "alunno_id",
+        "anno_sede_id"
+      ]
+    },
+    {
+      "tabella": "frequenze",
+      "indice": "frequenze_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "frequenze",
+      "indice": "frequenze_una_viva_per_anno",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "alunno_id",
+        "anno_id"
+      ]
+    },
+    {
+      "tabella": "frequenze_moduli",
+      "indice": "frequenze_moduli_coppia_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "frequenza_id",
+        "modulo_id"
+      ]
+    },
+    {
+      "tabella": "frequenze_moduli",
+      "indice": "frequenze_moduli_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
       "tabella": "galleria_media",
       "indice": "galleria_media_pkey",
       "parziale": false,
@@ -1296,6 +1465,31 @@
       ]
     },
     {
+      "tabella": "listino_voci",
+      "indice": "listino_voci_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "listino_voci",
+      "indice": "listino_voci_voce_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": true,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "anno_sede_id",
+        "fascia",
+        "payment_category_id",
+        "voce"
+      ]
+    },
+    {
       "tabella": "locker_config",
       "indice": "locker_config_pkey",
       "parziale": false,
@@ -1566,6 +1760,30 @@
     {
       "tabella": "merch_rettifiche",
       "indice": "merch_rettifiche_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "moduli_richiesti",
+      "indice": "moduli_richiesti_codice_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "anno_sede_id",
+        "codice",
+        "lista"
+      ]
+    },
+    {
+      "tabella": "moduli_richiesti",
+      "indice": "moduli_richiesti_pkey",
       "parziale": false,
       "con_espressioni": false,
       "nulls_not_distinct": false,
@@ -1909,6 +2127,76 @@
       ]
     },
     {
+      "tabella": "passaggi_anno",
+      "indice": "passaggi_anno_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "passaggi_anno",
+      "indice": "passaggi_anno_uno_per_coppia",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "a_anno_sede_id",
+        "da_anno_sede_id"
+      ]
+    },
+    {
+      "tabella": "passaggi_anno_docenti",
+      "indice": "passaggi_anno_docenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "passaggi_anno_docenti",
+      "indice": "passaggi_anno_docenti_una_volta_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "passaggio_id",
+        "sezione_a_id",
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "passaggi_anno_righe",
+      "indice": "passaggi_anno_righe_bambino_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "alunno_id",
+        "passaggio_id"
+      ]
+    },
+    {
+      "tabella": "passaggi_anno_righe",
+      "indice": "passaggi_anno_righe_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
       "tabella": "password_cambi",
       "indice": "password_cambi_pkey",
       "parziale": false,
@@ -1974,6 +2262,29 @@
       "colonne": [
         "scuola_id",
         "slug"
+      ]
+    },
+    {
+      "tabella": "posti_autorizzati",
+      "indice": "posti_autorizzati_fascia_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "anno_sede_id",
+        "fascia"
+      ]
+    },
+    {
+      "tabella": "posti_autorizzati",
+      "indice": "posti_autorizzati_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
       ]
     },
     {
@@ -2445,6 +2756,7 @@
       "nulls_not_distinct": false,
       "ha_colonna_nullable": false,
       "colonne": [
+        "anno_id",
         "scuola_id"
       ]
     },
@@ -2456,6 +2768,7 @@
       "nulls_not_distinct": false,
       "ha_colonna_nullable": false,
       "colonne": [
+        "anno_id",
         "name",
         "scuola_id"
       ]

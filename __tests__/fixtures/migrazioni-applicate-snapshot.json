@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-04",
-  "generato_alle": "2026-11-04T10:53:41Z",
-  "sha256": "86daa239343ed3a5217899e8fa6c920b6d46e4bdf5644e7cd558d2dac36a7cfd",
+  "generato_il": "2026-11-07",
+  "generato_alle": "2026-11-07T01:07:58Z",
+  "sha256": "05c849b8bc0ea9cb12bf05f3b290b3824b057df177e8d4f60e7cd26f58e2e768",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -1007,6 +1007,14 @@
     {
       "version": "20261103172513",
       "name": "form_submissions_senza_policy_browser"
+    },
+    {
+      "version": "20261104173158",
+      "name": "voti_periodo_id"
+    },
+    {
+      "version": "20261106200347",
+      "name": "anno_scolastico_schema"
     }
   ]
 }

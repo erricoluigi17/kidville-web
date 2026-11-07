@@ -69,6 +69,9 @@ const FK_VERSO_SCUOLE: Record<string, string> = {
     cassa_chiusure: 'modulo Cassa (2026-07-20): nato puntando a `scuole`, ON DELETE CASCADE',
     cassa_movimenti: 'modulo Cassa (2026-07-20): nato puntando a `scuole`, ON DELETE CASCADE',
     news_categorie: 'modulo News (2026-07-20): nato puntando a `scuole`',
+    frequenze: 'anno scolastico (PR 1, 2026-11-06): la sede non ha una FK a una colonna verso `schools`, ma la '
+        + 'composta `(scuola_id, anno_id)` verso `anni_sede`, che a sua volta ha `scuola_id` → `schools`. È voluta: '
+        + 'impedisce che una frequenza punti a un anno che quella sede non ha. NON punta a `scuole`',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

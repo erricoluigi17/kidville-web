@@ -41,7 +41,9 @@ import { COPPIE_OBLIO_AMMESSE } from '@/lib/gdpr/oblio-registro'
  *  - una `rpc` che scrive il registro: ci pensano la guardia in database e la sezione 6;
  *  - `getMonth()` conta solo se confrontato DIRETTAMENTE con 7, 8 o 9: `const m = d.getMonth(); if (m >= 8)` e
  *    `getUTCMonth()` sfuggono (li chiude la PR 4.1, che toglie tutto il calcolo a mano);
- *  - nella finestra dei `pagamenti` basta che `scadenza` o `periodo_competenza` siano NOMINATE, anche in una stringa.
+ *  - nella finestra dei `pagamenti` basta che `scadenza` o `periodo_competenza` siano NOMINATE, anche in una stringa;
+ *  - per `.insert(variabile)` il controllo dell'anno resta a livello di FILE, ristretto a `anno_id:` / `conAnno(` /
+ *    `annoDelBambino(`: non dice che quella variabile specifica porti l'anno.
  */
 
 const CWD = process.cwd()

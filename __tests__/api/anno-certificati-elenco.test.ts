@@ -19,6 +19,7 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
  */
 
 const h = vi.hoisted(() => ({
+    letture: [] as string[],
     ruolo: 'admin' as string,
     utente: '' as string,
     attive: [] as string[],
@@ -57,7 +58,7 @@ vi.mock('@/lib/supabase/server-client', () => {
             for (const x of s) (h.scritture as unknown[]).push({ ...x, header })
             return mio.length
         }
-        const finto = creaFintoSupabase(h.db as DBFinto, [], { errori: h.errori, scritture: mio })
+        const finto = creaFintoSupabase(h.db as DBFinto, h.letture, { errori: h.errori, scritture: mio })
         const storage = {
             from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }) }),
         }
@@ -107,6 +108,8 @@ const AL_2 = 'b0000000-0000-4000-8000-000000000002'
 const SCRUT = 'd0000000-0000-4000-8000-000000000001'
 const PER = 'e0000000-0000-4000-8000-000000000001'
 // `anni_scolastici.id`
+const A1 = 'a1111111-1111-4111-8111-111111111111' // 2025/26, chiuso
+const S1A = 'b1111111-1111-4111-8111-aaaaaaaaaaaa'
 const A2 = 'a2222222-2222-4222-8222-222222222222' // corrente
 const A3 = 'a3333333-3333-4333-8333-333333333333' // in_preparazione
 // `anni_sede.id`
@@ -124,12 +127,20 @@ beforeEach(() => {
     h.errori = {}
     h.saltaScopeSezione = false
     h.scritture = []
+    h.letture.length = 0
     h.usiChiesti = []
     h.nRighe = 1
     h.logEvento.mockClear()
     h.logErrore.mockClear()
     h.db = {
+        anni_scolastici: [
+            { id: A1, etichetta: '2025/2026', etichetta_breve: '2025/26' },
+            { id: A2, etichetta: '2026/2027', etichetta_breve: '2026/27' },
+            { id: A3, etichetta: '2027/2028', etichetta_breve: '2027/28' },
+        ],
+        anno_regole: [{ guardia_attiva: false }],
         anni_sede: [
+            { id: S1A, scuola_id: SEDE_A, anno_id: A1, stato: 'chiuso', domande_aperte: false },
             { id: S2A, scuola_id: SEDE_A, anno_id: A2, stato: 'corrente', domande_aperte: false },
             { id: S3A, scuola_id: SEDE_A, anno_id: A3, stato: 'in_preparazione', domande_aperte: false },
             { id: S2B, scuola_id: SEDE_B, anno_id: A2, stato: 'corrente', domande_aperte: false },
@@ -144,7 +155,7 @@ beforeEach(() => {
             { id: AL_1, section_id: SEZ_A },
             { id: AL_2, section_id: SEZ_A },
         ],
-        scrutini: [{ id: SCRUT, section_id: SEZ_A, stato: 'chiuso', periodo_id: PER, creato_il: '2026-06-10T10:00:00Z' }],
+        scrutini: [{ id: SCRUT, section_id: SEZ_A, stato: 'chiuso', periodo_id: PER, creato_il: '2027-06-10T10:00:00Z' }],
         scrutinio_periodi: [{ id: PER, anno_scolastico: '2026/2027' }],
         scrutinio_giudizi: [],
         materie: [],
@@ -166,6 +177,46 @@ const postCompetenze = (b: unknown) =>
     )
 
 describe('POST /api/admin/competenze · l\'anno del certificato', () => {
+    // P49: l'anno è quello dell'ETICHETTA del periodo dell'ultimo scrutinio finale chiuso, non il `corrente`.
+    it('un\'etichetta diversa dal `corrente` dà l\'anno dell\'etichetta (anno_scolastico e anno_id coerenti)', async () => {
+        h.db.scrutinio_periodi = [{ id: PER, anno_scolastico: '2027/2028' }]
+        const res = await postCompetenze({ sectionId: SEZ_A, alunnoId: AL_1 })
+        expect(res.status).toBe(200)
+        expect(scritte('certificati_competenze')[0].valori[0]).toMatchObject({ anno_scolastico: '2027/2028', anno_id: A3 })
+    })
+
+    it('un certificato del 2025/26 che esiste già non cambia anno_id con una seconda chiamata (anno chiuso, guardia spenta: osservato)', async () => {
+        h.db.scrutinio_periodi = [{ id: PER, anno_scolastico: '2025/2026' }]
+        h.db.certificati_competenze = [
+            { id: 'f0000000-0000-4000-8000-000000000002', alunno_id: AL_1, anno_scolastico: '2025/2026', anno_id: A1, stato: 'bozza', scuola_id: SEDE_A },
+        ]
+        for (let i = 0; i < 2; i++) {
+            const res = await postCompetenze({ sectionId: SEZ_A, alunnoId: AL_1 })
+            expect(res.status).toBe(200)
+        }
+        expect(scritte('certificati_competenze')[0].valori[0]).not.toHaveProperty('anno_id')
+        expect(h.db.certificati_competenze).toHaveLength(1)
+        expect(h.db.certificati_competenze[0]).toMatchObject({ anno_scolastico: '2025/2026', anno_id: A1 })
+        expect(h.logEvento.mock.calls.filter((c) => c[2]?.tipo === 'anno-chiuso-osservato')).toHaveLength(2)
+    })
+
+    it('un\'etichetta che non è di nessun anno → 400 ANNO_NON_DELLA_SEDE e 0 scritture', async () => {
+        h.db.scrutinio_periodi = [{ id: PER, anno_scolastico: '1999/2000' }]
+        const res = await postCompetenze({ sectionId: SEZ_A })
+        expect(res.status).toBe(400)
+        expect((await res.json()).codice).toBe('ANNO_NON_DELLA_SEDE')
+        expect(scritte('certificati_competenze')).toHaveLength(0)
+    })
+
+    it('l\'etichetta si legge UNA volta per sezione, anche con più alunni', async () => {
+        const res = await postCompetenze({ sectionId: SEZ_A })
+        expect(res.status).toBe(200)
+        expect(scritte('certificati_competenze')).toHaveLength(2)
+        expect(h.letture.filter((t) => t === 'scrutinio_periodi')).toHaveLength(1)
+        // «2026/2027» è la forma lunga: `annoDaEtichetta` prova prima la breve e poi la lunga (2 letture, una volta sola).
+        expect(h.letture.filter((t) => t === 'anni_scolastici')).toHaveLength(2)
+    })
+
     it('il certificato nasce con l\'anno del `corrente` (a)', async () => {
         const res = await postCompetenze({ sectionId: SEZ_A, alunnoId: AL_1 })
         expect(res.status).toBe(200)
@@ -230,12 +281,19 @@ describe('POST /api/admin/competenze · l\'anno del certificato', () => {
             { utente_id: ADM, scuola_id: SEDE_A },
             { utente_id: ADM, scuola_id: SEDE_B },
         ]
-        // La classe quinta di B non ha uno scrutinio chiuso: il rifiuto è del dominio, ma prima dell'upsert
-        // l'anno si è risolto sulla sede B e non sulla A. Si prova col `corrente` di B scritto a mano.
+        // L'anno si cerca nella sede della SEZIONE (B), non in quella dell'operatore: la sede B ha solo il 2027/28.
         h.db.anni_sede = h.db.anni_sede.map((r) => (r.id === S2B ? { ...r, anno_id: A3 } : r))
-        h.db.scrutini.push({ id: 'd0000000-0000-4000-8000-000000000002', section_id: SEZ_B, stato: 'chiuso', periodo_id: PER, creato_il: '2026-06-11T10:00:00Z' })
-        h.db.alunni.push({ id: 'b0000000-0000-4000-8000-000000000009', section_id: SEZ_B })
-        const res = await postCompetenze({ sectionId: SEZ_B, alunnoId: 'b0000000-0000-4000-8000-000000000009' })
+        const AL_B = 'b0000000-0000-4000-8000-000000000009'
+        h.db.alunni.push({ id: AL_B, section_id: SEZ_B })
+        h.db.scrutini.push({ id: 'd0000000-0000-4000-8000-000000000002', section_id: SEZ_B, stato: 'chiuso', periodo_id: PER, creato_il: '2027-06-11T10:00:00Z' })
+        // L'etichetta del periodo è «2026/2027»: un anno che la sede A ha e la B no → 400, e nessuna scrittura.
+        const no = await postCompetenze({ sectionId: SEZ_B, alunnoId: AL_B })
+        expect(no.status).toBe(400)
+        expect((await no.json()).errori[0].codice).toBe('ANNO_NON_DELLA_SEDE')
+        expect(scritte('certificati_competenze')).toHaveLength(0)
+        // Con l'etichetta «2027/2028» il certificato nasce nella sede B, con l'anno di B.
+        h.db.scrutinio_periodi = [{ id: PER, anno_scolastico: '2027/2028' }]
+        const res = await postCompetenze({ sectionId: SEZ_B, alunnoId: AL_B })
         expect(res.status).toBe(200)
         expect(scritte('certificati_competenze')[0].valori[0]).toMatchObject({ scuola_id: SEDE_B, anno_id: A3 })
     })

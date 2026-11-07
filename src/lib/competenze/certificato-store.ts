@@ -29,7 +29,7 @@ function guastoDb(operazione: string, esito: string, error: unknown, tipo: 'lett
   }
 }
 
-interface ValidaResult {
+export interface ValidaResult {
   ok?: boolean
   scrutinioId?: string
   scuolaId?: string | null
@@ -102,8 +102,11 @@ export async function seedCertificato(
   sectionId: string,
   alunnoId: string,
   esito: EsitoAnno,
+  validato?: ValidaResult,
 ): Promise<{ certificatoId?: string; error?: string; status?: number; codice?: string }> {
-  const v = await validaScrutinioFinaleClasseQuinta(supabase, sectionId)
+  // `validato`: la validazione già fatta dalla route, una volta per sezione (da lì viene l'etichetta che dà
+  // l'anno, P49). Senza, si valida qui, come prima.
+  const v = validato?.ok ? validato : await validaScrutinioFinaleClasseQuinta(supabase, sectionId)
   if (!v.ok) return { error: v.error, status: v.status }
 
   const scrittura = await clientPerScrittura(supabase, esito)

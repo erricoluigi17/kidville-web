@@ -36,7 +36,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
+import { conAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 import { parseMultipart, parseData, parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
@@ -118,6 +121,13 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       { status: 400 },
     )
   }
+
+  // ── 2bis. IN QUALE ANNO ─────────────────────────────────────────────────
+  // L'elenco di classe appartiene all'anno `corrente` della sede (o a quello del cookie): mai indovinato,
+  // e prima di caricare il foglio nello Storage, così un rifiuto non lascia niente da ritirare. Le righe
+  // (`iscrizioni_elenco_righe`) sono in modo `madre`: l'anno lo prendono dal caricamento.
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId)
+  if (esito instanceof NextResponse) return esito
 
   // ── 3. IL CORPO ─────────────────────────────────────────────────────────
   const form = await parseMultipart(request)
@@ -270,7 +280,8 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
     )
   }
 
-  const { data: caricamento, error: erroreCaricamento } = await supabase
+  const scrittura = await clientPerScrittura(supabase, esito)
+  const { data: caricamento, error: erroreCaricamento } = await scrittura
     .from('iscrizioni_elenco_caricamenti')
     .insert({
       scuola_id: scuolaId,
@@ -280,11 +291,14 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       anomalie: letto.anomalie,
       caricato_da: auth.user.id,
       attivo: true,
+      ...conAnno(esito),
     })
     .select('id, caricato_il')
     .single()
   if (erroreCaricamento || !caricamento) {
     await ritira()
+    const anno = erroreAnno(erroreCaricamento, OPERAZIONE_POST)
+    if (anno) return anno
     logEvento('db', 'error', {
       operazione: OPERAZIONE_POST,
       esito: 'elenco-non-registrato',

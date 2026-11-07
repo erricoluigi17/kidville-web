@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, resolveAnnoScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import type { EsitoAnno } from '@/lib/anno/tipi'
 import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -126,12 +127,25 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     }
 
     let creati = 0
-    const errori: { alunnoId: string; error?: string; status?: number }[] = []
+    const errori: { alunnoId: string; error?: string; status?: number; codice?: string }[] = []
     let firstErrStatus: number | undefined
     for (const alunnoId of alunniIds) {
-      const r = await seedCertificato(supabase, body.sectionId, alunnoId)
+      // L'anno del certificato: l'unico `corrente` della sede DELLA SEZIONE (mai quella dell'operatore).
+      // Un esito per alunno, perché un gettone vale una sola transazione e ogni certificato è una scrittura.
+      let esito: EsitoAnno | undefined
+      if (scuolaSezione) {
+        const risolto = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione)
+        if (risolto instanceof NextResponse) {
+          const rifiuto = (await risolto.json()) as { error?: string; codice?: string }
+          errori.push({ alunnoId, error: rifiuto.error, status: risolto.status, codice: rifiuto.codice })
+          firstErrStatus = firstErrStatus ?? risolto.status
+          continue
+        }
+        esito = risolto
+      }
+      const r = await seedCertificato(supabase, body.sectionId, alunnoId, esito)
       if (r.error) {
-        errori.push({ alunnoId, error: r.error, status: r.status })
+        errori.push({ alunnoId, error: r.error, status: r.status, codice: r.codice })
         firstErrStatus = firstErrStatus ?? r.status
       } else {
         creati++
@@ -146,6 +160,7 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
       }
     }
     // Se nessun certificato è stato creato e c'è un errore di guard, propaga lo status.
+    // Il codice di un rifiuto dell'anno (`ANNO_CHIUSO`…) sta in `errori[].codice`, per alunno.
     if (creati === 0 && firstErrStatus) return NextResponse.json({ error: errori[0].error, errori }, { status: firstErrStatus })
     return NextResponse.json({ success: true, creati, totale: alunniIds.length, errori })
   } catch (err) {

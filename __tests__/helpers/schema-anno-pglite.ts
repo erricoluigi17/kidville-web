@@ -520,8 +520,6 @@ export interface OpzioniDbPr2 {
   dopoM1?: (db: PGlite) => Promise<void>
   dopoF1?: (db: PGlite) => Promise<void>
   dopoV1?: (db: PGlite) => Promise<void>
-  /** Salta la correzione `FOTO`: riproduce la catena che in produzione si è fermata in V2 (il 07/11). */
-  senzaFoto?: boolean
 }
 
 /**
@@ -538,7 +536,6 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
   const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2']
   const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined } as const
   for (const passo of ordine) {
-    if (passo === 'FOTO' && o.senzaFoto) continue
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)
     if (passo === o.fino) break

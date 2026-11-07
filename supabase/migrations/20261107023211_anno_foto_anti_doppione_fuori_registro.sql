@@ -21,6 +21,9 @@
 -- `anno_id` se ne vanno da sole il CHECK `gallery_photo_uploads_anno_id_presente`, la FK composta
 -- `gallery_photo_uploads_scuola_anno_fkey` e l'indice `gallery_photo_uploads_scuola_anno_idx`: vale anche se il CHECK
 -- era già stato tolto a mano dall'editor SQL. Nessun uuid di sede.
+-- Togliere la colonna porta via la FK composta e, con lei, i trigger RI su `anni_sede`, che per un istante va in
+-- ACCESS EXCLUSIVE: le scritture sulle tabelle dell'anno aspettano al più 10 s (`lock_timeout`); con `55P03` la
+-- migrazione fallisce pulita e si rilancia.
 --
 -- distruttiva approvata: toglie solo la colonna derivata `anno_id` (calcolata dalla foto madre, ricostruibile) e la riga del registro; le chiavi restano tutte.
 

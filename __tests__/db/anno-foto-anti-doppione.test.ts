@@ -44,9 +44,9 @@ afterAll(async () => { for (const d of dbDaChiudere) await d.close() })
 
 type Risultato = { ok: boolean; created?: boolean; media?: { id: string; anno_id?: string | null } }
 
-async function nuovoDb(o: { fino: 'V1' | 'FOTO' | 'V2'; senzaFoto?: boolean; orfano?: boolean }): Promise<PGlite> {
+async function nuovoDb(o: { fino: 'V1' | 'FOTO' | 'V2'; orfano?: boolean }): Promise<PGlite> {
   const d = await creaDbAnnoPr2({
-    sedi: [SEDE], fino: o.fino, senzaFoto: o.senzaFoto, codaPrima: CODA_PRIMA,
+    sedi: [SEDE], fino: o.fino, codaPrima: CODA_PRIMA,
     // una chiave senza più la foto (cestino purgato): il suo anno non si può calcolare
     dopoM1: o.orfano ? async (db) => {
       await db.query(
@@ -66,18 +66,25 @@ async function pubblica(d: PGlite, upload: string = UPLOAD): Promise<Risultato> 
 async function una<T>(d: PGlite, sql: string, params: unknown[] = []): Promise<T> {
   return Object.values((await d.query<Record<string, T>>(sql, params)).rows[0])[0] as T
 }
-async function codice(p: Promise<unknown>): Promise<string> {
+type Errore = { codice: string; vincolo?: string; dettaglio?: unknown }
+/** Il codice dell'errore e CHI l'ha sollevato: il vincolo (`constraint`) e il dettaglio (`detail`, JSON). */
+async function errore(p: Promise<unknown>): Promise<Errore> {
   try { await p } catch (e) {
-    const x = e as { code?: string; message?: string }
-    return /^[A-Z_]+$/.test(x.message ?? '') ? x.message! : (x.code ?? x.message ?? 'senza-codice')
+    const x = e as { code?: string; message?: string; constraint?: string; detail?: string }
+    let dettaglio: unknown
+    try { dettaglio = x.detail ? JSON.parse(x.detail) : undefined } catch { dettaglio = x.detail }
+    return {
+      codice: /^[A-Z_]+$/.test(x.message ?? '') ? x.message! : (x.code ?? x.message ?? 'senza-codice'),
+      vincolo: x.constraint, dettaglio,
+    }
   }
-  return 'nessun-errore'
+  return { codice: 'nessun-errore' }
 }
 
 describe('foto anti-doppione · la correzione che porta la chiave fuori dal registro', () => {
   it('1 · SENZA la correzione la pubblicazione è rifiutata con 23514 (il guasto di produzione)', async () => {
     const d = await nuovoDb({ fino: 'V1' })
-    expect(await codice(pubblica(d))).toBe('23514')
+    expect(await errore(pubblica(d))).toMatchObject({ codice: '23514', vincolo: 'gallery_photo_uploads_anno_id_presente' })
     expect(await una<number>(d, 'SELECT count(*)::int FROM public.galleria_media_v2')).toBe(0)
   })
 
@@ -93,8 +100,9 @@ describe('foto anti-doppione · la correzione che porta la chiave fuori dal regi
   })
 
   it('3 · con una chiave orfana V2 senza la correzione si ferma; con la correzione si applica', async () => {
-    const senza = await nuovoDb({ fino: 'V1', senzaFoto: true, orfano: true })
-    expect(await codice(applicaPr2(senza, 'V2'))).toBe('ANNO_RIEMPIMENTO_INCOMPLETO')
+    const senza = await nuovoDb({ fino: 'V1', orfano: true })
+    expect(await errore(applicaPr2(senza, 'V2'))).toMatchObject({
+      codice: 'ANNO_RIEMPIMENTO_INCOMPLETO', dettaglio: { tabella: 'gallery_photo_uploads' } })
     expect(await una<boolean>(senza, 'SELECT controlli_rigidi FROM public.anno_regole')).toBe(false)
 
     const con = await nuovoDb({ fino: 'V2', orfano: true })

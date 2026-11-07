@@ -6,7 +6,9 @@ import { creaDbAnno, creaAnniFissi } from '../helpers/schema-anno-pglite'
  * COMPITO 1.4c · `sposta_confine_anno`: lo spostamento del confine fra due anni di una sede,
  * rifiutato quando nei giorni spostati ci sono già righe (review focus 2). Solo uuid finti.
  *
- * Il calendario di prova è fisso e non dipende da oggi: ogni test riparte da `ripristina()`.
+ * Il calendario di prova è fisso e non dipende da oggi: `creaAnniFissi` svuota quello che la migrazione ha
+ * creato per il giorno in cui gira il test (anni nuovi, anni mancanti) e lo ricrea con la data fissa; il
+ * 2027/28 lo aggiunge il beforeAll; ogni test riparte da `ripristina()`.
  *   2025/26  2025-09-01 → 2026-08-31  chiuso
  *   2026/27  2026-09-01 → 2027-08-31  corrente        ← l'anno su cui si sposta la fine
  *   2027/28  2027-09-01 → 2028-08-31  in_preparazione ← il successivo

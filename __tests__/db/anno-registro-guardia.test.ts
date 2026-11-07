@@ -7,11 +7,10 @@ import { creaDbAnno, creaAnniFissi } from '../helpers/schema-anno-pglite'
  * La guardia dell'anno chiuso (gettoni, header, oblio) e `sposta_confine_anno` NON sono qui: arrivano
  * nel 1.4b e nel 1.4c. Solo uuid finti.
  *
- * Gli anni sono fissi: creati con `p_oggi` fisso E con gli stati reimpostati da `fissaCalendarioAnni`
- * (la migrazione dà alle sedi già presenti gli stati di OGGI: dal 01/08/2027 il 2026/27 sarebbe
- * `in_chiusura`, dal 01/09/2027 il 2027/28 sarebbe già `corrente`). L'helper riporta tutto al calendario
- * di sempre; il 2027/28 del describe «F2» si toglie solo se l'ha creato il test. Nessun test dipende da
- * oggi, tranne quello che scrive «oggi» di proposito.
+ * Gli anni sono fissi: `creaAnniFissi` svuota il calendario che la migrazione ha creato per OGGI (dal
+ * 01/08/2027 il 2026/27 sarebbe `in_chiusura`, dal 01/09/2027 il 2027/28 `corrente`, poi anni nuovi o
+ * mancanti) e lo ricrea con la data fissa: 2025/26 chiuso, 2026/27 corrente.
+ * Il 2027/28 del describe «F2» si toglie solo se l'ha creato il test. Nessun test dipende da oggi, tranne quello che scrive «oggi» di proposito.
  */
 
 const SEDE = '22222222-2222-4222-8222-222222222222'

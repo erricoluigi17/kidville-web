@@ -1430,8 +1430,9 @@ $$;
 -- `data`/`madre` quando `anno_id` è uguale a quello di OLD: chi corregge la data (o la madre) senza
 -- cambiare l'anno vuole che la riga segua, e la riga si riallinea all'anno calcolato (anche in modo
 -- morbido; la guardia vede ancora OLD e NEW). RIGIDI (`anno_regole`, o `rigida` della tabella):
--- GIORNO_SENZA_ANNO, ANNO_NON_COERENTE (solo per un `anno_id` scritto diverso da OLD e dal calcolato),
--- SEZIONE_DI_ALTRO_ANNO.
+-- GIORNO_SENZA_ANNO, ANNO_NON_COERENTE (in modo data/madre solo per un `anno_id` scritto diverso da OLD
+-- e dal calcolato; nel modo dichiarato un UPDATE con `anno_id` uguale a OLD e competenza spostata la
+-- solleva ancora), SEZIONE_DI_ALTRO_ANNO.
 -- UPDATE: si ricalcola e si verifica solo se cambia la colonna data (o la riserva), la via della
 -- sede, la madre, section_id o anno_id, oppure se anno_id è NULL: una riga vecchia incoerente non
 -- deve bloccare una scrittura che con lei non c'entra. Questa uscita anticipata salta il RICALCOLO,

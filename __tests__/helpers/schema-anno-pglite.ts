@@ -240,11 +240,10 @@ export async function creaDbAnno(opzioni: OpzioniDbAnno = {}): Promise<PGlite> {
 }
 
 /**
- * Riporta gli anni di TUTTE le sedi a un calendario fisso, indipendente dal giorno in cui gira il test:
- * sotto il 2026 `chiuso`, 2026/27 `corrente`, dal 2027 in su `in_preparazione`. La migrazione dà alle sedi
- * che già c'erano gli stati di OGGI (dal 01/08/2027 il 2026/27 sarebbe `in_chiusura`, dal 01/09/2027 il
- * 2027/28 sarebbe `corrente`). Va chiamata dopo `anni_sede_crea_per_sede(sede, '2026-11-06')`, che completa
- * gli anni mancanti.
+ * Riporta gli STATI e le date degli anni esistenti a quelli di sempre: sotto il 2026 `chiuso`, 2026/27
+ * `corrente`, dal 2027 in su `in_preparazione`. NON crea né toglie anni: da sola non rende il calendario
+ * indipendente da oggi (dal 01/09/2028 la migrazione ha creato anche il 2028/29, dal 01/09/2029 manca il
+ * 2027/28). Per quello c'è `creaAnniFissi`, che la chiama dopo aver ricreato il calendario.
  *
  * DUE UPDATE, non uno: l'indice unico `anni_sede_un_corrente_per_sede` non è differibile, e con un
  * UPDATE solo il 2026/27 diventa `corrente` mentre un altro anno lo è ancora (23505). Prima si porta
@@ -269,13 +268,18 @@ export async function fissaCalendarioAnni(db: PGlite): Promise<void> {
 }
 
 /**
- * Dà alla sede gli anni del calendario di prova (2025/26 e 2026/27, creati con `p_oggi` fisso) e riporta
- * tutto a stati fissi. Prima mette fuori da `corrente` gli anni che la migrazione ha già creato per OGGI:
- * dal 01/09/2028 il 2028/29 sarebbe `corrente` e la creazione del 2026/27 `corrente` urterebbe
- * `anni_sede_un_corrente_per_sede` (indice non differibile).
+ * Dà alle sedi il calendario di prova, SEMPRE lo stesso qualunque sia il giorno in cui gira il test:
+ * 2025/26 `chiuso` e 2026/27 `corrente` (anno attivo); il 2027/28 `in_preparazione` lo aggiunge, quando serve,
+ * il test che lo vuole (anno-confine, F2, dbB) e `fissaCalendarioAnni` lo tiene in quello stato.
+ *
+ * Svuota prima il calendario che la migrazione ha creato per OGGI (come fa `sedeVuota` in
+ * `anno-calendario.test.ts`) e lo ricrea con la data fissa: aggiustarlo non basta. Dal 01/09/2028 la
+ * migrazione ha già creato anche il 2028/29 (che un test sul «nessun anno successivo» troverebbe), e dal
+ * 01/09/2029 manca il 2027/28, per cui `anni_sede_crea_per_sede` urterebbe `CALENDARIO_NON_CONTINUO`.
+ * Va chiamata PRIMA di creare righe che puntano agli anni (sezioni, presenze…) e con TUTTE le sedi del db.
  */
 export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
-  await db.exec(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE stato = 'corrente'`)
+  await db.exec('DELETE FROM public.anni_sede_stati; DELETE FROM public.anni_sede; DELETE FROM public.anni_scolastici;')
   for (const sede of sedi) await db.query(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [sede])
   await fissaCalendarioAnni(db)
 }

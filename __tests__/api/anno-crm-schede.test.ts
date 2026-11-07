@@ -79,13 +79,13 @@ const A3 = 'a3333333-3333-4333-8333-333333333333' // in_preparazione 2027/28
 const S2 = 'b2222222-2222-4222-8222-222222222222'
 const S3 = 'b3333333-3333-4333-8333-333333333333'
 
-const richiesta = (percorso: string, corpo: unknown) =>
+const richiesta = (percorso: string, corpo: unknown, cookie?: string) =>
     new NextRequest(`http://localhost${percorso}`, {
         method: 'POST',
         body: JSON.stringify(corpo),
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
     })
-const postScheda = (bambini: { nome: string; annoIngresso: string }[], extra: Record<string, unknown> = {}) =>
+const postScheda = (bambini: { nome: string; annoIngresso: string }[], extra: Record<string, unknown> = {}, cookie?: string) =>
     POST_SCHEDA(
         richiesta('/api/admin/crm/schede', {
             genitoreNome: 'Famiglia Prova',
@@ -93,12 +93,15 @@ const postScheda = (bambini: { nome: string; annoIngresso: string }[], extra: Re
             origine: 'telefonata',
             bambini,
             ...extra,
-        }),
+        }, cookie),
     )
-const postBambino = (annoIngresso: string) =>
-    POST_BAMBINO(richiesta(`/api/admin/crm/schede/${SCHEDA}/bambini`, { nome: 'Bimbo Prova', annoIngresso }), {
+const postBambino = (annoIngresso: string, cookie?: string) =>
+    POST_BAMBINO(richiesta(`/api/admin/crm/schede/${SCHEDA}/bambini`, { nome: 'Bimbo Prova', annoIngresso }, cookie), {
         params: Promise.resolve({ id: SCHEDA }),
     })
+
+// Il selettore d'anno (PR 4.2) scriverà questo cookie: punta al 2027/28 mentre il `corrente` è il 2026/27.
+const COOKIE_SUL_PROSSIMO = `anno_attivo=${A3}`
 
 const inserimenti = (tabella: string) =>
     (h.scritture as Array<Scrittura & { header: string | null }>).filter((s) => s.tabella === tabella && s.operazione === 'insert')
@@ -130,6 +133,12 @@ describe('POST /api/admin/crm/schede · l\'anno dei bambini', () => {
         expect(res.status).toBe(201)
         expect(bambiniScritti()).toHaveLength(1)
         expect(bambiniScritti()[0]).toMatchObject({ scuola_id: SEDE_A, anno_id: A2, anno_ingresso: 'in_corso' })
+    })
+
+    it.each(['in_corso', 'non_indicato'])('un cookie `anno_attivo` sul 2027/28 NON sposta un bambino `%s`: resta l\'anno del `corrente` (P40)', async (tipo) => {
+        const res = await postScheda([{ nome: 'Bimbo Prova', annoIngresso: tipo }], {}, COOKIE_SUL_PROSSIMO)
+        expect(res.status).toBe(201)
+        expect(bambiniScritti()[0]).toMatchObject({ anno_id: A2, anno_ingresso: tipo })
     })
 
     it('`non_indicato` vale come `in_corso`: l\'anno del `corrente`', async () => {
@@ -207,6 +216,12 @@ describe('POST /api/admin/crm/schede/[id]/bambini · l\'anno del bambino', () =>
         const res = await postBambino('in_corso')
         expect(res.status).toBe(201)
         expect(bambiniScritti()[0]).toMatchObject({ scuola_id: SEDE_A, scheda_id: SCHEDA, anno_id: A2, anno_ingresso: 'in_corso' })
+    })
+
+    it.each(['in_corso', 'non_indicato'])('un cookie `anno_attivo` sul 2027/28 NON sposta un bambino `%s`: resta l\'anno del `corrente` (P40)', async (tipo) => {
+        const res = await postBambino(tipo, COOKIE_SUL_PROSSIMO)
+        expect(res.status).toBe(201)
+        expect(bambiniScritti()[0]).toMatchObject({ anno_id: A2, anno_ingresso: tipo })
     })
 
     it('`prossimo` nasce con l\'anno 2027/28, con il ruolo segreteria', async () => {

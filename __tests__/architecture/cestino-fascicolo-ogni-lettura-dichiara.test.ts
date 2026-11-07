@@ -283,8 +283,10 @@ const COPERTE_ATTESE: Record<string, number> = {
   'src/lib/gdpr/cosa-distrugge.ts': 1,
   // La PURGA del cestino (compito PU1): `fascicoloNelCestino` sulle righe scadute da
   // togliere · `fascicoloAncheNelCestino` sui percorsi ancora citati da una riga VIVA o
-  // nel cestino (un file condiviso non si cancella) · `fascicoloNelCestino` sul DELETE.
-  'src/app/api/gdpr/retention-cestino-registro/route.ts': 3,
+  // nel cestino (un file condiviso non si cancella). 3 → 2 (PR 3, 3.6): il DELETE non è più un
+  // `from('student_documents')` ma `scriviOblio` `delete_cestino` (RPC `anno_oblio_scrivi`), che porta
+  // la cintura `eliminato_il IS NOT NULL AND < soglia` nell'SQL e nel ripiego.
+  'src/app/api/gdpr/retention-cestino-registro/route.ts': 2,
   // `fascicoloAncheNelCestino` (robustezza 2, sessione 1): la conservazione delle domande
   // d'iscrizione chiede se un documento del fascicolo, vivo o nel cestino, nomina ancora un
   // allegato prima di toglierlo dal bucket. Un letterale solo, chiamato per due colonne.
@@ -301,8 +303,12 @@ const COPERTE_ATTESE: Record<string, number> = {
  * è cambiato, si abbassa.
  * 2026-10 · 29: la lettura dichiarata di `src/lib/iscrizioni/percorsi-citati.ts` (robustezza 2,
  * sessione 1). Alzata, non abbassata.
+ * 2026-11 · 28 (PR 3, 3.6): ABBASSATA di una, e la causa è nota: il DELETE della purga del cestino
+ * (`retention-cestino-registro`) è passato da `from('student_documents').delete()` a `scriviOblio`
+ * (RPC). Il riconoscitore non si è rotto: l'occorrenza è sparita dal sorgente, e la cintura che
+ * quella riga portava vive ora nell'SQL di M3 e nel ripiego, entrambi provati da test.
  */
-const SOGLIA_VISTE = 29
+const SOGLIA_VISTE = 28
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Le funzioni edge (Deno): il filtro del cestino scritto a mano

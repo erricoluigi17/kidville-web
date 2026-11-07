@@ -1,6 +1,7 @@
 import { fenceSignedArchive, archiveWriterActive } from '@/lib/forms/signed-archive-state'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { SIGNED_FORMS_BUCKET, pendingSignedSubmissionPath, ARCHIVE_ERASURE } from '@/lib/forms/signed-path'
+import { SIGNED_FORMS_BUCKET, pendingSignedSubmissionPath } from '@/lib/forms/signed-path'
+import { scriviOblio } from '@/lib/gdpr/oblio-registro'
 import { percorsoNelBucket } from '@/lib/allegati/storage'
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { logEvento, logErrore } from '@/lib/logging/logger'
@@ -167,17 +168,18 @@ export async function obliaModuliGenitori(db: SupabaseClient, soggetto: Soggetto
     if (voce.protetto) continue
     if (voce.paths.some((path) => fermi.has(path))) continue
     // Eliminare tutta la riga toglie anche answers, parent_details e snapshot.
-    const { data, error } = await db.from('forms_submissions').delete().eq('id', voce.riga.id).eq(`signature_log->>${ARCHIVE_ERASURE}`, true).select('id')
-    if (error || !Array.isArray(data)) {
-      logErrore({ operazione: op, evento: 'oblio_moduli_evidenza' }, error ?? { message: 'risposta cancellazione assente' })
+    // Dal 3.6 la cancellazione passa da `anno_oblio_scrivi`: la cintura ARCHIVE_ERASURE sta nell'SQL (e nel ripiego).
+    const esito = await scriviOblio(db, { azione: 'delete', tabella: 'forms_submissions', colonnaFiltro: 'id', valoriFiltro: [String(voce.riga.id)], op })
+    if (!esito.ok) {
+      logErrore({ operazione: op, evento: 'oblio_moduli_evidenza' }, { message: esito.codice ?? 'cancellazione fallita' })
       out.nonRimossi++
-    } else if (data.length === 0) {
+    } else if (esito.righe === 0) {
       const remaining = await db.from('forms_submissions').select('id').eq('id', voce.riga.id).maybeSingle()
       if (remaining.error || remaining.data) {
         logErrore({ operazione: op, evento: 'oblio_moduli_delete_non_confermato' }, remaining.error ?? { message: 'indice ancora presente dopo delete CAS' })
         out.nonRimossi++
       }
-    } else out.righe += data.length
+    } else out.righe += esito.righe
   }
   logEvento('gdpr', out.nonRimossi ? 'error' : 'info', { operazione: op, esito: 'oblio-moduli-genitori', n_file: out.rimossi, n_righe: out.righe, n: out.protetti, n_condivisi: out.condivisi })
   return out

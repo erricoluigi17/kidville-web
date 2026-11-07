@@ -86,7 +86,8 @@ export function signedFormsClient(db = signedFormsDb()) {
         if (action === 'insert') { const row = { id: SUBMISSION, ...structuredClone(payload) }; (db[table] ??= []).push(row); rows = [row] }
         if (action === 'update') rows.forEach((r) => Object.assign(r, structuredClone(payload)))
         if (action === 'delete') db[table] = (db[table] ?? []).filter((r) => !rows.includes(r))
-        return { data: structuredClone(rows), error: null }
+        // `count` come con `{ count: 'exact' }`: dal 3.6 la cancellazione dell'oblio passa da scriviOblio (ripiego diretto).
+        return { data: structuredClone(rows), error: null, count: rows.length }
       }
       const execute = async () => { await hooks.beforeQuery?.({ table, action, payload }); return result() }
       const qb = {

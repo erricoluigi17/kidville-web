@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { scriviOblio } from '@/lib/gdpr/oblio-registro'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { percorsoNelBucket } from '@/lib/allegati/storage'
@@ -331,10 +332,23 @@ const CONTENITORI_CESTINO_REGISTRO: readonly Contenitore[] = [
                     'le sole vive la purga toglierebbe dal bucket il file di un documento che la segreteria può ' +
                     'ancora ripristinare — il «Ripristina» restituirebbe un documento che non c\'è più.',
             ),
-        cancella: (s, soglia, ids) =>
-            fascicoloNelCestino(s.from('student_documents').delete({ count: 'exact' }))
-                .lt('eliminato_il', soglia)
-                .in('id', ids),
+        // Dal 3.6 la purga del fascicolo passa da `anno_oblio_scrivi` (azione `delete_cestino`): l'SQL ripete la
+        // cintura di prima nella stessa DELETE (`eliminato_il IS NOT NULL AND eliminato_il < soglia`), e il ripiego
+        // sul DB della CI la riproduce con `.not(…).lt(…)`. `righe = 0` è il ramo di prima: una riga ripristinata fra
+        // la lettura e la cancellazione non si cancella.
+        cancella: async (s, soglia, ids) => {
+            const e = await scriviOblio(s, {
+                azione: 'delete_cestino',
+                tabella: 'student_documents',
+                colonnaFiltro: 'id',
+                valoriFiltro: ids,
+                op: 'gdpr/retention-cestino-registro:POST',
+                primaDi: soglia,
+            })
+            return e.ok
+                ? { error: null, count: e.righe }
+                : { error: { code: e.codice ?? 'oblio-non-riuscito' }, count: null }
+        },
     },
 ]
 

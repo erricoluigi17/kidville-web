@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { scriviOblio } from '@/lib/gdpr/oblio-registro'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import {
@@ -116,6 +117,8 @@ import { BUCKET_GALLERIA, percorsoNelBucket } from '@/lib/gallery/storage'
 
 /** Il nome con cui questo lavoro si presenta in `app_log` e in `cron.job`. */
 const JOB = 'galleria-retention'
+/** Il nome della route: finisce nel riepilogo che l'RPC dell'oblio scrive (mai dati). */
+const OP_OBLIO = 'gdpr/retention-galleria:POST'
 
 /**
  * IL TETTO DEL LOTTO. Una lettura senza `.limit()` non è «tutte le righe»: è
@@ -1047,9 +1050,18 @@ export const POST = withRoute('gdpr/retention-galleria:POST', async (request: Ne
         const timbrati: string[] = []
         for (let i = 0; i < idsConFile.length; i += LOTTO_SCRITTURA) {
             const lotto = idsConFile.slice(i, i + LOTTO_SCRITTURA)
-            const { error: erroreTimbro } = await soloNelCestino(
-                supabase.from('galleria_media_v2').update({ file_rimosso_il: adesso.toISOString() }),
-            ).in('id', lotto)
+            // Dal 3.6 il timbro passa da `anno_oblio_scrivi` (`update|galleria_media_v2|id`, chiave `file_rimosso_il`).
+            // Gli id vengono dalla lettura del cestino qui sopra; la funzione non ha la cintura `soloNelCestino` (audit
+            // del 3.3-3, riga 5), che prima era anche sull'UPDATE.
+            const esitoTimbro = await scriviOblio(supabase, {
+                azione: 'update',
+                tabella: 'galleria_media_v2',
+                colonnaFiltro: 'id',
+                valoriFiltro: lotto,
+                set: { file_rimosso_il: adesso.toISOString() },
+                op: OP_OBLIO,
+            })
+            const erroreTimbro = esitoTimbro.ok ? null : { code: esitoTimbro.codice ?? 'oblio-non-riuscito' }
             if (erroreTimbro) {
                 // Il file è uscito e la riga non porta il timbro: la riga NON si
                 // cancella, perché il giro dopo la rileggerebbe fra le
@@ -1097,16 +1109,19 @@ export const POST = withRoute('gdpr/retention-galleria:POST', async (request: Ne
             let nonRaggiunte = 0
             for (let i = 0; i < daCancellare.length; i += LOTTO_SCRITTURA) {
                 const lotto = daCancellare.slice(i, i + LOTTO_SCRITTURA)
-                const { error, count } = await ancheNelCestino(
-                    supabase.from('galleria_media_v2').delete({ count: 'exact' }),
-                    'la DELETE deve raggiungere anche le righe il cui file è già uscito (`file_rimosso_il` ' +
-                        'valorizzato), che `soloNelCestino` esclude per costruzione: filtrando le sole ripristinabili ' +
-                        'una riga rimasta indietro da una DELETE fallita non verrebbe più cancellata da nessun giro. ' +
-                        'La cintura contro la riga VIVA resta, e sta qui accanto: `.not(eliminato_il, is, null)`, ' +
-                        'cioè una foto che nessuno ha messo nel cestino non è cancellabile da questo lavoro.',
-                )
-                    .not('eliminato_il', 'is', null)
-                    .in('id', lotto)
+                // `delete_cestino|galleria_media_v2|id`: la DELETE raggiunge anche le righe il cui file è già uscito
+                // (`file_rimosso_il` valorizzato) e la cintura contro la riga VIVA (`eliminato_il IS NOT NULL`) sta
+                // dentro la funzione SQL, nella stessa istruzione; il ripiego sul DB della CI la riproduce con
+                // `.not('eliminato_il', 'is', null)`. Una foto che nessuno ha messo nel cestino non è cancellabile.
+                const esitoDelete = await scriviOblio(supabase, {
+                    azione: 'delete_cestino',
+                    tabella: 'galleria_media_v2',
+                    colonnaFiltro: 'id',
+                    valoriFiltro: lotto,
+                    op: OP_OBLIO,
+                })
+                const error = esitoDelete.ok ? null : { code: esitoDelete.codice ?? 'oblio-non-riuscito' }
+                const count = esitoDelete.ok ? esitoDelete.righe : null
 
                 if (error) {
                     // Si FERMA al primo lotto che fallisce, e non prosegue: le righe

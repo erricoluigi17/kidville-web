@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
+import { scriviOblio } from '@/lib/gdpr/oblio-registro'
 import { rimuoviEVerifica, bloccanti, type EsitoRimozione } from '@/lib/storage/rimozione-verificata'
 import { percorsiCitati } from '@/lib/iscrizioni/percorsi-citati'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
@@ -387,11 +388,16 @@ export const POST = withRoute('gdpr/retention-iscrizioni:POST', async (request: 
                     n_domande: idDaCancellare.length,
                 }, e)
             }
-            const { error: erroreDelete } = await supabase
-                .from('enrollment_submissions')
-                .delete()
-                .in('id', idDaCancellare)
-            if (erroreDelete) {
+            // Dal 3.6 la cancellazione passa da `anno_oblio_scrivi` (`delete|enrollment_submissions|id`): la conservazione
+            // è un obbligo di legge e deve funzionare sull'anno chiuso senza gettone. L'errore l'ha già registrato `scriviOblio`.
+            const esitoDelete = await scriviOblio(supabase, {
+                azione: 'delete',
+                tabella: 'enrollment_submissions',
+                colonnaFiltro: 'id',
+                valoriFiltro: idDaCancellare,
+                op: 'gdpr/retention-iscrizioni:POST',
+            })
+            if (!esitoDelete.ok) {
                 logEvento('cron', 'error', {
                     operazione: JOB,
                     esito: 'cancellazione-fallita',

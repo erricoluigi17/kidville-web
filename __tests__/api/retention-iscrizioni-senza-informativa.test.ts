@@ -64,6 +64,14 @@ vi.mock('@/lib/auth/require-staff', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // Dal 3.6 la cancellazione passa da `anno_oblio_scrivi` (`delete|enrollment_submissions|id`).
+    rpc: async (nome: string, args: Record<string, unknown>) => {
+      if (nome !== 'anno_oblio_scrivi' || args.p_azione !== 'delete' || args.p_tabella !== 'enrollment_submissions') {
+        throw new Error(`rpc non prevista: ${nome}`)
+      }
+      h.cancellati.push(...(args.p_valori as string[]))
+      return { data: (args.p_valori as unknown[]).length, error: null }
+    },
     from: () => {
       const qb: Record<string, unknown> = {}
       qb.select = (cols: string) => {

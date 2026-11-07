@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertAlunnoInScope } from '@/lib/auth/scope'
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { famigliaDiAlunno } from '@/lib/pagamenti/sospensione'
 import { logScrittura } from '@/lib/audit/scrittura'
@@ -13,6 +13,7 @@ import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { guastoSecondario } from '@/lib/db/guasto'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
 
 // Comportamento storico preservato: `sospeso` conta solo se strettamente === true,
 // `motivo` è usato solo se stringa — qualunque altro valore è tollerato (→ false/null).
@@ -37,17 +38,19 @@ const postBodySchema = z
 async function applicaSospensione(
   supabase: SupabaseClient,
   args: { alunnoId: string; sospeso: boolean; motivo: string | null; causa: 'morosita' | 'altro'; attoreId: string }
-): Promise<{ error: { message?: string; code?: string } | null }> {
+): Promise<{ error: { message?: string; code?: string } | null; scritto: Record<string, unknown> }> {
   const base = args.sospeso
     ? { sospeso: true, sospeso_motivo: args.motivo, sospeso_il: new Date().toISOString(), sospeso_da: args.attoreId }
     : { sospeso: false, sospeso_motivo: null, sospeso_il: null, sospeso_da: args.attoreId }
   const conCausa = args.sospeso ? { ...base, sospeso_causa: args.causa } : { ...base, sospeso_causa: null }
 
+  let scritto: Record<string, unknown> = conCausa
   let res = await supabase.from('alunni').update(conCausa).eq('id', args.alunnoId)
   if (res.error && ['PGRST204', '42703'].includes((res.error as { code?: string }).code ?? '')) {
+    scritto = base
     res = await supabase.from('alunni').update(base).eq('id', args.alunnoId)
   }
-  return { error: res.error }
+  return { error: res.error, scritto }
 }
 
 const getQuerySchema = z.object({ alunno_id: zUuid })
@@ -109,8 +112,9 @@ export const POST = withRoute('admin/pagamenti/sospensione:POST', async (request
     }
 
     const applicati: string[] = []
+    const scritti = new Map<string, Record<string, unknown>>()
     for (const alunnoId of alunnoIds) {
-      const { error } = await applicaSospensione(supabase, { alunnoId, sospeso, motivo, causa, attoreId: auth.user.id })
+      const { error, scritto } = await applicaSospensione(supabase, { alunnoId, sospeso, motivo, causa, attoreId: auth.user.id })
       if (error) {
         logEvento('pagamento', 'error', {
           operazione: 'admin/pagamenti/sospensione:POST',
@@ -124,6 +128,33 @@ export const POST = withRoute('admin/pagamenti/sospensione:POST', async (request
         continue
       }
       applicati.push(alunnoId)
+      scritti.set(alunnoId, scritto)
+    }
+
+    // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo della sede di ciascuno (fail-open).
+    // La sede non è nel corpo della richiesta: una lettura sola per tutti gli alunni applicati.
+    if (scritti.size > 0) try {
+      const plessi = await scuoleDiUtente(supabase, auth.user)
+      const sedi = await supabase.from('alunni').select('id, scuola_id').in('id', [...scritti.keys()]).in('scuola_id', plessi)
+      if (sedi.error) {
+        logEvento('anno-scolastico', 'warn', {
+          tipo: 'frequenza-sede-non-letta',
+          error_code: (sedi.error as { code?: string }).code ?? null,
+          operazione: 'admin/pagamenti/sospensione:POST',
+          n: scritti.size,
+        })
+      } else {
+        const cacheAnno = new Map<string, string | null>()
+        for (const riga of (sedi.data ?? []) as { id: string; scuola_id: string | null }[]) {
+          const annoSedeId = await annoAttivoDiSede(supabase, riga.scuola_id, cacheAnno)
+          if (annoSedeId) {
+            await scriviFrequenza(supabase, { alunnoId: riga.id, annoSedeId, campi: campiFrequenzaDaAlunno(scritti.get(riga.id) ?? {}) })
+          }
+        }
+      }
+    } catch (err) {
+      // la frequenza non fa fallire una sospensione già scritta: la lettura della sede ha lanciato (rete, configurazione)
+      logErrore({ operazione: 'admin/pagamenti/sospensione:POST', evento: 'frequenza_sede' }, err)
     }
 
     if (applicati.length === 0) {

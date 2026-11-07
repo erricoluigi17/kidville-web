@@ -430,3 +430,514 @@ REVOKE ALL ON FUNCTION public.crm_bambini_anno_da_etichetta()             FROM P
 GRANT EXECUTE ON FUNCTION public.anni_sede_crea_successivo(uuid, date)    TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_dichiarato_transitorio(text, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.crm_bambini_anno_da_etichetta()          TO service_role;
+
+-- ── 2.1 · Il rapporto di riconciliazione ────────────────────────────────────
+
+-- Una fotografia di conteggi, euro e uuid: MAI un nome, MAI testo libero. Nessuna chiave esterna verso `anni_*`
+-- (un anno che sparisce non deve toglierle il senso); verso `schools` sì, perché il lock `fk-scuola-id` vuole ogni
+-- `scuola_id` con la sua FK, e `SET NULL` conserva i conteggi anche se la sede viene eliminata. La migrazione gira su un database vivo, quindi il criterio di
+-- conservazione non è `dopo = prima` ma `dopo − prima − nuove = 0` (`anno_riconciliazione_differenze`).
+CREATE TABLE IF NOT EXISTS public.riconciliazione_anno (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  fase        text        NOT NULL CONSTRAINT riconciliazione_anno_fase_check CHECK (fase IN ('prima', 'dopo', 'finale')),
+  eseguita_il timestamptz NOT NULL DEFAULT now(),
+  transazione bigint      NOT NULL DEFAULT txid_current(),
+  tabella     text        NOT NULL,
+  scuola_id   uuid REFERENCES public.schools(id) ON DELETE SET NULL,
+  anno_id     uuid,
+  voce        text        NOT NULL,
+  valore      numeric     NOT NULL
+);
+CREATE INDEX IF NOT EXISTS riconciliazione_anno_fase_idx ON public.riconciliazione_anno (fase, eseguita_il, tabella);
+CREATE INDEX IF NOT EXISTS riconciliazione_anno_scuola_idx ON public.riconciliazione_anno (scuola_id);
+
+ALTER TABLE public.riconciliazione_anno ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.riconciliazione_anno FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.riconciliazione_anno TO service_role;
+
+-- L'espressione SQL che dà la SEDE di una riga della tabella (alias `p_alias`): `scuola_id` se la tabella ce
+-- l'ha, poi la via del registro (sezione, alunno, chat). Le tabelle `madre` non hanno sede: NULL.
+CREATE OR REPLACE FUNCTION public.anno_sede_sql(p_tabella text, p_alias text DEFAULT 't')
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_via   text;
+  v_madre text;
+  v_parti text[] := '{}';
+BEGIN
+  SELECT t.via_sede, t.madre_tabella INTO v_via, v_madre FROM public.anno_tabelle t WHERE t.tabella = p_tabella;
+  IF v_madre IS NOT NULL THEN
+    RETURN 'NULL::uuid';
+  END IF;
+  IF public.anno_ha_colonna(p_tabella, 'scuola_id') THEN
+    v_parti := v_parti || format('%I.scuola_id', p_alias);
+  END IF;
+  IF v_via IS NOT NULL AND v_via <> 'scuola_id' AND public.anno_ha_colonna(p_tabella, v_via) THEN
+    v_parti := v_parti || CASE
+      WHEN v_via = 'section_id' THEN
+        format('(SELECT x.scuola_id FROM public.sections x WHERE x.id = %I.section_id)', p_alias)
+      WHEN v_via IN ('alunno_id', 'student_id') THEN
+        format('(SELECT x.scuola_id FROM public.alunni x WHERE x.id = %I.%I)', p_alias, v_via)
+      WHEN v_via = 'thread_id' THEN
+        format('(SELECT a.scuola_id FROM public.chat_threads c JOIN public.alunni a ON a.id = c.student_id WHERE c.id = %I.thread_id)', p_alias)
+    END;
+  END IF;
+  IF cardinality(v_parti) = 0 THEN
+    RETURN 'NULL::uuid';
+  END IF;
+  RETURN 'coalesce(' || array_to_string(v_parti, ', ') || ')';
+END
+$$;
+
+-- Scrive nel rapporto il risultato di una SELECT (colonne `scuola_id`, `anno_id`, `valore`) e dice quante righe.
+CREATE OR REPLACE FUNCTION public.anno_fotografa_scrivi(p_fase text, p_tabella text, p_voce text, p_select text)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n bigint;
+BEGIN
+  EXECUTE format(
+    'INSERT INTO public.riconciliazione_anno (fase, tabella, scuola_id, anno_id, voce, valore) '
+    || 'SELECT %L, %L, q.scuola_id, q.anno_id, %L, q.valore FROM (%s) q WHERE q.valore IS NOT NULL',
+    p_fase, p_tabella, p_voce, p_select);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END
+$$;
+
+-- La fotografia. Per ogni tabella del registro che esiste (o per quelle date) scrive, per sede e per anno:
+-- `righe`, `righe_per_anno`, `righe_senza_anno`, `righe_senza_sede`; in `dopo` e `finale` anche `righe_nuove`
+-- (righe nate dopo la fotografia `prima` della stessa tabella); su `pagamenti` gli euro; su `incassi` il totale
+-- (anno solare: nessun `anno_id`); e le voci `ambiguo:*`, che contano i casi in cui il riempimento ha dovuto
+-- scegliere. Conta soltanto: nessuna riga viene letta o restituita.
+CREATE OR REPLACE FUNCTION public.anno_fotografa(p_fase text, p_tabelle text[] DEFAULT NULL)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r       record;
+  c       record;
+  v_tot   bigint := 0;
+  v_sede  text;
+  v_t     text;
+  v_prima timestamptz;
+  v_nuova text;
+  v_cond  text;
+BEGIN
+  IF p_fase IS NULL OR p_fase NOT IN ('prima', 'dopo', 'finale') THEN
+    RAISE EXCEPTION 'FASE_NON_VALIDA';
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (r.tabella = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+
+    v_t := format('public.%I', r.tabella);
+    v_sede := public.anno_sede_sql(r.tabella, 't');
+    v_prima := NULL;
+    IF p_fase <> 'prima' THEN
+      SELECT max(x.eseguita_il) INTO v_prima
+        FROM public.riconciliazione_anno x WHERE x.fase = 'prima' AND x.tabella = r.tabella;
+    END IF;
+    -- le righe nate dopo la fotografia `prima` di QUESTA tabella
+    v_nuova := CASE WHEN v_prima IS NOT NULL AND r.colonna_creazione IS NOT NULL
+                    THEN format('t.%I::timestamptz >= %L::timestamptz', r.colonna_creazione, v_prima) END;
+
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe',
+      format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_per_anno',
+      format('SELECT %s AS scuola_id, t.anno_id AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_id IS NOT NULL GROUP BY 1, 2', v_sede, v_t));
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_senza_anno',
+      format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_id IS NULL GROUP BY 1', v_sede, v_t));
+    -- la sede non ricavabile: una riga così, a controlli rigidi, può restare senza anno (tabelle `sede_facoltativa`)
+    IF r.modo <> 'madre' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_senza_sede',
+        format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s IS NULL', v_t, v_sede));
+    END IF;
+    IF v_nuova IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_nuove',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_sede, v_t, v_nuova));
+    END IF;
+
+    -- La sezione della riga è di un altro anno (tutte le righe, non solo quelle dopo `controlli_rigidi_dal`).
+    IF r.tabella <> 'sections' AND public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:sezione_altro_anno:' || r.tabella,
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t JOIN public.sections s ON s.id = t.section_id '
+               || 'WHERE t.anno_id IS NOT NULL AND s.anno_id IS NOT NULL AND t.anno_id <> s.anno_id GROUP BY 1', v_sede, v_t));
+    END IF;
+
+    IF r.tabella = 'pagamenti' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_importo',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo), 0)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_importo_pagato',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo_pagato), 0)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+      IF v_nuova IS NOT NULL THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_nuove',
+          format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo), 0)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_sede, v_t, v_nuova));
+      END IF;
+      -- per quale strada il riempimento ha trovato l'anno di una voce: competenza, scadenza o creazione
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_competenza',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NOT NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_scadenza',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NULL AND t.%I IS NOT NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data, r.colonna_data_riserva));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_creazione',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NULL AND t.%I IS NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data, r.colonna_data_riserva));
+      -- competenza oltre la fine dell'ultimo anno che la sede ha in questo momento
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:pagamenti_anno_successivo',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore '
+               || 'FROM (SELECT %s AS sede, t.%I AS giorno FROM %s t WHERE t.%I IS NOT NULL) q '
+               || 'WHERE q.giorno > (SELECT max(s.fine) FROM public.anni_sede s WHERE s.scuola_id = q.sede) GROUP BY 1',
+               v_sede, r.colonna_data, v_t, r.colonna_data));
+      -- Una voce senza competenza con l'anno DICHIARATO diverso da quello della scadenza è legittima (una quota
+      -- 2027/28 con scadenza a febbraio 2027): non è un errore, la segreteria deve solo poterla vedere.
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:pagamenti_anno_diverso_da_scadenza',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore '
+               || 'FROM (SELECT %s AS sede, t.anno_id AS anno, t.%I AS giorno FROM %s t '
+               || 'WHERE t.%I IS NULL AND t.%I IS NOT NULL AND t.anno_id IS NOT NULL) q '
+               || 'WHERE q.anno IS DISTINCT FROM public.anno_di(q.sede, q.giorno) GROUP BY 1',
+               v_sede, r.colonna_data_riserva, v_t, r.colonna_data, r.colonna_data_riserva));
+
+    ELSIF r.tabella = 'enrollment_submissions' THEN
+      -- L'anno della domanda: il suo, o quello attivo della sede. Il 15/09 e il 01/09 sono di QUELL'anno.
+      v_cond := format('SELECT t.scuola_id AS sede, public.giorno_roma(t.created_at) AS giorno, '
+                       || '(SELECT y.anno_inizio FROM public.anni_scolastici y WHERE y.id = coalesce(t.anno_id, '
+                       || '(SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(t.scuola_id)))) AS base '
+                       || 'FROM %s t WHERE t.scuola_id IS NOT NULL', v_t);
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:domande_dopo_15_09',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+               || 'WHERE q.base IS NOT NULL AND q.giorno > make_date(q.base::int, 9, 15) GROUP BY 1', v_cond));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:domande_prima_1_09',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+               || 'WHERE q.base IS NOT NULL AND q.giorno < make_date(q.base::int, 9, 1) GROUP BY 1', v_cond));
+
+    ELSIF r.tabella = 'crm_bambini' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:crm_non_indicato',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_ingresso = %L GROUP BY 1',
+               v_sede, v_t, 'non_indicato'));
+
+    ELSIF r.tabella = 'frequenze' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'recuperi',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.origine = %L GROUP BY 1',
+               v_t, 'recupero'));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_da_listino',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.retta_mensile IS NULL GROUP BY 1', v_t));
+      -- sedi senza `retta_default_importo`: la retta senza fascia diventa 150 € (come fa oggi la generazione)
+      IF public.anno_ha_colonna('schools', 'retta_default_importo') THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_default_assente_150',
+          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
+                 || 'WHERE EXISTS (SELECT 1 FROM public.schools s WHERE s.id = t.scuola_id AND s.retta_default_importo IS NULL) GROUP BY 1', v_t));
+      END IF;
+      -- ingresso/uscita che il riempimento ha dovuto portare all'inizio dell'anno
+      IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:ingresso_portato_a_inizio_anno',
+          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
+                 || 'JOIN public.anni_sede a ON a.id = t.anno_sede_id WHERE t.data_ingresso = a.inizio '
+                 || 'AND EXISTS (SELECT 1 FROM public.alunni_classi_storico h WHERE h.alunno_id = t.alunno_id AND h.dal < a.inizio) GROUP BY 1', v_t));
+      END IF;
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:uscita_portata_a_inizio_anno',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
+               || 'JOIN public.anni_sede a ON a.id = t.anno_sede_id WHERE t.data_uscita IS NOT NULL AND t.data_uscita = a.inizio GROUP BY 1', v_t));
+    END IF;
+  END LOOP;
+
+  -- I nomi di classe (testo) che nessuna sezione dell'anno ATTIVO della sede ha: si contano, non si leggono.
+  FOR c IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', true), ('forms_templates', 'target_classes', true),
+      ('galleria_media_v2', 'target_classes', true), ('news_posts', 'target_classes', true),
+      ('video_intents', 'classi_destinatarie', true), ('mensa_class_menu_assignment', 'classe', false)
+    ) AS v(tab, col, e_array) LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (c.tab = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', c.tab)) IS NULL OR NOT public.anno_ha_colonna(c.tab, c.col);
+    v_t := format('public.%I', c.tab);
+    v_sede := public.anno_sede_sql(c.tab, 't');
+    v_cond := CASE WHEN c.e_array
+                   THEN format('SELECT %s AS sede, v.voce FROM %s t CROSS JOIN LATERAL unnest(coalesce(t.%I, %L::text[])) AS v(voce)', v_sede, v_t, c.col, '{}')
+                   ELSE format('SELECT %s AS sede, t.%I AS voce FROM %s t', v_sede, c.col, v_t) END;
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, c.tab, 'ambiguo:nomi_classe_non_abbinati:' || c.tab,
+      format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+             || 'WHERE q.sede IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = q.sede '
+             || 'AND s.anno_id = (SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(q.sede)) '
+             || 'AND lower(replace(s.name, %L, %L)) = lower(replace(q.voce, %L, %L))) GROUP BY 1',
+             v_cond, ' ', '', ' ', ''));
+  END LOOP;
+
+  -- Gli incassi non hanno anno (anno solare): solo il totale per sede, via la voce di pagamento.
+  IF (p_tabelle IS NULL OR 'incassi' = ANY (p_tabelle))
+     AND to_regclass('public.incassi') IS NOT NULL AND to_regclass('public.pagamenti') IS NOT NULL THEN
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'incassi', 'euro_incassi',
+      'SELECT p.scuola_id AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(i.importo), 0)::numeric AS valore '
+      || 'FROM public.incassi i JOIN public.pagamenti p ON p.id = i.pagamento_id GROUP BY 1');
+  END IF;
+
+  -- Gli alunni: la tabella non è nel registro, ma il riempimento e lo specchio li toccano.
+  IF (p_tabelle IS NULL OR 'alunni' = ANY (p_tabelle)) AND to_regclass('public.alunni') IS NOT NULL THEN
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'ambiguo:alunni_senza_sede',
+      'SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a WHERE a.scuola_id IS NULL');
+    IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'ambiguo:alunni_senza_storico',
+        'SELECT a.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a '
+        || 'WHERE a.scuola_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.alunni_classi_storico h WHERE h.alunno_id = a.id) GROUP BY 1');
+    END IF;
+    -- gli alunni con sede ma senza frequenza nell'anno attivo della sede (chi non ha sede non conta)
+    IF to_regclass('public.frequenze') IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'alunni_senza_frequenza',
+        'SELECT a.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a '
+        || 'WHERE a.scuola_id IS NOT NULL AND public.anno_attivo(a.scuola_id) IS NOT NULL '
+        || 'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(a.scuola_id)) GROUP BY 1');
+    END IF;
+  END IF;
+
+  RETURN v_tot;
+END
+$$;
+
+-- Le tabelle CONSERVATE in cui l'ultima fotografia `prima` e l'ultima `dopo` (o `finale`) non tornano:
+-- `dopo − prima − nuove <> 0`, per `righe` ed euro, al centesimo. Vuota = conservato. Sono escluse
+-- `frequenze` e `frequenze_moduli`, che nascono vuote; si confrontano solo le tabelle fotografate in entrambe
+-- le fasi. «Ultima» = la fotografia (la transazione) dell'ultima riga scritta per quella tabella e fase.
+CREATE OR REPLACE FUNCTION public.anno_riconciliazione_differenze()
+RETURNS TABLE (tabella text, scuola_id uuid, voce text, prima numeric, dopo numeric, nuove numeric)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  WITH ultime AS (
+    SELECT DISTINCT ON (r.tabella, (r.fase = 'prima'))
+           r.tabella, (r.fase = 'prima') AS e_prima, r.transazione
+      FROM public.riconciliazione_anno r
+     ORDER BY r.tabella, (r.fase = 'prima'), r.id DESC
+  ),
+  complete AS (
+    SELECT u.tabella FROM ultime u
+     WHERE u.tabella IN (SELECT t.tabella FROM public.anno_tabelle t WHERE t.tabella NOT IN ('frequenze', 'frequenze_moduli'))
+     GROUP BY u.tabella HAVING count(*) = 2
+  ),
+  marcate AS (
+    SELECT r.tabella, r.scuola_id,
+           CASE r.voce WHEN 'righe_nuove' THEN 'righe' WHEN 'euro_nuove' THEN 'euro_importo' ELSE r.voce END AS voce,
+           CASE WHEN r.fase = 'prima' THEN 'p'
+                WHEN r.voce IN ('righe_nuove', 'euro_nuove') THEN 'n'
+                ELSE 'd' END AS k,
+           r.valore
+      FROM public.riconciliazione_anno r
+      JOIN ultime u ON u.tabella = r.tabella AND u.transazione = r.transazione AND u.e_prima = (r.fase = 'prima')
+     WHERE r.tabella IN (SELECT c.tabella FROM complete c)
+       AND r.voce IN ('righe', 'euro_importo', 'righe_nuove', 'euro_nuove')
+       AND NOT (r.fase = 'prima' AND r.voce IN ('righe_nuove', 'euro_nuove'))
+  )
+  SELECT m.tabella, m.scuola_id, m.voce,
+         coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0) AS prima,
+         coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) AS dopo,
+         coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) AS nuove
+    FROM marcate m
+   GROUP BY m.tabella, m.scuola_id, m.voce
+  HAVING coalesce(sum(m.valore) FILTER (WHERE m.k = 'd'), 0) - coalesce(sum(m.valore) FILTER (WHERE m.k = 'p'), 0)
+         - coalesce(sum(m.valore) FILTER (WHERE m.k = 'n'), 0) <> 0
+   ORDER BY m.tabella, m.scuola_id, m.voce
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_sede_sql(text, text)                          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_fotografa_scrivi(text, text, text, text)      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_fotografa(text, text[])                       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_riconciliazione_differenze()                  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_sede_sql(text, text)                       TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_fotografa_scrivi(text, text, text, text)   TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_fotografa(text, text[])                    TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_riconciliazione_differenze()               TO service_role;
+
+-- ── 2.1 · anno_invarianti(): la fotografia del rapporto non è un difetto ─────────────
+-- Identica a quella della PR 1 tranne nell'invariante 10b: `riconciliazione_anno` ha una colonna `anno_id` (la
+-- fotografia dice a quale anno appartengono le righe contate) ma non è una tabella del registro, e senza questa
+-- esclusione la 10b la segnalerebbe per sempre. Il compito 2.3 aggiunge qui le invarianti 12 e 13.
+CREATE OR REPLACE FUNCTION public.anno_invarianti()
+RETURNS TABLE (invariante text, tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  r             public.anno_tabelle%ROWTYPE;
+  v_guardia_dal timestamptz;
+  v_mappa6      jsonb := '{}'::jsonb;
+  v_ha_nera     boolean;
+  v_ha_anno     boolean;
+  v_fuori       text[];
+  v_cond        text[];
+  v_col         text;
+  v_n           bigint;
+BEGIN
+  -- 1. Nessun giorno senza anno, nessun giorno in due anni.
+  SELECT count(*) INTO v_n FROM (
+    SELECT s.scuola_id, g::date
+      FROM (SELECT a.scuola_id, min(a.inizio) AS da, max(a.fine) AS al
+              FROM public.anni_sede a GROUP BY a.scuola_id) s
+     CROSS JOIN LATERAL generate_series(s.da::timestamp, s.al::timestamp, interval '1 day') g
+      LEFT JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND g::date <@ a.periodo
+     GROUP BY s.scuola_id, g::date
+    HAVING count(a.id) <> 1) x;
+  invariante := '1'; tabella := 'anni_sede'; righe := v_n; RETURN NEXT;
+
+  -- 6, prima parte: le violazioni di tutte le tabelle in una volta sola (poi si distribuiscono).
+  SELECT g.guardia_attiva_dal INTO v_guardia_dal FROM public.anno_regole g;
+  v_ha_nera := to_regclass('scatola_nera.modifiche') IS NOT NULL;
+  IF v_ha_nera AND v_guardia_dal IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT coalesce(jsonb_object_agg(x.tabella, x.n), '{}'::jsonb) FROM (
+        SELECT m.tabella, count(*) AS n
+          FROM scatola_nera.modifiche m
+          JOIN public.anno_tabelle t ON t.tabella = m.tabella
+         CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+          JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+         CROSS JOIN LATERAL (SELECT min(st.dal) AS dal FROM public.anni_sede_stati st
+                              WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')) ch
+         WHERE m.modificata_il >= $1
+           AND ch.dal IS NOT NULL
+           AND m.modificata_il >= ch.dal
+           -- le modifiche che la guardia lascia passare apposta non sono un difetto
+           AND NOT (
+             coalesce((SELECT bool_and(
+                         c = ANY (public.anno_colonne_esenti(m.tabella))
+                         OR (m.tabella = 'pagamenti' AND c LIKE 'fattura\_%')
+                         OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                         FROM unnest(m.cambiate) c), false)
+             AND (m.tabella <> 'frequenze'
+                  OR NOT ('stato' = ANY (m.cambiate))
+                  OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
+           AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+                            WHERE u.transazione = m.transazione AND u.tabella = m.tabella
+                              AND (u.riga_id IS NULL OR u.riga_id = m.riga_id))
+         GROUP BY m.tabella) x
+    $q$ INTO v_mappa6 USING v_guardia_dal;
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+    v_ha_anno := public.anno_ha_colonna(r.tabella, 'anno_id');
+
+    -- 2. Nessuna riga fuori dal suo anno (modo `data`).
+    IF r.modo = 'data' THEN
+      invariante := '2'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_fuori_periodo(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 6, seconda parte: una riga per tabella (se c'è la scatola nera).
+    IF v_ha_nera THEN
+      invariante := '6'; tabella := r.tabella; righe := coalesce((v_mappa6 ->> r.tabella)::bigint, 0);
+      RETURN NEXT;
+    END IF;
+
+    -- 9. Nessuna riga nuova con una sezione di un altro anno.
+    IF public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      invariante := '9'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_sezione_altro_anno(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 10a. La colonna e il trigger generico (una riga per tabella: 0, 1 o 2 difetti).
+    invariante := '10a'; tabella := r.tabella;
+    righe := (CASE WHEN v_ha_anno THEN 0 ELSE 1 END)
+           + (CASE WHEN EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc pr ON pr.oid = tg.tgfoid
+                                 WHERE tg.tgrelid = to_regclass(format('public.%I', r.tabella))
+                                   AND pr.proname = 'anno_assegna_e_verifica' AND NOT tg.tgisinternal)
+                   THEN 0 ELSE 1 END);
+    RETURN NEXT;
+  END LOOP;
+
+  IF NOT v_ha_nera THEN
+    invariante := '6'; tabella := '(scatola_nera assente)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno.
+  SELECT count(*) INTO v_n FROM (
+    SELECT f.alunno_id, f.anno_id FROM public.frequenze f
+     WHERE f.stato IN ('in_attesa', 'iscritto')
+     GROUP BY f.alunno_id, f.anno_id HAVING count(*) > 1) x;
+  invariante := '3'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+
+  -- 4. Nessun «iscritto» senza moduli o senza quota, ricalcolato dalla verità e non dai flag.
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.stato = 'iscritto' AND f.origine <> 'recupero'
+     AND (EXISTS (SELECT 1 FROM public.moduli_richiesti m
+                   WHERE m.anno_sede_id = f.anno_sede_id AND m.lista = f.tipo
+                     AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                                      WHERE fm.frequenza_id = f.id AND fm.modulo_id = m.id))
+          OR q.id IS NULL OR q.stato <> 'pagato');
+  invariante := '4'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+  --    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.quota_saldata IS DISTINCT FROM (q.id IS NOT NULL AND q.stato = 'pagato');
+  invariante := '4'; tabella := 'frequenze (flag)'; righe := v_n; RETURN NEXT;
+
+  -- 5. Nessuna competenza fuori dal periodo del suo anno.
+  v_n := 0;
+  IF to_regclass('public.pagamenti') IS NOT NULL AND public.anno_ha_colonna('pagamenti', 'anno_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pagamenti p '
+            'JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id '
+            'WHERE p.periodo_competenza IS NOT NULL AND NOT (p.periodo_competenza <@ a.periodo)'
+    INTO v_n;
+  END IF;
+  invariante := '5'; tabella := 'pagamenti'; righe := v_n; RETURN NEXT;
+
+  -- 10b. Una tabella con `anno_id` che il registro non conosce.
+  SELECT array_agg(c.relname::text ORDER BY c.relname) INTO v_fuori
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND at.attname = 'anno_id' AND at.attnum > 0 AND NOT at.attisdropped
+     AND c.relname NOT IN ('anni_sede', 'riconciliazione_anno')
+     AND c.relname NOT IN (SELECT t.tabella FROM public.anno_tabelle t);
+  IF v_fuori IS NULL THEN
+    invariante := '10b'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  ELSE
+    FOREACH v_col IN ARRAY v_fuori LOOP
+      invariante := '10b'; tabella := v_col; righe := 1; RETURN NEXT;
+    END LOOP;
+  END IF;
+
+  -- 11. La scheda alunno e la frequenza dell'anno attivo dicono la stessa cosa (solo chi ha la frequenza).
+  --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
+  --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL THEN
+    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
+                  WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
+                    AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
+                    AND NOT x.attisdropped AND NOT y.attisdropped) THEN
+        v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
+      END IF;
+    END LOOP;
+    EXECUTE 'SELECT count(*) FROM public.alunni al '
+            'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
+            'WHERE ' || array_to_string(v_cond, ' OR ')
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
+
+  RETURN;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_invarianti() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_invarianti() TO service_role;

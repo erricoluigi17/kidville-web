@@ -379,12 +379,21 @@ export function posterioriCheContengono(
 // `fk-scuola-id.test.ts`); FK verso `utenti` invariate a 83 (nessuna FK nuova,
 // come voleva R15), solo l'istante dello scatto. Le altre due (bucket, schema delle candidature) non si toccano.
 // Nasce `scripts/tabelle-anno-fotografia.mjs`, con la sua fotografia di `anno_tabelle` (47 righe).
-// PR 2 «anno scolastico» (07/11/2026), M1 `20261107012110_anno_strumenti`: NON entra qui. Aggiunge colonne a
-// `anno_regole` e `anno_tabelle`, tre funzioni `SECURITY DEFINER` nuove e un trigger su `crm_bambini`, e riscrive
-// `anno_assegna_e_verifica`: nessuna tabella, FK, indice unico o policy nuovi, quindi nessuna delle tre guardie la
-// segnala e la prova gemella «nessuna voce morta» rifiuta una dichiarazione che non serve (provato il 07/11/2026).
-// Le voci per le migrazioni della PR 2 che toccano le fotografie arrivano con i compiti che le scrivono.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+// PR 2 «anno scolastico» (07/11/2026), M1 `20261107012110_anno_strumenti`, compiti 2.0 e 2.1. Il 2.0 non muoveva
+// nessuna fotografia (colonne a `anno_regole` e `anno_tabelle`, funzioni `SECURITY DEFINER`, un trigger su
+// `crm_bambini`). Il 2.1 aggiunge `riconciliazione_anno`: la fotografia dei conteggi, con `scuola_id` (FK
+// verso `schools`, `ON DELETE SET NULL`: la vuole `fk-scuola-id`) e `anno_id` senza chiave esterna di proposito (un
+// anno che sparisce non deve toglierle il senso), RLS accesa senza policy e una `PRIMARY KEY`. Cambieranno davvero, rigenerando dalla produzione dopo il merge: la fotografia delle
+// migrazioni (+1 riga), degli indici unici (+1, la chiave primaria), della RLS (+1 tabella, nessuna policy) e delle
+// tabelle con `scuola_id` (+1) e delle FK di sede (+1, `riconciliazione_anno_scuola_id_fkey`).
+// Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge. Le altre migrazioni della PR 2
+// arrivano con i compiti che le scrivono.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261107012110_anno_strumenti.sql':
+        'PR 2 anno scolastico, M1 (compiti 2.0-2.1): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
+        '`scuola_id` con FK verso `schools`). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
+        'produzione nella PR-B.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -766,7 +766,9 @@ Sono tutte regole generiche, valide per ogni sede, senza uuid.
   - casi ambigui per motivo.
 - **Interruttori nella migrazione del riempimento**:
   - `scatola_nera.senza_storico`, altrimenti 200.000 «com'era» finirebbero nella scatola nera;
-  - `registri.manutenzione`, altrimenti `storico_versione` salterebbe.
+  - `anno_scolastico.riempimento` (corretto il 07/11/2026; la bozza diceva `registri.manutenzione`, che nessun trigger di queste tabelle legge
+    e che aprirebbe `DELETE` sul WORM di `registro_modifiche` e `audit_scritture_docente`): il trigger generico rimette `storico_versione`
+    e `updated_at` al valore di `OLD`, altrimenti salterebbero.
 
   **Sono interruttori del freno: il corpo della PR li mostra al titolare**, che approva il merge.
 

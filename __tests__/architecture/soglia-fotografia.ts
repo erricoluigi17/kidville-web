@@ -386,11 +386,11 @@ export function posterioriCheContengono(
 // anno che sparisce non deve toglierle il senso), RLS accesa senza policy e una `PRIMARY KEY`. Cambieranno davvero, rigenerando dalla produzione dopo il merge: la fotografia delle
 // migrazioni (+1 riga), degli indici unici (+1, la chiave primaria), della RLS (+1 tabella, nessuna policy) e delle
 // tabelle con `scuola_id` (+1) e delle FK di sede (+1, `riconciliazione_anno_scuola_id_fkey`).
-// Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge. Le altre migrazioni della PR 2
-// arrivano con i compiti che le scrivono.
+// Si toglie nella PR-B, il primo commit della sessione che apre dopo il merge. Le quattro migrazioni della PR 2 sono
+// M1, F1 (esclusa a ragione: chiama solo funzioni di M1), V1 e V2 (compiti 2.0-2.3), tutte qui sotto salvo F1.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261107012110_anno_strumenti.sql':
-        'PR 2 anno scolastico, M1 (compiti 2.0-2.2): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
+        'PR 2 anno scolastico, M1 (compiti 2.0-2.3): tabella nuova `riconciliazione_anno` (PRIMARY KEY, RLS senza policy, ' +
         '`scuola_id` con FK verso `schools`); colonne `target_section_ids` e `mensa_class_menu_assignment.section_id` ' +
         '(FK verso `sections`, con indice). Applicata dall\'integrazione al merge; si rigenerano le fotografie dalla ' +
         'produzione nella PR-B. F1 (`_anno_riempimento_1`, compito 2.2) contiene solo chiamate a funzioni di M1: ' +

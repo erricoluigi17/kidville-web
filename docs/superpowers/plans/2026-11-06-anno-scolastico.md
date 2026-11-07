@@ -216,7 +216,8 @@ fixture `__tests__/fixtures/tabelle-anno.json`, da `anno_tabelle` (tabella, modo
   Test (PGlite): righe ed euro tornano al centesimo; un seme con una voce ambigua finisce nei
   `casi_ambigui`, conteggiata per motivo.
 - **Compito 2.2 — Riempimento**, con le regole del §4.13 e gli interruttori `scatola_nera.senza_storico` e
-  `registri.manutenzione`, accesi solo nella transazione. Test, uno per regola:
+  `anno_scolastico.riempimento`, accesi solo nella transazione (corretto il 07/11/2026: `registri.manutenzione` **non** si accende, vale solo per il
+  WORM di `registro_modifiche` e `audit_scritture_docente`, che il riempimento non tocca). Test, uno per regola:
   - frequenza da alunno;
   - zero → NULL, con la retta del listino uguale a `retta_default_importo`;
   - competenza → scadenza → creazione;

@@ -111,8 +111,9 @@ e **il merge lo fa il titolare**. L'hook `PreToolUse` `.claude/hooks/supabase_sq
 `deny` — mai `ask`, che `auto_allow_permission.py` approverebbe — a ogni `apply_migration` e, su
 `execute_sql`, a `DELETE`, `DROP`, `TRUNCATE`, `UPDATE` senza `WHERE`, `ALTER … DROP`, agli
 interruttori della scatola nera, dei registri, dell'anno chiuso e dei trigger (`registri.manutenzione`,
-`scatola_nera.manutenzione`, `scatola_nera.senza_storico`, `anno_chiuso.oblio`, `session_replication_role`,
-`DISABLE TRIGGER`, `UPDATE pg_settings`), alla sicurezza a livello di riga spenta
+`scatola_nera.manutenzione`, `scatola_nera.senza_storico`, `anno_chiuso.oblio`, `anno_scolastico.riempimento`,
+`session_replication_role`, `DISABLE TRIGGER`, `UPDATE pg_settings`), a ogni scrittura (`UPDATE`, `INSERT`, `MERGE`) su
+`anno_regole` e `anno_tabelle` (le manopole dell'anno scolastico; un `SELECT` passa), alla sicurezza a livello di riga spenta
 (`ALTER TABLE … DISABLE ROW LEVEL SECURITY` e `… NO FORCE ROW LEVEL SECURITY`; `ENABLE` e `FORCE`
 passano) e a ciò che non sa leggere (in dubbio si ferma). Le stesse
 categorie le cerca anche nelle stringhe che il database poi **esegue** — `EXECUTE` e `format()`,

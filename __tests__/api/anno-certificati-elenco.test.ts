@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message?: string }>,
     scritture: [] as unknown[],
+    usiChiesti: [] as number[],
+    nRighe: 1,
     logEvento: vi.fn(),
     logErrore: vi.fn(),
 }))
@@ -39,22 +41,47 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/auth/scope')>()
     return { ...vero, resolveScuoleAttive: async () => [...h.attive] }
 })
+// Ogni client scrive nell'accumulatore comune MARCANDO la scrittura con l'header del gettone che porta
+// (`null` per il client senza): così un test sa da quale client è passata ogni scrittura.
 vi.mock('@/lib/supabase/server-client', () => {
-    const nuovo = () => {
-        const finto = creaFintoSupabase(h.db as DBFinto, [], { errori: h.errori, scritture: h.scritture as Scrittura[] })
+    const nuovo = (header: string | null) => {
+        const mio = [] as Scrittura[]
+        mio.push = (...s: Scrittura[]) => {
+            for (const x of s) (h.scritture as unknown[]).push({ ...x, header })
+            return mio.length
+        }
+        const finto = creaFintoSupabase(h.db as DBFinto, [], { errori: h.errori, scritture: mio })
         const storage = {
             from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }) }),
         }
         return Object.assign(finto, { storage })
     }
-    return { createAdminClient: async () => nuovo(), createAdminClientConHeader: async () => nuovo() }
+    return {
+        createAdminClient: async () => nuovo(null),
+        createAdminClientConHeader: async (hd: Record<string, string>) => nuovo(hd['x-kidville-correzione'] ?? null),
+    }
+})
+// Il finto genera id che non sono uuid: i gettoni (veri: `conGettone` li valida) si creano qui, e si
+// registra quanti ne chiede la route (`usi`).
+const GETTONI = ['f1111111-1111-4111-8111-111111111111', 'f2222222-2222-4222-8222-222222222222', 'f3333333-3333-4333-8333-333333333333']
+vi.mock('@/lib/anno/gettone', async (importActual) => {
+    const vero = await importActual<typeof import('@/lib/anno/gettone')>()
+    return {
+        ...vero,
+        creaGettoni: async (_s: unknown, r: { usi?: number }) => {
+            h.usiChiesti.push(r.usi ?? 1)
+            return Array.from({ length: r.usi ?? 1 }, (_, i) => GETTONI[i % GETTONI.length])
+        },
+    }
 })
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn(async () => undefined) }))
 vi.mock('@/lib/iscrizioni/import/elenco', () => ({
     leggiElenco: () => ({
-        righe: [{ classe: '2 ANNI', nome: 'Nome Finto', nomeNorm: 'nome finto', rigaExcel: 2, retta: 100, rettaTesto: null }],
+        righe: Array.from({ length: h.nRighe }, (_, i) => ({
+            classe: '2 ANNI', nome: `Nome Finto ${i}`, nomeNorm: `nome finto ${i}`, rigaExcel: i + 2, retta: 100, rettaTesto: null,
+        })),
         anomalie: [],
-        perClasse: [{ classe: '2 ANNI', alunni: 1 }],
+        perClasse: [{ classe: '2 ANNI', alunni: h.nRighe }],
     }),
 }))
 vi.mock('@/lib/logging/logger', async (importActual) => {
@@ -89,6 +116,8 @@ beforeEach(() => {
     h.attive = [SEDE_A]
     h.errori = {}
     h.scritture = []
+    h.usiChiesti = []
+    h.nRighe = 1
     h.logEvento.mockClear()
     h.logErrore.mockClear()
     h.db = {
@@ -202,10 +231,10 @@ describe('POST /api/admin/competenze · l\'anno del certificato', () => {
 })
 
 // ── l'elenco di classe ───────────────────────────────────────────────────────
-const postElenco = (query = '') => {
+const postElenco = (query = '', headers: Record<string, string> = {}) => {
     const form = new FormData()
     form.append('file', new File([new Uint8Array([1, 2, 3])], 'elenco.xlsx'))
-    return POST_ELENCO(new NextRequest(`http://localhost/api/admin/iscrizioni/elenco${query}`, { method: 'POST', body: form }))
+    return POST_ELENCO(new NextRequest(`http://localhost/api/admin/iscrizioni/elenco${query}`, { method: 'POST', body: form, headers }))
 }
 
 describe('POST /api/admin/iscrizioni/elenco · l\'anno del caricamento', () => {
@@ -255,6 +284,43 @@ describe('POST /api/admin/iscrizioni/elenco · l\'anno del caricamento', () => {
         expect(res.status).toBe(400)
         expect((await res.json()).codice).toBe('ANNO_DA_SPECIFICARE')
         expect(h.scritture).toEqual([])
+    })
+})
+
+describe('POST /api/admin/iscrizioni/elenco · il gettone vale una richiesta', () => {
+    const registro = ['iscrizioni_elenco_caricamenti', 'iscrizioni_elenco_righe']
+    const scrittureRegistro = () => (h.scritture as Array<Scrittura & { header: string | null }>).filter((s) => registro.includes(s.tabella))
+    // Agosto: l'anno `in_chiusura` si sceglie col cookie `anno_attivo` (`anni_scolastici.id`).
+    const inChiusura = () => {
+        h.ruolo = 'segreteria'
+        h.db.anni_sede = h.db.anni_sede.map((r) => (r.id === S2A ? { ...r, stato: 'in_chiusura' } : r))
+        h.db.iscrizioni_elenco_caricamenti = [{ id: 'f9999999-9999-4999-8999-999999999999', scuola_id: SEDE_A, attivo: true }]
+    }
+
+    it('lo spegnimento del precedente, il caricamento e OGNI blocco di righe passano dal client col gettone; `usi` = richieste', async () => {
+        inChiusura()
+        h.nRighe = 450 // 3 blocchi da 200
+        const res = await postElenco('', { cookie: `anno_attivo=${A2}` })
+        expect(res.status).toBe(200)
+        const sc = scrittureRegistro()
+        expect(sc.map((s) => `${s.tabella}:${s.operazione}`)).toEqual([
+            'iscrizioni_elenco_caricamenti:update',
+            'iscrizioni_elenco_caricamenti:insert',
+            'iscrizioni_elenco_righe:insert',
+            'iscrizioni_elenco_righe:insert',
+            'iscrizioni_elenco_righe:insert',
+        ])
+        for (const s of sc) expect(s.header, `${s.tabella}:${s.operazione}`).toMatch(/^f\d{7}-/)
+        // spegni (1) + caricamento (1) + 3 blocchi + disfacimento (1)
+        expect(h.usiChiesti).toEqual([6])
+    })
+
+    it('anno `corrente`: nessun gettone, tutto sul client semplice', async () => {
+        h.ruolo = 'segreteria'
+        const res = await postElenco()
+        expect(res.status).toBe(200)
+        for (const s of scrittureRegistro()) expect(s.header).toBeNull()
+        expect(h.usiChiesti).toEqual([])
     })
 })
 

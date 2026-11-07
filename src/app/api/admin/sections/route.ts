@@ -275,7 +275,7 @@ export const PATCH = withRoute('admin/sections:PATCH', async (request: NextReque
         // Rinomina: il nome resta unico DENTRO la sede della classe (mai quella
         // di chi scrive: le due possono differire per un admin multi-plesso).
         if (typeof updates.name === 'string' && updates.name !== prima.name) {
-            const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, updates.name, id);
+            const omonimia = await nomeGiaUsatoNellaSede(supabase, sede, updates.name, id, (prima.anno_id as string | null | undefined) ?? null);
             if ('response' in omonimia) return omonimia.response;
             if (omonimia.occupato) {
                 logEvento('multi_sede', 'warn', {

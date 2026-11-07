@@ -107,7 +107,11 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   const scuolaId = sede.scuolaId as string
   // L'anno della votazione: dichiarato, o quello del cookie, o l'unico `corrente`. Le figlie (classi e
   // candidati) sono in modo `madre`: l'anno lo prendono dalla testata e non lo scrivono.
-  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId })
+  // Un gettone vale UNA richiesta di scrittura: testata, classi (se ci sono), candidati (se ci sono) e, se una
+  // figlia cade, il disfacimento della testata. Tutte tabelle del registro (`dichiarato` o `madre`).
+  const candidatiDaScrivere = dati.rappresentanteIstituto ? dati.candidatiIstituto : []
+  const usi = 1 + (dati.sectionIds.length > 0 ? 1 : 0) + (candidatiDaScrivere.length > 0 ? 1 : 0) + 1
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId, usi })
   if (esito instanceof NextResponse) return esito
   const operazione = 'admin/votazioni:POST'
   const guasto = (errore: unknown) => rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
@@ -134,7 +138,7 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
 
   // 7. e 8. I candidati d'istituto: almeno uno, e tutti genitori della sede con un account attivo. I candidati
   //    mandati con l'istituto spento si ignorano (non si scrivono e non si validano).
-  const candidati = dati.rappresentanteIstituto ? dati.candidatiIstituto : []
+  const candidati = candidatiDaScrivere
   if (dati.rappresentanteIstituto && candidati.length === 0) {
     return rifiutoVotazione('VOTAZIONE_CANDIDATI_MANCANTI')
   }
@@ -177,16 +181,16 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   const id = (creata as { id: string }).id
 
   if (dati.sectionIds.length > 0) {
-    const { error } = await supabase
+    const { error } = await scrittura
       .from('votazioni_classi')
       .insert(dati.sectionIds.map((section_id) => ({ votazione_id: id, scuola_id: scuolaId, section_id })))
-    if (error) return annullaTestata(supabase, id, scuolaId, error, operazione)
+    if (error) return annullaTestata(scrittura, id, scuolaId, error, operazione)
   }
   if (candidati.length > 0) {
-    const { error } = await supabase
+    const { error } = await scrittura
       .from('votazioni_candidati')
       .insert(candidati.map((utente_id) => ({ votazione_id: id, scuola_id: scuolaId, utente_id })))
-    if (error) return annullaTestata(supabase, id, scuolaId, error, operazione)
+    if (error) return annullaTestata(scrittura, id, scuolaId, error, operazione)
   }
 
   // 12. L'audit (senza il titolo: testo libero) e il battito di successo.

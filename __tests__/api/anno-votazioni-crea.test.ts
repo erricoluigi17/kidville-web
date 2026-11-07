@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message?: string }>,
     scritture: [] as unknown[],
+    usiChiesti: [] as number[],
     logEvento: vi.fn(),
     logErrore: vi.fn(),
 }))
@@ -35,10 +36,35 @@ vi.mock('@/lib/auth/scope', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/auth/scope')>()
     return { ...vero, resolveScuoleAttive: async () => [...h.attive] }
 })
-vi.mock('@/lib/supabase/server-client', () => ({
-    createAdminClient: async () =>
-        creaFintoSupabase(h.db as DBFinto, [], { errori: h.errori, scritture: h.scritture as Scrittura[] }),
-}))
+// Ogni client scrive nell'accumulatore comune MARCANDO la scrittura con l'header del gettone che porta
+// (`null` per il client senza): così un test sa da quale client è passata ogni scrittura.
+vi.mock('@/lib/supabase/server-client', () => {
+    const nuovo = (header: string | null) => {
+        const mio = [] as Scrittura[]
+        mio.push = (...s: Scrittura[]) => {
+            for (const x of s) (h.scritture as unknown[]).push({ ...x, header })
+            return mio.length
+        }
+        return creaFintoSupabase(h.db as DBFinto, [], { errori: h.errori, scritture: mio })
+    }
+    return {
+        createAdminClient: async () => nuovo(null),
+        createAdminClientConHeader: async (hd: Record<string, string>) => nuovo(hd['x-kidville-correzione'] ?? null),
+    }
+})
+// Il finto genera id che non sono uuid: i gettoni (veri: `conGettone` li valida) si creano qui, e si
+// registra quanti ne chiede la route (`usi`).
+const GETTONI = ['f1111111-1111-4111-8111-111111111111', 'f2222222-2222-4222-8222-222222222222', 'f3333333-3333-4333-8333-333333333333']
+vi.mock('@/lib/anno/gettone', async (importActual) => {
+    const vero = await importActual<typeof import('@/lib/anno/gettone')>()
+    return {
+        ...vero,
+        creaGettoni: async (_s: unknown, r: { usi?: number }) => {
+            h.usiChiesti.push(r.usi ?? 1)
+            return Array.from({ length: r.usi ?? 1 }, (_, i) => GETTONI[i % GETTONI.length])
+        },
+    }
+})
 vi.mock('@/lib/logging/logger', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/logging/logger')>()
     return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
@@ -92,6 +118,7 @@ beforeEach(() => {
     h.attive = [SEDE_A]
     h.errori = {}
     h.scritture = []
+    h.usiChiesti = []
     h.logEvento.mockClear()
     h.logErrore.mockClear()
     h.db = {
@@ -172,5 +199,36 @@ describe('POST /api/admin/votazioni · l\'anno', () => {
         expect(res.status).toBe(400)
         expect((await res.json()).codice).toBe('ANNO_NON_DELLA_SEDE')
         expect(h.scritture).toEqual([])
+    })
+})
+
+describe('POST /api/admin/votazioni · il gettone vale una richiesta', () => {
+    const conAgosto = () => {
+        h.db.anni_sede = (h.db.anni_sede as Riga[]).map((r) => (r.id === S2 ? { ...r, stato: 'in_chiusura' } : r))
+    }
+    const registro = ['votazioni', 'votazioni_classi', 'votazioni_candidati']
+    const scrittureRegistro = () => (h.scritture as Array<Scrittura & { header: string | null }>).filter((s) => registro.includes(s.tabella))
+
+    it('testata, classi e candidati passano TUTTI dal client col gettone, e `usi` = 3 richieste (+1 per il disfacimento)', async () => {
+        conAgosto()
+        const res = await post(corpo({ annoId: A2 }))
+        expect(res.status).toBe(201)
+        expect(scrittureRegistro().map((s) => s.tabella)).toEqual(['votazioni', 'votazioni_classi', 'votazioni_candidati'])
+        for (const s of scrittureRegistro()) expect(s.header, s.tabella).toMatch(/^f\d{7}-/)
+        expect(h.usiChiesti).toEqual([4])
+    })
+
+    it('senza candidati le richieste sono due (+1): `usi` = 3', async () => {
+        conAgosto()
+        const res = await post(corpo({ annoId: A2, rappresentanteIstituto: false, candidatiIstituto: [] }))
+        expect(res.status).toBe(201)
+        expect(h.usiChiesti).toEqual([3])
+    })
+
+    it('anno `corrente`: nessun gettone, tutto sul client semplice', async () => {
+        const res = await post(corpo())
+        expect(res.status).toBe(201)
+        for (const s of scrittureRegistro()) expect(s.header).toBeNull()
+        expect(h.usiChiesti).toEqual([])
     })
 })

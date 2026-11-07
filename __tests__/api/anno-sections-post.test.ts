@@ -57,7 +57,7 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
     return { ...vero, logEvento: h.logEvento, logErrore: h.logErrore }
 })
 
-import { POST } from '@/app/api/admin/sections/route'
+import { POST, PATCH } from '@/app/api/admin/sections/route'
 
 const SEG = '20000000-0000-4000-8000-000000000001'
 // `anni_scolastici.id`
@@ -198,5 +198,45 @@ describe('POST /api/admin/sections · l\'anno', () => {
         expect(res.status).toBe(201)
         expect(h.conHeader).toHaveLength(1)
         expect(h.conHeader[0]['x-kidville-correzione']).toBe(GETTONE)
+    })
+})
+
+describe('PATCH /api/admin/sections · la rinomina guarda lo stesso anno', () => {
+    const ID = 'c1000000-0000-4000-8000-0000000000aa'
+    const patch = (b: unknown) =>
+        PATCH(
+            new NextRequest('http://localhost/api/admin/sections', {
+                method: 'PATCH',
+                body: JSON.stringify(b),
+                headers: { 'content-type': 'application/json' },
+            }),
+        )
+
+    it('rinomina con un nome usato in un altro anno → 200', async () => {
+        h.db.sections = [
+            { id: ID, name: 'Sezione B', scuola_id: SEDE_A, anno_id: A3 },
+            { id: 'c1000000-0000-4000-8000-0000000000bb', name: 'Sezione A', scuola_id: SEDE_A, anno_id: A2 },
+        ]
+        const res = await patch({ id: ID, name: 'Sezione A' })
+        expect(res.status).toBe(200)
+    })
+
+    it('rinomina con un nome usato nello stesso anno → 409 NOME_DUPLICATO', async () => {
+        h.db.sections = [
+            { id: ID, name: 'Sezione B', scuola_id: SEDE_A, anno_id: A2 },
+            { id: 'c1000000-0000-4000-8000-0000000000bb', name: 'Sezione A', scuola_id: SEDE_A, anno_id: A2 },
+        ]
+        const res = await patch({ id: ID, name: 'Sezione A' })
+        expect(res.status).toBe(409)
+        expect((await res.json()).error).toMatch(/Esiste già una classe/)
+    })
+
+    it('con lo schema indietro (la sezione non ha anno_id) il controllo resta per sede', async () => {
+        h.db.sections = [
+            { id: ID, name: 'Sezione B', scuola_id: SEDE_A },
+            { id: 'c1000000-0000-4000-8000-0000000000bb', name: 'Sezione A', scuola_id: SEDE_A },
+        ]
+        const res = await patch({ id: ID, name: 'Sezione A' })
+        expect(res.status).toBe(409)
     })
 })

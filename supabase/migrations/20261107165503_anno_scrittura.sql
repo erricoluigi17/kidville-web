@@ -33,16 +33,51 @@ ALTER TABLE public.anno_guardia_osservazioni ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.anno_guardia_osservazioni FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_guardia_osservazioni TO service_role;
 
--- (anno_regole.riserva_permanente e anno_transitorio_usi: Compito 3.3-2)
+-- Le due manopole per tabella (Compito 3.3-2), nel registro `anno_tabelle`:
+--   · `guardia`: `piena` = come la PR 1; `solo_contenuto` = gli UPDATE non si guardano, INSERT e DELETE sì;
+--     `nessuna` = nessun controllo di guardia (la tabella resta nel registro per l'anno). Si decide per tabella
+--     perché una macchina a stati (video) o una presa visione (ricezioni) non è un contenuto da correggere.
+--   · `riserva_permanente`: la regola transitoria («l'app di oggi non scrive anno_id») resta valida per questa
+--     tabella ANCHE con `dichiarato_transitorio = false`. Una voce di cassa o una domanda di una famiglia non
+--     devono mai fallire per l'anno.
+ALTER TABLE public.anno_tabelle ADD COLUMN IF NOT EXISTS guardia text NOT NULL DEFAULT 'piena'
+  CHECK (guardia IN ('piena', 'solo_contenuto', 'nessuna'));
+ALTER TABLE public.anno_tabelle ADD COLUMN IF NOT EXISTS riserva_permanente boolean NOT NULL DEFAULT false;
 
--- Il contatore. Fail-open: un guasto del contatore NON blocca la scrittura e lascia `anno_log_guasto`.
--- `origine` si legge dall'header `x-kidville-route` e si valida ANCHE qui con la regola dell'app
--- (`^[a-z0-9/_\-\[\]:.]+$`, senza distinzione di maiuscole), poi si tronca a 120: un header si può forgiare
--- da qualunque client con la chiave service-role, e la tabella non deve mai tenere testo libero.
-CREATE OR REPLACE FUNCTION public.anno_guardia_osserva_conta(p_tabella text, p_op text, p_stato text)
-RETURNS void
+-- Una tabella che non c'è nel database (la CI non ha cassa, video, pagelle…) non ha la sua riga: gli UPDATE
+-- sotto non fanno niente per lei.
+UPDATE public.anno_tabelle SET riserva_permanente = true
+ WHERE tabella IN ('pagamenti', 'enrollment_submissions') AND NOT riserva_permanente;
+UPDATE public.anno_tabelle t SET guardia = v.g
+  FROM (VALUES ('video_jobs', 'nessuna'), ('video_intents', 'solo_contenuto'),
+               ('pagella_ricezioni', 'nessuna'), ('nota_ricezioni', 'nessuna')) AS v(tabella, g)
+ WHERE t.tabella = v.tabella AND t.guardia <> v.g;
+
+-- Il contatore della regola transitoria: quante volte, per tabella e per route, una scrittura ha ricevuto l'anno
+-- dalla regola e non dal chiamante. È la MISURA che dice quando il 3-B è sicuro. Mai righe, mai dati.
+CREATE TABLE IF NOT EXISTS public.anno_transitorio_usi (
+  giorno    date        NOT NULL,
+  tabella   text        NOT NULL,
+  regola    text        NOT NULL,
+  origine   text        NOT NULL,
+  n         bigint      NOT NULL DEFAULT 1,
+  prima_il  timestamptz NOT NULL DEFAULT now(),
+  ultima_il timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (giorno, tabella, regola, origine)
+);
+ALTER TABLE public.anno_transitorio_usi ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.anno_transitorio_usi FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anno_transitorio_usi TO service_role;
+
+-- L'`origine` di una scrittura, per i DUE contatori (osservazione e regola transitoria): la sola funzione che la
+-- legge dall'header `x-kidville-route` e la valida con la regola dell'app (`^[a-z0-9/_\-\[\]:.]+$`, senza
+-- distinzione di maiuscole), poi la tronca a 120. Un header si può forgiare da qualunque client con la chiave
+-- service-role, e le tabelle non devono mai tenere testo libero. Mancante: `sql-senza-richiesta`; non valido:
+-- `origine-non-valida`.
+CREATE OR REPLACE FUNCTION public.anno_origine_richiesta()
+RETURNS text
 LANGUAGE plpgsql
-SECURITY DEFINER
+STABLE
 SET search_path = public, pg_temp
 AS $$
 DECLARE
@@ -54,15 +89,25 @@ BEGIN
     v_origine := NULL;
   END;
   IF v_origine IS NULL OR btrim(v_origine) = '' THEN
-    v_origine := 'sql-senza-richiesta';
+    RETURN 'sql-senza-richiesta';
   ELSIF v_origine !~* '^[a-z0-9/_\-\[\]:.]+$' THEN
-    v_origine := 'origine-non-valida';
-  ELSE
-    v_origine := left(v_origine, 120);
+    RETURN 'origine-non-valida';
   END IF;
+  RETURN left(v_origine, 120);
+END
+$$;
 
+-- Il contatore. Fail-open: un guasto del contatore NON blocca la scrittura e lascia `anno_log_guasto`.
+-- L'`origine` la dà `anno_origine_richiesta()`.
+CREATE OR REPLACE FUNCTION public.anno_guardia_osserva_conta(p_tabella text, p_op text, p_stato text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
   INSERT INTO public.anno_guardia_osservazioni (giorno, tabella, op, stato, origine)
-  VALUES (public.giorno_roma(now()), p_tabella, p_op, p_stato, v_origine)
+  VALUES (public.giorno_roma(now()), p_tabella, p_op, p_stato, public.anno_origine_richiesta())
   ON CONFLICT (giorno, tabella, op, stato, origine)
   DO UPDATE SET n = public.anno_guardia_osservazioni.n + 1, ultima_il = now();
 EXCEPTION WHEN OTHERS THEN
@@ -72,7 +117,81 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
--- ── (2) anno_colonne_esenti esteso: Compito 3.3-2 ───────────────────────────
+-- Il contatore della regola transitoria, stessa forma: una riga per chiave, `ON CONFLICT … DO UPDATE`, fail-open.
+-- `regola` dice quale ramo di `anno_dichiarato_transitorio` ha dato l'anno (un nome per tabella: il ramo è uno).
+CREATE OR REPLACE FUNCTION public.anno_transitorio_conta(p_tabella text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public.anno_transitorio_usi (giorno, tabella, regola, origine)
+  VALUES (public.giorno_roma(now()), p_tabella,
+          CASE p_tabella
+            WHEN 'pagamenti'                     THEN 'pagamenti/creazione'
+            WHEN 'enrollment_submissions'        THEN 'enrollment/anno-attivo'
+            WHEN 'votazioni'                     THEN 'votazioni/anno-attivo'
+            WHEN 'iscrizioni_elenco_caricamenti' THEN 'elenco/anno-attivo'
+            WHEN 'crm_bambini'                   THEN 'crm/quota-o-etichetta'
+            WHEN 'scrutinio_periodi'             THEN 'scrutinio/etichetta-o-anno-attivo'
+            WHEN 'certificati_competenze'        THEN 'certificato/etichetta-o-anno-attivo'
+            ELSE p_tabella
+          END,
+          public.anno_origine_richiesta())
+  ON CONFLICT (giorno, tabella, regola, origine)
+  DO UPDATE SET n = public.anno_transitorio_usi.n + 1, ultima_il = now();
+EXCEPTION WHEN OTHERS THEN
+  PERFORM public.anno_log_guasto(p_tabella, 'transitorio-conta-fallito', 'anno_transitorio_conta',
+                                 'contatore della regola transitoria fallito: la scrittura è passata',
+                                 'db:anno-transitorio-conta:' || p_tabella, SQLSTATE);
+END
+$$;
+
+-- ── (2) anno_colonne_esenti esteso ──────────────────────────────────────────
+
+-- Le colonne che la guardia lascia cambiare senza gettone: l'elenco di `20261106200347`, esteso. Una colonna è
+-- esente solo se una persona NON la sta correggendo: o è lo stato che cambia da sé (incasso, letto, consegnato),
+-- o è un testo derivato dal nome di una sezione (D12), o la scrive un trigger. Sempre PER NOME, mai per modello.
+--   · `pagamenti`: l'incasso, `ultimo_sollecito_il`, `aggiornato_il` e le CINQUE colonne `fattura_*` che la tabella
+--     ha davvero (baseline 20260704120000: `fattura_aruba_id`, `fattura_stato`, `fattura_pdf_path`,
+--     `fattura_emessa_il`, `fattura_causale`; nessuna migrazione dopo ne ha aggiunte). NON `sconto`, `sconto_motivo`,
+--     `tipo`: cambiano quanto si deve o chi lo deve = correzione (Ruling P12).
+--   · `frequenze`: i due flag del trigger della frequenza (R25).
+--   · `chat_messages`: letto e consegnato.
+--   · `sections`: il nome (l'etichetta; la propagazione riscrive i testi derivati nelle tabelle sotto).
+--   · `registro_orario`: `classe_sezione` (testo derivato dal nome) e `storico_versione`.
+--   · `avvisi`, `galleria_media_v2`: `target_classes` e `target_section_ids` (derivati dal nome della sezione; il
+--     trigger di traduzione li muove in coppia).
+--   · `storico_versione` su `registro_orario`, `firme_docenti`, `note_disciplinari`, `valutazioni`: la scrive il
+--     trigger `storici_prima_mutazione` (BEFORE UPDATE, +1 a OGNI UPDATE, anche alla propagazione della rinomina) e
+--     la «tocca» `storici_versione_aggregato` (AFTER) quando si firma una nota o si aggiunge un allegato: una
+--     `UPDATE madre SET storico_versione = storico_versione` che da sola non cambia nessun contenuto. Un UPDATE vero
+--     cambia altre colonne e resta guardato: la guardia confronta TUTTO il resto della riga.
+--     (`registri.manutenzione` non c'entra: lo legge il trigger anti-DELETE, non scrive nessuna colonna.)
+CREATE OR REPLACE FUNCTION public.anno_colonne_esenti(p_tabella text)
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE p_tabella
+           WHEN 'pagamenti' THEN ARRAY['stato', 'importo_pagato', 'data_incasso', 'ultimo_sollecito_il', 'aggiornato_il',
+                                       'fattura_aruba_id', 'fattura_stato', 'fattura_pdf_path', 'fattura_emessa_il',
+                                       'fattura_causale']
+           WHEN 'frequenze' THEN ARRAY['moduli_completi', 'quota_saldata']
+           WHEN 'chat_messages' THEN ARRAY['read_at', 'delivered_at']
+           WHEN 'sections' THEN ARRAY['name']
+           WHEN 'registro_orario' THEN ARRAY['classe_sezione', 'storico_versione']
+           WHEN 'avvisi' THEN ARRAY['target_classes', 'target_section_ids']
+           WHEN 'galleria_media_v2' THEN ARRAY['target_classes', 'target_section_ids']
+           WHEN 'firme_docenti' THEN ARRAY['storico_versione']
+           WHEN 'note_disciplinari' THEN ARRAY['storico_versione']
+           WHEN 'valutazioni' THEN ARRAY['storico_versione']
+           ELSE ARRAY[]::text[]
+         END
+$$;
 
 -- ── (3) La guardia e il trigger generico ────────────────────────────────────
 
@@ -139,6 +258,11 @@ DECLARE
   v_riga_id   text;
   v_orfani    uuid[] := '{}';
 BEGIN
+  -- La manopola della tabella: `nessuna` non si guarda mai; `solo_contenuto` non guarda gli UPDATE.
+  IF p_reg.guardia = 'nessuna' OR (p_reg.guardia = 'solo_contenuto' AND p_op = 'UPDATE') THEN
+    RETURN;
+  END IF;
+
   IF p_old IS NOT NULL THEN v_sede_old := public.anno_guardia_sede(p_reg.tabella, p_old); END IF;
   IF p_new IS NOT NULL THEN v_sede_new := public.anno_guardia_sede(p_reg.tabella, p_new); END IF;
 
@@ -258,14 +382,12 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Le esenzioni: l'UPDATE cambia SOLO colonne che una persona non sta correggendo.
-  IF p_op = 'UPDATE' AND p_reg.tabella = 'pagamenti' THEN
-    v_chiavi := public.anno_colonne_esenti('pagamenti');
-    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_ko
-      FROM jsonb_each(p_old) e WHERE e.key <> ALL (v_chiavi) AND e.key NOT LIKE 'fattura\_%';
-    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) INTO v_kn
-      FROM jsonb_each(p_new) e WHERE e.key <> ALL (v_chiavi) AND e.key NOT LIKE 'fattura\_%';
-    IF v_ko = v_kn THEN RETURN; END IF;
+  -- Le esenzioni: l'UPDATE cambia SOLO colonne che una persona non sta correggendo. Una regola sola per tutte le
+  -- tabelle (`anno_colonne_esenti`): si toglie l'elenco dalle due righe e il resto deve essere IDENTICO. Un UPDATE
+  -- che cambia anche una colonna non esente non è esente.
+  IF p_op = 'UPDATE' AND p_reg.tabella <> 'frequenze' AND cardinality(public.anno_colonne_esenti(p_reg.tabella)) > 0 THEN
+    v_chiavi := public.anno_colonne_esenti(p_reg.tabella);
+    IF (p_old - v_chiavi) = (p_new - v_chiavi) THEN RETURN; END IF;
   ELSIF p_op = 'UPDATE' AND p_reg.tabella = 'frequenze' THEN
     -- I due flag li scrive il trigger della frequenza (R25): non sono mai una scrittura di una persona.
     v_ko := p_old - public.anno_colonne_esenti('frequenze');
@@ -312,6 +434,11 @@ BEGIN
       -- `in_chiusura` accetta `agosto` e `correzione`; `chiuso` solo `correzione`; `oblio` mai da qui.
       -- Valido se: dell'anno-sede giusto, non scaduto, dell'utente che scrive e MAI usato da un'altra transazione
       -- (un gettone vale una transazione: tutte le sue scritture, ma solo le sue).
+      -- LIMITE NOTO del `NOT EXISTS … transazione <> txid_current()`: due transazioni CONCORRENTI con lo stesso
+      -- gettone non vedono gli usi non ancora confermati l'una dell'altra, e possono passare entrambe. Senza un
+      -- blocco sulla riga del gettone (`FOR UPDATE`) non si evita. È accettabile: il gettone dura 10 minuti ed è
+      -- dello staff (Direzione/segreteria), che lo ottiene per UNA correzione; una gara fra due schede dello stesso
+      -- utente lascia comunque gli usi registrati (uno per scrittura) e l'`app_log` di ciascuno.
       SELECT c.id, c.codice INTO v_trovato, v_cod FROM public.correzioni_anno_chiuso c
        WHERE c.id = ANY (v_gettoni) AND c.anno_sede_id = v_protetti[v_i] AND now() < c.scade_il
          AND c.codice = ANY (CASE WHEN v_stati[v_i] = 'chiuso' THEN ARRAY['correzione']
@@ -339,6 +466,28 @@ BEGIN
       PERFORM public.anno_log_uso_gettone(v_uso, p_reg.tabella, v_riga_id, v_cod);
     END IF;
   END LOOP;
+END
+$$;
+
+-- L'osservazione NON rifiuta MAI una scrittura (Ruling P27). Dal merge, con `guardia_attiva = false` e
+-- `guardia_osserva = true`, la guardia gira per la prima volta su ogni scrittura delle tabelle del registro, anche
+-- quelle del codice vecchio: un errore imprevisto di lei (una tabella `madre` fatta diversamente, un `EXECUTE format`
+-- che non torna) farebbe cadere una scrittura che oggi passa. Qui qualunque errore diventa un guasto registrato
+-- (SOLO SQLSTATE e tabella, mai i dati) e la scrittura prosegue. Con la guardia ACCESA il trigger chiama direttamente
+-- `anno_guardia_verifica` e gli errori restano errori.
+CREATE OR REPLACE FUNCTION public.anno_guardia_osserva_sicura(
+  p_reg public.anno_tabelle, p_op text, p_old jsonb, p_new jsonb, p_calcolato uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  PERFORM public.anno_guardia_verifica(p_reg, p_op, p_old, p_new, p_calcolato, true);
+EXCEPTION WHEN OTHERS THEN
+  PERFORM public.anno_log_guasto(p_reg.tabella, 'osservazione-guardia-fallita', 'anno_guardia_osserva_sicura',
+                                 'la guardia in osservazione è fallita: la scrittura è passata',
+                                 'db:anno-osservazione-guardia:' || p_reg.tabella, SQLSTATE);
 END
 $$;
 
@@ -388,7 +537,11 @@ BEGIN
     IF v_guardia OR v_osserva THEN
       SELECT * INTO v_reg FROM public.anno_tabelle WHERE tabella = TG_TABLE_NAME;
       IF FOUND THEN
-        PERFORM public.anno_guardia_verifica(v_reg, TG_OP, to_jsonb(OLD), NULL, NULL, NOT v_guardia);
+        IF v_guardia THEN
+          PERFORM public.anno_guardia_verifica(v_reg, TG_OP, to_jsonb(OLD), NULL, NULL, false);
+        ELSE
+          PERFORM public.anno_guardia_osserva_sicura(v_reg, TG_OP, to_jsonb(OLD), NULL, NULL);
+        END IF;
       END IF;
     END IF;
     RETURN OLD;
@@ -413,7 +566,11 @@ BEGIN
        AND (v_n ->> 'section_id')                IS NOT DISTINCT FROM (v_o ->> 'section_id') THEN
       -- Niente ricalcolo, ma la guardia sì: un UPDATE estraneo all'anno su una riga di un anno chiuso.
       IF v_guardia OR v_osserva THEN
-        PERFORM public.anno_guardia_verifica(v_reg, TG_OP, v_o, v_n, NULL, NOT v_guardia);
+        IF v_guardia THEN
+          PERFORM public.anno_guardia_verifica(v_reg, TG_OP, v_o, v_n, NULL, false);
+        ELSE
+          PERFORM public.anno_guardia_osserva_sicura(v_reg, TG_OP, v_o, v_n, NULL);
+        END IF;
       END IF;
       -- Il riempimento tocca anche le madri che hanno già l'anno: l'aggregato AFTER delle figlie (storici_versione_aggregato)
       -- fa `UPDATE madre SET storico_versione = storico_versione` quando F1 riempie una figlia, e `storici_prima_mutazione`
@@ -514,7 +671,9 @@ BEGIN
      AND TG_TABLE_NAME = ANY (ARRAY['enrollment_submissions', 'pagamenti', 'crm_bambini', 'votazioni',
                                     'scrutinio_periodi', 'certificati_competenze', 'iscrizioni_elenco_caricamenti'])
      AND public.anno_sede_della_riga(TG_TABLE_NAME, v_n) IS NOT NULL THEN
-    IF v_trans_on THEN
+    -- La regola vale con la manopola accesa (`dichiarato_transitorio`) O per le tabelle con la riserva permanente
+    -- (`pagamenti`, `enrollment_submissions`: una voce di cassa o una domanda non falliscono mai per l'anno).
+    IF v_trans_on OR v_reg.riserva_permanente THEN
       IF v_rigidi THEN
         v_trans := public.anno_dichiarato_transitorio(TG_TABLE_NAME, v_n);
       ELSE
@@ -531,6 +690,8 @@ BEGIN
         NEW := jsonb_populate_record(NEW, jsonb_build_object('anno_id', v_trans));
         v_attuale := v_trans;
         v_n := to_jsonb(NEW);
+        -- Ogni uso della regola si conta (fail-open): è la misura che dice quando il 3-B è sicuro.
+        PERFORM public.anno_transitorio_conta(TG_TABLE_NAME);
       ELSIF v_rigidi THEN
         -- c'è un'etichetta (quota_anno, anno_scolastico) e nessun anno della sede la ha: non si indovina
         IF (v_n ->> 'quota_anno') IS NOT NULL OR (v_n ->> 'anno_scolastico') IS NOT NULL THEN
@@ -566,9 +727,12 @@ BEGIN
 
   -- La guardia dell'anno chiuso (§4.4.6), DOPO il calcolo (§4.21): guarda l'anno della riga prima
   -- (OLD) e quello in cui finisce (NEW, e l'anno che dice la sua data).
-  IF v_guardia OR v_osserva THEN
+  IF v_guardia THEN
     PERFORM public.anno_guardia_verifica(v_reg, TG_OP, CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END,
-                                         to_jsonb(NEW), v_calcolato, NOT v_guardia);
+                                         to_jsonb(NEW), v_calcolato, false);
+  ELSIF v_osserva THEN
+    PERFORM public.anno_guardia_osserva_sicura(v_reg, TG_OP, CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END,
+                                               to_jsonb(NEW), v_calcolato);
   END IF;
 
   -- (c) Il riempimento: una riga che nasceva senza anno non cambia versione né data di modifica.
@@ -599,3 +763,13 @@ GRANT EXECUTE ON FUNCTION public.anno_guardia_verifica(public.anno_tabelle, text
 GRANT EXECUTE ON FUNCTION public.anno_guardia_osserva_conta(text, text, text)                                  TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_log_uso_gettone(uuid, text, text, text)                                  TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_assegna_e_verifica()                                                      TO service_role;
+
+-- Compito 3.3-2: le funzioni nuove e quella ridefinita.
+REVOKE ALL ON FUNCTION public.anno_origine_richiesta()                                                            FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_transitorio_conta(text)                                                        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_guardia_osserva_sicura(public.anno_tabelle, text, jsonb, jsonb, uuid)         FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_colonne_esenti(text)                                                           FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_origine_richiesta()                                                         TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_transitorio_conta(text)                                                     TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_guardia_osserva_sicura(public.anno_tabelle, text, jsonb, jsonb, uuid)      TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_colonne_esenti(text)                                                        TO service_role;

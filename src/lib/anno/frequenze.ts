@@ -179,3 +179,60 @@ export async function scriviFrequenza(
     return { ok: false, codice: 'SCRITTURA_FALLITA' }
   }
 }
+
+/**
+ * L'anno ATTIVO di una sede (`anni_sede.id`), letto con `anno_attivo(p_scuola)`. NON LANCIA MAI.
+ *
+ * Serve alle route che, dopo aver scritto `alunni`, chiamano `scriviFrequenza`: l'`annoSedeId` è quello della sede
+ * dell'alunno (su un trasferimento, della sede NUOVA). `null` vuol dire «non chiamare `scriviFrequenza`»: sede senza
+ * anno attivo, schema indietro (`PGRST202`/`PGRST205`, il DB della CI) oppure un guasto, che si logga col solo codice.
+ * `cache` (una `Map` per richiesta) evita di rileggere la stessa sede quando la route scrive più alunni.
+ */
+export async function annoAttivoDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+  cache?: Map<string, string | null>,
+): Promise<string | null> {
+  if (!scuolaId) return null
+  if (cache?.has(scuolaId)) return cache.get(scuolaId) ?? null
+  let anno: string | null = null
+  try {
+    const r = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
+    if (r.error) {
+      if (!schemaAnnoIndietro(r.error)) {
+        // solo il SQLSTATE: il messaggio non serve a niente e non deve portare dati
+        logErrore({ operazione: 'anno/frequenze:annoAttivoDiSede' }, new Error(`anno_attivo:${r.error.code ?? 'senza-codice'}`))
+      }
+    } else if (typeof r.data === 'string') {
+      anno = r.data
+    }
+  } catch (err) {
+    logErrore({ operazione: 'anno/frequenze:annoAttivoDiSede' }, err)
+  }
+  cache?.set(scuolaId, anno)
+  return anno
+}
+
+/**
+ * I siti che scrivono `alunni` e NON si collegano a `scriviFrequenza`, ciascuno col suo motivo. Lo legge il lock del
+ * 3.9: un sito `.from('alunni')` con insert/update/upsert che non chiama `scriviFrequenza` deve stare qui.
+ * ⚠️ Provvisorio: `src/lib/gdpr/esegui.ts` (patchAlunno azzera `intestatario_fatture` e `retta_split_config`) e
+ * `src/app/api/admin/import/anagrafiche/route.ts` (solo INSERT senza colonne copiate) aspettano la decisione del controllore.
+ */
+export const ESENTI: readonly { file: string; motivo: string }[] = [
+  {
+    file: 'src/lib/forms/persist-submission.ts',
+    motivo:
+      'Scrive solo le colonne anagrafiche mappate dai moduli (db_mapping alunni.*: nome, cognome, codice fiscale, nascita, residenza, allergie, note mediche, documento): nessuna delle 15 colonne copiate nella frequenza.',
+  },
+  {
+    file: 'src/lib/sidi/import-apply.ts',
+    motivo:
+      "Aggiorna solo numero_domanda_sidi e inserisce anagrafica + stato iscritto: nessuna colonna copiata, e la frequenza dell'anno attivo nasce dal trigger-specchio all'INSERT.",
+  },
+  {
+    file: 'src/lib/alunni/libera-spazio.ts',
+    motivo:
+      "Scrive solo spazio_liberato_il, il segno che i file di un archiviato sono stati tolti: non è una colonna della frequenza e non cambia lo stato dell'alunno.",
+  },
+]

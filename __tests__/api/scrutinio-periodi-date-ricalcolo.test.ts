@@ -120,6 +120,17 @@ beforeEach(() => {
       periodo(Q2, SEDE_A, 2, '2027-02-01', '2027-06-30'),
     ],
     scrutini: [],
+    // Dal 3.5-1 il periodo nasce con l'anno ricavato dall'etichetta: `ANNO` esiste ed è il `corrente` di entrambe le sedi.
+    anni_scolastici: [
+      { id: 'a2222222-2222-4222-8222-222222222222', etichetta: ANNO, etichetta_breve: '2026/27' },
+      // I test «di un altro anno» parlano di date, non di stato: l'anno 2025/2026 qui è un anno scrivibile.
+      { id: 'a1111111-1111-4111-8111-111111111111', etichetta: '2025/2026', etichetta_breve: '2025/26' },
+    ],
+    anni_sede: [
+      { id: 'b1111111-1111-4111-8111-aaaaaaaaaaaa', scuola_id: SEDE_A, anno_id: 'a1111111-1111-4111-8111-111111111111', stato: 'in_preparazione', domande_aperte: false },
+      { id: 'b2222222-2222-4222-8222-aaaaaaaaaaaa', scuola_id: SEDE_A, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+      { id: 'b2222222-2222-4222-8222-bbbbbbbbbbbb', scuola_id: SEDE_B, anno_id: 'a2222222-2222-4222-8222-222222222222', stato: 'corrente', domande_aperte: false },
+    ],
   } as DBFinto
   h.scritture = []
   h.errori = undefined

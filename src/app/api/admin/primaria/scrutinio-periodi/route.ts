@@ -3,7 +3,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { conAnno } from '@/lib/anno/tipi'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -142,6 +146,30 @@ async function rifiutoSuSovrapposizione(
   return null
 }
 
+/**
+ * L'`anni_scolastici.id` di un'etichetta («2026/27» o «2026/2027»: sono le due forme generate dello stesso
+ * anno, quindi un testo dà al più una riga). Due letture con `eq` e non un `.or()`: il testo arriva dal
+ * client e non entra mai in un filtro PostgREST. `null` = nessun anno con quell'etichetta;
+ * `indietro` = lo schema dell'anno non c'è (database della CI): si scrive come prima, senza `anno_id`.
+ */
+async function annoDaEtichetta(
+  supabase: SupabaseClient,
+  etichetta: string,
+  operazione: string,
+): Promise<{ annoId: string | null } | { indietro: true } | { guasto: NextResponse }> {
+  for (const colonna of ['etichetta_breve', 'etichetta'] as const) {
+    const { data, error } = await supabase.from('anni_scolastici').select('id').eq(colonna, etichetta).limit(1)
+    if (error) {
+      if (schemaAnnoIndietro(error)) return { indietro: true }
+      logErrore({ operazione, stato: 500, evento: 'anno-etichetta-non-letta' }, error)
+      return { guasto: NextResponse.json({ error: 'Errore interno', codice: 'LETTURA_FALLITA' }, { status: 500 }) }
+    }
+    const riga = (Array.isArray(data) ? data[0] : null) as { id?: string } | null
+    if (riga?.id) return { annoId: riga.id }
+  }
+  return { annoId: null }
+}
+
 const getQuerySchema = z.object({
   annoScolastico: z.string().optional(),
   // `si` = anche i periodi archiviati (la segreteria li rivede per ripristinarli).
@@ -262,7 +290,23 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
       if (rifiutoSovrapposto) return rifiutoSovrapposto
     }
 
-    const { data, error } = await supabase
+    // Dopo le date e le sovrapposizioni (così in agosto non nascono gettoni per una richiesta che si rifiuta).
+    // L'anno si ricava dall'etichetta che la pagina già manda: un testo che non è un anno → 400, come un
+    // `anno_id` dichiarato di un'altra sede. `anno_scolastico` (testo) resta scritto com'è: lo toglie la PR 5.
+    const daEtichetta = await annoDaEtichetta(supabase, annoScolastico, operazione)
+    if ('guasto' in daEtichetta) return daEtichetta.guasto
+    let esito: Awaited<ReturnType<typeof resolveAnnoScrittura>> | null = null
+    if (!('indietro' in daEtichetta)) {
+      if (daEtichetta.annoId === null) {
+        logEvento('anno-scolastico', 'warn', { tipo: 'etichetta-non-di-un-anno', azione: operazione })
+        return erroreAnno({ message: 'ANNO_NON_DELLA_SEDE' }, operazione) as NextResponse
+      }
+      esito = await resolveAnnoScrittura(request, supabase, auth.user, sede.scuolaId!, { dichiarato: daEtichetta.annoId })
+      if (esito instanceof NextResponse) return esito
+    }
+
+    const scrittura = esito ? await clientPerScrittura(supabase, esito) : supabase
+    const { data, error } = await scrittura
       .from('scrutinio_periodi')
       .insert({
         scuola_id: sede.scuolaId!,
@@ -271,10 +315,15 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
         ordine: ordine ?? 0,
         data_inizio: inizio,
         data_fine: fine,
+        ...(esito ? conAnno(esito) : {}),
       })
       .select()
       .single()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      const anno = erroreAnno(error, operazione)
+      if (anno) return anno
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
     logEvento('registro', 'info', {
       operazione, esito: 'periodo-creato', scuola_id: sede.scuolaId!, periodo_id: data?.id ?? null, con_date: Boolean(inizio && fine),
     })

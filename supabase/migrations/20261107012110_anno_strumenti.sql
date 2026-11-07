@@ -1028,7 +1028,10 @@ $mig$;
 -- `lower(replace(x, ' ', ''))` (la forma di `sections_forma_normalizzata_per_sede`): «gira soli» e «Girasoli» sono
 -- la stessa sezione. Toglie i doppioni; un nome che nessuna sezione ha non produce niente (resta nei nomi).
 -- NULL → NULL; array vuoto → '{}'; sede NULL → '{}'. Il Compito 2.3 la chiama dai trigger per tabella.
-CREATE OR REPLACE FUNCTION public.anno_traduci_classi(p_scuola uuid, p_nomi text[])
+-- `p_anno` è un `anni_scolastici.id`: NULL vuol dire l'anno attivo della sede (il riempimento la chiama così); i
+-- trigger e `anno_target_divergenti()` passano l'anno DELLA RIGA, perché dopo un passaggio d'anno gli uuid di un
+-- avviso vecchio sono quelli delle sezioni di quell'anno e non vanno né riscritti né contati come divergenti.
+CREATE OR REPLACE FUNCTION public.anno_traduci_classi(p_scuola uuid, p_nomi text[], p_anno uuid DEFAULT NULL)
 RETURNS uuid[]
 LANGUAGE sql
 STABLE
@@ -1041,7 +1044,7 @@ AS $$
       SELECT array_agg(DISTINCT s.id ORDER BY s.id)
         FROM public.sections s
        WHERE s.scuola_id = p_scuola
-         AND s.anno_id = (SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(p_scuola))
+         AND s.anno_id = coalesce(p_anno, (SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(p_scuola)))
          AND lower(replace(s.name::text, ' ', '')) IN (SELECT lower(replace(n, ' ', '')) FROM unnest(p_nomi) AS n)
     ), '{}'::uuid[])
   END
@@ -1332,10 +1335,10 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON FUNCTION public.anno_traduci_classi(uuid, text[])        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_traduci_classi(uuid, text[], uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_copia_configurazione(uuid, uuid)    FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_riempi(text[], date)                FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.anno_traduci_classi(uuid, text[])     TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_traduci_classi(uuid, text[], uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_copia_configurazione(uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_riempi(text[], date)             TO service_role;
 
@@ -1514,6 +1517,8 @@ DECLARE
   v_ids    uuid[];
   v_dist   integer;
   v_manca  integer;
+  v_anno   uuid;
+  v_data   text;
 BEGIN
   BEGIN
     IF v_n -> TG_ARGV[0] IS NULL OR jsonb_typeof(v_n -> TG_ARGV[0]) = 'null' THEN
@@ -1524,21 +1529,35 @@ BEGIN
       RETURN NEW;
     END IF;
 
+    -- L'anno delle sezioni con cui tradurre. Tabella con `anno_id`: in UPDATE quello che la riga ha già (OLD), in INSERT
+    -- l'anno attivo (NULL). Tabella senza `anno_id`: l'anno della data della riga stessa (`attivo_dal`, o la creazione);
+    -- senza nessuna data, o con una data fuori da ogni anno, l'anno attivo (limite noto).
+    IF v_n ? 'anno_id' THEN
+      IF TG_OP = 'UPDATE' THEN
+        v_anno := (to_jsonb(OLD) ->> 'anno_id')::uuid;
+      END IF;
+    ELSE
+      v_data := coalesce(v_n ->> 'attivo_dal', v_n ->> 'created_at');
+      IF v_data IS NOT NULL THEN
+        v_anno := public.anno_di(v_sede, CASE WHEN length(v_data) = 10 THEN v_data::date ELSE public.giorno_roma(v_data::timestamptz) END);
+      END IF;
+    END IF;
+
     IF TG_ARGV[2] = 'array' THEN
       SELECT coalesce(array_agg(x), '{}'::text[]) INTO v_nomi FROM jsonb_array_elements_text(v_n -> TG_ARGV[0]) AS x;
-      v_ids := public.anno_traduci_classi(v_sede, v_nomi);
+      v_ids := public.anno_traduci_classi(v_sede, v_nomi, v_anno);
       SELECT count(DISTINCT lower(replace(x, ' ', ''))) INTO v_dist FROM unnest(v_nomi) AS x;
       v_manca := v_dist - coalesce(cardinality(v_ids), 0);
       NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], to_jsonb(v_ids)));
     ELSE
-      v_ids := public.anno_traduci_classi(v_sede, ARRAY[v_n ->> TG_ARGV[0]]);
+      v_ids := public.anno_traduci_classi(v_sede, ARRAY[v_n ->> TG_ARGV[0]], v_anno);
       v_manca := CASE WHEN v_ids[1] IS NULL THEN 1 ELSE 0 END;
       NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], v_ids[1]));
     END IF;
 
     IF v_manca > 0 THEN
       PERFORM public.anno_log_avviso(TG_TABLE_NAME, 'classe-non-abbinata', 'anno_traduci_classi_trg',
-                                     'nomi di classe che nessuna sezione dell''anno attivo ha: restano nei nomi',
+                                     'nomi di classe che nessuna sezione dell''anno della riga ha: restano nei nomi',
                                      'db:anno-classe-non-abbinata:' || TG_TABLE_NAME, v_manca);
     END IF;
   EXCEPTION WHEN OTHERS THEN
@@ -1572,7 +1591,7 @@ BEGIN
 END
 $mig$;
 
--- Le righe in cui nomi e uuid non dicono la stessa cosa (anno ATTIVO della sede): per tabella, anche a zero. Un uuid
+-- Le righe in cui nomi e uuid non dicono la stessa cosa (nell'anno DELLA RIGA, vedi sotto): per tabella, anche a zero. Un uuid
 -- senza nome, un nome senza uuid (anche perché nessuna sezione lo ha) o due insiemi diversi. Le righe senza sede
 -- non si possono tradurre e non contano. L'insieme degli uuid si confronta ordinato e senza doppioni.
 CREATE OR REPLACE FUNCTION public.anno_target_divergenti()
@@ -1585,6 +1604,7 @@ AS $$
 DECLARE
   r      record;
   v_sede text;
+  v_anno text;
   v_cond text;
   v_n    bigint;
 BEGIN
@@ -1599,18 +1619,25 @@ BEGIN
     CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class k WHERE k.oid = to_regclass(format('public.%I', r.t)) AND k.relkind IN ('r', 'p'))
                OR NOT public.anno_ha_colonna(r.t, r.src) OR NOT public.anno_ha_colonna(r.t, r.dst);
     v_sede := public.anno_sede_sql(r.t, 't');
+    -- L'anno con cui tradurre è quello DELLA RIGA: \`anno_id\` dove la tabella ce l'ha; altrimenti l'anno della sua data
+    -- (\`attivo_dal\`, o la creazione). Una tabella senza nessuna delle due (o una riga fuori da ogni anno) usa l'anno attivo.
+    v_anno := CASE
+      WHEN public.anno_ha_colonna(r.t, 'anno_id') THEN 't.anno_id'
+      WHEN public.anno_ha_colonna(r.t, 'attivo_dal') THEN format('public.anno_di(%s, t.attivo_dal)', v_sede)
+      WHEN public.anno_ha_colonna(r.t, 'created_at') THEN format('public.anno_di(%s, public.giorno_roma(t.created_at::timestamptz))', v_sede)
+      ELSE 'NULL::uuid' END;
     IF r.e_array THEN
       -- gli uuid non sono quelli che i nomi danno, OPPURE c'è un nome che nessuna sezione ha (resta nei nomi)
       v_cond := format(
         '((SELECT coalesce(array_agg(DISTINCT x ORDER BY x), %1$L::uuid[]) FROM unnest(coalesce(t.%2$I, %1$L::uuid[])) AS x) '
-        || 'IS DISTINCT FROM coalesce(public.anno_traduci_classi(%3$s, t.%4$I), %1$L::uuid[]) '
+        || 'IS DISTINCT FROM coalesce(public.anno_traduci_classi(%3$s, t.%4$I, %7$s), %1$L::uuid[]) '
         || 'OR (SELECT count(DISTINCT lower(replace(n, %5$L, %6$L))) FROM unnest(coalesce(t.%4$I, %1$L::text[])) AS n) '
-        || '<> cardinality(coalesce(public.anno_traduci_classi(%3$s, t.%4$I), %1$L::uuid[])))',
-        '{}', r.dst, v_sede, r.src, ' ', '');
+        || '<> cardinality(coalesce(public.anno_traduci_classi(%3$s, t.%4$I, %7$s), %1$L::uuid[])))',
+        '{}', r.dst, v_sede, r.src, ' ', '', v_anno);
     ELSE
-      v_cond := format('(t.%1$I IS DISTINCT FROM (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I]))[1] '
-                       || 'OR (t.%3$I IS NOT NULL AND (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I]))[1] IS NULL))',
-                       r.dst, v_sede, r.src);
+      v_cond := format('(t.%1$I IS DISTINCT FROM (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I], %4$s))[1] '
+                       || 'OR (t.%3$I IS NOT NULL AND (public.anno_traduci_classi(%2$s, ARRAY[t.%3$I], %4$s))[1] IS NULL))',
+                       r.dst, v_sede, r.src, v_anno);
     END IF;
     EXECUTE format('SELECT count(*) FROM public.%I t WHERE %s IS NOT NULL AND %s', r.t, v_sede, v_cond) INTO v_n;
     tabella := r.t; righe := v_n;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
+import { creaDbAnnoPr2, fissaCalendarioAnni } from '../helpers/schema-anno-pglite'
 
 /**
  * PR 2 · COMPITO 2.3 · I NOMI DI CLASSE → UUID DI SEZIONE (migrazione M1: colonne, `anno_traduci_classi_trg`,
@@ -173,5 +173,46 @@ describe('anno_target_divergenti() e l\'invariante 13', () => {
     const riga = await inserisci(ARRAY_TABELLE[0], ['Girasoli', 'Margherite'])
     await db.query(`UPDATE public.avvisi SET target_section_ids = ARRAY[$2, $3, $2]::uuid[] WHERE id = $1`, [riga.id, MARGHERITE, GIRASOLI])
     expect((await divergenti()).avvisi).toBe(0)
+  })
+})
+
+describe('dopo il passaggio d\'anno: la traduzione guarda l\'anno DELLA RIGA, non quello attivo', () => {
+  // la sede S1 passa al 2027/28 (corrente); il 2026/27 diventa chiuso. In `finally` il calendario torna quello di prova.
+  async function passaAl2728() {
+    await db.query(`UPDATE public.anni_sede s SET stato = 'chiuso' FROM public.anni_scolastici y
+                     WHERE y.id = s.anno_id AND y.anno_inizio = 2026 AND s.scuola_id = $1`, [S1])
+    await db.query(`UPDATE public.anni_sede s SET stato = 'corrente' FROM public.anni_scolastici y
+                     WHERE y.id = s.anno_id AND y.anno_inizio = 2027 AND s.scuola_id = $1`, [S1])
+  }
+  async function tornaAl2627() { await fissaCalendarioAnni(db) }
+
+  it('un avviso del 2026/27: un UPDATE che rimanda gli stessi nomi lascia gli uuid del 2026/27 e l\'invariante 13 resta a zero', async () => {
+    const riga = await inserisci(ARRAY_TABELLE[0], ['Girasoli'])
+    expect(riga.ids).toEqual([GIRASOLI])
+    try {
+      await passaAl2728()
+      expect((await divergenti()).avvisi).toBe(0)
+      await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Girasoli'] WHERE id = $1`, [riga.id])
+      expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [riga.id])).toEqual([GIRASOLI])
+      expect(Object.values(await divergenti()).reduce((n, x) => n + x, 0)).toBe(0)
+      // un INSERT nuovo (con il giorno del 2027/28) sceglie la «Girasoli» del 2027/28
+      const nuovo = await db.query<{ ids: string[] }>(
+        `INSERT INTO public.avvisi (scuola_id, target_classes, giorno_competenza) VALUES ($1, ARRAY['Girasoli'], DATE '2027-10-05')
+         RETURNING target_section_ids AS ids`, [S1])
+      expect(nuovo.rows[0].ids).toEqual([GIRASOLI_2728])
+      expect((await divergenti()).avvisi).toBe(0)
+    } finally { await tornaAl2627() }
+  })
+
+  it('una voce di mensa del 2026/27 (attivo_dal) segue il suo anno anche dopo il passaggio', async () => {
+    const m = await una<string>(
+      `INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, attivo_dal) VALUES ($1, 'Girasoli', DATE '2026-09-01') RETURNING id`, [S1])
+    expect(await una<string>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [m])).toBe(GIRASOLI)
+    try {
+      await passaAl2728()
+      await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Girasoli' WHERE id = $1`, [m])
+      expect(await una<string>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [m])).toBe(GIRASOLI)
+      expect((await divergenti()).mensa_class_menu_assignment).toBe(0)
+    } finally { await tornaAl2627() }
   })
 })

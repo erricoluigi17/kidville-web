@@ -60,43 +60,54 @@ BEGIN
 END
 $mig$;
 
--- 3 + 4 · Convalida e NOT NULL.
+-- 3 + 4 · Convalida e NOT NULL, in DUE giri. \`SET NOT NULL\` prende \`ACCESS EXCLUSIVE\` e lo tiene fino al commit della
+-- migrazione: se stesse nello stesso giro dei \`VALIDATE\` (scansioni complete), le tabelle già bloccate non servirebbero
+-- nemmeno le letture mentre si scandiscono quelle dopo. Giro 1: tutte le convalide (\`SHARE UPDATE EXCLUSIVE\`, le
+-- scritture e le letture passano). Giro 2, breve: \`SET NOT NULL\` (senza scansione, il CHECK convalidato lo dimostra) e
+-- \`DROP CONSTRAINT\`.
 DO $mig$
 DECLARE
   r       record;
   v_nome  text;
   v_rel   regclass;
   v_nn    boolean;
+  v_giro  integer;
 BEGIN
-  FOR r IN SELECT t.* FROM public.anno_tabelle t ORDER BY t.tabella LOOP
-    v_rel := to_regclass(format('public.%I', r.tabella));
-    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = v_rel AND c.relkind IN ('r', 'p'))
-               OR NOT public.anno_ha_colonna(r.tabella, 'anno_id');
-    v_nome := r.tabella || '_anno_id_presente';
-    SELECT a.attnotnull INTO v_nn FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attname = 'anno_id' AND NOT a.attisdropped;
+  FOR v_giro IN 1..2 LOOP
+    FOR r IN SELECT t.* FROM public.anno_tabelle t ORDER BY t.tabella LOOP
+      v_rel := to_regclass(format('public.%I', r.tabella));
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = v_rel AND c.relkind IN ('r', 'p'))
+                 OR NOT public.anno_ha_colonna(r.tabella, 'anno_id');
+      v_nome := r.tabella || '_anno_id_presente';
+      SELECT a.attnotnull INTO v_nn FROM pg_attribute a WHERE a.attrelid = v_rel AND a.attname = 'anno_id' AND NOT a.attisdropped;
 
-    IF r.sede_facoltativa THEN
-      -- il CHECK resta: se manca (V1 non applicato) lo si mette ora, poi si convalida
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome) THEN
-        EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (anno_id IS NOT NULL OR %I IS NULL) NOT VALID',
-                       r.tabella, v_nome, r.via_sede);
+      IF v_giro = 1 THEN
+        IF r.sede_facoltativa THEN
+          -- il CHECK resta: se manca (V1 non applicato) lo si mette ora, poi si convalida
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome) THEN
+            EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (anno_id IS NOT NULL OR %I IS NULL) NOT VALID',
+                           r.tabella, v_nome, r.via_sede);
+          END IF;
+        ELSIF NOT v_nn THEN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome) THEN
+            EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (anno_id IS NOT NULL) NOT VALID', r.tabella, v_nome);
+          END IF;
+        ELSE
+          CONTINUE;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome AND NOT k.convalidated) THEN
+          EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I', r.tabella, v_nome);
+        END IF;
+      ELSE
+        IF r.sede_facoltativa THEN
+          CONTINUE;                       -- il CHECK resta, la colonna ammette NULL
+        ELSIF NOT v_nn THEN
+          EXECUTE format('ALTER TABLE public.%I ALTER COLUMN anno_id SET NOT NULL', r.tabella);
+        END IF;
+        -- già NOT NULL (di V2 rieseguita, o di sections e frequenze): un CHECK doppio non serve
+        EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', r.tabella, v_nome);
       END IF;
-      IF EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome AND NOT k.convalidated) THEN
-        EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I', r.tabella, v_nome);
-      END IF;
-    ELSIF NOT v_nn THEN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome) THEN
-        EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (anno_id IS NOT NULL) NOT VALID', r.tabella, v_nome);
-      END IF;
-      IF EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = v_rel AND k.conname = v_nome AND NOT k.convalidated) THEN
-        EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I', r.tabella, v_nome);
-      END IF;
-      EXECUTE format('ALTER TABLE public.%I ALTER COLUMN anno_id SET NOT NULL', r.tabella);
-      EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', r.tabella, v_nome);
-    ELSE
-      -- già NOT NULL (di V2 rieseguita, o di sections e frequenze): un CHECK doppio non serve
-      EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', r.tabella, v_nome);
-    END IF;
+    END LOOP;
   END LOOP;
 END
 $mig$;

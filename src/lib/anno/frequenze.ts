@@ -216,8 +216,6 @@ export async function annoAttivoDiSede(
 /**
  * I siti che scrivono `alunni` e NON si collegano a `scriviFrequenza`, ciascuno col suo motivo. Lo legge il lock del
  * 3.9: un sito `.from('alunni')` con insert/update/upsert che non chiama `scriviFrequenza` deve stare qui.
- * ⚠️ Provvisorio: `src/lib/gdpr/esegui.ts` (patchAlunno azzera `intestatario_fatture` e `retta_split_config`) e
- * `src/app/api/admin/import/anagrafiche/route.ts` (solo INSERT senza colonne copiate) aspettano la decisione del controllore.
  */
 export const ESENTI: readonly { file: string; motivo: string }[] = [
   {
@@ -234,5 +232,15 @@ export const ESENTI: readonly { file: string; motivo: string }[] = [
     file: 'src/lib/alunni/libera-spazio.ts',
     motivo:
       "Scrive solo spazio_liberato_il, il segno che i file di un archiviato sono stati tolti: non è una colonna della frequenza e non cambia lo stato dell'alunno.",
+  },
+  {
+    file: 'src/app/api/admin/import/anagrafiche/route.ts',
+    motivo:
+      "INSERT senza colonne copiate; section_id lo calcola il trigger BEFORE trg_alunni_sync_section da classe_sezione, e lo specchio lo copia nella frequenza.",
+  },
+  {
+    file: 'src/lib/gdpr/esegui.ts',
+    motivo:
+      "Oblio: patchAlunno azzera intestatario_fatture e retta_split_config. Lo specchio le copia nella frequenza dell'anno attivo. Le frequenze degli altri anni le pulisce l'oblio con scriviOblio (compito 3.6-2).",
   },
 ]

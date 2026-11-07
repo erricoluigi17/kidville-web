@@ -9,6 +9,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
 
 // ============================================================================
 // ARCHIVIA UN ALUNNO — «non più iscritto», con l'anagrafica INTATTA.
@@ -204,6 +205,14 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                 { error: 'L\'archiviazione non è stata registrata: la scheda è rimasta com\'era.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
                 { status: 500 },
             );
+        }
+
+        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
+        // `archiviato_il` → stato `ritirato` + uscita; `section_id` e `gruppo_mensa_id` a NULL.
+        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        if (Object.keys(campiFreq).length > 0) {
+            const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFreq });
         }
 
         // Audit DOPO il successo, e con i soli campi toccati: `registro_modifiche`

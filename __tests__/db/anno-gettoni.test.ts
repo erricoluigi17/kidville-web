@@ -97,7 +97,7 @@ describe('3.3-1 (a) · un gettone vale una transazione', () => {
     const ids = [await presenza(D2526), await presenza(D2526), await presenza(D2526)]
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: header(g) }, (tx) => tocca(tx, ids))
+    await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, ids))
     const u = await usi()
     expect(u).toHaveLength(3)
     expect(new Set(u.map((x) => x.transazione)).size).toBe(1)
@@ -109,8 +109,8 @@ describe('3.3-1 (a) · un gettone vale una transazione', () => {
     const [a, b] = [await presenza(D2526), await presenza(D2526)]
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: header(g) }, (tx) => tocca(tx, [a]))
-    expect(await messaggio(inTx({ header: header(g) }, (tx) => tocca(tx, [b])))).toBe('ANNO_CHIUSO')
+    await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [a]))
+    expect(await messaggio(inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [b])))).toBe('ANNO_CHIUSO')
     expect(await usi()).toHaveLength(1)
   })
 
@@ -118,7 +118,7 @@ describe('3.3-1 (a) · un gettone vale una transazione', () => {
     const [a, b] = [await presenza(D2526), await presenza(D2526)]
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: header(g) }, async (tx) => { await tocca(tx, [a]); await tocca(tx, [b]) })
+    await inTx({ header: header(g), ruolo: 'service_role' }, async (tx) => { await tocca(tx, [a]); await tocca(tx, [b]) })
     expect(await usi()).toHaveLength(2)
   })
 })
@@ -136,7 +136,7 @@ describe('3.3-1 (a) · una lista di gettoni (chiude la consegna F10b)', () => {
     const g1 = await gettone({ anno: A2526 })
     const g2 = await gettone({ anno: A2627 })
     await guardia(true)
-    await inTx({ header: header(g1, g2) }, sposta)
+    await inTx({ header: header(g1, g2), ruolo: 'service_role' }, sposta)
     const u = await usi()
     expect(u).toHaveLength(2)
     expect(new Set(u.map((x) => x.correzione_id))).toEqual(new Set([g1, g2]))
@@ -146,7 +146,7 @@ describe('3.3-1 (a) · una lista di gettoni (chiude la consegna F10b)', () => {
     const { id, sposta } = await dueAnniProtetti()
     const g1 = await gettone({ anno: A2526 })
     await guardia(true)
-    expect(await messaggio(inTx({ header: header(g1) }, sposta))).toBe('ANNO_CHIUSO')
+    expect(await messaggio(inTx({ header: header(g1), ruolo: 'service_role' }, sposta))).toBe('ANNO_CHIUSO')
     expect(await una<string>(`SELECT data::text FROM public.presenze WHERE id = $1`, [id])).toBe(D2526)
     expect(await usi()).toHaveLength(0)
   })
@@ -155,7 +155,7 @@ describe('3.3-1 (a) · una lista di gettoni (chiude la consegna F10b)', () => {
     const id = await presenza(D2526)
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: JSON.stringify({ 'x-kidville-correzione': `non-un-uuid ,  ${g}  , 123` }) }, (tx) => tocca(tx, [id]))
+    await inTx({ header: JSON.stringify({ 'x-kidville-correzione': `non-un-uuid ,  ${g}  , 123` }), ruolo: 'service_role' }, (tx) => tocca(tx, [id]))
     expect(await usi()).toHaveLength(1)
   })
 })
@@ -165,7 +165,7 @@ describe('3.3-1 (a) · gettoni che non valgono', () => {
     const id = await presenza(D2526)
     const g = await gettone({ codice: 'agosto' })
     await guardia(true)
-    expect(await messaggio(inTx({ header: header(g) }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
+    expect(await messaggio(inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
   })
 
   it('un gettone `agosto` su un anno `in_chiusura` passa', async () => {
@@ -173,7 +173,7 @@ describe('3.3-1 (a) · gettoni che non valgono', () => {
     const id = await presenza(D2526)
     const g = await gettone({ codice: 'agosto' })
     await guardia(true)
-    await inTx({ header: header(g) }, (tx) => tocca(tx, [id]))
+    await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id]))
     expect(await usi()).toHaveLength(1)
   })
 
@@ -181,14 +181,14 @@ describe('3.3-1 (a) · gettoni che non valgono', () => {
     const id = await presenza(D2526)
     const g = await gettone({ sede: ALTRA_SEDE })
     await guardia(true)
-    expect(await messaggio(inTx({ header: header(g) }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
+    expect(await messaggio(inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
   })
 
   it('un gettone scaduto (scade_il forzata nel passato dal seme) → ANNO_CHIUSO', async () => {
     const id = await presenza(D2526)
     const g = await gettone({ scaduto: true })
     await guardia(true)
-    expect(await messaggio(inTx({ header: header(g) }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
+    expect(await messaggio(inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
   })
 
   it.each([
@@ -201,7 +201,7 @@ describe('3.3-1 (a) · gettoni che non valgono', () => {
     const id = await presenza(D2526)
     await gettone()
     await guardia(true)
-    expect(await messaggio(inTx({ header: h }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
+    expect(await messaggio(inTx({ header: h, ruolo: 'service_role' }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
   })
 
   it('il DETAIL porta solo tabella, anno_sede_id e stato (mai il motivo)', async () => {
@@ -232,12 +232,27 @@ describe('3.3-1 (a) · il gettone è legato all\'utente', () => {
     expect(await usi()).toHaveLength(1)
   })
 
-  it('senza `sub` (service_role) → passa: il controllo è dell\'app', async () => {
+  it('`{role: service_role}` senza `sub` → passa: il controllo è dell\'app', async () => {
     const id = await presenza(D2526)
     const g = await gettone()
     await guardia(true)
     await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id]))
     expect(await usi()).toHaveLength(1)
+  })
+
+  it('`{role: anon}` (senza `sub`) con il gettone di un altro utente → ANNO_CHIUSO', async () => {
+    const id = await presenza(D2526)
+    const g = await gettone()
+    await guardia(true)
+    expect(await messaggio(inTx({ header: header(g), ruolo: 'anon' }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
+    expect(await usi()).toHaveLength(0)
+  })
+
+  it('senza claims (né `sub` né ruolo) → ANNO_CHIUSO: il legame non è soddisfatto', async () => {
+    const id = await presenza(D2526)
+    const g = await gettone()
+    await guardia(true)
+    expect(await messaggio(inTx({ header: header(g) }, (tx) => tocca(tx, [id])))).toBe('ANNO_CHIUSO')
   })
 
   it('un `sub` che non è un uuid non rompe niente: non coincide, ANNO_CHIUSO', async () => {
@@ -254,7 +269,7 @@ describe('3.3-1 (a) · ogni uso lascia la sua riga in app_log, e il motivo non e
     const ids = [await presenza(D2526), await presenza(D2526)]
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: header(g) }, (tx) => tocca(tx, ids))
+    await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, ids))
     const r = (await db.query<{ livello: string; evento: string; contesto: Record<string, unknown> }>(
       `SELECT livello, evento, contesto FROM public.app_log WHERE evento = 'anno-scolastico'`)).rows
     expect(r).toHaveLength(2)
@@ -272,7 +287,7 @@ describe('3.3-1 (a) · ogni uso lascia la sua riga in app_log, e il motivo non e
     const id = await presenza(D2526)
     const g = await gettone()
     await guardia(true)
-    await inTx({ header: header(g) }, (tx) => tocca(tx, [id]))
+    await inTx({ header: header(g), ruolo: 'service_role' }, (tx) => tocca(tx, [id]))
     expect(await una<number>(`SELECT count(*)::int FROM public.app_log`)).toBeGreaterThan(0)
     expect(await una<number>(
       `SELECT count(*)::int FROM public.app_log WHERE to_jsonb(app_log)::text LIKE '%' || $1 || '%'`, [MOTIVO_SEGRETO])).toBe(0)

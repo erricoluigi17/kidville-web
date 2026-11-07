@@ -367,9 +367,11 @@ BEGIN
     v_gettoni := '{}';
   END;
 
-  -- Chi scrive: `sub` e `role` dei claims di PostgREST. Un gettone è LEGATO all'utente che l'ha creato: se la
-  -- richiesta porta un `sub` e il ruolo non è `service_role`, `sub` deve essere `utente_id`. Per `service_role`
-  -- (nessun `sub`) il controllo è dell'app, che il gettone l'ha creato per `user.id`. Claims illeggibili: nessun sub.
+  -- Chi scrive: `sub` e `role` dei claims di PostgREST (`request.jwt.claims`). Un gettone è LEGATO all'utente che
+  -- l'ha creato: passa solo se il ruolo è `service_role` (la chiave del server, il cui JWT porta `role` =
+  -- 'service_role'; il controllo di chi può chiedere un gettone è dell'app, che l'ha creato per `user.id`) oppure se
+  -- `sub` è `utente_id`. Senza `sub` NON passa: un ruolo `anon` non ha `sub`, e non deve scavalcare il legame.
+  -- Claims assenti o illeggibili: né `sub` né ruolo, quindi il legame non è soddisfatto.
   v_sub := NULL; v_ruolo := NULL;
   BEGIN
     v_claims := nullif(current_setting('request.jwt.claims', true), '')::jsonb;
@@ -398,7 +400,7 @@ BEGIN
          AND a.stato IN ('in_chiusura', 'chiuso')
          AND c.codice = ANY (CASE WHEN a.stato = 'chiuso' THEN ARRAY['correzione']
                                   ELSE ARRAY['agosto', 'correzione'] END)
-         AND (v_sub IS NULL OR v_ruolo = 'service_role' OR c.utente_id::text = v_sub)
+         AND (v_ruolo = 'service_role' OR c.utente_id::text = v_sub)
          AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
                           WHERE u.correzione_id = c.id AND u.transazione <> txid_current())
        ORDER BY c.creata_il LIMIT 1;
@@ -480,7 +482,7 @@ BEGIN
        WHERE c.id = ANY (v_gettoni) AND c.anno_sede_id = v_protetti[v_i] AND now() < c.scade_il
          AND c.codice = ANY (CASE WHEN v_stati[v_i] = 'chiuso' THEN ARRAY['correzione']
                                   ELSE ARRAY['agosto', 'correzione'] END)
-         AND (v_sub IS NULL OR v_ruolo = 'service_role' OR c.utente_id::text = v_sub)
+         AND (v_ruolo = 'service_role' OR c.utente_id::text = v_sub)
          AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
                           WHERE u.correzione_id = c.id AND u.transazione <> txid_current())
        ORDER BY c.creata_il LIMIT 1;
@@ -892,6 +894,8 @@ BEGIN
   v_chiave := coalesce(p_azione, '') || '|' || coalesce(p_tabella, '') || '|' || coalesce(p_colonna, '');
   v_ammessi := CASE coalesce(p_azione, '') || '|' || coalesce(p_tabella, '') || '|' || coalesce(p_colonna, '')
     WHEN 'update|chat_messages|id'          THEN ARRAY['attachment_url', 'attachment_type']
+    -- `data` si SOSTITUISCE per intero (non si fonde): la composizione della domanda anonimizzata spetta al
+    -- chiamante (`esegui.ts`); qui il confine di fiducia è `service_role`.
     WHEN 'update|enrollment_submissions|id' THEN ARRAY['data', 'updated_at', 'consents_log']
     WHEN 'delete|enrollment_submissions|id' THEN ARRAY[]::text[]
     WHEN 'update|galleria_media_v2|id'      THEN ARRAY['tag_students', 'file_rimosso_il']

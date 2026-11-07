@@ -188,6 +188,7 @@ describe('3.3-1 (b) · ciò che passerebbe anche accesa non si conta', () => {
     await manopole(false, true)
     await db.transaction(async (tx) => {
       await tx.query(`SELECT set_config('request.headers', $1, true)`, [JSON.stringify({ 'x-kidville-correzione': g })])
+      await tx.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ role: 'service_role' })])
       await tocca(tx, id)
     })
     expect(await osservazioni()).toEqual([])

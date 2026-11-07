@@ -68,3 +68,9 @@ describe('import a elenco — scheda già esistente', () => {
     expect(String(patch.allergies)).toMatch(/^Arachidi\nDalla domanda di iscrizione del \d{2}\/\d{2}\/\d{4}: nessuna$/)
   })
 })
+
+// PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+vi.mock('@/lib/anno/frequenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/frequenze')>()),
+  annoAttivoDiSede: async () => null,
+}))

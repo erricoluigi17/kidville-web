@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   tabelle: [] as string[],
   scritture: [] as unknown[],
   errori: {} as Record<string, { code: string; message?: string }>,
+  sparisceDopoLoScope: null as string | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -39,8 +40,20 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: vi.fn(async () => [
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   const opzioni = () => ({ scritture: h.scritture as Scrittura[], errori: h.errori })
+  // Corsa: `sparisceDopoLoScope` toglie una riga dal db fra la lettura dello scope (1ª lettura di `alunni`) e l'UPDATE.
+  const conCorsa = (c: ReturnType<typeof creaFintoSupabase>) => {
+    let letture = 0
+    const from = c.from.bind(c)
+    c.from = ((tabella: string) => {
+      if (tabella === 'alunni' && h.sparisceDopoLoScope && ++letture === 2) {
+        h.db.alunni = h.db.alunni.filter((r) => r.id !== h.sparisceDopoLoScope)
+      }
+      return from(tabella)
+    }) as typeof c.from
+    return c
+  }
   return {
-    createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, opzioni()),
+    createAdminClient: async () => conCorsa(creaFintoSupabase(h.db, h.tabelle, opzioni())),
     createClient: async () => creaFintoSupabase(h.db, h.tabelle, opzioni()),
   }
 })
@@ -99,6 +112,7 @@ beforeEach(() => {
   h.tabelle = []
   h.scritture = []
   h.errori = {}
+  h.sparisceDopoLoScope = null
   h.requireStaff.mockResolvedValue({ user: { id: 'adm-1', role: 'admin', scuola_id: SEDE_A } })
   h.annoAttivoDiSede.mockImplementation(async (_c: unknown, sede: string | null) => (sede ? `anno-di-${sede}` : null))
   h.scriviFrequenza.mockResolvedValue({ ok: true })
@@ -140,6 +154,14 @@ describe('PATCH /api/admin/students — bulk', () => {
     const chiamate = h.scriviFrequenza.mock.calls.map((c) => c[1])
     expect(chiamate).toContainEqual({ alunnoId: ALU_A, annoSedeId: `anno-di-${SEDE_A}`, campi: { gruppo_mensa_id: null } })
     expect(chiamate).toContainEqual({ alunnoId: ALU_B, annoSedeId: `anno-di-${SEDE_B}`, campi: { gruppo_mensa_id: null } })
+  })
+
+  it('gruppo mensa: un id richiesto che l’UPDATE non ha toccato non riceve nessuna chiamata (si itera su `data`)', async () => {
+    h.sparisceDopoLoScope = ALU_A2
+    const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], gruppo_mensa_id: null }))
+    expect(res.status).toBe(200)
+    const chiamate = h.scriviFrequenza.mock.calls.map((c) => c[1].alunnoId)
+    expect(chiamate).toEqual([ALU_A])
   })
 
   it('gruppo mensa con alunni in errore: zero chiamate', async () => {

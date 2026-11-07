@@ -796,9 +796,10 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
             // Fase A (§4.19): la frequenza dell'anno attivo di ciascuna sede (fail-open), un anno per sede.
             const campiMensa = campiFrequenzaDaAlunno({ gruppo_mensa_id: gruppoMensaId });
             const annoPerSede = new Map<string, string | null>();
-            for (const alunnoId of bersagli.ids) {
-                const annoSedeId = await annoAttivoDiSede(supabase, bersagli.sedePerId.get(alunnoId), annoPerSede);
-                if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiMensa });
+            // Solo le righe che l'UPDATE ha davvero toccato (`data`), non gli id richiesti.
+            for (const riga of (data ?? []) as { id: string; scuola_id?: string | null }[]) {
+                const annoSedeId = await annoAttivoDiSede(supabase, riga.scuola_id ?? bersagli.sedePerId.get(riga.id), annoPerSede);
+                if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: riga.id, annoSedeId, campi: campiMensa });
             }
             for (const alunnoId of bersagli.ids) {
                 await logScrittura(supabase, {

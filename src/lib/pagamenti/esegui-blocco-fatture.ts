@@ -147,6 +147,8 @@ export async function eseguiBloccoFatture<R extends RigaBlocco>(
   // altre lo riusano.
   const sessione = creaSessioneAruba()
   const inizio = opzioni.inizioMs ?? Date.now()
+  // L'anno attivo di una sede si legge una volta per blocco, non una per fattura (3.7-2).
+  const cacheAnno = new Map<string, string | null>()
   const emesse: RigaEsito[] = []
   const giaEmesse: RigaEsito[] = []
   const fallite: RigaEsito[] = []
@@ -213,7 +215,7 @@ export async function eseguiBloccoFatture<R extends RigaBlocco>(
       if (esito.gia) giaEmesse.push(voce)
       else emesse.push(voce)
 
-      await ricordaChiHaPagato(supabase, riga, esito, operazione)
+      await ricordaChiHaPagato(supabase, riga, esito, operazione, cacheAnno)
       if (dopoRiga) await dopoRiga(riga, esito)
       continue
     }
@@ -292,9 +294,10 @@ async function ricordaChiHaPagato(
   riga: RigaBlocco,
   esito: Extract<EsitoEmissione, { ok: true }>,
   operazione: string,
+  cacheAnno: Map<string, string | null>,
 ): Promise<void> {
   if (riga.intestatario?.tipo === 'persona') {
-    await ricordaPersonaDigitata(supabase, riga, riga.intestatario, esito, operazione)
+    await ricordaPersonaDigitata(supabase, riga, riga.intestatario, esito, operazione, cacheAnno)
     return
   }
   if (
@@ -333,6 +336,7 @@ async function ricordaChiHaPagato(
       supabase,
       alunnoId,
       adultId,
+      cacheAnno,
     )
     // ⚠️ `distingui: ['alunno_id']` NON è un vezzo: `app_log` deduplica per
     // `(fingerprint, giorno)` e l'`ON CONFLICT` somma le occorrenze SENZA aggiornare il
@@ -402,6 +406,7 @@ async function ricordaPersonaDigitata(
   persona: PersonaScelta,
   esito: Extract<EsitoEmissione, { ok: true }>,
   operazione: string,
+  cacheAnno: Map<string, string | null>,
 ): Promise<void> {
   if (!riga.ricordaSullaScheda || esito.gia || !esito.alunnoId) return
   const alunnoId = esito.alunnoId
@@ -422,7 +427,7 @@ async function ricordaPersonaDigitata(
   const dati = datiAltroDaPersonaScelta(persona)
   try {
     const sedi = await scuoleDiUtente(supabase, attore)
-    const r = await ricordaPersonaSullaScheda(supabase, alunnoId, dati, sedi)
+    const r = await ricordaPersonaSullaScheda(supabase, alunnoId, dati, sedi, cacheAnno)
     logEvento(
       'fattura',
       r.esito === 'salvato' ? 'info' : 'warn',

@@ -270,6 +270,35 @@ describe('AnnoProvider — il cookie stantio', () => {
     expect(scritture).toEqual([])
   })
 
+  // Il calendario può rispondere SENZA errore e SENZA righe per una sede: `fonte: 'non_disponibile'` (database
+  // non migrato: la sede non compare in `data`), una sede con zero righe valide, o una sede aggiunta dopo il
+  // primo caricamento. Un elenco vuoto così non è un elenco: non può cancellare la scelta dell'utente.
+  it('una sede assente dal calendario (senza errore) NON pota il cookie', () => {
+    cookieIniziale(A27)
+    h.perSede = {}
+    monta()
+    expect(scritture).toEqual([])
+    expect(ctx.anni).toEqual([])
+  })
+
+  it('una sede con il calendario vuoto (zero righe, senza errore) NON pota il cookie', () => {
+    cookieIniziale(A27)
+    h.perSede = { [SEDE_A]: [] }
+    monta()
+    expect(scritture).toEqual([])
+  })
+
+  it('con due sedi, se una sola ha il calendario il cookie RESTA; se lo hanno entrambe e non c\'è l\'anno, si pota', () => {
+    cookieIniziale(IGNOTO)
+    h.effettive = [SEDE_A, SEDE_B]
+    h.perSede = { [SEDE_A]: treAnni(SEDE_A) }
+    monta()
+    expect(scritture).toEqual([])
+    h.perSede = { [SEDE_A]: treAnni(SEDE_A), [SEDE_B]: treAnni(SEDE_B) }
+    monta()
+    expect(scritture).toEqual(['anno_attivo=; path=/; samesite=lax; max-age=0'])
+  })
+
   it('un cookie che non ha la forma di un uuid si ignora (senza scrivere)', () => {
     cookieIniziale('non-un-uuid')
     monta()

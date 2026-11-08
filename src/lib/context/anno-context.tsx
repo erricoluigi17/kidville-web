@@ -138,7 +138,16 @@ export function AnnoProvider({ children }: { children: React.ReactNode }) {
    *    cookie stantio (403 ANNO_NON_ACCESSIBILE). L'effetto non fa `setState`: legge il cookie e lo
    *    confronta con l'elenco, quindi è idempotente (e copre anche un cookie scritto da un'altra scheda).
    */
-  const attendibile = !caricaCalendario && !erroreCalendario && !caricaSedi && !erroreSedi && effettive.length > 0;
+  // Ogni sede attiva deve avere un calendario CON righe: il calendario può rispondere senza errore e senza
+  // righe per una sede (`fonte: 'non_disponibile'`, zero righe valide, sede aggiunta dopo il primo
+  // caricamento), e un elenco vuoto così non è un elenco.
+  const attendibile =
+    !caricaCalendario &&
+    !erroreCalendario &&
+    !caricaSedi &&
+    !erroreSedi &&
+    effettive.length > 0 &&
+    effettive.every((s) => (perSede[s]?.length ?? 0) > 0);
   if (attendibile && scelto !== null && !anni.some((a) => a.annoId === scelto)) {
     setScelto(null);
   }
@@ -215,7 +224,12 @@ export function AnnoScopeBoundary({ children }: { children: React.ReactNode }) {
 
 /** `true` per chi può scegliere l'anno. `''` (ruolo non ancora arrivato) nasconde, come gli altri comandi riservati. */
 export function useVedeAnno(): boolean {
-  return RUOLI_CHE_SCELGONO.has(useRuoloCockpit());
+  return puoScegliAnno(useRuoloCockpit());
+}
+
+/** Per chi ha già il ruolo in mano (il foglio «Menu» lo riceve come prop). */
+export function puoScegliAnno(ruolo: string): boolean {
+  return RUOLI_CHE_SCELGONO.has(ruolo);
 }
 
 /** Lo stato di un anno in parole (non solo colore). */
@@ -257,9 +271,14 @@ export function AnnoNotice() {
   // `stato` è `null` quando le sedi attive non concordano: dicitura neutra (nel testo di `testoStato`).
   const stato = effettivo.stato === 'chiuso' ? t('annoAvvisoChiusoDettaglio') : testoStato(effettivo.stato);
   return (
+    // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
+    // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la
+    // topbar desktop alta 64 px (`top-16`, la stessa che regge il binario e la sidebar). `z-30`: sotto le
+    // barre (z-40 / z-105) e i fogli (z-110).
     <div
       role="status"
-      className="flex flex-wrap items-center justify-between gap-3 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2.5 font-maven text-[14px] text-kidville-ink"
+      data-kv-anno-avviso
+      className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-3 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2.5 font-maven text-[14px] text-kidville-ink"
     >
       <p>{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</p>
       <button

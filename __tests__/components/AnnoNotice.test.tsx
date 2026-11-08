@@ -91,6 +91,19 @@ describe('AnnoNotice', () => {
     expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
   })
 
+  it('sta in flusso, sotto la barra: sticky (telefono: --kv-appbar-h; da 744 px: top-16), mai fixed né absolute', () => {
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    const cls = screen.getByRole('status').className.split(/\s+/)
+    expect(cls).toContain('sticky')
+    expect(cls).toContain('top-[var(--kv-appbar-h)]')
+    expect(cls).toContain('tablet:top-16')
+    expect(cls).toContain('flex-wrap') // il testo va a capo, non si tronca
+    expect(cls).not.toContain('fixed')
+    expect(cls).not.toContain('absolute')
+    expect(cls.some((c) => /truncate|line-clamp|overflow-hidden/.test(c))).toBe(false)
+  })
+
   it('non si può chiudere: l\'unico pulsante è «Torna all\'anno in corso»', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))

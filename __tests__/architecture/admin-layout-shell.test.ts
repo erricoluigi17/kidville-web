@@ -72,4 +72,22 @@ describe('admin layout — shell mobile montata (Step 4)', () => {
     expect(main?.[0]).toContain('<SedeScopeBoundary>');
     expect(main?.[0]).toContain('{children}');
   });
+
+  it('monta l\'anno scolastico: provider dentro il calendario, avviso in cima al <main>, confine dentro la sede', () => {
+    const calendario = src.indexOf('<CalendarioProvider>');
+    const provider = src.indexOf('<AnnoProvider>');
+    const shell = src.indexOf('data-kv-shell');
+    expect(calendario).toBeGreaterThan(-1);
+    expect(provider).toBeGreaterThan(calendario); // la sua unica fonte è il calendario
+    expect(shell).toBeGreaterThan(provider); // e avvolge topbar, foglio e contenuto
+    expect(src.indexOf('</AnnoProvider>')).toBeLessThan(src.indexOf('</CalendarioProvider>'));
+    const main = src.match(/<main[\s\S]*?<\/main>/)?.[0] ?? '';
+    const sede = main.indexOf('<SedeScopeBoundary>');
+    const avviso = main.indexOf('<AnnoNotice />');
+    const confine = main.indexOf('<AnnoScopeBoundary>{children}</AnnoScopeBoundary>');
+    expect(sede).toBeGreaterThan(-1);
+    expect(avviso).toBeGreaterThan(sede); // dentro il SedeScopeBoundary
+    expect(confine).toBeGreaterThan(avviso); // l'avviso viene prima del contenuto
+    expect(main.indexOf('</SedeScopeBoundary>')).toBeGreaterThan(confine);
+  });
 });

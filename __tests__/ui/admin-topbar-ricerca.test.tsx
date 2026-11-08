@@ -17,7 +17,7 @@ import { QUERY_SIDEBAR, QUERY_TABLET } from '@/lib/ui/use-formato-guscio';
 vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'u1', ruolo: 'segreteria', withUser: (h: string) => `${h}?userId=u1` }),
 }));
-vi.mock('@/components/ui/cockpit', () => ({ SedeSelector: () => null }));
+vi.mock('@/components/ui/cockpit', () => ({ SedeSelector: () => null, AnnoSelector: () => null }));
 vi.mock('@/components/ui/UserMenu', () => ({ UserMenu: () => null }));
 vi.mock('@/components/features/admin/AdminSearchPanel', () => ({ AdminSearchPanel: () => null }));
 vi.mock('@/components/features/admin/AdminNotificationsPanel', () => ({ AdminNotificationsPanel: () => null }));

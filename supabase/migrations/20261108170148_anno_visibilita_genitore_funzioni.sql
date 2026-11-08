@@ -122,9 +122,9 @@ GRANT EXECUTE ON FUNCTION public.figli_attivi_miei() TO authenticated, service_r
 -- precedente. Quindi quel giorno lo specchio non ha creato nessuno, e l'insieme è chiuso per sempre.
 -- `origine = 'recupero'` da sola non basta: la scrive anche lo specchio `alunni` → `frequenze`, per ogni bambino nuovo e per il
 -- trasferito nella sede nuova. Trattarla da stima aprirebbe a un bambino creato oggi le foto da settembre, contro la decisione 17:
--- una famiglia nuova vede le foto solo da quando è entrata. E non basta confrontare `data_ingresso` con `creata_il`: la data
--- cambia dopo la nascita (la segreteria la sceglie all'indietro o la corregge, lo specchio la porta a `fine` se l'anno è finito e
--- la sede non è passata), `creata_il` no, e una data vera sarebbe passata per stima.
+-- una famiglia nuova vede le foto solo da quando è entrata. E non basta confrontare `data_ingresso` con `creata_il`: una data
+-- vera può stare prima del giorno di nascita della riga (la segreteria la sceglie all'indietro o la corregge dopo; lo specchio la
+-- scrive già alla nascita a `fine`, se l'anno è finito e la sede non è passata), e sarebbe passata per stima.
 -- IL LIMITE: una correzione della segreteria su una di quelle 811 righe non sposta il confine, che resta l'inizio dell'anno.
 -- Distinguerle con una colonna costerebbe una scrittura su 811 righe di minori.
 --

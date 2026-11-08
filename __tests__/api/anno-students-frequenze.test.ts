@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   scritture: [] as unknown[],
   errori: {} as Record<string, { code: string; message?: string }>,
   sparisceDopoLoScope: null as string | null,
+  logErrore: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -37,11 +38,23 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   annoAttivoDiSede: h.annoAttivoDiSede,
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
+vi.mock('@/lib/logging/logger', async (orig) => ({
+  ...(await orig<typeof import('@/lib/logging/logger')>()),
+  logErrore: h.logErrore,
+}))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn() }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: vi.fn(async () => []) }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  const opzioni = () => ({ scritture: h.scritture as Scrittura[], errori: h.errori })
+  // `errori` è una vista VIVA su `h.errori`: un test può iniettare un guasto DOPO la creazione del client (per esempio dentro il
+  // mock di `scriviFrequenza`, per modellare «la frequenza si scrive e poi alunni fallisce»).
+  const vivi = new Proxy({} as Record<string, { code: string; message?: string }>, {
+    get: (_t, k) => h.errori[k as string],
+    has: (_t, k) => k in h.errori,
+    ownKeys: () => Reflect.ownKeys(h.errori),
+    getOwnPropertyDescriptor: (_t, k) => (k in h.errori ? { enumerable: true, configurable: true, value: h.errori[k as string] } : undefined),
+  })
+  const opzioni = () => ({ scritture: h.scritture as Scrittura[], errori: vivi })
   // Corsa: `sparisceDopoLoScope` toglie una riga dal db fra la lettura dello scope (1ª lettura di `alunni`) e l'UPDATE.
   const conCorsa = (c: ReturnType<typeof creaFintoSupabase>) => {
     let letture = 0
@@ -86,8 +99,12 @@ const dbBase = (): DBFinto => ({
   utenti_scuole: [{ utente_id: 'adm-1', scuola_id: SEDE_A }, { utente_id: 'adm-1', scuola_id: SEDE_B }],
   utenti_sezioni: [],
   sections: [
-    { id: SEC_A, scuola_id: SEDE_A, name: '2 ANNI' },
-    { id: SEC_B, scuola_id: SEDE_B, name: '2 ANNI' },
+    { id: SEC_A, scuola_id: SEDE_A, name: '2 ANNI', anno_id: 'y1' },
+    { id: SEC_B, scuola_id: SEDE_B, name: '2 ANNI', anno_id: 'y1' },
+  ],
+  anni_sede: [
+    { id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' },
+    { id: `anno-di-${SEDE_B}`, scuola_id: SEDE_B, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' },
   ],
   gruppi_mensa: [],
   alunni: [
@@ -333,12 +350,35 @@ describe('PATCH /api/admin/students — lotti in fase B (giro di correzione 1)',
       expect(auditDi()).toEqual([])
     })
 
-    it(`${nome}: l'UPDATE di alunni fallisce su tutte le righe => 500, nessun audit`, async () => {
+    it(`${nome}: l'UPDATE di alunni fallisce su tutte le righe DOPO la frequenza => 500 SCRITTURA_INCOMPLETA, alunni com'era, log dedicato, nessun audit`, async () => {
       h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
       h.errori = { 'alunni:update': { code: '23503', message: 'no' } }
+      const prima = JSON.stringify(h.db.alunni)
       const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], ...corpo }))
       expect(res.status).toBe(500)
+      const j = await res.json()
+      // la frequenza di entrambe È stata scritta: la risposta non può dire «la scheda è rimasta com'era»
+      expect(j.codice).toBe('SCRITTURA_INCOMPLETA')
+      expect(h.scriviFrequenza.mock.calls.map((c) => c[1].alunnoId).sort()).toEqual([ALU_A, ALU_A2].sort())
+      // e `alunni` è davvero rimasta com'era (l'UPDATE è fallito)
+      expect(JSON.stringify(h.db.alunni)).toBe(prima)
       expect(auditDi()).toEqual([])
+      // un log dedicato per riga
+      expect(h.logErrore.mock.calls.filter((c) => c[0]?.operazione === 'anno/fase-b:alunni-non-scritto')).toHaveLength(2)
+    })
+
+    it(`${nome}: la riga con la frequenza scritta e alunni fallita NON è «non scritta»: codice di riga SCRITTURA_INCOMPLETA`, async () => {
+      h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+      h.scriviFrequenza.mockImplementation(async (_c: unknown, a: { alunnoId: string }) => {
+        h.errori = a.alunnoId === ALU_A2 ? { 'alunni:update': { code: '23505', message: 'no' } } : {}
+        return { ok: true }
+      })
+      const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], ...corpo }))
+      expect(res.status).toBe(200)
+      const j = await res.json()
+      expect(j.updated).toBe(1)
+      expect(j.errori).toEqual([{ id: ALU_A2, codice: 'SCRITTURA_INCOMPLETA' }])
+      expect(auditDi()).toEqual([ALU_A])
     })
   }
 })
@@ -372,5 +412,220 @@ describe('POST /api/admin/students — data d’ingresso e anno attivo (giro di 
     expect((await res.json()).codice).toBe('ANNO_NON_COERENTE')
     expect(h.scriviFrequenza).not.toHaveBeenCalled()
     expect(JSON.stringify(h.scritture)).not.toContain('2027-09-02')
+  })
+})
+
+describe('fase B: alunni fallisce DOPO la frequenza (archivia, riattiva, PATCH singolo)', () => {
+  const faseB = () => { h.db.anno_regole = [{ specchio_frequenze_attivo: true }] }
+  /** La frequenza «si scrive» e da quel momento ogni UPDATE di `alunni` fallisce con 23505. */
+  const poiAlunniFallisce = () =>
+    h.scriviFrequenza.mockImplementation(async () => {
+      h.errori = { 'alunni:update': { code: '23505', message: 'duplicate key' } }
+      return { ok: true }
+    })
+  const dedicati = () => h.logErrore.mock.calls.filter((c) => c[0]?.operazione === 'anno/fase-b:alunni-non-scritto')
+  const riga = (id: string) => h.db.alunni.find((r) => r.id === id)!
+
+  it('PATCH singolo (retta + CF già usato): 500 SCRITTURA_INCOMPLETA, non un errore grezzo, e il log dedicato parte', async () => {
+    faseB()
+    poiAlunniFallisce()
+    const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(res.status).toBe(500)
+    const j = await res.json()
+    expect(j.codice).toBe('SCRITTURA_INCOMPLETA')
+    expect(j.error).toMatch(/frequenza/i)
+    expect(j.error).not.toMatch(/duplicate key/)
+    expect(h.scriviFrequenza).toHaveBeenCalledTimes(1)
+    expect(dedicati()).toHaveLength(1)
+    expect(h.logScrittura).not.toHaveBeenCalled()
+  })
+
+  it('PATCH singolo: alunni fallisce ma la frequenza non è stata toccata (anno non attivo): errore come prima, nessun log dedicato', async () => {
+    faseB()
+    h.scriviFrequenza.mockImplementation(async () => {
+      h.errori = { 'alunni:update': { code: '23505', message: 'duplicate key' } }
+      return { ok: true, saltata: 'anno-non-attivo' }
+    })
+    const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).not.toBe('SCRITTURA_INCOMPLETA')
+    expect(dedicati()).toHaveLength(0)
+  })
+
+  it("archivia: la memoria è scritta PRIMA della frequenza; se alunni fallisce dopo, 500 SCRITTURA_INCOMPLETA e la memoria c'è", async () => {
+    faseB()
+    const ordine: string[] = []
+    h.scriviFrequenza.mockImplementation(async () => {
+      ordine.push(`frequenza:memoria=${String(riga(ALU_A2).archiviato_section_id)}`)
+      h.errori = { 'alunni:update': { code: '23505', message: 'duplicate key' } }
+      return { ok: true }
+    })
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2, motivo: 'ritiro' }))
+    expect(res.status).toBe(500)
+    const j = await res.json()
+    expect(j.codice).toBe('SCRITTURA_INCOMPLETA')
+    expect(j.error).not.toMatch(/rimasta com/)
+    // quando la frequenza si scrive la memoria della classe c'è già
+    expect(ordine).toEqual([`frequenza:memoria=${SEC_A}`])
+    expect(riga(ALU_A2).archiviato_section_id).toBe(SEC_A)
+    expect(riga(ALU_A2).archiviato_classe_sezione).toBe('2 ANNI')
+    expect(dedicati()).toHaveLength(1)
+    expect(h.logScrittura).not.toHaveBeenCalled()
+  })
+
+  it('archivia: la memoria non riesce => 500 e la frequenza NON si scrive', async () => {
+    faseB()
+    h.errori = { 'alunni:update': { code: '23505', message: 'duplicate key' } }
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+    expect(res.status).toBe(500)
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  describe("archivia: riprovare su un'archiviazione da completare", () => {
+    /** Come la lascia il guasto: archiviato_il valorizzato (lo specchio), archiviato_da NULL, memoria piena. */
+    const daCompletare = (extra: Record<string, unknown> = {}) => {
+      Object.assign(riga(ALU_A2), {
+        stato: 'ritirato', section_id: null, classe_sezione: null, gruppo_mensa_id: null,
+        archiviato_il: '2026-08-01T10:00:00.000Z', archiviato_da: null, archiviato_motivo: null,
+        archiviato_section_id: SEC_A, archiviato_classe_sezione: '2 ANNI', ...extra,
+      })
+    }
+
+    it('non è un 409: completa autore e audit, e NON tocca la memoria', async () => {
+      faseB()
+      daCompletare()
+      const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2, motivo: 'ritiro' }))
+      expect(res.status).toBe(200)
+      expect(riga(ALU_A2).archiviato_da).toBe('adm-1')
+      expect(riga(ALU_A2).archiviato_section_id).toBe(SEC_A)
+      expect(riga(ALU_A2).archiviato_classe_sezione).toBe('2 ANNI')
+      // nessun UPDATE ha MAI portato la memoria nel payload (e quindi nessun NULL)
+      for (const sc of (h.scritture as Scrittura[]).filter((x) => x.tabella === 'alunni')) {
+        for (const v of sc.valori) {
+          expect(Object.keys(v)).not.toContain('archiviato_section_id')
+          expect(Object.keys(v)).not.toContain('archiviato_classe_sezione')
+        }
+      }
+      // la data di archiviazione è quella originale, e l'uscita della frequenza la segue
+      expect(riga(ALU_A2).archiviato_il).toBe('2026-08-01T10:00:00.000Z')
+      expect(h.scriviFrequenza.mock.calls[0][1].campi.data_uscita).toBe('2026-08-01')
+      expect(h.logScrittura).toHaveBeenCalledTimes(1)
+    })
+
+    it("anche se la memoria è vuota resta com'è: mai riscritta con dei NULL, né con valori inventati", async () => {
+      faseB()
+      daCompletare({ archiviato_section_id: null, archiviato_classe_sezione: null })
+      const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+      expect(res.status).toBe(200)
+      expect(riga(ALU_A2).archiviato_section_id).toBeNull()
+      expect(riga(ALU_A2).archiviato_classe_sezione).toBeNull()
+    })
+
+    it('fase A (interruttore spento), stessa riga: completa lo stesso senza sovrascrivere la memoria', async () => {
+      daCompletare()
+      const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+      expect(res.status).toBe(200)
+      expect(riga(ALU_A2).archiviato_section_id).toBe(SEC_A)
+      expect(riga(ALU_A2).archiviato_classe_sezione).toBe('2 ANNI')
+      expect(riga(ALU_A2).archiviato_da).toBe('adm-1')
+    })
+
+    it('archiviato per intero (archiviato_da valorizzato) resta un 409', async () => {
+      faseB()
+      daCompletare({ archiviato_da: 'adm-0' })
+      const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('ALUNNO_GIA_ARCHIVIATO')
+    })
+  })
+
+  describe('riattiva: dopo un fallimento a metà, riprovare completa il lavoro', () => {
+    it("alunni fallisce dopo la frequenza: 500 SCRITTURA_INCOMPLETA, non «la scheda è rimasta com'era»", async () => {
+      faseB()
+      poiAlunniFallisce()
+      const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+      expect(res.status).toBe(500)
+      const j = await res.json()
+      expect(j.codice).toBe('SCRITTURA_INCOMPLETA')
+      expect(j.error).not.toMatch(/rimasta com/)
+      expect(dedicati()).toHaveLength(1)
+      expect(h.logScrittura).not.toHaveBeenCalled()
+    })
+
+    /** La riga come la lascia lo specchio dopo la frequenza `iscritto`: stato iscritto, archiviato_il NULL, tracce rimaste. */
+    const mezzaRiattivata = () => {
+      Object.assign(riga(ALU_R), { stato: 'iscritto', archiviato_il: null })
+    }
+
+    it("stato iscritto con le tracce dell'archiviazione ancora addosso: NON è un 409, completa e le azzera", async () => {
+      faseB()
+      mezzaRiattivata()
+      const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+      expect(res.status).toBe(200)
+      expect(riga(ALU_R)).toMatchObject({
+        stato: 'iscritto', archiviato_da: null, archiviato_motivo: null,
+        archiviato_section_id: null, archiviato_classe_sezione: null,
+      })
+      expect(h.logScrittura).toHaveBeenCalledTimes(1)
+    })
+
+    it('un alunno DAVVERO iscritto (nessuna traccia) resta un 409 ALUNNO_NON_ARCHIVIATO', async () => {
+      faseB()
+      Object.assign(riga(ALU_R), {
+        stato: 'iscritto', archiviato_il: null, archiviato_da: null, archiviato_motivo: null,
+        archiviato_section_id: null, archiviato_classe_sezione: null,
+      })
+      const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('ALUNNO_NON_ARCHIVIATO')
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('PATCH singolo — la regola della data d’iscrizione vale anche qui (stesso helper del POST)', () => {
+  const conAnno = () => {
+    h.db.anni_sede = [{ id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' }]
+  }
+  const campiScritti = () => h.scriviFrequenza.mock.calls.map((c) => c[1].campi)
+  const valoriAlunni = () => (h.scritture as Scrittura[]).filter((x) => x.tabella === 'alunni').flatMap((x) => x.valori)
+
+  it('dentro l’anno attivo: data_ingresso = la data scelta', async () => {
+    conAnno()
+    const res = await PATCH(patch({ id: ALU_A, data_iscrizione: '2026-10-15' }))
+    expect(res.status).toBe(200)
+    expect(campiScritti()).toEqual([{ data_ingresso: '2026-10-15' }])
+    expect(valoriAlunni()).toContainEqual(expect.objectContaining({ data_iscrizione: '2026-10-15' }))
+  })
+
+  it('PRIMA dell’inizio: alunni.data_iscrizione resta come scritta, data_ingresso = primo giorno dell’anno', async () => {
+    conAnno()
+    const res = await PATCH(patch({ id: ALU_A, data_iscrizione: '2025-03-10' }))
+    expect(res.status).toBe(200)
+    expect(campiScritti()).toEqual([{ data_ingresso: '2026-09-01' }])
+    expect(valoriAlunni()).toContainEqual(expect.objectContaining({ data_iscrizione: '2025-03-10' }))
+  })
+
+  it('DOPO la fine: 422 ANNO_NON_COERENTE e nessuna scrittura', async () => {
+    conAnno()
+    const res = await PATCH(patch({ id: ALU_A, data_iscrizione: '2027-09-02' }))
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('ANNO_NON_COERENTE')
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    expect(valoriAlunni()).toEqual([])
+  })
+
+  it('schema indietro (nessun anno attivo): solo alunni, mai la frequenza', async () => {
+    h.annoAttivoDiSede.mockResolvedValue(null)
+    const res = await PATCH(patch({ id: ALU_A, data_iscrizione: '2027-09-02' }))
+    expect(res.status).toBe(200)
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    expect(valoriAlunni()).toContainEqual(expect.objectContaining({ data_iscrizione: '2027-09-02' }))
+  })
+
+  it('senza data_iscrizione nel corpo non si legge il periodo e non si scrive data_ingresso', async () => {
+    conAnno()
+    await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(campiScritti()).toEqual([{ usa_pannolino: true }])
   })
 })

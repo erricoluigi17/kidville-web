@@ -194,10 +194,21 @@ export function erroreAnno(
  * il resto → 500 `FREQUENZA_NON_SCRITTA`. Il guasto è già nel log (`anno/fase-b:frequenza-non-scritta`): qui niente dati.
  */
 export function rispostaFrequenzaNonScritta(codice: string, operazione?: string): NextResponse {
+  if (codice === 'SCRITTURA_INCOMPLETA') return rispostaScritturaIncompleta()
   return (
     erroreAnno({ message: codice }, operazione) ??
     NextResponse.json({ error: frase('FREQUENZA_NON_SCRITTA'), codice: 'FREQUENZA_NON_SCRITTA' }, { status: 500 })
   )
+}
+
+/**
+ * La risposta quando, in fase B, la frequenza è stata scritta e la scheda `alunni` no (`frequenzaGiaScritta` di
+ * `scriviAlunnoEFrequenza`): 500 `SCRITTURA_INCOMPLETA`. Dice il vero — la frequenza è già aggiornata, la scheda no — e
+ * invita a riprovare, perché il secondo tentativo completa il lavoro. Il guasto è già nel log
+ * (`anno/fase-b:alunni-non-scritto`): qui niente dati.
+ */
+export function rispostaScritturaIncompleta(): NextResponse {
+  return NextResponse.json({ error: frase('SCRITTURA_INCOMPLETA'), codice: 'SCRITTURA_INCOMPLETA' }, { status: 500 })
 }
 
 /**

@@ -303,7 +303,11 @@ describe('POST /api/admin/students/riattiva — la classe è SPARITA', () => {
 
 describe('POST /api/admin/students/riattiva — i rifiuti', () => {
   it('409 se è già fra gli ISCRITTI, e non si scrive niente', async () => {
-    h.db.alunni[0].stato = 'iscritto'
+    // davvero iscritto: nessuna traccia dell'archiviazione addosso
+    Object.assign(h.db.alunni[0], {
+      stato: 'iscritto', archiviato_il: null, archiviato_da: null, archiviato_motivo: null,
+      archiviato_section_id: null, archiviato_classe_sezione: null,
+    })
 
     const res = await POST(post({ alunno_id: ALU_A }))
 

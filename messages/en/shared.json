@@ -836,5 +836,6 @@
   "annoStatoChiuso": "closed",
   "annoAvvisoTesto": "You are working on {anno} ({stato}): new classes, votes and uploaded lists go to that year. The class lists on screen show that year too.",
   "annoAvvisoTorna": "Back to the current year",
-  "annoStatoDiverso": "status differs between locations"
+  "annoStatoDiverso": "status differs between locations",
+  "erroreScritturaIncompleta": "The change was only partly saved: the school-year enrolment record is updated, the child’s card is not. Try again: the new attempt completes the work."
 }

@@ -21,7 +21,8 @@ import { HEADER_TOTALE } from '@/lib/api/paginazione';
 import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte } from '@/lib/anno/scrittura';
-import { erroreAnno, rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
+import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
+import { risolviDataIngresso } from '@/lib/anno/data-ingresso';
 import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ============================================================
@@ -232,6 +233,14 @@ const patchBodySchema = z.object({
     intestatario_fatture: z.unknown().optional(),
 });
 
+/**
+ * Il codice con cui un lotto interamente fallito risponde. Se anche una sola riga ha la frequenza GIÀ scritta e la scheda
+ * no (`SCRITTURA_INCOMPLETA`) vince quella: dire «la scheda è rimasta com'era» per tutto il lotto sarebbe falso.
+ */
+function codicePrevalente(nonScritti: { id: string; codice: string }[]): string {
+    return nonScritti.find((r) => r.codice === 'SCRITTURA_INCOMPLETA')?.codice ?? nonScritti[0].codice;
+}
+
 // ─── Scope di sede sulle MUTAZIONI ───────────────────────────────────────────
 // `requireStaff` dice che RUOLO hai, non su QUALE SEDE. Su una route
 // service-role (la RLS non interviene) il solo gate di ruolo lasciava alla
@@ -381,35 +390,14 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
         const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id);
         if (sw.response) return sw.response;
 
-        // La data d'ingresso (consegna 8 della PR 4.1): la data di iscrizione scelta passa sulla frequenza dell'anno attivo
-        // della sede (`data_ingresso`). Fuori dal periodo di quell'anno il database direbbe `ANNO_NON_COERENTE` (422):
-        // lo si dice PRIMA dell'INSERT, perché una scheda creata a metà non si può "annullare" da qui.
-        // Regola: DOPO la fine dell'anno attivo => 422; PRIMA del suo inizio => accettata, `alunni.data_iscrizione` resta quella
-        // scritta e la frequenza riceve `data_ingresso` = inizio dell'anno (come il riempimento: chi c'era già entra il primo
-        // giorno). Dentro l'anno: la data scelta.
-        let dataIngresso = typeof body.data_iscrizione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.data_iscrizione)
-            ? body.data_iscrizione : null;
-        const annoSedeNuovo = dataIngresso ? await annoAttivoDiSede(supabase, sw.scuolaId) : null;
-        if (dataIngresso && annoSedeNuovo) {
-            const periodo = await supabase.from('anni_sede').select('inizio, fine').eq('id', annoSedeNuovo).maybeSingle();
-            if (periodo.error) {
-                logEvento('anno-scolastico', 'warn', {
-                    tipo: 'periodo-anno-non-letto',
-                    error_code: (periodo.error as { code?: string }).code ?? null,
-                    operazione: 'admin/students:POST',
-                });
-            } else if (periodo.data) {
-                const { inizio, fine } = periodo.data as { inizio: string; fine: string };
-                if (dataIngresso < inizio) {
-                    dataIngresso = inizio;
-                } else if (dataIngresso > fine) {
-                    logEvento('anno-scolastico', 'warn', {
-                        tipo: 'data-ingresso-fuori-anno', error_code: 'ANNO_NON_COERENTE', operazione: 'admin/students:POST',
-                    });
-                    return erroreAnno({ message: 'ANNO_NON_COERENTE' }, 'admin/students:POST') as NextResponse;
-                }
-            }
-        }
+        // La data d'ingresso (consegna 8 della PR 4.1): la regola — dopo la fine dell'anno attivo 422, prima del suo inizio
+        // `data_ingresso` = inizio dell'anno, dentro l'anno la data scelta — sta in `risolviDataIngresso`, la stessa del
+        // PATCH. Si dice PRIMA dell'INSERT, perché una scheda creata a metà non si può "annullare" da qui.
+        const ingresso = await risolviDataIngresso(supabase, {
+            scuolaId: sw.scuolaId, dataIscrizione: body.data_iscrizione, operazione: 'admin/students:POST',
+        });
+        if (!ingresso.ok) return ingresso.response;
+        const { dataIngresso, annoSedeId: annoSedeNuovo } = ingresso;
 
         const record: Record<string, unknown> = {
             scuola_id: sw.scuolaId,
@@ -802,12 +790,16 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                         () => supabase.from('alunni').update({ classe_sezione: body.classe_sezione }).eq('id', alunnoId).in('scuola_id', plessi).select(),
                     );
                     if (!esito.scritto) { nonScritti.push({ id: alunnoId, codice: esito.codice }); continue; }
-                    if (esito.risultato.error) { nonScritti.push({ id: alunnoId, codice: 'SCRITTURA_FALLITA' }); continue; }
+                    if (esito.risultato.error) {
+                        // La frequenza è già scritta (con la sua copia in `alunni`) e la scheda no: NON «non scritta».
+                        nonScritti.push({ id: alunnoId, codice: esito.frequenzaGiaScritta ? 'SCRITTURA_INCOMPLETA' : 'SCRITTURA_FALLITA' });
+                        continue;
+                    }
                     scritte.push(...((esito.risultato.data ?? []) as Record<string, unknown>[]));
                 }
                 segnalaRigheNonScritte('admin/students:PATCH', nonScritti.length);
                 if (scritte.length === 0 && nonScritti.length > 0) {
-                    return rispostaFrequenzaNonScritta(nonScritti[0].codice, 'admin/students:PATCH');
+                    return rispostaFrequenzaNonScritta(codicePrevalente(nonScritti), 'admin/students:PATCH');
                 }
                 data = scritte;
             } else {
@@ -819,8 +811,11 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     .select();
                 if (r.error) return NextResponse.json({ error: r.error.message, codice: 'SCRITTURA_FALLITA' }, { status: 500 });
                 data = r.data;
-                // Fase A: nessuna frequenza da scrivere (la patch non nomina colonne copiate: `section_id` lo calcola il
-                // trigger BEFORE da `classe_sezione` e lo specchio lo copia nella frequenza dell'anno attivo).
+                // Ramo senza fase B (DB della CI senza la colonna dell'interruttore, oppure interruttore spento): la patch non
+                // nomina colonne copiate e `section_id` lo calcola il trigger BEFORE da `classe_sezione`. ⚠️ NESSUN trigger
+                // copia più `alunni → frequenze` (la migrazione ha tolto `trg_alunni_specchio_frequenza`): con l'interruttore
+                // SPENTO la nuova classe resta solo su `alunni` e la prossima scrittura della frequenza la annulla. Per questo
+                // spegnere l'interruttore NON è un modo di tornare indietro (vedi il PRD, voce «fase B»).
             }
             // Audit: una riga per alunno DAVVERO riassegnato (DL-037): in fase B le righe non scritte non hanno audit.
             const idScritti = new Set((data ?? []).map((r) => String((r as { id?: unknown }).id)));
@@ -875,12 +870,16 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                         () => supabase.from('alunni').update({ gruppo_mensa_id: gruppoMensaId }).eq('id', alunnoId).in('scuola_id', plessi).select(),
                     );
                     if (!esito.scritto) { nonScritti.push({ id: alunnoId, codice: esito.codice }); continue; }
-                    if (esito.risultato.error) { nonScritti.push({ id: alunnoId, codice: 'SCRITTURA_FALLITA' }); continue; }
+                    if (esito.risultato.error) {
+                        // La frequenza è già scritta (con la sua copia in `alunni`) e la scheda no: NON «non scritta».
+                        nonScritti.push({ id: alunnoId, codice: esito.frequenzaGiaScritta ? 'SCRITTURA_INCOMPLETA' : 'SCRITTURA_FALLITA' });
+                        continue;
+                    }
                     scritte.push(...((esito.risultato.data ?? []) as Record<string, unknown>[]));
                 }
                 segnalaRigheNonScritte('admin/students:PATCH', nonScritti.length);
                 if (scritte.length === 0 && nonScritti.length > 0) {
-                    return rispostaFrequenzaNonScritta(nonScritti[0].codice, 'admin/students:PATCH');
+                    return rispostaFrequenzaNonScritta(codicePrevalente(nonScritti), 'admin/students:PATCH');
                 }
                 data = scritte;
             } else {
@@ -1387,8 +1386,16 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // Fase B (§4.19): la frequenza dell'anno attivo si scrive PRIMA, e se non si scrive `alunni` resta com'è.
                 // Su un trasferimento l'anno è quello della sede NUOVA: la vecchia frequenza la chiude lo specchio.
                 const campiFreq = campiFrequenzaDaAlunno(updates);
+                // La data d'iscrizione ha la stessa regola del POST (`risolviDataIngresso`): dopo la fine dell'anno attivo
+                // 422 PRIMA di scrivere qualunque cosa; prima del suo inizio `alunni.data_iscrizione` resta quella scritta e
+                // `data_ingresso` è il primo giorno dell'anno. L'anno è quello della sede d'arrivo, se c'è un trasferimento.
+                const ingresso = await risolviDataIngresso(supabase, {
+                    scuolaId: sedeArrivo ?? sedeAttuale, dataIscrizione: updates.data_iscrizione, operazione: 'admin/students:PATCH',
+                });
+                if (!ingresso.ok) return ingresso.response;
+                if (ingresso.dataIngresso) campiFreq.data_ingresso = ingresso.dataIngresso;
                 const annoSedeId = Object.keys(campiFreq).length > 0 || nuovaClasse
-                    ? await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale)
+                    ? (ingresso.annoSedeId ?? await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale))
                     : null;
                 const esitoScrittura = await scriviAlunnoEFrequenza(
                     supabase,
@@ -1441,6 +1448,11 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 }
                 if (esitoScrittura.risultato instanceof NextResponse) return esitoScrittura.risultato;
                 const { data, error } = esitoScrittura.risultato;
+
+                // Fase B: la frequenza è già scritta e la scheda no (il caso realistico: retta più un codice fiscale già usato
+                // da un altro alunno). Il messaggio dice la verità, il log dedicato è già partito dall'helper. Niente audit:
+                // il secondo tentativo, che completa la scheda, lo scrive.
+                if (error && esitoScrittura.frequenzaGiaScritta) return rispostaScritturaIncompleta();
 
                 // Zero righe aggiornate col gate già passato (PGRST116 su
                 // `.single()`): la riga è uscita dallo scope fra il gate e

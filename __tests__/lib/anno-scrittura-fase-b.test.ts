@@ -6,6 +6,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // a) fase B: prima la frequenza, poi alunni · b) frequenza fallita → alunni NON toccata (fail-closed)
 // c) interruttore spento = fase A (alunni, poi frequenza) · d) codice dell'anno → 422 · e) lotto con una riga che fallisce
 // f) colonna dell'interruttore assente (42703) → fase A, senza logErrore.
+// g) guasto di lettura dell'interruttore (non schema assente) → fase B, con logErrore: la frequenza si scrive per prima
+//    e se il database è giù la risposta è un errore onesto · h) alunni fallisce DOPO la frequenza → segnale + log dedicato.
 // =============================================================================
 
 const h = vi.hoisted(() => ({
@@ -114,6 +116,87 @@ describe('scriviAlunnoEFrequenza', () => {
     expect(r.scritto).toBe(true)
     expect(h.ordine).toEqual(['alunni', 'frequenza'])
     expect(h.logErrore).not.toHaveBeenCalled()
+  })
+
+  describe('(g) guasto di lettura dell’interruttore: NON è la fase A', () => {
+    it('errore che non è schema assente → fase B e logErrore col solo codice', async () => {
+      h.regole = { data: null, error: { code: 'XX000' } }
+      const c = finto()
+      expect(await conFaseB(c)).toBe(true)
+      expect(h.logErrore).toHaveBeenCalledTimes(1)
+      const r = await scriviAlunnoEFrequenza(c, args, scriviAlunni)
+      expect(r.scritto).toBe(true)
+      expect(h.ordine).toEqual(['frequenza', 'alunni'])
+    })
+
+    it('con il database giù la frequenza fallisce per prima e alunni NON si tocca', async () => {
+      h.regole = { data: null, error: { code: '57014' } }
+      h.scriviFrequenza.mockResolvedValue({ ok: false, codice: 'SCRITTURA_FALLITA' })
+      const r = await scriviAlunnoEFrequenza(finto(), args, scriviAlunni)
+      expect(r).toEqual({ scritto: false, codice: 'SCRITTURA_FALLITA' })
+      expect(scriviAlunni).not.toHaveBeenCalled()
+    })
+
+    it('il client che lancia → fase B e logErrore', async () => {
+      const lancia = { from: () => { throw new Error('rete') } } as unknown as SupabaseClient
+      expect(await conFaseB(lancia)).toBe(true)
+      expect(h.logErrore).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['42703', '42P01', 'PGRST204', 'PGRST205'])('schema assente (%s) → fase A, nessun logErrore', async (code) => {
+      h.regole = { data: null, error: { code } }
+      expect(await conFaseB(finto())).toBe(false)
+      expect(h.logErrore).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('(h) alunni fallisce dopo la frequenza', () => {
+    const fallisce = vi.fn(async () => {
+      h.ordine.push('alunni')
+      return { data: null, error: { code: '23505' } }
+    })
+
+    it('segnale frequenzaGiaScritta e un log dedicato con i soli uuid e il codice', async () => {
+      const r = await scriviAlunnoEFrequenza(finto(), args, fallisce)
+      expect(h.ordine).toEqual(['frequenza', 'alunni'])
+      expect(r).toMatchObject({ scritto: true, frequenzaGiaScritta: true })
+      const dedicati = h.logErrore.mock.calls.filter((c) => c[0]?.operazione === 'anno/fase-b:alunni-non-scritto')
+      expect(dedicati).toHaveLength(1)
+      const msg = String((dedicati[0][1] as Error).message)
+      expect(msg).toContain('23505')
+      expect(msg).toContain(ALU)
+      expect(msg).toContain(ANNO_SEDE)
+    })
+
+    it('alunni riuscita: nessun segnale e nessun log', async () => {
+      const r = await scriviAlunnoEFrequenza(finto(), args, scriviAlunni)
+      expect(r).not.toHaveProperty('frequenzaGiaScritta')
+      expect(h.logErrore).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['anno non attivo (saltata)', { ok: true, saltata: 'anno-non-attivo' }],
+      ['schema indietro (saltata)', { ok: true, saltata: 'schema-indietro' }],
+    ])('frequenza %s: niente è stato scritto, quindi nessun segnale', async (_nome, esito) => {
+      h.scriviFrequenza.mockResolvedValue(esito)
+      const r = await scriviAlunnoEFrequenza(finto(), args, fallisce)
+      expect(r).toMatchObject({ scritto: true })
+      expect(r).not.toHaveProperty('frequenzaGiaScritta')
+      expect(h.logErrore).not.toHaveBeenCalled()
+    })
+
+    it('nessun campo da scrivere in frequenza: nessun segnale', async () => {
+      const r = await scriviAlunnoEFrequenza(finto(), { ...args, campi: {} }, fallisce)
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+      expect(r).not.toHaveProperty('frequenzaGiaScritta')
+    })
+
+    it('fase A: alunni fallita, la frequenza non si scrive e non c’è segnale', async () => {
+      h.regole = { data: { specchio_frequenze_attivo: false }, error: null }
+      const r = await scriviAlunnoEFrequenza(finto(), args, fallisce)
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+      expect(r).not.toHaveProperty('frequenzaGiaScritta')
+    })
   })
 
   it('senza anno attivo (annoSedeId null): solo alunni, mai la frequenza', async () => {

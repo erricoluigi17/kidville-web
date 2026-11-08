@@ -12,7 +12,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 import { classeEsisteInOgniSede } from '../route';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
-import { rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
+import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
 // ============================================================================
 // RIPORTA UN ALUNNO FRA GLI ISCRITTI — il ritorno, che è metà del modello.
@@ -120,7 +120,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // Lettura minima: nessuna colonna che nomini il bambino.
         const { data: prima, error: errLettura } = await supabase
             .from('alunni')
-            .select('id, scuola_id, stato, classe_sezione, archiviato_il, archiviato_classe_sezione, spazio_liberato_il')
+            .select('id, scuola_id, stato, classe_sezione, archiviato_il, archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione, spazio_liberato_il')
             .eq('id', alunnoId)
             .in('scuola_id', plessi)
             .maybeSingle();
@@ -159,7 +159,17 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
          * fatto a mano dalla tendina (`stato = 'ritirato'`, `archiviato_il` NULL),
          * che è precisamente il caso in cui il ritorno serve.
          */
-        if (eAncoraIscritto(prima.stato as string | null)) {
+        /**
+         * ⚠️ ECCEZIONE: una riattivazione a metà. Senza transazione (fino alla PR 5) la frequenza `iscritto` può essere
+         * scritta e `alunni` no: lo specchio ha già messo `stato = 'iscritto'`, ma le tracce dell'archiviazione
+         * (`archiviato_da`, `archiviato_motivo`, la memoria della classe) sono ancora lì. Uno stato `iscritto` con quelle
+         * tracce NON è un bambino davvero iscritto: è il lavoro da completare, e riprovare lo completa.
+         */
+        const tracceArchiviazione =
+            prima.archiviato_da != null || prima.archiviato_motivo != null ||
+            prima.archiviato_section_id != null || prima.archiviato_classe_sezione != null;
+        const mezzaRiattivata = prima.stato === STATO_ISCRITTO && tracceArchiviazione;
+        if (eAncoraIscritto(prima.stato as string | null) && !mezzaRiattivata) {
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/riattiva:POST', esito: 'gia-iscritto', alunno: alunnoId,
             });
@@ -276,6 +286,9 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
             return rispostaFrequenzaNonScritta(esitoScrittura.codice, 'admin/students/riattiva:POST');
         }
         const { data: dopo, error: errScrittura } = esitoScrittura.risultato;
+
+        // La frequenza è già scritta e `alunni` no: non è vero che «la scheda è rimasta com'era». Riprovare completa.
+        if (errScrittura && esitoScrittura.frequenzaGiaScritta) return rispostaScritturaIncompleta();
 
         if (errScrittura) {
             if (colonnaAssente(errScrittura)) return archivioNonDisponibile('scrittura', alunnoId);

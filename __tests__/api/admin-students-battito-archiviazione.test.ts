@@ -110,6 +110,7 @@ const archiviaLaRiga = () => {
   a.section_id = null
   a.classe_sezione = null
   a.archiviato_il = '2026-08-01T10:00:00.000Z'
+  a.archiviato_da = 'seg-1'
   a.archiviato_section_id = SEC_A
   a.archiviato_classe_sezione = '2 ANNI'
 }

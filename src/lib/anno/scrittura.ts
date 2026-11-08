@@ -14,7 +14,7 @@ import { letturaAnnoFallita, scriviFrequenza, type CampiFrequenza, type EsitoFre
  * della frequenza (lo specchio inverso riporta indietro il vecchio valore). Per questo ogni sito che scrive le colonne
  * copiate passa da `scriviAlunnoEFrequenza`, e SOLO da lì si decide l'ordine:
  *
- *  - fase A (interruttore spento, o DB senza la colonna: la CI): come prima. `alunni` e poi la frequenza, fail-open;
+ *  - fase A (DB senza la colonna dell'interruttore: la CI): come prima. `alunni` e poi la frequenza, fail-open;
  *  - fase B: PRIMA la frequenza. Se non si scrive, `alunni` NON si tocca e il chiamante riceve il codice (fail-closed:
  *    una scheda che dice una classe e una frequenza che ne dice un'altra è peggio di una richiesta respinta).
  *    La frequenza che non c'è ancora (un alunno nuovo: la fa nascere il trigger d'INSERT) o un anno non attivo
@@ -34,24 +34,33 @@ async function leggiFaseB(supabase: SupabaseClient): Promise<boolean> {
   try {
     const r = await supabase.from('anno_regole').select('specchio_frequenze_attivo').limit(1).maybeSingle()
     if (r.error) {
-      // La colonna o la tabella non ci sono (il DB della CI, o la finestra del deploy): è la fase A, e non è un guasto.
-      if (!schemaAnnoIndietro(r.error)) {
-        logErrore({ operazione: 'anno/fase-b:interruttore' }, new Error(`anno_regole:${r.error.code ?? 'senza-codice'}`))
-      }
-      return false
+      // La colonna o la tabella non ci sono (il DB della CI): è la fase A, e non è un guasto.
+      if (schemaAnnoIndietro(r.error)) return false
+      // Un guasto vero (il database non risponde) NON è la fase A: dalla migrazione `trg_alunni_specchio_frequenza`
+      // non c'è più, quindi scrivere `alunni` per primo lascerebbe una scrittura di sola classe senza frequenza, e la
+      // scrittura successiva della frequenza la annullerebbe in silenzio. Nel dubbio si va in fase B: la frequenza si
+      // scrive PER PRIMA e, se il database è giù, la risposta è un errore onesto.
+      logErrore({ operazione: 'anno/fase-b:interruttore' }, new Error(`anno_regole:${r.error.code ?? 'senza-codice'}`))
+      return true
     }
     return (r.data as { specchio_frequenze_attivo?: unknown } | null)?.specchio_frequenze_attivo === true
   } catch (err) {
-    // il client ha lanciato (rete, configurazione): nel dubbio si resta in fase A, che è il comportamento di sempre
+    // il client ha lanciato (rete, configurazione): stesso ragionamento di un guasto, si va in fase B
     logErrore({ operazione: 'anno/fase-b:interruttore' }, err)
-    return false
+    return true
   }
 }
 
 /**
  * `true` se la fase B è accesa (`anno_regole.specchio_frequenze_attivo`). NON LANCIA MAI. L'interruttore è globale
- * (`anno_regole` ha una riga sola). Colonna o tabella assenti → `false` senza errore; un altro guasto → `false` e un
- * `logErrore` col solo codice.
+ * (`anno_regole` ha una riga sola). Colonna o tabella assenti → `false` senza errore (la CI); un altro guasto → `true`
+ * (la frequenza si scrive per prima: un database giù dà un errore onesto) e un `logErrore` col solo codice.
+ *
+ * ⚠️ L'interruttore SPENTO (`specchio_frequenze_attivo = false`) NON riporta alla fase A di prima: la migrazione ha
+ * tolto `trg_alunni_specchio_frequenza`, quindi il ramo «`alunni` e poi la frequenza» scrive la frequenza solo per i
+ * `campi` che il chiamante conosce, e una scrittura di sola classe resta su `alunni`. Tornare indietro davvero vuol dire
+ * ricreare `trg_alunni_specchio_frequenza` e togliere `trg_frequenze_specchio_alunni` e `trg_alunni_specchio_frequenza_sede`,
+ * dall'editor SQL (il freno nega le istruzioni distruttive): vedi il PRD, voce «Sezioni e docenti per anno, fase B».
  */
 export function conFaseB(supabase: SupabaseClient): Promise<boolean> {
   let p = CACHE_FASE_B.get(supabase)
@@ -107,7 +116,14 @@ async function sezioneDelNome(
 
 // ───────────────────────── l'ordine ─────────────────────────
 
-export type EsitoScritturaAlunno<T> = { scritto: true; risultato: T } | { scritto: false; codice: string }
+export type EsitoScritturaAlunno<T> =
+  /**
+   * `frequenzaGiaScritta`: in fase B la frequenza è stata scritta e poi `scrivi` (la scheda `alunni`) è fallita. Non c'è
+   * transazione: la frequenza e la sua copia in `alunni` sono già applicate, e il chiamante deve DIRLO (non «la scheda
+   * è rimasta com'era») e riprovare in modo che completi il lavoro. La PR 5 toglie la doppia scrittura e chiude la finestra.
+   */
+  | { scritto: true; risultato: T; frequenzaGiaScritta?: true }
+  | { scritto: false; codice: string }
 
 export type ArgomentiScritturaAlunno = {
   alunnoId: string
@@ -168,6 +184,9 @@ export async function scriviAlunnoEFrequenza<T>(
     if (!s.ok) return { scritto: false, codice: 'SCRITTURA_FALLITA' }
     campi.section_id = s.id
   }
+  // `true` solo se la frequenza è stata davvero toccata: una scrittura saltata (anno non attivo, schema indietro) non
+  // ha lasciato niente da raccontare.
+  let frequenzaScritta = false
   if (Object.keys(campi).length > 0) {
     const esito = await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi })
     if (!esito.ok) {
@@ -180,8 +199,23 @@ export async function scriviAlunnoEFrequenza<T>(
       }
       return { scritto: false, codice: esito.codice }
     }
+    frequenzaScritta = !('saltata' in esito)
   }
-  return { scritto: true, risultato: await scrivi() }
+  const risultato = await scrivi()
+  if (frequenzaScritta && !riuscita(risultato)) {
+    // La frequenza è applicata (con la sua copia in `alunni`) e la scheda no: la finestra senza transazione. Solo uuid e
+    // il codice di Postgres, mai il messaggio (può riportare la riga).
+    const codice = (risultato as { error?: { code?: unknown } } | null | undefined)?.error?.code
+    logErrore(
+      { operazione: 'anno/fase-b:alunni-non-scritto' },
+      new Error(
+        `alunni-non-scritto-dopo-frequenza:${typeof codice === 'string' && /^[A-Za-z0-9]{3,10}$/.test(codice) ? codice : 'senza-codice'}`
+        + `:alunno=${alunnoId}:anno_sede=${annoSedeId}`,
+      ),
+    )
+    return { scritto: true, risultato, frequenzaGiaScritta: true }
+  }
+  return { scritto: true, risultato }
 }
 
 /**

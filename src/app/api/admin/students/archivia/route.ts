@@ -10,8 +10,8 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
-import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
-import { rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
+import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
+import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
 // ============================================================================
 // ARCHIVIA UN ALUNNO — «non più iscritto», con l'anagrafica INTATTA.
@@ -101,7 +101,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // corsa fra il gate e la lettura ne faccia rientrare una.
         const { data: prima, error: errLettura } = await supabase
             .from('alunni')
-            .select('id, scuola_id, section_id, classe_sezione, gruppo_mensa_id, stato, archiviato_il')
+            .select('id, scuola_id, section_id, classe_sezione, gruppo_mensa_id, stato, archiviato_il, archiviato_da, archiviato_section_id, archiviato_classe_sezione')
             .eq('id', alunnoId)
             .in('scuola_id', plessi)
             .maybeSingle();
@@ -143,8 +143,16 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
          * lo lascerebbe bloccato in quello stato per sempre, ed è esattamente il
          * caso per cui questa rotta serve. Chi è già archiviato davvero ha
          * `archiviato_il`: quello, e solo quello, è «l'ho già fatto».
+         *
+         * ⚠️ MA «già archiviato» vuol dire anche `archiviato_da`. Senza transazione (fino alla PR 5) la frequenza dell'anno
+         * può essere scritta e `alunni` no: lo specchio ha già messo `archiviato_il` ma l'autore, il motivo e l'audit non ci
+         * sono. Un `archiviato_il` valorizzato con `archiviato_da` NULL è un'archiviazione DA COMPLETARE, non un 409:
+         * riprovare scrive autore, motivo e audit, e NON tocca la memoria della classe (che il primo giro ha già scritto,
+         * e che dalla scheda sganciata non si può più ricavare). Vale anche per gli alunni archiviati prima di questa
+         * regola con `archiviato_da` NULL e la memoria già piena.
          */
-        if (prima.archiviato_il != null) {
+        const daCompletare = prima.archiviato_il != null && prima.archiviato_da == null;
+        if (prima.archiviato_il != null && !daCompletare) {
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId,
             });
@@ -153,20 +161,24 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                 { status: 409 },
             );
         }
+        if (daCompletare) {
+            logEvento('gdpr', 'info', {
+                operazione: 'admin/students/archivia:POST', esito: 'archiviazione-da-completare', alunno: alunnoId,
+            });
+        }
 
-        const adesso = new Date().toISOString();
-        // UN SOLO UPDATE. Due scritture separate (prima lo sgancio, poi la
-        // memoria di dov'era) lascerebbero una finestra in cui il bambino è
-        // fuori dalla sua sezione e nessuna riga dice quale fosse.
+        // Se `alunni` è già archiviato a metà, l'istante dell'archiviazione resta quello del primo giro (l'uscita della
+        // frequenza lo segue); altrimenti è adesso.
+        const adesso = daCompletare ? String(prima.archiviato_il) : new Date().toISOString();
+        // UN SOLO UPDATE, dove la frequenza non si scrive prima. Due scritture separate (prima lo sgancio, poi la
+        // memoria di dov'era) lascerebbero una finestra in cui il bambino è fuori dalla sua sezione e nessuna riga dice
+        // quale fosse. L'eccezione è la fase B, qui sotto: la memoria si scrive PRIMA della frequenza, quindi la finestra
+        // è all'incontrario (memoria scritta, bambino ancora in classe) ed è innocua.
         const aggiornamento: Record<string, unknown> = {
             stato: STATO_RITIRATO,
             archiviato_il: adesso,
             archiviato_da: auth.user.id,
             archiviato_motivo: motivo ?? null,
-            // La memoria del ritorno: si scrive PRIMA di azzerare, nello stesso
-            // UPDATE, quindi legge i valori di `prima` e non quelli già persi.
-            archiviato_section_id: (prima.section_id as string | null) ?? null,
-            archiviato_classe_sezione: (prima.classe_sezione as string | null) ?? null,
             // Lo sganciamento: è QUESTO che lo fa sparire dagli elenchi.
             section_id: null,
             classe_sezione: null,
@@ -174,12 +186,56 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // archiviato che resta in una lista di cucina è un pasto contato.
             gruppo_mensa_id: null,
         };
+        // La memoria del ritorno: si scrive PRIMA di azzerare, nello stesso UPDATE, quindi legge i valori di `prima` e non
+        // quelli già persi. Su un'archiviazione da completare `prima.section_id` è già NULL: riscriverla cancellerebbe la
+        // memoria vera, e la memoria NON si tocca mai.
+        if (!daCompletare) {
+            aggiornamento.archiviato_section_id = (prima.section_id as string | null) ?? null;
+            aggiornamento.archiviato_classe_sezione = (prima.classe_sezione as string | null) ?? null;
+        }
 
         // Fase B (§4.19): prima la frequenza dell'anno attivo (`archiviato_il` → `ritirato` + uscita; `section_id` e
-        // `gruppo_mensa_id` a NULL), poi `alunni`. Se la frequenza non si scrive, la scheda resta com'era.
-        // In fase A: `alunni` e poi la frequenza, fail-open.
+        // `gruppo_mensa_id` a NULL), poi `alunni`. Se la frequenza non si scrive, la scheda resta com'era. In fase A:
+        // `alunni` e poi la frequenza, fail-open.
         const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
         const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+
+        // La frequenza si scrive per prima, e lo specchio ricopia in `alunni` stato, archiviato_il e il distacco dalla
+        // classe: se poi l'UPDATE di `alunni` fallisse, la memoria di dov'era il bambino andrebbe persa (la scheda non ha
+        // più la classe da cui ricavarla). Quindi la memoria si scrive in un UPDATE proprio, PRIMA.
+        if (!daCompletare && annoSedeId && await conFaseB(supabase)) {
+            const { error: errMemoria } = await supabase
+                .from('alunni')
+                .update({
+                    archiviato_section_id: aggiornamento.archiviato_section_id,
+                    archiviato_classe_sezione: aggiornamento.archiviato_classe_sezione,
+                })
+                .eq('id', alunnoId)
+                .in('scuola_id', plessi)
+                .select('id')
+                .single();
+            if (errMemoria) {
+                if (colonnaAssente(errMemoria)) return archivioNonDisponibile('scrittura', alunnoId);
+                if ((errMemoria as { code?: string }).code === 'PGRST116') {
+                    logEvento('multi_sede', 'warn', {
+                        operazione: 'admin/students/archivia:POST', esito: 'nessuna-riga-aggiornata', alunno: alunnoId,
+                    });
+                    return NextResponse.json(
+                        { error: 'Questo bambino non è più nell\'elenco di questa postazione.', codice: 'ALUNNO_NON_APRIBILE' },
+                        { status: 404 },
+                    );
+                }
+                logEvento('gdpr', 'error', {
+                    operazione: 'admin/students/archivia:POST', esito: 'memoria-non-scritta',
+                    alunno: alunnoId, error_code: (errMemoria as { code?: string }).code,
+                }, errMemoria);
+                return NextResponse.json(
+                    { error: 'L\'archiviazione non è stata registrata: la scheda è rimasta com\'era.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+        }
+
         const esitoScrittura = await scriviAlunnoEFrequenza(
             supabase,
             { alunnoId, annoSedeId, campi: campiFreq },
@@ -195,6 +251,11 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             return rispostaFrequenzaNonScritta(esitoScrittura.codice, 'admin/students/archivia:POST');
         }
         const { data: dopo, error: errScrittura } = esitoScrittura.risultato;
+
+        // La frequenza è già scritta (e lo specchio ha già sganciato il bambino dalla classe) e `alunni` no: non è vero che
+        // «la scheda è rimasta com'era». Il log dedicato è già partito dall'helper; la memoria della classe è al sicuro
+        // (scritta prima), e riprovare completa autore e audit.
+        if (errScrittura && esitoScrittura.frequenzaGiaScritta) return rispostaScritturaIncompleta();
 
         if (errScrittura) {
             // ⚠️ QUI NON SI DEGRADA. Il ciclo «togli la colonna e riprova» del
@@ -283,7 +344,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             alunno_id: (dopo?.id as string | undefined) ?? alunnoId,
             archiviato_il: adesso,
             /** La classe da cui è stato sganciato: la scheda la mostra come «Era in: …». */
-            era_in: (prima.classe_sezione as string | null) ?? null,
+            era_in: (prima.classe_sezione as string | null) ?? (daCompletare ? (prima.archiviato_classe_sezione as string | null) : null) ?? null,
         });
     } catch (err) {
         logErrore({ operazione: 'admin/students/archivia:POST', stato: 500 }, err);

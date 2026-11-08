@@ -18,6 +18,8 @@ import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
 import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
+import { annoDelGiorno, giornoValido } from '@/lib/anno-scolastico';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
 
 interface Student {
     id: string;
@@ -164,6 +166,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
     const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
+
+    // ─── L'ANNO SCOLASTICO DELLA DATA DI ISCRIZIONE (PR 4.3, consegna 8 della 4.1) ───────────────────────────
+    // La data d'ingresso passa sulla frequenza dell'anno dichiarato: qui si dice in quale anno cade e, se la sede ha un
+    // calendario che non la contiene, si blocca il salvataggio. Il calendario è quello della sede DELL'ALUNNO (la sede
+    // della scheda, anche dopo un trasferimento non ancora salvato). Si blocca solo una data CAMBIATA in questa sessione:
+    // una scheda con una data vecchia (l'iscrizione di tre anni fa) deve restare modificabile in tutto il resto.
+    // Stato derivato: nessun effetto che copia valori nello stato.
+    const calendarioSede = useCalendarioDi(((form.scuola_id as string | null | undefined) ?? student?.scuola_id) ?? null);
+    const dataIscrizione = (form.data_iscrizione as string | null | undefined) ?? '';
+    const annoIscrizione = giornoValido(dataIscrizione) ? annoDelGiorno(dataIscrizione, calendarioSede) : null;
+    const dataCambiata = dataIscrizione !== ((student?.data_iscrizione as string | null | undefined) ?? '');
+    const dataFuoriAnno = dataCambiata && annoIscrizione !== null && !!calendarioSede && calendarioSede.length > 0 && annoIscrizione.fonte === 'predefinito';
     /** Primo clic: si chiede conferma. Secondo clic: si archivia. */
     const [confermaArchiviazione, setConfermaArchiviazione] = useState(false);
     const [archiviazioneInCorso, setArchiviazioneInCorso] = useState(false);
@@ -396,6 +410,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     if (!student) return null;
 
     const handleSave = async () => {
+        if (dataFuoriAnno) return; // il messaggio è già sotto il campo e il pulsante è spento
         setIsSaving(true);
         try {
             /**
@@ -1084,11 +1099,16 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     type="date"
                                     value={(form.data_iscrizione as string) ?? ''}
                                     onChange={e => updateForm('data_iscrizione', e.target.value || null)}
+                                    aria-invalid={dataFuoriAnno || undefined}
+                                    aria-describedby={annoIscrizione || dataFuoriAnno ? 'dettaglio-data-iscrizione-anno' : undefined}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                 />
                                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
                                     {t('detailDataIscrizioneHint')}
                                 </p>
+                                {dataFuoriAnno
+                                    ? <p id="dettaglio-data-iscrizione-anno" role="alert" className="font-maven text-[11px] text-kidville-error mt-1">{t('dataIscrizioneFuoriAnno')}</p>
+                                    : annoIscrizione && <p id="dettaglio-data-iscrizione-anno" className="font-maven text-[11px] text-kidville-sub mt-1">{t('dataIscrizioneAnno', { anno: annoIscrizione.etichettaBreve })}</p>}
                             </div>
                         </div>
                     </section>
@@ -1608,7 +1628,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                     {/* Salva */}
                     <button
                         onClick={handleSave}
-                        disabled={isSaving}
+                        disabled={isSaving || dataFuoriAnno}
                         className="w-full h-12 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                         {isSaving ? (

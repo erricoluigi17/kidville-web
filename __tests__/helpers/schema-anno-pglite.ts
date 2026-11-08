@@ -440,8 +440,30 @@ const SUFFISSI_PR2 = {
   M42: '_anno_impostazioni_sede.sql',
 } as const
 
+/**
+ * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
+ * `SCHEMA_BASE`, per non cambiare il registro che i test vecchi si aspettano; chi vuole che il registro la veda (e la
+ * guardia dell'anno la guardi) la passa nella `codaPrima` di `creaDbAnnoPr2`.
+ */
+export const SCHEMA_STUDENT_DOCUMENTS = `
+  CREATE TYPE public.document_type_enum AS ENUM ('diagnosi', 'pei', '104', 'pdp', 'scheda_sanitaria');
+  CREATE TABLE public.student_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+    student_id uuid NOT NULL,
+    document_type public.document_type_enum NOT NULL,
+    file_url text NOT NULL,
+    expiry_date date,
+    created_at timestamptz DEFAULT now()
+  );
+`
+
 export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
   const suffisso = SUFFISSI_PR2[quale]
+  // La sezione M della migrazione 4.2 aggiorna `student_documents`: se il banco non l'ha, la crea nuda (senza registro).
+  if (quale === 'M42') {
+    const c = await db.query<{ t: string | null }>(`SELECT to_regclass('public.student_documents')::text t`)
+    if (!c.rows[0].t) await db.exec(SCHEMA_STUDENT_DOCUMENTS)
+  }
   const f = readdirSync(CARTELLA).find((x) => x.endsWith(suffisso))
   if (!f) throw new Error(`manca supabase/migrations/*${suffisso}`)
   await db.exec(readFileSync(join(CARTELLA, f), 'utf8'))

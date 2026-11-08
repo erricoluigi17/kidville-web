@@ -526,3 +526,262 @@ GRANT EXECUTE ON FUNCTION public.anno_prerequisiti_iscrizioni(uuid)     TO servi
 GRANT EXECUTE ON FUNCTION public.anno_imposta_date(uuid, date, date)    TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_apri_iscrizioni(uuid, uuid)       TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_imposta_domande(uuid, boolean)    TO service_role;
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- Compito 4.2.M · due correzioni piccole rimaste dalla PR 4.1.
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- (M-1) Le schede sanitarie già firmate non scadono più. Decisione del titolare (risposta 10): i moduli sanitari
+-- (scheda sanitaria, farmaci, dieta) valgono fino a revoca. Dalla PR 4.1 la firma in app non scrive più la scadenza;
+-- restano le schede firmate PRIMA, con `expiry_date = 31/07/2027`. Si toglie SOLO quella scadenza, SOLO alle schede
+-- sanitarie: un'altra scadenza o un altro tipo di documento non si toccano. Il numero delle righe toccate va nel NOTICE
+-- (nessun dato della riga).
+DO $m1$
+DECLARE
+  v_n bigint;
+BEGIN
+  SELECT count(*) INTO v_n
+    FROM public.student_documents
+   WHERE document_type::text = 'scheda_sanitaria'
+     AND expiry_date = DATE '2027-07-31';
+  RAISE NOTICE 'schede sanitarie con scadenza 2027-07-31 da azzerare: %', v_n;
+
+  UPDATE public.student_documents
+     SET expiry_date = NULL
+   WHERE document_type::text = 'scheda_sanitaria'
+     AND expiry_date = DATE '2027-07-31';
+END
+$m1$;
+
+-- (M-2) anno_invarianti: la definizione di `20261107165503_anno_scrittura.sql` (5b), identica salvo la 14. Prima
+-- la 14 cercava una chiave esterna di UNA colonna e dava un falso allarme (3 righe) sulle `votazioni_*`, che hanno una
+-- chiave composta con entrambe le colonne NOT NULL. Ora vale la regola scritta nel commento della 14.
+CREATE OR REPLACE FUNCTION public.anno_invarianti()
+RETURNS TABLE (invariante text, tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  r             public.anno_tabelle%ROWTYPE;
+  v_guardia_dal timestamptz;
+  v_mappa6      jsonb := '{}'::jsonb;
+  v_ha_nera     boolean;
+  v_ha_anno     boolean;
+  v_fuori       text[];
+  v_cond        text[];
+  v_col         text;
+  v_n           bigint;
+  v_trovata     boolean := false;
+  d             record;
+BEGIN
+  -- 1. Nessun giorno senza anno, nessun giorno in due anni.
+  SELECT count(*) INTO v_n FROM (
+    SELECT s.scuola_id, g::date
+      FROM (SELECT a.scuola_id, min(a.inizio) AS da, max(a.fine) AS al
+              FROM public.anni_sede a GROUP BY a.scuola_id) s
+     CROSS JOIN LATERAL generate_series(s.da::timestamp, s.al::timestamp, interval '1 day') g
+      LEFT JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND g::date <@ a.periodo
+     GROUP BY s.scuola_id, g::date
+    HAVING count(a.id) <> 1) x;
+  invariante := '1'; tabella := 'anni_sede'; righe := v_n; RETURN NEXT;
+
+  -- 6, prima parte: le violazioni di tutte le tabelle in una volta sola (poi si distribuiscono).
+  SELECT g.guardia_attiva_dal INTO v_guardia_dal FROM public.anno_regole g;
+  v_ha_nera := to_regclass('scatola_nera.modifiche') IS NOT NULL;
+  IF v_ha_nera AND v_guardia_dal IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT coalesce(jsonb_object_agg(x.tabella, x.n), '{}'::jsonb) FROM (
+        SELECT m.tabella, count(*) AS n
+          FROM scatola_nera.modifiche m
+          -- `nessuna` e `solo_contenuto` non guardano gli UPDATE (la scatola nera registra solo UPDATE): non sono un difetto
+          JOIN public.anno_tabelle t ON t.tabella = m.tabella AND t.guardia = 'piena'
+         CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+          JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+         CROSS JOIN LATERAL (SELECT min(st.dal) AS dal FROM public.anni_sede_stati st
+                              WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')) ch
+         WHERE m.modificata_il >= $1
+           AND ch.dal IS NOT NULL
+           AND m.modificata_il >= ch.dal
+           -- le modifiche che la guardia lascia passare apposta non sono un difetto
+           AND NOT (
+             coalesce((SELECT bool_and(
+                         c = ANY (public.anno_colonne_esenti(m.tabella))
+                         OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                         FROM unnest(m.cambiate) c), false)
+             AND (m.tabella <> 'frequenze'
+                  OR NOT ('stato' = ANY (m.cambiate))
+                  OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
+           AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+                            WHERE u.transazione = m.transazione AND u.tabella = m.tabella
+                              AND (u.riga_id IS NULL OR u.riga_id = m.riga_id))
+         GROUP BY m.tabella) x
+    $q$ INTO v_mappa6 USING v_guardia_dal;
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+    v_ha_anno := public.anno_ha_colonna(r.tabella, 'anno_id');
+
+    -- 2. Nessuna riga fuori dal suo anno (modo `data`).
+    IF r.modo = 'data' THEN
+      invariante := '2'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_fuori_periodo(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 6, seconda parte: una riga per tabella (se c'è la scatola nera).
+    IF v_ha_nera THEN
+      invariante := '6'; tabella := r.tabella; righe := coalesce((v_mappa6 ->> r.tabella)::bigint, 0);
+      RETURN NEXT;
+    END IF;
+
+    -- 9. Nessuna riga nuova con una sezione di un altro anno.
+    IF public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      invariante := '9'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_sezione_altro_anno(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 10a. La colonna e il trigger generico (una riga per tabella: 0, 1 o 2 difetti).
+    invariante := '10a'; tabella := r.tabella;
+    righe := (CASE WHEN v_ha_anno THEN 0 ELSE 1 END)
+           + (CASE WHEN EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc pr ON pr.oid = tg.tgfoid
+                                 WHERE tg.tgrelid = to_regclass(format('public.%I', r.tabella))
+                                   AND pr.proname = 'anno_assegna_e_verifica' AND NOT tg.tgisinternal)
+                   THEN 0 ELSE 1 END);
+    RETURN NEXT;
+
+    -- 12. Nessuna riga senza anno e con una sede da cui ricavarlo.
+    invariante := '12'; tabella := r.tabella;
+    righe := CASE WHEN v_ha_anno THEN public.anno_righe_senza_anno_con_sede(r.tabella) ELSE 0 END;
+    RETURN NEXT;
+
+    -- 14. «madre ⇒ FK» (Ruling P5; corretta in 4.2.M): ogni tabella `madre` ha una chiave esterna vera dalla colonna
+    --     `madre_colonna` alla tabella madre. La chiave può essere COMPOSTA (le `votazioni_*` hanno
+    --     `(votazione_id, scuola_id)`): conta se contiene la `madre_colonna` E garantisce davvero la madre, cioè ha una
+    --     colonna sola, oppure è MATCH FULL, oppure tutte le sue colonne sono NOT NULL. Una composta MATCH SIMPLE con una
+    --     colonna che ammette NULL non basta: con quella colonna NULL Postgres non controlla la chiave.
+    IF r.modo = 'madre' THEN
+      invariante := '14'; tabella := r.tabella;
+      righe := CASE WHEN EXISTS (
+                 SELECT 1 FROM pg_constraint c
+                  WHERE c.contype = 'f'
+                    AND c.conrelid = to_regclass(format('public.%I', r.tabella))
+                    AND c.confrelid = to_regclass(format('public.%I', r.madre_tabella))
+                    AND EXISTS (SELECT 1 FROM unnest(c.conkey) AS k(attnum)
+                                  JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = k.attnum
+                                 WHERE at.attname = r.madre_colonna)
+                    AND (cardinality(c.conkey) = 1
+                         OR c.confmatchtype = 'f'
+                         OR NOT EXISTS (SELECT 1 FROM unnest(c.conkey) AS k(attnum)
+                                          JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = k.attnum
+                                         WHERE NOT at.attnotnull))) THEN 0 ELSE 1 END;
+      RETURN NEXT;
+    END IF;
+  END LOOP;
+
+  IF NOT v_ha_nera THEN
+    invariante := '6'; tabella := '(scatola_nera assente)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno.
+  SELECT count(*) INTO v_n FROM (
+    SELECT f.alunno_id, f.anno_id FROM public.frequenze f
+     WHERE f.stato IN ('in_attesa', 'iscritto')
+     GROUP BY f.alunno_id, f.anno_id HAVING count(*) > 1) x;
+  invariante := '3'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+
+  -- 4. Nessun «iscritto» senza moduli o senza quota, ricalcolato dalla verità e non dai flag.
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.stato = 'iscritto' AND f.origine <> 'recupero'
+     AND (EXISTS (SELECT 1 FROM public.moduli_richiesti m
+                   WHERE m.anno_sede_id = f.anno_sede_id AND m.lista = f.tipo
+                     AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                                      WHERE fm.frequenza_id = f.id AND fm.modulo_id = m.id))
+          OR q.id IS NULL OR q.stato <> 'pagato');
+  invariante := '4'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+  --    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.quota_saldata IS DISTINCT FROM (q.id IS NOT NULL AND q.stato = 'pagato');
+  invariante := '4'; tabella := 'frequenze (flag)'; righe := v_n; RETURN NEXT;
+
+  -- 5. Nessuna competenza fuori dal periodo del suo anno.
+  v_n := 0;
+  IF to_regclass('public.pagamenti') IS NOT NULL AND public.anno_ha_colonna('pagamenti', 'anno_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pagamenti p '
+            'JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id '
+            'WHERE p.periodo_competenza IS NOT NULL AND NOT (p.periodo_competenza <@ a.periodo)'
+    INTO v_n;
+  END IF;
+  invariante := '5'; tabella := 'pagamenti'; righe := v_n; RETURN NEXT;
+
+  -- 10b. Una tabella con `anno_id` che il registro non conosce.
+  SELECT array_agg(c.relname::text ORDER BY c.relname) INTO v_fuori
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND at.attname = 'anno_id' AND at.attnum > 0 AND NOT at.attisdropped
+     AND c.relname NOT IN ('anni_sede', 'riconciliazione_anno')
+     AND c.relname NOT IN (SELECT t.tabella FROM public.anno_tabelle t);
+  IF v_fuori IS NULL THEN
+    invariante := '10b'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  ELSE
+    FOREACH v_col IN ARRAY v_fuori LOOP
+      invariante := '10b'; tabella := v_col; righe := 1; RETURN NEXT;
+    END LOOP;
+  END IF;
+
+  -- 11. La scheda alunno e la frequenza dell'anno attivo dicono la stessa cosa (solo chi ha la frequenza).
+  --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
+  --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL THEN
+    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
+                  WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
+                    AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
+                    AND NOT x.attisdropped AND NOT y.attisdropped) THEN
+        v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
+      END IF;
+    END LOOP;
+    EXECUTE 'SELECT count(*) FROM public.alunni al '
+            'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
+            'WHERE ' || array_to_string(v_cond, ' OR ')
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
+
+  --     11-bis. Un alunno con una sede deve avere la frequenza dell'anno attivo (lo specchio la crea).
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL AND to_regclass('public.frequenze') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.alunni al WHERE al.scuola_id IS NOT NULL '
+            'AND public.anno_attivo(al.scuola_id) IS NOT NULL '
+            'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = al.id '
+            'AND f.anno_sede_id = public.anno_attivo(al.scuola_id))'
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni (senza frequenza)'; righe := v_n; RETURN NEXT;
+
+  -- 13. I nomi di classe e gli uuid di sezione dicono la stessa cosa (una riga per tabella che ha le due colonne).
+  FOR d IN SELECT x.tabella AS t, x.righe AS n FROM public.anno_target_divergenti() x LOOP
+    v_trovata := true;
+    invariante := '13'; tabella := d.t; righe := d.n; RETURN NEXT;
+  END LOOP;
+  IF NOT v_trovata THEN
+    invariante := '13'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  RETURN;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_invarianti() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_invarianti() TO service_role;

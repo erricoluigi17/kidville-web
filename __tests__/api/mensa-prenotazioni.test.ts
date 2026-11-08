@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // T4 — la Segreteria può FORZARE prenotazione/disdetta dei pasti fuori orario
 // (telefonate out-of-hours), con saldo che può andare in negativo. Qui si prova
@@ -71,6 +72,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
     // (saldo ↔ prenotazione ↔ ledger) così le asserzioni della catena reggono
     // sul percorso RPC. Con rpcError impostato ritorna l'errore → fallback.
     rpc: async (fn: string, params: Record<string, unknown>) => {
+      const indietro = rpcVisibilitaIndietro(fn)
+      if (indietro) return indietro
       if (h.rpcError) return { data: null, error: h.rpcError }
       if (fn === 'scala_ticket_e_prenota') {
         const nuovo = Number(h.saldo) - 1

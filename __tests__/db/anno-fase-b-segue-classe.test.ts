@@ -115,4 +115,28 @@ describe('4.3.5 · la sezione scelta dalla classe arriva nella frequenza', () =>
               has_function_privilege('authenticated', 'public.fn_form_submission_etl()', 'EXECUTE') AS auth`)
     expect(r.rows[0]).toEqual({ anon: false, auth: false })
   })
+
+  prova('propaga_rinomina_sezione, ramo orfani: l’alunno riagganciato ha la stessa sezione anche nella frequenza, e un aggiornamento successivo non lo stacca', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL, { sezione: null, nome: null })
+      // l'orfano: una classe scritta a mano che nessuna sezione riconosce (la fase B non copia alunni → frequenza)
+      await db.query(`UPDATE public.alunni SET classe_sezione = 'Zeta' WHERE id = $1`, [AL])
+      expect((await alunno()).section_id).toBeNull()
+      expect((await frequenza()).section_id).toBeNull()
+
+      // la sezione deve essere dell'anno attivo della sede, altrimenti la rinomina non riaggancia nessuno
+      await db.query(`UPDATE public.sections SET anno_id = (SELECT anno_id FROM public.anni_sede WHERE id = $2) WHERE id = $1`,
+        [SEZ_B, ANNO_SEDE[`${S1}:2026`]])
+      await db.query(`UPDATE public.sections SET name = 'Zeta' WHERE id = $1`, [SEZ_B])
+
+      expect((await alunno()).section_id).toBe(SEZ_B)
+      expect((await frequenza()).section_id).toBe(SEZ_B)
+
+      // una scrittura successiva della frequenza (qui la retta) non riporta indietro la sezione
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 400 WHERE alunno_id = $1 AND anno_sede_id = $2`,
+        [AL, ANNO_SEDE[`${S1}:2026`]])
+      expect((await alunno()).section_id).toBe(SEZ_B)
+      expect((await frequenza()).section_id).toBe(SEZ_B)
+    })
+  })
 })

@@ -30,7 +30,7 @@ const riga = (annoInizio: number, inizio: string, fine: string) => ({
   domandeAperte: false,
 })
 
-const FUORI = itAdmin.dataIscrizioneFuoriAnno
+const FUORI = itAdmin.dataIscrizioneFuoriAnno // «dopo la fine dell'anno in corso»
 let calendario: unknown[] = []
 const patchInviate: unknown[] = []
 const onSave = vi.fn((d: unknown) => { patchInviate.push(d) })
@@ -96,11 +96,20 @@ describe('StudentDetailPanel — data di iscrizione e anno scolastico', () => {
     monta()
     scrivi('2026-10-01')
     expect(await screen.findByText('Anno scolastico 2026/27')).toBeInTheDocument()
-    scrivi('2026-08-20')
-    expect(await screen.findByText('Anno scolastico 2025/26')).toBeInTheDocument()
   })
 
-  it('con un calendario che non contiene la data cambiata: messaggio d’errore e il salvataggio è spento', async () => {
+  it('data PRIMA dell’inizio dell’anno attivo: accettata, la riga dice l’anno attivo e il giorno d’ingresso preso dal calendario', async () => {
+    calendario = CALENDARIO_DUE_ANNI()
+    monta()
+    scrivi('2026-08-20')
+    expect(await screen.findByText('Anno scolastico 2026/27 · ingresso dal 01/09/2026')).toBeInTheDocument()
+    expect(screen.queryByText(FUORI)).toBeNull()
+    expect(salva()).toBeEnabled()
+    fireEvent.click(salva())
+    await waitFor(() => expect(patchInviate).toHaveLength(1))
+  })
+
+  it('data DOPO la fine dell’anno attivo: messaggio chiaro e il salvataggio è spento', async () => {
     calendario = CALENDARIO_DUE_ANNI()
     monta()
     // Il messaggio compare solo dopo l'arrivo del calendario: si aspetta la sua PRESENZA.
@@ -123,7 +132,7 @@ describe('StudentDetailPanel — data di iscrizione e anno scolastico', () => {
 
   it('una data vecchia NON toccata non blocca: la scheda resta salvabile', async () => {
     calendario = CALENDARIO_DUE_ANNI()
-    monta() // data_iscrizione 2020-01-10: fuori da ogni anno del calendario
+    monta() // data_iscrizione 2020-01-10: prima di ogni anno del calendario
     // aspetto il calendario guardando una data cambiata e rimessa com'era
     scrivi('2026-10-01')
     await screen.findByText('Anno scolastico 2026/27')

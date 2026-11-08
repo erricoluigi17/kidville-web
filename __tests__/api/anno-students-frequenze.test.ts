@@ -21,6 +21,7 @@ const SEC_B = '33333333-3333-4333-8333-bbbbbbbbbbbb'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   scriviFrequenza: vi.fn(),
+  logScrittura: vi.fn(async () => undefined),
   annoAttivoDiSede: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
@@ -35,6 +36,7 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   scriviFrequenza: h.scriviFrequenza,
   annoAttivoDiSede: h.annoAttivoDiSede,
 }))
+vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn() }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: vi.fn(async () => []) }))
 vi.mock('@/lib/supabase/server-client', async () => {
@@ -291,5 +293,84 @@ describe('PATCH /api/admin/students — fase B (4.3.5): prima la frequenza, poi 
   it('fase A (interruttore spento): la frequenza fallita non cambia la risposta', async () => {
     h.scriviFrequenza.mockResolvedValue({ ok: false, codice: 'SCRITTURA_FALLITA' })
     expect((await PATCH(patch({ id: ALU_A, usa_pannolino: true }))).status).toBe(200)
+  })
+})
+
+describe('PATCH /api/admin/students — lotti in fase B (giro di correzione 1)', () => {
+  const auditDi = () => h.logScrittura.mock.calls.map((c) => ((c as unknown[])[1] as { entitaId: string }).entitaId).sort()
+  const frequenzaFallisceA = (...ids: string[]) =>
+    h.scriviFrequenza.mockImplementation(async (_c: unknown, a: { alunnoId: string }) =>
+      ids.includes(a.alunnoId) ? { ok: false, codice: 'SCRITTURA_FALLITA' } : { ok: true })
+
+  for (const [nome, corpo] of [
+    ['classe_sezione', { classe_sezione: '2 ANNI' }],
+    ['gruppo mensa', { gruppo_mensa_id: null }],
+  ] as const) {
+    it(`${nome}: una riga con la frequenza fallita è contata in errori, ha audit solo chi è stato scritto, risposta 200`, async () => {
+      h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+      h.db.anni_sede = [
+        { id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1' },
+        { id: `anno-di-${SEDE_B}`, scuola_id: SEDE_B, anno_id: 'y1' },
+      ]
+      for (const sez of h.db.sections) sez.anno_id = 'y1'
+      frequenzaFallisceA(ALU_A2)
+      const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], ...corpo }))
+      expect(res.status).toBe(200)
+      const j = await res.json()
+      expect(j.updated).toBe(1)
+      expect(j.errori).toEqual([{ id: ALU_A2, codice: 'SCRITTURA_FALLITA' }])
+      expect(auditDi()).toEqual([ALU_A])
+    })
+
+    it(`${nome}: nessuna riga passa => 500 FREQUENZA_NON_SCRITTA e nessun audit`, async () => {
+      h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+      h.db.anni_sede = [{ id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1' }]
+      for (const sez of h.db.sections) sez.anno_id = 'y1'
+      frequenzaFallisceA(ALU_A, ALU_A2)
+      const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], ...corpo }))
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('FREQUENZA_NON_SCRITTA')
+      expect(auditDi()).toEqual([])
+    })
+
+    it(`${nome}: l'UPDATE di alunni fallisce su tutte le righe => 500, nessun audit`, async () => {
+      h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+      h.errori = { 'alunni:update': { code: '23503', message: 'no' } }
+      const res = await PATCH(patch({ ids: [ALU_A, ALU_A2], ...corpo }))
+      expect(res.status).toBe(500)
+      expect(auditDi()).toEqual([])
+    })
+  }
+})
+
+describe('POST /api/admin/students — data d’ingresso e anno attivo (giro di correzione 1)', () => {
+  const corpo = (data: string) => ({ nome: 'Prova', cognome: 'Finto', data_nascita: '2023-05-01', scuola_id: SEDE_A, data_iscrizione: data })
+  const conAnno = () => {
+    h.db.anni_sede = [{ id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' }]
+  }
+  const campiScritti = () => h.scriviFrequenza.mock.calls.map((c) => c[1].campi)
+
+  it('dentro l’anno attivo: data_ingresso = la data scelta', async () => {
+    conAnno()
+    const res = await CREA(crea(corpo('2026-10-15')))
+    expect(res.status).toBe(201)
+    expect(campiScritti()[0]).toMatchObject({ data_ingresso: '2026-10-15' })
+  })
+
+  it('PRIMA dell’inizio: accettata, alunni.data_iscrizione resta quella scritta, data_ingresso = inizio dell’anno', async () => {
+    conAnno()
+    const res = await CREA(crea(corpo('2025-03-10')))
+    expect(res.status).toBe(201)
+    expect(campiScritti()[0]).toMatchObject({ data_ingresso: '2026-09-01' })
+    expect(JSON.stringify(h.scritture)).toContain('2025-03-10')
+  })
+
+  it('DOPO la fine: 422 ANNO_NON_COERENTE e nessuna scheda creata', async () => {
+    conAnno()
+    const res = await CREA(crea(corpo('2027-09-02')))
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('ANNO_NON_COERENTE')
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    expect(JSON.stringify(h.scritture)).not.toContain('2027-09-02')
   })
 })

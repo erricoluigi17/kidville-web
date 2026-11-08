@@ -343,6 +343,7 @@ DECLARE
 
   -- Quante righe sono state riscritte, tabella per tabella.
   v_alunni          integer := 0;
+  v_orfani_ids      uuid[] := '{}';
   v_alunni_orfani   integer := 0;
   v_registro        integer := 0;
   v_avvisi          integer := 0;
@@ -431,15 +432,24 @@ BEGIN
   -- `section_id`: l'indice unico sulla forma normalizzata garantisce che per una
   -- sede e una forma ci sia al massimo una sezione, quindi «la sua» non è una
   -- scelta arbitraria.
-  UPDATE public.alunni a
-     SET classe_sezione = NEW.name,
-         section_id     = NEW.id
-   WHERE a.scuola_id = NEW.scuola_id
-     AND v_attivo
-     AND a.section_id IS NULL
-     AND a.classe_sezione IS NOT NULL
-     AND lower(replace(a.classe_sezione::text, ' ', '')) IN (v_forma_vecchia, v_forma_nuova);
-  GET DIAGNOSTICS v_alunni_orfani = ROW_COUNT;
+  -- 4.3.5: questo ramo CAMBIA `section_id` di `alunni` (da NULL alla sezione), quindi in fase B la frequenza dell'anno
+  -- attivo deve seguirla, altrimenti la prossima scrittura della frequenza annullerebbe il riaggancio.
+  WITH riagganciati AS (
+    UPDATE public.alunni a
+       SET classe_sezione = NEW.name,
+           section_id     = NEW.id
+     WHERE a.scuola_id = NEW.scuola_id
+       AND v_attivo
+       AND a.section_id IS NULL
+       AND a.classe_sezione IS NOT NULL
+       AND lower(replace(a.classe_sezione::text, ' ', '')) IN (v_forma_vecchia, v_forma_nuova)
+    RETURNING a.id
+  )
+  SELECT coalesce(array_agg(riagganciati.id), '{}'::uuid[]) INTO v_orfani_ids FROM riagganciati;
+  v_alunni_orfani := coalesce(cardinality(v_orfani_ids), 0);
+  IF v_alunni_orfani > 0 THEN
+    PERFORM public.frequenza_segue_classe_alunno(x) FROM unnest(v_orfani_ids) AS x;
+  END IF;
 
   -- ─── 3. Il registro orario ──────────────────────────────────────────────────
   -- Il legame per `section_id` viene PRIMA del nome: è l'unico che sopravvive a
@@ -854,8 +864,9 @@ $mig$;
 -- recente di ciascuno):
 --   · `fn_form_submission_etl()` (20260731101818): scrive `classe_sezione` di un alunno già esistente, quindi `section_id`
 --     → QUI sotto riscritta per aggiornare anche la frequenza dell'anno attivo (stessa sezione);
---   · `propaga_rinomina_sezione()` (M43, 4.3.3): scrive `classe_sezione` = nuovo nome di una sezione per gli alunni che
---     hanno GIÀ quel `section_id`: la sezione non cambia, niente da copiare;
+--   · `propaga_rinomina_sezione()` (M43, 4.3.3): ramo 1, `classe_sezione` = nuovo nome per gli alunni che hanno GIÀ quel
+--     `section_id`: la sezione non cambia, niente da copiare. Ramo 2, gli alunni ORFANI (`section_id` NULL, riconosciuti
+--     per nome): CAMBIA `section_id` → riscritta sopra per chiamare `frequenza_segue_classe_alunno` su ciascuno;
 --   · `sync_alunno_section_id()` (BEFORE su `alunni`): calcola `section_id` dentro la scrittura stessa; la sezione
 --     arriva alla frequenza dalla route (`scriviAlunnoEFrequenza`) o dalla funzione qui sotto;
 --   · `alunni_riallinea_da_frequenze()` (4.3.4): è lo specchio inverso stesso;

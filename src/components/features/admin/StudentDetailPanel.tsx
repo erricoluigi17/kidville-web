@@ -18,7 +18,7 @@ import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formattaIstante } from '@/i18n/config';
 import { apriLinkNellApp } from '@/lib/ui/apri-documento-firmato';
-import { annoDelGiorno, giornoValido } from '@/lib/anno-scolastico';
+import { annoAttivoDelCalendario, annoDelGiorno, giornoValido } from '@/lib/anno-scolastico';
 import { useCalendarioDi } from '@/lib/context/calendario-context';
 
 interface Student {
@@ -177,7 +177,14 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     const dataIscrizione = (form.data_iscrizione as string | null | undefined) ?? '';
     const annoIscrizione = giornoValido(dataIscrizione) ? annoDelGiorno(dataIscrizione, calendarioSede) : null;
     const dataCambiata = dataIscrizione !== ((student?.data_iscrizione as string | null | undefined) ?? '');
-    const dataFuoriAnno = dataCambiata && annoIscrizione !== null && !!calendarioSede && calendarioSede.length > 0 && annoIscrizione.fonte === 'predefinito';
+    // Regola (giro di correzione 1): si iscrive solo all'anno ATTIVO della sede, come fa il server. Una data PRIMA del suo
+    // inizio è accettata (chi c'era già entra il primo giorno dell'anno); una data DOPO la sua fine è rifiutata, e qui la si
+    // blocca prima del salvataggio. Anno e giorno vengono dal calendario, mai scritti a mano.
+    const rigaAttiva = annoAttivoDelCalendario(calendarioSede);
+    const dataValida = giornoValido(dataIscrizione);
+    const dataFuoriAnno = dataCambiata && dataValida && !!rigaAttiva && dataIscrizione > rigaAttiva.fine;
+    const ingressoDal = dataValida && !!rigaAttiva && dataIscrizione < rigaAttiva.inizio ? rigaAttiva : null;
+    const giornoIt = (g: string) => g.split('-').reverse().join('/');
     /** Primo clic: si chiede conferma. Secondo clic: si archivia. */
     const [confermaArchiviazione, setConfermaArchiviazione] = useState(false);
     const [archiviazioneInCorso, setArchiviazioneInCorso] = useState(false);
@@ -1100,7 +1107,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     value={(form.data_iscrizione as string) ?? ''}
                                     onChange={e => updateForm('data_iscrizione', e.target.value || null)}
                                     aria-invalid={dataFuoriAnno || undefined}
-                                    aria-describedby={annoIscrizione || dataFuoriAnno ? 'dettaglio-data-iscrizione-anno' : undefined}
+                                    aria-describedby={annoIscrizione || ingressoDal || dataFuoriAnno ? 'dettaglio-data-iscrizione-anno' : undefined}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                 />
                                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
@@ -1108,7 +1115,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                 </p>
                                 {dataFuoriAnno
                                     ? <p id="dettaglio-data-iscrizione-anno" role="alert" className="font-maven text-[11px] text-kidville-error mt-1">{t('dataIscrizioneFuoriAnno')}</p>
-                                    : annoIscrizione && <p id="dettaglio-data-iscrizione-anno" className="font-maven text-[11px] text-kidville-sub mt-1">{t('dataIscrizioneAnno', { anno: annoIscrizione.etichettaBreve })}</p>}
+                                    : ingressoDal
+                                        ? <p id="dettaglio-data-iscrizione-anno" className="font-maven text-[11px] text-kidville-sub mt-1">{t('dataIscrizioneIngressoDal', { anno: annoDelGiorno(ingressoDal.inizio, calendarioSede).etichettaBreve, giorno: giornoIt(ingressoDal.inizio) })}</p>
+                                        : annoIscrizione && <p id="dettaglio-data-iscrizione-anno" className="font-maven text-[11px] text-kidville-sub mt-1">{t('dataIscrizioneAnno', { anno: annoIscrizione.etichettaBreve })}</p>}
                             </div>
                         </div>
                     </section>

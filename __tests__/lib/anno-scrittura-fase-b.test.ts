@@ -23,6 +23,7 @@ vi.mock('@/lib/logging/logger', () => ({ logErrore: h.logErrore, logOk: vi.fn(),
 
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura'
 import { rispostaFrequenzaNonScritta } from '@/lib/anno/errori'
+import { annoAttivoDiSede } from '@/lib/anno/frequenze'
 
 const ANNO_SEDE = '22222222-2222-4222-8222-222222222222'
 const ALU = '11111111-1111-4111-8111-111111111111'
@@ -119,5 +120,58 @@ describe('scriviAlunnoEFrequenza', () => {
     const r = await scriviAlunnoEFrequenza(finto(), { ...args, annoSedeId: null }, scriviAlunni)
     expect(r.scritto).toBe(true)
     expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  describe('lettura di anno_attivo (null ambiguo)', () => {
+    const conRpc = (esito: { data: unknown; error: { code?: string } | null } | 'lancia'): SupabaseClient =>
+      ({
+        ...(finto() as unknown as object),
+        rpc: async () => {
+          if (esito === 'lancia') throw new Error('rete')
+          return esito
+        },
+      }) as unknown as SupabaseClient
+
+    it('fase B, guasto di anno_attivo: rifiuto, alunni NON scritta', async () => {
+      const c = conRpc({ data: null, error: { code: 'XX000' } })
+      const anno = await annoAttivoDiSede(c, 'sede-1')
+      expect(anno).toBeNull()
+      const r = await scriviAlunnoEFrequenza(c, { ...args, annoSedeId: anno }, scriviAlunni)
+      expect(r).toEqual({ scritto: false, codice: 'SCRITTURA_FALLITA' })
+      expect(scriviAlunni).not.toHaveBeenCalled()
+      expect(rispostaFrequenzaNonScritta('SCRITTURA_FALLITA').status).toBe(500)
+    })
+
+    it('fase B, rpc che lancia: stesso rifiuto', async () => {
+      const c = conRpc('lancia')
+      const anno = await annoAttivoDiSede(c, 'sede-1')
+      const r = await scriviAlunnoEFrequenza(c, { ...args, annoSedeId: anno }, scriviAlunni)
+      expect(r.scritto).toBe(false)
+      expect(scriviAlunni).not.toHaveBeenCalled()
+    })
+
+    it('fase B, schema indietro (PGRST202): alunni scritta, niente frequenza', async () => {
+      const c = conRpc({ data: null, error: { code: 'PGRST202' } })
+      const anno = await annoAttivoDiSede(c, 'sede-1')
+      const r = await scriviAlunnoEFrequenza(c, { ...args, annoSedeId: anno }, scriviAlunni)
+      expect(r.scritto).toBe(true)
+      expect(scriviAlunni).toHaveBeenCalledTimes(1)
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    })
+
+    it('fase B, sede senza anno attivo (data null): alunni scritta', async () => {
+      const c = conRpc({ data: null, error: null })
+      const anno = await annoAttivoDiSede(c, 'sede-1')
+      const r = await scriviAlunnoEFrequenza(c, { ...args, annoSedeId: anno }, scriviAlunni)
+      expect(r.scritto).toBe(true)
+    })
+
+    it('fase A, guasto di anno_attivo: alunni scritta come sempre', async () => {
+      h.regole = { data: { specchio_frequenze_attivo: false }, error: null }
+      const c = conRpc({ data: null, error: { code: 'XX000' } })
+      const anno = await annoAttivoDiSede(c, 'sede-1')
+      const r = await scriviAlunnoEFrequenza(c, { ...args, annoSedeId: anno }, scriviAlunni)
+      expect(r.scritto).toBe(true)
+    })
   })
 })

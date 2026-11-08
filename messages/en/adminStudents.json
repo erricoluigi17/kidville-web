@@ -872,5 +872,6 @@
   "scadRinnova": "Renew",
   "scadRinnovaDi": "Renew the document of {nome}",
   "dataIscrizioneAnno": "School year {anno}",
-  "dataIscrizioneFuoriAnno": "The date does not fall in any school year of this location"
+  "dataIscrizioneFuoriAnno": "The date is after the end of the current school year. You can only enrol for the current year: enrolment for next year will be done through the enrolments.",
+  "dataIscrizioneIngressoDal": "School year {anno} · joins from {giorno}"
 }

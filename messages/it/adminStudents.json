@@ -872,5 +872,6 @@
   "scadRinnova": "Rinnova",
   "scadRinnovaDi": "Rinnova il documento di {nome}",
   "dataIscrizioneAnno": "Anno scolastico {anno}",
-  "dataIscrizioneFuoriAnno": "La data non cade in nessun anno scolastico della sede"
+  "dataIscrizioneFuoriAnno": "La data è dopo la fine dell’anno scolastico in corso. Si può iscrivere solo all’anno in corso: l’iscrizione all’anno prossimo si farà con le iscrizioni.",
+  "dataIscrizioneIngressoDal": "Anno scolastico {anno} · ingresso dal {giorno}"
 }

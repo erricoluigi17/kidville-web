@@ -3,7 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { CODICI_ANNO } from '@/lib/anno/tipi'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
-import { scriviFrequenza, type CampiFrequenza, type EsitoFrequenza } from '@/lib/anno/frequenze'
+import { letturaAnnoFallita, scriviFrequenza, type CampiFrequenza, type EsitoFrequenza } from '@/lib/anno/frequenze'
 
 /**
  * L'ORDINE DELLE DUE SCRITTURE `alunni` ↔ `frequenze` (Compito 4.3.5).
@@ -140,6 +140,15 @@ export async function scriviAlunnoEFrequenza<T>(
   riuscita: (risultato: T) => boolean = riuscitaDi,
 ): Promise<EsitoScritturaAlunno<T>> {
   const { alunnoId, annoSedeId } = args
+  // `annoSedeId` null = sede senza anno attivo o schema indietro (si scrive solo `alunni`), MA anche una lettura di
+  // `anno_attivo` fallita: in fase B quest'ultima non può scrivere `alunni` senza frequenza (fail-closed).
+  if (!annoSedeId && letturaAnnoFallita(supabase) && (await conFaseB(supabase))) {
+    logErrore(
+      { operazione: 'anno/fase-b:frequenza-non-scritta' },
+      new Error(`frequenza-non-scritta:ANNO_ATTIVO_NON_LETTO:alunno=${alunnoId}`),
+    )
+    return { scritto: false, codice: 'SCRITTURA_FALLITA' }
+  }
   const faseB = annoSedeId ? await conFaseB(supabase) : false
 
   if (!faseB || !annoSedeId) {

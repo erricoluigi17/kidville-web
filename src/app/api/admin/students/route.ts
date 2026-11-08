@@ -379,7 +379,10 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
         // La data d'ingresso (consegna 8 della PR 4.1): la data di iscrizione scelta passa sulla frequenza dell'anno attivo
         // della sede (`data_ingresso`). Fuori dal periodo di quell'anno il database direbbe `ANNO_NON_COERENTE` (422):
         // lo si dice PRIMA dell'INSERT, perché una scheda creata a metà non si può "annullare" da qui.
-        const dataIngresso = typeof body.data_iscrizione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.data_iscrizione)
+        // Regola: DOPO la fine dell'anno attivo => 422; PRIMA del suo inizio => accettata, `alunni.data_iscrizione` resta quella
+        // scritta e la frequenza riceve `data_ingresso` = inizio dell'anno (come il riempimento: chi c'era già entra il primo
+        // giorno). Dentro l'anno: la data scelta.
+        let dataIngresso = typeof body.data_iscrizione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.data_iscrizione)
             ? body.data_iscrizione : null;
         const annoSedeNuovo = dataIngresso ? await annoAttivoDiSede(supabase, sw.scuolaId) : null;
         if (dataIngresso && annoSedeNuovo) {
@@ -392,7 +395,9 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
                 });
             } else if (periodo.data) {
                 const { inizio, fine } = periodo.data as { inizio: string; fine: string };
-                if (dataIngresso < inizio || dataIngresso > fine) {
+                if (dataIngresso < inizio) {
+                    dataIngresso = inizio;
+                } else if (dataIngresso > fine) {
                     logEvento('anno-scolastico', 'warn', {
                         tipo: 'data-ingresso-fuori-anno', error_code: 'ANNO_NON_COERENTE', operazione: 'admin/students:POST',
                     });
@@ -776,7 +781,8 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
 
             let data: Record<string, unknown>[] | null;
             const nonScritti: { id: string; codice: string }[] = [];
-            if (await conFaseB(supabase)) {
+            const faseBLotto = await conFaseB(supabase);
+            if (faseBLotto) {
                 // Fase B: la frequenza comanda. `section_id` lo calcola il trigger BEFORE da `classe_sezione`; qui la STESSA
                 // sezione si scrive prima nella frequenza dell'anno attivo di ogni sede. Una riga alla volta: una frequenza
                 // che non si scrive ferma SOLO quella riga (un lotto di 200 bambini non si ferma per uno).
@@ -791,7 +797,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                         () => supabase.from('alunni').update({ classe_sezione: body.classe_sezione }).eq('id', alunnoId).in('scuola_id', plessi).select(),
                     );
                     if (!esito.scritto) { nonScritti.push({ id: alunnoId, codice: esito.codice }); continue; }
-                    if (esito.risultato.error) return NextResponse.json({ error: esito.risultato.error.message, codice: 'SCRITTURA_FALLITA' }, { status: 500 });
+                    if (esito.risultato.error) { nonScritti.push({ id: alunnoId, codice: 'SCRITTURA_FALLITA' }); continue; }
                     scritte.push(...((esito.risultato.data ?? []) as Record<string, unknown>[]));
                 }
                 segnalaRigheNonScritte('admin/students:PATCH', nonScritti.length);
@@ -811,8 +817,10 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // Fase A: nessuna frequenza da scrivere (la patch non nomina colonne copiate: `section_id` lo calcola il
                 // trigger BEFORE da `classe_sezione` e lo specchio lo copia nella frequenza dell'anno attivo).
             }
-            // Audit: una riga per alunno riassegnato (DL-037).
+            // Audit: una riga per alunno DAVVERO riassegnato (DL-037): in fase B le righe non scritte non hanno audit.
+            const idScritti = new Set((data ?? []).map((r) => String((r as { id?: unknown }).id)));
             for (const alunnoId of bersagli.ids) {
+                if (faseBLotto && !idScritti.has(alunnoId)) continue;
                 await logScrittura(supabase, {
                     attore: auth.user,
                     entitaTipo: 'alunni',
@@ -849,7 +857,8 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
             const nonScritti: { id: string; codice: string }[] = [];
             const campiMensa = campiFrequenzaDaAlunno({ gruppo_mensa_id: gruppoMensaId });
             const annoPerSede = new Map<string, string | null>();
-            if (await conFaseB(supabase)) {
+            const faseBLotto = await conFaseB(supabase);
+            if (faseBLotto) {
                 // Fase B: prima la frequenza dell'anno attivo di ciascuna sede, poi `alunni`, una riga alla volta. Una riga
                 // con la frequenza fallita non si scrive e si conta; le altre vanno avanti.
                 const scritte: Record<string, unknown>[] = [];
@@ -861,7 +870,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                         () => supabase.from('alunni').update({ gruppo_mensa_id: gruppoMensaId }).eq('id', alunnoId).in('scuola_id', plessi).select(),
                     );
                     if (!esito.scritto) { nonScritti.push({ id: alunnoId, codice: esito.codice }); continue; }
-                    if (esito.risultato.error) return NextResponse.json({ error: esito.risultato.error.message, codice: 'SCRITTURA_FALLITA' }, { status: 500 });
+                    if (esito.risultato.error) { nonScritti.push({ id: alunnoId, codice: 'SCRITTURA_FALLITA' }); continue; }
                     scritte.push(...((esito.risultato.data ?? []) as Record<string, unknown>[]));
                 }
                 segnalaRigheNonScritte('admin/students:PATCH', nonScritti.length);
@@ -885,7 +894,9 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     await scriviFrequenzaDopoAlunni(supabase, { alunnoId: riga.id, annoSedeId, campi: campiMensa });
                 }
             }
+            const idScritti = new Set((data ?? []).map((r) => String((r as { id?: unknown }).id)));
             for (const alunnoId of bersagli.ids) {
+                if (faseBLotto && !idScritti.has(alunnoId)) continue;
                 await logScrittura(supabase, {
                     attore: auth.user,
                     entitaTipo: 'alunni',

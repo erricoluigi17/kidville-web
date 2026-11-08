@@ -196,6 +196,17 @@ export async function scriviFrequenza(
  * anno attivo, schema indietro (`PGRST202`/`PGRST205`, il DB della CI) oppure un guasto, che si logga col solo codice.
  * `cache` (una `Map` per richiesta) evita di rileggere la stessa sede quando la route scrive più alunni.
  */
+/**
+ * I client (uno per richiesta) per cui la lettura di `anno_attivo` è FALLITA (non: sede senza anno o schema indietro).
+ * `null` da `annoAttivoDiSede` vale sia «niente anno attivo» (si scrive solo `alunni`) sia «guasto»: in fase B il secondo
+ * caso non può scrivere `alunni` senza frequenza. Chi deve distinguere chiede `letturaAnnoFallita(supabase)`: è larga
+ * (qualunque sede di quella richiesta), cioè sbaglia dalla parte che rifiuta.
+ */
+const LETTURE_ANNO_FALLITE = new WeakSet<object>()
+export function letturaAnnoFallita(supabase: SupabaseClient): boolean {
+  return LETTURE_ANNO_FALLITE.has(supabase)
+}
+
 export async function annoAttivoDiSede(
   supabase: SupabaseClient,
   scuolaId: string | null | undefined,
@@ -210,12 +221,14 @@ export async function annoAttivoDiSede(
       if (!schemaAnnoIndietro(r.error)) {
         // solo il SQLSTATE: il messaggio non serve a niente e non deve portare dati
         logErrore({ operazione: 'anno/frequenze:annoAttivoDiSede' }, new Error(`anno_attivo:${r.error.code ?? 'senza-codice'}`))
+        LETTURE_ANNO_FALLITE.add(supabase)
       }
     } else if (typeof r.data === 'string') {
       anno = r.data
     }
   } catch (err) {
     logErrore({ operazione: 'anno/frequenze:annoAttivoDiSede' }, err)
+    LETTURE_ANNO_FALLITE.add(supabase)
   }
   cache?.set(scuolaId, anno)
   return anno

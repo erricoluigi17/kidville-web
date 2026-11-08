@@ -8,7 +8,7 @@ import {
   type Calendario,
   type RigaCalendario,
 } from '@/lib/anno-scolastico'
-import { logErrore, logEvento } from '@/lib/logging/logger'
+import { logEvento } from '@/lib/logging/logger'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import type { StatoAnno } from '@/lib/anno/tipi'
 
@@ -37,6 +37,12 @@ const STATI: ReadonlySet<string> = new Set<StatoAnno>([
 const CACHE = new WeakMap<SupabaseClient, Map<string, Promise<Calendario | null>>>()
 // «Giorno fuori dal calendario» si segnala una volta per sede e per client, come la lettura.
 const FUORI_SEGNALATI = new WeakMap<SupabaseClient, Set<string>>()
+
+// Un errore con la sede. `logErrore` non ha un posto per `scuola_id` (accetta solo operazione,
+// ms, stato, evento) e lo scarterebbe in silenzio: `logEvento` livello error lo porta nella riga.
+function erroreDiSede(operazione: string, tipo: string, scuolaId: string, err: unknown): void {
+  logEvento('anno-scolastico', 'error', { tipo, operazione, scuola_id: scuolaId }, err)
+}
 
 type RigaDb = {
   id?: unknown
@@ -101,8 +107,10 @@ async function leggi(supabase: SupabaseClient, scuolaId: string): Promise<Calend
         logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', scuola_id: scuolaId })
       } else {
         // solo il SQLSTATE: il messaggio non serve e non deve portare dati
-        logErrore(
-          { operazione: 'anno/calendario:caricaCalendario', evento: 'calendario-non-letto', scuola_id: scuolaId } as Parameters<typeof logErrore>[0],
+        erroreDiSede(
+          'anno/calendario:caricaCalendario',
+          'calendario-non-letto',
+          scuolaId,
           new Error(`anni_sede:${error.code ?? 'senza-codice'}`),
         )
       }
@@ -121,10 +129,7 @@ async function leggi(supabase: SupabaseClient, scuolaId: string): Promise<Calend
     }
     return buone
   } catch (err) {
-    logErrore(
-      { operazione: 'anno/calendario:caricaCalendario', evento: 'calendario-non-letto', scuola_id: scuolaId } as Parameters<typeof logErrore>[0],
-      err,
-    )
+    erroreDiSede('anno/calendario:caricaCalendario', 'calendario-non-letto', scuolaId, err)
     return null
   }
 }
@@ -190,8 +195,10 @@ export async function annoDellaFrequenza(
       if (schemaAnnoIndietro(error)) {
         logEvento('anno-scolastico', 'info', { tipo: 'frequenze-non-disponibili', scuola_id: scuolaId })
       } else {
-        logErrore(
-          { operazione: 'anno/calendario:annoDellaFrequenza', evento: 'frequenze-non-lette', scuola_id: scuolaId } as Parameters<typeof logErrore>[0],
+        erroreDiSede(
+          'anno/calendario:annoDellaFrequenza',
+          'frequenze-non-lette',
+          scuolaId,
           new Error(`frequenze:${error.code ?? 'senza-codice'}`),
         )
       }
@@ -203,10 +210,7 @@ export async function annoDellaFrequenza(
       )
     }
   } catch (err) {
-    logErrore(
-      { operazione: 'anno/calendario:annoDellaFrequenza', evento: 'frequenze-non-lette', scuola_id: scuolaId } as Parameters<typeof logErrore>[0],
-      err,
-    )
+    erroreDiSede('anno/calendario:annoDellaFrequenza', 'frequenze-non-lette', scuolaId, err)
   }
   if (!vive) return annoDi(supabase, scuolaId, oggi)
 

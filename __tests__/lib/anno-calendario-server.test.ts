@@ -76,6 +76,7 @@ function cliente(risposte: { anni_sede?: Esito; frequenze?: Esito; lancia?: bool
 }
 const lette = (f: { from: ReturnType<typeof vi.fn> }, t: string) => f.from.mock.calls.filter((a) => a[0] === t).length
 const OK = (...righe: unknown[]): Esito => ({ data: righe, error: null })
+const errori = () => vi.mocked(logEvento).mock.calls.filter((a) => a[1] === 'error')
 const eventi = (tipo: string) => vi.mocked(logEvento).mock.calls.filter((a) => a[2]?.tipo === tipo)
 
 describe('cache per richiesta', () => {
@@ -191,18 +192,21 @@ describe('caricaCalendario', () => {
     const f = cliente({ anni_sede: { data: null, error: { code: 'XX000', message: 'boom' } } })
     expect(await caricaCalendario(f.c, SEDE)).toBeNull()
     expect(await caricaCalendario(f.c, SEDE)).toBeNull()
-    expect(logErrore).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(logErrore).mock.calls[0][0]).toMatchObject({
+    expect(errori()).toHaveLength(1)
+    expect(errori()[0][2]).toMatchObject({
+      tipo: 'calendario-non-letto',
       operazione: 'anno/calendario:caricaCalendario',
-      evento: 'calendario-non-letto',
       scuola_id: SEDE,
     })
+    expect(logErrore).not.toHaveBeenCalled()
   })
 
-  it('un client che lancia → null, un logErrore, nessuna eccezione', async () => {
+  it('un client che lancia → null, un errore con la sede, nessuna eccezione', async () => {
     const f = cliente({ lancia: true })
     await expect(caricaCalendario(f.c, SEDE)).resolves.toBeNull()
-    expect(logErrore).toHaveBeenCalledTimes(1)
+    expect(errori()).toHaveLength(1)
+    expect(errori()[0][2]).toMatchObject({ tipo: 'calendario-non-letto', scuola_id: SEDE })
+    expect(logErrore).not.toHaveBeenCalled()
   })
 })
 
@@ -286,12 +290,13 @@ describe('annoDellaFrequenza', () => {
     const f = cliente({ anni_sede: cal, frequenze: { data: null, error: { code: 'XX000' } } })
     const a = await annoDellaFrequenza(f.c, ALUNNO, SEDE, '2027-03-10')
     expect(a.annoInizio).toBe(2026)
-    expect(logErrore).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(logErrore).mock.calls[0][0]).toMatchObject({
+    expect(errori()).toHaveLength(1)
+    expect(errori()[0][2]).toMatchObject({
+      tipo: 'frequenze-non-lette',
       operazione: 'anno/calendario:annoDellaFrequenza',
-      evento: 'frequenze-non-lette',
       scuola_id: SEDE,
     })
+    expect(logErrore).not.toHaveBeenCalled()
   })
 
   it('(e) calendario null → predefinito di oggi, senza leggere le frequenze', async () => {

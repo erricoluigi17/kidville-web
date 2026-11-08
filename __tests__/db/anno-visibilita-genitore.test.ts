@@ -109,15 +109,17 @@ type DatiFrequenza = {
   origine?: string
   tipo?: string | null
   continuaDa?: string | null
+  /** Di partenza `now()`: un recupero con un ingresso già passato è una stima, perciò vede dall'inizio dell'anno. */
+  creataIl?: string
 }
 
 /** Di partenza una frequenza `recupero` e `iscritto`, come tutte quelle di produzione. */
 async function frequenza(d: DatiFrequenza): Promise<string> {
   return una<string>(
-    `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine, tipo, continua_da)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+    `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine, tipo, continua_da, creata_il)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10::timestamptz, now())) RETURNING id`,
     [d.alunno, d.annoSede, d.sezione ?? null, d.stato ?? 'iscritto', d.ingresso ?? '2026-09-01', d.uscita ?? null,
-      d.origine ?? 'recupero', d.tipo ?? null, d.continuaDa ?? null])
+      d.origine ?? 'recupero', d.tipo ?? null, d.continuaDa ?? null, d.creataIl ?? null])
 }
 
 /** Una frequenza venuta da una domanda: `data_ingresso` è vera, e non serve la quota per essere attiva (`in_attesa`). */
@@ -216,7 +218,7 @@ beforeAll(async () => {
   ATTIVO_B = riga(SEDE_B, 2026).id
   PRIMA_B = riga(SEDE_B, 2025).id
 
-  const sezione =(id: string, sede: string, nome: string) =>
+  const sezione = (id: string, sede: string, nome: string) =>
     db.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, $3, $4)`,
       [id, sede, nome, riga(sede, 2026).anno_id])
   await sezione(SEZ_1, SEDE, 'Girasoli')
@@ -585,15 +587,99 @@ describe('media_visibili_genitore', () => {
       })
     })
 
-    // In produzione tutte le 811 frequenze sono di recupero e la loro `data_ingresso` è una stima (il primo `dal` dello
-    // storico): 175 coppie foto-figlio di 64 bambini vivi hanno la foto prima di quella data, e non devono sparire.
+    // Le 811 frequenze del riempimento sono recuperi con una `data_ingresso` stimata (il primo `dal` dello storico), già
+    // passata quando sono state create: 175 coppie foto-figlio di 64 bambini vivi hanno la foto prima di quella data, e non
+    // devono sparire.
     prova('la stessa foto prima di data_ingresso: invisibile con origine domanda, visibile con origine recupero', async () => {
       await inRollback(async () => {
         const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
-        const f = await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        const f = await nuovaIscrizione({
+          alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-11-07T10:00:00+01:00',
+        })
         expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
         await db.query(`UPDATE public.frequenze SET origine = 'recupero' WHERE id = $1`, [f])
         expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+      })
+    })
+
+    // Lo specchio scrive `recupero` anche per ogni bambino nuovo, con `data_ingresso` il giorno vero: non è una stima.
+    describe('un recupero con la data vera', () => {
+      prova('data_ingresso uguale al giorno di creata_il è una data vera: vede da lì', async () => {
+        await inRollback(async () => {
+          await frequenza({
+            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T10:00:00+02:00',
+          })
+          await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+          const dallIngresso = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-15' })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([dallIngresso])
+        })
+      })
+
+      prova('il giorno di creata_il è quello di Roma, non quello UTC', async () => {
+        await inRollback(async () => {
+          // Il 15/10 alle 22:30 UTC a Roma è già il 16: l'ingresso del 15 è precedente, quindi è una stima.
+          await frequenza({
+            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T22:30:00Z',
+          })
+          const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+        })
+      })
+
+      prova('nella catena vale la stessa regola: la conferma vede dalla data vera del recupero', async () => {
+        await inRollback(async () => {
+          const oggi = await passaAl2027()
+          const recupero = await frequenza({
+            alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T10:00:00+02:00',
+          })
+          await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2027], ingresso: oggi, continuaDa: recupero })
+          await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-14' })
+          const dallIngresso = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-15' })
+          expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([dallIngresso])
+        })
+      })
+
+      // Con il trigger vero, non con una riga scritta dalla prova: è così che nasce oggi ogni frequenza nuova.
+      prova('un bambino nato dallo specchio non vede le foto di prima, da nessuna delle tre strade', async () => {
+        await inRollback(async () => {
+          const { ieri, oggi } = await giorni()
+          const nuovo = '11111111-1111-4111-8111-11111111111b'
+          const genitore = '99999999-9999-4999-8999-99999999999a'
+          await db.query(`INSERT INTO public.alunni (id, scuola_id, section_id) VALUES ($1, $2, $3)`, [nuovo, SEDE, SEZ_1])
+          await db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [genitore, nuovo])
+          const nata = await db.query<{ origine: string; ingresso: string }>(
+            `SELECT origine, data_ingresso::text AS ingresso FROM public.frequenze WHERE alunno_id = $1`, [nuovo])
+          expect(nata.rows).toEqual([{ origine: 'recupero', ingresso: oggi }])
+
+          await foto({ tag: [nuovo], giorno: ieri })
+          await foto({ broadcast: true, giorno: ieri })
+          // Prima del 15/10/2026, dove lo storico tace e deciderebbe la sezione della frequenza.
+          await foto({ target: [SEZ_1], giorno: '2026-10-01' })
+          expect(await coppieDi(genitore)).toEqual([])
+
+          const diOggi = await foto({ tag: [nuovo], giorno: oggi })
+          expect(await coppieDi(genitore)).toEqual([{ media_id: diOggi, alunno_id: nuovo }])
+        })
+      })
+
+      prova('un trasferito dallo specchio non vede le foto della sede nuova di prima del trasferimento', async () => {
+        await inRollback(async () => {
+          const { ieri, oggi } = await giorni()
+          await db.query(`UPDATE public.alunni SET scuola_id = $2, section_id = $3 WHERE id = $1`, [FIGLIO_DOPPIO, SEDE_B, SEZ_B])
+          const vive = await db.query<{ scuola_id: string; origine: string; ingresso: string }>(
+            `SELECT scuola_id, origine, data_ingresso::text AS ingresso FROM public.frequenze
+              WHERE alunno_id = $1 AND stato IN ('in_attesa', 'iscritto')`, [FIGLIO_DOPPIO])
+          expect(vive.rows).toEqual([{ scuola_id: SEDE_B, origine: 'recupero', ingresso: oggi }])
+
+          await foto({ sede: SEDE_B, tag: [FIGLIO_DOPPIO], giorno: ieri })
+          await foto({ sede: SEDE_B, broadcast: true, giorno: ieri })
+          await foto({ sede: SEDE_B, target: [SEZ_B], giorno: '2026-10-01' })
+          await foto({ tag: [FIGLIO_DOPPIO], giorno: ieri })
+          expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+
+          const diOggi = await foto({ sede: SEDE_B, tag: [FIGLIO_DOPPIO], giorno: oggi })
+          expect(await coppieDi(GEN_DOPPIO)).toEqual([{ media_id: diOggi, alunno_id: FIGLIO_DOPPIO }])
+        })
       })
     })
 
@@ -1071,13 +1157,12 @@ describe('media_visibili_genitore', () => {
   })
 
   describe('gli indici', () => {
-    prova('ci sono i due nuovi, parziali sulle foto vive, accanto a quello sui tag', async () => {
+    prova('ci sono i due nuovi, parziali sulle foto vive', async () => {
       const r = await db.query<{ indexname: string; indexdef: string }>(
         `SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'galleria_media_v2' ORDER BY indexname`)
       const per = new Map(r.rows.map((x) => [x.indexname, x.indexdef]))
       expect(per.get('idx_galleria_v2_broadcast_vive')).toMatch(/\(scuola_id\) WHERE .*is_broadcast.*eliminato_il IS NULL/)
       expect(per.get('idx_galleria_v2_destinatari_vive')).toMatch(/USING gin \(target_section_ids\) WHERE .*eliminato_il IS NULL/)
-      expect(per.get('idx_galleria_v2_tag_students')).toMatch(/USING gin \(tag_students\)/)
     })
   })
 

@@ -114,9 +114,14 @@ GRANT EXECUTE ON FUNCTION public.figli_attivi_miei() TO authenticated, service_r
 -- stesso bambino: `uscito`, `ritirato` e `trasferito` interrompono la catena, e chi rientra vede dalla conferma. La sede è
 -- quella della foto: chi cambia sede non si porta dietro un diritto sulle foto della sede vecchia. UNION e non UNION ALL:
 -- nessun vincolo impedisce un `continua_da` che gira su se stesso, e così la ricorsione si ferma comunque.
--- Il giorno di partenza di una frequenza `origine = 'recupero'` è l'INIZIO dell'anno della sede, non `data_ingresso`: lì
--- quella data è una stima (il primo `dal` dello storico), e prenderla per vera toglierebbe a una famiglia le foto vere di un
--- figlio vivo. Quando nascono frequenze vere (`domanda`, `conferma`), `data_ingresso` torna a contare.
+--
+-- IL GIORNO DI PARTENZA DI UN ANELLO è `data_ingresso`, salvo quando è una stima, e la stima si riconosce da sola:
+-- `origine = 'recupero'` con `data_ingresso` PRIMA del giorno di Roma di `creata_il`. Lì vale l'INIZIO dell'anno della sede.
+-- Il riempimento ha dato alle sue frequenze come ingresso il primo `dal` dello storico, una data già passata quando le ha
+-- create: prenderla per vera toglierebbe a una famiglia le foto vere di un figlio vivo. `origine = 'recupero'` da sola non
+-- basta: la scrive anche lo specchio `alunni` → `frequenze`, per ogni bambino nuovo e per il trasferito nella sede nuova, e
+-- lì `data_ingresso` è il giorno vero, uguale a quello di `creata_il`. Trattarla da stima aprirebbe a un bambino creato oggi
+-- le foto da settembre, contro la decisione 17: una famiglia nuova vede le foto solo da quando è entrata.
 --
 -- IL PERIODO di un anello finisce con `data_uscita`, o con la fine del suo anno; quello della frequenza attiva, se non ha
 -- uscita, resta aperto: `figli_attivi` guarda lo stato dell'anno, e finché la sede non passa il figlio frequenta ancora.
@@ -172,27 +177,35 @@ BEGIN
   FOR v_figlio IN
     SELECT a.alunno_id, a.frequenza_id, a.scuola_id FROM public.figli_attivi(p_utente) a
   LOOP
-    WITH RECURSIVE catena (id, continua_da, section_id, dal, al) AS (
-      SELECT f.id, f.continua_da, f.section_id,
-             CASE WHEN f.origine = 'recupero' THEN s.inizio ELSE f.data_ingresso END,
-             f.data_uscita
+    WITH RECURSIVE catena (id, continua_da) AS (
+      SELECT f.id, f.continua_da
         FROM public.frequenze f
-        JOIN public.anni_sede s ON s.id = f.anno_sede_id
        WHERE f.id = v_figlio.frequenza_id
       UNION
-      SELECT p.id, p.continua_da, p.section_id,
-             CASE WHEN p.origine = 'recupero' THEN s.inizio ELSE p.data_ingresso END,
-             coalesce(p.data_uscita, s.fine)
+      SELECT p.id, p.continua_da
         FROM catena c
         JOIN public.frequenze p ON p.id = c.continua_da
-        JOIN public.anni_sede s ON s.id = p.anno_sede_id
        WHERE p.alunno_id = v_figlio.alunno_id
          AND p.scuola_id = v_figlio.scuola_id
          AND p.stato IN ('in_attesa', 'iscritto')
+    ),
+    anelli AS (
+      SELECT f.section_id,
+             CASE WHEN f.origine = 'recupero' AND f.data_ingresso < public.giorno_roma(f.creata_il)
+                  THEN s.inizio
+                  ELSE f.data_ingresso
+             END AS dal,
+             CASE WHEN f.id = v_figlio.frequenza_id
+                  THEN f.data_uscita
+                  ELSE coalesce(f.data_uscita, s.fine)
+             END AS al
+        FROM catena c
+        JOIN public.frequenze f ON f.id = c.id
+        JOIN public.anni_sede s ON s.id = f.anno_sede_id
     )
-    SELECT min(c.dal), array_agg(c.section_id), array_agg(c.dal), array_agg(c.al)
+    SELECT min(a.dal), array_agg(a.section_id), array_agg(a.dal), array_agg(a.al)
       INTO v_confine, v_fr_sez, v_fr_dal, v_fr_al
-      FROM catena c;
+      FROM anelli a;
 
     IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
       SELECT array_agg(h.section_id), array_agg(h.dal), array_agg(h.al)

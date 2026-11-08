@@ -300,6 +300,8 @@ function DettaglioAnno({
       case 'pagamenti': return t('annoTabPagamenti');
       case 'chat_messages': return t('annoTabChat');
       case 'avvisi': return t('annoTabAvvisi');
+      case 'galleria_media_v2': return t('annoTabGalleria');
+      case 'gallery_photo_uploads': return t('annoTabFotoCaricate');
       default: return nome; // nome tecnico: solo il nome di una tabella, mai una riga
     }
   };

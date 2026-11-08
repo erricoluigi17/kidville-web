@@ -131,7 +131,7 @@ describe('Impostazioni → Anno scolastico: l’elenco', () => {
     expect(righe[0]).toHaveTextContent('in preparazione')
     expect(righe[1]).toHaveTextContent('2026/27')
     expect(righe[1]).toHaveTextContent('in corso')
-    expect(righe[1]).toHaveTextContent('dal 1/9/2026 al 31/8/2027')
+    expect(righe[1]).toHaveTextContent('da 1/9/2026 a 31/8/2027')
     expect(righe[2]).toHaveTextContent('2025/26')
     expect(righe[2]).toHaveTextContent('chiuso')
   })
@@ -206,6 +206,24 @@ describe('Impostazioni → Anno scolastico: la fine dell’anno (il confine)', (
     await screen.findByLabelText(itSettings.annoFineTitolo)
     fireEvent.click(salvaDi(itSettings.annoFineTitolo))
     expect(await screen.findByRole('alert')).toHaveTextContent('Non si può: ci sono già 1 riga in quei giorni (student_documents 1)')
+  })
+
+  it('le tabelle del registro dell’anno hanno un’etichetta leggibile: galleria, foto caricate, chat, avvisi, valutazioni, pagamenti', async () => {
+    rispostaPatch = {
+      status: 409,
+      body: {
+        error: 'x', codice: 'CONFINE_CON_RIGHE', righe: 21,
+        tabelle: {
+          avvisi: 1, chat_messages: 2, galleria_media_v2: 3, gallery_photo_uploads: 4, pagamenti: 5, valutazioni: 6,
+        },
+      },
+    }
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(salvaDi(itSettings.annoFineTitolo))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Non si può: ci sono già 21 righe in quei giorni (avvisi 1, chat 2, galleria 3, foto caricate 4, pagamenti 5, valutazioni 6)',
+    )
   })
 
   it('CONFINE_NON_VALIDO con un motivo noto dice quel motivo, non la frase generica', async () => {

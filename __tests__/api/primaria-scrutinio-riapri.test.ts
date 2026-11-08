@@ -109,7 +109,7 @@ const authMock = vi.hoisted(() => ({ requireStaff: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: authMock.requireStaff }))
 
 const scopeMock = vi.hoisted(() => ({ assertSezioneInScope: vi.fn() }))
-vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: scopeMock.assertSezioneInScope }))
+vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: scopeMock.assertSezioneInScope, assertSezioneScrivibile: scopeMock.assertSezioneInScope }))
 
 const auditMock = vi.hoisted(() => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: auditMock.logScrittura }))

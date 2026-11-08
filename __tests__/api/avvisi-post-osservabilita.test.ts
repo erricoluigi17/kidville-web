@@ -62,6 +62,8 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   resolveScuoleAttive: h.resolveScuoleAttive,
 }))
+// Il filtro d'anno ha i suoi test (admin-sections-anno.test.ts): questo finto non conosce `anni_sede`.
+vi.mock('@/lib/anno/anni-attivi', () => ({ anniAttiviDeiPlessi: async () => null, filtraPerAnnoDiSede: <Q,>(q: Q) => q }))
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: h.getModuleConfig }))
 vi.mock('@/lib/avvisi/target-gate', () => ({ verificaTargetAvvisoDocente: h.verificaTargetAvvisoDocente }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))

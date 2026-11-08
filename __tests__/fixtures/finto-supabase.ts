@@ -970,6 +970,19 @@ export function creaFintoSupabase(
     rpc: async (nome: string, args: Riga = {}) => {
       if (nome === 'storici_applica_rettifica' && !opzioni.rpc?.[nome]) return rettificaStoricaFinta(db, args, opzioni)
       if (nome === 'anno_oblio_scrivi' && !opzioni.rpc?.[nome]) return await oblioScriviFinta(from, args)
+      // Compito 4.3.6: di serie la funzione dei docenti risponde come «tutte le assegnate, nessuna in sola lettura»
+      // (le tabelle del finto non hanno anni); gli errori iniettati su `utenti_sezioni` passano com'erano.
+      if (nome === 'sezioni_visibili_docente' && !opzioni.rpc?.[nome]) {
+        type Lettura = { select: (c: string) => { eq: (c: string, v: unknown) => Promise<{ data: Riga[] | null; error: unknown }> } }
+        // la sola riga DIRETTA, come la funzione vera (e come il suo ripiego in docenti.ts): le righe per materia
+        // dicono quali discipline insegna, non se la classe è sua
+        const dirette = await (from('utenti_sezioni') as Lettura).select('section_id').eq('utente_id', args.p_utente)
+        const ids = [...new Set((dirette.data ?? []).map(x => x.section_id as string))]
+        return {
+          data: dirette.error ? null : ids.map(section_id => ({ section_id, sola_lettura: false })),
+          error: dirette.error ?? null,
+        } as RispostaRpc
+      }
       const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]
       if (!impl) {
         throw new Error(

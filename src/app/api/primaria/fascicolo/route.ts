@@ -158,7 +158,7 @@ export const POST = withRoute('primaria/fascicolo:POST', async (request: NextReq
     if (file.size > MAX_SIZE) return NextResponse.json({ error: 'File oltre 15MB' }, { status: 400 })
 
     const supabase = await createAdminClient()
-    const access = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const access = await puoAccedereFascicolo(supabase, userId, alunnoId, 'upload')
     const guastoGate = rispostaGuastoAccesso(access)
     if (guastoGate) return guastoGate
     if (!access.consentito) {
@@ -299,7 +299,7 @@ export const PATCH = withRoute('primaria/fascicolo:PATCH', async (request: NextR
     if (!prima || !prima.student_id) {
       return NextResponse.json({ error: 'Documento non trovato', codice: 'DOCUMENTO_NON_TROVATO' }, { status: 404 })
     }
-    const accesso = await puoAccedereFascicolo(supabase, userId, prima.student_id)
+    const accesso = await puoAccedereFascicolo(supabase, userId, prima.student_id, 'upload')
     const negato = rispostaGestioneNegata(accesso, prima.caricato_da, prima.student_id, userId, OP)
     if (negato) return negato
     const nonDelFascicolo = rispostaNonDelFascicolo(prima.document_type, prima.student_id, OP)
@@ -388,7 +388,7 @@ export const DELETE = withRoute('primaria/fascicolo:DELETE', async (request: Nex
     if (!doc || !doc.student_id) {
       return NextResponse.json({ error: 'Documento non trovato', codice: 'DOCUMENTO_NON_TROVATO' }, { status: 404 })
     }
-    const accesso = await puoAccedereFascicolo(supabase, userId, doc.student_id)
+    const accesso = await puoAccedereFascicolo(supabase, userId, doc.student_id, 'delete')
     const negato = rispostaGestioneNegata(accesso, doc.caricato_da, doc.student_id, userId, OP)
     if (negato) return negato
 

@@ -825,6 +825,8 @@
   "errorePrerequisitiMancanti": "Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.",
   "erroreParametroMancante": "Manca un dato richiesto. Controlla e riprova.",
   "erroreCalendarioNonDisponibile": "Le impostazioni dell’anno scolastico non sono ancora disponibili. Riprova fra poco.",
+  "erroreFrequenzaNonScritta": "La modifica non è stata salvata: la scheda è rimasta com’era. Riprova fra poco.",
+  "erroreSezioneSolaLettura": "Questa classe è di un anno passato: puoi consultarla ma non modificarla.",
   "annoSelettoreAria": "Cambia anno scolastico",
   "annoOgniSede": "Anno in corso",
   "annoStatoInCorso": "in corso",
@@ -832,7 +834,10 @@
   "annoStatoIscrizioniAperte": "iscrizioni aperte",
   "annoStatoInPreparazione": "in preparazione",
   "annoStatoChiuso": "chiuso",
-  "annoAvvisoTesto": "Stai lavorando sul {anno} ({stato}): le nuove classi, le votazioni e gli elenchi caricati vanno in quell’anno. Gli elenchi sul video mostrano ancora l’anno in corso.",
+  "annoAvvisoTesto": "Stai lavorando sul {anno} ({stato}): le nuove classi, le votazioni e gli elenchi caricati vanno in quell’anno. Anche gli elenchi delle classi sul video mostrano quell’anno.",
   "annoAvvisoTorna": "Torna all’anno in corso",
-  "annoStatoDiverso": "stato diverso fra le sedi"
+  "annoStatoDiverso": "stato diverso fra le sedi",
+  "erroreScritturaIncompleta": "La modifica è stata salvata solo in parte: la frequenza dell’anno è aggiornata, la scheda no. Riprova: se il guasto era passeggero, il nuovo tentativo completa il lavoro.",
+  "erroreCodiceFiscaleGiaUsato": "Questo codice fiscale è già registrato su un’altra scheda: controlla che sia scritto bene (potrebbe essere un doppione da sistemare) e salva di nuovo. Non è stato modificato niente.",
+  "erroreAlunnoAnonimizzato": "Questa scheda è stata anonimizzata e non si può archiviare o modificare: nessuna modifica è stata registrata."
 }

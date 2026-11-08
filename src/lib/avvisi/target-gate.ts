@@ -76,7 +76,7 @@ export async function verificaTargetAvvisoDocente(
   }
 
   // (c) classi non incluse tra le proprie sezioni.
-  const proprie = new Set(await nomiSezioniDiUtente(supabase, user.id))
+  const proprie = new Set(await nomiSezioniDiUtente(supabase, user.id, { soloScrivibili: true }))
   const estranee = classi.filter((c) => !proprie.has(c))
   if (estranee.length > 0) {
     return nega(

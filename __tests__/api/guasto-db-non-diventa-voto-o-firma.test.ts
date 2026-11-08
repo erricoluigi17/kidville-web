@@ -58,7 +58,7 @@ vi.mock('@/lib/auth/require-staff', async (importOriginal) => {
 })
 vi.mock('@/lib/auth/scope', async (importOriginal) => {
   const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
-  return { ...vero, assertSezioneInScope: async () => null, assertAlunniInSezione: async () => null }
+  return { ...vero, assertSezioneInScope: async () => null, assertSezioneScrivibile: async () => null, assertAlunniInSezione: async () => null }
 })
 // Mock PARZIALE: la spia vede la riga come la scrive `rispostaGuastoDb`; il resto
 // del modulo (che `withRoute` usa) resta vero.

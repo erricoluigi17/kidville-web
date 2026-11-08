@@ -36,6 +36,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/auth/scope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
   assertSezioneInScope: h.assertSezioneInScope,
+  assertSezioneScrivibile: h.assertSezioneInScope,
   assertAlunniInSezione: vi.fn(async () => null),
 }))
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn() }))

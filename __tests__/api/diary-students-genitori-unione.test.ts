@@ -39,6 +39,7 @@ vi.mock('@/lib/auth/scope', () => ({
   // Il gemello per UUID: da quando la classe si identifica con `section_id`
   // (2026-09-02) `risolviSezione` sceglie fra i due gate.
   assertSezioneInScope: h.assertSezioneInScope,
+  assertSezioneScrivibile: h.assertSezioneInScope,
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

@@ -3,11 +3,12 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppRole } from '@/lib/auth/require-staff'
 import {
-  assertSezioneInScope,
   assertUtenteInScope,
   formaConfronto,
+  resolveAnnoLetturaElenco,
   resolveScuoleAttive,
   scuoleDiUtente,
+  assertSezioneScrivibile,
 } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
@@ -23,6 +24,7 @@ import { puoModificareIncaricoStaff, type CambiIncarico } from '@/lib/auth/incar
 // valore importato da lì arriverebbe `undefined` dentro la rotta sotto test. La
 // testata di `predicati-ruolo.ts` racconta i 46 test che l'hanno misurato.
 import { type AppUser, haRuolo } from '@/lib/auth/predicati-ruolo'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 // Lettura estesa alla Segreteria (T3): l'elenco del personale è consultabile anche
@@ -167,6 +169,16 @@ export const GET = withRoute('admin/staff:GET', async (request: NextRequest) => 
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     const accessibili = await scuoleDiUtente(supabase, auth.user)
 
+    // Le classi proposte sono di un solo anno: scelto (Direzione, segreteria) o attivo. `null` = DB non migrato.
+    const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi)
+    if (anno instanceof NextResponse) return anno
+    let ricercaSezioni = supabase
+      .from('sections')
+      .select('id, name, scuola_id, school_type')
+      .in('scuola_id', plessi)
+      .order('name')
+    ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anno)
+
     // contesto per la UI: personale + sedi + classi
     const [
       { data, error },
@@ -180,11 +192,7 @@ export const GET = withRoute('admin/staff:GET', async (request: NextRequest) => 
         .in('scuola_id', plessi)
         .order('cognome', { ascending: true }),
       supabase.from('schools').select('id, nome').in('id', accessibili),
-      supabase
-        .from('sections')
-        .select('id, name, scuola_id, school_type')
-        .in('scuola_id', plessi)
-        .order('name'),
+      ricercaSezioni,
     ])
     if (error) return erroreDb('admin/staff:GET', 'db-rubrica', error)
     // PostgREST non lancia: senza questi due controlli una lettura fallita
@@ -451,7 +459,7 @@ export const PATCH = withRoute('admin/staff:PATCH', async (request: Request) => 
     // Si applica più sotto, dove le sedi delle sezioni sono già state lette.
     if (sezioni && !trasferimento) {
       for (const sid of sezioni) {
-        const fuori = await assertSezioneInScope(supabase, auth.user, sid as string)
+        const fuori = await assertSezioneScrivibile(supabase, auth.user, sid as string)
         if (fuori) return fuori
       }
     }

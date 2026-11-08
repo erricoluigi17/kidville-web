@@ -59,7 +59,9 @@ const dbBase = (): DBFinto => ({
     { id: SEZ_MATERIA, scuola_id: SEDE_A, name: '3A', school_type: 'primaria' },
     { id: SEZ_B, scuola_id: SEDE_B, name: 'Girasoli', school_type: 'infanzia' },
   ],
-  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
+  // SEZ_MATERIA: primaria, il docente ha la riga diretta E quella per materia (come le crea /admin/primaria/docenti-materie).
+  // Conta la riga diretta: quella per materia dice solo quali discipline insegna.
+  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
   utenti_sezioni_materie: [{ utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' }],
   utenti_scuole: [],
   alunni: [
@@ -165,8 +167,13 @@ describe('GET /api/teacher/alunni/[id] — si apre', () => {
     expect(audit()[0].valori[0]).toMatchObject({ alunno_id: ALU_SOSPESO, utente_id: 'ed1', azione: 'view' })
   })
 
-  it('educator assegnato per sola materia', async () => {
+  it('educator di primaria (riga diretta + riga per materia): la scheda si apre', async () => {
     expect((await chiama(ALU_MATERIA)).status).toBe(200)
+  })
+
+  it('educator con la SOLA riga per materia (tolto dalla classe): 403, la riga per materia non basta', async () => {
+    h.db.utenti_sezioni = [{ utente_id: 'ed1', section_id: SEZ_MIA }]
+    expect((await chiama(ALU_MATERIA)).status).toBe(403)
   })
 
   it('segreteria: ogni bambino della propria sede', async () => {

@@ -35,7 +35,10 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: (...args: unknown[]) => h.scuoleDiUtente(...args) }))
+vi.mock('@/lib/auth/scope', () => ({
+  scuoleDiUtente: (...args: unknown[]) => h.scuoleDiUtente(...args),
+  resolveAnnoLetturaElenco: async () => null,
+}))
 vi.mock('@/lib/sezioni/docenti', () => ({ sezioniDiUtente: (...args: unknown[]) => h.sezioniDiUtente(...args) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

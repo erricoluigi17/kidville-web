@@ -1,13 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from './require-staff'
-import { sezioniDiUtente } from '@/lib/sezioni/docenti'
+import { sezioniDiUtente, sezioniVisibiliDiUtente } from '@/lib/sezioni/docenti'
 import { logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from './rifiuto-sede'
 import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { anniDellaSede, esitoSchemaIndietro, guastoAnno, type RigaAnnoSede } from '@/lib/anno/lettura'
 import { creaGettoni } from '@/lib/anno/gettone'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede, type AnniAttivi } from '@/lib/anno/anni-attivi'
 import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
@@ -569,7 +570,15 @@ export async function resolveAnnoScrittura(
   const { righe } = anni
   const perAnno = new Map(righe.map((r) => [formaConfronto(String(r.anno_id)), r]))
 
-  const richiesto = opzioni.dichiarato?.trim() || annoDalCookie(request)
+  // Come `resolveAnnoLettura`: il cookie lo seguono solo Direzione e segreteria. Per tutti gli altri si ignora (con
+  // lo stesso `warn` se c'era) e la scrittura va sull'anno `corrente`, a meno che il client non dichiari l'anno.
+  const cookie = annoDalCookie(request)
+  if (!vedeTutteLeClassi(user) && cookie) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-cookie-ignorato-ruolo', azione, utente: user.id, ruolo: user.role,
+    })
+  }
+  const richiesto = opzioni.dichiarato?.trim() || (vedeTutteLeClassi(user) ? cookie : null)
   let riga: RigaAnnoSede | undefined
   if (richiesto) {
     riga = perAnno.get(formaConfronto(richiesto))
@@ -626,11 +635,15 @@ export async function resolveAnnoLettura(
     return null
   }
 
-  const anni = await anniDellaSede(supabase, scuolaId)
+  // Le due letture non dipendono l'una dall'altra: in parallelo. L'esito si valuta nello stesso ordine di prima
+  // (prima gli anni della sede, poi l'anno attivo), quindi cosa succede quando una fallisce non cambia.
+  const [anni, attivo] = await Promise.all([
+    anniDellaSede(supabase, scuolaId),
+    supabase.rpc('anno_attivo', { p_scuola: scuolaId }),
+  ])
   if ('indietro' in anni) return nonDisponibile('schema-indietro')
   if ('guasto' in anni) return guastoAnno(azione, anni.guasto)
 
-  const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
   if (attivo.error) {
     if (schemaAnnoIndietro(attivo.error)) return nonDisponibile('schema-indietro')
     return guastoAnno(azione, attivo.error)
@@ -671,6 +684,61 @@ export async function resolveAnnoLettura(
     return rifiutoAnno('ANNO_NON_VISIBILE', azione)
   }
   return { annoSedeId: riga.id, annoId: riga.anno_id, stato: riga.stato, eAttivo: riga.id === attivoId }
+}
+
+/**
+ * L'anno su cui LEGGERE un ELENCO che può attraversare più sedi (Compito 4.3.7). Il passaggio d'anno è PER SEDE, quindi
+ * il risultato è un insieme di coppie sede→anno (`AnniAttivi`), da applicare con `filtraPerAnnoDiSede`:
+ *  · senza cookie, o per chi non è Direzione/segreteria (il cookie si ignora, con lo stesso `warn` di
+ *    `resolveAnnoLettura`): l'anno ATTIVO di ciascuna sede (`anniAttiviDeiPlessi`);
+ *  · Direzione e segreteria con il cookie: quell'anno per le sedi che lo hanno, e una sede che non lo ha resta VUOTA.
+ *    `403 ANNO_NON_ACCESSIBILE` solo se NESSUNA sede dell'elenco lo ha, così l'esito non dipende dall'ordine delle sedi;
+ *  · una sede senza righe, senza anno attivo o con la lettura fallita non sparisce: per lei niente filtro (fail-open,
+ *    come il DB della CI), con un `warn` col solo codice quando è un guasto;
+ *  · `null` = nessun filtro per nessuna sede (DB non migrato, nessun plesso).
+ */
+export async function resolveAnnoLetturaElenco(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  plessi: readonly string[],
+): Promise<AnniAttivi | null | NextResponse> {
+  const azione = 'resolveAnnoLetturaElenco'
+  const sedi = [...new Set(plessi)]
+  if (sedi.length === 0) return null
+  const staff = vedeTutteLeClassi(user)
+  const cookie = annoDalCookie(request)
+  if (!staff && cookie) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-cookie-ignorato-ruolo', azione, utente: user.id, ruolo: user.role,
+    })
+  }
+  if (!staff || !cookie) return anniAttiviDeiPlessi(supabase, sedi)
+
+  const coppie: { sede: string; annoId: string }[] = []
+  const liberi: string[] = []
+  for (const sede of sedi) {
+    const anni = await anniDellaSede(supabase, sede)
+    if ('indietro' in anni) {
+      logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', azione, esito: 'schema-indietro' })
+      return null
+    }
+    if ('guasto' in anni) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anni-sede-non-letti', azione }, anni.guasto)
+      liberi.push(sede)
+      continue
+    }
+    const riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === cookie)
+    if (riga) coppie.push({ sede, annoId: String(riga.anno_id) })
+  }
+  if (coppie.length === 0 && liberi.length === 0) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-lettura-cookie-fuori-scope', azione, error_code: 'ANNO_NON_ACCESSIBILE',
+      utente: user.id, ruolo: user.role, esito: 'cookie',
+    })
+    return rifiutoAnno('ANNO_NON_ACCESSIBILE', azione)
+  }
+  return coppie.length > 0 ? { coppie, liberi } : null
 }
 
 /**
@@ -735,7 +803,8 @@ export function vedeTutteLeClassi(user: AppUser): boolean {
  *
  * Ritorna `null` per chi vede tutte le classi del proprio plesso (admin,
  * coordinator, segreteria): nessuna restrizione oltre alla sede. Per l'`educator`
- * ritorna le sole sezioni assegnate in `utenti_sezioni` — decisione di prodotto
+ * ritorna le sole sezioni assegnate con una riga DIRETTA in `utenti_sezioni` (quelle per materia non contano, e la funzione
+ * `sezioni_visibili_docente` le legge dalla stessa tabella; un anno non attivo ci entra in sola lettura) — decisione di prodotto
  * del 2026-07-30, presa dal titolare: 9 educator su 10 le hanno già assegnate.
  *
  * Fail-closed: un educator senza sezioni assegnate riceve `[]`, cioè un elenco
@@ -760,12 +829,36 @@ export async function sezioniVisibili(
 
 /**
  * Verifica che `sectionId` sia nello scope dell'utente. Per `educator` richiede
- * anche che la sezione sia assegnata (utenti_sezioni). 403/404 se fuori scope.
+ * anche che la sezione sia assegnata con una riga diretta in `utenti_sezioni` (la regola di `sezioni_visibili_docente`).
+ * 403/404 se fuori scope.
  */
 export async function assertSezioneInScope(
   supabase: SupabaseClient,
   user: AppUser,
   sectionId: string | null | undefined,
+): Promise<NextResponse | null> {
+  return await verificaSezione(supabase, user, sectionId, false)
+}
+
+/**
+ * Come `assertSezioneInScope`, per le SCRITTURE: in più, un docente che vede la sezione in sola lettura (anno
+ * `in_chiusura` o `chiuso`) riceve **403** con `codice: 'SEZIONE_SOLA_LETTURA'`. Direzione e segreteria
+ * (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso per loro lo difende il database (PR 3-B).
+ * Le `GET` restano su `assertSezioneInScope`.
+ */
+export async function assertSezioneScrivibile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string | null | undefined,
+): Promise<NextResponse | null> {
+  return await verificaSezione(supabase, user, sectionId, true)
+}
+
+async function verificaSezione(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string | null | undefined,
+  inScrittura: boolean,
 ): Promise<NextResponse | null> {
   if (!sectionId) {
     return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
@@ -786,9 +879,19 @@ export async function assertSezioneInScope(
   }
 
   if (!vedeTutteLeClassi(user)) {
-    const mie = await sezioniDiUtente(supabase, user.id)
-    if (!mie.includes(sectionId)) {
+    const mie = await sezioniVisibiliDiUtente(supabase, user.id)
+    const mia = mie.find(m => m.sectionId === sectionId)
+    if (!mia) {
       return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
+    }
+    if (inScrittura && mia.solaLettura) {
+      logEvento('auth', 'warn', {
+        tipo: 'sezione-sola-lettura', azione: 'assertSezioneScrivibile', utente: user.id, sezione: sectionId,
+      })
+      return NextResponse.json(
+        { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
+        { status: 403 },
+      )
     }
   }
   return null
@@ -917,12 +1020,57 @@ export async function assertSezionePrimariaFirmabile(
   // Chi vede tutte le classi del plesso (admin/coordinator/segreteria) non fa
   // supplenza per definizione: agisce sull'intera scuola per progetto.
   if (vedeTutteLeClassi(user)) return { supplenza: false }
+  // 3b) L'ANNO. La supplenza vale su qualunque classe di primaria della sede, ma solo nell'anno attivo: un
+  // docente non firma il registro di una classe di un anno passato o non ancora iniziato.
+  const rifiutoAnno = await rifiutoAnnoDellaFirma(supabase, user, section.id, section.scuola_id)
+  if (rifiutoAnno) return { response: rifiutoAnno }
   const mie = await sezioniDiUtente(supabase, user.id)
   // Si confronta `section.id` (il valore CANONICO che arriva dal database) e non
   // la stringa del client: in Postgres `uuid` è un tipo, quindi `.eq()` avrebbe
   // trovato la riga anche in MAIUSCOLO, mentre `Array.includes` no — e la firma
   // di una classe propria sarebbe finita in audit come supplenza.
   return { supplenza: !mie.includes(section.id) }
+}
+
+/**
+ * L'anno della classe, per chi firma senza vedere tutte le classi: `corrente` e basta.
+ *  · `in_chiusura` o `chiuso` → 403 `SEZIONE_SOLA_LETTURA`;
+ *  · `in_preparazione` o `iscrizioni_aperte` → lo stesso rifiuto di una classe che il docente non può usare
+ *    (`SEDE_NON_ACCESSIBILE`: non si rivela che esiste);
+ *  · colonna o tabella dell'anno assente (DB non migrato) → nessun controllo;
+ *  · qualunque altra lettura fallita → rifiuto, come fa il resto del gate.
+ */
+async function rifiutoAnnoDellaFirma(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string,
+  scuolaId: string,
+): Promise<NextResponse | null> {
+  const nonUsabile = () => rifiutoSede('SEDE_NON_ACCESSIBILE')
+  const anno = await supabase.from('sections').select('anno_id').eq('id', sectionId).maybeSingle()
+  if (anno.error) {
+    if (schemaAnnoIndietro(anno.error)) return null
+    return scopeNonRisolto('scope-firma-primaria-non-risolta', anno.error, { utente: user.id, sezione: sectionId })
+  }
+  const annoId = (anno.data as { anno_id?: string | null } | null)?.anno_id
+  if (!annoId) return null
+  const stato = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
+  if (stato.error) {
+    if (schemaAnnoIndietro(stato.error)) return null
+    return scopeNonRisolto('scope-firma-primaria-non-risolta', stato.error, { utente: user.id, sezione: sectionId })
+  }
+  const valore = (stato.data as { stato?: string | null } | null)?.stato
+  if (valore === 'corrente') return null
+  if (valore === 'in_chiusura' || valore === 'chiuso') {
+    logEvento('auth', 'warn', {
+      tipo: 'sezione-sola-lettura', azione: 'assertSezionePrimariaFirmabile', utente: user.id, sezione: sectionId,
+    })
+    return NextResponse.json(
+      { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
+      { status: 403 },
+    )
+  }
+  return nonUsabile()
 }
 
 /**
@@ -959,11 +1107,15 @@ export async function assertClasseNomeInScope(
   // Niente `.limit(1)`: con `soloSezioniAssegnate` servono TUTTE le sezioni
   // omonime dentro i propri plessi per intersecarle con quelle del docente.
   // L'insieme è comunque minuscolo (una riga per sede accessibile).
-  const { data, error } = await supabase
+  // Il nome si ripete ogni anno: si risolve sull'anno ATTIVO dei plessi (`null` = niente filtro, DB non migrato).
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase
     .from('sections')
     .select('id')
     .eq('name', classeNome)
     .in('scuola_id', plessi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.

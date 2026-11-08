@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { assertSezioneInScope, assertUtenteInScope } from '@/lib/auth/scope';
+import { assertSezioneInScope, assertUtenteInScope, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { docentiDiSezione } from '@/lib/sezioni/docenti';
 import { staffScuola } from '@/lib/notifiche/destinatari';
@@ -153,7 +153,7 @@ export const POST = withRoute('admin/sections/[id]/teachers:POST', async (reques
 
   try {
     const supabase = await createAdminClient();
-    const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
+    const fuoriSezione = await assertSezioneScrivibile(supabase, auth.user, sectionId);
     if (fuoriSezione) return fuoriSezione;
     const fuoriUtente = await assertUtenteInScope(supabase, auth.user, utente_id);
     if (fuoriUtente) return fuoriUtente;
@@ -197,7 +197,7 @@ export const DELETE = withRoute('admin/sections/[id]/teachers:DELETE', async (re
     const supabase = await createAdminClient();
     // Anche la RIMOZIONE va vincolata: sfilare il docente titolare di una
     // sezione di un altro plesso gli toglie l'accesso alla propria classe.
-    const fuoriSezione = await assertSezioneInScope(supabase, auth.user, sectionId);
+    const fuoriSezione = await assertSezioneScrivibile(supabase, auth.user, sectionId);
     if (fuoriSezione) return fuoriSezione;
     const fuoriUtente = await assertUtenteInScope(supabase, auth.user, utente_id);
     if (fuoriUtente) return fuoriUtente;

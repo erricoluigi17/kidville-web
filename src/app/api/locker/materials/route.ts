@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -59,7 +60,11 @@ async function sezioniConNome(
 ): Promise<string[]> {
     const plessi = await scuoleDiUtente(admin, user);
     if (plessi.length === 0) return [];
-    const { data, error } = await admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    // Il nome si ripete ogni anno: vale la sezione dell'anno ATTIVO (`null` = DB non migrato, nessun filtro).
+    const anniAttivi = await anniAttiviDeiPlessi(admin, plessi);
+    let ricerca = admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi);
+    const { data, error } = await ricerca;
     if (error) {
         // Un guasto NON è «nessuna sezione»: in GET diventerebbe un elenco vuoto, in POST un
         // materiale scritto con `section_id` nullo, cioè senza sede. Si lancia, e lo prende il
@@ -248,7 +253,7 @@ export const PATCH = withRoute('locker/materials:PATCH', async (request: NextReq
         const { data: row, error: rowErr } = await admin
             .from('locker_config').select('section_id').eq('id', id).maybeSingle();
         if (rowErr) throw rowErr;
-        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        const scopeErr = await assertSezioneScrivibile(admin, auth.user, (row?.section_id as string | null) ?? null);
         if (scopeErr) return scopeErr;
 
         const { data, error } = await admin
@@ -306,7 +311,7 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
         // lo stesso — si fallisce chiusi in entrambi i casi — ma il log direbbe
         // «riga senza sezione» invece di «il database non ha risposto».
         if (rowErr) throw rowErr;
-        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        const scopeErr = await assertSezioneScrivibile(admin, auth.user, (row?.section_id as string | null) ?? null);
         if (scopeErr) return scopeErr;
 
         const { error } = await admin.from('locker_config').delete().eq('id', id);

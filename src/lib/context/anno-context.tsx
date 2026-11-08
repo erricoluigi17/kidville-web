@@ -154,6 +154,9 @@ export function AnnoProvider({ children }: { children: React.ReactNode }) {
     effettive.every((s) => (perSede[s]?.length ?? 0) > 0);
   if (attendibile && scelto !== null && !anni.some((a) => a.annoId === scelto)) {
     setScelto(null);
+    // Le pagine montate hanno letto (o stanno leggendo) con l'anno sparito: senza far avanzare l'epoca restano
+    // lì fino alla prossima navigazione. Dalla 4.3 le liste filtrano per anno, e si vedrebbe.
+    setEpocaAnno((n) => n + 1);
   }
   useLayoutEffect(() => {
     if (!attendibile) return;

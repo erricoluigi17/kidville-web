@@ -2341,6 +2341,8 @@ export const CODICI_ERRORE = {
      * questo lavoro non tocca. Quando qualcuno darà un codice anche a loro, li unirà.
      */
     SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
+    /** 403 — la classe è di un anno passato e il docente la vede in sola lettura (`assertSezioneScrivibile`). */
+    SEZIONE_SOLA_LETTURA: 'erroreSezioneSolaLettura',
     /** 403 — questa è la porta del registro di PRIMARIA, e la classe è di un altro grado. */
     CLASSE_NON_DI_PRIMARIA: 'erroreClasseNonDiPrimaria',
     /**
@@ -3595,6 +3597,14 @@ export const CODICI_ERRORE = {
     PREREQUISITI_MANCANTI: 'errorePrerequisitiMancanti',
     PARAMETRO_MANCANTE: 'erroreParametroMancante',
     CALENDARIO_NON_DISPONIBILE: 'erroreCalendarioNonDisponibile',
+    // Fase B (PR 4.3, compito 4.3.5): la frequenza non si è scritta e la scheda dell'alunno è rimasta com'era (500).
+    FREQUENZA_NON_SCRITTA: 'erroreFrequenzaNonScritta',
+    // Fase B: la frequenza dell'anno è stata scritta e la scheda `alunni` no (500). Non c'è transazione: il messaggio
+    // dice che la frequenza è già aggiornata e che riprovare completa il lavoro. NON riusa FREQUENZA_NON_SCRITTA, che
+    // dice l'opposto («la scheda è rimasta com'era»).
+    SCRITTURA_INCOMPLETA: 'erroreScritturaIncompleta',
+    CODICE_FISCALE_GIA_USATO: 'erroreCodiceFiscaleGiaUsato',
+    ALUNNO_ANONIMIZZATO: 'erroreAlunnoAnonimizzato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

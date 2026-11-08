@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity, loadAppUser, requireStaff, type StaffRole } from '@/lib/auth/require-staff'
-import { assertAlunnoInScope, assertAlunniInSezione, assertSezioneInScope } from '@/lib/auth/scope'
+import { assertAlunnoInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { generaPagella, PAGELLE_BUCKET } from '@/lib/primaria/pagella-store'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -175,7 +175,7 @@ export const DELETE = withRoute('primaria/pagella:DELETE', async (request: NextR
 
     // Sede PRIMA di ogni altra lettura e di ogni scrittura: Segreteria e
     // Direzione eliminano solo pagelle di classi del proprio plesso.
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, scrutinio.section_id)
     if (scopeErr) return scopeErr
 
     const sez = Array.isArray(scrutinio.sections) ? scrutinio.sections[0] : scrutinio.sections

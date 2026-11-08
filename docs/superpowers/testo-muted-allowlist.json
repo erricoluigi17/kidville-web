@@ -1,8 +1,8 @@
 {
   "_": "Debito misurato di `text-kidville-muted` come INCHIOSTRO. Vedi __tests__/a11y/testo-muted-allowlist.test.ts. Questa lista può solo accorciarsi.",
   "misurato_il": "2026-08-02",
-  "totale_file": 173,
-  "totale_occorrenze": 1132,
+  "totale_file": 172,
+  "totale_occorrenze": 1126,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -307,10 +307,6 @@
     {
       "path": "src/components/features/admin/StudentEconomicSection.tsx",
       "n": 8
-    },
-    {
-      "path": "src/components/features/admin/StudentRegistryForm.tsx",
-      "n": 6
     },
     {
       "path": "src/components/features/admin/forms/builder/DraggableField.tsx",

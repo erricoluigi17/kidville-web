@@ -77,7 +77,9 @@ import { sanitariDaScrivere, type SanitariScheda } from '@/lib/iscrizioni/sanita
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
+import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -242,10 +244,14 @@ async function nomeCanonicoClasse(
   scuolaId: string,
   classe: string,
 ): Promise<string> {
-  const { data, error } = await supabase
+  // L'import scrive alunni dell'anno ATTIVO (la PR 4.5 lo cambierà): il nome si risolve sulle sezioni di quell'anno.
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
+  let ricerca = supabase
     .from('sections')
     .select('name')
     .eq('scuola_id', scuolaId)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo la lettura caduta diventerebbe
     // «nessuna sezione», e si tornerebbe a scrivere il grezzo in silenzio.
@@ -300,10 +306,15 @@ async function conDegradoDiColonna<T extends { error: { code?: string; message?:
 }
 
 /**
- * Fase A (§4.19): `alunni` è appena stato scritto, ora la frequenza dell'anno attivo della sede su cui è scritto
- * (fail-open: l'esito dell'import non cambia). `cacheAnno` tiene l'anno della sede per tutta l'esecuzione.
+ * La frequenza dell'anno attivo della sede su cui `alunni` è scritto (§4.19). `cacheAnno` tiene l'anno della sede per
+ * tutta l'esecuzione.
+ *
+ *  - `frequenzaDopoInsert`: dopo un INSERT (la FK obbliga a scrivere prima la scheda; la frequenza nasce dal trigger
+ *    d'INSERT), fail-open: l'esito dell'import non cambia;
+ *  - `scriviSchedaEFrequenza`: per un UPDATE. In fase B PRIMA la frequenza, poi `alunni`; se la frequenza non si scrive la
+ *    scheda resta com'era e l'import di quella domanda fallisce come per qualunque altra scrittura non riuscita.
  */
-async function frequenzaDopoAlunni(
+async function frequenzaDopoInsert(
   supabase: SupabaseClient,
   alunnoId: string,
   scuolaId: string,
@@ -312,8 +323,24 @@ async function frequenzaDopoAlunni(
 ): Promise<void> {
   const campi = campiFrequenzaDaAlunno(patch)
   if (Object.keys(campi).length === 0) return
-  const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
-  if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi })
+  await scriviFrequenzaDopoAlunni(supabase, { alunnoId, annoSedeId: await annoAttivoDiSede(supabase, scuolaId, cacheAnno), campi })
+}
+
+async function scriviSchedaEFrequenza<T>(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  scuolaId: string,
+  patch: Record<string, unknown>,
+  scrivi: () => PromiseLike<T>,
+  cacheAnno?: Map<string, string | null>,
+  classeSezione?: string,
+) {
+  // `patch` può perdere colonne nel degrado (DB senza lo schema nuovo): i campi si leggono prima, e senza anno non servono
+  const campi = campiFrequenzaDaAlunno(patch)
+  const annoSedeId = Object.keys(campi).length > 0 || classeSezione
+    ? await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
+    : null
+  return scriviAlunnoEFrequenza(supabase, { alunnoId, annoSedeId, campi, classeSezione }, scrivi)
 }
 
 /**
@@ -378,13 +405,16 @@ export async function alunnoDiRiferimento(
         ...(consensi?.daProva ? consensi.colonne : {}),
         ...sanitariDaScrivere(trovato, grezzo, new Date()),
       }
-      const { error: errUp } = await conDegradoDiColonna(patch, (rec) =>
-        supabase.from('alunni').update(rec).eq('id', trovato.id),
-      )
-      if (errUp) return { errore: `alunno non aggiornato: ${errUp.message}` }
       // ⚠️ Oggi l'import sposta il bambino nella classe nuova scrivendo `classe_sezione` su `alunni`: difetto noto, lo chiude
-      // la PR 4.5. Qui non cambia: la frequenza dell'anno attivo segue `alunni`, come lo specchio.
-      await frequenzaDopoAlunni(supabase, trovato.id, scuolaId, patch, cacheAnno)
+      // la PR 4.5. Qui non cambia: la frequenza dell'anno attivo prende la stessa classe (in fase B, prima di `alunni`).
+      const esitoUp = await scriviSchedaEFrequenza(
+        supabase, trovato.id, scuolaId, patch,
+        () => conDegradoDiColonna(patch, (rec) => supabase.from('alunni').update(rec).eq('id', trovato.id)),
+        cacheAnno, classe,
+      )
+      if (!esitoUp.scritto) return { errore: `alunno non aggiornato: la frequenza dell'anno non è stata scritta (${esitoUp.codice})` }
+      const errUp = esitoUp.risultato.error
+      if (errUp) return { errore: `alunno non aggiornato: ${errUp.message}` }
       return { id: trovato.id }
     }
   }
@@ -428,7 +458,7 @@ export async function alunnoDiRiferimento(
   if (error || !data) return { errore: `alunno non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id
-  await frequenzaDopoAlunni(supabase, id, scuolaId, record, cacheAnno)
+  await frequenzaDopoInsert(supabase, id, scuolaId, record, cacheAnno)
   const { error: errSegna } = await supabase.rpc('iscrizioni_segna_creato', {
     p_submission_id: submissionId,
     p_tipo: 'alunno',
@@ -571,12 +601,13 @@ export async function eseguiDomanda(
         `la retta di ${ass.cognome} ${ass.nome} è a carico di ${ass.aCaricoDi}, che però non risulta ancora in anagrafica: senza il collegamento gli verrebbe generata la retta di default`,
       )
     }
-    const { error } = await supabase
-      .from('alunni')
-      .update({ retta_a_carico_di: fratelloId })
-      .eq('id', mio)
-    if (error) return fallisci(`collegamento della retta non scritto: ${error.message}`)
-    await frequenzaDopoAlunni(supabase, mio, scuolaId, { retta_a_carico_di: fratelloId }, cacheAnno)
+    const esitoAc = await scriviSchedaEFrequenza(
+      supabase, mio, scuolaId, { retta_a_carico_di: fratelloId },
+      () => supabase.from('alunni').update({ retta_a_carico_di: fratelloId }).eq('id', mio),
+      cacheAnno,
+    )
+    if (!esitoAc.scritto) return fallisci(`collegamento della retta non scritto: la frequenza dell'anno non è stata scritta (${esitoAc.codice})`)
+    if (esitoAc.risultato.error) return fallisci(`collegamento della retta non scritto: ${esitoAc.risultato.error.message}`)
   }
 
   const alunniDellaDomanda = [...alunnoPerNome.values()]

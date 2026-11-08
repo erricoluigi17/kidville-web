@@ -1,4 +1,5 @@
 import type { createAdminClient } from '@/lib/supabase/server-client';
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi';
 
 type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
 
@@ -35,11 +36,17 @@ export async function classiMancantiNellaSede(
     scuolaId: string,
     classi: string[],
 ): Promise<EsitoClassi> {
-    const { data, error } = await supabase
+    // L'avviso arriva ai bambini dell'anno ATTIVO: una classe che esiste solo in un altro anno (per esempio la «1A»
+    // del 2027/28, creata in anticipo) non è una classe a cui l'avviso può arrivare, quindi risulta mancante.
+    // `null` = niente filtro (DB senza lo schema dell'anno): il controllo resta per sede, come prima.
+    const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId]);
+    let ricerca = supabase
         .from('sections')
         .select('name')
         .eq('scuola_id', scuolaId)
         .in('name', classi);
+    ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi);
+    const { data, error } = await ricerca;
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe «nessuna classe trovata», cioè un 400 che accusa l'operatore
     // di un errore che non ha commesso.

@@ -214,6 +214,12 @@ const h = vi.hoisted(() => {
         return qb
       },
       rpc(nome: string, args: unknown) {
+        // La funzione dei docenti (4.3.6) risponde con le stesse righe di `utenti_sezioni` e non entra
+        // nell'elenco delle rpc di numerazione.
+        if (nome === 'sezioni_visibili_docente') {
+          const righe = (state.risposte['utenti_sezioni']?.[0]?.data ?? []) as { section_id: string }[]
+          return Promise.resolve({ data: righe.map((r) => ({ section_id: r.section_id, sola_lettura: false })), error: null })
+        }
         state.rpc.push({ nome, args })
         const esito =
           nome === 'prossimo_numero_protocollo'

@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { sezioniDiUtentePerGrado, type SezioneInfo } from '@/lib/sezioni/docenti'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const OP = 'primaria/classi:GET'
 
@@ -42,12 +43,17 @@ export const GET = withRoute('primaria/classi:GET', async (request: NextRequest)
       // Staff/segreteria: tutte le sezioni primaria dei plessi consentiti (no cross-tenant).
       const plessi = await scuoleDiUtente(supabase, user)
       if (plessi.length) {
-        const { data, error: errSezioni } = await supabase
+        // Un solo anno: quello scelto da Direzione e segreteria. `null` = DB senza lo schema dell'anno.
+        const anno = await resolveAnnoLetturaElenco(request, supabase, user, plessi)
+        if (anno instanceof NextResponse) return anno
+        let ricerca = supabase
           .from('sections')
           .select('id, name, school_type')
           .eq('school_type', 'primaria')
           .in('scuola_id', plessi)
           .order('name')
+        ricerca = filtraPerAnnoDiSede(ricerca, anno)
+        const { data, error: errSezioni } = await ricerca
         // Un guasto non è «nessuna classe primaria nel plesso».
         if (errSezioni) return rispostaGuastoDb(OP, 'db:sections', errSezioni)
         sezioni = (data ?? []) as SezioneInfo[]

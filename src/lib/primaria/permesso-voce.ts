@@ -3,6 +3,7 @@ import { puoCorreggereStorico } from '@/lib/storici/retroattivita'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { haRuolo, haUnRuolo, type AppRole, type AppUser } from '@/lib/auth/predicati-ruolo'
 import { logEvento } from '@/lib/logging/logger'
+import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
 import { chiusureIn, leggiQuadrimestri, type QuadrimestriLetti } from '@/lib/primaria/quadrimestre'
 import {
   calcolaScadenza,
@@ -263,16 +264,12 @@ async function autorizzate(
   if (daClasse.length === 0) return { ok: true, chiavi }
 
   const sezioni = [...new Set(daClasse.map((v) => v.sectionId))]
-  const { data, error } = await supabase
-    .from('utenti_sezioni')
-    .select('section_id')
-    .eq('utente_id', utente.id)
-    .in('section_id', sezioni)
-  if (error) {
-    logGuasto('docenti-classe-non-letti', error, { n: sezioni.length })
-    return { ok: false }
-  }
-  const mie = new Set(((data ?? []) as { section_id: string }[]).map((r) => r.section_id))
+  // Controllo di SCRITTURA: valgono solo le sezioni dell'anno attivo (non quelle in sola lettura né le future).
+  // Un guasto resta `ok:false` (la riga `error` la scrive `sezioniVisibiliConEsito`).
+  const visibili = await sezioniVisibiliConEsito(supabase, utente.id)
+  if (!visibili.ok) return { ok: false }
+  const richieste = new Set(sezioni)
+  const mie = new Set(visibili.sezioni.filter((s) => !s.solaLettura && richieste.has(s.sectionId)).map((s) => s.sectionId))
   for (const v of daClasse) if (mie.has(v.sectionId)) chiavi.add(chiaveVoce(v.tipo, v.id))
   return { ok: true, chiavi }
 }

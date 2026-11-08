@@ -23,7 +23,8 @@ import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legam
 import { residuoEffettivo, statoEffettivo, type AgingPagamento } from '@/lib/pagamenti/aging'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { logEvento } from '@/lib/logging/logger'
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
+import { scriviAlunnoEFrequenza, segnalaRigheNonScritte } from '@/lib/anno/scrittura'
 
 /**
  * IL RIFIUTO PER MOROSITÀ — e perché il log sta QUI e non nelle rotte (rilievo Q6).
@@ -364,14 +365,24 @@ export async function verificaRevocaSospensioneMorosita(
     const daRevocare = ((sel.data ?? []) as { id: string; scuola_id?: string | null; sospeso_causa?: string | null }[])
       .filter((a) => a.sospeso_causa === 'morosita')
 
-    // Fase A (§4.19): un anno attivo per sede, letto una volta per chiamata.
+    // §4.19: un anno attivo per sede, letto una volta per chiamata.
     const cacheAnno = new Map<string, string | null>()
+    let nonScritte = 0
     for (const a of daRevocare) {
       const patchRevoca = { sospeso: false, sospeso_motivo: null, sospeso_il: null }
-      const { error } = await supabase
-        .from('alunni')
-        .update(patchRevoca)
-        .eq('id', a.id)
+      // Fase B: prima la frequenza dell'anno attivo della sede, poi `alunni`. Una frequenza che non si scrive lascia la
+      // sospensione dov'era (un guasto non deve togliere né dare una sospensione a metà) e le altre righe vanno avanti.
+      const annoSedeId = await annoAttivoDiSede(supabase, (a.scuola_id as string | null | undefined) ?? null, cacheAnno)
+      const esito = await scriviAlunnoEFrequenza(
+        supabase,
+        { alunnoId: a.id, annoSedeId, campi: campiFrequenzaDaAlunno(patchRevoca) },
+        () => supabase.from('alunni').update(patchRevoca).eq('id', a.id),
+      )
+      if (!esito.scritto) {
+        nonScritte++
+        continue
+      }
+      const error = esito.risultato.error
       if (error) {
         logEvento('db', 'error', {
           operazione: 'verificaRevocaSospensioneMorosita',
@@ -380,10 +391,6 @@ export async function verificaRevocaSospensioneMorosita(
         continue
       }
       revocati.push(a.id)
-
-      // `alunni` è scritto: ora la frequenza dell'anno attivo della sua sede (fail-open; l'esito non cambia).
-      const annoSedeId = await annoAttivoDiSede(supabase, (a.scuola_id as string | null | undefined) ?? null, cacheAnno)
-      if (annoSedeId) await scriviFrequenza(supabase, { alunnoId: a.id, annoSedeId, campi: campiFrequenzaDaAlunno(patchRevoca) })
 
       // Audit immutabile (utente_id null = sistema). PostgREST non lancia → { error }.
       const { error: auditErr } = await supabase.from('registro_modifiche').insert({
@@ -416,6 +423,7 @@ export async function verificaRevocaSospensioneMorosita(
       })
     }
 
+    segnalaRigheNonScritte('verificaRevocaSospensioneMorosita', nonScritte)
     if (revocati.length > 0) {
       // Evento critico → SUCCESSO loggato (conteggi/uuid, MAI nomi).
       logEvento('pagamento', 'info', {

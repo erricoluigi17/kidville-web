@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -98,7 +98,7 @@ export const POST = withRoute('admin/primaria/docenti-materie:POST', async (requ
 
     // Isolamento per sede: `sectionId` arriva dal client e non era verificato —
     // si assegnavano docenti e materie a sezioni di un'altra sede.
-    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
 
     // Garantisce anche il legame docente↔sezione (utenti_sezioni canonico).
@@ -145,7 +145,7 @@ export const DELETE = withRoute('admin/primaria/docenti-materie:DELETE', async (
     // Un guasto non è «assegnazione non trovata».
     if (errRiga) return rispostaGuastoDb('admin/primaria/docenti-materie:DELETE', 'db:utenti_sezioni_materie', errRiga)
     if (!riga) return NextResponse.json({ error: 'Assegnazione non trovata' }, { status: 404 })
-    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, riga.section_id as string)
+    const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, riga.section_id as string)
     if (fuoriScopeSez) return fuoriScopeSez
 
     const { error } = await supabase.from('utenti_sezioni_materie').delete().eq('id', id)

@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunnoInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { assertAlunnoInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { renderGiudizioDescrittivo, type Dimensioni } from '@/lib/primaria/giudizio'
@@ -311,7 +311,7 @@ async function voceAutorizzata(
 
   // Scope PRIMA del permesso: «è Segreteria» non vuol dire «è Segreteria di
   // quella classe» (permesso-voce non guarda la sede).
-  const scopeErr = await assertSezioneInScope(supabase, user, riga.section_id)
+  const scopeErr = await assertSezioneScrivibile(supabase, user, riga.section_id)
   if (scopeErr) return { response: scopeErr }
 
   // La coppia (classe, materia) della voce deve essere ancora fra quelle assegnate alla docente (D19).
@@ -495,7 +495,7 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     const supabase = await createAdminClient()
 
     // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     // L'alunno valutato deve appartenere alla sezione asserita (no valutazioni cross-sezione).

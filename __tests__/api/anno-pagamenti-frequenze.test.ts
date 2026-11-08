@@ -37,7 +37,7 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   annoAttivoDiSede: h.annoAttivoDiSede,
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
+  createAdminClient: async () => (await import('../helpers/anno-regole-assente')).conSchemaIndietro({
     from: () => ({
       update: (row: Record<string, unknown>) => ({
         eq: async (_c: string, id: unknown) => { h.updates.push({ row, id }); return { error: h.erroreUpdate } },
@@ -48,6 +48,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/admin/pagamenti/sospensione/route'
+import { conSchemaIndietro } from '../helpers/anno-regole-assente'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { ricordaIntestatarioSullaScheda, ricordaPersonaSullaScheda } from '@/lib/pagamenti/intestatari'
 
@@ -114,7 +115,7 @@ function clienteRevoca(opts: { erroreUpdate?: { code: string; message: string } 
     { alunno_id: ALU, importo: 10, importo_pagato: 10, sconto: 0, scadenza: '2020-01-01', stato: 'pagato', tipo: 'singolo' },
   ]
   const righe: Record<string, Record<string, unknown>[]> = { alunni, legame_genitori_alunni: legami, pagamenti }
-  return {
+  return conSchemaIndietro({
     from(tabella: string) {
       const ins: [string, unknown[]][] = []
       const b: Record<string, unknown> = {}
@@ -131,7 +132,7 @@ function clienteRevoca(opts: { erroreUpdate?: { code: string; message: string } 
       }
       return b
     },
-  } as unknown as SupabaseClient
+  } as unknown as SupabaseClient)
 }
 
 describe('verificaRevocaSospensioneMorosita', () => {
@@ -160,7 +161,7 @@ function clienteIntestatario(opts: { data?: unknown[]; error?: unknown; lettura?
   catena.select = () => catena
   catena.maybeSingle = async () => ({ data: opts.lettura ?? null, error: null })
   catena.then = (resolve: (r: unknown) => void) => resolve({ data: opts.data ?? null, error: opts.error ?? null })
-  return { from: () => catena } as unknown as SupabaseClient
+  return conSchemaIndietro({ from: () => catena } as unknown as SupabaseClient)
 }
 
 describe('ricordaIntestatarioSullaScheda', () => {

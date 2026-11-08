@@ -50,7 +50,7 @@ vi.mock('@/lib/logging/logger', async (originale) => {
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ assertPagamentoInScope: h.scope }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
+  createAdminClient: async () => (await import('../helpers/anno-regole-assente')).conSchemaIndietro({
     from: (tabella: string) => {
       const ctx: { tabella: string; payload?: unknown; insert?: unknown; filtri: Record<string, unknown>; is?: [string, unknown]; in?: [string, string[]] } =
         { tabella, filtri: {} }

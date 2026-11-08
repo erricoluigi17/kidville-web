@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -401,7 +401,7 @@ export const POST = withRoute('admin/primaria/orario:POST', async (request: Next
     // qui sotto accettavano il `sectionId` del client così com'era, con un client
     // service-role che scavalca la RLS. Bastava conoscere l'uuid di una sezione
     // per riscrivere l'orario di una classe di un altro plesso.
-    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, body.sectionId)
+    const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, body.sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
     const sectionId = body.sectionId
 

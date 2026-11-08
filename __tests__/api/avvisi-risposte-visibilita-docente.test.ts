@@ -63,6 +63,7 @@ const riga = (id: string, classi: string[]) => ({
 const dbBase = (): DBFinto => ({
   avvisi: [riga(AV_MIA_CLASSE, ['Girasoli', 'Tulipani']), riga(AV_ALTRE_CLASSI, ['Tulipani', 'Papaveri'])],
   avvisi_risposte: [],
+  sections: [{ id: 'sec-gira', name: 'Girasoli', scuola_id: SEDE_A }],
   utenti_sezioni: [
     { utente_id: DOCENTE, section_id: 'sec-gira', sections: { name: 'Girasoli', scuola_id: SEDE_A } },
   ],

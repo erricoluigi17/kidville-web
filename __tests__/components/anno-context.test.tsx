@@ -234,7 +234,28 @@ describe('AnnoProvider — il cookie stantio', () => {
     expect(scritture).toEqual(['anno_attivo=; path=/; samesite=lax; max-age=0'])
     expect(ctx.selezionato).toBeNull()
     expect(ctx.effettivo?.annoId).toBe(A26)
-    expect(ctx.epocaAnno).toBe(0)
+    // La potatura fa avanzare l'epoca: le pagine montate con l'anno sparito si rimontano (Compito 4.3.7).
+    expect(ctx.epocaAnno).toBe(1)
+  })
+
+  it('la potatura a metà sessione (dopo ricarica(), l\'anno scelto non c\'è più) azzera la scelta e fa avanzare l\'epoca', () => {
+    h.perSede = { [SEDE_A]: treAnni(SEDE_A) }
+    const { rerender } = monta()
+    act(() => ctx.scegli(A27))
+    expect(ctx.epocaAnno).toBe(1)
+    scritture.length = 0
+
+    // il titolare ha tolto il 2027/28: il calendario riletto non lo ha più
+    h.perSede = { [SEDE_A]: [riga(SEDE_A, 2025, 'chiuso', A25), riga(SEDE_A, 2026, 'corrente', A26)] }
+    rerender(
+      <AnnoProvider>
+        <Spia />
+      </AnnoProvider>,
+    )
+    expect(ctx.selezionato).toBeNull()
+    expect(ctx.effettivo?.annoId).toBe(A26)
+    expect(scritture).toEqual(['anno_attivo=; path=/; samesite=lax; max-age=0'])
+    expect(ctx.epocaAnno).toBe(2)
   })
 
   it('un cookie valido e presente nell\'elenco resta, ed è la scelta', () => {

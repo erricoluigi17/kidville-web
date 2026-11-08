@@ -75,7 +75,7 @@ describe('il percorso felice resta muto', () => {
   })
 
   it('nessun legame ⇒ [] e nessun log: è una condizione legittima', async () => {
-    const c = creaFintoSupabase({ ...db, utenti_sezioni: [] })
+    const c = creaFintoSupabase({ ...db, utenti_sezioni: [], utenti_sezioni_materie: [] })
     expect(await sezioniDiUtente(c, UTENTE)).toEqual([])
     expect(logEvento).not.toHaveBeenCalled()
   })
@@ -122,9 +122,10 @@ describe('sezioniDiUtenteConSede — le classi della docente CON la loro sede', 
   it('restituisce nome e sede di ogni classe assegnata, senza log', async () => {
     const c = creaFintoSupabase({
       ...db,
+      sections: [{ id: SEZIONE, name: '1 A', scuola_id: 'sede-a', school_type: 'primaria' }],
       utenti_sezioni: [
-        { utente_id: UTENTE, section_id: SEZIONE, sections: { name: '1 A', scuola_id: 'sede-a' } },
-        { utente_id: 'altro', section_id: SEZIONE, sections: { name: '2 B', scuola_id: 'sede-a' } },
+        { utente_id: UTENTE, section_id: SEZIONE },
+        { utente_id: 'altro', section_id: 'sezione-di-un-altro' },
       ],
     })
     expect(await sezioniDiUtenteConSede(c, UTENTE)).toEqual([{ nome: '1 A', scuola_id: 'sede-a' }])

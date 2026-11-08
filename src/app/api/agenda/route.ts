@@ -11,6 +11,7 @@ import {
   resolveScuoleAttive,
   resolveScuolaScrittura,
   scuoleDiUtente,
+  assertSezioneScrivibile,
 } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
@@ -25,6 +26,7 @@ import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
 // plesso (section_id NULL) o di sezione, su eventi_agenda (migr. 20260762).
@@ -105,11 +107,15 @@ async function sezionePerNomeInScope(
     NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
   if (plessi.length === 0) return { response: fuoriPlesso() }
 
-  const { data, error } = await supabase
+  // Il nome si ripete ogni anno: la sezione giusta è quella dell'anno ATTIVO (`null` = DB non migrato, nessun filtro).
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase
     .from('sections')
     .select('id, scuola_id')
     .eq('name', nome)
     .in('scuola_id', plessi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.
@@ -309,7 +315,7 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
 
     let scuolaId: string | null = null
     if (sectionId) {
-      const scopeErr = await assertSezioneInScope(supabase, user, sectionId)
+      const scopeErr = await assertSezioneScrivibile(supabase, user, sectionId)
       if (scopeErr) return scopeErr
       const { data: section, error: errSezione } = await supabase
         .from('sections')

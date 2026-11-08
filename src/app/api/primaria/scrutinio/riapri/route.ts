@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type StaffRole } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -140,7 +140,7 @@ export const POST = withRoute('primaria/scrutinio/riapri:POST', async (request: 
     // Sede PRIMA dello stato: la Segreteria e la Direzione riaprono solo scrutini
     // del proprio plesso, e a chi è fuori sede la risposta non deve dipendere
     // dallo stato di uno scrutinio che non le appartiene (409 vs 403).
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, scrutinio.section_id)
     if (scopeErr) return scopeErr
 
     if (scrutinio.stato !== 'chiuso') return giaAperto()

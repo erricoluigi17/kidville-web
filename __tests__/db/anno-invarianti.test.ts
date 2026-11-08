@@ -145,11 +145,12 @@ describe('anno_invarianti · il seme pulito', () => {
     expect(rs.map((x) => `${x.invariante}:${x.tabella}`).sort()).toEqual(atteso)
   })
 
-  prova('le invarianti 7 e 8 arrivano con le PR 4.3/4.4: qui non ci sono (e nessuna altra manca o avanza)', async () => {
+  // La 8 è della PR 4.3 (migrazione `_anno_sezioni_docenti_fase_b.sql`, provata in fondo a questo file con
+  // `fino: 'M43'`): questo banco ha solo la migrazione della PR 1, quindi non la vede e non se ne parla qui.
+  prova('l’invariante 7 arriva con la PR 4.4: qui non c’è (e nessuna altra manca o avanza)', async () => {
     const nomi = [...new Set((await invarianti()).map((x) => x.invariante))].sort()
     expect(nomi).toEqual(['1', '10a', '10b', '11', '2', '3', '4', '5', '6', '9'].sort())
     expect(nomi).not.toContain('7')
-    expect(nomi).not.toContain('8')
   })
 
   prova('un database con DATI VECCHI (righe senza anno, manopole spente) dà zero', async () => {
@@ -698,5 +699,91 @@ describe('anno_invarianti · le invarianti della PR 2 (12, 13, 11-bis)', () => {
       expect(await soprazero()).toEqual(['11:alunni (senza frequenza)=1'])
     })
     expect(await soprazero()).toEqual([])
+  })
+})
+
+/**
+ * COMPITO 4.3.2 · l'invariante 8: i docenti vedono solo sezioni di anni attivi o passati.
+ * Banco con la catena fino a M43. `righe` = quante delle sezioni che `sezioni_visibili_docente` restituisce
+ * appartengono a un anno `in_preparazione` o `iscrizioni_aperte`. «Passa» vuol dire `righe = 0`.
+ */
+describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
+  const S = '22222222-2222-4222-8222-222222222222'
+  const DOC = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+  const SEZ_CORR = '55555555-5555-4555-8555-555555555552'
+  const SEZ_FUTURA = '55555555-5555-4555-8555-555555555553'
+  const ZERO = [{ invariante: '8', tabella: 'utenti_sezioni', righe: 0 }]
+  let d: PGlite
+
+  const riga8 = async (): Promise<Riga[]> => {
+    const r = await d.query<{ invariante: string; tabella: string; righe: string }>(
+      `SELECT invariante, tabella, righe::text FROM public.anno_invarianti() WHERE invariante = '8'`)
+    return r.rows.map((x) => ({ ...x, righe: Number(x.righe) }))
+  }
+  const rollback = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    await d.exec('BEGIN')
+    try { return await fn() } finally { await d.exec('ROLLBACK') }
+  }
+
+  /** Ridefinisce `sezioni_visibili_docente` col corpo dato (`p_utente` è il parametro): la versione SENZA filtro di stato. */
+  const visibilitaSenzaFiltroDiStato = (corpo: string) =>
+    d.exec(`
+        CREATE OR REPLACE FUNCTION public.sezioni_visibili_docente(p_utente uuid)
+        RETURNS TABLE (section_id uuid, sola_lettura boolean)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+        AS $$ ${corpo} $$`)
+
+  beforeAll(async () => {
+    d = await creaDbAnnoPr2({ sedi: [S], fino: 'M43' })
+    const anni = await d.query<{ anno_inizio: number; anno_id: string }>(
+      `SELECT y.anno_inizio, s.anno_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1`, [S])
+    const idAnno = (n: number) => anni.rows.find((x) => x.anno_inizio === n)!.anno_id
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Girasoli', $3)`, [SEZ_CORR, S, idAnno(2026)])
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Girasoli', $3)`, [SEZ_FUTURA, S, idAnno(2027)])
+  }, 120_000)
+  afterAll(async () => { await d.close() })
+
+  prova('anno_invarianti() contiene la riga 8 e passa con docenti assegnati solo a sezioni di anni futuri', async () => {
+    await rollback(async () => {
+      await d.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2)`, [DOC, SEZ_FUTURA])
+      expect(await riga8()).toEqual(ZERO)
+    })
+    // la riga c'è anche senza nessuna assegnazione
+    expect(await riga8()).toEqual(ZERO)
+  })
+
+  prova('la riga 8 va rossa se la visibilità dei docenti perde il filtro di stato', async () => {
+    await rollback(async () => {
+      await d.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($1, $3)`, [DOC, SEZ_CORR, SEZ_FUTURA])
+      expect(await riga8()).toEqual(ZERO)
+      // la stessa funzione, SENZA il filtro sullo stato dell'anno
+      await visibilitaSenzaFiltroDiStato(`
+          SELECT us.section_id, (a.stato::text <> 'corrente')
+            FROM public.utenti_sezioni us
+            JOIN public.sections s  ON s.id = us.section_id
+            JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
+           WHERE us.utente_id = p_utente`)
+      const r = await riga8()
+      expect(r).toHaveLength(1)
+      expect(r[0].righe).toBeGreaterThanOrEqual(1)
+    })
+    // il ROLLBACK ha ripristinato la funzione vera
+    expect(await riga8()).toEqual(ZERO)
+  })
+
+  prova('la riga 8 non è tautologica: coincide con un conteggio fatto a parte dal catalogo', async () => {
+    await rollback(async () => {
+      await d.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($1, $3)`, [DOC, SEZ_CORR, SEZ_FUTURA])
+      await visibilitaSenzaFiltroDiStato(
+        `SELECT us.section_id, false FROM public.utenti_sezioni us WHERE us.utente_id = p_utente`)
+      const dalCatalogo = await d.query<{ n: string }>(
+        `SELECT count(*)::text n
+           FROM public.utenti_sezioni us
+           JOIN public.sections s  ON s.id = us.section_id
+           JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
+          WHERE a.stato::text IN ('in_preparazione', 'iscrizioni_aperte')`)
+      expect(Number(dalCatalogo.rows[0].n)).toBe(1)
+      expect((await riga8())[0].righe).toBe(Number(dalCatalogo.rows[0].n))
+    })
   })
 })

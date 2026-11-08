@@ -26,8 +26,10 @@
   "statConAllergie": "Con Allergie",
   "staffErrCaricamento": "Errore nel caricamento dello staff",
   "toastAssegnati": "{n, plural, one {# alunno assegnato} other {# alunni assegnati}} a {classe}",
+  "toastAssegnatiParziale": "{n, plural, one {# alunno assegnato} other {# alunni assegnati}} su {m} a {classe}: gli altri sono rimasti indietro, riprova",
   "toastErrAssegnazione": "Errore nell’assegnazione massiva",
   "toastAssegnatiMensa": "{n, plural, one {# alunno assegnato} other {# alunni assegnati}} al gruppo mensa {nome}",
+  "toastAssegnatiMensaParziale": "{n, plural, one {# alunno assegnato} other {# alunni assegnati}} su {m} al gruppo mensa {nome}: gli altri sono rimasti indietro, riprova",
   "toastErrMensa": "Errore nell’assegnazione gruppo mensa",
   "exportVuoto": "Nessun dato da esportare",
   "toastExport": "{n, plural, one {Esportato # record in CSV} other {Esportati # record in CSV}}",
@@ -872,5 +874,6 @@
   "scadRinnova": "Rinnova",
   "scadRinnovaDi": "Rinnova il documento di {nome}",
   "dataIscrizioneAnno": "Anno scolastico {anno}",
-  "dataIscrizioneFuoriAnno": "La data non cade in nessun anno scolastico della sede"
+  "dataIscrizioneFuoriAnno": "La data è dopo la fine dell’anno scolastico in corso. Si può iscrivere solo all’anno in corso: l’iscrizione all’anno prossimo si farà con le iscrizioni.",
+  "dataIscrizioneIngressoDal": "Anno scolastico {anno} · ingresso dal {giorno}"
 }

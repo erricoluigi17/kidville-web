@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
+import { resolveAnnoLetturaElenco, resolveAnnoScrittura, resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
 import { conAnno } from '@/lib/anno/tipi';
 import { erroreAnno } from '@/lib/anno/errori';
 import { clientPerScrittura } from '@/lib/anno/gettone';
@@ -11,6 +11,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi';
 
 // ============================================================
 // Anagrafica sezioni/classi — gated Segreteria+Direzione (DL-036) + audit (DL-037).
@@ -113,13 +114,19 @@ export const GET = withRoute('admin/sections:GET', async (request: NextRequest) 
     try {
         const supabase = await createAdminClient();
 
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+        // L'elenco mostra UN anno: quello scelto (cookie) da Direzione e segreteria. `null` = DB senza lo schema dell'anno.
+        const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
+        if (anno instanceof NextResponse) return anno;
+
         let query = supabase
             .from('sections')
             .select('*')
             .order('name', { ascending: true })
-            .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
+            .in('scuola_id', plessi);
 
         if (scuolaId) query = query.eq('scuola_id', scuolaId);
+        query = filtraPerAnnoDiSede(query, anno);
 
         const { data, error } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });

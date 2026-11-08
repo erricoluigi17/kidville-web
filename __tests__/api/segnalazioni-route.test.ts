@@ -64,6 +64,8 @@ const h = vi.hoisted(() => ({
   legamiList: [] as Array<Record<string, unknown>>,
   alunniList: [] as Array<Record<string, unknown>>,
   utentiSezioni: [] as Array<Record<string, unknown>>,
+  /** Se valorizzato, risposta della funzione dei docenti al posto di quella ricavata da utentiSezioni. */
+  rpcSezioni: null as null | { data: unknown; error: unknown },
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -121,6 +123,7 @@ function resolveList(s: { table: string }) {
 }
 
 const adminClient = {
+  rpc: async () => h.rpcSezioni ?? ({ data: h.utentiSezioni.map((r) => ({ section_id: r.section_id, sola_lettura: false })), error: null }),
   from(table: string) {
     const state: { table: string; mode: string; filters: Record<string, unknown>; orCond: string | null } = {
       table,
@@ -203,6 +206,7 @@ beforeEach(() => {
   h.legamiList = [{ alunno_id: STUDENT }]
   h.alunniList = [{ section_id: SEC, scuola_id: 'sc-1' }]
   h.utentiSezioni = [{ section_id: SEC }]
+  h.rpcSezioni = null
 })
 
 describe('POST /api/segnalazioni — validazione applicativa', () => {
@@ -333,6 +337,48 @@ describe('POST /api/segnalazioni — inserimento e notifica', () => {
     const res = await POST(postReq({ tipo_oggetto: 'utente', segnalato_id: TEACHER, categoria: 'spam' }))
     expect(res.status).toBe(201)
     expect(h.inserted.segnalazioni.segnalato_id).toBe(TEACHER)
+  })
+
+  describe('sezione in comune: contano solo le sezioni dell’anno attivo (4.3.6)', () => {
+    const senzaThread = () => {
+      h.threadsList = []
+      h.legamiList = [{ alunno_id: STUDENT }]
+      h.alunniList = [{ section_id: SEC, scuola_id: 'sc-1' }]
+    }
+    const segnala = () => POST(postReq({ tipo_oggetto: 'utente', segnalato_id: TEACHER, categoria: 'spam' }))
+
+    it('la sezione dell’anno attivo passa', async () => {
+      senzaThread()
+      h.rpcSezioni = { data: [{ section_id: SEC, sola_lettura: false }], error: null }
+      expect((await segnala()).status).toBe(201)
+    })
+
+    it('una sezione che la funzione non restituisce (anno in preparazione) NON passa', async () => {
+      senzaThread()
+      h.rpcSezioni = { data: [], error: null }
+      expect((await segnala()).status).toBe(403)
+      expect(h.inserted.segnalazioni).toBeUndefined()
+    })
+
+    it('anno IN CHIUSURA (la sezione del figlio torna in sola lettura): la famiglia può ancora segnalare alla maestra', async () => {
+      // da agosto l'anno attivo è `in_chiusura` e la funzione restituisce le sue sezioni con sola_lettura = true: il
+      // controllo passa dalla sezione del BAMBINO (sempre dell'anno attivo), quindi una sezione passata non può combaciare
+      senzaThread()
+      h.rpcSezioni = { data: [{ section_id: SEC, sola_lettura: true }], error: null }
+      expect((await segnala()).status).toBe(201)
+    })
+
+    it('una sezione passata (non è quella del figlio) NON passa, in sola lettura o no', async () => {
+      senzaThread()
+      h.rpcSezioni = { data: [{ section_id: 'sez-di-un-altro-anno', sola_lettura: true }], error: null }
+      expect((await segnala()).status).toBe(403)
+    })
+
+    it('un guasto della funzione è lo stesso rifiuto di oggi (403), mai un permesso', async () => {
+      senzaThread()
+      h.rpcSezioni = { data: null, error: { code: '57014', message: 'timeout' } }
+      expect((await segnala()).status).toBe(403)
+    })
   })
 
   it('201 media_galleria broadcast: sempre segnalabile dal genitore', async () => {

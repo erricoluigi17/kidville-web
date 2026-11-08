@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { filtraPerAnnoDiSede, type AnniAttivi } from '@/lib/anno/anni-attivi';
+import { resolveAnnoLetturaElenco, resolveScuoleAttive } from '@/lib/auth/scope';
 import { sezioniDiUtente } from '@/lib/sezioni/docenti';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -60,13 +61,17 @@ interface RigaSezione {
 async function sezioniDeiPlessi(
     supabase: SupabaseClient,
     plessi: string[],
+    anni: AnniAttivi | null,
 ): Promise<RigaSezione[] | null> {
     if (plessi.length === 0) return [];
-    const { data, error } = await supabase
+    let query = supabase
         .from('sections')
         .select('id, name, school_type, scuola_id')
         .in('scuola_id', plessi)
         .order('name');
+    // Un solo anno (Compito 4.3.7): `null` = DB senza lo schema dell'anno, nessun filtro.
+    query = filtraPerAnnoDiSede(query, anni);
+    const { data, error } = await query;
     if (error) {
         // PostgREST non lancia: senza questo controllo un guasto di lettura
         // sarebbe indistinguibile da «questo docente non ha sezioni».
@@ -224,7 +229,9 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
 
         const isManager = normalizedRole === 'admin' || normalizedRole === 'coordinator';
 
-        const candidate = await sezioniDeiPlessi(supabase, plessi);
+        const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
+        if (anno instanceof NextResponse) return anno;
+        const candidate = await sezioniDeiPlessi(supabase, plessi, anno);
         if (candidate === null) {
             return NextResponse.json({ sectionNames: [], sections: [], role: normalizedRole });
         }

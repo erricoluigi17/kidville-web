@@ -6,7 +6,7 @@ import { requireDocente, requireUser } from '@/lib/auth/require-staff'
 // intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
-import { assertAlunnoInScope, assertSezioneInScope, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { assertAlunnoInScope, assertSezioneInScope, resolveScuolaScrittura, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { genitoriDiAlunni } from '@/lib/notifiche/destinatari'
@@ -534,7 +534,7 @@ export const POST = withRoute('teacher/uscite:POST', async (request: NextRequest
     // sezione sia davvero sua. Le sezioni sono poche (una gita ne coinvolge due
     // o tre), quindi il costo del ciclo è noto e limitato dal `max(20)` di zod.
     for (const sezione of corpo.sezioni) {
-      const fuoriScope = await assertSezioneInScope(supabase, user, sezione)
+      const fuoriScope = await assertSezioneScrivibile(supabase, user, sezione)
       if (fuoriScope) return fuoriScope
     }
 

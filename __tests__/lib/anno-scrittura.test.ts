@@ -169,6 +169,23 @@ describe('resolveAnnoScrittura — l\'ordine di risoluzione', () => {
     }
   })
 
+  it('2c · il cookie lo segue solo lo staff, come in lettura: un docente col cookie su a3 scrive su a2 (warn), la segreteria su a3', async () => {
+    const { supabase } = finto()
+    const docente = esito(await resolveAnnoScrittura(richiesta(`anno_attivo=${A3}`), supabase, DOCENTE, SEDE))
+    expect(docente.annoId).toBe(A2)
+    const avvisi = logger.logEvento.mock.calls.filter((c) => c[1] === 'warn').map((c) => (c[2] as { tipo?: string }).tipo)
+    expect(avvisi).toContain('anno-cookie-ignorato-ruolo')
+
+    logger.logEvento.mockClear()
+    // senza cookie nessun warn
+    esito(await resolveAnnoScrittura(richiesta(), supabase, DOCENTE, SEDE))
+    expect(tuttoIlLog()).not.toContain('anno-cookie-ignorato-ruolo')
+
+    const staff = esito(await resolveAnnoScrittura(richiesta(`anno_attivo=${A3}`), supabase, SEGRETERIA, SEDE))
+    expect(staff.annoId).toBe(A3)
+    expect(tuttoIlLog()).not.toContain('anno-cookie-ignorato-ruolo')
+  })
+
   it('3 · unico corrente: niente dichiarato né cookie → a2, senza leggere l\'orologio', async () => {
     const { supabase } = finto()
     const spia = vi.spyOn(Date, 'now')

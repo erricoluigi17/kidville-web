@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -41,7 +41,7 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
       .maybeSingle()
     if (errPresenza) return rispostaGuastoDb('primaria/presenze/giust-vista:POST', 'db:presenze', errPresenza)
     if (!presenza) return NextResponse.json({ error: 'Presenza non trovata' }, { status: 404 })
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, presenza.section_id as string)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, presenza.section_id as string)
     if (scopeErr) return scopeErr
 
     // SI CHIEDONO SEI COLONNE, NON VENTICINQUE. `.select()` nudo è `select *`, e
@@ -196,7 +196,7 @@ export const DELETE = withRoute('primaria/presenze/giust-vista:DELETE', async (r
     // LO SCOPE PRIMA DEL PERMESSO: fuori dalla propria classe (o dal proprio plesso)
     // non si scopre nemmeno se la presa visione c'è e di chi è.
     const sectionId = riga.section_id as string
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     const vistaIl = (riga.giust_vista_il as string | null) ?? null

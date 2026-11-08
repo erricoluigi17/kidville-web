@@ -341,6 +341,7 @@ describe('POST /api/admin/students/archivia — l\'audit', () => {
 describe('POST /api/admin/students/archivia — i rifiuti', () => {
   it('409 se è GIÀ archiviato, e la riga non cambia', async () => {
     h.db.alunni[0].archiviato_il = '2026-08-01T10:00:00.000Z'
+    h.db.alunni[0].archiviato_da = 'seg-1' // archiviato per intero: autore valorizzato
     h.db.alunni[0].stato = 'ritirato'
     h.db.alunni[0].section_id = null
     h.db.alunni[0].classe_sezione = null

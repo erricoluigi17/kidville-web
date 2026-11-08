@@ -87,7 +87,7 @@ describe('AnnoNotice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
 
     const avviso = screen.getByRole('status')
-    expect(avviso).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Gli elenchi sul video mostrano ancora l.anno in corso/)
+    expect(avviso).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Anche gli elenchi delle classi sul video mostrano quell.anno\./)
     expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
   })
 
@@ -178,7 +178,7 @@ describe('AnnoNotice', () => {
     cleanup()
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
-    expect(screen.getByRole('status')).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Gli elenchi sul video mostrano ancora l.anno in corso/)
+    expect(screen.getByRole('status')).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Anche gli elenchi delle classi sul video mostrano quell.anno\./)
   })
 
   it('un docente non lo vede, anche se sceglie un altro anno', () => {

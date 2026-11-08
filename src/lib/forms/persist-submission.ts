@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
+import { annoAttivoDiSede } from '@/lib/anno/frequenze'
+import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura'
 import type { FormField } from '@/types/database.types'
 import { buildSignedDocumentSnapshot, freezeSignedDocument, SignedDocumentError, validateSubmissionAnswers } from './signed-document'
 import { ensureSignedSubmissionPdf, type SignedSubmissionPdfResult } from './signed-archive'
@@ -118,13 +120,23 @@ export async function persistSignedSubmission(
   }
 
   if (Object.keys(studentUpdates).length > 0 && student_id) {
-    const { error: studentErr } = await supabase
-      .from('alunni')
-      .update(studentUpdates)
-      .eq('id', student_id)
+    // Un campo mappato `alunni.classe_sezione` (anagrafica-fields) cambia la classe: il trigger BEFORE ne ricava
+    // `section_id`, che in fase B è una colonna copiata dalla frequenza. Quindi passa da `scriviAlunnoEFrequenza`:
+    // prima la sezione nella frequenza dell'anno attivo, poi `alunni`. Le altre colonne mappate sono anagrafica pura.
+    const classe = typeof studentUpdates.classe_sezione === 'string' ? studentUpdates.classe_sezione : null
+    const annoSedeId = classe ? await annoAttivoDiSede(supabase, (student?.scuola_id as string | null | undefined) ?? null) : null
+    const esito = await scriviAlunnoEFrequenza(
+      supabase,
+      { alunnoId: student_id, annoSedeId, campi: {}, classeSezione: classe },
+      () => supabase.from('alunni').update(studentUpdates).eq('id', student_id),
+    )
     // PostgREST non lancia: si controlla il valore di ritorno. L'auto-aggiornamento
     // anagrafica è best-effort (la firma resta valida), ma un fallimento va tracciato.
-    if (studentErr) logEvento('db', 'error', { operazione: 'forms/persist-submission', azione: 'auto_update_alunno', esito: 'fallito' }, studentErr)
+    if (!esito.scritto) {
+      logEvento('db', 'error', { operazione: 'forms/persist-submission', azione: 'auto_update_alunno', esito: 'frequenza-non-scritta', error_code: esito.codice })
+    } else if (esito.risultato.error) {
+      logEvento('db', 'error', { operazione: 'forms/persist-submission', azione: 'auto_update_alunno', esito: 'fallito' }, esito.risultato.error)
+    }
   }
 
   if (Object.keys(parentUpdates).length > 0) {

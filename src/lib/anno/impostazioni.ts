@@ -8,6 +8,7 @@ import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceDaMessaggio } from '@/lib/anno/tipi'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { segnalaErroreLoggato } from '@/lib/logging/context'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 
@@ -91,6 +92,9 @@ export function impostazioniNonDisponibili(error: ErroreDb, operazione: string):
     operazione,
     error_code: typeof error.code === 'string' ? error.code : undefined,
   })
+  // Degrado previsto, già loggato qui a `info`: segnato come «già loggato» perché `withRoute` non ci aggiunga
+  // un `error` per il 5xx (M10). Ogni altro 503 non passa da qui e resta com'è.
+  segnalaErroreLoggato()
   return NextResponse.json(
     { error: frase('CALENDARIO_NON_DISPONIBILE'), codice: 'CALENDARIO_NON_DISPONIBILE' },
     { status: 503 },
@@ -113,12 +117,14 @@ function guasto(error: unknown, operazione: string, lettura: boolean): NextRespo
  * `SEDE_NON_ACCESSIBILE` (con un `warn`) se è di un'altra sede, 503 se il database non ha lo schema
  * dell'anno, 500 se la lettura è fallita. Il nome segue la convenzione `assert…InScope`: è il gate che il
  * lock `isolamento-sede-coverage` riconosce, e le funzioni SQL ricevono proprio l'id che ha verificato.
+ * Se passi `letta`, a gate superato vi trova `scuolaId`: la sede dell'anno, per `tracciaAnno`.
  */
 export async function assertAnnoSedeInScope(
   supabase: SupabaseClient,
   user: AppUser,
   annoSedeId: string,
   operazione: string,
+  letta?: { scuolaId?: string },
 ): Promise<NextResponse | null> {
   const { data, error } = await supabase.from('anni_sede').select('id, scuola_id').eq('id', annoSedeId).maybeSingle()
   if (error) {
@@ -141,6 +147,8 @@ export async function assertAnnoSedeInScope(
     })
     return rifiutoSede('SEDE_NON_ACCESSIBILE')
   }
+  // La sede dell'anno, per chi deve scriverla in una traccia senza rileggere la riga.
+  if (letta) letta.scuolaId = riga.scuola_id
   return null
 }
 
@@ -212,26 +220,21 @@ type ValoriTraccia = { prima: Record<string, unknown>; dopo: Record<string, unkn
  * Una riga nel registro delle scritture per ogni modifica RIUSCITA e con `cambiato: true`: chi, quando e
  * i valori prima/dopo (solo uuid, date, stati, booleani). Il log `info` di sopra vive pochi giorni su Vercel;
  * questa resta. `logScrittura` non lancia mai e, se l'inserimento fallisce, lo registra da sé: la risposta
- * della route non cambia. La sede si rilegge dalla riga (un utente con più sedi non ha «la sua»).
+ * della route non cambia. La sede è quella dell'anno (un utente con più sedi non ha «la sua»).
  */
 export async function tracciaAnno(
   supabase: SupabaseClient,
   user: AppUser,
   annoSedeId: string,
   v: ValoriTraccia,
+  scuolaIdAnno: string | undefined,
 ): Promise<void> {
-  let scuolaId: string | undefined
-  try {
-    const { data, error } = await supabase.from('anni_sede').select('id, scuola_id').eq('id', annoSedeId).maybeSingle()
-    if (error) {
-      // La traccia si scrive lo stesso (con la sede dell'attore): la sede non letta si dice, non si ignora.
-      evento('info', { tipo: 'anno-traccia-sede-non-letta', anno_sede_id: annoSedeId, utente: user.id, error_code: typeof error.code === 'string' ? error.code : undefined })
-    } else {
-      scuolaId = uuidDa((data as { scuola_id?: unknown } | null)?.scuola_id)
-    }
-  } catch (err) {
-    evento('info', { tipo: 'anno-traccia-sede-non-letta', anno_sede_id: annoSedeId, utente: user.id })
-    logErrore({ operazione: 'anno:traccia:sede', stato: 500 }, err)
+  // La sede è quella dell'anno, già letta dal perimetro (`assertAnnoSedeInScope`): non si rilegge, e non si
+  // ripiega sulla sede dell'attore (con più sedi sarebbe quella sbagliata). Senza, la traccia non si scrive.
+  const scuolaId = uuidDa(scuolaIdAnno)
+  if (!scuolaId) {
+    evento('warn', { tipo: 'anno-traccia-senza-sede', anno_sede_id: annoSedeId, utente: user.id })
+    return
   }
   await logScrittura(supabase, {
     attore: user,

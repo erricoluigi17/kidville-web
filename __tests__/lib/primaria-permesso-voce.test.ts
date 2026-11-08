@@ -182,12 +182,41 @@ describe('CHI — l’impreparato dichiarato dal GENITORE', () => {
     expect((await verificaPermessoVoce(client(), collega, nota, ADESSO)).ok).toBe(false)
   })
 
+  describe('solo le sezioni dell’anno attivo (4.3.6): è un controllo di SCRITTURA', () => {
+    const conFunzione = (data: unknown, error: unknown = null) => {
+      opzioni = { rpc: { sezioni_visibili_docente: () => ({ data, error }) } as never }
+    }
+
+    it('la sezione dell’anno attivo passa', async () => {
+      conFunzione([{ section_id: SEZ_A, sola_lettura: false }])
+      expect(await verificaPermessoVoce(client(), collega, dalGenitore(), ADESSO)).toEqual({ ok: true })
+    })
+
+    it('una sezione che la funzione non restituisce (anno in preparazione) NON passa', async () => {
+      conFunzione([])
+      expect(await verificaPermessoVoce(client(), collega, dalGenitore(), ADESSO))
+        .toEqual({ ok: false, stato: 403, codice: 'VOCE_NON_AUTORE' })
+    })
+
+    it('una sezione in sola lettura (anno passato) NON passa: non si scrive sul registro vecchio', async () => {
+      conFunzione([{ section_id: SEZ_A, sola_lettura: true }])
+      expect(await verificaPermessoVoce(client(), collega, dalGenitore(), ADESSO))
+        .toEqual({ ok: false, stato: 403, codice: 'VOCE_NON_AUTORE' })
+    })
+
+    it('un guasto della funzione è 500 LETTURA_FALLITA come oggi', async () => {
+      conFunzione(null, { code: '57014', message: 'timeout' })
+      expect(await verificaPermessoVoce(client(), collega, dalGenitore(), ADESSO))
+        .toEqual({ ok: false, stato: 500, codice: 'LETTURA_FALLITA' })
+    })
+  })
+
   it('un guasto su `utenti_sezioni` è 500 LETTURA_FALLITA, non un 403', async () => {
     opzioni = { errori: { 'utenti_sezioni:select': { code: '57014', message: 'timeout' } } }
     const esito = await verificaPermessoVoce(client(), collega, dalGenitore(), ADESSO)
     expect(esito).toEqual({ ok: false, stato: 500, codice: 'LETTURA_FALLITA' })
     expect(h.logEvento).toHaveBeenCalledWith(
-      'registro', 'error', expect.objectContaining({ esito: 'docenti-classe-non-letti' }), expect.anything(),
+      'notifica', 'error', expect.objectContaining({ esito: 'sezioni-non-lette' }), expect.anything(),
     )
   })
 })

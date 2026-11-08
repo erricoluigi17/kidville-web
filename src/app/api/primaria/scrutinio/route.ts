@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { titolareDiMateria } from '@/lib/audit/valutatore'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -355,7 +355,7 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 
     const sectionId = scr.section_id as string
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     const valid = giudizi.filter(
@@ -485,7 +485,7 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 
     const sectionId = scr.section_id as string
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     const rows = comportamento

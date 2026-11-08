@@ -205,7 +205,7 @@ const FILTRO_SEDE =
  * `assertAvvisoInScope`, … La forma del nome è il contratto (`assert…InScope`) e
  * vale anche per i gate locali di una route.
  */
-const GATE_OGGETTO = /\bassert[A-Z][A-Za-z]*InScope\s*\(/
+const GATE_OGGETTO = /\b(?:assert[A-Z][A-Za-z]*InScope|assertSezioneScrivibile)\s*\(/
 
 /** L'unico punto che risponde 400 quando la sede di una scrittura è ambigua. */
 const SEDE_SCRITTURA = /\bresolveScuolaScrittura\s*\(/

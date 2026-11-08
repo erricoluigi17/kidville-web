@@ -24,6 +24,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: h.assertSezioneInScope,
+  assertSezioneScrivibile: h.assertSezioneInScope,
   scuoleDiUtente: h.scuoleDiUtente,
   // W2-M: la route legge nel perimetro del SedeSelector e l'evento di plesso
   // dichiara la sua sede. L'isolamento vero è provato in

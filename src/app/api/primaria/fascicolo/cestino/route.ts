@@ -150,7 +150,7 @@ export const POST = withRoute('primaria/fascicolo/cestino:POST', async (request:
       return NextResponse.json({ error: 'Il documento non è nel cestino', codice: 'FASCICOLO_NON_NEL_CESTINO' }, { status: 409 })
     }
 
-    const accesso = await puoAccedereFascicolo(supabase, userId, doc.student_id)
+    const accesso = await puoAccedereFascicolo(supabase, userId, doc.student_id, 'delete')
     const negato = rispostaGestioneNegata(accesso, doc.caricato_da, doc.student_id, userId, OP)
     if (negato) return negato
 

@@ -189,6 +189,44 @@ export function erroreAnno(
 }
 
 /**
+ * La risposta di una route a UN alunno quando, in fase B, la frequenza non è stata scritta (e quindi `alunni` non è stata
+ * toccata): un codice dell'anno (`SEZIONE_DI_ALTRO_ANNO`, `ANNO_NON_COERENTE`…) → la risposta di `erroreAnno` (409/422);
+ * il resto → 500 `FREQUENZA_NON_SCRITTA`. Il guasto è già nel log (`anno/fase-b:frequenza-non-scritta`): qui niente dati.
+ */
+export function rispostaFrequenzaNonScritta(codice: string, operazione?: string): NextResponse {
+  if (codice === 'SCRITTURA_INCOMPLETA') return rispostaScritturaIncompleta()
+  return (
+    erroreAnno({ message: codice }, operazione) ??
+    NextResponse.json({ error: frase('FREQUENZA_NON_SCRITTA'), codice: 'FREQUENZA_NON_SCRITTA' }, { status: 500 })
+  )
+}
+
+/**
+ * La risposta quando, in fase B, la frequenza è stata scritta e la scheda `alunni` no (`frequenzaGiaScritta` di
+ * `scriviAlunnoEFrequenza`): 500 `SCRITTURA_INCOMPLETA`. Dice il vero — la frequenza è già aggiornata, la scheda no — e
+ * invita a riprovare: se il guasto era passeggero il secondo tentativo completa il lavoro. (Il doppione del codice fiscale non arriva
+ * qui: lo ferma un controllo prima della frequenza.) Il guasto è già nel log
+ * (`anno/fase-b:alunni-non-scritto`): qui niente dati.
+ */
+export function rispostaScritturaIncompleta(): NextResponse {
+  return NextResponse.json({ error: frase('SCRITTURA_INCOMPLETA'), codice: 'SCRITTURA_INCOMPLETA' }, { status: 500 })
+}
+
+/**
+ * 409 quando il PATCH di una scheda porta un codice fiscale che un ALTRO alunno ha già (`alunni_codice_fiscale_key` è
+ * UNIQUE su tutta la tabella). Si controlla PRIMA di scrivere la frequenza: senza, la retta passava in frequenza e
+ * `alunni` falliva con 23505. La frase non nomina l'altro alunno né riporta il codice.
+ */
+export function rispostaCodiceFiscaleGiaUsato(): NextResponse {
+  return NextResponse.json({ error: frase('CODICE_FISCALE_GIA_USATO'), codice: 'CODICE_FISCALE_GIA_USATO' }, { status: 409 })
+}
+
+/** 409 su una scheda anonimizzata (diritto all'oblio): non si archivia e non riceve scritture. */
+export function rispostaAlunnoAnonimizzato(): NextResponse {
+  return NextResponse.json({ error: frase('ALUNNO_ANONIMIZZATO'), codice: 'ALUNNO_ANONIMIZZATO' }, { status: 409 })
+}
+
+/**
  * Codici che SOLO una migrazione o il riempimento sollevano: non arrivano mai a una route,
  * quindi `erroreAnno` non li traduce. Un codice nuovo nelle migrazioni dell'anno deve stare
  * in `erroreAnno` o qui: lo pretende `__tests__/lib/anno-errori.test.ts`.

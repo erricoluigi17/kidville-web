@@ -24,7 +24,7 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
  *
  *   · `ScrollableStudentForm` ×9  — nome, cognome, sesso, cittadinanza, comune di
  *     residenza, provincia di residenza, CAP, sede, sezione;
- *   · `StudentRegistryForm`   ×5  — nome, cognome, sesso, comune di residenza, CAP;
+ *   · `StudentRegistryForm`   ×5  — (modulo mai montato, tolto in 4.3.5);
  *   · `StudentDetailPanel`    ×13 — nome, cognome, data di nascita, sesso,
  *     cittadinanza, indirizzo, civico, comune, provincia, CAP, sezione, stato,
  *     data d'iscrizione.
@@ -51,9 +51,7 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
  *   · `ScrollableStudentForm` — scheda a riposo, PIÙ il ramo BES acceso e il ramo
  *     «Altro Soggetto» dell'intestatario fattura (i 4 campi che prima erano fuori
  *     dal DOM: `alunno-note-bes`, `alunno-intestatario-nome/-cognome/-codice-fiscale`);
- *   · `StudentRegistryForm` — TUTTI E QUATTRO i passi del wizard, non solo il primo,
- *     coi rami BES (passo 3) e intestatario (passo 4) aperti; e da oggi passa anche
- *     da `verificaEtichette`, che prima saltava del tutto questa scheda;
+ *   · (`StudentRegistryForm`, il wizard che nessuna pagina montava, è stato tolto in 4.3.5 con i suoi casi);
  *   · `StudentDetailPanel` — scheda a dati caricati, con `bes` acceso nella fixture.
  *
  * Dall'11 agosto c'è anche il caso che mancava, ed è l'ultimo blocco di questo file:
@@ -111,7 +109,6 @@ vi.mock('@/lib/context/sede-context', () => ({
 }))
 
 import { ScrollableStudentForm } from '@/components/features/admin/ScrollableStudentForm'
-import { StudentRegistryForm } from '@/components/features/admin/StudentRegistryForm'
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel'
 
 /** Toponimi e codici catastali: dati aperti, non dati di persone. */
@@ -209,13 +206,6 @@ const apriRamiScrollable = async () => {
   await screen.findByLabelText(/Codice Fiscale Intestatario/)
 }
 
-/** Il wizard non ha rotta né stato esterno: si cambia passo col suo bottone. */
-const avanti = async (volte: number) => {
-  for (let i = 0; i < volte; i++) {
-    fireEvent.click(screen.getByRole('button', { name: 'Avanti' }))
-  }
-}
-
 describe('axe · le tre schede dell’alunno, zero violazioni', () => {
   it('ScrollableStudentForm — la scheda montata dal cockpit (`FamilyRegistryManager`)', async () => {
     const { container } = render(<ScrollableStudentForm />)
@@ -229,38 +219,6 @@ describe('axe · le tre schede dell’alunno, zero violazioni', () => {
     const { container } = render(<ScrollableStudentForm />)
     await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
     await apriRamiScrollable()
-    expect(await axe(container, axeOpts)).toHaveNoViolations()
-  })
-
-  it('StudentRegistryForm — non montata da nessuna pagina, ma finché esiste si misura', async () => {
-    const { container } = render(<StudentRegistryForm />)
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    expect(await axe(container, axeOpts)).toHaveNoViolations()
-  })
-
-  it('StudentRegistryForm — passo 2 (residenza), che il solo passo 1 non montava', async () => {
-    const { container } = render(<StudentRegistryForm />)
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    await avanti(1)
-    await screen.findByLabelText(/Indirizzo di Residenza/)
-    expect(await axe(container, axeOpts)).toHaveNoViolations()
-  })
-
-  it('StudentRegistryForm — passo 3 col ramo BES APERTO', async () => {
-    const { container } = render(<StudentRegistryForm />)
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    await avanti(2)
-    fireEvent.click(await screen.findByLabelText(/Studente BES \/ DSA/))
-    await screen.findByLabelText(/Note BES \/ DSA/)
-    expect(await axe(container, axeOpts)).toHaveNoViolations()
-  })
-
-  it('StudentRegistryForm — passo 4 col ramo intestatario APERTO', async () => {
-    const { container } = render(<StudentRegistryForm />)
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    await avanti(3)
-    fireEvent.click(await screen.findByLabelText(/^Altro Soggetto$/))
-    await screen.findByLabelText(/Codice Fiscale Intestatario/)
     expect(await axe(container, axeOpts)).toHaveNoViolations()
   })
 
@@ -313,33 +271,6 @@ describe('ogni campo ha un nome, e ogni `htmlFor` un bersaglio', () => {
     // Nominati uno per uno: `verificaEtichette` non può accorgersi di un campo che
     // qualcuno rimuovesse del tutto, e questi quattro sono quelli che erano scoperti.
     for (const id of ['alunno-note-bes', 'alunno-intestatario-nome', 'alunno-intestatario-cognome', 'alunno-intestatario-codice-fiscale']) {
-      expect(container.querySelector(`label[for="${id}"]`)).not.toBeNull()
-      expect(container.querySelector(`[id="${id}"]`)).not.toBeNull()
-    }
-  })
-
-  it('StudentRegistryForm, tutti e quattro i passi: nessun `for` orfano, nessun `id` duplicato', async () => {
-    // Questa scheda non passava affatto da `verificaEtichette`: il controllo
-    // d'insieme copriva solo le altre due.
-    const { container } = render(<StudentRegistryForm />)
-    await waitFor(() => expect(screen.getByLabelText(/Codice Fiscale/)).toBeInTheDocument())
-    verificaEtichette(container)
-
-    await avanti(1)
-    await screen.findByLabelText(/Indirizzo di Residenza/)
-    verificaEtichette(container)
-
-    await avanti(1)
-    fireEvent.click(await screen.findByLabelText(/Studente BES \/ DSA/))
-    await screen.findByLabelText(/Note BES \/ DSA/)
-    verificaEtichette(container)
-    expect(container.querySelector('label[for="registry-note-bes"]')).not.toBeNull()
-
-    await avanti(1)
-    fireEvent.click(await screen.findByLabelText(/^Altro Soggetto$/))
-    await screen.findByLabelText(/Codice Fiscale Intestatario/)
-    verificaEtichette(container)
-    for (const id of ['registry-intestatario-nome', 'registry-intestatario-cognome', 'registry-intestatario-codice-fiscale']) {
       expect(container.querySelector(`label[for="${id}"]`)).not.toBeNull()
       expect(container.querySelector(`[id="${id}"]`)).not.toBeNull()
     }
@@ -446,11 +377,4 @@ describe('ogni `aria-describedby` punta a un elemento che esiste', () => {
     verificaDescrizioni(container)
   })
 
-  it('StudentRegistryForm — wizard appena aperto, che è lo stato senza badge', async () => {
-    const { container } = render(<StudentRegistryForm />)
-    const campoCf = await screen.findByLabelText(/Codice Fiscale/)
-    expect(container.querySelector('#registry-badge-coerenza-cf')).toBeNull()
-    expect(campoCf.getAttribute('aria-describedby')).toBeNull()
-    verificaDescrizioni(container)
-  })
 })

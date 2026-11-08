@@ -84,6 +84,7 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async () => ({ data: [], error: null }),
     from(table: string) {
       const b: Record<string, unknown> = {}
       for (const m of ['select', 'eq', 'in', 'gte', 'lte', 'not', 'order']) b[m] = () => b

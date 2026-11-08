@@ -49,7 +49,9 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
-  return { createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle) }
+  // Nessun anno attivo (`anno_attivo` → null): la lettura d'anno degrada a «niente filtro», come sul DB non migrato.
+  const rpc = { anno_attivo: () => ({ data: null, error: null }) }
+  return { createAdminClient: async () => creaFintoSupabase(h.db, h.tabelle, { rpc }) }
 })
 
 import { GET } from '@/app/api/educator-sections/route'

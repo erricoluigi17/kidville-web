@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, resolveAnnoScrittura } from '@/lib/auth/scope'
+import { assertSezioneInScope, resolveAnnoScrittura, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { annoDaEtichetta } from '@/lib/anno/etichetta'
 import { erroreAnno } from '@/lib/anno/errori'
@@ -114,7 +114,7 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
 
     // Isolamento per sede: si generavano certificati delle competenze per una
     // sezione di un'altra sede passandone l'uuid.
-    const fuoriScopePost = await assertSezioneInScope(supabase, auth.user, body.sectionId)
+    const fuoriScopePost = await assertSezioneScrivibile(supabase, auth.user, body.sectionId)
     if (fuoriScopePost) return fuoriScopePost
     const scuolaSezione = await sedeDellaSezione(supabase, body.sectionId)
     // Senza la sede non c'è anno da dichiarare: scrivere un certificato così lo lascerebbe senza `anno_id`. È un
@@ -219,7 +219,7 @@ export const PATCH = withRoute('admin/competenze:PATCH', async (request: NextReq
     }
     if (!cert) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
     const sectionId = cert.section_id as string
-    const fuoriScopePatch = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const fuoriScopePatch = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (fuoriScopePatch) return fuoriScopePatch
     const scuolaSezione = await sedeDellaSezione(supabase, sectionId)
 

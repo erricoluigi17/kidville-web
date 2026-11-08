@@ -72,6 +72,7 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
   assertAlunnoInScope: vi.fn(async () => null),
   assertSezioneInScope: vi.fn(async () => null),
+  assertSezioneScrivibile: vi.fn(async () => null),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn(async () => {}) }))
 vi.mock('@/lib/logging/logger', async (originale) => ({

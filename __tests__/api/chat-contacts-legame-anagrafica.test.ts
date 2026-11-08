@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async () => ({ data: [{ section_id: 'sec1', sola_lettura: false }], error: null }),
     from: (table: string) => {
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}
@@ -44,7 +45,7 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
         { id: 'doc1', ruolo: 'maestra', role: 'educator' },
         { id: 'gen1', nome: 'Anna', cognome: 'Bianchi', first_name: null, last_name: null },
       ],
-      utenti_sezioni: [{ sections: { name: 'Girasoli' } }],
+      sections: [{ name: 'Girasoli' }],
       alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', stato: 'iscritto' }],
       legame_genitori_alunni: [],
       student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],
@@ -62,7 +63,7 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
     h.requireUser.mockResolvedValue({ user: { id: 'doc1', role: 'educator' } })
     h.righe = {
       utenti: [{ id: 'doc1', ruolo: 'maestra', role: 'educator' }],
-      utenti_sezioni: [{ sections: { name: 'Girasoli' } }],
+      sections: [{ name: 'Girasoli' }],
       alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', stato: 'iscritto' }],
       legame_genitori_alunni: [],
       student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],

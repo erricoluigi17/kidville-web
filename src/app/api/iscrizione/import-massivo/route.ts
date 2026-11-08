@@ -74,6 +74,7 @@ import { primoGemelloFraIBambini } from '@/lib/iscrizioni/doppioni'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { invitiPrevisti, riprendiInvitiSospesi, emailSpediteOggi } from '@/lib/iscrizioni/import/inviti'
 import { pausaFraEmail } from '@/lib/email/ritmo'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const JOB = 'iscrizioni-import-invio'
 
@@ -95,7 +96,11 @@ async function nomiSezioniDiSede(
   supabase: SupabaseClient,
   scuolaId: string,
 ): Promise<Set<string> | null> {
-  const { data, error } = await supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  // Il pre-flight guarda le sezioni dell'anno ATTIVO, le sole che il trigger `sync_alunno_section_id` sa risolvere.
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
+  let ricerca = supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     const codice = (error as { code?: string }).code ?? null
     logEvento('iscrizione', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {

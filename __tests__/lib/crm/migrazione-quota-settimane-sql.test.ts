@@ -273,11 +273,13 @@ async function bambino(id: string): Promise<RigaBambino> {
     [id],
   )
 }
+// L'ordine segue l'inserimento: `creato_il` è `now()` e due eventi vicini possono avere lo stesso valore; a parità
+// decide `ctid` (la tabella è in sola aggiunta, quindi la posizione fisica è l'ordine di scrittura), non l'uuid a caso.
 async function tipiEvento(id: string): Promise<string[]> {
   return (
     await righe<{ tipo: string }>(
       `SELECT e.tipo FROM public.crm_eventi e JOIN public.crm_bambini b ON b.scheda_id = e.scheda_id
-        WHERE b.id = $1 AND e.tipo <> 'creata' ORDER BY e.creato_il, e.id`,
+        WHERE b.id = $1 AND e.tipo <> 'creata' ORDER BY e.creato_il, e.ctid`,
       [id],
     )
   ).map((r) => r.tipo)
@@ -286,7 +288,7 @@ async function datiEvento(id: string, tipo: string): Promise<Record<string, unkn
   return (
     await una<{ dati: Record<string, unknown> }>(
       `SELECT e.dati FROM public.crm_eventi e JOIN public.crm_bambini b ON b.scheda_id = e.scheda_id
-        WHERE b.id = $1 AND e.tipo = $2 ORDER BY e.creato_il DESC LIMIT 1`,
+        WHERE b.id = $1 AND e.tipo = $2 ORDER BY e.creato_il DESC, e.ctid DESC LIMIT 1`,
       [id, tipo],
     )
   ).dati

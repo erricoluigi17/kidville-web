@@ -4,13 +4,14 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
-import { assertClasseNomeInScope, assertSezioneInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY, vincoloConflittoAssente } from '@/lib/registro/chiave-orario';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -123,7 +124,7 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
         // perimetro e l'ambiguità si NEGA.
         let sezione: { id: string; name: string; scuola_id: string };
         if (sectionId) {
-            const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId);
+            const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId);
             if (scopeErr) return scopeErr;
             const { data: row, error: sezErr } = await supabase
                 .from('sections')
@@ -155,11 +156,15 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
                 ? [scuolaId]
                 : await resolveScuoleAttive(request, supabase, auth.user);
 
-            const { data: omonime, error: sezErr } = await supabase
+            // Il nome si ripete ogni anno: la lezione si registra sulla sezione dell'anno ATTIVO.
+            const anniAttivi = await anniAttiviDeiPlessi(supabase, perimetro);
+            let ricercaSezione = supabase
                 .from('sections')
                 .select('id, name, scuola_id')
                 .eq('name', classeSezione as string)
                 .in('scuola_id', perimetro);
+            ricercaSezione = filtraPerAnnoDiSede(ricercaSezione, anniAttivi);
+            const { data: omonime, error: sezErr } = await ricercaSezione;
             if (sezErr) {
                 logEvento('registro', 'error', {
                     operazione: 'register/lessons:POST', esito: 'sezione-non-risolta', sezione: classeSezione,

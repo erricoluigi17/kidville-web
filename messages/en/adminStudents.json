@@ -26,8 +26,10 @@
   "statConAllergie": "With Allergies",
   "staffErrCaricamento": "Error loading staff",
   "toastAssegnati": "{n, plural, one {# student assigned} other {# students assigned}} to {classe}",
+  "toastAssegnatiParziale": "{n, plural, one {# student assigned} other {# students assigned}} of {m} to {classe}: the others were left behind, try again",
   "toastErrAssegnazione": "Error in bulk assignment",
   "toastAssegnatiMensa": "{n, plural, one {# student assigned} other {# students assigned}} to meal group {nome}",
+  "toastAssegnatiMensaParziale": "{n, plural, one {# student assigned} other {# students assigned}} of {m} to meal group {nome}: the others were left behind, try again",
   "toastErrMensa": "Error assigning meal group",
   "exportVuoto": "No data to export",
   "toastExport": "{n, plural, one {Exported # record to CSV} other {Exported # records to CSV}}",
@@ -872,5 +874,6 @@
   "scadRinnova": "Renew",
   "scadRinnovaDi": "Renew the document of {nome}",
   "dataIscrizioneAnno": "School year {anno}",
-  "dataIscrizioneFuoriAnno": "The date does not fall in any school year of this location"
+  "dataIscrizioneFuoriAnno": "The date is after the end of the current school year. You can only enrol for the current year: enrolment for next year will be done through the enrolments.",
+  "dataIscrizioneIngressoDal": "School year {anno} · joins from {giorno}"
 }

@@ -35,7 +35,8 @@ export const POST = withRoute(
     const annoSedeId = id.data
 
     const supabase = await createAdminClient()
-    const fuoriSede = await assertAnnoSedeInScope(supabase, auth.user, annoSedeId, OPERAZIONE)
+    const annoLetto: { scuolaId?: string } = {}
+    const fuoriSede = await assertAnnoSedeInScope(supabase, auth.user, annoSedeId, OPERAZIONE, annoLetto)
     if (fuoriSede) return fuoriSede
     const chi = { utente: auth.user.id, annoSedeId }
 
@@ -52,7 +53,7 @@ export const POST = withRoute(
 
     if (r.cambiato) {
       logIscrizioniAperte(chi)
-      await tracciaAnno(supabase, auth.user, annoSedeId, valoriApertura(r))
+      await tracciaAnno(supabase, auth.user, annoSedeId, valoriApertura(r), annoLetto.scuolaId)
     }
     return NextResponse.json({ success: true, data: r })
   },

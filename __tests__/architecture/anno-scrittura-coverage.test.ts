@@ -15,7 +15,9 @@ import { COPPIE_OBLIO_AMMESSE } from '@/lib/gdpr/oblio-registro'
  *  1. lo SCANNER, provato su sorgenti finti (senza di lui il lock sarebbe verde anche se non leggesse niente);
  *  2. le scritture sulle tabelle DICHIARATE portano l'anno (`anno_id`) e lo ricavano da un helper;
  *  3. la ZONA OBLIO scrive il registro solo da `scriviOblio` / `svuotaOblio` / `.rpc`;
- *  4. la DOPPIA SCRITTURA `alunni` → `frequenze` passa da `scriviFrequenza` (o è in `ESENTI`, col suo motivo);
+ *  4. la DOPPIA SCRITTURA `alunni` ↔ `frequenze` (fase B, 4.3.5): ogni UPDATE di `alunni` con colonne copiate passa da
+ *     `scriviAlunnoEFrequenza` (prima la frequenza, poi la scheda), un INSERT da quello o da `scriviFrequenzaDopoAlunni`;
+ *     nessuno fuori da `src/lib/anno/` chiama `scriviFrequenza` da solo (o il sito è in `ESENTI`, col suo motivo);
  *  5. nessun CALCOLO DELL'ANNO A MANO fuori dal modulo dell'anno (con l'elenco di quelli di oggi e il tetto);
  *  6. l'SQL: ogni funzione che scrive il registro ha una classe, e le funzioni di oblio hanno l'interruttore
  *     nella loro ULTIMA definizione (non nella prima che capita);
@@ -438,6 +440,21 @@ function sitiAlunniConColonneCopiate(files: Analisi[], colonne: string[]): { a: 
   return out
 }
 
+const RE_HELPER_ORDINE = /\bscriviAlunnoEFrequenza\s*\(/
+const RE_DOPO_INSERT = /\bscriviFrequenzaDopoAlunni\s*\(/
+const RE_FREQUENZA_DA_SOLA = /\bscriviFrequenza\s*\(/
+/** I soli file che possono chiamare `scriviFrequenza`: l'ordine delle due scritture lo decide `scrittura.ts`. */
+const PUO_CHIAMARE_SCRIVI_FREQUENZA = new Set(['src/lib/anno/scrittura.ts', 'src/lib/anno/frequenze.ts'])
+
+/**
+ * Fase B (4.3.5): la frequenza comanda, quindi una scrittura di `alunni` che cambia una colonna copiata (o `classe_sezione`,
+ * da cui il trigger BEFORE ricava `section_id`) deve passare dalla frequenza PER PRIMA. Regole, a livello di file:
+ *  - un UPDATE/UPSERT vuole `scriviAlunnoEFrequenza(` (la CHIAMATA, non l'import);
+ *  - un INSERT vuole quello o `scriviFrequenzaDopoAlunni(` (la FK obbliga a scrivere prima la scheda);
+ *  - nessun file fuori da `src/lib/anno/` chiama `scriviFrequenza(` da solo: è l'ordine della fase A («alunni, e poi la
+ *    frequenza»), che in fase B annulla la scrittura alla prossima volta che la frequenza si tocca;
+ *  - i file in `ESENTI` sono fuori, col loro motivo.
+ */
 function violazioniDoppiaScrittura(
   files: Analisi[],
   colonne: string[],
@@ -446,10 +463,20 @@ function violazioniDoppiaScrittura(
   const out: string[] = []
   const nelleEsenti = new Set(esenti.map((e) => e.file))
   for (const { a, s } of sitiAlunniConColonneCopiate(files, colonne)) {
-    // la CHIAMATA, non l'import: togliere la chiamata lasciando l'import non deve far passare il lock
-    if (/\bscriviFrequenza\s*\(/.test(a.m.struttura)) continue
     if (nelleEsenti.has(a.percorso)) continue
-    out.push(`${a.percorso}:${s.riga} — \`.from('alunni').${s.op}\` con colonne copiate in un file che non chiama scriviFrequenza e non è in ESENTI`)
+    const conOrdine = RE_HELPER_ORDINE.test(a.m.struttura)
+    const dopoInsert = s.op === 'insert' && RE_DOPO_INSERT.test(a.m.struttura)
+    if (conOrdine || dopoInsert) continue
+    out.push(
+      `${a.percorso}:${s.riga} — \`.from('alunni').${s.op}\` con colonne copiate in un file che non chiama scriviAlunnoEFrequenza` +
+        `${s.op === 'insert' ? ' (né scriviFrequenzaDopoAlunni)' : ''} e non è in ESENTI`,
+    )
+  }
+  for (const a of files) {
+    if (PUO_CHIAMARE_SCRIVI_FREQUENZA.has(a.percorso) || nelleEsenti.has(a.percorso)) continue
+    if (RE_FREQUENZA_DA_SOLA.test(a.m.struttura)) {
+      out.push(`${a.percorso} — chiama scriviFrequenza da solo: in fase B la frequenza si scrive PRIMA di alunni, con scriviAlunnoEFrequenza (src/lib/anno/scrittura.ts)`)
+    }
   }
   return out
 }
@@ -939,20 +966,47 @@ describe('anno-scrittura-coverage — 1. lo scanner, provato su sorgenti finti',
     expect(violazioniOblio([wipe])).toHaveLength(1)
   })
 
-  it('doppia scrittura: `alunni` con colonne copiate vuole la CHIAMATA a scriviFrequenza (l’import non basta) o ESENTI', () => {
+  it('doppia scrittura (fase B): un UPDATE vuole la CHIAMATA a scriviAlunnoEFrequenza; scriviFrequenza da sola no; un INSERT può usare scriviFrequenzaDopoAlunni', () => {
     const colonne = ['sospeso', 'section_id']
     const nuda = finto('src/lib/x.ts', "await s.from('alunni').update({ sospeso: true }).eq('id', id)")
     expect(violazioniDoppiaScrittura([nuda], colonne, [])).toHaveLength(1)
-    const conChiamata = finto(
+    const conOrdine = finto(
+      'src/lib/x.ts',
+      "import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura'\nawait scriviAlunnoEFrequenza(s, {}, () => s.from('alunni').update({ sospeso: true }))",
+    )
+    expect(violazioniDoppiaScrittura([conOrdine], colonne, [])).toEqual([])
+    // l'ordine della fase A: alunni, e POI scriviFrequenza — è proprio ciò che il lock deve rifiutare
+    const ordineVecchio = finto(
       'src/lib/x.ts',
       "import { scriviFrequenza } from '@/lib/anno/frequenze'\nawait s.from('alunni').update({ sospeso: true })\nawait scriviFrequenza(s, {})",
     )
-    expect(violazioniDoppiaScrittura([conChiamata], colonne, [])).toEqual([])
+    expect(violazioniDoppiaScrittura([ordineVecchio], colonne, [])).toHaveLength(2)
+    // con l'helper nel file ma una scriviFrequenza da sola accanto: rifiutata lo stesso
+    const misto = finto(
+      'src/lib/x.ts',
+      "await scriviAlunnoEFrequenza(s, {}, () => s.from('alunni').update({ sospeso: true }))\nawait scriviFrequenza(s, {})",
+    )
+    expect(violazioniDoppiaScrittura([misto], colonne, [])).toHaveLength(1)
+    // solo l'import non basta
     const soloImport = finto(
       'src/lib/x.ts',
-      "import { scriviFrequenza } from '@/lib/anno/frequenze'\nawait s.from('alunni').update({ sospeso: true })",
+      "import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura'\nawait s.from('alunni').update({ sospeso: true })",
     )
     expect(violazioniDoppiaScrittura([soloImport], colonne, [])).toHaveLength(1)
+    // un UPDATE con la sola scriviFrequenzaDopoAlunni non basta (è l'ordine di fase A); un INSERT sì
+    const updateDopo = finto(
+      'src/lib/x.ts',
+      "await s.from('alunni').update({ sospeso: true })\nawait scriviFrequenzaDopoAlunni(s, {})",
+    )
+    expect(violazioniDoppiaScrittura([updateDopo], colonne, [])).toHaveLength(1)
+    const insertDopo = finto(
+      'src/lib/x.ts',
+      "await s.from('alunni').insert({ sospeso: true })\nawait scriviFrequenzaDopoAlunni(s, {})",
+    )
+    expect(violazioniDoppiaScrittura([insertDopo], colonne, [])).toEqual([])
+    // i file dell'ordine possono chiamare scriviFrequenza
+    const scrittura = finto('src/lib/anno/scrittura.ts', 'await scriviFrequenza(s, {})')
+    expect(violazioniDoppiaScrittura([scrittura], colonne, [])).toEqual([])
     expect(violazioniDoppiaScrittura([nuda], colonne, [{ file: 'src/lib/x.ts', motivo: 'm' }])).toEqual([])
     const anagrafica = finto('src/lib/y.ts', "await s.from('alunni').update({ nome: 'x' })")
     expect(violazioniDoppiaScrittura([anagrafica], colonne, [])).toEqual([])
@@ -1081,22 +1135,25 @@ describe('anno-scrittura-coverage — 4. la doppia scrittura alunni → frequenz
     expect([...new Set(daTs)].sort(), 'campiFrequenzaDaAlunno e il trigger copiano colonne diverse: alunni_specchio_frequenza (M1) vs frequenze.ts').toEqual([...COLONNE_COPIATE].sort())
   })
 
-  it('ogni scrittura di `alunni` con colonne copiate chiama scriviFrequenza o sta in ESENTI', () => {
-    const v = violazioniDoppiaScrittura(ANALISI, COLONNE_COPIATE, ESENTI)
+  it('ogni scrittura di `alunni` con colonne copiate (o classe_sezione) passa da scriviAlunnoEFrequenza o sta in ESENTI', () => {
+    const v = violazioniDoppiaScrittura(ANALISI, [...COLONNE_COPIATE, 'classe_sezione'], ESENTI)
     expect(
       v,
-      `Scritture di alunni con colonne copiate senza scriviFrequenza (${v.length}). Chiama scriviFrequenza dopo la scrittura, ` +
-        `oppure aggiungi il file a ESENTI di src/lib/anno/frequenze.ts con il motivo.` +
+      `Scritture di alunni che non passano dalla frequenza per prima (${v.length}). Usa scriviAlunnoEFrequenza ` +
+        `(src/lib/anno/scrittura.ts), oppure aggiungi il file a ESENTI di src/lib/anno/frequenze.ts con il motivo.` +
         elenco(v),
     ).toEqual([])
   })
 
-  it('ogni voce di ESENTI è viva: il file scrive `alunni` e NON chiama scriviFrequenza', () => {
+  it('ogni voce di ESENTI è viva: il file scrive `alunni` e NON passa dalla frequenza', () => {
     for (const e of ESENTI) {
       const a = PER_PERCORSO.get(e.file)
       expect(a, `${e.file} non esiste più: togli la voce da ESENTI`).toBeDefined()
       expect(a!.scritture.some((s) => s.tabella === 'alunni' && s.op !== 'delete'), `${e.file} non scrive più alunni: togli la voce`).toBe(true)
-      expect(/\bscriviFrequenza\s*\(/.test(a!.m.struttura), `${e.file} chiama scriviFrequenza: non è più un'eccezione`).toBe(false)
+      expect(
+        RE_FREQUENZA_DA_SOLA.test(a!.m.struttura) || RE_HELPER_ORDINE.test(a!.m.struttura) || RE_DOPO_INSERT.test(a!.m.struttura),
+        `${e.file} passa dalla frequenza: non è più un'eccezione`,
+      ).toBe(false)
       expect(e.motivo.length, `${e.file}: ESENTI vuole un motivo`).toBeGreaterThan(20)
     }
   })

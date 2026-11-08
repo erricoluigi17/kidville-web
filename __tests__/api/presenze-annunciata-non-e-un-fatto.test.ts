@@ -140,6 +140,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: vi.fn(async () => null),
+  assertSezioneScrivibile: vi.fn(async () => null),
   assertAlunniInSezione: vi.fn(async () => null),
   assertClasseNomeInScope: vi.fn(async () => null),
   resolveScuoleAttive: vi.fn(async () => [SEDE]),

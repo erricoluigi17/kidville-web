@@ -10,7 +10,9 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { classeEsisteInOgniSede } from '../route';
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
+import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
 // ============================================================================
 // RIPORTA UN ALUNNO FRA GLI ISCRITTI — il ritorno, che è metà del modello.
@@ -118,7 +120,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // Lettura minima: nessuna colonna che nomini il bambino.
         const { data: prima, error: errLettura } = await supabase
             .from('alunni')
-            .select('id, scuola_id, stato, classe_sezione, archiviato_il, archiviato_classe_sezione, spazio_liberato_il')
+            .select('id, scuola_id, stato, classe_sezione, archiviato_il, archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione, spazio_liberato_il')
             .eq('id', alunnoId)
             .in('scuola_id', plessi)
             .maybeSingle();
@@ -157,7 +159,24 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
          * fatto a mano dalla tendina (`stato = 'ritirato'`, `archiviato_il` NULL),
          * che è precisamente il caso in cui il ritorno serve.
          */
-        if (eAncoraIscritto(prima.stato as string | null)) {
+        /**
+         * ⚠️ ECCEZIONE: una riattivazione a metà. Senza transazione (fino alla PR 5) la frequenza `iscritto` può essere
+         * scritta e `alunni` no: lo specchio ha già messo `stato = 'iscritto'`, ma le tracce dell'archiviazione
+         * (`archiviato_da`, `archiviato_motivo`, la memoria della classe) sono ancora lì. Uno stato `iscritto` con quelle
+         * tracce NON è un bambino davvero iscritto: è il lavoro da completare, e riprovare lo completa.
+         */
+        const tracceArchiviazione =
+            prima.archiviato_da != null || prima.archiviato_motivo != null ||
+            prima.archiviato_section_id != null || prima.archiviato_classe_sezione != null;
+        // ⚠️ Le stesse tracce le lascia anche un'ARCHIVIAZIONE fallita a metà (la memoria è scritta prima della frequenza):
+        // un iscritto VERO con la memoria addosso. Lì la classe attuale è quella ricordata e riattivare completa senza
+        // spostare nessuno. Se invece la classe attuale è DIVERSA dalla ricordata la memoria è stantia: riscriverla
+        // sposterebbe il bambino, quindi 409. Senza classe attuale non c'è nessuno da spostare.
+        const attuale = ((prima.classe_sezione as string | null) ?? '').trim();
+        const ricordataPrima = ((prima.archiviato_classe_sezione as string | null) ?? '').trim();
+        const classeCompatibile = attuale === '' || attuale === ricordataPrima;
+        const mezzaRiattivata = prima.stato === STATO_ISCRITTO && tracceArchiviazione && classeCompatibile;
+        if (eAncoraIscritto(prima.stato as string | null) && !mezzaRiattivata) {
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/riattiva:POST', esito: 'gia-iscritto', alunno: alunnoId,
             });
@@ -254,13 +273,29 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // l'archiviazione.
         if (classeDaScrivere !== null) aggiornamento.classe_sezione = classeDaScrivere;
 
-        const { data: dopo, error: errScrittura } = await supabase
-            .from('alunni')
-            .update(aggiornamento)
-            .eq('id', alunnoId)
-            .in('scuola_id', plessi)
-            .select('id')
-            .single();
+        // Fase B (§4.19): prima la frequenza dell'anno attivo (`archiviato_il` NULL → `iscritto` senza uscita; la sezione
+        // della classe ripristinata la risolve `scriviAlunnoEFrequenza` dal nome), poi `alunni`. Se la frequenza non si
+        // scrive, la scheda resta com'era. In fase A: `alunni` e poi la frequenza, fail-open.
+        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        const annoSedeId = await annoAttivoDiSede(supabase, sede);
+        const esitoScrittura = await scriviAlunnoEFrequenza(
+            supabase,
+            { alunnoId, annoSedeId, campi: campiFreq, classeSezione: classeDaScrivere },
+            () => supabase
+                .from('alunni')
+                .update(aggiornamento)
+                .eq('id', alunnoId)
+                .in('scuola_id', plessi)
+                .select('id')
+                .single(),
+        );
+        if (!esitoScrittura.scritto) {
+            return rispostaFrequenzaNonScritta(esitoScrittura.codice, 'admin/students/riattiva:POST');
+        }
+        const { data: dopo, error: errScrittura } = esitoScrittura.risultato;
+
+        // La frequenza è già scritta e `alunni` no: non è vero che «la scheda è rimasta com'era». Riprovare completa.
+        if (errScrittura && esitoScrittura.frequenzaGiaScritta) return rispostaScritturaIncompleta();
 
         if (errScrittura) {
             if (colonnaAssente(errScrittura)) return archivioNonDisponibile('scrittura', alunnoId);
@@ -281,14 +316,6 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                 { error: 'Il bambino non è stato riportato fra gli iscritti: la scheda è rimasta com\'era.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
                 { status: 500 },
             );
-        }
-
-        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
-        // `archiviato_il` NULL → `iscritto` senza uscita; `section_id` lo risolve il trigger BEFORE e lo copia lo specchio.
-        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
-        if (Object.keys(campiFreq).length > 0) {
-            const annoSedeId = await annoAttivoDiSede(supabase, sede);
-            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFreq });
         }
 
         await logScrittura(supabase, {

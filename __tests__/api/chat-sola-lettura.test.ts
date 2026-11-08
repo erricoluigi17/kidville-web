@@ -65,6 +65,8 @@ vi.mock('@/lib/supabase/server-client', () => {
 import { GET as LISTA, POST as APRI } from '@/app/api/chat/threads/route'
 import { GET as LEGGI, POST as SCRIVI } from '@/app/api/chat/messages/route'
 import { GET as RUBRICA } from '@/app/api/chat/contacts/route'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { leggiChatNonLetti } from '@/lib/chat/non-letti'
 
 const url = 'http://test/api/chat'
 const reqGet = (q = '') => new Request(`${url}${q}`) as never
@@ -408,5 +410,63 @@ describe('POST /api/chat/threads', () => {
     h.figliAttivi = (() => INDIETRO) as Rpc
 
     expect((await apri(DOC_VECCHIO)).status).toBe(201)
+  })
+})
+
+describe('il badge della chat (`leggiChatNonLetti`)', () => {
+  const badge = async () => leggiChatNonLetti(await createAdminClient() as never, GEN, 'notifiche:GET')
+
+  it('il thread nascosto con non letti non entra nel totale, e badge e lista dicono lo stesso', async () => {
+    // Il ripiego della lista conta sullo stesso database del badge.
+    h.riepilogo = (() => INDIETRO) as Rpc
+
+    const conta = await badge()
+    expect(conta).toEqual({ totale: 1, threadIds: [T_VIVO] })
+
+    const res = await LISTA(reqGet())
+    const lista = await res.json() as Array<{ id: string; unread_count: number }>
+    expect(lista.map((t) => t.id)).toEqual(conta?.threadIds)
+    expect(lista.reduce((somma, t) => somma + t.unread_count, 0)).toBe(conta?.totale)
+  })
+
+  it('tutti nascosti: zero, e il conteggio dei messaggi non parte', async () => {
+    h.threadVisibili = (() => ({ data: [], error: null })) as Rpc
+
+    expect(await badge()).toEqual({ totale: 0, threadIds: [] })
+    expect(h.lette).not.toContain('chat_messages')
+  })
+
+  it('schema indietro: si conta come oggi, su tutti i thread', async () => {
+    h.threadVisibili = (() => INDIETRO) as Rpc
+
+    expect(await badge()).toEqual({ totale: 2, threadIds: [T_VIVO, T_NASCOSTO] })
+  })
+
+  it('un guasto della funzione non è zero: `null`, cioè «non lo so», e il conteggio non parte', async () => {
+    h.threadVisibili = (() => GUASTO) as Rpc
+
+    expect(await badge()).toBeNull()
+    expect(h.lette).not.toContain('chat_messages')
+  })
+
+  it('nessuna conversazione: la funzione non viene chiesta, è il caso di quasi tutti i genitori nuovi a ogni giro', async () => {
+    const chiesta = vi.fn(() => ({ data: [], error: null }))
+    h.threadVisibili = chiesta as Rpc
+    h.db.chat_threads = []
+
+    expect(await badge()).toEqual({ totale: 0, threadIds: [] })
+    expect(chiesta).not.toHaveBeenCalled()
+  })
+
+  it('gira a ogni poll: la lettura riuscita non lascia una riga, il guasto sì', async () => {
+    await badge()
+    expect(h.logEvento.mock.calls.filter((c) => c[0] === 'anno-scolastico')).toEqual([])
+
+    h.threadVisibili = (() => GUASTO) as Rpc
+    await badge()
+    expect(h.logEvento).toHaveBeenCalledWith('anno-scolastico', 'error', expect.objectContaining({
+      operazione: 'anno/visibilita:thread_visibili',
+      esito: 'lettura-fallita',
+    }), expect.anything())
   })
 })

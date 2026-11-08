@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // Mock generico: builder thenable (risolve per-tabella FIFO) + registro chiamate.
 // Stessa forma di `push-dispatch.test.ts`, con una differenza che è tutto il punto
@@ -18,6 +19,7 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
       from(table: string) {
         const qb: Record<string, unknown> = {}
         const rec = (m: string) => (...args: unknown[]) => { state.calls.push({ table, m, args }); return qb }

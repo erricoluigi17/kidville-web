@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * «CONSEGNATO» QUANDO IL MESSAGGIO ARRIVA, NON QUANDO SI APRE LA LISTA CHAT (D2).
@@ -55,6 +56,7 @@ const h = vi.hoisted(() => {
     return q[i] ?? { data: [], count: 0, error: null }
   }
   const client = {
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from(table: string) {
       const qb: Record<string, unknown> = {}
       const rec = (m: string) => (...args: unknown[]) => { state.calls.push({ table, m, args }); return qb }

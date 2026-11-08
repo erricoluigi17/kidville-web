@@ -45,6 +45,12 @@ type Esito =
 function makeClient(esiti: Esito[]) {
     const catene: Catena[] = [];
     const client = {
+        // La funzione di visibilità lascia tutti i thread della prima query: qui si prova il conteggio.
+        rpc: async () => {
+            const primo = esiti[0];
+            const righe = primo instanceof Error ? [] : primo?.data ?? [];
+            return { data: righe.map((t) => ({ thread_id: t.id, scrivibile: true })), error: null };
+        },
         from(table: string) {
             const c: Catena = { table, select: [], or: [], in: [], neq: [], is: [] };
             catene.push(c);
@@ -83,10 +89,13 @@ const ALTRO_UTENTE = 'aaaaaaaa-0000-4000-8000-000000000002';
 const THREAD_1 = 'dddddddd-0000-4000-8000-000000000001';
 const THREAD_2 = 'dddddddd-0000-4000-8000-000000000002';
 
-/** I campi passati a `logEvento`, per livello. */
+/**
+ * I campi passati a `logEvento`, per livello, sul canale di QUESTO modulo. `leggiVisibilita` scrive su
+ * `anno-scolastico` e risponde di quelle righe: con 1000 thread ne aggiunge una sua, con l'uuid dell'utente.
+ */
 function campiLoggati(livello: string): Array<Record<string, unknown>> {
     return (vi.mocked(logEvento).mock.calls as Array<[string, string, Record<string, unknown>]>)
-        .filter((c) => c[1] === livello)
+        .filter((c) => c[0] === 'chat' && c[1] === livello)
         .map((c) => c[2]);
 }
 

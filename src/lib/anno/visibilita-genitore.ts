@@ -67,6 +67,8 @@ export async function leggiVisibilita<T>(
   funzione: FunzioneVisibilita,
   utente: string,
   altri: Record<string, unknown> = {},
+  // Per chi gira a ogni poll: una riga di successo ogni 60 s per persona è solo rumore.
+  { successoMuto = false }: { successoMuto?: boolean } = {},
 ): Promise<EsitoVisibilita<T>> {
   const operazione = `anno/visibilita:${funzione}`
   const { data, error } = await supabase.rpc(funzione, { p_utente: utente, ...altri })
@@ -82,7 +84,7 @@ export async function leggiVisibilita<T>(
   const righe = (Array.isArray(data) ? data : data === null || data === undefined ? [] : [data]) as T[]
   if (righe.length >= RIGHE_DA_CONTROLLARE) {
     logEvento('anno-scolastico', 'warn', { operazione, esito: 'righe-forse-tagliate', n: righe.length, utente })
-  } else {
+  } else if (!successoMuto) {
     logEvento('anno-scolastico', 'info', { operazione, esito: 'letta', n: righe.length })
   }
   return { stato: 'ok', righe }

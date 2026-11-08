@@ -4,6 +4,7 @@ import { requireUser, type AuthResult } from '@/lib/auth/require-staff'
 import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo'
 import { verificaLegameGenitore } from '@/lib/anagrafiche/legami'
 import { verificaAlunnoAttivo } from '@/lib/alunni/attivo'
+import { esitoFiglioAttivo, logVisibilitaNegata } from '@/lib/anno/visibilita-genitore'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -96,12 +97,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  * if (auth.response) return auth.response
  * const userId = auth.user.id
  * ```
+ *
+ * PR 4.4 · `{ soloAttivo: true }` chiede in più che il figlio sia attivo per la funzione SQL `figli_attivi`, altrimenti 403
+ * `FIGLIO_NON_ATTIVO`. Vale solo sul ramo del legame: lo staff non passa di lì, e la docente-genitore in veste di lavoro nemmeno,
+ * su un bambino che non è suo. Chi legge da una funzione di visibilità guarda `perLegame`: dice che la porta l'ha aperta il legame
+ * e non il ruolo, senza rifare la lettura che il gate ha già fatto. Le altre route restano col booleano di sempre.
  */
 export async function requireParentOfStudent(
   request: Request,
   studentId: string,
-  richiediAttivo: boolean = true
-): Promise<AuthResult> {
+  richiediAttivo: boolean | { soloAttivo: true } = true
+): Promise<AuthResult & { perLegame?: true }> {
   const auth = await requireUser(request)
   if (auth.response) return auth
 
@@ -187,6 +193,25 @@ export async function requireParentOfStudent(
     }
 
     if (esito === 'si') {
+      // PR 4.4: la frequenza dell'anno attivo, prima del controllo qui sotto, che resta sopra la funzione: una frequenza viva
+      // senza sezione la funzione la dà attiva, e l'app di famiglia quel bambino non lo mostra. `indietro` vuol dire il controllo
+      // di oggi. Il guasto è un 500 come il `non-deciso` qui sopra, e il log l'ha già lasciato `leggiVisibilita`.
+      if (typeof richiediAttivo === 'object') {
+        const figlio = await esitoFiglioAttivo(supabase, auth.user.id, studentId)
+        if (figlio === 'guasto') {
+          return { response: NextResponse.json({ error: 'Errore interno' }, { status: 500 }) }
+        }
+        if (figlio === 'non-attivo') {
+          logVisibilitaNegata('figlio-non-attivo', { utente: auth.user.id, alunno_id: studentId }, ['alunno_id'])
+          return {
+            response: NextResponse.json(
+              { error: 'Questo bambino non risulta iscritto nell’anno in corso. Per informazioni contatta la segreteria.', codice: 'FIGLIO_NON_ATTIVO' },
+              { status: 403 },
+            ),
+          }
+        }
+      }
+
       // ─── IL LEGAME C'È, MA IL BAMBINO PUÒ NON ESSERE PIÙ FRA I VISIBILI ──
       //
       // Dal 2026-09-05 l'app di famiglia non mostra più i figli senza sezione, i
@@ -266,7 +291,7 @@ export async function requireParentOfStudent(
           ruolo: auth.user.role,
         })
       }
-      return { user: auth.user }
+      return { user: auth.user, perLegame: true }
     }
 
     // ─── ESITO `no`: E QUI LE DUE VESTI SI SEPARANO ────────────────────────

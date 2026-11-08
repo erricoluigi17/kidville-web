@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
+import { figliAttiviDi } from '@/lib/anno/visibilita-genitore';
 import {
   COLONNE_VISIBILITA,
   motivoNascosto,
@@ -574,6 +575,12 @@ function testo(v: unknown): string | null {
  * significherebbe svuotare l'app a 662 famiglie perché uno schema è indietro — ma
  * un degrado muto sarebbe un filtro che smette di filtrare senza dirlo, quindi la
  * riga di `warn` non è un ornamento.
+ *
+ * ⚠️ PR 4.4: «ATTIVO» LO DICE LA FUNZIONE SQL `figli_attivi`, cioè la frequenza dell'anno attivo. Il filtro qui sotto resta sopra
+ * la funzione: lei dà attivo anche un bambino senza sezione o `ritirato` non archiviato, se ha una frequenza viva, e l'app di
+ * famiglia quei bambini non li mostra. Schema indietro = il comportamento di prima. Ogni altro errore = nessun figlio ed `errore`
+ * valorizzato, come una lettura fallita di `alunni`: il chiamante risponde 500, e la lista larga non esce mai. I figli con il legame
+ * e senza frequenza attiva si contano fra i `ritirato`: è la sola frase vera per chi li ha tutti così («non risulta più iscritto»).
  */
 export async function getFigliAttiviDiGenitore(
   supabase: SupabaseClient,
@@ -582,6 +589,25 @@ export async function getFigliAttiviDiGenitore(
   const { figli: ids, completo } = await getFigliDiGenitoreEsito(supabase, accountId);
   if (ids.length === 0) {
     return { righe: [], totaleLegami: 0, nascosti: nascostiVuoti(), completo, errore: null };
+  }
+
+  const frequenze = await figliAttiviDi(supabase, accountId);
+  if (frequenze.stato === 'guasto') {
+    return {
+      righe: [],
+      totaleLegami: ids.length,
+      nascosti: nascostiVuoti(),
+      completo: false,
+      errore: frequenze.errore,
+    };
+  }
+  // `null` = schema indietro: nessuna frequenza da guardare. Altrimenti, per ogni bambino, se almeno una frequenza viva ha la sezione.
+  let conSezione: Map<string, boolean> | null = null;
+  if (frequenze.stato === 'ok') {
+    conSezione = new Map();
+    for (const f of frequenze.righe) {
+      conSezione.set(f.alunno_id, Boolean(conSezione.get(f.alunno_id)) || Boolean(f.section_id));
+    }
   }
 
   let colonne = [...COLONNE_FIGLIO];
@@ -629,6 +655,11 @@ export async function getFigliAttiviDiGenitore(
     // bambino nascosto nell'elenco e visibile aprendo il link, o viceversa.
     const motivo = motivoNascosto(r, presenti);
     if (motivo) { nascosti[motivo] += 1; continue; }
+    if (conSezione) {
+      const sezioneViva = conSezione.get(id);
+      if (sezioneViva === undefined) { nascosti.ritirato += 1; continue; }
+      if (!sezioneViva) { nascosti['senza-sezione'] += 1; continue; }
+    }
     righe.push({
       id,
       nome: testo(r.nome),

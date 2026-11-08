@@ -839,5 +839,8 @@
   "annoStatoDiverso": "status differs between locations",
   "erroreScritturaIncompleta": "The change was only partly saved: the school-year enrolment record is updated, the child’s card is not. Try again: if the fault was temporary, the new attempt completes the work.",
   "erroreCodiceFiscaleGiaUsato": "This tax code is already registered on another record: check that it is typed correctly (it may be a duplicate to sort out) and save again. Nothing was changed.",
-  "erroreAlunnoAnonimizzato": "This record has been anonymised and cannot be archived or edited: no change was recorded."
+  "erroreAlunnoAnonimizzato": "This record has been anonymised and cannot be archived or edited: no change was recorded.",
+  "erroreFiglioNonAttivo": "This child is not enrolled in the current school year. Please contact the school office.",
+  "erroreChatSolaLettura": "This conversation is read-only: you can read it again, but you cannot send messages.",
+  "erroreDataFuoriAnno": "This day is outside the current school year: it cannot be booked or cancelled."
 }

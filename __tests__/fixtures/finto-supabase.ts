@@ -587,9 +587,20 @@ async function oblioScriviFinta(from: (tabella: string) => unknown, args: Riga):
  * file nasconderebbe l'oggetto di quei test. Qui risponde «zero righe tolte»; chi
  * vuole provarla davvero la passa in `opzioni.rpc`, che vince. La funzione SQL vera
  * è provata su Postgres in `__tests__/lib/scatola-nera-sql.test.ts`.
+ *
+ * Le funzioni di visibilità del genitore (PR 4.4): il finto si comporta come il database della CI, che non le ha, cioè con lo
+ * schema indietro. È il percorso di ieri, ed è quello che i test scritti prima di quel giorno misurano. Chi prova la visibilità
+ * passa la funzione in `opzioni.rpc`; la funzione SQL vera è provata in `__tests__/db/anno-visibilita-genitore.test.ts`.
  */
+const schemaIndietro = (): RispostaRpc => ({ data: null, error: { code: 'PGRST202', message: 'funzione assente' } })
 const RPC_DI_SERIE: Record<string, (args: Riga) => RispostaRpc> = {
   scatola_nera_dimentica: () => ({ data: 0, error: null }),
+  figli_attivi: schemaIndietro,
+  avvisi_visibili_genitore: schemaIndietro,
+  thread_visibili: schemaIndietro,
+  thread_e_visibile: schemaIndietro,
+  voci_visibili_genitore: schemaIndietro,
+  galleria_pagina_genitore: schemaIndietro,
 }
 
 /**

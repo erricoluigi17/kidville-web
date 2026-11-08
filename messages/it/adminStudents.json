@@ -870,5 +870,7 @@
   "staffDocDatiNumeroObbligatorio": "Indica il numero del documento, oppure lascia quello che c’è.",
   "staffDocDatiErrore": "Non è stato possibile salvare i dati del documento. Riprova fra qualche istante.",
   "scadRinnova": "Rinnova",
-  "scadRinnovaDi": "Rinnova il documento di {nome}"
+  "scadRinnovaDi": "Rinnova il documento di {nome}",
+  "dataIscrizioneAnno": "Anno scolastico {anno}",
+  "dataIscrizioneFuoriAnno": "La data non cade in nessun anno scolastico della sede"
 }

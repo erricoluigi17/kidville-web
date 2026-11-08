@@ -16,6 +16,8 @@ import { SelettoreAlunni } from '@/components/ui/SelettoreAlunni';
 import { SELEZIONE_TUTTI, parametriSelezione, alunniBersaglio, type SelezioneAlunni } from '@/lib/pagamenti/selezione-alunni';
 import { type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
 import { ScegliMetodiAmmessi } from './ScegliMetodiAmmessi';
+import { useAnnoDi } from '@/lib/context/calendario-context';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -48,7 +50,15 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [importo, setImporto] = useState<number>(0);
     const [scadenza, setScadenza] = useState(() => new Date().toISOString().slice(0, 10));
     const [obbligatorio, setObbligatorio] = useState(true);
-    const [gruppo, setGruppo] = useState('');
+    // La chiave anti-doppione proposta porta l'anno SCOLASTICO di oggi della sede (`annoInizio`), non
+    // l'anno solare. Stato derivato: finché la segreteria non la scrive vale il proposto, e segue il
+    // calendario anche se arriva dopo le categorie.
+    const [oggi] = useState(() => oggiFiscaleISO());
+    const annoDi = useAnnoDi(scuolaId);
+    const [gruppoScritto, setGruppoScritto] = useState<string | null>(null);
+    const catScelta = categorie.find((c) => c.id === categoriaId);
+    const gruppoProposto = catScelta ? `${catScelta.slug || catScelta.nome.toLowerCase()}-${annoDi(oggi).annoInizio}` : '';
+    const gruppo = gruppoScritto ?? gruppoProposto;
     const [acconti, setAcconti] = useState(false);
     const [nRate, setNRate] = useState(3);
     // Con cosa si potrà pagare la voce: di partenza tutti e due, come prima della colonna.
@@ -69,7 +79,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
         setAnteprima(null);
         if (cat) {
             setDescrizione(cat.nome);
-            setGruppo(`${cat.slug || cat.nome.toLowerCase()}-${new Date().getFullYear()}`);
+            setGruppoScritto(null);
         }
     }, []);
 
@@ -207,7 +217,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencGruppoLabel')}</label>
-                    <input type="text" value={gruppo} onChange={(e) => { setGruppo(e.target.value); setAnteprima(null); }}
+                    <input type="text" value={gruppo} onChange={(e) => { setGruppoScritto(e.target.value); setAnteprima(null); }}
                         className={GC_INPUT} />
                 </div>
             </div>

@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, within, waitFor, act } from '@testing-library/react'
 import { SEDE_A, SEDE_B } from '../../fixtures/sedi'
 import { NuovaVotazioneForm } from '@/components/features/votazioni/admin/NuovaVotazioneForm'
-import { TITOLO_PREDEFINITO } from '@/lib/votazioni/tipi'
+import { titoloPredefinito } from '@/lib/votazioni/tipi'
+import { CalendarioProvider } from '@/lib/context/calendario-context'
+import { annoDelGiorno } from '@/lib/anno-scolastico'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import shared from '../../../messages/it/shared.json'
 
 /**
@@ -32,6 +35,8 @@ const h = vi.hoisted(() => ({
   genitoriStato: 200,
   genitori: [] as { utenteId: string; nome: string }[],
   chiamate: [] as { metodo: string; url: string; corpo: Record<string, unknown> | null }[],
+  /** `GET /api/anno/calendario`: la promessa da cui il test decide QUANDO arriva la risposta. */
+  calendario: null as null | Promise<Response>,
 }))
 
 const json = (corpo: unknown, status = 200) =>
@@ -60,6 +65,7 @@ beforeEach(() => {
     { utenteId: G_BIANCHI, nome: 'Bianchi Anna' },
   ]
   h.chiamate = []
+  h.calendario = null
 
   vi.stubGlobal(
     'fetch',
@@ -69,6 +75,9 @@ beforeEach(() => {
       const corpo = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null
       h.chiamate.push({ metodo, url: url.pathname + url.search, corpo })
 
+      if (url.pathname === '/api/anno/calendario') {
+        return h.calendario ?? json({ success: true, data: [] })
+      }
       if (url.pathname === '/api/admin/sections/scoped') {
         if (h.sezioniStato !== 200) return json({ error: 'x' }, h.sezioniStato)
         // La forma VERA della route: avvolta in `{ success, data }`, un gruppo per sede.
@@ -208,7 +217,10 @@ describe('NuovaVotazioneForm · quando «Apri votazione» è spento', () => {
     monta()
     await classiPronte()
 
-    expect((screen.getByLabelText('Titolo') as HTMLInputElement).value).toBe(TITOLO_PREDEFINITO)
+    // L'anno di OGGI senza calendario caricato = il predefinito: il test non dipende dalla data in cui gira.
+    expect((screen.getByLabelText('Titolo') as HTMLInputElement).value).toBe(
+      titoloPredefinito(annoDelGiorno(oggiFiscaleISO()).etichettaBreve),
+    )
     expect(screen.getByRole('switch', { name: 'Anche rappresentante d’istituto' }).getAttribute('aria-checked')).toBe('false')
     expect(screen.queryByLabelText('Cerca un genitore')).toBeNull()
     expect(apri().disabled).toBe(true)
@@ -482,5 +494,53 @@ describe('NuovaVotazioneForm · l’invio', () => {
     expect(onAnnulla).toHaveBeenCalledTimes(1)
     expect(onCreata).not.toHaveBeenCalled()
     expect(scritture()).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('NuovaVotazioneForm · il titolo proposto segue l’anno della sede (4.1.P)', () => {
+  // Una riga che contiene OGGI e porta un anno che il predefinito non darebbe mai: se il titolo la mostra,
+  // l'etichetta viene dal calendario della sede e non da una costante.
+  const rigaSede = {
+    annoId: 'a2031',
+    annoSedeId: 'r2031',
+    annoInizio: 2031,
+    inizio: '2020-01-01',
+    fine: '2040-12-31',
+    ultimoGiornoAperto: '2040-12-31',
+    preparaSuccessivoDal: '2020-01-01',
+    stato: 'corrente',
+    domandeAperte: false,
+  }
+  const risposta = () => json({ success: true, data: [{ scuola_id: SEDE_A, righe: [rigaSede] }], fonte: 'database' })
+
+  function montaConCalendario() {
+    render(
+      <CalendarioProvider>
+        <NuovaVotazioneForm scuolaId={SEDE_A} onCreata={vi.fn()} onAnnulla={vi.fn()} />
+      </CalendarioProvider>,
+    )
+  }
+
+  it('propone il titolo con l’etichetta del calendario della sede, appena arriva', async () => {
+    h.calendario = Promise.resolve(risposta())
+    montaConCalendario()
+    await waitFor(() =>
+      expect((screen.getByLabelText('Titolo') as HTMLInputElement).value).toBe(titoloPredefinito('2031/32')),
+    )
+  })
+
+  it('un titolo scritto a mano prima dell’arrivo del calendario resta', async () => {
+    const d = differita<Response>()
+    h.calendario = d.promessa
+    montaConCalendario()
+    await classiPronte()
+    fireEvent.change(screen.getByLabelText('Titolo'), { target: { value: 'Elezione di prova mia' } })
+
+    await act(async () => {
+      d.risolvi(risposta())
+    })
+    await waitFor(() => expect(h.chiamate.some((c) => c.url === '/api/anno/calendario')).toBe(true))
+    expect((screen.getByLabelText('Titolo') as HTMLInputElement).value).toBe('Elezione di prova mia')
   })
 })

@@ -492,9 +492,11 @@ describe('il banco ha davvero le regole di oggi', () => {
     expect(PRIMA['pagamenti · GEN_PONTE']).toEqual(['V_DIVISA_ALTRO', 'V_DIVISA_SUA', 'V_FUTURA', 'V_NASCOSTA'])
   })
 
-  it('prima di M44b chi è legato solo da `legame_genitori_alunni` dalle regole non aveva né foto né voci', () => {
+  it('prima di M44b chi è legato solo da `legame_genitori_alunni` dalle regole non aveva né foto, né voci, né news', () => {
     expect(PRIMA['galleria_media_v2 · GEN_LEGAME']).toEqual([])
     expect(PRIMA['pagamenti · GEN_LEGAME']).toEqual([])
+    // La regola di oggi quella strada la nomina, ma `alunni` e `legame_genitori_alunni` sotto RLS non gli tornano niente.
+    expect(PRIMA['news_posts · GEN_LEGAME']).toEqual([])
   })
 })
 
@@ -854,11 +856,88 @@ describe('il trigger chat_messaggio_broadcast', () => {
     })
   })
 
-  prova('fail-open: se il controllo si guasta il messaggio entra lo stesso, e il segnale non parte per nessuno', async () => {
+  describe('se il controllo si guasta', () => {
+    /** La funzione vera, tranne per l'utente indicato: per lui si guasta. */
+    const guastoPer = (utente: string) => `
+      CREATE OR REPLACE FUNCTION public.thread_e_visibile(p_utente uuid, p_thread uuid) RETURNS boolean
+      LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+      BEGIN
+        IF p_utente = '${utente}' THEN RAISE EXCEPTION 'guasto di prova'; END IF;
+        RETURN EXISTS (SELECT 1 FROM public.thread_visibili(p_utente) v WHERE v.thread_id = p_thread);
+      END $f$;`
+    const registro = () => db.query<{ livello: string; evento: string; occorrenze: number; contesto: Record<string, string> }>(
+      `SELECT livello, evento, occorrenze, contesto FROM public.app_log WHERE fingerprint = 'db:anno-chat-broadcast'`)
+
+    prova('il messaggio entra, il docente riceve, al genitore non parte, e il guasto resta nel registro con il solo SQLSTATE', async () => {
+      await inRollback(async () => {
+        await db.exec(`ALTER FUNCTION public.thread_e_visibile(uuid, uuid) RENAME TO thread_e_visibile_via`)
+        expect(await canali(T.T_1)).toEqual(['DOC_1'])
+        expect(await una<number>(`SELECT count(*)::int FROM public.chat_messages WHERE thread_id = $1`, [T.T_1])).toBe(2)
+        const r = await registro()
+        expect(r.rows).toHaveLength(1)
+        expect(r.rows[0]).toMatchObject({ livello: 'error', evento: 'anno-scolastico', occorrenze: 1 })
+        expect(r.rows[0].contesto).toEqual({
+          esito: 'visibilita-thread-fallita', operazione: 'chat_messaggio_broadcast', tabella: 'chat_messages', sqlstate: '42883',
+        })
+      })
+    })
+
+    prova('il guasto di un destinatario non tocca gli altri: a chi si guasta non parte, chi risponde riceve', async () => {
+      await inRollback(async () => {
+        await db.exec(guastoPer(PONTE_1))
+        expect(await canali(T.T_SCHEDA)).toEqual(['DOC_1', 'GEN_PONTE'])
+        await db.exec(guastoPer(GEN_PONTE))
+        expect(await canali(T.T_SCHEDA)).toEqual(['DOC_1'])
+        expect((await registro()).rows[0].occorrenze).toBe(2)
+      })
+    })
+
+    prova('vale anche per le spunte: una riga di registro con le occorrenze, e il docente riceve', async () => {
+      await inRollback(async () => {
+        await db.exec(`ALTER FUNCTION public.thread_e_visibile(uuid, uuid) RENAME TO thread_e_visibile_via`)
+        await db.exec(`DELETE FROM realtime.messages`)
+        const r = await db.query(`UPDATE public.chat_messages SET read_at = now() WHERE thread_id = $1 AND read_at IS NULL`, [T.T_1])
+        expect(r.affectedRows).toBeGreaterThan(0)
+        const scritti = await canaliScritti()
+        expect(scritti.length).toBe(r.affectedRows)
+        expect(new Set(scritti)).toEqual(new Set(['DOC_1']))
+        expect((await registro()).rows[0].occorrenze).toBe(r.affectedRows)
+      })
+    })
+
+    prova('la scrittura non fallisce mai, nemmeno se manca anche `anno_log_guasto`: il docente riceve e resta un WARNING', async () => {
+      await inRollback(async () => {
+        await db.exec(`ALTER FUNCTION public.thread_e_visibile(uuid, uuid) RENAME TO thread_e_visibile_via`)
+        await db.exec(`ALTER FUNCTION public.anno_log_guasto(text, text, text, text, text, text) RENAME TO anno_log_guasto_via`)
+        await db.exec(`DELETE FROM realtime.messages`)
+        const avvisi: string[] = []
+        await db.query(`INSERT INTO public.chat_messages (thread_id, sender_id, content) VALUES ($1, $2, 'Testo di prova')`, [T.T_1, DOC_1], {
+          onNotice: (n) => { avvisi.push(n.message ?? '') },
+        })
+        expect(await una<number>(`SELECT count(*)::int FROM public.chat_messages WHERE thread_id = $1`, [T.T_1])).toBe(2)
+        expect(await canaliScritti()).toEqual(['DOC_1'])
+        expect(avvisi.filter((a) => a.startsWith('chat_messaggio_broadcast(INSERT): registro non raggiunto'))).toHaveLength(1)
+      })
+    })
+
+    prova('se si guasta `realtime.send` il messaggio entra lo stesso: il fail-open esterno resta', async () => {
+      await inRollback(async () => {
+        await db.exec(`ALTER FUNCTION realtime.send(jsonb, text, text, boolean) RENAME TO send_via`)
+        const avvisi: string[] = []
+        await db.query(`INSERT INTO public.chat_messages (thread_id, sender_id, content) VALUES ($1, $2, 'Testo di prova')`, [T.T_1, DOC_1], {
+          onNotice: (n) => { avvisi.push(n.message ?? '') },
+        })
+        expect(await una<number>(`SELECT count(*)::int FROM public.chat_messages WHERE thread_id = $1`, [T.T_1])).toBe(2)
+        expect(avvisi.filter((a) => a.startsWith('chat_messaggio_broadcast(INSERT): 42883'))).toHaveLength(1)
+      })
+    })
+  })
+
+  prova('un thread senza docente: al genitore arriva lo stesso, e il controllo gira', async () => {
     await inRollback(async () => {
-      await db.exec(`ALTER FUNCTION public.thread_e_visibile(uuid, uuid) RENAME TO thread_e_visibile_via`)
-      expect(await canali(T.T_1)).toEqual([])
-      expect(await una<number>(`SELECT count(*)::int FROM public.chat_messages WHERE thread_id = $1`, [T.T_1])).toBe(2)
+      const r = await db.query<{ id: string }>(
+        `INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES (NULL, $1, $2) RETURNING id`, [GEN_LEGAME, FIGLIO_1])
+      expect(await canali(r.rows[0].id)).toEqual(['GEN_LEGAME'])
     })
   })
 
@@ -905,6 +984,14 @@ describe('il testo delle regole', () => {
   ]
   const trova = (righe: RigaRegola[], tabella: string, nome: string) =>
     righe.find((r) => r.schemaname === 'public' && r.tablename === tabella && r.policyname === nome)
+
+  prova('`chat_messages` si blocca prima di `chat_threads`: è l’ordine di un INSERT, che per la chiave esterna vuole la seconda', async () => {
+    const sql = fileMigrazione('_anno_visibilita_genitore_policy.sql')
+    const messaggi = sql.indexOf('DROP POLICY chat_messages_select_participant')
+    const conversazioni = sql.indexOf('DROP POLICY chat_threads_select_participant')
+    expect(messaggi).toBeGreaterThan(0)
+    expect(conversazioni).toBeGreaterThan(messaggi)
+  })
 
   prova('stessi nomi, stesso comando, stessi ruoli; nessuna regola in più o in meno', async () => {
     const ossatura = (righe: RigaRegola[]) => righe.map((r) => `${r.schemaname}.${r.tablename} · ${r.policyname} · ${r.cmd} · ${r.roles.join(',')}`)
@@ -1173,6 +1260,34 @@ describe('M44b su un database senza l’anno', () => {
       expect(await leggi('pagamenti')).toEqual([voceId])
       expect(await leggi('news_posts')).toEqual([])
       await nudo.exec('ROLLBACK')
+    } finally {
+      await nudo.close()
+    }
+  })
+
+  prova('senza `frequenze` e senza M44a il segnale resta quello di oggi: messaggio entrato, docente e genitore lo ricevono, nessun avviso', async () => {
+    const nudo = new PGlite()
+    try {
+      await nudo.exec(SCHEMA_BASE)
+      await nudo.exec(SCHEMA_GALLERIA_GENITORE)
+      await nudo.exec(SCHEMA_NEWS_GENITORE)
+      await preparaAccesso(nudo)
+      const prima = await regole(nudo)
+      await applicaPr2(nudo, 'M44b')
+      expect(await regole(nudo)).toEqual(prima)
+      const senzaFunzione = await nudo.query(`SELECT 1 FROM pg_proc WHERE proname = 'thread_e_visibile'`)
+      expect(senzaFunzione.rows).toEqual([])
+
+      const threadId = (await nudo.query<{ id: string }>(
+        `INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3) RETURNING id`, [DOC_1, GEN_PONTE, FIGLIO_1])).rows[0].id
+      const avvisi: string[] = []
+      await nudo.query(`INSERT INTO public.chat_messages (thread_id, sender_id, content) VALUES ($1, $2, 'Testo di prova')`, [threadId, DOC_1], {
+        onNotice: (n) => { avvisi.push(n.message ?? '') },
+      })
+      expect((await nudo.query(`SELECT id FROM public.chat_messages WHERE thread_id = $1`, [threadId])).rows).toHaveLength(1)
+      const canali = await nudo.query<{ topic: string }>(`SELECT topic FROM realtime.messages`)
+      expect(canali.rows.map((r) => r.topic).sort()).toEqual([`chat:${DOC_1}`, `chat:${GEN_PONTE}`].sort())
+      expect(avvisi).toEqual([])
     } finally {
       await nudo.close()
     }

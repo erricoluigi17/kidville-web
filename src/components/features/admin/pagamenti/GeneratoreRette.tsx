@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { dataCivile } from '@/i18n/config';
+import { useAnnoDi } from '@/lib/context/calendario-context';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
@@ -41,15 +43,6 @@ interface MesePreview {
 interface Props { userId: string; scuolaId: string }
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
-function currentPeriod(): string {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
-}
-function annoScolasticoCorrente(): number {
-    const n = new Date();
-    return n.getMonth() + 1 >= 9 ? n.getFullYear() : n.getFullYear() - 1;
-}
-
 type Mode = 'mese' | 'anno';
 
 export function GeneratoreRette({ userId, scuolaId }: Props) {
@@ -61,8 +54,13 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     // verifica per nascondere un numero.
     const eDirezione = eDirezioneCockpit(useRuoloCockpit());
     const [mode, setMode] = useState<Mode>('anno');
-    const [periodo, setPeriodo] = useState(currentPeriod());
-    const [anno, setAnno] = useState(annoScolasticoCorrente());
+    // «Oggi» è il giorno di Roma, letto una volta; l'anno proposto lo dà il calendario della sede (quando arriva) e
+    // una scelta a mano della segreteria lo batte sempre: stato derivato, niente effetto che copia il calendario.
+    const [oggi] = useState(() => dataCivile());
+    const [periodo, setPeriodo] = useState(oggi.slice(0, 7));
+    const annoProposto = useAnnoDi(scuolaId)(oggi).annoInizio;
+    const [annoScelto, setAnno] = useState<number | null>(null);
+    const anno = annoScelto ?? annoProposto;
     const [previewMese, setPreviewMese] = useState<{ candidati: Candidato[]; gia_generati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
     const [previewAnno, setPreviewAnno] = useState<{ mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
     const [loading, setLoading] = useState(false);
@@ -173,7 +171,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('genrAnnoScolasticoLabel')}</label>
                         <select value={anno} onChange={e => { setAnno(Number(e.target.value)); reset(); }}
                             className={GEN_SELECT}>
-                            {[annoScolasticoCorrente() - 1, annoScolasticoCorrente(), annoScolasticoCorrente() + 1].map(y => (
+                            {[annoProposto - 1, annoProposto, annoProposto + 1].map(y => (
                                 <option key={y} value={y}>{y}/{y + 1}</option>
                             ))}
                         </select>

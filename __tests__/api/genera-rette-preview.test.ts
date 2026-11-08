@@ -83,6 +83,23 @@ describe('GET /api/pagamenti/genera-rette — preview con data_iscrizione', () =
     expect(j.data.alunni_attivi).toBe(2)
   })
 
+  it('annuale: i dieci periodi sono set-giu, gli stessi di sempre (4.1.S4a: da mesiDelAnno)', async () => {
+    const j = await (await GET(url('anno=2026'))).json()
+    expect(j.data.mesi.map((m: { periodo: string }) => m.periodo)).toEqual([
+      '2026-09-01', '2026-10-01', '2026-11-01', '2026-12-01',
+      '2027-01-01', '2027-02-01', '2027-03-01', '2027-04-01', '2027-05-01', '2027-06-01',
+    ])
+  })
+
+  it('mensile senza periodo: il predefinito è il mese di ROMA, non quello UTC (00:30 del 1° novembre a Roma)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-31T23:30:00Z')) // a Roma è già il 1° novembre, in UTC è ancora ottobre
+      const j = await (await GET(url(''))).json()
+      expect(j.data.periodo).toBe('2026-11-01')
+    } finally { vi.useRealTimers() }
+  })
+
   it('mensile: stesso filtro sul periodo richiesto', async () => {
     const res = await GET(url('periodo=2026-09'))
     const j = await res.json()

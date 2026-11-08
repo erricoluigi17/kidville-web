@@ -466,6 +466,24 @@ describe('registro — firma, protocollo e archiviazione', () => {
   })
 })
 
+describe('registro — la durata di ciò che si firma', () => {
+  it('ogni voce del catalogo dichiara una durata valida, nessuna esclusa', () => {
+    // È la rete per i nove della segreteria: `MODELLI_SEGRETERIA` dichiara lo slug come
+    // `string`, quindi un modello nuovo di là che manchi dall'unione compila lo stesso e
+    // arriverebbe qui con `durata: undefined`.
+    expect(PRESTAMPATI.length).toBeGreaterThan(0)
+    for (const voce of PRESTAMPATI) {
+      expect(['anno', 'fino_a_revoca'], `${voce.slug} senza durata`).toContain(voce.durata)
+    }
+  })
+
+  it('i tre moduli sanitari valgono fino a revoca, e sono i soli (risposta 10)', () => {
+    const finoARevoca = PRESTAMPATI.filter((v) => v.durata === 'fino_a_revoca').map((v) => v.slug)
+    expect(finoARevoca.sort()).toEqual(['autorizzazione_farmaci', 'dieta_speciale', 'scheda_sanitaria'])
+    expect(PRESTAMPATI.filter((v) => v.durata === 'anno')).toHaveLength(14)
+  })
+})
+
 describe('registro — le etichette esistono in entrambe le lingue', () => {
   it('tutti e diciassette hanno la loro voce in `prestampatiSegreteria`', () => {
     for (const slug of SLUG_PRESTAMPATI) {

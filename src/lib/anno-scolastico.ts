@@ -113,6 +113,20 @@ export function annoDiIstante(istante: Date, calendario?: Calendario | null): An
   return annoDelGiorno(dataCivile(istante), calendario)
 }
 
+/**
+ * L'anno ATTIVO di una sede: fra le righe `corrente`, `in_chiusura` e `chiuso`, quella con
+ * l'`inizio` più recente. È la stessa regola di `anno_attivo()` in SQL: un anno in preparazione
+ * o con le iscrizioni aperte non è ancora quello in cui si lavora. `null` se non ce n'è.
+ */
+export function annoAttivoDelCalendario(calendario: Calendario | null | undefined): RigaCalendario | null {
+  let attivo: RigaCalendario | null = null
+  for (const r of calendario ?? []) {
+    if (r.stato !== 'corrente' && r.stato !== 'in_chiusura' && r.stato !== 'chiuso') continue
+    if (!attivo || r.inizio > attivo.inizio) attivo = r
+  }
+  return attivo
+}
+
 function rigaDellAnno(annoInizio: number, calendario?: Calendario | null) {
   return calendario?.find((r) => r.annoInizio === annoInizio)
 }

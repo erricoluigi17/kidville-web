@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  annoAttivoDelCalendario,
   annoDelGiorno,
   annoDiIstante,
   etichettaAnno,
@@ -146,5 +147,39 @@ describe('giornoValido', () => {
     for (const g of ['2026-02-29', '2026-02-30', '2026-13-01', '', '2026-9-1', '2026-09-01T00:00:00Z']) {
       expect(giornoValido(g)).toBe(false)
     }
+  })
+})
+
+describe('annoAttivoDelCalendario', () => {
+  const r = (annoInizio: number, stato: RigaCalendario['stato']): RigaCalendario => ({
+    ...riga2025,
+    annoInizio,
+    inizio: `${annoInizio}-09-01`,
+    fine: `${annoInizio + 1}-08-31`,
+    stato,
+  })
+
+  it('chiuso, corrente, in_preparazione: vince il corrente', () => {
+    const cal = [r(2025, 'chiuso'), r(2026, 'corrente'), r(2027, 'in_preparazione')]
+    expect(annoAttivoDelCalendario(cal)?.annoInizio).toBe(2026)
+  })
+
+  it('chiuso, in_chiusura, iscrizioni_aperte: vince in_chiusura', () => {
+    const cal = [r(2025, 'chiuso'), r(2026, 'in_chiusura'), r(2027, 'iscrizioni_aperte')]
+    expect(annoAttivoDelCalendario(cal)?.annoInizio).toBe(2026)
+  })
+
+  it('fra più righe attive vince l’inizio più recente, qualunque sia l’ordine', () => {
+    expect(annoAttivoDelCalendario([r(2026, 'corrente'), r(2025, 'chiuso')])?.annoInizio).toBe(2026)
+  })
+
+  it('solo in_preparazione: null', () => {
+    expect(annoAttivoDelCalendario([r(2027, 'in_preparazione')])).toBeNull()
+  })
+
+  it('calendario assente o vuoto: null', () => {
+    expect(annoAttivoDelCalendario(null)).toBeNull()
+    expect(annoAttivoDelCalendario(undefined)).toBeNull()
+    expect(annoAttivoDelCalendario([])).toBeNull()
   })
 })

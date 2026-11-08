@@ -33,7 +33,6 @@ import {
   datiUscitaDaEvento,
   dipendeDallUscita,
   emailMancante,
-  fineAnnoScolastico,
   garantisciBucketFascicolo,
   ilFileRestaNelBucket,
   motivoMancatoArchivioDa,
@@ -44,7 +43,6 @@ import {
   riferimentiAllegati,
   rifiutoDelRender,
   scaduto,
-  scadeAFineAnnoScolastico,
   sconosciuto,
   sempreFirmabiliDa,
   serveIlPrecompilato,
@@ -327,13 +325,14 @@ async function allegatiAssenti(
 // valgono. `ricorrenzaFino` NON è una scadenza — `expiry_date` fa scadere il DOCUMENTO,
 // `ricorrenzaFino` dice fin quando si ripete un permesso già concesso.
 //
-// ⚠️ IL N. 05 NON PASSA DA LÌ. La scheda sanitaria dichiara la propria scadenza nel
-// calendario, non nelle risposte: `05-scheda-sanitaria.md:78-79` chiede `expiry_date` = fine
-// anno scolastico, «va riconfermata ogni anno». `scadenzaDaRisposte` legge `al`,
-// `ricorrenzaFino` e `giorno`, e nello schema del n. 05 non c'è nessuno dei tre: passando di
-// là il valore sarebbe `null` SEMPRE — una scheda sanitaria archiviata come se non scadesse
-// mai, e il cron che non chiede mai la riconferma. La calcola
-// `fineAnnoScolastico(prefill.dati.annoScolastico)`, che è il dato già in mano.
+// ⚠️ IL N. 05 PASSA DA LÌ COME TUTTI, E IL RISULTATO È `null`: NESSUNA SCADENZA. Fino al 06/11/2026
+// la scheda sanitaria scadeva a fine anno scolastico (`${fine}-07-31`) e la famiglia doveva
+// riconfermarla ogni anno. La risposta 10 del titolare l'ha tolto: «i moduli sanitari (scheda
+// sanitaria, farmaci, dieta) valgono fino a revoca». La riconferma annuale non c'è più, quindi
+// non c'è più una scadenza «del calendario» da calcolare: nello schema del n. 05 non c'è né
+// `al` né `ricorrenzaFino` né `giorno`, `scadenzaDaRisposte` dà `null`, e `null` è il valore
+// giusto (un documento valido fino a revoca). Farmaci e dieta, se la famiglia scrive la fine di
+// una terapia, continuano a scadere alla data che ha scritto lei.
 //
 // 🔴 IL N. 07 RESTA SENZA SCADENZA, E VA DETTO INVECE CHE LASCIATO SUCCEDERE. Il contratto
 // dichiarato in `modelli/genitore.ts` promette che `expiry_date` nasca «dall'`al` del 06 e
@@ -345,8 +344,7 @@ async function allegatiAssenti(
 // resterebbe comunque senza scadenza. Perciò oggi il n. 07 si archivia con `expiry_date`
 // nullo e il cron non avvisa — è una lacuna dichiarata e collaudata, non un caso dimenticato;
 // il rimedio è un campo `data` sul modello, che è file di un'altra mano, ed è segnalato
-// all'orchestratore. La differenza col n. 05 è che là la fine dell'anno scolastico è un
-// FATTO del calendario, qui sarebbe una data estratta da una frase scritta da un medico.
+// all'orchestratore. Una data qui sarebbe estratta da una frase scritta da un medico.
 
 // ─── La morosità: quali moduli questa sede non blocca mai ───────────────────────
 
@@ -1417,12 +1415,9 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // Il giorno in cui i diciassette slug entrano nell'enumerato, questo codice comincia ad
     // archiviare senza che nessuno lo tocchi.
     //
-    // La scadenza: il n. 05 la prende dal CALENDARIO (fine anno scolastico, §05: «va
-    // riconfermata ogni anno»), tutti gli altri dalle risposte con la regola condivisa della
-    // segreteria. Vedi il blocco «La scadenza dell'archivio» più in alto.
-    const scadenza = scadeAFineAnnoScolastico(voce.slug)
-      ? fineAnnoScolastico(prefill.dati.annoScolastico)
-      : scadenzaDaRisposte(esito.risposte)
+    // La scadenza: per tutti i modelli dalle risposte, con la regola condivisa della segreteria
+    // (il n. 05 dà `null`: vale fino a revoca). Vedi il blocco «La scadenza dell'archivio».
+    const scadenza = scadenzaDaRisposte(esito.risposte)
     let documentoId: string | null = null
     let codiceArchivio: string | null = null
     // ⚠️ LA GUARDIA OGGI È SEMPRE VERA, e va scritto invece che lasciato scoprire: tutte e

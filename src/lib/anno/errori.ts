@@ -189,6 +189,18 @@ export function erroreAnno(
 }
 
 /**
+ * La risposta di una route a UN alunno quando, in fase B, la frequenza non è stata scritta (e quindi `alunni` non è stata
+ * toccata): un codice dell'anno (`SEZIONE_DI_ALTRO_ANNO`, `ANNO_NON_COERENTE`…) → la risposta di `erroreAnno` (409/422);
+ * il resto → 500 `FREQUENZA_NON_SCRITTA`. Il guasto è già nel log (`anno/fase-b:frequenza-non-scritta`): qui niente dati.
+ */
+export function rispostaFrequenzaNonScritta(codice: string, operazione?: string): NextResponse {
+  return (
+    erroreAnno({ message: codice }, operazione) ??
+    NextResponse.json({ error: frase('FREQUENZA_NON_SCRITTA'), codice: 'FREQUENZA_NON_SCRITTA' }, { status: 500 })
+  )
+}
+
+/**
  * Codici che SOLO una migrazione o il riempimento sollevano: non arrivano mai a una route,
  * quindi `erroreAnno` non li traduce. Un codice nuovo nelle migrazioni dell'anno deve stare
  * in `erroreAnno` o qui: lo pretende `__tests__/lib/anno-errori.test.ts`.

@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno, getGenitoriDiAlunnoEsito } from '@/lib/anagrafiche/legami'
 import { logEvento } from '@/lib/logging/logger'
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
+import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
 import { formaConfronto } from '@/lib/auth/scope'
 import {
   anagraficaDaIntestatarioAltro,
@@ -222,6 +223,7 @@ export interface RisultatoRicorda {
  * Fase A (§4.19): `alunni.intestatario_fatture` è appena stato scritto, ora la frequenza dell'anno attivo della sede
  * del bambino (fail-open: l'esito di chi chiama non cambia). Senza sede in mano non si chiama niente e si lascia un
  * `warn` con l'uuid. `cacheAnno` (una `Map` per richiesta, facoltativa) evita di rileggere l'anno della stessa sede.
+ * In fase B non si usa: la frequenza si scrive PRIMA, con `scriviAlunnoEFrequenza`.
  */
 async function frequenzaDopoIntestatario(
   supabase: SupabaseClient,
@@ -235,9 +237,7 @@ async function frequenzaDopoIntestatario(
     return
   }
   const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
-  if (annoSedeId) {
-    await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFrequenzaDaAlunno({ intestatario_fatture: intestatario }) })
-  }
+  await scriviFrequenzaDopoAlunni(supabase, { alunnoId, annoSedeId, campi: campiFrequenzaDaAlunno({ intestatario_fatture: intestatario }) })
 }
 
 export async function ricordaIntestatarioSullaScheda(
@@ -247,12 +247,35 @@ export async function ricordaIntestatarioSullaScheda(
   cacheAnno?: Map<string, string | null>,
 ): Promise<RisultatoRicorda> {
   const intestatario = { tipo: 'adult', adult_id: adultId }
-  const { data, error } = await supabase
-    .from('alunni')
-    .update({ intestatario_fatture: intestatario })
-    .eq('id', alunnoId)
-    .is('intestatario_fatture', null)
-    .select('id, scuola_id')
+  const scrivi = () =>
+    supabase
+      .from('alunni')
+      .update({ intestatario_fatture: intestatario })
+      .eq('id', alunnoId)
+      .is('intestatario_fatture', null)
+      .select('id, scuola_id')
+
+  if (await conFaseB(supabase)) {
+    // Fase B: la frequenza si scrive PRIMA e non conosce la condizione «solo se vuota». La scheda è la copia della
+    // frequenza, quindi si guarda lì se l'intestatario c'è già: se c'è non si scrive niente (come la UPDATE condizionata
+    // di fase A, che toccava zero righe). La condizione resta anche sulla UPDATE.
+    const letta = await supabase.from('alunni').select('scuola_id, intestatario_fatture').eq('id', alunnoId).maybeSingle()
+    if (letta.error) return { esito: 'non_salvato', error: letta.error }
+    const riga = letta.data as { scuola_id?: string | null; intestatario_fatture?: unknown } | null
+    if (!riga || riga.intestatario_fatture != null) return { esito: 'gia_impostato', error: null }
+    const annoSedeId = await annoAttivoDiSede(supabase, riga.scuola_id, cacheAnno)
+    const esito = await scriviAlunnoEFrequenza(
+      supabase,
+      { alunnoId, annoSedeId, campi: campiFrequenzaDaAlunno({ intestatario_fatture: intestatario }) },
+      scrivi,
+    )
+    if (!esito.scritto) return { esito: 'non_salvato', error: new Error(`FREQUENZA_NON_SCRITTA:${esito.codice}`) }
+    if (esito.risultato.error) return { esito: 'non_salvato', error: esito.risultato.error }
+    if ((esito.risultato.data?.length ?? 0) === 0) return { esito: 'gia_impostato', error: null }
+    return { esito: 'salvato', error: null }
+  }
+
+  const { data, error } = await scrivi()
   if (error) return { esito: 'non_salvato', error }
   if ((data?.length ?? 0) === 0) return { esito: 'gia_impostato', error: null }
   await frequenzaDopoIntestatario(supabase, alunnoId, (data?.[0] as { scuola_id?: string | null } | undefined)?.scuola_id, intestatario, cacheAnno)
@@ -314,14 +337,17 @@ export async function ricordaPersonaSullaScheda(
     return { esito: 'fuori_sede', error: null }
   }
   const intestatario = { tipo: 'altro', dati }
-  const { data, error } = await supabase
-    .from('alunni')
-    .update({ intestatario_fatture: intestatario })
-    .eq('id', alunnoId)
-    .select('id')
+  // Fase B: prima la frequenza dell'anno attivo della sede del bambino (già letta qui sopra), poi `alunni`.
+  const annoSedeId = await annoAttivoDiSede(supabase, prima.scuola_id, cacheAnno)
+  const esito = await scriviAlunnoEFrequenza(
+    supabase,
+    { alunnoId, annoSedeId, campi: campiFrequenzaDaAlunno({ intestatario_fatture: intestatario }) },
+    () => supabase.from('alunni').update({ intestatario_fatture: intestatario }).eq('id', alunnoId).select('id'),
+  )
+  if (!esito.scritto) return { esito: 'non_salvato', error: new Error(`FREQUENZA_NON_SCRITTA:${esito.codice}`) }
+  const { data, error } = esito.risultato
   if (error) return { esito: 'non_salvato', error }
   if ((data?.length ?? 0) === 0) return { esito: 'non_salvato', error: null }
-  await frequenzaDopoIntestatario(supabase, alunnoId, prima.scuola_id, intestatario, cacheAnno)
   return { esito: 'salvato', error: null, prima }
 }
 

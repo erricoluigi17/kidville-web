@@ -825,6 +825,7 @@
   "errorePrerequisitiMancanti": "Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.",
   "erroreParametroMancante": "Manca un dato richiesto. Controlla e riprova.",
   "erroreCalendarioNonDisponibile": "Le impostazioni dell’anno scolastico non sono ancora disponibili. Riprova fra poco.",
+  "erroreFrequenzaNonScritta": "La modifica non è stata salvata: la scheda è rimasta com’era. Riprova fra poco.",
   "annoSelettoreAria": "Cambia anno scolastico",
   "annoOgniSede": "Anno in corso",
   "annoStatoInCorso": "in corso",

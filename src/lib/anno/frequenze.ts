@@ -7,13 +7,14 @@ import { codiceAnnoDa } from '@/lib/anno/tipi'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 
 /**
- * LA DOPPIA SCRITTURA `alunni` → `frequenze` (fase A, specifica §4.19, Compito 3.7).
+ * LA DOPPIA SCRITTURA `alunni` ↔ `frequenze` (specifica §4.19, Compiti 3.7 e 4.3.5).
  *
- * In fase A la fonte di verità è ancora `alunni`: il trigger `alunni_specchio_frequenza()` (migrazione M1) copia 15
- * colonne nella frequenza dell'anno ATTIVO. Le route continuano a scrivere `alunni` e POI chiamano `scriviFrequenza`
- * con i campi tradotti da `campiFrequenzaDaAlunno`. Il valore non è ridondare il trigger: è che dalla 4.3 (fase B)
- * la fonte si capovolge e le route sono già pronte, e che la scrittura esplicita è l'unica strada per un anno
- * che non è l'attivo (4.5).
+ * Fase A (fino alla 4.3.4): la fonte di verità è `alunni`; il trigger `alunni_specchio_frequenza()` (migrazione M1) copia
+ * 15 colonne nella frequenza dell'anno ATTIVO, e le route scrivono `alunni` e POI chiamano `scriviFrequenza`.
+ * Fase B (da `anno_regole.specchio_frequenze_attivo`, migrazione M43): comanda la frequenza dell'anno attivo e `alunni`
+ * ne è la copia (`frequenze_specchio_alunni`). Le route scrivono PRIMA la frequenza, e solo se è passata scrivono
+ * `alunni`: l'ordine lo decide `scriviAlunnoEFrequenza` (`src/lib/anno/scrittura.ts`), l'unico posto che chiama
+ * `scriviFrequenza` insieme a un `alunni`. Resta la scrittura esplicita l'unica strada per un anno che non è l'attivo (4.5).
  *
  * ⚠️ `campiFrequenzaDaAlunno` DEVE dare gli stessi valori del trigger: lo prova `__tests__/lib/anno-frequenze.test.ts`
  * (parità in PGlite contro la funzione SQL vera). Se cambi una regola qui, cambia anche lì il caso.
@@ -22,6 +23,8 @@ import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
  */
 
 export type CampiFrequenza = Partial<{
+  /** Solo il POST di una scheda nuova (la data d'ingresso scelta): NON è tra le colonne di `campiFrequenzaDaAlunno`, che resta pari al trigger. */
+  data_ingresso: string
   section_id: string | null
   stato: typeof STATO_ISCRITTO | typeof STATO_RITIRATO
   data_uscita: string | null
@@ -135,7 +138,8 @@ function esitoDaErrore(error: ErrorePg, passo: string): EsitoFrequenza {
  *    domanda ha un suo ciclo di vita), e l'uscita si porta dentro [data_ingresso, fine dell'anno];
  *  - `PGRST205` & C. (schema dell'anno assente: la CI) → `saltata: 'schema-indietro'`;
  *  - un errore dell'anno (`SEZIONE_DI_ALTRO_ANNO`…) → `{ ok: false, codice }` e un warn; altro →
- *    `SCRITTURA_FALLITA` e un logErrore. Il chiamante ha già scritto `alunni` e non deve fallire per la frequenza.
+ *    `SCRITTURA_FALLITA` e un logErrore. Non decide cosa fare dell'errore: in fase A il chiamante ha già scritto `alunni`
+ *    e non deve fallire per la frequenza; in fase B `scriviAlunnoEFrequenza` la chiama PRIMA e, se fallisce, non scrive `alunni`.
  */
 export async function scriviFrequenza(
   supabase: SupabaseClient,
@@ -187,7 +191,7 @@ export async function scriviFrequenza(
 /**
  * L'anno ATTIVO di una sede (`anni_sede.id`), letto con `anno_attivo(p_scuola)`. NON LANCIA MAI.
  *
- * Serve alle route che, dopo aver scritto `alunni`, chiamano `scriviFrequenza`: l'`annoSedeId` è quello della sede
+ * Serve alle route che scrivono `alunni` e la frequenza (`scriviAlunnoEFrequenza`): l'`annoSedeId` è quello della sede
  * dell'alunno (su un trasferimento, della sede NUOVA). `null` vuol dire «non chiamare `scriviFrequenza`»: sede senza
  * anno attivo, schema indietro (`PGRST202`/`PGRST205`, il DB della CI) oppure un guasto, che si logga col solo codice.
  * `cache` (una `Map` per richiesta) evita di rileggere la stessa sede quando la route scrive più alunni.
@@ -218,15 +222,13 @@ export async function annoAttivoDiSede(
 }
 
 /**
- * I siti che scrivono `alunni` e NON si collegano a `scriviFrequenza`, ciascuno col suo motivo. Lo legge il lock del
- * 3.9: un sito `.from('alunni')` con insert/update/upsert che non chiama `scriviFrequenza` deve stare qui.
+ * I siti che scrivono `alunni` e NON passano dalla frequenza, ciascuno col suo motivo. Lo legge il lock del 3.9, rivisto
+ * nel 4.3.5: un sito `.from('alunni')` con insert/update/upsert di una colonna copiata (o di `classe_sezione`, da cui il
+ * trigger BEFORE ricava `section_id`) deve usare `scriviAlunnoEFrequenza` (`src/lib/anno/scrittura.ts`) o stare qui.
+ * ⚠️ «Nessuna colonna copiata» deve restare VERO: dalla fase B una scrittura di una colonna copiata che non passa dalla
+ * frequenza viene annullata alla prossima scrittura della frequenza.
  */
 export const ESENTI: readonly { file: string; motivo: string }[] = [
-  {
-    file: 'src/lib/forms/persist-submission.ts',
-    motivo:
-      'Scrive solo le colonne anagrafiche mappate dai moduli (db_mapping alunni.*: nome, cognome, codice fiscale, nascita, residenza, allergie, note mediche, documento): nessuna delle 15 colonne copiate nella frequenza.',
-  },
   {
     file: 'src/lib/sidi/import-apply.ts',
     motivo:
@@ -240,7 +242,7 @@ export const ESENTI: readonly { file: string; motivo: string }[] = [
   {
     file: 'src/app/api/admin/import/anagrafiche/route.ts',
     motivo:
-      "INSERT senza colonne copiate; section_id lo calcola il trigger BEFORE trg_alunni_sync_section da classe_sezione, e lo specchio lo copia nella frequenza.",
+      "Solo INSERT: section_id lo calcola il trigger BEFORE trg_alunni_sync_section da classe_sezione, e la frequenza dell'anno attivo nasce dal trigger d'INSERT con quella sezione (nessun UPDATE: in fase B non c'è niente da far precedere).",
   },
   {
     file: 'src/lib/gdpr/esegui.ts',

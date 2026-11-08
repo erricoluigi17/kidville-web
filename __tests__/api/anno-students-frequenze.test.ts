@@ -253,3 +253,43 @@ describe('POST /api/admin/students/riattiva', () => {
     expect(h.scriviFrequenza).not.toHaveBeenCalled()
   })
 })
+
+describe('PATCH /api/admin/students — fase B (4.3.5): prima la frequenza, poi alunni', () => {
+  const aggiornamentiAlunni = () => h.scritture.filter((x) => JSON.stringify(x).includes('alunni'))
+
+  it('frequenza scritta: alunni viene scritta DOPO, e la risposta è 200', async () => {
+    h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+    const ordine: string[] = []
+    h.scriviFrequenza.mockImplementation(async () => {
+      ordine.push(`frequenza:${aggiornamentiAlunni().length}`)
+      return { ok: true }
+    })
+    const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(res.status).toBe(200)
+    // al momento della scrittura della frequenza `alunni` non era ancora stata toccata
+    expect(ordine).toEqual(['frequenza:0'])
+    expect(aggiornamentiAlunni().length).toBeGreaterThan(0)
+  })
+
+  it('frequenza non scritta: 500 FREQUENZA_NON_SCRITTA e alunni NON toccata', async () => {
+    h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+    h.scriviFrequenza.mockResolvedValue({ ok: false, codice: 'SCRITTURA_FALLITA' })
+    const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('FREQUENZA_NON_SCRITTA')
+    expect(aggiornamentiAlunni()).toEqual([])
+  })
+
+  it('codice dell’anno (ANNO_NON_COERENTE): 422 e alunni NON toccata', async () => {
+    h.db.anno_regole = [{ specchio_frequenze_attivo: true }]
+    h.scriviFrequenza.mockResolvedValue({ ok: false, codice: 'ANNO_NON_COERENTE' })
+    const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+    expect(res.status).toBe(422)
+    expect(aggiornamentiAlunni()).toEqual([])
+  })
+
+  it('fase A (interruttore spento): la frequenza fallita non cambia la risposta', async () => {
+    h.scriviFrequenza.mockResolvedValue({ ok: false, codice: 'SCRITTURA_FALLITA' })
+    expect((await PATCH(patch({ id: ALU_A, usa_pannolino: true }))).status).toBe(200)
+  })
+})

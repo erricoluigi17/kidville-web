@@ -43,7 +43,8 @@ import {
   type SchedaGenitoreGemella,
 } from '@/lib/iscrizioni/doppioni'
 import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
+import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -1760,16 +1761,32 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     const dataDomanda = new Date((sub as { created_at?: string | null }).created_at ?? Date.now())
 
     /**
-     * Fase A (§4.19): `alunni` è appena stato scritto, ora la frequenza dell'anno attivo della sede (fail-open: la
-     * risposta non cambia). La sede è `scuolaId`, quella su cui si scrive `alunni` (la domanda può venire da un'altra
-     * sede, ma l'alunno è sempre scritto qui). Un anno per sede, letto una volta per richiesta.
+     * La frequenza dell'anno attivo della sede `scuolaId`: è la sede su cui si scrive `alunni` (la domanda può venire da
+     * un'altra sede, ma l'alunno è sempre scritto qui). Un anno per sede, letto una volta per richiesta.
+     *
+     *  - `frequenzaDopoInsert`: dopo un INSERT (la FK obbliga a scrivere prima la scheda; la frequenza nasce dal trigger
+     *    d'INSERT), fail-open;
+     *  - `scriviSchedaEFrequenza`: per un UPDATE di una scheda che esiste già. In fase B (§4.19) PRIMA la frequenza e poi
+     *    `alunni`; se la frequenza non si scrive la scheda non si tocca e si riceve il codice. In fase A come sempre.
      */
     const cacheAnno = new Map<string, string | null>()
-    const frequenzaDopoAlunni = async (alunnoId: string, patch: Record<string, unknown>) => {
+    const cacheSezioni = new Map<string, { id: string; name: string }[]>()
+    const frequenzaDopoInsert = async (alunnoId: string, patch: Record<string, unknown>) => {
       const campi = campiFrequenzaDaAlunno(patch)
       if (Object.keys(campi).length === 0) return
-      const annoSedeId = await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
-      if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi })
+      await scriviFrequenzaDopoAlunni(supabase, { alunnoId, annoSedeId: await annoAttivoDiSede(supabase, scuolaId, cacheAnno), campi })
+    }
+    const scriviSchedaEFrequenza = async <T,>(
+      alunnoId: string,
+      patch: Record<string, unknown>,
+      scrivi: () => PromiseLike<T>,
+      classeSezione?: string,
+    ) => {
+      const campi = campiFrequenzaDaAlunno(patch)
+      const annoSedeId = Object.keys(campi).length > 0 || classeSezione
+        ? await annoAttivoDiSede(supabase, scuolaId, cacheAnno)
+        : null
+      return scriviAlunnoEFrequenza(supabase, { alunnoId, annoSedeId, campi, classeSezione, cacheSezioni }, scrivi)
     }
 
     /**
@@ -1784,7 +1801,19 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         : {}
       const sanitari = scheda ? sanitariDaScrivere(scheda, c, dataDomanda) : {}
       const daScrivere = { classe_sezione: classe, ...campiEconomici(ci), ...sanitari }
-      const { error: errScheda } = await supabase.from('alunni').update(daScrivere).eq('id', alunnoId)
+      const esitoScheda = await scriviSchedaEFrequenza(
+        alunnoId,
+        daScrivere,
+        () => supabase.from('alunni').update(daScrivere).eq('id', alunnoId),
+        classe,
+      )
+      if (!esitoScheda.scritto) {
+        // Fase B: la frequenza non si è scritta e la scheda è rimasta com'era. Come un UPDATE fallito: un avviso, non un blocco.
+        warnings.push(`Bambino ${ci + 1}: scheda esistente non aggiornata (la frequenza dell'anno non è stata scritta)`)
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'update-bambino-esistente-fallito', entita: 'bambino', indice: ci + 1, codice: esitoScheda.codice })
+        return
+      }
+      const errScheda = esitoScheda.risultato.error
       if (errScheda) {
         const d = descriviErroreDb(errScheda)
         warnings.push(`Bambino ${ci + 1}: scheda esistente non aggiornata (${d.messaggio})`)
@@ -1792,8 +1821,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         return
       }
       // ⚠️ Oggi la re-iscrizione sposta il bambino nella classe nuova scrivendo `classe_sezione` su `alunni`: difetto noto,
-      // lo chiude la PR 4.5. Qui non cambia: la frequenza dell'anno attivo segue `alunni`, come lo specchio.
-      await frequenzaDopoAlunni(alunnoId, daScrivere)
+      // lo chiude la PR 4.5. Qui non cambia: la frequenza dell'anno attivo ha la stessa classe (già scritta sopra).
       if (scheda && copiaSanitariPresente({ ...scheda, ...sanitari }, c)) sanitariInScheda.add(ci)
       if (scheda && (Object.keys(sanitari) as CampoSanitario[]).some((k) => normalizzaSanitario(scheda[k]) !== '')) {
         sanitariAggiuntiAScheda++
@@ -1926,7 +1954,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         studentId = newChild.id
         createdStudents.push({ id: newChild.id, nome: newChild.nome })
-        await frequenzaDopoAlunni(newChild.id, childRecord)
+        await frequenzaDopoInsert(newChild.id, childRecord)
         // Scheda nuova: i sanitari sono entrati con l'insert — a meno che il degrado
         // di colonna (DB E2E) non li abbia tolti dal record, e allora restano nella domanda.
         if (copiaSanitariPresente(childRecord as SanitariScheda, c)) sanitariInScheda.add(ci)
@@ -2070,10 +2098,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         })
         continue
       }
-      const { error: acErr } = await supabase
-        .from('alunni')
-        .update({ retta_a_carico_di: fratelloId })
-        .eq('id', figlioId)
+      const esitoAc = await scriviSchedaEFrequenza(
+        figlioId,
+        { retta_a_carico_di: fratelloId },
+        () => supabase.from('alunni').update({ retta_a_carico_di: fratelloId }).eq('id', figlioId),
+      )
+      // Fase B: se la frequenza non si scrive il collegamento non parte, e conta come qualunque altro non scritto.
+      const acErr = esitoAc.scritto ? esitoAc.risultato.error : ({ code: esitoAc.codice, message: 'FREQUENZA_NON_SCRITTA' } as const)
       if (acErr) {
         // PostgREST non lancia (AGENTS.md §7): senza questo controllo il bambino
         // resterebbe senza il collegamento E senza una cifra, e alla prima
@@ -2093,7 +2124,6 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         )
       } else {
         aCaricoScritti++
-        await frequenzaDopoAlunni(figlioId, { retta_a_carico_di: fratelloId })
       }
     }
     if (aCaricoScritti > 0 || aCaricoFalliti > 0) {

@@ -9,7 +9,9 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
+import { rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
 
 // ============================================================================
 // ARCHIVIA UN ALUNNO — «non più iscritto», con l'anagrafica INTATTA.
@@ -173,13 +175,26 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             gruppo_mensa_id: null,
         };
 
-        const { data: dopo, error: errScrittura } = await supabase
-            .from('alunni')
-            .update(aggiornamento)
-            .eq('id', alunnoId)
-            .in('scuola_id', plessi)
-            .select('id')
-            .single();
+        // Fase B (§4.19): prima la frequenza dell'anno attivo (`archiviato_il` → `ritirato` + uscita; `section_id` e
+        // `gruppo_mensa_id` a NULL), poi `alunni`. Se la frequenza non si scrive, la scheda resta com'era.
+        // In fase A: `alunni` e poi la frequenza, fail-open.
+        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+        const esitoScrittura = await scriviAlunnoEFrequenza(
+            supabase,
+            { alunnoId, annoSedeId, campi: campiFreq },
+            () => supabase
+                .from('alunni')
+                .update(aggiornamento)
+                .eq('id', alunnoId)
+                .in('scuola_id', plessi)
+                .select('id')
+                .single(),
+        );
+        if (!esitoScrittura.scritto) {
+            return rispostaFrequenzaNonScritta(esitoScrittura.codice, 'admin/students/archivia:POST');
+        }
+        const { data: dopo, error: errScrittura } = esitoScrittura.risultato;
 
         if (errScrittura) {
             // ⚠️ QUI NON SI DEGRADA. Il ciclo «togli la colonna e riprova» del
@@ -205,14 +220,6 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                 { error: 'L\'archiviazione non è stata registrata: la scheda è rimasta com\'era.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
                 { status: 500 },
             );
-        }
-
-        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
-        // `archiviato_il` → stato `ritirato` + uscita; `section_id` e `gruppo_mensa_id` a NULL.
-        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
-        if (Object.keys(campiFreq).length > 0) {
-            const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
-            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFreq });
         }
 
         // Audit DOPO il successo, e con i soli campi toccati: `registro_modifiche`

@@ -3595,6 +3595,8 @@ export const CODICI_ERRORE = {
     PREREQUISITI_MANCANTI: 'errorePrerequisitiMancanti',
     PARAMETRO_MANCANTE: 'erroreParametroMancante',
     CALENDARIO_NON_DISPONIBILE: 'erroreCalendarioNonDisponibile',
+    // Fase B (PR 4.3, compito 4.3.5): la frequenza non si è scritta e la scheda dell'alunno è rimasta com'era (500).
+    FREQUENZA_NON_SCRITTA: 'erroreFrequenzaNonScritta',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

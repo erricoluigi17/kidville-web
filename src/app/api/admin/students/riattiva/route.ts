@@ -10,7 +10,9 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { classeEsisteInOgniSede } from '../route';
-import { annoAttivoDiSede, campiFrequenzaDaAlunno, scriviFrequenza } from '@/lib/anno/frequenze';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
+import { rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
 
 // ============================================================================
 // RIPORTA UN ALUNNO FRA GLI ISCRITTI — il ritorno, che è metà del modello.
@@ -254,13 +256,26 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // l'archiviazione.
         if (classeDaScrivere !== null) aggiornamento.classe_sezione = classeDaScrivere;
 
-        const { data: dopo, error: errScrittura } = await supabase
-            .from('alunni')
-            .update(aggiornamento)
-            .eq('id', alunnoId)
-            .in('scuola_id', plessi)
-            .select('id')
-            .single();
+        // Fase B (§4.19): prima la frequenza dell'anno attivo (`archiviato_il` NULL → `iscritto` senza uscita; la sezione
+        // della classe ripristinata la risolve `scriviAlunnoEFrequenza` dal nome), poi `alunni`. Se la frequenza non si
+        // scrive, la scheda resta com'era. In fase A: `alunni` e poi la frequenza, fail-open.
+        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        const annoSedeId = await annoAttivoDiSede(supabase, sede);
+        const esitoScrittura = await scriviAlunnoEFrequenza(
+            supabase,
+            { alunnoId, annoSedeId, campi: campiFreq, classeSezione: classeDaScrivere },
+            () => supabase
+                .from('alunni')
+                .update(aggiornamento)
+                .eq('id', alunnoId)
+                .in('scuola_id', plessi)
+                .select('id')
+                .single(),
+        );
+        if (!esitoScrittura.scritto) {
+            return rispostaFrequenzaNonScritta(esitoScrittura.codice, 'admin/students/riattiva:POST');
+        }
+        const { data: dopo, error: errScrittura } = esitoScrittura.risultato;
 
         if (errScrittura) {
             if (colonnaAssente(errScrittura)) return archivioNonDisponibile('scrittura', alunnoId);
@@ -281,14 +296,6 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                 { error: 'Il bambino non è stato riportato fra gli iscritti: la scheda è rimasta com\'era.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
                 { status: 500 },
             );
-        }
-
-        // Fase A (§4.19): `alunni` è scritto, ora la frequenza dell'anno attivo (fail-open; la risposta non cambia).
-        // `archiviato_il` NULL → `iscritto` senza uscita; `section_id` lo risolve il trigger BEFORE e lo copia lo specchio.
-        const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
-        if (Object.keys(campiFreq).length > 0) {
-            const annoSedeId = await annoAttivoDiSede(supabase, sede);
-            if (annoSedeId) await scriviFrequenza(supabase, { alunnoId, annoSedeId, campi: campiFreq });
         }
 
         await logScrittura(supabase, {

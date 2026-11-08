@@ -825,6 +825,7 @@
   "errorePrerequisitiMancanti": "Some details are still missing before enrolment can open: check the year’s fees and forms.",
   "erroreParametroMancante": "A required value is missing. Check and try again.",
   "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly.",
+  "erroreFrequenzaNonScritta": "The change was not saved: the record has been left as it was. Try again shortly.",
   "annoSelettoreAria": "Change school year",
   "annoOgniSede": "Current year",
   "annoStatoInCorso": "current",

@@ -135,3 +135,46 @@ describe('POST /api/admin/protocolli/genera-documento — il foglio che esce', (
     expect(percorsi.filter((p) => p.endsWith('-timbrato.pdf'))).toHaveLength(1)
   })
 })
+
+// ─── L'anno che il documento dichiara (compito 4.1.S1) ───────────────────────────
+// PRIMA: `annoScolasticoCorrente()` — l'anno dell'orologio con soglia al 1° agosto, uguale per
+// tutti. DOPO: l'anno della FREQUENZA del bambino nel calendario della sua sede
+// (`annoDellaFrequenza`), e solo senza calendario l'anno del giorno di Roma.
+
+const ANNO_SEDE = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
+const ANNO = 'c3c3c3c3-3333-4333-8333-cccccccccccc'
+
+async function testoDelDocumento(): Promise<string> {
+  const { estraiTesto } = await import('@/lib/protocolli/estrai')
+  return (await estraiTesto(await generaEPrendiIlTimbrato())).replace(/\s+/g, ' ')
+}
+
+describe('POST /api/admin/protocolli/genera-documento — l’anno scolastico dichiarato', () => {
+  it('stampa l’anno della FREQUENZA del bambino, non quello dell’orologio', async () => {
+    // L'anno corrente della sede è il 2031/2032: nessun orologio di oggi può produrlo, quindi il
+    // test è verde solo se l'anno arriva da `frequenze` → `anni_sede`, e non dal giorno.
+    h.db.anni_sede = [
+      {
+        id: ANNO_SEDE,
+        scuola_id: SEDE,
+        anno_id: ANNO,
+        inizio: '2031-09-01',
+        fine: '2032-08-31',
+        ultimo_giorno_aperto: '2032-08-31',
+        prepara_successivo_dal: '2032-03-01',
+        stato: 'corrente',
+        domande_aperte: false,
+        anni_scolastici: { anno_inizio: 2031 },
+      },
+    ]
+    h.db.frequenze = [{ alunno_id: ALUNNO, scuola_id: SEDE, stato: 'iscritto', anno_sede_id: ANNO_SEDE }]
+
+    expect(await testoDelDocumento()).toContain('2031/2032')
+  })
+
+  it('senza calendario (schema dell’anno assente o vuoto) ripiega sull’anno del giorno di Roma', async () => {
+    const { annoDiIstante } = await import('@/lib/anno-scolastico')
+    const atteso = annoDiIstante(new Date()).etichetta
+    expect(await testoDelDocumento()).toContain(atteso)
+  })
+})

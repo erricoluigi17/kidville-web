@@ -537,26 +537,6 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
     motivo: 'l’anno di apertura della quota CRM viene da annoScolasticoCorrente(adesso); la PR 4.1 lo legge dall’anno `corrente` della sede, e lo toglie',
   },
   {
-    file: 'src/lib/prestampati/prefill.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno scolastico che precompila il modulo viene da annoScolasticoCorrente(oggi); la PR 4.1 gli passa l’anno della sede, e lo toglie',
-  },
-  {
-    file: 'src/app/api/prestampati/banco.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'annoScolastico del banco dei prestampati = annoScolasticoCorrente(); la PR 4.1 lo risolve per sede, e lo toglie',
-  },
-  {
-    file: 'src/app/api/parent/prestampati/banco-famiglia.ts',
-    modelli: ['-07-31', 'mese >= soglia', 'annoScolasticoDelGiorno'],
-    motivo: 'la fine dell’anno scolastico del modulo famiglia è `${fine}-07-31`, scritta a mano, e annoScolasticoDelGiorno decide l’anno con `mese >= 8`; la PR 4.1 li prende dall’anno della sede (anni_scolastici.fine), e li toglie',
-  },
-  {
-    file: 'src/app/api/admin/protocolli/genera-documento/route.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno del protocollo generato è annoScolasticoCorrente(); la PR 4.1 usa l’anno della sede del documento, e lo toglie',
-  },
-  {
     file: 'src/app/(dashboard)/teacher/primaria/[sectionId]/compiti/page.tsx',
     modelli: ['annoScolasticoCorrente(', '-08-01'],
     motivo: 'il filtro «compiti di quest’anno» parte da `${anno}-08-01`; la PR 4.1 lo legge dall’inizio dell’anno della classe, e lo toglie',
@@ -618,14 +598,16 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
   },
 ]
 /**
- * Il tetto è il numero di file di oggi (17) e può solo SCENDERE.
+ * Il tetto è il numero di file di oggi (13) e può solo SCENDERE.
  * Era 10 (misurato 2026-11-07). Sceso a 9 l'08/11/2026, PR 4.1 compito 4.1.1: `src/lib/anno-scolastico.ts` è
  * diventato il modulo dell'anno ed è esente (lì le soglie sono la definizione); non era un file che calcola a mano.
  * Salito da 9 a 17 l'08/11/2026, PR 4.1 compito 4.1.L: il lock ora vede anche le soglie al 1° settembre, che la PR 3
  * non vedeva; i file sono quelli del censimento della PR 4.1; ogni compito di sostituzione lo abbassa, l'ultimo lo
  * porta a 0.
+ * Sceso da 17 a 13 l'08/11/2026 (−4: prestampati e documenti sul modulo dell'anno, compito 4.1.S1):
+ * prefill.ts, banco.ts, banco-famiglia.ts e genera-documento/route.ts non calcolano più l'anno a mano.
  */
-const TETTO_ANNO_A_MANO = 17
+const TETTO_ANNO_A_MANO = 13
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -1215,7 +1197,7 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
 
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(17) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre); scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(13) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre), 13 dall'08/11 (4.1.S1: −4, prestampati e documenti sul modulo dell'anno); scende, non sale
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

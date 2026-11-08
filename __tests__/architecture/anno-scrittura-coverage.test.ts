@@ -750,7 +750,7 @@ const MINIMI: { chiave: keyof Misure; minimo: number; nota: string }[] = [
   { chiave: 'dichiarateNonPagamenti', minimo: 9, nota: 'misurate 9 il 2026-11-07 (crm 2, enrollment 2, elenco 1, scrutinio 1, sections 1, votazioni 1, certificati 1)' },
   { chiave: 'pagamenti', minimo: 12, nota: 'misurate 12 il 2026-11-07' },
   { chiave: 'sitiAlunni', minimo: 20, nota: 'misurati 20 il 2026-11-07 (bozza: 12; la misura conta anche i file con l’oggetto in una variabile)' },
-  { chiave: 'funzioni', minimo: 65, nota: 'misurate 65 il 2026-11-07 (bozza 55, poi P13: 60; la fotografia ne ha 65)' },
+  { chiave: 'funzioni', minimo: 66, nota: 'misurate 66 il 2026-11-08 (bozza 55, poi P13: 60, 65 il 2026-11-07; la PR 4.3-B aggiunge frequenza_segue_classe_alunno)' },
 ]
 /** Per ogni tabella dichiarata (esclusa `frequenze` e `pagamenti`) misurati il 2026-11-07: crm_bambini 2, enrollment_submissions 2, il resto 1. */
 const MINIMI_PER_TABELLA: Record<string, number> = {

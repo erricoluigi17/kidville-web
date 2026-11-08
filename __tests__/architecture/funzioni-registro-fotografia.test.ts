@@ -25,7 +25,7 @@ const registro = new Set(
 )
 
 // Da aggiornare quando si rigenera la fotografia: blocca le cancellazioni silenziose.
-const FUNZIONI_ATTESE = 65 // misurate in produzione il 07/11/2026 (il piano ne scriveva 58, vedi il report del 3.0)
+const FUNZIONI_ATTESE = 66 // misurate in produzione l'08/11/2026 dopo la PR 4.3 (65 il 07/11, +1: frequenza_segue_classe_alunno; il piano ne scriveva 58, vedi il report del 3.0)
 const CLASSI = ['corrente', 'esente-colonne', 'oblio', 'macchina-a-stati', 'dichiara']
 
 describe('fotografia delle funzioni che scrivono il registro', () => {

@@ -152,6 +152,7 @@ export const CLASSI = {
     gallery_publish_photo_storico: C('corrente', 'scrive galleria_media_v2 (modo data) con giorno_competenza passato dal chiamante'),
     note_modifica: C('corrente', 'modifica note disciplinari e le loro ricezioni'),
     primaria_ricalcola_periodi: C('corrente', 'ricalcola periodo_id nella stessa transazione della scrittura guardata sui periodi'),
+    frequenza_segue_classe_alunno: C('corrente', 'PR 4.3-B: aggiorna section_id della frequenza dell\'anno attivo quando alunni cambia sezione (fail-open, solo service_role)'),
     propaga_rinomina_sezione: C('esente-colonne', 'trigger: riscrive target_classes e classe_sezione (testi derivati dal nome) -- non ancora in anno_colonne_esenti'),
     riaccredita_ticket_e_disdici: C('corrente', 'disdice una prenotazione mensa'),
     salva_comportamento_scrutinio: C('corrente', 'salva il giudizio di comportamento di uno scrutinio aperto'),

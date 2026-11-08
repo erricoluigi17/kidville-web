@@ -126,6 +126,8 @@ const VOCI: { id: string; etichetta: string }[] = [
   { id: 'chat', etichetta: itAdminSettings.voceChat },
   { id: 'galleria', etichetta: itAdminSettings.voceGalleria },
   { id: 'notifiche', etichetta: itAdminSettings.voceNotifiche },
+  // PR 4.2.7: la sezione degli anni scolastici sta dietro `conSede` come le altre.
+  { id: 'anno', etichetta: itAdminSettings.voceAnno },
 ]
 
 const paginaConSedi = (cambioVerso?: string) =>
@@ -273,7 +275,7 @@ describe('Impostazioni — le etichette nuove esistono in entrambe le lingue', (
     'sedeRequiredModuli', 'sedeRequiredModulistica', 'sedeRequiredDiario',
     'sedeRequiredPresenze', 'sedeRequiredNote', 'sedeRequiredArmadietto',
     'sedeRequiredAvvisi', 'sedeRequiredChat', 'sedeRequiredGalleria',
-    'sedeRequiredNotifiche', 'sedeInConfigurazione', 'sedeSconosciuta',
+    'sedeRequiredNotifiche', 'sedeInConfigurazione', 'sedeSconosciuta', 'sedeRequiredAnno',
   ]
 
   it.each(CHIAVI)('«%s» c\'è in it e in en', (k) => {

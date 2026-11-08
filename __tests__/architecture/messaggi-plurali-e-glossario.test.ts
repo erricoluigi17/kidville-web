@@ -826,6 +826,9 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
         ['parentChat.chatFotoConversazione', 'forma «foto N di M»: posizione in una sequenza'],
         ['teacherPrimaria.valutazioniStoricoTitolo', 'nome e cognome dell’alunno e nome della materia: titolo «Tutti i voti di {alunno} in {materia}»'],
+        ['adminSettings.annoRigaPeriodo', 'date di inizio e fine di un anno scolastico, non conteggi'],
+        ['adminSettings.annoFineSotto', 'etichetta dell’anno («2027/28») e data di inizio, non conteggi'],
+        ['adminSettings.annoDateFuoriPeriodo', 'date di inizio e fine dell’anno, non conteggi'],
 
         // (c) FRAZIONE `n/tot`: il sostantivo concorda con il totale, non con il
         //     numeratore. «1/20 presenti» è corretto e «1/20 presente» sarebbe
@@ -1014,7 +1017,15 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // preposizione che li lega — nessun sostantivo concorda con un numero. Il riconoscitore
         // scatta perché dopo il segnaposto viene «in»; riscrivere il titolo per schivarlo è la
         // frase piegata al lock già scartata più volte, qui sopra.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(44)
+        //
+        // 2026-11-08 · 44 → 47. La sezione «Anno scolastico» delle impostazioni (PR 4.2.7) ha tre
+        // messaggi con DATE e non con conteggi: `annoRigaPeriodo` («dal {inizio} al {fine}» — gemella
+        // di `parentServizi.modulisticaPeriodoDalAl`), `annoFineSotto` («Il {anno} comincerà il
+        // {data}»: `{anno}` è l'etichetta «2027/28») e `annoDateFuoriPeriodo` («fra il {inizio} e il
+        // {fine}», che in inglese cade sotto il riconoscitore per via di «and»). Categoria (a): il
+        // verbo o la preposizione dopo il segnaposto non concorda con nessun numero. Tre messaggi
+        // nuovi, tre eccezioni dichiarate: il tetto sale di tre e non di più.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(47)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

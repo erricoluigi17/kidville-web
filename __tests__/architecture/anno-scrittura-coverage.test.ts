@@ -458,7 +458,10 @@ function violazioniDoppiaScrittura(
 
 type ModelloAnno = 'annoScolasticoCorrente(' | '-08-01' | '-07-31' | 'getMonth()'
 
-const FUORI_DAL_MODULO_ANNO = (p: string) => !p.startsWith('src/lib/anno/') && p !== 'src/lib/auth/scope.ts'
+// Il «modulo dell'anno» sono `src/lib/anno/`, `src/lib/auth/scope.ts` e (dal compito 4.1.1) `src/lib/anno-scolastico.ts`:
+// quest'ultimo è il posto dove le soglie vivono, quindi lì i letterali sono la definizione, non un calcolo a mano.
+const FUORI_DAL_MODULO_ANNO = (p: string) =>
+  !p.startsWith('src/lib/anno/') && p !== 'src/lib/auth/scope.ts' && p !== 'src/lib/anno-scolastico.ts'
 
 /**
  * I modelli di calcolo dell'anno presenti nel file. Le chiamate si cercano nel testo `struttura`; i letterali
@@ -488,11 +491,6 @@ function modelliAnnoNelFile(a: Analisi): ModelloAnno[] {
  * dell'elenco non contiene più un suo modello (niente eccezioni morte), e se l'elenco CRESCE.
  */
 const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: string }[] = [
-  {
-    file: 'src/lib/anno-scolastico.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'è la DEFINIZIONE di annoScolasticoCorrente (confine al 1° agosto, fuso di Roma) che tutti i file sotto chiamano; la PR 4.1 la sostituisce col modulo anno e la toglie',
-  },
   {
     file: 'src/lib/crm/quota-anno.ts',
     modelli: ['annoScolasticoCorrente('],
@@ -539,8 +537,12 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
     motivo: 'l’anno proposto per i periodi di scrutinio è `getMonth() >= 8 ? y : y - 1` (fuso del browser); la PR 4.1 lo prende dall’anno corrente della sede, e lo toglie',
   },
 ]
-/** Il tetto è il numero di file di oggi (10, 2026-11-07) e può solo SCENDERE. */
-const TETTO_ANNO_A_MANO = 10
+/**
+ * Il tetto è il numero di file di oggi (9) e può solo SCENDERE.
+ * Era 10 (misurato 2026-11-07). Sceso a 9 l'08/11/2026, PR 4.1 compito 4.1.1: `src/lib/anno-scolastico.ts` è
+ * diventato il modulo dell'anno ed è esente (lì le soglie sono la definizione); non era un file che calcola a mano.
+ */
+const TETTO_ANNO_A_MANO = 9
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -553,7 +555,7 @@ function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tet
   }
   for (const [file, mod] of trovati) {
     const e = perFile.get(file)
-    if (!e) { out.push(`${file} — calcola l'anno a mano (${mod.join(', ')}) fuori da src/lib/anno/ e da src/lib/auth/scope.ts: usa il modulo dell'anno`); continue }
+    if (!e) { out.push(`${file} — calcola l'anno a mano (${mod.join(', ')}) fuori da src/lib/anno/, src/lib/auth/scope.ts e src/lib/anno-scolastico.ts: usa il modulo dell'anno`); continue }
     const nuovi = mod.filter((m) => !e.modelli.includes(m))
     if (nuovi.length > 0) out.push(`${file} — nuovo modello di calcolo a mano: ${nuovi.join(', ')}`)
   }
@@ -1090,7 +1092,7 @@ describe('anno-scrittura-coverage — 4. la doppia scrittura alunni → frequenz
 })
 
 describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => {
-  it('fuori da src/lib/anno/ e src/lib/auth/scope.ts nessun annoScolasticoCorrente(, -08-01, -07-31, getMonth() dell’anno, se non nell’elenco di oggi', () => {
+  it('fuori da src/lib/anno/, src/lib/auth/scope.ts e src/lib/anno-scolastico.ts nessun annoScolasticoCorrente(, -08-01, -07-31, getMonth() dell’anno, se non nell’elenco di oggi', () => {
     const v = violazioniAnnoAMano(ANALISI)
     expect(
       v,
@@ -1102,7 +1104,7 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
 
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(10) // misurato il 2026-11-07: 10 file; scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(9) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente); scende, non sale
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

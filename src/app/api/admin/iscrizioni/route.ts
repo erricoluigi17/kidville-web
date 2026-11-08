@@ -47,6 +47,7 @@ import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 // Esito bloccante dell'import: impedisce di marcare l'invio 'approved' (a differenza
 // dei `warnings`, non bloccanti). `dove` = "Adulto N"/"Bambino N", `messaggio` = testo it.
@@ -1138,10 +1139,14 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // che hanno sezioni quasi omonime ("3 ANNI", "2 ANNI A") succede al primo errore di
     // tendina. Qui si controlla PRIMA di ogni scrittura, con la stessa normalizzazione
     // del trigger — niente insert parziali, l'invio resta 'pending'.
-    const { data: sezioniSede, error: sezErr } = await supabase
+    // Solo le sezioni dell'anno ATTIVO: il trigger non risolve le altre (e un nome dell'anno dopo non è una classe di oggi).
+    const anniAttiviSede = await anniAttiviDeiPlessi(supabase, [scuolaId])
+    let ricercaSezioni = supabase
       .from('sections')
       .select('name')
       .eq('scuola_id', scuolaId)
+    if (anniAttiviSede) ricercaSezioni = ricercaSezioni.in('anno_id', anniAttiviSede)
+    const { data: sezioniSede, error: sezErr } = await ricercaSezioni
     if (sezErr) {
       // Il controllo si salta, l'import prosegue: il DB E2E della CI non è migrato e
       // un'iscrizione non si blocca per un problema d'infrastruttura. `info` quando è

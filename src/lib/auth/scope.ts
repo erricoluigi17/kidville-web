@@ -8,6 +8,7 @@ import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { anniDellaSede, esitoSchemaIndietro, guastoAnno, type RigaAnnoSede } from '@/lib/anno/lettura'
 import { creaGettoni } from '@/lib/anno/gettone'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
@@ -569,7 +570,15 @@ export async function resolveAnnoScrittura(
   const { righe } = anni
   const perAnno = new Map(righe.map((r) => [formaConfronto(String(r.anno_id)), r]))
 
-  const richiesto = opzioni.dichiarato?.trim() || annoDalCookie(request)
+  // Come `resolveAnnoLettura`: il cookie lo seguono solo Direzione e segreteria. Per tutti gli altri si ignora (con
+  // lo stesso `warn` se c'era) e la scrittura va sull'anno `corrente`, a meno che il client non dichiari l'anno.
+  const cookie = annoDalCookie(request)
+  if (!vedeTutteLeClassi(user) && cookie) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-cookie-ignorato-ruolo', azione, utente: user.id, ruolo: user.role,
+    })
+  }
+  const richiesto = opzioni.dichiarato?.trim() || (vedeTutteLeClassi(user) ? cookie : null)
   let riga: RigaAnnoSede | undefined
   if (richiesto) {
     riga = perAnno.get(formaConfronto(richiesto))
@@ -671,6 +680,28 @@ export async function resolveAnnoLettura(
     return rifiutoAnno('ANNO_NON_VISIBILE', azione)
   }
   return { annoSedeId: riga.id, annoId: riga.anno_id, stato: riga.stato, eAttivo: riga.id === attivoId }
+}
+
+/**
+ * L'anno su cui LEGGERE un ELENCO che può attraversare più sedi (Compito 4.3.7). L'`anni_scolastici.id` è lo stesso per
+ * tutte le sedi, quindi basta risolverlo su UNA: `preferita` se è fra i plessi, poi la sede dell'utente, poi la prima.
+ * Stesse uscite di `resolveAnnoLettura`: `null` = nessun filtro d'anno (DB non migrato, nessun plesso), una risposta
+ * d'errore va restituita così com'è.
+ */
+export async function resolveAnnoLetturaElenco(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  plessi: readonly string[],
+  preferita?: string | null,
+): Promise<AnnoLettura | null | NextResponse> {
+  const sede =
+    (preferita && plessi.includes(preferita) ? preferita : null) ??
+    (user.scuola_id && plessi.includes(user.scuola_id) ? user.scuola_id : null) ??
+    plessi[0] ??
+    null
+  if (!sede) return null
+  return resolveAnnoLettura(request, supabase, user, sede)
 }
 
 /**
@@ -1037,11 +1068,15 @@ export async function assertClasseNomeInScope(
   // Niente `.limit(1)`: con `soloSezioniAssegnate` servono TUTTE le sezioni
   // omonime dentro i propri plessi per intersecarle con quelle del docente.
   // L'insieme è comunque minuscolo (una riga per sede accessibile).
-  const { data, error } = await supabase
+  // Il nome si ripete ogni anno: si risolve sull'anno ATTIVO dei plessi (`null` = niente filtro, DB non migrato).
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase
     .from('sections')
     .select('id')
     .eq('name', classeNome)
     .in('scuola_id', plessi)
+  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.

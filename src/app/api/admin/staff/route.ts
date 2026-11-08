@@ -5,6 +5,7 @@ import { requireStaff, type AppRole } from '@/lib/auth/require-staff'
 import {
   assertUtenteInScope,
   formaConfronto,
+  resolveAnnoLetturaElenco,
   resolveScuoleAttive,
   scuoleDiUtente,
   assertSezioneScrivibile,
@@ -167,6 +168,16 @@ export const GET = withRoute('admin/staff:GET', async (request: NextRequest) => 
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     const accessibili = await scuoleDiUtente(supabase, auth.user)
 
+    // Le classi proposte sono di un solo anno: scelto (Direzione, segreteria) o attivo. `null` = DB non migrato.
+    const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi)
+    if (anno instanceof NextResponse) return anno
+    let ricercaSezioni = supabase
+      .from('sections')
+      .select('id, name, scuola_id, school_type')
+      .in('scuola_id', plessi)
+      .order('name')
+    if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId)
+
     // contesto per la UI: personale + sedi + classi
     const [
       { data, error },
@@ -180,11 +191,7 @@ export const GET = withRoute('admin/staff:GET', async (request: NextRequest) => 
         .in('scuola_id', plessi)
         .order('cognome', { ascending: true }),
       supabase.from('schools').select('id, nome').in('id', accessibili),
-      supabase
-        .from('sections')
-        .select('id, name, scuola_id, school_type')
-        .in('scuola_id', plessi)
-        .order('name'),
+      ricercaSezioni,
     ])
     if (error) return erroreDb('admin/staff:GET', 'db-rubrica', error)
     // PostgREST non lancia: senza questi due controlli una lettura fallita

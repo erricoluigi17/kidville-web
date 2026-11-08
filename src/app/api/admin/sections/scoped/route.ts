@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -44,6 +44,10 @@ export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRe
       return NextResponse.json({ success: true, data: [] })
     }
 
+    // Un solo anno: quello scelto da Direzione e segreteria, l'attivo per i docenti. `null` = DB non migrato.
+    const anno = await resolveAnnoLetturaElenco(request, supabase, user, plessi)
+    if (anno instanceof NextResponse) return anno
+
     const types = q.data.grado ? q.data.grado.split(',') : null
     let query = supabase
       .from('sections')
@@ -51,6 +55,7 @@ export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRe
       .in('scuola_id', plessi)
       .order('name')
     if (types) query = query.in('school_type', types)
+    if (anno) query = query.eq('anno_id', anno.annoId)
     const { data: sections, error } = await query
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente }))
+vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente, resolveAnnoLetturaElenco: async () => null }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {

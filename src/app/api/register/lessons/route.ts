@@ -11,6 +11,7 @@ import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -155,11 +156,15 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
                 ? [scuolaId]
                 : await resolveScuoleAttive(request, supabase, auth.user);
 
-            const { data: omonime, error: sezErr } = await supabase
+            // Il nome si ripete ogni anno: la lezione si registra sulla sezione dell'anno ATTIVO.
+            const anniAttivi = await anniAttiviDeiPlessi(supabase, perimetro);
+            let ricercaSezione = supabase
                 .from('sections')
                 .select('id, name, scuola_id')
                 .eq('name', classeSezione as string)
                 .in('scuola_id', perimetro);
+            if (anniAttivi) ricercaSezione = ricercaSezione.in('anno_id', anniAttivi);
+            const { data: omonime, error: sezErr } = await ricercaSezione;
             if (sezErr) {
                 logEvento('registro', 'error', {
                     operazione: 'register/lessons:POST', esito: 'sezione-non-risolta', sezione: classeSezione,

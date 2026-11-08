@@ -834,7 +834,7 @@
   "annoStatoIscrizioniAperte": "enrolment open",
   "annoStatoInPreparazione": "in preparation",
   "annoStatoChiuso": "closed",
-  "annoAvvisoTesto": "You are working on {anno} ({stato}): new classes, votes and uploaded lists go to that year. The lists on screen still show the current year.",
+  "annoAvvisoTesto": "You are working on {anno} ({stato}): new classes, votes and uploaded lists go to that year. The class lists on screen show that year too.",
   "annoAvvisoTorna": "Back to the current year",
   "annoStatoDiverso": "status differs between locations"
 }

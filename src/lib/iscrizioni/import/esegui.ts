@@ -79,6 +79,7 @@ import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -243,10 +244,14 @@ async function nomeCanonicoClasse(
   scuolaId: string,
   classe: string,
 ): Promise<string> {
-  const { data, error } = await supabase
+  // L'import scrive alunni dell'anno ATTIVO (la PR 4.5 lo cambierà): il nome si risolve sulle sezioni di quell'anno.
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
+  let ricerca = supabase
     .from('sections')
     .select('name')
     .eq('scuola_id', scuolaId)
+  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo la lettura caduta diventerebbe
     // «nessuna sezione», e si tornerebbe a scrivere il grezzo in silenzio.

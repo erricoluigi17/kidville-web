@@ -26,6 +26,7 @@ import { rispostaGuastoDb } from '@/lib/db/guasto'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { dataCivile } from '@/i18n/config'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
 // plesso (section_id NULL) o di sezione, su eventi_agenda (migr. 20260762).
@@ -106,11 +107,15 @@ async function sezionePerNomeInScope(
     NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
   if (plessi.length === 0) return { response: fuoriPlesso() }
 
-  const { data, error } = await supabase
+  // Il nome si ripete ogni anno: la sezione giusta è quella dell'anno ATTIVO (`null` = DB non migrato, nessun filtro).
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase
     .from('sections')
     .select('id, scuola_id')
     .eq('name', nome)
     .in('scuola_id', plessi)
+  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe un 403 muto, indistinguibile da un tentativo cross-sede.

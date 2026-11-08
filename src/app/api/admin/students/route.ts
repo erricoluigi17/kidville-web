@@ -22,6 +22,7 @@ import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte } from '@/lib/anno/scrittura';
 import { erroreAnno, rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -306,11 +307,15 @@ export async function classeEsisteInOgniSede(
     sedi: string[],
     operazione: string,
 ): Promise<NextResponse | null> {
-    const { data, error } = await supabase
+    // Il nome si ripete ogni anno: vale la classe dell'anno ATTIVO (il trigger `sync_alunno_section_id` fa lo stesso).
+    const anniAttivi = await anniAttiviDeiPlessi(supabase, sedi);
+    let ricerca = supabase
         .from('sections')
         .select('scuola_id')
         .eq('name', nome)
         .in('scuola_id', sedi);
+    if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi);
+    const { data, error } = await ricerca;
     if (error) {
         logEvento('multi_sede', 'error', { operazione, esito: 'classe-non-risolta', sezione: nome }, error);
         return NextResponse.json({ error: 'Verifica della classe non riuscita' }, { status: 500 });

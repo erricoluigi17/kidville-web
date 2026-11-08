@@ -42,6 +42,8 @@ vi.mock('@/lib/auth/scope', () => ({
   scuoleDiUtente: h.scuoleDiUtente,
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
+// Il filtro d'anno ha i suoi test (admin-sections-anno.test.ts): qui la lettura di `anni_sede` sporcherebbe l'elenco delle tabelle.
+vi.mock('@/lib/anno/anni-attivi', () => ({ anniAttiviDeiPlessi: async () => null }))
 // Logger VERO, con `logEvento` sotto spia: sotto vitest il logger è silenzioso per
 // scelta (`SILENZIOSO`), quindi «ha loggato?» non si legge dalla console — si legge
 // solo qui. È l'unico modo di provare che il ripiego d'ultima istanza parla.

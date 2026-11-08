@@ -9,6 +9,7 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -59,7 +60,11 @@ async function sezioniConNome(
 ): Promise<string[]> {
     const plessi = await scuoleDiUtente(admin, user);
     if (plessi.length === 0) return [];
-    const { data, error } = await admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    // Il nome si ripete ogni anno: vale la sezione dell'anno ATTIVO (`null` = DB non migrato, nessun filtro).
+    const anniAttivi = await anniAttiviDeiPlessi(admin, plessi);
+    let ricerca = admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
+    if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi);
+    const { data, error } = await ricerca;
     if (error) {
         // Un guasto NON è «nessuna sezione»: in GET diventerebbe un elenco vuoto, in POST un
         // materiale scritto con `section_id` nullo, cioè senza sede. Si lancia, e lo prende il

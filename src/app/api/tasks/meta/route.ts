@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export const GET = withRoute('tasks/meta:GET', async (request: Request) => {
+export const GET = withRoute('tasks/meta:GET', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -74,11 +74,16 @@ export const GET = withRoute('tasks/meta:GET', async (request: Request) => {
         }
 
         // Recupera tutte le sezioni
-        const { data: sections, error: secErr } = await supabase
+        // Un solo anno: scelto (staff) o attivo (docenti), così il selettore non propone due «1A». `null` = DB non migrato.
+        const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
+        if (anno instanceof NextResponse) return anno;
+        let ricercaSezioni = supabase
             .from('sections')
             .select('name')
             .in('scuola_id', plessi)
             .order('name', { ascending: true });
+        if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId);
+        const { data: sections, error: secErr } = await ricercaSezioni;
 
         // Nessun elenco hardcoded: senza sezioni né alunni il selettore resta vuoto.
         let classes: string[] = [];

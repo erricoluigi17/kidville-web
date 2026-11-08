@@ -48,6 +48,7 @@ import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piatta
 import { leggiElenco, type Anomalia } from '@/lib/iscrizioni/import/elenco'
 import { anomalieClassiSenzaSezione } from '@/lib/iscrizioni/import/sezioni'
 import { SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 
 const OPERAZIONE_POST = 'admin/iscrizioni/elenco:POST'
 const OPERAZIONE_GET = 'admin/iscrizioni/elenco:GET'
@@ -464,7 +465,11 @@ async function leggiNomiSezioni(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   scuolaId: string,
 ): Promise<string[]> {
-  const { data, error } = await supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  // Solo le sezioni dell'anno ATTIVO, le sole che il trigger `sync_alunno_section_id` risolve.
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
+  let ricerca = supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     const codice = (error as { code?: string }).code
     logEvento('db', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveAnnoLetturaElenco, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -29,12 +29,17 @@ export const GET = withRoute('primaria/sezioni:GET', async (request: NextRequest
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     if (plessi.length === 0) return NextResponse.json({ success: true, data: [] })
 
-    const { data, error } = await supabase
+    // Un solo anno: la supplenza si firma nell'anno scelto (staff) o attivo (docenti). `null` = DB non migrato.
+    const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi)
+    if (anno instanceof NextResponse) return anno
+    let ricerca = supabase
       .from('sections')
       .select('id, name, scuola_id')
       .eq('school_type', 'primaria')
       .in('scuola_id', plessi)
       .order('name')
+    if (anno) ricerca = ricerca.eq('anno_id', anno.annoId)
+    const { data, error } = await ricerca
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     return NextResponse.json({ success: true, data: data ?? [] })

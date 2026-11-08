@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { assertClasseNomeInScope, assertSezioneInScope } from '@/lib/auth/scope'
 import { logEvento } from '@/lib/logging/logger'
+import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
 import type { NextResponse } from 'next/server'
 
 /**
@@ -41,7 +42,8 @@ import type { NextResponse } from 'next/server'
  */
 
 /**
- * Le sezioni, dentro i plessi dati, che portano un dato NOME.
+ * Le sezioni, dentro i plessi dati, che portano un dato NOME, nell'anno ATTIVO (Compito 4.3.7: lo stesso nome c'è in
+ * più anni, e la sezione giusta è quella dell'anno in corso).
  *
  * Promozione di `sezioniConNome`, che viveva privata dentro
  * `src/app/api/locker/materials/route.ts` — l'unica route 0-6 che era già
@@ -60,11 +62,15 @@ export async function sezioniDiNome(
   plessi: readonly string[],
 ): Promise<string[]> {
   if (!nome || plessi.length === 0) return []
-  const { data, error } = await supabase
+  // Il nome si ripete ogni anno: vale l'anno ATTIVO dei plessi (`null` = niente filtro, DB non migrato).
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase
     .from('sections')
     .select('id')
     .eq('name', nome)
     .in('scuola_id', plessi as string[])
+  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  const { data, error } = await ricerca
   if (error) {
     logEvento('auth', 'error', {
       tipo: 'sezioni-di-nome-non-risolte', azione: 'sezioniDiNome', sezione: nome,

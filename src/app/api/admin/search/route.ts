@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { ripulisciTermineRicerca } from '@/lib/validation/ricerca-testo'
 import { withRoute } from '@/lib/logging/with-route'
@@ -56,7 +56,7 @@ const ROLE_LABEL: Record<string, string> = {
 // quando una ricerca sbaglia, e correggerla in un posto su due lascia due campi
 // che cercano in modo diverso nella stessa applicazione.
 
-export const GET = withRoute('admin/search:GET', async (request: Request) => {
+export const GET = withRoute('admin/search:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -74,7 +74,18 @@ export const GET = withRoute('admin/search:GET', async (request: Request) => {
     return NextResponse.json({ success: true, data: GRUPPI_VUOTI })
   }
 
+  // Le classi cercate sono quelle dell'anno scelto (cookie): due «1A» di anni diversi non si confondono.
+  const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi)
+  if (anno instanceof NextResponse) return anno
+
   const like = `%${term}%`
+  let ricercaSezioni = supabase
+    .from('sections')
+    .select('id, name, school_type')
+    .in('scuola_id', plessi)
+    .ilike('name', like)
+    .limit(5)
+  if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId)
   const [alunniRes, utentiRes, sezioniRes, moduliRes] = await Promise.all([
     supabase
       .from('alunni')
@@ -89,12 +100,7 @@ export const GET = withRoute('admin/search:GET', async (request: Request) => {
       .or(`role.in.(${STAFF_ROLES}),ruolo.in.(${STAFF_ROLES})`)
       .or(`nome.ilike.${like},cognome.ilike.${like}`)
       .limit(5),
-    supabase
-      .from('sections')
-      .select('id, name, school_type')
-      .in('scuola_id', plessi)
-      .ilike('name', like)
-      .limit(5),
+    ricercaSezioni,
     supabase
       .from('form_models')
       .select('id, title, is_active')

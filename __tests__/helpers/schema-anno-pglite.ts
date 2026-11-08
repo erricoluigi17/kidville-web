@@ -438,6 +438,8 @@ const SUFFISSI_PR2 = {
   M3: '_anno_scrittura.sql',
   // PR 4.2: il conteggio selettivo per sede, la regola della scadenza e le impostazioni di sede. Dopo M3.
   M42: '_anno_impostazioni_sede.sql',
+  // PR 4.3: sezioni e docenti per anno, fase B dello specchio. Dopo M42 (i compiti successivi aggiungono sezioni in coda al file).
+  M43: '_anno_sezioni_docenti_fase_b.sql',
 } as const
 
 /**
@@ -537,7 +539,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -559,8 +561,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

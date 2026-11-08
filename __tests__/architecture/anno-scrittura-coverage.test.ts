@@ -468,21 +468,13 @@ type ModelloAnno =
   | 'annoScolasticoDelGiorno'
   | 'annoScolasticoDiData'
   | 'periodoDaSettembre'
-  | 'annoScolasticoDiCompetenza'
-  | 'annoScolasticoAmbiguo'
-  | 'MESE_INIZIO_ANNO_SCOLASTICO'
-  | 'MESE_RIPIEGO_AMBIGUO'
 
-// I nomi delle vecchie regole d'anno e le due costanti di soglia: chi le nomina (le chiama, le importa, le definisce)
+// I nomi delle vecchie regole d'anno: chi le nomina (le chiama, le importa, le definisce)
 // ha ancora una regola d'anno sua. Si cercano nel testo `struttura`, come identificatore intero.
 const NOMI_VECCHI_ANNO = [
   'annoScolasticoDelGiorno',
   'annoScolasticoDiData',
   'periodoDaSettembre',
-  'annoScolasticoDiCompetenza',
-  'annoScolasticoAmbiguo',
-  'MESE_INIZIO_ANNO_SCOLASTICO',
-  'MESE_RIPIEGO_AMBIGUO',
 ] as const
 // `periodoDaSettembre` è la scorciatoia «da settembre» delle statistiche CRM: la regola sta nel file che la DEFINISCE
 // (crm/statistiche.ts, censimento R10); chi si limita a chiamarla (StatisticheCrm.tsx, un pulsante) non ha soglie
@@ -557,16 +549,6 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
     motivo: 'l’inizio dell’anno dell’appello è `${anno}-09-01` con `meseOggi >= 9` (fuso del browser); la PR 4.1 lo legge dal calendario della sede, e lo toglie',
   },
   {
-    file: 'src/lib/fatturazione/sezionale.ts',
-    modelli: ['annoScolasticoDiCompetenza', 'annoScolasticoAmbiguo', 'MESE_INIZIO_ANNO_SCOLASTICO', 'MESE_RIPIEGO_AMBIGUO'],
-    motivo: 'il sezionale delle fatture ha le sue costanti di soglia (settembre, ripiego agosto) e annoScolasticoDiCompetenza/annoScolasticoAmbiguo; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
-  },
-  {
-    file: 'src/lib/aruba/emissione.ts',
-    modelli: ['annoScolasticoDiCompetenza', 'annoScolasticoAmbiguo'],
-    motivo: 'l’emissione chiama annoScolasticoDiCompetenza e legge annoScolasticoAmbiguo del sezionale; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
-  },
-  {
     file: 'src/lib/pagamenti/selezione-voci.ts',
     modelli: ['mese >= soglia'],
     motivo: 'periodoDi (`mese >= 9`) e annoScolasticoDi (`meseDi(oggi) >= 9`) decidono l’anno con la soglia di settembre; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
@@ -593,8 +575,11 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
  * prefill.ts, banco.ts, banco-famiglia.ts e genera-documento/route.ts non calcolano più l'anno a mano.
  * Sceso da 13 a 10 l'08/11/2026 (−3: primaria e CRM sul modulo dell'anno, compito 4.1.S2): quota-anno.ts,
  * periodo.ts e quota.ts non contengono più nessun modello.
+ * Sceso da 10 a 8 l'08/11/2026 (−2: fatturazione sul modulo dell'anno, compito 4.1.S3): sezionale.ts ed emissione.ts
+ * non contengono più nessun modello. `annoScolasticoDiCompetenza` esce dai nomi vecchi: resta come funzione, ma
+ * adesso delega a `annoDelGiorno` (non ha più soglie sue); `annoScolasticoAmbiguo` e le due costanti non esistono più.
  */
-const TETTO_ANNO_A_MANO = 10
+const TETTO_ANNO_A_MANO = 8
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -1168,7 +1153,7 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
       'function g(mese, anno) { return mese >= 9 ? anno : anno + 1 }',
       'const start = d.getMonth() >= 8 ? y : y - 1',
       'const ok = n.getMonth() + 1 >= 9',
-      'const MESE_RIPIEGO_AMBIGUO = MESE_INIZIO_ANNO_SCOLASTICO - 1',
+      'const a = annoScolasticoDelGiorno(giorno)',
     ]
     const negativi = [
       'const ok = d.getMonth() + 1 === mese',
@@ -1184,7 +1169,7 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
 
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(10) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre), 13 dall'08/11 (4.1.S1: −4, prestampati e documenti sul modulo dell'anno), 10 dall'08/11 (4.1.S2: −3, primaria e CRM sul modulo dell'anno); scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(8) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre), 13 dall'08/11 (4.1.S1: −4, prestampati e documenti sul modulo dell'anno), 10 dall'08/11 (4.1.S2: −3, primaria e CRM sul modulo dell'anno), 8 dall'08/11 (4.1.S3: −2, fatturazione sul modulo dell'anno); scende, non sale
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

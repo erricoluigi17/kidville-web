@@ -47,6 +47,7 @@
  */
 
 import { dataNascitaDaCodiceFiscale } from '@/lib/fiscale/codice-fiscale'
+import { annoDelGiorno, fineAnno, inizioAnno, type Calendario } from '@/lib/anno-scolastico'
 
 /** Le due serie di numerazione realmente in uso. */
 export type Sezionale = 'Asilo' | 'FPR'
@@ -98,29 +99,6 @@ export interface IngressoSezionale {
   dataNascita?: Date | string | null
   /** Anno d'apertura dell'anno scolastico: 2026 sta per «2026/2027». */
   annoScolastico: number
-  /**
-   * `true` quando l'anno scolastico qui sopra NON è stato dichiarato da nessuno ma
-   * ricavato dalla data del documento **in agosto**, cioè nell'unico mese in cui la
-   * risposta cambia a seconda di quale regola si guarda (vedi `annoScolasticoDiCompetenza`
-   * → `ambiguo`). In quel caso la serie si emette solo se è la STESSA su entrambi gli anni
-   * candidati; altrimenti si lancia, perché una serie fiscale non si tira a sorte.
-   */
-  annoScolasticoAmbiguo?: boolean
-}
-
-/**
- * L'anno scolastico che decide la serie non si è potuto stabilire, e i due candidati
- * porterebbero il bambino su serie DIVERSE.
- *
- * Ha una classe propria perché chi chiama deve poterlo distinguere dall'anagrafica
- * incompleta: la riparazione è un'altra (compilare «periodo di competenza» sul pagamento,
- * non completare la scheda del bambino) e il messaggio all'utente pure.
- */
-export class ErroreSerieAmbigua extends Error {
-  constructor(messaggio: string) {
-    super(messaggio)
-    this.name = 'ErroreSerieAmbigua'
-  }
 }
 
 /** Aprile, indice 3 nei mesi di `Date`. */
@@ -130,53 +108,12 @@ const GIORNO_LIMITE = 30
 /** Quanti anni deve compiere il bambino entro il limite. */
 const ETA_SOGLIA = 3
 /**
- * Primo mese del nuovo anno scolastico ai fini della FATTURAZIONE: settembre.
- *
- * ⚠️ DIVERGENZA DA `@/lib/anno-scolastico`, DECISA il 2026-08-10 e non più «da decidere».
- * `annoScolasticoCorrente()` fa partire l'anno da AGOSTO perché risponde a un'altra
- * domanda — *in quale anno scolastico sta operando la scuola oggi* — e ad agosto la scuola
- * sta già iscrivendo per settembre. Qui la domanda è *a quale anno scolastico appartiene
- * il documento che sto emettendo*, e una fattura emessa ad agosto salda quasi sempre
- * arretrati dell'anno che si è appena chiuso: a settembre non c'è ancora stato un giorno
- * di scuola da fatturare. Due domande diverse, due confini diversi, scritti tutti e due in
- * `docs/fatturazione/tracciato-di-riferimento.md`.
- *
- * ⚠️ E LA DIVERGENZA HA UN COSTO CHE NON RESTA PIÙ MUTO. In agosto — e solo in agosto — le
- * due regole rispondono anni diversi, quindi il RIPIEGO sulla data del documento
- * (`fonte: 'data_documento'`, cioè 71 pagamenti su 98 in produzione) è indecidibile.
- * `annoScolasticoDiCompetenza` lo marca `ambiguo`, e `sezionalePerMinore` con
- * `annoScolasticoAmbiguo: true` **rifiuta di scegliere** se i due anni candidati portano
- * il bambino su serie diverse. Non blocca l'intero agosto: blocca esattamente i bambini
- * per cui la differenza esiste — la coorte a cavallo del 30 aprile.
- */
-const MESE_INIZIO_ANNO_SCOLASTICO = 9
-/**
- * L'unico mese in cui il ripiego sulla data del documento è indecidibile: AGOSTO, il mese
- * che sta fra il confine di `annoScolasticoCorrente()` (1° agosto) e quello di questo
- * modulo (1° settembre).
- */
-const MESE_RIPIEGO_AMBIGUO = MESE_INIZIO_ANNO_SCOLASTICO - 1
-/**
  * Nessun alunno di questa scuola può avere più di 18 anni all'apertura dell'anno
  * scolastico. Non è una stima di comodo: è il limite oltre il quale la data non descrive
  * più un minore, ed è il controllo che manda in errore il codice fiscale di un GENITORE
  * incollato nel campo del bambino (il caso `…85T10…`, misurato).
  */
 const ETA_MASSIMA_ALUNNO = 18
-
-/**
- * Anno scolastico di una data: 15/10/2026 → 2026, 20/02/2027 → 2026.
- * Il confine è il 1° settembre — vedi `MESE_INIZIO_ANNO_SCOLASTICO` per il perché, e per
- * quale prezzo si paga in agosto.
- */
-export function annoScolasticoDi(data: Date): number {
-  if (!(data instanceof Date) || !Number.isFinite(data.getTime())) {
-    throw new Error('annoScolasticoDi: data non valida.')
-  }
-  const anno = data.getFullYear()
-  const mese = data.getMonth() + 1
-  return mese >= MESE_INIZIO_ANNO_SCOLASTICO ? anno : anno - 1
-}
 
 /** Da dove è stato ricavato l'anno scolastico che decide la serie. */
 export type FonteAnnoScolastico = 'periodo_competenza' | 'data_documento'
@@ -185,13 +122,6 @@ export interface EsitoAnnoScolastico {
   /** Anno d'apertura: 2026 sta per «2026/2027». */
   anno: number
   fonte: FonteAnnoScolastico
-  /**
-   * `true` quando l'anno è un ripiego sulla data del documento E quella data cade in
-   * AGOSTO: l'unico mese in cui le due regole d'anno scolastico in uso nel prodotto
-   * rispondono anni diversi, quindi l'unico in cui il ripiego è una monetina.
-   * Chi chiama lo passa a `sezionalePerMinore` come `annoScolasticoAmbiguo`.
-   */
-  ambiguo: boolean
 }
 
 /**
@@ -214,36 +144,30 @@ export interface EsitoAnnoScolastico {
  * lancia — bloccare i tre quarti delle fatture per un campo facoltativo sarebbe peggio
  * del difetto — ma DICE da dove ha preso l'anno, e chi chiama logga il ripiego.
  *
- * ⚠️ CON UN'ECCEZIONE, ed è agosto. Dal 1° al 31 agosto il ripiego risponde l'anno vecchio
- * mentre `annoScolasticoCorrente()` risponde già quello nuovo: lo stesso pagamento
- * fatturato il 31 agosto e il 1° settembre esce su due serie diverse per la coorte a
- * cavallo del 30 aprile. In quel mese l'esito porta `ambiguo: true`, e `sezionalePerMinore`
- * si rifiuta di scegliere quando la differenza cambia davvero la serie.
+ * LA REGOLA DELL'ANNO È UNA SOLA (dalla PR 4.1): `annoDelGiorno`, cioè il calendario della
+ * sede o, senza, il predefinito del 1° settembre. Fino ad allora la fatturazione usava il
+ * 1° settembre e il resto del prodotto il 1° agosto, e ad agosto il ripiego era
+ * «ambiguo»: ora l'agosto appartiene all'anno che si chiude per tutti e la serie si decide.
+ * La competenza si legge come il database assegna `anno_id` a una voce con competenza:
+ * dal GIORNO 1 del mese di competenza.
  *
  * @param periodoCompetenza `pagamenti.periodo_competenza`: colonna `date`, quindi
  *        «YYYY-MM-DD» da PostgREST. Si accetta anche «YYYY-MM» e una `Date`.
- * @param dataDocumento la data del documento, come ripiego. Va passata come
- *        data-calendario locale (vedi `giornoDaIsoFiscale` in `@/lib/aruba/emissione`).
+ * @param giornoDocumento il giorno del documento come `'AAAA-MM-GG'` (il giorno fiscale di
+ *        Roma, `oggiFiscaleISO()`), come ripiego. Lancia `RangeError` se non è un giorno.
+ * @param calendario il calendario della sede; senza, vale il predefinito.
  */
 export function annoScolasticoDiCompetenza(
   periodoCompetenza: Date | string | null | undefined,
-  dataDocumento: Date,
+  giornoDocumento: string,
+  calendario?: Calendario | null,
 ): EsitoAnnoScolastico {
   const competenza = aMeseCalendario(periodoCompetenza)
   if (competenza) {
-    const { anno, mese } = competenza
-    return {
-      anno: mese >= MESE_INIZIO_ANNO_SCOLASTICO ? anno : anno - 1,
-      fonte: 'periodo_competenza',
-      ambiguo: false,
-    }
+    const giorno1 = `${String(competenza.anno).padStart(4, '0')}-${String(competenza.mese).padStart(2, '0')}-01`
+    return { anno: annoDelGiorno(giorno1, calendario).annoInizio, fonte: 'periodo_competenza' }
   }
-  const anno = annoScolasticoDi(dataDocumento)
-  return {
-    anno,
-    fonte: 'data_documento',
-    ambiguo: dataDocumento.getMonth() + 1 === MESE_RIPIEGO_AMBIGUO,
-  }
+  return { anno: annoDelGiorno(giornoDocumento, calendario).annoInizio, fonte: 'data_documento' }
 }
 
 /**
@@ -335,7 +259,7 @@ function presente(valore: unknown): boolean {
 
 /**
  * L'ULTIMO GIORNO in cui può essere nato un alunno dell'anno scolastico `annoScolastico`:
- * il 31 agosto successivo, cioè la chiusura di quell'anno. Dopo quella data il bambino
+ * l'ultimo giorno di quell'anno (`fineAnno`, il 31 agosto successivo), cioè la sua chiusura. Dopo quella data il bambino
  * non era ancora nato quando l'anno si è chiuso.
  *
  * Serve a due cose insieme, ed è la stessa cosa detta una volta sola:
@@ -345,17 +269,25 @@ function presente(valore: unknown): boolean {
  *  2. fare da confine superiore di plausibilità.
  */
 function finePlausibile(annoScolastico: number): Date {
-  // giorno 0 del mese d'inizio = ultimo giorno del mese precedente, cioè il 31 agosto.
-  return new Date(annoScolastico + 1, MESE_INIZIO_ANNO_SCOLASTICO - 1, 0)
+  // L'ultimo giorno dell'anno, SENZA calendario: è un confine di plausibilità della data
+  // di nascita, non una regola di sede.
+  return daStringaGiorno(fineAnno(annoScolastico))
 }
 
 /**
- * Il PRIMO giorno in cui può essere nato un alunno di quell'anno scolastico: il 1°
- * settembre di diciotto anni prima. Prima di quella data la persona non è un minore, e il
+ * Il PRIMO giorno in cui può essere nato un alunno di quell'anno scolastico: il primo
+ * giorno (`inizioAnno`, il 1° settembre) di diciotto anni prima. Prima di quella data la persona non è un minore, e il
  * dato descrive qualcun altro — nel caso reale, il genitore.
  */
 function inizioPlausibile(annoScolastico: number): Date {
-  return new Date(annoScolastico - ETA_MASSIMA_ALUNNO, MESE_INIZIO_ANNO_SCOLASTICO - 1, 1)
+  return daStringaGiorno(inizioAnno(annoScolastico - ETA_MASSIMA_ALUNNO))
+}
+
+/** `'AAAA-MM-GG'` → mezzanotte LOCALE di quel giorno (la convenzione di `aDataCalendario`). */
+function daStringaGiorno(giorno: string): Date {
+  const data = aDataCalendario(giorno)
+  if (!data) throw new RangeError('giorno non valido: atteso AAAA-MM-GG')
+  return data
 }
 
 /** La data può appartenere a un alunno di quell'anno scolastico? */
@@ -404,23 +336,18 @@ function fonteDaAnagrafica(dataNascita: Date | string | null | undefined, annoSc
  * - codice fiscale assente, illeggibile o impossibile → `fonte: 'data_nascita'`
  * - anagrafica assente, illeggibile o impossibile → `fonte: 'cf'`
  * - **nessuna delle due utilizzabile → lancia**
- * - anno scolastico ambiguo (agosto, senza periodo di competenza) e le due letture
- *   portano su serie diverse → **lancia** `ErroreSerieAmbigua`
  *
  * I casi si distinguono nell'esito: `discordanza` dice che le due fonti si contraddicono,
  * `…Illeggibile` che una delle due non è nemmeno arrivata al confronto, `…Implausibile`
  * che si legge ma descrive qualcun altro. Sono segnali diversi e vanno loggati tutti:
  * vedi `@/lib/aruba/emissione`.
  *
- * @throws {ErroreSerieAmbigua} quando l'anno scolastico è un ripiego d'agosto e i due anni
- *         candidati darebbero serie diverse
  * @throws {Error} quando non esiste alcuna data di nascita utilizzabile
  */
 export function sezionalePerMinore({
   codiceFiscale,
   dataNascita,
   annoScolastico,
-  annoScolasticoAmbiguo = false,
 }: IngressoSezionale): EsitoSezionale {
   if (!Number.isInteger(annoScolastico) || annoScolastico < 1900 || annoScolastico > 2999) {
     throw new Error(
@@ -429,65 +356,19 @@ export function sezionalePerMinore({
     )
   }
 
-  const esito = risolviSullAnno(codiceFiscale, dataNascita, annoScolastico)
-
-  if (annoScolasticoAmbiguo) {
-    /*
-     * AGOSTO, SENZA «PERIODO DI COMPETENZA». L'anno scolastico non l'ha dichiarato
-     * nessuno: è stato dedotto dalla data del documento, nell'unico mese in cui la
-     * deduzione cambia risposta a seconda di quale regola si guarda. Qui non si sceglie
-     * a maggioranza: si guarda se la differenza CONTA per questo bambino.
-     *
-     * Undici volte su dodici (e per la gran parte dei bambini anche in agosto) i due anni
-     * candidati danno la stessa serie, e allora l'ambiguità è una questione di lana
-     * caprina: la fattura parte. Per la coorte a cavallo del 30 aprile invece la serie
-     * cambia davvero — ed è il numero di un registro fiscale, non un'etichetta. Si blocca.
-     */
-    const alternativo = annoScolastico + 1
-    const altro = risolviSullAnno(codiceFiscale, dataNascita, alternativo, { lancia: false })
-    if (altro && altro.sezionale !== esito.sezionale) {
-      throw new ErroreSerieAmbigua(
-        "Serie fiscale ambigua: il pagamento non ha un «periodo di competenza» e la fattura si emette in "
-        + `agosto, il mese in cui l'anno scolastico cambia. Sull'anno ${annoScolastico}/${annoScolastico + 1} `
-        + `questo bambino va su «${esito.sezionale}», sull'anno ${alternativo}/${alternativo + 1} su `
-        + `«${altro.sezionale}». Compila «periodo di competenza» sul pagamento: la serie fiscale non si tira a sorte.`,
-      )
-    }
-  }
-
-  return esito
+  return risolviSullAnno(codiceFiscale, dataNascita, annoScolastico)
 }
 
-/**
- * L'esito su UN anno scolastico dato. Estratto da `sezionalePerMinore` perché in agosto va
- * calcolato due volte, sui due anni candidati — e senza `try/catch` attorno alla seconda
- * chiamata: un `catch` che inghiotte è un bug (AGENTS.md), quindi il caso «non c'è dato
- * utilizzabile» qui si dice con `null`, non con un'eccezione.
- *
- * @param opzioni `lancia: false` per la seconda lettura, quella di confronto.
- */
+/** L'esito su UN anno scolastico dato. */
 function risolviSullAnno(
   codiceFiscale: string | null | undefined,
   dataNascita: Date | string | null | undefined,
   annoScolastico: number,
-  opzioni: { lancia: false },
-): EsitoSezionale | null
-function risolviSullAnno(
-  codiceFiscale: string | null | undefined,
-  dataNascita: Date | string | null | undefined,
-  annoScolastico: number,
-): EsitoSezionale
-function risolviSullAnno(
-  codiceFiscale: string | null | undefined,
-  dataNascita: Date | string | null | undefined,
-  annoScolastico: number,
-  opzioni: { lancia: boolean } = { lancia: true },
-): EsitoSezionale | null {
+): EsitoSezionale {
   const cf = fonteDaCodiceFiscale(codiceFiscale, annoScolastico)
   const anagrafica = fonteDaAnagrafica(dataNascita, annoScolastico)
 
   if (!cf.data && !anagrafica.data) {
-    if (!opzioni.lancia) return null
     // Il messaggio dice QUALE dei casi è, perché la riparazione è diversa: «manca» si
     // completa, «c'è ma è sbagliato» si corregge, «c'è ma è di un'altra persona» si
     // sostituisce — e chi legge il log deve sapere quale dei tre. Nessun valore nel

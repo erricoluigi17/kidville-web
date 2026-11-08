@@ -1,12 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
-  annoScolasticoDi,
   annoScolasticoDiCompetenza,
   sezionalePerMinore,
   formattaNumeroFattura,
-  ErroreSerieAmbigua,
 } from '@/lib/fatturazione/sezionale'
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
 
 /**
  * ⚠️ Codici fiscali SINTETICI e impossibili: terna `XXXYYY`, catastale `Z999`,
@@ -58,54 +55,6 @@ function atteso(
 
 afterEach(() => {
   vi.useRealTimers()
-})
-
-describe('annoScolasticoDi', () => {
-  it("ottobre sta nell'anno che è appena iniziato", () => {
-    expect(annoScolasticoDi(new Date(2026, 9, 15))).toBe(2026) // 15/10/2026
-  })
-
-  it("febbraio sta ancora nell'anno iniziato l'autunno prima", () => {
-    expect(annoScolasticoDi(new Date(2027, 1, 20))).toBe(2026) // 20/02/2027
-  })
-
-  it('il confine è il 1° settembre', () => {
-    expect(annoScolasticoDi(new Date(2026, 7, 31))).toBe(2025) // 31 agosto
-    expect(annoScolasticoDi(new Date(2026, 8, 1))).toBe(2026) // 1° settembre
-  })
-
-  it('dicembre e giugno cadono nello stesso anno scolastico', () => {
-    expect(annoScolasticoDi(new Date(2026, 11, 31))).toBe(2026)
-    expect(annoScolasticoDi(new Date(2027, 5, 30))).toBe(2026)
-  })
-
-  /**
-   * DIVERGENZA DECISA (2026-08-10), non più «da decidere»: `annoScolasticoCorrente` fa
-   * partire l'anno da AGOSTO — risponde a *in che anno sta operando la scuola oggi*, e ad
-   * agosto sta già iscrivendo per settembre — mentre qui il confine è SETTEMBRE, perché la
-   * domanda è *a quale anno appartiene il documento che emetto*, e una fattura di agosto
-   * salda arretrati dell'anno che si è appena chiuso.
-   *
-   * Le due regole coincidono undici mesi su dodici. Il dodicesimo — agosto — non è più
-   * lasciato a sé: la divergenza è misurata qui sotto, e il test che segue dimostra che in
-   * quel mese la serie NON viene tirata a sorte. Se un giorno le regole verranno
-   * unificate, è questo test a diventare rosso, e deve.
-   */
-  it('agosto: qui vale ancora l\'anno vecchio, per `annoScolasticoCorrente` no', () => {
-    expect(annoScolasticoDi(new Date(2026, 7, 15))).toBe(2025)
-    expect(annoScolasticoCorrente(new Date(2026, 7, 15))).toBe('2026/2027')
-    // undici mesi su dodici, invece, dicono lo stesso anno: la divergenza è SOLO agosto
-    for (const mese of [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11]) {
-      const giorno = new Date(2026, mese, 15)
-      const [apertura] = annoScolasticoCorrente(giorno).split('/')
-      expect(annoScolasticoDi(giorno), `mese ${mese + 1}`).toBe(Number(apertura))
-    }
-  })
-
-  it('rifiuta una data non valida invece di rispondere NaN', () => {
-    expect(() => annoScolasticoDi(new Date('non-una-data'))).toThrow(/data non valida/i)
-    expect(() => annoScolasticoDi(null as unknown as Date)).toThrow(/data non valida/i)
-  })
 })
 
 describe('sezionalePerMinore — il confine del 30 aprile', () => {
@@ -528,18 +477,47 @@ describe('sezionalePerMinore — quando NON si emette', () => {
  * data di EMISSIONE. Una retta di maggio fatturata a settembre finiva sull'anno
  * scolastico nuovo, il confine dei tre anni si spostava di dodici mesi, e lo stesso
  * bambino usciva su una serie diversa — con un numero già bruciato.
+ *
+ * Dal 2026-11-08 (PR 4.1) la regola dell'anno è UNA sola in tutto il prodotto
+ * (`annoDelGiorno`: il calendario della sede, o il predefinito 1° settembre) e il giorno
+ * del documento arriva come stringa `AAAA-MM-GG` (il giorno fiscale di Roma).
  */
 describe('annoScolasticoDiCompetenza — la serie la decide il periodo, non il calendario', () => {
   /** Il ripiego: 30 settembre 2026, cioè anno scolastico 2026 se si guardasse oggi. */
-  const EMISSIONE_SETTEMBRE = new Date(2026, 8, 30)
+  const EMISSIONE_SETTEMBRE = '2026-09-30'
 
   it("il periodo di competenza vince sulla data d'emissione", () => {
     // retta di MAGGIO 2026 (anno scolastico 2025/2026) fatturata a SETTEMBRE 2026
     expect(annoScolasticoDiCompetenza('2026-05-01', EMISSIONE_SETTEMBRE))
-      .toEqual({ anno: 2025, fonte: 'periodo_competenza', ambiguo: false })
+      .toEqual({ anno: 2025, fonte: 'periodo_competenza' })
     // e senza il periodo si sarebbe letto 2026: è esattamente il salto d'anno del difetto
     expect(annoScolasticoDiCompetenza(null, EMISSIONE_SETTEMBRE))
-      .toEqual({ anno: 2026, fonte: 'data_documento', ambiguo: false })
+      .toEqual({ anno: 2026, fonte: 'data_documento' })
+  })
+
+  it('i casi della PR 4.1: competenza ad agosto, ripiego ad agosto, ripiego a settembre', () => {
+    expect(annoScolasticoDiCompetenza('2026-08-01', '2026-11-08'))
+      .toEqual({ anno: 2025, fonte: 'periodo_competenza' })
+    // era «ambiguo»: ora l'agosto è dell'anno che si chiude, come per tutto il prodotto
+    expect(annoScolasticoDiCompetenza(null, '2026-08-20'))
+      .toEqual({ anno: 2025, fonte: 'data_documento' })
+    expect(annoScolasticoDiCompetenza(null, '2026-09-01').anno).toBe(2026)
+  })
+
+  it('con il calendario della sede vale quello: la sede che comincia il 14/09 ha il 10/09 nel 2025', () => {
+    const cal = [{
+      annoId: 'a-2026', annoSedeId: 's-2026', annoInizio: 2026,
+      inizio: '2026-09-14', fine: '2027-08-31', ultimoGiornoAperto: '2027-07-31',
+      preparaSuccessivoDal: '2027-05-01', stato: 'corrente' as const, domandeAperte: false,
+    }, {
+      annoId: 'a-2025', annoSedeId: 's-2025', annoInizio: 2025,
+      inizio: '2025-09-01', fine: '2026-09-13', ultimoGiornoAperto: '2026-07-31',
+      preparaSuccessivoDal: '2026-05-01', stato: 'chiuso' as const, domandeAperte: false,
+    }]
+    expect(annoScolasticoDiCompetenza(null, '2026-09-10', cal))
+      .toEqual({ anno: 2025, fonte: 'data_documento' })
+    // anche la competenza si legge col calendario: il 1° settembre è ancora il 2025
+    expect(annoScolasticoDiCompetenza('2026-09-01', '2026-11-08', cal).anno).toBe(2025)
   })
 
   it('e cambia DAVVERO la serie, non solo un numero in un oggetto', () => {
@@ -560,11 +538,11 @@ describe('annoScolasticoDiCompetenza — la serie la decide il periodo, non il c
 
   it('accetta «YYYY-MM», la stringa completa e una Date', () => {
     expect(annoScolasticoDiCompetenza('2026-10', EMISSIONE_SETTEMBRE))
-      .toEqual({ anno: 2026, fonte: 'periodo_competenza', ambiguo: false })
+      .toEqual({ anno: 2026, fonte: 'periodo_competenza' })
     expect(annoScolasticoDiCompetenza('2026-10-15', EMISSIONE_SETTEMBRE))
-      .toEqual({ anno: 2026, fonte: 'periodo_competenza', ambiguo: false })
+      .toEqual({ anno: 2026, fonte: 'periodo_competenza' })
     expect(annoScolasticoDiCompetenza(new Date(2026, 9, 15), EMISSIONE_SETTEMBRE))
-      .toEqual({ anno: 2026, fonte: 'periodo_competenza', ambiguo: false })
+      .toEqual({ anno: 2026, fonte: 'periodo_competenza' })
   })
 
   /**
@@ -581,93 +559,53 @@ describe('annoScolasticoDiCompetenza — la serie la decide il periodo, non il c
   it('un periodo illeggibile ripiega sulla data del documento, e lo DICE', () => {
     for (const rotto of [null, undefined, '', '   ', 'maggio 2026', '2026-13-01', new Date('non-una-data')]) {
       expect(annoScolasticoDiCompetenza(rotto, EMISSIONE_SETTEMBRE), String(rotto))
-        .toEqual({ anno: 2026, fonte: 'data_documento', ambiguo: false })
+        .toEqual({ anno: 2026, fonte: 'data_documento' })
     }
   })
 
-  it('senza periodo E con una data documento non valida, non inventa un anno: lancia', () => {
-    expect(() => annoScolasticoDiCompetenza(null, new Date('non-una-data'))).toThrow(/data non valida/i)
+  it('senza periodo E con un giorno del documento non valido, non inventa un anno: lancia', () => {
+    expect(() => annoScolasticoDiCompetenza(null, 'non-un-giorno')).toThrow(/giorno non valido/i)
   })
 })
 
 /**
- * D1 — IL MESE IN CUI IL RIPIEGO È UNA MONETINA, ED È QUESTO MESE.
+ * AGOSTO NON È PIÙ AMBIGUO (PR 4.1, 2026-11-08).
  *
- * Misurato: `annoScolasticoDiCompetenza(null, 10/08/2026)` risponde 2025, mentre
- * `annoScolasticoCorrente(10/08/2026)` dice già «2026/2027». Per un bambino nato fra il
- * 01/05/2023 e il 30/04/2024 — la coorte che la regola dei tre anni esiste per separare —
- * i due anni danno serie DIVERSE: `Asilo` con 2025, `FPR` con 2026. Lo stesso identico
- * pagamento, senza `periodo_competenza` (71 su 98 in produzione), usciva su una serie il
- * 31 agosto e sull'altra il 1° settembre. Numero già consumato sul sezionale sbagliato →
- * nota di variazione verso lo SDI.
- *
- * La cura non è spostare il confine (è deciso: settembre, e il perché sta in
- * `docs/fatturazione/tracciato-di-riferimento.md`), ed è ancora meno «bloccare agosto»:
- * è rifiutare di scegliere **solo quando la scelta cambia la serie**.
+ * Fino alla PR 4.1 il resto del prodotto faceva partire l'anno da AGOSTO e la fatturazione
+ * da SETTEMBRE: il ripiego sulla data del documento, ad agosto, era una monetina, e per la
+ * coorte a cavallo del 30 aprile `sezionalePerMinore` lanciava `ErroreSerieAmbigua` (422).
+ * Adesso la regola è una sola: l'agosto appartiene all'anno scolastico che si chiude, e la
+ * serie si decide sempre.
  */
-describe('agosto — il ripiego ambiguo non decide una serie da solo', () => {
-  const EMISSIONE_AGOSTO = new Date(2026, 7, 10) // 10 agosto 2026
+describe('agosto — non è più ambiguo: la serie si decide sempre', () => {
   /** Nato il 15/06/2023: `Asilo` sull'anno 2025, `FPR` sull'anno 2026. */
   const NASCITA_DELLA_COORTE = '2023-06-15'
 
-  it("in agosto, senza periodo di competenza, l'anno è marcato ambiguo", () => {
-    expect(annoScolasticoDiCompetenza(null, EMISSIONE_AGOSTO))
-      .toEqual({ anno: 2025, fonte: 'data_documento', ambiguo: true })
-    // col periodo dichiarato non c'è nulla di ambiguo: l'ha detto una persona
-    expect(annoScolasticoDiCompetenza('2026-05-01', EMISSIONE_AGOSTO).ambiguo).toBe(false)
-    // e fuori da agosto il ripiego resta il ripiego di sempre
-    expect(annoScolasticoDiCompetenza(null, new Date(2026, 6, 31)).ambiguo).toBe(false)
-    expect(annoScolasticoDiCompetenza(null, new Date(2026, 8, 1)).ambiguo).toBe(false)
+  it("ad agosto, senza periodo di competenza, l'anno è quello che si chiude: 2025", () => {
+    const { anno, fonte } = annoScolasticoDiCompetenza(null, '2026-08-10')
+    expect(anno).toBe(2025)
+    expect(fonte).toBe('data_documento')
   })
 
-  it('la coorte a cavallo del 30 aprile NON esce su una serie tirata a sorte: lancia', () => {
-    const { anno, ambiguo } = annoScolasticoDiCompetenza(null, EMISSIONE_AGOSTO)
-    // senza la bandiera uscirebbe «Asilo», e il 1° settembre lo stesso pagamento «FPR»
+  it('la coorte a cavallo del 30 aprile ha la sua serie (Asilo), senza eccezioni', () => {
+    const { anno } = annoScolasticoDiCompetenza(null, '2026-08-10')
     expect(sezionalePerMinore({ dataNascita: NASCITA_DELLA_COORTE, annoScolastico: anno }).sezionale)
       .toBe('Asilo')
-    expect(sezionalePerMinore({ dataNascita: NASCITA_DELLA_COORTE, annoScolastico: anno + 1 }).sezionale)
-      .toBe('FPR')
-
-    expect(() => sezionalePerMinore({
-      dataNascita: NASCITA_DELLA_COORTE,
-      annoScolastico: anno,
-      annoScolasticoAmbiguo: ambiguo,
-    })).toThrow(ErroreSerieAmbigua)
+    // il 31 agosto e il 1° settembre cambiano anno, come cambia tutto il prodotto
+    expect(annoScolasticoDiCompetenza(null, '2026-08-31').anno).toBe(2025)
+    expect(annoScolasticoDiCompetenza(null, '2026-09-01').anno).toBe(2026)
   })
 
-  it("il messaggio dice di compilare «periodo di competenza», non di correggere l'anagrafica", () => {
-    try {
-      sezionalePerMinore({
-        dataNascita: NASCITA_DELLA_COORTE, annoScolastico: 2025, annoScolasticoAmbiguo: true,
-      })
-      expect.unreachable('doveva lanciare')
-    } catch (e) {
-      expect(e).toBeInstanceOf(ErroreSerieAmbigua)
-      expect((e as Error).message).toMatch(/periodo di competenza/i)
-      expect((e as Error).message).toMatch(/non si tira a sorte/i)
-      // nessuna data di nascita nel testo: è il dato di un minore
-      expect((e as Error).message).not.toContain('2023')
-    }
+  it("l'esito non ha più il campo «ambiguo»", () => {
+    expect(Object.keys(annoScolasticoDiCompetenza(null, '2026-08-10')).sort())
+      .toEqual(['anno', 'fonte'])
   })
 
-  it('fuori dalla coorte la fattura parte lo stesso: si blocca solo dove la differenza esiste', () => {
-    // nato nel 2019: «FPR» su entrambi gli anni candidati → l'ambiguità non conta
-    expect(sezionalePerMinore({
-      dataNascita: '2019-03-10', annoScolastico: 2025, annoScolasticoAmbiguo: true,
-    })).toEqual(atteso('FPR', 'data_nascita'))
-    // nato nel 2025: «Asilo» su entrambi → parte anche lui
-    expect(sezionalePerMinore({
-      dataNascita: '2025-03-10', annoScolastico: 2025, annoScolasticoAmbiguo: true,
-    })).toEqual(atteso('Asilo', 'data_nascita'))
-  })
-
-  it('l’ambiguità non maschera un’anagrafica assente: quell’errore resta il suo', () => {
-    expect(() => sezionalePerMinore({ annoScolastico: 2025, annoScolasticoAmbiguo: true }))
-      .toThrow(/non determinabile/i)
-    expect(() => sezionalePerMinore({ annoScolastico: 2025, annoScolasticoAmbiguo: true }))
-      .not.toThrow(ErroreSerieAmbigua)
+  it('un’anagrafica assente resta il suo errore, ad agosto come sempre', () => {
+    expect(() => sezionalePerMinore({ annoScolastico: 2025 })).toThrow(/non determinabile/i)
   })
 })
+
 
 describe('formattaNumeroFattura', () => {
   it("«Asilo» scrive l'anno a QUATTRO cifre", () => {

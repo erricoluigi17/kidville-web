@@ -1,24 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
- * AGOSTO — IL MESE IN CUI LA SERIE FISCALE SI TIRAVA A SORTE, E IL CAMPO CHE SI LEGGE
- * BENISSIMO MA È DI UN'ALTRA PERSONA.
+ * L'ANNO DELLA VOCE DECIDE LA SERIE, E AGOSTO NON È PIÙ AMBIGUO.
  *
  * ─────────────────────────────────────────────────────────────────────────────────
- * 1. IL RIPIEGO D'AGOSTO. `annoScolasticoDiCompetenza` fa partire l'anno scolastico dal
- *    1° SETTEMBRE; `annoScolasticoCorrente()` — con cui ragiona tutto il resto del
- *    prodotto — dal 1° AGOSTO. Le due regole coincidono undici mesi su dodici. Nel
- *    dodicesimo, per un pagamento SENZA `periodo_competenza` (71 su 98 in produzione al
- *    2026-08-10), l'anno viene dedotto dalla data del documento e la deduzione è una
- *    monetina: lo stesso pagamento emesso il 31 agosto esce su `Asilo` e il 1° settembre
- *    su `FPR`, per la coorte a cavallo del 30 aprile — cioè proprio la coorte che la
- *    regola dei tre anni esiste per separare. Numero già consumato sul sezionale
- *    sbagliato → nota di variazione verso lo SDI.
+ * 1. L'ANNO DELLA VOCE (PR 4.1, compito 4.1.S3). Ogni voce di `pagamenti` ha il suo
+ *    `anno_id`, calcolato dal database dalla competenza, altrimenti dalla scadenza,
+ *    altrimenti dalla creazione. Una retta di maggio saldata a novembre ha l'anno
+ *    2025/26: la serie fiscale si decide su quello, non sul giorno in cui si emette
+ *    (che sarebbe il 2026/27 e sposterebbe di dodici mesi il confine dei tre anni).
+ *    L'`anno_id` si traduce in `annoInizio` attraverso il calendario della sede.
+ *    Sul database della CI la colonna non c'è (42703): si rifà la lettura senza e si va
+ *    avanti, con un solo log `info`.
  *
- *    Non si blocca agosto: si blocca **dove la differenza esiste**. Se i due anni
- *    candidati portano il bambino sulla stessa serie, la fattura parte come sempre.
+ * 2. AGOSTO NON È PIÙ AMBIGUO. Prima la fatturazione faceva partire l'anno dal 1°
+ *    SETTEMBRE e il resto del prodotto dal 1° AGOSTO: il ripiego sulla data del documento,
+ *    ad agosto, per la coorte a cavallo del 30 aprile era una monetina e l'emissione si
+ *    fermava con 422 `periodo_competenza_mancante`. Adesso la regola è una sola (il
+ *    calendario della sede, o il predefinito del 1° settembre): la fattura parte.
  *
- * 2. IL DATO DI UN ADULTO NEL CAMPO DEL BAMBINO. `…85T10…` è un codice fiscale di forma
+ * 3. IL DATO DI UN ADULTO NEL CAMPO DEL BAMBINO. `…85T10…` è un codice fiscale di forma
  *    perfetta che dice 10/12/1985: prima produceva una serie con tutte le bandiere a
  *    `false` e la fattura partiva muta. Ora è `anagrafica-minore-implausibile`, `error`.
  *
@@ -34,8 +35,26 @@ type Riga = Record<string, unknown>
 const SCUOLA = '11111111-1111-1111-1111-111111111111'
 const ALUNNO = '22222222-2222-2222-2222-222222222222'
 
-/** Il giorno in cui si emette: **10 agosto 2026**, dentro il mese della divergenza. */
-const ADESSO = new Date(2026, 7, 10, 10, 0, 0)
+/** Il giorno in cui si emette: **20 agosto 2026**, il mese che prima era «ambiguo». */
+const ADESSO = new Date(2026, 7, 20, 10, 0, 0)
+
+/** Il calendario della sede: il 2025/26 e il 2026/27, con i loro `anno_id`. */
+const ANNO_2025 = 'aaaaaaaa-0000-0000-0000-000000002025'
+const ANNO_2026 = 'aaaaaaaa-0000-0000-0000-000000002026'
+const anniSede = [
+  {
+    id: 'bbbbbbbb-0000-0000-0000-000000002025', anno_id: ANNO_2025,
+    inizio: '2025-09-01', fine: '2026-08-31', ultimo_giorno_aperto: '2026-07-31',
+    prepara_successivo_dal: '2026-05-01', stato: 'chiuso', domande_aperte: false,
+    anni_scolastici: { anno_inizio: 2025 },
+  },
+  {
+    id: 'bbbbbbbb-0000-0000-0000-000000002026', anno_id: ANNO_2026,
+    inizio: '2026-09-01', fine: '2027-08-31', ultimo_giorno_aperto: '2027-07-31',
+    prepara_successivo_dal: '2027-05-01', stato: 'corrente', domande_aperte: false,
+    anni_scolastici: { anno_inizio: 2026 },
+  },
+]
 
 let appLog: ReturnType<typeof vi.fn>
 
@@ -65,14 +84,28 @@ async function righeConEsito(esito: string): Promise<Riga[]> {
   return (await righe()).filter((r) => JSON.stringify(r).includes(esito))
 }
 
-function makeSupabase(responses: Record<string, unknown> & { rpc?: number }) {
+function makeSupabase(responses: Record<string, unknown> & { rpc?: number; erroreAnnoId?: boolean }) {
   const inserts: { table: string; row: unknown }[] = []
+  /** Le liste di colonne chiesta a `pagamenti`, nell'ordine: serve a vedere la seconda lettura. */
+  const selectPagamenti: string[] = []
   const api = {
     from(table: string) {
+      let colonne = ''
       const builder = {
-        select: () => builder,
+        select: (c?: string) => {
+          colonne = c ?? ''
+          if (table === 'pagamenti') selectPagamenti.push(colonne)
+          return builder
+        },
         eq: () => builder,
-        single: async () => ({ data: responses[table] ?? null, error: null }),
+        // il calendario della sede: `.select().eq().order()` e basta
+        order: async () => ({ data: responses[table] ?? [], error: null }),
+        single: async () => {
+          if (table === 'pagamenti' && responses.erroreAnnoId && colonne.includes('anno_id')) {
+            return { data: null, error: { code: '42703', message: 'column pagamenti.anno_id does not exist' } }
+          }
+          return { data: responses[table] ?? null, error: null }
+        },
         maybeSingle: async () => ({ data: responses[table] ?? null, error: null }),
         insert: async (row: unknown) => {
           inserts.push({ table, row })
@@ -84,6 +117,7 @@ function makeSupabase(responses: Record<string, unknown> & { rpc?: number }) {
     },
     rpc: async () => ({ data: responses.rpc ?? 1, error: null }),
     _inserts: inserts,
+    _selectPagamenti: selectPagamenti,
   }
   return api
 }
@@ -166,8 +200,8 @@ afterEach(() => {
   vi.resetModules()
 })
 
-describe('emissione in agosto senza periodo di competenza', () => {
-  it('la coorte a cavallo del 30 aprile NON viene numerata: 422 e nessun numero bruciato', async () => {
+describe('emissione in agosto senza periodo di competenza: non è più ambiguo', () => {
+  it('la coorte a cavallo del 30 aprile PARTE, sulla serie del 2025/26 (prima: 422)', async () => {
     const { emettiFatturaPagamento } = await carica()
     const sb = makeSupabase({
       pagamenti: pagamentoSaldato,
@@ -177,47 +211,21 @@ describe('emissione in agosto senza periodo di competenza', () => {
     })
 
     const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
-    expect(esito.ok).toBe(false)
-    if (esito.ok) return
-    expect(esito.motivo).toBe('periodo_competenza_mancante')
-    expect(esito.httpStatus).toBe(422)
-    // Il messaggio manda dove sta il dato mancante — il PAGAMENTO — non sull'anagrafica
-    // del bambino, che è già a posto.
-    expect(esito.messaggio).toMatch(/periodo di competenza/i)
-    expect(esito.messaggio).not.toMatch(/anagrafica/i)
-    // E soprattutto: nessuna riga in `fatture_emesse`, cioè nessun numero consumato.
-    expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(0)
+    expect(esito.ok, 'ad agosto la serie si decide: nessun 422 periodo_competenza_mancante').toBe(true)
+    const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
+    // 15/06/2023 sull'anno 2025/26: compie 3 anni DOPO il 30/04/2026 → «Asilo»
+    expect((riga.row as { sezionale: string }).sezionale).toBe('Asilo')
+    expect(await righeConEsito('anno-scolastico-ambiguo')).toHaveLength(0)
+    // il ripiego sulla data del documento resta tracciato, come in ogni altro mese
+    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(1)
   })
 
-  it('lascia una riga `error` con `anno-scolastico-ambiguo`, senza la data di nascita', async () => {
-    const { emettiFatturaPagamento } = await carica()
-    const sb = makeSupabase({
-      pagamenti: pagamentoSaldato,
-      admin_settings: settingsConfig,
-      parents: parent,
-      rpc: 42,
-    })
-
-    await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
-
-    const trovate = await righeConEsito('anno-scolastico-ambiguo')
-    expect(trovate).toHaveLength(1)
-    expect(trovate[0].livello).toBe('error')
-    expect(trovate[0].evento).toBe('fattura')
-    expect(String(trovate[0].messaggio)).toMatch(/periodo di competenza/i)
-    // l'uuid serve a trovare la pratica; la data di nascita del minore non entra mai
-    expect(JSON.stringify(trovate[0])).toContain(ALUNNO)
-    expect(JSON.stringify(trovate[0])).not.toContain('2023-06-15')
-    // e non si spaccia per un'anagrafica incompleta: sono due riparazioni diverse
-    expect(await righeConEsito('sezionale-non-determinabile')).toHaveLength(0)
-  })
-
-  it('fuori dalla coorte la fattura parte lo stesso: si blocca dove la differenza esiste', async () => {
+  it('fuori dalla coorte la fattura parte come sempre', async () => {
     const { emettiFatturaPagamento } = await carica()
     const sb = makeSupabase({
       pagamenti: {
         ...pagamentoSaldato,
-        // nato nel 2019: «FPR» su entrambi gli anni candidati, l'ambiguità non conta
+        // nato nel 2019: «FPR» su qualunque anno
         alunni: { ...pagamentoSaldato.alunni, data_nascita: '2019-03-10' },
       },
       admin_settings: settingsConfig,
@@ -228,12 +236,9 @@ describe('emissione in agosto senza periodo di competenza', () => {
     expect((await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })).ok).toBe(true)
     const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
     expect((riga.row as { sezionale: string }).sezionale).toBe('FPR')
-    expect(await righeConEsito('anno-scolastico-ambiguo')).toHaveLength(0)
-    // il ripiego resta comunque tracciato, come in ogni altro mese
-    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(1)
   })
 
-  it('col periodo di competenza dichiarato non c’è nessuna ambiguità, nemmeno in agosto', async () => {
+  it('col periodo di competenza dichiarato la serie è quella del periodo', async () => {
     const { emettiFatturaPagamento } = await carica()
     const sb = makeSupabase({
       pagamenti: { ...pagamentoSaldato, periodo_competenza: '2026-05-01' },
@@ -246,7 +251,81 @@ describe('emissione in agosto senza periodo di competenza', () => {
     const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
     // maggio 2026 = anno scolastico 2025/2026 → il bambino del 15/06/2023 sta su «Asilo»
     expect((riga.row as { sezionale: string }).sezionale).toBe('Asilo')
-    expect(await righeConEsito('anno-scolastico-ambiguo')).toHaveLength(0)
+    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(0)
+  })
+})
+
+/**
+ * Una retta di MAGGIO (2025/26) saldata a NOVEMBRE 2026. Il bambino nato il 30/04/2024
+ * compie 3 anni «entro il 30 aprile» del 2027 (→ FPR sull'anno 2026/27) ma non del 2026
+ * (→ Asilo sull'anno 2025/26): la serie giusta per quella retta è «Asilo».
+ */
+describe('l’anno della voce decide la serie', () => {
+  const NOVEMBRE = new Date(2026, 10, 8, 10, 0, 0)
+  const voceDiMaggio = {
+    ...pagamentoSaldato,
+    anno_id: ANNO_2025,
+    periodo_competenza: null,
+    alunni: { ...pagamentoSaldato.alunni, data_nascita: '2024-04-30' },
+  }
+
+  it('voce del 2025/26, senza competenza, emessa a novembre: serie sul 2025, nessun ripiego', async () => {
+    vi.setSystemTime(NOVEMBRE)
+    const { emettiFatturaPagamento } = await carica()
+    const sb = makeSupabase({
+      pagamenti: voceDiMaggio, anni_sede: anniSede,
+      admin_settings: settingsConfig, parents: parent, rpc: 50,
+    })
+
+    expect((await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })).ok).toBe(true)
+    const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
+    // sull'anno della data del documento (2026) sarebbe «FPR»: la retta è del 2025 → «Asilo»
+    expect((riga.row as { sezionale: string }).sezionale).toBe('Asilo')
+    // l'anno della voce non è un ripiego: nessun warn
+    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(0)
+  })
+
+  it('un anno_id che il calendario della sede non conosce ripiega sulla regola di sempre', async () => {
+    vi.setSystemTime(NOVEMBRE)
+    const { emettiFatturaPagamento } = await carica()
+    const sb = makeSupabase({
+      pagamenti: { ...voceDiMaggio, anno_id: 'cccccccc-0000-0000-0000-000000000000' },
+      anni_sede: anniSede, admin_settings: settingsConfig, parents: parent, rpc: 51,
+    })
+
+    expect((await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })).ok).toBe(true)
+    const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
+    expect((riga.row as { sezionale: string }).sezionale).toBe('FPR')
+    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(1)
+  })
+
+  it('sul database senza `anno_id` (42703) rilegge senza la colonna, logga info una volta e la fattura parte', async () => {
+    vi.setSystemTime(NOVEMBRE)
+    const { emettiFatturaPagamento } = await carica()
+    const { anno_id: _scartato, ...voceSenzaColonna } = voceDiMaggio
+    void _scartato
+    const sb = makeSupabase({
+      pagamenti: voceSenzaColonna, erroreAnnoId: true,
+      admin_settings: settingsConfig, parents: parent, rpc: 52,
+    })
+
+    // un uuid vero: il logger redige gli id che non hanno la forma di un uuid
+    const PAGAMENTO = '33333333-3333-3333-3333-333333333333'
+    expect((await emettiFatturaPagamento(sb as never, PAGAMENTO, { id: 'staff-1' })).ok).toBe(true)
+    // due letture della voce: la prima con `anno_id`, la seconda senza
+    expect(sb._selectPagamenti).toHaveLength(2)
+    expect(sb._selectPagamenti[0]).toContain('anno_id')
+    expect(sb._selectPagamenti[1]).not.toContain('anno_id')
+
+    const info = await righeConEsito('anno-della-voce-non-disponibile')
+    expect(info).toHaveLength(1)
+    expect(info[0].livello).toBe('info')
+    expect(JSON.stringify(info[0])).toContain(SCUOLA)
+    expect(JSON.stringify(info[0])).toContain(PAGAMENTO)
+    // la serie si decide dalla data del documento (novembre 2026 → anno 2026 → «FPR»)
+    const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
+    expect((riga.row as { sezionale: string }).sezionale).toBe('FPR')
+    expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(1)
   })
 })
 

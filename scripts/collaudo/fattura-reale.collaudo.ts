@@ -35,7 +35,8 @@ import { createClient } from '@supabase/supabase-js'
 import { buildFatturaElettronicaXml } from '@/lib/aruba/fatturapa-xml'
 import { cedenteDaConfig, componiIndirizzo } from '@/lib/fatturazione/cedente'
 import { validaCessionario, cessionarioCompleto } from '@/lib/fatturazione/cessionario'
-import { sezionalePerMinore, annoScolasticoDi, formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
+import { sezionalePerMinore, annoScolasticoDiCompetenza, formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { causaleFattura } from '@/lib/pagamenti/causale-fattura'
 import { validaFatturaPA } from '../../__tests__/lib/aruba/valida-xsd'
 
@@ -143,7 +144,7 @@ describe.skipIf(!ATTIVO)('collaudo: fatture generate dall\'anagrafica reale, mai
                 const esito = sezionalePerMinore({
                     codiceFiscale: alunno.codice_fiscale as string | null,
                     dataNascita: alunno.data_nascita as string | null,
-                    annoScolastico: annoScolasticoDi(dataDoc),
+                    annoScolastico: annoScolasticoDiCompetenza(null, oggiFiscaleISO()).anno,
                 })
                 sezionale = esito.sezionale
                 if (esito.discordanza) conta('⚠️ CF e data di nascita DISCORDANO (si usa l\'anagrafica)')

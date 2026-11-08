@@ -127,7 +127,6 @@ const MOTIVI_LOCALI = new Set<string>([
   'gia_emessa_altro_intestatario',
   'quota_estranea',
   'partita_non_registrata',
-  'periodo_competenza_mancante',
   'dati_minore_mancanti',
 ])
 

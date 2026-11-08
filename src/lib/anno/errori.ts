@@ -116,6 +116,12 @@ export function erroreAnno(
         { error: frase('ANNO_NON_VISIBILE'), codice: 'ANNO_NON_VISIBILE' },
         { status: 403 },
       )
+    case 'ANNO_NON_ACCESSIBILE':
+      // Cookie o anno dichiarato che la sede non ha (manomesso o stantio): lo logga `resolveAnnoLettura`.
+      return NextResponse.json(
+        { error: frase('ANNO_NON_ACCESSIBILE'), codice: 'ANNO_NON_ACCESSIBILE' },
+        { status: 403 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { resolveIdentity, loadAppUser, type AppRole } from '@/lib/auth/require-staff'
 import { getSessionProfili } from '@/lib/auth/profili'
 import { ACTIVE_ROLE_COOKIE, areaForRole, RUOLI_APP } from '@/lib/auth/active-role'
+import { COOKIE_ANNO } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
@@ -102,11 +103,16 @@ export const POST = withRoute('auth/active-role:POST', async (request: Request) 
    * del tutto — lo stato in cui le cinque persone vere si sono trovate finché uno
    * switch dentro l'app non è esistito.
    *
+   * Lo stesso vale per `anno_attivo`, la scelta dell'anno scolastico del cockpit: una
+   * preferenza di Direzione e segreteria, che chi passa a una veste non di cockpit non deve
+   * portarsi dietro. La veste admin non lo azzera, per la stessa ragione di `sedi_attive`.
+   *
    * Nessun `httpOnly` e nessun `secure`: si sta CANCELLANDO un cookie scritto dal
    * browser, e per farlo bastano (e devono combaciare) nome e `path`.
    */
   if (area !== 'admin') {
     res.cookies.set(COOKIE_SEDI, '', { path: '/', maxAge: 0 })
+    res.cookies.set(COOKIE_ANNO, '', { path: '/', maxAge: 0 })
   }
 
   res.cookies.set(ACTIVE_ROLE_COOKIE, ruolo, {

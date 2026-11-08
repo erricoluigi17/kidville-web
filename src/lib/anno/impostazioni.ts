@@ -208,7 +208,7 @@ export function logIscrizioniAperte(chi: ChiHaAgito): void {
 export type ContestoRifiuto = ChiHaAgito & {
   operazione: string
   /** Il `tipo` del warn per i rifiuti di stato e di prerequisiti: cambia fra «domande» e «iscrizioni». */
-  tipoRifiuto: 'anno-domande-rifiutate' | 'anno-iscrizioni-rifiutate'
+  tipoRifiuto: 'anno-domande-rifiutate' | 'anno-iscrizioni-rifiutate' | 'anno-date-rifiutate' | 'anno-confine-rifiutato'
   /** Solo per `domande`: il valore che si voleva impostare. */
   aperte?: boolean
   /** `true` per la `GET`: il guasto è «lettura» e non «scrittura». */
@@ -248,8 +248,12 @@ export function rispostaErroreImpostazioni(error: ErroreDb, ctx: ContestoRifiuto
         al,
         righe,
         senza_competenza: senzaCompetenza,
-        ...Object.fromEntries(Object.entries(tabelle).map(([nome, n]) => [`t_${nome}`, n])),
       })
+      // Una riga per tabella: il NOME sta come valore di `entita_tipo` (chiave in chiaro) e non dentro il nome
+      // di una chiave, perché `redact` decide sulla chiave (`note_disciplinari` conterrebbe «note»).
+      for (const [nome, n] of Object.entries(tabelle)) {
+        evento('warn', { tipo: 'anno-confine-rifiutato-tabella', ...base, entita_tipo: nome, righe: n })
+      }
       dettagli = senzaVuoti({ righe, senza_competenza: senzaCompetenza, dal, al })
       dettagli.tabelle = tabelle
       break
@@ -263,7 +267,9 @@ export function rispostaErroreImpostazioni(error: ErroreDb, ctx: ContestoRifiuto
       const d = leggiDettaglio(error, ctx.operazione)
       const motivo = codiceDa(d?.motivo)
       const campo = codiceDa(d?.campo)
-      evento('warn', { tipo: 'anno-date-rifiutate', ...base, motivo, campo })
+      // `motivo` è una radice di testo libero per `redact` (sparirebbe): il motivo in codice va sotto `esito`,
+      // il campo (`ultimo_giorno_aperto`, …) sotto `entita_tipo`. Nella risposta HTTP restano `motivo` e `campo`.
+      evento('warn', { tipo: 'anno-date-rifiutate', ...base, esito: motivo, entita_tipo: campo })
       dettagli = senzaVuoti({ motivo, campo })
       break
     }

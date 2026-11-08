@@ -112,7 +112,12 @@ export const PATCH = withRoute('admin/anni/[annoSedeId]:PATCH', async (request: 
     return rispostaErroreImpostazioni(error, {
       ...chi,
       operazione,
-      tipoRifiuto: 'anno-domande-rifiutate',
+      tipoRifiuto:
+        corpo.azione === 'domande'
+          ? 'anno-domande-rifiutate'
+          : corpo.azione === 'date'
+            ? 'anno-date-rifiutate'
+            : 'anno-confine-rifiutato',
       aperte: corpo.azione === 'domande' ? corpo.aperte : undefined,
     })
   }

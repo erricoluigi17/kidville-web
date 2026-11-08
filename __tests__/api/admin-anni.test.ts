@@ -78,6 +78,7 @@ vi.mock('@/lib/logging/logger', () => ({
   logOk: (...args: unknown[]) => void h.log.push({ fn: 'ok', args }),
 }))
 
+import { redact } from '@/lib/logging/redact'
 import { GET, PATCH } from '@/app/api/admin/anni/[annoSedeId]/route'
 import { POST } from '@/app/api/admin/anni/[annoSedeId]/apri-iscrizioni/route'
 
@@ -312,7 +313,9 @@ describe('PATCH azione=confine', () => {
     expect(ev).toHaveLength(1)
     expect(ev[0].campi).toMatchObject({ anno_sede_id: ANNO_A, righe: 7, senza_competenza: 2, utente: UTENTE })
     // i conteggi per tabella ci sono, piatti e numerici; le righe no
-    expect(JSON.stringify(ev[0].campi)).toContain('pagamenti')
+    // un evento per tabella, col nome come VALORE di `entita_tipo`
+    const perTabella = eventi('anno-confine-rifiutato-tabella', 'warn').map((e) => [e.campi.entita_tipo, e.campi.righe])
+    expect(perTabella).toEqual([['pagamenti', 4], ['presenze', 3]])
     expect(Object.values(ev[0].campi).every((v) => typeof v !== 'object')).toBe(true)
     expect(eventi('anno-confine-spostato')).toEqual([])
   })
@@ -423,7 +426,8 @@ describe('PATCH azione=date', () => {
     expect(corpo.campo).toBe('ultimo_giorno_aperto')
     const ev = eventi('anno-date-rifiutate', 'warn')
     expect(ev).toHaveLength(1)
-    expect(ev[0].campi).toMatchObject({ motivo: 'fuori_periodo', campo: 'ultimo_giorno_aperto', anno_sede_id: ANNO_A })
+    // chiavi in chiaro per `redact` (`motivo` è testo libero): vedi il test con la redazione vera, più sotto
+    expect(ev[0].campi).toMatchObject({ esito: 'fuori_periodo', entita_tipo: 'ultimo_giorno_aperto', anno_sede_id: ANNO_A })
   })
 
   it('il motivo ultimo_giorno_nel_passato passa com’è', async () => {
@@ -622,5 +626,66 @@ describe('POST /api/admin/anni/[annoSedeId]/apri-iscrizioni', () => {
     expect(r.status).toBe(503)
     expect((await r.json()).codice).toBe('CALENDARIO_NON_DISPONIBILE')
     expect(eventi('impostazioni-schema-indietro', 'info')).toHaveLength(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// I log di rifiuto passano dalla redazione VERA: il motivo, il campo e i conteggi devono restare leggibili
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('log di rifiuto — attraverso redact() vero', () => {
+  /** Tutti i campi emessi con `logEvento`, redatti come farebbe il logger prima di scriverli. */
+  const redatti = () =>
+    h.log.filter((l) => l.fn === 'evento').map((l) => redact(l.args[2]) as Record<string, unknown>)
+
+  it.each([
+    ['fuori_periodo', 'ultimo_giorno_aperto'],
+    ['ultimo_giorno_nel_passato', 'ultimo_giorno_aperto'],
+    ['fuori_periodo', 'prepara_successivo_dal'],
+  ])('DATE_NON_VALIDE %s / %s: motivo e campo escono in chiaro', async (motivo, campo) => {
+    h.esiti.anno_imposta_date = rifiuto('DATE_NON_VALIDE', { motivo, campo, anno_sede_id: ANNO_A })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    const riga = redatti().find((c) => c.tipo === 'anno-date-rifiutate')
+    expect(riga).toBeDefined()
+    expect(riga).toMatchObject({ esito: motivo, entita_tipo: campo })
+  })
+
+  it('CONFINE_CON_RIGHE: il conteggio di note_disciplinari esce in chiaro, col nome della tabella', async () => {
+    h.esiti.sposta_confine_anno = rifiuto('CONFINE_CON_RIGHE', {
+      nuova_fine: '2027-08-15',
+      dal: '2027-08-16',
+      al: '2027-08-31',
+      righe: 9,
+      tabelle: { note_disciplinari: 5, pagamenti: 4 },
+      senza_competenza: 2,
+    })
+    await modifica({ azione: 'confine', nuova_fine: '2027-08-15' })
+    const righe = redatti()
+    expect(righe.find((c) => c.tipo === 'anno-confine-rifiutato')).toMatchObject({ righe: 9, senza_competenza: 2 })
+    const perTabella = righe.filter((c) => c.tipo === 'anno-confine-rifiutato-tabella')
+    expect(perTabella.map((c) => [c.entita_tipo, c.righe])).toEqual([
+      ['note_disciplinari', 5],
+      ['pagamenti', 4],
+    ])
+  })
+
+  it('nessun campo dei log di rifiuto esce redatto', async () => {
+    h.esiti.anno_imposta_date = rifiuto('DATE_NON_VALIDE', { motivo: 'fuori_periodo', campo: 'ultimo_giorno_aperto' })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    h.esiti.sposta_confine_anno = rifiuto('CONFINE_CON_RIGHE', { righe: 1, tabelle: { note_disciplinari: 1 }, senza_competenza: 0 })
+    await modifica({ azione: 'confine', nuova_fine: '2027-08-15' })
+    h.esiti.anno_imposta_domande = rifiuto('STATO_NON_AMMESSO', { stato: 'in_preparazione' })
+    await modifica({ azione: 'domande', aperte: true })
+    h.esiti.anno_apri_iscrizioni = rifiuto('PREREQUISITI_MANCANTI', { mancano: ['quota_nuova'] })
+    await apri()
+    expect(JSON.stringify(redatti())).not.toContain('[redatto')
+    expect(redatti().filter((c) => String(c.tipo).includes('rifiutat'))).toHaveLength(5)
+  })
+
+  it('il tipo del rifiuto segue l’azione: un rifiuto di stato su "date" non si chiama "domande"', async () => {
+    h.esiti.anno_imposta_date = rifiuto('STATO_NON_AMMESSO', { stato: 'chiuso' })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    expect(eventi('anno-date-rifiutate', 'warn')).toHaveLength(1)
+    expect(eventi('anno-domande-rifiutate')).toEqual([])
   })
 })

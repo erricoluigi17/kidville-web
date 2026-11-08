@@ -8,7 +8,7 @@ import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { anniDellaSede, esitoSchemaIndietro, guastoAnno, type RigaAnnoSede } from '@/lib/anno/lettura'
 import { creaGettoni } from '@/lib/anno/gettone'
-import type { EsitoAnno } from '@/lib/anno/tipi'
+import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
 // Scoping per tenant (plesso) e per classe delle funzioni docente.
@@ -424,13 +424,17 @@ export async function resolveScuolaScrittura(
 // o è l'unico `corrente` della sede. In agosto, senza `corrente`, la risposta è 400 ANNO_DA_SPECIFICARE.
 // =============================================================================
 
-const COOKIE_ANNO = 'anno_attivo'
+/** Il cookie con cui Direzione e segreteria scelgono l'anno: contiene `anni_scolastici.id`. */
+export const COOKIE_ANNO = 'anno_attivo'
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Il cookie `anno_attivo` (lo crea la PR 4.2): un valore che non è un uuid si ignora, come se mancasse. */
-function annoDalCookie(request: NextRequest): string | null {
+/**
+ * Il cookie `anno_attivo`: un valore che non è un uuid si ignora, come se mancasse. L'uuid esce in
+ * forma canonica (minuscolo), la stessa del database.
+ */
+export function annoDalCookie(request: NextRequest): string | null {
   const raw = request.cookies?.get?.(COOKIE_ANNO)?.value?.trim()
-  return raw && FORMA_UUID.test(raw) ? raw : null
+  return raw && FORMA_UUID.test(raw) ? formaConfronto(raw) : null
 }
 
 function rifiutoAnno(codice: string, operazione: string): NextResponse {
@@ -457,7 +461,7 @@ export type OpzioniAnnoScrittura = {
  * | `in_chiusura`                          | gettone `agosto`               | 409 ANNO_CHIUSO     |
  * | `chiuso`                               | 409, o gettone `correzione`    | 409 ANNO_CHIUSO     |
  *
- * «Staff» è `vedeTutteLeClassi` (Direzione e segreteria): un docente con `correzione` non ottiene mai
+ * «Staff» è `vedeTutteLeClassi` (admin, coordinator e segreteria): un docente con `correzione` non ottiene mai
  * un gettone. `utente_id` del gettone è `AppUser.id` (= `utenti.id` = `auth.users.id` per lo staff).
  */
 /**
@@ -589,6 +593,84 @@ export async function resolveAnnoScrittura(
     }
   }
   return esitoPerAnno(supabase, user, riga, opzioni, azione)
+}
+
+/** L'anno su cui si LEGGE (`resolveAnnoLettura`). `annoId` è `anni_scolastici.id`, `annoSedeId` è `anni_sede.id`. */
+export type AnnoLettura = { annoSedeId: string; annoId: string; stato: StatoAnno; eAttivo: boolean }
+
+/**
+ * L'anno su cui LEGGERE. Ordine: `opzioni.dichiarato` (`anni_scolastici.id`, già validato da zod dal
+ * chiamante) → cookie `anno_attivo` → `anno_attivo(sede)`. Non risponde mai `ANNO_DA_SPECIFICARE`:
+ * leggere si può sempre, e l'anno predefinito è l'anno attivo.
+ *
+ * Direzione (admin e coordinator) e segreteria (`vedeTutteLeClassi`) scelgono l'anno. Docenti e genitori NO: per loro il
+ * cookie è ignorato (con un `warn` solo se c'era) e vale l'anno attivo; l'anno dichiarato lo
+ * possono chiedere, ma `in_preparazione`/`iscrizioni_aperte` è `403 ANNO_NON_VISIBILE`.
+ * Un anno (cookie o dichiarato) che la sede non ha è `403 ANNO_NON_ACCESSIBILE`, come un cookie di
+ * sede manomesso: nel log non entra mai il valore.
+ *
+ * `null` = calendario non disponibile (database senza lo schema dell'anno, o sede senza anno
+ * attivo e nessuno scelto): chi chiama legge senza filtro d'anno, come prima della PR 4.2.
+ */
+export async function resolveAnnoLettura(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  scuolaId: string,
+  opzioni: { dichiarato?: string } = {},
+): Promise<AnnoLettura | null | NextResponse> {
+  const azione = 'resolveAnnoLettura'
+  // Il motivo va sotto `esito`: `motivo` è una radice di testo libero per `redact` e uscirebbe `[redatto:str/N]`.
+  const nonDisponibile = (motivo: string): null => {
+    logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', azione, esito: motivo })
+    return null
+  }
+
+  const anni = await anniDellaSede(supabase, scuolaId)
+  if ('indietro' in anni) return nonDisponibile('schema-indietro')
+  if ('guasto' in anni) return guastoAnno(azione, anni.guasto)
+
+  const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
+  if (attivo.error) {
+    if (schemaAnnoIndietro(attivo.error)) return nonDisponibile('schema-indietro')
+    return guastoAnno(azione, attivo.error)
+  }
+  const attivoId = typeof attivo.data === 'string' ? attivo.data : null
+
+  const staff = vedeTutteLeClassi(user)
+  const dichiarato = opzioni.dichiarato?.trim() || null
+  const cookie = annoDalCookie(request)
+  if (!staff && cookie) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-cookie-ignorato-ruolo', azione, utente: user.id, ruolo: user.role,
+    })
+  }
+  const richiesto = dichiarato ?? (staff ? cookie : null)
+
+  const perAnno = new Map(anni.righe.map((r) => [formaConfronto(String(r.anno_id)), r]))
+  let riga: RigaAnnoSede | undefined
+  if (richiesto) {
+    riga = perAnno.get(formaConfronto(richiesto))
+    if (!riga) {
+      logEvento('anno-scolastico', 'warn', {
+        tipo: 'anno-lettura-cookie-fuori-scope', azione, error_code: 'ANNO_NON_ACCESSIBILE',
+        utente: user.id, ruolo: user.role, // `fonte` non è fra le chiavi in chiaro di `redact`: il valore sta sotto `esito`.
+        esito: dichiarato ? 'dichiarato' : 'cookie',
+      })
+      return rifiutoAnno('ANNO_NON_ACCESSIBILE', azione)
+    }
+  } else {
+    riga = anni.righe.find((r) => r.id === attivoId)
+    if (!riga) return nonDisponibile('nessun-anno-attivo')
+  }
+
+  if (!staff && (riga.stato === 'in_preparazione' || riga.stato === 'iscrizioni_aperte')) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-non-visibile', azione, error_code: 'ANNO_NON_VISIBILE', utente: user.id, ruolo: user.role,
+    })
+    return rifiutoAnno('ANNO_NON_VISIBILE', azione)
+  }
+  return { annoSedeId: riga.id, annoId: riga.anno_id, stato: riga.stato, eAttivo: riga.id === attivoId }
 }
 
 /**

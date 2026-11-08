@@ -7,6 +7,7 @@ import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { SedeProvider, SedeScopeBoundary } from '@/lib/context/sede-context';
 import { AdminIdentityProvider } from '@/lib/context/admin-identity';
 import { CalendarioProvider } from '@/lib/context/calendario-context';
+import { AnnoNotice, AnnoProvider, AnnoScopeBoundary } from '@/lib/context/anno-context';
 import { requireArea } from '@/lib/auth/area-guard';
 
 // Shell cockpit Direzione/Segreteria, in tre forme (dal 2026-10-18, iPad PR 3):
@@ -25,6 +26,10 @@ import { requireArea } from '@/lib/auth/area-guard';
 // tablet:pb-0` del <main> libera lo spazio della bottom-nav flottante sul telefono.
 // Nessun componente qui usa useSearchParams (userId è letto client-side): niente
 // Suspense → inline su ogni route, anche le dinamiche /admin/primaria/[sectionId]/*.
+// L'ANNO SCOLASTICO (PR 4.2.6): `AnnoProvider` sta DENTRO `CalendarioProvider` (la sua unica fonte) e
+// attorno a tutta la shell, perché lo leggono la topbar (≥1024 px) e il foglio «Menu». In cima al <main>
+// c'è l'avviso (`AnnoNotice`, in flusso) e il contenuto sta in `AnnoScopeBoundary`, che lo rimonta quando
+// si sceglie un altro anno, come `SedeScopeBoundary` per la sede.
 // Il contenuto (e SOLO il contenuto: non la topbar, non la sidebar, non la
 // bottom-nav) sta dentro `SedeScopeBoundary`, che lo rimonta quando l'utente
 // cambia sede: senza, ogni pagina con `useEffect(…, [userId])` — cioè quasi
@@ -36,6 +41,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <AdminIdentityProvider>
       <SedeProvider>
         <CalendarioProvider>
+          <AnnoProvider>
           <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-admin>
             <AdminTopBarMobile />
             <AdminTopBar />
@@ -50,11 +56,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               <AdminBinario />
               <AdminSidebar />
               <main className="flex-1 min-w-0 pb-28 tablet:pb-0" data-cockpit-content>
-                <SedeScopeBoundary>{children}</SedeScopeBoundary>
+                <SedeScopeBoundary>
+                  {/* Avviso «stai guardando un altro anno» (PR 4.2.6): IN FLUSSO e sticky, non copre niente. */}
+                  <AnnoNotice />
+                  <AnnoScopeBoundary>{children}</AnnoScopeBoundary>
+                </SedeScopeBoundary>
               </main>
             </div>
             <AdminBottomNav />
           </div>
+          </AnnoProvider>
         </CalendarioProvider>
       </SedeProvider>
     </AdminIdentityProvider>

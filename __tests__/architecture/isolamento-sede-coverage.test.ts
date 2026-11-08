@@ -2640,7 +2640,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // scelgono (query `.strict()`, nessun `scuolaId`): per lo staff vengono da `scuoleDiUtente`, per il
             // genitore dai propri figli attivi (`getFigliAttiviDiGenitore`); `anni_sede` si legge con
             // `.eq('scuola_id', …)` per ciascuna di quelle sedi. Misurato rieseguendo il lock: 384 → 385.
-            routeConServiceRole: 385,
+            // 385 → 387 il 2026-11-08 (anno scolastico, PR 4.2, compito 4.2.4): entrano `admin/anni/[annoSedeId]`
+            // (GET e PATCH) e `admin/anni/[annoSedeId]/apri-iscrizioni` (POST). CONTROLLATE, nessuna esenzione:
+            // gate `requireStaff`, id validato come uuid, e `assertAnnoSedeInScope` legge la riga `anni_sede` e nega
+            // con 403 `SEDE_NON_ACCESSIBILE` se la sede non è fra quelle di `scuoleDiUtente`, PRIMA di chiamare la
+            // funzione SQL con proprio quell'id. Misurato rieseguendo il lock: 385 → 387.
+            routeConServiceRole: 387,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2972,7 +2977,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 593 → 594 il 2026-11-08 (anno scolastico, PR 4.1, compito 4.1.4): `anno/calendario:GET` (vedi
             // `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
             // Misurato rieseguendo il lock: 593 → 594.
-            handlerControllati: 594,
+            // 594 → 597 il 2026-11-08 (anno scolastico, PR 4.2, compito 4.2.4): `admin/anni/[annoSedeId]:GET`,
+            // `…:PATCH` e `…/apri-iscrizioni:POST` (vedi `routeConServiceRole`). Tre handler, tutti CONTROLLATI;
+            // `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 594 → 597.
+            handlerControllati: 597,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

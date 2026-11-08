@@ -83,6 +83,42 @@ describe('GeneratoreCategoria — l\'anteprima vale solo per la chiave che ha us
     expect(anteprime[1]).toContain('gruppo=gita-2025');
     expect(posted[0].gruppo).toBe('gita-2025');
   });
+  it('l\'anno della chiave è cambiato: al posto dell\'anteprima una riga con le due etichette; rifatta, sparisce', async () => {
+    render(
+      <CalendarioProvider>
+        <GeneratoreCategoria userId="u1" scuolaId="sc-1" />
+      </CalendarioProvider>,
+    );
+    await waitFor(() => expect(campoGruppo().value).toBe('gita-2026'));
+    await waitFor(() => expect(screen.getByText(/Si genera per/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    expect(await screen.findByRole('button', { name: /Conferma generazione/ })).toBeInTheDocument();
+    expect(screen.queryByText(/L’anteprima era per il/)).toBeNull();
+
+    apriCalendario();
+    await waitFor(() => expect(campoGruppo().value).toBe('gita-2025'));
+    const riga = screen.getByText('L’anteprima era per il 2026/27: rifalla per il 2025/26');
+    expect(riga).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(/Anteprima generazione/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    expect(await screen.findByRole('button', { name: /Conferma generazione/ })).toBeInTheDocument();
+    expect(screen.queryByText(/L’anteprima era per il/)).toBeNull();
+  });
+
+  it('la chiave cambiata a mano (stesso anno) non scrive la riga: l\'ha cambiata la segreteria', async () => {
+    render(<GeneratoreCategoria userId="u1" scuolaId="sc-1" />);
+    await waitFor(() => expect(campoGruppo().value).toBe('gita-2026'));
+    await waitFor(() => expect(screen.getByText(/Si genera per/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    expect(await screen.findByRole('button', { name: /Conferma generazione/ })).toBeInTheDocument();
+
+    fireEvent.change(campoGruppo(), { target: { value: 'gita-primavera-2026' } });
+    expect(screen.queryByRole('button', { name: /Conferma generazione/ })).toBeNull();
+    expect(screen.queryByText(/L’anteprima era per il/)).toBeNull();
+  });
 });
 
 describe('GeneratoreCategoria — la scadenza proposta è il giorno di Roma', () => {

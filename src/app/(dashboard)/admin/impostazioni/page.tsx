@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
     StickyNote, Megaphone, MessageCircle, Images, Package, FileSignature,
-    UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2, KeyRound,
+    UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2, KeyRound, CalendarDays,
 } from 'lucide-react';
 import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard';
 import { ContrastSwitch } from '@/components/ui/ContrastSwitch';
@@ -26,13 +26,14 @@ import { ArmadiettoSettings } from '@/components/features/admin/settings/Armadie
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
 import { NotificheSettings } from '@/components/features/admin/settings/NotificheSettings';
 import { AnagraficaSedeSettings } from '@/components/features/admin/settings/AnagraficaSedeSettings';
+import { AnnoScolasticoSettings } from '@/components/features/admin/settings/AnnoScolasticoSettings';
 import { SedeCorrente } from '@/components/features/admin/settings/SedeCorrente';
 import { PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 
 type Sezione =
-    | 'moduli' | 'sede' | 'account'
+    | 'moduli' | 'sede' | 'anno' | 'account'
     | 'pagamenti' | 'rette' | 'modulistica'
     | 'didattica' | 'pagelle' | 'diario' | 'presenze' | 'note'
     | 'mensa' | 'armadietto'
@@ -51,6 +52,7 @@ const GRUPPI: Gruppo[] = [
             // Prima voce nata da un messaggio d'errore: i prestampati rimandavano
             // «nelle impostazioni della sede» a una schermata che non esisteva.
             { id: 'sede', labelKey: 'voceSede', icon: <Building2 size={15} /> },
+            { id: 'anno', labelKey: 'voceAnno', icon: <CalendarDays size={15} /> },
             // ⚠️ L'UNICA VOCE DI QUESTA PAGINA CHE NON CONFIGURA UNA SEDE: configura
             // CHI STA GUARDANDO. Sta qui e non in una schermata sua perché è dove la
             // segreteria cerca le proprie preferenze, e perché una pagina in più per
@@ -221,6 +223,7 @@ function Inner() {
                         </h2>
                         {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'sede' && conSede(t('sedeRequiredSede'), (sid) => <AnagraficaSedeSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'anno' && conSede(t('sedeRequiredAnno'), (sid) => <AnnoScolasticoSettings userId={userId} scuolaId={sid} />)}
                         {/* ⚠️ SENZA `conSede`, ED È L'UNICA. La password non è un
                             affare di plesso: la chiave è `auth.users.id`, e la route
                             che la scrive (`POST /api/account/password`) è una sola per

@@ -43,8 +43,37 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['ANNO_NON_DELLA_SEDE', 400, 'L’anno scolastico scelto non appartiene a questa sede.'],
     ['GIORNO_SENZA_ANNO', 500, 'Nessun anno scolastico copre questo giorno: avvisa l’assistenza.'],
     ['ANNO_NON_VISIBILE', 403, 'Questo anno scolastico non è ancora disponibile per te.'],
+    ['ANNO_NON_ACCESSIBILE', 403, 'Questo anno scolastico non è disponibile per questa sede.'],
     ['MOTIVO_OBBLIGATORIO', 400, 'Indica il motivo.'],
+    // PR 4.2, compito 4.2.4: le funzioni delle impostazioni di sede (20261108052944_anno_impostazioni_sede.sql).
+    ['ANNO_NON_TROVATO', 404, 'Questo anno scolastico non esiste più. Aggiorna la pagina.'],
+    ['ANNO_IN_CHIUSURA', 409, 'L’anno è in chiusura: l’ultimo giorno aperto non si può più cambiare.'],
+    ['DATE_NON_VALIDE', 422, 'Le date scelte non sono valide per questo anno scolastico.'],
+    ['STATO_NON_AMMESSO', 409, 'Questa operazione non è possibile nello stato attuale. Aggiorna la pagina e riprova.'],
+    ['PREREQUISITI_MANCANTI', 409, 'Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.'],
+    ['PARAMETRO_MANCANTE', 400, 'Manca un dato richiesto. Controlla e riprova.'],
   ]
+
+  it('i dettagli della route finiscono nel corpo accanto al codice, senza toccare stato e frase', async () => {
+    const r = await corpo(erroreAnno({ message: 'PREREQUISITI_MANCANTI' }, 'x:POST', { mancano: ['quota_nuova'] }))
+    expect(r.stato).toBe(409)
+    expect(r.body).toEqual({
+      error: 'Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.',
+      codice: 'PREREQUISITI_MANCANTI',
+      mancano: ['quota_nuova'],
+    })
+  })
+
+  it('un dettaglio non può sovrascrivere il codice né la frase', async () => {
+    const r = await corpo(
+      erroreAnno({ message: 'DATE_NON_VALIDE' }, 'x:PATCH', { codice: 'ALTRO', error: 'falso', motivo: 'fuori_periodo' }),
+    )
+    expect(r.body).toEqual({
+      error: 'Le date scelte non sono valide per questo anno scolastico.',
+      codice: 'DATE_NON_VALIDE',
+      motivo: 'fuori_periodo',
+    })
+  })
 
   it.each(TABELLA)('%s → %i con messaggio e codice', async (codice, stato, messaggio) => {
     const r = await corpo(erroreAnno({ code: 'P0001', message: codice }))

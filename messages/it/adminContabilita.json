@@ -434,6 +434,7 @@
   "gencScadenzaPre": "Scadenza",
   "gencTotale": "totale",
   "gencTuttiIscritti": "tutti gli iscritti",
+  "gencAnteprimaScaduta": "L’anteprima era per il {prima}: rifalla per il {ora}",
   "genrAlunniAttivi": "alunni attivi",
   "genrAlunniCandidati": "alunni candidati",
   "genrAnnoScolastico": "Anno scolastico",

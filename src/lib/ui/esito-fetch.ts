@@ -3567,8 +3567,13 @@ export const CODICI_ERRORE = {
      * 409 `ANNO_CHIUSO` · 409 `PASSAGGIO_DA_FARE` · 409 `CONFINE_CON_RIGHE` ·
      * 422 `SEZIONE_DI_ALTRO_ANNO` · 422 `SEZIONE_DI_ALTRA_SEDE` · 422 `ANNO_NON_COERENTE` ·
      * 422 `MODULO_NON_RICHIESTO` · 422 `CONFINE_NON_VALIDO` · 422 `CALENDARIO_NON_CONTINUO` ·
-     * 400 `ANNO_DA_SPECIFICARE` · 400 `ANNO_NON_DELLA_SEDE` · 403 `ANNO_NON_VISIBILE` ·
+     * 400 `ANNO_DA_SPECIFICARE` · 400 `ANNO_NON_DELLA_SEDE` · 403 `ANNO_NON_VISIBILE` · 403 `ANNO_NON_ACCESSIBILE` ·
      * 400 `MOTIVO_OBBLIGATORIO` (già del CRM) · 500 `GIORNO_SENZA_ANNO`.
+     *
+     * LE IMPOSTAZIONI DI SEDE (PR 4.2, compito 4.2.4): 404 `ANNO_NON_TROVATO` · 409 `ANNO_IN_CHIUSURA` ·
+     * 422 `DATE_NON_VALIDE` (col motivo) · 409 `STATO_NON_AMMESSO` (la frase è quella del CRM) ·
+     * 409 `PREREQUISITI_MANCANTI` (con l'elenco) · 400 `PARAMETRO_MANCANTE` · 503 `CALENDARIO_NON_DISPONIBILE`
+     * (il database non ha ancora lo schema dell'anno: lo dice `impostazioni.ts`, non `erroreAnno`).
      */
     ANNO_CHIUSO: 'erroreAnnoChiuso',
     PASSAGGIO_DA_FARE: 'errorePassaggioDaFare',
@@ -3583,6 +3588,13 @@ export const CODICI_ERRORE = {
     CALENDARIO_NON_CONTINUO: 'erroreCalendarioNonContinuo',
     GIORNO_SENZA_ANNO: 'erroreGiornoSenzaAnno',
     ANNO_NON_VISIBILE: 'erroreAnnoNonVisibile',
+    ANNO_NON_ACCESSIBILE: 'erroreAnnoNonAccessibile',
+    ANNO_NON_TROVATO: 'erroreAnnoNonTrovato',
+    ANNO_IN_CHIUSURA: 'erroreAnnoInChiusura',
+    DATE_NON_VALIDE: 'erroreDateNonValide',
+    PREREQUISITI_MANCANTI: 'errorePrerequisitiMancanti',
+    PARAMETRO_MANCANTE: 'erroreParametroMancante',
+    CALENDARIO_NON_DISPONIBILE: 'erroreCalendarioNonDisponibile',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -48,11 +48,12 @@ import { useEffect, useId, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { X, Users, ChevronRight, ChevronDown, Check, School } from 'lucide-react';
+import { X, Users, ChevronRight, ChevronDown, Check, School, CalendarDays } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { puoScegliAnno, useAnnoOpzionale, useTestoStatoAnno } from '@/lib/context/anno-context';
 import { activeHref, gruppiVisibili, CODA_FATTURE_HREF, puoLeggereCodaFatture, type NavItem } from './admin-nav-config';
 import { useGruppoAperto } from './use-gruppo-aperto';
 import { useConteggioCodaFatture } from './use-conteggio-coda-fatture';
@@ -126,6 +127,46 @@ function SedeRigaMenu({ nome, attiva, onClick }: { nome: string; attiva: boolean
       <span className="min-w-0 flex-1 truncate font-semibold">{nome}</span>
       {attiva && <Check size={16} strokeWidth={2.4} className="shrink-0 text-kidville-green" />}
     </button>
+  );
+}
+
+/**
+ * Blocco «Anno scolastico» (PR 4.2.6), subito sotto la sede. Una riga per anno, come quelle della sede:
+ * `aria-pressed`, spunta sulla scelta, NON chiude il foglio (è uno stato, non una navigazione). Compare solo
+ * a chi sceglie l'anno (Direzione, segreteria) e ha almeno due anni: senza `AnnoProvider` (docenti,
+ * genitori) o col database della CI, che non ha anni, non monta niente. Come nel `AnnoSelector` della barra,
+ * la riga dell'anno ATTIVO è «torna al predefinito» e non fissa il cookie.
+ */
+function AnnoBloccoMenu({ ruolo }: { ruolo: string }) {
+  const t = useTranslations('adminNav');
+  const ctx = useAnnoOpzionale();
+  const testoStato = useTestoStatoAnno();
+  if (!ctx || !puoScegliAnno(ruolo) || ctx.anni.length < 2) return null;
+  return (
+    <div className="mb-4 flex flex-col gap-1">
+      <p className="px-1 pb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-sub">
+        {t('menuAnnoGruppo')}
+      </p>
+      {ctx.anni.map((a) => {
+        const attiva = ctx.effettivo?.annoId === a.annoId;
+        return (
+          <button
+            key={a.annoId}
+            type="button"
+            aria-pressed={attiva}
+            onClick={() => (a.attivo ? ctx.usaAttivo() : ctx.scegli(a.annoId))}
+            className={`${ROW_CLS} w-full text-left ${attiva ? 'bg-kidville-green-soft' : ''}`}
+          >
+            <CalendarDays size={20} strokeWidth={2} aria-hidden="true" className="shrink-0 text-kidville-green" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold">{a.etichettaBreve}</span>
+              <span className="block text-xs text-kidville-sub">{testoStato(a.stato)}</span>
+            </span>
+            {attiva && <Check size={16} strokeWidth={2.4} aria-hidden="true" className="shrink-0 text-kidville-green" />}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -286,6 +327,9 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
             ))}
           </div>
         )}
+
+        {/* ANNO SCOLASTICO — sotto la sede, solo a chi ha più anni da scegliere. */}
+        <AnnoBloccoMenu ruolo={ruolo} />
 
         {/* Anagrafica in evidenza — la sezione di consultazione più frequente da
             telefono (decisione utente), fuori dai gruppi e ben visibile. */}

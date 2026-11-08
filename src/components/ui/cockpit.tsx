@@ -12,7 +12,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
-import { Search, X, ChevronDown, Check } from 'lucide-react';
+import { Search, X, ChevronDown, Check, CalendarDays } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { SHADOW_CARD, SHADOW_FLOAT } from '@/components/ui/Card';
 import { SedeIcon } from '@/components/ui/SedeIcon';
@@ -20,6 +20,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { TONE_HEX, TRACK } from '@/lib/ui/chart-colors';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { useAnnoOpzionale, useTestoStatoAnno, useVedeAnno, type AnnoContextValue } from '@/lib/context/anno-context';
 import { focusabiliIn } from '@/lib/accessibility/focus-dialogo';
 
 export type Tone = 'green' | 'info' | 'warn' | 'error' | 'success' | 'neutral' | 'yellow';
@@ -649,5 +650,110 @@ function SedeRow({ active, nome, meta, onClick }: { active: boolean; nome: strin
       </span>
       {active && <Check size={16} className="shrink-0 text-kidville-green" />}
     </button>
+  );
+}
+
+/**
+ * Selettore dell'ANNO SCOLASTICO (PR 4.2), accanto a `SedeSelector`. Stesso scheletro e stessa a11y:
+ * le righe sono `<button aria-pressed>` in un `group` (non un menu ARIA: niente frecce), Escape chiude e
+ * riporta il focus al trigger, lo stato di ogni anno è in PAROLE (non solo colore).
+ *
+ * Non si monta per chi non sceglie l'anno (docenti e genitori: nelle loro shell non esiste un
+ * `AnnoProvider`), né con meno di due anni da scegliere — in particolare mai sul database E2E della CI,
+ * che non ha il calendario: lì `anni` è vuoto. `compatto` mostra `26/27` per la barra mobile.
+ */
+export function AnnoSelector({ compatto = false }: { compatto?: boolean }) {
+  const ctx = useAnnoOpzionale();
+  const vede = useVedeAnno();
+  if (!ctx || !vede || ctx.anni.length < 2) return null;
+  return <AnnoSelectorAperto ctx={ctx} compatto={compatto} />;
+}
+
+function AnnoSelectorAperto({ ctx, compatto }: { ctx: AnnoContextValue; compatto: boolean }) {
+  const t = useTranslations('shared');
+  const testoStato = useTestoStatoAnno();
+  const { anni, effettivo, scegli, usaAttivo } = ctx;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const idBase = useId();
+  const triggerId = `${idBase}-anno-trigger`;
+  const pannelloId = `${idBase}-anno-pannello`;
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  // Con più sedi e nessuna scelta non c'è UN anno: ogni sede usa il proprio.
+  const nome = effettivo
+    ? (compatto ? effettivo.etichettaBreve.replace(/^\d{2}/, '') : effettivo.etichettaBreve)
+    : t('annoOgniSede');
+
+  return (
+    <div
+      ref={ref}
+      className="relative"
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape' || !open) return;
+        e.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        id={triggerId}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={open ? pannelloId : undefined}
+        className={cx(
+          'flex items-center rounded-[12px] bg-kidville-white/[0.12] text-kidville-white',
+          compatto ? 'min-h-[36px] gap-1.5 px-2.5 py-1.5' : 'gap-2.5 px-3 py-[7px]',
+        )}
+      >
+        <span className="sr-only">{t('annoSelettoreAria')}:</span>
+        <span className="flex shrink-0 text-kidville-yellow"><CalendarDays size={compatto ? 16 : 18} aria-hidden="true" /></span>
+        {/* Lo spazio è un nodo di testo vero: lo spazio finale di uno span `sr-only` il nome accessibile lo taglia. */}
+        {' '}
+        <span className={cx('font-barlow font-extrabold uppercase', compatto ? 'text-[12.5px]' : 'text-sm')}>{nome}</span>
+        <ChevronDown size={compatto ? 14 : 16} className="shrink-0 text-kidville-white/80" aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          id={pannelloId}
+          role="group"
+          aria-labelledby={triggerId}
+          className={cx(
+            'absolute top-[calc(100%+8px)] z-[60] w-[264px] max-w-[86vw] rounded-[14px] bg-kidville-white p-1.5',
+            compatto ? 'right-0' : 'left-0',
+          )}
+          style={{ boxShadow: SHADOW_FLOAT }}
+        >
+          {anni.map((a) => {
+            const active = effettivo?.annoId === a.annoId;
+            return (
+              <button
+                key={a.annoId}
+                type="button"
+                aria-pressed={active}
+                // La riga dell'anno ATTIVO non è una scelta: è «torna al predefinito». Fissare il cookie sul
+                // 2026/27 lascerebbe la segreteria sull'anno vecchio dopo il passaggio all'anno nuovo.
+                onClick={() => { if (a.attivo) usaAttivo(); else scegli(a.annoId); setOpen(false); triggerRef.current?.focus(); }}
+                className={cx('flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 text-left', active ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream')}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block font-barlow text-[14.5px] font-extrabold uppercase text-kidville-green">{a.etichettaBreve}</span>
+                  <span className="block font-maven text-[11.5px] text-kidville-sub">{testoStato(a.stato)}</span>
+                </span>
+                {active && <Check size={16} className="shrink-0 text-kidville-green" aria-hidden="true" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

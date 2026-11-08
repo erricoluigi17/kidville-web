@@ -817,5 +817,22 @@
   "erroreConfineConRighe": "The date cannot be moved: records already exist on the days that would change school year.",
   "erroreCalendarioNonContinuo": "A location’s school years must follow one another with no gaps or overlaps.",
   "erroreGiornoSenzaAnno": "No school year covers this day: please contact support.",
-  "erroreAnnoNonVisibile": "This school year is not available to you yet."
+  "erroreAnnoNonVisibile": "This school year is not available to you yet.",
+  "erroreAnnoNonAccessibile": "This school year is not available for this location.",
+  "erroreAnnoNonTrovato": "This school year no longer exists. Refresh the page.",
+  "erroreAnnoInChiusura": "The year is closing: the last open day can no longer be changed.",
+  "erroreDateNonValide": "The chosen dates are not valid for this school year.",
+  "errorePrerequisitiMancanti": "Some details are still missing before enrolment can open: check the year’s fees and forms.",
+  "erroreParametroMancante": "A required value is missing. Check and try again.",
+  "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly.",
+  "annoSelettoreAria": "Change school year",
+  "annoOgniSede": "Current year",
+  "annoStatoInCorso": "current",
+  "annoStatoInChiusura": "closing",
+  "annoStatoIscrizioniAperte": "enrolment open",
+  "annoStatoInPreparazione": "in preparation",
+  "annoStatoChiuso": "closed",
+  "annoAvvisoTesto": "You are working on {anno} ({stato}): new classes, votes and uploaded lists go to that year. The lists on screen still show the current year.",
+  "annoAvvisoTorna": "Back to the current year",
+  "annoStatoDiverso": "status differs between locations"
 }

@@ -1014,6 +1014,11 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // preposizione che li lega — nessun sostantivo concorda con un numero. Il riconoscitore
         // scatta perché dopo il segnaposto viene «in»; riscrivere il titolo per schivarlo è la
         // frase piegata al lock già scartata più volte, qui sopra.
+        //
+        // I tre messaggi con date della sezione «Anno scolastico» (PR 4.2.7: `annoRigaPeriodo`,
+        // `annoFineSotto`, `annoDateFuoriPeriodo`) sono scritti senza la forma «segnaposto + parola»
+        // («da {inizio} a {fine}», «L’anno successivo ({anno}) comincerà il {data}»): nessuna
+        // eccezione, il tetto resta 44.
         expect(NON_CONTATORI.size).toBeLessThanOrEqual(44)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {

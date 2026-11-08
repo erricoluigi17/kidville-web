@@ -16,7 +16,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
 import { Search } from 'lucide-react';
-import { SedeSelector } from '@/components/ui/cockpit';
+import { AnnoSelector, SedeSelector } from '@/components/ui/cockpit';
 import { UserMenu } from '@/components/ui/UserMenu';
 import { AdminSearchPanel } from './AdminSearchPanel';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
@@ -98,6 +98,11 @@ export function AdminTopBar() {
         <div className="ml-auto flex shrink-0 items-center gap-4">
           {/* selettore sede (reale) */}
           <SedeSelector userId={userId} />
+
+          {/* selettore anno scolastico (PR 4.2.6): SOLO da 1024 px. Sotto, la ricerca non ha 100 px da
+              cedere (vedi sopra: il testo breve chiede 284 px su ~310) e la scelta sta nel foglio/pannello
+              «Menu». Non si monta senza anni (database della CI) né per chi non sceglie l'anno. */}
+          {formato === 'sidebar' && <AnnoSelector />}
 
           {/* centro notifiche (reale, /api/notifiche — M7.3); attiva fetch/poll
               solo quando questa topbar desktop è effettivamente visibile */}

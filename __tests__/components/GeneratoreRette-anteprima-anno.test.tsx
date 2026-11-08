@@ -75,6 +75,28 @@ describe('GeneratoreRette — l\'anteprima vale solo per l\'anno che ha contato'
     expect((posted[0] as { anno: number }).anno).toBe(2025);
   });
 
+  it('quando l\'anteprima sparisce perché l\'anno è cambiato, una riga dice per quale anno era e per quale rifarla', async () => {
+    render(
+      <CalendarioProvider>
+        <GeneratoreRette userId="u1" scuolaId="sede-1" />
+      </CalendarioProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    expect(await screen.findByRole('button', { name: /Genera 3 rette/ })).toBeInTheDocument();
+    expect(screen.queryByText(/L’anteprima era per il/)).toBeNull();
+
+    apriCalendario();
+    expect(await screen.findByDisplayValue('2025/2026')).toBeInTheDocument();
+    const riga = screen.getByText('L’anteprima era per il 2026/27: rifalla per il 2025/26');
+    expect(riga).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(/alunni attivi/)).toBeNull();
+
+    // rifatta l'anteprima, la riga sparisce
+    fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));
+    expect(await screen.findByRole('button', { name: /Genera 3 rette/ })).toBeInTheDocument();
+    expect(screen.queryByText(/L’anteprima era per il/)).toBeNull();
+  });
+
   it('senza cambi, la conferma manda l\'anno dell\'anteprima', async () => {
     render(<GeneratoreRette userId="u1" scuolaId="sede-1" />);
     fireEvent.click(screen.getByRole('button', { name: /Anteprima/ }));

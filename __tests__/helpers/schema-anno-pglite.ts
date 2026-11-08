@@ -436,10 +436,34 @@ const SUFFISSI_PR2 = {
   V2: '_anno_vincoli_2.sql',
   // PR 3: la regola di scrittura (gettoni, osservazione, esenzioni, oblio). Dopo V2.
   M3: '_anno_scrittura.sql',
+  // PR 4.2: il conteggio selettivo per sede, la regola della scadenza e le impostazioni di sede. Dopo M3.
+  M42: '_anno_impostazioni_sede.sql',
 } as const
+
+/**
+ * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
+ * `SCHEMA_BASE`, per non cambiare il registro che i test vecchi si aspettano; chi vuole che il registro la veda (e la
+ * guardia dell'anno la guardi) la passa nella `codaPrima` di `creaDbAnnoPr2`.
+ */
+export const SCHEMA_STUDENT_DOCUMENTS = `
+  CREATE TYPE public.document_type_enum AS ENUM ('diagnosi', 'pei', '104', 'pdp', 'scheda_sanitaria');
+  CREATE TABLE public.student_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
+    student_id uuid NOT NULL,
+    document_type public.document_type_enum NOT NULL,
+    file_url text NOT NULL,
+    expiry_date date,
+    created_at timestamptz DEFAULT now()
+  );
+`
 
 export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
   const suffisso = SUFFISSI_PR2[quale]
+  // La sezione M della migrazione 4.2 aggiorna `student_documents`: se il banco non l'ha, la crea nuda (senza registro).
+  if (quale === 'M42') {
+    const c = await db.query<{ t: string | null }>(`SELECT to_regclass('public.student_documents')::text t`)
+    if (!c.rows[0].t) await db.exec(SCHEMA_STUDENT_DOCUMENTS)
+  }
   const f = readdirSync(CARTELLA).find((x) => x.endsWith(suffisso))
   if (!f) throw new Error(`manca supabase/migrations/*${suffisso}`)
   await db.exec(readFileSync(join(CARTELLA, f), 'utf8'))
@@ -513,7 +537,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -535,8 +559,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

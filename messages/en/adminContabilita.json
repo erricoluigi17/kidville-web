@@ -434,6 +434,7 @@
   "gencScadenzaPre": "Due date",
   "gencTotale": "total",
   "gencTuttiIscritti": "all enrolled",
+  "gencAnteprimaScaduta": "The preview was for {prima}: run it again for {ora}",
   "genrAlunniAttivi": "active students",
   "genrAlunniCandidati": "candidate students",
   "genrAnnoScolastico": "School year",

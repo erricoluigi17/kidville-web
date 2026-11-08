@@ -18,6 +18,7 @@ import { type MetodoAmmesso } from '@/lib/pagamenti/metodi-ammessi';
 import { ScegliMetodiAmmessi } from './ScegliMetodiAmmessi';
 import { useAnnoDi } from '@/lib/context/calendario-context';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { etichettaAnno } from '@/lib/anno-scolastico';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -48,12 +49,14 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [categoriaId, setCategoriaId] = useState('');
     const [descrizione, setDescrizione] = useState('');
     const [importo, setImporto] = useState<number>(0);
-    const [scadenza, setScadenza] = useState(() => oggiFiscaleISO());
+    // «Oggi» (giorno di Roma) si legge UNA volta: la scadenza proposta parte da lì, e la chiave anti-doppione più sotto
+    // usa lo stesso valore. Due letture dell'orologio potevano cadere a cavallo della mezzanotte, in due giorni diversi.
+    const [oggi] = useState(() => oggiFiscaleISO());
+    const [scadenza, setScadenza] = useState(() => oggi);
     const [obbligatorio, setObbligatorio] = useState(true);
     // La chiave anti-doppione proposta porta l'anno SCOLASTICO di oggi della sede (`annoInizio`), non
     // l'anno solare. Stato derivato: finché la segreteria non la scrive vale il proposto, e segue il
     // calendario anche se arriva dopo le categorie.
-    const [oggi] = useState(() => oggiFiscaleISO());
     const annoDi = useAnnoDi(scuolaId);
     const [gruppoScritto, setGruppoScritto] = useState<string | null>(null);
     const catScelta = categorie.find((c) => c.id === categoriaId);
@@ -74,7 +77,9 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     // L'anteprima porta la chiave anti-doppione con cui ha contato i «già generati» (`gruppo`): se la chiave proposta
     // cambia (arriva il calendario) quell'anteprima non vale più, sparisce e va rifatta. Così la generazione non
     // esclude con una chiave diversa da quella dell'anteprima. Stato derivato, nessun effetto.
-    const [anteprimaGrezza, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number; gruppo: string } | null>(null);
+    // Porta anche l'anno proposto di quel momento (`annoInizio`): se l'anteprima non vale più e l'anno è cambiato, una riga lo dice;
+    // se è cambiata solo la chiave (l'ha scritta la segreteria) sparisce e basta.
+    const [anteprimaGrezza, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number; gruppo: string; annoInizio: number } | null>(null);
     const anteprima = anteprimaGrezza && anteprimaGrezza.gruppo === gruppo.trim() ? anteprimaGrezza : null;
 
     // imposta categoria + suggerimenti di descrizione/gruppo coerenti
@@ -159,7 +164,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             // ristretti a chi è stato scelto: l'intersezione, non uno dei due.
             const scelti = new Set(alunniBersaglio(alunni, selezione).map((a) => a.id));
             const candidati = ((j.data.candidati || []) as { id: string }[]).filter((c) => scelti.has(c.id));
-            setAnteprima({ candidati, giaGenerati: j.data.gia_generati || 0, gruppo: gruppo.trim() });
+            setAnteprima({ candidati, giaGenerati: j.data.gia_generati || 0, gruppo: gruppo.trim(), annoInizio: annoDi(oggi).annoInizio });
         } catch {
             setError(t('gencErrRete'));
         } finally { setLoading(false); }
@@ -190,6 +195,9 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             setError(t('gencErrRete'));
         } finally { setLoading(false); }
     };
+
+    const annoProposto = annoDi(oggi).annoInizio;
+    const annoAnteprimaScaduto = !anteprima && anteprimaGrezza && anteprimaGrezza.annoInizio !== annoProposto ? anteprimaGrezza.annoInizio : null;
 
     return (
         <div className="space-y-4">
@@ -248,6 +256,12 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 )}
                 <ScegliMetodiAmmessi valore={metodi} onChange={(v) => { setMetodi(v); setAnteprima(null); }} disabled={loading} />
             </div>
+
+            {annoAnteprimaScaduto !== null && !done && (
+                <p role="status" className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+                    {t('gencAnteprimaScaduta', { prima: etichettaAnno(annoAnteprimaScaduto, 'breve'), ora: etichettaAnno(annoProposto, 'breve') })}
+                </p>
+            )}
 
             {anteprima && !done && (
                 <div className="space-y-1 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/50 p-4">

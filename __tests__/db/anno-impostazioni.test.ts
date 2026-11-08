@@ -6,12 +6,13 @@ import { creaDbAnnoPr2, applicaPr2 } from '../helpers/schema-anno-pglite'
  * COMPITO 4.2.2 · le funzioni con cui la segreteria cambia le date di un anno, apre le iscrizioni e apre/sospende
  * le domande dal sito. Solo uuid finti.
  *
- * Calendario di prova (fisso): 2025/26 chiuso · 2026/27 corrente (2026-09-01 → 2027-08-31, ultimo giorno aperto
- * 2027-07-31) · 2027/28 in_preparazione. Gli stati «in_chiusura» si mettono a mano nel seme: la funzione legge
- * `anni_sede.stato`, non l'orologio.
- *
- * SCADENZA: i casi del 2026/27 usano date letterali nel 2027 (`2027-07-15` accettata). Dopo il 2027-07-15 «oggi» le
- * supera e il test va riscritto con il calendario dell'anno dopo: è l'anno di prova che finisce, non un bug.
+ * Calendario di prova COSTRUITO INTORNO A OGGI (`giorno_roma(now())` letto dal database, `ripristina`), così il test
+ * passa qualunque giorno giri, senza congelare l'orologio: 2025/26 chiuso (finisce 101 giorni prima di oggi) ·
+ * 2026/27 corrente (da oggi-100 a oggi+265, ultimo giorno aperto oggi+200, prepara_successivo_dal = inizio) ·
+ * 2027/28 in_preparazione (subito dopo). I valori dei casi sono scostamenti da oggi (`D`), mai date letterali:
+ * «accettato» = oggi+100, «nel passato» = oggi-1, «fuori periodo» = fine+1. Gli scostamenti stanno tutti ben dentro
+ * il periodo, quindi nemmeno il 31/07, il 31/08 o il primo e l'ultimo giorno del periodo cambiano l'esito.
+ * Gli stati «in_chiusura» si mettono a mano nel seme: la funzione legge `anni_sede.stato`, non l'orologio.
  */
 
 const SEDE = '22222222-2222-4222-8222-222222222222'
@@ -53,14 +54,32 @@ async function tuttoPronto(id: string) {
   await modulo(id, 'conferma'); await modulo(id, 'nuova')
 }
 
+/** Le date dei casi, rifatte a ogni `ripristina` a partire da oggi (Roma). */
+let D: Record<'oggi' | 'inizio' | 'fine' | 'ultimo' | 'accettato' | 'passato' | 'fuori' | 'prepaFuori' | 'prepaOk', string>
+const giorno = (base: string, n: number) => {
+  const d = new Date(`${base}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
 async function ripristina() {
+  const oggi = await una<string>(`SELECT public.giorno_roma(now())::text`)
+  D = {
+    oggi, inizio: giorno(oggi, -100), fine: giorno(oggi, 265), ultimo: giorno(oggi, 200),
+    accettato: giorno(oggi, 100), passato: giorno(oggi, -1), fuori: giorno(oggi, 266),
+    prepaFuori: giorno(oggi, -101), prepaOk: giorno(oggi, -50),
+  }
+  const fine2526 = giorno(oggi, -101), ini2526 = giorno(oggi, -101 - 364)
+  const ini2728 = giorno(oggi, 266), fine2728 = giorno(oggi, 266 + 364)
   await db.exec(`
     DELETE FROM public.listino_voci; DELETE FROM public.moduli_richiesti;
     DELETE FROM public.anni_sede_stati WHERE da IS NOT NULL;
-    UPDATE public.anni_sede s
-       SET stato = CASE WHEN y.anno_inizio < 2026 THEN 'chiuso' WHEN y.anno_inizio = 2026 THEN 'corrente' ELSE 'in_preparazione' END,
-           ultimo_giorno_aperto = make_date(y.anno_inizio + 1, 7, 31),
-           prepara_successivo_dal = y.inizio_predefinito, domande_aperte = false
+    UPDATE public.anni_sede s SET domande_aperte = false,
+           stato = CASE y.anno_inizio WHEN 2025 THEN 'chiuso' WHEN 2026 THEN 'corrente' ELSE 'in_preparazione' END,
+           inizio = CASE y.anno_inizio WHEN 2025 THEN DATE '${ini2526}' WHEN 2026 THEN DATE '${D.inizio}' ELSE DATE '${ini2728}' END,
+           fine = CASE y.anno_inizio WHEN 2025 THEN DATE '${fine2526}' WHEN 2026 THEN DATE '${D.fine}' ELSE DATE '${fine2728}' END,
+           ultimo_giorno_aperto = CASE y.anno_inizio WHEN 2025 THEN DATE '${fine2526}' WHEN 2026 THEN DATE '${D.ultimo}' ELSE DATE '${fine2728}' END,
+           prepara_successivo_dal = CASE y.anno_inizio WHEN 2025 THEN DATE '${ini2526}' WHEN 2026 THEN DATE '${D.inizio}' ELSE DATE '${ini2728}' END
       FROM public.anni_scolastici y WHERE y.id = s.anno_id;
   `)
 }
@@ -70,7 +89,7 @@ beforeAll(async () => {
   await db.exec(`
     INSERT INTO public.anni_scolastici (anno_inizio) VALUES (2027) ON CONFLICT (anno_inizio) DO NOTHING;
     INSERT INTO public.anni_sede (scuola_id, anno_id, inizio, fine, stato, ultimo_giorno_aperto, prepara_successivo_dal)
-    SELECT s.id, y.id, y.inizio_predefinito, y.fine_predefinita, 'in_preparazione', DATE '2028-07-31', y.inizio_predefinito
+    SELECT s.id, y.id, y.inizio_predefinito, y.fine_predefinita, 'in_preparazione', y.fine_predefinita, y.inizio_predefinito
       FROM public.schools s JOIN public.anni_scolastici y ON y.anno_inizio = 2027
      WHERE NOT EXISTS (SELECT 1 FROM public.anni_sede x WHERE x.scuola_id = s.id AND x.anno_id = y.id);
   `)
@@ -83,18 +102,18 @@ afterAll(async () => { await db.close() })
 beforeEach(ripristina)
 
 describe('anno_imposta_date', () => {
-  it('sposta l\'ultimo giorno aperto del 2026/27 al 15/07/2027: cambiato true, e lo scrive', async () => {
+  it('sposta l\'ultimo giorno aperto del 2026/27 a oggi+100: cambiato true, e lo scrive', async () => {
     const id = await annoSede(A2627)
-    const r = await chiama(`public.anno_imposta_date($1, DATE '2027-07-15', NULL)`, [id])
-    expect(r).toMatchObject({ cambiato: true, anno_sede_id: id, ultimo_giorno_aperto: '2027-07-15', ultimo_giorno_aperto_precedente: '2027-07-31' })
-    expect((await date(id)).u).toBe('2027-07-15')
+    const r = await chiama(`public.anno_imposta_date($1, $2::date, NULL)`, [id, D.accettato])
+    expect(r).toMatchObject({ cambiato: true, anno_sede_id: id, ultimo_giorno_aperto: D.accettato, ultimo_giorno_aperto_precedente: D.ultimo })
+    expect((await date(id)).u).toBe(D.accettato)
   })
 
   it('lo stesso valore di nuovo: cambiato false e nessun errore', async () => {
     const id = await annoSede(A2627)
-    await chiama(`public.anno_imposta_date($1, DATE '2027-07-15', NULL)`, [id])
-    const r = await chiama(`public.anno_imposta_date($1, DATE '2027-07-15', NULL)`, [id])
-    expect(r).toMatchObject({ cambiato: false, ultimo_giorno_aperto: '2027-07-15' })
+    await chiama(`public.anno_imposta_date($1, $2::date, NULL)`, [id, D.accettato])
+    const r = await chiama(`public.anno_imposta_date($1, $2::date, NULL)`, [id, D.accettato])
+    expect(r).toMatchObject({ cambiato: false, ultimo_giorno_aperto: D.accettato })
   })
 
   it('senza argomenti non tocca niente', async () => {
@@ -102,24 +121,24 @@ describe('anno_imposta_date', () => {
     expect(await chiama(`public.anno_imposta_date($1)`, [id])).toMatchObject({ cambiato: false })
   })
 
-  it('al 01/09/2027 (fuori dal periodo): DATE_NON_VALIDE / fuori_periodo', async () => {
+  it('il giorno dopo la fine dell\'anno (fuori dal periodo): DATE_NON_VALIDE / fuori_periodo', async () => {
     const id = await annoSede(A2627)
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, DATE '2027-09-01', NULL)`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, $2::date, NULL)`, [id, D.fuori]))
     expect(e.codice).toBe('DATE_NON_VALIDE')
     expect(e.detail).toMatchObject({ motivo: 'fuori_periodo', campo: 'ultimo_giorno_aperto' })
   })
 
   it('un ultimo giorno nel passato su un anno corrente: DATE_NON_VALIDE / ultimo_giorno_nel_passato', async () => {
     const id = await annoSede(A2627)
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, DATE '2026-10-01', NULL)`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, $2::date, NULL)`, [id, D.passato]))
     expect(e.codice).toBe('DATE_NON_VALIDE')
     expect(e.detail).toMatchObject({ motivo: 'ultimo_giorno_nel_passato' })
-    expect((await date(id)).u).toBe('2027-07-31')
+    expect((await date(id)).u).toBe(D.ultimo)
   })
 
   it('prepara_successivo_dal fuori dal periodo: DATE_NON_VALIDE / fuori_periodo', async () => {
     const id = await annoSede(A2627)
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, NULL, DATE '2025-01-01')`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, NULL, $2::date)`, [id, D.prepaFuori]))
     expect(e.codice).toBe('DATE_NON_VALIDE')
     expect(e.detail).toMatchObject({ motivo: 'fuori_periodo', campo: 'prepara_successivo_dal' })
   })
@@ -127,31 +146,31 @@ describe('anno_imposta_date', () => {
   it('tutto o niente: un valore giusto e uno sbagliato non cambiano nessuna delle due date', async () => {
     const id = await annoSede(A2627)
     const prima = await date(id)
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, DATE '2027-07-15', DATE '2028-01-01')`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, $2::date, $3::date)`, [id, D.accettato, D.prepaFuori]))
     expect(e.codice).toBe('DATE_NON_VALIDE')
     expect(await date(id)).toEqual(prima)
   })
 
   it('cambia le due date insieme', async () => {
     const id = await annoSede(A2627)
-    const r = await chiama(`public.anno_imposta_date($1, DATE '2027-07-15', DATE '2027-05-01')`, [id])
-    expect(r).toMatchObject({ cambiato: true, prepara_successivo_dal: '2027-05-01', prepara_successivo_dal_precedente: '2026-09-01' })
-    expect(await date(id)).toEqual({ u: '2027-07-15', p: '2027-05-01' })
+    const r = await chiama(`public.anno_imposta_date($1, $2::date, $3::date)`, [id, D.accettato, D.prepaOk])
+    expect(r).toMatchObject({ cambiato: true, prepara_successivo_dal: D.prepaOk, prepara_successivo_dal_precedente: D.inizio })
+    expect(await date(id)).toEqual({ u: D.accettato, p: D.prepaOk })
   })
 
   it('su un anno chiuso: ANNO_CHIUSO', async () => {
     const id = await annoSede(A2526)
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, DATE '2026-07-15', NULL)`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, $2::date, NULL)`, [id, D.accettato]))
     expect(e.codice).toBe('ANNO_CHIUSO')
   })
 
   it('su un anno in_chiusura (stato letto dalla riga): l\'ultimo giorno non si cambia, il resto sì', async () => {
     const id = await annoSede(A2627)
     await db.query(`UPDATE public.anni_sede SET stato = 'in_chiusura' WHERE id = $1`, [id])
-    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, DATE '2027-07-15', NULL)`, [id]))
+    const e = await errore(db.query(`SELECT public.anno_imposta_date($1, $2::date, NULL)`, [id, D.accettato]))
     expect(e.codice).toBe('ANNO_IN_CHIUSURA')
-    expect((await date(id)).u).toBe('2027-07-31')
-    expect(await chiama(`public.anno_imposta_date($1, DATE '2027-07-31', DATE '2027-05-01')`, [id])).toMatchObject({ cambiato: true })
+    expect((await date(id)).u).toBe(D.ultimo)
+    expect(await chiama(`public.anno_imposta_date($1, $2::date, $3::date)`, [id, D.ultimo, D.prepaOk])).toMatchObject({ cambiato: true })
   })
 
   it('un anno inesistente: ANNO_NON_TROVATO', async () => {

@@ -154,4 +154,13 @@ export const CODICI_INTERNI = [
   'TABELLA_NON_NEL_RIEMPIMENTO', // 20261107012110_anno_strumenti.sql
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
+  // PR 4.2, compito 4.2.2 (20261108052944_anno_impostazioni_sede.sql): finché la route delle impostazioni (compito
+  // 4.2.4) non li traduce in risposte HTTP stanno qui; il 4.2.4 li SPOSTA nel switch di `erroreAnno` (o li lascia qui
+  // se la route li gestisce da sé, come `PREREQUISITI_MANCANTI` che porta il DETAIL).
+  'ANNO_NON_TROVATO',
+  'ANNO_IN_CHIUSURA',
+  'DATE_NON_VALIDE',
+  'STATO_NON_AMMESSO',
+  'PREREQUISITI_MANCANTI',
+  'PARAMETRO_MANCANTE',
 ] as const

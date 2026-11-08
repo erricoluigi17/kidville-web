@@ -319,3 +319,210 @@ REVOKE ALL ON FUNCTION public.sposta_confine_anno(uuid, date) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION public.anno_conta_righe_nei_giorni_base(text, uuid, uuid, date, date, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_conta_righe_assegnate_nei_giorni(text, uuid, uuid, date, date) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sposta_confine_anno(uuid, date) TO service_role;
+
+-- ── 4.2.2 Le date dell'anno, l'apertura delle iscrizioni e le domande dal sito ────────────────────────
+--
+-- Quattro funzioni NUOVE con cui la segreteria governa un anno dalle impostazioni di sede. Tutte
+-- `SECURITY DEFINER`, solo `service_role`; il perimetro di sede lo giudica la route (4.2.4), qui si giudica
+-- la regola. Gli errori sono codici nel messaggio e, dove serve, un JSON in `DETAIL`; un anno inesistente è
+-- `ANNO_NON_TROVATO` (DETAIL `anno_sede_id`).
+--
+-- `anno_prerequisiti_iscrizioni(anno_sede) → text[]`: i codici che mancano per aprire le iscrizioni, SEMPRE in
+--   questo ordine: quota_conferma, quota_nuova, moduli_conferma, moduli_nuova. Vuoto = tutto pronto. Una quota
+--   conta solo con `importo > 0` (NULL = non ancora deciso). Sta a parte perché la regola è una sola: la usano
+--   l'apertura e la lettura delle impostazioni (la segreteria vede che cosa manca PRIMA del clic).
+-- `anno_imposta_date(anno_sede, ultimo_giorno_aperto, prepara_successivo_dal) → jsonb`: tutto o niente; NULL =
+--   non toccare. ANNO_CHIUSO · ANNO_IN_CHIUSURA (l'ultimo giorno aperto di un anno in chiusura è passato: non si
+--   cambia; `prepara_successivo_dal` sì) · DATE_NON_VALIDE (DETAIL `motivo`: `fuori_periodo` | `ultimo_giorno_nel_passato`).
+--   Lo stato si legge da `anni_sede.stato`, non dall'orologio.
+-- `anno_apri_iscrizioni(anno_sede, da) → jsonb`: `in_preparazione` → `iscrizioni_aperte` + riga in `anni_sede_stati`.
+-- `anno_imposta_domande(anno_sede, aperte) → jsonb`: `true` solo con anno `iscrizioni_aperte` o `corrente`.
+
+CREATE OR REPLACE FUNCTION public.anno_prerequisiti_iscrizioni(p_anno_sede uuid)
+RETURNS text[]
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_mancano text[] := '{}';
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.anni_sede WHERE id = p_anno_sede) THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO'
+      USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.listino_voci
+                  WHERE anno_sede_id = p_anno_sede AND voce = 'quota_conferma' AND importo > 0) THEN
+    v_mancano := array_append(v_mancano, 'quota_conferma'::text);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.listino_voci
+                  WHERE anno_sede_id = p_anno_sede AND voce = 'quota_nuova' AND importo > 0) THEN
+    v_mancano := array_append(v_mancano, 'quota_nuova'::text);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.moduli_richiesti
+                  WHERE anno_sede_id = p_anno_sede AND lista = 'conferma') THEN
+    v_mancano := array_append(v_mancano, 'moduli_conferma'::text);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.moduli_richiesti
+                  WHERE anno_sede_id = p_anno_sede AND lista = 'nuova') THEN
+    v_mancano := array_append(v_mancano, 'moduli_nuova'::text);
+  END IF;
+  RETURN v_mancano;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.anno_imposta_date(
+  p_anno_sede uuid, p_ultimo_giorno_aperto date DEFAULT NULL, p_prepara_successivo_dal date DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_a        public.anni_sede%ROWTYPE;
+  v_ultimo   date;
+  v_prepara  date;
+BEGIN
+  SELECT * INTO v_a FROM public.anni_sede WHERE id = p_anno_sede FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO'
+      USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+
+  IF v_a.stato = 'chiuso' THEN
+    RAISE EXCEPTION 'ANNO_CHIUSO'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', 'chiuso')::text;
+  END IF;
+
+  v_ultimo  := COALESCE(p_ultimo_giorno_aperto, v_a.ultimo_giorno_aperto);
+  v_prepara := COALESCE(p_prepara_successivo_dal, v_a.prepara_successivo_dal);
+
+  -- L'ultimo giorno aperto di un anno in chiusura è passato: non si sposta (lo stesso valore non è un cambio).
+  IF v_a.stato = 'in_chiusura' AND v_ultimo <> v_a.ultimo_giorno_aperto THEN
+    RAISE EXCEPTION 'ANNO_IN_CHIUSURA'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', 'in_chiusura',
+                                       'ultimo_giorno_aperto', v_a.ultimo_giorno_aperto)::text;
+  END IF;
+
+  IF v_ultimo < v_a.inizio OR v_ultimo > v_a.fine THEN
+    RAISE EXCEPTION 'DATE_NON_VALIDE'
+      USING DETAIL = json_build_object('motivo', 'fuori_periodo', 'campo', 'ultimo_giorno_aperto',
+                                       'anno_sede_id', v_a.id, 'valore', v_ultimo,
+                                       'inizio', v_a.inizio, 'fine', v_a.fine)::text;
+  END IF;
+  IF v_prepara < v_a.inizio OR v_prepara > v_a.fine THEN
+    RAISE EXCEPTION 'DATE_NON_VALIDE'
+      USING DETAIL = json_build_object('motivo', 'fuori_periodo', 'campo', 'prepara_successivo_dal',
+                                       'anno_sede_id', v_a.id, 'valore', v_prepara,
+                                       'inizio', v_a.inizio, 'fine', v_a.fine)::text;
+  END IF;
+  -- Un ultimo giorno già passato chiuderebbe l'anno ai docenti alla prima ora del job, senza passaggio.
+  IF v_a.stato = 'corrente' AND v_ultimo <> v_a.ultimo_giorno_aperto
+     AND v_ultimo < public.giorno_roma(now()) THEN
+    RAISE EXCEPTION 'DATE_NON_VALIDE'
+      USING DETAIL = json_build_object('motivo', 'ultimo_giorno_nel_passato', 'campo', 'ultimo_giorno_aperto',
+                                       'anno_sede_id', v_a.id, 'valore', v_ultimo)::text;
+  END IF;
+
+  IF v_ultimo = v_a.ultimo_giorno_aperto AND v_prepara = v_a.prepara_successivo_dal THEN
+    RETURN jsonb_build_object('cambiato', false, 'anno_sede_id', v_a.id,
+                              'ultimo_giorno_aperto', v_a.ultimo_giorno_aperto,
+                              'prepara_successivo_dal', v_a.prepara_successivo_dal);
+  END IF;
+
+  UPDATE public.anni_sede
+     SET ultimo_giorno_aperto = v_ultimo, prepara_successivo_dal = v_prepara
+   WHERE id = v_a.id;
+
+  RETURN jsonb_build_object(
+    'cambiato', true,
+    'anno_sede_id', v_a.id,
+    'ultimo_giorno_aperto', v_ultimo,
+    'ultimo_giorno_aperto_precedente', v_a.ultimo_giorno_aperto,
+    'prepara_successivo_dal', v_prepara,
+    'prepara_successivo_dal_precedente', v_a.prepara_successivo_dal);
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.anno_apri_iscrizioni(p_anno_sede uuid, p_da uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_a       public.anni_sede%ROWTYPE;
+  v_mancano text[];
+BEGIN
+  SELECT * INTO v_a FROM public.anni_sede WHERE id = p_anno_sede FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO'
+      USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+
+  IF v_a.stato = 'iscrizioni_aperte' THEN
+    RETURN jsonb_build_object('cambiato', false, 'anno_sede_id', v_a.id, 'stato', v_a.stato);
+  END IF;
+  IF v_a.stato <> 'in_preparazione' THEN
+    RAISE EXCEPTION 'STATO_NON_AMMESSO'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', v_a.stato)::text;
+  END IF;
+
+  v_mancano := public.anno_prerequisiti_iscrizioni(v_a.id);
+  IF cardinality(v_mancano) > 0 THEN
+    RAISE EXCEPTION 'PREREQUISITI_MANCANTI'
+      USING DETAIL = json_build_object('mancano', to_jsonb(v_mancano))::text;
+  END IF;
+
+  UPDATE public.anni_sede SET stato = 'iscrizioni_aperte' WHERE id = v_a.id;
+  INSERT INTO public.anni_sede_stati (anno_sede_id, stato, da)
+  VALUES (v_a.id, 'iscrizioni_aperte', p_da);
+
+  RETURN jsonb_build_object('cambiato', true, 'anno_sede_id', v_a.id,
+                            'stato', 'iscrizioni_aperte', 'stato_precedente', v_a.stato);
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.anno_imposta_domande(p_anno_sede uuid, p_aperte boolean)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_a public.anni_sede%ROWTYPE;
+BEGIN
+  IF p_aperte IS NULL THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE'
+      USING DETAIL = json_build_object('campo', 'aperte')::text;
+  END IF;
+
+  SELECT * INTO v_a FROM public.anni_sede WHERE id = p_anno_sede FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO'
+      USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+
+  IF p_aperte AND v_a.stato NOT IN ('iscrizioni_aperte', 'corrente') THEN
+    RAISE EXCEPTION 'STATO_NON_AMMESSO'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', v_a.stato)::text;
+  END IF;
+
+  IF v_a.domande_aperte = p_aperte THEN
+    RETURN jsonb_build_object('cambiato', false, 'anno_sede_id', v_a.id, 'domande_aperte', v_a.domande_aperte);
+  END IF;
+
+  UPDATE public.anni_sede SET domande_aperte = p_aperte WHERE id = v_a.id;
+  RETURN jsonb_build_object('cambiato', true, 'anno_sede_id', v_a.id, 'domande_aperte', p_aperte);
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_prerequisiti_iscrizioni(uuid)        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_imposta_date(uuid, date, date)       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_apri_iscrizioni(uuid, uuid)          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_imposta_domande(uuid, boolean)       FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_prerequisiti_iscrizioni(uuid)     TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_imposta_date(uuid, date, date)    TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_apri_iscrizioni(uuid, uuid)       TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_imposta_domande(uuid, boolean)    TO service_role;

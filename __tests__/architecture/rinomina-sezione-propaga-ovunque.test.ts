@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { senzaCommenti } from './soglia-fotografia'
+import { creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOCK · rinominare una sezione deve propagare il nome OVUNQUE sia scritto
@@ -50,11 +51,16 @@ import { senzaCommenti } from './soglia-fotografia'
 const MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
 
 /**
- * LA DEFINIZIONE CHE CONTA È L'ULTIMA. `CREATE OR REPLACE FUNCTION` sostituisce la precedente, quindi
- * il lock esamina la migrazione PIÙ RECENTE (in ordine di nome) che definisce
- * `public.propaga_rinomina_sezione`, e di quel file legge SOLO il corpo della funzione: una
- * migrazione grande (come quella dell'anno scolastico) ha anche altri UPDATE che non c'entrano.
- * Leggere la prima definizione era un lock cieco: verde su una funzione già sostituita.
+ * LA DEFINIZIONE CHE CONTA È QUELLA VIVA NEL DATABASE, NON UN FILE.
+ * `CREATE OR REPLACE FUNCTION` sostituisce la precedente, e dalla PR 4.3 (R-43-4) la funzione è
+ * ridefinita in coda alla migrazione `…_anno_sezioni_docenti_fase_b.sql`, che è anche un file con
+ * altre funzioni. Il lock non legge più un file: applica la catena delle migrazioni al banco PGlite
+ * (`creaDbAnnoPr2` fino a M43) e legge da `pg_proc` il corpo della funzione CORRENTE. Leggere una
+ * definizione storica era un lock cieco: verde su una funzione già sostituita.
+ *
+ * `FILE_ESAMINATO` resta come guardia: l'ultima migrazione che definisce la funzione deve essere
+ * quella che il banco applica per ultima. Se ne arriva una più nuova, il banco non la conosce e il
+ * lock tornerebbe cieco: la prova qui sotto lo dice.
  */
 const DEFINIZIONE = /create\s+or\s+replace\s+function\s+public\.propaga_rinomina_sezione\b/i
 const FILE_DEFINIZIONE = readdirSync(MIGRAZIONI)
@@ -64,11 +70,20 @@ const FILE_DEFINIZIONE = readdirSync(MIGRAZIONI)
 /** Il file esaminato: l'ultimo che la definisce. */
 const FILE_ESAMINATO = FILE_DEFINIZIONE.at(-1)
 const FILE = FILE_ESAMINATO ? [FILE_ESAMINATO] : []
-const TESTO_FILE = FILE.map((f) => readFileSync(join(MIGRAZIONI, f), 'utf8')).join('\n')
-const INIZIO_FN = TESTO_FILE.search(DEFINIZIONE)
-const FINE_FN = TESTO_FILE.indexOf('$function$;', TESTO_FILE.indexOf('$function$', INIZIO_FN) + 1)
-/** Solo il corpo della funzione, dal CREATE OR REPLACE al `$function$;` che la chiude. */
-const SQL = INIZIO_FN < 0 ? '' : TESTO_FILE.slice(INIZIO_FN, FINE_FN + '$function$;'.length)
+
+/** La definizione corrente, letta dal catalogo di un database con tutte le migrazioni applicate. */
+async function definizioneCorrente(): Promise<string> {
+  const db = await creaDbAnnoPr2({ sedi: ['22222222-2222-4222-8222-222222222222'], fino: 'M43' })
+  try {
+    const r = await db.query<{ def: string }>(
+      `SELECT pg_get_functiondef('public.propaga_rinomina_sezione()'::regprocedure) AS def`)
+    return r.rows[0]?.def ?? ''
+  } finally {
+    await db.close()
+  }
+}
+/** Tutto il `CREATE OR REPLACE FUNCTION …` così come lo vede Postgres. */
+const SQL = await definizioneCorrente()
 /**
  * Le sole ISTRUZIONI: niente commenti, stringhe intatte.
  *
@@ -146,6 +161,11 @@ function insertNelLog(): string {
   return ISTRUZIONI.find((i) => /\binsert\s+into\s+public\.app_log\b/i.test(i)) ?? ''
 }
 
+/** Le tabelle con `anno_id`: propagano sempre, ma alle sole righe dell'anno della sezione. */
+const TABELLE_CON_ANNO = ['registro_orario', 'avvisi', 'galleria_media_v2'] as const
+/** Le tabelle senza `anno_id`: propagano solo se la sezione è dell'anno attivo. */
+const TABELLE_SENZA_ANNO = ['alunni', 'news_posts', 'forms_templates', 'mensa_class_menu_assignment'] as const
+
 describe('lock architettura · la rinomina di una sezione propaga ovunque, e solo nella sua sede', () => {
   it('esamina la definizione PIÙ RECENTE della funzione (non una storica già sostituita)', () => {
     expect(FILE_ESAMINATO, 'nessuna migrazione definisce propaga_rinomina_sezione').toBeDefined()
@@ -153,9 +173,9 @@ describe('lock architettura · la rinomina di una sezione propaga ovunque, e sol
       FILE_ESAMINATO,
       'La definizione più recente di propaga_rinomina_sezione è cambiata: il lock ora esamina questo ' +
         'file. Se ne è arrivata una più nuova, il lock la segue da solo; aggiorna qui il nome atteso.',
-    ).toBe('20261106200347_anno_scolastico_schema.sql')
-    expect(SQL.length, 'il corpo della funzione non è stato estratto').toBeGreaterThan(1000)
-    expect(SQL.trimEnd().endsWith('$function$;')).toBe(true)
+    ).toBe('20261108102826_anno_sezioni_docenti_fase_b.sql')
+    expect(SQL.length, 'il corpo della funzione non è stato letto da pg_proc').toBeGreaterThan(1000)
+    expect(SQL.trimEnd().endsWith('$function$')).toBe(true)
   })
 
   it('la migrazione esiste nel repo', () => {
@@ -327,5 +347,45 @@ describe('lock architettura · la rinomina di una sezione propaga ovunque, e sol
         'della CLASSE: sono dati di minori, e `app_log` è interrogabile da chiunque abbia accesso ' +
         'al database.',
     ).toEqual([])
+  })
+})
+
+describe('lock architettura · la rinomina di una sezione propaga per anno (R-43-4)', () => {
+  it('le tabelle con `anno_id` filtrano per l’anno della sezione, in OGNI update', () => {
+    for (const tabella of TABELLE_CON_ANNO) {
+      const ups = aggiornamenti().filter((a) => a.tabella === tabella)
+      expect(ups.length, `nessun UPDATE su \`${tabella}\``).toBeGreaterThan(0)
+      for (const { testo } of ups) {
+        expect(
+          /anno_id\s*=\s*new\.anno_id/i.test(testo),
+          `L’UPDATE su \`${tabella}\` non filtra per \`anno_id = NEW.anno_id\`: rinominare «1A» del ` +
+            'prossimo anno riscriverebbe gli avvisi, la galleria e il registro dell’anno corrente.',
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('le tabelle senza `anno_id` propagano solo se la sezione è dell’anno attivo', () => {
+    for (const tabella of TABELLE_SENZA_ANNO) {
+      const ups = aggiornamenti().filter((a) => a.tabella === tabella)
+      expect(ups.length, `nessun UPDATE su \`${tabella}\``).toBeGreaterThan(0)
+      for (const { testo } of ups) {
+        const conGuardia = /\bv_attivo\b/i.test(testo)
+        const dentroIf = new RegExp(`if\\s+v_ha_${tabella}\\s+and\\s+v_attivo\\s+then`, 'i').test(CODICE)
+        expect(
+          conGuardia || dentroIf,
+          `L’UPDATE su \`${tabella}\` non è condizionato a \`v_attivo\`: il suo testo descrive la ` +
+            'classe dell’anno attivo e una sezione di un altro anno non deve riscriverlo.',
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('non esce in anticipo per le sezioni di un altro anno (propagherebbe a nessuno)', () => {
+    expect(
+      /if\s+not\s+exists[\s\S]{0,300}?return\s+new/i.test(CODICE),
+      'La funzione esce subito se la sezione non è dell’anno attivo: così le tabelle con `anno_id` ' +
+        'dell’anno futuro non vengono mai allineate.',
+    ).toBe(false)
   })
 })

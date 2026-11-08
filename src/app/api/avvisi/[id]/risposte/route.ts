@@ -10,6 +10,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { alunniDelleRisposte, nomiGenitoriDelleRisposte } from '@/lib/avvisi/nomi-risposte';
 import { verificaVisibilitaDocente } from '@/lib/avvisi/gate-docente';
+import { avvisoScaduto } from '@/lib/avvisi/scadenze';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { zNumeroPartecipanti } from '@/lib/validation/avvisi';
@@ -574,7 +575,7 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
                 );
             }
             const scadenza = (termine?.scadenza_avviso as string | null | undefined) ?? null;
-            if (!scadenza || new Date(scadenza).getTime() >= Date.now()) {
+            if (!avvisoScaduto(scadenza, new Date().toISOString())) {
                 logEvento('avvisi', 'warn', {
                     operazione: 'avvisi/[id]/risposte:POST',
                     esito: 'adesione-alunno-fuori-avviso',

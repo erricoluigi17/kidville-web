@@ -532,11 +532,6 @@ function modelliAnnoNelFile(a: Analisi): ModelloAnno[] {
  */
 const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: string }[] = [
   {
-    file: 'src/lib/crm/quota-anno.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno di apertura della quota CRM viene da annoScolasticoCorrente(adesso); la PR 4.1 lo legge dall’anno `corrente` della sede, e lo toglie',
-  },
-  {
     file: 'src/app/(dashboard)/teacher/primaria/[sectionId]/compiti/page.tsx',
     modelli: ['annoScolasticoCorrente(', '-08-01'],
     motivo: 'il filtro «compiti di quest’anno» parte da `${anno}-08-01`; la PR 4.1 lo legge dall’inizio dell’anno della classe, e lo toglie',
@@ -560,16 +555,6 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
     file: 'src/app/(dashboard)/teacher/primaria/[sectionId]/appello/page.tsx',
     modelli: ['mese >= soglia', '-09-01'],
     motivo: 'l’inizio dell’anno dell’appello è `${anno}-09-01` con `meseOggi >= 9` (fuso del browser); la PR 4.1 lo legge dal calendario della sede, e lo toglie',
-  },
-  {
-    file: 'src/lib/primaria/periodo.ts',
-    modelli: ['mese >= soglia', 'annoScolasticoDiData'],
-    motivo: 'annoScolasticoDiData decide l’anno con `m >= 8`; la PR 4.1 la sostituisce con il modulo dell’anno, e la toglie',
-  },
-  {
-    file: 'src/lib/crm/quota.ts',
-    modelli: ['-09-01'],
-    motivo: 'competenzaDellaQuota fissa la competenza al `${anno}-09-01`, scritto a mano; la PR 4.1 lo prende dall’inizio dell’anno della sede, e lo toglie',
   },
   {
     file: 'src/lib/fatturazione/sezionale.ts',
@@ -598,7 +583,7 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
   },
 ]
 /**
- * Il tetto è il numero di file di oggi (13) e può solo SCENDERE.
+ * Il tetto è il numero di file di oggi (10) e può solo SCENDERE.
  * Era 10 (misurato 2026-11-07). Sceso a 9 l'08/11/2026, PR 4.1 compito 4.1.1: `src/lib/anno-scolastico.ts` è
  * diventato il modulo dell'anno ed è esente (lì le soglie sono la definizione); non era un file che calcola a mano.
  * Salito da 9 a 17 l'08/11/2026, PR 4.1 compito 4.1.L: il lock ora vede anche le soglie al 1° settembre, che la PR 3
@@ -606,8 +591,10 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
  * porta a 0.
  * Sceso da 17 a 13 l'08/11/2026 (−4: prestampati e documenti sul modulo dell'anno, compito 4.1.S1):
  * prefill.ts, banco.ts, banco-famiglia.ts e genera-documento/route.ts non calcolano più l'anno a mano.
+ * Sceso da 13 a 10 l'08/11/2026 (−3: primaria e CRM sul modulo dell'anno, compito 4.1.S2): quota-anno.ts,
+ * periodo.ts e quota.ts non contengono più nessun modello.
  */
-const TETTO_ANNO_A_MANO = 13
+const TETTO_ANNO_A_MANO = 10
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -1197,7 +1184,7 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
 
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(13) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre), 13 dall'08/11 (4.1.S1: −4, prestampati e documenti sul modulo dell'anno); scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(10) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre), 13 dall'08/11 (4.1.S1: −4, prestampati e documenti sul modulo dell'anno), 10 dall'08/11 (4.1.S2: −3, primaria e CRM sul modulo dell'anno); scende, non sale
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

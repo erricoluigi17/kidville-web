@@ -8,6 +8,7 @@ import { Btn } from '@/components/ui/Btn'
 import { DateField } from '@/components/ui/DateField'
 import { ETICHETTA_CAMPO_FILTRO } from '@/components/ui/BarraFiltri'
 import { dataCivile } from '@/i18n/config'
+import { useAnnoDi } from '@/lib/context/calendario-context'
 import { annoDellaQuota, etichettaAnno } from '@/lib/crm/quota-anno'
 import { QUOTA_METODI, QUOTA_MOTIVI_BLOCCO, type BambinoDettaglioRow, type MetodoQuota } from '@/lib/crm/tipi'
 import { useDateFormat } from '@/lib/i18n/date'
@@ -68,10 +69,13 @@ const urlQuota = (schedaId: string, bambinoId: string) =>
 
 export function QuotaIscrizione({
   schedaId,
+  scuolaId,
   bambino,
   onCambiata,
 }: {
   schedaId: string
+  /** La sede della scheda: il calendario dell'anno è suo. */
+  scuolaId: string
   bambino: BambinoDettaglioRow
   onCambiata: () => void
 }) {
@@ -163,6 +167,7 @@ export function QuotaIscrizione({
     contenuto = (
       <ModuloQuota
         url={url}
+        scuolaId={scuolaId}
         bambino={bambino}
         titolo={t('quotaTitolo')}
         onFatto={() => {
@@ -267,12 +272,14 @@ export function QuotaIscrizione({
 
 function ModuloQuota({
   url,
+  scuolaId,
   bambino,
   titolo,
   onFatto,
   onAnnulla,
 }: {
   url: string
+  scuolaId: string
   bambino: BambinoDettaglioRow
   /** Il nome accessibile del modulo (lo stesso della sezione). */
   titolo: string
@@ -285,6 +292,7 @@ function ModuloQuota({
   const [importo, setImporto] = useState(() => importoPerCampo(bambino.quota_importo))
   // Oggi a Roma: è il giorno proposto (o quello già segnato, se si corregge) e il confine del futuro.
   const oggi = dataCivile()
+  const annoDi = useAnnoDi(scuolaId)
   const [giorno, setGiorno] = useState(() => bambino.quota_saldata_il ?? oggi)
   const [metodo, setMetodo] = useState<MetodoQuota>(() => (eMetodo(bambino.quota_metodo) ? bambino.quota_metodo : 'contanti'))
   const [invio, setInvio] = useState(false)
@@ -295,8 +303,9 @@ function ModuloQuota({
 
   const importoNumero = importoDaTesto(importo)
   const importoErrato = importo.trim() !== '' && importoNumero === null
-  // L'anno si ricava dall'anno di ingresso, adesso: lo stesso calcolo che la route rifà al momento di salvare.
-  const annoQuota = annoDellaQuota(bambino.anno_ingresso)
+  // L'anno si ricava dall'anno di ingresso e dall'anno in corso della sede, adesso: lo stesso calcolo che la
+  // route rifà al momento di salvare (col calendario della sede, o il predefinito).
+  const annoQuota = annoDellaQuota(bambino.anno_ingresso, annoDi(oggi).annoInizio)
   // `DateField` consegna `''` per una data vuota, incompleta o inesistente: non è «oggi», è un giorno che manca.
   const giornoValido = GIORNO_ISO.test(giorno)
   const giornoFuturo = giornoValido && giorno > oggi

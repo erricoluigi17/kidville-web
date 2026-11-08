@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react'
 import { SEDE_A } from '../../fixtures/sedi'
 import { QuotaIscrizione } from '@/components/features/crm/schede/QuotaIscrizione'
+import { annoDelGiorno } from '@/lib/anno-scolastico'
+import { CalendarioProvider } from '@/lib/context/calendario-context'
 import { annoDellaQuota, etichettaAnno } from '@/lib/crm/quota-anno'
 import { importoDaTesto, importoLeggibile, importoPerCampo } from '@/components/features/crm/schede/quota-importo'
 import type { BambinoDettaglioRow } from '@/lib/crm/tipi'
@@ -154,7 +156,7 @@ const bambino = (extra: Partial<BambinoDettaglioRow> = {}): BambinoDettaglioRow 
 
 function monta(extra: Partial<BambinoDettaglioRow> = {}) {
   const onCambiata = vi.fn()
-  render(<QuotaIscrizione schedaId={SCHEDA} bambino={bambino(extra)} onCambiata={onCambiata} />)
+  render(<QuotaIscrizione schedaId={SCHEDA} scuolaId={SEDE_A} bambino={bambino(extra)} onCambiata={onCambiata} />)
   return { onCambiata }
 }
 
@@ -164,12 +166,11 @@ const apriModulo = () => fireEvent.click(screen.getByRole('button', { name: SEGN
 const scrivi = (etichetta: string, valore: string) => fireEvent.change(screen.getByLabelText(etichetta), { target: { value: valore } })
 const conferma = () => screen.getByRole('button', { name: 'Segna la quota' }) as HTMLButtonElement
 
-// L'anno atteso si calcola con la stessa funzione del componente: il test non dipende dal giorno in cui gira.
-const ANNO_PROSSIMO = etichettaAnno(annoDellaQuota('prossimo') as number)
-
 // Oggi a Roma, calcolato qui in modo INDIPENDENTE dal componente (non con la sua `dataCivile`): se il campo
 // partisse da un altro giorno, il test se ne accorgerebbe.
 const OGGI_ISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date())
+// Senza provider vale il predefinito del modulo dell'anno (soglia 1° settembre): il test non dipende dal giorno in cui gira.
+const ANNO_PROSSIMO = etichettaAnno(annoDellaQuota('prossimo', annoDelGiorno(OGGI_ISO).annoInizio) as number)
 const OGGI_IT = OGGI_ISO.split('-').reverse().join('/')
 const GIORNO = 'Giorno del pagamento'
 const GIORNO_NON_VALIDO = 'Indica un giorno valido'
@@ -182,6 +183,38 @@ describe('QuotaIscrizione · segnare la quota', () => {
     expect(screen.getByRole('button', { name: SEGNA })).toBeTruthy()
     expect(screen.queryByLabelText('Importo (€)')).toBeNull()
     expect(h.chiamate).toEqual([])
+  })
+
+  it('con il calendario della sede il riquadro mostra l’anno del calendario, non il predefinito', async () => {
+    // Una riga che copre ogni giorno possibile: il test non dipende dal giorno in cui gira.
+    const riga = {
+      annoId: 'a2040',
+      annoSedeId: 's2040',
+      annoInizio: 2040,
+      inizio: '1990-01-01',
+      fine: '2099-12-31',
+      ultimoGiornoAperto: '2099-12-31',
+      preparaSuccessivoDal: '1990-01-01',
+      stato: 'corrente',
+      domandeAperte: false,
+    }
+    rotta('GET', '/api/anno/calendario', json(200, { success: true, data: [{ scuola_id: SEDE_A, righe: [riga] }], fonte: 'database' }))
+    render(
+      <CalendarioProvider>
+        <QuotaIscrizione schedaId={SCHEDA} scuolaId={SEDE_A} bambino={bambino({ anno_ingresso: 'in_corso' })} onCambiata={vi.fn()} />
+      </CalendarioProvider>,
+    )
+    apriModulo()
+    // Si aspetta la PRESENZA dell'etichetta del calendario (2040/41), che arriva con la risposta.
+    expect(await screen.findByText('Anno scolastico 2040/41')).toBeTruthy()
+    // Il predefinito (anno di oggi) non è più sul riquadro.
+    expect(screen.queryByText(`Anno scolastico ${etichettaAnno(annoDelGiorno(OGGI_ISO).annoInizio)}`)).toBeNull()
+  })
+
+  it('senza provider il riquadro mostra l’anno predefinito: «in corso» è quello del giorno di oggi', () => {
+    monta({ anno_ingresso: 'in_corso' })
+    apriModulo()
+    expect(screen.getByText(`Anno scolastico ${etichettaAnno(annoDelGiorno(OGGI_ISO).annoInizio)}`)).toBeTruthy()
   })
 
   it('con «150,50» manda importo 150.5 e metodo contanti', async () => {

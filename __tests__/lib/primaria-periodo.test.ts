@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   COLONNE_PERIODO,
-  annoScolasticoDiData,
   dataDiCompetenza,
   dateMancantiPerAnno,
   giornoDiRoma,
@@ -10,6 +9,7 @@ import {
   sovrapposto,
   type PeriodoScrutinio,
 } from '@/lib/primaria/periodo'
+import type { Calendario, RigaCalendario } from '@/lib/anno-scolastico'
 import { SEDE_A } from '../fixtures/sedi'
 
 // =============================================================================
@@ -49,14 +49,6 @@ const QB = periodo({ id: ID_QB, anno_scolastico: '2025/2026', ordine: 2, data_in
 describe('COLONNE_PERIODO', () => {
   it('sono le colonne dell’interfaccia, nell’ordine dell’interfaccia', () => {
     expect(COLONNE_PERIODO).toBe('id, scuola_id, anno_scolastico, nome, ordine, data_inizio, data_fine, attivo')
-  })
-})
-
-describe('annoScolasticoDiData', () => {
-  it('agosto apre il nuovo anno, luglio chiude il vecchio', () => {
-    expect(annoScolasticoDiData('2026-11-04')).toBe('2026/2027')
-    expect(annoScolasticoDiData('2027-07-31')).toBe('2026/2027')
-    expect(annoScolasticoDiData('2027-08-01')).toBe('2027/2028')
   })
 })
 
@@ -108,6 +100,39 @@ describe('periodoPerData', () => {
 
   it('un periodo non attivo con le date copre lo stesso', () => {
     expect(periodoPerData([{ ...Q1, attivo: false }], '2026-10-01').periodoId).toBe(Q1.id)
+  })
+
+  it('il 20 agosto, senza calendario, è ancora l’anno che si chiude (soglia 1° settembre): configurato, niente date mancanti', () => {
+    // Prima (soglia al 1° agosto) il 2026-08-20 era del 2026/2027, senza periodi: `dateMancanti: true`.
+    const esito = periodoPerData([QA, QB], '2026-08-20')
+    expect(esito.periodoId).toBeNull()
+    expect(esito.coprenti).toEqual([])
+    expect(esito.dateMancanti).toBe(false)
+    expect(periodoPerData([QA, QB], '2026-08-20', null).dateMancanti).toBe(false)
+  })
+
+  it('con il calendario della sede, che apre il 2026/27 il 17 agosto, il 17 agosto è del 2026/2027: date mancanti', () => {
+    const riga = (annoInizio: number, inizio: string, fine: string): RigaCalendario => ({
+      annoId: `a${annoInizio}`,
+      annoSedeId: `s${annoInizio}`,
+      annoInizio,
+      inizio,
+      fine,
+      ultimoGiornoAperto: fine,
+      preparaSuccessivoDal: inizio,
+      stato: 'corrente',
+      domandeAperte: false,
+    })
+    const cal: Calendario = [riga(2025, '2025-09-01', '2026-08-16'), riga(2026, '2026-08-17', '2027-08-31')]
+    expect(periodoPerData([QA, QB], '2026-08-17', cal).dateMancanti).toBe(true)
+    // Il giorno prima è ancora del 2025/2026, configurato.
+    expect(periodoPerData([QA, QB], '2026-08-16', cal).dateMancanti).toBe(false)
+  })
+
+  it('un giorno che ha la forma giusta ma non esiste (2026-13-01) non lancia: nessun periodo, nessuna mancanza', () => {
+    expect(() => periodoPerData([Q1, Q2], '2026-13-01')).not.toThrow()
+    expect(periodoPerData([Q1, Q2], '2026-13-01')).toEqual({ periodoId: null, coprenti: [], dateMancanti: false })
+    expect(periodoPerData([], '2026-02-30')).toEqual({ periodoId: null, coprenti: [], dateMancanti: false })
   })
 
   it('una data che non è una data: nessun periodo e nessuna configurazione mancante', () => {

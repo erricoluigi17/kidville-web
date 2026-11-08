@@ -684,7 +684,7 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
 
       {/* Fuori dal modulo dell'esito: hanno i loro moduli, e un form dentro un form non è HTML valido. */}
       <CollegaAlunno schedaId={scheda.id} scuolaId={scheda.scuola_id} bambino={b} onCambiata={rileggi} />
-      <QuotaIscrizione schedaId={scheda.id} bambino={b} onCambiata={rileggi} />
+      <QuotaIscrizione schedaId={scheda.id} scuolaId={scheda.scuola_id} bambino={b} onCambiata={rileggi} />
     </article>
   )
 }

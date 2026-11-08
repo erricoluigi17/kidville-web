@@ -22,7 +22,6 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 
 import {
   annoDellaQuota,
-  competenzaDellaQuota,
   esitoPassaggioDa,
   etichettaAnno,
   giornoContantiAmmesso,
@@ -51,35 +50,23 @@ beforeEach(() => {
 })
 
 describe('annoDellaQuota', () => {
-  it('in_corso è il primo anno dell’anno scolastico corrente, prossimo quello dopo', () => {
-    expect(annoDellaQuota('in_corso', new Date('2026-10-31T10:00:00Z'))).toBe(2026)
-    expect(annoDellaQuota('prossimo', new Date('2026-10-31T10:00:00Z'))).toBe(2027)
-  })
-
-  it('prima di agosto l’anno in corso è ancora il precedente', () => {
-    expect(annoDellaQuota('in_corso', new Date('2026-07-15T10:00:00Z'))).toBe(2025)
-    expect(annoDellaQuota('prossimo', new Date('2026-07-15T10:00:00Z'))).toBe(2026)
-  })
-
-  it('il cambio d’anno si conta a Roma: l’1 agosto alle 00:30 italiane (31 luglio 22:30 UTC) è già il nuovo anno', () => {
-    expect(annoDellaQuota('in_corso', new Date('2026-07-31T21:30:00Z'))).toBe(2025)
-    expect(annoDellaQuota('in_corso', new Date('2026-07-31T22:30:00Z'))).toBe(2026)
+  it('in_corso è l’anno che chi chiama dichiara in corso, prossimo quello dopo: nessuna data dentro', () => {
+    expect(annoDellaQuota('in_corso', 2026)).toBe(2026)
+    expect(annoDellaQuota('prossimo', 2026)).toBe(2027)
+    expect(annoDellaQuota('in_corso', 2025)).toBe(2025)
+    expect(annoDellaQuota('prossimo', 2025)).toBe(2026)
   })
 
   it('non_indicato non ha un anno', () => {
-    expect(annoDellaQuota('non_indicato')).toBeNull()
+    expect(annoDellaQuota('non_indicato', 2026)).toBeNull()
   })
 })
 
-describe('etichetta, competenza e metodo', () => {
+describe('etichetta e metodo', () => {
   it('etichettaAnno: 2027 → 2027/28, e il secolo non rompe la forma', () => {
     expect(etichettaAnno(2027)).toBe('2027/28')
     expect(etichettaAnno(2099)).toBe('2099/00')
     expect(etichettaAnno(2008)).toBe('2008/09')
-  })
-
-  it('competenzaDellaQuota è il 1° settembre dell’anno d’apertura', () => {
-    expect(competenzaDellaQuota(2027)).toBe('2027-09-01')
   })
 
   it('metodoIncasso: la carta in contabilità è «pos», gli altri due restano', () => {

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { caricaCalendario } from '@/lib/anno/calendario'
 import { logEvento } from '@/lib/logging/logger'
 import { oggiRoma } from '@/lib/storici/retroattivita'
 import { COLONNE_PERIODO, periodoPerData, type PeriodoScrutinio } from '@/lib/primaria/periodo'
@@ -134,7 +135,9 @@ export async function statoQuadrimestre(
   const lettura = await leggiQuadrimestri(supabase, { scuolaIds: [scuolaId], sectionIds: [sectionId] })
   if (!lettura.ok) return { ok: false }
 
-  const esito = periodoPerData(lettura.letti.periodi.get(scuolaId) ?? [], data)
+  // L'anno in cui cercare la configurazione dei periodi è quello del calendario della sede (o il predefinito).
+  const calendario = await caricaCalendario(supabase, scuolaId)
+  const esito = periodoPerData(lettura.letti.periodi.get(scuolaId) ?? [], data, calendario)
   const chiuso = chiusoIn(lettura.letti, scuolaId, sectionId, data)
 
   if (esito.dateMancanti) {

@@ -10,6 +10,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
+import { leggiVisibilita, type RigaVoceVisibile } from '@/lib/anno/visibilita-genitore'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
@@ -190,6 +191,8 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     let qData: z.infer<typeof getQuerySchema> | null = null
     let sediAttive: string[] = []
     let figli: string[] | null = null
+    // `null` = DB senza la funzione: resta il filtro di oggi su figli e `visibile_dal`.
+    let vociVisibili: Set<string> | null = null
 
     if (isStaff) {
       // I filtri sono validati solo nel ramo staff: il ramo genitore li ignora (come oggi).
@@ -210,6 +213,17 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       // proprio nel caso in cui non ha niente da mostrare, e il componente
       // andrebbe scritto per due risposte diverse invece che per una.
       if (figli.length === 0) return NextResponse.json({ success: true, data: [], sedi: [] }, { headers: SENZA_CACHE })
+      // Quali voci vede la famiglia lo decide la funzione: toglie quelle di un anno futuro
+      // non ancora toccate, ma non la quota d'iscrizione. I figli non si restringono: la
+      // voce del ritirato con un dovuto aperto resta. Un guasto non apre: niente lista larga.
+      const voci = await leggiVisibilita<RigaVoceVisibile>(supabase, 'voci_visibili_genitore', user.id)
+      if (voci.stato === 'guasto') {
+        return NextResponse.json(
+          { error: 'Errore nel recupero dei pagamenti', codice: 'LETTURA_FALLITA' },
+          { status: 500, headers: SENZA_CACHE },
+        )
+      }
+      if (voci.stato === 'ok') vociVisibili = new Set(voci.righe.map((v) => v.voce_id))
     }
 
     // Costruttore della query parametrizzato sul SELECT: il ramo di retry lo
@@ -331,6 +345,13 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
 
     let rows = (data ?? []) as unknown as PagamentoGetRow[]
     const righeLette = rows.length
+
+    // In memoria e non con `.in('id', voci)`: la query resta una sola per i due rami, con
+    // i suoi blocchi e la sua scala di SELECT, e una famiglia ha poche decine di voci.
+    if (vociVisibili) {
+      const visibili = vociVisibili
+      rows = rows.filter((r) => visibili.has(r.id))
+    }
 
     // Proiezione lato genitore: nasconde i container rateali (padre); le rate
     // figlie (tipo='rata') restano visibili come voci separate con la propria scadenza.

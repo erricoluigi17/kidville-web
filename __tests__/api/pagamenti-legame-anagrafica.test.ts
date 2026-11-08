@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // A2 — Il ramo genitore di GET /api/pagamenti risolveva i figli leggendo SOLO
 // `legame_genitori_alunni`: un genitore importato dal form pubblico (legame in
@@ -32,6 +33,7 @@ vi.mock('@/lib/settings/module-config', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from: (table: string) => {
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}

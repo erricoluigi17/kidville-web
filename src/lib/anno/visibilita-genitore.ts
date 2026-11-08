@@ -41,6 +41,10 @@ export interface CoppiaAvviso {
   alunno_id: string
 }
 
+export interface RigaVoceVisibile {
+  voce_id: string
+}
+
 export type FunzioneVisibilita =
   | 'figli_attivi'
   | 'avvisi_visibili_genitore'

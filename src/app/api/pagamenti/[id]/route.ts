@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { leggiVisibilita, logVisibilitaNegata, type RigaVoceVisibile } from '@/lib/anno/visibilita-genitore'
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
@@ -132,7 +134,18 @@ export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, cont
 
       // visibilità ritardata: il genitore non può aprire un pagamento non ancora pubblicato
       const oggi = new Date().toISOString().slice(0, 10)
-      if (pag.visibile_dal && String(pag.visibile_dal) > oggi) {
+      let nascosta = !!pag.visibile_dal && String(pag.visibile_dal) > oggi
+      // La stessa domanda della lista: la voce che non esce in elenco non si apre
+      // conoscendone l'uuid. Un guasto non apre.
+      if (!nascosta) {
+        const voci = await leggiVisibilita<RigaVoceVisibile>(supabase, 'voci_visibili_genitore', user.id)
+        if (voci.stato === 'guasto') return rispostaGuastoGiaRegistrato()
+        if (voci.stato === 'ok' && !voci.righe.some((v) => v.voce_id === id)) {
+          logVisibilitaNegata('pagamento-nascosto', { pagamento: id, uid: user.id }, ['pagamento'])
+          nascosta = true
+        }
+      }
+      if (nascosta) {
         return NextResponse.json({ error: 'Pagamento non ancora disponibile' }, { status: 403 })
       }
 

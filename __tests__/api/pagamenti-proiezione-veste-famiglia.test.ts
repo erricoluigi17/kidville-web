@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * `GET /api/pagamenti` — LA PROIEZIONE DELLA VESTE DI FAMIGLIA, CHE NESSUN TEST
@@ -46,6 +47,7 @@ vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       for (const m of ['select', 'order', 'range', 'eq', 'in', 'or', 'gte', 'lte']) b[m] = () => b

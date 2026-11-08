@@ -10,7 +10,7 @@ import { logEvento } from '@/lib/logging/logger'
  * Accesso ammesso a:
  *  - Dirigenza/Segreteria: ruoli 'admin' / 'coordinator' / 'segreteria', MA solo
  *    per gli alunni del proprio plesso (Direzione: dei plessi associati). Mai cross-tenant.
- *  - Docenti CONTITOLARI della sezione dell'alunno (utenti_sezioni / utenti_sezioni_materie).
+ *  - Docenti CONTITOLARI della sezione dell'alunno (via `sezioni_visibili_docente`: dirette e per materia).
  * Vietato ai docenti di altre classi e a chiunque altro.
  *
  * Enforcement APPLICATIVO (RLS non attiva — vedi require-staff). L'accesso ai
@@ -35,10 +35,14 @@ function negatoPerGuasto(esito: string, ruolo: string | null, error: unknown): A
   return { consentito: false, ruolo, motivo: 'errore' }
 }
 
+/** Le azioni che SCRIVONO: per un docente valgono solo sulle sezioni dell'anno attivo. */
+const AZIONI_DI_SCRITTURA: ReadonlySet<AzioneGate> = new Set<AzioneGate>(['upload', 'delete', 'sostituisci'])
+
 export async function puoAccedereFascicolo(
   supabase: SupabaseClient,
   utenteId: string,
-  alunnoId: string
+  alunnoId: string,
+  azione: AzioneGate = 'view',
 ): Promise<AccessoFascicolo> {
   // Ruolo + plesso dell'utente.
   const { data: u, error: errUtente } = await supabase
@@ -73,26 +77,22 @@ export async function puoAccedereFascicolo(
   const sectionId = alunno?.section_id
   if (!sectionId) return { consentito: false, ruolo, motivo: 'no-section' }
 
-  // Contitolare: assegnazione alla sezione (per materia o diretta).
-  // LETTURA del fascicolo: la sezione deve essere fra le VISIBILI del docente (anche in sola lettura di un anno
-  // passato; mai una futura). L'assegnazione per materia vale solo se la sezione è visibile.
-  const [{ error: errUsm }, visibili] = await Promise.all([
-    supabase.from('utenti_sezioni_materie').select('utente_id').eq('utente_id', utenteId).eq('section_id', sectionId).limit(1),
-    sezioniVisibiliConEsito(supabase, utenteId),
-  ])
-  const sezioneVisibile = visibili.ok && visibili.sezioni.some((s) => s.sectionId === sectionId)
-  // Una sezione visibile con l'assegnazione diretta (o per materia, che la funzione già accompagna) basta;
-  // `usm` si legge ancora (stesse tabelle, lock `assegnazioni-docente-coerenti`) ma da solo non basta più: senza
-  // una sezione visibile non c'è accesso. Un guasto conta solo se non c'è già un sì.
-  if (sezioneVisibile) return { consentito: true, ruolo, motivo: 'contitolare' }
-  if (errUsm || !visibili.ok) return negatoPerGuasto('contitolarita-non-letta', ruolo, errUsm ?? new Error('sezioni-visibili-non-lette'))
+  // Contitolare: assegnazione alla sezione (diretta o per materia: la conta la funzione dei docenti).
+  // LETTURA: basta che la sezione sia fra le VISIBILI (anche in sola lettura di un anno passato; mai una futura).
+  // SCRITTURA (upload, delete, sostituisci): solo le sezioni dell'anno attivo, cioè non in sola lettura.
+  const visibili = await sezioniVisibiliConEsito(supabase, utenteId)
+  if (!visibili.ok) return negatoPerGuasto('contitolarita-non-letta', ruolo, new Error('sezioni-visibili-non-lette'))
+  const scrittura = AZIONI_DI_SCRITTURA.has(azione)
+  const consentita = visibili.sezioni.some((s) => s.sectionId === sectionId && (!scrittura || !s.solaLettura))
+  if (consentita) return { consentito: true, ruolo, motivo: 'contitolare' }
 
   return { consentito: false, ruolo, motivo: 'negato' }
 }
 
 /**
  * Le sezioni di cui l'utente è CONTITOLARE — assegnazione diretta
- * (`utenti_sezioni`) o per materia (`utenti_sezioni_materie`).
+ * (`utenti_sezioni`) o per materia (`utenti_sezioni_materie`): la regola sta nella funzione SQL
+ * `sezioni_visibili_docente`, qui non si rileggono le tabelle.
  *
  * È la stessa condizione che `puoAccedereFascicolo` verifica una sezione alla
  * volta, qui raccolta in blocco: serve agli ELENCHI, dove chiedere il gate per
@@ -112,28 +112,15 @@ export async function sezioniContitolari(
   supabase: SupabaseClient,
   utenteId: string,
 ): Promise<string[]> {
-  const [{ data: perMateria, error: errPerMateria }, visibili] = await Promise.all([
-    supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
-    sezioniVisibiliConEsito(supabase, utenteId),
-  ])
-  // Il contratto resta (un elenco, al peggio più corto: fail-closed), ma «nessuna sezione» e
-  // «non ho letto» non si leggono più uguali. (Se è la funzione a fallire, la riga `error` l'ha già scritta lei.)
-  if (errPerMateria) {
-    logEvento('fascicolo', 'error', {
-      operazione: 'primaria/fascicolo-rbac:sezioniContitolari',
-      esito: 'contitolarita-non-letta',
-    }, errPerMateria)
-  }
-  // LETTURA: tutte le sezioni VISIBILI (anche in sola lettura); le righe per materia solo se la sezione è visibile.
-  const sezioni = new Set<string>((visibili.ok ? visibili.sezioni : []).map((s) => s.sectionId))
-  for (const riga of perMateria ?? []) {
-    const id = (riga as { section_id?: string | null }).section_id
-    if (id && sezioni.has(id)) sezioni.add(id)
-  }
-  return [...sezioni]
+  // LETTURA: tutte le sezioni VISIBILI (anche in sola lettura); la funzione conta dirette e per materia.
+  // Se è lei a fallire, la riga `error` l'ha già scritta lei: l'elenco è vuoto (fail-closed).
+  const visibili = await sezioniVisibiliConEsito(supabase, utenteId)
+  return visibili.ok ? [...new Set(visibili.sezioni.map((s) => s.sectionId))] : []
 }
 
 export type AzioneFascicolo = 'list' | 'view' | 'download' | 'upload' | 'delete'
+/** Il gate distingue anche la sostituzione di un documento (scrittura, con il suo audit a parte). */
+export type AzioneGate = AzioneFascicolo | 'sostituisci'
 
 /** Registra un accesso al fascicolo nel log immodificabile. Best-effort. */
 export async function logAccessoFascicolo(

@@ -56,9 +56,9 @@ beforeEach(() => {
   tabelle = []
   opzioni = {}
   db = {
-    // La materia porta sempre il legame diretto (`admin/primaria/docenti-materie:POST` scrive entrambe).
-    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
-    // La stessa sezione anche per materia: l'unione non deve produrre doppioni.
+    // SEZ_MATERIA: il docente la ha SOLO per materia (nessuna riga in utenti_sezioni): la funzione dei docenti la conta lo stesso.
+    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
+    // SEZ_MIA anche per materia: l'unione non deve produrre doppioni.
     utenti_sezioni_materie: [
       { utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' },
       { utente_id: 'ed1', section_id: SEZ_MIA, materia_id: 'm2' },
@@ -106,9 +106,9 @@ describe('sezioniAnagraficaVisibili', () => {
     opzioni = { errori: { utenti_sezioni_materie: { code: '57P01', message: 'terminating connection' } } }
     expect(await sezioniAnagraficaVisibili(client(), EDUCATOR)).toEqual({ esito: 'errore' })
     expect(h.logEvento).toHaveBeenCalledWith(
-      'auth',
+      'notifica',
       'error',
-      expect.objectContaining({ tipo: 'anagrafica-sezioni-non-lette', utente: 'ed1' }),
+      expect.objectContaining({ esito: 'sezioni-non-lette', utente_id: 'ed1' }),
       expect.objectContaining({ code: '57P01' }),
     )
   })

@@ -251,3 +251,79 @@ describe('POST /api/primaria/registro — supplenza (L4-a) e grado (L4-e)', () =
     expect(res.status).toBe(422)
   })
 })
+
+// ── Giro di correzione 1 (4.3.6): la firma segue l'anno della classe ────────────────────────────────────────────
+// Un docente (non direzione/segreteria) firma solo se la classe è dell'anno `corrente` della sua sede.
+describe('POST /api/primaria/registro — l’anno della classe', () => {
+  const ANNO_CORR = '77777777-7777-4777-8777-000000000001'
+  const ANNO_PASS = '77777777-7777-4777-8777-000000000002'
+  const ANNO_FUT = '77777777-7777-4777-8777-000000000003'
+  const SEZ_PASSATA = '11111111-5555-4111-8111-aaaaaaaaaaaa'
+  const SEZ_FUTURA = '11111111-6666-4111-8111-aaaaaaaaaaaa'
+  const SEZ_CHIUSA = '11111111-7777-4111-8111-aaaaaaaaaaaa'
+
+  function conAnni(stati: { passato: string; futuro: string }) {
+    const sez = (id: string, nome: string, anno: string) =>
+      ({ id, name: nome, scuola_id: SEDE_A, school_type: 'primaria', anno_id: anno })
+    h.db.sections = [
+      sez(SEZ_MIA, '1A', ANNO_CORR),
+      sez(SEZ_NON_MIA, '2B', ANNO_CORR),
+      sez(SEZ_PASSATA, '1A', ANNO_PASS),
+      sez(SEZ_FUTURA, '1A', ANNO_FUT),
+      sez(SEZ_CHIUSA, '3A', ANNO_PASS),
+    ]
+    h.db.anni_sede = [
+      { scuola_id: SEDE_A, anno_id: ANNO_CORR, stato: 'corrente' },
+      { scuola_id: SEDE_A, anno_id: ANNO_PASS, stato: stati.passato },
+      { scuola_id: SEDE_A, anno_id: ANNO_FUT, stato: stati.futuro },
+    ] as Riga[]
+    h.db.utenti_sezioni = [
+      { utente_id: DOCENTE, section_id: SEZ_MIA },
+      { utente_id: DOCENTE, section_id: SEZ_PASSATA },
+    ]
+  }
+
+  it('anno in_chiusura: 403 SEZIONE_SOLA_LETTURA e nessuna scrittura', async () => {
+    conAnni({ passato: 'in_chiusura', futuro: 'in_preparazione' })
+    const res = await POST(req(corpo(SEZ_PASSATA)))
+    expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('SEZIONE_SOLA_LETTURA')
+    expect(righeScritte()).toEqual([])
+  })
+
+  it('anno chiuso: 403 SEZIONE_SOLA_LETTURA anche in supplenza (classe non assegnata)', async () => {
+    conAnni({ passato: 'chiuso', futuro: 'in_preparazione' })
+    const res = await POST(req(corpo(SEZ_CHIUSA)))
+    expect(res.status).toBe(403)
+    expect((await res.json()).codice).toBe('SEZIONE_SOLA_LETTURA')
+    expect(righeScritte()).toEqual([])
+  })
+
+  it.each(['in_preparazione', 'iscrizioni_aperte'])('anno %s: lo stesso rifiuto di una classe non usabile, senza rivelarla', async (stato) => {
+    conAnni({ passato: 'chiuso', futuro: stato })
+    const res = await POST(req(corpo(SEZ_FUTURA)))
+    expect(res.status).toBe(403)
+    const corpoRisposta = await res.json()
+    // lo stesso rifiuto che il gate dà per una classe che il docente non può usare (non rivela che esiste)
+    expect(corpoRisposta.codice).toBe('SEDE_NON_ACCESSIBILE')
+    expect(righeScritte()).toEqual([])
+  })
+
+  it('supplenza su una classe dell’anno attivo resta ammessa', async () => {
+    conAnni({ passato: 'chiuso', futuro: 'in_preparazione' })
+    const res = await POST(req(corpo(SEZ_NON_MIA)))
+    expect(res.status).toBe(200)
+    expect((await res.json()).supplenza).toBe(true)
+  })
+
+  it('la direzione/segreteria non è toccata dall’anno (resta il guardiano del database)', async () => {
+    conAnni({ passato: 'chiuso', futuro: 'in_preparazione' })
+    h.requireDocente.mockResolvedValue({
+      user: { id: DOCENTE, role: 'segreteria', scuola_id: SEDE_A }, response: null,
+    })
+    h.db.utenti = [{ id: DOCENTE, gradi: [], scuola_id: SEDE_A, ruolo: 'segreteria', nome: 'S', cognome: 'S' }]
+    const res = await POST(req(corpo(SEZ_PASSATA)))
+    // 422 come sopra (manca il docente titolare): il gate dell'anno non l'ha fermata
+    expect(res.status).toBe(422)
+  })
+})

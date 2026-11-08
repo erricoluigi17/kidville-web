@@ -950,12 +950,57 @@ export async function assertSezionePrimariaFirmabile(
   // Chi vede tutte le classi del plesso (admin/coordinator/segreteria) non fa
   // supplenza per definizione: agisce sull'intera scuola per progetto.
   if (vedeTutteLeClassi(user)) return { supplenza: false }
+  // 3b) L'ANNO. La supplenza vale su qualunque classe di primaria della sede, ma solo nell'anno attivo: un
+  // docente non firma il registro di una classe di un anno passato o non ancora iniziato.
+  const rifiutoAnno = await rifiutoAnnoDellaFirma(supabase, user, section.id, section.scuola_id)
+  if (rifiutoAnno) return { response: rifiutoAnno }
   const mie = await sezioniDiUtente(supabase, user.id)
   // Si confronta `section.id` (il valore CANONICO che arriva dal database) e non
   // la stringa del client: in Postgres `uuid` è un tipo, quindi `.eq()` avrebbe
   // trovato la riga anche in MAIUSCOLO, mentre `Array.includes` no — e la firma
   // di una classe propria sarebbe finita in audit come supplenza.
   return { supplenza: !mie.includes(section.id) }
+}
+
+/**
+ * L'anno della classe, per chi firma senza vedere tutte le classi: `corrente` e basta.
+ *  · `in_chiusura` o `chiuso` → 403 `SEZIONE_SOLA_LETTURA`;
+ *  · `in_preparazione` o `iscrizioni_aperte` → lo stesso rifiuto di una classe che il docente non può usare
+ *    (`SEDE_NON_ACCESSIBILE`: non si rivela che esiste);
+ *  · colonna o tabella dell'anno assente (DB non migrato) → nessun controllo;
+ *  · qualunque altra lettura fallita → rifiuto, come fa il resto del gate.
+ */
+async function rifiutoAnnoDellaFirma(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string,
+  scuolaId: string,
+): Promise<NextResponse | null> {
+  const nonUsabile = () => rifiutoSede('SEDE_NON_ACCESSIBILE')
+  const anno = await supabase.from('sections').select('anno_id').eq('id', sectionId).maybeSingle()
+  if (anno.error) {
+    if (schemaAnnoIndietro(anno.error)) return null
+    return scopeNonRisolto('scope-firma-primaria-non-risolta', anno.error, { utente: user.id, sezione: sectionId })
+  }
+  const annoId = (anno.data as { anno_id?: string | null } | null)?.anno_id
+  if (!annoId) return null
+  const stato = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
+  if (stato.error) {
+    if (schemaAnnoIndietro(stato.error)) return null
+    return scopeNonRisolto('scope-firma-primaria-non-risolta', stato.error, { utente: user.id, sezione: sectionId })
+  }
+  const valore = (stato.data as { stato?: string | null } | null)?.stato
+  if (valore === 'corrente') return null
+  if (valore === 'in_chiusura' || valore === 'chiuso') {
+    logEvento('auth', 'warn', {
+      tipo: 'sezione-sola-lettura', azione: 'assertSezionePrimariaFirmabile', utente: user.id, sezione: sectionId,
+    })
+    return NextResponse.json(
+      { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
+      { status: 403 },
+    )
+  }
+  return nonUsabile()
 }
 
 /**

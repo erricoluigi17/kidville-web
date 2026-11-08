@@ -16,6 +16,15 @@ import { mascheraSorgente, fileSorgente, riga } from '../fixtures/sorgente'
  * `assertSezioneInScope(` dentro un handler di scrittura, o nei suoi helper non esportati fuori da ogni `GET`, è
  * un errore, salvo file in `ECCEZIONI` con la ragione. Una `GET` resta su `assertSezioneInScope`.
  *
+ * ── COSA COPRE QUESTO LOCK, e cosa no (detto con precisione) ──
+ *  · COPRE (automatico): le route di scrittura che chiamano `assertSezioneInScope(` direttamente.
+ *  · NON lo vede (ma è a posto, ognuno col suo test): `assertSezionePrimariaFirmabile` (la firma del registro di
+ *    primaria guarda l'anno della classe: `primaria-registro-supplenza.test.ts`), `puoAccedereFascicolo` con
+ *    l'azione `upload`/`delete`/`sostituisci` (solo sezioni scrivibili: `anno-accesso-docenti-letture.test.ts`),
+ *    `verificaTargetAvvisoDocente` (solo i nomi delle sezioni scrivibili: `avvisi-gate-scrittura-anno.test.ts`).
+ *    Quei gate vivono in `src/lib`, e questo lock non li segue: se ne nasce uno nuovo, la sola difesa è la revisione.
+ *  · NON coperti per scelta: `GATE_NON_COPERTI` qui sotto.
+ *
  * Limite dichiarato: un helper che sta in un ALTRO file (`src/lib`) e serve sia letture sia scritture non si vede
  * da qui; per quelli vale la lista `HELPER_CONDIVISI` (documentata, senza controllo automatico).
  */
@@ -33,6 +42,17 @@ export const ECCEZIONI: Record<string, string> = {}
 export const HELPER_CONDIVISI: Record<string, string> = {
   'lib/sezioni/risoluzione.ts':
     'risolviSezione serve letture e scritture (modulistica e certificati del fascicolo): il docente di un anno passato le scrive come prima, finché non arriva la guardia DB della 3-B',
+}
+
+/**
+ * Gate di scope che restano com'erano anche in scrittura, e perché. Il lock non li controlla: li dichiara, con la
+ * ragione, perché sia chiaro che non sono una dimenticanza.
+ */
+export const GATE_NON_COPERTI: Record<string, string> = {
+  assertAlunnoInScope:
+    'la chiave è `alunni.section_id`, cioè la sezione dell’anno attivo: un alunno non ha una sezione di un anno passato da cui scrivere; alla chiusura dell’anno le scritture le ferma la guardia DB `ANNO_CHIUSO` (PR 3-B)',
+  assertClasseNomeInScope:
+    'la chiave è il NOME della classe (`classe_sezione`), che nella tabella degli alunni è quello dell’anno attivo; alla chiusura dell’anno le scritture le ferma la guardia DB `ANNO_CHIUSO` (PR 3-B)',
 }
 
 type Chiamata = { file: string; riga: number; metodo: string }
@@ -83,6 +103,14 @@ describe('le scritture verificano la sezione con assertSezioneScrivibile', () =>
       .filter((v) => !(v.file in ECCEZIONI))
       .map((v) => `${v.file}:${v.riga} (${v.metodo})`)
     expect(fuori, 'in una scrittura usa assertSezioneScrivibile (stessa firma)').toEqual([])
+  })
+
+  it('i gate dichiarati non coperti hanno una ragione e esistono ancora', () => {
+    const scope = fs.readFileSync(path.join(SRC, 'lib/auth/scope.ts'), 'utf8')
+    for (const [nome, ragione] of Object.entries(GATE_NON_COPERTI)) {
+      expect(ragione.length, nome).toBeGreaterThan(40)
+      expect(new RegExp(`export\\s+async\\s+function\\s+${nome}\\b`).test(scope), `${nome}: voce morta`).toBe(true)
+    }
   })
 
   it('ogni eccezione ha una ragione e serve ancora', () => {

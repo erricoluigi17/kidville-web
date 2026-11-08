@@ -973,11 +973,19 @@ export function creaFintoSupabase(
       // Compito 4.3.6: di serie la funzione dei docenti risponde come «tutte le assegnate, nessuna in sola lettura»
       // (le tabelle del finto non hanno anni); gli errori iniettati su `utenti_sezioni` passano com'erano.
       if (nome === 'sezioni_visibili_docente' && !opzioni.rpc?.[nome]) {
-        const r = (await (from('utenti_sezioni') as { select: (c: string) => { eq: (c: string, v: unknown) => Promise<{ data: Riga[] | null; error: unknown }> } })
-          .select('section_id').eq('utente_id', args.p_utente))
+        type Lettura = { select: (c: string) => { eq: (c: string, v: unknown) => Promise<{ data: Riga[] | null; error: unknown }> } }
+        // dirette + per materia, come la funzione vera (e come il suo ripiego in docenti.ts)
+        const dirette = await (from('utenti_sezioni') as Lettura).select('section_id').eq('utente_id', args.p_utente)
+        // La lettura per materia è del DATABASE (dentro la funzione), non dell'applicazione: non entra fra le
+        // «tabelle lette» (i test che asseriscono «non ho letto le materie» misurano il codice, non questo finto).
+        const lette = tabelleLette.length
+        const materie = await (from('utenti_sezioni_materie') as Lettura).select('section_id').eq('utente_id', args.p_utente)
+        tabelleLette.length = lette
+        const errore = dirette.error ?? materie.error
+        const ids = [...new Set([...(dirette.data ?? []), ...(materie.data ?? [])].map(x => x.section_id as string))]
         return {
-          data: r.data ? r.data.map(x => ({ section_id: x.section_id, sola_lettura: false })) : null,
-          error: r.error,
+          data: errore ? null : ids.map(section_id => ({ section_id, sola_lettura: false })),
+          error: errore ?? null,
         } as RispostaRpc
       }
       const impl = opzioni.rpc?.[nome] ?? RPC_DI_SERIE[nome]

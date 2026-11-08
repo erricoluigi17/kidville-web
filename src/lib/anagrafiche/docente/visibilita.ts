@@ -42,27 +42,10 @@ export async function sezioniAnagraficaVisibili(
 ): Promise<SezioniVisibili> {
   if (vedeTutteLeClassi(user)) return { esito: 'tutte' }
   // LETTURA: valgono tutte le sezioni VISIBILI (anche quelle in sola lettura di un anno passato), mai le future.
-  // Le assegnazioni per materia si tengono solo se la sezione è fra le visibili.
-  const [visibili, perMateria] = await Promise.all([
-    sezioniVisibiliConEsito(supabase, user.id),
-    supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', user.id),
-  ])
+  // La funzione conta già le assegnazioni dirette e quelle per materia: qui non si rileggono le tabelle.
+  const visibili = await sezioniVisibiliConEsito(supabase, user.id)
   if (!visibili.ok) return { esito: 'errore' }
-  if (perMateria.error) {
-    logEvento(
-      'auth',
-      'error',
-      { tipo: 'anagrafica-sezioni-non-lette', azione: 'sezioniAnagraficaVisibili', utente: user.id },
-      perMateria.error,
-    )
-    return { esito: 'errore' }
-  }
-  const sezioni = new Set<string>(visibili.sezioni.map((s) => s.sectionId))
-  for (const riga of perMateria.data ?? []) {
-    const id = (riga as { section_id?: string | null }).section_id
-    if (id && sezioni.has(id)) sezioni.add(id)
-  }
-  return { esito: 'sezioni', sezioni: [...sezioni] }
+  return { esito: 'sezioni', sezioni: [...new Set(visibili.sezioni.map((s) => s.sectionId))] }
 }
 
 export interface AlunnoInScope {

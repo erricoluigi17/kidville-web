@@ -121,6 +121,18 @@ describe('sezioniVisibiliConEsito', () => {
     expect(logEvento.mock.calls.filter(c => c[1] === 'info')).toHaveLength(1)
   })
 
+  it('funzione assente: il ripiego conta anche le assegnazioni per materia, senza doppioni', async () => {
+    const d = db()
+    ;(d as unknown as Record<string, unknown[]>).utenti_sezioni = [{ utente_id: DOCENTE, section_id: S_ATTIVA }]
+    ;(d as unknown as Record<string, unknown[]>).utenti_sezioni_materie = [
+      { utente_id: DOCENTE, section_id: S_ATTIVA, materia_id: 'm1' },
+      { utente_id: DOCENTE, section_id: S_PASSATA, materia_id: 'm1' },
+    ]
+    const sb = conRpc(() => ({ data: null, error: { code: '42883', message: 'x' } }), d)
+    const r = await sezioniVisibiliConEsito(sb, DOCENTE)
+    expect(r.ok && r.sezioni.map(s => s.sectionId).sort()).toEqual([S_ATTIVA, S_PASSATA].sort())
+  })
+
   it('un altro errore PROPAGA il guasto: ok false e riga error', async () => {
     const sb = conRpc(() => ({ data: null, error: { code: '57014', message: 'x' } }))
     expect(await sezioniVisibiliConEsito(sb, DOCENTE)).toEqual({ ok: false })

@@ -190,7 +190,7 @@ export type EsitoSezioniVisibili = { ok: true; sezioni: SezioneVisibile[] } | { 
  * `service_role`, quindi `supabase` qui è il client di servizio, come in tutte le route.
  *
  * Funzione ASSENTE (`42883`/`PGRST202`: il DB E2E della CI non è migrato) → la query di prima su
- * `utenti_sezioni`, tutte scrivibili, con un log `info`. Qualunque ALTRO errore NON ripiega: mostrerebbe a un
+ * `utenti_sezioni` e `utenti_sezioni_materie`, tutte scrivibili, con un log `info`. Qualunque ALTRO errore NON ripiega: mostrerebbe a un
  * docente le sezioni future proprio quando la funzione è rotta. Lista vuota e riga `error`, come ogni guasto
  * di lettura di questo file.
  */
@@ -217,17 +217,23 @@ export async function sezioniVisibiliConEsito(
     esito: 'rpc-assente',
     error_code: code,
   })
-  const { data: legami, error: errLegami } = await supabase
-    .from('utenti_sezioni')
-    .select('section_id')
-    .eq('utente_id', utenteId)
+  // Stessa regola della funzione: assegnazioni dirette + per materia, senza doppioni.
+  const [dirette, perMateria] = await Promise.all([
+    supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId),
+    supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
+  ])
+  const errLegami = dirette.error ?? perMateria.error
   if (errLegami) {
     segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, errLegami)
     return { ok: false }
   }
+  const ids = new Set<string>()
+  for (const r of [...(dirette.data ?? []), ...(perMateria.data ?? [])]) {
+    if (r.section_id) ids.add(r.section_id as string)
+  }
   return {
     ok: true,
-    sezioni: (legami ?? []).map(r => ({ sectionId: r.section_id as string, solaLettura: false })),
+    sezioni: [...ids].map(sectionId => ({ sectionId, solaLettura: false })),
   }
 }
 
@@ -249,9 +255,15 @@ export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string
 }
 
 // Nomi (sections.name) delle sezioni VISIBILI a un utente — i nomi si ripetono ogni anno, quindi si parte dagli
-// id della funzione: il nome di una sezione futura non esce. Nessun fallback euristico: senza legami → [].
-export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
-  const ids = await sezioniDiUtente(supabase, utenteId)
+// id della funzione: il nome di una sezione futura non esce. Con `soloScrivibili` contano solo le sezioni
+// dell'anno attivo: è l'opzione dei controlli che DECIDONO una scrittura (un nome di classe dell'anno scorso
+// non autorizza a scrivere nella classe che oggi si chiama allo stesso modo). Nessun fallback euristico: senza legami → [].
+export async function nomiSezioniDiUtente(
+  supabase: SupabaseClient,
+  utenteId: string,
+  opzioni: { soloScrivibili?: boolean } = {},
+): Promise<string[]> {
+  const ids = (await sezioniVisibiliDiUtente(supabase, utenteId, opzioni)).map(r => r.sectionId)
   if (ids.length === 0) return []
   const { data, error } = await supabase.from('sections').select('name').in('id', ids)
   if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
@@ -268,8 +280,9 @@ export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: st
 export async function sezioniDiUtenteConSede(
   supabase: SupabaseClient,
   utenteId: string,
+  opzioni: { soloScrivibili?: boolean } = {},
 ): Promise<{ nome: string; scuola_id: string | null }[]> {
-  const ids = await sezioniDiUtente(supabase, utenteId)
+  const ids = (await sezioniVisibiliDiUtente(supabase, utenteId, opzioni)).map(r => r.sectionId)
   if (ids.length === 0) return []
   const { data, error } = await supabase.from('sections').select('name, scuola_id').in('id', ids)
   if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)

@@ -75,7 +75,7 @@ describe('il percorso felice resta muto', () => {
   })
 
   it('nessun legame ⇒ [] e nessun log: è una condizione legittima', async () => {
-    const c = creaFintoSupabase({ ...db, utenti_sezioni: [] })
+    const c = creaFintoSupabase({ ...db, utenti_sezioni: [], utenti_sezioni_materie: [] })
     expect(await sezioniDiUtente(c, UTENTE)).toEqual([])
     expect(logEvento).not.toHaveBeenCalled()
   })

@@ -59,8 +59,8 @@ const dbBase = (): DBFinto => ({
     { id: SEZ_MATERIA, scuola_id: SEDE_A, name: '3A', school_type: 'primaria' },
     { id: SEZ_B, scuola_id: SEDE_B, name: 'Girasoli', school_type: 'infanzia' },
   ],
-  // La materia porta sempre il legame diretto (`admin/primaria/docenti-materie:POST` scrive entrambe).
-  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
+  // SEZ_MATERIA: il docente la ha SOLO per materia (nessuna riga in utenti_sezioni): la funzione dei docenti la conta lo stesso.
+  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
   utenti_sezioni_materie: [{ utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' }],
   utenti_scuole: [],
   alunni: [

@@ -83,6 +83,25 @@ describe('puoAccedereFascicolo', () => {
     const r = await puoAccedereFascicolo(conFunzione(null, { code: '57014', message: 'x' }), DOC, AL_ATTIVA)
     expect(r).toMatchObject({ consentito: false, motivo: 'errore' })
   })
+
+  // Giro di correzione 1: upload, delete e sostituisci SCRIVONO, quindi contano solo le sezioni dell'anno attivo.
+  it.each(['upload', 'delete', 'sostituisci'] as const)('%s: sezione dell’anno attivo passa', async (azione) => {
+    expect((await puoAccedereFascicolo(conFunzione(VISIBILI), DOC, AL_ATTIVA, azione)).consentito).toBe(true)
+  })
+
+  it.each(['upload', 'delete', 'sostituisci'] as const)('%s: sezione in sola lettura di un anno passato NON passa', async (azione) => {
+    const r = await puoAccedereFascicolo(conFunzione(VISIBILI), DOC, AL_PASSATA, azione)
+    expect(r).toMatchObject({ consentito: false, motivo: 'negato' })
+  })
+
+  it.each(['list', 'view', 'download'] as const)('%s (lettura): la sezione di un anno passato passa ancora', async (azione) => {
+    expect((await puoAccedereFascicolo(conFunzione(VISIBILI), DOC, AL_PASSATA, azione)).consentito).toBe(true)
+  })
+
+  it('upload: un guasto della funzione nega con motivo `errore` (mai un sì per un guasto)', async () => {
+    const r = await puoAccedereFascicolo(conFunzione(null, { code: '57014', message: 'x' }), DOC, AL_ATTIVA, 'upload')
+    expect(r).toMatchObject({ consentito: false, motivo: 'errore' })
+  })
 })
 
 describe('sezioniContitolari', () => {

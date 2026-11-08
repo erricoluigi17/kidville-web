@@ -8,8 +8,10 @@
 
 -- ── 4.3.1 Le sezioni che un docente vede ──────────────────────────────────────────────────────────
 --
--- Un docente vede le sezioni a cui è assegnato (`utenti_sezioni`) il cui anno, PER LA SEDE DELLA SEZIONE, è
--- `corrente` (scrivibile), `in_chiusura` o `chiuso` (sola lettura). Un anno `in_preparazione` o con
+-- Un docente vede le sezioni a cui è assegnato — direttamente (`utenti_sezioni`) o per materia
+-- (`utenti_sezioni_materie`), senza doppioni: la regola «contano sia le assegnazioni dirette sia quelle per materia»
+-- sta SOLO qui, e il codice (anagrafica, fascicolo, avvisi…) chiama la funzione. L'anno della sezione, PER LA SEDE DELLA
+-- SEZIONE, è `corrente` (scrivibile), `in_chiusura` o `chiuso` (sola lettura). Un anno `in_preparazione` o con
 -- `iscrizioni_aperte` non compare MAI: le sezioni del prossimo anno si preparano, ma i docenti non le vedono
 -- finché l'anno non è iniziato. Un anno `chiuso` compare solo se il docente è assegnato a quella sezione.
 -- La sola lettura la impone il codice applicativo (la guardia dell'anno chiuso è ancora spenta): qui la si dichiara.
@@ -20,15 +22,20 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT us.section_id, (a.stato::text <> 'corrente')
-    FROM public.utenti_sezioni us
-    JOIN public.sections s    ON s.id = us.section_id
+  WITH assegnate AS (
+    SELECT us.section_id FROM public.utenti_sezioni us WHERE us.utente_id = p_utente
+    UNION
+    SELECT um.section_id FROM public.utenti_sezioni_materie um WHERE um.utente_id = p_utente
+  )
+  SELECT x.section_id, (a.stato::text <> 'corrente')
+    FROM assegnate x
+    JOIN public.sections s    ON s.id = x.section_id
     JOIN public.anni_sede a   ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
-   WHERE us.utente_id = p_utente
-     AND a.stato::text IN ('corrente', 'in_chiusura', 'chiuso')
+   WHERE a.stato::text IN ('corrente', 'in_chiusura', 'chiuso')
 $$;
 
--- Le sole sezioni SCRIVIBILI (quelle dell'anno attivo della loro sede): servono alle liste.
+-- Le sole sezioni SCRIVIBILI (quelle dell'anno attivo della loro sede): servono alle liste. Stessa regola di
+-- assegnazione (dirette + per materia).
 CREATE OR REPLACE FUNCTION public.sezioni_docente_anno_attivo(p_utente uuid)
 RETURNS TABLE (section_id uuid)
 LANGUAGE sql
@@ -36,12 +43,16 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT us.section_id
-    FROM public.utenti_sezioni us
-    JOIN public.sections s ON s.id = us.section_id
+  WITH assegnate AS (
+    SELECT us.section_id FROM public.utenti_sezioni us WHERE us.utente_id = p_utente
+    UNION
+    SELECT um.section_id FROM public.utenti_sezioni_materie um WHERE um.utente_id = p_utente
+  )
+  SELECT x.section_id
+    FROM assegnate x
+    JOIN public.sections s ON s.id = x.section_id
     JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
-   WHERE us.utente_id = p_utente
-     AND a.id = public.anno_attivo(s.scuola_id)
+   WHERE a.id = public.anno_attivo(s.scuola_id)
 $$;
 
 REVOKE ALL ON FUNCTION public.sezioni_visibili_docente(uuid)    FROM PUBLIC, anon, authenticated;
@@ -297,7 +308,8 @@ BEGIN
   v_n := 0;
   IF to_regclass('public.utenti_sezioni') IS NOT NULL AND to_regclass('public.sections') IS NOT NULL THEN
     SELECT count(*) INTO v_n
-      FROM (SELECT DISTINCT us.utente_id FROM public.utenti_sezioni us) u
+      FROM (SELECT us.utente_id FROM public.utenti_sezioni us
+             UNION SELECT um.utente_id FROM public.utenti_sezioni_materie um) u
      CROSS JOIN LATERAL public.sezioni_visibili_docente(u.utente_id) v
       JOIN public.sections s  ON s.id = v.section_id
       JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id

@@ -108,7 +108,7 @@ export const POST = withRoute('primaria/fascicolo/sostituisci:POST', async (requ
     }
     const alunnoId = vecchio.student_id
 
-    const accesso = await puoAccedereFascicolo(supabase, userId, alunnoId)
+    const accesso = await puoAccedereFascicolo(supabase, userId, alunnoId, 'sostituisci')
     const negato = rispostaGestioneNegata(accesso, vecchio.caricato_da, alunnoId, userId, OP)
     if (negato) return negato
     // Un prestampato firmato o protocollato NON si sostituisce dal fascicolo: la riga nuova

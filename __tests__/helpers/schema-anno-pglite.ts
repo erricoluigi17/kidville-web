@@ -198,6 +198,15 @@ export const SCHEMA_BASE = `
     creato_il timestamptz DEFAULT now(),
     PRIMARY KEY (utente_id, section_id)
   );
+  -- Assegnazioni per materia (baseline): la regola «dirette + per materia» sta nelle funzioni dei docenti.
+  CREATE TABLE public.utenti_sezioni_materie (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    utente_id uuid NOT NULL,
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    materia_id uuid NOT NULL,
+    e_contitolare boolean DEFAULT false NOT NULL,
+    creato_il timestamptz DEFAULT now()
+  );
 
   -- ── Compito 1.4b: la scatola nera, solo le colonne che servono a provare la \`transazione\` ──
   CREATE SCHEMA scatola_nera;

@@ -28,6 +28,10 @@ async function sezioniDi(docente: string): Promise<Array<{ section_id: string; s
 async function assegna(docente: string, sezione: string) {
   await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [docente, sezione])
 }
+async function assegnaMateria(docente: string, sezione: string) {
+  await db.query(
+    `INSERT INTO public.utenti_sezioni_materie (utente_id, section_id, materia_id) VALUES ($1, $2, gen_random_uuid())`, [docente, sezione])
+}
 async function statoAnno(anno: number, stato: string) {
   await db.query(
     `UPDATE public.anni_sede s SET stato = $3
@@ -116,6 +120,27 @@ describe('sezioni_visibili_docente', () => {
         { section_id: S_2627, sola_lettura: true },
         { section_id: S_2728, sola_lettura: false },
       ])
+    })
+  })
+
+  prova('un docente assegnato SOLO per materia vede la sezione dell’anno attivo, e non quella in preparazione', async () => {
+    await inRollback(async () => {
+      await assegnaMateria(DOCENTE, S_2627)
+      await assegnaMateria(DOCENTE, S_2728)
+      expect(await sezioniDi(DOCENTE)).toEqual([{ section_id: S_2627, sola_lettura: false }])
+      const r = await db.query<{ section_id: string }>(`SELECT section_id FROM public.sezioni_docente_anno_attivo($1)`, [DOCENTE])
+      expect(r.rows.map((x) => x.section_id)).toEqual([S_2627])
+    })
+  })
+
+  prova('diretta + per materia sulla stessa sezione: una riga sola, senza doppioni', async () => {
+    await inRollback(async () => {
+      await assegna(DOCENTE, S_2627)
+      await assegnaMateria(DOCENTE, S_2627)
+      await assegnaMateria(DOCENTE, S_2627)
+      expect(await sezioniDi(DOCENTE)).toEqual([{ section_id: S_2627, sola_lettura: false }])
+      const r = await db.query<{ section_id: string }>(`SELECT section_id FROM public.sezioni_docente_anno_attivo($1)`, [DOCENTE])
+      expect(r.rows).toHaveLength(1)
     })
   })
 

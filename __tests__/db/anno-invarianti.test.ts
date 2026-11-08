@@ -725,6 +725,14 @@ describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
     try { return await fn() } finally { await d.exec('ROLLBACK') }
   }
 
+  /** Ridefinisce `sezioni_visibili_docente` col corpo dato (`p_utente` è il parametro): la versione SENZA filtro di stato. */
+  const visibilitaSenzaFiltroDiStato = (corpo: string) =>
+    d.exec(`
+        CREATE OR REPLACE FUNCTION public.sezioni_visibili_docente(p_utente uuid)
+        RETURNS TABLE (section_id uuid, sola_lettura boolean)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+        AS $$ ${corpo} $$`)
+
   beforeAll(async () => {
     d = await creaDbAnnoPr2({ sedi: [S], fino: 'M43' })
     const anni = await d.query<{ anno_inizio: number; anno_id: string }>(
@@ -749,17 +757,12 @@ describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
       await d.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($1, $3)`, [DOC, SEZ_CORR, SEZ_FUTURA])
       expect(await riga8()).toEqual(ZERO)
       // la stessa funzione, SENZA il filtro sullo stato dell'anno
-      await d.exec(`
-        CREATE OR REPLACE FUNCTION public.sezioni_visibili_docente(p_utente uuid)
-        RETURNS TABLE (section_id uuid, sola_lettura boolean)
-        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
-        AS $$
+      await visibilitaSenzaFiltroDiStato(`
           SELECT us.section_id, (a.stato::text <> 'corrente')
             FROM public.utenti_sezioni us
             JOIN public.sections s  ON s.id = us.section_id
             JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
-           WHERE us.utente_id = p_utente
-        $$`)
+           WHERE us.utente_id = p_utente`)
       const r = await riga8()
       expect(r).toHaveLength(1)
       expect(r[0].righe).toBeGreaterThanOrEqual(1)
@@ -771,11 +774,8 @@ describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
   prova('la riga 8 non è tautologica: coincide con un conteggio fatto a parte dal catalogo', async () => {
     await rollback(async () => {
       await d.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($1, $3)`, [DOC, SEZ_CORR, SEZ_FUTURA])
-      await d.exec(`
-        CREATE OR REPLACE FUNCTION public.sezioni_visibili_docente(p_utente uuid)
-        RETURNS TABLE (section_id uuid, sola_lettura boolean)
-        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
-        AS $$ SELECT us.section_id, false FROM public.utenti_sezioni us WHERE us.utente_id = p_utente $$`)
+      await visibilitaSenzaFiltroDiStato(
+        `SELECT us.section_id, false FROM public.utenti_sezioni us WHERE us.utente_id = p_utente`)
       const dalCatalogo = await d.query<{ n: string }>(
         `SELECT count(*)::text n
            FROM public.utenti_sezioni us

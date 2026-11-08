@@ -296,6 +296,38 @@ describe('propaga_rinomina_sezione per anno', () => {
     })
   })
 
+  // Il DB E2E non migrato ha la tabella ma non la colonna `anno_id`: la funzione, che per queste tre tabelle
+  // controlla anche la colonna, non deve né fallire né toccarle (non saprebbe dire di che anno sono le righe).
+  // La rinomina, invece, propaga alle tabelle che hanno tutto. Il fatto è dichiarato nel log (`tabelle_assenti`).
+  it.each([
+    ['avvisi', 'target_classes'],
+    ['galleria_media_v2', 'target_classes'],
+    ['registro_orario', 'classe_sezione'],
+  ])('senza la colonna anno_id su %s la rinomina passa, la tabella resta ferma e il log la dichiara assente', async (tab) => {
+    await inRollback(async () => {
+      const corr = await sezione('1A', 2026)
+      const av = await avviso(2026, ['1A'])
+      const g = await galleria(2026, ['1A'])
+      const r = await registro(2026, '1A', corr)
+      const nw = await news(['1A'])
+      await db.exec(`ALTER TABLE public.${tab} DROP COLUMN anno_id CASCADE`)
+      await rinomina(corr, '1E')
+      // le altre tabelle (con tutte le colonne) propagano come sempre, la sezione è dell'anno attivo
+      expect(await classi('news_posts', nw)).toEqual(['1E'])
+      if (tab !== 'avvisi') expect(await classi('avvisi', av)).toEqual(['1E'])
+      if (tab !== 'galleria_media_v2') expect(await classi('galleria_media_v2', g)).toEqual(['1E'])
+      if (tab !== 'registro_orario') expect(await nomeRegistro(r)).toBe('1E')
+      // quella senza la colonna resta com'era
+      if (tab === 'avvisi') expect(await classi('avvisi', av)).toEqual(['1A'])
+      if (tab === 'galleria_media_v2') expect(await classi('galleria_media_v2', g)).toEqual(['1A'])
+      if (tab === 'registro_orario') expect(await nomeRegistro(r)).toBe('1A')
+      const log = await db.query<{ t: string[] }>(
+        `SELECT ARRAY(SELECT jsonb_array_elements_text(contesto->'tabelle_assenti')) AS t
+           FROM public.app_log WHERE fingerprint = $1`, ['db:rinomina-sezione:' + corr])
+      expect(log.rows).toEqual([{ t: [tab] }])
+    })
+  })
+
   prova('registra in app_log se la sezione era dell’anno attivo', async () => {
     await inRollback(async () => {
       const futura = await sezione('1A', 2027)

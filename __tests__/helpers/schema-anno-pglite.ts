@@ -461,6 +461,8 @@ const SUFFISSI_PR2 = {
   M43: '_anno_sezioni_docenti_fase_b.sql',
   // PR 4.4: le funzioni di visibilità del genitore (inerti: nessuna policy). Dopo M43 (i compiti successivi aggiungono sezioni in coda al file).
   M44a: '_anno_visibilita_genitore_funzioni.sql',
+  // PR 4.4: le regole di accesso e il trigger di broadcast della chat. Dopo M44a.
+  M44b: '_anno_visibilita_genitore_policy.sql',
 } as const
 
 /**
@@ -546,6 +548,26 @@ export const SCHEMA_AVVISI_CHAT_VOCI_GENITORE = `
     adult_id uuid NOT NULL,
     importo numeric(10,2) NOT NULL,
     UNIQUE (pagamento_id, adult_id)
+  );
+`
+
+/**
+ * PR 4.4 · `news_posts` con le colonne vere di produzione che la regola di accesso legge: lo stato, il tipo di destinatari, i
+ * gradi e la sede che può essere NULL. Va nella `codaPrima` di `creaDbAnnoPr2`: `target_section_ids` e il trigger li aggiungono
+ * le migrazioni. Non si passa insieme a `completo`, che ha una sua `news_posts` più povera.
+ */
+export const SCHEMA_NEWS_GENITORE = `
+  CREATE TABLE public.news_posts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo text NOT NULL DEFAULT 'articolo' CHECK (tipo IN ('articolo', 'breve', 'instagram')),
+    stato text NOT NULL DEFAULT 'bozza' CHECK (stato IN ('bozza', 'proposta', 'programmata', 'pubblicata', 'nascosta')),
+    titolo text NOT NULL DEFAULT 'Titolo di prova',
+    target_scope text NOT NULL DEFAULT 'globale' CHECK (target_scope IN ('globale', 'grado', 'classi')),
+    target_gradi public.school_type_enum[],
+    target_classes text[],
+    scuola_id uuid,
+    author_id uuid NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
   );
 `
 
@@ -646,7 +668,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -668,8 +690,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

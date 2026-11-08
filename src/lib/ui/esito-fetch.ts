@@ -3603,6 +3603,8 @@ export const CODICI_ERRORE = {
     // dice che la frequenza è già aggiornata e che riprovare completa il lavoro. NON riusa FREQUENZA_NON_SCRITTA, che
     // dice l'opposto («la scheda è rimasta com'era»).
     SCRITTURA_INCOMPLETA: 'erroreScritturaIncompleta',
+    CODICE_FISCALE_GIA_USATO: 'erroreCodiceFiscaleGiaUsato',
+    ALUNNO_ANONIMIZZATO: 'erroreAlunnoAnonimizzato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

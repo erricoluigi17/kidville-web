@@ -168,7 +168,14 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         const tracceArchiviazione =
             prima.archiviato_da != null || prima.archiviato_motivo != null ||
             prima.archiviato_section_id != null || prima.archiviato_classe_sezione != null;
-        const mezzaRiattivata = prima.stato === STATO_ISCRITTO && tracceArchiviazione;
+        // ⚠️ Le stesse tracce le lascia anche un'ARCHIVIAZIONE fallita a metà (la memoria è scritta prima della frequenza):
+        // un iscritto VERO con la memoria addosso. Lì la classe attuale è quella ricordata e riattivare completa senza
+        // spostare nessuno. Se invece la classe attuale è DIVERSA dalla ricordata la memoria è stantia: riscriverla
+        // sposterebbe il bambino, quindi 409. Senza classe attuale non c'è nessuno da spostare.
+        const attuale = ((prima.classe_sezione as string | null) ?? '').trim();
+        const ricordataPrima = ((prima.archiviato_classe_sezione as string | null) ?? '').trim();
+        const classeCompatibile = attuale === '' || attuale === ricordataPrima;
+        const mezzaRiattivata = prima.stato === STATO_ISCRITTO && tracceArchiviazione && classeCompatibile;
         if (eAncoraIscritto(prima.stato as string | null) && !mezzaRiattivata) {
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/riattiva:POST', esito: 'gia-iscritto', alunno: alunnoId,

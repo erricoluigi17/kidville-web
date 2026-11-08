@@ -313,8 +313,21 @@ describe('scriviFrequenza', () => {
     const id = await nuovoAlunno(1)
     expect(await frequenza(id)).toBeUndefined()
     const r = await scriviFrequenza(clienteSu(db), { alunnoId: id, annoSedeId: AS1, campi: { usa_pannolino: true } })
-    expect(r).toEqual({ ok: true })
+    // niente è stato scritto, e lo dice: chi chiama non deve credere a una frequenza che non c'è
+    expect(r).toEqual({ ok: true, saltata: 'nessuna-riga' })
     expect(await frequenza(id)).toBeUndefined()
+  })
+
+  it('set vuoto dopo lo scarto di stato/data_uscita (frequenza non `recupero`): nessuna scrittura, e lo dice', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    await db.query(`UPDATE public.frequenze SET origine = 'segreteria', tipo = 'nuova' WHERE alunno_id = $1`, [id])
+    const scritture = { n: 0 }
+    const r = await scriviFrequenza(clienteSu(db, scritture), {
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T22:30:00Z' }),
+    })
+    expect(r).toEqual({ ok: true, saltata: 'nessuna-modifica' })
+    expect(scritture.n).toBe(0)
   })
 
   it('stato e data_uscita cambiano solo se la frequenza è `recupero`', async () => {

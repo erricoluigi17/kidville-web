@@ -89,7 +89,7 @@ beforeEach(() => {
 })
 
 describe('GET /api/teacher/alunni', () => {
-  it('educator: solo i bambini iscritti delle sue sezioni (dirette e per materia), in ordine di cognome', async () => {
+  it('educator: solo i bambini iscritti delle sue sezioni (riga diretta), in ordine di cognome', async () => {
     const res = await chiama()
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('no-store')

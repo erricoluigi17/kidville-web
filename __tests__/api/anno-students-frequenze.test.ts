@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, { code: string; message?: string }>,
   sparisceDopoLoScope: null as string | null,
   logErrore: vi.fn(),
+  riallineaImporto: vi.fn(async () => undefined),
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -38,6 +39,10 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   annoAttivoDiSede: h.annoAttivoDiSede,
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
+vi.mock('@/lib/pagamenti/scadenze', async (orig) => ({
+  ...(await orig<typeof import('@/lib/pagamenti/scadenze')>()),
+  riallineaImportoRetteFuture: h.riallineaImporto,
+}))
 vi.mock('@/lib/logging/logger', async (orig) => ({
   ...(await orig<typeof import('@/lib/logging/logger')>()),
   logErrore: h.logErrore,
@@ -135,6 +140,7 @@ beforeEach(() => {
   h.requireStaff.mockResolvedValue({ user: { id: 'adm-1', role: 'admin', scuola_id: SEDE_A } })
   h.annoAttivoDiSede.mockImplementation(async (_c: unknown, sede: string | null) => (sede ? `anno-di-${sede}` : null))
   h.scriviFrequenza.mockResolvedValue({ ok: true })
+  h.riallineaImporto.mockResolvedValue(undefined)
 })
 
 describe('POST /api/admin/students — creazione', () => {
@@ -437,7 +443,10 @@ describe('fase B: alunni fallisce DOPO la frequenza (archivia, riattiva, PATCH s
     expect(j.error).not.toMatch(/duplicate key/)
     expect(h.scriviFrequenza).toHaveBeenCalledTimes(1)
     expect(dedicati()).toHaveLength(1)
-    expect(h.logScrittura).not.toHaveBeenCalled()
+    // l'audit di recupero c'è, ed è dei soli campi copiati in frequenza (qui: usa_pannolino), non della scheda intera
+    expect(h.logScrittura).toHaveBeenCalledTimes(1)
+    const audit = (h.logScrittura.mock.calls[0] as unknown[])[1] as { valoreDopo: Record<string, unknown> }
+    expect(Object.keys(audit.valoreDopo)).toEqual(['usa_pannolino'])
   })
 
   it('PATCH singolo: alunni fallisce ma la frequenza non è stata toccata (anno non attivo): errore come prima, nessun log dedicato', async () => {
@@ -627,5 +636,173 @@ describe('PATCH singolo — la regola della data d’iscrizione vale anche qui (
     conAnno()
     await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
     expect(campiScritti()).toEqual([{ usa_pannolino: true }])
+  })
+})
+
+
+describe('PATCH singolo — il doppione del codice fiscale e la retta quando alunni fallisce dopo la frequenza', () => {
+  const faseB = () => { h.db.anno_regole = [{ specchio_frequenze_attivo: true }] }
+  const CF = 'RSSMRA80A01H501U'
+  const dedicati = () => h.logErrore.mock.calls.filter((c) => c[0]?.operazione === 'anno/fase-b:alunni-non-scritto')
+  const riga = (id: string) => h.db.alunni.find((r) => r.id === id)!
+  const poiAlunniFallisce = () =>
+    h.scriviFrequenza.mockImplementation(async () => {
+      h.errori = { 'alunni:update': { code: '23505', message: 'duplicate key' } }
+      return { ok: true }
+    })
+
+  describe('codice fiscale già di un altro alunno', () => {
+    it('409 CODICE_FISCALE_GIA_USATO PRIMA di scrivere: nessuna frequenza, nessun alunni, nessun audit, e l’altro non è nominato', async () => {
+      faseB()
+      riga(ALU_A2).codice_fiscale = CF
+      riga(ALU_A2).nome = 'NomeAltro'
+      const res = await PATCH(patch({ id: ALU_A, codice_fiscale: CF, importo_retta_mensile: 300 }))
+      expect(res.status).toBe(409)
+      const j = await res.json()
+      expect(j.codice).toBe('CODICE_FISCALE_GIA_USATO')
+      expect(j.error).toMatch(/codice fiscale/i)
+      const testo = JSON.stringify(j)
+      expect(testo).not.toContain(ALU_A2)
+      expect(testo).not.toContain('NomeAltro')
+      expect(testo).not.toContain(CF)
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+      expect(h.scritture.filter((x) => (x as { tabella: string }).tabella === 'alunni')).toEqual([])
+      expect(h.logScrittura).not.toHaveBeenCalled()
+    })
+
+    it('CONTROLLO POSITIVO — un codice fiscale libero passa, e lo stesso codice già suo non si controlla', async () => {
+      faseB()
+      expect((await PATCH(patch({ id: ALU_A, codice_fiscale: CF }))).status).toBe(200)
+      // adesso è suo: salvare di nuovo la stessa scheda non è un doppione di sé stesso
+      expect((await PATCH(patch({ id: ALU_A, codice_fiscale: CF, usa_pannolino: true }))).status).toBe(200)
+    })
+  })
+
+  describe('frequenza scritta e alunni fallita: la retta scende lo stesso, una volta sola', () => {
+    it('retta cambiata: discesa subito, e audit dei soli campi della frequenza con il VECCHIO importo; risposta 500 SCRITTURA_INCOMPLETA', async () => {
+      faseB()
+      riga(ALU_A).importo_retta_mensile = 100
+      poiAlunniFallisce()
+      const res = await PATCH(patch({ id: ALU_A, importo_retta_mensile: 300, note_mediche: 'riservato' }))
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('SCRITTURA_INCOMPLETA')
+      expect(dedicati()).toHaveLength(1)
+      expect(h.riallineaImporto).toHaveBeenCalledTimes(1)
+      expect(h.riallineaImporto.mock.calls[0].slice(1)).toEqual([ALU_A, 300])
+      expect(h.logScrittura).toHaveBeenCalledTimes(1)
+      const audit = (h.logScrittura.mock.calls[0] as unknown[])[1] as { entitaId: string; valorePrima: Record<string, unknown>; valoreDopo: Record<string, unknown> }
+      expect(audit.entitaId).toBe(ALU_A)
+      expect(audit.valorePrima).toEqual({ importo_retta_mensile: 100 })
+      expect(audit.valoreDopo).toEqual({ importo_retta_mensile: 300 })
+    })
+
+    it('la RIPROVA riuscita non rifa la discesa (alunni ha già l’importo nuovo per lo specchio)', async () => {
+      faseB()
+      riga(ALU_A).importo_retta_mensile = 100
+      poiAlunniFallisce()
+      expect((await PATCH(patch({ id: ALU_A, importo_retta_mensile: 300 }))).status).toBe(500)
+      // lo specchio ha già portato la retta nuova in alunni; il guasto è passato
+      riga(ALU_A).importo_retta_mensile = 300
+      h.errori = {}
+      h.scriviFrequenza.mockResolvedValue({ ok: true })
+      expect((await PATCH(patch({ id: ALU_A, importo_retta_mensile: 300 }))).status).toBe(200)
+      expect(h.riallineaImporto).toHaveBeenCalledTimes(1)
+    })
+
+    it('retta NON cambiata: nessuna discesa e nessun audit di recupero', async () => {
+      faseB()
+      riga(ALU_A).importo_retta_mensile = 100
+      poiAlunniFallisce()
+      const res = await PATCH(patch({ id: ALU_A, usa_pannolino: true }))
+      expect(res.status).toBe(500)
+      expect(h.riallineaImporto).not.toHaveBeenCalled()
+    })
+
+    it('un guasto della discesa si logga e NON cambia la risposta', async () => {
+      faseB()
+      riga(ALU_A).importo_retta_mensile = 100
+      poiAlunniFallisce()
+      h.riallineaImporto.mockRejectedValue(new Error('boom'))
+      const res = await PATCH(patch({ id: ALU_A, importo_retta_mensile: 300 }))
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('SCRITTURA_INCOMPLETA')
+      expect(h.logErrore.mock.calls.some((c) => c[0]?.evento === 'recupero-retta-dopo-frequenza')).toBe(true)
+    })
+  })
+
+  describe('data d’iscrizione: si scrive in frequenza solo se è cambiata', () => {
+    it('PATCH che rimanda la STESSA data (la scheda salva il form intero) non forza la frequenza', async () => {
+      h.db.anni_sede = [{ id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' }]
+      riga(ALU_A).data_iscrizione = '2026-10-15'
+      const res = await PATCH(patch({ id: ALU_A, data_iscrizione: '2026-10-15', residence_address: 'Via Prova 1' }))
+      expect(res.status).toBe(200)
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    })
+
+    it('una data DIVERSA la scrive', async () => {
+      h.db.anni_sede = [{ id: `anno-di-${SEDE_A}`, scuola_id: SEDE_A, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' }]
+      riga(ALU_A).data_iscrizione = '2026-10-15'
+      await PATCH(patch({ id: ALU_A, data_iscrizione: '2026-10-20' }))
+      expect(h.scriviFrequenza.mock.calls[0][1].campi).toEqual({ data_ingresso: '2026-10-20' })
+    })
+  })
+})
+
+describe('archivia e riattiva — i ritocchi dopo la revisione', () => {
+  const faseB = () => { h.db.anno_regole = [{ specchio_frequenze_attivo: true }] }
+  const riga = (id: string) => h.db.alunni.find((r) => r.id === id)!
+  const daCompletare = (extra: Record<string, unknown> = {}) =>
+    Object.assign(riga(ALU_A2), {
+      stato: 'ritirato', section_id: null, classe_sezione: null, gruppo_mensa_id: null,
+      archiviato_il: '2026-08-01T10:00:00.000Z', archiviato_da: null, archiviato_motivo: null,
+      archiviato_section_id: SEC_A, archiviato_classe_sezione: '2 ANNI', ...extra,
+    })
+
+  it('archivia da completare: un motivo GIÀ presente non si perde, anche se la riprova non ne porta', async () => {
+    faseB()
+    daCompletare({ archiviato_motivo: 'ritiro-originale' })
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+    expect(res.status).toBe(200)
+    expect(riga(ALU_A2).archiviato_motivo).toBe('ritiro-originale')
+  })
+
+  it('archivia da completare: con motivo NULL il motivo della riprova si scrive', async () => {
+    faseB()
+    daCompletare()
+    expect((await ARCHIVIA(archivia({ alunno_id: ALU_A2, motivo: 'trasferimento' }))).status).toBe(200)
+    expect(riga(ALU_A2).archiviato_motivo).toBe('trasferimento')
+  })
+
+  it('archivia: una scheda ANONIMIZZATA dà 409 e non riceve scritture', async () => {
+    faseB()
+    daCompletare({ anonimizzato_il: '2026-09-01T00:00:00.000Z' })
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A2 }))
+    expect(res.status).toBe(409)
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    expect(h.scritture.filter((x) => (x as { tabella: string }).tabella === 'alunni')).toEqual([])
+  })
+
+  describe('riattiva: un iscritto con la memoria rimasta', () => {
+    const iscrittoConMemoria = (classe: string | null) =>
+      Object.assign(riga(ALU_R), {
+        stato: 'iscritto', archiviato_il: null, section_id: classe ? SEC_A : null, classe_sezione: classe,
+      })
+
+    it('classe attuale UGUALE alla ricordata (archiviazione fallita a metà): completa senza spostare nessuno', async () => {
+      faseB()
+      iscrittoConMemoria('2 ANNI')
+      const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+      expect(res.status).toBe(200)
+      expect(riga(ALU_R).classe_sezione).toBe('2 ANNI')
+    })
+
+    it('classe attuale DIVERSA dalla ricordata (memoria stantia): 409, il bambino NON viene spostato', async () => {
+      faseB()
+      iscrittoConMemoria('3 ANNI')
+      const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+      expect(res.status).toBe(409)
+      expect(riga(ALU_R).classe_sezione).toBe('3 ANNI')
+      expect(h.scriviFrequenza).not.toHaveBeenCalled()
+    })
   })
 })

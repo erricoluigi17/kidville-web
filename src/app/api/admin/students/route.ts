@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { AppUser } from '@/lib/auth/require-staff';
 import { z } from 'zod';
 import { STATO_ISCRITTO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -17,11 +18,12 @@ import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rispostaGuastoDb } from '@/lib/db/guasto';
+import { codiceFiscaleDiAltroAlunno } from '@/lib/alunni/codice-fiscale-doppione';
 import { HEADER_TOTALE } from '@/lib/api/paginazione';
 import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte } from '@/lib/anno/scrittura';
-import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
+import { rispostaCodiceFiscaleGiaUsato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 import { risolviDataIngresso } from '@/lib/anno/data-ingresso';
 import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
@@ -1379,6 +1381,23 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     if (errClasse) return errClasse;
                 }
 
+                // Il CODICE FISCALE non può essere già di un altro alunno (`alunni_codice_fiscale_key` è UNIQUE su tutta la
+                // tabella, quindi il controllo guarda tutte le sedi). Si controlla QUI, prima di scrivere la frequenza: senza,
+                // in fase B la retta arrivava in frequenza (e per lo specchio in `alunni`) e poi `alunni` falliva con 23505,
+                // ogni volta. Stesso confronto del vincolo (il valore com'è, come la route lo scrive); la risposta non nomina
+                // l'altro alunno e non riporta il codice.
+                if (typeof updates.codice_fiscale === 'string' && updates.codice_fiscale.trim() !== ''
+                    && updates.codice_fiscale.trimEnd() !== String(prima.codice_fiscale ?? '').trimEnd()) {
+                    const doppione = await codiceFiscaleDiAltroAlunno(supabase, updates.codice_fiscale, id as string);
+                    if (!doppione.ok) return rispostaGuastoDb('admin/students:PATCH', 'db:alunni-cf', doppione.error);
+                    if (doppione.usato) {
+                        logEvento('anagrafica', 'warn', {
+                            operazione: 'admin/students:PATCH', esito: 'codice-fiscale-gia-usato', alunno: id,
+                        });
+                        return rispostaCodiceFiscaleGiaUsato();
+                    }
+                }
+
                 // Il filtro affianca il gate, non lo sostituisce: `.in('scuola_id',
                 // plessi)` fa sì che la riga RILETTA e restituita al client sia
                 // per costruzione dentro i plessi dell'utente, anche se fra il
@@ -1393,7 +1412,12 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     scuolaId: sedeArrivo ?? sedeAttuale, dataIscrizione: updates.data_iscrizione, operazione: 'admin/students:PATCH',
                 });
                 if (!ingresso.ok) return ingresso.response;
-                if (ingresso.dataIngresso) campiFreq.data_ingresso = ingresso.dataIngresso;
+                // La scheda salva il form INTERO e rimanda sempre la data: si scrive in frequenza solo se è CAMBIATA rispetto a
+                // `prima`. Altrimenti ogni salvataggio forzerebbe la frequenza e, su un archiviato con `data_iscrizione`
+                // successiva alla `data_uscita`, il CHECK `frequenze_uscita_dopo_ingresso` bloccherebbe anche una correzione
+                // d'indirizzo. (Il 422 sopra la data oltre l'anno resta per ogni data inviata.)
+                const dataCambiata = String(updates.data_iscrizione ?? '').slice(0, 10) !== String(prima.data_iscrizione ?? '').slice(0, 10);
+                if (ingresso.dataIngresso && dataCambiata) campiFreq.data_ingresso = ingresso.dataIngresso;
                 const annoSedeId = Object.keys(campiFreq).length > 0 || nuovaClasse
                     ? (ingresso.annoSedeId ?? await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale))
                     : null;
@@ -1449,10 +1473,17 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 if (esitoScrittura.risultato instanceof NextResponse) return esitoScrittura.risultato;
                 const { data, error } = esitoScrittura.risultato;
 
-                // Fase B: la frequenza è già scritta e la scheda no (il caso realistico: retta più un codice fiscale già usato
-                // da un altro alunno). Il messaggio dice la verità, il log dedicato è già partito dall'helper. Niente audit:
-                // il secondo tentativo, che completa la scheda, lo scrive.
-                if (error && esitoScrittura.frequenzaGiaScritta) return rispostaScritturaIncompleta();
+                // Fase B: la frequenza è già scritta e la scheda no (un guasto: il doppione del codice fiscale lo ha già fermato
+                // il controllo qui sopra). Il log dedicato è già partito dall'helper. Ma la RETTA è già arrivata in `alunni`
+                // per lo specchio: alla riprova `prima` avrebbe l'importo nuovo, il confronto qui sotto sarebbe falso e i
+                // pagamenti futuri (e l'audit col vecchio importo) non sarebbero mai ricalcolati. Quindi si fanno ADESSO, e un
+                // errore di questi due passi si logga e non cambia la risposta.
+                if (error && esitoScrittura.frequenzaGiaScritta) {
+                    await recuperaDopoFrequenzaScritta(supabase, auth.user, {
+                        id: id as string, prima, updates, scuolaId: sedeAttuale,
+                    });
+                    return rispostaScritturaIncompleta();
+                }
 
                 // Zero righe aggiornate col gate già passato (PGRST116 su
                 // `.single()`): la riga è uscita dallo scope fra il gate e
@@ -1594,3 +1625,47 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
     }
 });
+
+/** Le colonne di `alunni` che la frequenza ricopia per intero: l'audit di recupero registra solo queste. */
+const CAMPI_COPIATI_IN_FREQUENZA = [
+    'importo_retta_mensile', 'retta_a_carico_di', 'retta_split_config', 'intestatario_fatture',
+    'giorno_scadenza_pagamenti', 'usa_pannolino', 'sospeso', 'sospeso_causa', 'sospeso_motivo', 'sospeso_il', 'sospeso_da',
+] as const;
+
+/**
+ * Il PATCH singolo ha scritto la frequenza e `alunni` no. La frequenza ha già portato in `alunni` (per lo specchio) la
+ * retta nuova, quindi la riprova non vedrebbe più una retta cambiata: la discesa sui pagamenti futuri e l'audit col
+ * `valore_prima` vero si fanno qui, subito. Mai lancia: ogni passo si logga e la risposta resta quella dell'incompleto.
+ */
+async function recuperaDopoFrequenzaScritta(
+    supabase: SupabaseClient,
+    attore: AppUser,
+    { id, prima, updates, scuolaId }: {
+        id: string; prima: Record<string, unknown>; updates: Record<string, unknown>; scuolaId: string | null;
+    },
+): Promise<void> {
+    const copiati = CAMPI_COPIATI_IN_FREQUENZA.filter((k) => k in updates);
+    const rettaCambiata = 'importo_retta_mensile' in updates
+        && Number(updates.importo_retta_mensile) !== Number(prima.importo_retta_mensile);
+    if (rettaCambiata) {
+        try {
+            await riallineaImportoRetteFuture(supabase, id, updates.importo_retta_mensile as number | null);
+        } catch (e) {
+            logErrore({ operazione: 'admin/students:PATCH', evento: 'recupero-retta-dopo-frequenza' }, e);
+        }
+    }
+    if (copiati.length === 0) return;
+    try {
+        await logScrittura(supabase, {
+            attore,
+            entitaTipo: 'alunni',
+            entitaId: id,
+            azione: 'update',
+            scuolaId,
+            valorePrima: Object.fromEntries(copiati.map((k) => [k, prima[k] ?? null])),
+            valoreDopo: Object.fromEntries(copiati.map((k) => [k, updates[k]])),
+        });
+    } catch (e) {
+        logErrore({ operazione: 'admin/students:PATCH', evento: 'recupero-audit-dopo-frequenza' }, e);
+    }
+}

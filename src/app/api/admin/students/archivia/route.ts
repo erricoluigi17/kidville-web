@@ -11,7 +11,7 @@ import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
-import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
+import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
 // ============================================================================
 // ARCHIVIA UN ALUNNO — «non più iscritto», con l'anagrafica INTATTA.
@@ -101,7 +101,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // corsa fra il gate e la lettura ne faccia rientrare una.
         const { data: prima, error: errLettura } = await supabase
             .from('alunni')
-            .select('id, scuola_id, section_id, classe_sezione, gruppo_mensa_id, stato, archiviato_il, archiviato_da, archiviato_section_id, archiviato_classe_sezione')
+            .select('id, scuola_id, section_id, classe_sezione, gruppo_mensa_id, stato, archiviato_il, archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione, anonimizzato_il')
             .eq('id', alunnoId)
             .in('scuola_id', plessi)
             .maybeSingle();
@@ -151,6 +151,14 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
          * e che dalla scheda sganciata non si può più ricavare). Vale anche per gli alunni archiviati prima di questa
          * regola con `archiviato_da` NULL e la memoria già piena.
          */
+        // Una scheda ANONIMIZZATA (oblio) non si archivia e non riceve scritture, nemmeno come «da completare»: la funzione di
+        // copia della migrazione la salta, e archiviarla scriverebbe autore, motivo e audit su una riga svuotata di proposito.
+        if (prima.anonimizzato_il != null) {
+            logEvento('gdpr', 'info', {
+                operazione: 'admin/students/archivia:POST', esito: 'anonimizzato', alunno: alunnoId,
+            });
+            return rispostaAlunnoAnonimizzato();
+        }
         const daCompletare = prima.archiviato_il != null && prima.archiviato_da == null;
         if (prima.archiviato_il != null && !daCompletare) {
             logEvento('gdpr', 'info', {
@@ -178,7 +186,9 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             stato: STATO_RITIRATO,
             archiviato_il: adesso,
             archiviato_da: auth.user.id,
-            archiviato_motivo: motivo ?? null,
+            // Su un'archiviazione da completare il motivo già scritto non si perde: la riprova (la UI manda solo l'alunno)
+            // lo riscriverebbe a NULL. Si scrive solo se manca.
+            archiviato_motivo: daCompletare ? ((prima.archiviato_motivo as string | null) ?? motivo ?? null) : (motivo ?? null),
             // Lo sganciamento: è QUESTO che lo fa sparire dagli elenchi.
             section_id: null,
             classe_sezione: null,
@@ -203,6 +213,9 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // La frequenza si scrive per prima, e lo specchio ricopia in `alunni` stato, archiviato_il e il distacco dalla
         // classe: se poi l'UPDATE di `alunni` fallisse, la memoria di dov'era il bambino andrebbe persa (la scheda non ha
         // più la classe da cui ricavarla). Quindi la memoria si scrive in un UPDATE proprio, PRIMA.
+        // ⚠️ Se poi è la FREQUENZA a non scriversi, la memoria resta: il bambino è ancora iscritto e in classe, con la
+        // memoria addosso (innocua: `riattiva` la riconosce, e `archivia` la riscrive alla prossima archiviazione).
+        // Il messaggio «la scheda è rimasta com'era» è vero per la classe e lo stato, non per questa memoria.
         if (!daCompletare && annoSedeId && await conFaseB(supabase)) {
             const { error: errMemoria } = await supabase
                 .from('alunni')

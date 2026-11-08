@@ -177,6 +177,8 @@ describe('scriviAlunnoEFrequenza', () => {
     it.each([
       ['anno non attivo (saltata)', { ok: true, saltata: 'anno-non-attivo' }],
       ['schema indietro (saltata)', { ok: true, saltata: 'schema-indietro' }],
+      ['nessuna riga di frequenza (la crea lo specchio)', { ok: true, saltata: 'nessuna-riga' }],
+      ['set vuoto (niente da scrivere)', { ok: true, saltata: 'nessuna-modifica' }],
     ])('frequenza %s: niente è stato scritto, quindi nessun segnale', async (_nome, esito) => {
       h.scriviFrequenza.mockResolvedValue(esito)
       const r = await scriviAlunnoEFrequenza(finto(), args, fallisce)

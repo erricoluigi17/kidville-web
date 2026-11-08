@@ -23,7 +23,7 @@ import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
  */
 
 export type CampiFrequenza = Partial<{
-  /** Solo il POST di una scheda nuova (la data d'ingresso scelta): NON è tra le colonne di `campiFrequenzaDaAlunno`, che resta pari al trigger. */
+  /** Il POST di una scheda nuova e il PATCH che cambia `data_iscrizione` (la data d'ingresso scelta): NON è tra le colonne di `campiFrequenzaDaAlunno`, che resta pari al trigger. */
   data_ingresso: string
   section_id: string | null
   stato: typeof STATO_ISCRITTO | typeof STATO_RITIRATO
@@ -104,7 +104,7 @@ export function campiFrequenzaDaAlunno(patch: Record<string, unknown>): CampiFre
 
 export type EsitoFrequenza =
   | { ok: true }
-  | { ok: true; saltata: 'anno-non-attivo' | 'schema-indietro' | 'nessun-campo' }
+  | { ok: true; saltata: 'anno-non-attivo' | 'schema-indietro' | 'nessun-campo' | 'nessuna-riga' | 'nessuna-modifica' }
   | { ok: false; codice: string }
 
 type ErrorePg = { code?: string | null; message?: string | null } | null | undefined
@@ -164,7 +164,7 @@ export async function scriviFrequenza(
       .eq('anno_sede_id', annoSedeId)
       .maybeSingle()
     if (riga.error) return esitoDaErrore(riga.error, 'lettura')
-    if (!riga.data) return { ok: true } // la crea lo specchio
+    if (!riga.data) return { ok: true, saltata: 'nessuna-riga' } // la crea lo specchio: qui non si è scritto niente
     const f = riga.data as { id: string; origine: string; data_ingresso: string }
 
     const set: Record<string, unknown> = { ...campi }
@@ -176,7 +176,7 @@ export async function scriviFrequenza(
       const u = set.data_uscita
       set.data_uscita = u < f.data_ingresso ? f.data_ingresso : u > fine ? fine : u
     }
-    if (Object.keys(set).length === 0) return { ok: true }
+    if (Object.keys(set).length === 0) return { ok: true, saltata: 'nessuna-modifica' }
 
     const scritta = await supabase.from('frequenze').update(set).eq('id', f.id).select('id')
     if (scritta.error) return esitoDaErrore(scritta.error, 'scrittura')

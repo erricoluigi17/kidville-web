@@ -837,5 +837,7 @@
   "annoAvvisoTesto": "Stai lavorando sul {anno} ({stato}): le nuove classi, le votazioni e gli elenchi caricati vanno in quell’anno. Anche gli elenchi delle classi sul video mostrano quell’anno.",
   "annoAvvisoTorna": "Torna all’anno in corso",
   "annoStatoDiverso": "stato diverso fra le sedi",
-  "erroreScritturaIncompleta": "La modifica è stata salvata solo in parte: la frequenza dell’anno è aggiornata, la scheda no. Riprova: il nuovo tentativo completa il lavoro."
+  "erroreScritturaIncompleta": "La modifica è stata salvata solo in parte: la frequenza dell’anno è aggiornata, la scheda no. Riprova: se il guasto era passeggero, il nuovo tentativo completa il lavoro.",
+  "erroreCodiceFiscaleGiaUsato": "Questo codice fiscale è già registrato su un’altra scheda: controlla che sia scritto bene (potrebbe essere un doppione da sistemare) e salva di nuovo. Non è stato modificato niente.",
+  "erroreAlunnoAnonimizzato": "Questa scheda è stata anonimizzata e non si può archiviare o modificare: nessuna modifica è stata registrata."
 }

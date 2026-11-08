@@ -115,13 +115,18 @@ GRANT EXECUTE ON FUNCTION public.figli_attivi_miei() TO authenticated, service_r
 -- quella della foto: chi cambia sede non si porta dietro un diritto sulle foto della sede vecchia. UNION e non UNION ALL:
 -- nessun vincolo impedisce un `continua_da` che gira su se stesso, e così la ricorsione si ferma comunque.
 --
--- IL GIORNO DI PARTENZA DI UN ANELLO è `data_ingresso`, salvo quando è una stima, e la stima si riconosce da sola:
--- `origine = 'recupero'` con `data_ingresso` PRIMA del giorno di Roma di `creata_il`. Lì vale l'INIZIO dell'anno della sede.
--- Il riempimento ha dato alle sue frequenze come ingresso il primo `dal` dello storico, una data già passata quando le ha
--- create: prenderla per vera toglierebbe a una famiglia le foto vere di un figlio vivo. `origine = 'recupero'` da sola non
--- basta: la scrive anche lo specchio `alunni` → `frequenze`, per ogni bambino nuovo e per il trasferito nella sede nuova, e
--- lì `data_ingresso` è il giorno vero, uguale a quello di `creata_il`. Trattarla da stima aprirebbe a un bambino creato oggi
--- le foto da settembre, contro la decisione 17: una famiglia nuova vede le foto solo da quando è entrata.
+-- IL GIORNO DI PARTENZA DI UN ANELLO è `data_ingresso`, salvo per le righe del RIEMPIMENTO: `origine = 'recupero'` nate entro
+-- il 07/11/2026, giorno di Roma di `creata_il`. Lì vale l'INIZIO dell'anno della sede.
+-- Il riempimento ha dato a quelle righe come ingresso il primo `dal` dello storico, che è una stima: prenderla per vera
+-- toglierebbe a una famiglia le foto vere di un figlio vivo. Misurato l'08/11: 811 frequenze, nate tutte il 07/11 con ingresso
+-- precedente. Quindi quel giorno lo specchio non ha creato nessuno, e l'insieme è chiuso per sempre.
+-- `origine = 'recupero'` da sola non basta: la scrive anche lo specchio `alunni` → `frequenze`, per ogni bambino nuovo e per il
+-- trasferito nella sede nuova. Trattarla da stima aprirebbe a un bambino creato oggi le foto da settembre, contro la decisione 17:
+-- una famiglia nuova vede le foto solo da quando è entrata. E non basta confrontare `data_ingresso` con `creata_il`: la data
+-- cambia dopo la nascita (la segreteria la sceglie all'indietro o la corregge, lo specchio la porta a `fine` se l'anno è finito e
+-- la sede non è passata), `creata_il` no, e una data vera sarebbe passata per stima.
+-- IL LIMITE: una correzione della segreteria su una di quelle 811 righe non sposta il confine, che resta l'inizio dell'anno.
+-- Distinguerle con una colonna costerebbe una scrittura su 811 righe di minori.
 --
 -- IL PERIODO di un anello finisce con `data_uscita`, o con la fine del suo anno; quello della frequenza attiva, se non ha
 -- uscita, resta aperto: `figli_attivi` guarda lo stato dell'anno, e finché la sede non passa il figlio frequenta ancora.
@@ -159,7 +164,8 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  c_storico_completo CONSTANT date := DATE '2026-10-15';
+  c_storico_completo   CONSTANT date := DATE '2026-10-15';
+  c_giorno_riempimento CONSTANT date := DATE '2026-11-07';
   v_figlio  record;
   v_confine date;
   v_fr_sez  uuid[];
@@ -191,7 +197,7 @@ BEGIN
     ),
     anelli AS (
       SELECT f.section_id,
-             CASE WHEN f.origine = 'recupero' AND f.data_ingresso < public.giorno_roma(f.creata_il)
+             CASE WHEN f.origine = 'recupero' AND public.giorno_roma(f.creata_il) <= c_giorno_riempimento
                   THEN s.inizio
                   ELSE f.data_ingresso
              END AS dal,

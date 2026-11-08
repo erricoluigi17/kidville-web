@@ -109,17 +109,22 @@ type DatiFrequenza = {
   origine?: string
   tipo?: string | null
   continuaDa?: string | null
-  /** Di partenza `now()`: un recupero con un ingresso già passato è una stima, perciò vede dall'inizio dell'anno. */
+  /** Di partenza il giorno del riempimento, come tutte quelle di produzione; per una riga nata dopo, `NATA_ORA`. */
   creataIl?: string
 }
+
+/** Tutte le frequenze del riempimento sono nate quel giorno: per loro `data_ingresso` è una stima. */
+const NATA_COL_RIEMPIMENTO = '2026-11-07T10:00:00+01:00'
+/** Una riga nata dopo il riempimento: `now` è un valore che Postgres capisce, ed è l'istante della transazione. */
+const NATA_ORA = 'now'
 
 /** Di partenza una frequenza `recupero` e `iscritto`, come tutte quelle di produzione. */
 async function frequenza(d: DatiFrequenza): Promise<string> {
   return una<string>(
     `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine, tipo, continua_da, creata_il)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10::timestamptz, now())) RETURNING id`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
     [d.alunno, d.annoSede, d.sezione ?? null, d.stato ?? 'iscritto', d.ingresso ?? '2026-09-01', d.uscita ?? null,
-      d.origine ?? 'recupero', d.tipo ?? null, d.continuaDa ?? null, d.creataIl ?? null])
+      d.origine ?? 'recupero', d.tipo ?? null, d.continuaDa ?? null, d.creataIl ?? NATA_COL_RIEMPIMENTO])
 }
 
 /** Una frequenza venuta da una domanda: `data_ingresso` è vera, e non serve la quota per essere attiva (`in_attesa`). */
@@ -587,27 +592,37 @@ describe('media_visibili_genitore', () => {
       })
     })
 
-    // Le 811 frequenze del riempimento sono recuperi con una `data_ingresso` stimata (il primo `dal` dello storico), già
-    // passata quando sono state create: 175 coppie foto-figlio di 64 bambini vivi hanno la foto prima di quella data, e non
-    // devono sparire.
-    prova('la stessa foto prima di data_ingresso: invisibile con origine domanda, visibile con origine recupero', async () => {
-      await inRollback(async () => {
-        const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
-        const f = await nuovaIscrizione({
-          alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-11-07T10:00:00+01:00',
+    // Le 811 frequenze del riempimento sono recuperi con una `data_ingresso` stimata (il primo `dal` dello storico): 175 coppie
+    // foto-figlio di 64 bambini vivi hanno la foto prima di quella data, e non devono sparire.
+    describe('una riga del riempimento', () => {
+      prova('la stessa foto prima di data_ingresso: invisibile con origine domanda, visibile con origine recupero', async () => {
+        await inRollback(async () => {
+          const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+          const f = await nuovaIscrizione({
+            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: NATA_COL_RIEMPIMENTO,
+          })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
+          await db.query(`UPDATE public.frequenze SET origine = 'recupero' WHERE id = $1`, [f])
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
         })
-        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
-        await db.query(`UPDATE public.frequenze SET origine = 'recupero' WHERE id = $1`, [f])
-        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
       })
-    })
 
-    // Lo specchio scrive `recupero` anche per ogni bambino nuovo, con `data_ingresso` il giorno vero: non è una stima.
-    describe('un recupero con la data vera', () => {
-      prova('data_ingresso uguale al giorno di creata_il è una data vera: vede da lì', async () => {
+      prova('nata il 07/11 alle 23:30 di Roma è del riempimento', async () => {
         await inRollback(async () => {
           await frequenza({
-            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T10:00:00+02:00',
+            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-11-07T23:30:00+01:00',
+          })
+          const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+        })
+      })
+
+      prova('nata l’08/11 alle 00:30 di Roma non lo è, anche se in UTC è ancora il 07/11', async () => {
+        await inRollback(async () => {
+          // Le sessioni di produzione sono in UTC; PGlite prende il fuso della macchina, e un `::date` qui non si vedrebbe.
+          await db.exec(`SET LOCAL TimeZone = 'UTC'`)
+          await frequenza({
+            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-11-08T00:30:00+01:00',
           })
           await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
           const dallIngresso = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-15' })
@@ -615,27 +630,79 @@ describe('media_visibili_genitore', () => {
         })
       })
 
-      prova('il giorno di creata_il è quello di Roma, non quello UTC', async () => {
+      prova('limite dichiarato: una correzione della segreteria su una riga del riempimento non sposta il confine', async () => {
         await inRollback(async () => {
-          // Il 15/10 alle 22:30 UTC a Roma è già il 16: l'ingresso del 15 è precedente, quindi è una stima.
-          await frequenza({
-            alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T22:30:00Z',
-          })
-          const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
-          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+          const f = await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+          const primoGiorno = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-09-01' })
+          await db.query(`UPDATE public.frequenze SET data_ingresso = '2026-10-20' WHERE id = $1`, [f])
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([primoGiorno])
+        })
+      })
+    })
+
+    // Lo specchio scrive `recupero` anche per ogni bambino nuovo e per il trasferito nella sede nuova, e la segreteria può
+    // scegliere o correggere la data: dopo il riempimento `data_ingresso` è sempre vera, anche se è prima di `creata_il`.
+    describe('un recupero nato dopo il riempimento', () => {
+      prova('una data scelta all’indietro vale per quello che dice', async () => {
+        await inRollback(async () => {
+          await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-11-01', creataIl: NATA_ORA })
+          await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-31' })
+          await foto({ broadcast: true, giorno: '2026-10-31' })
+          const dallIngresso = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-11-01' })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([dallIngresso])
+        })
+      })
+
+      prova('una data spostata di un giorno sposta il confine di un giorno solo', async () => {
+        await inRollback(async () => {
+          const { ieri, oggi } = await giorni()
+          const f = await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: oggi, creataIl: NATA_ORA })
+          await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-10' })
+          const diIeri = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: ieri })
+          const diOggi = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: oggi })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([diOggi])
+          await db.query(`UPDATE public.frequenze SET data_ingresso = $2 WHERE id = $1`, [f, ieri])
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual(ordinate(diIeri, diOggi))
         })
       })
 
       prova('nella catena vale la stessa regola: la conferma vede dalla data vera del recupero', async () => {
         await inRollback(async () => {
           const oggi = await passaAl2027()
-          const recupero = await frequenza({
-            alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-10-15', creataIl: '2026-10-15T10:00:00+02:00',
-          })
+          const recupero = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-11-01', creataIl: NATA_ORA })
           await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2027], ingresso: oggi, continuaDa: recupero })
-          await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-14' })
-          const dallIngresso = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-15' })
+          await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-31' })
+          const dallIngresso = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-11-01' })
           expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([dallIngresso])
+        })
+      })
+
+      // Lo specchio porta l'ingresso a `fine` quando l'anno è finito e la sede non è ancora passata.
+      prova('un bambino nato dopo la fine dell’anno, con la sede non ancora passata, non vede le foto di prima', async () => {
+        await inRollback(async () => {
+          const date = await db.query<{ fine: string; vecchia: string }>(
+            `SELECT (public.giorno_roma(now()) - 3)::text AS fine, (public.giorno_roma(now()) - 60)::text AS vecchia`)
+          const { fine, vecchia } = date.rows[0]
+          await db.query(
+            `UPDATE public.anni_sede
+                SET inizio = least(inizio, $2::date - 90), fine = $2, ultimo_giorno_aperto = $2, prepara_successivo_dal = $2
+              WHERE id = $1`, [ANNO_2627, fine])
+          const nuovo = '11111111-1111-4111-8111-11111111111c'
+          const genitore = '99999999-9999-4999-8999-99999999999b'
+          await db.query(`INSERT INTO public.alunni (id, scuola_id, section_id) VALUES ($1, $2, $3)`, [nuovo, SEDE, SEZ_1])
+          await db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [genitore, nuovo])
+          const nata = await db.query<{ origine: string; ingresso: string }>(
+            `SELECT origine, data_ingresso::text AS ingresso FROM public.frequenze WHERE alunno_id = $1`, [nuovo])
+          expect(nata.rows).toEqual([{ origine: 'recupero', ingresso: fine }])
+
+          await storico(nuovo, SEZ_1, vecchia)
+          await foto({ tag: [nuovo], giorno: vecchia })
+          await foto({ broadcast: true, giorno: vecchia })
+          await foto({ target: [SEZ_1], giorno: vecchia })
+          expect(await coppieDi(genitore)).toEqual([])
+
+          const dallIngresso = await foto({ tag: [nuovo], giorno: fine })
+          expect(await coppieDi(genitore)).toEqual([{ media_id: dallIngresso, alunno_id: nuovo }])
         })
       })
 

@@ -818,5 +818,11 @@
   "erroreCalendarioNonContinuo": "A location’s school years must follow one another with no gaps or overlaps.",
   "erroreGiornoSenzaAnno": "No school year covers this day: please contact support.",
   "erroreAnnoNonVisibile": "This school year is not available to you yet.",
-  "erroreAnnoNonAccessibile": "This school year is not available for this location."
+  "erroreAnnoNonAccessibile": "This school year is not available for this location.",
+  "erroreAnnoNonTrovato": "This school year no longer exists. Refresh the page.",
+  "erroreAnnoInChiusura": "The year is closing: the last open day can no longer be changed.",
+  "erroreDateNonValide": "The chosen dates are not valid for this school year.",
+  "errorePrerequisitiMancanti": "Some details are still missing before enrolment can open: check the year’s fees and forms.",
+  "erroreParametroMancante": "A required value is missing. Check and try again.",
+  "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly."
 }

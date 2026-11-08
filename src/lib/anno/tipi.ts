@@ -61,6 +61,13 @@ export const CODICI_ANNO = [
   'ANNO_NON_VISIBILE',
   'ANNO_NON_ACCESSIBILE',
   'MOTIVO_OBBLIGATORIO',
+  // PR 4.2: le funzioni delle impostazioni di sede (anno_impostazioni_sede.sql).
+  'ANNO_NON_TROVATO',
+  'ANNO_IN_CHIUSURA',
+  'DATE_NON_VALIDE',
+  'STATO_NON_AMMESSO',
+  'PREREQUISITI_MANCANTI',
+  'PARAMETRO_MANCANTE',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]

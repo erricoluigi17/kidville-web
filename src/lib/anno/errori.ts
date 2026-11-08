@@ -51,9 +51,16 @@ function avvisaRifiuto(codice: string, operazione: string | undefined): void {
   logEvento('anno-scolastico', 'warn', campi)
 }
 
+/**
+ * `dettagli` (opzionale): campi in più per il corpo della risposta, accanto a `error` e `codice`
+ * (il motivo di `DATE_NON_VALIDE`, l'elenco di `PREREQUISITI_MANCANTI`, i conteggi di
+ * `CONFINE_CON_RIGHE`). Li compone la route che ha letto il `DETAIL` (`impostazioni.ts`): qui non si
+ * legge niente dal database. `error` e `codice` non si sovrascrivono mai.
+ */
 export function erroreAnno(
   error: { code?: string; message?: string } | null | undefined,
   operazione?: string,
+  dettagli?: Record<string, unknown>,
 ): NextResponse | null {
   switch (codiceDa(error)) {
     case 'ANNO_CHIUSO':
@@ -66,8 +73,9 @@ export function erroreAnno(
         { status: 409 },
       )
     case 'CONFINE_CON_RIGHE':
+      // I conteggi per tabella (non le righe) li aggiunge `impostazioni.ts` in `dettagli`.
       return NextResponse.json(
-        { error: frase('CONFINE_CON_RIGHE'), codice: 'CONFINE_CON_RIGHE' },
+        { ...dettagli, error: frase('CONFINE_CON_RIGHE'), codice: 'CONFINE_CON_RIGHE' },
         { status: 409 },
       )
     case 'SEZIONE_DI_ALTRO_ANNO':
@@ -92,7 +100,7 @@ export function erroreAnno(
       )
     case 'CONFINE_NON_VALIDO':
       return NextResponse.json(
-        { error: frase('CONFINE_NON_VALIDO'), codice: 'CONFINE_NON_VALIDO' },
+        { ...dettagli, error: frase('CONFINE_NON_VALIDO'), codice: 'CONFINE_NON_VALIDO' },
         { status: 422 },
       )
     case 'CALENDARIO_NON_CONTINUO':
@@ -121,6 +129,42 @@ export function erroreAnno(
       return NextResponse.json(
         { error: frase('ANNO_NON_ACCESSIBILE'), codice: 'ANNO_NON_ACCESSIBILE' },
         { status: 403 },
+      )
+    // ── Le impostazioni di sede (PR 4.2): le sollevano le funzioni di `anno_impostazioni_sede.sql`.
+    case 'ANNO_NON_TROVATO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANNO_NON_TROVATO'), codice: 'ANNO_NON_TROVATO' },
+        { status: 404 },
+      )
+    case 'ANNO_IN_CHIUSURA':
+      // L'ultimo giorno aperto di un anno in chiusura è passato: non si cambia più.
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANNO_IN_CHIUSURA'), codice: 'ANNO_IN_CHIUSURA' },
+        { status: 409 },
+      )
+    case 'DATE_NON_VALIDE':
+      // Il motivo in codice (`fuori_periodo`, `ultimo_giorno_nel_passato`) arriva in `dettagli`.
+      return NextResponse.json(
+        { ...dettagli, error: frase('DATE_NON_VALIDE'), codice: 'DATE_NON_VALIDE' },
+        { status: 422 },
+      )
+    case 'STATO_NON_AMMESSO':
+      // La frase è quella del CRM («non è possibile nello stato attuale»): vale anche per un anno.
+      return NextResponse.json(
+        { ...dettagli, error: frase('STATO_NON_AMMESSO'), codice: 'STATO_NON_AMMESSO' },
+        { status: 409 },
+      )
+    case 'PREREQUISITI_MANCANTI':
+      // `dettagli.mancano`: l'elenco di ciò che manca, nell'ordine del database.
+      return NextResponse.json(
+        { ...dettagli, error: frase('PREREQUISITI_MANCANTI'), codice: 'PREREQUISITI_MANCANTI' },
+        { status: 409 },
+      )
+    case 'PARAMETRO_MANCANTE':
+      // Un valore NULL che la route avrebbe dovuto impedire (zod): qui è un errore di chi chiama.
+      return NextResponse.json(
+        { ...dettagli, error: frase('PARAMETRO_MANCANTE'), codice: 'PARAMETRO_MANCANTE' },
+        { status: 400 },
       )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
@@ -160,13 +204,4 @@ export const CODICI_INTERNI = [
   'TABELLA_NON_NEL_RIEMPIMENTO', // 20261107012110_anno_strumenti.sql
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
-  // PR 4.2, compito 4.2.2 (20261108052944_anno_impostazioni_sede.sql): finché la route delle impostazioni (compito
-  // 4.2.4) non li traduce in risposte HTTP stanno qui; il 4.2.4 li SPOSTA nel switch di `erroreAnno` (o li lascia qui
-  // se la route li gestisce da sé, come `PREREQUISITI_MANCANTI` che porta il DETAIL).
-  'ANNO_NON_TROVATO',
-  'ANNO_IN_CHIUSURA',
-  'DATE_NON_VALIDE',
-  'STATO_NON_AMMESSO',
-  'PREREQUISITI_MANCANTI',
-  'PARAMETRO_MANCANTE',
 ] as const

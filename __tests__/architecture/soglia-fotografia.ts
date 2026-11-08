@@ -400,8 +400,13 @@ export function posterioriCheContengono(
 // dentro la PR e la applica l'integrazione al merge, ma NON e' dichiarata qui: lo SQL non contiene nessun UNIQUE o PRIMARY KEY, nessuna
 // policy ne' RLS, nessun add/drop constraint ne' FK verso `utenti`, quindi nessuna delle tre guardie la segnalerebbe e il lock
 // «nessuna voce morta» (prova 5) rifiuta una dichiarazione che non serve. Aggiunge funzioni, una colonna di `anno_regole`
-// (`specchio_frequenze_attivo`), trigger e la riga 8 di `anno_invarianti`: le fotografie del catalogo non cambiano, salvo il registro
-// delle migrazioni (+1 riga), che la PR-B rigenera dalla produzione dopo il merge. L'elenco resta vuoto.
+// (`specchio_frequenze_attivo`), trigger, la riga 8 di `anno_invarianti` e l'estensione dell'invariante 11. Cambia davvero, e la PR-B
+// la rigenera dalla produzione dopo il merge: (1) il registro delle migrazioni (+1 riga); (2) la fotografia delle funzioni che scrivono
+// nel registro (`funzioni-scrivono-registro.json`): `frequenza_segue_classe_alunno` fa `UPDATE public.frequenze` e `frequenze` e' in
+// `anno_tabelle`, quindi entra; le altre funzioni nuove non scrivono tabelle di `anno_tabelle` (`alunni_riallinea_da_frequenze` scrive
+// `alunni`, che non c'e'; `frequenze_specchio_alunni` e' esclusa dal nome; `propaga_rinomina_sezione` e `fn_form_submission_etl`
+// restano come sono). La PR-B aggiorna allora `FUNZIONI_ATTESE` in `funzioni-registro-fotografia.test.ts` e il `minimo` in
+// `anno-scrittura-coverage.test.ts`. L'elenco resta vuoto.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

@@ -824,5 +824,15 @@
   "erroreDateNonValide": "Le date scelte non sono valide per questo anno scolastico.",
   "errorePrerequisitiMancanti": "Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.",
   "erroreParametroMancante": "Manca un dato richiesto. Controlla e riprova.",
-  "erroreCalendarioNonDisponibile": "Le impostazioni dell’anno scolastico non sono ancora disponibili. Riprova fra poco."
+  "erroreCalendarioNonDisponibile": "Le impostazioni dell’anno scolastico non sono ancora disponibili. Riprova fra poco.",
+  "annoSelettoreAria": "Cambia anno scolastico",
+  "annoOgniSede": "Anno in corso",
+  "annoStatoInCorso": "in corso",
+  "annoStatoInChiusura": "in chiusura",
+  "annoStatoIscrizioniAperte": "iscrizioni aperte",
+  "annoStatoInPreparazione": "in preparazione",
+  "annoStatoChiuso": "chiuso",
+  "annoAvvisoTesto": "Stai guardando il {anno} ({stato}), non l’anno in corso",
+  "annoAvvisoChiusoDettaglio": "chiuso: le modifiche si registrano come correzione",
+  "annoAvvisoTorna": "Torna all’anno in corso"
 }

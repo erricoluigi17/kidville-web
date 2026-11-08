@@ -200,9 +200,18 @@ let trattieni = false
 const appese: Array<() => void> = []
 const rilascia = (i: number) => appese[i]()
 
+/** Il calendario che la rete finta serve a `/api/anno/calendario` (null = nessuno: la risposta generica). */
+let calendarioServito: unknown = null
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
     chiamate.push(url)
+    if (url.startsWith('/api/anno/calendario') && calendarioServito) {
+        return {
+            ok: true, status: 200,
+            json: async () => ({ success: true, data: calendarioServito }),
+        } as unknown as Response
+    }
     if (url.includes('/api/primaria/compiti')) {
         const fotografia = coda.length > 0 ? (coda.shift() as Risposta) : { ...risposta }
         const res = {
@@ -246,6 +255,7 @@ beforeEach(() => {
     trattieni = false
     appese.length = 0
     coda = []
+    calendarioServito = null
     stub.params = { sectionId: SEZIONE }
     stub.search = new URLSearchParams(`userId=${DOCENTE}`)
     rispondiCon([])
@@ -260,6 +270,7 @@ afterEach(() => {
     vi.useRealTimers()
 })
 
+import { CalendarioProvider } from '@/lib/context/calendario-context'
 import CompitiPage from '@/app/(dashboard)/teacher/primaria/[sectionId]/compiti/page'
 import { ClasseShell } from '@/components/features/primaria/ClasseShell'
 
@@ -536,6 +547,35 @@ describe('classe · linguetta «Compiti»', () => {
                 `anno=${daAnno}, 90 giorni=${da90}.`,
         ).toBe(true)
         expect(daAnno, 'l’anno scolastico 2026/2027 apre il 1° settembre 2026').toBe('2026-09-01')
+    })
+
+    it('(8-bis) con il calendario della sede, «Anno scolastico» chiede la data d’inizio di QUEL calendario, non il 1° settembre', async () => {
+        // Il 18/09/2026 il predefinito darebbe 2026-09-01 (DA_ANNO). Questa sede comincia il 2026/27 il 17 agosto:
+        // la pagina deve far arrivare il suo calendario alla funzione (se passasse `undefined` uscirebbe DA_ANNO).
+        calendarioServito = [
+            {
+                scuola_id: 'scu-1',
+                righe: [
+                    {
+                        annoId: 'a-2026', annoSedeId: 's-2026', annoInizio: 2026, inizio: '2026-08-17', fine: '2027-08-31',
+                        ultimoGiornoAperto: '2027-07-15', preparaSuccessivoDal: '2027-03-01', stato: 'corrente',
+                        domandeAperte: false,
+                    },
+                ],
+            },
+        ]
+        render(<CalendarioProvider><CompitiPage /></CalendarioProvider>)
+        await waitFor(() => expect(chiamateCompiti()).toHaveLength(1))
+        // Si aspetta la PRESENZA dell'arrivo del calendario (la sua fetch), poi si lascia girare la catena
+        // promesse -> stato -> effetto che aggiorna il riferimento.
+        await waitFor(() => expect(chiamate.some((u) => u.startsWith('/api/anno/calendario'))).toBe(true))
+        await act(async () => {})
+        await act(async () => {})
+
+        fireEvent.click(screen.getByRole('button', { name: itShared.classeCompitiPeriodoAnno }))
+        await waitFor(() => expect(chiamateCompiti()).toHaveLength(2))
+        expect(dataDaDi(chiamateCompiti()[1])).toBe('2026-08-17')
+        expect(DA_ANNO).toBe('2026-09-01') // il predefinito che NON deve uscire
     })
 
     it('(9) il tetto vero: al 31 agosto di un anno BISESTILE il clamp ferma l’anno a 364 giorni', async () => {

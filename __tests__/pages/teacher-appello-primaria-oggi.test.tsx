@@ -107,12 +107,25 @@ describe('l’appello della primaria apre sul giorno civile italiano', () => {
             ultimoGiornoAperto: '2027-07-15', preparaSuccessivoDal: '2027-03-01', stato: 'corrente',
             domandeAperte: false,
         }
+        // DUE sedi nel provider: con una sola, `useCalendarioDi(null)` risponderebbe comunque quella e il test
+        // resterebbe verde anche se la pagina non passasse la sede della sezione. La sede 0 è PRIMA nell'elenco e
+        // ha un altro calendario (il suo 2026/27 comincia il 10 settembre): solo la sede della sezione dà il 17/08.
+        const riga0 = {
+            ...riga, annoId: 'a-2025-0', annoSedeId: 's-2025-0', annoInizio: 2025, inizio: '2025-09-01',
+            fine: '2026-09-09', stato: 'chiuso',
+        }
+        const riga0b = { ...riga, annoId: 'a-2026-0', annoSedeId: 's-2026-0', inizio: '2026-09-10' }
         fetchMock.mockImplementation(async (url: string) => ({
             ok: true,
             status: 200,
             json: async () => {
                 if (String(url).startsWith('/api/anno/calendario')) {
-                    return { data: [{ scuola_id: 'scu-1', righe: [riga] }] }
+                    return {
+                        data: [
+                            { scuola_id: 'scu-0', righe: [riga0, riga0b] },
+                            { scuola_id: 'scu-1', righe: [riga] },
+                        ],
+                    }
                 }
                 if (String(url).startsWith('/api/primaria/classe/')) {
                     return { success: true, data: { section: { scuola_id: 'scu-1' }, alunni: [] } }

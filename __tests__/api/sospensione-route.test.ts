@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: h.assertAlunnoInScope }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
+  createAdminClient: async () => (await import('../helpers/anno-regole-assente')).conSchemaIndietro({
     from: () => ({ update: (row: Record<string, unknown>) => ({ eq: async () => { h.updates.push({ row }); return { error: null } } }) }),
   }),
 }))

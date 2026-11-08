@@ -14,6 +14,7 @@ import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/component
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { leggiEsitoLotto } from '@/lib/ui/esito-lotto';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
@@ -461,10 +462,15 @@ function AdminStudentsInner() {
       });
       if (!res.ok) throw new Error('Errore bulk assign');
 
-      showToastMsg(`✅ ${t('toastAssegnati', { n: selectedIds.size, classe: targetClass })}`);
+      // 200 non vuol dire «tutti»: la route conta le righe scritte (`updated`) ed elenca quelle rimaste indietro (`errori`).
+      const esito = await leggiEsitoLotto(res, selectedIds);
+      showToastMsg(esito.parziale
+        ? `⚠️ ${t('toastAssegnatiParziale', { n: esito.riusciti, m: esito.totale, classe: targetClass })}`
+        : `✅ ${t('toastAssegnati', { n: esito.riusciti, classe: targetClass })}`);
       fetchStudents();
-      setSelectedIds(new Set());
-      setTargetClass('');
+      // Restano selezionati quelli non riusciti: basta rilanciare per completare.
+      setSelectedIds(esito.parziale ? esito.rimasti : new Set());
+      if (!esito.parziale) setTargetClass('');
     } catch (err) {
       // Il nome della classe di destinazione NON entra nel log: è un dato di
       // contesto scolastico, e il messaggio è testo libero (nessuna whitelist lo guarda).
@@ -491,10 +497,13 @@ function AdminStudentsInner() {
       });
       if (!res.ok) throw new Error('Errore bulk mensa');
       const grp = mensaGroups.find(g => g.id === targetMensa);
-      showToastMsg(`✅ ${t('toastAssegnatiMensa', { n: selectedIds.size, nome: grp?.nome ?? '' })}`);
+      const esito = await leggiEsitoLotto(res, selectedIds);
+      showToastMsg(esito.parziale
+        ? `⚠️ ${t('toastAssegnatiMensaParziale', { n: esito.riusciti, m: esito.totale, nome: grp?.nome ?? '' })}`
+        : `✅ ${t('toastAssegnatiMensa', { n: esito.riusciti, nome: grp?.nome ?? '' })}`);
       fetchStudents();
-      setSelectedIds(new Set());
-      setTargetMensa('');
+      setSelectedIds(esito.parziale ? esito.rimasti : new Set());
+      if (!esito.parziale) setTargetMensa('');
     } catch (err) {
       logClient({
         livello: 'error',

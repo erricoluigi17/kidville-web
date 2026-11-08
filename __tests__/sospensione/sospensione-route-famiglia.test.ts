@@ -20,7 +20,7 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ getFigliDiGenitore: h.getFigli }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
 vi.mock('@/lib/supabase/server-client', () => ({
-  createAdminClient: async () => ({
+  createAdminClient: async () => (await import('../helpers/anno-regole-assente')).conSchemaIndietro({
     from: () => {
       const b: Record<string, unknown> = {}
       b.select = () => b

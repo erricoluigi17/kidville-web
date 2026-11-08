@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ricordaIntestatarioSullaScheda, ricordaPersonaSullaScheda } from '@/lib/pagamenti/intestatari'
+import { conSchemaIndietro } from '../../helpers/anno-regole-assente'
 
 /**
  * ─── «RICORDA CHI HA PAGATO» — la scrittura più delicata di tutto il lotto ───
@@ -42,7 +43,7 @@ function clientFinto(risposta: { data?: unknown[] | null; error?: unknown }) {
     select: (cols: string) => { visto.select = cols; return Promise.resolve({ data: risposta.data ?? null, error: risposta.error ?? null }) },
   }
   const from = vi.fn((tabella: string) => { visto.from = tabella; return catena })
-  return { supabase: { from } as unknown as SupabaseClient, visto, from }
+  return { supabase: conSchemaIndietro({ from } as unknown as SupabaseClient), visto, from }
 }
 
 describe('ricordaIntestatarioSullaScheda', () => {
@@ -129,7 +130,7 @@ function clientConLettura(risposte: {
     }
     return catena
   })
-  return { supabase: { from } as unknown as SupabaseClient, catene }
+  return { supabase: conSchemaIndietro({ from } as unknown as SupabaseClient), catene }
 }
 
 const DATI = {

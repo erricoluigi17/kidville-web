@@ -406,7 +406,7 @@ export function posterioriCheContengono(
 // `anno_tabelle`, quindi entra; le altre funzioni nuove non scrivono tabelle di `anno_tabelle` (`alunni_riallinea_da_frequenze` scrive
 // `alunni`, che non c'e'; `frequenze_specchio_alunni` e' esclusa dal nome; `propaga_rinomina_sezione` e `fn_form_submission_etl`
 // restano come sono). La PR-B aggiorna allora `FUNZIONI_ATTESE` in `funzioni-registro-fotografia.test.ts` e il `minimo` in
-// `anno-scrittura-coverage.test.ts`. L'elenco resta vuoto.
+// `anno-scrittura-coverage.test.ts`. (Ondata di correzioni: `sezioni_docente_anno_attivo` e' stata tolta dalla migrazione; non scriveva nel registro, quindi il conto delle funzioni che lo scrivono non cambia.) L'elenco resta vuoto.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

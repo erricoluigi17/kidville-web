@@ -307,11 +307,12 @@ async function contattoLegittimo(
   }
   if (sedePerSezione.size === 0) return { ok: false }
 
-  // Sul PRESENTE: valgono solo le sezioni dell'anno attivo (non quelle in sola lettura né quelle future).
-  // Un guasto di lettura resta `ok:false` (la riga `error` la scrive `sezioniVisibiliConEsito`).
+  // Il ponte passa dalla sezione del BAMBINO, che è sempre dell'anno attivo: una sezione passata (in sola lettura, anno
+  // in chiusura o chiuso) non può combaciare. Quindi niente filtro sulle «scrivibili»: da agosto, con l'anno in chiusura,
+  // la famiglia deve poter ancora segnalare alla maestra del figlio. Un guasto di lettura resta `ok:false` (la riga `error` la scrive `sezioniVisibiliConEsito`).
   const visibili = await sezioniVisibiliConEsito(supabase, teacherId)
   if (!visibili.ok) return { ok: false }
-  const inComune = visibili.sezioni.find((s) => !s.solaLettura && sedePerSezione.has(s.sectionId))
+  const inComune = visibili.sezioni.find((s) => sedePerSezione.has(s.sectionId))
   if (!inComune) return { ok: false }
   return { ok: true, scuolaId: sedePerSezione.get(inComune.sectionId) ?? null }
 }

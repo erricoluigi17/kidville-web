@@ -685,6 +685,11 @@ BEGIN
 END
 $mig$;
 
+-- ⚠️ L'INTERRUTTORE SPENTO NON È LA FASE A. Questa migrazione toglie `trg_alunni_specchio_frequenza` (la copia
+-- alunni → frequenze) e crea `trg_frequenze_specchio_alunni` e `trg_alunni_specchio_frequenza_sede`: con l'interruttore
+-- a `false` NESSUNO dei due copia, e quindi nessuna direzione è coperta. Il vero ritorno indietro è ricreare
+-- `trg_alunni_specchio_frequenza` (la definizione sta nella migrazione che l'ha creata) e togliere i due trigger nuovi,
+-- dall'editor SQL (il freno SQL nega DROP e DISABLE TRIGGER da qui). Vedi il PRD, voce «Sezioni e docenti per anno, fase B».
 ALTER TABLE IF EXISTS public.anno_regole
   ADD COLUMN IF NOT EXISTS specchio_frequenze_attivo boolean NOT NULL DEFAULT true;
 
@@ -719,6 +724,10 @@ DECLARE
 BEGIN
   SELECT to_jsonb(a) INTO v_cur FROM public.alunni a WHERE a.id = p_alunno;
   IF v_cur IS NULL OR (v_cur ->> 'scuola_id') IS NULL THEN
+    RETURN;
+  END IF;
+  -- Una scheda anonimizzata (diritto all'oblio) non si riempie di nuovo: la copia dalla frequenza non riporta niente.
+  IF (v_cur ->> 'anonimizzato_il') IS NOT NULL THEN
     RETURN;
   END IF;
 
@@ -768,6 +777,13 @@ BEGIN
     'sospeso_il', v_f -> 'sospeso_il',
     'sospeso_da', v_f -> 'sospeso_da',
     'usa_pannolino', v_f -> 'usa_pannolino');
+
+  -- Senza una sezione né sulla frequenza né sulla scheda il NOME di classe non si tocca: il testo scritto a mano (o un
+  -- nome che nella sede non risolve) non deve sparire solo perché la frequenza non ha una sezione. Se la sezione c'era
+  -- e viene svuotata, invece, il nome segue (v_f section_id NULL ma v_cur section_id valorizzato).
+  IF (v_f ->> 'section_id') IS NULL AND (v_cur ->> 'section_id') IS NULL THEN
+    v_t := v_t - 'classe_sezione';
+  END IF;
 
   -- solo le colonne che alunni ha davvero e che cambiano
   SELECT jsonb_object_agg(e.k, e.v) INTO v_patch
@@ -875,7 +891,8 @@ BEGIN
   END IF;
 
   BEGIN
-    -- Fase A (interruttore spento): è ancora `alunni` a comandare e il suo trigger copia la sezione da solo.
+    -- Interruttore spento: NON è la fase A (`trg_alunni_specchio_frequenza` non c'è più, e nessun trigger copia più la
+    -- sezione di `alunni` sulla frequenza): qui semplicemente non si copia. Il vero ritorno indietro è nel PRD.
     SELECT r.specchio_frequenze_attivo INTO v_attivo FROM public.anno_regole r;
     IF NOT coalesce(v_attivo, false) THEN
       RETURN;

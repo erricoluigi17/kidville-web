@@ -41,7 +41,7 @@ export const ECCEZIONI: Record<string, string> = {}
  */
 export const HELPER_CONDIVISI: Record<string, string> = {
   'lib/sezioni/risoluzione.ts':
-    'risolviSezione serve letture e scritture (modulistica e certificati del fascicolo): il docente di un anno passato le scrive come prima, finché non arriva la guardia DB della 3-B',
+    'risolviSezione serve le sole GET (modulistica, certificati, registro, diario, armadietti: lo si legge dai chiamanti, nessuna POST/PATCH/DELETE la usa): una lettura di un anno passato resta lecita, e le scritture passano da assertSezioneScrivibile',
 }
 
 /**

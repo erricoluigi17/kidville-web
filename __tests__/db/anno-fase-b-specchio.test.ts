@@ -394,3 +394,34 @@ describe('giro di correzione 1', () => {
     })
   })
 })
+
+describe('giro di correzione 2 (ondata 4.3)', () => {
+  prova('punto 4 · un nome di classe che non risolve in una sezione NON viene azzerato dalla copia', async () => {
+    await inRollback(async () => {
+      // la sezione non c'è: il trigger che risolve il nome lascia section_id NULL, e il testo scritto resta
+      await nuovoAlunno(AL, { sezione: null, nome: 'Classe Inesistente' })
+      const a = await alunno()
+      expect(a.section_id).toBeNull()
+      expect(a.classe_sezione).toBe('Classe Inesistente')
+      // una scrittura successiva della frequenza (la retta) non deve portarsi via il testo
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 410 WHERE alunno_id = $1`, [AL])
+      const dopo = await alunno()
+      expect(dopo.classe_sezione).toBe('Classe Inesistente')
+      expect(dopo.section_id).toBeNull()
+      expect(dopo.importo_retta_mensile).toBe(410)
+      expect(await invariante11()).toBe(0)
+    })
+  })
+
+  prova('punto 9 · una scheda anonimizzata non riceve niente dalla frequenza', async () => {
+    await inRollback(async () => {
+      await db.exec(`ALTER TABLE public.alunni ADD COLUMN IF NOT EXISTS anonimizzato_il timestamptz`)
+      await nuovoAlunno()
+      await db.query(`UPDATE public.alunni SET anonimizzato_il = now() WHERE id = $1`, [AL])
+      const prima = await alunno()
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 999, section_id = $2 WHERE alunno_id = $1`, [AL, SEZ_B])
+      expect(await alunno()).toEqual(prima)
+    })
+  })
+})
+

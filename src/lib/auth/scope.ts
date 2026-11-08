@@ -803,7 +803,8 @@ export function vedeTutteLeClassi(user: AppUser): boolean {
  *
  * Ritorna `null` per chi vede tutte le classi del proprio plesso (admin,
  * coordinator, segreteria): nessuna restrizione oltre alla sede. Per l'`educator`
- * ritorna le sole sezioni assegnate in `utenti_sezioni` — decisione di prodotto
+ * ritorna le sole sezioni assegnate con una riga DIRETTA in `utenti_sezioni` (quelle per materia non contano, e la funzione
+ * `sezioni_visibili_docente` le legge dalla stessa tabella; un anno non attivo ci entra in sola lettura) — decisione di prodotto
  * del 2026-07-30, presa dal titolare: 9 educator su 10 le hanno già assegnate.
  *
  * Fail-closed: un educator senza sezioni assegnate riceve `[]`, cioè un elenco
@@ -828,7 +829,8 @@ export async function sezioniVisibili(
 
 /**
  * Verifica che `sectionId` sia nello scope dell'utente. Per `educator` richiede
- * anche che la sezione sia assegnata (utenti_sezioni). 403/404 se fuori scope.
+ * anche che la sezione sia assegnata con una riga diretta in `utenti_sezioni` (la regola di `sezioni_visibili_docente`).
+ * 403/404 se fuori scope.
  */
 export async function assertSezioneInScope(
   supabase: SupabaseClient,

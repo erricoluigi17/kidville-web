@@ -360,9 +360,17 @@ describe('POST /api/segnalazioni — inserimento e notifica', () => {
       expect(h.inserted.segnalazioni).toBeUndefined()
     })
 
-    it('una sezione in sola lettura (anno passato) NON passa: il rapporto è sul presente', async () => {
+    it('anno IN CHIUSURA (la sezione del figlio torna in sola lettura): la famiglia può ancora segnalare alla maestra', async () => {
+      // da agosto l'anno attivo è `in_chiusura` e la funzione restituisce le sue sezioni con sola_lettura = true: il
+      // controllo passa dalla sezione del BAMBINO (sempre dell'anno attivo), quindi una sezione passata non può combaciare
       senzaThread()
       h.rpcSezioni = { data: [{ section_id: SEC, sola_lettura: true }], error: null }
+      expect((await segnala()).status).toBe(201)
+    })
+
+    it('una sezione passata (non è quella del figlio) NON passa, in sola lettura o no', async () => {
+      senzaThread()
+      h.rpcSezioni = { data: [{ section_id: 'sez-di-un-altro-anno', sola_lettura: true }], error: null }
       expect((await segnala()).status).toBe(403)
     })
 

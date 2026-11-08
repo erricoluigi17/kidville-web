@@ -37,16 +37,27 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    from: () => {
+    from: (tabella: string) => {
       let sede = ''
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.order = () => b
+      b.in = () => b
       b.eq = (_c: string, v: string) => {
         sede = v
         return b
       }
       b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
+        if (tabella === 'anni_scolastici') {
+          // la seconda lettura (senza embed): { id, anno_inizio } dai join che le righe di prova portano ancora
+          const righe = Object.values(h.anni).flatMap((e) =>
+            ((e.data ?? []) as Array<{ anno_id: string; anni_scolastici: { anno_inizio: number } }>).map((r) => ({
+              id: r.anno_id,
+              anno_inizio: r.anni_scolastici.anno_inizio,
+            })),
+          )
+          return Promise.resolve({ data: righe, error: null }).then(res, rej)
+        }
         h.letture++
         return Promise.resolve(h.anni[sede] ?? { data: [], error: null }).then(res, rej)
       }

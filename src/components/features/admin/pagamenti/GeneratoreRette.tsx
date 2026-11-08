@@ -62,7 +62,11 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     const [annoScelto, setAnno] = useState<number | null>(null);
     const anno = annoScelto ?? annoProposto;
     const [previewMese, setPreviewMese] = useState<{ candidati: Candidato[]; gia_generati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
-    const [previewAnno, setPreviewAnno] = useState<{ mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
+    // L'anteprima dell'anno porta con sé l'anno per cui è stata calcolata (`annoAnteprima`): se nel frattempo l'anno proposto
+    // cambia (arriva il calendario della sede) quell'anteprima NON vale più per l'anno a schermo, sparisce e va rifatta.
+    // Così "Conferma" non manda mai un anno diverso da quello che l'anteprima ha contato. Stato derivato, nessun effetto.
+    const [previewAnnoGrezza, setPreviewAnno] = useState<{ annoAnteprima: number; mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
+    const previewAnno = previewAnnoGrezza && previewAnnoGrezza.annoAnteprima === anno ? previewAnnoGrezza : null;
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     /**
@@ -89,7 +93,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             const res = await fetch(`/api/pagamenti/genera-rette?userId=${userId}&${qs}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
             const j = await res.json();
             if (j.success) {
-                if (mode === 'anno') { setPreviewAnno(j.data); setPreviewMese(null); }
+                if (mode === 'anno') { setPreviewAnno({ ...j.data, annoAnteprima: anno }); setPreviewMese(null); }
                 else { setPreviewMese(j.data); setPreviewAnno(null); }
             }
         } finally { setLoading(false); }

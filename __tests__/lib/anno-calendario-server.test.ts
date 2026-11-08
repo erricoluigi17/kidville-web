@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
 
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { annoDellaFrequenza, annoDi, azzeraSegnalazioniFuoriCalendario, caricaCalendario } from '@/lib/anno/calendario'
+import { annoDellaFrequenza, annoDi, azzeraSegnalazioniFuoriCalendario, caricaCalendario, statoCalendario } from '@/lib/anno/calendario'
 
 /** PR 4.1 · COMPITO 4.1.2 · il calendario lato server: una lettura per richiesta, degrado, mai eccezioni. */
 const SEDE = '11111111-1111-4111-8111-111111111111'
@@ -54,14 +54,35 @@ const r27 = (over: Record<string, unknown> = {}) =>
     ...over,
   })
 
+/**
+ * Le righe di prova portano `anni_scolastici` (com'era l'embed): il finto le divide nelle due letture
+ * vere. `anni_sede` risponde senza quel campo; `anni_scolastici` risponde `{ id, anno_inizio }` a meno
+ * che il test non lo dia a mano. Un join null o storto non produce la riga (l'anno non torna).
+ */
+function esitoDi(risposte: Record<string, unknown>, tabella: string): Esito {
+  const dato = risposte[tabella] as Esito | undefined
+  const sede = risposte.anni_sede as Esito | undefined
+  if (tabella === 'anni_sede' && sede && Array.isArray(sede.data)) {
+    return { ...sede, data: sede.data.map((r) => ({ ...(r as object), anni_scolastici: undefined })) }
+  }
+  if (tabella === 'anni_scolastici' && !dato && sede && Array.isArray(sede.data)) {
+    const righe = (sede.data as Array<{ anno_id: string; anni_scolastici?: unknown }>).flatMap((r) => {
+      const j = Array.isArray(r.anni_scolastici) ? r.anni_scolastici[0] : r.anni_scolastici
+      return j && typeof j === 'object' ? [{ id: r.anno_id, anno_inizio: (j as { anno_inizio?: unknown }).anno_inizio }] : []
+    })
+    return { data: righe, error: null }
+  }
+  return dato ?? { data: [], error: null }
+}
+
 /** Client finto che registra le chiamate e risponde per tabella. */
-function cliente(risposte: { anni_sede?: Esito; frequenze?: Esito; lancia?: boolean }) {
+function cliente(risposte: { anni_sede?: Esito; anni_scolastici?: Esito; frequenze?: Esito; lancia?: boolean }) {
   const chiamate: Array<{ tabella: string; passi: Array<[string, unknown[]]> }> = []
   const from = vi.fn((tabella: string) => {
     if (risposte.lancia) throw new Error('rete')
     const reg = { tabella, passi: [] as Array<[string, unknown[]]> }
     chiamate.push(reg)
-    const esito = (risposte as Record<string, Esito | undefined>)[tabella] ?? { data: [], error: null }
+    const esito = esitoDi(risposte, tabella)
     const q: Record<string, unknown> = {}
     for (const m of ['select', 'eq', 'in', 'order']) {
       q[m] = (...a: unknown[]) => {
@@ -115,10 +136,25 @@ describe('cache per richiesta', () => {
     const f = cliente({ anni_sede: OK(r25()) })
     await caricaCalendario(f.c, SEDE)
     expect(f.chiamate[0].passi).toEqual([
-      ['select', ['id, anno_id, inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal, stato, domande_aperte, anni_scolastici(anno_inizio)']],
+      ['select', ['id, anno_id, inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal, stato, domande_aperte']],
       ['eq', ['scuola_id', SEDE]],
       ['order', ['inizio', { ascending: true }]],
     ])
+    // niente embed: nel DB della CI risponderebbe PGRST200, che non è «schema indietro»
+    expect(String(f.chiamate[0].passi[0][1][0])).not.toContain('(')
+    expect(f.chiamate[1].tabella).toBe('anni_scolastici')
+    expect(f.chiamate[1].passi).toEqual([
+      ['select', ['id, anno_inizio']],
+      ['in', ['id', [r25().anno_id]]],
+    ])
+    expect(lette(f, 'anni_scolastici')).toBe(1)
+  })
+
+  it('più chiamate sulla stessa sede: anche anni_scolastici si legge una volta sola', async () => {
+    const f = cliente({ anni_sede: OK(r25(), r26()) })
+    await Promise.all([annoDi(f.c, SEDE, '2026-01-10'), annoDi(f.c, SEDE, '2026-01-11')])
+    await annoDi(f.c, SEDE, '2026-01-12')
+    expect(lette(f, 'anni_scolastici')).toBe(1)
   })
 })
 
@@ -184,9 +220,47 @@ describe('caricaCalendario', () => {
       expect(info).toHaveLength(1)
       expect(info[0][1]).toBe('info')
       expect(info[0][2]).toMatchObject({ scuola_id: SEDE })
-      expect(logErrore).not.toHaveBeenCalled()
+      expect(errori()).toHaveLength(0)
     },
   )
+
+  it('anni_scolastici assente (PGRST205) → predefinito, una info, zero error', async () => {
+    const f = cliente({ anni_sede: OK(r25(), r26()), anni_scolastici: { data: null, error: { code: 'PGRST205' } } })
+    expect(await caricaCalendario(f.c, SEDE)).toBeNull()
+    expect(await caricaCalendario(f.c, SEDE)).toBeNull()
+    expect(errori()).toHaveLength(0)
+    const info = eventi('calendario-non-disponibile')
+    expect(info).toHaveLength(1)
+    expect(info[0][1]).toBe('info')
+    expect(await statoCalendario(f.c, SEDE)).toBe('non_disponibile')
+  })
+
+  it('anni_scolastici con un guasto vero → calendario-non-letto, un error con la sede', async () => {
+    const f = cliente({ anni_sede: OK(r25()), anni_scolastici: { data: null, error: { code: 'XX000' } } })
+    expect(await caricaCalendario(f.c, SEDE)).toBeNull()
+    expect(errori()).toHaveLength(1)
+    expect(errori()[0][2]).toMatchObject({ tipo: 'calendario-non-letto', scuola_id: SEDE })
+    expect(await statoCalendario(f.c, SEDE)).toBe('guasto')
+  })
+
+  it('PGRST200 su anni_sede (quello che darebbe un embed nel DB della CI) è un guasto, e la select non ha embed', async () => {
+    const f = cliente({ anni_sede: { data: null, error: { code: 'PGRST200', message: 'relationship' } } })
+    expect(await caricaCalendario(f.c, SEDE)).toBeNull()
+    expect(errori()).toHaveLength(1)
+    expect(errori()[0][2]).toMatchObject({ tipo: 'calendario-non-letto', scuola_id: SEDE })
+    expect(String(f.chiamate[0].passi[0][1][0])).not.toContain('(')
+    expect(lette(f, 'anni_scolastici')).toBe(0)
+  })
+
+  it('una riga di anni_sede il cui anno_id non torna da anni_scolastici si scarta con il warn', async () => {
+    const f = cliente({
+      anni_sede: OK(r25(), r26()),
+      anni_scolastici: { data: [{ id: r25().anno_id, anno_inizio: 2025 }], error: null },
+    })
+    const cal = await caricaCalendario(f.c, SEDE)
+    expect(cal?.map((r) => r.annoInizio)).toEqual([2025])
+    expect(eventi('calendario-riga-scartata')[0][2]).toMatchObject({ scuola_id: SEDE, scartate: 1 })
+  })
 
   it('un altro errore → predefinito e un logErrore', async () => {
     const f = cliente({ anni_sede: { data: null, error: { code: 'XX000', message: 'boom' } } })
@@ -306,7 +380,7 @@ describe('annoDellaFrequenza', () => {
     const info = eventi('frequenze-non-disponibili')
     expect(info).toHaveLength(1)
     expect(info[0][1]).toBe('info')
-    expect(logErrore).not.toHaveBeenCalled()
+    expect(errori()).toHaveLength(0)
   })
 
   it('altro errore sulle frequenze → ripiego e un logErrore', async () => {

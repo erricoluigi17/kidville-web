@@ -206,12 +206,20 @@ export default function AppelloPage() {
   // Carica lista alunni per il selettore riepilogo
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => {
+      .then(async (r) => {
+        if (!r.ok) {
+          // Solo il codice e l'uuid della sezione: mai il corpo, che porta i nomi dei bambini.
+          logClient({ livello: 'error', evento: 'fetch', messaggio: 'appello-primaria-classe-non-letta', route: '/teacher/primaria/appello', stato: r.status, campi: { section_id: sectionId } });
+          return;
+        }
+        const d = await r.json();
         if (d.success) {
           setAlunniList(d.data.alunni ?? []);
           setScuolaSezione(typeof d.data.section?.scuola_id === 'string' ? d.data.section.scuola_id : null);
         }
+      })
+      .catch((err) => {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-classe-non-letta: ${nomeErrore(err)}`, route: '/teacher/primaria/appello', campi: { section_id: sectionId } });
       });
   }, [sectionId, userId]);
 

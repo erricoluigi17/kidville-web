@@ -164,9 +164,9 @@ describe('POST /api/admin/protocolli/genera-documento — l’anno scolastico di
         prepara_successivo_dal: '2032-03-01',
         stato: 'corrente',
         domande_aperte: false,
-        anni_scolastici: { anno_inizio: 2031 },
       },
     ]
+    h.db.anni_scolastici = [{ id: ANNO, anno_inizio: 2031 }]
     h.db.frequenze = [{ alunno_id: ALUNNO, scuola_id: SEDE, stato: 'iscritto', anno_sede_id: ANNO_SEDE }]
 
     expect(await testoDelDocumento()).toContain('2031/2032')

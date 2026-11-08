@@ -46,14 +46,17 @@ const anniSede = [
     id: 'bbbbbbbb-0000-0000-0000-000000002025', anno_id: ANNO_2025,
     inizio: '2025-09-01', fine: '2026-08-31', ultimo_giorno_aperto: '2026-07-31',
     prepara_successivo_dal: '2026-05-01', stato: 'chiuso', domande_aperte: false,
-    anni_scolastici: { anno_inizio: 2025 },
   },
   {
     id: 'bbbbbbbb-0000-0000-0000-000000002026', anno_id: ANNO_2026,
     inizio: '2026-09-01', fine: '2027-08-31', ultimo_giorno_aperto: '2027-07-31',
     prepara_successivo_dal: '2027-05-01', stato: 'corrente', domande_aperte: false,
-    anni_scolastici: { anno_inizio: 2026 },
   },
+]
+/** L'`anno_inizio` di quegli anni: `anni_scolastici` si legge a parte, senza embed. */
+const anniScolastici = [
+  { id: ANNO_2025, anno_inizio: 2025 },
+  { id: ANNO_2026, anno_inizio: 2026 },
 ]
 
 let appLog: ReturnType<typeof vi.fn>
@@ -84,7 +87,18 @@ async function righeConEsito(esito: string): Promise<Riga[]> {
   return (await righe()).filter((r) => JSON.stringify(r).includes(esito))
 }
 
-function makeSupabase(responses: Record<string, unknown> & { rpc?: number; erroreAnnoId?: boolean }) {
+function makeSupabase(
+  responses: Record<string, unknown> & {
+    rpc?: number
+    erroreAnnoId?: boolean
+    /** Un errore PostgREST per tabella (`PGRST205` = la tabella non c'è, com'è nel DB della CI). */
+    errori?: Record<string, { code: string; message: string }>
+  },
+) {
+  const rispostaLista = (table: string) => {
+    const errore = responses.errori?.[table]
+    return errore ? { data: null, error: errore } : { data: responses[table] ?? [], error: null }
+  }
   const inserts: { table: string; row: unknown }[] = []
   /** Le liste di colonne chiesta a `pagamenti`, nell'ordine: serve a vedere la seconda lettura. */
   const selectPagamenti: string[] = []
@@ -99,7 +113,9 @@ function makeSupabase(responses: Record<string, unknown> & { rpc?: number; error
         },
         eq: () => builder,
         // il calendario della sede: `.select().eq().order()` e basta
-        order: async () => ({ data: responses[table] ?? [], error: null }),
+        order: async () => rispostaLista(table),
+        // …e `anni_scolastici` con `.select().in()`
+        in: async () => rispostaLista(table),
         single: async () => {
           if (table === 'pagamenti' && responses.erroreAnnoId && colonne.includes('anno_id')) {
             return { data: null, error: { code: '42703', message: 'column pagamenti.anno_id does not exist' } }
@@ -273,7 +289,7 @@ describe('l’anno della voce decide la serie', () => {
     vi.setSystemTime(NOVEMBRE)
     const { emettiFatturaPagamento } = await carica()
     const sb = makeSupabase({
-      pagamenti: voceDiMaggio, anni_sede: anniSede,
+      pagamenti: voceDiMaggio, anni_sede: anniSede, anni_scolastici: anniScolastici,
       admin_settings: settingsConfig, parents: parent, rpc: 50,
     })
 
@@ -290,7 +306,7 @@ describe('l’anno della voce decide la serie', () => {
     const { emettiFatturaPagamento } = await carica()
     const sb = makeSupabase({
       pagamenti: { ...voceDiMaggio, anno_id: 'cccccccc-0000-0000-0000-000000000000' },
-      anni_sede: anniSede, admin_settings: settingsConfig, parents: parent, rpc: 51,
+      anni_sede: anniSede, anni_scolastici: anniScolastici, admin_settings: settingsConfig, parents: parent, rpc: 51,
     })
 
     expect((await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })).ok).toBe(true)
@@ -306,6 +322,8 @@ describe('l’anno della voce decide la serie', () => {
     void _scartato
     const sb = makeSupabase({
       pagamenti: voceSenzaColonna, erroreAnnoId: true,
+      // com'è nel DB della CI: manca la colonna `anno_id` E manca il calendario
+      errori: { anni_sede: { code: 'PGRST205', message: 'Could not find the table' } },
       admin_settings: settingsConfig, parents: parent, rpc: 52,
     })
 
@@ -326,6 +344,17 @@ describe('l’anno della voce decide la serie', () => {
     const riga = sb._inserts.find((i) => i.table === 'fatture_emesse')!
     expect((riga.row as { sezionale: string }).sezionale).toBe('FPR')
     expect(await righeConEsito('anno-scolastico-da-data-documento')).toHaveLength(1)
+    // Zero righe `error` (né in `app_log` né su console), com'è nel DB della CI (manca la colonna E il calendario).
+    const tutte = await righe()
+    expect(tutte.filter((r) => r.livello === 'error')).toHaveLength(0)
+    const console_ = [...vi.mocked(console.log).mock.calls, ...vi.mocked(console.error).mock.calls].map((a) => String(a[0]))
+    expect(console_.filter((l) => l.startsWith('KV_ERR'))).toHaveLength(0)
+    // Le `info` del degrado sono DUE: `anno-della-voce-non-disponibile` (la colonna) e
+    // `calendario-non-disponibile` (la tabella). Più il `warn` `anno-scolastico-da-data-documento` (sopra).
+    const degrado = console_.filter((l) => l.startsWith('KV_EVT') && /non-disponibile/.test(l))
+    expect(degrado).toHaveLength(2)
+    expect(degrado.filter((l) => l.includes('esito=anno-della-voce-non-disponibile'))).toHaveLength(1)
+    expect(degrado.filter((l) => l.includes('tipo=calendario-non-disponibile'))).toHaveLength(1)
   })
 })
 

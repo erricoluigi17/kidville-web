@@ -58,9 +58,9 @@ const calendarioCorrente2031 = () => [
     prepara_successivo_dal: '2032-03-01',
     stato: 'corrente',
     domande_aperte: false,
-    anni_scolastici: { anno_inizio: 2031 },
   },
 ]
+const anniScolastici2031 = () => [{ id: ANNO, anno_inizio: 2031 }]
 
 async function annoDelPrefill(client: SupabaseClient, oggi: Date): Promise<string> {
   const esito = await caricaPrefillAlunno(new Request('http://localhost/x'), client, ALUNNO, { oggi })
@@ -84,6 +84,7 @@ describe('caricaPrefillAlunno — annoScolastico', () => {
     // 2031/2032 non lo produce nessun orologio di `oggi` (2026): arriva da frequenze → anni_sede.
     const d = db()
     d.anni_sede = calendarioCorrente2031()
+    d.anni_scolastici = anniScolastici2031()
     d.frequenze = [{ alunno_id: ALUNNO, scuola_id: SEDE, stato: 'iscritto', anno_sede_id: ANNO_SEDE }]
     expect(await annoDelPrefill(creaFintoSupabase(d), new Date('2026-10-10T10:00:00Z'))).toBe('2031/2032')
   })

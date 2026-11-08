@@ -301,11 +301,14 @@ describe('PUT …/quota · segnare la quota', () => {
       prepara_successivo_dal: inizio,
       stato: 'corrente',
       domande_aperte: false,
-      anni_scolastici: { anno_inizio: annoInizio },
     })
     h.db.anni_sede = [
       riga('as-2025', 2025, '2025-09-01', '2026-08-16'),
       riga('as-2026', 2026, '2026-08-17', '2027-08-31'),
+    ]
+    h.db.anni_scolastici = [
+      { id: 'anno-2025', anno_inizio: 2025 },
+      { id: 'anno-2026', anno_inizio: 2026 },
     ]
     segnaOk()
     await put(corpoValido({ metodo: 'bonifico' }), B_IN_CORSO)

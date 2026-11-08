@@ -73,19 +73,11 @@ type RigaDb = {
   prepara_successivo_dal?: unknown
   stato?: unknown
   domande_aperte?: unknown
-  anni_scolastici?: unknown
 }
 
 const data = (v: unknown): v is string => typeof v === 'string' && giornoValido(v)
 
-/** PostgREST può restituire il join come oggetto o come array di un elemento. */
-function annoInizioDelJoin(join: unknown): unknown {
-  const j = Array.isArray(join) ? join[0] : join
-  return j && typeof j === 'object' ? (j as { anno_inizio?: unknown }).anno_inizio : undefined
-}
-
-function inRigaCalendario(r: RigaDb): RigaCalendario | null {
-  const annoInizio = annoInizioDelJoin(r.anni_scolastici)
+function inRigaCalendario(r: RigaDb, annoInizio: unknown): RigaCalendario | null {
   if (
     typeof r.id !== 'string' ||
     typeof r.anno_id !== 'string' ||
@@ -113,36 +105,57 @@ function inRigaCalendario(r: RigaDb): RigaCalendario | null {
   }
 }
 
+/** Esito di una lettura: lo schema indietro e il guasto sono due cose diverse. */
+function esitoLettura(supabase: SupabaseClient, scuolaId: string, tabella: string, error: { code?: string }): void {
+  if (schemaAnnoIndietro(error)) {
+    annotaEsito(supabase, scuolaId, 'non_disponibile')
+    logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', scuola_id: scuolaId })
+  } else {
+    annotaEsito(supabase, scuolaId, 'guasto')
+    // solo il SQLSTATE: il messaggio non serve e non deve portare dati
+    erroreDiSede(
+      'anno/calendario:caricaCalendario',
+      'calendario-non-letto',
+      scuolaId,
+      new Error(`${tabella}:${error.code ?? 'senza-codice'}`),
+    )
+  }
+}
+
+// Due letture SEMPLICI e non un embed di `anni_scolastici` dentro la select: nel database non migrato della
+// CI un embed risponde `PGRST200`, che `schemaAnnoIndietro` non copre e che sarebbe un falso guasto.
+// Una tabella assente invece risponde `PGRST205`, coperto.
 async function leggi(supabase: SupabaseClient, scuolaId: string): Promise<Calendario | null> {
   try {
     const { data: righe, error } = await supabase
       .from('anni_sede')
-      .select(
-        'id, anno_id, inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal, stato, domande_aperte, anni_scolastici(anno_inizio)',
-      )
+      .select('id, anno_id, inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal, stato, domande_aperte')
       .eq('scuola_id', scuolaId)
       .order('inizio', { ascending: true })
     if (error) {
-      if (schemaAnnoIndietro(error)) {
-        annotaEsito(supabase, scuolaId, 'non_disponibile')
-        logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', scuola_id: scuolaId })
-      } else {
-        annotaEsito(supabase, scuolaId, 'guasto')
-        // solo il SQLSTATE: il messaggio non serve e non deve portare dati
-        erroreDiSede(
-          'anno/calendario:caricaCalendario',
-          'calendario-non-letto',
-          scuolaId,
-          new Error(`anni_sede:${error.code ?? 'senza-codice'}`),
-        )
-      }
+      esitoLettura(supabase, scuolaId, 'anni_sede', error)
       return null
     }
     const grezze = Array.isArray(righe) ? (righe as RigaDb[]) : []
+    const ids = [...new Set(grezze.map((g) => g.anno_id).filter((v): v is string => typeof v === 'string'))]
+    const annoInizioDi = new Map<string, unknown>()
+    if (ids.length > 0) {
+      const { data: anni, error: erroreAnni } = await supabase
+        .from('anni_scolastici')
+        .select('id, anno_inizio')
+        .in('id', ids)
+      if (erroreAnni) {
+        esitoLettura(supabase, scuolaId, 'anni_scolastici', erroreAnni)
+        return null
+      }
+      for (const a of Array.isArray(anni) ? (anni as Array<{ id?: unknown; anno_inizio?: unknown }>) : []) {
+        if (typeof a.id === 'string') annoInizioDi.set(a.id, a.anno_inizio)
+      }
+    }
     const buone: RigaCalendario[] = []
     let scartate = 0
     for (const g of grezze) {
-      const r = inRigaCalendario(g)
+      const r = inRigaCalendario(g, typeof g.anno_id === 'string' ? annoInizioDi.get(g.anno_id) : undefined)
       if (r) buone.push(r)
       else scartate++
     }

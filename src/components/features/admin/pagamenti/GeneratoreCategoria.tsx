@@ -48,7 +48,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [categoriaId, setCategoriaId] = useState('');
     const [descrizione, setDescrizione] = useState('');
     const [importo, setImporto] = useState<number>(0);
-    const [scadenza, setScadenza] = useState(() => new Date().toISOString().slice(0, 10));
+    const [scadenza, setScadenza] = useState(() => oggiFiscaleISO());
     const [obbligatorio, setObbligatorio] = useState(true);
     // La chiave anti-doppione proposta porta l'anno SCOLASTICO di oggi della sede (`annoInizio`), non
     // l'anno solare. Stato derivato: finché la segreteria non la scrive vale il proposto, e segue il
@@ -71,7 +71,11 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const erroreRete = t('gencErrRete');
     // Anteprima OBBLIGATORIA: si genera solo sui candidati mostrati; qualunque
     // modifica ai campi la invalida e riparte dall'anteprima.
-    const [anteprima, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number } | null>(null);
+    // L'anteprima porta la chiave anti-doppione con cui ha contato i «già generati» (`gruppo`): se la chiave proposta
+    // cambia (arriva il calendario) quell'anteprima non vale più, sparisce e va rifatta. Così la generazione non
+    // esclude con una chiave diversa da quella dell'anteprima. Stato derivato, nessun effetto.
+    const [anteprimaGrezza, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number; gruppo: string } | null>(null);
+    const anteprima = anteprimaGrezza && anteprimaGrezza.gruppo === gruppo.trim() ? anteprimaGrezza : null;
 
     // imposta categoria + suggerimenti di descrizione/gruppo coerenti
     const applyCategoria = useCallback((cat?: Categoria) => {
@@ -155,7 +159,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             // ristretti a chi è stato scelto: l'intersezione, non uno dei due.
             const scelti = new Set(alunniBersaglio(alunni, selezione).map((a) => a.id));
             const candidati = ((j.data.candidati || []) as { id: string }[]).filter((c) => scelti.has(c.id));
-            setAnteprima({ candidati, giaGenerati: j.data.gia_generati || 0 });
+            setAnteprima({ candidati, giaGenerati: j.data.gia_generati || 0, gruppo: gruppo.trim() });
         } catch {
             setError(t('gencErrRete'));
         } finally { setLoading(false); }

@@ -260,7 +260,6 @@ describe('statoQuadrimestre', () => {
       prepara_successivo_dal: inizio,
       stato: 'corrente',
       domande_aperte: false,
-      anni_scolastici: { anno_inizio: annoInizio },
     })
     // Senza calendario il 15 luglio è del 2026/2027, configurato: nessun periodo lo copre ma non è un guasto.
     db.anni_sede = []
@@ -269,6 +268,10 @@ describe('statoQuadrimestre', () => {
     db.anni_sede = [
       riga('as-26', 2026, '2026-09-01', '2027-02-28'),
       riga('as-27', 2027, '2027-03-01', '2028-08-31'),
+    ]
+    db.anni_scolastici = [
+      { id: 'anno-2026', anno_inizio: 2026 },
+      { id: 'anno-2027', anno_inizio: 2027 },
     ]
     expect(await statoQuadrimestre(client(), SEDE_A, SEZ_A, '2027-07-15')).toMatchObject({ dateMancanti: true })
   })

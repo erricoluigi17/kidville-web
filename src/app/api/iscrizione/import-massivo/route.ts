@@ -162,11 +162,11 @@ export const maxDuration = 300
  */
 const BUDGET_MS = 240_000
 
-/** La finestra decisa dal titolare. Estremi compresi, in ora italiana. */
-export // ATTENZIONE: queste due date NON sono i confini di un anno scolastico e NON si derivano dal calendario.
+// ATTENZIONE: queste due date NON sono i confini di un anno scolastico e NON si derivano dal calendario.
 // Sono la finestra, decisa una volta dal titolare, in cui il cron invia le credenziali alle famiglie
 // importate: derivarla dal calendario riarmerebbe da sola, ogni anno, un invio di massa a famiglie vere.
-const PRIMO_GIORNO ='2026-08-22'
+/** La finestra decisa dal titolare. Estremi compresi, in ora italiana. */
+export const PRIMO_GIORNO = '2026-08-22'
 export const ULTIMO_GIORNO = '2026-09-10'
 
 const bodySchema = z

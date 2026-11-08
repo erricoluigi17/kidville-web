@@ -672,7 +672,7 @@ export function AnnoSelector({ compatto = false }: { compatto?: boolean }) {
 function AnnoSelectorAperto({ ctx, compatto }: { ctx: AnnoContextValue; compatto: boolean }) {
   const t = useTranslations('shared');
   const testoStato = useTestoStatoAnno();
-  const { anni, effettivo, scegli } = ctx;
+  const { anni, effettivo, scegli, usaAttivo } = ctx;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -739,7 +739,9 @@ function AnnoSelectorAperto({ ctx, compatto }: { ctx: AnnoContextValue; compatto
                 key={a.annoId}
                 type="button"
                 aria-pressed={active}
-                onClick={() => { scegli(a.annoId); setOpen(false); triggerRef.current?.focus(); }}
+                // La riga dell'anno ATTIVO non è una scelta: è «torna al predefinito». Fissare il cookie sul
+                // 2026/27 lascerebbe la segreteria sull'anno vecchio dopo il passaggio all'anno nuovo.
+                onClick={() => { if (a.attivo) usaAttivo(); else scegli(a.annoId); setOpen(false); triggerRef.current?.focus(); }}
                 className={cx('flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 text-left', active ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream')}
               >
                 <span className="min-w-0 flex-1">

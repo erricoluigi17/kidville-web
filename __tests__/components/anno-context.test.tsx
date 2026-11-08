@@ -79,6 +79,12 @@ function Spia() {
 }
 
 let scritture: string[]
+/** La spia REGISTRA ogni scrittura (con i suoi attributi) e la inoltra a jsdom: il cookie resta vero. */
+const setterVero = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!.set!
+function registraEScrivi(v: string) {
+  scritture.push(v)
+  setterVero.call(document, v)
+}
 let spiaCookie: ReturnType<typeof vi.spyOn>
 
 function azzeraCookieJsdom() {
@@ -96,9 +102,7 @@ beforeEach(() => {
   h.sediErrore = false
   scritture = []
   spiaCookie = vi.spyOn(document, 'cookie', 'set')
-  spiaCookie.mockImplementation(((v: string) => {
-    scritture.push(v)
-  }) as never)
+  spiaCookie.mockImplementation(registraEScrivi as never)
 })
 
 afterEach(() => {
@@ -111,9 +115,7 @@ function cookieIniziale(valore: string) {
   spiaCookie.mockRestore()
   document.cookie = `${COOKIE_ANNO_CLIENT}=${valore}; path=/`
   spiaCookie = vi.spyOn(document, 'cookie', 'set')
-  spiaCookie.mockImplementation(((v: string) => {
-    scritture.push(v)
-  }) as never)
+  spiaCookie.mockImplementation(registraEScrivi as never)
 }
 
 function monta() {
@@ -195,6 +197,13 @@ describe('AnnoProvider — scegliere, tornare all\'attivo, epoca', () => {
       </AnnoProvider>,
     )
     expect(ctx.anni).toHaveLength(3)
+    expect(ctx.epocaAnno).toBe(0)
+  })
+
+  it('usaAttivo senza una scelta in corso non scrive niente e non avanza l\'epoca', () => {
+    monta()
+    act(() => ctx.usaAttivo())
+    expect(scritture).toEqual([])
     expect(ctx.epocaAnno).toBe(0)
   })
 
@@ -289,6 +298,35 @@ describe('AnnoProvider — più sedi attive', () => {
     expect(ctx.anni.find((a) => a.annoId === A27)?.attivo).toBe(false)
   })
 
+  it('lo stato di un anno è quello comune a tutte le sedi; se non concordano è null (mai lo stato della prima)', () => {
+    h.perSede = {
+      [SEDE_A]: [riga(SEDE_A, 2026, 'corrente', A26), riga(SEDE_A, 2027, 'iscrizioni_aperte', A27)],
+      [SEDE_B]: [riga(SEDE_B, 2026, 'in_chiusura', A26), riga(SEDE_B, 2027, 'iscrizioni_aperte', A27)],
+    }
+    monta()
+    expect(ctx.anni.find((a) => a.annoId === A26)?.stato).toBeNull()
+    expect(ctx.anni.find((a) => a.annoId === A27)?.stato).toBe('iscrizioni_aperte')
+  })
+
+  it('con una sola sede lo stato è sempre quello della riga', () => {
+    h.effettive = [SEDE_A]
+    monta()
+    expect(ctx.anni.map((a) => a.stato)).toEqual(['in_preparazione', 'corrente', 'chiuso'])
+  })
+
+  it('un anno è «attivo» solo se è l\'attivo in TUTTE le sedi', () => {
+    h.perSede = {
+      [SEDE_A]: [riga(SEDE_A, 2025, 'chiuso', A25), riga(SEDE_A, 2026, 'corrente', A26)],
+      // Nella seconda sede il 2026/27 non è ancora in corso: l'attivo è il 2025/26.
+      [SEDE_B]: [riga(SEDE_B, 2025, 'chiuso', A25), riga(SEDE_B, 2026, 'in_preparazione', A26)],
+    }
+    monta()
+    expect(ctx.anni.map((a) => [a.annoId, a.attivo])).toEqual([
+      [A26, false],
+      [A25, false],
+    ])
+  })
+
   it('con una scelta l\'effettivo è quell\'anno, e non è l\'attivo', () => {
     monta()
     act(() => ctx.scegli(A27))
@@ -342,6 +380,46 @@ describe('AnnoProvider — cambiare sede', () => {
     expect(ctx.effettivo?.annoId).toBe(A27)
     expect(ctx.effettivo?.annoSedeId).not.toBe(sedeA)
     expect(ctx.effettivo?.annoSedeId).toBe((h.perSede[SEDE_B][2] as RigaCalendario).annoSedeId)
+  })
+})
+
+describe('AnnoProvider — la potatura precede gli effetti dei figli', () => {
+  it('dopo un cambio sede, un figlio che legge il cookie nel suo useEffect di montaggio lo trova già potato', () => {
+    // Qui il cookie è quello VERO di jsdom (niente spia sul setter): il figlio lo legge com'è.
+    spiaCookie.mockRestore()
+    document.cookie = `${COOKIE_ANNO_CLIENT}=${A25}; path=/`
+    h.perSede = {
+      [SEDE_A]: treAnni(SEDE_A),
+      [SEDE_B]: [riga(SEDE_B, 2026, 'corrente', A26), riga(SEDE_B, 2027, 'in_preparazione', A27)],
+    }
+    const lettureAlMontaggio: string[] = []
+    function Figlio() {
+      useEffect(() => {
+        lettureAlMontaggio.push(document.cookie)
+      }, [])
+      return null
+    }
+    // `key` come fa `SedeScopeBoundary`: cambiata la sede il figlio si rimonta.
+    const albero = () => (
+      <AnnoProvider>
+        <Spia />
+        <Figlio key={h.effettive.join(',')} />
+      </AnnoProvider>
+    )
+    const { rerender } = render(albero())
+    expect(lettureAlMontaggio).toEqual([`${COOKIE_ANNO_CLIENT}=${A25}`])
+
+    h.effettive = [SEDE_B]
+    rerender(albero())
+
+    expect(lettureAlMontaggio).toHaveLength(2)
+    expect(lettureAlMontaggio[1]).not.toContain(A25)
+    expect(ctx.selezionato).toBeNull()
+    // Tornando alla sede che ha il 2025/26 la scelta potata NON risorge: il cookie non c'è più.
+    h.effettive = [SEDE_A]
+    rerender(albero())
+    expect(ctx.selezionato).toBeNull()
+    expect(ctx.effettivo?.annoId).toBe(A26)
   })
 })
 

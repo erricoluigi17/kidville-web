@@ -834,5 +834,6 @@
   "annoStatoChiuso": "chiuso",
   "annoAvvisoTesto": "Stai guardando il {anno} ({stato}), non l’anno in corso",
   "annoAvvisoChiusoDettaglio": "chiuso: le modifiche si registrano come correzione",
-  "annoAvvisoTorna": "Torna all’anno in corso"
+  "annoAvvisoTorna": "Torna all’anno in corso",
+  "annoStatoDiverso": "stato diverso fra le sedi"
 }

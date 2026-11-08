@@ -834,5 +834,6 @@
   "annoStatoChiuso": "closed",
   "annoAvvisoTesto": "You are viewing {anno} ({stato}), not the current year",
   "annoAvvisoChiusoDettaglio": "closed: changes are recorded as corrections",
-  "annoAvvisoTorna": "Back to the current year"
+  "annoAvvisoTorna": "Back to the current year",
+  "annoStatoDiverso": "status differs between locations"
 }

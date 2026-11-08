@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { axe, toHaveNoViolations } from 'jest-axe'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
@@ -30,7 +30,7 @@ vi.mock('@/lib/context/sede-context', () => ({
 }))
 vi.mock('@/lib/context/admin-identity', () => ({ useRuoloCockpit: () => h.ruolo }))
 
-import { AnnoProvider } from '@/lib/context/anno-context'
+import { AnnoProvider, useAnno } from '@/lib/context/anno-context'
 import { AnnoSelector } from '@/components/ui/cockpit'
 
 const A25 = '22222222-2222-4222-8222-222222222025'
@@ -174,6 +174,92 @@ describe('AnnoSelector — su quale anno sto lavorando', () => {
     expect(
       await axe(container, { rules: { region: { enabled: false }, 'landmark-one-main': { enabled: false } } }),
     ).toHaveNoViolations()
+  })
+})
+
+describe('AnnoSelector — la riga dell\'anno attivo è «torna al predefinito», non una scelta', () => {
+  let scritture: string[]
+  let spia: ReturnType<typeof vi.spyOn>
+
+  function Sonda() {
+    const { epocaAnno, eAttivo } = useAnno()
+    return <output data-testid="sonda">{`${epocaAnno}|${eAttivo}`}</output>
+  }
+
+  function montaConSonda() {
+    return render(
+      <AnnoProvider>
+        <AnnoSelector />
+        <Sonda />
+      </AnnoProvider>,
+    )
+  }
+
+  function sulCookie() {
+    scritture = []
+    spia = vi.spyOn(document, 'cookie', 'set')
+    spia.mockImplementation(((v: string) => {
+      scritture.push(v)
+    }) as never)
+  }
+
+  afterEach(() => {
+    spia?.mockRestore()
+    document.cookie = 'anno_attivo=; path=/; max-age=0'
+  })
+
+  it('con il cookie su un altro anno, il clic sulla riga attiva lo cancella, eAttivo torna true e l\'epoca avanza', () => {
+    document.cookie = `anno_attivo=${A27}; path=/` // cookie vero, prima della spia
+    sulCookie()
+    montaConSonda()
+    expect(screen.getByTestId('sonda')).toHaveTextContent('0|false')
+
+    fireEvent.click(screen.getByRole('button', { name: /cambia anno scolastico/i }))
+    fireEvent.click(screen.getByRole('button', { name: /2026\/27/, pressed: false }))
+
+    expect(scritture).toEqual(['anno_attivo=; path=/; samesite=lax; max-age=0'])
+    expect(screen.getByTestId('sonda')).toHaveTextContent('1|true')
+    expect(screen.getByRole('button', { name: /cambia anno scolastico/i })).toHaveAccessibleName(
+      'Cambia anno scolastico: 2026/27',
+    )
+  })
+
+  it('senza cookie, il clic sulla riga attiva non scrive niente e non fa avanzare l\'epoca (ma chiude il pannello)', () => {
+    sulCookie()
+    montaConSonda()
+    const trigger = screen.getByRole('button', { name: /cambia anno scolastico/i })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('button', { name: /2026\/27/, pressed: true }))
+
+    expect(scritture).toEqual([])
+    expect(screen.getByTestId('sonda')).toHaveTextContent('0|true')
+    expect(screen.queryByRole('group', { name: /cambia anno scolastico/i })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('un anno NON attivo resta una scelta: scrive il cookie', () => {
+    sulCookie()
+    montaConSonda()
+    fireEvent.click(screen.getByRole('button', { name: /cambia anno scolastico/i }))
+    fireEvent.click(screen.getByRole('button', { name: /2027\/28/ }))
+    expect(scritture).toEqual([`anno_attivo=${A27}; path=/; samesite=lax; max-age=604800`])
+    expect(screen.getByTestId('sonda')).toHaveTextContent('1|false')
+  })
+})
+
+describe('AnnoSelector — più sedi: lo stato è quello comune, altrimenti dicitura neutra', () => {
+  it('stato uguale nelle due sedi → lo stato; stato diverso → «stato diverso fra le sedi»', () => {
+    h.effettive = [SEDE_A, SEDE_B]
+    h.perSede = {
+      [SEDE_A]: [riga(SEDE_A, 2026, 'corrente', A26), riga(SEDE_A, 2027, 'iscrizioni_aperte', A27)],
+      [SEDE_B]: [riga(SEDE_B, 2026, 'in_chiusura', A26), riga(SEDE_B, 2027, 'iscrizioni_aperte', A27)],
+    }
+    const { gruppo } = apri()
+    const testo = (anno: string) => within(gruppo).getByRole('button', { name: new RegExp(anno) }).textContent ?? ''
+    expect(testo('2027/28')).toContain('iscrizioni aperte')
+    expect(testo('2026/27')).toContain('stato diverso fra le sedi')
+    expect(testo('2026/27')).not.toContain('in corso')
+    expect(testo('2026/27')).not.toContain('in chiusura')
   })
 })
 

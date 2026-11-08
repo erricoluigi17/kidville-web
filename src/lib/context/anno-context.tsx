@@ -23,7 +23,7 @@
  *  - `ricarica`   → rilegge il calendario (lo userà la sezione «Anno scolastico» dopo un salvataggio).
  */
 
-import { Fragment, createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { Fragment, createContext, useCallback, useContext, useLayoutEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { annoAttivoDelCalendario, etichettaAnno, type Calendario } from '@/lib/anno-scolastico';
 import type { StatoAnno } from '@/lib/anno/tipi';
@@ -46,7 +46,9 @@ export interface AnnoScelta {
   annoInizio: number;
   etichetta: string;
   etichettaBreve: string;
-  stato: StatoAnno;
+  /** Lo stato dell'anno; con più sedi attive, quello comune a tutte. `null` se le sedi non concordano. */
+  stato: StatoAnno | null;
+  /** È l'anno attivo (con più sedi: in TUTTE). */
   attivo: boolean;
 }
 
@@ -105,8 +107,9 @@ function calcolaAnni(sedi: string[], perSede: Record<string, Calendario>): AnnoS
       annoInizio: r.annoInizio,
       etichetta: etichettaAnno(r.annoInizio, 'estesa'),
       etichettaBreve: etichettaAnno(r.annoInizio, 'breve'),
-      // Con più sedi lo stato è quello della prima: l'avviso lo mostra, non decide nulla.
-      stato: r.stato,
+      // Con più sedi lo stato è quello COMUNE; se le sedi non concordano è `null`, e chi lo mostra scrive
+      // una dicitura neutra invece di uno stato preso a caso.
+      stato: calendari.every((cal) => cal.find((x) => x.annoId === r.annoId)?.stato === r.stato) ? r.stato : null,
       attivo: attiviDelleSedi.every((a) => a === r.annoId),
     }))
     .sort((a, b) => b.annoInizio - a.annoInizio);
@@ -125,16 +128,25 @@ export function AnnoProvider({ children }: { children: React.ReactNode }) {
    * sede senza quell'anno dopo un cambio sede). Lo si pota SOLO su un elenco attendibile: potare su `[]`
    * per un errore di rete cancellerebbe la scelta dell'utente.
    *
-   * È fatto durante il render, e non in un effetto, per due motivi: la regola `set-state-in-effect`, e
-   * l'ordine degli effetti — quelli dei figli girano PRIMA di quelli del genitore, quindi dopo un cambio
-   * sede le pagine rimontate scaricherebbero ancora col cookie stantio (403 ANNO_NON_ACCESSIBILE).
-   * È idempotente: dipende solo dai dati.
+   * DUE PEZZI, perché sono due cose diverse:
+   *  · lo STATO (`scelto`) si azzera durante il render, col pattern «aggiusta lo stato quando cambiano i
+   *    dati» (condizionato, converge subito): niente effetto che copia stato, e una scelta potata non
+   *    risorge se più tardi quell'anno ricompare nell'elenco;
+   *  · il COOKIE si cancella in un `useLayoutEffect`, non in un `useEffect`: gli effetti di layout di un
+   *    commit girano tutti PRIMA di quelli passivi, e le pagine rimontate da `SedeScopeBoundary` scaricano
+   *    in un `useEffect` passivo. Con un `useEffect` qui dopo un cambio sede scaricherebbero ancora col
+   *    cookie stantio (403 ANNO_NON_ACCESSIBILE). L'effetto non fa `setState`: legge il cookie e lo
+   *    confronta con l'elenco, quindi è idempotente (e copre anche un cookie scritto da un'altra scheda).
    */
   const attendibile = !caricaCalendario && !erroreCalendario && !caricaSedi && !erroreSedi && effettive.length > 0;
   if (attendibile && scelto !== null && !anni.some((a) => a.annoId === scelto)) {
-    cancellaCookie();
     setScelto(null);
   }
+  useLayoutEffect(() => {
+    if (!attendibile) return;
+    const nelCookie = leggiCookie();
+    if (nelCookie !== null && !anni.some((a) => a.annoId === nelCookie)) cancellaCookie();
+  }, [attendibile, anni]);
 
   const scegli = useCallback(
     (annoId: string) => {
@@ -149,14 +161,17 @@ export function AnnoProvider({ children }: { children: React.ReactNode }) {
     [anni],
   );
 
+  const selezionato = scelto !== null && anni.some((a) => a.annoId === scelto) ? scelto : null;
   const usaAttivo = useCallback(() => {
+    // Senza una scelta in corso il predefinito c'è già: niente cookie da cancellare, niente rimontaggio.
+    if (selezionato === null) return;
     setScelto(null);
     cancellaCookie();
     setEpocaAnno((n) => n + 1);
-  }, []);
+  }, [selezionato]);
 
   const value = useMemo<AnnoContextValue>(() => {
-    const scelta = scelto ? (anni.find((a) => a.annoId === scelto) ?? null) : null;
+    const scelta = selezionato ? (anni.find((a) => a.annoId === selezionato) ?? null) : null;
     const attivoComune = anni.find((a) => a.attivo) ?? null;
     const effettivo = scelta ?? (effettive.length === 1 ? attivoComune : null);
     return {
@@ -171,7 +186,7 @@ export function AnnoProvider({ children }: { children: React.ReactNode }) {
       usaAttivo,
       ricarica,
     };
-  }, [anni, scelto, effettive.length, epocaAnno, caricaCalendario, caricaSedi, erroreCalendario, scegli, usaAttivo, ricarica]);
+  }, [anni, selezionato, effettive.length, epocaAnno, caricaCalendario, caricaSedi, erroreCalendario, scegli, usaAttivo, ricarica]);
 
   return <AnnoContext.Provider value={value}>{children}</AnnoContext.Provider>;
 }
@@ -204,11 +219,13 @@ export function useVedeAnno(): boolean {
 }
 
 /** Lo stato di un anno in parole (non solo colore). */
-export function useTestoStatoAnno(): (stato: StatoAnno) => string {
+export function useTestoStatoAnno(): (stato: StatoAnno | null) => string {
   const t = useTranslations('shared');
   return useCallback(
-    (stato: StatoAnno) => {
+    (stato: StatoAnno | null) => {
       switch (stato) {
+        case null:
+          return t('annoStatoDiverso');
         case 'corrente':
           return t('annoStatoInCorso');
         case 'in_chiusura':
@@ -237,6 +254,7 @@ export function AnnoNotice() {
   const testoStato = useTestoStatoAnno();
   if (!ctx || !visibile || !ctx.effettivo || ctx.eAttivo) return null;
   const { effettivo } = ctx;
+  // `stato` è `null` quando le sedi attive non concordano: dicitura neutra (nel testo di `testoStato`).
   const stato = effettivo.stato === 'chiuso' ? t('annoAvvisoChiusoDettaglio') : testoStato(effettivo.stato);
   return (
     <div

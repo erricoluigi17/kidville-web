@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
-import { SEDE_A } from '../fixtures/sedi'
+import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import type { RigaCalendario } from '@/lib/anno-scolastico'
 import type { StatoAnno } from '@/lib/anno/tipi'
 
@@ -15,13 +15,14 @@ vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => '
 const h = vi.hoisted(() => ({
   perSede: {} as Record<string, readonly unknown[]>,
   ruolo: 'admin',
+  effettive: [] as string[],
 }))
 
 vi.mock('@/lib/context/calendario-context', () => ({
   useCalendario: () => ({ perSede: h.perSede, loading: false, errore: false, ricarica: vi.fn() }),
 }))
 vi.mock('@/lib/context/sede-context', () => ({
-  useSediAttive: () => ({ effettive: [SEDE_A], loading: false, errore: false }),
+  useSediAttive: () => ({ effettive: h.effettive, loading: false, errore: false }),
 }))
 vi.mock('@/lib/context/admin-identity', () => ({ useRuoloCockpit: () => h.ruolo }))
 
@@ -58,6 +59,7 @@ function Scegli({ annoId }: { annoId: string }) {
 beforeEach(() => {
   document.cookie = 'anno_attivo=; path=/; max-age=0'
   h.ruolo = 'admin'
+  h.effettive = [SEDE_A]
   h.perSede = {
     [SEDE_A]: [riga(2025, 'chiuso', A25), riga(2026, 'corrente', A26), riga(2027, 'iscrizioni_aperte', A27)],
   }
@@ -124,6 +126,29 @@ describe('AnnoNotice', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2025' }))
     expect(screen.getByRole('status')).toHaveTextContent(/Stai guardando il 2025\/26 \(in chiusura\), non l.anno in corso/)
+  })
+
+  it('con più sedi: stato comune → lo stato; stato diverso fra le sedi → dicitura neutra', () => {
+    h.effettive = [SEDE_A, SEDE_B]
+    h.perSede = {
+      [SEDE_A]: [riga(2026, 'corrente', A26), riga(2027, 'iscrizioni_aperte', A27)],
+      [SEDE_B]: [riga(2026, 'corrente', A26), riga(2027, 'in_preparazione', A27)],
+    }
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    const avviso = screen.getByRole('status')
+    expect(avviso).toHaveTextContent(/Stai guardando il 2027\/28 \(stato diverso fra le sedi\), non l.anno in corso/)
+    expect(avviso).not.toHaveTextContent('iscrizioni aperte')
+    expect(avviso).not.toHaveTextContent('in preparazione')
+
+    h.perSede = {
+      [SEDE_A]: [riga(2026, 'corrente', A26), riga(2027, 'iscrizioni_aperte', A27)],
+      [SEDE_B]: [riga(2026, 'corrente', A26), riga(2027, 'iscrizioni_aperte', A27)],
+    }
+    cleanup()
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    expect(screen.getByRole('status')).toHaveTextContent(/Stai guardando il 2027\/28 \(iscrizioni aperte\), non l.anno in corso/)
   })
 
   it('un docente o un genitore non lo vedono, e senza AnnoProvider non monta nulla', () => {

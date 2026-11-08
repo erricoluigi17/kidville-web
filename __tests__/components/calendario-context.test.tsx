@@ -6,7 +6,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 const logClient = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/logging/client', () => ({ logClient }))
 
-import { CalendarioProvider, useAnnoDi, useCalendario } from '@/lib/context/calendario-context'
+import { CalendarioProvider, useAnnoDi, useCalendario, useCalendarioDi } from '@/lib/context/calendario-context'
 
 const riga = (id: string, inizio: string, fine: string, annoInizio: number) => ({
   annoId: `a${annoInizio}`,
@@ -158,5 +158,69 @@ describe('CalendarioProvider / useAnnoDi', () => {
     )
     expect(viste[viste.length - 1]).toBe(dopo)
     expect(viste[0]).not.toBe(dopo)
+  })
+})
+
+describe('ricarica(): le referenze stabili per le sedi che non sono cambiate', () => {
+  const CAL_S2 = [riga('q26', '2026-09-01', '2027-08-31', 2026)]
+  const rispostaDue = (s1: unknown[]) => () =>
+    risposta([
+      { scuola_id: 's1', righe: s1 },
+      { scuola_id: 's2', righe: CAL_S2 },
+    ])
+
+  function Raccogli({ viste }: { viste: Record<string, unknown[]> }) {
+    const { loading, ricarica } = useCalendario()
+    viste.a1.push(useAnnoDi('s1'))
+    viste.a2.push(useAnnoDi('s2'))
+    viste.c1.push(useCalendarioDi('s1'))
+    viste.c2.push(useCalendarioDi('s2'))
+    return (
+      <div>
+        <span>{`pronto:${!loading}`}</span>
+        <button onClick={ricarica}>ricarica</button>
+      </div>
+    )
+  }
+  const ultimo = (v: unknown[]) => v[v.length - 1]
+
+  it('stessa risposta: useAnnoDi e useCalendarioDi restituiscono la STESSA referenza (toBe)', async () => {
+    fetchMock.mockImplementation(rispostaDue(CAL_S1))
+    const viste: Record<string, unknown[]> = { a1: [], a2: [], c1: [], c2: [] }
+    render(
+      <CalendarioProvider>
+        <Raccogli viste={viste} />
+      </CalendarioProvider>,
+    )
+    await screen.findByText('pronto:true')
+    const prima = { a1: ultimo(viste.a1), a2: ultimo(viste.a2), c1: ultimo(viste.c1), c2: ultimo(viste.c2) }
+    act(() => screen.getByText('ricarica').click())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await screen.findByText('pronto:true')
+    expect(ultimo(viste.a1)).toBe(prima.a1)
+    expect(ultimo(viste.a2)).toBe(prima.a2)
+    expect(ultimo(viste.c1)).toBe(prima.c1)
+    expect(ultimo(viste.c2)).toBe(prima.c2)
+  })
+
+  it('una riga cambiata in s1: s1 nuova, s2 la stessa', async () => {
+    fetchMock.mockImplementation(rispostaDue(CAL_S1))
+    const viste: Record<string, unknown[]> = { a1: [], a2: [], c1: [], c2: [] }
+    render(
+      <CalendarioProvider>
+        <Raccogli viste={viste} />
+      </CalendarioProvider>,
+    )
+    await screen.findByText('pronto:true')
+    const prima = { a1: ultimo(viste.a1), a2: ultimo(viste.a2), c1: ultimo(viste.c1), c2: ultimo(viste.c2) }
+    const cambiato = [CAL_S1[0], { ...CAL_S1[1], fine: '2027-09-10' }]
+    fetchMock.mockImplementation(rispostaDue(cambiato))
+    act(() => screen.getByText('ricarica').click())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(ultimo(viste.c1)).not.toBe(prima.c1))
+    await screen.findByText('pronto:true')
+    expect(ultimo(viste.a1)).not.toBe(prima.a1)
+    expect(ultimo(viste.a2)).toBe(prima.a2)
+    expect(ultimo(viste.c2)).toBe(prima.c2)
   })
 })

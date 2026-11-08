@@ -441,7 +441,7 @@ export function StudentRegistryForm() {
                             <span className="text-xs text-kidville-muted">Le rette partono dal mese di iscrizione.</span>
                             {dataFuoriAnno
                                 ? <span className="block text-xs text-kidville-error">{t('dataIscrizioneFuoriAnno')}</span>
-                                : annoIngresso && <span className="block text-xs text-kidville-muted">{t('dataIscrizioneAnno', { anno: annoIngresso.etichettaBreve })}</span>}
+                                : annoIngresso && <span className="block text-xs text-kidville-sub">{t('dataIscrizioneAnno', { anno: annoIngresso.etichettaBreve })}</span>}
                         </div>
                         {/* Comune, provincia e nazione erano tre caselle di testo libero:
                             da lì non usciva nessun codice catastale, e senza quello il

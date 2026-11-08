@@ -15,7 +15,9 @@ import { parseQuery } from '@/lib/validation/http'
 // Nessun parametro ammesso: un `?x=1` è un 400 (la sede non si sceglie, si ricava dall'utente).
 const getQuerySchema = z.object({}).strict()
 
-const CACHE = { 'Cache-Control': 'private, max-age=60' }
+// `Vary: Cookie`: dopo un cambio d'account sullo stesso browser la cache non serve per un minuto
+// la risposta dell'utenza di prima.
+const CACHE = { 'Cache-Control': 'private, max-age=60', Vary: 'Cookie' }
 const SENZA_CACHE = { 'Cache-Control': 'no-store' }
 
 // Gli anni che docenti e genitori «non vedono» (specifica §4.4.1): ancora in costruzione.

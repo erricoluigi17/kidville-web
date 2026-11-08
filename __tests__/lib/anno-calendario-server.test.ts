@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
 
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { annoDellaFrequenza, annoDi, caricaCalendario } from '@/lib/anno/calendario'
+import { annoDellaFrequenza, annoDi, azzeraSegnalazioniFuoriCalendario, caricaCalendario } from '@/lib/anno/calendario'
 
 /** PR 4.1 · COMPITO 4.1.2 · il calendario lato server: una lettura per richiesta, degrado, mai eccezioni. */
 const SEDE = '11111111-1111-4111-8111-111111111111'
@@ -221,6 +221,7 @@ describe('annoDi', () => {
   })
 
   it('giorno fuori da un calendario non vuoto → predefinito e un warn', async () => {
+    azzeraSegnalazioniFuoriCalendario()
     const f = cliente({ anni_sede: OK(r25(), r26()) })
     const a = await annoDi(f.c, SEDE, '2030-01-10')
     await annoDi(f.c, SEDE, '2030-01-11')
@@ -230,6 +231,28 @@ describe('annoDi', () => {
     expect(w).toHaveLength(1)
     expect(w[0][1]).toBe('warn')
     expect(w[0][2]).toMatchObject({ scuola_id: SEDE, giorno: '2030-01-10' })
+  })
+
+  it('anno-fuori-calendario: una volta per sede e per giorno NEL PROCESSO, anche con client (richieste) diversi', async () => {
+    azzeraSegnalazioniFuoriCalendario()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2030-01-10T10:00:00Z'))
+      // tre richieste = tre client: prima della correzione la segnalazione usciva a ogni richiesta
+      for (let i = 0; i < 3; i++) await annoDi(cliente({ anni_sede: OK(r25(), r26()) }).c, SEDE, '2030-01-10')
+      expect(eventi('anno-fuori-calendario')).toHaveLength(1)
+      // un'altra sede segnala la sua
+      await annoDi(cliente({ anni_sede: OK(r25(), r26()) }).c, SEDE2, '2030-01-10')
+      expect(eventi('anno-fuori-calendario')).toHaveLength(2)
+      // il giorno dopo la stessa sede segnala di nuovo (una volta)
+      vi.setSystemTime(new Date('2030-01-11T10:00:00Z'))
+      for (let i = 0; i < 2; i++) await annoDi(cliente({ anni_sede: OK(r25(), r26()) }).c, SEDE, '2030-01-11')
+      expect(eventi('anno-fuori-calendario')).toHaveLength(3)
+      // la riga porta solo sede e giorno
+      for (const w of eventi('anno-fuori-calendario')) expect(Object.keys(w[2] as object).sort()).toEqual(['giorno', 'scuola_id', 'tipo'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('un giorno non valido lancia', async () => {

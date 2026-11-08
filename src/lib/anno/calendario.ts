@@ -35,8 +35,15 @@ const STATI: ReadonlySet<string> = new Set<StatoAnno>([
 // ⚠️ Se quel client diventasse un singleton, la cache diventerebbe per PROCESSO: sbagliato,
 // perché le date di una sede cambiano e il processo non se ne accorgerebbe mai.
 const CACHE = new WeakMap<SupabaseClient, Map<string, Promise<Calendario | null>>>()
-// «Giorno fuori dal calendario» si segnala una volta per sede e per client, come la lettura.
-const FUORI_SEGNALATI = new WeakMap<SupabaseClient, Set<string>>()
+// «Giorno fuori dal calendario» si segnala UNA volta per sede e per giorno (di Roma) NEL PROCESSO,
+// non a ogni richiesta: sede -> ultimo giorno segnalato. Un buco nel calendario è un guasto da
+// sapere, non da leggere cento volte al minuto. Un processo nuovo ricomincia (è voluto).
+const FUORI_SEGNALATI = new Map<string, string>()
+
+/** Solo per i test: ricomincia da zero le segnalazioni «fuori dal calendario». */
+export function azzeraSegnalazioniFuoriCalendario(): void {
+  FUORI_SEGNALATI.clear()
+}
 // Com'è andata la lettura di una sede, accanto alla cache e senza una lettura in più: distingue
 // «lo schema dell'anno non c'è» (si degrada) da «il database ha risposto male» (la route dà 500).
 export type StatoCalendario = 'ok' | 'non_disponibile' | 'guasto'
@@ -183,13 +190,9 @@ export async function annoDi(supabase: SupabaseClient, scuolaId: string, giorno:
   const anno = annoDelGiorno(giorno, cal)
   if (cal && cal.length > 0 && anno.fonte === 'predefinito') {
     // Il database impedisce i buchi: se succede, il predefinito risponde ma qualcuno deve saperlo.
-    let visti = FUORI_SEGNALATI.get(supabase)
-    if (!visti) {
-      visti = new Set()
-      FUORI_SEGNALATI.set(supabase, visti)
-    }
-    if (!visti.has(scuolaId)) {
-      visti.add(scuolaId)
+    const oggi = dataCivile()
+    if (FUORI_SEGNALATI.get(scuolaId) !== oggi) {
+      FUORI_SEGNALATI.set(scuolaId, oggi)
       logEvento('anno-scolastico', 'warn', { tipo: 'anno-fuori-calendario', scuola_id: scuolaId, giorno })
     }
   }

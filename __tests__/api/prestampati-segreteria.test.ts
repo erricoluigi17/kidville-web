@@ -3899,6 +3899,33 @@ describe('stampe_sezione — l’anno scolastico è quello della sezione', () =>
     }
   })
 
+  it('senza sections.anno_id E senza anni_sede (come nel DB della CI): due info in tutto, nessun error, anno predefinito', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-08-15T10:00:00.000Z'))
+      h.state.risposte['sections'] = [
+        { data: RIGA_SEZIONE, error: null },
+        { data: null, error: { code: '42703', message: 'column sections.anno_id does not exist' } },
+      ]
+      h.state.risposte['anni_sede'] = [{ data: null, error: { code: 'PGRST205', message: 'assente' } }]
+
+      const testo = await testoDellaStampa()
+
+      expect(testo).toContain('2025/2026')
+      // Tutto ciò che il modulo dell'anno ha scritto, non solo `anno-sezione*`: UNA riga della
+      // sezione e UNA del calendario, entrambe `info`.
+      const tutti = logSpia.eventi.filter((e) => e[0] === 'anno-scolastico')
+      expect(tutti.map((e) => (e[2] as { tipo?: string }).tipo).sort()).toEqual([
+        'anno-sezione-non-disponibile',
+        'calendario-non-disponibile',
+      ])
+      expect(tutti.every((e) => e[1] === 'info')).toBe(true)
+      expect(tutti.some((e) => e[1] === 'error')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('con anni_scolastici assente (PGRST205) ripiega allo stesso modo, un solo info', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     try {

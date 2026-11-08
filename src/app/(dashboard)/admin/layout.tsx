@@ -36,25 +36,25 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <AdminIdentityProvider>
       <SedeProvider>
         <CalendarioProvider>
-        <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-admin>
-          <AdminTopBarMobile />
-          <AdminTopBar />
-          {/* La topbar mobile è sticky come l'AppBar delle altre due shell, e
-              con la tastiera aperta copre allo stesso modo il campo a fuoco —
-              qui i moduli sono quelli della segreteria, che scrive tutto il
-              giorno. Il componente riconosce entrambe le classi di barra
-              (`.kv-appbar` e `.kv-appbar-admin`) e su desktop non fa nulla,
-              perché lì la tastiera non riduce la viewport. */}
-          <CampoNonCoperto />
-          <div className="tablet:flex">
-            <AdminBinario />
-            <AdminSidebar />
-            <main className="flex-1 min-w-0 pb-28 tablet:pb-0" data-cockpit-content>
-              <SedeScopeBoundary>{children}</SedeScopeBoundary>
-            </main>
+          <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-admin>
+            <AdminTopBarMobile />
+            <AdminTopBar />
+            {/* La topbar mobile è sticky come l'AppBar delle altre due shell, e
+                con la tastiera aperta copre allo stesso modo il campo a fuoco —
+                qui i moduli sono quelli della segreteria, che scrive tutto il
+                giorno. Il componente riconosce entrambe le classi di barra
+                (`.kv-appbar` e `.kv-appbar-admin`) e su desktop non fa nulla,
+                perché lì la tastiera non riduce la viewport. */}
+            <CampoNonCoperto />
+            <div className="tablet:flex">
+              <AdminBinario />
+              <AdminSidebar />
+              <main className="flex-1 min-w-0 pb-28 tablet:pb-0" data-cockpit-content>
+                <SedeScopeBoundary>{children}</SedeScopeBoundary>
+              </main>
+            </div>
+            <AdminBottomNav />
           </div>
-          <AdminBottomNav />
-        </div>
         </CalendarioProvider>
       </SedeProvider>
     </AdminIdentityProvider>

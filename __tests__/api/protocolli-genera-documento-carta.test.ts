@@ -173,8 +173,17 @@ describe('POST /api/admin/protocolli/genera-documento — l’anno scolastico di
   })
 
   it('senza calendario (schema dell’anno assente o vuoto) ripiega sull’anno del giorno di Roma', async () => {
-    const { annoDiIstante } = await import('@/lib/anno-scolastico')
-    const atteso = annoDiIstante(new Date()).etichetta
-    expect(await testoDelDocumento()).toContain(atteso)
+    // Orologio fisso al 15 agosto 2026: con la soglia predefinita del 1° settembre l'anno è 2025/2026
+    // (con la vecchia soglia del 1° agosto sarebbe 2026/2027). Senza orologio finto il test era verde
+    // fuori da agosto anche con la soglia sbagliata.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-08-15T10:00:00.000Z'))
+      const testo = await testoDelDocumento()
+      expect(testo).toContain('2025/2026')
+      expect(testo).not.toContain('2026/2027')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

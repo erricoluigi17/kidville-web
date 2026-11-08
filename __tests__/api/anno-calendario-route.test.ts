@@ -155,6 +155,17 @@ describe('GET /api/anno/calendario', () => {
     expect(stati(b, SEDE_B)).toEqual(STATI_VISIBILI)
   })
 
+  it('i figli non si leggono ⇒ 500 con UNA riga d\'errore `calendario-figli-non-letti`, senza identità', async () => {
+    h.user = { id: 'G1', role: 'genitore' }
+    h.figliErrore = { code: 'XX000' }
+    const res = await chiedi()
+    expect(res.status).toBe(500)
+    const errori = h.log.filter((a) => a[1] === 'error')
+    expect(errori).toHaveLength(1)
+    expect(errori[0][2]).toEqual({ tipo: 'calendario-figli-non-letti', operazione: 'anno/calendario:GET' })
+    expect(JSON.stringify(errori)).not.toContain('G1')
+  })
+
   it('nessuna sede ⇒ 200 con data []', async () => {
     h.user = { id: 'G2', role: 'genitore' }
     const b = await corpo()
@@ -169,6 +180,18 @@ describe('GET /api/anno/calendario', () => {
     const b = (await res.json()) as Corpo
     expect(b.data).toEqual([])
     expect(b.fonte).toBe('non_disponibile')
+    // Degrado = UN info con la sede, nessun error (come nel DB della CI non migrato).
+    expect(h.log.filter((a) => a[1] === 'error')).toHaveLength(0)
+    const info = h.log.filter((a) => a[1] === 'info')
+    expect(info).toHaveLength(1)
+    expect(info[0][2]).toEqual({ tipo: 'calendario-non-disponibile', scuola_id: SEDE_A })
+  })
+
+  it('le risposte portano Cache-Control privato E Vary: Cookie (cambio di account sullo stesso browser)', async () => {
+    const res = await chiedi()
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('private, max-age=60')
+    expect(res.headers.get('Vary')).toMatch(/Cookie/i)
   })
 
   it("un altro errore (XX000) ⇒ 500, con UNA sola riga d'errore (quella con la sede)", async () => {

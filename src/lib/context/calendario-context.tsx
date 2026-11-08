@@ -46,6 +46,35 @@ function leggiRisposta(corpo: unknown): Risposta | null {
   return { perSede };
 }
 
+/** Uguali per CONTENUTO (le righe sono piccole e di forma fissa: basta la serializzazione). */
+function stesseRighe(a: Calendario, b: Calendario): boolean {
+  return a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Dopo `ricarica()` tiene la VECCHIA referenza di ogni sede il cui calendario non è cambiato, così
+ * `useAnnoDi(sede)` e `useCalendarioDi(sede)` non cambiano identità (e non rilanciano gli effetti) per
+ * sedi che non c'entrano. Se nessuna sede è cambiata restituisce lo stesso oggetto `prev`.
+ */
+function unisciPerSede(
+  prev: Record<string, Calendario>,
+  nuovo: Record<string, Calendario>,
+): Record<string, Calendario> {
+  const sedi = Object.keys(nuovo);
+  let cambiato = sedi.length !== Object.keys(prev).length;
+  const risultato: Record<string, Calendario> = {};
+  for (const sede of sedi) {
+    const vecchio = prev[sede];
+    if (vecchio && stesseRighe(vecchio, nuovo[sede])) {
+      risultato[sede] = vecchio;
+    } else {
+      risultato[sede] = nuovo[sede];
+      cambiato = true;
+    }
+  }
+  return cambiato ? risultato : prev;
+}
+
 // Funzione di modulo (non un setState sincrono nell'effect): vedi la regola react-hooks/set-state-in-effect.
 async function scarica(userId: string | null | undefined): Promise<Risposta | { stato: number } | null> {
   const res = await fetch('/api/anno/calendario', {
@@ -82,7 +111,7 @@ export function CalendarioProvider({ children, userId }: { children: React.React
       .then((esito) => {
         if (annullato) return;
         if (esito && 'perSede' in esito) {
-          setPerSede(esito.perSede);
+          setPerSede((prev) => unisciPerSede(prev, esito.perSede));
           setErrore(false);
           setLoading(false);
         } else if (esito && 'stato' in esito) {

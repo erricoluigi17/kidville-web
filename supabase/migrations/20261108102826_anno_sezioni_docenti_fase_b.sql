@@ -243,8 +243,10 @@ BEGIN
   v_n := 0;
   IF to_regclass('public.alunni') IS NOT NULL THEN
     v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    -- Fase B (4.3.4): l'invariante guarda anche ciò che lo specchio inverso scrive in più (sospensione).
     FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
-                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture'] LOOP
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture',
+                                 'sospeso', 'sospeso_causa', 'sospeso_motivo', 'sospeso_il', 'sospeso_da'] LOOP
       IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
                   WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
                     AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
@@ -252,6 +254,16 @@ BEGIN
         v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
       END IF;
     END LOOP;
+    -- archiviato ↔ frequenza chiusa (NON `alunni.stato`: la tendina può dire «ritirato» senza archiviare) e retta
+    -- (lo zero di `alunni` è NULL nella frequenza).
+    IF EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = 'public.alunni'::regclass
+                  AND x.attname = 'archiviato_il' AND x.attnum > 0 AND NOT x.attisdropped) THEN
+      v_cond := v_cond || ARRAY['(al.archiviato_il IS NOT NULL) IS DISTINCT FROM (f.stato IN (''ritirato'', ''trasferito'', ''uscito''))'];
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = 'public.alunni'::regclass
+                  AND x.attname = 'importo_retta_mensile' AND x.attnum > 0 AND NOT x.attisdropped) THEN
+      v_cond := v_cond || ARRAY['nullif(al.importo_retta_mensile, 0) IS DISTINCT FROM f.retta_mensile'];
+    END IF;
     EXECUTE 'SELECT count(*) FROM public.alunni al '
             'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
             'WHERE ' || array_to_string(v_cond, ' OR ')
@@ -726,7 +738,10 @@ BEGIN
   v_viva := (v_f ->> 'stato') IN ('in_attesa', 'iscritto');
   IF v_viva THEN
     -- 'sospeso' (o NULL, che il codice legge «iscritto») si conserva finché la frequenza è viva
-    v_stato := CASE WHEN coalesce(v_cur ->> 'stato', 'iscritto') IN ('iscritto', 'sospeso')
+    -- `ritirato` senza `archiviato_il` è la tendina della scheda (non archivia): resta com'è. Una vera riapertura
+    -- (`archiviato_il` valorizzato) torna `iscritto`.
+    v_stato := CASE WHEN (v_cur ->> 'archiviato_il') IS NOT NULL THEN 'iscritto'
+                    WHEN coalesce(v_cur ->> 'stato', 'iscritto') IN ('iscritto', 'sospeso', 'ritirato')
                     THEN v_cur ->> 'stato' ELSE 'iscritto' END;
     v_arch := NULL;
   ELSE

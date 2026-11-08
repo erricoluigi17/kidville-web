@@ -52,6 +52,9 @@ async function aggiornamentiAlunni(): Promise<number> {
 async function invariante11(): Promise<number> {
   return una<number>(`SELECT coalesce(sum(righe), 0)::int FROM public.anno_invarianti() WHERE invariante = '11'`)
 }
+async function invariante11Alunni(): Promise<number> {
+  return una<number>(`SELECT righe::int FROM public.anno_invarianti() WHERE invariante = '11' AND tabella = 'alunni'`)
+}
 function sezioneM43(): string {
   const f = readdirSync(CARTELLA).find((x) => x.endsWith('_anno_sezioni_docenti_fase_b.sql'))!
   const sql = readFileSync(join(CARTELLA, f), 'utf8')
@@ -301,6 +304,93 @@ describe('fase B · la frequenza dell’anno attivo si ricopia in alunni', () =>
       const prima = await alunno()
       await db.query(`DELETE FROM public.frequenze WHERE alunno_id = $1`, [AL])
       expect(await alunno()).toEqual(prima)
+    })
+  })
+})
+
+describe('giro di correzione 1', () => {
+  prova('F1 · ritirato dalla tendina (archiviato_il NULL) resta ritirato quando la frequenza si modifica', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno()
+      await db.query(`UPDATE public.alunni SET stato = 'ritirato' WHERE id = $1`, [AL]) // la tendina: non archivia
+      const prima = await alunno()
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 410 WHERE alunno_id = $1`, [AL])
+      const dopo = await alunno()
+      expect(dopo.stato).toBe('ritirato')
+      expect(dopo.stato_cambiato_il).toEqual(prima.stato_cambiato_il)
+      expect(dopo.archiviato_il).toBeNull()
+      expect(dopo.importo_retta_mensile).toBe(410)
+      expect(await invariante11Alunni()).toBe(0)
+    })
+  })
+
+  prova('F2a · una frequenza di un anno non attivo non riallinea alunni nemmeno se alunni è divergente', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno()
+      await db.exec(`UPDATE public.anno_regole SET specchio_frequenze_attivo = false`)
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 480, section_id = $2 WHERE alunno_id = $1`, [AL, SEZ_B])
+      await db.exec(`UPDATE public.anno_regole SET specchio_frequenze_attivo = true`)
+      await db.query(
+        `INSERT INTO public.frequenze (alunno_id, anno_sede_id, anno_id, scuola_id, origine, stato, data_ingresso, data_uscita)
+         SELECT $1, s.id, s.anno_id, s.scuola_id, 'recupero', 'uscito', s.inizio, s.inizio FROM public.anni_sede s WHERE s.id = $2`,
+        [AL, ANNO_SEDE[`${S1}:2025`]])
+      await db.query(`UPDATE public.frequenze SET retta_mensile = 999, stato = 'ritirato' WHERE alunno_id = $1 AND anno_sede_id = $2`,
+        [AL, ANNO_SEDE[`${S1}:2025`]])
+      const a = await alunno()
+      expect(a.importo_retta_mensile).toBe(350) // ancora divergente: nessun riallineamento
+      expect(a.section_id).toBe(SEZ_A)
+      expect(a.archiviato_il).toBeNull()
+    })
+  })
+
+  prova('F2b · la frequenza trasferito della sede vecchia non tocca né archivia l’alunno', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL2, { sezione: null, nome: null })
+      await db.query(`UPDATE public.alunni SET scuola_id = $2 WHERE id = $1`, [AL2, S2])
+      const prima = await alunno(AL2)
+      const n = await aggiornamentiAlunni()
+      await db.query(`UPDATE public.frequenze SET stato = 'ritirato', retta_mensile = 999 WHERE alunno_id = $1 AND anno_sede_id = $2`,
+        [AL2, ANNO_SEDE[`${S1}:2026`]])
+      expect(await alunno(AL2)).toEqual(prima)
+      expect(await aggiornamentiAlunni()).toBe(n)
+      expect((await alunno(AL2)).archiviato_il).toBeNull()
+    })
+  })
+
+  // F3 · l'invariante 11 estesa: un seme che diverge su UNA colonna sola la fa salire a 1
+  const DIVERGENZE: Array<[string, string]> = [
+    ['archiviato_il', `archiviato_il = now()`],
+    ['importo_retta_mensile', `importo_retta_mensile = 111`],
+    ['sospeso', `sospeso = true`],
+    ['sospeso_causa', `sospeso_causa = 'altro'`],
+    ['sospeso_motivo', `sospeso_motivo = 'x'`],
+    ['sospeso_il', `sospeso_il = now()`],
+    ['sospeso_da', `sospeso_da = '99999999-9999-4999-8999-999999999999'`],
+  ]
+  for (const [colonna, set] of DIVERGENZE) {
+    prova(`F3 · invariante 11: diverge solo ${colonna} → sale a 1 (e a 0 quando si riallinea)`, async () => {
+      await inRollback(async () => {
+        await nuovoAlunno()
+        expect(await invariante11Alunni()).toBe(0)
+        await db.query(`UPDATE public.alunni SET ${set} WHERE id = $1`, [AL])
+        expect(await invariante11Alunni()).toBe(1)
+        await db.query(`SELECT public.alunni_riallinea_da_frequenze($1)`, [AL])
+        expect(await invariante11Alunni()).toBe(0)
+      })
+    })
+  }
+
+  prova('F3 · invariante 11: la frequenza chiusa senza archiviazione fa salire l’invariante, il ritirato da tendina no', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno()
+      await db.exec(`UPDATE public.anno_regole SET specchio_frequenze_attivo = false`)
+      await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = data_ingresso WHERE alunno_id = $1`, [AL])
+      expect(await invariante11Alunni()).toBe(1)
+    })
+    await inRollback(async () => {
+      await nuovoAlunno()
+      await db.query(`UPDATE public.alunni SET stato = 'ritirato' WHERE id = $1`, [AL])
+      expect(await invariante11Alunni()).toBe(0)
     })
   })
 })

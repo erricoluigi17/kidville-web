@@ -456,7 +456,41 @@ function violazioniDoppiaScrittura(
 
 // ───────────────────────── sezione 5: l'anno calcolato a mano ─────────────────────────
 
-type ModelloAnno = 'annoScolasticoCorrente(' | '-08-01' | '-07-31' | 'getMonth()'
+type ModelloAnno =
+  | 'annoScolasticoCorrente('
+  | '-08-01'
+  | '-07-31'
+  | '-09-01'
+  | '-08-31'
+  | 'getMonth()'
+  | 'getUTCMonth()'
+  | 'mese >= soglia'
+  | 'annoScolasticoDelGiorno'
+  | 'annoScolasticoDiData'
+  | 'periodoDaSettembre'
+  | 'annoScolasticoDiCompetenza'
+  | 'annoScolasticoAmbiguo'
+  | 'MESE_INIZIO_ANNO_SCOLASTICO'
+  | 'MESE_RIPIEGO_AMBIGUO'
+
+// I nomi delle vecchie regole d'anno e le due costanti di soglia: chi le nomina (le chiama, le importa, le definisce)
+// ha ancora una regola d'anno sua. Si cercano nel testo `struttura`, come identificatore intero.
+const NOMI_VECCHI_ANNO = [
+  'annoScolasticoDelGiorno',
+  'annoScolasticoDiData',
+  'periodoDaSettembre',
+  'annoScolasticoDiCompetenza',
+  'annoScolasticoAmbiguo',
+  'MESE_INIZIO_ANNO_SCOLASTICO',
+  'MESE_RIPIEGO_AMBIGUO',
+] as const
+// `periodoDaSettembre` è la scorciatoia «da settembre» delle statistiche CRM: la regola sta nel file che la DEFINISCE
+// (crm/statistiche.ts, censimento R10); chi si limita a chiamarla (StatisticheCrm.tsx, un pulsante) non ha soglie
+// sue, e il censimento non lo conta. Per questo nome si cerca solo la definizione.
+const SOLO_DEFINIZIONE = new Set<string>(['periodoDaSettembre'])
+// Un mese (identificatore intero, non una proprietà `x.m`) confrontato con la soglia 7/8/9 da >=, >, <, <=.
+// L'uguaglianza (`=== mese`) non conta: mostrare o filtrare un mese non è un calcolo d'anno.
+const RE_MESE_SOGLIA = /(?<![\w$.])(?:mese|meseOggi|month|m)\s*(?:>=|<=|>|<)\s*[789]\b/
 
 // Il «modulo dell'anno» sono `src/lib/anno/`, `src/lib/auth/scope.ts` e (dal compito 4.1.1) `src/lib/anno-scolastico.ts`:
 // quest'ultimo è il posto dove le soglie vivono, quindi lì i letterali sono la definizione, non un calcolo a mano.
@@ -473,7 +507,13 @@ function modelliAnnoNelFile(a: Analisi): ModelloAnno[] {
   const out: ModelloAnno[] = []
   if (/\bannoScolasticoCorrente\s*\(/.test(a.m.struttura)) out.push('annoScolasticoCorrente(')
   if (/\.getMonth\s*\(\s*\)\s*(?:\+\s*1\s*)?(?:>=|<=|>|<|===|!==)\s*[789]\b/.test(a.m.struttura)) out.push('getMonth()')
-  for (const lett of ['-08-01', '-07-31'] as const) {
+  if (/\.getUTCMonth\s*\(\s*\)\s*(?:\+\s*1\s*)?(?:>=|<=|>|<|===|!==)\s*[789]\b/.test(a.m.struttura)) out.push('getUTCMonth()')
+  if (RE_MESE_SOGLIA.test(a.m.struttura)) out.push('mese >= soglia')
+  for (const nome of NOMI_VECCHI_ANNO) {
+    const prefisso = SOLO_DEFINIZIONE.has(nome) ? '\\b(?:function|const|let)\\s+' : '(?<![\\w$])'
+    if (new RegExp(`${prefisso}${nome}(?![\\w$])`).test(a.m.struttura)) out.push(nome)
+  }
+  for (const lett of ['-08-01', '-07-31', '-09-01', '-08-31'] as const) {
     let da = 0
     for (;;) {
       const i = a.m.senzaCommenti.indexOf(lett, da)
@@ -508,8 +548,8 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
   },
   {
     file: 'src/app/api/parent/prestampati/banco-famiglia.ts',
-    modelli: ['-07-31'],
-    motivo: 'la fine dell’anno scolastico del modulo famiglia è `${fine}-07-31`, scritta a mano; la PR 4.1 la prende da anni_scolastici.fine, e la toglie',
+    modelli: ['-07-31', 'mese >= soglia', 'annoScolasticoDelGiorno'],
+    motivo: 'la fine dell’anno scolastico del modulo famiglia è `${fine}-07-31`, scritta a mano, e annoScolasticoDelGiorno decide l’anno con `mese >= 8`; la PR 4.1 li prende dall’anno della sede (anni_scolastici.fine), e li toglie',
   },
   {
     file: 'src/app/api/admin/protocolli/genera-documento/route.ts',
@@ -536,13 +576,56 @@ const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: strin
     modelli: ['getMonth()'],
     motivo: 'l’anno proposto per i periodi di scrutinio è `getMonth() >= 8 ? y : y - 1` (fuso del browser); la PR 4.1 lo prende dall’anno corrente della sede, e lo toglie',
   },
+  {
+    file: 'src/app/(dashboard)/teacher/primaria/[sectionId]/appello/page.tsx',
+    modelli: ['mese >= soglia', '-09-01'],
+    motivo: 'l’inizio dell’anno dell’appello è `${anno}-09-01` con `meseOggi >= 9` (fuso del browser); la PR 4.1 lo legge dal calendario della sede, e lo toglie',
+  },
+  {
+    file: 'src/lib/primaria/periodo.ts',
+    modelli: ['mese >= soglia', 'annoScolasticoDiData'],
+    motivo: 'annoScolasticoDiData decide l’anno con `m >= 8`; la PR 4.1 la sostituisce con il modulo dell’anno, e la toglie',
+  },
+  {
+    file: 'src/lib/crm/quota.ts',
+    modelli: ['-09-01'],
+    motivo: 'competenzaDellaQuota fissa la competenza al `${anno}-09-01`, scritto a mano; la PR 4.1 lo prende dall’inizio dell’anno della sede, e lo toglie',
+  },
+  {
+    file: 'src/lib/fatturazione/sezionale.ts',
+    modelli: ['annoScolasticoDiCompetenza', 'annoScolasticoAmbiguo', 'MESE_INIZIO_ANNO_SCOLASTICO', 'MESE_RIPIEGO_AMBIGUO'],
+    motivo: 'il sezionale delle fatture ha le sue costanti di soglia (settembre, ripiego agosto) e annoScolasticoDiCompetenza/annoScolasticoAmbiguo; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
+  },
+  {
+    file: 'src/lib/aruba/emissione.ts',
+    modelli: ['annoScolasticoDiCompetenza', 'annoScolasticoAmbiguo'],
+    motivo: 'l’emissione chiama annoScolasticoDiCompetenza e legge annoScolasticoAmbiguo del sezionale; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
+  },
+  {
+    file: 'src/lib/pagamenti/selezione-voci.ts',
+    modelli: ['mese >= soglia'],
+    motivo: 'periodoDi (`mese >= 9`) e annoScolasticoDi (`meseDi(oggi) >= 9`) decidono l’anno con la soglia di settembre; la PR 4.1 le sostituisce con il modulo dell’anno, e le toglie',
+  },
+  {
+    file: 'src/lib/storici/periodi.ts',
+    modelli: ['mese >= soglia', '-09-01'],
+    motivo: 'l’inizio dell’anno degli storici è `${mese >= 9 ? anno : anno - 1}-09-01`; la PR 4.1 lo prende dal calendario della sede, e lo toglie',
+  },
+  {
+    file: 'src/lib/crm/statistiche.ts',
+    modelli: ['mese >= soglia', 'periodoDaSettembre'],
+    motivo: 'periodoDaSettembre decide l’anno con `mese >= 9`; la PR 4.1 la sostituisce con il modulo dell’anno, e la toglie',
+  },
 ]
 /**
- * Il tetto è il numero di file di oggi (9) e può solo SCENDERE.
+ * Il tetto è il numero di file di oggi (17) e può solo SCENDERE.
  * Era 10 (misurato 2026-11-07). Sceso a 9 l'08/11/2026, PR 4.1 compito 4.1.1: `src/lib/anno-scolastico.ts` è
  * diventato il modulo dell'anno ed è esente (lì le soglie sono la definizione); non era un file che calcola a mano.
+ * Salito da 9 a 17 l'08/11/2026, PR 4.1 compito 4.1.L: il lock ora vede anche le soglie al 1° settembre, che la PR 3
+ * non vedeva; i file sono quelli del censimento della PR 4.1; ogni compito di sostituzione lo abbassa, l'ultimo lo
+ * porta a 0.
  */
-const TETTO_ANNO_A_MANO = 9
+const TETTO_ANNO_A_MANO = 17
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -1102,9 +1185,37 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
     ).toEqual([])
   })
 
+  it('esamina tutto src/ (almeno 1.500 file .ts/.tsx: oggi sono ~1.680) e non è cieco', () => {
+    expect(ANALISI.length, `Il lock dell'anno a mano ha esaminato ${ANALISI.length} file di src/: ne servono almeno 1500`).toBeGreaterThanOrEqual(1500)
+    // lo stesso insieme di file del minimo `fileLetti` della sezione 7
+    expect(ANALISI.length).toBe(misura(ANALISI, COLONNE_COPIATE, FIXTURE_FUNZIONI.funzioni).fileLetti)
+  })
+
+  it('campione fisso: 6 frammenti di codice veri sono riconosciuti, 6 sosia no', () => {
+    const modelli = (codice: string) => modelliAnnoNelFile(finto('src/lib/x/campione.ts', codice))
+    const positivi = [
+      'function f() { return `${fine}-07-31` }',
+      'const q = { from: `${anno}-09-01` }',
+      'function g(mese, anno) { return mese >= 9 ? anno : anno + 1 }',
+      'const start = d.getMonth() >= 8 ? y : y - 1',
+      'const ok = n.getMonth() + 1 >= 9',
+      'const MESE_RIPIEGO_AMBIGUO = MESE_INIZIO_ANNO_SCOLASTICO - 1',
+    ]
+    const negativi = [
+      'const ok = d.getMonth() + 1 === mese',
+      "const CONSENSI_VERSIONE = '2026-07-31'",
+      '// il 1° settembre: ${anno}-09-01\nconst a = 1',
+      'for (let m = 1; m <= 12; m++) { somma += m }',
+      'const etichetta = `${a}/${a + 1}`',
+      'const mm = meseCivile(istante).slice(5, 7)',
+    ]
+    for (const c of positivi) expect(modelli(c), c).not.toEqual([])
+    for (const c of negativi) expect(modelli(c), c).toEqual([])
+  })
+
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(9) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente); scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(17) // 10 il 2026-11-07, 9 dall'08/11 (anno-scolastico.ts esente), 17 dall'08/11 (4.1.L: vede anche le soglie al 1° settembre); scende, non sale
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

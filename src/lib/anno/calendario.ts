@@ -37,6 +37,19 @@ const STATI: ReadonlySet<string> = new Set<StatoAnno>([
 const CACHE = new WeakMap<SupabaseClient, Map<string, Promise<Calendario | null>>>()
 // «Giorno fuori dal calendario» si segnala una volta per sede e per client, come la lettura.
 const FUORI_SEGNALATI = new WeakMap<SupabaseClient, Set<string>>()
+// Com'è andata la lettura di una sede, accanto alla cache e senza una lettura in più: distingue
+// «lo schema dell'anno non c'è» (si degrada) da «il database ha risposto male» (la route dà 500).
+export type StatoCalendario = 'ok' | 'non_disponibile' | 'guasto'
+const ESITI = new WeakMap<SupabaseClient, Map<string, StatoCalendario>>()
+
+function annotaEsito(supabase: SupabaseClient, scuolaId: string, stato: StatoCalendario): void {
+  let m = ESITI.get(supabase)
+  if (!m) {
+    m = new Map()
+    ESITI.set(supabase, m)
+  }
+  m.set(scuolaId, stato)
+}
 
 // Un errore con la sede. `logErrore` non ha un posto per `scuola_id` (accetta solo operazione,
 // ms, stato, evento) e lo scarterebbe in silenzio: `logEvento` livello error lo porta nella riga.
@@ -104,8 +117,10 @@ async function leggi(supabase: SupabaseClient, scuolaId: string): Promise<Calend
       .order('inizio', { ascending: true })
     if (error) {
       if (schemaAnnoIndietro(error)) {
+        annotaEsito(supabase, scuolaId, 'non_disponibile')
         logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', scuola_id: scuolaId })
       } else {
+        annotaEsito(supabase, scuolaId, 'guasto')
         // solo il SQLSTATE: il messaggio non serve e non deve portare dati
         erroreDiSede(
           'anno/calendario:caricaCalendario',
@@ -127,8 +142,10 @@ async function leggi(supabase: SupabaseClient, scuolaId: string): Promise<Calend
     if (scartate > 0) {
       logEvento('anno-scolastico', 'warn', { tipo: 'calendario-riga-scartata', scuola_id: scuolaId, scartate })
     }
+    annotaEsito(supabase, scuolaId, 'ok')
     return buone
   } catch (err) {
+    annotaEsito(supabase, scuolaId, 'guasto')
     erroreDiSede('anno/calendario:caricaCalendario', 'calendario-non-letto', scuolaId, err)
     return null
   }
@@ -147,6 +164,17 @@ export function caricaCalendario(supabase: SupabaseClient, scuolaId: string): Pr
     perSede.set(scuolaId, p)
   }
   return p
+}
+
+/**
+ * Com'è andata la lettura del calendario di una sede, dalla STESSA cache di `caricaCalendario`
+ * (nessuna lettura in più). Non lancia. Il guasto è già registrato da `caricaCalendario`.
+ */
+export async function statoCalendario(supabase: SupabaseClient, scuolaId: string): Promise<StatoCalendario> {
+  const cal = await caricaCalendario(supabase, scuolaId)
+  const s = ESITI.get(supabase)?.get(scuolaId)
+  if (s) return s
+  return cal ? 'ok' : 'guasto'
 }
 
 /** L'anno di un giorno civile per una sede. Un `giorno` non valido lancia (errore di programma). */

@@ -620,8 +620,9 @@ export async function resolveAnnoLettura(
   opzioni: { dichiarato?: string } = {},
 ): Promise<AnnoLettura | null | NextResponse> {
   const azione = 'resolveAnnoLettura'
+  // Il motivo va sotto `esito`: `motivo` è una radice di testo libero per `redact` e uscirebbe `[redatto:str/N]`.
   const nonDisponibile = (motivo: string): null => {
-    logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', azione, motivo })
+    logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', azione, esito: motivo })
     return null
   }
 

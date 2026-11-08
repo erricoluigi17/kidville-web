@@ -11,6 +11,7 @@ vi.mock('@/lib/logging/logger', () => logger)
 vi.mock('@/lib/sezioni/docenti', () => ({ sezioniDiUtente: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClientConHeader: vi.fn() }))
 
+import { redact } from '@/lib/logging/redact'
 import { annoDalCookie, resolveAnnoLettura, COOKIE_ANNO, type AnnoLettura } from '@/lib/auth/scope'
 import type { AppUser } from '@/lib/auth/require-staff'
 
@@ -205,6 +206,12 @@ describe('resolveAnnoLettura', () => {
       expect(info).toHaveLength(1)
       expect((info[0][2] as { tipo: string }).tipo).toBe('calendario-non-disponibile')
     }
+  })
+
+  it('il motivo del degrado esce in chiaro dalla redazione vera (sotto `esito`, non `motivo`)', async () => {
+    await resolveAnnoLettura(richiesta(), finto({ indietro: 'tabella' }), SEGRETERIA, SEDE)
+    const info = logger.logEvento.mock.calls.find((c) => c[0] === 'anno-scolastico' && c[1] === 'info')
+    expect(redact(info?.[2])).toMatchObject({ tipo: 'calendario-non-disponibile', esito: 'schema-indietro' })
   })
 
   it('un altro errore → 500 con log error, senza il messaggio del database', async () => {

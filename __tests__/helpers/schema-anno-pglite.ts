@@ -544,7 +544,8 @@ export const SCHEMA_AVVISI_CHAT_VOCI_GENITORE = `
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id) ON DELETE CASCADE,
     adult_id uuid NOT NULL,
-    importo numeric(10,2) NOT NULL
+    importo numeric(10,2) NOT NULL,
+    UNIQUE (pagamento_id, adult_id)
   );
 `
 

@@ -394,3 +394,53 @@ describe('un anno senza sezioni nella sede (gli avvisi di luglio e agosto 2026 s
     expect(v).toBe(1)
   })
 })
+
+// `anno_traduci_classi_trg` è fail-open: una traduzione che si guasta non deve fermare la scrittura di un avviso o di una foto.
+// Il guasto si fabbrica togliendo di mezzo la funzione di traduzione, dentro una transazione che poi si annulla.
+describe('se la traduzione si guasta, la scrittura passa e il guasto resta nel registro', () => {
+  const conTraduzioneRotta = async (fn: () => Promise<void>) => {
+    await db.exec(`BEGIN`)
+    try {
+      await db.exec(`ALTER FUNCTION public.anno_traduci_classi(uuid, text[], uuid) RENAME TO anno_traduci_classi_via`)
+      await fn()
+    } finally {
+      await db.exec(`ROLLBACK`)
+    }
+  }
+
+  it.each(ARRAY_TABELLE)('$t: INSERT e UPDATE passano, gli uuid non cambiano, il registro ha la riga', async (t) => {
+    await conTraduzioneRotta(async () => {
+      const riga = await inserisci(t, ['Girasoli'], [FINTO])
+      expect(riga.ids).toEqual([FINTO])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = ARRAY['Margherite'] WHERE id = $1`, [riga.id])
+      expect(await una<string[]>(`SELECT ${t.dst} FROM public.${t.t} WHERE id = $1`, [riga.id])).toEqual([FINTO])
+      expect(await una<string[]>(`SELECT ${t.src} FROM public.${t.t} WHERE id = $1`, [riga.id])).toEqual(['Margherite'])
+      // Una riga sola con due occorrenze: l'impronta è per tabella e per giorno.
+      const log = await avvisiLog()
+      expect(log).toHaveLength(1)
+      expect(log[0].livello).toBe('error')
+      expect(log[0].contesto).toMatchObject({ esito: 'traduzione-classi-fallita', tabella: t.t, sqlstate: '42883' })
+      expect(await una<number>(`SELECT occorrenze FROM public.app_log WHERE evento = 'anno-scolastico'`)).toBe(2)
+      expect(JSON.stringify(log)).not.toContain('Girasoli')
+      expect(JSON.stringify(log)).not.toContain('Margherite')
+    })
+  })
+
+  it('la forma scalare: `mensa_class_menu_assignment` passa, la sezione non cambia', async () => {
+    await conTraduzioneRotta(async () => {
+      const sezione = (id: string) => una<string>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [id])
+      const id = await una<string>(`INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, section_id) VALUES ($1, 'Girasoli', $2) RETURNING id`, [S1, GIRASOLI_2728])
+      expect(await sezione(id)).toBe(GIRASOLI_2728)
+      await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Margherite' WHERE id = $1`, [id])
+      expect(await sezione(id)).toBe(GIRASOLI_2728)
+      const log = await avvisiLog()
+      expect(log).toHaveLength(1)
+      expect(log[0].contesto).toMatchObject({ esito: 'traduzione-classi-fallita', tabella: 'mensa_class_menu_assignment' })
+    })
+  })
+
+  it('la transazione annullata rimette la traduzione: il banco non resta rotto', async () => {
+    const riga = await inserisci(ARRAY_TABELLE[0], ['Girasoli'])
+    expect(riga.ids).toEqual([GIRASOLI])
+  })
+})

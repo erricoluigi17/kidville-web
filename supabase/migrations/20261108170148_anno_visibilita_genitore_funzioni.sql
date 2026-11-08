@@ -626,8 +626,10 @@ GRANT EXECUTE ON FUNCTION public.thread_visibili_miei() TO authenticated, servic
 -- `visibile_dal` VALE SEMPRE, anche per una voce pagata o per una quota: è una scelta della segreteria. Oggi è il giorno di Roma,
 -- come in `src/app/api/pagamenti/route.ts`.
 --
--- UNA VOCE `split` È DI CHI HA LA SUA QUOTA (`pagamenti_quote.adult_id`): senza, non si vede nemmeno se è di un figlio. Come la route
--- e la regola di accesso di oggi: il dovuto dell'altro genitore non è affare di questo. Vale prima dell'anno, come `visibile_dal`.
+-- UNA VOCE `split` È DI CHI HA LA SUA QUOTA (`pagamenti_quote.adult_id`): senza, non si vede nemmeno se è di un figlio. Il dovuto
+-- dell'altro genitore non è affare di questo. Vale prima dell'anno, come `visibile_dal`. Oggi il filtro sta solo nella route
+-- (`src/app/api/pagamenti/route.ts`): la regola di accesso di `pagamenti` lascia passare ogni voce del figlio, e questa funzione è
+-- più stretta di lei. Quando la regola passerà da qui, restringerà.
 --
 -- LA SEDE è `scuola_id`, con riserva quella del bambino: la stessa strada con cui il registro assegna l'anno
 -- (`anno_sede_della_riga`). `POST /api/pagamenti` la lascia ricavare dall'alunno. Una voce senza anno, o in una sede senza anno

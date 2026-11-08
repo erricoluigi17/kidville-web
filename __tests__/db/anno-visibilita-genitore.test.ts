@@ -2223,8 +2223,8 @@ describe('voci_visibili_genitore', () => {
     })
   })
 
-  // Come la route e la regola di accesso di oggi. M44b sostituirà quella regola con questa funzione: se qui mancasse il filtro,
-  // dal browser si aprirebbe il dovuto dell'altro genitore.
+  // Come la route. La regola di accesso di oggi questo filtro non ce l'ha: lascia passare ogni voce del figlio, e M44b la stringe
+  // facendola passare da questa funzione. Se qui mancasse il filtro, dal browser resterebbe aperto il dovuto dell'altro genitore.
   describe('una voce divisa è di chi ha la sua quota', () => {
     prova('con la quota del genitore si vede, senza no', async () => {
       await inRollback(async () => {
@@ -2276,15 +2276,6 @@ describe('voci_visibili_genitore', () => {
         await quotaDi(await voce({ tipo: 'split', competenza: FUTURA }), GEN_DOPPIO)
         await quotaDi(await voce({ tipo: 'split', visibileDal: domani }), GEN_DOPPIO)
         expect(await vociDi(GEN_DOPPIO)).toEqual([])
-      })
-    })
-
-    prova('due quote dello stesso genitore danno una riga sola', async () => {
-      await inRollback(async () => {
-        const v = await voce({ tipo: 'split' })
-        await quotaDi(v, GEN_DOPPIO)
-        await quotaDi(v, GEN_DOPPIO)
-        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
       })
     })
   })

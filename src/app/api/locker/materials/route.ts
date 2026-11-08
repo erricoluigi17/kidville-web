@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -248,7 +248,7 @@ export const PATCH = withRoute('locker/materials:PATCH', async (request: NextReq
         const { data: row, error: rowErr } = await admin
             .from('locker_config').select('section_id').eq('id', id).maybeSingle();
         if (rowErr) throw rowErr;
-        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        const scopeErr = await assertSezioneScrivibile(admin, auth.user, (row?.section_id as string | null) ?? null);
         if (scopeErr) return scopeErr;
 
         const { data, error } = await admin
@@ -306,7 +306,7 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
         // lo stesso — si fallisce chiusi in entrambi i casi — ma il log direbbe
         // «riga senza sezione» invece di «il database non ha risposto».
         if (rowErr) throw rowErr;
-        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        const scopeErr = await assertSezioneScrivibile(admin, auth.user, (row?.section_id as string | null) ?? null);
         if (scopeErr) return scopeErr;
 
         const { error } = await admin.from('locker_config').delete().eq('id', id);

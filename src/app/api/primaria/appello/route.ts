@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { colonneConMotivo } from '@/lib/presenze/motivo-visibile'
 import { aOrarioIso } from '@/lib/presenze/orario'
 import { logScrittura } from '@/lib/audit/scrittura'
@@ -282,7 +282,7 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     const politica = politicaNotificaOperazione({ attore: auth.user, giornoCompetenza: data })
 
     const supabase = await createAdminClient()
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     // Dispatch singolo/bulk come oggi: records array → bulk, altrimenti campi top-level.
@@ -610,7 +610,7 @@ export const DELETE = withRoute('primaria/appello:DELETE', async (request: NextR
 
     // LO SCOPE PRIMA DI TUTTO, come nella POST: dopo un diniego `presenze` non si
     // legge nemmeno.
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
     const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
     if (alunnoErr) return alunnoErr

@@ -33,6 +33,7 @@ vi.mock('@/lib/auth/scope', () => ({
     // Il gemello per UUID: da quando la classe si identifica con `section_id`
     // (2026-09-02) `risolviSezione` sceglie fra i due gate.
     assertSezioneInScope: vi.fn(async () => null),
+    assertSezioneScrivibile: vi.fn(async () => null),
     // Scope di sede sulla query (l'isolamento vero è verificato in
     // `attendance-scope-sede.test.ts`, con un finto client che filtra davvero).
     resolveScuoleAttive: vi.fn(async () => ['sc-1']),

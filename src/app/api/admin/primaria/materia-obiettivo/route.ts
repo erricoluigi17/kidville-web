@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -77,7 +77,7 @@ export const POST = withRoute('admin/primaria/materia-obiettivo:POST', async (re
     // Isolamento per sede: `sectionId` arrivava dal client senza verifica — si
     // leggevano e si scrivevano materie, orari, obiettivi e certificati delle
     // competenze su sezioni di un'altra sede.
-    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
 
 

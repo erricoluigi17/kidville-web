@@ -66,6 +66,7 @@ const m = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: m.requireDocente }))
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: m.assertSezioneInScope,
+  assertSezioneScrivibile: m.assertSezioneInScope,
   assertAlunnoInScope: vi.fn().mockResolvedValue(null),
   assertAlunniInSezione: vi.fn().mockResolvedValue(null),
 }))

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { logEvento } from '@/lib/logging/logger'
 import { verificaPermessoVoce, rispostaPermessoNegato } from '@/lib/primaria/permesso-voce'
 import { allegatiRegistroVivi } from '@/lib/primaria/cestino-allegati-registro'
@@ -203,7 +203,7 @@ export async function allegatoDaGestire(
   }
   if (!lezione) return { ok: false, risposta: risposte.lezioneNonTrovata() }
 
-  const scopeErr = await assertSezioneInScope(supabase, utente, lezione.section_id)
+  const scopeErr = await assertSezioneScrivibile(supabase, utente, lezione.section_id)
   if (scopeErr) return { ok: false, risposta: scopeErr }
 
   const permesso = await verificaPermessoVoce(supabase, utente, {

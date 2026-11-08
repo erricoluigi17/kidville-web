@@ -174,38 +174,75 @@ function segnalaLetturaFallita(esito: string, campi: Record<string, string | num
   logEvento('notifica', 'error', { operazione: OPERAZIONE_DOCENTI, esito, ...campi }, errore)
 }
 
-// Id delle sezioni assegnate a un utente (docente).
-export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('utenti_sezioni')
-    .select('section_id')
-    .eq('utente_id', utenteId)
-  // L'errore va INTERO come 4° argomento: `code`, `details` e `hint` di
-  // PostgREST sono ciò che dice *perché* (`42501` la RLS, `42P01`/`42703` lo
-  // schema non migrato, `PGRST301` il token).
-  if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
-  return (data ?? []).map(r => r.section_id as string)
+/**
+ * Una sezione che il docente vede: `solaLettura` è vero per quelle di un anno `in_chiusura` o `chiuso`
+ * (la sola lettura la impone il codice applicativo: `assertSezioneScrivibile`).
+ */
+export type SezioneVisibile = { sectionId: string; solaLettura: boolean }
+
+const ERRORI_FUNZIONE_ASSENTE = new Set(['42883', 'PGRST202'])
+
+/**
+ * Le sezioni che un docente VEDE, per anno: viene dalla funzione SQL `sezioni_visibili_docente` (anni
+ * `corrente`, `in_chiusura`, `chiuso` della sede della sezione; mai quelli futuri). EXECUTE è solo di
+ * `service_role`, quindi `supabase` qui è il client di servizio, come in tutte le route.
+ *
+ * Funzione ASSENTE (`42883`/`PGRST202`: il DB E2E della CI non è migrato) → la query di prima su
+ * `utenti_sezioni`, tutte scrivibili, con un log `info`. Qualunque ALTRO errore NON ripiega: mostrerebbe a un
+ * docente le sezioni future proprio quando la funzione è rotta. Lista vuota e riga `error`, come ogni guasto
+ * di lettura di questo file.
+ */
+export async function sezioniVisibiliDiUtente(
+  supabase: SupabaseClient,
+  utenteId: string,
+  opzioni: { soloScrivibili?: boolean } = {},
+): Promise<SezioneVisibile[]> {
+  const { data, error } = await supabase.rpc('sezioni_visibili_docente', { p_utente: utenteId })
+  let righe: SezioneVisibile[]
+  if (error) {
+    const code = (error as { code?: string }).code ?? ''
+    if (!ERRORI_FUNZIONE_ASSENTE.has(code)) {
+      // L'errore va INTERO come 4° argomento: `code`, `details` e `hint` dicono *perché*.
+      segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
+      return []
+    }
+    logEvento('notifica', 'info', {
+      operazione: OPERAZIONE_DOCENTI,
+      esito: 'rpc-assente',
+      error_code: code,
+    })
+    const { data: legami, error: errLegami } = await supabase
+      .from('utenti_sezioni')
+      .select('section_id')
+      .eq('utente_id', utenteId)
+    if (errLegami) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, errLegami)
+    righe = (legami ?? []).map(r => ({ sectionId: r.section_id as string, solaLettura: false }))
+  } else {
+    righe = ((data ?? []) as { section_id: string; sola_lettura: boolean }[])
+      .map(r => ({ sectionId: r.section_id, solaLettura: r.sola_lettura === true }))
+  }
+  return opzioni.soloScrivibili ? righe.filter(r => !r.solaLettura) : righe
 }
 
-// Nomi (sections.name) delle sezioni assegnate a un utente — fonte canonica
-// utenti_sezioni → sections. Nessun fallback euristico: senza legami → [].
+// Id delle sezioni VISIBILI a un utente (docente), scrivibili e in sola lettura. Per distinguere le due
+// categorie: `sezioniVisibiliDiUtente`.
+export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
+  return (await sezioniVisibiliDiUtente(supabase, utenteId)).map(r => r.sectionId)
+}
+
+// Nomi (sections.name) delle sezioni VISIBILI a un utente — i nomi si ripetono ogni anno, quindi si parte dagli
+// id della funzione: il nome di una sezione futura non esce. Nessun fallback euristico: senza legami → [].
 export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('utenti_sezioni')
-    .select('sections(name)')
-    .eq('utente_id', utenteId)
+  const ids = await sezioniDiUtente(supabase, utenteId)
+  if (ids.length === 0) return []
+  const { data, error } = await supabase.from('sections').select('name').in('id', ids)
   if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
-  type Row = { sections: { name?: string | null }[] | { name?: string | null } | null }
   return [...new Set(
-    ((data ?? []) as Row[]).flatMap((r) => {
-      const s = r.sections
-      if (!s) return []
-      return (Array.isArray(s) ? s : [s]).map((x) => x.name)
-    }).filter((n): n is string => Boolean(n))
+    ((data ?? []) as { name?: string | null }[]).map(x => x.name).filter((n): n is string => Boolean(n)),
   )]
 }
 
-// Le sezioni assegnate a un utente con la loro SEDE: `{ nome, scuola_id }`.
+// Le sezioni VISIBILI a un utente con la loro SEDE: `{ nome, scuola_id }`.
 // Il nome da solo non è una chiave — «2 ANNI» esiste in due plessi — e chi deve
 // decidere se un avviso «di classe» riguarda questo docente (bacheca avvisi,
 // 2026-10-07) confronta la coppia, non la stringa. Stessa fonte e stesso
@@ -214,20 +251,14 @@ export async function sezioniDiUtenteConSede(
   supabase: SupabaseClient,
   utenteId: string,
 ): Promise<{ nome: string; scuola_id: string | null }[]> {
-  const { data, error } = await supabase
-    .from('utenti_sezioni')
-    .select('sections(name, scuola_id)')
-    .eq('utente_id', utenteId)
+  const ids = await sezioniDiUtente(supabase, utenteId)
+  if (ids.length === 0) return []
+  const { data, error } = await supabase.from('sections').select('name, scuola_id').in('id', ids)
   if (error) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
   type Sezione = { name?: string | null; scuola_id?: string | null }
-  type Row = { sections: Sezione[] | Sezione | null }
-  return ((data ?? []) as Row[]).flatMap((r) => {
-    const s = r.sections
-    if (!s) return []
-    return (Array.isArray(s) ? s : [s])
-      .filter((x): x is Sezione & { name: string } => Boolean(x.name))
-      .map((x) => ({ nome: x.name, scuola_id: x.scuola_id ?? null }))
-  })
+  return ((data ?? []) as Sezione[])
+    .filter((x): x is Sezione & { name: string } => Boolean(x.name))
+    .map((x) => ({ nome: x.name, scuola_id: x.scuola_id ?? null }))
 }
 
 // Sezioni di un docente filtrate per grado scolastico (es. solo 'primaria').

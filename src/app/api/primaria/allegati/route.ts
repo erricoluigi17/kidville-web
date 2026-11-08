@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -179,7 +179,7 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
       return risposte.letturaFallita()
     }
     if (!lezione) return risposte.lezioneNonTrovata()
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, lezione.section_id)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, lezione.section_id)
     if (scopeErr) return scopeErr
 
     // Assicura il bucket.

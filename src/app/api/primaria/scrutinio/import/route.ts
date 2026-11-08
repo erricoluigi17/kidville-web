@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -75,7 +75,7 @@ export const POST = withRoute('primaria/scrutinio/import:POST', async (request: 
     if (scrutinio.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: import non consentito', locked: true }, { status: 423 })
 
     // Scope sulla sezione dello scrutinio (educator: solo proprie sezioni; staff: plesso).
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, scrutinio.section_id as string)
     if (scopeErr) return scopeErr
 
     // Anagrafiche della sezione per risoluzione per nome.

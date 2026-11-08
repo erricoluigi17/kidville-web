@@ -106,7 +106,7 @@ const scopeMock = vi.hoisted(() => ({
   assertAlunnoInScope: vi.fn(),
   assertAlunniInSezione: vi.fn(),
 }))
-vi.mock('@/lib/auth/scope', () => scopeMock)
+vi.mock('@/lib/auth/scope', () => ({ ...scopeMock, assertSezioneScrivibile: scopeMock.assertSezioneInScope }))
 
 const auditMock = vi.hoisted(() => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: auditMock.logScrittura }))

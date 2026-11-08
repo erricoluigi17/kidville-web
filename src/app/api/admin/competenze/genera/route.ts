@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { generaCertificato } from '@/lib/competenze/certificato-store'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -41,7 +41,7 @@ export const POST = withRoute('admin/competenze/genera:POST', async (request: Ne
       // conoscendo l'uuid di una quinta di un altro plesso, la Direzione ne
       // generava i certificati delle competenze e ci apponeva la firma
       // elettronica del dirigente. Il gate va PRIMA della query, non dopo.
-      const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, body.sectionId)
+      const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, body.sectionId)
       if (fuoriScopeSez) return fuoriScopeSez
 
       const { data: certs, error: errCerts } = await supabase
@@ -79,7 +79,7 @@ export const POST = withRoute('admin/competenze/genera:POST', async (request: Ne
         return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
       }
       if (!cert) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
-      const fuoriScopeCert = await assertSezioneInScope(supabase, auth.user, cert.section_id as string)
+      const fuoriScopeCert = await assertSezioneScrivibile(supabase, auth.user, cert.section_id as string)
       if (fuoriScopeCert) return fuoriScopeCert
 
       const { pdf, error, status } = await generaCertificato(supabase, body.certificatoId, auth.user.id, true)

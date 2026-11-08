@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -42,7 +42,7 @@ export const POST = withRoute('primaria/scrutinio/pubblica:POST', async (request
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Pubblicabile solo a scrutinio chiuso' }, { status: 409 })
 
     // Scoping di plesso per la dirigenza: si pubblicano solo scrutini del proprio plesso.
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, scrutinio.section_id as string)
     if (scopeErr) return scopeErr
 
     const { data: updated, error } = await supabase

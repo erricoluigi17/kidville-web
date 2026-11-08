@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from './require-staff'
-import { sezioniDiUtente } from '@/lib/sezioni/docenti'
+import { sezioniDiUtente, sezioniVisibiliDiUtente } from '@/lib/sezioni/docenti'
 import { logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from './rifiuto-sede'
 import { erroreAnno } from '@/lib/anno/errori'
@@ -767,6 +767,29 @@ export async function assertSezioneInScope(
   user: AppUser,
   sectionId: string | null | undefined,
 ): Promise<NextResponse | null> {
+  return await verificaSezione(supabase, user, sectionId, false)
+}
+
+/**
+ * Come `assertSezioneInScope`, per le SCRITTURE: in più, un docente che vede la sezione in sola lettura (anno
+ * `in_chiusura` o `chiuso`) riceve **403** con `codice: 'SEZIONE_SOLA_LETTURA'`. Direzione e segreteria
+ * (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso per loro lo difende il database (PR 3-B).
+ * Le `GET` restano su `assertSezioneInScope`.
+ */
+export async function assertSezioneScrivibile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string | null | undefined,
+): Promise<NextResponse | null> {
+  return await verificaSezione(supabase, user, sectionId, true)
+}
+
+async function verificaSezione(
+  supabase: SupabaseClient,
+  user: AppUser,
+  sectionId: string | null | undefined,
+  inScrittura: boolean,
+): Promise<NextResponse | null> {
   if (!sectionId) {
     return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
   }
@@ -786,9 +809,19 @@ export async function assertSezioneInScope(
   }
 
   if (!vedeTutteLeClassi(user)) {
-    const mie = await sezioniDiUtente(supabase, user.id)
-    if (!mie.includes(sectionId)) {
+    const mie = await sezioniVisibiliDiUtente(supabase, user.id)
+    const mia = mie.find(m => m.sectionId === sectionId)
+    if (!mia) {
       return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
+    }
+    if (inScrittura && mia.solaLettura) {
+      logEvento('auth', 'warn', {
+        tipo: 'sezione-sola-lettura', azione: 'assertSezioneScrivibile', utente: user.id, sezione: sectionId,
+      })
+      return NextResponse.json(
+        { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
+        { status: 403 },
+      )
     }
   }
   return null

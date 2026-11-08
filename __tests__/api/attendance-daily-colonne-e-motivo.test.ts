@@ -78,6 +78,7 @@ vi.mock('@/lib/auth/scope', () => ({
   // (2026-09-02) `risolviSezione` sceglie fra i due, e un mock che ne conosce
   // uno solo fa esplodere l'altro ramo invece di provarlo.
   assertSezioneInScope: vi.fn(async () => null),
+  assertSezioneScrivibile: vi.fn(async () => null),
   resolveScuoleAttive: vi.fn(async () => [SEDE]),
   // Il vero `vedeTutteLeClassi`, non uno finto: è la funzione che decide se il motivo
   // dell'assenza esce da questa rotta (Q1), e riscriverla qui vorrebbe dire provare la

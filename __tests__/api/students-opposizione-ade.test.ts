@@ -14,6 +14,7 @@ vi.mock('@/lib/auth/scope', () => ({
   assertAlunnoInScope: async () => null,
   assertAlunniInSezione: async () => null,
   assertSezioneInScope: async () => null,
+  assertSezioneScrivibile: async () => null,
   scuoleDiUtente: async () => ['sc-1'],
 }))
 vi.mock('@/lib/supabase/server-client', () => ({

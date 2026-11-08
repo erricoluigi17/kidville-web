@@ -33,6 +33,7 @@ vi.mock('@/lib/auth/require-parent', () => ({
 vi.mock('@/lib/auth/scope', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   assertSezioneInScope: async () => null,
+  assertSezioneScrivibile: async () => null,
 }))
 vi.mock('@/lib/competenze/certificato-store', () => ({ CERTIFICATI_BUCKET: 'certificati-competenze' }))
 vi.mock('@/lib/supabase/server-client', () => ({

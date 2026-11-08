@@ -7,7 +7,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, type AppUser } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -197,7 +197,7 @@ async function caricaBersagli(
   if (!nota || !nota.section_id) return { response: notaNonTrovata() }
   const sectionId = nota.section_id
 
-  const scopeErr = await assertSezioneInScope(supabase, utente, sectionId)
+  const scopeErr = await assertSezioneScrivibile(supabase, utente, sectionId)
   if (scopeErr) return { response: scopeErr }
 
   const sede = await scuolaDellaSezione(supabase, sectionId, operazione)
@@ -482,7 +482,7 @@ export const POST = withRoute('primaria/note:POST', async (request: NextRequest)
     const docenteId = b.data.docenteId as string | null | undefined
 
     const supabase = await createAdminClient()
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     // Gli alunni destinatari devono appartenere alla sezione asserita (no note cross-sezione).

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, type AppUser } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { resolveScuolaScrittura, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseBody, validationError } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
@@ -658,7 +658,7 @@ async function caricaContesto(
     // Anche qui `sections` si legge due volte (qui dentro e in `caricaSezione`): il
     // perché e la riparazione — che sta in `src/lib/auth/scope.ts` — sono scritti accanto
     // alla stessa chiamata nel GET (`../route.ts`).
-    const fuoriPortata = await assertSezioneInScope(supabase, user, input.sezioneId)
+    const fuoriPortata = await assertSezioneScrivibile(supabase, user, input.sezioneId)
     if (fuoriPortata) return { response: fuoriPortata }
 
     // Delle tre stampe del n. 49, ciascuna legge SOLO ciò che stampa: l'elenco né diete né

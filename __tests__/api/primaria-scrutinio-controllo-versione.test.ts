@@ -46,6 +46,7 @@ const authMock = vi.hoisted(() => ({ requireDocente: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: authMock.requireDocente }))
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: vi.fn().mockResolvedValue(null),
+  assertSezioneScrivibile: vi.fn().mockResolvedValue(null),
   assertAlunniInSezione: vi.fn().mockResolvedValue(null),
 }))
 const audit = vi.hoisted(() => ({ logScrittura: vi.fn(), notificaTitolariScrittura: vi.fn() }))

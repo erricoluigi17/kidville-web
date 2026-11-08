@@ -16,6 +16,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async () => ({ data: (h.righe.utenti_sezioni ?? []).map(r => ({ section_id: r.section_id, sola_lettura: false })), error: null }),
     from: (table: string) => {
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}

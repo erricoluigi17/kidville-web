@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneScrivibile } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -73,7 +73,7 @@ export const POST = withRoute('primaria/pagella/batch:POST', async (request: Nex
     if (scrutinio.stato !== 'chiuso') return rifiuto('Generazione disponibile solo a scrutinio chiuso', 409)
 
     // Scoping di plesso per la dirigenza: batch solo su scrutini del proprio plesso.
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, scrutinio.section_id as string)
     if (scopeErr) return scopeErr
 
     const { data: alunni, error: errAlunni } = await supabase.from('alunni').select('id').eq('section_id', scrutinio.section_id)

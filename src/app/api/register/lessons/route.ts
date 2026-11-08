@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
-import { assertClasseNomeInScope, assertSezioneInScope, resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, resolveScuoleAttive, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY, vincoloConflittoAssente } from '@/lib/registro/chiave-orario';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
@@ -123,7 +123,7 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
         // perimetro e l'ambiguità si NEGA.
         let sezione: { id: string; name: string; scuola_id: string };
         if (sectionId) {
-            const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId);
+            const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId);
             if (scopeErr) return scopeErr;
             const { data: row, error: sezErr } = await supabase
                 .from('sections')

@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 const h = vi.hoisted(() => ({ db: {} as DBFinto }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: async () => ({ user: { id: 'direzione', role: 'admin' } }) }))
-vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: async () => null }))
+vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: async () => null, assertSezioneScrivibile: async () => null }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db) }))
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ getGenitoriDiAlunni: async () => new Map([['alunno', ['genitore']]]) }))

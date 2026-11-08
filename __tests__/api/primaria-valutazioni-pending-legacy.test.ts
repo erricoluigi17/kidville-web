@@ -4,7 +4,7 @@ import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 const h = vi.hoisted(() => ({ db: {} as DBFinto }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db) }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: { id: 'staff', role: 'segreteria', scuola_id: 'sede' } }) }))
-vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: async () => null }))
+vi.mock('@/lib/auth/scope', () => ({ assertSezioneInScope: async () => null, assertSezioneScrivibile: async () => null }))
 vi.mock('@/lib/primaria/obiettivi', () => ({ leggiObiettiviDisponibili: async () => ({ ok: true, righe: [] }) }))
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn() }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))

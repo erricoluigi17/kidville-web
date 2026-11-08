@@ -2341,6 +2341,8 @@ export const CODICI_ERRORE = {
      * questo lavoro non tocca. Quando qualcuno darà un codice anche a loro, li unirà.
      */
     SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
+    /** 403 — la classe è di un anno passato e il docente la vede in sola lettura (`assertSezioneScrivibile`). */
+    SEZIONE_SOLA_LETTURA: 'erroreSezioneSolaLettura',
     /** 403 — questa è la porta del registro di PRIMARIA, e la classe è di un altro grado. */
     CLASSE_NON_DI_PRIMARIA: 'erroreClasseNonDiPrimaria',
     /**

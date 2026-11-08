@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, type AppUser } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { haUnRuolo } from '@/lib/auth/predicati-ruolo'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -235,7 +235,7 @@ export const POST = withRoute('primaria/allegati/cestino:POST', async (request: 
     if (!sectionId) return risposte.allegatoNonTrovato()
 
     // ── 3. La classe nello scope, PRIMA di dire qualunque cosa sulla lezione ──
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
     // ── 4. Oltre la custodia: non si ripristina (la purga può averlo già tolto).

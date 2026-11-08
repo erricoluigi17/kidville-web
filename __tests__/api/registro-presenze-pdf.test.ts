@@ -46,6 +46,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/auth/scope', () => ({
   assertClasseNomeInScope: h.assertClasseNomeInScope,
   assertSezioneInScope: h.assertSezioneInScope,
+  assertSezioneScrivibile: h.assertSezioneInScope,
   resolveScuoleAttive: h.resolveScuoleAttive,
 }))
 vi.mock('@/lib/supabase/server-client', async () => {

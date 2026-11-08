@@ -3,11 +3,11 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppRole } from '@/lib/auth/require-staff'
 import {
-  assertSezioneInScope,
   assertUtenteInScope,
   formaConfronto,
   resolveScuoleAttive,
   scuoleDiUtente,
+  assertSezioneScrivibile,
 } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
@@ -451,7 +451,7 @@ export const PATCH = withRoute('admin/staff:PATCH', async (request: Request) => 
     // Si applica più sotto, dove le sedi delle sezioni sono già state lette.
     if (sezioni && !trasferimento) {
       for (const sid of sezioni) {
-        const fuori = await assertSezioneInScope(supabase, auth.user, sid as string)
+        const fuori = await assertSezioneScrivibile(supabase, auth.user, sid as string)
         if (fuori) return fuori
       }
     }

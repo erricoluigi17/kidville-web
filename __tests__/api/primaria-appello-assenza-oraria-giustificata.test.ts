@@ -36,6 +36,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/auth/scope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
   assertSezioneInScope: vi.fn(async () => null),
+  assertSezioneScrivibile: vi.fn(async () => null),
   assertAlunniInSezione: vi.fn(async () => null),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn(async () => undefined) }))

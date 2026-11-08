@@ -11,6 +11,7 @@ import {
   resolveScuoleAttive,
   resolveScuolaScrittura,
   scuoleDiUtente,
+  assertSezioneScrivibile,
 } from '@/lib/auth/scope'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
@@ -309,7 +310,7 @@ export const POST = withRoute('agenda:POST', async (request: NextRequest) => {
 
     let scuolaId: string | null = null
     if (sectionId) {
-      const scopeErr = await assertSezioneInScope(supabase, user, sectionId)
+      const scopeErr = await assertSezioneScrivibile(supabase, user, sectionId)
       if (scopeErr) return scopeErr
       const { data: section, error: errSezione } = await supabase
         .from('sections')

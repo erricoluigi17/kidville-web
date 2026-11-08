@@ -61,6 +61,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: authMock.requireDoc
 // Il gate vero è coperto in `primaria-registro-supplenza.test.ts`.
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: vi.fn().mockResolvedValue(null),
+  assertSezioneScrivibile: vi.fn().mockResolvedValue(null),
   assertAlunniInSezione: vi.fn().mockResolvedValue(null),
   assertSezionePrimariaFirmabile: vi.fn().mockResolvedValue({ supplenza: false }),
 }))

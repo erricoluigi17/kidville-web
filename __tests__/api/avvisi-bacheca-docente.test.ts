@@ -105,6 +105,10 @@ const utente = (id: string, ruolo: string) => ({
 const dbBase = (): DBFinto => ({
   utenti: [utente(DOCENTE, 'educator'), utente(COLLEGA, 'educator'), utente(SEGRETERIA, 'segreteria')],
   avvisi_risposte: [],
+  sections: [
+    { id: 'sez-gira-a', name: 'Girasoli', scuola_id: SEDE_A },
+    { id: 'sez-tuli-a', name: 'Tulipani', scuola_id: SEDE_A },
+  ],
   // La docente ha UNA classe: «Girasoli» della sede A. La sede B ha una classe
   // con lo stesso nome, che NON è sua.
   utenti_sezioni: [

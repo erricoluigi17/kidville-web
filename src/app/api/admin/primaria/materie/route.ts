@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -42,7 +42,7 @@ async function assertMateriaInScope(
     return NextResponse.json({ error: 'Verifica di scope non riuscita' }, { status: 500 })
   }
   if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
-  return await assertSezioneInScope(supabase, user, materia.section_id as string)
+  return await assertSezioneScrivibile(supabase, user, materia.section_id as string)
 }
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -141,7 +141,7 @@ export const POST = withRoute('admin/primaria/materie:POST', async (request: Nex
     // sedi. Derivare `scuola_id` dalla sezione NON è un presidio: scriveva la
     // sede giusta, cioè quella di un plesso non proprio. Serve il gate.
     const sectionId = body.sectionId
-    const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const fuoriScopeSez = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
 
     // Risolve la scuola dalla sezione (single source of truth).

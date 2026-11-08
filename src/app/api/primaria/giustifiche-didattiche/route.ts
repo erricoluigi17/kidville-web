@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione, assertSezioneScrivibile } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -332,7 +332,7 @@ async function voceAutorizzata(
 
   // Scope PRIMA del permesso: «è Segreteria» non vuol dire «è Segreteria di
   // quella classe» (permesso-voce non guarda la sede).
-  const scopeErr = await assertSezioneInScope(supabase, user, riga.section_id)
+  const scopeErr = await assertSezioneScrivibile(supabase, user, riga.section_id)
   if (scopeErr) return { response: scopeErr }
 
   // La coppia (classe, materia) della voce deve essere ancora fra quelle assegnate alla docente (regola 19): vale
@@ -517,7 +517,7 @@ export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (req
     if (data > oggiRoma()) return rispostaDataFutura(operazione)
 
     const supabase = await createAdminClient()
-    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    const scopeErr = await assertSezioneScrivibile(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
     const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
     if (alunnoErr) return alunnoErr

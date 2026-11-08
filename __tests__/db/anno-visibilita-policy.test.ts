@@ -933,6 +933,7 @@ describe('il trigger chat_messaggio_broadcast', () => {
     })
   })
 
+  // Lo schema vero ha `chat_threads.teacher_id` NOT NULL e rifiuta questa riga: la prova guarda solo il trigger, sul banco che lo permette.
   prova('un thread senza docente: al genitore arriva lo stesso, e il controllo gira', async () => {
     await inRollback(async () => {
       const r = await db.query<{ id: string }>(

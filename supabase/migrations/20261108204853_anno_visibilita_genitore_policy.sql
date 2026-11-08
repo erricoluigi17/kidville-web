@@ -201,7 +201,7 @@ BEGIN
                         v_manda := false;
                         BEGIN
                             PERFORM public.anno_log_guasto('chat_messages', 'visibilita-thread-fallita', 'chat_messaggio_broadcast',
-                                                           'controllo della visibilità del thread fallito: il segnale a questo destinatario non è partito, il messaggio è entrato',
+                                                           'controllo della visibilità del thread fallito: il segnale a questo destinatario non è partito, la scrittura è entrata',
                                                            'db:anno-chat-broadcast', SQLSTATE);
                         EXCEPTION
                             WHEN OTHERS THEN

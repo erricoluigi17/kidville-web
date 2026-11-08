@@ -6,11 +6,16 @@
 -- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 
+-- `anno_regole` la leggono i trigger a ogni riga scritta: un ALTER in coda farebbe accodare anche quelle scritture.
+SET LOCAL lock_timeout = '10s';
+
 -- ── 4.4.1 La manopola della chat ──────────────────────────────────────────────────────────────────
 --
 -- Nasce SPENTA, e la accende la PR 4.8: a manopola spenta le conversazioni con un docente non più assegnato restano
 -- scrivibili come oggi. Le scritture su `anno_regole` le ferma il freno.
-ALTER TABLE public.anno_regole
+-- IF EXISTS: il lancio manuale di «DB migrate (CI)» gira con `--single-transaction`, e su un database senza
+-- `anno_regole` un errore qui annullerebbe tutto il file.
+ALTER TABLE IF EXISTS public.anno_regole
   ADD COLUMN IF NOT EXISTS chat_sola_lettura_dal_passaggio boolean NOT NULL DEFAULT false;
 
 -- ── 4.4.1 I figli attivi di un genitore ───────────────────────────────────────────────────────────
@@ -23,6 +28,11 @@ ALTER TABLE public.anno_regole
 --   · è `in_attesa` o `iscritto`. `sospeso` è un flag della frequenza, non uno stato: un figlio sospeso resta attivo;
 --   · oggi (giorno di Roma) cade fra `data_ingresso` e `data_uscita`, estremi compresi.
 -- Il confine sulle frequenze `origine = 'recupero'` riguarda le foto, non questa funzione: qui un recupero è come le altre.
+--
+-- IL CONTRATTO È UNA RIGA PER FREQUENZA VIVA, non una per bambino. Oggi le due cose coincidono, perché le tre sedi hanno
+-- lo stesso anno attivo. Ma `frequenze_una_viva_per_anno` copre solo lo stesso `anno_id` e `anno_attivo` è per sede: con
+-- due sedi su anni attivi diversi (si raggiungerà col passaggio, PR 4.8) lo stesso bambino dà due righe, ognuna con la
+-- sua sede e la sua sezione. Chi vuole l'elenco dei bambini fa il DISTINCT da sé; chi guarda per sede usa la riga giusta.
 --
 -- Il legame ha DUE strade, e il codice le unisce da sempre (`getFigliDiGenitoreEsito` in `src/lib/anagrafiche/legami.ts`):
 -- `legame_genitori_alunni` e `student_parents` con `parents.auth_user_id`. Con una sola, una parte delle famiglie

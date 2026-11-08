@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnnoPr2, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
+import { PGlite } from '@electric-sql/pglite'
+import { applicaPr2, creaDbAnnoPr2, SCHEMA_BASE, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
 
 /**
  * PR 4.4 · CHE COSA VEDE UNA FAMIGLIA. Una regola sola, in SQL.
@@ -26,6 +26,7 @@ const GEN_TRASFERITO = '99999999-9999-4999-8999-999999999994'
 const GEN_PONTE = '99999999-9999-4999-8999-999999999995'
 const GEN_DOPPIO = '99999999-9999-4999-8999-999999999996'
 const GEN_ALTRI_ANNI = '99999999-9999-4999-8999-999999999997'
+const GEN_SENZA_SEZIONE = '99999999-9999-4999-8999-999999999998'
 
 const FIGLIO_1 = '11111111-1111-4111-8111-111111111111'
 const FIGLIO_2 = '11111111-1111-4111-8111-111111111112'
@@ -35,6 +36,7 @@ const FIGLIO_TRASFERITO = '11111111-1111-4111-8111-111111111115'
 const FIGLIO_PONTE = '11111111-1111-4111-8111-111111111116'
 const FIGLIO_DOPPIO = '11111111-1111-4111-8111-111111111117'
 const FIGLIO_ALTRI_ANNI = '11111111-1111-4111-8111-111111111118'
+const FIGLIO_SENZA_SEZIONE = '11111111-1111-4111-8111-11111111111a'
 
 const PONTE_1 = '88888888-8888-4888-8888-888888888881'
 const PONTE_2 = '88888888-8888-4888-8888-888888888882'
@@ -45,10 +47,12 @@ let db: PGlite
 /** `anni_sede.id` di ogni anno della sede principale, e l'anno attivo della seconda. */
 const ANNO: Record<number, string> = {}
 let ATTIVO_B: string
+let PRIMA_B: string
 let ANNO_2627: string
 let FREQ_1: string
 let FREQ_2: string
 let FREQ_RITIRATO: string
+let FREQ_SENZA_SEZIONE: string
 
 const prova = (nome: string, fn: () => Promise<void>) => it(nome, fn, 30_000)
 
@@ -119,8 +123,9 @@ beforeAll(async () => {
   for (const n of [2025, 2026, 2027]) ANNO[n] = riga(SEDE, n).id
   ANNO_2627 = ANNO[2026]
   ATTIVO_B = riga(SEDE_B, 2026).id
+  PRIMA_B = riga(SEDE_B, 2025).id
 
-  const sezione = (id: string, sede: string, nome: string) =>
+  const sezione =(id: string, sede: string, nome: string) =>
     db.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, $3, $4)`,
       [id, sede, nome, riga(sede, 2026).anno_id])
   await sezione(SEZ_1, SEDE, 'Girasoli')
@@ -132,7 +137,7 @@ beforeAll(async () => {
   await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
   const alunno = (id: string, sede: string) =>
     db.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [id, sede])
-  for (const id of [FIGLIO_1, FIGLIO_2, FIGLIO_RITIRATO, FIGLIO_IN_ATTESA, FIGLIO_PONTE, FIGLIO_DOPPIO, FIGLIO_ALTRI_ANNI]) {
+  for (const id of [FIGLIO_1, FIGLIO_2, FIGLIO_RITIRATO, FIGLIO_IN_ATTESA, FIGLIO_PONTE, FIGLIO_DOPPIO, FIGLIO_ALTRI_ANNI, FIGLIO_SENZA_SEZIONE]) {
     await alunno(id, SEDE)
   }
   await alunno(FIGLIO_TRASFERITO, SEDE_B)
@@ -147,6 +152,7 @@ beforeAll(async () => {
   await legame(GEN_TRASFERITO, FIGLIO_TRASFERITO)
   await legame(GEN_DOPPIO, FIGLIO_DOPPIO)
   await legame(GEN_ALTRI_ANNI, FIGLIO_ALTRI_ANNI)
+  await legame(GEN_SENZA_SEZIONE, FIGLIO_SENZA_SEZIONE)
 
   // Il ponte anagrafico: `parents.auth_user_id` → `student_parents`.
   await db.query(`INSERT INTO public.parents (id, auth_user_id) VALUES ($1, $2), ($3, $4)`,
@@ -161,6 +167,7 @@ beforeAll(async () => {
   })
   await frequenza({ alunno: FIGLIO_PONTE, annoSede: ANNO_2627, sezione: SEZ_2 })
   await frequenza({ alunno: FIGLIO_DOPPIO, annoSede: ANNO_2627, sezione: SEZ_1 })
+  FREQ_SENZA_SEZIONE = await frequenza({ alunno: FIGLIO_SENZA_SEZIONE, annoSede: ANNO_2627 })
 }, 120_000)
 afterAll(async () => { await db.close() })
 
@@ -241,6 +248,27 @@ describe('figli_attivi', () => {
 
   prova('un figlio collegato per tutte e due le strade compare una volta sola', async () => {
     expect(soliId(await figliDi(GEN_DOPPIO))).toEqual([FIGLIO_DOPPIO])
+  })
+
+  // Il contratto è una riga per FREQUENZA viva, non una per bambino. `frequenze_una_viva_per_anno` copre solo lo stesso
+  // `anno_id` e `anno_attivo` è per sede: con due sedi su anni attivi diversi le righe sono due, tutte e due vere.
+  prova('un bambino vivo in due sedi con anni attivi diversi dà due righe, una per frequenza', async () => {
+    await inRollback(async () => {
+      // La seconda sede non è ancora passata al 2026/27: il suo anno attivo è il 2025/26.
+      await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+      const inB = await frequenza({ alunno: FIGLIO_PONTE, annoSede: PRIMA_B, sezione: null, ingresso: '2025-09-01' })
+      const righe = await figliDi(GEN_PONTE)
+      expect(righe.map((x) => [x.frequenza_id, x.scuola_id]).filter(([f]) => f === inB)).toEqual([[inB, SEDE_B]])
+      expect(righe.map((x) => x.alunno_id)).toEqual([FIGLIO_PONTE, FIGLIO_PONTE])
+      expect(new Set(righe.map((x) => x.scuola_id))).toEqual(new Set([SEDE, SEDE_B]))
+    })
+  })
+
+  // In produzione i bambini così sono 5, e la riscrittura di `getFigliAttiviDiGenitore` conta su questa forma.
+  prova('un figlio attivo senza sezione torna con section_id NULL', async () => {
+    expect(await figliDi(GEN_SENZA_SEZIONE)).toEqual([
+      { alunno_id: FIGLIO_SENZA_SEZIONE, frequenza_id: FREQ_SENZA_SEZIONE, section_id: null, scuola_id: SEDE },
+    ])
   })
 
   prova('il giorno dell’uscita è ancora attivo, il giorno dopo no, anche se lo stato è rimasto iscritto', async () => {
@@ -390,5 +418,25 @@ describe('la manopola della chat', () => {
         WHERE table_schema = 'public' AND table_name = 'anno_regole' AND column_name = 'chat_sola_lettura_dal_passaggio'`)
     expect(r.rows).toEqual([{ data_type: 'boolean', is_nullable: 'NO', column_default: 'false' }])
     expect(await una<boolean>(`SELECT chat_sola_lettura_dal_passaggio FROM public.anno_regole`)).toBe(false)
+  })
+})
+
+// Il lancio manuale di «DB migrate (CI)» gira con `--single-transaction` su un database senza l'anno: un errore su un
+// file solo annulla tutto. M44a deve passare anche lì, e chi la applica deve poter aspettare il lock soltanto un poco.
+describe('M44a su un database senza l’anno', () => {
+  prova('si applica anche dove anno_regole non c’è, con il lock_timeout impostato', async () => {
+    const nudo = new PGlite()
+    try {
+      await nudo.exec(SCHEMA_BASE)
+      await nudo.exec('BEGIN')
+      await applicaPr2(nudo, 'M44a')
+      const r = await nudo.query<{ lock_timeout: string }>('SHOW lock_timeout')
+      expect(r.rows[0].lock_timeout).toBe('10s')
+      await nudo.exec('COMMIT')
+      const f = await nudo.query<{ f: string | null }>(`SELECT to_regprocedure('public.figli_attivi(uuid)')::text AS f`)
+      expect(f.rows[0].f).not.toBeNull()
+    } finally {
+      await nudo.close()
+    }
   })
 })

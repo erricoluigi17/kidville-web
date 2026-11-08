@@ -8,13 +8,16 @@
 
 -- ── 4.3.1 Le sezioni che un docente vede ──────────────────────────────────────────────────────────
 --
--- Un docente vede le sezioni a cui è assegnato — direttamente (`utenti_sezioni`) o per materia
--- (`utenti_sezioni_materie`), senza doppioni: la regola «contano sia le assegnazioni dirette sia quelle per materia»
--- sta SOLO qui, e il codice (anagrafica, fascicolo, avvisi…) chiama la funzione. L'anno della sezione, PER LA SEDE DELLA
--- SEZIONE, è `corrente` (scrivibile), `in_chiusura` o `chiuso` (sola lettura). Un anno `in_preparazione` o con
--- `iscrizioni_aperte` non compare MAI: le sezioni del prossimo anno si preparano, ma i docenti non le vedono
--- finché l'anno non è iniziato. Un anno `chiuso` compare solo se il docente è assegnato a quella sezione.
--- La sola lettura la impone il codice applicativo (la guardia dell'anno chiuso è ancora spenta): qui la si dichiara.
+-- Un docente vede le sezioni a cui è assegnato DIRETTAMENTE (`utenti_sezioni`): la riga diretta è la sola che decide.
+-- Le righe per materia (`utenti_sezioni_materie`) dicono QUALI discipline insegna in una classe, non se la classe è
+-- sua: le tre strade che tolgono una docente da una classe (`admin/sections/[id]/teachers` DELETE e i due punti di
+-- `admin/staff`) cancellano la riga diretta e basta, quindi una riga per materia rimasta indietro non può tenere aperta
+-- la porta. La regola sta SOLO qui, e il codice (anagrafica, fascicolo, avvisi…) chiama la funzione.
+-- L'anno della sezione, PER LA SEDE DELLA SEZIONE, è `corrente` (scrivibile), `in_chiusura` o `chiuso` (sola lettura).
+-- Un anno `in_preparazione` o con `iscrizioni_aperte` non compare MAI: le sezioni del prossimo anno si preparano, ma i
+-- docenti non le vedono finché l'anno non è iniziato. Un anno `chiuso` compare solo se il docente è assegnato a quella
+-- sezione. La sola lettura la impone il codice applicativo (la guardia dell'anno chiuso è ancora spenta): qui la si
+-- dichiara.
 CREATE OR REPLACE FUNCTION public.sezioni_visibili_docente(p_utente uuid)
 RETURNS TABLE (section_id uuid, sola_lettura boolean)
 LANGUAGE sql
@@ -22,43 +25,16 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  WITH assegnate AS (
-    SELECT us.section_id FROM public.utenti_sezioni us WHERE us.utente_id = p_utente
-    UNION
-    SELECT um.section_id FROM public.utenti_sezioni_materie um WHERE um.utente_id = p_utente
-  )
-  SELECT x.section_id, (a.stato::text <> 'corrente')
-    FROM assegnate x
-    JOIN public.sections s    ON s.id = x.section_id
+  SELECT s.id, (a.stato::text <> 'corrente')
+    FROM public.utenti_sezioni us
+    JOIN public.sections s    ON s.id = us.section_id
     JOIN public.anni_sede a   ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
-   WHERE a.stato::text IN ('corrente', 'in_chiusura', 'chiuso')
+   WHERE us.utente_id = p_utente
+     AND a.stato::text IN ('corrente', 'in_chiusura', 'chiuso')
 $$;
 
--- Le sole sezioni SCRIVIBILI (quelle dell'anno attivo della loro sede): servono alle liste. Stessa regola di
--- assegnazione (dirette + per materia).
-CREATE OR REPLACE FUNCTION public.sezioni_docente_anno_attivo(p_utente uuid)
-RETURNS TABLE (section_id uuid)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-  WITH assegnate AS (
-    SELECT us.section_id FROM public.utenti_sezioni us WHERE us.utente_id = p_utente
-    UNION
-    SELECT um.section_id FROM public.utenti_sezioni_materie um WHERE um.utente_id = p_utente
-  )
-  SELECT x.section_id
-    FROM assegnate x
-    JOIN public.sections s ON s.id = x.section_id
-    JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
-   WHERE a.id = public.anno_attivo(s.scuola_id)
-$$;
-
-REVOKE ALL ON FUNCTION public.sezioni_visibili_docente(uuid)    FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.sezioni_docente_anno_attivo(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.sezioni_visibili_docente(uuid)    TO service_role;
-GRANT EXECUTE ON FUNCTION public.sezioni_docente_anno_attivo(uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.sezioni_visibili_docente(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sezioni_visibili_docente(uuid) TO service_role;
 
 -- ── 4.3.2 anno_invarianti: la riga 8 ──────────────────────────────────────────────────────────────
 --

@@ -56,8 +56,9 @@ const dbBase = (): DBFinto => ({
     { id: SEZ_ALTRUI, scuola_id: SEDE_A, name: 'Tulipani', school_type: 'infanzia' },
     { id: SEZ_B, scuola_id: SEDE_B, name: 'Girasoli', school_type: 'infanzia' },
   ],
-  // SEZ_MATERIA: il docente la ha SOLO per materia (nessuna riga in utenti_sezioni): la funzione dei docenti la conta lo stesso.
-  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
+  // SEZ_MATERIA: primaria, il docente ha la riga diretta E quella per materia (come le crea /admin/primaria/docenti-materie).
+  // Conta la riga diretta: quella per materia dice solo quali discipline insegna.
+  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
   utenti_sezioni_materie: [{ utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' }],
   utenti_scuole: [],
   alunni: [
@@ -96,6 +97,13 @@ describe('GET /api/teacher/alunni', () => {
     expect(corpo.alunni.map((a: { cognome: string }) => a.cognome)).toEqual(['Alfieri', 'Zeta'])
     expect(corpo.sezioni.map((s: { id: string }) => s.id).sort()).toEqual([SEZ_MIA, SEZ_MATERIA].sort())
     expect(corpo.alunni[0]).toMatchObject({ grado: 'primaria', allergeni: ['latte'], haAllergie: true })
+  })
+
+  it('tolta la riga diretta, la riga per materia rimasta indietro NON tiene aperta la classe', async () => {
+    h.db.utenti_sezioni = [{ utente_id: 'ed1', section_id: SEZ_MIA }]
+    const corpo = await (await chiama()).json()
+    expect(corpo.alunni.map((a: { cognome: string }) => a.cognome)).toEqual(['Zeta'])
+    expect(corpo.sezioni.map((s: { id: string }) => s.id)).toEqual([SEZ_MIA])
   })
 
   it('niente testo sanitario, codice fiscale o economia nell’elenco', async () => {

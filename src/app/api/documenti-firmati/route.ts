@@ -47,11 +47,9 @@ import { fascicoloVivo } from '@/lib/primaria/cestino-fascicolo'
  * proprie sezioni e i sanitari degli stessi bambini; fuori da lì, niente — non
  * una riga oscurata, proprio nessuna riga.
  *
- * ⚠️ Perché il gate sanitario non coincide con lo scope: `sezioniVisibili` legge
- * `utenti_sezioni`, il gate del fascicolo anche `utenti_sezioni_materie`. Un
- * docente assegnato per sola materia passa il secondo e non il primo. Tenerli
- * separati è voluto: il primo decide quali bambini si vedono, il secondo se di
- * quei bambini si vedono anche i documenti sanitari.
+ * Dal 2026-11-08 lo scope e il gate sanitario leggono la STESSA fonte: la funzione SQL `sezioni_visibili_docente`
+ * (conta la riga diretta in `utenti_sezioni`; le righe per materia no). Restano due chiamate distinte perché la prima
+ * decide quali bambini si vedono (con la sede), la seconda se di quei bambini si vedono anche i documenti sanitari.
  */
 
 const getQuerySchema = z.object({

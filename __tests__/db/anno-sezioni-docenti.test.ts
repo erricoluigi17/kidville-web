@@ -3,7 +3,7 @@ import type { PGlite } from '@electric-sql/pglite'
 import { creaDbAnnoPr2, applicaPr2 } from '../helpers/schema-anno-pglite'
 
 /**
- * COMPITO 4.3.1 · `sezioni_visibili_docente` e `sezioni_docente_anno_attivo`.
+ * COMPITO 4.3.1 · `sezioni_visibili_docente` (conta la riga DIRETTA in `utenti_sezioni`; le righe per materia no).
  *
  * Calendario di prova fisso (`creaAnniFissi`): 2025/26 chiuso, 2026/27 corrente, 2027/28 in_preparazione.
  * Una sezione per anno (più una seconda del 2027/28 per le iscrizioni aperte). Solo uuid finti.
@@ -123,24 +123,27 @@ describe('sezioni_visibili_docente', () => {
     })
   })
 
-  prova('un docente assegnato SOLO per materia vede la sezione dell’anno attivo, e non quella in preparazione', async () => {
+  prova('un docente con la sola riga per materia NON vede la sezione: conta la riga diretta', async () => {
     await inRollback(async () => {
       await assegnaMateria(DOCENTE, S_2627)
       await assegnaMateria(DOCENTE, S_2728)
-      expect(await sezioniDi(DOCENTE)).toEqual([{ section_id: S_2627, sola_lettura: false }])
-      const r = await db.query<{ section_id: string }>(`SELECT section_id FROM public.sezioni_docente_anno_attivo($1)`, [DOCENTE])
-      expect(r.rows.map((x) => x.section_id)).toEqual([S_2627])
+      expect(await sezioniDi(DOCENTE)).toEqual([])
     })
   })
 
-  prova('diretta + per materia sulla stessa sezione: una riga sola, senza doppioni', async () => {
+  prova('diretta + per materia: la sezione esce quando si toglie la riga diretta, anche se le righe per materia restano', async () => {
     await inRollback(async () => {
       await assegna(DOCENTE, S_2627)
       await assegnaMateria(DOCENTE, S_2627)
       await assegnaMateria(DOCENTE, S_2627)
+      // una riga sola, senza doppioni
       expect(await sezioniDi(DOCENTE)).toEqual([{ section_id: S_2627, sola_lettura: false }])
-      const r = await db.query<{ section_id: string }>(`SELECT section_id FROM public.sezioni_docente_anno_attivo($1)`, [DOCENTE])
-      expect(r.rows).toHaveLength(1)
+      // la rimozione che fanno le route (`DELETE` della riga diretta) toglie l'accesso
+      await db.query(`DELETE FROM public.utenti_sezioni WHERE utente_id = $1 AND section_id = $2`, [DOCENTE, S_2627])
+      const restano = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM public.utenti_sezioni_materie WHERE utente_id = $1`, [DOCENTE])
+      expect(restano.rows[0].n).toBe(2)
+      expect(await sezioniDi(DOCENTE)).toEqual([])
     })
   })
 
@@ -151,22 +154,12 @@ describe('sezioni_visibili_docente', () => {
     })
   })
 
-  prova('sezioni_docente_anno_attivo restituisce solo le scrivibili', async () => {
-    await inRollback(async () => {
-      await assegna(DOCENTE, S_2526)
-      await assegna(DOCENTE, S_2627)
-      await assegna(DOCENTE, S_2728)
-      const r = await db.query<{ section_id: string }>(`SELECT section_id FROM public.sezioni_docente_anno_attivo($1)`, [DOCENTE])
-      expect(r.rows.map((x) => x.section_id)).toEqual([S_2627])
-    })
-  })
-
   prova('authenticated e anon non possono eseguire le funzioni', async () => {
     const r = await db.query<{ ruolo: string; f: string; ok: boolean }>(`
       SELECT ruolo, f, has_function_privilege(ruolo, f, 'EXECUTE') AS ok
         FROM unnest(ARRAY['authenticated', 'anon']) ruolo,
-             unnest(ARRAY['public.sezioni_visibili_docente(uuid)', 'public.sezioni_docente_anno_attivo(uuid)']) f`)
-    expect(r.rows).toHaveLength(4)
+             unnest(ARRAY['public.sezioni_visibili_docente(uuid)']) f`)
+    expect(r.rows).toHaveLength(2)
     expect(r.rows.filter((x) => x.ok)).toEqual([])
   })
 

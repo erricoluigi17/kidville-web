@@ -4,11 +4,14 @@ import path from 'node:path'
 import { mascheraSorgente, fineParentesi } from '../fixtures/sorgente'
 
 /**
- * LA REGOLA «CONTANO SIA LE ASSEGNAZIONI DIRETTE SIA QUELLE PER MATERIA» STA IN UN POSTO SOLO.
+ * LA REGOLA «LA CLASSE È DEL DOCENTE SE C'È LA RIGA DIRETTA» STA IN UN POSTO SOLO.
  *
- * Sta nelle funzioni SQL `sezioni_visibili_docente` e `sezioni_docente_anno_attivo` (ultima migrazione che le
- * definisce): leggono l'unione di `utenti_sezioni` (diretta) e `utenti_sezioni_materie` (per materia), senza
- * doppioni. Le tre funzioni applicative che dicono «questa classe è tua» — `puoAccedereFascicolo` e
+ * Sta nella funzione SQL `sezioni_visibili_docente` (ultima migrazione che la definisce): legge SOLO `utenti_sezioni`
+ * (la riga diretta). `utenti_sezioni_materie` dice quali discipline insegna in una classe, non se la classe è sua: le
+ * tre strade che tolgono una docente da una classe (`admin/sections/[id]/teachers` DELETE e i due punti di
+ * `admin/staff`) cancellano la riga diretta e basta, quindi una riga per materia rimasta indietro NON deve tenere
+ * aperto l'accesso. (Prima la funzione leggeva l'unione: a una docente tolta dalla classe restavano le righe per materia
+ * e continuava a vedere e a scrivere.) Le tre funzioni applicative che dicono «questa classe è tua» — `puoAccedereFascicolo` e
  * `sezioniContitolari` (fascicolo, documenti sanitari) e `sezioniAnagraficaVisibili` (anagrafica docente) — NON
  * rileggono più le tabelle: chiamano `sezioniVisibiliConEsito`/`sezioniVisibiliDiUtente` (docenti.ts). Così un
  * elenco e il gate che lo accompagna non possono più divergere, e la regola per anno (mai le sezioni future) non si
@@ -17,8 +20,8 @@ import { mascheraSorgente, fineParentesi } from '../fixtures/sorgente'
  * Il lock verifica DUE cose, entrambe sul testo con i commenti tolti (un lock che legge un file come testo legge
  * anche i commenti: se non li togliessi, il commento che spiega la regola la soddisferebbe da solo):
  *  · le tre funzioni chiamano la funzione di visibilità;
- *  · il corpo SQL dell'ULTIMA definizione di ciascuna delle due funzioni legge entrambe le tabelle (e il ripiego di
- *    `docenti.ts`, usato quando la funzione manca nel DB, le legge entrambe a sua volta).
+ *  · il corpo SQL dell'ULTIMA definizione della funzione legge `utenti_sezioni` e NON legge `utenti_sezioni_materie` (e
+ *    il ripiego di `docenti.ts`, usato quando la funzione manca nel DB, fa lo stesso).
  *
  * I LIMITI CHE RESTANO, detti qui perché nessuno ci costruisca sopra una prova che non regge:
  *  · controlla CHE le tabelle siano lette, non COME: filtri, `error` di PostgREST e unione effettiva li provano i
@@ -29,8 +32,6 @@ import { mascheraSorgente, fineParentesi } from '../fixtures/sorgente'
  *  · una chiamata scritta DENTRO il corpo conta anche in un ramo mai eseguito: il lock vede il testo, non
  *    l'esecuzione.
  */
-
-const TABELLE = ['utenti_sezioni', 'utenti_sezioni_materie']
 
 /** `.from('<tabella>')` con qualunque apice e spazi dentro le parentesi. */
 const letturaDi = (tabella: string) => new RegExp(`\\.from\\(\\s*['"\`]${tabella}['"\`]\\s*\\)`)
@@ -112,17 +113,23 @@ describe('LOCK · la regola delle assegnazioni docente↔classe sta nella funzio
     expect(CHIAMA_VISIBILITA.test(corpo ?? ''), `${nome} non chiama sezioniVisibiliConEsito/DiUtente`).toBe(true)
   })
 
-  it.each(['sezioni_visibili_docente', 'sezioni_docente_anno_attivo'])('%s (ultima definizione SQL) legge entrambe le tabelle', (nome) => {
-    const def = corpoSqlRecente(nome)
-    expect(def, `nessuna migrazione definisce ${nome}: il lock non sta misurando niente`).not.toBeNull()
-    const mancano = TABELLE.filter((t) => !sqlLegge(def?.corpo ?? '', t))
-    expect(mancano, `${nome} in ${def?.file} non legge: ${mancano.join(', ')}`).toEqual([])
+  it('sezioni_visibili_docente (ultima definizione SQL) legge la riga diretta e NON quella per materia', () => {
+    const def = corpoSqlRecente('sezioni_visibili_docente')
+    expect(def, 'nessuna migrazione definisce sezioni_visibili_docente: il lock non sta misurando niente').not.toBeNull()
+    expect(sqlLegge(def?.corpo ?? '', 'utenti_sezioni'), `la funzione in ${def?.file} non legge utenti_sezioni`).toBe(true)
+    expect(sqlLegge(def?.corpo ?? '', 'utenti_sezioni_materie'),
+      `la funzione in ${def?.file} legge utenti_sezioni_materie: una riga per materia rimasta indietro riaprirebbe l'accesso`).toBe(false)
   })
 
-  it('il ripiego di docenti.ts (funzione assente nel DB) legge entrambe le tabelle', () => {
+  it('la funzione per le sole sezioni «scrivibili» non esiste più (nessun codice la usava)', () => {
+    expect(corpoSqlRecente('sezioni_docente_anno_attivo')).toBeNull()
+  })
+
+  it('il ripiego di docenti.ts (funzione assente nel DB) legge la riga diretta e NON quella per materia', () => {
     const corpo = corpoDi(fs.readFileSync(path.join(process.cwd(), 'src/lib/sezioni/docenti.ts'), 'utf8'), 'sezioniVisibiliConEsito')
     expect(corpo).not.toBeNull()
-    expect(TABELLE.filter((t) => !letturaDi(t).test(corpo ?? ''))).toEqual([])
+    expect(letturaDi('utenti_sezioni').test(corpo ?? '')).toBe(true)
+    expect(letturaDi('utenti_sezioni_materie').test(corpo ?? '')).toBe(false)
   })
 
   it('CONTROLLO POSITIVO — una funzione TS che non chiama la visibilità viene vista', () => {
@@ -148,6 +155,7 @@ describe('LOCK · la regola delle assegnazioni docente↔classe sta nella funzio
 
   it('CONTROLLO POSITIVO — una tabella citata fuori da `.from(...)` non conta come lettura TS', () => {
     const finto = "export async function x(s) {\n  await s.rpc('leggi', { nome: 'utenti_sezioni_materie' })\n  return s.from( \"utenti_sezioni\" )\n}\n"
-    expect(TABELLE.filter((t) => !letturaDi(t).test(corpoDi(finto, 'x') ?? ''))).toEqual(['utenti_sezioni_materie'])
+    const letture = ['utenti_sezioni', 'utenti_sezioni_materie'].filter((t) => letturaDi(t).test(corpoDi(finto, 'x') ?? ''))
+    expect(letture).toEqual(['utenti_sezioni'])
   })
 })

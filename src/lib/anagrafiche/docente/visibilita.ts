@@ -42,7 +42,7 @@ export async function sezioniAnagraficaVisibili(
 ): Promise<SezioniVisibili> {
   if (vedeTutteLeClassi(user)) return { esito: 'tutte' }
   // LETTURA: valgono tutte le sezioni VISIBILI (anche quelle in sola lettura di un anno passato), mai le future.
-  // La funzione conta già le assegnazioni dirette e quelle per materia: qui non si rileggono le tabelle.
+  // La funzione conta la riga diretta (`utenti_sezioni`; le righe per materia no): qui non si rileggono le tabelle.
   const visibili = await sezioniVisibiliConEsito(supabase, user.id)
   if (!visibili.ok) return { esito: 'errore' }
   return { esito: 'sezioni', sezioni: [...new Set(visibili.sezioni.map((s) => s.sectionId))] }

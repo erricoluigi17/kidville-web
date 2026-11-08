@@ -190,7 +190,7 @@ export type EsitoSezioniVisibili = { ok: true; sezioni: SezioneVisibile[] } | { 
  * `service_role`, quindi `supabase` qui è il client di servizio, come in tutte le route.
  *
  * Funzione ASSENTE (`42883`/`PGRST202`: il DB E2E della CI non è migrato) → la query di prima su
- * `utenti_sezioni` e `utenti_sezioni_materie`, tutte scrivibili, con un log `info`. Qualunque ALTRO errore NON ripiega: mostrerebbe a un
+ * `utenti_sezioni` (la riga diretta), tutte scrivibili, con un log `info`. Qualunque ALTRO errore NON ripiega: mostrerebbe a un
  * docente le sezioni future proprio quando la funzione è rotta. Lista vuota e riga `error`, come ogni guasto
  * di lettura di questo file.
  */
@@ -217,18 +217,15 @@ export async function sezioniVisibiliConEsito(
     esito: 'rpc-assente',
     error_code: code,
   })
-  // Stessa regola della funzione: assegnazioni dirette + per materia, senza doppioni.
-  const [dirette, perMateria] = await Promise.all([
-    supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId),
-    supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
-  ])
-  const errLegami = dirette.error ?? perMateria.error
-  if (errLegami) {
-    segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, errLegami)
+  // Stessa regola della funzione: conta la riga DIRETTA (`utenti_sezioni`). Le righe per materia dicono quali
+  // discipline insegna, non se la classe è sua: tolta la riga diretta, la classe esce.
+  const dirette = await supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId)
+  if (dirette.error) {
+    segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, dirette.error)
     return { ok: false }
   }
   const ids = new Set<string>()
-  for (const r of [...(dirette.data ?? []), ...(perMateria.data ?? [])]) {
+  for (const r of dirette.data ?? []) {
     if (r.section_id) ids.add(r.section_id as string)
   }
   return {

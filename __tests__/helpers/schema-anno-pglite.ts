@@ -198,7 +198,7 @@ export const SCHEMA_BASE = `
     creato_il timestamptz DEFAULT now(),
     PRIMARY KEY (utente_id, section_id)
   );
-  -- Assegnazioni per materia (baseline): la regola «dirette + per materia» sta nelle funzioni dei docenti.
+  -- Assegnazioni per materia (baseline): dicono QUALI materie, non se la classe è del docente (conta utenti_sezioni).
   CREATE TABLE public.utenti_sezioni_materie (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     utente_id uuid NOT NULL,

@@ -56,9 +56,10 @@ beforeEach(() => {
   tabelle = []
   opzioni = {}
   db = {
-    // SEZ_MATERIA: il docente la ha SOLO per materia (nessuna riga in utenti_sezioni): la funzione dei docenti la conta lo stesso.
-    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
-    // SEZ_MIA anche per materia: l'unione non deve produrre doppioni.
+    // SEZ_MATERIA: primaria, il docente ha la riga diretta E quella per materia (come le crea /admin/primaria/docenti-materie).
+    // Conta la riga diretta: quella per materia dice solo quali discipline insegna.
+    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
+    // SEZ_MIA anche per materia: la sezione esce una volta sola.
     utenti_sezioni_materie: [
       { utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' },
       { utente_id: 'ed1', section_id: SEZ_MIA, materia_id: 'm2' },
@@ -90,10 +91,16 @@ describe('sezioniAnagraficaVisibili', () => {
     expect(tabelle).toEqual([])
   })
 
-  it('educator: unione di assegnazioni dirette e per materia, senza doppioni', async () => {
+  it('educator: contano le righe dirette, senza doppioni anche se ha pure le righe per materia', async () => {
     const esito = await sezioniAnagraficaVisibili(client(), EDUCATOR)
     expect(esito.esito).toBe('sezioni')
     expect(esito.esito === 'sezioni' && [...esito.sezioni].sort()).toEqual([SEZ_MIA, SEZ_MATERIA].sort())
+  })
+
+  it('tolta la riga diretta, la riga per materia rimasta indietro non tiene aperta la sezione', async () => {
+    db.utenti_sezioni = [{ utente_id: 'ed1', section_id: SEZ_MIA }]
+    const esito = await sezioniAnagraficaVisibili(client(), EDUCATOR)
+    expect(esito).toEqual({ esito: 'sezioni', sezioni: [SEZ_MIA] })
   })
 
   it('educator senza assegnazioni: elenco vuoto (nega per difetto)', async () => {
@@ -102,8 +109,8 @@ describe('sezioniAnagraficaVisibili', () => {
     expect(await sezioniAnagraficaVisibili(client(), EDUCATOR)).toEqual({ esito: 'sezioni', sezioni: [] })
   })
 
-  it('un guasto su una delle due letture è un ERRORE con log, mai «nessuna sezione»', async () => {
-    opzioni = { errori: { utenti_sezioni_materie: { code: '57P01', message: 'terminating connection' } } }
+  it('un guasto sulla lettura delle assegnazioni è un ERRORE con log, mai «nessuna sezione»', async () => {
+    opzioni = { errori: { utenti_sezioni: { code: '57P01', message: 'terminating connection' } } }
     expect(await sezioniAnagraficaVisibili(client(), EDUCATOR)).toEqual({ esito: 'errore' })
     expect(h.logEvento).toHaveBeenCalledWith(
       'notifica',
@@ -120,9 +127,14 @@ describe('assertAlunnoAnagraficaInScope', () => {
     return esito.ok ? 200 : esito.response.status
   }
 
-  it('apre al docente della sezione e a quello di sola materia', async () => {
+  it('apre al docente della sezione, anche di primaria (riga diretta + per materia)', async () => {
     expect(await stato(EDUCATOR, ALU_MIO)).toBe(200)
     expect(await stato(EDUCATOR, ALU_MATERIA)).toBe(200)
+  })
+
+  it('NON apre a chi ha la sola riga per materia (è stato tolto dalla classe)', async () => {
+    db.utenti_sezioni = [{ utente_id: 'ed1', section_id: SEZ_MIA }]
+    expect(await stato(EDUCATOR, ALU_MATERIA)).toBe(403)
   })
 
   it('restituisce sezione e sede dell’alunno', async () => {

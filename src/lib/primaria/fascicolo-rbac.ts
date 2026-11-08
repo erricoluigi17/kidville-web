@@ -77,7 +77,7 @@ export async function puoAccedereFascicolo(
   const sectionId = alunno?.section_id
   if (!sectionId) return { consentito: false, ruolo, motivo: 'no-section' }
 
-  // Contitolare: assegnazione alla sezione (diretta o per materia: la conta la funzione dei docenti).
+  // Contitolare: assegnazione DIRETTA alla sezione (la riga in `utenti_sezioni`: la regola sta nella funzione dei docenti).
   // LETTURA: basta che la sezione sia fra le VISIBILI (anche in sola lettura di un anno passato; mai una futura).
   // SCRITTURA (upload, delete, sostituisci): solo le sezioni dell'anno attivo, cioè non in sola lettura.
   const visibili = await sezioniVisibiliConEsito(supabase, utenteId)
@@ -90,9 +90,9 @@ export async function puoAccedereFascicolo(
 }
 
 /**
- * Le sezioni di cui l'utente è CONTITOLARE — assegnazione diretta
- * (`utenti_sezioni`) o per materia (`utenti_sezioni_materie`): la regola sta nella funzione SQL
- * `sezioni_visibili_docente`, qui non si rileggono le tabelle.
+ * Le sezioni di cui l'utente è CONTITOLARE — assegnazione diretta (`utenti_sezioni`):
+ * la riga per materia (`utenti_sezioni_materie`) dice quali discipline insegna, non se la classe è sua. La regola sta
+ * nella funzione SQL `sezioni_visibili_docente`, qui non si rileggono le tabelle.
  *
  * È la stessa condizione che `puoAccedereFascicolo` verifica una sezione alla
  * volta, qui raccolta in blocco: serve agli ELENCHI, dove chiedere il gate per
@@ -105,14 +105,14 @@ export async function puoAccedereFascicolo(
  * gate mostrerebbe righe che poi non si aprono; più severo, nasconderebbe
  * documenti a chi ha diritto di vederli e nessuno se ne accorgerebbe.
  * Il lock `__tests__/architecture/assegnazioni-docente-coerenti.test.ts` verifica
- * che leggano le stesse due tabelle (fino al 2026-10-04 questo commento citava un
+ * che le tre funzioni chiamino la funzione di visibilità e che questa legga la riga diretta (fino al 2026-10-04 questo commento citava un
  * file che non è mai esistito).
  */
 export async function sezioniContitolari(
   supabase: SupabaseClient,
   utenteId: string,
 ): Promise<string[]> {
-  // LETTURA: tutte le sezioni VISIBILI (anche in sola lettura); la funzione conta dirette e per materia.
+  // LETTURA: tutte le sezioni VISIBILI (anche in sola lettura); la funzione conta la riga diretta.
   // Se è lei a fallire, la riga `error` l'ha già scritta lei: l'elenco è vuoto (fail-closed).
   const visibili = await sezioniVisibiliConEsito(supabase, utenteId)
   return visibili.ok ? [...new Set(visibili.sezioni.map((s) => s.sectionId))] : []

@@ -47,7 +47,7 @@ import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // Esito bloccante dell'import: impedisce di marcare l'invio 'approved' (a differenza
 // dei `warnings`, non bloccanti). `dove` = "Adulto N"/"Bambino N", `messaggio` = testo it.
@@ -1145,7 +1145,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       .from('sections')
       .select('name')
       .eq('scuola_id', scuolaId)
-    if (anniAttiviSede) ricercaSezioni = ricercaSezioni.in('anno_id', anniAttiviSede)
+    ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anniAttiviSede)
     const { data: sezioniSede, error: sezErr } = await ricercaSezioni
     if (sezErr) {
       // Il controllo si salta, l'import prosegue: il DB E2E della CI non è migrato e

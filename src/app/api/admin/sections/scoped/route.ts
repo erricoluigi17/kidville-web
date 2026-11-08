@@ -8,6 +8,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria } from '@/lib/db/guasto'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `grado`: csv di school_type ammessi (es. 'nido,infanzia'); assente = tutti.
@@ -55,7 +56,7 @@ export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRe
       .in('scuola_id', plessi)
       .order('name')
     if (types) query = query.in('school_type', types)
-    if (anno) query = query.eq('anno_id', anno.annoId)
+    query = filtraPerAnnoDiSede(query, anno)
     const { data: sections, error } = await query
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

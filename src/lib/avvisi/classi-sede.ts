@@ -1,5 +1,5 @@
 import type { createAdminClient } from '@/lib/supabase/server-client';
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi';
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi';
 
 type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
 
@@ -45,7 +45,7 @@ export async function classiMancantiNellaSede(
         .select('name')
         .eq('scuola_id', scuolaId)
         .in('name', classi);
-    if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi);
+    ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi);
     const { data, error } = await ricerca;
     // PostgREST non lancia: senza questo controllo un guasto di lettura
     // diventerebbe «nessuna classe trovata», cioè un 400 che accusa l'operatore

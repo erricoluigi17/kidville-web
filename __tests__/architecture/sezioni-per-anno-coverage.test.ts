@@ -11,8 +11,9 @@ import { mascheraSorgente, fineCatena, fileSorgente, riga } from '../fixtures/so
  * muti: una lista mostra due «1A» senza dire quale è quale, e una ricerca per nome può agganciare un bambino alla
  * «1A» sbagliata. Questo lock tiene ferme le tre risposte accettate per OGNI `.from('sections')` di `src/`:
  *
- *  1. un filtro `anno_id` (`.eq('anno_id', …)`, `.in('anno_id', …)`), nella catena stessa o nel `if (anno) query =
- *     query.eq('anno_id', …)` che la segue subito (si guarda fino al prossimo `.from(`);
+ *  1. un filtro `anno_id` (`.eq('anno_id', …)`, `.in('anno_id', …)`) o l'helper `filtraPerAnnoDiSede(query, anni)` (il
+ *     filtro PER COPPIA sede-anno, `src/lib/anno/anni-attivi.ts`), nella catena stessa o subito dopo (si guarda fino al
+ *     prossimo `.from(`);
  *  2. un filtro per `id` (`.eq('id', …)`, `.in('id', …)`): un id è già di un anno solo;
  *  3. una voce in `ESENTI`, con la ragione e il NUMERO di query che copre. Una voce che non copre più nulla, o ne
  *     copre di più o di meno, fa fallire il lock: l'elenco delle eccezioni non può invecchiare in silenzio.
@@ -44,7 +45,7 @@ export interface Query {
 const FINESTRA_DOPO = 600
 
 const RE_FROM = /\.from\(\s*(['"`])sections\1\s*\)/g
-const RE_ANNO = /\.(?:eq|in)\(\s*(['"`])anno_id\1/
+const RE_ANNO = /\.(?:eq|in)\(\s*(['"`])anno_id\1|\bfiltraPerAnnoDiSede\(/
 const RE_ID = /\.(?:eq|in)\(\s*(['"`])id\1/
 
 /** Tutte le query su `sections` di un sorgente, già classificate. */
@@ -158,6 +159,14 @@ describe('sezioni-per-anno-coverage · lo scanner', () => {
       const dopo = q.eq('anno_id', a)
     `
     expect(queryDiSezioni('x.ts', sorgente)[0].esito).toBe('nessuno')
+  })
+
+  it('riconosce l\'helper `filtraPerAnnoDiSede` che segue la catena', () => {
+    const sorgente = `
+      let query = db.from('sections').select('id').eq('scuola_id', s)
+      query = filtraPerAnnoDiSede(query, anni)
+    `
+    expect(queryDiSezioni('x.ts', sorgente)[0].esito).toBe('anno')
   })
 
   it('riconosce il filtro per id', () => {

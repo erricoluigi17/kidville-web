@@ -11,7 +11,7 @@ import { persistFaseStato } from '@/lib/sidi/sync-store'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // scuola_id opzionale: la sede su cui operare (preferita per resolveScuolaScrittura).
@@ -41,7 +41,7 @@ export const POST = withRoute('admin/sidi/fase-a:POST', async (request: NextRequ
       // La struttura che va al Ministero è quella dell'anno ATTIVO: le classi di un anno in preparazione non si dichiarano.
       const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
       let ricercaSezioni = supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)
-      if (anniAttivi) ricercaSezioni = ricercaSezioni.in('anno_id', anniAttivi)
+      ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anniAttivi)
       const { data: sezioni, error: errSezioni } = await ricercaSezioni
       if (errSezioni) return rispostaGuastoDb(OP, 'db:sections', errSezioni)
       const { data: tempo, error: errTempo } = await supabase.from('tempo_scuola').select('section_id, modello, giorni_settimana, attivo')

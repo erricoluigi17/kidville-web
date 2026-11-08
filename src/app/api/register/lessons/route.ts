@@ -11,7 +11,7 @@ import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -163,7 +163,7 @@ export const POST = withRoute('register/lessons:POST', async (request: NextReque
                 .select('id, name, scuola_id')
                 .eq('name', classeSezione as string)
                 .in('scuola_id', perimetro);
-            if (anniAttivi) ricercaSezione = ricercaSezione.in('anno_id', anniAttivi);
+            ricercaSezione = filtraPerAnnoDiSede(ricercaSezione, anniAttivi);
             const { data: omonime, error: sezErr } = await ricercaSezione;
             if (sezErr) {
                 logEvento('registro', 'error', {

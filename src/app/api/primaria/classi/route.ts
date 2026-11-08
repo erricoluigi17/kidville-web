@@ -9,6 +9,7 @@ import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const OP = 'primaria/classi:GET'
 
@@ -51,7 +52,7 @@ export const GET = withRoute('primaria/classi:GET', async (request: NextRequest)
           .eq('school_type', 'primaria')
           .in('scuola_id', plessi)
           .order('name')
-        if (anno) ricerca = ricerca.eq('anno_id', anno.annoId)
+        ricerca = filtraPerAnnoDiSede(ricerca, anno)
         const { data, error: errSezioni } = await ricerca
         // Un guasto non è «nessuna classe primaria nel plesso».
         if (errSezioni) return rispostaGuastoDb(OP, 'db:sections', errSezioni)

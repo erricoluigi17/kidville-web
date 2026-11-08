@@ -6,6 +6,7 @@ import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,7 +83,7 @@ export const GET = withRoute('tasks/meta:GET', async (request: NextRequest) => {
             .select('name')
             .in('scuola_id', plessi)
             .order('name', { ascending: true });
-        if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId);
+        ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anno);
         const { data: sections, error: secErr } = await ricercaSezioni;
 
         // Nessun elenco hardcoded: senza sezioni né alunni il selettore resta vuoto.

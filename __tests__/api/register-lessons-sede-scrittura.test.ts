@@ -38,6 +38,8 @@ const h = vi.hoisted(() => ({
   db: {} as Record<string, Record<string, unknown>[]>,
   tabelle: [] as string[],
   scritture: [] as Scrittura[],
+  errori: {} as Record<string, { code: string; message?: string }>,
+  attivo: 'b2222222-2222-4222-8222-aaaaaaaaaaaa',
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
@@ -50,7 +52,11 @@ vi.mock('@/lib/notifiche/triggers', () => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase: crea } = await import('../fixtures/finto-supabase')
   return {
-    createAdminClient: async () => crea(h.db, h.tabelle, { scritture: h.scritture }),
+    createAdminClient: async () => crea(h.db, h.tabelle, {
+        scritture: h.scritture,
+        errori: h.errori,
+        rpc: { anno_attivo: () => ({ data: h.attivo, error: null }) },
+      }),
   }
 })
 
@@ -103,6 +109,7 @@ beforeEach(() => {
   h.db = dbBase()
   h.tabelle = []
   h.scritture = []
+  h.errori = {}
   h.genitoriDiClassi.mockResolvedValue([])
   h.notificaEvento.mockResolvedValue(undefined)
   h.requireDocente.mockResolvedValue({
@@ -217,5 +224,38 @@ describe('POST /api/register/lessons — la notifica compiti parte sulla sede ri
     expect(h.genitoriDiClassi).toHaveBeenCalledTimes(1)
     expect(h.genitoriDiClassi.mock.calls[0][1]).toBe(SEDE_B)
     expect(h.notificaEvento.mock.calls[0][1]).toMatchObject({ scuolaId: SEDE_B, entitaId: SEC_B })
+  })
+})
+
+// Compito 4.3.7 · il nome si ripete ogni anno: la lezione si registra sulla sezione dell'anno ATTIVO.
+describe('POST /api/register/lessons — due sezioni omonime di anni diversi nella stessa sede', () => {
+  const A2 = 'a2222222-2222-4222-8222-222222222222'
+  const A3 = 'a3333333-3333-4333-8333-333333333333'
+  const S2 = 'b2222222-2222-4222-8222-aaaaaaaaaaaa'
+  const S3 = 'b3333333-3333-4333-8333-aaaaaaaaaaaa'
+
+  beforeEach(() => {
+    h.db.anni_sede = [
+      { id: S2, scuola_id: SEDE_A, anno_id: A2, stato: 'corrente', domande_aperte: false },
+      { id: S3, scuola_id: SEDE_A, anno_id: A3, stato: 'in_preparazione', domande_aperte: false },
+    ]
+    h.db.sections = [
+      { id: 'aaaa5555-0000-4000-8000-000000000001', scuola_id: SEDE_A, name: '1A', anno_id: A2 },
+      { id: 'aaaa5555-0000-4000-8000-000000000002', scuola_id: SEDE_A, name: '1A', anno_id: A3 },
+    ]
+  })
+
+  it('con l\'anno attivo la «1A» è UNA sola: niente 400 di omonimia, la lezione nasce nella sede', async () => {
+    const res = await POST(postReq(lezione({ classeSezione: '1A' })))
+    expect(res.status).toBe(200)
+    expect(scrittureSu('registro_orario')[0].valori[0]).toMatchObject({ scuola_id: SEDE_A, classe_sezione: '1A' })
+  })
+
+  it('con lo schema dell\'anno indietro e UNA sola sezione: nessun filtro e nessun errore', async () => {
+    h.errori = { anni_sede: { code: 'PGRST205', message: 'Could not find the table' } }
+    h.db.sections = [{ id: 'aaaa5555-0000-4000-8000-000000000001', scuola_id: SEDE_A, name: '1A' }]
+    const res = await POST(postReq(lezione({ classeSezione: '1A' })))
+    expect(res.status).toBe(200)
+    expect(scrittureSu('registro_orario')).toHaveLength(1)
   })
 })

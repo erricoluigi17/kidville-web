@@ -9,7 +9,7 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -63,7 +63,7 @@ async function sezioniConNome(
     // Il nome si ripete ogni anno: vale la sezione dell'anno ATTIVO (`null` = DB non migrato, nessun filtro).
     const anniAttivi = await anniAttiviDeiPlessi(admin, plessi);
     let ricerca = admin.from('sections').select('id').eq('name', nome).in('scuola_id', plessi);
-    if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi);
+    ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi);
     const { data, error } = await ricerca;
     if (error) {
         // Un guasto NON è «nessuna sezione»: in GET diventerebbe un elenco vuoto, in POST un

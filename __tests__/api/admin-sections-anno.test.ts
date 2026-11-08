@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
     db: {} as Record<string, Record<string, unknown>[]>,
     errori: {} as Record<string, { code: string; message?: string }>,
     attivoPerSede: {} as Record<string, string>,
+    rpcRottaPer: [] as string[],
+    logEvento: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-staff', async (importActual) => {
@@ -43,6 +45,10 @@ vi.mock('@/lib/sezioni/docenti', async (importActual) => {
     const vero = await importActual<typeof import('@/lib/sezioni/docenti')>()
     return { ...vero, sezioniDiUtente: async () => [...h.mie] }
 })
+vi.mock('@/lib/logging/logger', async (importActual) => {
+    const vero = await importActual<typeof import('@/lib/logging/logger')>()
+    return { ...vero, logEvento: h.logEvento }
+})
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => nuovoFinto(),
 }))
@@ -51,7 +57,10 @@ function nuovoFinto() {
     return creaFintoSupabase(h.db as DBFinto, [], {
         errori: h.errori,
         rpc: {
-            anno_attivo: (args: Riga) => ({ data: h.attivoPerSede[String(args.p_scuola)] ?? null, error: null }),
+            anno_attivo: (args: Riga) =>
+                h.rpcRottaPer.includes(String(args.p_scuola))
+                    ? { data: null, error: { code: 'XX000', message: 'guasto finto' } }
+                    : { data: h.attivoPerSede[String(args.p_scuola)] ?? null, error: null },
         },
     })
 }
@@ -122,6 +131,8 @@ beforeEach(() => {
     h.mie = []
     h.errori = {}
     h.attivoPerSede = { [SEDE_A]: S2A, [SEDE_B]: S2B }
+    h.rpcRottaPer = []
+    h.logEvento.mockClear()
     h.db = {
         sections: sezioni(),
         anni_sede: anniSede(),
@@ -298,5 +309,89 @@ describe('classiMancantiNellaSede · il target di un avviso si valida sull\'anno
         h.errori = { sections: { code: '57014', message: 'timeout' } }
         const esito = await classiMancantiNellaSede(nuovoFinto() as never, SEDE_A, ['1A'])
         expect(esito.ok).toBe(false)
+    })
+})
+
+describe('il passaggio d\'anno è PER SEDE: A è già sul 2027/28, B è ancora sul 2026/27', () => {
+    beforeEach(() => {
+        h.attivoPerSede = { [SEDE_A]: S3A, [SEDE_B]: S2B }
+        h.attive = [SEDE_A, SEDE_B]
+    })
+
+    it('la lista su due sedi mostra per ciascuna la classe del SUO anno attivo', async () => {
+        const res = await SEZIONI_GET(req('/api/admin/sections'))
+        expect(res.status).toBe(200)
+        expect(idsDi(await res.json())).toEqual([SEZ_1A_2728, SEZ_2B_2728, SEZ_1A_B_2627].sort())
+    })
+
+    it('anche i docenti: lo stesso perimetro per coppia, il cookie si ignora', async () => {
+        h.ruolo = 'educator'
+        h.mie = [SEZ_1A_2627, SEZ_1A_2728, SEZ_1A_B_2627, SEZ_1A_B_2728]
+        const res = await SCOPED_GET(req('/api/admin/sections/scoped', A3))
+        const gruppi = (await res.json()).data as { sezioni: { id: string }[] }[]
+        expect(gruppi.flatMap((g) => g.sezioni.map((x) => x.id)).sort()).toEqual([SEZ_1A_2728, SEZ_1A_B_2627].sort())
+    })
+
+    it('sezioniDiNome trova UNA «1A» per sede (mai due nella stessa sede)', async () => {
+        expect((await sezioniDiNome(nuovoFinto(), '1A', [SEDE_A, SEDE_B])).sort()).toEqual([SEZ_1A_2728, SEZ_1A_B_2627].sort())
+        expect(await sezioniDiNome(nuovoFinto(), '1A', [SEDE_A])).toEqual([SEZ_1A_2728])
+        expect(await sezioniDiNome(nuovoFinto(), '1A', [SEDE_B])).toEqual([SEZ_1A_B_2627])
+    })
+
+    it('assertClasseNomeInScope: passa la classe dell\'anno attivo di una sede, non quella vecchia', async () => {
+        const utente = { id: SEG, role: 'segreteria', scuola_id: SEDE_A } as never
+        // «2B» è del 2027/28 in A (attivo là): passa
+        expect(await assertClasseNomeInScope(nuovoFinto(), utente, '2B')).toBeNull()
+        // «3C» c'è solo nel 2026/27 di A, che è passata al 2027/28: fuori
+        h.db.sections = [...sezioni(), { id: 'c1000000-0000-4000-8000-000000000009', name: '3C', scuola_id: SEDE_A, anno_id: A2 }]
+        const rifiuto = (await assertClasseNomeInScope(nuovoFinto(), utente, '3C')) as NextResponse
+        expect(rifiuto.status).toBe(403)
+    })
+
+    it('classiMancantiNellaSede guarda l\'anno attivo della SUA sede', async () => {
+        expect(await classiMancantiNellaSede(nuovoFinto() as never, SEDE_A, ['2B'])).toEqual({ ok: true, mancanti: [] })
+        expect(await classiMancantiNellaSede(nuovoFinto() as never, SEDE_B, ['2B'])).toEqual({ ok: true, mancanti: ['2B'] })
+    })
+
+    it('una sede con la lettura di `anno_attivo` fallita NON sparisce: per lei niente filtro, e un warn col solo codice', async () => {
+        h.rpcRottaPer = [SEDE_B]
+        const res = await SEZIONI_GET(req('/api/admin/sections'))
+        expect(idsDi(await res.json())).toEqual([SEZ_1A_2728, SEZ_2B_2728, SEZ_1A_B_2627, SEZ_1A_B_2728].sort())
+        const avvisi = h.logEvento.mock.calls.filter(
+            (c) => c[1] === 'warn' && (c[2] as { tipo?: string }).tipo === 'anni-attivi-non-letti',
+        )
+        expect(avvisi.length).toBeGreaterThan(0)
+        expect(JSON.stringify(avvisi.map((c) => c[2]))).not.toContain('guasto finto')
+    })
+
+    it('una sede senza anno attivo resta senza filtro', async () => {
+        h.attivoPerSede = { [SEDE_A]: S3A }
+        const res = await SEZIONI_GET(req('/api/admin/sections'))
+        expect(idsDi(await res.json())).toEqual([SEZ_1A_2728, SEZ_2B_2728, SEZ_1A_B_2627, SEZ_1A_B_2728].sort())
+    })
+})
+
+describe('il cookie di staff su un anno che ha UNA sola sede', () => {
+    beforeEach(() => {
+        // B non ha il 2027/28
+        h.db.anni_sede = anniSede().filter((r) => r.id !== S3B)
+    })
+
+    it.each([
+        ['A poi B', [SEDE_A, SEDE_B]],
+        ['B poi A', [SEDE_B, SEDE_A]],
+    ])('dà le classi di quella sede e nulla dell\'altra (%s)', async (_nome, ordine) => {
+        h.attive = ordine as string[]
+        const res = await SEZIONI_GET(req('/api/admin/sections', A3))
+        expect(res.status).toBe(200)
+        expect(idsDi(await res.json())).toEqual([SEZ_1A_2728, SEZ_2B_2728].sort())
+    })
+
+    it('un anno che nessuna sede ha → 403 ANNO_NON_ACCESSIBILE, in entrambi gli ordini', async () => {
+        for (const ordine of [[SEDE_A, SEDE_B], [SEDE_B, SEDE_A]]) {
+            h.attive = ordine
+            const res = await SEZIONI_GET(req('/api/admin/sections', 'a9999999-9999-4999-8999-999999999999'))
+            expect(res.status).toBe(403)
+        }
     })
 })

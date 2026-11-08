@@ -22,7 +22,7 @@ import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte } from '@/lib/anno/scrittura';
 import { erroreAnno, rispostaFrequenzaNonScritta } from '@/lib/anno/errori';
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -314,7 +314,7 @@ export async function classeEsisteInOgniSede(
         .select('scuola_id')
         .eq('name', nome)
         .in('scuola_id', sedi);
-    if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi);
+    ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi);
     const { data, error } = await ricerca;
     if (error) {
         logEvento('multi_sede', 'error', { operazione, esito: 'classe-non-risolta', sezione: nome }, error);

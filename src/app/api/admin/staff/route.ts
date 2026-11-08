@@ -24,6 +24,7 @@ import { puoModificareIncaricoStaff, type CambiIncarico } from '@/lib/auth/incar
 // valore importato da lì arriverebbe `undefined` dentro la rotta sotto test. La
 // testata di `predicati-ruolo.ts` racconta i 46 test che l'hanno misurato.
 import { type AppUser, haRuolo } from '@/lib/auth/predicati-ruolo'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 // Lettura estesa alla Segreteria (T3): l'elenco del personale è consultabile anche
@@ -176,7 +177,7 @@ export const GET = withRoute('admin/staff:GET', async (request: NextRequest) => 
       .select('id, name, scuola_id, school_type')
       .in('scuola_id', plessi)
       .order('name')
-    if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId)
+    ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anno)
 
     // contesto per la UI: personale + sedi + classi
     const [

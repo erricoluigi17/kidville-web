@@ -79,7 +79,7 @@ import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -250,7 +250,7 @@ async function nomeCanonicoClasse(
     .from('sections')
     .select('name')
     .eq('scuola_id', scuolaId)
-  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
   const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo la lettura caduta diventerebbe

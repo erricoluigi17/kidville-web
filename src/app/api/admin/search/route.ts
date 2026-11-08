@@ -6,6 +6,7 @@ import { resolveAnnoLetturaElenco, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { ripulisciTermineRicerca } from '@/lib/validation/ricerca-testo'
 import { withRoute } from '@/lib/logging/with-route'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 /**
  * GET /api/admin/search?q=  — ricerca globale del cockpit (M7.1).
@@ -85,7 +86,7 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
     .in('scuola_id', plessi)
     .ilike('name', like)
     .limit(5)
-  if (anno) ricercaSezioni = ricercaSezioni.eq('anno_id', anno.annoId)
+  ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anno)
   const [alunniRes, utentiRes, sezioniRes, moduliRes] = await Promise.all([
     supabase
       .from('alunni')

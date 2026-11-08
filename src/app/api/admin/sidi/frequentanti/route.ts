@@ -12,7 +12,7 @@ import { loadSyncState, persistFaseStato } from '@/lib/sidi/sync-store'
 import { puoInviareFrequentanti } from '@/lib/sidi/sequenza'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `scuola_id`: la sede di cui si trasmette l'elenco frequentanti. Fino al
@@ -46,7 +46,7 @@ export const POST = withRoute('admin/sidi/frequentanti:POST', async (request: Ne
       // I frequentanti sono quelli dell'anno ATTIVO: le sezioni sono le sue (le classi future non hanno alunni).
       const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
       let ricercaSezioni = supabase.from('sections').select('id, name').eq('scuola_id', scuolaId)
-      if (anniAttivi) ricercaSezioni = ricercaSezioni.in('anno_id', anniAttivi)
+      ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anniAttivi)
       const { data: sezioni, error: errSezioni } = await ricercaSezioni
       const { data: alunni, error: errAlunni } = await supabase
         .from('alunni')

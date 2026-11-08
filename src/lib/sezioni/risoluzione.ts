@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { assertClasseNomeInScope, assertSezioneInScope } from '@/lib/auth/scope'
 import { logEvento } from '@/lib/logging/logger'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 import type { NextResponse } from 'next/server'
 
 /**
@@ -69,7 +69,7 @@ export async function sezioniDiNome(
     .select('id')
     .eq('name', nome)
     .in('scuola_id', plessi as string[])
-  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
   const { data, error } = await ricerca
   if (error) {
     logEvento('auth', 'error', {

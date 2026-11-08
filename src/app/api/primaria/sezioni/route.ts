@@ -6,6 +6,7 @@ import { resolveAnnoLetturaElenco, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireDocente), non dall'handler.
@@ -38,7 +39,7 @@ export const GET = withRoute('primaria/sezioni:GET', async (request: NextRequest
       .eq('school_type', 'primaria')
       .in('scuola_id', plessi)
       .order('name')
-    if (anno) ricerca = ricerca.eq('anno_id', anno.annoId)
+    ricerca = filtraPerAnnoDiSede(ricerca, anno)
     const { data, error } = await ricerca
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

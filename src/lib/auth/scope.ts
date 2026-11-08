@@ -8,7 +8,7 @@ import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { anniDellaSede, esitoSchemaIndietro, guastoAnno, type RigaAnnoSede } from '@/lib/anno/lettura'
 import { creaGettoni } from '@/lib/anno/gettone'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede, type AnniAttivi } from '@/lib/anno/anni-attivi'
 import type { EsitoAnno, StatoAnno } from '@/lib/anno/tipi'
 
 // =============================================================================
@@ -683,25 +683,58 @@ export async function resolveAnnoLettura(
 }
 
 /**
- * L'anno su cui LEGGERE un ELENCO che può attraversare più sedi (Compito 4.3.7). L'`anni_scolastici.id` è lo stesso per
- * tutte le sedi, quindi basta risolverlo su UNA: `preferita` se è fra i plessi, poi la sede dell'utente, poi la prima.
- * Stesse uscite di `resolveAnnoLettura`: `null` = nessun filtro d'anno (DB non migrato, nessun plesso), una risposta
- * d'errore va restituita così com'è.
+ * L'anno su cui LEGGERE un ELENCO che può attraversare più sedi (Compito 4.3.7). Il passaggio d'anno è PER SEDE, quindi
+ * il risultato è un insieme di coppie sede→anno (`AnniAttivi`), da applicare con `filtraPerAnnoDiSede`:
+ *  · senza cookie, o per chi non è Direzione/segreteria (il cookie si ignora, con lo stesso `warn` di
+ *    `resolveAnnoLettura`): l'anno ATTIVO di ciascuna sede (`anniAttiviDeiPlessi`);
+ *  · Direzione e segreteria con il cookie: quell'anno per le sedi che lo hanno, e una sede che non lo ha resta VUOTA.
+ *    `403 ANNO_NON_ACCESSIBILE` solo se NESSUNA sede dell'elenco lo ha, così l'esito non dipende dall'ordine delle sedi;
+ *  · una sede senza righe, senza anno attivo o con la lettura fallita non sparisce: per lei niente filtro (fail-open,
+ *    come il DB della CI), con un `warn` col solo codice quando è un guasto;
+ *  · `null` = nessun filtro per nessuna sede (DB non migrato, nessun plesso).
  */
 export async function resolveAnnoLetturaElenco(
   request: NextRequest,
   supabase: SupabaseClient,
   user: AppUser,
   plessi: readonly string[],
-  preferita?: string | null,
-): Promise<AnnoLettura | null | NextResponse> {
-  const sede =
-    (preferita && plessi.includes(preferita) ? preferita : null) ??
-    (user.scuola_id && plessi.includes(user.scuola_id) ? user.scuola_id : null) ??
-    plessi[0] ??
-    null
-  if (!sede) return null
-  return resolveAnnoLettura(request, supabase, user, sede)
+): Promise<AnniAttivi | null | NextResponse> {
+  const azione = 'resolveAnnoLetturaElenco'
+  const sedi = [...new Set(plessi)]
+  if (sedi.length === 0) return null
+  const staff = vedeTutteLeClassi(user)
+  const cookie = annoDalCookie(request)
+  if (!staff && cookie) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-cookie-ignorato-ruolo', azione, utente: user.id, ruolo: user.role,
+    })
+  }
+  if (!staff || !cookie) return anniAttiviDeiPlessi(supabase, sedi)
+
+  const coppie: { sede: string; annoId: string }[] = []
+  const liberi: string[] = []
+  for (const sede of sedi) {
+    const anni = await anniDellaSede(supabase, sede)
+    if ('indietro' in anni) {
+      logEvento('anno-scolastico', 'info', { tipo: 'calendario-non-disponibile', azione, esito: 'schema-indietro' })
+      return null
+    }
+    if ('guasto' in anni) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anni-sede-non-letti', azione }, anni.guasto)
+      liberi.push(sede)
+      continue
+    }
+    const riga = anni.righe.find((r) => formaConfronto(String(r.anno_id)) === cookie)
+    if (riga) coppie.push({ sede, annoId: String(riga.anno_id) })
+  }
+  if (coppie.length === 0 && liberi.length === 0) {
+    logEvento('anno-scolastico', 'warn', {
+      tipo: 'anno-lettura-cookie-fuori-scope', azione, error_code: 'ANNO_NON_ACCESSIBILE',
+      utente: user.id, ruolo: user.role, esito: 'cookie',
+    })
+    return rifiutoAnno('ANNO_NON_ACCESSIBILE', azione)
+  }
+  return coppie.length > 0 ? { coppie, liberi } : null
 }
 
 /**
@@ -1075,7 +1108,7 @@ export async function assertClasseNomeInScope(
     .select('id')
     .eq('name', classeNome)
     .in('scuola_id', plessi)
-  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
   const { data, error } = await ricerca
   if (error) {
     // PostgREST non lancia: senza questo controllo un guasto di lettura

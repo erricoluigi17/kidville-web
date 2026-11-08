@@ -48,7 +48,7 @@ import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piatta
 import { leggiElenco, type Anomalia } from '@/lib/iscrizioni/import/elenco'
 import { anomalieClassiSenzaSezione } from '@/lib/iscrizioni/import/sezioni'
 import { SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
-import { anniAttiviDeiPlessi } from '@/lib/anno/anni-attivi'
+import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
 
 const OPERAZIONE_POST = 'admin/iscrizioni/elenco:POST'
 const OPERAZIONE_GET = 'admin/iscrizioni/elenco:GET'
@@ -468,7 +468,7 @@ async function leggiNomiSezioni(
   // Solo le sezioni dell'anno ATTIVO, le sole che il trigger `sync_alunno_section_id` risolve.
   const anniAttivi = await anniAttiviDeiPlessi(supabase, [scuolaId])
   let ricerca = supabase.from('sections').select('name').eq('scuola_id', scuolaId)
-  if (anniAttivi) ricerca = ricerca.in('anno_id', anniAttivi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
   const { data, error } = await ricerca
   if (error) {
     const codice = (error as { code?: string }).code

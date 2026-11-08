@@ -463,6 +463,8 @@ const SUFFISSI_PR2 = {
   M44a: '_anno_visibilita_genitore_funzioni.sql',
   // PR 4.4: le regole di accesso e il trigger di broadcast della chat. Dopo M44a.
   M44b: '_anno_visibilita_genitore_policy.sql',
+  // PR 4.4: la pagina della galleria di una famiglia, sopra `media_visibili_genitore`. Dopo M44b.
+  M44g: '_anno_galleria_pagina_genitore.sql',
 } as const
 
 /**
@@ -690,8 +692,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

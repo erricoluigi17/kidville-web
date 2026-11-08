@@ -103,6 +103,7 @@ describe('requireParentOfStudent con `soloAttivo`', () => {
     const auth = await requireParentOfStudent(req(), FIGLIO, { soloAttivo: true })
 
     expect(auth.response?.status).toBe(500)
+    expect(await auth.response?.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
   })
 
   it('senza opzione la funzione non si chiama: le altre route restano come sono', async () => {

@@ -6,6 +6,7 @@ import { verificaLegameGenitore } from '@/lib/anagrafiche/legami'
 import { verificaAlunnoAttivo } from '@/lib/alunni/attivo'
 import { esitoFiglioAttivo, logVisibilitaNegata } from '@/lib/anno/visibilita-genitore'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 /**
@@ -198,9 +199,8 @@ export async function requireParentOfStudent(
       // di oggi. Il guasto è un 500 come il `non-deciso` qui sopra, e il log l'ha già lasciato `leggiVisibilita`.
       if (typeof richiediAttivo === 'object') {
         const figlio = await esitoFiglioAttivo(supabase, auth.user.id, studentId)
-        if (figlio === 'guasto') {
-          return { response: NextResponse.json({ error: 'Errore interno' }, { status: 500 }) }
-        }
+        // La riga `error` l'ha già scritta `leggiVisibilita`.
+        if (figlio === 'guasto') return { response: rispostaGuastoGiaRegistrato() }
         if (figlio === 'non-attivo') {
           logVisibilitaNegata('figlio-non-attivo', { utente: auth.user.id, alunno_id: studentId }, ['alunno_id'])
           return {

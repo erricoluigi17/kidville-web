@@ -43,7 +43,8 @@ import { ancheNelCestino, colonnaCestinoAssente, soloNelCestino, soloVive } from
 import { logScrittura } from '@/lib/audit/scrittura';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { rispostaGuastoDb } from '@/lib/db/guasto';
+import { rispostaGuastoDb, rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
+import { paginaGalleriaFamiglia } from '@/lib/gallery/pagina-famiglia';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -277,7 +278,7 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         const auth = vistaSede
             ? await requireStaff(request)
             : studentId
-                ? await requireParentOfStudent(request, studentId)
+                ? await requireParentOfStudent(request, studentId, { soloAttivo: true })
                 : await requireDocente(request);
         if (auth.response) return auth.response;
 
@@ -576,7 +577,22 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         // legge le foto di un altro plesso — è già successo, fix D3); togliere il
         // filtro del cestino quando mancava la sede rimette in galleria le foto
         // che qualcuno ha eliminato, magari dopo una segnalazione.
-        let mediaRes = await buildMedia(true, true);
+        //
+        // PR 4.4 · LA FAMIGLIA NON PASSA DA `buildMedia`: quel filtro dà ogni
+        // broadcast della sede a chiunque abbia un figlio in quella sede, classe
+        // o non classe. Chi ha passato il gate per LEGAME (`perLegame`, anche una
+        // docente sul proprio figlio) riceve la pagina di
+        // `galleria_pagina_genitore`. Lo staff con `studentId` resta dov'è.
+        // Il filtro di oggi serve solo al database senza lo schema dell'anno: un
+        // guasto non ci cade mai, risponde errore.
+        let paginaFamiglia: Awaited<ReturnType<typeof paginaGalleriaFamiglia>> | null = null;
+        if (!vistaSede && studentId && 'perLegame' in auth && auth.perLegame) {
+            paginaFamiglia = await paginaGalleriaFamiglia(supabase, auth.user.id, studentId, { date, limit, offset });
+        }
+        if (paginaFamiglia?.stato === 'guasto') return rispostaGuastoGiaRegistrato();
+        let mediaRes = paginaFamiglia?.stato === 'ok'
+            ? { data: paginaFamiglia.media, count: paginaFamiglia.totale, error: null }
+            : await buildMedia(true, true);
         let cestinoDegradato = false;
         const colonnaAssente = (e: unknown) => {
             const err = e as { code?: string } | null;

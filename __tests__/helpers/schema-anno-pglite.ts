@@ -523,6 +523,24 @@ export const SCHEMA_GALLERIA_GENITORE = `
 `
 
 /**
+ * PR 4.4 · Le colonne che avvisi, chat e voci leggono e che il banco minimo non ha, con i tipi e i vincoli veri di
+ * produzione. `scadenza_avviso` è `NOT NULL` come lì. Si esegue dopo `creaDbAnnoPr2`, come `SCHEMA_LEGAMI_GENITORE`: i test
+ * che non la passano restano sul banco di prima.
+ */
+export const SCHEMA_AVVISI_CHAT_VOCI_GENITORE = `
+  ALTER TABLE public.avvisi
+    ADD COLUMN target_scope character varying(20) DEFAULT 'globale' NOT NULL,
+    ADD COLUMN scadenza date,
+    ADD COLUMN scadenza_avviso timestamptz NOT NULL;
+  ALTER TABLE public.utenti
+    ADD COLUMN ruolo character varying(50),
+    ADD COLUMN archiviato_il timestamptz;
+  ALTER TABLE public.pagamenti
+    ADD COLUMN visibile_dal date,
+    ADD COLUMN parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE;
+`
+
+/**
  * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
  * `SCHEMA_BASE`, per non cambiare il registro che i test vecchi si aspettano; chi vuole che il registro la veda (e la
  * guardia dell'anno la guardi) la passa nella `codaPrima` di `creaDbAnnoPr2`.

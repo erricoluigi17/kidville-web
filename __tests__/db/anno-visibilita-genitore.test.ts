@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
-import { applicaPr2, creaDbAnnoPr2, SCHEMA_BASE, SCHEMA_GALLERIA_GENITORE, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
+import { applicaPr2, creaDbAnnoPr2, SCHEMA_AVVISI_CHAT_VOCI_GENITORE, SCHEMA_BASE, SCHEMA_GALLERIA_GENITORE, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
 
 /**
  * PR 4.4 · CHE COSA VEDE UNA FAMIGLIA. Una regola sola, in SQL.
@@ -11,6 +11,10 @@ import { applicaPr2, creaDbAnnoPr2, SCHEMA_BASE, SCHEMA_GALLERIA_GENITORE, SCHEM
  * Compito 4.4.2 · `media_visibili_genitore`: figlio per figlio, le foto vive della sede della frequenza attiva, dal
  * giorno da cui il figlio frequenta senza interruzioni, se è taggato, o se la foto è per tutta la sede e lui quel giorno
  * c'era, o se quel giorno stava in una sezione destinataria.
+ *
+ * Compito 4.4.3 · `avvisi_visibili_genitore`, `thread_visibili`, `thread_e_visibile`, `voci_visibili_genitore`: gli avvisi
+ * non scaduti della sede o della sezione attuale del figlio attivo; le conversazioni del figlio attivo, con la manopola che
+ * decide se un docente non più assegnato toglie la scrittura; le voci di tutti i figli collegati, senza quelle di un anno futuro.
  *
  * Calendario di prova fisso (`creaAnniFissi`): 2025/26 chiuso, 2026/27 corrente, 2027/28 in_preparazione. L'anno
  * attivo dipende dallo stato e non dalla data, ma il confronto con OGGI sì: le prove che ne dipendono allargano
@@ -46,6 +50,15 @@ const FIGLIO_SENZA_SEZIONE = '11111111-1111-4111-8111-11111111111a'
 
 const PONTE_1 = '88888888-8888-4888-8888-888888888881'
 const PONTE_2 = '88888888-8888-4888-8888-888888888882'
+
+const DOC_SEZ_1 = '77777777-7777-4777-8777-777777777771'
+const DOC_SEZ_2 = '77777777-7777-4777-8777-777777777772'
+/** Ha sulla sezione 1 solo la riga per materia: dice quali materie, non che la classe è sua. */
+const DOC_MATERIA = '77777777-7777-4777-8777-777777777773'
+const SEGRETERIA = '77777777-7777-4777-8777-777777777774'
+const DIREZIONE = '77777777-7777-4777-8777-777777777775'
+const AMMINISTRATORE = '77777777-7777-4777-8777-777777777776'
+const CUOCA = '77777777-7777-4777-8777-777777777777'
 
 type Riga = { alunno_id: string; frequenza_id: string; section_id: string | null; scuola_id: string }
 
@@ -268,6 +281,17 @@ beforeAll(async () => {
   await frequenza({ alunno: FIGLIO_PONTE, annoSede: ANNO_2627, sezione: SEZ_2 })
   await frequenza({ alunno: FIGLIO_DOPPIO, annoSede: ANNO_2627, sezione: SEZ_1 })
   FREQ_SENZA_SEZIONE = await frequenza({ alunno: FIGLIO_SENZA_SEZIONE, annoSede: ANNO_2627 })
+
+  await db.exec(SCHEMA_AVVISI_CHAT_VOCI_GENITORE)
+  const persone: Array<[string, string]> = [
+    [DOC_SEZ_1, 'educator'], [DOC_SEZ_2, 'educator'], [DOC_MATERIA, 'educator'],
+    [SEGRETERIA, 'segreteria'], [DIREZIONE, 'coordinator'], [AMMINISTRATORE, 'admin'], [CUOCA, 'cuoca'],
+  ]
+  for (const [id, ruolo] of persone) await db.query(`INSERT INTO public.utenti (id, ruolo) VALUES ($1, $2)`, [id, ruolo])
+  await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($3, $4)`,
+    [DOC_SEZ_1, SEZ_1, DOC_SEZ_2, SEZ_2])
+  await db.query(`INSERT INTO public.utenti_sezioni_materie (utente_id, section_id, materia_id) VALUES ($1, $2, gen_random_uuid())`,
+    [DOC_MATERIA, SEZ_1])
 }, 120_000)
 afterAll(async () => { await db.close() })
 
@@ -1277,6 +1301,986 @@ describe('media_visibili_genitore', () => {
       })
     })
   })
+})
+
+type DatiAvviso = {
+  sede?: string | null
+  scope?: string
+  target?: string[] | null
+  classi?: string[] | null
+  /** Quanto manca alla scadenza, da adesso (`now()` è fermo dentro una transazione): `'0'` è l'ultimo istante valido. */
+  fraQuanto?: string
+  vecchiaScadenza?: string | null
+  creatoIl?: string
+}
+
+/** Di partenza un avviso globale della prima sede, nato il 20/10/2026, che scade domani. */
+async function avviso(d: DatiAvviso = {}): Promise<string> {
+  return una<string>(
+    `INSERT INTO public.avvisi (scuola_id, target_scope, target_section_ids, target_classes, scadenza, scadenza_avviso, created_at)
+     VALUES ($1, $2, $3, $4, $5, now() + $6::interval, $7) RETURNING id`,
+    [d.sede === undefined ? SEDE : d.sede, d.scope ?? 'globale', d.target ?? null, d.classi ?? null, d.vecchiaScadenza ?? null,
+      d.fraQuanto ?? '1 day', d.creatoIl ?? '2026-10-20T12:00:00+02:00'])
+}
+
+type CoppiaAvviso = { avviso_id: string; alunno_id: string }
+
+async function avvisiDi(genitore: string | null): Promise<CoppiaAvviso[]> {
+  const r = await db.query<CoppiaAvviso>(
+    `SELECT avviso_id, alunno_id FROM public.avvisi_visibili_genitore($1) ORDER BY avviso_id, alunno_id`, [genitore])
+  return r.rows
+}
+
+describe('avvisi_visibili_genitore', () => {
+  describe('a chi arriva', () => {
+    prova('un avviso di una sezione arriva al figlio in quella sezione, non a quello nell’altra', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', target: [SEZ_1] })
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+        expect(await avvisiDi(GEN_PONTE)).toEqual([])
+      })
+    })
+
+    prova('un avviso con più sezioni arriva a chi sta in una qualunque', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', target: [SEZ_1, SEZ_2] })
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([
+          { avviso_id: a, alunno_id: FIGLIO_1 }, { avviso_id: a, alunno_id: FIGLIO_2 },
+        ])
+      })
+    })
+
+    prova('un avviso globale (target vuoto) arriva a tutta la sede, una riga per figlio', async () => {
+      await inRollback(async () => {
+        const nullo = await avviso()
+        const vuoto = await avviso({ target: [], classi: [] })
+        const atteso = (a: string) => [{ avviso_id: a, alunno_id: FIGLIO_1 }, { avviso_id: a, alunno_id: FIGLIO_2 }]
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual(
+          [...atteso(nullo), ...atteso(vuoto)].sort((x, y) => x.avviso_id.localeCompare(y.avviso_id) || x.alunno_id.localeCompare(y.alunno_id)))
+        expect((await avvisiDi(GEN_PONTE)).map((x) => x.alunno_id)).toEqual([FIGLIO_PONTE, FIGLIO_PONTE])
+      })
+    })
+
+    prova('un globale non esce dalla sua sede, e un avviso senza sede non arriva a nessuno', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_TRASFERITO, annoSede: ATTIVO_B, sezione: SEZ_B })
+        await avviso()
+        await avviso({ sede: null })
+        expect(await avvisiDi(GEN_TRASFERITO)).toEqual([])
+        const suo = await avviso({ sede: SEDE_B })
+        expect(await avvisiDi(GEN_TRASFERITO)).toEqual([{ avviso_id: suo, alunno_id: FIGLIO_TRASFERITO }])
+      })
+    })
+
+    prova('un destinatario di un’altra sede non apre l’avviso: decide anche la sede dell’avviso', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_TRASFERITO, annoSede: ATTIVO_B, sezione: SEZ_B })
+        await avviso({ scope: 'classe', target: [SEZ_B] })
+        expect(await avvisiDi(GEN_TRASFERITO)).toEqual([])
+      })
+    })
+
+    prova('conta la sezione attuale: dopo un cambio di classe l’avviso della classe di prima non arriva più', async () => {
+      await inRollback(async () => {
+        const diPrima = await avviso({ scope: 'classe', target: [SEZ_1] })
+        const nuova = await avviso({ scope: 'classe', target: [SEZ_2] })
+        expect((await avvisiDi(GEN_DOPPIO)).map((x) => x.avviso_id)).toEqual([diPrima])
+        await db.query(`UPDATE public.frequenze SET section_id = $2 WHERE alunno_id = $1`, [FIGLIO_DOPPIO, SEZ_2])
+        expect((await avvisiDi(GEN_DOPPIO)).map((x) => x.avviso_id)).toEqual([nuova])
+      })
+    })
+
+    prova('un figlio senza sezione non incrocia nessun destinatario, e il globale gli arriva', async () => {
+      await inRollback(async () => {
+        await avviso({ scope: 'classe', target: [SEZ_1, SEZ_2] })
+        const perTutti = await avviso()
+        expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([{ avviso_id: perTutti, alunno_id: FIGLIO_SENZA_SEZIONE }])
+      })
+    })
+
+    prova('il legame via student_parents conta come quello diretto', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', target: [SEZ_2] })
+        expect(await avvisiDi(GEN_PONTE)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_PONTE }])
+      })
+    })
+  })
+
+  // Il trigger traduce i nomi in uuid: un nome che nessuna sezione ha resta nei nomi e lascia gli uuid vuoti. Quell'avviso HA
+  // dei destinatari, solo che non si sa quali. Un guasto non deve aprire dati.
+  describe('un avviso con i destinatari non risolti non arriva a nessuno', () => {
+    for (const scope of ['classe', 'globale']) {
+      prova(`${scope}, con un nome di classe che nessuna sezione ha`, async () => {
+        await inRollback(async () => {
+          const a = await avviso({ scope, classi: ['Classe che non esiste'] })
+          const r = await db.query<{ target_section_ids: string[] }>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [a])
+          expect(r.rows[0].target_section_ids).toEqual([])
+          expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([])
+          expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
+        })
+      })
+    }
+
+    prova('classe, senza né uuid né nomi: vuoto non vuol dire «per tutti» se lo scope dice «classe»', async () => {
+      await inRollback(async () => {
+        await avviso({ scope: 'classe' })
+        await avviso({ scope: 'classe', target: [], classi: [] })
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([])
+        expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
+      })
+    })
+
+    prova('con il nome di una sezione che c’è, il trigger lo traduce e l’avviso arriva a quella sezione', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', classi: ['Girasoli'] })
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('globale con destinatari veri: comandano i destinatari, non diventa per tutta la sede', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'globale', classi: ['Girasoli'] })
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('globale con i soli uuid: lo stesso, e un figlio senza sezione non lo riceve', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'globale', target: [SEZ_1] })
+        const r = await db.query<{ target_classes: string[] | null }>(`SELECT target_classes FROM public.avvisi WHERE id = $1`, [a])
+        expect(r.rows[0].target_classes ?? []).toEqual([])
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+        expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
+      })
+    })
+  })
+
+  describe('la scadenza', () => {
+    prova('un avviso valido non scaduto si vede anche se precedente all’ingresso', async () => {
+      await inRollback(async () => {
+        const { oggi } = await giorni()
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, sezione: SEZ_1, ingresso: oggi })
+        const globale = await avviso()
+        const diClasse = await avviso({ scope: 'classe', target: [SEZ_1] })
+        expect((await avvisiDi(GEN_IN_ATTESA)).map((x) => x.avviso_id).sort()).toEqual(ordinate(globale, diClasse))
+      })
+    })
+
+    prova('un avviso scaduto non si vede, nell’ultimo istante sì (come la route: `.gte`)', async () => {
+      await inRollback(async () => {
+        await avviso({ fraQuanto: '-1 millisecond' })
+        expect(await avvisiDi(GEN_DOPPIO)).toEqual([])
+        const ultimo = await avviso({ fraQuanto: '0' })
+        expect(await avvisiDi(GEN_DOPPIO)).toEqual([{ avviso_id: ultimo, alunno_id: FIGLIO_DOPPIO }])
+      })
+    })
+
+    prova('decide `scadenza_avviso`, non la vecchia `scadenza`', async () => {
+      await inRollback(async () => {
+        const vivo = await avviso({ vecchiaScadenza: '2020-01-01' })
+        await avviso({ vecchiaScadenza: '2999-01-01', fraQuanto: '-1 day' })
+        expect(await avvisiDi(GEN_DOPPIO)).toEqual([{ avviso_id: vivo, alunno_id: FIGLIO_DOPPIO }])
+      })
+    })
+  })
+
+  describe('la regola del figlio attivo', () => {
+    prova('un ritirato non vede niente', async () => {
+      await inRollback(async () => {
+        await avviso()
+        await avviso({ scope: 'classe', target: [SEZ_1] })
+        expect(await avvisiDi(GEN_RITIRATO)).toEqual([])
+      })
+    })
+
+    prova('con due figli, quando uno lascia si perde solo ciò che arrivava da lui', async () => {
+      await inRollback(async () => {
+        const globale = await avviso()
+        await avviso({ scope: 'classe', target: [SEZ_2] })
+        await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = '2026-10-01' WHERE id = $1`, [FREQ_2])
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: globale, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('un bambino vivo in due sedi dà una riga sola per avviso, dalla frequenza di quella sede', async () => {
+      await inRollback(async () => {
+        await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+        await frequenza({ alunno: FIGLIO_PONTE, annoSede: PRIMA_B, ingresso: '2025-09-01' })
+        expect(await figliDi(GEN_PONTE)).toHaveLength(2)
+        const a = await avviso()
+        const b = await avviso({ sede: SEDE_B })
+        expect(await avvisiDi(GEN_PONTE)).toEqual(
+          [a, b].sort().map((avviso_id) => ({ avviso_id, alunno_id: FIGLIO_PONTE })))
+      })
+    })
+  })
+
+  describe('schema indietro', () => {
+    prova('senza avvisi nessuna riga e nessun errore', async () => {
+      await inRollback(async () => {
+        await db.exec(`DROP TABLE public.avvisi CASCADE`)
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([])
+      })
+    })
+  })
+
+  describe('chi può chiamarla', () => {
+    prova('authenticated e anon non possono, service_role sì', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', target: [SEZ_1] })
+        await db.exec('SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', GEN_DUE_FIGLI)
+        expect(await codiceErrore(`SELECT * FROM public.avvisi_visibili_genitore($1)`, [GEN_PONTE])).toBe('42501')
+        await db.exec('ROLLBACK TO SAVEPOINT prima_del_ruolo')
+        await comeUtente('anon', null)
+        expect(await codiceErrore(`SELECT * FROM public.avvisi_visibili_genitore($1)`, [GEN_PONTE])).toBe('42501')
+        await db.exec('ROLLBACK TO SAVEPOINT prima_del_ruolo')
+        await comeUtente('service_role', null)
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+      })
+    })
+  })
+})
+
+async function thread(docente: string, genitore: string, figlio: string): Promise<string> {
+  return una<string>(
+    `INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3) RETURNING id`, [docente, genitore, figlio])
+}
+
+type RigaThread = { thread_id: string; scrivibile: boolean }
+
+async function threadDi(utente: string | null): Promise<RigaThread[]> {
+  const r = await db.query<RigaThread>(`SELECT thread_id, scrivibile FROM public.thread_visibili($1) ORDER BY thread_id`, [utente])
+  return r.rows
+}
+
+const manopola = (accesa: boolean) =>
+  db.query(`UPDATE public.anno_regole SET chat_sola_lettura_dal_passaggio = $1`, [accesa])
+
+const ritira = (frequenzaId: string) =>
+  db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = '2026-10-01' WHERE id = $1`, [frequenzaId])
+
+describe('thread_visibili', () => {
+  const POSIZIONI = [{ accesa: false, nome: 'spenta' }, { accesa: true, nome: 'accesa' }]
+
+  describe('il filtro sul figlio attivo vale in tutte e due le posizioni della manopola', () => {
+    for (const { accesa, nome } of POSIZIONI) {
+      prova(`manopola ${nome}: il genitore vede il thread del figlio attivo, con il docente assegnato si scrive`, async () => {
+        await inRollback(async () => {
+          await manopola(accesa)
+          const t = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+          expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: true }])
+          expect(await threadDi(DOC_SEZ_1)).toEqual([{ thread_id: t, scrivibile: true }])
+        })
+      })
+
+      prova(`manopola ${nome}: il genitore non vede il thread di un figlio ritirato, il docente ne vede la storia e non scrive`, async () => {
+        await inRollback(async () => {
+          await manopola(accesa)
+          const t = await thread(DOC_SEZ_1, GEN_RITIRATO, FIGLIO_RITIRATO)
+          expect(await threadDi(GEN_RITIRATO)).toEqual([])
+          expect(await threadDi(DOC_SEZ_1)).toEqual([{ thread_id: t, scrivibile: false }])
+        })
+      })
+
+      prova(`manopola ${nome}: nemmeno la segreteria scrive sul thread di un figlio ritirato`, async () => {
+        await inRollback(async () => {
+          await manopola(accesa)
+          const t = await thread(SEGRETERIA, GEN_RITIRATO, FIGLIO_RITIRATO)
+          expect(await threadDi(GEN_RITIRATO)).toEqual([])
+          expect(await threadDi(SEGRETERIA)).toEqual([{ thread_id: t, scrivibile: false }])
+        })
+      })
+
+      prova(`manopola ${nome}: un figlio in attesa con ingresso futuro non è attivo`, async () => {
+        await inRollback(async () => {
+          await manopola(accesa)
+          const { domani } = await giorni()
+          await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, sezione: SEZ_1, ingresso: domani })
+          const t = await thread(DOC_SEZ_1, GEN_IN_ATTESA, FIGLIO_IN_ATTESA)
+          expect(await threadDi(GEN_IN_ATTESA)).toEqual([])
+          expect(await threadDi(DOC_SEZ_1)).toEqual([{ thread_id: t, scrivibile: false }])
+        })
+      })
+    }
+  })
+
+  describe('ogni thread guarda il suo bambino', () => {
+    const dove = async (utente: string) =>
+      Object.fromEntries((await threadDi(utente)).map((x) => [x.thread_id, x.scrivibile]))
+
+    for (const { accesa, nome } of POSIZIONI) {
+      prova(`manopola ${nome}: lo stesso docente scrive sul figlio attivo e non sul ritirato`, async () => {
+        await inRollback(async () => {
+          await manopola(accesa)
+          const attivo = await thread(DOC_SEZ_1, GEN_DOPPIO, FIGLIO_DOPPIO)
+          const ritirato = await thread(DOC_SEZ_1, GEN_RITIRATO, FIGLIO_RITIRATO)
+          expect(await dove(DOC_SEZ_1)).toEqual({ [attivo]: true, [ritirato]: false })
+        })
+      })
+    }
+
+    prova('manopola accesa: lo stesso docente è assegnato a un bambino e non all’altro', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const suo = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        const altro = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_2)
+        expect(await dove(DOC_SEZ_1)).toEqual({ [suo]: true, [altro]: false })
+        expect(await dove(GEN_DUE_FIGLI)).toEqual({ [suo]: true, [altro]: false })
+      })
+    })
+  })
+
+  describe('la manopola spenta, come al deploy', () => {
+    prova('un thread del figlio attivo è scrivibile anche con un docente non più assegnato: le conversazioni di oggi restano come sono', async () => {
+      await inRollback(async () => {
+        const t = await thread(DOC_SEZ_2, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: true }])
+        expect(await threadDi(DOC_SEZ_2)).toEqual([{ thread_id: t, scrivibile: true }])
+      })
+    })
+  })
+
+  describe('la manopola accesa', () => {
+    prova('con il docente non più assegnato il thread si vede e non si scrive, da tutte e due le parti', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const t = await thread(DOC_SEZ_2, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: false }])
+        expect(await threadDi(DOC_SEZ_2)).toEqual([{ thread_id: t, scrivibile: false }])
+      })
+    })
+
+    for (const [nome, chi] of [['admin', AMMINISTRATORE], ['coordinator', DIREZIONE], ['segreteria', SEGRETERIA]] as const) {
+      prova(`con un operatore ${nome} si scrive sempre, senza nessuna riga in utenti_sezioni`, async () => {
+        await inRollback(async () => {
+          await manopola(true)
+          const t = await thread(chi, GEN_DUE_FIGLI, FIGLIO_1)
+          expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: true }])
+          expect(await threadDi(chi)).toEqual([{ thread_id: t, scrivibile: true }])
+        })
+      })
+    }
+
+    prova('un altro ruolo non conta come operatore', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const t = await thread(CUOCA, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: false }])
+      })
+    })
+
+    prova('la sola riga per materia non assegna il docente alla classe', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const t = await thread(DOC_MATERIA, GEN_DOPPIO, FIGLIO_DOPPIO)
+        expect(await threadDi(GEN_DOPPIO)).toEqual([{ thread_id: t, scrivibile: false }])
+        await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2)`, [DOC_MATERIA, SEZ_1])
+        expect(await threadDi(GEN_DOPPIO)).toEqual([{ thread_id: t, scrivibile: true }])
+      })
+    })
+
+    prova('conta la sezione attuale del figlio: dopo un cambio di classe la scrittura segue il docente nuovo', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const vecchia = await thread(DOC_SEZ_1, GEN_DOPPIO, FIGLIO_DOPPIO)
+        const nuova = await thread(DOC_SEZ_2, GEN_DOPPIO, FIGLIO_DOPPIO)
+        const dove = async () => Object.fromEntries((await threadDi(GEN_DOPPIO)).map((x) => [x.thread_id, x.scrivibile]))
+        expect(await dove()).toEqual({ [vecchia]: true, [nuova]: false })
+        await db.query(`UPDATE public.frequenze SET section_id = $2 WHERE alunno_id = $1`, [FIGLIO_DOPPIO, SEZ_2])
+        expect(await dove()).toEqual({ [vecchia]: false, [nuova]: true })
+      })
+    })
+
+    prova('una sezione nulla non assegna nessuno; l’operatore resta scrivibile', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const col_docente = await thread(DOC_SEZ_1, GEN_SENZA_SEZIONE, FIGLIO_SENZA_SEZIONE)
+        const con_segreteria = await thread(SEGRETERIA, GEN_SENZA_SEZIONE, FIGLIO_SENZA_SEZIONE)
+        expect(Object.fromEntries((await threadDi(GEN_SENZA_SEZIONE)).map((x) => [x.thread_id, x.scrivibile])))
+          .toEqual({ [col_docente]: false, [con_segreteria]: true })
+      })
+    })
+
+    prova('un profilo revocato non conta più: né operatore né docente assegnato', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        const colDocente = await thread(DOC_SEZ_1, GEN_DOPPIO, FIGLIO_DOPPIO)
+        const conSegreteria = await thread(SEGRETERIA, GEN_DOPPIO, FIGLIO_DOPPIO)
+        await db.query(`UPDATE public.utenti SET archiviato_il = now() WHERE id = ANY ($1::uuid[])`, [[DOC_SEZ_1, SEGRETERIA]])
+        expect(Object.fromEntries((await threadDi(GEN_DOPPIO)).map((x) => [x.thread_id, x.scrivibile])))
+          .toEqual({ [colDocente]: false, [conSegreteria]: false })
+      })
+    })
+  })
+
+  describe('di chi è un thread', () => {
+    prova('un altro genitore non lo vede, anche se è genitore dello stesso bambino', async () => {
+      await inRollback(async () => {
+        await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(GEN_PONTE)).toEqual([])
+        await db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_PONTE, FIGLIO_1])
+        expect(await threadDi(GEN_PONTE)).toEqual([])
+      })
+    })
+
+    prova('un altro docente non lo vede', async () => {
+      await inRollback(async () => {
+        await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(DOC_SEZ_2)).toEqual([])
+        expect(await threadDi(SEGRETERIA)).toEqual([])
+      })
+    })
+
+    prova('il genitore non vede un thread a suo nome su un bambino che non è suo', async () => {
+      await inRollback(async () => {
+        await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_DOPPIO)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([])
+      })
+    })
+
+    // `parent_id` porta due cose secondo l'età della riga (`20261012085225_chat_broadcast_privato.sql`): l'account o la sua
+    // riga di `parents`. La regola di oggi le accetta tutte e due, e anche il segnale della chat.
+    prova('un thread con la riga di parents al posto dell’account è di quell’account', async () => {
+      await inRollback(async () => {
+        const t = await thread(DOC_SEZ_2, PONTE_1, FIGLIO_PONTE)
+        expect(await threadDi(GEN_PONTE)).toEqual([{ thread_id: t, scrivibile: true }])
+        expect(await threadDi(DOC_SEZ_2)).toEqual([{ thread_id: t, scrivibile: true }])
+        expect(await threadDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('un thread con la riga di parents e un figlio ritirato non si vede', async () => {
+      await inRollback(async () => {
+        const f = await una<string>(`SELECT id FROM public.frequenze WHERE alunno_id = $1`, [FIGLIO_PONTE])
+        await thread(DOC_SEZ_2, PONTE_1, FIGLIO_PONTE)
+        await ritira(f)
+        expect(await threadDi(GEN_PONTE)).toEqual([])
+      })
+    })
+
+    prova('una persona docente e genitore vede i suoi thread nei due ruoli, ciascuno con la sua regola', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        await db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [DOC_SEZ_1, FIGLIO_2])
+        const daDocente = await thread(DOC_SEZ_1, GEN_DOPPIO, FIGLIO_DOPPIO)
+        const daGenitore = await thread(DOC_MATERIA, DOC_SEZ_1, FIGLIO_2)
+        expect(Object.fromEntries((await threadDi(DOC_SEZ_1)).map((x) => [x.thread_id, x.scrivibile])))
+          .toEqual({ [daDocente]: true, [daGenitore]: false })
+      })
+    })
+
+    prova('un utente senza thread o nullo: nessuna riga', async () => {
+      await inRollback(async () => {
+        await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await threadDi(GEN_RITIRATO)).toEqual([])
+        expect(await threadDi(null)).toEqual([])
+      })
+    })
+
+    prova('un bambino vivo in due sedi dà una riga sola per thread, e il docente di una delle due sezioni è assegnato', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+        const annoPrimaB = await una<string>(`SELECT anno_id FROM public.anni_sede WHERE id = $1`, [PRIMA_B])
+        const sezPrimaB = await una<string>(
+          `INSERT INTO public.sections (scuola_id, name, anno_id) VALUES ($1, 'Tulipani di prima', $2) RETURNING id`, [SEDE_B, annoPrimaB])
+        await frequenza({ alunno: FIGLIO_PONTE, annoSede: PRIMA_B, sezione: sezPrimaB, ingresso: '2025-09-01' })
+        expect(await figliDi(GEN_PONTE)).toHaveLength(2)
+        await db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2)`, [DOC_MATERIA, sezPrimaB])
+        const t = await thread(DOC_MATERIA, GEN_PONTE, FIGLIO_PONTE)
+        expect(await threadDi(GEN_PONTE)).toEqual([{ thread_id: t, scrivibile: true }])
+        const altro = await thread(SEGRETERIA, GEN_PONTE, FIGLIO_PONTE)
+        expect((await threadDi(GEN_PONTE)).map((x) => x.thread_id).sort()).toEqual(ordinate(t, altro))
+      })
+    })
+  })
+
+  describe('thread_e_visibile', () => {
+    prova('dice la stessa cosa di thread_visibili, per ogni utente e ogni thread, nelle due posizioni', async () => {
+      await inRollback(async () => {
+        const threads = [
+          await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1),
+          await thread(DOC_SEZ_2, GEN_DUE_FIGLI, FIGLIO_1),
+          await thread(SEGRETERIA, GEN_DUE_FIGLI, FIGLIO_2),
+          await thread(DOC_SEZ_1, GEN_RITIRATO, FIGLIO_RITIRATO),
+          await thread(DOC_SEZ_2, PONTE_1, FIGLIO_PONTE),
+        ]
+        const utenti = [GEN_DUE_FIGLI, GEN_RITIRATO, GEN_PONTE, GEN_DOPPIO, DOC_SEZ_1, DOC_SEZ_2, DOC_MATERIA, SEGRETERIA]
+        let visti = 0
+        for (const accesa of [false, true]) {
+          await manopola(accesa)
+          for (const u of utenti) {
+            const suoi = new Set((await threadDi(u)).map((x) => x.thread_id))
+            for (const t of threads) {
+              const si = await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [u, t])
+              expect(si, `utente ${u}, thread ${t}, manopola ${accesa}`).toBe(suoi.has(t))
+              if (si) visti++
+            }
+          }
+        }
+        // Non è una tautologia sul vuoto. Per posizione 9 sì: 3 di GEN_DUE_FIGLI, 1 di GEN_PONTE, 2 di DOC_SEZ_1, 2 di DOC_SEZ_2,
+        // 1 di SEGRETERIA. La manopola decide chi scrive, non chi vede.
+        expect(visti).toBe(2 * 9)
+      })
+    })
+
+    prova('un thread che non esiste o un utente nullo: false, non errore', async () => {
+      await inRollback(async () => {
+        const t = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        expect(await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [GEN_DUE_FIGLI, GEN_DUE_FIGLI])).toBe(false)
+        expect(await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [null, t])).toBe(false)
+        expect(await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [GEN_DUE_FIGLI, null])).toBe(false)
+      })
+    })
+  })
+
+  describe('schema indietro', () => {
+    prova('senza chat_threads nessuna riga e nessun errore', async () => {
+      await inRollback(async () => {
+        await db.exec(`DROP TABLE public.chat_threads CASCADE`)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([])
+        expect(await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [GEN_DUE_FIGLI, GEN_DUE_FIGLI])).toBe(false)
+      })
+    })
+
+    prova('senza la riga delle regole la manopola non si legge, e chiude: conta solo l’assegnazione', async () => {
+      await inRollback(async () => {
+        const assegnato = await thread(DOC_SEZ_1, GEN_DOPPIO, FIGLIO_DOPPIO)
+        const altro = await thread(DOC_SEZ_2, GEN_DOPPIO, FIGLIO_DOPPIO)
+        await db.exec(`SET LOCAL session_replication_role = replica`)
+        await db.exec(`DELETE FROM public.anno_regole`)
+        await db.exec(`SET LOCAL session_replication_role = DEFAULT`)
+        expect(Object.fromEntries((await threadDi(GEN_DOPPIO)).map((x) => [x.thread_id, x.scrivibile])))
+          .toEqual({ [assegnato]: true, [altro]: false })
+      })
+    })
+
+    prova('senza parents restano i thread con l’account', async () => {
+      await inRollback(async () => {
+        const t = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        await db.exec(`DROP TABLE public.parents CASCADE`)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: true }])
+      })
+    })
+  })
+
+  describe('chi può chiamarla', () => {
+    const miei = async () =>
+      (await db.query<RigaThread>(`SELECT thread_id, scrivibile FROM public.thread_visibili_miei()`)).rows
+
+    prova('authenticated non può chiamare thread_visibili(uuid) né thread_e_visibile, può chiamare thread_visibili_miei()', async () => {
+      await inRollback(async () => {
+        const mio = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        const altrui = await thread(DOC_SEZ_2, GEN_PONTE, FIGLIO_PONTE)
+        await comeUtente('authenticated', GEN_DUE_FIGLI)
+        expect(await codiceErrore(`SELECT * FROM public.thread_visibili($1)`, [GEN_PONTE])).toBe('42501')
+        expect(await codiceErrore(`SELECT public.thread_e_visibile($1, $2)`, [GEN_PONTE, altrui])).toBe('42501')
+        expect(await miei()).toEqual([{ thread_id: mio, scrivibile: true }])
+      })
+    })
+
+    prova('anon non può chiamare nessuna delle tre', async () => {
+      await inRollback(async () => {
+        await comeUtente('anon', null)
+        expect(await codiceErrore(`SELECT * FROM public.thread_visibili($1)`, [GEN_DUE_FIGLI])).toBe('42501')
+        expect(await codiceErrore(`SELECT public.thread_e_visibile($1, $2)`, [GEN_DUE_FIGLI, GEN_DUE_FIGLI])).toBe('42501')
+        expect(await codiceErrore(`SELECT * FROM public.thread_visibili_miei()`)).toBe('42501')
+      })
+    })
+
+    prova('service_role chiama thread_visibili(uuid) e thread_e_visibile per conto di un genitore', async () => {
+      await inRollback(async () => {
+        const t = await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_1)
+        await comeUtente('service_role', null)
+        expect(await threadDi(GEN_DUE_FIGLI)).toEqual([{ thread_id: t, scrivibile: true }])
+        expect(await una<boolean>(`SELECT public.thread_e_visibile($1, $2)`, [GEN_DUE_FIGLI, t])).toBe(true)
+      })
+    })
+
+    prova('thread_visibili_miei() dà le righe di chi chiama, e niente a chi non ha claim', async () => {
+      await inRollback(async () => {
+        await manopola(true)
+        await thread(DOC_SEZ_1, GEN_DUE_FIGLI, FIGLIO_2)
+        const attese = await threadDi(GEN_DUE_FIGLI)
+        expect(attese).toHaveLength(1)
+        expect(attese[0].scrivibile).toBe(false)
+        await db.exec('SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', GEN_DUE_FIGLI)
+        expect(await miei()).toEqual(attese)
+        await db.exec('ROLLBACK TO SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', null)
+        expect(await miei()).toEqual([])
+      })
+    })
+  })
+})
+
+type DatiVoce = {
+  alunno?: string | null
+  sede?: string | null
+  /** La competenza decide l'anno della voce: di partenza un mese del 2026/27. */
+  competenza?: string
+  stato?: string
+  pagato?: number
+  categoria?: string | null
+  visibileDal?: string | null
+  padre?: string | null
+}
+
+/** Di partenza una voce da pagare della prima sede, nell'anno attivo. */
+async function voce(d: DatiVoce = {}): Promise<string> {
+  return una<string>(
+    `INSERT INTO public.pagamenti
+       (alunno_id, scuola_id, descrizione, importo, scadenza, stato, categoria_id, importo_pagato, periodo_competenza, visibile_dal, parent_payment_id)
+     VALUES ($1, $2, 'Voce di prova', 100, $3, $4, $5, $6, $3, $7, $8) RETURNING id`,
+    [d.alunno === undefined ? FIGLIO_DOPPIO : d.alunno, d.sede === undefined ? SEDE : d.sede, d.competenza ?? '2026-10-01',
+      d.stato ?? 'da_pagare', d.categoria ?? null, d.pagato ?? 0, d.visibileDal ?? null, d.padre ?? null])
+}
+
+async function vociDi(genitore: string | null): Promise<string[]> {
+  const r = await db.query<{ voce_id: string }>(`SELECT voce_id FROM public.voci_visibili_genitore($1)`, [genitore])
+  return r.rows.map((x) => x.voce_id).sort()
+}
+
+const categoria = (nome: string) =>
+  una<string>(`INSERT INTO public.payment_categories (scuola_id, nome) VALUES (NULL, $1) RETURNING id`, [nome])
+
+const nelListino = (annoSede: string, tipo: string, cat: string) =>
+  db.query(`INSERT INTO public.listino_voci (anno_sede_id, voce, payment_category_id, importo) VALUES ($1, $2, $3, 100)`, [annoSede, tipo, cat])
+
+const FUTURA = '2027-10-01'
+
+describe('voci_visibili_genitore', () => {
+  describe('di chi sono', () => {
+    prova('le voci di tutti i figli collegati, per le due strade', async () => {
+      await inRollback(async () => {
+        const a = await voce({ alunno: FIGLIO_1 })
+        const b = await voce({ alunno: FIGLIO_2 })
+        const ponte = await voce({ alunno: FIGLIO_PONTE })
+        expect(await vociDi(GEN_DUE_FIGLI)).toEqual(ordinate(a, b))
+        expect(await vociDi(GEN_PONTE)).toEqual([ponte])
+      })
+    })
+
+    prova('un figlio ritirato con un dovuto aperto resta: la voce si deve poter pagare', async () => {
+      await inRollback(async () => {
+        const aperta = await voce({ alunno: FIGLIO_RITIRATO })
+        expect(await figliDi(GEN_RITIRATO)).toEqual([])
+        expect(await vociDi(GEN_RITIRATO)).toEqual([aperta])
+      })
+    })
+
+    prova('un figlio ritirato non porta con sé le voci di un anno futuro', async () => {
+      await inRollback(async () => {
+        await voce({ alunno: FIGLIO_RITIRATO, competenza: FUTURA })
+        expect(await vociDi(GEN_RITIRATO)).toEqual([])
+      })
+    })
+
+    prova('la voce di un altro bambino, o senza bambino, non si vede', async () => {
+      await inRollback(async () => {
+        await voce({ alunno: FIGLIO_PONTE })
+        await voce({ alunno: null })
+        expect(await vociDi(GEN_DUE_FIGLI)).toEqual([])
+        expect(await vociDi(null)).toEqual([])
+      })
+    })
+
+    prova('un figlio collegato per tutte e due le strade dà la voce una volta sola', async () => {
+      await inRollback(async () => {
+        const v = await voce()
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+  })
+
+  describe('l’anno', () => {
+    prova('una voce dell’anno attivo o di un anno passato si vede, una di un anno futuro no', async () => {
+      await inRollback(async () => {
+        const attivo = await voce()
+        const passato = await voce({ competenza: '2026-03-01' })
+        const futura = await voce({ competenza: FUTURA })
+        const anni = await db.query<{ id: string; anno_inizio: number }>(
+          `SELECT p.id, y.anno_inizio FROM public.pagamenti p JOIN public.anni_scolastici y ON y.id = p.anno_id`)
+        const annoDi = new Map(anni.rows.map((x) => [x.id, x.anno_inizio]))
+        expect([annoDi.get(attivo), annoDi.get(passato), annoDi.get(futura)]).toEqual([2026, 2025, 2027])
+        expect(await vociDi(GEN_DOPPIO)).toEqual(ordinate(attivo, passato))
+      })
+    })
+
+    prova('dopo il passaggio d’anno la voce non è più futura', async () => {
+      await inRollback(async () => {
+        const v = await voce({ competenza: FUTURA })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+        await passaAl2027()
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+
+    prova('l’anno attivo è quello della sede della voce', async () => {
+      await inRollback(async () => {
+        // La seconda sede non è ancora passata al 2026/27: per lei quella competenza è futura.
+        await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+        const qui = await voce()
+        await voce({ sede: SEDE_B })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([qui])
+      })
+    })
+
+    // `POST /api/pagamenti` la lascia ricavare dal bambino, e il registro le dà l'anno da lì: senza riserva, una voce futura
+    // senza `scuola_id` non troverebbe un anno attivo e passerebbe per «non si può dire».
+    prova('una voce senza sede prende quella del bambino, come il registro', async () => {
+      await inRollback(async () => {
+        const qui = await voce({ sede: null })
+        await voce({ sede: null, competenza: FUTURA })
+        const anni = await db.query<{ anno_inizio: number }>(
+          `SELECT y.anno_inizio FROM public.pagamenti p JOIN public.anni_scolastici y ON y.id = p.anno_id ORDER BY 1`)
+        expect(anni.rows.map((x) => x.anno_inizio)).toEqual([2026, 2027])
+        expect(await vociDi(GEN_DOPPIO)).toEqual([qui])
+      })
+    })
+
+    prova('il listino di una voce senza sede è quello della sede del bambino', async () => {
+      await inRollback(async () => {
+        const c = await categoria('Quota di prova')
+        await nelListino(ANNO[2027], 'quota_nuova', c)
+        const v = await voce({ sede: null, competenza: FUTURA, categoria: c })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+
+    prova('una voce di cui non si sa la sede non ha un anno: non si può dire futura, e resta', async () => {
+      await inRollback(async () => {
+        await db.query(`UPDATE public.alunni SET scuola_id = NULL WHERE id = $1`, [FIGLIO_DOPPIO])
+        const v = await voce({ sede: null, competenza: FUTURA })
+        expect(await una<string | null>(`SELECT anno_id FROM public.pagamenti WHERE id = $1`, [v])).toBeNull()
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+
+    // Il registro la lascia così solo quando la sua rete ha preso un guasto: a `replica` i trigger non scattano.
+    prova('una voce con la sede del bambino ma senza anno non si può dire futura, e resta', async () => {
+      await inRollback(async () => {
+        await db.exec(`SET LOCAL session_replication_role = replica`)
+        const v = await voce({ sede: null, competenza: FUTURA })
+        await db.exec(`SET LOCAL session_replication_role = DEFAULT`)
+        expect(await una<string | null>(`SELECT anno_id FROM public.pagamenti WHERE id = $1`, [v])).toBeNull()
+        expect(await una<string | null>(`SELECT public.anno_attivo($1)`, [SEDE])).not.toBeNull()
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+
+    prova('una voce con un anno, in una sede senza anno attivo, non si può dire futura e resta', async () => {
+      await inRollback(async () => {
+        const v = await voce({ competenza: FUTURA })
+        await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE scuola_id = $1`, [SEDE])
+        expect(await una<string | null>(`SELECT public.anno_attivo($1)`, [SEDE])).toBeNull()
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+  })
+
+  describe('le eccezioni al futuro', () => {
+    prova('una voce futura già pagata si vede: le due «Iscrizione» con competenza dal 2027 restano', async () => {
+      await inRollback(async () => {
+        const iscrizione = await categoria('Iscrizione')
+        const pagata = await voce({ competenza: FUTURA, stato: 'pagato', pagato: 100, categoria: iscrizione })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([pagata])
+      })
+    })
+
+    prova('una voce futura pagata a metà si vede: quei soldi la famiglia li ha dati', async () => {
+      await inRollback(async () => {
+        const acconto = await voce({ competenza: FUTURA, stato: 'parziale', pagato: 40 })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([acconto])
+      })
+    })
+
+    prova('una voce futura esente, pagata con importo pagato zero, si vede', async () => {
+      await inRollback(async () => {
+        const esente = await voce({ competenza: FUTURA, stato: 'pagato', pagato: 0 })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([esente])
+      })
+    })
+
+    prova('la quota di una frequenza (quota_pagamento_id) si vede anche da pagare', async () => {
+      await inRollback(async () => {
+        const quota = await voce({ competenza: FUTURA })
+        await db.query(`UPDATE public.frequenze SET quota_pagamento_id = $2 WHERE alunno_id = $1`, [FIGLIO_DOPPIO, quota])
+        expect(await vociDi(GEN_DOPPIO)).toEqual([quota])
+      })
+    })
+
+    prova('le rate della quota di una frequenza si vedono con lei', async () => {
+      await inRollback(async () => {
+        const quota = await voce({ competenza: FUTURA })
+        const rata = await voce({ competenza: FUTURA, padre: quota })
+        await voce({ competenza: FUTURA, padre: await voce({ competenza: FUTURA }) })
+        await db.query(`UPDATE public.frequenze SET quota_pagamento_id = $2 WHERE alunno_id = $1`, [FIGLIO_DOPPIO, quota])
+        expect(await vociDi(GEN_DOPPIO)).toEqual(ordinate(quota, rata))
+      })
+    })
+
+    for (const tipo of ['quota_nuova', 'quota_conferma']) {
+      prova(`una voce futura con la categoria di ${tipo} del listino si vede anche da pagare`, async () => {
+        await inRollback(async () => {
+          const c = await categoria('Quota di prova')
+          await nelListino(ANNO[2027], tipo, c)
+          const v = await voce({ competenza: FUTURA, categoria: c })
+          expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+        })
+      })
+    }
+
+    prova('il listino vale per il suo anno e per la sua sede', async () => {
+      await inRollback(async () => {
+        const c = await categoria('Quota di prova')
+        await nelListino(ANNO_2627, 'quota_nuova', c)
+        const annoFuturoB = await una<string>(
+          `SELECT s.id FROM public.anni_sede s WHERE s.scuola_id = $1 AND s.anno_id = (SELECT anno_id FROM public.anni_sede WHERE id = $2)`,
+          [SEDE_B, ANNO[2027]])
+        await nelListino(annoFuturoB, 'quota_nuova', c)
+        await voce({ competenza: FUTURA, categoria: c })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('la categoria della retta nel listino non è una quota', async () => {
+      await inRollback(async () => {
+        const c = await categoria('Retta di prova')
+        await nelListino(ANNO[2027], 'retta', c)
+        await voce({ competenza: FUTURA, categoria: c })
+        await voce({ competenza: FUTURA })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+  })
+
+  describe('visibile_dal', () => {
+    prova('una data futura nasconde qualunque voce: dell’anno attivo, pagata, quota', async () => {
+      await inRollback(async () => {
+        const { domani } = await giorni()
+        const c = await categoria('Quota di prova')
+        await nelListino(ANNO[2027], 'quota_nuova', c)
+        await voce({ visibileDal: domani })
+        await voce({ visibileDal: domani, stato: 'pagato', pagato: 100 })
+        await voce({ visibileDal: domani, competenza: FUTURA, categoria: c })
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('senza data, con una data passata o con quella di oggi la voce si vede', async () => {
+      await inRollback(async () => {
+        const { oggi, ieri } = await giorni()
+        const attese = [await voce(), await voce({ visibileDal: ieri }), await voce({ visibileDal: oggi })]
+        expect(await vociDi(GEN_DOPPIO)).toEqual(ordinate(...attese))
+      })
+    })
+
+    // Oggi è il giorno di Roma, non quello della sessione: in produzione le sessioni sono in UTC. Con questi due fusi uno dei
+    // due sta sempre su un giorno diverso da quello di Roma, a qualunque ora giri la prova.
+    for (const fuso of ['Etc/GMT-14', 'Etc/GMT+12']) {
+      prova(`oggi è il giorno di Roma anche con la sessione in ${fuso}`, async () => {
+        await inRollback(async () => {
+          const { oggi, domani } = await giorni()
+          const si = await voce({ visibileDal: oggi })
+          await voce({ visibileDal: domani })
+          await db.exec(`SET LOCAL TimeZone = '${fuso}'`)
+          expect(await vociDi(GEN_DOPPIO)).toEqual([si])
+        })
+      })
+    }
+  })
+
+  describe('schema indietro', () => {
+    prova('senza pagamenti nessuna riga e nessun errore', async () => {
+      await inRollback(async () => {
+        await db.exec(`DROP TABLE public.pagamenti CASCADE`)
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('senza una delle strade del legame resta l’altra', async () => {
+      await inRollback(async () => {
+        const diretta = await voce({ alunno: FIGLIO_1 })
+        const ponte = await voce({ alunno: FIGLIO_PONTE })
+        await db.exec(`DROP TABLE public.student_parents CASCADE`)
+        expect(await vociDi(GEN_DUE_FIGLI)).toEqual([diretta])
+        expect(await vociDi(GEN_PONTE)).toEqual([])
+        expect(ponte).not.toBe(diretta)
+      })
+    })
+  })
+
+  describe('chi può chiamarla', () => {
+    const miei = async () =>
+      (await db.query<{ voce_id: string }>(`SELECT voce_id FROM public.voci_visibili_miei()`)).rows.map((x) => x.voce_id).sort()
+
+    prova('authenticated non può chiamare voci_visibili_genitore(uuid), può chiamare voci_visibili_miei()', async () => {
+      await inRollback(async () => {
+        const mia = await voce({ alunno: FIGLIO_1 })
+        await voce({ alunno: FIGLIO_PONTE })
+        await comeUtente('authenticated', GEN_DUE_FIGLI)
+        expect(await codiceErrore(`SELECT * FROM public.voci_visibili_genitore($1)`, [GEN_PONTE])).toBe('42501')
+        expect(await miei()).toEqual([mia])
+      })
+    })
+
+    prova('anon non può chiamare nessuna delle due', async () => {
+      await inRollback(async () => {
+        await comeUtente('anon', null)
+        expect(await codiceErrore(`SELECT * FROM public.voci_visibili_genitore($1)`, [GEN_DUE_FIGLI])).toBe('42501')
+        expect(await codiceErrore(`SELECT * FROM public.voci_visibili_miei()`)).toBe('42501')
+      })
+    })
+
+    prova('service_role chiama voci_visibili_genitore(uuid) per conto di un genitore', async () => {
+      await inRollback(async () => {
+        const v = await voce({ alunno: FIGLIO_1 })
+        await comeUtente('service_role', null)
+        expect(await vociDi(GEN_DUE_FIGLI)).toEqual([v])
+      })
+    })
+
+    prova('voci_visibili_miei() dà le righe di chi chiama, e niente a chi non ha claim', async () => {
+      await inRollback(async () => {
+        const v = await voce({ alunno: FIGLIO_PONTE })
+        await db.exec('SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', GEN_PONTE)
+        expect(await miei()).toEqual([v])
+        await db.exec('ROLLBACK TO SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', null)
+        expect(await miei()).toEqual([])
+      })
+    })
+  })
+})
+
+// Le due funzioni che tengono in un posto solo «chi è mio figlio» e «che cos'è una frequenza attiva». Con il parametro aperto,
+// un genitore potrebbe chiedere di qualunque bambino o di qualunque account.
+describe('figli_collegati e frequenze_attive', () => {
+  prova('figli_collegati dà anche il figlio ritirato, per le due strade', async () => {
+    const figli = async (g: string) => (await una<string[]>(`SELECT public.figli_collegati($1)`, [g]))
+    expect(await figli(GEN_RITIRATO)).toEqual([FIGLIO_RITIRATO])
+    expect(await figli(GEN_PONTE)).toEqual([FIGLIO_PONTE])
+    expect(await figli(GEN_DUE_FIGLI)).toEqual(expect.arrayContaining([FIGLIO_1, FIGLIO_2]))
+  })
+
+  prova('frequenze_attive dice la stessa cosa di figli_attivi, e un alunno ritirato non ha righe', async () => {
+    const r = await db.query<Riga>(`SELECT ${COLONNE} FROM public.frequenze_attive($1) ORDER BY alunno_id`, [[FIGLIO_1, FIGLIO_2, FIGLIO_RITIRATO]])
+    expect(r.rows).toEqual(await figliDi(GEN_DUE_FIGLI))
+  })
+
+  for (const ruolo of ['authenticated', 'anon']) {
+    prova(`${ruolo} non può chiamarle`, async () => {
+      await inRollback(async () => {
+        await comeUtente(ruolo, ruolo === 'anon' ? null : GEN_DUE_FIGLI)
+        expect(await codiceErrore(`SELECT public.figli_collegati($1)`, [GEN_PONTE])).toBe('42501')
+        expect(await codiceErrore(`SELECT * FROM public.frequenze_attive($1)`, [[FIGLIO_PONTE]])).toBe('42501')
+      })
+    })
+  }
 })
 
 describe('la manopola della chat', () => {

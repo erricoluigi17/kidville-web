@@ -99,7 +99,7 @@ const AMMESSE = new Map<string, readonly string[]>([
   // `current_parent_student_ids()`: non hanno parametri, prendono l'utente da `auth.uid()` e tornano il solo scope di chi
   // chiama. Sono l'unica via dal browser, perché le versioni con `p_utente` restano solo `service_role` (lì un genitore
   // enumererebbe i figli altrui, e lo prova `anno-visibilita-genitore.test.ts`).
-  ['20261108170148_anno_visibilita_genitore_funzioni.sql', ['figli_attivi_miei', 'media_visibili_miei']],
+  ['20261108170148_anno_visibilita_genitore_funzioni.sql', ['figli_attivi_miei', 'media_visibili_miei', 'thread_visibili_miei', 'voci_visibili_miei']],
 ])
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')

@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { dataCivile } from '@/i18n/config';
 import { useAnnoDi } from '@/lib/context/calendario-context';
+import { etichettaAnno } from '@/lib/anno-scolastico';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
@@ -67,6 +68,8 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     // Così "Conferma" non manda mai un anno diverso da quello che l'anteprima ha contato. Stato derivato, nessun effetto.
     const [previewAnnoGrezza, setPreviewAnno] = useState<{ annoAnteprima: number; mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
     const previewAnno = previewAnnoGrezza && previewAnnoGrezza.annoAnteprima === anno ? previewAnnoGrezza : null;
+    // Se l'anteprima c'è ma è per un altro anno, al posto del riepilogo una riga dice perché non si vede più.
+    const annoAnteprimaScaduta = previewAnnoGrezza && !previewAnno ? previewAnnoGrezza.annoAnteprima : null;
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     /**
@@ -207,6 +210,12 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             <div role="alert" className={avvisoServiziNonGenerati ? 'rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong' : undefined}>
                 {avvisoServiziNonGenerati ? t('genrServiziNonGenerati') : ''}
             </div>
+
+            {mode === 'anno' && annoAnteprimaScaduta !== null && (
+                <p role="status" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+                    {t('gencAnteprimaScaduta', { prima: etichettaAnno(annoAnteprimaScaduta, 'breve'), ora: etichettaAnno(anno, 'breve') })}
+                </p>
+            )}
 
             {/* Anteprima ANNO */}
             {mode === 'anno' && previewAnno && (

@@ -183,9 +183,12 @@ function dataDaDelPeriodo(periodo: Periodo, calendario?: Calendario | null): str
     const anno = annoDelGiorno(oggi, calendario);
     const inizio = anno.riga?.inizio ?? inizioAnno(anno.annoInizio);
     // Confronto lessicografico su `YYYY-MM-DD`: coincide con quello di calendario.
-    // Il clamp morde in un giorno solo — il 31 agosto di un anno bisestile, quando
-    // il 1° settembre precedente dista 365 giorni — ed è esattamente il giorno in cui
-    // senza di lui la route risponderebbe 400.
+    // Il clamp porta l'inizio non oltre GIORNI_INDIETRO_MASSIMI giorni prima di oggi, il tetto della route
+    // (oltre risponderebbe 400). Morde quando l'anno del calendario è cominciato più di 364 giorni fa. Con il
+    // calendario predefinito (1/9 → 31/8) accade in un giorno solo, il 31 agosto di un anno bisestile (365 giorni
+    // dal 1° settembre). Con un calendario di sede più lungo — per esempio un anno che finisce il 14 settembre —
+    // morde per tutti i giorni in coda all'anno oltre i 364 dall'inizio. In quei giorni «anno scolastico» mostra
+    // gli ultimi 364 giorni e non l'anno intero.
     return inizio < limite ? limite : inizio;
   }
   return addGiorni(oggi, -Number(periodo));

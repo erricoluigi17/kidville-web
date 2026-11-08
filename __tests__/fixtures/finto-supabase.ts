@@ -604,6 +604,14 @@ const RPC_DI_SERIE: Record<string, (args: Riga) => RispostaRpc> = {
 }
 
 /**
+ * Per i finti scritti a mano: una funzione di visibilità risponde come sul database della CI, ogni altro nome resta del finto, che
+ * lancia. `null` vuol dire che il nome non è una di loro.
+ */
+export function rpcVisibilitaIndietro(nome: string): RispostaRpc | null {
+  return nome !== 'scatola_nera_dimentica' && RPC_DI_SERIE[nome] ? schemaIndietro() : null
+}
+
+/**
  * @param db           tabella → righe (mutabile dal test fra un caso e l'altro,
  *                     e mutata DAVVERO dalle scritture)
  * @param tabelleLette accumulatore dei `from(<tabella>)` eseguiti: serve a

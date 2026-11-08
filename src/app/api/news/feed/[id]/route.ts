@@ -6,8 +6,9 @@ import { requireUser } from '@/lib/auth/require-staff'
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
-import { caricaFigliConTarget, postVisibileAiFigli, type PostTarget } from '@/lib/news/target'
+import { caricaFigliConTarget, postVisibileAiFigli, senzaSezioniTarget, type PostTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -45,7 +46,12 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
     const supabase = await createAdminClient()
     const user = auth.user
 
-    const { data, error } = await supabase.from('news_posts').select(POST_COLS).eq('id', p.data).maybeSingle()
+    // PR 4.4: gli uuid delle sezioni solo alla famiglia, e la colonna può non esserci (il database della CI). Senza, la classe si
+    // confronta per nome, come oggi.
+    const leggiPost = (colonne: string) => supabase.from('news_posts').select(colonne).eq('id', p.data).maybeSingle()
+    const famiglia = agisceComeGenitore(user)
+    const primaLettura = await leggiPost(famiglia ? `${POST_COLS}, target_section_ids` : POST_COLS)
+    const { data, error } = famiglia && schemaAnnoIndietro(primaLettura.error) ? await leggiPost(POST_COLS) : primaLettura
     if (error) {
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'news/feed/[id]:GET', esito: 'schema-assente' })
@@ -55,7 +61,7 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
       return NextResponse.json({ error: 'Errore nel recupero della news' }, { status: 500 })
     }
     if (!data) return NON_TROVATA()
-    const post = data as NewsPost
+    const post = data as unknown as NewsPost & Pick<PostTarget, 'target_section_ids'>
     if (post.stato !== 'pubblicata') return NON_TROVATA()
 
     // Ri-verifica il target su QUESTO post: fuori target → 404 (non 403).
@@ -94,7 +100,7 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
       }
     }
 
-    return NextResponse.json({ disponibile: true, post, media: (media ?? []) as NewsMedia[] })
+    return NextResponse.json({ disponibile: true, post: senzaSezioniTarget(post), media: (media ?? []) as NewsMedia[] })
   } catch (err) {
     logErrore({ operazione: 'news/feed/[id]:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

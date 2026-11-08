@@ -35,6 +35,12 @@ export interface RigaFiglioAttivo {
   scuola_id: string
 }
 
+/** Una riga per coppia: due figli sono due righe sullo stesso avviso. */
+export interface CoppiaAvviso {
+  avviso_id: string
+  alunno_id: string
+}
+
 export type FunzioneVisibilita =
   | 'figli_attivi'
   | 'avvisi_visibili_genitore'

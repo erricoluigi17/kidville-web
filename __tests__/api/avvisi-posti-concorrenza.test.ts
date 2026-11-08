@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // =============================================================================
 // POST /api/avvisi/[id]/risposte — IL TETTO DEI POSTI NON SI CONTA QUI.
@@ -57,6 +58,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
     // 🔴 IL FINTO LANCIA SU QUALUNQUE ALTRA `rpc`. È la rete contro la sostituzione
     // silenziosa: chi cambiasse il nome della funzione non troverebbe un verde.
     rpc(nome: string, args: Record<string, unknown>) {
+        const indietro = rpcVisibilitaIndietro(nome)
+        if (indietro) return Promise.resolve(indietro)
       if (nome !== 'avviso_adesione_registra') throw new Error(`rpc non emulata in questo finto: ${nome}`)
       h.nRpc += 1
       h.lastRpc = { nome, args }

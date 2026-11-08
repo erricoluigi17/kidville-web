@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { NextResponse } from 'next/server'
 
 // GET/POST /api/avvisi.
@@ -69,6 +70,7 @@ vi.mock('@/lib/notifiche/destinatari', () => ({
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: (...a: unknown[]) => h.logScrittura(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from(table: string) {
       const st: { count: boolean; notNull: string | null; filters: Record<string, unknown>; inserted: Record<string, unknown> | null; gte: [string, unknown] | null } =
         { count: false, notNull: null, filters: {}, inserted: null, gte: null }

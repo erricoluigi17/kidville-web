@@ -52,7 +52,8 @@ function riga(sede: string, anno: number, stato: StatoAnno, annoId: string): Rig
 }
 
 function treAnni(sede: string, stato27: StatoAnno = 'in_preparazione'): RigaCalendario[] {
-  return [riga(sede, 2025, 'chiuso', A25), riga(sede, 2026, 'corrente', A26), riga(sede, 2027, stato27, A27)]
+  // il 2025/26 è `in_chiusura` e non `chiuso`: i chiusi non si scelgono (fino alla 4.9)
+  return [riga(sede, 2025, 'in_chiusura', A25), riga(sede, 2026, 'corrente', A26), riga(sede, 2027, stato27, A27)]
 }
 
 beforeEach(() => {
@@ -107,7 +108,7 @@ describe('AnnoSelector — su quale anno sto lavorando', () => {
     const { gruppo } = apri()
     const testo = (anno: string) =>
       within(gruppo).getByRole('button', { name: new RegExp(anno) }).textContent ?? ''
-    expect(testo('2025/26')).toContain('chiuso')
+    expect(testo('2025/26')).toContain('in chiusura')
     expect(testo('2026/27')).toContain('in corso')
     expect(testo('2027/28')).toContain('in preparazione')
   })

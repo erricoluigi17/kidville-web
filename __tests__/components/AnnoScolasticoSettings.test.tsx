@@ -11,7 +11,7 @@ import type { StatoAnno } from '@/lib/anno/tipi'
 // PR 4.2 · compito 4.2.7 · LA SEZIONE «ANNO SCOLASTICO» NELLE IMPOSTAZIONI.
 //
 // È la schermata che la segreteria usa davvero per spostare il confine fra due anni, fissare le date del
-// registro, aprire le iscrizioni e sospendere le domande dal sito. Le regole stanno nel database e nelle
+// registro e aprire le iscrizioni (le domande dal sito hanno solo una riga informativa fino alla 4.5). Le regole stanno nel database e nelle
 // route (4.2.4): qui si prova che la schermata le DICA invece di nasconderle — il rifiuto con i numeri, il
 // 403 con le parole, ciò che si digitava ancora lì — e che non scriva mai quando non deve.
 //
@@ -26,6 +26,13 @@ const h = vi.hoisted(() => ({
   loading: false,
   errore: false,
   ricarica: vi.fn(),
+  anno: null as null | { selezionato: string | null },
+}))
+
+// Il selettore dell'anno (4.2): qui basta la sua scelta, `selezionato`. `null` = fuori dal provider.
+vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
+  useAnnoOpzionale: () => h.anno,
 }))
 
 vi.mock('@/lib/context/calendario-context', () => ({
@@ -83,6 +90,7 @@ beforeEach(() => {
   h.perSede = { [SEDE_A]: treAnni() }
   h.loading = false
   h.errore = false
+  h.anno = null
   rispostaPatch = ok({ cambiato: true })
   rispostaPost = ok({ cambiato: true })
   rispostaGet = ok({ mancano: tutti })
@@ -142,6 +150,41 @@ describe('Impostazioni → Anno scolastico: l’elenco', () => {
     const elenco = await screen.findByRole('list', { name: itSettings.annoElencoAria })
     expect(within(elenco).getByRole('button', { name: /^2026\/27/ })).toHaveAttribute('aria-pressed', 'true')
     expect(within(elenco).getByRole('button', { name: /^2027\/28/ })).toHaveAttribute('aria-pressed', 'false')
+  })
+})
+
+describe('Impostazioni → Anno scolastico: parte dall’anno scelto nel selettore', () => {
+  const premuto = async (etichetta: string) => {
+    const elenco = await screen.findByRole('list', { name: itSettings.annoElencoAria })
+    return within(elenco).getByRole('button', { name: new RegExp(`^${etichetta}`) })
+  }
+
+  it('se il selettore è sul 2027/28 la sezione si apre sul 2027/28', async () => {
+    h.anno = { selezionato: A27 }
+    monta()
+    expect(await premuto('2027/28')).toHaveAttribute('aria-pressed', 'true')
+    expect(await premuto('2026/27')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('se l’anno scelto non esiste per questa sede si apre sull’anno in corso, come oggi', async () => {
+    h.anno = { selezionato: '99999999-9999-4999-8999-999999999999' }
+    monta()
+    expect(await premuto('2026/27')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('senza una scelta (o fuori dal provider) si apre sull’anno in corso', async () => {
+    h.anno = { selezionato: null }
+    monta()
+    expect(await premuto('2026/27')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('è solo la scelta iniziale: si può aprire un altro anno dall’elenco', async () => {
+    h.anno = { selezionato: A27 }
+    monta()
+    await premuto('2027/28')
+    scegli('2026/27')
+    expect(await premuto('2026/27')).toHaveAttribute('aria-pressed', 'true')
+    expect(await premuto('2027/28')).toHaveAttribute('aria-pressed', 'false')
   })
 })
 
@@ -404,41 +447,31 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
 })
 
 describe('Impostazioni → Anno scolastico: le domande dal sito', () => {
-  it('con le domande aperte il pulsante le sospende', async () => {
+  // Fino alla 4.5 il modulo pubblico non guarda l'interruttore: le domande arrivano sempre nell'anno in corso.
+  // La schermata non deve far credere il contrario, quindi dice la verità e non offre nessun comando.
+  it('una sola riga che dice la verità, e nessun pulsante per le domande, per ogni anno non chiuso', async () => {
     h.perSede = { [SEDE_A]: treAnni({ domandeAperte: true }) }
     monta()
-    expect(await screen.findByText(itSettings.annoDomandeAperte)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: itSettings.annoDomandeSospendi }))
-    await waitFor(() => expect(ultima('PATCH')).not.toBeNull())
-    expect(ultima('PATCH')!.body).toEqual({ azione: 'domande', aperte: false })
-    expect(ultima('PATCH')!.url).toBe(`/api/admin/anni/${S26}`)
-    await waitFor(() => expect(h.ricarica).toHaveBeenCalledTimes(1))
-  })
-
-  it('con le domande sospese il pulsante le riapre', async () => {
-    monta()
-    expect(await screen.findByText(itSettings.annoDomandeSospese)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: itSettings.annoDomandeRiapri }))
-    await waitFor(() => expect(ultima('PATCH')).not.toBeNull())
-    expect(ultima('PATCH')!.body).toEqual({ azione: 'domande', aperte: true })
-  })
-
-  it('in preparazione il pulsante è aria-disabled, non scrive, e la schermata dice perché', async () => {
-    monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
-    scegli('2027/28')
-    const riapri = await screen.findByRole('button', { name: itSettings.annoDomandeRiapri })
-    expect(riapri).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByText(itSettings.annoDomandeNonDisponibili)).toBeInTheDocument()
-    fireEvent.click(riapri)
+    for (const anno of ['2026/27', '2027/28']) {
+      scegli(anno)
+      const nota = await screen.findByRole('note')
+      expect(nota).toHaveTextContent(itSettings.annoDomandeNota)
+      expect(screen.getAllByRole('note')).toHaveLength(1)
+      const nomi = screen.queryAllByRole('button').map((x) => x.textContent ?? '')
+      expect(nomi.some((n) => /domande/i.test(n))).toBe(false)
+    }
     expect(chiamate('PATCH')).toHaveLength(0)
   })
 
-  it('STATO_NON_AMMESSO si dice con la frase del catalogo, non con un errore generico', async () => {
-    rispostaPatch = { status: 409, body: { error: 'x', codice: 'STATO_NON_AMMESSO', stato: 'in_preparazione' } }
-    monta()
-    fireEvent.click(await screen.findByRole('button', { name: itSettings.annoDomandeRiapri }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Questa operazione non è possibile nello stato attuale')
+  it('non c’è più il vecchio stato «aperte»/«sospese»: la riga non dipende da domande_aperte', async () => {
+    for (const aperte of [true, false]) {
+      h.perSede = { [SEDE_A]: treAnni({ domandeAperte: aperte }) }
+      const { unmount } = monta()
+      expect(await screen.findByRole('note')).toHaveTextContent(itSettings.annoDomandeNota)
+      expect(screen.queryByText(/sospese|sono aperte/i)).toBeNull()
+      unmount()
+    }
   })
 })
 
@@ -451,8 +484,7 @@ describe('Impostazioni → Anno scolastico: un anno chiuso è in sola lettura', 
     expect(screen.queryByLabelText(itSettings.annoFineTitolo)).toBeNull()
     expect(screen.queryByLabelText(itSettings.annoUltimoGiorno)).toBeNull()
     expect(screen.queryByRole('button', { name: itSettings.salva })).toBeNull()
-    expect(screen.queryByRole('button', { name: itSettings.annoDomandeRiapri })).toBeNull()
-    expect(screen.queryByRole('button', { name: itSettings.annoDomandeSospendi })).toBeNull()
+    expect(screen.queryByRole('note')).toBeNull()
     expect(document.querySelectorAll('input')).toHaveLength(0)
   })
 })

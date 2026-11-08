@@ -461,7 +461,7 @@ export type OpzioniAnnoScrittura = {
  * | `in_chiusura`                          | gettone `agosto`               | 409 ANNO_CHIUSO     |
  * | `chiuso`                               | 409, o gettone `correzione`    | 409 ANNO_CHIUSO     |
  *
- * «Staff» è `vedeTutteLeClassi` (Direzione e segreteria): un docente con `correzione` non ottiene mai
+ * «Staff» è `vedeTutteLeClassi` (admin, coordinator e segreteria): un docente con `correzione` non ottiene mai
  * un gettone. `utente_id` del gettone è `AppUser.id` (= `utenti.id` = `auth.users.id` per lo staff).
  */
 /**
@@ -603,7 +603,7 @@ export type AnnoLettura = { annoSedeId: string; annoId: string; stato: StatoAnno
  * chiamante) → cookie `anno_attivo` → `anno_attivo(sede)`. Non risponde mai `ANNO_DA_SPECIFICARE`:
  * leggere si può sempre, e l'anno predefinito è l'anno attivo.
  *
- * Direzione e segreteria (`vedeTutteLeClassi`) scelgono l'anno. Docenti e genitori NO: per loro il
+ * Direzione (admin e coordinator) e segreteria (`vedeTutteLeClassi`) scelgono l'anno. Docenti e genitori NO: per loro il
  * cookie è ignorato (con un `warn` solo se c'era) e vale l'anno attivo; l'anno dichiarato lo
  * possono chiedere, ma `in_preparazione`/`iscrizioni_aperte` è `403 ANNO_NON_VISIBILE`.
  * Un anno (cookie o dichiarato) che la sede non ha è `403 ANNO_NON_ACCESSIBILE`, come un cookie di
@@ -654,7 +654,8 @@ export async function resolveAnnoLettura(
     if (!riga) {
       logEvento('anno-scolastico', 'warn', {
         tipo: 'anno-lettura-cookie-fuori-scope', azione, error_code: 'ANNO_NON_ACCESSIBILE',
-        utente: user.id, ruolo: user.role, fonte: dichiarato ? 'dichiarato' : 'cookie',
+        utente: user.id, ruolo: user.role, // `fonte` non è fra le chiavi in chiaro di `redact`: il valore sta sotto `esito`.
+        esito: dichiarato ? 'dichiarato' : 'cookie',
       })
       return rifiutoAnno('ANNO_NON_ACCESSIBILE', azione)
     }

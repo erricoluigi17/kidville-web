@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { CalendarDays } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { annoAttivoDelCalendario, etichettaAnno, giornoValido, type RigaCalendario } from '@/lib/anno-scolastico';
-import { useTestoStatoAnno } from '@/lib/context/anno-context';
+import { useAnnoOpzionale, useTestoStatoAnno } from '@/lib/context/anno-context';
 import { useCalendario, useCalendarioDi } from '@/lib/context/calendario-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -15,7 +15,7 @@ import { btnPrimary, card, h3, hint, input, label } from './ui';
  * LA SEZIONE «ANNO SCOLASTICO» DELLE IMPOSTAZIONI (PR 4.2, compito 4.2.7).
  *
  * È la schermata con cui la segreteria sposta il confine fra due anni, fissa le date del registro, apre le
- * iscrizioni e sospende le domande dal sito, per UNA sede alla volta (la pagina la passa da `conSede`).
+ * iscrizioni, per UNA sede alla volta (la pagina la passa da `conSede`).
  * Le regole stanno nel database e nelle route `/api/admin/anni/…` (4.2.4): qui si fa vedere ciò che
  * rispondono, con le parole che la segreteria capisce.
  *
@@ -25,10 +25,13 @@ import { btnPrimary, card, h3, hint, input, label } from './ui';
  *    (stessa lezione di `AnagraficaSedeSettings`).
  *  · Gli anni vengono dal calendario della 4.1 (nessuna seconda fetch); dopo un salvataggio riuscito si
  *    chiama `ricarica()`. Mentre si rilegge, il modulo resta com'è e i comandi si fermano.
+ *  · Le domande dal sito NON hanno un comando: fino alla 4.5 il modulo pubblico non guarda l'interruttore
+ *    (`domande_aperte`) e ogni domanda va nell'anno in corso. Una riga lo dice; la route `PATCH azione: 'domande'`
+ *    resta, ma da qui non si chiama.
  *  · Nel messaggio di un rifiuto passano solo nomi di tabelle e numeri: mai righe di bambini.
  */
 
-type Blocco = 'confine' | 'date' | 'iscrizioni' | 'domande';
+type Blocco = 'confine' | 'date' | 'iscrizioni';
 
 /** L'errore come CODICE; il testo si compone al render. */
 type ErroreUi =
@@ -106,6 +109,9 @@ export function AnnoScolasticoSettings({ userId, scuolaId }: { userId: string; s
   const testoStato = useTestoStatoAnno();
   const calendario = useCalendarioDi(scuolaId);
   const { loading, errore, ricarica } = useCalendario();
+  // L'anno su cui si apre la sezione: quello scelto nel selettore, se questa sede lo ha; poi l'anno attivo.
+  // `scelto` è solo la scelta fatta DOPO, dall'elenco qui sotto (derivato, nessun effetto che copia stato).
+  const annoDelSelettore = useAnnoOpzionale()?.selezionato ?? null;
   const [scelto, setScelto] = useState<string | null>(null);
 
   const intestazione = (
@@ -133,7 +139,7 @@ export function AnnoScolasticoSettings({ userId, scuolaId }: { userId: string; s
 
   const righe = [...calendario].sort((a, b) => b.annoInizio - a.annoInizio);
   const riga =
-    righe.find((r) => r.annoId === scelto) ?? annoAttivoDelCalendario(calendario) ?? righe[0];
+    righe.find((r) => r.annoId === (scelto ?? annoDelSelettore)) ?? annoAttivoDelCalendario(calendario) ?? righe[0];
   const successivo = calendario.find((r) => r.annoInizio === riga.annoInizio + 1) ?? null;
 
   return (
@@ -290,10 +296,6 @@ function DettaglioAnno({
     if (vivo.current && aggiornato && aggiornato.length > 0) setLettura({ mancano: aggiornato });
   };
 
-  const cambiaDomande = () => {
-    void esegui('domande', 'PATCH', url, { azione: 'domande', aperte: !riga.domandeAperte });
-  };
-
   // ── Testi ────────────────────────────────────────────────────────────────────────────────────
 
   const nomeTabella = (nome: string): string => {
@@ -375,9 +377,6 @@ function DettaglioAnno({
 
   const nuovoInizio = giornoDopo(fine);
   const annoSuccessivo = etichettaAnno(riga.annoInizio + 1, 'breve');
-
-  const domandeConsentite = riga.stato === 'iscrizioni_aperte' || riga.stato === 'corrente';
-  const domandeBloccate = !riga.domandeAperte && !domandeConsentite;
 
   const mancano = lettura && 'mancano' in lettura ? lettura.mancano : null;
   const puoAprire = mancano !== null && mancano.length === 0;
@@ -499,25 +498,12 @@ function DettaglioAnno({
             </fieldset>
           )}
 
-          {/* ── Le domande dal sito ────────────────────────────────────────────────────── */}
+          {/* ── Le domande dal sito: solo una riga, il comando arriva con la 4.5 ─────────── */}
           <fieldset className={gruppoClasse}>
             <legend className={legenda}>{t('annoDomandeTitolo')}</legend>
-            <p className="font-maven text-sm text-kidville-ink">
-              {riga.domandeAperte ? t('annoDomandeAperte') : t('annoDomandeSospese')}
+            <p role="note" className="font-maven text-sm text-kidville-ink">
+              {t('annoDomandeNota')}
             </p>
-            {domandeBloccate && <p className={hint}>{t('annoDomandeNonDisponibili')}</p>}
-            <div className="mt-3">
-              <button
-                type="button"
-                aria-disabled={domandeBloccate}
-                disabled={occupatoOra}
-                onClick={() => { if (!domandeBloccate) cambiaDomande(); }}
-                className={`${btnPrimary} ${bloccatoClasse}`}
-              >
-                {riga.domandeAperte ? t('annoDomandeSospendi') : t('annoDomandeRiapri')}
-              </button>
-            </div>
-            {esitoDi('domande', t('salvato'))}
           </fieldset>
         </>
       )}

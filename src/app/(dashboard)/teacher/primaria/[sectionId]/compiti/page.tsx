@@ -186,7 +186,7 @@ function dataDaDelPeriodo(periodo: Periodo, calendario?: Calendario | null): str
     // Il clamp porta l'inizio non oltre GIORNI_INDIETRO_MASSIMI giorni prima di oggi, il tetto della route
     // (oltre risponderebbe 400). Morde quando l'anno del calendario è cominciato più di 364 giorni fa. Con il
     // calendario predefinito (1/9 → 31/8) accade in un giorno solo, il 31 agosto di un anno bisestile (365 giorni
-    // dal 1° settembre). Con un calendario di sede più lungo — per esempio un anno che finisce il 14 settembre —
+    // dal 1° settembre). Con un calendario di sede più lungo — per esempio un anno più lungo di 364 giorni —
     // morde per tutti i giorni in coda all'anno oltre i 364 dall'inizio. In quei giorni «anno scolastico» mostra
     // gli ultimi 364 giorni e non l'anno intero.
     return inizio < limite ? limite : inizio;

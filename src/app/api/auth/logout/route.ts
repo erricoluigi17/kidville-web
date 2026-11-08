@@ -5,7 +5,7 @@ import { withRoute } from '@/lib/logging/with-route'
 
 // POST /api/auth/logout — azzera i cookie server-side dell'identità applicativa.
 // I cookie di sessione Supabase (sb-*) li rimuove il client con auth.signOut();
-// qui si eliminano il ruolo attivo (kv-active-role) lo scope sedi (sedi_attive) e l'anno scelto (anno_attivo),
+// qui si eliminano il ruolo attivo (kv-active-role), lo scope sedi (sedi_attive) e l'anno scelto (anno_attivo),
 // che sono httpOnly/server-managed e sopravviverebbero al signOut client.
 // Nessun gate: è un'operazione di uscita, sempre sicura (non è un'escalation).
 

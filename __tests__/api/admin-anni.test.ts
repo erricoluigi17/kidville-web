@@ -30,6 +30,8 @@ const h = vi.hoisted(() => ({
   esiti: {} as Record<string, Esito>,
   gateAmmessi: null as null | readonly string[],
   log: [] as Array<{ fn: 'evento' | 'errore' | 'ok'; args: unknown[] }>,
+  audit: [] as Array<Record<string, unknown>>,
+  auditErrore: null as null | { message: string },
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -52,6 +54,14 @@ vi.mock('@/lib/auth/scope', async (importOriginal) => ({
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (tabella: string) => {
+      if (tabella === 'audit_scritture_docente') {
+        return {
+          insert: async (riga: Record<string, unknown>) => {
+            h.audit.push(riga)
+            return { error: h.auditErrore }
+          },
+        }
+      }
       const b: Record<string, unknown> = {}
       let id = ''
       b.select = () => b
@@ -118,6 +128,8 @@ beforeEach(() => {
   h.esiti = {}
   h.gateAmmessi = null
   h.log = []
+  h.audit = []
+  h.auditErrore = null
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -687,5 +699,122 @@ describe('log di rifiuto — attraverso redact() vero', () => {
     await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
     expect(eventi('anno-date-rifiutate', 'warn')).toHaveLength(1)
     expect(eventi('anno-domande-rifiutate')).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// La traccia di chi e quando (logScrittura) — I3 della revisione finale
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('traccia delle scritture (audit_scritture_docente)', () => {
+  it('confine spostato: una riga con entita anno_sede e le date prima/dopo', async () => {
+    h.esiti.sposta_confine_anno = ok({
+      cambiato: true,
+      anno_sede_id: ANNO_A,
+      fine_precedente: '2027-08-31',
+      fine_nuova: '2027-09-15',
+      inizio_successivo_precedente: '2027-09-01',
+      inizio_successivo_nuovo: '2027-09-16',
+    })
+    const r = await modifica({ azione: 'confine', nuova_fine: '2027-09-15' })
+    expect(r.status).toBe(200)
+    expect(h.audit).toHaveLength(1)
+    expect(h.audit[0]).toMatchObject({
+      attore_id: UTENTE,
+      entita_tipo: 'anno_sede',
+      entita_id: ANNO_A,
+      azione: 'update',
+      scuola_id: SEDE_A,
+      valore_prima: { fine: '2027-08-31', inizio_successivo: '2027-09-01' },
+      valore_dopo: { fine: '2027-09-15', inizio_successivo: '2027-09-16' },
+    })
+  })
+
+  it('date impostate: prima/dopo delle due date', async () => {
+    h.esiti.anno_imposta_date = ok({
+      cambiato: true,
+      anno_sede_id: ANNO_A,
+      ultimo_giorno_aperto: '2027-07-15',
+      ultimo_giorno_aperto_precedente: '2027-07-10',
+      prepara_successivo_dal: '2027-08-01',
+      prepara_successivo_dal_precedente: '2027-07-20',
+    })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    expect(h.audit).toHaveLength(1)
+    expect(h.audit[0]).toMatchObject({
+      entita_tipo: 'anno_sede',
+      entita_id: ANNO_A,
+      valore_prima: { ultimo_giorno_aperto: '2027-07-10', prepara_successivo_dal: '2027-07-20' },
+      valore_dopo: { ultimo_giorno_aperto: '2027-07-15', prepara_successivo_dal: '2027-08-01' },
+    })
+  })
+
+  it('domande: prima/dopo del booleano', async () => {
+    h.esiti.anno_imposta_domande = ok({ cambiato: true, anno_sede_id: ANNO_A, domande_aperte: true })
+    await modifica({ azione: 'domande', aperte: true })
+    expect(h.audit[0]).toMatchObject({
+      entita_tipo: 'anno_sede',
+      valore_prima: { domande_aperte: false },
+      valore_dopo: { domande_aperte: true },
+    })
+  })
+
+  it('apri-iscrizioni: lo stato prima/dopo', async () => {
+    h.esiti.anno_apri_iscrizioni = ok({ cambiato: true, anno_sede_id: ANNO_A, stato: 'iscrizioni_aperte' })
+    await apri()
+    expect(h.audit[0]).toMatchObject({
+      entita_tipo: 'anno_sede',
+      entita_id: ANNO_A,
+      valore_prima: { stato: 'in_preparazione' },
+      valore_dopo: { stato: 'iscrizioni_aperte' },
+    })
+  })
+
+  it('cambiato=false: nessuna traccia', async () => {
+    h.esiti.sposta_confine_anno = ok({ cambiato: false })
+    h.esiti.anno_imposta_date = ok({ cambiato: false })
+    h.esiti.anno_imposta_domande = ok({ cambiato: false })
+    h.esiti.anno_apri_iscrizioni = ok({ cambiato: false })
+    await modifica({ azione: 'confine', nuova_fine: '2027-09-15' })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    await modifica({ azione: 'domande', aperte: true })
+    await apri()
+    expect(h.audit).toEqual([])
+  })
+
+  it('rifiuto del database: nessuna traccia', async () => {
+    h.esiti.anno_imposta_date = rifiuto('ANNO_IN_CHIUSURA', { stato: 'in_chiusura' })
+    await modifica({ azione: 'date', ultimo_giorno_aperto: '2027-07-15' })
+    expect(h.audit).toEqual([])
+  })
+
+  it('traccia rifiutata: la risposta resta 200 e resta un log di errore', async () => {
+    h.auditErrore = { message: 'rls' }
+    h.esiti.anno_imposta_domande = ok({ cambiato: true, anno_sede_id: ANNO_A, domande_aperte: true })
+    const r = await modifica({ azione: 'domande', aperte: true })
+    expect(r.status).toBe(200)
+    expect((await r.json()).data.cambiato).toBe(true)
+    const errori = h.log.filter((l) => l.fn === 'evento' && l.args[1] === 'error')
+    expect(errori.map((e) => (e.args[2] as Record<string, unknown>).esito)).toContain('audit-non-registrato')
+  })
+})
+
+// M2: i rifiuti senza un warn proprio
+describe('rifiuti senza dettagli: un warn proprio, redatto bene', () => {
+  const redatti = () =>
+    h.log.filter((l) => l.fn === 'evento').map((l) => redact(l.args[2]) as Record<string, unknown>)
+
+  it.each([
+    ['CONFINE_NON_VALIDO', 'sposta_confine_anno', { azione: 'confine', nuova_fine: '2027-09-15' }, { motivo: 'x' }],
+    ['ANNO_IN_CHIUSURA', 'anno_imposta_date', { azione: 'date', ultimo_giorno_aperto: '2027-07-15' }, {}],
+  ])('%s: warn con anno_sede_id, error_code ed esito', async (codice, rpc, corpo, dett) => {
+    h.esiti[rpc] = rifiuto(codice, dett)
+    await modifica(corpo)
+    const riga = redatti().find((c) => c.tipo === 'anno-rifiuto')
+    expect(riga).toBeDefined()
+    expect(riga).toMatchObject({ anno_sede_id: ANNO_A, utente: UTENTE, error_code: codice })
+    expect(JSON.stringify(riga)).not.toContain('[redatto')
+    const livelli = h.log.filter((l) => l.fn === 'evento' && (l.args[2] as Record<string, unknown>).tipo === 'anno-rifiuto')
+    expect(livelli[0].args[1]).toBe('warn')
   })
 })

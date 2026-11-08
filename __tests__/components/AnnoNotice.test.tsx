@@ -87,7 +87,7 @@ describe('AnnoNotice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
 
     const avviso = screen.getByRole('status')
-    expect(avviso).toHaveTextContent(/Stai guardando il 2027\/28 \(iscrizioni aperte\), non l.anno in corso/)
+    expect(avviso).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Gli elenchi sul video mostrano ancora l.anno in corso/)
     expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
   })
 
@@ -124,12 +124,29 @@ describe('AnnoNotice', () => {
     expect(document.cookie).not.toContain('anno_attivo=2')
   })
 
-  it('con l\'anno scelto chiuso dice che le modifiche si registrano come correzione', () => {
+  it('un anno chiuso non compare fra le scelte: scegliere il 2025 non fa niente (nessun avviso, nessun cookie)', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2025' }))
-    expect(screen.getByRole('status')).toHaveTextContent(
-      /Stai guardando il 2025\/26 \(chiuso: le modifiche si registrano come correzione\), non l.anno in corso/,
-    )
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.cookie).not.toContain('anno_attivo=2')
+  })
+
+  it('un cookie rimasto su un anno chiuso viene potato come un anno che non c\'è più', () => {
+    document.cookie = `anno_attivo=${A25}; path=/`
+    monta()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.cookie).not.toContain('anno_attivo=2')
+  })
+
+  it('con più sedi, un anno chiuso anche in una sola sede esce dalle scelte comuni', () => {
+    h.effettive = [SEDE_A, SEDE_B]
+    h.perSede = {
+      [SEDE_A]: [riga(2025, 'chiuso', A25), riga(2026, 'corrente', A26), riga(2027, 'in_preparazione', A27)],
+      [SEDE_B]: [riga(2025, 'in_chiusura', A25), riga(2026, 'corrente', A26), riga(2027, 'in_preparazione', A27)],
+    }
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2025' }))
+    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('con l\'anno scelto in chiusura dice «(in chiusura)»', () => {
@@ -138,7 +155,7 @@ describe('AnnoNotice', () => {
     }
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2025' }))
-    expect(screen.getByRole('status')).toHaveTextContent(/Stai guardando il 2025\/26 \(in chiusura\), non l.anno in corso/)
+    expect(screen.getByRole('status')).toHaveTextContent(/Stai lavorando sul 2025\/26 \(in chiusura\): le nuove classi/)
   })
 
   it('con più sedi: stato comune → lo stato; stato diverso fra le sedi → dicitura neutra', () => {
@@ -150,7 +167,7 @@ describe('AnnoNotice', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
     const avviso = screen.getByRole('status')
-    expect(avviso).toHaveTextContent(/Stai guardando il 2027\/28 \(stato diverso fra le sedi\), non l.anno in corso/)
+    expect(avviso).toHaveTextContent(/Stai lavorando sul 2027\/28 \(stato diverso fra le sedi\): le nuove classi/)
     expect(avviso).not.toHaveTextContent('iscrizioni aperte')
     expect(avviso).not.toHaveTextContent('in preparazione')
 
@@ -161,10 +178,10 @@ describe('AnnoNotice', () => {
     cleanup()
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
-    expect(screen.getByRole('status')).toHaveTextContent(/Stai guardando il 2027\/28 \(iscrizioni aperte\), non l.anno in corso/)
+    expect(screen.getByRole('status')).toHaveTextContent(/Stai lavorando sul 2027\/28 \(iscrizioni aperte\): le nuove classi, le votazioni e gli elenchi caricati vanno in quell.anno\. Gli elenchi sul video mostrano ancora l.anno in corso/)
   })
 
-  it('un docente o un genitore non lo vedono, e senza AnnoProvider non monta nulla', () => {
+  it('un docente non lo vede, anche se sceglie un altro anno', () => {
     h.ruolo = 'docente'
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))

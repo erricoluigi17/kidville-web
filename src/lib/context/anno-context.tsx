@@ -13,7 +13,7 @@
  * test li tiene allineati — qui non si importa scope.ts perché porterebbe codice server nel client).
  *
  * Espone:
- *  - `anni`       → gli anni scegliibili, dal più recente. Con UNA sede sono i suoi; con più sedi
+ *  - `anni`       → gli anni selezionabili (senza i `chiuso`, fino alla 4.9), dal più recente. Con UNA sede sono i suoi; con più sedi
  *                   l'INTERSEZIONE (quelli che le hanno tutte) e `annoSedeId` è `null`;
  *  - `selezionato`→ l'anno scelto dall'utente, `null` se non ha scelto (o se la scelta non è più valida);
  *  - `effettivo`  → l'anno su cui si lavora: la scelta, altrimenti l'anno attivo della sede. Con più sedi
@@ -85,7 +85,7 @@ function cancellaCookie() {
   document.cookie = `${COOKIE_ANNO_CLIENT}=; path=/; samesite=lax; max-age=0`;
 }
 
-// ─── Gli anni scegliibili ────────────────────────────────────────────────────
+// ─── Gli anni selezionabili ────────────────────────────────────────────────────
 function calcolaAnni(sedi: string[], perSede: Record<string, Calendario>): AnnoScelta[] {
   if (sedi.length === 0) return [];
   const calendari: Calendario[] = [];
@@ -96,8 +96,12 @@ function calcolaAnni(sedi: string[], perSede: Record<string, Calendario>): AnnoS
     calendari.push(cal);
   }
   const attiviDelleSedi = calendari.map((cal) => annoAttivoDelCalendario(cal)?.annoId ?? null);
+  // Gli anni `chiuso` non si scelgono (fino alla 4.9): scrivere lì vorrebbe una correzione con un motivo, che
+  // non esiste ancora, e la scrittura finirebbe nell'anno sbagliato senza che nessuno se ne accorga. Un anno
+  // chiuso anche in UNA sola delle sedi attive esce dalle scelte comuni. Un cookie rimasto su un anno così non
+  // è più nell'elenco, quindi lo pota la stessa regola di qualunque anno che non c'è più.
   const comuni = calendari[0].filter((r) =>
-    calendari.every((cal) => cal.some((x) => x.annoId === r.annoId)),
+    calendari.every((cal) => cal.some((x) => x.annoId === r.annoId && x.stato !== 'chiuso')),
   );
   const unaSola = sedi.length === 1;
   return comuni
@@ -257,7 +261,8 @@ export function useTestoStatoAnno(): (stato: StatoAnno | null) => string {
 }
 
 /**
- * Avviso persistente: si guarda un anno che non è quello attivo. In flusso, non si chiude — sparisce solo
+ * Avviso persistente: si lavora su un anno che non è quello attivo. Dice la verità della 4.2: cambiano solo le
+ * NUOVE registrazioni (classi, votazioni, elenchi caricati); gli elenchi mostrano ancora l'anno in corso. In flusso, non si chiude — sparisce solo
  * tornando all'anno in corso (`usaAttivo`). Lo vedono Direzione e segreteria; senza `AnnoProvider` (docenti,
  * genitori) non monta nulla.
  */
@@ -269,7 +274,7 @@ export function AnnoNotice() {
   if (!ctx || !visibile || !ctx.effettivo || ctx.eAttivo) return null;
   const { effettivo } = ctx;
   // `stato` è `null` quando le sedi attive non concordano: dicitura neutra (nel testo di `testoStato`).
-  const stato = effettivo.stato === 'chiuso' ? t('annoAvvisoChiusoDettaglio') : testoStato(effettivo.stato);
+  const stato = testoStato(effettivo.stato);
   return (
     // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
     // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la

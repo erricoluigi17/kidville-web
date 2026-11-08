@@ -7,6 +7,10 @@ import {
   logDateImpostate,
   logDomandeImpostate,
   risultatoScrittura,
+  tracciaAnno,
+  valoriConfine,
+  valoriDate,
+  valoriDomande,
   rispostaErroreImpostazioni,
   rispostaNonRiconosciuta,
 } from '@/lib/anno/impostazioni'
@@ -129,6 +133,13 @@ export const PATCH = withRoute('admin/anni/[annoSedeId]:PATCH', async (request: 
     if (corpo.azione === 'confine') logConfineSpostato(chi, r)
     else if (corpo.azione === 'date') logDateImpostate(chi, r)
     else logDomandeImpostate(chi, corpo.aperte)
+    // La traccia permanente: chi e quando (il log sopra vive pochi giorni). Non fa mai fallire la risposta.
+    await tracciaAnno(
+      supabase,
+      auth.user,
+      annoSedeId,
+      corpo.azione === 'confine' ? valoriConfine(r) : corpo.azione === 'date' ? valoriDate(r) : valoriDomande(corpo.aperte),
+    )
   }
   return NextResponse.json({ success: true, data: r })
 })

@@ -4,6 +4,8 @@ import {
   assertAnnoSedeInScope,
   logIscrizioniAperte,
   risultatoScrittura,
+  tracciaAnno,
+  valoriApertura,
   rispostaErroreImpostazioni,
   rispostaNonRiconosciuta,
 } from '@/lib/anno/impostazioni'
@@ -48,7 +50,10 @@ export const POST = withRoute(
     const r = risultatoScrittura(data)
     if (!r) return rispostaNonRiconosciuta(OPERAZIONE)
 
-    if (r.cambiato) logIscrizioniAperte(chi)
+    if (r.cambiato) {
+      logIscrizioniAperte(chi)
+      await tracciaAnno(supabase, auth.user, annoSedeId, valoriApertura(r))
+    }
     return NextResponse.json({ success: true, data: r })
   },
 )

@@ -156,6 +156,16 @@ describe('resolveAnnoLettura', () => {
     expect(tuttoIlLog()).not.toContain(A9)
   })
 
+  it('la fonte della richiesta rifiutata esce in chiaro attraverso redact() vero (cookie o dichiarato)', async () => {
+    await resolveAnnoLettura(conAnnoCookie(A9), finto(), SEGRETERIA, SEDE)
+    await resolveAnnoLettura(richiesta(), finto(), SEGRETERIA, SEDE, { dichiarato: A9 })
+    const righe = logger.logEvento.mock.calls
+      .filter((c) => c[2]?.tipo === 'anno-lettura-cookie-fuori-scope')
+      .map((c) => redact(c[2]) as Record<string, unknown>)
+    expect(righe.map((r) => r.esito)).toEqual(['cookie', 'dichiarato'])
+    expect(JSON.stringify(righe)).not.toContain('[redatto')
+  })
+
   it('cookie con un uuid che non è un anno → 403; dichiarato inesistente → lo stesso', async () => {
     const x = 'deadbeef-dead-4ead-8ead-deadbeefdead'
     expect((await leggi(await resolveAnnoLettura(conAnnoCookie(x), finto(), SEGRETERIA, SEDE))).body.codice).toBe('ANNO_NON_ACCESSIBILE')

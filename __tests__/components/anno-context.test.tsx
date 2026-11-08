@@ -59,10 +59,14 @@ function riga(sede: string, anno: number, stato: StatoAnno, annoId: string): Rig
   }
 }
 
-/** Come in produzione: 2025/26 chiuso, 2026/27 corrente, 2027/28 in preparazione. */
+/**
+ * Tre anni SCEGLIBILI. In produzione il 2025/26 è `chiuso` e non si sceglie (fino alla 4.9): qui è `in_chiusura`
+ * perché molti casi hanno bisogno di un terzo anno da scegliere. Il comportamento dei `chiuso` ha i suoi test
+ * in fondo (`anni chiusi`).
+ */
 function treAnni(sede: string): RigaCalendario[] {
   return [
-    riga(sede, 2025, 'chiuso', A25),
+    riga(sede, 2025, 'in_chiusura', A25),
     riga(sede, 2026, 'corrente', A26),
     riga(sede, 2027, 'in_preparazione', A27),
   ]
@@ -340,14 +344,14 @@ describe('AnnoProvider — più sedi attive', () => {
   it('con una sola sede lo stato è sempre quello della riga', () => {
     h.effettive = [SEDE_A]
     monta()
-    expect(ctx.anni.map((a) => a.stato)).toEqual(['in_preparazione', 'corrente', 'chiuso'])
+    expect(ctx.anni.map((a) => a.stato)).toEqual(['in_preparazione', 'corrente', 'in_chiusura'])
   })
 
   it('un anno è «attivo» solo se è l\'attivo in TUTTE le sedi', () => {
     h.perSede = {
-      [SEDE_A]: [riga(SEDE_A, 2025, 'chiuso', A25), riga(SEDE_A, 2026, 'corrente', A26)],
+      [SEDE_A]: [riga(SEDE_A, 2025, 'in_chiusura', A25), riga(SEDE_A, 2026, 'corrente', A26)],
       // Nella seconda sede il 2026/27 non è ancora in corso: l'attivo è il 2025/26.
-      [SEDE_B]: [riga(SEDE_B, 2025, 'chiuso', A25), riga(SEDE_B, 2026, 'in_preparazione', A26)],
+      [SEDE_B]: [riga(SEDE_B, 2025, 'in_chiusura', A25), riga(SEDE_B, 2026, 'in_preparazione', A26)],
     }
     monta()
     expect(ctx.anni.map((a) => [a.annoId, a.attivo])).toEqual([
@@ -447,6 +451,33 @@ describe('AnnoProvider — la potatura precede gli effetti dei figli', () => {
     // Tornando alla sede che ha il 2025/26 la scelta potata NON risorge: il cookie non c'è più.
     h.effettive = [SEDE_A]
     rerender(albero())
+    expect(ctx.selezionato).toBeNull()
+    expect(ctx.effettivo?.annoId).toBe(A26)
+  })
+})
+
+describe('AnnoProvider — anni chiusi', () => {
+  const conChiuso = (sede: string): RigaCalendario[] => [
+    riga(sede, 2025, 'chiuso', A25),
+    riga(sede, 2026, 'corrente', A26),
+    riga(sede, 2027, 'in_preparazione', A27),
+  ]
+
+  it('un anno chiuso non è fra gli anni scegliibili, e scegliere non scrive niente', () => {
+    h.perSede = { [SEDE_A]: conChiuso(SEDE_A) }
+    monta()
+    expect(ctx.anni.map((a) => a.annoId)).toEqual([A27, A26])
+    act(() => ctx.scegli(A25))
+    expect(scritture).toEqual([])
+    expect(ctx.selezionato).toBeNull()
+    expect(ctx.epocaAnno).toBe(0)
+  })
+
+  it('un cookie su un anno chiuso viene potato come un anno che non c’è più', () => {
+    cookieIniziale(A25)
+    h.perSede = { [SEDE_A]: conChiuso(SEDE_A) }
+    monta()
+    expect(scritture).toEqual(['anno_attivo=; path=/; samesite=lax; max-age=0'])
     expect(ctx.selezionato).toBeNull()
     expect(ctx.effettivo?.annoId).toBe(A26)
   })

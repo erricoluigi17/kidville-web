@@ -7,6 +7,7 @@ import { formaConfronto, scuoleDiUtente } from '@/lib/auth/scope'
 import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceDaMessaggio } from '@/lib/anno/tipi'
+import { logScrittura } from '@/lib/audit/scrittura'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 
@@ -203,6 +204,74 @@ export function logIscrizioniAperte(chi: ChiHaAgito): void {
   })
 }
 
+// ── La traccia di chi e quando (audit_scritture_docente) ──────────────────────────────────────
+
+type ValoriTraccia = { prima: Record<string, unknown>; dopo: Record<string, unknown> }
+
+/**
+ * Una riga nel registro delle scritture per ogni modifica RIUSCITA e con `cambiato: true`: chi, quando e
+ * i valori prima/dopo (solo uuid, date, stati, booleani). Il log `info` di sopra vive pochi giorni su Vercel;
+ * questa resta. `logScrittura` non lancia mai e, se l'inserimento fallisce, lo registra da sé: la risposta
+ * della route non cambia. La sede si rilegge dalla riga (un utente con più sedi non ha «la sua»).
+ */
+export async function tracciaAnno(
+  supabase: SupabaseClient,
+  user: AppUser,
+  annoSedeId: string,
+  v: ValoriTraccia,
+): Promise<void> {
+  let scuolaId: string | undefined
+  try {
+    const { data, error } = await supabase.from('anni_sede').select('id, scuola_id').eq('id', annoSedeId).maybeSingle()
+    if (error) {
+      // La traccia si scrive lo stesso (con la sede dell'attore): la sede non letta si dice, non si ignora.
+      evento('info', { tipo: 'anno-traccia-sede-non-letta', anno_sede_id: annoSedeId, utente: user.id, error_code: typeof error.code === 'string' ? error.code : undefined })
+    } else {
+      scuolaId = uuidDa((data as { scuola_id?: unknown } | null)?.scuola_id)
+    }
+  } catch (err) {
+    evento('info', { tipo: 'anno-traccia-sede-non-letta', anno_sede_id: annoSedeId, utente: user.id })
+    logErrore({ operazione: 'anno:traccia:sede', stato: 500 }, err)
+  }
+  await logScrittura(supabase, {
+    attore: user,
+    entitaTipo: 'anno_sede',
+    entitaId: annoSedeId,
+    azione: 'update',
+    scuolaId,
+    valorePrima: v.prima,
+    valoreDopo: v.dopo,
+  })
+}
+
+const campoData = (r: Record<string, unknown>, k: string) => dataDa(r[k]) ?? null
+
+export const valoriConfine = (r: Record<string, unknown>): ValoriTraccia => ({
+  prima: { fine: campoData(r, 'fine_precedente'), inizio_successivo: campoData(r, 'inizio_successivo_precedente') },
+  dopo: { fine: campoData(r, 'fine_nuova'), inizio_successivo: campoData(r, 'inizio_successivo_nuovo') },
+})
+
+export const valoriDate = (r: Record<string, unknown>): ValoriTraccia => ({
+  prima: {
+    ultimo_giorno_aperto: campoData(r, 'ultimo_giorno_aperto_precedente'),
+    prepara_successivo_dal: campoData(r, 'prepara_successivo_dal_precedente'),
+  },
+  dopo: {
+    ultimo_giorno_aperto: campoData(r, 'ultimo_giorno_aperto'),
+    prepara_successivo_dal: campoData(r, 'prepara_successivo_dal'),
+  },
+})
+
+export const valoriDomande = (aperte: boolean): ValoriTraccia => ({
+  prima: { domande_aperte: !aperte },
+  dopo: { domande_aperte: aperte },
+})
+
+export const valoriApertura = (r: Record<string, unknown>): ValoriTraccia => ({
+  prima: { stato: 'in_preparazione' },
+  dopo: { stato: typeof r.stato === 'string' && STATI_ANNO.has(r.stato) ? r.stato : 'iscrizioni_aperte' },
+})
+
 // ── Il rifiuto del database, tradotto ────────────────────────────────────────────────────────
 
 export type ContestoRifiuto = ChiHaAgito & {
@@ -228,7 +297,7 @@ export function rispostaErroreImpostazioni(error: ErroreDb, ctx: ContestoRifiuto
 
   switch (codice) {
     case 'CONFINE_CON_RIGHE': {
-      // I conteggi per tabella: numeri, mai le righe. Nel log restano piatti (`t_<tabella>`).
+      // I conteggi per tabella: numeri, mai le righe. Nel log, una riga per tabella (`entita_tipo` = il nome, `righe` = il conteggio).
       const d = leggiDettaglio(error, ctx.operazione)
       const tabelle: Record<string, number> = {}
       if (d?.tabelle !== null && typeof d?.tabelle === 'object') {
@@ -260,7 +329,10 @@ export function rispostaErroreImpostazioni(error: ErroreDb, ctx: ContestoRifiuto
     }
     case 'CONFINE_NON_VALIDO': {
       const d = leggiDettaglio(error, ctx.operazione)
-      dettagli = senzaVuoti({ motivo: codiceDa(d?.motivo) })
+      const motivo = codiceDa(d?.motivo)
+      // `motivo` è radice di testo libero per `redact`: il motivo in codice va sotto `esito`.
+      evento('warn', { tipo: 'anno-rifiuto', ...base, operazione: ctx.operazione, error_code: codice, esito: motivo ?? 'rifiutato' })
+      dettagli = senzaVuoti({ motivo })
       break
     }
     case 'DATE_NON_VALIDE': {
@@ -290,6 +362,17 @@ export function rispostaErroreImpostazioni(error: ErroreDb, ctx: ContestoRifiuto
       break
     }
     default:
+      // CONFINE_NON_VALIDO, ANNO_IN_CHIUSURA, ANNO_NON_TROVATO, PARAMETRO_MANCANTE e ogni altro codice:
+      // senza questa riga restava solo l'`info`/`warn` di withRoute, senza la sede e senza chi ha chiesto.
+      if (codice !== null) {
+        evento('warn', {
+          tipo: 'anno-rifiuto',
+          ...base,
+          operazione: ctx.operazione,
+          error_code: codice,
+          esito: 'rifiutato',
+        })
+      }
       break
   }
 

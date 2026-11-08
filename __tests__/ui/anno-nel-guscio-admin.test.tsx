@@ -84,7 +84,7 @@ function riga(sede: string, anno: number, stato: StatoAnno, annoId: string): Rig
   };
 }
 const treAnni = (sede: string) => [
-  riga(sede, 2025, 'chiuso', A25),
+  riga(sede, 2025, 'in_chiusura', A25),
   riga(sede, 2026, 'corrente', A26),
   riga(sede, 2027, 'in_preparazione', A27),
 ];

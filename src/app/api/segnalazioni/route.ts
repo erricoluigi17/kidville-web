@@ -8,6 +8,7 @@ import { requireUser, type AppUser } from '@/lib/auth/require-staff'
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
+import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
 import { getFigliDiGenitore, genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola } from '@/lib/notifiche/destinatari'
@@ -306,20 +307,13 @@ async function contattoLegittimo(
   }
   if (sedePerSezione.size === 0) return { ok: false }
 
-  const { data: sezioniDocente, error: errSezioni } = await supabase
-    .from('utenti_sezioni')
-    .select('section_id')
-    .eq('utente_id', teacherId)
-  if (errSezioni) {
-    logEvento('segnalazione', 'error', {
-      operazione: 'segnalazioni:POST',
-      esito: 'sezioni-docente-non-lette',
-    }, errSezioni)
-    return { ok: false }
-  }
-  const inComune = (sezioniDocente ?? []).find((r) => sedePerSezione.has(r.section_id as string))
+  // Sul PRESENTE: valgono solo le sezioni dell'anno attivo (non quelle in sola lettura né quelle future).
+  // Un guasto di lettura resta `ok:false` (la riga `error` la scrive `sezioniVisibiliConEsito`).
+  const visibili = await sezioniVisibiliConEsito(supabase, teacherId)
+  if (!visibili.ok) return { ok: false }
+  const inComune = visibili.sezioni.find((s) => !s.solaLettura && sedePerSezione.has(s.sectionId))
   if (!inComune) return { ok: false }
-  return { ok: true, scuolaId: sedePerSezione.get(inComune.section_id as string) ?? null }
+  return { ok: true, scuolaId: sedePerSezione.get(inComune.sectionId) ?? null }
 }
 
 /**

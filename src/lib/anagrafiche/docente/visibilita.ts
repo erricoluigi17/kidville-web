@@ -4,6 +4,7 @@ import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente, vedeTutteLeClassi } from '@/lib/auth/scope'
 import { STATI_CHE_FREQUENTANO } from '@/lib/alunni/stato'
 import { logEvento } from '@/lib/logging/logger'
+import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
 import { COLONNE_GATE } from './colonne'
 
 /**
@@ -40,24 +41,26 @@ export async function sezioniAnagraficaVisibili(
   user: AppUser,
 ): Promise<SezioniVisibili> {
   if (vedeTutteLeClassi(user)) return { esito: 'tutte' }
-  const [dirette, perMateria] = await Promise.all([
-    supabase.from('utenti_sezioni').select('section_id').eq('utente_id', user.id),
+  // LETTURA: valgono tutte le sezioni VISIBILI (anche quelle in sola lettura di un anno passato), mai le future.
+  // Le assegnazioni per materia si tengono solo se la sezione è fra le visibili.
+  const [visibili, perMateria] = await Promise.all([
+    sezioniVisibiliConEsito(supabase, user.id),
     supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', user.id),
   ])
-  const guasto = dirette.error ?? perMateria.error
-  if (guasto) {
+  if (!visibili.ok) return { esito: 'errore' }
+  if (perMateria.error) {
     logEvento(
       'auth',
       'error',
       { tipo: 'anagrafica-sezioni-non-lette', azione: 'sezioniAnagraficaVisibili', utente: user.id },
-      guasto,
+      perMateria.error,
     )
     return { esito: 'errore' }
   }
-  const sezioni = new Set<string>()
-  for (const riga of [...(dirette.data ?? []), ...(perMateria.data ?? [])]) {
+  const sezioni = new Set<string>(visibili.sezioni.map((s) => s.sectionId))
+  for (const riga of perMateria.data ?? []) {
     const id = (riga as { section_id?: string | null }).section_id
-    if (id) sezioni.add(id)
+    if (id && sezioni.has(id)) sezioni.add(id)
   }
   return { esito: 'sezioni', sezioni: [...sezioni] }
 }

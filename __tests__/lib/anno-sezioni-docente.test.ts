@@ -19,6 +19,7 @@ import { redact } from '@/lib/logging/redact'
 import {
   sezioniDiUtente,
   sezioniVisibiliDiUtente,
+  sezioniVisibiliConEsito,
   nomiSezioniDiUtente,
 } from '@/lib/sezioni/docenti'
 import { assertSezioneScrivibile } from '@/lib/auth/scope'
@@ -101,6 +102,37 @@ describe('sezioniDiUtente / nomiSezioniDiUtente', () => {
   it('i nomi sono solo quelli delle sezioni visibili (la futura non esce)', async () => {
     const sb = conRpc(() => ({ data: RIGHE, error: null }))
     expect(await nomiSezioniDiUtente(sb, DOCENTE)).toEqual(['Girasoli'])
+  })
+})
+
+describe('sezioniVisibiliConEsito', () => {
+  it('ok con le sezioni', async () => {
+    const sb = conRpc(() => ({ data: RIGHE, error: null }))
+    expect(await sezioniVisibiliConEsito(sb, DOCENTE)).toEqual({
+      ok: true,
+      sezioni: [{ sectionId: S_ATTIVA, solaLettura: false }, { sectionId: S_PASSATA, solaLettura: true }],
+    })
+  })
+
+  it('funzione assente: ripiego ok, log info', async () => {
+    const sb = conRpc(() => ({ data: null, error: { code: '42883', message: 'x' } }))
+    const r = await sezioniVisibiliConEsito(sb, DOCENTE)
+    expect(r.ok && r.sezioni).toHaveLength(3)
+    expect(logEvento.mock.calls.filter(c => c[1] === 'info')).toHaveLength(1)
+  })
+
+  it('un altro errore PROPAGA il guasto: ok false e riga error', async () => {
+    const sb = conRpc(() => ({ data: null, error: { code: '57014', message: 'x' } }))
+    expect(await sezioniVisibiliConEsito(sb, DOCENTE)).toEqual({ ok: false })
+    expect(logEvento.mock.calls.some(c => c[1] === 'error')).toBe(true)
+  })
+
+  it('ripiego con la query di prima rotta: ok false', async () => {
+    const sb = creaFintoSupabase(db(), [], {
+      rpc: { sezioni_visibili_docente: () => ({ data: null, error: { code: 'PGRST202', message: 'x' } }) } as never,
+      errori: { utenti_sezioni: { code: '57014', message: 'timeout' } } as never,
+    })
+    expect(await sezioniVisibiliConEsito(sb, DOCENTE)).toEqual({ ok: false })
   })
 })
 

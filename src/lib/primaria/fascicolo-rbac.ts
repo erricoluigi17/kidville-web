@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppRole } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
+import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
 import { logEvento } from '@/lib/logging/logger'
 
 /**
@@ -73,16 +74,18 @@ export async function puoAccedereFascicolo(
   if (!sectionId) return { consentito: false, ruolo, motivo: 'no-section' }
 
   // Contitolare: assegnazione alla sezione (per materia o diretta).
-  const [{ data: usm, error: errUsm }, { data: us, error: errUs }] = await Promise.all([
+  // LETTURA del fascicolo: la sezione deve essere fra le VISIBILI del docente (anche in sola lettura di un anno
+  // passato; mai una futura). L'assegnazione per materia vale solo se la sezione è visibile.
+  const [{ error: errUsm }, visibili] = await Promise.all([
     supabase.from('utenti_sezioni_materie').select('utente_id').eq('utente_id', utenteId).eq('section_id', sectionId).limit(1),
-    supabase.from('utenti_sezioni').select('utente_id').eq('utente_id', utenteId).eq('section_id', sectionId).limit(1),
+    sezioniVisibiliConEsito(supabase, utenteId),
   ])
-  // Basta una delle due assegnazioni per essere contitolare: un guasto conta solo se l'altra
-  // non ha già risposto di sì.
-  if ((usm && usm.length > 0) || (us && us.length > 0)) {
-    return { consentito: true, ruolo, motivo: 'contitolare' }
-  }
-  if (errUsm || errUs) return negatoPerGuasto('contitolarita-non-letta', ruolo, errUsm ?? errUs)
+  const sezioneVisibile = visibili.ok && visibili.sezioni.some((s) => s.sectionId === sectionId)
+  // Una sezione visibile con l'assegnazione diretta (o per materia, che la funzione già accompagna) basta;
+  // `usm` si legge ancora (stesse tabelle, lock `assegnazioni-docente-coerenti`) ma da solo non basta più: senza
+  // una sezione visibile non c'è accesso. Un guasto conta solo se non c'è già un sì.
+  if (sezioneVisibile) return { consentito: true, ruolo, motivo: 'contitolare' }
+  if (errUsm || !visibili.ok) return negatoPerGuasto('contitolarita-non-letta', ruolo, errUsm ?? new Error('sezioni-visibili-non-lette'))
 
   return { consentito: false, ruolo, motivo: 'negato' }
 }
@@ -109,22 +112,23 @@ export async function sezioniContitolari(
   supabase: SupabaseClient,
   utenteId: string,
 ): Promise<string[]> {
-  const [{ data: perMateria, error: errPerMateria }, { data: dirette, error: errDirette }] = await Promise.all([
+  const [{ data: perMateria, error: errPerMateria }, visibili] = await Promise.all([
     supabase.from('utenti_sezioni_materie').select('section_id').eq('utente_id', utenteId),
-    supabase.from('utenti_sezioni').select('section_id').eq('utente_id', utenteId),
+    sezioniVisibiliConEsito(supabase, utenteId),
   ])
   // Il contratto resta (un elenco, al peggio più corto: fail-closed), ma «nessuna sezione» e
-  // «non ho letto» non si leggono più uguali.
-  if (errPerMateria || errDirette) {
+  // «non ho letto» non si leggono più uguali. (Se è la funzione a fallire, la riga `error` l'ha già scritta lei.)
+  if (errPerMateria) {
     logEvento('fascicolo', 'error', {
       operazione: 'primaria/fascicolo-rbac:sezioniContitolari',
       esito: 'contitolarita-non-letta',
-    }, errPerMateria ?? errDirette)
+    }, errPerMateria)
   }
-  const sezioni = new Set<string>()
-  for (const riga of [...(perMateria ?? []), ...(dirette ?? [])]) {
+  // LETTURA: tutte le sezioni VISIBILI (anche in sola lettura); le righe per materia solo se la sezione è visibile.
+  const sezioni = new Set<string>((visibili.ok ? visibili.sezioni : []).map((s) => s.sectionId))
+  for (const riga of perMateria ?? []) {
     const id = (riga as { section_id?: string | null }).section_id
-    if (id) sezioni.add(id)
+    if (id && sezioni.has(id)) sezioni.add(id)
   }
   return [...sezioni]
 }

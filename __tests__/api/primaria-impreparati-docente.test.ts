@@ -25,7 +25,17 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
-      rpc(nome: string, args: unknown) { state.chiamate.push({ table: nome, op: 'rpc', payload: args, filtri: [] }); return Promise.resolve(take(`${nome}:rpc`)) },
+      rpc(nome: string, args: unknown) {
+        // La funzione dei docenti (4.3.6) legge lo stesso dato della vecchia `select` su `utenti_sezioni`: i test
+        // continuano a prepararlo e a ispezionarlo come tale (`utente_id` nel filtro, nessuna sola lettura).
+        if (nome === 'sezioni_visibili_docente') {
+          state.chiamate.push({ table: 'utenti_sezioni', op: 'select', filtri: [['eq', 'utente_id', (args as { p_utente: string }).p_utente]] })
+          const r = take('utenti_sezioni:select')
+          const righe = (r.data ?? []) as Array<{ section_id: string }>
+          return Promise.resolve({ data: r.error ? null : righe.map((x) => ({ section_id: x.section_id, sola_lettura: false })), error: r.error })
+        }
+        state.chiamate.push({ table: nome, op: 'rpc', payload: args, filtri: [] }); return Promise.resolve(take(`${nome}:rpc`))
+      },
       from(table: string) {
         const c: Chiamata = { table, op: 'select', filtri: [] }
         state.chiamate.push(c)

@@ -86,7 +86,15 @@ function corpoDi(sorgente: string, nome: string): string | null {
   return senzaCommenti.slice(graffa, fineGraffa(struttura, graffa))
 }
 
-const mancanti = (corpo: string) => TABELLE.filter((t) => !letturaDi(t).test(corpo))
+/**
+ * Dal compito 4.3.6 le assegnazioni dirette (`utenti_sezioni`) non si leggono più a mano: passano da
+ * `sezioniVisibiliConEsito`/`sezioniVisibiliDiUtente` (docenti.ts), che per anno escludono le sezioni future.
+ * La chiamata vale come lettura di `utenti_sezioni`.
+ */
+const LETTURA_VIA_FUNZIONE = /\bsezioniVisibili(?:ConEsito|DiUtente)\s*\(/
+
+const mancanti = (corpo: string) =>
+  TABELLE.filter((t) => !letturaDi(t).test(corpo) && !(t === 'utenti_sezioni' && LETTURA_VIA_FUNZIONE.test(corpo)))
 
 describe('LOCK · le assegnazioni docente↔classe si leggono ovunque dalle stesse due tabelle', () => {
   it.each(FUNZIONI)('$nome legge entrambe le tabelle', ({ file, nome }) => {

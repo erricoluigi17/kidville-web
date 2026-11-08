@@ -182,6 +182,8 @@ export type SezioneVisibile = { sectionId: string; solaLettura: boolean }
 
 const ERRORI_FUNZIONE_ASSENTE = new Set(['42883', 'PGRST202'])
 
+export type EsitoSezioniVisibili = { ok: true; sezioni: SezioneVisibile[] } | { ok: false }
+
 /**
  * Le sezioni che un docente VEDE, per anno: viene dalla funzione SQL `sezioni_visibili_docente` (anni
  * `corrente`, `in_chiusura`, `chiuso` della sede della sezione; mai quelli futuri). EXECUTE è solo di
@@ -192,36 +194,52 @@ const ERRORI_FUNZIONE_ASSENTE = new Set(['42883', 'PGRST202'])
  * docente le sezioni future proprio quando la funzione è rotta. Lista vuota e riga `error`, come ogni guasto
  * di lettura di questo file.
  */
+export async function sezioniVisibiliConEsito(
+  supabase: SupabaseClient,
+  utenteId: string,
+): Promise<EsitoSezioniVisibili> {
+  const { data, error } = await supabase.rpc('sezioni_visibili_docente', { p_utente: utenteId })
+  if (!error) {
+    return {
+      ok: true,
+      sezioni: ((data ?? []) as { section_id: string; sola_lettura: boolean }[])
+        .map(r => ({ sectionId: r.section_id, solaLettura: r.sola_lettura === true })),
+    }
+  }
+  const code = (error as { code?: string }).code ?? ''
+  if (!ERRORI_FUNZIONE_ASSENTE.has(code)) {
+    // L'errore va INTERO come 4° argomento: `code`, `details` e `hint` dicono *perché*.
+    segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
+    return { ok: false }
+  }
+  logEvento('notifica', 'info', {
+    operazione: OPERAZIONE_DOCENTI,
+    esito: 'rpc-assente',
+    error_code: code,
+  })
+  const { data: legami, error: errLegami } = await supabase
+    .from('utenti_sezioni')
+    .select('section_id')
+    .eq('utente_id', utenteId)
+  if (errLegami) {
+    segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, errLegami)
+    return { ok: false }
+  }
+  return {
+    ok: true,
+    sezioni: (legami ?? []).map(r => ({ sectionId: r.section_id as string, solaLettura: false })),
+  }
+}
+
+/** Come `sezioniVisibiliConEsito`, ma un guasto è la lista vuota (già loggato come `error`). */
 export async function sezioniVisibiliDiUtente(
   supabase: SupabaseClient,
   utenteId: string,
   opzioni: { soloScrivibili?: boolean } = {},
 ): Promise<SezioneVisibile[]> {
-  const { data, error } = await supabase.rpc('sezioni_visibili_docente', { p_utente: utenteId })
-  let righe: SezioneVisibile[]
-  if (error) {
-    const code = (error as { code?: string }).code ?? ''
-    if (!ERRORI_FUNZIONE_ASSENTE.has(code)) {
-      // L'errore va INTERO come 4° argomento: `code`, `details` e `hint` dicono *perché*.
-      segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, error)
-      return []
-    }
-    logEvento('notifica', 'info', {
-      operazione: OPERAZIONE_DOCENTI,
-      esito: 'rpc-assente',
-      error_code: code,
-    })
-    const { data: legami, error: errLegami } = await supabase
-      .from('utenti_sezioni')
-      .select('section_id')
-      .eq('utente_id', utenteId)
-    if (errLegami) segnalaLetturaFallita('sezioni-non-lette', { utente_id: utenteId }, errLegami)
-    righe = (legami ?? []).map(r => ({ sectionId: r.section_id as string, solaLettura: false }))
-  } else {
-    righe = ((data ?? []) as { section_id: string; sola_lettura: boolean }[])
-      .map(r => ({ sectionId: r.section_id, solaLettura: r.sola_lettura === true }))
-  }
-  return opzioni.soloScrivibili ? righe.filter(r => !r.solaLettura) : righe
+  const r = await sezioniVisibiliConEsito(supabase, utenteId)
+  if (!r.ok) return []
+  return opzioni.soloScrivibili ? r.sezioni.filter(x => !x.solaLettura) : r.sezioni
 }
 
 // Id delle sezioni VISIBILI a un utente (docente), scrivibili e in sola lettura. Per distinguere le due

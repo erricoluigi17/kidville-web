@@ -56,7 +56,8 @@ beforeEach(() => {
   tabelle = []
   opzioni = {}
   db = {
-    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
+    // La materia porta sempre il legame diretto (`admin/primaria/docenti-materie:POST` scrive entrambe).
+    utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
     // La stessa sezione anche per materia: l'unione non deve produrre doppioni.
     utenti_sezioni_materie: [
       { utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' },

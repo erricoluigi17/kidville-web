@@ -26,14 +26,6 @@ export const ECCEZIONI: Record<string, string> = {
     'rubrica della famiglia: parte dalle sezioni del FIGLIO (anno attivo) e cerca chi vi insegna; non è «le sezioni di un docente»',
   'lib/audit/valutatore.ts':
     'chi è titolare di una materia in una sezione GIÀ nota (la scrive solo chi ha passato assertSezioneScrivibile); distingue guasto da assenza, cosa che sezioniDiUtente non fa',
-  'app/api/segnalazioni/route.ts':
-    'cerca una sezione in comune fra docente e figli del genitore; un guasto di lettura deve dare ok:false, mentre sezioniDiUtente degrada a lista vuota. Da portare sotto la funzione col 4.3.7',
-  'lib/primaria/permesso-voce.ts':
-    'verifica che una voce sia di una classe del docente; un guasto deve dare ok:false (non lista vuota). Da portare sotto la funzione col 4.3.7',
-  'lib/anagrafiche/docente/visibilita.ts':
-    'anagrafica in sola lettura delle docenti: legge utenti_sezioni e utenti_sezioni_materie in coppia e distingue il guasto. Da portare sotto la funzione col 4.3.7',
-  'lib/primaria/fascicolo-rbac.ts':
-    'contitolarità del fascicolo: unisce utenti_sezioni e utenti_sezioni_materie e distingue il guasto. Da portare sotto la funzione col 4.3.7',
 }
 
 type Lettura = { file: string; riga: number }

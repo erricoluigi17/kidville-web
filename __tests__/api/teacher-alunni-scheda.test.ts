@@ -59,7 +59,8 @@ const dbBase = (): DBFinto => ({
     { id: SEZ_MATERIA, scuola_id: SEDE_A, name: '3A', school_type: 'primaria' },
     { id: SEZ_B, scuola_id: SEDE_B, name: 'Girasoli', school_type: 'infanzia' },
   ],
-  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }],
+  // La materia porta sempre il legame diretto (`admin/primaria/docenti-materie:POST` scrive entrambe).
+  utenti_sezioni: [{ utente_id: 'ed1', section_id: SEZ_MIA }, { utente_id: 'ed1', section_id: SEZ_MATERIA }],
   utenti_sezioni_materie: [{ utente_id: 'ed1', section_id: SEZ_MATERIA, materia_id: 'm1' }],
   utenti_scuole: [],
   alunni: [

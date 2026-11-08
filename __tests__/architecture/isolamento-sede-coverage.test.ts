@@ -2645,7 +2645,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // gate `requireStaff`, id validato come uuid, e `assertAnnoSedeInScope` legge la riga `anni_sede` e nega
             // con 403 `SEDE_NON_ACCESSIBILE` se la sede non è fra quelle di `scuoleDiUtente`, PRIMA di chiamare la
             // funzione SQL con proprio quell'id. Misurato rieseguendo il lock: 385 → 387.
-            routeConServiceRole: 387,
+            // 387 → 388 il 2026-11-08 (anno scolastico, PR 4.4, compito 4.4.8): entra `admin/students/export`
+            // (GET), che porta sul server l'export di `ImportExportClient`. CONTROLLATA, nessuna esenzione: gate
+            // `requireStaff`, sedi da `resolveScuoleAttive` (il vuoto nega), e `alunni` si legge con
+            // `.in('scuola_id', plessi)`. Misurato rieseguendo il lock: 387 → 388.
+            routeConServiceRole: 388,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2980,7 +2984,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 594 → 597 il 2026-11-08 (anno scolastico, PR 4.2, compito 4.2.4): `admin/anni/[annoSedeId]:GET`,
             // `…:PATCH` e `…/apri-iscrizioni:POST` (vedi `routeConServiceRole`). Tre handler, tutti CONTROLLATI;
             // `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 594 → 597.
-            handlerControllati: 597,
+            // 597 → 598 il 2026-11-08 (anno scolastico, PR 4.4, compito 4.4.8): `admin/students/export:GET` (vedi
+            // `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // Misurato rieseguendo il lock: 597 → 598.
+            handlerControllati: 598,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

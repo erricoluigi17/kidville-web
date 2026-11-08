@@ -3605,6 +3605,9 @@ export const CODICI_ERRORE = {
     SCRITTURA_INCOMPLETA: 'erroreScritturaIncompleta',
     CODICE_FISCALE_GIA_USATO: 'erroreCodiceFiscaleGiaUsato',
     ALUNNO_ANONIMIZZATO: 'erroreAlunnoAnonimizzato',
+    // `GET /api/admin/students/export` (PR 4.4, compito 4.4.8): l'anagrafica non si è letta per intero (500) e il foglio
+    // non esce. NON riusa ANAGRAFICA_ELENCO_NON_LETTO, che è l'elenco del docente a schermo: qui si dice che il file non c'è.
+    ANAGRAFICA_EXPORT_NON_LETTA: 'erroreAnagraficaExportNonLetta',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

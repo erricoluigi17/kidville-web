@@ -157,11 +157,11 @@ sede** (`anni_sede`) e, dove la sede non ne ha uno (o il database non è ancora 
 della CI), il predefinito del **1° SETTEMBRE**. Un documento datato 31 agosto 2026 appartiene al
 2025/2026, uno datato 1° settembre 2026 al 2026/2027 (`annoDelGiorno` in `src/lib/anno-scolastico.ts`).
 
-Fino a quella PR non era così: la fatturazione usava il 1° settembre (`annoScolasticoDi`, tolta) e il
-resto del prodotto il 1° agosto, e ad agosto il ripiego sulla data del documento era «ambiguo» e
-fermava l'emissione. **Quella divergenza non esiste più**: agosto appartiene sempre all'anno che si
-chiude, per tutti, e la serie si decide.
-
+Fino a quella PR non era così: la fatturazione usava il 1° settembre (`annoScolasticoDi`, tolta). Il
+1° agosto valeva per `annoScolasticoCorrente` e le sue due copie (anche quelle tolte), mentre storici,
+rette, appello e statistiche contavano già dal 1° settembre. Ad agosto il ripiego sulla data del
+documento era «ambiguo» e fermava l'emissione. **Quella divergenza non esiste più**: agosto appartiene
+sempre all'anno che si chiude, per tutti, e la serie si decide.
 
 Le due cose che restano da dire, perché sono quelle che si sbagliano:
 
@@ -215,8 +215,10 @@ con cui `emettiFatturaPagamento` (`src/lib/aruba/emissione.ts`, passo 3) sceglie
 **Agosto non ferma più l'emissione.** Il motivo `periodo_competenza_mancante` e l'esito
 `anno-scolastico-ambiguo` sono stati tolti dal compito 4.1.S3: con una regola sola non c'è più un
 anno «candidato» da scegliere fra due. Sul database della CI, dove `pagamenti.anno_id` non c'è
-(errore `42703`), la lettura della voce si rifà senza la colonna e si scrive un solo `info`
-(`esito = 'anno-della-voce-non-disponibile'`): la fattura parte come prima.
+(errore `42703`), la lettura della voce si rifà senza la colonna e si scrive un `info`
+(`esito = 'anno-della-voce-non-disponibile'`); poiché lì manca anche il calendario (`PGRST205`), se ne
+aggiunge un secondo (`calendario-non-disponibile`), e se la voce non ha la competenza anche il `warn`
+`anno-scolastico-da-data-documento`. In tutto due `info` e nessuna riga `error`: la fattura parte come prima.
 
 Per i test: `__tests__/lib/aruba/emissione-anno-della-voce.test.ts`, `__tests__/lib/fatturazione/`.
 

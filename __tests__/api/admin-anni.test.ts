@@ -89,6 +89,8 @@ vi.mock('@/lib/logging/logger', () => ({
 }))
 
 import { redact } from '@/lib/logging/redact'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { tracciaAnno } from '@/lib/anno/impostazioni'
 import { GET, PATCH } from '@/app/api/admin/anni/[annoSedeId]/route'
 import { POST } from '@/app/api/admin/anni/[annoSedeId]/apri-iscrizioni/route'
 
@@ -796,6 +798,36 @@ describe('traccia delle scritture (audit_scritture_docente)', () => {
     expect((await r.json()).data.cambiato).toBe(true)
     const errori = h.log.filter((l) => l.fn === 'evento' && l.args[1] === 'error')
     expect(errori.map((e) => (e.args[2] as Record<string, unknown>).esito)).toContain('audit-non-registrato')
+  })
+})
+
+// La sede della traccia è quella dell'anno che la route ha già letto: nessuna rilettura, nessun ripiego
+// sulla sede dell'attore (con più sedi sarebbe quella sbagliata).
+describe('tracciaAnno: la sede viene dall’anno', () => {
+  const ALTRA = '33333333-3333-4333-8333-333333333333'
+  const valori = { prima: { stato: 'in_preparazione' }, dopo: { stato: 'iscrizioni_aperte' } }
+  const client = async () => (await createAdminClient()) as never
+  const attore = () => ({ id: UTENTE, role: 'admin', scuola_id: SEDE_A }) as never
+
+  it('con la sede dell’anno: la traccia porta quella, anche se l’attore ha un’altra sede', async () => {
+    await tracciaAnno(await client(), attore(), ANNO_B, valori, SEDE_B)
+    expect(h.audit).toHaveLength(1)
+    expect(h.audit[0]).toMatchObject({ entita_id: ANNO_B, scuola_id: SEDE_B })
+  })
+
+  it('non rilegge anni_sede (nemmeno quando la lettura fallirebbe)', async () => {
+    h.letturaErrore = { code: '57014', message: 'timeout' }
+    await tracciaAnno(await client(), attore(), ANNO_B, valori, ALTRA)
+    expect(h.audit[0]).toMatchObject({ scuola_id: ALTRA })
+    expect(eventi('anno-traccia-sede-non-letta')).toEqual([])
+  })
+
+  it('senza la sede dell’anno: nessuna traccia e un warn (mai la sede dell’attore)', async () => {
+    await tracciaAnno(await client(), attore(), ANNO_B, valori, undefined)
+    expect(h.audit).toEqual([])
+    const w = eventi('anno-traccia-senza-sede', 'warn')
+    expect(w).toHaveLength(1)
+    expect(w[0].campi).toMatchObject({ anno_sede_id: ANNO_B, utente: UTENTE })
   })
 })
 

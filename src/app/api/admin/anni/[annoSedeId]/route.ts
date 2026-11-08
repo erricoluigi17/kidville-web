@@ -97,7 +97,8 @@ export const PATCH = withRoute('admin/anni/[annoSedeId]:PATCH', async (request: 
   const operazione = `admin/anni/[annoSedeId]:PATCH:${corpo.azione}`
 
   const supabase = await createAdminClient()
-  const fuoriSede = await assertAnnoSedeInScope(supabase, auth.user, annoSedeId, operazione)
+  const annoLetto: { scuolaId?: string } = {}
+  const fuoriSede = await assertAnnoSedeInScope(supabase, auth.user, annoSedeId, operazione, annoLetto)
   if (fuoriSede) return fuoriSede
   const chi = { utente: auth.user.id, annoSedeId }
 
@@ -139,6 +140,7 @@ export const PATCH = withRoute('admin/anni/[annoSedeId]:PATCH', async (request: 
       auth.user,
       annoSedeId,
       corpo.azione === 'confine' ? valoriConfine(r) : corpo.azione === 'date' ? valoriDate(r) : valoriDomande(corpo.aperte),
+      annoLetto.scuolaId,
     )
   }
   return NextResponse.json({ success: true, data: r })

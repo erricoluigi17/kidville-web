@@ -535,9 +535,17 @@ export const SCHEMA_AVVISI_CHAT_VOCI_GENITORE = `
   ALTER TABLE public.utenti
     ADD COLUMN ruolo character varying(50),
     ADD COLUMN archiviato_il timestamptz;
+  CREATE TYPE public.pagamento_tipo AS ENUM ('singolo', 'padre', 'rata', 'split');
   ALTER TABLE public.pagamenti
     ADD COLUMN visibile_dal date,
-    ADD COLUMN parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE;
+    ADD COLUMN parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE,
+    ADD COLUMN tipo public.pagamento_tipo DEFAULT 'singolo' NOT NULL;
+  CREATE TABLE public.pagamenti_quote (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id) ON DELETE CASCADE,
+    adult_id uuid NOT NULL,
+    importo numeric(10,2) NOT NULL
+  );
 `
 
 /**

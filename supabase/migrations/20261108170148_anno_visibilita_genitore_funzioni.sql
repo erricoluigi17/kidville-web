@@ -1,7 +1,8 @@
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 -- ANNO SCOLASTICO, PR 4.4 · «Che cosa vede una famiglia» · M44a, le funzioni
 -- Un solo file per le funzioni della PR; ogni compito SQL aggiunge una sezione in coda, con la sua testata.
--- INERTE: nessuna tabella la legge ancora e nessuna regola di accesso cambia; gli indici non cambiano che cosa si legge.
+-- INERTE per chi legge: nessuna tabella legge queste funzioni e nessuna regola di accesso cambia; gli indici non cambiano che cosa
+-- si legge. UNA SOLA COSA CAMBIA DA SUBITO, una scrittura: `anno_traduci_classi_trg` (sezione 4.4.3, sotto gli avvisi).
 -- Le regole di accesso stanno nell'altra migrazione della PR (M44b, version maggiore).
 -- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -345,7 +346,7 @@ $mig$;
 --
 -- Figlio per figlio, da `figli_attivi`, nella sede della sua frequenza attiva. Un avviso è visibile tramite un figlio se non è
 -- scaduto e se vale una delle due:
---   · è PER TUTTA LA SEDE: `target_scope = 'globale'` e nessun destinatario, né in uuid né in nomi;
+--   · è PER TUTTA LA SEDE: `target_scope = 'globale'`, qualunque cosa resti in uuid e nomi;
 --   · i suoi destinatari comprendono la sezione ATTUALE del figlio.
 -- Nessun confine d'ingresso: chi entra oggi vede gli avvisi ancora validi anche se sono nati prima, come succede già.
 --
@@ -353,11 +354,13 @@ $mig$;
 -- istante valido. La vecchia `scadenza` resta per il codice di ieri e non decide niente. `scadenza_adesione` chiude le adesioni,
 -- non l'avviso.
 --
--- `target_scope` E I NOMI. Un avviso di classe scritto in nomi che nessuna sezione ha resta con `target_section_ids` vuoto e
--- `target_classes` pieno (`anno_traduci_classi_trg`): ha dei destinatari, solo che non si sa quali, e un guasto non deve aprire
--- dati. Quindi non arriva a nessuno, nemmeno se lo scope è `globale`. Lo stesso vale per un `classe` senza né uuid né nomi: vuoto
--- da solo non vuol dire «per tutti». Un `globale` con destinatari veri va solo a quelli, MENTRE OGGI LA ROUTE LO MANDA A TUTTA LA
--- SEDE: il modulo non può crearlo (svuota le classi se lo scope è globale), serve una richiesta costruita a mano.
+-- `globale` È LA SCELTA DICHIARATA DA CHI SCRIVE, e comanda lei: è quello che fa `listaAvvisiGenitore`, e la PUT calcola i
+-- destinatari delle notifiche su scope e nomi. Guardare anche gli uuid farebbe divergere i due giudizi in silenzio: il modulo in
+-- modifica lascia rendere «a tutti» un avviso di classe, e fino al trigger qui sotto quella riga teneva gli uuid della classe di
+-- prima. Le righe nate così prima di questa migrazione restano com'erano e valgono lo stesso per tutta la sede.
+-- Un avviso che NON è `globale` va solo ai destinatari. Scritto in nomi che nessuna sezione ha resta con `target_section_ids`
+-- vuoto e `target_classes` pieno (`anno_traduci_classi_trg`): ha dei destinatari, solo che non si sa quali, e un guasto non deve
+-- aprire dati, quindi non arriva a nessuno. Lo stesso senza né uuid né nomi: vuoto da solo non vuol dire «per tutti».
 --
 -- UNA RIGA PER COPPIA (avviso, figlio). Un avviso ha una sede e ogni riga di `figli_attivi` guarda la sua: un bambino vivo in due
 -- sedi non dà mai due volte lo stesso avviso. Due figli sono due righe, di proposito: se uno lascia si perde solo ciò che arrivava
@@ -382,17 +385,117 @@ BEGIN
       FROM public.figli_attivi(p_utente) f
       JOIN public.avvisi a ON a.scuola_id = f.scuola_id
      WHERE a.scadenza_avviso >= now()
-       AND (
-         (a.target_scope = 'globale'
-          AND coalesce(cardinality(a.target_section_ids), 0) = 0
-          AND coalesce(cardinality(a.target_classes), 0) = 0)
-         OR f.section_id = ANY (a.target_section_ids)
-       );
+       AND (a.target_scope = 'globale' OR f.section_id = ANY (a.target_section_ids));
 END
 $$;
 
 REVOKE ALL ON FUNCTION public.avvisi_visibili_genitore(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.avvisi_visibili_genitore(uuid) TO service_role;
+
+-- ── 4.4.3 Il trigger dei nomi di classe: quando i nomi spariscono o cambiano ──────────────────────
+--
+-- Ridefinisce `anno_traduci_classi_trg` di `20261107012110_anno_strumenti.sql`: uguale nel resto, fail-open compreso. Vale per ogni
+-- tabella col trigger. Due cambi, tutti e due in UPDATE: una riga nuova si comporta come prima.
+--
+-- 1. NOMI CHE PASSANO DA UN VALORE A NULL, con gli uuid che la stessa scrittura non riscrive: anche gli uuid vanno a NULL. Il modulo
+-- non blocca il cambio di destinatari in modifica e manda `target_classes: []`, la PUT scrive NULL
+-- (`src/app/api/avvisi/[id]/route.ts`), e il trigger usciva lasciando gli uuid della classe di prima: una riga che diceva due cose.
+-- Se la stessa scrittura mette uuid diversi restano quelli. Se rimette gli stessi non si distingue da chi non li ha toccati, e vanno
+-- a NULL. I nomi NULL che restano NULL non cambiano niente: gli uuid scritti a mano restano. La forma `scalare` è la sola
+-- `mensa_class_menu_assignment`, dove oggi `classe` è NOT NULL: la regola c'è, ma lì non può ancora scattare.
+--
+-- 2. UNA RIGA DI UN ANNO SENZA SEZIONI (gli avvisi di luglio e agosto 2026 stanno nel 2025/26). Se i NOMI CAMBIANO si traduce
+-- sull'anno attivo, come fa l'INSERT: prima gli uuid restavano quelli della classe vecchia, e `anno_target_divergenti` non lo contava.
+-- Se i nomi non cambiano gli uuid restano come sono, perché ricalcolarli butterebbe via quelli del riempimento. Il confronto è
+-- letterale: gli stessi nomi in un altro ordine contano come cambiati, e sull'anno attivo danno le stesse sezioni.
+-- `anno_target_divergenti` resta com'è: quelle righe non le conta perché il loro anno non ha niente con cui abbinarle, e dopo un
+-- passaggio d'anno il confronto con l'anno attivo le darebbe tutte divergenti. Le conta `anno_fotografa`.
+CREATE OR REPLACE FUNCTION public.anno_traduci_classi_trg()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n      jsonb := to_jsonb(NEW);
+  v_o      jsonb;
+  v_nomi   text[];
+  v_sede   uuid;
+  v_ids    uuid[];
+  v_dist   integer;
+  v_manca  integer;
+  v_anno   uuid;
+  v_data   text;
+BEGIN
+  BEGIN
+    IF TG_OP = 'UPDATE' THEN
+      v_o := to_jsonb(OLD);
+    END IF;
+
+    IF v_n -> TG_ARGV[0] IS NULL OR jsonb_typeof(v_n -> TG_ARGV[0]) = 'null' THEN
+      IF TG_OP = 'UPDATE' AND jsonb_typeof(v_o -> TG_ARGV[0]) <> 'null'
+         AND (v_o -> TG_ARGV[1]) IS NOT DISTINCT FROM (v_n -> TG_ARGV[1]) THEN
+        NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], NULL::text));
+      END IF;
+      RETURN NEW;
+    END IF;
+    v_sede := public.anno_sede_della_riga(TG_TABLE_NAME, v_n);
+    IF v_sede IS NULL THEN
+      RETURN NEW;
+    END IF;
+
+    -- L'anno delle sezioni con cui tradurre. Tabella con `anno_id`: in UPDATE quello che la riga ha già (OLD), in INSERT
+    -- l'anno attivo (NULL). Tabella senza `anno_id`: l'anno della data della riga stessa (`attivo_dal`, o la creazione);
+    -- senza nessuna data, o con una data fuori da ogni anno, l'anno attivo (limite noto).
+    IF v_n ? 'anno_id' THEN
+      IF TG_OP = 'UPDATE' THEN
+        v_anno := (v_o ->> 'anno_id')::uuid;
+      END IF;
+    ELSE
+      v_data := coalesce(v_n ->> 'attivo_dal', v_n ->> 'created_at');
+      IF v_data IS NOT NULL THEN
+        v_anno := public.anno_di(v_sede, CASE WHEN length(v_data) = 10 THEN v_data::date ELSE public.giorno_roma(v_data::timestamptz) END);
+      END IF;
+    END IF;
+
+    -- Un anno che nella sede non ha NESSUNA sezione: in UPDATE, a nomi uguali gli uuid restano come sono; a nomi cambiati si traduce
+    -- sull'anno attivo, come in INSERT.
+    IF TG_OP = 'UPDATE' AND v_anno IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno) THEN
+      IF (v_o -> TG_ARGV[0]) IS NOT DISTINCT FROM (v_n -> TG_ARGV[0]) THEN
+        RETURN NEW;
+      END IF;
+      v_anno := NULL;
+    END IF;
+
+    IF TG_ARGV[2] = 'array' THEN
+      SELECT coalesce(array_agg(x), '{}'::text[]) INTO v_nomi FROM jsonb_array_elements_text(v_n -> TG_ARGV[0]) AS x;
+      v_ids := public.anno_traduci_classi(v_sede, v_nomi, v_anno);
+      SELECT count(DISTINCT lower(replace(x, ' ', ''))) INTO v_dist FROM unnest(v_nomi) AS x;
+      v_manca := v_dist - coalesce(cardinality(v_ids), 0);
+      NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], to_jsonb(v_ids)));
+    ELSE
+      v_ids := public.anno_traduci_classi(v_sede, ARRAY[v_n ->> TG_ARGV[0]], v_anno);
+      v_manca := CASE WHEN v_ids[1] IS NULL THEN 1 ELSE 0 END;
+      NEW := jsonb_populate_record(NEW, jsonb_build_object(TG_ARGV[1], v_ids[1]));
+    END IF;
+
+    IF v_manca > 0 THEN
+      PERFORM public.anno_log_avviso(TG_TABLE_NAME, 'classe-non-abbinata', 'anno_traduci_classi_trg',
+                                     'nomi di classe che nessuna sezione dell''anno della riga ha: restano nei nomi',
+                                     'db:anno-classe-non-abbinata:' || TG_TABLE_NAME, v_manca);
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM public.anno_log_guasto(TG_TABLE_NAME, 'traduzione-classi-fallita', 'anno_traduci_classi_trg',
+                                   'traduzione dei nomi di classe fallita: la scrittura è passata com''è',
+                                   'db:anno-classi:' || TG_TABLE_NAME, SQLSTATE);
+  END;
+  RETURN NEW;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_traduci_classi_trg() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_traduci_classi_trg() TO service_role;
 
 -- ── 4.4.3 Le conversazioni che vede chi vi partecipa ──────────────────────────────────────────────
 --
@@ -412,9 +515,9 @@ GRANT EXECUTE ON FUNCTION public.avvisi_visibili_genitore(uuid) TO service_role;
 -- UN PROFILO REVOCATO (`archiviato_il`) non conta né come operatore né come assegnato. Il ruolo non guarda la sede: il thread
 -- esiste già, e l'ha aperto chi poteva (`decidiAbbinamento`). `utenti.attivo` non si legge: non è un gate (`20260920001032`).
 --
--- `parent_id` PORTA DUE FORME secondo l'età della riga (`20261012085225_chat_broadcast_privato.sql`): l'uid dell'account o l'id
--- della sua riga di `parents`. Le accetta la regola di accesso di oggi, e questa funzione la sostituirà: guardare solo l'uid
--- toglierebbe il thread a chi lo vede oggi.
+-- `parent_id` PUÒ PORTARE DUE FORME (`20261012085225_chat_broadcast_privato.sql`): l'uid dell'account o l'id della sua riga di
+-- `parents`. Misurato l'08/11/2026: in produzione 0 thread su 1.130 usano la seconda, quindi oggi questo ramo non cambia niente.
+-- Resta per parità con la regola di accesso di oggi, che le accetta tutte e due e che questa funzione sostituirà.
 --
 -- IL BAMBINO IN DUE SEDI. Per `figli_attivi` sono due righe; qui si usano solo come elenco e come `EXISTS`, quindi resta UNA RIGA
 -- PER THREAD: `scrivibile` è vero se l'operatore è assegnato a una qualunque delle sue sezioni attuali.
@@ -523,11 +626,14 @@ GRANT EXECUTE ON FUNCTION public.thread_visibili_miei() TO authenticated, servic
 -- `visibile_dal` VALE SEMPRE, anche per una voce pagata o per una quota: è una scelta della segreteria. Oggi è il giorno di Roma,
 -- come in `src/app/api/pagamenti/route.ts`.
 --
+-- UNA VOCE `split` È DI CHI HA LA SUA QUOTA (`pagamenti_quote.adult_id`): senza, non si vede nemmeno se è di un figlio. Come la route
+-- e la regola di accesso di oggi: il dovuto dell'altro genitore non è affare di questo. Vale prima dell'anno, come `visibile_dal`.
+--
 -- LA SEDE è `scuola_id`, con riserva quella del bambino: la stessa strada con cui il registro assegna l'anno
 -- (`anno_sede_della_riga`). `POST /api/pagamenti` la lascia ricavare dall'alunno. Una voce senza anno, o in una sede senza anno
 -- attivo, non si può dire futura e resta.
 --
--- Le righe sono una per voce. Indici: `idx_pagamenti_alunno`, `frequenze_quota_pagamento_id_idx`,
+-- Le righe sono una per voce. Indici: `idx_pagamenti_alunno`, `idx_quote_pagamento`, `frequenze_quota_pagamento_id_idx`,
 -- `listino_voci_payment_category_id_idx`. Solo `service_role`: dal browser `voci_visibili_miei()`.
 CREATE OR REPLACE FUNCTION public.voci_visibili_genitore(p_utente uuid)
 RETURNS TABLE (voce_id uuid)
@@ -555,6 +661,8 @@ BEGIN
       LEFT JOIN public.anni_scolastici attivo ON attivo.id = s.anno_id
      WHERE p.alunno_id = ANY (v_figli)
        AND (p.visibile_dal IS NULL OR p.visibile_dal <= v_oggi)
+       AND (p.tipo <> 'split'
+            OR EXISTS (SELECT 1 FROM public.pagamenti_quote q WHERE q.pagamento_id = p.id AND q.adult_id = p_utente))
        AND (
          della_voce.anno_inizio IS NULL
          OR attivo.anno_inizio IS NULL

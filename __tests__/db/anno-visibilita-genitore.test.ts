@@ -1408,18 +1408,16 @@ describe('avvisi_visibili_genitore', () => {
 
   // Il trigger traduce i nomi in uuid: un nome che nessuna sezione ha resta nei nomi e lascia gli uuid vuoti. Quell'avviso HA
   // dei destinatari, solo che non si sa quali. Un guasto non deve aprire dati.
-  describe('un avviso con i destinatari non risolti non arriva a nessuno', () => {
-    for (const scope of ['classe', 'globale']) {
-      prova(`${scope}, con un nome di classe che nessuna sezione ha`, async () => {
-        await inRollback(async () => {
-          const a = await avviso({ scope, classi: ['Classe che non esiste'] })
-          const r = await db.query<{ target_section_ids: string[] }>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [a])
-          expect(r.rows[0].target_section_ids).toEqual([])
-          expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([])
-          expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
-        })
+  describe('un avviso di classe con i destinatari non risolti non arriva a nessuno', () => {
+    prova('classe, con un nome di classe che nessuna sezione ha', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', classi: ['Classe che non esiste'] })
+        const r = await db.query<{ target_section_ids: string[] }>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [a])
+        expect(r.rows[0].target_section_ids).toEqual([])
+        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([])
+        expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
       })
-    }
+    })
 
     prova('classe, senza né uuid né nomi: vuoto non vuol dire «per tutti» se lo scope dice «classe»', async () => {
       await inRollback(async () => {
@@ -1437,20 +1435,84 @@ describe('avvisi_visibili_genitore', () => {
       })
     })
 
-    prova('globale con destinatari veri: comandano i destinatari, non diventa per tutta la sede', async () => {
+  })
+
+  // `globale` è la scelta dichiarata da chi scrive. La route lo legge così, e la PUT calcola le notifiche su scope e nomi: se la
+  // visibilità guardasse anche gli uuid, i due giudizi divergerebbero in silenzio.
+  describe('un avviso per tutti è per tutti', () => {
+    const uuidDi = async (a: string) => {
+      const r = await db.query<{ target_section_ids: string[] | null }>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [a])
+      return r.rows[0].target_section_ids
+    }
+    /** Una famiglia per sezione e una senza sezione: se uno dei tre manca, l'avviso non è per tutti. */
+    const loVedonoTutti = async (a: string) => {
+      expect(await avvisiDi(GEN_DOPPIO)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_DOPPIO }])
+      expect(await avvisiDi(GEN_PONTE)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_PONTE }])
+      expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_SENZA_SEZIONE }])
+    }
+
+    prova('reso «a tutti» dal modulo: la PUT scrive nomi NULL, gli uuid vanno a NULL, e lo vede tutta la sede', async () => {
       await inRollback(async () => {
-        const a = await avviso({ scope: 'globale', classi: ['Girasoli'] })
-        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+        const a = await avviso({ scope: 'classe', classi: ['Girasoli'] })
+        expect(await uuidDi(a)).toEqual([SEZ_1])
+        expect(await avvisiDi(GEN_PONTE)).toEqual([])
+        await db.query(`UPDATE public.avvisi SET target_scope = 'globale', target_classes = NULL WHERE id = $1`, [a])
+        expect(await uuidDi(a)).toBeNull()
+        await loVedonoTutti(a)
       })
     })
 
-    prova('globale con i soli uuid: lo stesso, e un figlio senza sezione non lo riceve', async () => {
+    prova('reso «a tutti» con i nomi vuoti: gli uuid vanno vuoti, e lo vede tutta la sede', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', classi: ['Girasoli'] })
+        await db.query(`UPDATE public.avvisi SET target_scope = 'globale', target_classes = '{}' WHERE id = $1`, [a])
+        expect(await uuidDi(a)).toEqual([])
+        await loVedonoTutti(a)
+      })
+    })
+
+    // Le righe nate così prima della migrazione: il trigger di ieri lasciava gli uuid della classe di prima.
+    prova('una riga globale con gli uuid rimasti della classe di prima la vede tutta la sede', async () => {
       await inRollback(async () => {
         const a = await avviso({ scope: 'globale', target: [SEZ_1] })
-        const r = await db.query<{ target_classes: string[] | null }>(`SELECT target_classes FROM public.avvisi WHERE id = $1`, [a])
-        expect(r.rows[0].target_classes ?? []).toEqual([])
-        expect(await avvisiDi(GEN_DUE_FIGLI)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_1 }])
+        expect(await uuidDi(a)).toEqual([SEZ_1])
+        await loVedonoTutti(a)
+      })
+    })
+
+    prova('globale con un nome che nessuna sezione ha: per tutta la sede, perché lo dice lo scope', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'globale', classi: ['Classe che non esiste'] })
+        await loVedonoTutti(a)
+      })
+    })
+
+    prova('globale con il nome di una sezione: per tutta la sede', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'globale', classi: ['Girasoli'] })
+        expect(await uuidDi(a)).toEqual([SEZ_1])
+        await loVedonoTutti(a)
+      })
+    })
+
+    prova('la strada inversa: un avviso per tutti reso di classe va solo a quella classe', async () => {
+      await inRollback(async () => {
+        const a = await avviso()
+        await loVedonoTutti(a)
+        await db.query(`UPDATE public.avvisi SET target_scope = 'classe', target_classes = ARRAY['Girasoli'] WHERE id = $1`, [a])
+        expect(await avvisiDi(GEN_DOPPIO)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_DOPPIO }])
+        expect(await avvisiDi(GEN_PONTE)).toEqual([])
         expect(await avvisiDi(GEN_SENZA_SEZIONE)).toEqual([])
+      })
+    })
+
+    prova('un avviso di classe con i nomi tolti e gli uuid nuovi nella stessa scrittura va a quegli uuid', async () => {
+      await inRollback(async () => {
+        const a = await avviso({ scope: 'classe', classi: ['Girasoli'] })
+        await db.query(`UPDATE public.avvisi SET target_classes = NULL, target_section_ids = ARRAY[$2]::uuid[] WHERE id = $1`, [a, SEZ_2])
+        expect(await uuidDi(a)).toEqual([SEZ_2])
+        expect(await avvisiDi(GEN_DOPPIO)).toEqual([])
+        expect(await avvisiDi(GEN_PONTE)).toEqual([{ avviso_id: a, alunno_id: FIGLIO_PONTE }])
       })
     })
   })
@@ -1926,17 +1988,21 @@ type DatiVoce = {
   categoria?: string | null
   visibileDal?: string | null
   padre?: string | null
+  tipo?: string
 }
 
 /** Di partenza una voce da pagare della prima sede, nell'anno attivo. */
 async function voce(d: DatiVoce = {}): Promise<string> {
   return una<string>(
     `INSERT INTO public.pagamenti
-       (alunno_id, scuola_id, descrizione, importo, scadenza, stato, categoria_id, importo_pagato, periodo_competenza, visibile_dal, parent_payment_id)
-     VALUES ($1, $2, 'Voce di prova', 100, $3, $4, $5, $6, $3, $7, $8) RETURNING id`,
+       (alunno_id, scuola_id, descrizione, importo, scadenza, stato, categoria_id, importo_pagato, periodo_competenza, visibile_dal, parent_payment_id, tipo)
+     VALUES ($1, $2, 'Voce di prova', 100, $3, $4, $5, $6, $3, $7, $8, $9) RETURNING id`,
     [d.alunno === undefined ? FIGLIO_DOPPIO : d.alunno, d.sede === undefined ? SEDE : d.sede, d.competenza ?? '2026-10-01',
-      d.stato ?? 'da_pagare', d.categoria ?? null, d.pagato ?? 0, d.visibileDal ?? null, d.padre ?? null])
+      d.stato ?? 'da_pagare', d.categoria ?? null, d.pagato ?? 0, d.visibileDal ?? null, d.padre ?? null, d.tipo ?? 'singolo'])
 }
+
+const quotaDi = (pagamento: string, adulto: string) =>
+  db.query(`INSERT INTO public.pagamenti_quote (pagamento_id, adult_id, importo) VALUES ($1, $2, 50)`, [pagamento, adulto])
 
 async function vociDi(genitore: string | null): Promise<string[]> {
   const r = await db.query<{ voce_id: string }>(`SELECT voce_id FROM public.voci_visibili_genitore($1)`, [genitore])
@@ -2157,6 +2223,72 @@ describe('voci_visibili_genitore', () => {
     })
   })
 
+  // Come la route e la regola di accesso di oggi. M44b sostituirà quella regola con questa funzione: se qui mancasse il filtro,
+  // dal browser si aprirebbe il dovuto dell'altro genitore.
+  describe('una voce divisa è di chi ha la sua quota', () => {
+    prova('con la quota del genitore si vede, senza no', async () => {
+      await inRollback(async () => {
+        const sua = await voce({ tipo: 'split' })
+        await voce({ tipo: 'split' })
+        await quotaDi(sua, GEN_DOPPIO)
+        expect(await vociDi(GEN_DOPPIO)).toEqual([sua])
+      })
+    })
+
+    prova('la quota dell’altro genitore non la apre, e chi ce l’ha la vede lui', async () => {
+      await inRollback(async () => {
+        await db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_PONTE, FIGLIO_DOPPIO])
+        const v = await voce({ tipo: 'split' })
+        await quotaDi(v, GEN_PONTE)
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+        expect(await vociDi(GEN_PONTE)).toEqual([v])
+      })
+    })
+
+    prova('la quota non basta a chi non è genitore del bambino', async () => {
+      await inRollback(async () => {
+        const v = await voce({ tipo: 'split' })
+        await quotaDi(v, GEN_DUE_FIGLI)
+        expect(await vociDi(GEN_DUE_FIGLI)).toEqual([])
+      })
+    })
+
+    prova('vale anche per il figlio legato con la seconda strada', async () => {
+      await inRollback(async () => {
+        const sua = await voce({ alunno: FIGLIO_PONTE, tipo: 'split' })
+        await voce({ alunno: FIGLIO_PONTE, tipo: 'split' })
+        await quotaDi(sua, GEN_PONTE)
+        expect(await vociDi(GEN_PONTE)).toEqual([sua])
+      })
+    })
+
+    prova('le altre forme di voce non chiedono una quota', async () => {
+      await inRollback(async () => {
+        const attese = [await voce({ tipo: 'singolo' }), await voce({ tipo: 'padre' }), await voce({ tipo: 'rata' })]
+        expect(await vociDi(GEN_DOPPIO)).toEqual(ordinate(...attese))
+      })
+    })
+
+    prova('non scavalca né è scavalcata dalle altre regole: pagata senza quota no, con quota ma in un anno futuro no, con quota e `visibile_dal` futuro no', async () => {
+      await inRollback(async () => {
+        const { domani } = await giorni()
+        await voce({ tipo: 'split', stato: 'pagato', pagato: 100 })
+        await quotaDi(await voce({ tipo: 'split', competenza: FUTURA }), GEN_DOPPIO)
+        await quotaDi(await voce({ tipo: 'split', visibileDal: domani }), GEN_DOPPIO)
+        expect(await vociDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('due quote dello stesso genitore danno una riga sola', async () => {
+      await inRollback(async () => {
+        const v = await voce({ tipo: 'split' })
+        await quotaDi(v, GEN_DOPPIO)
+        await quotaDi(v, GEN_DOPPIO)
+        expect(await vociDi(GEN_DOPPIO)).toEqual([v])
+      })
+    })
+  })
+
   describe('visibile_dal', () => {
     prova('una data futura nasconde qualunque voce: dell’anno attivo, pagata, quota', async () => {
       await inRollback(async () => {
@@ -2205,10 +2337,10 @@ describe('voci_visibili_genitore', () => {
       await inRollback(async () => {
         const diretta = await voce({ alunno: FIGLIO_1 })
         const ponte = await voce({ alunno: FIGLIO_PONTE })
+        expect(await vociDi(GEN_PONTE)).toEqual([ponte])
         await db.exec(`DROP TABLE public.student_parents CASCADE`)
         expect(await vociDi(GEN_DUE_FIGLI)).toEqual([diretta])
         expect(await vociDi(GEN_PONTE)).toEqual([])
-        expect(ponte).not.toBe(diretta)
       })
     })
   })

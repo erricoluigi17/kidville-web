@@ -247,15 +247,19 @@ function DettaglioAnno({
     setInCorso(blocco);
     setEsito(null);
     const r = await chiama(metodo, indirizzo, userId, metodo === 'POST' ? undefined : corpo);
+    const riuscita = r.stato !== 0 && r.stato < 400;
+    const cambiato = riuscita && dataDi(r)?.cambiato !== false;
+    // Il database è già cambiato: il calendario si rilegge anche se il pannello è stato smontato in volo
+    // (cambio di sede o di anno). `onModificato` viene dal contesto, non da questo componente: è sicura.
+    // Il guard `vivo` vale solo per gli `setState` locali qui sotto.
+    if (cambiato) onModificato();
     if (!vivo.current) return null;
     setInCorso(null);
-    if (r.stato === 0 || r.stato >= 400) {
+    if (!riuscita) {
       setEsito({ blocco, tipo: 'errore', errore: erroreDa(r) });
       return r;
     }
-    const cambiato = dataDi(r)?.cambiato !== false;
     setEsito({ blocco, tipo: cambiato ? 'salvato' : 'invariato' });
-    if (cambiato) onModificato();
     return r;
   };
 

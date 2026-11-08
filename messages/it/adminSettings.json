@@ -455,7 +455,7 @@
   "annoDettaglioTitolo": "Anno {anno}",
   "annoChiusoSolaLettura": "Questo anno è chiuso: le date e le iscrizioni non si possono più cambiare.",
   "annoFineTitolo": "Fine dell’anno",
-  "annoFineSotto": "Il {anno} comincerà il {data}",
+  "annoFineSotto": "L’anno successivo ({anno}) comincerà il {data}",
   "annoFineSenzaSuccessivo": "Dopo questo anno non ce n’è un altro: la fine non si può spostare.",
   "annoDateTitolo": "Date del registro",
   "annoUltimoGiorno": "Ultimo giorno aperto",

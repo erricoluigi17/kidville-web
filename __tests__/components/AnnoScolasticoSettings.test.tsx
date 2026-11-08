@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
@@ -149,9 +150,9 @@ describe('Impostazioni → Anno scolastico: la fine dell’anno (il confine)', (
     monta()
     const campo = (await screen.findByLabelText(itSettings.annoFineTitolo)) as HTMLInputElement
     expect(campo.value).toBe('2027-08-31')
-    expect(screen.getByText('Il 2027/28 comincerà il 1/9/2027')).toBeInTheDocument()
+    expect(screen.getByText('L’anno successivo (2027/28) comincerà il 1/9/2027')).toBeInTheDocument()
     fireEvent.change(campo, { target: { value: '2027-08-30' } })
-    expect(screen.getByText('Il 2027/28 comincerà il 31/8/2027')).toBeInTheDocument()
+    expect(screen.getByText('L’anno successivo (2027/28) comincerà il 31/8/2027')).toBeInTheDocument()
   })
 
   it('Salva manda il confine all’anno scelto, con l’identità di sessione, e poi rilegge il calendario', async () => {
@@ -522,5 +523,55 @@ describe('Impostazioni → Anno scolastico: quando non c’è un calendario', ()
     rerender(<AnnoScolasticoSettings userId={USER} scuolaId={SEDE_A} />)
     expect((screen.getByLabelText(itSettings.annoFineTitolo) as HTMLInputElement).value).toBe('2027-08-25')
     expect(salvaDi(itSettings.annoFineTitolo)).toBeDisabled()
+  })
+})
+
+describe('Impostazioni → Anno scolastico: scrittura in volo e pannello smontato', () => {
+  /** Tiene la prossima fetch (la PATCH) in sospeso finché il test non la scioglie. */
+  function patchInSospeso() {
+    let sciogli: (r: unknown) => void = () => {}
+    fetchMock.mockImplementationOnce(() => new Promise((res) => { sciogli = res }))
+    return (cambiato: boolean) =>
+      sciogli({ ok: true, status: 200, json: async () => ({ success: true, data: { cambiato } }) })
+  }
+
+  it('una scrittura riuscita rilegge il calendario anche se il pannello si smonta mentre è in volo', async () => {
+    const errori = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const rispondi = patchInSospeso()
+    const { unmount } = monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(salvaDi(itSettings.annoFineTitolo))
+    await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
+    unmount()
+    rispondi(true)
+    await waitFor(() => expect(h.ricarica).toHaveBeenCalledTimes(1))
+    expect(errori).not.toHaveBeenCalled()
+    errori.mockRestore()
+  })
+
+  it('«nessuna modifica» con il pannello smontato non rilegge niente', async () => {
+    const errori = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const rispondi = patchInSospeso()
+    const { unmount } = monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(salvaDi(itSettings.annoFineTitolo))
+    await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
+    unmount()
+    rispondi(false)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(h.ricarica).not.toHaveBeenCalled()
+    expect(errori).not.toHaveBeenCalled()
+    errori.mockRestore()
+  })
+
+  it('in StrictMode (effetti montati due volte) una scrittura riuscita aggiorna ancora l’esito a schermo', async () => {
+    render(
+      <StrictMode>
+        <AnnoScolasticoSettings userId={USER} scuolaId={SEDE_A} />
+      </StrictMode>,
+    )
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(salvaDi(itSettings.annoFineTitolo))
+    expect(await screen.findByText(itSettings.salvato)).toBeInTheDocument()
   })
 })

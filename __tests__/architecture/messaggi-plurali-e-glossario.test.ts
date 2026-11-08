@@ -826,7 +826,6 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
         ['parentChat.chatFotoConversazione', 'forma «foto N di M»: posizione in una sequenza'],
         ['teacherPrimaria.valutazioniStoricoTitolo', 'nome e cognome dell’alunno e nome della materia: titolo «Tutti i voti di {alunno} in {materia}»'],
-        ['adminSettings.annoFineSotto', 'etichetta dell’anno («2027/28») e data di inizio, non conteggi'],
 
         // (c) FRAZIONE `n/tot`: il sostantivo concorda con il totale, non con il
         //     numeratore. «1/20 presenti» è corretto e «1/20 presente» sarebbe
@@ -1016,17 +1015,11 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // scatta perché dopo il segnaposto viene «in»; riscrivere il titolo per schivarlo è la
         // frase piegata al lock già scartata più volte, qui sopra.
         //
-        // 2026-11-08 · 44 → 45. La sezione «Anno scolastico» delle impostazioni (PR 4.2.7) aveva
-        // tre messaggi con date che il riconoscitore scambiava per contatori. Due sono stati
-        // RISCRITTI senza perdere chiarezza (`annoRigaPeriodo`: «da {inizio} a {fine}», con «a» di
-        // una lettera, e in inglese «{inizio} – {fine}»; `annoDateFuoriPeriodo` in inglese:
-        // «…the year: {inizio} – {fine}.»). Resta UNA eccezione, `annoFineSotto` («Il {anno}
-        // comincerà il {data}»): `{anno}` è l'etichetta «2027/28», il soggetto della frase, e il
-        // verbo che segue non concorda con un numero. Riscriverla per schivare la regexp (togliere
-        // il verbo, o spezzarla in due messaggi incollati dal codice) renderebbe la frase meno
-        // chiara per la segreteria, ed è la scelta già scartata più volte, qui sopra. Categoria
-        // (a): il tetto sale di uno e non di più.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(45)
+        // I tre messaggi con date della sezione «Anno scolastico» (PR 4.2.7: `annoRigaPeriodo`,
+        // `annoFineSotto`, `annoDateFuoriPeriodo`) sono scritti senza la forma «segnaposto + parola»
+        // («da {inizio} a {fine}», «L’anno successivo ({anno}) comincerà il {data}»): nessuna
+        // eccezione, il tetto resta 44.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(44)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

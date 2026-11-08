@@ -275,6 +275,20 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn(async () => h.makeClient()),
 }))
 
+// `logEvento` si registra E passa al vero: serve ai test dell'anno della sezione (4.1.S1), che
+// contano i log di degrado (uno solo, `info`, senza dati personali).
+const logSpia = vi.hoisted(() => ({ eventi: [] as unknown[][] }))
+vi.mock('@/lib/logging/logger', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
+  return {
+    ...vero,
+    logEvento: (...args: Parameters<typeof vero.logEvento>) => {
+      logSpia.eventi.push(args as unknown[])
+      return vero.logEvento(...args)
+    },
+  }
+})
+
 import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { GET } from '@/app/api/prestampati/route'
@@ -1356,10 +1370,14 @@ describe('POST /api/prestampati/genera — il percorso felice', () => {
     //    rifiuto quando non coincide ha il suo test («una sezione fuori dalla sede
     //    SELEZIONATA è 403»), qui si tiene fermo che l'id non venga allargato a un filtro
     //    più largo — un `.in('scuola_id', …)` al posto dell'`.eq('id', …)`.
-    //    Le letture sono DUE, ed è la duplicazione che le due route dichiarano accanto alla
-    //    chiamata: `assertSezioneInScope` guarda `scuola_id`, `caricaSezione` ha bisogno
-    //    anche di `name` e `school_type`. Si chiude quando il gate restituirà la riga letta.
+    //    Le letture sono TRE. Le prime due sono la duplicazione che le due route dichiarano
+    //    accanto alla chiamata: `assertSezioneInScope` guarda `scuola_id`, `caricaSezione` ha
+    //    bisogno anche di `name` e `school_type`. Si chiude quando il gate restituirà la riga
+    //    letta. La terza (PRIMA: assente, erano due) è `anno_id`, letto a parte da
+    //    `leggiAnnoSezione` perché sul database della CI la colonna non c'è e deve degradare
+    //    senza far fallire la lettura della sezione (compito 4.1.S1): sempre per ID.
     expect(restringimentiDi('sections')).toEqual([
+      { tabella: 'sections', metodo: 'eq', args: ['id', SEZIONE] },
       { tabella: 'sections', metodo: 'eq', args: ['id', SEZIONE] },
       { tabella: 'sections', metodo: 'eq', args: ['id', SEZIONE] },
     ])
@@ -3810,5 +3828,136 @@ describe('POST /api/prestampati/genera — le tre modalità dei moduli di famigl
     const riga = h.state.inserimenti.find((i) => i.tabella === 'student_documents')
     expect(riga, 'il certificato deve entrare nel fascicolo').toBeTruthy()
     expect(String(riga?.valori.descrizione)).not.toContain('modulo consegnato su carta')
+  })
+})
+
+// ─── L'anno stampato sulla stampa di sezione (compito 4.1.S1) ────────────────────
+// PRIMA: `annoScolasticoCorrente()` — l'anno dell'orologio, per tutte le sezioni. DOPO: l'anno
+// DELLA SEZIONE (`sections.anno_id` → `anni_scolastici.etichetta`); se la colonna o la tabella
+// mancano, l'anno del giorno di stampa nel calendario della sede, con un solo log `info`.
+
+describe('stampe_sezione — l’anno scolastico è quello della sezione', () => {
+  const ANNO_ID = '99999999-8888-4888-8888-999999999999'
+  const RIGA_SEZIONE = { id: SEZIONE, name: 'Coccinelle', school_type: 'infanzia', scuola_id: SEDE }
+
+  async function testoDellaStampa(): Promise<string> {
+    const voce = prestampato('stampe_sezione')
+    if (!voce) throw new Error('il registro non conosce `stampe_sezione`')
+    alunniDiSezione({ id: ALUNNO, cognome: 'Inventato' })
+    const supabase = h.makeClient() as unknown as SupabaseClient
+    const caricata = await caricaSezione(supabase, SEZIONE, letturaPerStampa({ stampa: 'elenco' }))
+    if (caricata.response) throw new Error('la sezione non si è caricata')
+    const contesto = { soggetto: 'sezione' as const, sezione: caricata.sezione }
+    const reso = componiPrestampato(voce, contesto, { stampa: 'elenco' }, { carta: cartaDelContesto(contesto) }, 'Inventata Anna')
+    if (!reso.ok) throw new Error('il foglio non si è composto')
+    return estraiTesto(reso.pdf)
+  }
+
+  const eventiAnno = () =>
+    logSpia.eventi.filter((e) => e[0] === 'anno-scolastico' && (e[2] as { tipo?: string })?.tipo?.startsWith('anno-sezione'))
+
+  beforeEach(() => {
+    logSpia.eventi = []
+  })
+
+  it('stampa l’etichetta dell’anno a cui la sezione appartiene, non quella di oggi', async () => {
+    // 2031/2032 non lo produce nessun orologio: arriva da sections.anno_id → anni_scolastici.
+    h.state.risposte['sections'] = [
+      { data: RIGA_SEZIONE, error: null },
+      { data: { anno_id: ANNO_ID }, error: null },
+    ]
+    h.state.risposte['anni_scolastici'] = [{ data: { etichetta: '2031/2032' }, error: null }]
+
+    const testo = await testoDellaStampa()
+
+    expect(testo).toContain('2031/2032')
+    expect(eventiAnno()).toEqual([])
+    // L'anno si cerca per id, non per «quello corrente».
+    expect(h.state.filtri).toContainEqual({ tabella: 'anni_scolastici', metodo: 'eq', args: ['id', ANNO_ID] })
+  })
+
+  it('con sections.anno_id assente (42703) stampa l’anno del giorno di stampa e scrive UN solo log info', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // 15 agosto 2026: soglia predefinita 1° settembre → 2025/2026 (con la vecchia soglia era 2026/2027).
+      vi.setSystemTime(new Date('2026-08-15T10:00:00.000Z'))
+      h.state.risposte['sections'] = [
+        { data: RIGA_SEZIONE, error: null },
+        { data: null, error: { code: '42703', message: 'column sections.anno_id does not exist' } },
+      ]
+
+      const testo = await testoDellaStampa()
+
+      expect(testo).toContain('2025/2026')
+      expect(testo).not.toContain('2026/2027')
+      const eventi = eventiAnno()
+      expect(eventi).toHaveLength(1)
+      expect(eventi[0][1]).toBe('info')
+      expect(eventi[0][2]).toEqual({ tipo: 'anno-sezione-non-disponibile', scuola_id: SEDE })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('senza sections.anno_id E senza anni_sede (come nel DB della CI): due info in tutto, nessun error, anno predefinito', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-08-15T10:00:00.000Z'))
+      h.state.risposte['sections'] = [
+        { data: RIGA_SEZIONE, error: null },
+        { data: null, error: { code: '42703', message: 'column sections.anno_id does not exist' } },
+      ]
+      h.state.risposte['anni_sede'] = [{ data: null, error: { code: 'PGRST205', message: 'assente' } }]
+
+      const testo = await testoDellaStampa()
+
+      expect(testo).toContain('2025/2026')
+      // Tutto ciò che il modulo dell'anno ha scritto, non solo `anno-sezione*`: UNA riga della
+      // sezione e UNA del calendario, entrambe `info`.
+      const tutti = logSpia.eventi.filter((e) => e[0] === 'anno-scolastico')
+      expect(tutti.map((e) => (e[2] as { tipo?: string }).tipo).sort()).toEqual([
+        'anno-sezione-non-disponibile',
+        'calendario-non-disponibile',
+      ])
+      expect(tutti.every((e) => e[1] === 'info')).toBe(true)
+      expect(tutti.some((e) => e[1] === 'error')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('con anni_scolastici assente (PGRST205) ripiega allo stesso modo, un solo info', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-15T10:00:00.000Z'))
+      h.state.risposte['sections'] = [
+        { data: RIGA_SEZIONE, error: null },
+        { data: { anno_id: ANNO_ID }, error: null },
+      ]
+      h.state.risposte['anni_scolastici'] = [{ data: null, error: { code: 'PGRST205', message: 'assente' } }]
+
+      const testo = await testoDellaStampa()
+
+      expect(testo).toContain('2026/2027')
+      expect(eventiAnno()).toHaveLength(1)
+      expect(eventiAnno()[0][1]).toBe('info')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('un errore diverso dallo schema indietro: stesso ripiego, ma log ERROR con sede e codice (mai nomi)', async () => {
+    h.state.risposte['sections'] = [
+      { data: RIGA_SEZIONE, error: null },
+      { data: null, error: { code: '57014', message: 'timeout su Inventato' } },
+    ]
+
+    await testoDellaStampa()
+
+    const eventi = eventiAnno()
+    expect(eventi).toHaveLength(1)
+    expect(eventi[0][1]).toBe('error')
+    expect(eventi[0][2]).toMatchObject({ tipo: 'anno-sezione-non-letto', scuola_id: SEDE, error_code: '57014' })
+    expect(JSON.stringify(eventi[0][2])).not.toContain('Inventato')
   })
 })

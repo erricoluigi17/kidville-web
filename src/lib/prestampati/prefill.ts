@@ -39,7 +39,7 @@ import type { AppUser } from '@/lib/auth/require-staff'
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { firstEmail } from '@/lib/auth/parent-identity'
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
+import { annoDellaFrequenza } from '@/lib/anno/calendario'
 import { dataCivile } from '@/i18n/config'
 import { eNonPiuIscritto } from '@/lib/alunni/stato'
 import { componiIndirizzoSede, parseAnagraficaSede } from '@/lib/scuole/anagrafica'
@@ -284,11 +284,13 @@ export async function caricaPrefillAlunno(
   const bloccato = alunnoNonStampabile(riga, alunnoId)
   if (bloccato) return { response: bloccato }
 
-  const [sezione, sede, fiscale, famiglia] = await Promise.all([
+  const oggiCivile = dataCivile(opzioni.oggi ?? new Date())
+  const [sezione, sede, fiscale, famiglia, annoFrequenza] = await Promise.all([
     leggiSezione(supabase, riga.section_id),
     leggiSede(supabase, scuolaId),
     leggiFiscale(supabase, scuolaId),
     leggiGenitori(supabase, alunnoId, selfService ? user.id : null),
+    annoDellaFrequenza(supabase, alunnoId, scuolaId, oggiCivile),
   ])
 
   if (selfService && !famiglia.richiedente && famiglia.genitori.length > 1) {
@@ -334,8 +336,8 @@ export async function caricaPrefillAlunno(
     // Giugliano»), che sta già in `datiSede.scuola_nome` due righe più su. La ragione
     // sociale dell'ente gestore è un altro dato e ha un'altra sorgente.
     scuola: componiScuola(anagrafica.piva_cf, fiscale),
-    annoScolastico: annoScolasticoCorrente(opzioni.oggi),
-    dataOggi: dataCivile(opzioni.oggi ?? new Date()),
+    annoScolastico: annoFrequenza.etichetta,
+    dataOggi: oggiCivile,
   }
 
   return {

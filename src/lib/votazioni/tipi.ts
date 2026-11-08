@@ -34,7 +34,10 @@ export type StatoVotazione = 'aperta' | 'chiusa'
 
 /** Il tetto del titolo: lo stesso del `CHECK` su `votazioni.titolo`. */
 export const TITOLO_MAX = 120
-export const TITOLO_PREDEFINITO = 'Elezione dei rappresentanti dei genitori a.s. 2026/27'
+/** Il titolo proposto: l'anno viene dal calendario della sede (`annoDelGiorno(oggi, cal).etichettaBreve`), mai scritto qui. */
+export function titoloPredefinito(etichettaBreve: string): string {
+  return `Elezione dei rappresentanti dei genitori a.s. ${etichettaBreve}`
+}
 
 /** Riga DB di `votazioni`. */
 export interface RigaVotazione {

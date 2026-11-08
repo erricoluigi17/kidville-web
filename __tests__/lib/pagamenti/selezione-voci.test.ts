@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  annoScolasticoDi,
   eMeseDiRetta,
   eVistaPerAlunno,
   etichettaMese,
@@ -25,6 +24,12 @@ describe('periodoDi / mesiAnnoScolastico', () => {
     expect(periodoDi(2026, 12)).toBe('2026-12-01');
     expect(periodoDi(2026, 1)).toBe('2027-01-01');
     expect(periodoDi(2026, 8)).toBe('2027-08-01');
+  });
+
+  it('un mese fuori da 1..12 è un errore di programma (RangeError), non un periodo inventato', () => {
+    expect(() => periodoDi(2026, 13)).toThrow(RangeError);
+    expect(() => periodoDi(2026, 0)).toThrow(RangeError);
+    expect(() => periodoDi(2026, 9.5)).toThrow(RangeError);
   });
 
   it('i 12 mesi vanno da settembre ad agosto', () => {
@@ -52,12 +57,8 @@ describe('meseDellaVoce', () => {
   });
 });
 
-describe('annoScolasticoDi / meseDi', () => {
-  it('agosto appartiene all\'anno scolastico precedente, settembre al nuovo', () => {
-    expect(annoScolasticoDi('2026-08-03')).toBe(2025);
-    expect(annoScolasticoDi('2026-09-01')).toBe(2026);
-    expect(annoScolasticoDi('2027-01-15')).toBe(2026);
-  });
+describe('meseDi', () => {
+  // 4.1.S4a: `annoScolasticoDi` non c'è più, l'anno di oggi lo dà il calendario della sede (`useAnnoDi`).
   it('meseDi restituisce 1..12', () => {
     expect(meseDi('2026-10-07')).toBe(10);
     expect(meseDi('2026-01-07')).toBe(1);

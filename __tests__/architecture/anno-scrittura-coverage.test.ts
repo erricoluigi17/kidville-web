@@ -456,9 +456,49 @@ function violazioniDoppiaScrittura(
 
 // ───────────────────────── sezione 5: l'anno calcolato a mano ─────────────────────────
 
-type ModelloAnno = 'annoScolasticoCorrente(' | '-08-01' | '-07-31' | 'getMonth()'
+type ModelloAnno =
+  | 'annoScolasticoCorrente('
+  | '-08-01'
+  | '-07-31'
+  | '-09-01'
+  | '-08-31'
+  | 'getMonth()'
+  | 'getUTCMonth()'
+  | 'mese >= soglia'
+  | 'annoScolasticoDelGiorno'
+  | 'annoScolasticoDiData'
+  | 'periodoDaSettembre'
+  | 'annoScolasticoAmbiguo'
+  | 'MESE_INIZIO_ANNO_SCOLASTICO'
+  | 'MESE_RIPIEGO_AMBIGUO'
 
-const FUORI_DAL_MODULO_ANNO = (p: string) => !p.startsWith('src/lib/anno/') && p !== 'src/lib/auth/scope.ts'
+// I nomi delle vecchie regole d'anno: chi le nomina (le chiama, le importa, le definisce)
+// ha ancora una regola d'anno sua. Si cercano nel testo `struttura`, come identificatore intero.
+const NOMI_VECCHI_ANNO = [
+  'annoScolasticoDelGiorno',
+  'annoScolasticoDiData',
+  'periodoDaSettembre',
+  // Tolti dal codice dal compito 4.1.S3 e rimessi qui dal 4.1.S4b: il modello del mese non li prende (non sono
+  // confronti con 7/8/9), quindi se tornano li ferma solo il nome. Il campione fisso lo prova.
+  'annoScolasticoAmbiguo',
+  'MESE_INIZIO_ANNO_SCOLASTICO',
+  'MESE_RIPIEGO_AMBIGUO',
+] as const
+// `periodoDaSettembre` è la scorciatoia «da settembre» delle statistiche CRM: la regola sta nel file che la DEFINISCE
+// (crm/statistiche.ts, censimento R10); chi si limita a chiamarla (StatisticheCrm.tsx, un pulsante) non ha soglie
+// sue, e il censimento non lo conta. Per questo nome si cerca solo la definizione.
+const SOLO_DEFINIZIONE = new Set<string>(['periodoDaSettembre'])
+// Un mese (identificatore intero, non una proprietà `x.m`) confrontato con la soglia 7/8/9 da >=, >, <, <=.
+// Il mese può anche essere il risultato di una CHIAMATA a una funzione il cui nome contiene mese/Mese/month/Month
+// (`meseDi(oggi) >= 9`, `meseCivile(x) < 8`; un solo livello di parentesi annidate negli argomenti).
+// L'uguaglianza (`=== mese`) non conta: mostrare o filtrare un mese non è un calcolo d'anno.
+const RE_MESE_SOGLIA =
+  /(?<![\w$.])(?:mese|meseOggi|month|m|[\w$]*(?:[mM]ese|[mM]onth)[\w$]*\s*\((?:[^()]|\([^()]*\))*\))\s*(?:>=|<=|>|<)\s*[789]\b/
+
+// Il «modulo dell'anno» sono `src/lib/anno/`, `src/lib/auth/scope.ts` e (dal compito 4.1.1) `src/lib/anno-scolastico.ts`:
+// quest'ultimo è il posto dove le soglie vivono, quindi lì i letterali sono la definizione, non un calcolo a mano.
+const FUORI_DAL_MODULO_ANNO = (p: string) =>
+  !p.startsWith('src/lib/anno/') && p !== 'src/lib/auth/scope.ts' && p !== 'src/lib/anno-scolastico.ts'
 
 /**
  * I modelli di calcolo dell'anno presenti nel file. Le chiamate si cercano nel testo `struttura`; i letterali
@@ -470,7 +510,13 @@ function modelliAnnoNelFile(a: Analisi): ModelloAnno[] {
   const out: ModelloAnno[] = []
   if (/\bannoScolasticoCorrente\s*\(/.test(a.m.struttura)) out.push('annoScolasticoCorrente(')
   if (/\.getMonth\s*\(\s*\)\s*(?:\+\s*1\s*)?(?:>=|<=|>|<|===|!==)\s*[789]\b/.test(a.m.struttura)) out.push('getMonth()')
-  for (const lett of ['-08-01', '-07-31'] as const) {
+  if (/\.getUTCMonth\s*\(\s*\)\s*(?:\+\s*1\s*)?(?:>=|<=|>|<|===|!==)\s*[789]\b/.test(a.m.struttura)) out.push('getUTCMonth()')
+  if (RE_MESE_SOGLIA.test(a.m.struttura)) out.push('mese >= soglia')
+  for (const nome of NOMI_VECCHI_ANNO) {
+    const prefisso = SOLO_DEFINIZIONE.has(nome) ? '\\b(?:function|const|let)\\s+' : '(?<![\\w$])'
+    if (new RegExp(`${prefisso}${nome}(?![\\w$])`).test(a.m.struttura)) out.push(nome)
+  }
+  for (const lett of ['-08-01', '-07-31', '-09-01', '-08-31'] as const) {
     let da = 0
     for (;;) {
       const i = a.m.senzaCommenti.indexOf(lett, da)
@@ -483,64 +529,31 @@ function modelliAnnoNelFile(a: Analisi): ModelloAnno[] {
 }
 
 /**
- * I file che oggi calcolano l'anno a mano, ognuno col suo motivo. Li toglie TUTTI la PR 4.1 (il modulo dell'anno
- * diventa l'unico a decidere l'anno di un giorno). Il lock fallisce se un file NUOVO compare qui fuori, se un file
- * dell'elenco non contiene più un suo modello (niente eccezioni morte), e se l'elenco CRESCE.
+ * I file che oggi calcolano l'anno a mano, ognuno col suo motivo. È VUOTO dalla fine della PR 4.1 (compito 4.1.S4b): il
+ * modulo dell'anno è l'unico a decidere l'anno di un giorno. Il lock fallisce se un file NUOVO compare fuori dal modulo
+ * con una soglia, se una voce dell'elenco non contiene più un suo modello (niente eccezioni morte: la struttura resta per
+ * la prossima voce), e se l'elenco CRESCE oltre il tetto.
  */
-const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: string }[] = [
-  {
-    file: 'src/lib/anno-scolastico.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'è la DEFINIZIONE di annoScolasticoCorrente (confine al 1° agosto, fuso di Roma) che tutti i file sotto chiamano; la PR 4.1 la sostituisce col modulo anno e la toglie',
-  },
-  {
-    file: 'src/lib/crm/quota-anno.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno di apertura della quota CRM viene da annoScolasticoCorrente(adesso); la PR 4.1 lo legge dall’anno `corrente` della sede, e lo toglie',
-  },
-  {
-    file: 'src/lib/prestampati/prefill.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno scolastico che precompila il modulo viene da annoScolasticoCorrente(oggi); la PR 4.1 gli passa l’anno della sede, e lo toglie',
-  },
-  {
-    file: 'src/app/api/prestampati/banco.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'annoScolastico del banco dei prestampati = annoScolasticoCorrente(); la PR 4.1 lo risolve per sede, e lo toglie',
-  },
-  {
-    file: 'src/app/api/parent/prestampati/banco-famiglia.ts',
-    modelli: ['-07-31'],
-    motivo: 'la fine dell’anno scolastico del modulo famiglia è `${fine}-07-31`, scritta a mano; la PR 4.1 la prende da anni_scolastici.fine, e la toglie',
-  },
-  {
-    file: 'src/app/api/admin/protocolli/genera-documento/route.ts',
-    modelli: ['annoScolasticoCorrente('],
-    motivo: 'l’anno del protocollo generato è annoScolasticoCorrente(); la PR 4.1 usa l’anno della sede del documento, e lo toglie',
-  },
-  {
-    file: 'src/app/(dashboard)/teacher/primaria/[sectionId]/compiti/page.tsx',
-    modelli: ['annoScolasticoCorrente(', '-08-01'],
-    motivo: 'il filtro «compiti di quest’anno» parte da `${anno}-08-01`; la PR 4.1 lo legge dall’inizio dell’anno della classe, e lo toglie',
-  },
-  {
-    file: 'src/components/features/parent/LezioniCompitiSections.tsx',
-    modelli: ['annoScolasticoCorrente(', '-08-01'],
-    motivo: 'il filtro «lezioni e compiti dell’anno in corso» parte da `${anno}-08-01`; la PR 4.1 lo legge dall’anno del figlio, e lo toglie',
-  },
-  {
-    file: 'src/components/features/admin/pagamenti/GeneratoreRette.tsx',
-    modelli: ['annoScolasticoCorrente(', 'getMonth()'],
-    motivo: 'ha una SUA annoScolasticoCorrente() locale (getMonth()+1 >= 9, confine al 1° settembre, nel fuso del browser): diverge dalla regola del server. La PR 4.1 la sostituisce con l’anno della sede, e la toglie',
-  },
-  {
-    file: 'src/components/features/admin/primaria/ScrutinioPeriodiManager.tsx',
-    modelli: ['getMonth()'],
-    motivo: 'l’anno proposto per i periodi di scrutinio è `getMonth() >= 8 ? y : y - 1` (fuso del browser); la PR 4.1 lo prende dall’anno corrente della sede, e lo toglie',
-  },
-]
-/** Il tetto è il numero di file di oggi (10, 2026-11-07) e può solo SCENDERE. */
-const TETTO_ANNO_A_MANO = 10
+const ANNO_A_MANO_DI_OGGI: { file: string; modelli: ModelloAnno[]; motivo: string }[] = []
+/**
+ * Il tetto è il numero di file dell'elenco e può solo SCENDERE. Storia (tutte le date sono 2026):
+ *   10  misurato il 07/11.
+ *    9  08/11, PR 4.1 compito 4.1.1: `src/lib/anno-scolastico.ts` è diventato il modulo dell'anno ed è esente (lì le
+ *       soglie sono la definizione); non era un file che calcola a mano.
+ *   17  08/11, compito 4.1.L: SALE, perché il lock ora vede anche le soglie al 1° settembre, che la PR 3 non vedeva; i
+ *       file sono quelli del censimento della PR 4.1. Da qui ogni compito di sostituzione lo abbassa, l'ultimo lo porta a 0.
+ *   13  08/11, compito 4.1.S1 (−4): prestampati e documenti sul modulo dell'anno (prefill.ts, banco.ts, banco-famiglia.ts,
+ *       genera-documento/route.ts).
+ *   10  08/11, compito 4.1.S2 (−3): primaria e CRM sul modulo dell'anno (quota-anno.ts, periodo.ts, quota.ts).
+ *    8  08/11, compito 4.1.S3 (−2): fatturazione sul modulo dell'anno (sezionale.ts, emissione.ts);
+ *       `annoScolasticoDiCompetenza` resta come funzione ma delega a `annoDelGiorno`.
+ *    6  08/11, compito 4.1.S4a (−2): contabilità e rette (GeneratoreRette.tsx, selezione-voci.ts); l'anno di oggi lo
+ *       dà `useAnnoDi`, i mesi `mesiDelAnno`.
+ *    0  08/11, compito 4.1.S4b (−6): scrutinio, storici, statistiche CRM, appello e compiti sul modulo dell'anno;
+ *       `annoScolasticoCorrente` tolta.
+ * 0: nessuna soglia d'anno scritta a mano in `src/`, PR 4.1, compito 4.1.S4b.
+ */
+const TETTO_ANNO_A_MANO = 0
 
 function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tetto = TETTO_ANNO_A_MANO): string[] {
   const out: string[] = []
@@ -553,7 +566,7 @@ function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tet
   }
   for (const [file, mod] of trovati) {
     const e = perFile.get(file)
-    if (!e) { out.push(`${file} — calcola l'anno a mano (${mod.join(', ')}) fuori da src/lib/anno/ e da src/lib/auth/scope.ts: usa il modulo dell'anno`); continue }
+    if (!e) { out.push(`${file} — calcola l'anno a mano (${mod.join(', ')}) fuori da src/lib/anno/, src/lib/auth/scope.ts e src/lib/anno-scolastico.ts: usa il modulo dell'anno`); continue }
     const nuovi = mod.filter((m) => !e.modelli.includes(m))
     if (nuovi.length > 0) out.push(`${file} — nuovo modello di calcolo a mano: ${nuovi.join(', ')}`)
   }
@@ -1090,19 +1103,66 @@ describe('anno-scrittura-coverage — 4. la doppia scrittura alunni → frequenz
 })
 
 describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => {
-  it('fuori da src/lib/anno/ e src/lib/auth/scope.ts nessun annoScolasticoCorrente(, -08-01, -07-31, getMonth() dell’anno, se non nell’elenco di oggi', () => {
+  it('fuori da src/lib/anno/, src/lib/auth/scope.ts e src/lib/anno-scolastico.ts nessuna soglia d’anno scolastico scritta a mano', () => {
     const v = violazioniAnnoAMano(ANALISI)
     expect(
       v,
       `Calcolo dell'anno a mano fuori dal modulo dell'anno (${v.length}). Usa annoDellaData / resolveAnnoScrittura. ` +
-        `L'elenco ANNO_A_MANO_DI_OGGI può solo scendere (tetto ${TETTO_ANNO_A_MANO}, la PR 4.1 lo svuota).` +
+        `L'elenco ANNO_A_MANO_DI_OGGI può solo scendere (tetto ${TETTO_ANNO_A_MANO}: la PR 4.1 l’ha svuotato).` +
         elenco(v),
     ).toEqual([])
   })
 
+  it('esamina tutto src/ (almeno 1.500 file .ts/.tsx: oggi sono ~1.680) e non è cieco', () => {
+    expect(ANALISI.length, `Il lock dell'anno a mano ha esaminato ${ANALISI.length} file di src/: ne servono almeno 1500`).toBeGreaterThanOrEqual(1500)
+    // lo stesso insieme di file del minimo `fileLetti` della sezione 7
+    expect(ANALISI.length).toBe(misura(ANALISI, COLONNE_COPIATE, FIXTURE_FUNZIONI.funzioni).fileLetti)
+  })
+
+  it('campione fisso: ogni positivo è riconosciuto COL SUO modello, i sosia no', () => {
+    const modelli = (codice: string) => modelliAnnoNelFile(finto('src/lib/x/campione.ts', codice))
+    // Ogni positivo asserisce il modello atteso, non solo «qualcosa»: un lock che trova il frammento per la
+    // ragione sbagliata è un lock che si rompe in silenzio alla prossima modifica del regex.
+    const positivi: [string, ModelloAnno][] = [
+      // i 6 obbligatori
+      ['function f() { return `${fine}-07-31` }', '-07-31'],
+      ['const q = { from: `${anno}-09-01` }', '-09-01'],
+      ['function g(mese, anno) { return mese >= 9 ? anno : anno + 1 }', 'mese >= soglia'],
+      ['const start = d.getMonth() >= 8 ? y : y - 1', 'getMonth()'],
+      ['const ok = n.getMonth() + 1 >= 9', 'getMonth()'],
+      ['const a = annoScolasticoDelGiorno(giorno)', 'annoScolasticoDelGiorno'],
+      // 4.1.S4b: il mese UTC, il mese dato da una chiamata, e i nomi che il compito 4.1.S3 aveva tolto dall'elenco
+      ['const ok = d.getUTCMonth() + 1 >= 9', 'getUTCMonth()'],
+      ['const ok = meseDi(oggi) >= 9', 'mese >= soglia'],
+      ['if (meseCivile(x) < 8) return y - 1', 'mese >= soglia'],
+      ['const MESE_INIZIO_ANNO_SCOLASTICO = 9', 'MESE_INIZIO_ANNO_SCOLASTICO'],
+      ['const a = mese >= MESE_INIZIO_ANNO_SCOLASTICO ? anno : anno - 1', 'MESE_INIZIO_ANNO_SCOLASTICO'],
+      ['const r = MESE_RIPIEGO_AMBIGUO - 1', 'MESE_RIPIEGO_AMBIGUO'],
+      ['if (annoScolasticoAmbiguo(giorno)) return null', 'annoScolasticoAmbiguo'],
+      ['const a = annoScolasticoCorrente(new Date())', 'annoScolasticoCorrente('],
+    ]
+    const negativi = [
+      'const ok = d.getMonth() + 1 === mese',
+      "const CONSENSI_VERSIONE = '2026-07-31'",
+      '// il 1° settembre: ${anno}-09-01\nconst a = 1',
+      'for (let m = 1; m <= 12; m++) { somma += m }',
+      'const etichetta = `${a}/${a + 1}`',
+      'const mm = meseCivile(istante).slice(5, 7)',
+      // 4.1.S4b: una proprietà (`x.m`) non è un mese isolato, l'uguaglianza non è una soglia, e una chiamata a
+      // una funzione che solo si chiama come una vecchia scorciatoia non ne è la definizione
+      'const ok = x.m >= 8',
+      'if (mese === 9) mostra()',
+      'const p = periodoDaSettembre(adesso)',
+    ]
+    for (const [c, atteso] of positivi) expect(modelli(c), c).toContain(atteso)
+    for (const c of negativi) expect(modelli(c), c).toEqual([])
+    // e la DEFINIZIONE di una scorciatoia con il nome vecchio è un positivo (solo la definizione conta)
+    expect(modelli('export function periodoDaSettembre(adesso) { return adesso }')).toContain('periodoDaSettembre')
+  })
+
   it('il tetto è il numero di oggi e ogni voce dice quale PR la toglie', () => {
     expect(ANNO_A_MANO_DI_OGGI.length).toBeLessThanOrEqual(TETTO_ANNO_A_MANO)
-    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(10) // misurato il 2026-11-07: 10 file; scende, non sale
+    expect(TETTO_ANNO_A_MANO).toBeLessThanOrEqual(0) // 17 → 13 → 10 → 8 → 6 → 0 (storia sopra TETTO_ANNO_A_MANO); non sale più
     expect(ANNO_A_MANO_DI_OGGI.every((e) => /PR 4\.1/.test(e.motivo))).toBe(true)
   })
 })

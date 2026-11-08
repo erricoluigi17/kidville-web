@@ -870,5 +870,7 @@
   "staffDocDatiNumeroObbligatorio": "Enter the document number, or leave the existing one.",
   "staffDocDatiErrore": "We could not save the document details. Please try again in a moment.",
   "scadRinnova": "Renew",
-  "scadRinnovaDi": "Renew the document of {nome}"
+  "scadRinnovaDi": "Renew the document of {nome}",
+  "dataIscrizioneAnno": "School year {anno}",
+  "dataIscrizioneFuoriAnno": "The date does not fall in any school year of this location"
 }

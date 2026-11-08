@@ -278,6 +278,44 @@ describe('PUT …/quota · segnare la quota', () => {
     expect(h.chiamateRpc).toHaveLength(0)
   })
 
+  it('il 20 agosto, con lo schema dell’anno assente, «in corso» è ancora il 2025 (luglio e agosto chiudono l’anno); «prossimo» il 2026', async () => {
+    // Prima (soglia al 1° agosto) il 20 agosto «in corso» era il 2026.
+    vi.setSystemTime(new Date('2026-08-20T10:00:00.000Z'))
+    h.db.anni_sede = []
+    h.errori = { anni_sede: { code: 'PGRST205', message: 'assente' } }
+    segnaOk()
+    await put(corpoValido({ metodo: 'bonifico' }), B_IN_CORSO)
+    await put(corpoValido({ metodo: 'bonifico' }), B_LIBERO)
+    expect(chiamate('crm_quota_segna').map((c) => c.args.p_anno)).toEqual([2025, 2026])
+  })
+
+  it('il 20 agosto, con il calendario della sede che apre il 2026/27 il 17 agosto, «in corso» è il 2026', async () => {
+    vi.setSystemTime(new Date('2026-08-20T10:00:00.000Z'))
+    const riga = (id: string, annoInizio: number, inizio: string, fine: string) => ({
+      id,
+      scuola_id: SEDE_A,
+      anno_id: `anno-${annoInizio}`,
+      inizio,
+      fine,
+      ultimo_giorno_aperto: fine,
+      prepara_successivo_dal: inizio,
+      stato: 'corrente',
+      domande_aperte: false,
+    })
+    h.db.anni_sede = [
+      riga('as-2025', 2025, '2025-09-01', '2026-08-16'),
+      riga('as-2026', 2026, '2026-08-17', '2027-08-31'),
+    ]
+    h.db.anni_scolastici = [
+      { id: 'anno-2025', anno_inizio: 2025 },
+      { id: 'anno-2026', anno_inizio: 2026 },
+    ]
+    segnaOk()
+    await put(corpoValido({ metodo: 'bonifico' }), B_IN_CORSO)
+    await put(corpoValido({ metodo: 'bonifico' }), B_LIBERO)
+    expect(chiamate('crm_quota_segna').map((c) => c.args.p_anno)).toEqual([2026, 2027])
+  })
+
   it('alle 23:30 UTC del 31/10 accetta il giorno 2026-11-01 (a Roma è già oggi) e rifiuta il 2', async () => {
     vi.setSystemTime(new Date('2026-10-31T23:30:00.000Z'))
     segnaOk()

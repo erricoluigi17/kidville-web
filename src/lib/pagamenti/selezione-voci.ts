@@ -11,6 +11,7 @@
  *  - le voci `tipo === 'padre'` NON si escludono qui (lo fa `calcolaTotaliPagamenti`).
  */
 import { intlDateTime } from '@/i18n/config';
+import { mesiDelAnno } from '@/lib/anno-scolastico';
 
 export interface SelezioneVoci {
   categorie: string[];
@@ -25,16 +26,25 @@ export interface VoceDatata {
   scadenza?: string | null;
 }
 
-const dueCifre = (n: number) => String(n).padStart(2, '0');
+/** I 12 primi del mese dell'anno scolastico `anno`, settembre → agosto: le posizioni, non i giorni (4.1.S4a). */
+const dodiciMesi = (anno: number) => mesiDelAnno(anno, { da: 9, a: 8 });
 
-/** 'YYYY-MM-01' del mese dell'anno scolastico `anno`: set-dic nell'anno, gen-ago nel successivo. */
+/**
+ * 'YYYY-MM-01' del mese di calendario `mese` (1..12) dell'anno scolastico `anno`: la risposta la dà il
+ * modulo dell'anno (`mesiDelAnno`), qui non c'è nessuna soglia. Un `mese` fuori da 1..12 è un `RangeError`.
+ */
 export function periodoDi(anno: number, mese: number): string {
-  return `${mese >= 9 ? anno : anno + 1}-${dueCifre(mese)}-01`;
+  if (!Number.isInteger(mese) || mese < 1 || mese > 12) {
+    throw new RangeError('mese non valido: atteso un intero da 1 a 12');
+  }
+  const trovato = dodiciMesi(anno).find((p) => Number(p.slice(5, 7)) === mese);
+  if (!trovato) throw new RangeError('mese non valido: atteso un intero da 1 a 12');
+  return trovato;
 }
 
 /** I 12 mesi dell'anno scolastico, da settembre ad agosto. */
 export function mesiAnnoScolastico(anno: number): { mese: number; periodo: string }[] {
-  return [9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8].map((mese) => ({ mese, periodo: periodoDi(anno, mese) }));
+  return dodiciMesi(anno).map((periodo) => ({ mese: Number(periodo.slice(5, 7)), periodo }));
 }
 
 const SOLO_ANNO_MESE = /^\d{4}-\d{2}/;
@@ -47,17 +57,7 @@ export function meseDellaVoce(v: VoceDatata): string | null {
   return null;
 }
 
-/**
- * Anno scolastico (anno d'inizio) a cui appartiene la data 'YYYY-MM-DD'.
- * Si passa la data civile italiana di `dataCivile()` (`@/i18n/config`), non
- * `toISOString()`: dopo le 22:00 UTC d'estate le due differiscono di un giorno.
- */
-export function annoScolasticoDi(oggi: string): number {
-  const anno = Number(oggi.slice(0, 4));
-  return meseDi(oggi) >= 9 ? anno : anno - 1;
-}
-
-/** Mese di calendario 1..12 della data civile 'YYYY-MM-DD' (vedi `annoScolasticoDi`). */
+/** Mese di calendario 1..12 della data civile 'YYYY-MM-DD'. */
 export function meseDi(oggi: string): number {
   return Number(oggi.slice(5, 7));
 }

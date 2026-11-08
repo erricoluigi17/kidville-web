@@ -331,6 +331,12 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/context/admin-identity.tsx',
         'BROWSER: contesto React su `/api/primaria/me`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/context/calendario-context.tsx',
+        'BROWSER: contesto React su `/api/anno/calendario`, una nostra route. Stessa forma, stesso '
+        + 'motivo del gemello `sede-context.tsx`: il tetto sta nella route, non nel chiamante. '
+        + 'Il guasto non passa in silenzio: il ramo non-`ok` e il rigetto sono loggati con '
+        + '`logClient` (una volta) e `errore` è distinto dal calendario vuoto; nel frattempo vale '
+        + 'il predefinito.'],
     ['src/lib/context/sede-context.tsx',
         'BROWSER: contesto React su `/api/admin/sedi`, una nostra route. Stessa forma, stesso '
         + 'motivo del gemello `admin-identity.tsx`: il tetto sta nella route, non nel chiamante. '

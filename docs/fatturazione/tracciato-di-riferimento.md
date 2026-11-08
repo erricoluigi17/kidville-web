@@ -151,19 +151,17 @@ dell'anno scolastico → `FPR`, se li compie dopo → `Asilo`. Il 30 aprile esat
 Deciso una volta per anno scolastico, così non cambia a metà anno.
 
 **Quale anno scolastico, esattamente.** «L'anno scolastico» qui sopra non è un modo di dire: è una
-data di confine, e per un documento irreversibile va scritta. **Ai fini della fatturazione l'anno
-scolastico comincia il 1° SETTEMBRE**: un documento datato 31 agosto 2026 appartiene al 2025/2026,
-uno datato 1° settembre 2026 al 2026/2027 (`annoScolasticoDi` in `sezionale.ts`).
+data di confine, e per un documento irreversibile va scritta. Dalla PR 4.1 dell'anno scolastico il
+confine è **uno solo per tutto il prodotto**, fatturazione compresa: quello del **calendario della
+sede** (`anni_sede`) e, dove la sede non ne ha uno (o il database non è ancora migrato, come quello
+della CI), il predefinito del **1° SETTEMBRE**. Un documento datato 31 agosto 2026 appartiene al
+2025/2026, uno datato 1° settembre 2026 al 2026/2027 (`annoDelGiorno` in `src/lib/anno-scolastico.ts`).
 
-⚠️ **È un confine DIVERSO da quello del resto del prodotto, ed è voluto.**
-`annoScolasticoCorrente()` in `src/lib/anno-scolastico.ts` fa partire l'anno dal **1° agosto**, e ha
-ragione a farlo: risponde a *in quale anno sta operando la scuola oggi*, e ad agosto la scuola sta
-già iscrivendo per settembre. Qui la domanda è un'altra — *a quale anno appartiene il documento che
-sto emettendo* — e una fattura emessa ad agosto salda quasi sempre arretrati dell'anno che si è
-appena chiuso, perché dell'anno nuovo non c'è ancora stato un giorno di scuola da fatturare.
-
-Il prezzo di questa divergenza si paga in **agosto**, l'unico mese in cui le due regole rispondono
-anni diversi, e si paga solo quando `periodo_competenza` manca. Vedi il punto 2.
+Fino a quella PR non era così: la fatturazione usava il 1° settembre (`annoScolasticoDi`, tolta). Il
+1° agosto valeva per `annoScolasticoCorrente` e le sue due copie (anche quelle tolte), mentre storici,
+rette, appello e statistiche contavano già dal 1° settembre. Ad agosto il ripiego sulla data del
+documento era «ambiguo» e fermava l'emissione. **Quella divergenza non esiste più**: agosto appartiene
+sempre all'anno che si chiude, per tutti, e la serie si decide.
 
 Le due cose che restano da dire, perché sono quelle che si sbagliano:
 
@@ -190,8 +188,9 @@ descrizione della riga qui sotto. Se mancano entrambi, non si emette.
 
 **Un campo che si legge benissimo può comunque descrivere un'altra persona**: il caso vero è il
 codice fiscale del *genitore* incollato nel campo del bambino (`…85T10…`: forma perfetta, dice
-1985). Una data che un alunno non può avere — fuori dalla finestra *dal 1° settembre di diciotto
-anni prima al 31 agosto di chiusura dell'anno scolastico* — **non è una fonte**: l'emissione scrive
+1985). Una data che un alunno non può avere — fuori dalla finestra *dal primo giorno di diciotto
+anni prima (`inizioAnno`) all'ultimo giorno dell'anno scolastico che si fattura (`fineAnno`)*, cioè col
+calendario predefinito dal 1° settembre al 31 agosto — **non è una fonte**: l'emissione scrive
 `esito = 'anagrafica-minore-implausibile'` a livello `error` e, se è l'unica fonte rimasta, non
 emette. Il secolo del codice fiscale (`26` = 1926 o 2026?) si scioglie contro **la fine dell'anno
 scolastico che si sta fatturando**, non contro l'orologio: altrimenti la stessa fattura, rifatta
@@ -199,23 +198,29 @@ dopo uno scarto SDI, cambierebbe serie da sola.
 
 Implementazione: `src/lib/fatturazione/sezionale.ts` → `sezionalePerMinore`.
 
-**2. L'anno scolastico è quello del PERIODO CHE SI FATTURA**, non del giorno in cui si emette
-(`pagamenti.periodo_competenza`). Una retta di maggio 2026 fatturata a settembre 2026 appartiene al
-2025/2026: valutata sull'anno di emissione, il confine dei tre anni si sposta di dodici mesi e lo
-stesso bambino esce sulla serie sbagliata. Quando `periodo_competenza` manca — **71 pagamenti su 98
-al 2026-08-10** — si ripiega sulla data del documento e si scrive una riga `warn`
-(`esito = 'anno-scolastico-da-data-documento'`). Implementazione: `annoScolasticoDiCompetenza`.
+**2. L'anno scolastico è quello della VOCE che si fattura**, non del giorno in cui si emette. Una retta
+di maggio 2026 fatturata a settembre 2026 appartiene al 2025/2026: valutata sull'anno di emissione, il
+confine dei tre anni si sposta di dodici mesi e lo stesso bambino esce sulla serie sbagliata. L'ordine
+con cui `emettiFatturaPagamento` (`src/lib/aruba/emissione.ts`, passo 3) sceglie l'anno è questo:
 
-⚠️ **In agosto quel ripiego non decide da solo.** Agosto è l'unico mese in cui il confine di
-fatturazione (1° settembre) e quello del resto del prodotto (1° agosto) rispondono anni diversi:
-lo stesso pagamento senza `periodo_competenza`, emesso il 31 agosto o il 1° settembre, uscirebbe su
-serie diverse per la coorte a cavallo del 30 aprile — un numero già consumato sul sezionale
-sbagliato, che si rimedia solo con una nota di variazione. Perciò in agosto l'esito porta
-`ambiguo: true` e l'emissione **si ferma**, con `motivo = 'periodo_competenza_mancante'` e
-`esito = 'anno-scolastico-ambiguo'` nel log, **solo per i bambini in cui i due anni candidati danno
-serie diverse**. Per tutti gli altri la fattura parte come sempre: si blocca dove la differenza
-esiste, non l'intero mese. Si sblocca compilando «periodo di competenza» sul pagamento — che è dove
-sta il dato mancante, non nell'anagrafica del bambino.
+1. **l'anno della voce** (`pagamenti.anno_id`, assegnato dal database dalla competenza, altrimenti dalla
+   scadenza, altrimenti dalla creazione), tradotto in anno d'apertura attraverso il calendario della sede;
+2. se la voce non ha `anno_id`, o il calendario non lo conosce, o lo schema è indietro: il **periodo di
+   competenza** (`pagamenti.periodo_competenza`, dal giorno 1 del mese) letto con la regola unica del
+   calendario (`annoScolasticoDiCompetenza`);
+3. se manca anche quello — **71 pagamenti su 98 al 2026-08-10** —: il **giorno del documento** (giorno
+   fiscale di Roma), con la stessa regola. Solo in questo caso l'emissione scrive una riga `warn`
+   (`esito = 'anno-scolastico-da-data-documento'`).
+
+**Agosto non ferma più l'emissione.** Il motivo `periodo_competenza_mancante` e l'esito
+`anno-scolastico-ambiguo` sono stati tolti dal compito 4.1.S3: con una regola sola non c'è più un
+anno «candidato» da scegliere fra due. Sul database della CI, dove `pagamenti.anno_id` non c'è
+(errore `42703`), la lettura della voce si rifà senza la colonna e si scrive un `info`
+(`esito = 'anno-della-voce-non-disponibile'`); poiché lì manca anche il calendario (`PGRST205`), se ne
+aggiunge un secondo (`calendario-non-disponibile`), e se la voce non ha la competenza anche il `warn`
+`anno-scolastico-da-data-documento`. In tutto due `info` e nessuna riga `error`: la fattura parte come prima.
+
+Per i test: `__tests__/lib/aruba/emissione-anno-della-voce.test.ts`, `__tests__/lib/fatturazione/`.
 
 ## La descrizione della riga
 

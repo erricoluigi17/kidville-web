@@ -9,6 +9,7 @@ import { ColonnaContenuto } from '@/components/features/shell/ColonnaContenuto';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
+import { CalendarioProvider } from '@/lib/context/calendario-context';
 
 export default async function ParentLayout({ children }: { children: React.ReactNode }) {
   // Il primo elemento di ogni schermata dell'area riservata — quello che
@@ -22,63 +23,65 @@ export default async function ParentLayout({ children }: { children: React.React
   return (
     // `data-kv-guscio-tablet`: da 744 px la barra in basso lascia il posto a un binario a
     // sinistra, e `--kv-rail-w` (globals.css) dice al contenuto quanto spazio lasciargli.
-    <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
-      {/* `focus:text-kidville-yellow-ink` e non `focus:text-kidville-yellow`:
-          giallo di brand su verde di brand vale 4,05:1 e la soglia per un testo
-          16px/400 è 4,5:1. La rete di `globals.css` che rimappa quella coppia
-          NON arriva qui: Tailwind genera per le varianti classi con nome diverso
-          (`.focus\:text-kidville-yellow`) e il selettore cerca la coppia scritta
-          nuda. È lo stesso modo in cui `text-kidville-ink/70` era sfuggito alla
-          sidebar desktop. `yellow-ink` (#FFDA5C) su #006A5F = 4,78:1.
-          Lock: `__tests__/a11y/contrasto-skip-link-e-selettore-figlio.test.tsx`. */}
-      <a
-        href="#content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
-      >
-        {tNav('saltaAlContenuto')}
-      </a>
-      {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
-      <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
-        <AppBar area="parent" />
-      </Suspense>
-      {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
-      <Suspense fallback={null}>
-        <NativePushAutoRegister />
-      </Suspense>
-      {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
-      <AvvisiSettimanaliApp />
-      {/* Con la tastiera aperta, Chromium allinea il campo a fuoco a `top: 0` —
-          cioè sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` che
-          globals.css dichiara. Misurato sull'emulatore: 82 px su 112 (73%) del
-          campo «Motivo» coperti, e il testo digitato invisibile. */}
-      <CampoNonCoperto />
-      {/* La colonna: 430 px sul telefono, 720 da tablet (larga per le rotte dichiarate in
-          `larghezza-pagina.ts`). Il margine sinistro lascia il posto al binario. */}
-      <div className="pl-[var(--kv-rail-w)]">
-        <ColonnaContenuto>
-          {/* Selettore figlio (per genitori con più figli). Usa useSearchParams → Suspense. */}
-          <Suspense fallback={null}>
-            <ChildSwitcher />
-          </Suspense>
-          {/* `tabIndex={-1}`: senza, lo skip link porta l'hash a `#content` ma
-              lascia `document.activeElement` su `<body>`. In Chrome funziona
-              lo stesso perché il browser sposta il punto di ripartenza della
-              navigazione sequenziale, ma il comportamento non è uniforme fra
-              browser e tecnologie assistive, e uno screen reader non annuncia
-              la destinazione. Raggiungibile dal codice, mai dal Tab. */}
-          <main id="content" tabIndex={-1} className="outline-none">
-            {/* Un account senza nessun bambino collegato non vede il vuoto né uno
-                spinner senza fine: vede una frase che dice cosa fare. Rende i figli
-                come sempre finché il server non lo dichiara. */}
-            <GuardiaSenzaFigli>{children}</GuardiaSenzaFigli>
-          </main>
-        </ColonnaContenuto>
+    <CalendarioProvider>
+      <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
+        {/* `focus:text-kidville-yellow-ink` e non `focus:text-kidville-yellow`:
+            giallo di brand su verde di brand vale 4,05:1 e la soglia per un testo
+            16px/400 è 4,5:1. La rete di `globals.css` che rimappa quella coppia
+            NON arriva qui: Tailwind genera per le varianti classi con nome diverso
+            (`.focus\:text-kidville-yellow`) e il selettore cerca la coppia scritta
+            nuda. È lo stesso modo in cui `text-kidville-ink/70` era sfuggito alla
+            sidebar desktop. `yellow-ink` (#FFDA5C) su #006A5F = 4,78:1.
+            Lock: `__tests__/a11y/contrasto-skip-link-e-selettore-figlio.test.tsx`. */}
+        <a
+          href="#content"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
+        >
+          {tNav('saltaAlContenuto')}
+        </a>
+        {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
+        <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
+          <AppBar area="parent" />
+        </Suspense>
+        {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
+        <Suspense fallback={null}>
+          <NativePushAutoRegister />
+        </Suspense>
+        {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
+        <AvvisiSettimanaliApp />
+        {/* Con la tastiera aperta, Chromium allinea il campo a fuoco a `top: 0` —
+            cioè sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` che
+            globals.css dichiara. Misurato sull'emulatore: 82 px su 112 (73%) del
+            campo «Motivo» coperti, e il testo digitato invisibile. */}
+        <CampoNonCoperto />
+        {/* La colonna: 430 px sul telefono, 720 da tablet (larga per le rotte dichiarate in
+            `larghezza-pagina.ts`). Il margine sinistro lascia il posto al binario. */}
+        <div className="pl-[var(--kv-rail-w)]">
+          <ColonnaContenuto>
+            {/* Selettore figlio (per genitori con più figli). Usa useSearchParams → Suspense. */}
+            <Suspense fallback={null}>
+              <ChildSwitcher />
+            </Suspense>
+            {/* `tabIndex={-1}`: senza, lo skip link porta l'hash a `#content` ma
+                lascia `document.activeElement` su `<body>`. In Chrome funziona
+                lo stesso perché il browser sposta il punto di ripartenza della
+                navigazione sequenziale, ma il comportamento non è uniforme fra
+                browser e tecnologie assistive, e uno screen reader non annuncia
+                la destinazione. Raggiungibile dal codice, mai dal Tab. */}
+            <main id="content" tabIndex={-1} className="outline-none">
+              {/* Un account senza nessun bambino collegato non vede il vuoto né uno
+                  spinner senza fine: vede una frase che dice cosa fare. Rende i figli
+                  come sempre finché il server non lo dichiara. */}
+              <GuardiaSenzaFigli>{children}</GuardiaSenzaFigli>
+            </main>
+          </ColonnaContenuto>
+        </div>
+        {/* Barra in basso sul telefono, binario o sidebar sul tablet: UNA sola montata.
+            Usa useSearchParams (via useChildSchoolType): Suspense per il prerender. */}
+        <Suspense fallback={null}>
+          <NavigazioneGenitore />
+        </Suspense>
       </div>
-      {/* Barra in basso sul telefono, binario o sidebar sul tablet: UNA sola montata.
-          Usa useSearchParams (via useChildSchoolType): Suspense per il prerender. */}
-      <Suspense fallback={null}>
-        <NavigazioneGenitore />
-      </Suspense>
-    </div>
+    </CalendarioProvider>
   );
 }

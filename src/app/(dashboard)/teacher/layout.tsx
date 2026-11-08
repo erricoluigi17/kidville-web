@@ -6,6 +6,7 @@ import { NavigazioneDocente } from '@/components/features/teacher/NavigazioneDoc
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
+import { CalendarioProvider } from '@/lib/context/calendario-context';
 
 // Cornice persistente dell'area Insegnante: AppBar verde (wordmark + back +
 // campanella) e bottom nav del design (DR) su tutte le rotte /teacher/**.
@@ -25,43 +26,45 @@ export default async function TeacherLayout({ children }: { children: React.Reac
     // sticky sotto la barra (ClasseShell); fallback 0px → /admin invariato.
     // `data-kv-guscio-tablet`: da 744 px la barra in basso lascia il posto a un binario a
     // sinistra, e `--kv-rail-w` (globals.css) dice al contenuto quanto spazio lasciargli.
-    <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
-      {/* `focus:text-kidville-yellow-ink`: giallo su verde vale 4,05:1, la
-          soglia per un testo 16px/400 è 4,5:1, e la rete di `globals.css` non
-          aggancia le classi generate dalle varianti. Gemello dello skip link
-          dell'area genitore — il rilievo dichiara «vale per entrambi i layout». */}
-      <a
-        href="#content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
-      >
-        {tNav('saltaAlContenuto')}
-      </a>
-      {/* AppBar usa useSearchParams (identità) → Suspense per il prerender. */}
-      <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
-        <AppBar area="teacher" />
-      </Suspense>
-      {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
-      <Suspense fallback={null}>
-        <NativePushAutoRegister />
-      </Suspense>
-      {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
-      <AvvisiSettimanaliApp />
-      {/* Con la tastiera aperta Chromium allinea il campo a fuoco a `top: 0` —
-          sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` dichiarato
-          in globals.css. Misurato sul genitore (82 px su 112 coperti), ma la
-          barra è LA STESSA (`features/shell/AppBar`) e questa shell ha i suoi
-          campi: note dell'appello, diario, chat. Il rimedio viveva montato su
-          una sola delle tre shell, con la lezione scritta in un commento. */}
-      <CampoNonCoperto />
-      {/* `tablet:pb-10`: il `pb-28` riserva il posto alla barra in basso, che da 744 px non c'è. */}
-      <main id="content" tabIndex={-1} className="pb-28 tablet:pb-10 pl-[var(--kv-rail-w)] outline-none">
-        {children}
-      </main>
-      {/* Barra in basso sul telefono, binario o sidebar sul tablet: UNA sola montata.
-          Usa useSearchParams (?userId=) → Suspense per il prerender. */}
-      <Suspense fallback={null}>
-        <NavigazioneDocente />
-      </Suspense>
-    </div>
+    <CalendarioProvider>
+      <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
+        {/* `focus:text-kidville-yellow-ink`: giallo su verde vale 4,05:1, la
+            soglia per un testo 16px/400 è 4,5:1, e la rete di `globals.css` non
+            aggancia le classi generate dalle varianti. Gemello dello skip link
+            dell'area genitore — il rilievo dichiara «vale per entrambi i layout». */}
+        <a
+          href="#content"
+          className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow-ink"
+        >
+          {tNav('saltaAlContenuto')}
+        </a>
+        {/* AppBar usa useSearchParams (identità) → Suspense per il prerender. */}
+        <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
+          <AppBar area="teacher" />
+        </Suspense>
+        {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
+        <Suspense fallback={null}>
+          <NativePushAutoRegister />
+        </Suspense>
+        {/* Avvisi settimanali dell'app nativa (notifiche spente, binario 1.0): sul web non rende niente. */}
+        <AvvisiSettimanaliApp />
+        {/* Con la tastiera aperta Chromium allinea il campo a fuoco a `top: 0` —
+            sotto l'AppBar sticky — e NON onora lo `scroll-margin-top` dichiarato
+            in globals.css. Misurato sul genitore (82 px su 112 coperti), ma la
+            barra è LA STESSA (`features/shell/AppBar`) e questa shell ha i suoi
+            campi: note dell'appello, diario, chat. Il rimedio viveva montato su
+            una sola delle tre shell, con la lezione scritta in un commento. */}
+        <CampoNonCoperto />
+        {/* `tablet:pb-10`: il `pb-28` riserva il posto alla barra in basso, che da 744 px non c'è. */}
+        <main id="content" tabIndex={-1} className="pb-28 tablet:pb-10 pl-[var(--kv-rail-w)] outline-none">
+          {children}
+        </main>
+        {/* Barra in basso sul telefono, binario o sidebar sul tablet: UNA sola montata.
+            Usa useSearchParams (?userId=) → Suspense per il prerender. */}
+        <Suspense fallback={null}>
+          <NavigazioneDocente />
+        </Suspense>
+      </div>
+    </CalendarioProvider>
   );
 }

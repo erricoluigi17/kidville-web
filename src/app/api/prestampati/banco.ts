@@ -69,7 +69,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { requireDocente, type AppRole } from '@/lib/auth/require-staff'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
+import { annoDi } from '@/lib/anno/calendario'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { STATO_ISCRITTO, STATO_SOSPESO } from '@/lib/alunni/stato'
 import { buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
 import { isoToIt } from '@/lib/format/data'
@@ -538,6 +539,12 @@ export interface ContestoSezione {
    * usarlo, cioè per nessuno. Si legge una volta e si porta con sé.
    */
   dataIso: string
+  /**
+   * L'etichetta dell'anno della SEZIONE (`'2026/2027'`), come la stampa la scrive: da
+   * `sections.anno_id` → `anni_scolastici.etichetta`; se lo schema dell'anno manca o la lettura
+   * fallisce, l'anno del giorno di stampa nel calendario della sede (`leggiAnnoSezione`).
+   */
+  annoScolastico: string
   /** Righe di carta intestata e riga «Luogo e data», già composte. */
   carta: { intestazione: string[]; luogoData: string }
 }
@@ -878,6 +885,7 @@ export async function caricaSezione(
   // data» qui sotto sia il piede del foglio, che la compone `componiPrestampato` da
   // `dataIso`. Vedi il commento del campo in `ContestoSezione`.
   const oggiIso = isoDiOggi()
+  const annoScolastico = await leggiAnnoSezione(supabase, sezioneId, scuolaId, oggiIso)
 
   return {
     sezione: {
@@ -899,6 +907,7 @@ export async function caricaSezione(
         telefono: sede.telefono,
       },
       dataIso: oggiIso,
+      annoScolastico,
       carta: {
         intestazione: buildIntestazioneSede({
           scuola_nome: sede.nome,
@@ -912,6 +921,52 @@ export async function caricaSezione(
       },
     },
   }
+}
+
+/**
+ * L'anno che la stampa di sezione porta in testa: quello della SEZIONE (`sections.anno_id` →
+ * `anni_scolastici.etichetta`), non quello di oggi. Una lettura che DEGRADA e non ferma il foglio:
+ *  · schema dell'anno assente (database della CI): ripiego sull'anno del giorno di stampa nel
+ *    calendario della sede, con un solo `info`;
+ *  · qualunque altro errore: stesso ripiego, ma `error` con la sede e il codice (mai nomi);
+ *  · sezione senza `anno_id` (riempimento in corso): ripiego silenzioso, non è un guasto.
+ */
+async function leggiAnnoSezione(
+  supabase: SupabaseClient,
+  sezioneId: string,
+  scuolaId: string,
+  dataIso: string,
+): Promise<string> {
+  const ripiego = async () => (await annoDi(supabase, scuolaId, dataIso)).etichetta
+  const degrada = async (error: { code?: string | null }, tipo: string) => {
+    if (schemaAnnoIndietro(error)) {
+      logEvento('anno-scolastico', 'info', { tipo: 'anno-sezione-non-disponibile', scuola_id: scuolaId })
+    } else {
+      logEvento(
+        'anno-scolastico',
+        'error',
+        { tipo, operazione: 'prestampati/banco', scuola_id: scuolaId, error_code: codicePostgrest(error) },
+        error,
+      )
+    }
+    return ripiego()
+  }
+  const { data: sez, error: errSez } = await supabase
+    .from('sections')
+    .select('anno_id')
+    .eq('id', sezioneId)
+    .maybeSingle()
+  if (errSez) return degrada(errSez, 'anno-sezione-non-letto')
+  const annoId = (sez as { anno_id?: unknown } | null)?.anno_id
+  if (typeof annoId !== 'string' || annoId === '') return ripiego()
+  const { data: anno, error: errAnno } = await supabase
+    .from('anni_scolastici')
+    .select('etichetta')
+    .eq('id', annoId)
+    .maybeSingle()
+  if (errAnno) return degrada(errAnno, 'anno-sezione-non-letto')
+  const etichetta = (anno as { etichetta?: unknown } | null)?.etichetta
+  return typeof etichetta === 'string' && etichetta.trim() !== '' ? etichetta : ripiego()
 }
 
 /** La data CIVILE italiana: su Vercel il processo gira in UTC, e alle 00:30 sarebbe ieri. */
@@ -1523,7 +1578,7 @@ export function componiPrestampato(
       {
         sezione: { nome: s.nome },
         sede: s.sede,
-        annoScolastico: annoScolasticoCorrente(),
+        annoScolastico: s.annoScolastico,
         // La stessa data della riga «Luogo e data», non una seconda lettura dell'orologio:
         // il perché è nel commento di `ContestoSezione.dataIso`.
         dataStampa: s.dataIso,

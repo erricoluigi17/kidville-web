@@ -249,6 +249,33 @@ describe('statoQuadrimestre', () => {
         (c[2] as { scuola_id?: string }).scuola_id === sede,
     )
 
+  it('l’anno dei periodi segue il calendario della sede: il 15 luglio, se la sede ha già aperto il 2027/28 in marzo, mancano le date', async () => {
+    const riga = (id: string, annoInizio: number, inizio: string, fine: string) => ({
+      id,
+      scuola_id: SEDE_A,
+      anno_id: `anno-${annoInizio}`,
+      inizio,
+      fine,
+      ultimo_giorno_aperto: fine,
+      prepara_successivo_dal: inizio,
+      stato: 'corrente',
+      domande_aperte: false,
+    })
+    // Senza calendario il 15 luglio è del 2026/2027, configurato: nessun periodo lo copre ma non è un guasto.
+    db.anni_sede = []
+    expect(await statoQuadrimestre(client(), SEDE_A, SEZ_A, '2027-07-15')).toMatchObject({ dateMancanti: false })
+    // Con il calendario che apre il 2027/28 il 1° marzo 2027 lo stesso giorno è del 2027/2028, senza periodi.
+    db.anni_sede = [
+      riga('as-26', 2026, '2026-09-01', '2027-02-28'),
+      riga('as-27', 2027, '2027-03-01', '2028-08-31'),
+    ]
+    db.anni_scolastici = [
+      { id: 'anno-2026', anno_inizio: 2026 },
+      { id: 'anno-2027', anno_inizio: 2027 },
+    ]
+    expect(await statoQuadrimestre(client(), SEDE_A, SEZ_A, '2027-07-15')).toMatchObject({ dateMancanti: true })
+  })
+
   it('date mancanti: un solo log error al giorno per sede', async () => {
     const c = client()
     const adesso = new Date('2026-11-04T10:00:00Z')

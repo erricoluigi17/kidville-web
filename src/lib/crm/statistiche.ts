@@ -1,4 +1,5 @@
 import { dataCivile } from '@/i18n/config'
+import { annoDiIstante, inizioAnno, type Calendario } from '@/lib/anno-scolastico'
 import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
 import type { AppuntamentoRow, AzioneRow, BambinoRow, SchedaRow } from './tipi'
 
@@ -300,10 +301,17 @@ export function periodoMeseScorso(adesso: Date): PeriodoStatistiche {
   return mese === 1 ? meseIntero(anno - 1, 12) : meseIntero(anno, mese - 1)
 }
 
-/** Dal 1° settembre dell'anno scolastico in corso (quello appena cominciato, o dell'anno prima) a fine mese. */
-export function periodoDaSettembre(adesso: Date): PeriodoStatistiche {
+/**
+ * Dall'inizio dell'anno scolastico in corso (quello del giorno di Roma di `adesso`) a fine mese. L'inizio è
+ * quello del calendario della sede; senza calendario, il 1° settembre.
+ */
+export function periodoDallInizioAnno(adesso: Date, calendario?: Calendario | null): PeriodoStatistiche {
   const { anno, mese } = annoMeseRoma(adesso)
-  return { dal: giornoYmd(mese >= 9 ? anno : anno - 1, 9, 1), al: giornoYmd(anno, mese, ultimoGiorno(anno, mese)) }
+  const dellAnno = annoDiIstante(adesso, calendario)
+  return {
+    dal: dellAnno.riga?.inizio ?? inizioAnno(dellAnno.annoInizio),
+    al: giornoYmd(anno, mese, ultimoGiorno(anno, mese)),
+  }
 }
 
 // ── La risposta di `GET /api/admin/crm/statistiche`, condivisa con la schermata ─────────────────────

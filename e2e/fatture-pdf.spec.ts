@@ -149,6 +149,18 @@ async function installaRisposte(
       return
     }
 
+    // Il calendario delle sedi (`CalendarioProvider`, montato dalla shell dalla PR 4.1 dell'anno
+    // scolastico). Nessuna sede con un calendario, come nel database della CI non migrato: si usa la
+    // soglia predefinita. Arriva due volte perché il test gira su `next dev` (effetti doppi di React).
+    if (url.pathname === '/api/anno/calendario') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] }),
+      })
+      return
+    }
+
     if (url.pathname === '/api/pagamenti/sospensione-stato') {
       await route.fulfill({
         status: 200,

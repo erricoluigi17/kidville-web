@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Baby, RefreshCw } from 'lucide-react';
@@ -13,6 +13,7 @@ import {
   type Lezione,
   type PeriodoCompiti,
 } from '@/components/features/parent/LezioniCompitiSections';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { btnClass } from '@/components/ui/Btn';
 
@@ -47,6 +48,11 @@ function CompitiInner() {
   const t = useTranslations('parentServizi');
   const { parentId, studentId, ready } = useParentIdentity();
   const [esito, setEsito] = useState<Esito | null>(null);
+  // La sede: il figlio non la porta in questa pagina, quindi vale l'unica sede del contesto (o il predefinito).
+  const calendario = useCalendarioDi();
+  // Il calendario arriva dopo il montaggio: la lettura lo trova in un ref, senza ripartire quando cambia.
+  const calendarioRef = useRef(calendario);
+  useEffect(() => { calendarioRef.current = calendario; }, [calendario]);
   const [periodo, setPeriodo] = useState<PeriodoCompiti>(PERIODO_PREDEFINITO);
   // Bump del pulsante «Riprova»: cambia la chiave, quindi rifà la lettura anche
   // quando il periodo è rimasto lo stesso.
@@ -67,7 +73,7 @@ function CompitiInner() {
         // decide la route, ed è esattamente la chiamata di prima di questo
         // filtro. Nessuna famiglia vede un comportamento diverso finché non
         // tocca il selettore.
-        const dataDa = dataDaDelPeriodo(periodo);
+        const dataDa = dataDaDelPeriodo(periodo, calendarioRef.current);
         if (dataDa) q.set('dataDa', dataDa);
         const r = await fetch(`/api/parent/primaria?${q.toString()}`, { headers: { 'x-user-id': parentId } });
         const d = await r.json();

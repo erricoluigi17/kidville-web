@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import { Printer, Download, Eye, Loader2, AlertTriangle } from 'lucide-react'
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit'
 import { Btn } from '@/components/ui/Btn'
+import { useCalendario } from '@/lib/context/calendario-context'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { apriDocumento, scaricaDocumento } from '@/lib/native/scarica'
@@ -50,6 +51,7 @@ export function StoriciPanel() {
   const [impegnato, setImpegnato] = useState(false)
   const [caricamento, setCaricamento] = useState(true)
   const [anteprima, setAnteprima] = useState<{ titolo: string; alunni: number; avvisi: string[]; sezioni: Array<{ id: string; titolo: string }> } | null>(null)
+  const { perSede } = useCalendario()
   const sedeCorrente = scuole.find(s => s.scuolaId === scuolaId)
   const sede = sedeCorrente ? { ...sedeCorrente, sezioni: [...new Map([...classiStoriche, ...sedeCorrente.sezioni].map(s => [s.id, s])).values()] } : undefined
   const identita = useCallback((url: string) => `${url}${url.includes('?') ? '&' : '?'}userId=${encodeURIComponent(userId ?? '')}`, [userId])
@@ -122,7 +124,7 @@ export function StoriciPanel() {
         <label className="font-maven text-sm">{t('dal')}<input className={INPUT} type="date" value={periodo.dal} onChange={e => setPeriodo(p => ({ ...p, dal: e.target.value }))} /></label>
         <label className="font-maven text-sm">{t('al')}<input className={INPUT} type="date" value={periodo.al} onChange={e => setPeriodo(p => ({ ...p, al: e.target.value }))} /></label>
         <div className="font-maven text-sm"><label htmlFor="storici-formato">{t('formato')}</label><select id="storici-formato" className={INPUT} value={formato} onChange={e => setFormato(e.target.value as typeof formato)}><option value="pdf">PDF</option><option value="xlsx">Excel</option></select></div>
-        <div className="flex flex-wrap gap-2 md:col-span-3">{(['giorno', 'settimana', 'mese', 'anno', 'tutto'] as PeriodoStorico[]).map(p => <button key={p} type="button" className="min-h-11 rounded-pill border border-kidville-line px-3 text-sm" onClick={() => setPeriodo(periodoStorico(p, oggiRoma()))}>{t(`periodi.${p}`)}</button>)}</div>
+        <div className="flex flex-wrap gap-2 md:col-span-3">{(['giorno', 'settimana', 'mese', 'anno', 'tutto'] as PeriodoStorico[]).map(p => <button key={p} type="button" className="min-h-11 rounded-pill border border-kidville-line px-3 text-sm" onClick={() => setPeriodo(periodoStorico(p, oggiRoma(), perSede[scuolaId] ?? null))}>{t(`periodi.${p}`)}</button>)}</div>
         {tipo === 'classe' && <div className="font-maven text-sm md:col-span-3"><label htmlFor="storici-raggruppamento">{t('raccolta')}</label><select id="storici-raggruppamento" className={INPUT} value={raggruppamento} onChange={e => setRaggruppamento(e.target.value as typeof raggruppamento)}><option value="classe">{t('riepilogoClasse')}</option><option value="alunno">{t('schedeIndividuali')}</option></select></div>}
       </div>
       <div className="my-5 flex flex-wrap gap-3"><Btn type="button" onClick={() => setCategorie(CATALOGO_STORICI.filter(c => disponibili.includes(c.id)).map(c => c.id))}>{t('selezionaTutto')}</Btn><Btn type="button" onClick={() => setCategorie([])}>{t('deseleziona')}</Btn></div>

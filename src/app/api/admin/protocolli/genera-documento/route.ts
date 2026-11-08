@@ -5,7 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
+import { annoDellaFrequenza } from '@/lib/anno/calendario'
+import { dataCivile } from '@/i18n/config'
 import { parseAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
 import {
@@ -114,12 +115,20 @@ export const POST = withRoute('admin/protocolli/genera-documento:POST', async (r
         scuola_codice_meccanografico: anagrafica.codice_meccanografico,
       })
 
+      // L'anno che il documento dichiara è quello della FREQUENZA del bambino in questa sede
+      // (specifica §4.12), nel calendario della sede; senza frequenza, l'anno del giorno di Roma.
+      // Fuori dal try: un guasto di lettura non è un «dati documento non validi» (400), e
+      // `annoDellaFrequenza` degrada da sé (log nel modulo del calendario).
+      const annoDocumento = (
+        await annoDellaFrequenza(supabase, b.data.alunnoId, scuolaId, dataCivile(new Date()))
+      ).etichetta
+
       let testi: { titolo: string; corpo: string }
       try {
         testi = buildDocumentoRichiesta(
           b.data.tipoDocumento as TipoDocumentoRichiesta,
           alunno,
-          annoScolasticoCorrente(),
+          annoDocumento,
           { titolo: b.data.titolo, corpo: b.data.corpo }
         )
       } catch (e) {

@@ -17,6 +17,7 @@ import { BadgeRettaACarico, BadgeRettaACaricoNonVisibile } from './BadgeRettaACa
 import { indicizzaLegami, legamiDaRisposta, nomePagante, nonVisibiliDaRisposta, type LegameRetta } from '@/lib/pagamenti/rette-a-carico';
 import { classiDaAlunni, filtraPerClassi } from '@/lib/pagamenti/filtro-classi';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { useAnnoDi } from '@/lib/context/calendario-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
@@ -30,7 +31,7 @@ import { FiltroAnnoContabilita, FiltroCategorieContabilita, FiltroMesiContabilit
 import { BTN_PRIMARY_SM, FILTER_SELECT, ICON_BTN } from './ui';
 import { useCifreNascoste } from './cifre-nascoste';
 import {
-    annoScolasticoDi, eMeseDiRetta, eVistaPerAlunno, etichettaMese, etichettaMesi, filtraPerSelezione,
+    eMeseDiRetta, eVistaPerAlunno, etichettaMese, etichettaMesi, filtraPerSelezione,
     meseDi, mesiValidi, periodoDi, type SelezioneVoci,
 } from '@/lib/pagamenti/selezione-voci';
 import { BadgeMetodoPagamento } from '@/components/features/pagamenti/BadgeMetodoPagamento';
@@ -209,10 +210,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const sedeQs = scuolaId ? `&scuola_id=${encodeURIComponent(scuolaId)}` : '';
 
     // «Oggi» è la data civile italiana: `toISOString()` è UTC e dopo le 22:00 d'estate è già domani.
-    // Anno scolastico corrente: set->ago = anno corrente, gen->giu = anno-1.
+    // L'anno scolastico di oggi lo dà il CALENDARIO della sede (`useAnnoDi`); con più sedi (`scuolaId === null`) vale
+    // il predefinito. Stato derivato: l'anno scelto a mano batte quello proposto, che segue il calendario quando arriva.
     const oggiStr = dataCivile();
-    const annoScolasticoCorrente = annoScolasticoDi(oggiStr);
-    const [annoScolastico, setAnnoScolastico] = useState<number>(() => annoScolasticoDi(dataCivile()));
+    const annoInCorso = useAnnoDi(scuolaId)(oggiStr).annoInizio;
+    const [annoScelto, setAnnoScolastico] = useState<number | null>(null);
+    const annoScolastico = annoScelto ?? annoInCorso;
     /** I mesi scelti (1–12); all'apertura il mese corrente. Cambiando anno si mantengono. */
     const [mesiScelti, setMesiScelti] = useState<number[]>(() => [meseDi(dataCivile())]);
 
@@ -746,7 +749,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     {/* L'anno prima dei mesi: le etichette dei mesi («Ott 2026») dipendono da lui. */}
                     <FiltroAnnoContabilita
                         anno={annoScolastico}
-                        anni={[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1]}
+                        anni={[annoInCorso - 1, annoInCorso, annoInCorso + 1]}
                         onChange={setAnnoScolastico}
                         className="max-sm:w-full"
                     />

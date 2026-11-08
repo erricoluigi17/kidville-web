@@ -73,9 +73,15 @@ async function serverFinto(page: Page) {
  * (PR #238: 62 px, 3 volte su 3, con `/api/admin/sedi` a 700 ms). Che il foglio aperto NON si
  * chiuda all'arrivo delle sedi lo prova il test unitario `CandidatureInsegnanti.test.tsx` ›
  * «le sedi che ARRIVANO dopo il clic…».
+ *
+ * Aspetta anche il RUOLO: la casella «Inoltra ai plessi», sopra la lista, compare solo quando il
+ * ruolo Direzione è risolto, ed è alta quanto lo stesso salto (PR #300: 62 px, 2 volte su 3, su
+ * `next dev` con una route in più da compilare, `/api/anno/calendario`). Arrivata dopo la misura, lo
+ * scroll si sposta da solo per tenere ferma la riga.
  */
 async function sediArrivate(page: Page) {
   await expect(page.getByRole('button', { name: /^Prova1 Candidata / })).toContainText(NOMI_SEDI.scuola)
+  await expect(page.getByRole('button', { name: 'Inoltra ai plessi le copie mai partite' })).toBeVisible()
 }
 
 /**

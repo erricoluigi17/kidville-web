@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { dataCivile } from '@/i18n/config'
+import { annoDi } from '@/lib/anno/calendario'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { assertBambinoInScope, assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
 import {
@@ -183,7 +184,8 @@ export const PUT = withRoute(
       )
     }
 
-    const anno = annoDellaQuota(bambino.anno_ingresso, adesso)
+    // L'anno in corso è quello del calendario della sede nel giorno di oggi (o il predefinito, soglia 1° settembre).
+    const anno = annoDellaQuota(bambino.anno_ingresso, (await annoDi(supabase, scuolaId, oggi)).annoInizio)
     if (anno === null) {
       return NextResponse.json(
         { error: 'Indica l’anno di ingresso del bambino prima di segnare la quota.', codice: 'QUOTA_ANNO_MANCANTE' },

@@ -7,6 +7,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { dataCivile } from '@/i18n/config'
+import { mesiDelAnno } from '@/lib/anno-scolastico'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rispostaBlocchiFalliti, rispostaGuastoDb } from '@/lib/pagamenti/guasto-db'
@@ -49,16 +51,8 @@ function firstOfMonth(periodo?: string | null): string {
     const [y, m] = periodo.split('-')
     return `${y}-${m}-01`
   }
-  const now = new Date()
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`
-}
-
-// I 10 periodi (primo del mese) di un anno scolastico: set(anno) -> giu(anno+1)
-function periodiAnno(annoInizio: number): string[] {
-  const out: string[] = []
-  for (let m = 9; m <= 12; m++) out.push(`${annoInizio}-${String(m).padStart(2, '0')}-01`)
-  for (let m = 1; m <= 6; m++) out.push(`${annoInizio + 1}-${String(m).padStart(2, '0')}-01`)
-  return out
+  // Il mese di ROMA, non quello UTC: alle 00:30 del 1° del mese a Roma l'UTC è ancora il mese prima.
+  return `${dataCivile(new Date()).slice(0, 7)}-01`
 }
 
 // importo retta effettivo = importo personalizzato dell'alunno, altrimenti default globale (150)
@@ -200,7 +194,7 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
     // --- Anteprima ANNUALE (set->giu) ---
     if (annoParam && /^\d{4}$/.test(annoParam)) {
       const annoInizio = parseInt(annoParam, 10)
-      const periodi = periodiAnno(annoInizio)
+      const periodi = mesiDelAnno(annoInizio)
 
       // A BLOCCHI: dieci mesi di rette di una sede sono migliaia di righe, e PostgREST ne
       // consegna 1000 senza dirlo — l'anteprima riproponeva come «da generare» le rette già

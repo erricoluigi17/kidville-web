@@ -17,8 +17,8 @@ import {
  *  · l'ANNO si ricava dall'anno di ingresso del bambino (`in_corso` → primo anno dell'anno scolastico
  *    corrente, `prossimo` → quello dopo) e si SALVA come intero, calcolato al momento in cui si segna: ad
  *    agosto «in corso» cambia significato e una quota già segnata non deve cambiare anno da sola;
- *  · l'ETICHETTA («2027/28») e la COMPETENZA (`2027-09-01`) ne discendono. La competenza non è un
- *    dettaglio: la fatturazione sceglie la serie dall'anno di competenza;
+ *  · l'ETICHETTA («2027/28») ne discende. La COMPETENZA la scrive la funzione SQL `crm_quota_passa`, non
+ *    questo file: la fatturazione sceglie la serie dall'anno di competenza;
  *  · il METODO: il CRM conosce `carta`, l'enum `incasso_metodo` no → in contabilità è `pos`;
  *  · la CASSA CHIUSA: un'entrata in contanti datata a un giorno già chiuso conterebbe due volte quei soldi
  *    (la chiusura registra la differenza col contato come rettifica).
@@ -34,11 +34,6 @@ import {
 // `annoDellaQuota` e `etichettaAnno` vivono in `quota-anno.ts` (calcolo puro, usabile anche dai componenti
 // client: questo file importa il logger del server). Qui si ripubblicano con lo stesso nome.
 export { annoDellaQuota, etichettaAnno } from './quota-anno'
-
-/** Il 1° settembre dell'anno d'apertura: 2027 → `2027-09-01`. */
-export function competenzaDellaQuota(anno: number): string {
-  return `${anno}-09-01`
-}
 
 /** Il metodo del CRM nell'enum `incasso_metodo`: `carta` → `pos`. */
 export function metodoIncasso(m: MetodoQuota): 'contanti' | 'pos' | 'bonifico' {

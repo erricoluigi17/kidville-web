@@ -15,6 +15,7 @@ import { modelloGenitore } from '@/lib/prestampati/modelli/genitore'
 import { cartaDaDati, renderPrestampatoGenitore } from '@/lib/prestampati/render'
 import { applicaCartaIntestata } from '@/lib/carta'
 import { annoFiscale } from '@/lib/format/fiscal-date'
+import { caricaCalendario } from '@/lib/anno/calendario'
 import {
   dataOraItaliana,
   formatNumeroProtocollo,
@@ -406,6 +407,9 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
         erroreArchivio,
       )
     } else {
+      // Il calendario della sede del bambino, UNA volta per richiesta e fuori dal ciclo:
+      // `null` se la sede non ne ha (o lo schema manca) e vale la soglia predefinita.
+      const calendario = await caricaCalendario(supabase, prefill.scuolaId)
       for (const riga of (righeArchivio ?? []) as unknown as {
         id: string
         document_type: string | null
@@ -430,7 +434,7 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
         if (
           vocePerTipo &&
           riusoLegatoAllAnnoScolastico(vocePerTipo) &&
-          !documentoDellAnnoScolastico(riga.created_at, dati.annoScolastico)
+          !documentoDellAnnoScolastico(riga.created_at, dati.annoScolastico, calendario)
         ) {
           continue
         }
@@ -835,9 +839,12 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
       }[]).filter((r) => r.document_type?.trim() === voce.slug)
       // L'ordine della query è `created_at` discendente: il primo che passa il vincolo è il
       // più recente, ed è quello che il genitore si aspetta di riprendere.
+      const calendario = riusoLegatoAllAnnoScolastico(voce)
+        ? await caricaCalendario(supabase, prefill.scuolaId)
+        : null
       const riusabili = riusoLegatoAllAnnoScolastico(voce)
         ? candidati.filter((r) =>
-            documentoDellAnnoScolastico(r.created_at, prefill.dati.annoScolastico),
+            documentoDellAnnoScolastico(r.created_at, prefill.dati.annoScolastico, calendario),
           )
         : candidati
       documentoInArchivio = riusabili[0] ?? null

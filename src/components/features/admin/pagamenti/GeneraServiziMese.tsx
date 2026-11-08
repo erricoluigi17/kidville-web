@@ -7,7 +7,8 @@ import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { zMese } from '@/lib/pagamenti/servizi-mensili';
-import { annoScolasticoDi } from '@/lib/pagamenti/selezione-voci';
+import { dataCivile } from '@/i18n/config';
+import { useAnnoDi } from '@/lib/context/calendario-context';
 import { PAGINA_SERVIZI, codiceSicuro, intestazioni, leggiCorpo, meseCorrente } from './servizi-client';
 import { BottonePrimarioServizi } from './BottonePrimarioServizi';
 import { avvisoErrore, avvisoOk, btnPiccolo, btnSecondario, campo, etichetta } from './servizi-stili';
@@ -44,8 +45,11 @@ export function GeneraServiziMese({ userId, scuolaId }: Props) {
     const id = useId();
     const [modo, setModo] = useState<'mese' | 'anno'>('mese');
     const [mese, setMese] = useState(meseCorrente());
-    const annoCorrente = annoScolasticoDi(`${meseCorrente()}-01`);
-    const [anno, setAnno] = useState(annoCorrente);
+    // L'anno proposto lo dà il calendario della sede, quando arriva; una scelta a mano della segreteria lo batte sempre.
+    const [oggi] = useState(() => dataCivile());
+    const annoCorrente = useAnnoDi(scuolaId)(oggi).annoInizio;
+    const [annoScelto, setAnno] = useState<number | null>(null);
+    const anno = annoScelto ?? annoCorrente;
     const [anteprima, setAnteprima] = useState<Anteprima | null>(null);
     const [occupato, setOccupato] = useState(false);
     const [esito, setEsito] = useState<Esito>(null);

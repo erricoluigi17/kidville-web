@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { eDirezione } from '@/lib/auth/predicati-ruolo'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { mesiDelAnno } from '@/lib/anno-scolastico'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { sedeDellaGenerazione, generaServizi, funzioneAssente, rispostaServiziNonDisponibili } from '@/lib/pagamenti/generazione-server'
@@ -43,15 +44,6 @@ const postBodySchema = z
   .object({ periodo: zMese.optional(), anno: z.number().int().min(2000).max(2100).optional(), scuola_id: zScuolaId })
   .refine(unoFraMeseEAnno.check, unoFraMeseEAnno.opzioni)
 
-/** I periodi 'YYYY-MM-01' di un anno scolastico: set–dic dell'anno, gen–giu del successivo. */
-function periodiDellAnno(anno: number): string[] {
-  const due = (m: number) => String(m).padStart(2, '0')
-  return [
-    ...[9, 10, 11, 12].map((m) => `${anno}-${due(m)}-01`),
-    ...[1, 2, 3, 4, 5, 6].map((m) => `${anno + 1}-${due(m)}-01`),
-  ]
-}
-
 // GET /api/pagamenti/genera-servizi?periodo=YYYY-MM&scuola_id=  (staff)
 // Anteprima: quante voci per servizio si genererebbero. Gli IMPORTI (totale e totali per
 // servizio) sono della Direzione: per gli altri la chiave NON c'è, non è azzerata.
@@ -67,7 +59,7 @@ export const GET = withRoute('pagamenti/genera-servizi:GET', async (request: Req
     const sede = await sedeDellaGenerazione(request, supabase, auth.user, 'pagamenti/genera-servizi:GET', q.data.scuola_id)
     if (sede.response) return sede.response
     const scuolaId = sede.scuolaId as string
-    const periodi = q.data.anno !== undefined ? periodiDellAnno(q.data.anno) : [primoDelMese(q.data.periodo as string)]
+    const periodi = q.data.anno !== undefined ? mesiDelAnno(q.data.anno) : [primoDelMese(q.data.periodo as string)]
     // Il testo del log: il mese, o l'anno d'inizio.
     const quando = q.data.anno !== undefined ? { anno_inizio: q.data.anno } : { periodo: periodi[0] }
 

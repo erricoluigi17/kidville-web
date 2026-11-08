@@ -6,6 +6,8 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { Plus, Trash2, GraduationCap, Archive, ArchiveRestore } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { creaMuta } from '@/lib/ui/muta';
+import { dataCivile } from '@/i18n/config';
+import { useAnnoDi } from '@/lib/context/calendario-context';
 
 interface Periodo {
   id: string; nome: string; anno_scolastico: string; ordine: number;
@@ -13,14 +15,6 @@ interface Periodo {
   /** Fase 4 della robustezza: un periodo archiviato esce dall'elenco, e niente di suo si perde. */
   archiviato_il?: string | null;
 }
-
-const annoCorrente = () => {
-  // Anno scolastico: settembre→agosto. (Date dinamica accettabile lato client.)
-  const d = new Date();
-  const y = d.getFullYear();
-  const start = d.getMonth() >= 8 ? y : y - 1;
-  return `${start}/${start + 1}`;
-};
 
 // `scuolaId` arriva da <SedeRequired> (una sede sola, mai ambigua) e va
 // DICHIARATO al server: la route non scrive più su `utenti.scuola_id`, e con tre
@@ -31,7 +25,12 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
   const t = useTranslations('adminPrimaria');
   const f = useDateFormat();
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
-  const [anno, setAnno] = useState(annoCorrente);
+  // L'anno proposto è quello del calendario della sede per il giorno di Roma; chi scrive nella casella lo vince
+  // (stato derivato: nessun effetto copia il calendario nello stato, e un valore a mano non viene sovrascritto).
+  const [oggi] = useState(() => dataCivile());
+  const annoProposto = useAnnoDi(scuolaId)(oggi).etichetta;
+  const [annoScelto, setAnnoScelto] = useState<string | null>(null);
+  const anno = annoScelto ?? annoProposto;
   const [nome, setNome] = useState('');
   const [dataInizio, setDataInizio] = useState('');
   const [dataFine, setDataFine] = useState('');
@@ -149,7 +148,7 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <label className="font-maven text-sm text-kidville-ink">{t('periodiAnnoScolastico')}</label>
-        <input value={anno} onChange={(e) => setAnno(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm w-28" />
+        <input value={anno} onChange={(e) => setAnnoScelto(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm w-28" />
         <label className="font-maven ml-auto inline-flex items-center gap-1.5 text-xs text-kidville-sub">
           <input type="checkbox" checked={mostraArchiviati} onChange={(e) => setMostraArchiviati(e.target.checked)} />
           {t('periodiMostraArchiviati')}

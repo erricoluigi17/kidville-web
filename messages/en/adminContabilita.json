@@ -1345,7 +1345,6 @@
       "gia_emessa_altro_intestatario": "Already issued to a different billed-to party",
       "quota_estranea": "Share already invoiced on another document",
       "partita_non_registrata": "Invoice sent but not on record: check before retrying",
-      "periodo_competenza_mancante": "Missing accrual period: set it on the payment",
       "dati_minore_mancanti": "Child’s details incomplete: tax code or date of birth"
     },
     "menu": {

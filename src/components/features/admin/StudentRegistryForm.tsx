@@ -11,6 +11,9 @@ import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/an
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { calcolaCodiceFiscale } from '@/lib/fiscale/calcolo';
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
+import { annoDelGiorno, giornoValido } from '@/lib/anno-scolastico';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════
@@ -107,13 +110,13 @@ export function StudentRegistryForm() {
     const idBadgeCf = 'registry-badge-coerenza-cf';
     
     // Form state
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState(() => ({
         nome: '',
         cognome: '',
         sesso: 'M',
         data_nascita: '',
         // default oggi: la data d'iscrizione pilota da quale mese partono le rette
-        data_iscrizione: new Date().toISOString().slice(0, 10),
+        data_iscrizione: oggiFiscaleISO(),
         comune_nascita: '',
         provincia_nascita: '',
         nazione_nascita: 'Italia',
@@ -128,7 +131,17 @@ export function StudentRegistryForm() {
         allergeni: [] as string[],
         invoice_holder_type: 'mom',
         invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' }
-    });
+    }));
+
+    // ─── L'ANNO SCOLASTICO DELLA DATA D'INGRESSO ─────────────────────────────────
+    // La sede è quella che il modulo sta per scrivere: il modulo NON invia `scuola_id`, la risolve il
+    // server (`resolveScuolaScrittura`: l'unica sede dell'utente), quindi qui vale l'unica sede del contesto
+    // (`useCalendarioDi` senza argomento; con più sedi dà `null` e non si blocca niente).
+    // Stato derivato: nessun effetto che copia valori nello stato.
+    const calendarioSede = useCalendarioDi();
+    const dataIngresso = formData.data_iscrizione;
+    const annoIngresso = giornoValido(dataIngresso) ? annoDelGiorno(dataIngresso, calendarioSede) : null;
+    const dataFuoriAnno = annoIngresso !== null && !!calendarioSede && calendarioSede.length > 0 && annoIngresso.fonte === 'predefinito';
 
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -278,6 +291,12 @@ export function StudentRegistryForm() {
     };
 
     const handleSubmit = async () => {
+        if (dataFuoriAnno) {
+            setErrors({ data_iscrizione: t('dataIscrizioneFuoriAnno') });
+            setToast({ type: 'error', message: 'Correggi gli errori evidenziati nel form.' });
+            setTimeout(() => setToast(null), 4000);
+            return;
+        }
         try {
             // Validazione Zod. Il codice fiscale che si salva è quello MOSTRATO: se
             // l'operatore non ha digitato niente, `formData.codice_fiscale` è vuoto
@@ -420,6 +439,9 @@ export function StudentRegistryForm() {
                             <label htmlFor="registry-data-iscrizione" className="block text-sm font-bold text-kidville-ink mb-1">Data di Iscrizione</label>
                             <input type="date" id="registry-data-iscrizione" name="data_iscrizione" value={formData.data_iscrizione} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.data_iscrizione ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
                             <span className="text-xs text-kidville-muted">Le rette partono dal mese di iscrizione.</span>
+                            {dataFuoriAnno
+                                ? <span className="block text-xs text-kidville-error">{t('dataIscrizioneFuoriAnno')}</span>
+                                : annoIngresso && <span className="block text-xs text-kidville-sub">{t('dataIscrizioneAnno', { anno: annoIngresso.etichettaBreve })}</span>}
                         </div>
                         {/* Comune, provincia e nazione erano tre caselle di testo libero:
                             da lì non usciva nessun codice catastale, e senza quello il

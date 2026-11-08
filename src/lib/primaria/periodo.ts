@@ -1,11 +1,12 @@
 import { dataCivile } from '@/i18n/config'
+import { annoDelGiorno, giornoValido, type Calendario } from '@/lib/anno-scolastico'
 
 /**
  * A QUALE QUADRIMESTRE (PERIODO DI SCRUTINIO) APPARTIENE UNA DATA — la parte PURA.
  *
  * Importabile anche dal browser (la UI della data dell'interrogazione mostra il
  * quadrimestre prima di salvare): per questo qui dentro non c'è il logger né il
- * client Supabase, e l'unico import è `@/i18n/config`. Le letture dal database e il
+ * client Supabase, e gli import sono `@/i18n/config` e il modulo puro dell'anno (`@/lib/anno-scolastico`). Le letture dal database e il
  * log stanno in `quadrimestre.ts`.
  *
  * ⚠️ LA REGOLA DI COPERTURA HA DUE FORMULAZIONI, E DEVONO RESTARE UGUALI. Questa e la
@@ -38,8 +39,6 @@ export interface PeriodoScrutinio {
 
 /** Le colonne di `scrutinio_periodi` che servono a decidere la copertura. */
 export const COLONNE_PERIODO = 'id, scuola_id, anno_scolastico, nome, ordine, data_inizio, data_fine, attivo'
-
-const GIORNO = /^\d{4}-\d{2}-\d{2}$/
 
 /** Il giorno civile di Roma (`YYYY-MM-DD`) di un istante ISO. `''` se assente o non valido. */
 export function giornoDiRoma(istante: string | null | undefined): string {
@@ -76,12 +75,6 @@ export function ordinaPerCompetenza<T extends { data_evento?: string | null; cre
   })
 }
 
-/** L'anno scolastico di un giorno `YYYY-MM-DD`: da agosto in poi è l'anno che inizia. Stessa regola di `annoScolasticoCorrente`. */
-export function annoScolasticoDiData(data: string): string {
-  const [y, m] = data.split('-').map(Number)
-  return m >= 8 ? `${y}/${y + 1}` : `${y - 1}/${y}`
-}
-
 /**
  * Configurazione mancante per l'anno: fra i periodi ATTIVI di quell'anno non ce n'è
  * nessuno, oppure ce n'è uno a cui manca una data.
@@ -109,11 +102,19 @@ function perSpareggio(a: PeriodoScrutinio, b: PeriodoScrutinio): number {
 }
 
 /**
- * Quale periodo copre `data` (`YYYY-MM-DD`). Una stringa che non è un giorno non
- * appartiene a nessun periodo e non è nemmeno un guasto di configurazione.
+ * Quale periodo copre `data` (`YYYY-MM-DD`). Una stringa che non è un giorno (nemmeno `2026-13-01`, che
+ * ha la forma giusta) non appartiene a nessun periodo e non è nemmeno un guasto di configurazione.
+ *
+ * L'anno in cui cercare la configurazione lo decide il modulo dell'anno: il calendario della sede se c'è
+ * (`calendario`), altrimenti il predefinito (soglia al 1° settembre). La sua etichetta (`2026/2027`) ha la
+ * stessa forma di `scrutinio_periodi.anno_scolastico`.
  */
-export function periodoPerData(periodi: readonly PeriodoScrutinio[], data: string): EsitoPeriodo {
-  if (!GIORNO.test(data)) return { periodoId: null, coprenti: [], dateMancanti: false }
+export function periodoPerData(
+  periodi: readonly PeriodoScrutinio[],
+  data: string,
+  calendario?: Calendario | null,
+): EsitoPeriodo {
+  if (!giornoValido(data)) return { periodoId: null, coprenti: [], dateMancanti: false }
   const coprenti = periodi
     .filter((p) => p.data_inizio && p.data_fine && p.data_inizio <= data && data <= p.data_fine)
     .sort(perSpareggio)
@@ -121,7 +122,7 @@ export function periodoPerData(periodi: readonly PeriodoScrutinio[], data: strin
   return {
     periodoId: coprenti[0] ?? null,
     coprenti,
-    dateMancanti: coprenti.length === 0 && dateMancantiPerAnno(periodi, annoScolasticoDiData(data)),
+    dateMancanti: coprenti.length === 0 && dateMancantiPerAnno(periodi, annoDelGiorno(data, calendario ?? null).etichetta),
   }
 }
 

@@ -242,17 +242,6 @@ function senzaValori(msg?: string): string {
 }
 
 /**
- * `YYYY-MM-DD` → mezzanotte LOCALE di quel giorno. Copia di `giornoDaIsoFiscale`
- * (`src/lib/aruba/emissione.ts`), che lì è privata: `new Date(iso)` la
- * leggerebbe come mezzanotte UTC e a ovest di Greenwich diventerebbe il giorno
- * prima — e qui il mese decide l'anno scolastico, cioè la SERIE.
- */
-function giornoDaIsoFiscale(iso: string): Date {
-    const [anno, mese, giorno] = iso.split('-').map(Number)
-    return new Date(anno, mese - 1, giorno)
-}
-
-/**
  * Copia di `progressivoInvioFattura` (`src/lib/aruba/emissione.ts`).
  *
  * È duplicata invece che importata perché importarla vorrebbe dire importare
@@ -371,13 +360,12 @@ describe.skipIf(!ATTIVO || !PAGAMENTO_ID)(
             const anno = annoFiscale()
             const competenza = annoScolasticoDiCompetenza(
                 p.periodo_competenza as string | null,
-                giornoDaIsoFiscale(dataDocumento),
+                dataDocumento,
             )
             const esitoSezionale = sezionalePerMinore({
                 codiceFiscale: alunno?.codice_fiscale as string | null,
                 dataNascita: alunno?.data_nascita as string | null,
                 annoScolastico: competenza.anno,
-                annoScolasticoAmbiguo: competenza.ambiguo,
             })
             const sezionale: Sezionale = esitoSezionale.sezionale
 
@@ -815,7 +803,7 @@ describe.skipIf(!ATTIVO || !PAGAMENTO_ID)(
                 `alunna ...................... ${s(alunno?.id)} (${iniz(alunno?.nome as string, alunno?.cognome as string)})`,
                 `intestatario ................ ${s(reg?.id)} (${iniz(reg?.first_name as string, reg?.last_name as string)})`,
                 '',
-                `anno scolastico ............. ${competenza.anno} (fonte: ${competenza.fonte}${competenza.ambiguo ? ', AMBIGUO' : ''})`,
+                `anno scolastico ............. ${competenza.anno} (fonte: ${competenza.fonte})`,
                 `serie ....................... ${sezionale} (fonte data: ${esitoSezionale.fonte}${esitoSezionale.discordanza ? ', DISCORDANZA CF/anagrafica' : ''})`,
                 `numero (SEGNAPOSTO) ......... ${numeroFattura}`,
                 `data documento .............. ${dataDocumento}`,

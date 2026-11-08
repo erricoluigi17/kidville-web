@@ -75,8 +75,9 @@ all'insegnante nella scheda del bambino, non solo nel PDF.
 
 ## Dopo la firma
 
-1. PDF in `student_documents` con `document_type = 'scheda_sanitaria'`, `expiry_date` = fine anno
-   scolastico (va riconfermata ogni anno).
+1. PDF in `student_documents` con `document_type = 'scheda_sanitaria'`, `expiry_date` nullo: la
+   scheda vale fino a revoca (decisione del titolare del 06/11/2026; prima scadeva a fine anno
+   scolastico e andava riconfermata ogni anno).
 2. I campi sanitari aggiornano l'anagrafica: la scheda **è** la fonte, non una copia.
 3. La scheda precedente resta a storico, non si sovrascrive.
 4. Se `ALLERGIE = SÌ`, l'app propone subito il [07 — dieta speciale](07-dieta-speciale.md).

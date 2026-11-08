@@ -72,8 +72,9 @@ import {
 } from '@/lib/prestampati/modelli/genitore'
 import type { EsitoRender } from '@/lib/prestampati/render'
 // Il giorno civile ITALIANO di un istante: il runtime gira in UTC, e sul confine fra due
-// anni scolastici (1° agosto) due ore decidono a quale anno appartiene un certificato.
+// anni scolastici (1° settembre, o l'inizio dell'anno della sede) due ore decidono a quale anno appartiene un certificato.
 import { dataCivile } from '@/i18n/config'
+import { annoDelGiorno, type Calendario } from '@/lib/anno-scolastico'
 import { logEvento } from '@/lib/logging/logger'
 
 // ─── Il cancello dello slug ─────────────────────────────────────────────────────
@@ -1135,67 +1136,7 @@ export function attesaAccettazioneDirezione(slug: string): boolean {
   return slug === 'autorizzazione_farmaci'
 }
 
-// ─── Quando scade il documento archiviato ───────────────────────────────────────
-
-/**
- * I modelli la cui scadenza NON sta nelle risposte ma nel calendario scolastico.
- *
- * Oggi è il solo n. 05. `docs/prestampati/05-scheda-sanitaria.md:78-79` è testuale: «PDF in
- * `student_documents` con `document_type = 'scheda_sanitaria'`, `expiry_date` = fine anno
- * scolastico (va riconfermata ogni anno)».
- *
- * ⚠️ ESISTE PERCHÉ LA REGOLA CONDIVISA NON POTEVA SAPERLO. `scadenzaDaRisposte`
- * (`src/app/api/prestampati/banco.ts`) legge `al`, `ricorrenzaFino` e `giorno`, e nello schema
- * della scheda sanitaria non c'è nessuno dei tre: il risultato era `null` SEMPRE, cioè una
- * scheda sanitaria archiviata come se non scadesse mai. Non era una deviazione dichiarata come
- * quella del n. 07 — era un valore che nessuno aveva calcolato, e il cron
- * `notifiche/scadenze-documenti` non avrebbe mai chiesto la riconferma annuale su cui la
- * regola 3 del README si appoggia.
- */
-export function scadeAFineAnnoScolastico(slug: string): boolean {
-  return slug === 'scheda_sanitaria'
-}
-
-/**
- * L'ultimo giorno dell'anno scolastico indicato, in `YYYY-MM-DD`, o `null`.
- *
- * ⚠️ IL 31 LUGLIO, E NON IL 30 GIUGNO O IL 31 AGOSTO: il confine lo fissa già
- * `annoScolasticoCorrente()` (`src/lib/anno-scolastico.ts`), che passa all'anno nuovo il **1°
- * agosto** — «agosto fa già da ponte verso il nuovo anno». Prendere una data diversa
- * significherebbe che per qualche settimana `annoScolastico` dice un anno e `expiry_date` ne
- * dichiara un altro, sullo stesso foglio.
- *
- * Il formato in ingresso è quello che il precompilato compone (`2026/2027`); qualunque altra
- * forma dà `null`, che è ciò che vale sempre: meglio un documento senza scadenza di un
- * documento con una scadenza inventata da una stringa non riconosciuta.
- */
-export function fineAnnoScolastico(annoScolastico: string | null | undefined): string | null {
-  const m = /^(\d{4})\/(\d{4})$/.exec((annoScolastico ?? '').trim())
-  if (!m) return null
-  const inizio = Number(m[1])
-  const fine = Number(m[2])
-  // `2026/2027` e non `2026/2029`: due anni consecutivi, o la stringa non descrive un anno
-  // scolastico e la scadenza sarebbe una data scelta a caso.
-  if (fine !== inizio + 1) return null
-  return `${fine}-07-31`
-}
-
 // ─── Il riscarico e l'anno scolastico ───────────────────────────────────────────
-
-/**
- * L'anno scolastico di un giorno civile `YYYY-MM-DD`, o `null` se non è una data.
- *
- * Stessa regola di `annoScolasticoCorrente()` (`src/lib/anno-scolastico.ts`): il confine è
- * il **1° agosto**, «agosto fa già da ponte verso il nuovo anno». Qui però si parte da una
- * data invece che da `new Date()`, perché la domanda è su un documento del passato.
- */
-export function annoScolasticoDelGiorno(giorno: string | null | undefined): string | null {
-  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec((giorno ?? '').trim())
-  if (!m) return null
-  const anno = Number(m[1])
-  const mese = Number(m[2])
-  return mese >= 8 ? `${anno}/${anno + 1}` : `${anno - 1}/${anno}`
-}
 
 /**
  * Il riscarico di questo modello è legato all'anno scolastico?
@@ -1230,9 +1171,15 @@ export function riusoLegatoAllAnnoScolastico(voce: VocePrestampato): boolean {
  * di produzione il 2026-08-16 — quindi si passa da `created_at`, che è l'istante in cui il
  * certificato è stato emesso e stampato in calce sul foglio stesso.
  *
+ * L'anno di quel giorno lo decide il modulo dell'anno (`annoDelGiorno`): il calendario della
+ * sede del bambino, se c'è, altrimenti la soglia predefinita del **1° settembre** (non più il
+ * 1° agosto: il centro estivo di luglio e agosto appartiene all'anno che si chiude). Il
+ * calendario è lo stesso con cui si calcola l'anno atteso, così emissione e attesa non
+ * divergono mai.
+ *
  * ⚠️ IL GIORNO È QUELLO CIVILE ITALIANO (`dataCivile`, `Europe/Rome`), non `iso.slice(0,10)`:
  * il runtime su Vercel gira in UTC, e fra mezzanotte e le due sono due giorni diversi. Sul
- * 1° agosto — cioè esattamente il confine fra due anni scolastici — quelle due ore
+ * confine fra due anni scolastici quelle due ore
  * deciderebbero se un certificato è di quest'anno o dell'anno scorso. È la stessa misura già
  * pagata in questo repo il 2026-08-01 alle 01:08 (un incasso vero sparito da un KPI perché
  * il server contava in UTC).
@@ -1244,13 +1191,14 @@ export function riusoLegatoAllAnnoScolastico(voce: VocePrestampato): boolean {
 export function documentoDellAnnoScolastico(
   creatoIl: string | null | undefined,
   annoScolastico: string | null | undefined,
+  calendario?: Calendario | null,
 ): boolean {
   const atteso = (annoScolastico ?? '').trim()
   if (!atteso) return false
   if (typeof creatoIl !== 'string' || creatoIl.trim() === '') return false
   const istante = new Date(creatoIl)
   if (Number.isNaN(istante.getTime())) return false
-  return annoScolasticoDelGiorno(dataCivile(istante)) === atteso
+  return annoDelGiorno(dataCivile(istante), calendario ?? null).etichetta === atteso
 }
 
 // ─── I moduli che la morosità non blocca ────────────────────────────────────────

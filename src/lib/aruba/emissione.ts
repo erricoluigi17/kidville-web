@@ -77,12 +77,13 @@ import {
   annoScolasticoDiCompetenza,
   formattaNumeroFattura,
   sezionalePerMinore,
-  ErroreSerieAmbigua,
   type Sezionale,
 } from '@/lib/fatturazione/sezionale'
 import { componiCausalePagamento, slugCategoria, type PagamentoPerCausale } from './causale-pagamento'
 import { leggiModuleConfig } from '@/lib/settings/module-config'
 import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
+import { caricaCalendario } from '@/lib/anno/calendario'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { logEvento } from '@/lib/logging/logger'
 
 export interface AttoreEmissione {
@@ -208,8 +209,6 @@ export type EsitoEmissione =
         | 'non_saldato'
         | 'non_configurato'
         | 'dati_minore_mancanti'
-        /** Serie ambigua: emissione in agosto senza `periodo_competenza`. Vedi `ErroreSerieAmbigua`. */
-        | 'periodo_competenza_mancante'
         | 'numerazione_non_allineata'
         | 'intestatario_mancante'
         /** 409 — l'intestatario scelto contro un pagamento RIPARTITO fra due genitori. */
@@ -314,21 +313,6 @@ function s(v: unknown): string {
  */
 function cfNormalizzato(v: unknown): string {
   return s(v).trim().toUpperCase().replace(/\s+/g, '')
-}
-
-/**
- * `YYYY-MM-DD` → mezzanotte LOCALE di quel giorno.
- *
- * La stringa arriva da `oggiFiscaleISO()`, che la formatta in **Europe/Rome**:
- * leggerla a pezzi e ricostruirla con `new Date(a, m-1, g)` tiene il GIORNO
- * italiano qualunque sia il fuso del processo (Vercel gira in UTC). Passare da
- * `new Date(iso)` la interpreterebbe come mezzanotte UTC, e a ovest di Greenwich
- * diventerebbe il giorno prima — il difetto già pagato in questo repo col banco
- * di prova che viveva in un altro fuso dal prodotto.
- */
-function giornoDaIsoFiscale(iso: string): Date {
-  const [anno, mese, giorno] = iso.split('-').map(Number)
-  return new Date(anno, mese - 1, giorno)
 }
 
 /**
@@ -829,7 +813,9 @@ export async function emettiFatturaPagamento(
 ): Promise<EsitoEmissione> {
   // 1. pagamento + alunno (con i campi split, il CF e la data di nascita del minore)
   //    + slug della categoria, che decide il MODELLO di causale.
-  const { data: pag, error: errPag } = await supabase
+  // `anno_id` (PR 2 dell'anno scolastico) decide la serie fiscale: vedi il passo 3. Sul database
+  // della CI la colonna non c'è (42703): si rifà la lettura con la lista di sempre.
+  let { data: pag, error: errPag } = await supabase
     .from('pagamenti')
     // Una stringa SOLA, per quanto lunga: spezzata con `+` il client Supabase
     // perde il tipo letterale del select e ogni campo di `pag` diventa un errore
@@ -837,10 +823,33 @@ export async function emettiFatturaPagamento(
     // `fattura_stato` e `fattura_aruba_id` (colonne della baseline, ci sono anche sul DB
     // E2E non migrato) servono al 409 «partita ma non registrata» del passo 6.
     .select(
-      'id, descrizione, importo, stato, scadenza, periodo_competenza, scuola_id, fattura_causale, categoria_id, alunno_id, fattura_stato, fattura_aruba_id, payment_categories:categoria_id ( slug ), alunni:alunno_id ( id, nome, cognome, codice_fiscale, data_nascita, genitori_separati, retta_split_config, intestatario_fatture )'
+      'id, descrizione, importo, stato, scadenza, periodo_competenza, anno_id, scuola_id, fattura_causale, categoria_id, alunno_id, fattura_stato, fattura_aruba_id, payment_categories:categoria_id ( slug ), alunni:alunno_id ( id, nome, cognome, codice_fiscale, data_nascita, genitori_separati, retta_split_config, intestatario_fatture )'
     )
     .eq('id', pagamentoId)
     .single()
+  let annoIdDisponibile = true
+  if (errPag && schemaAnnoIndietro(errPag)) {
+    annoIdDisponibile = false
+    const seconda = await supabase
+      .from('pagamenti')
+      .select(
+        'id, descrizione, importo, stato, scadenza, periodo_competenza, scuola_id, fattura_causale, categoria_id, alunno_id, fattura_stato, fattura_aruba_id, payment_categories:categoria_id ( slug ), alunni:alunno_id ( id, nome, cognome, codice_fiscale, data_nascita, genitori_separati, retta_split_config, intestatario_fatture )'
+      )
+      .eq('id', pagamentoId)
+      .single()
+    pag = seconda.data as unknown as typeof pag
+    errPag = seconda.error as unknown as typeof errPag
+    if (!seconda.error && seconda.data) {
+      logEvento('fattura', 'info', {
+        operazione: 'emettiFatturaPagamento',
+        esito: 'anno-della-voce-non-disponibile',
+        scuola_id: seconda.data.scuola_id,
+        pagamento_id: pagamentoId,
+        msg: "la colonna pagamenti.anno_id non c'è in questo database: la serie fiscale si decide "
+          + 'sul periodo di competenza o sulla data del documento',
+      })
+    }
+  }
   // PostgREST NON LANCIA (AGENTS.md, regola 7): fino al 2026-08-10 l'errore era
   // scartato dalla destrutturazione e QUALUNQUE guasto di lettura — permesso
   // negato, colonna assente (42703) sul DB E2E non migrato, rete — usciva come
@@ -1007,16 +1016,34 @@ export async function emettiFatturaPagamento(
   const alunno = (Array.isArray(pag.alunni) ? pag.alunni[0] : pag.alunni) as AlunnoNested | null
   const dataDocumento = oggiFiscaleISO()
   const anno = annoFiscale()
-  // L'anno scolastico viene dal PERIODO CHE SI FATTURA, non da oggi: una retta di maggio
-  // saldata a settembre appartiene all'anno scolastico vecchio, e il confine dei tre anni
-  // si sposterebbe di dodici mesi (cioè cambierebbe la SERIE) se si guardasse il
-  // calendario invece del documento. Vedi `annoScolasticoDiCompetenza`.
-  const competenza = annoScolasticoDiCompetenza(
-    pag.periodo_competenza as string | null,
-    giornoDaIsoFiscale(dataDocumento),
-  )
-  const annoScolastico = competenza.anno
-  if (competenza.fonte === 'data_documento') {
+  // L'anno scolastico della serie, in quest'ordine:
+  //  1. L'ANNO DELLA VOCE: `pagamenti.anno_id`, calcolato dal database dalla competenza,
+  //     altrimenti dalla scadenza, altrimenti dalla creazione. Una retta di maggio saldata a
+  //     novembre appartiene al 2025/26 e il confine dei tre anni non deve spostarsi di
+  //     dodici mesi perché la fattura esce dopo. Si traduce in `annoInizio` attraverso il
+  //     calendario della sede (mai con un embed: sul database della CI l'embed risponderebbe
+  //     PGRST200).
+  //  2. altrimenti (voce senza `anno_id`, un `anno_id` che il calendario non conosce, schema
+  //     indietro): il periodo di competenza e, in mancanza, il giorno del documento — con la
+  //     stessa regola dell'anno di tutto il prodotto (`annoDelGiorno`).
+  const calendario = await caricaCalendario(supabase, s(pag.scuola_id))
+  const annoIdVoce = annoIdDisponibile ? s((pag as { anno_id?: unknown }).anno_id) : ''
+  const rigaVoce = annoIdVoce ? calendario?.find((r) => r.annoId === annoIdVoce) : undefined
+  let annoScolastico: number
+  let fonteAnno: 'voce' | 'periodo_competenza' | 'data_documento'
+  if (rigaVoce) {
+    annoScolastico = rigaVoce.annoInizio
+    fonteAnno = 'voce'
+  } else {
+    const competenza = annoScolasticoDiCompetenza(
+      pag.periodo_competenza as string | null,
+      dataDocumento,
+      calendario,
+    )
+    annoScolastico = competenza.anno
+    fonteAnno = competenza.fonte
+  }
+  if (fonteAnno === 'data_documento') {
     // `warn` e non `error`: il ripiego è la MAGGIORANZA dei pagamenti (71 su 98 in
     // produzione al 2026-08-10 non hanno `periodo_competenza`) e nella quasi totalità
     // dei casi coincide col periodo fatturato. Ma non è muto, perché quando NON coincide
@@ -1040,10 +1067,6 @@ export async function emettiFatturaPagamento(
       codiceFiscale: alunno?.codice_fiscale,
       dataNascita: alunno?.data_nascita,
       annoScolastico,
-      // In agosto, e solo senza «periodo di competenza», l'anno scolastico è dedotto in un
-      // mese in cui le due regole del prodotto rispondono anni diversi: `sezionalePerMinore`
-      // rifiuta di scegliere se i due anni candidati portano il bambino su serie diverse.
-      annoScolasticoAmbiguo: competenza.ambiguo,
     })
     sezionale = esitoSezionale.sezionale
     if (esitoSezionale.codiceFiscaleImplausibile || esitoSezionale.dataNascitaImplausibile) {
@@ -1119,31 +1142,14 @@ export async function emettiFatturaPagamento(
     // Nei campi solo `esito` (in lista bianca) e gli uuid: la data di nascita di
     // un minore nei log non entra mai.
     //
-    // DUE BLOCCHI DIVERSI, DUE RIPARAZIONI DIVERSE. L'anagrafica incompleta si
-    // completa sulla scheda del bambino; la serie ambigua d'agosto si scioglie
-    // compilando «periodo di competenza» SUL PAGAMENTO — e non c'è niente da
-    // correggere sul bambino. Rispondere all'una col messaggio dell'altra manderebbe
-    // la segreteria a cercare un campo che è già a posto.
-    const ambigua = e instanceof ErroreSerieAmbigua
     logEvento('fattura', 'error', {
       operazione: 'emettiFatturaPagamento',
-      esito: ambigua ? 'anno-scolastico-ambiguo' : 'sezionale-non-determinabile',
+      esito: 'sezionale-non-determinabile',
       scuola_id: pag.scuola_id,
       pagamento_id: pagamentoId,
       alunno_id: alunno?.id ?? pag.alunno_id,
       anno_scolastico: annoScolastico,
     }, e)
-    if (ambigua) {
-      return {
-        ok: false,
-        motivo: 'periodo_competenza_mancante',
-        messaggio:
-          'Impossibile determinare la serie fiscale (Asilo/FPR): il pagamento non ha un «periodo di competenza» ' +
-          'e la fattura si emette in agosto, il mese in cui cambia l’anno scolastico. Per questo bambino i due ' +
-          'anni possibili danno serie diverse. Indica il periodo di competenza sul pagamento e riprova.',
-        httpStatus: 422,
-      }
-    }
     return {
       ok: false,
       motivo: 'dati_minore_mancanti',

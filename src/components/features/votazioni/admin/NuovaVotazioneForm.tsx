@@ -7,7 +7,9 @@ import { Btn } from '@/components/ui/Btn'
 import { Toggle } from '@/components/ui/cockpit'
 import { DateTimeField } from '@/components/ui/DateTimeField'
 import { Modal } from '@/components/ui/Modal'
-import { TITOLO_MAX, TITOLO_PREDEFINITO, type GenitoreScheda } from '@/lib/votazioni/tipi'
+import { TITOLO_MAX, titoloPredefinito, type GenitoreScheda } from '@/lib/votazioni/tipi'
+import { useAnnoDi } from '@/lib/context/calendario-context'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { idCreato, leggiClassi, scrivi, type ClasseDellaSede, type LetturaClassi } from './chiamate'
 import { cifreLocali } from './scadenza'
 import { SceltaCandidati } from './SceltaCandidati'
@@ -91,7 +93,12 @@ export function NuovaVotazioneForm({
   const tutteLeClassi = gruppi.flatMap((g) => g.classi)
 
   // ── Il modulo ───────────────────────────────────────────────────────────────────
-  const [titolo, setTitolo] = useState(TITOLO_PREDEFINITO)
+  // Il titolo scritto dalla segreteria non si sovrascrive mai: finché non scrive vale il proposto, che segue
+  // l'anno scolastico di OGGI della sede (il calendario può arrivare dopo il primo disegno).
+  const [oggi] = useState(() => oggiFiscaleISO())
+  const annoDi = useAnnoDi(scuolaId)
+  const [titoloScritto, setTitoloScritto] = useState<string | null>(null)
+  const titolo = titoloScritto ?? titoloPredefinito(annoDi(oggi).etichettaBreve)
   const [scelte, setScelte] = useState<string[]>([])
   const [istituto, setIstituto] = useState(false)
   const [candidati, setCandidati] = useState<GenitoreScheda[]>([])
@@ -183,7 +190,7 @@ export function NuovaVotazioneForm({
               type="text"
               value={titolo}
               maxLength={TITOLO_MAX}
-              onChange={(e) => setTitolo(e.target.value)}
+              onChange={(e) => setTitoloScritto(e.target.value)}
               style={{ fontSize: '16px' }}
               className={CAMPO}
             />

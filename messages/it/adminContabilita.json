@@ -1345,7 +1345,6 @@
       "gia_emessa_altro_intestatario": "Già emessa con un altro intestatario",
       "quota_estranea": "Quota già fatturata su un altro documento",
       "partita_non_registrata": "Fattura partita ma non a registro: verifica prima di riprovare",
-      "periodo_competenza_mancante": "Periodo di competenza mancante: indicalo sul pagamento",
       "dati_minore_mancanti": "Dati del bambino incompleti: codice fiscale o data di nascita"
     },
     "menu": {

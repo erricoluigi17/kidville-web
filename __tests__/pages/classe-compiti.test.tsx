@@ -63,7 +63,7 @@ import itShared from '../../messages/it/shared.json'
  *  · `prossimoCursore` scartato nella lettura → rossi i casi (13) e (14);
  *  · il giro che si ferma sulla prima pagina vuota → rosso il caso (14);
  *  · seguito fallito che azzera le righe o il cursore → rosso il caso (15);
- *  · `annoScolasticoCorrente()` chiamata senza argomento → rosso il caso (16);
+ *  · `annoDelGiorno` chiamata con un secondo `new Date()` invece del giorno già letto → rosso il caso (16);
  *  · periodo rimesso fra i filtri, con «Pulisci filtri» che lo azzera → rosso il
  *    caso (6);
  *  · lista non validata (200 malformato → `[]`) e `individualizzati` non
@@ -84,14 +84,15 @@ const MEZZOGIORNO_18 = '2026-09-18T10:00:00Z'
 
 /**
  * I `dataDa` attesi, SCRITTI PER ESTESO e non ricalcolati con `addGiorni` /
- * `annoScolasticoCorrente`: riusare le stesse funzioni del componente
+ * `annoDelGiorno`: riusare le stesse funzioni del componente
  * proverebbe soltanto che due chiamate identiche danno lo stesso risultato.
  * Contati a mano dal 18/09/2026: −30 → 19/08, −90 → 20/06; l'anno SCOLASTICO in
- * corso il 18/09/2026 è il 2026/2027, che apre il 1° agosto 2026.
+ * corso il 18/09/2026 è il 2026/2027, che apre il 1° settembre 2026 (soglia
+ * predefinita del modulo dell'anno, senza il calendario della sede).
  */
 const DA_30 = '2026-08-19'
 const DA_90 = '2026-06-20'
-const DA_ANNO = '2026-08-01'
+const DA_ANNO = '2026-09-01'
 
 const stub = vi.hoisted(() => ({
     params: { sectionId: 'sez-1' } as Record<string, string>,
@@ -113,8 +114,10 @@ const spie = vi.hoisted(() => ({ annoScolastico: vi.fn() as ReturnType<typeof vi
 
 vi.mock('@/lib/anno-scolastico', async (importOriginal) => {
     const vero = await importOriginal<typeof import('@/lib/anno-scolastico')>()
-    spie.annoScolastico.mockImplementation((d?: Date) => vero.annoScolasticoCorrente(d))
-    return { ...vero, annoScolasticoCorrente: spie.annoScolastico }
+    spie.annoScolastico.mockImplementation((giorno: string, cal?: unknown) =>
+        vero.annoDelGiorno(giorno, cal as never),
+    )
+    return { ...vero, annoDelGiorno: spie.annoScolastico }
 })
 
 vi.mock('next/navigation', () => ({
@@ -197,9 +200,18 @@ let trattieni = false
 const appese: Array<() => void> = []
 const rilascia = (i: number) => appese[i]()
 
+/** Il calendario che la rete finta serve a `/api/anno/calendario` (null = nessuno: la risposta generica). */
+let calendarioServito: unknown = null
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
     chiamate.push(url)
+    if (url.startsWith('/api/anno/calendario') && calendarioServito) {
+        return {
+            ok: true, status: 200,
+            json: async () => ({ success: true, data: calendarioServito }),
+        } as unknown as Response
+    }
     if (url.includes('/api/primaria/compiti')) {
         const fotografia = coda.length > 0 ? (coda.shift() as Risposta) : { ...risposta }
         const res = {
@@ -243,6 +255,7 @@ beforeEach(() => {
     trattieni = false
     appese.length = 0
     coda = []
+    calendarioServito = null
     stub.params = { sectionId: SEZIONE }
     stub.search = new URLSearchParams(`userId=${DOCENTE}`)
     rispondiCon([])
@@ -257,6 +270,7 @@ afterEach(() => {
     vi.useRealTimers()
 })
 
+import { CalendarioProvider } from '@/lib/context/calendario-context'
 import CompitiPage from '@/app/(dashboard)/teacher/primaria/[sectionId]/compiti/page'
 import { ClasseShell } from '@/components/features/primaria/ClasseShell'
 
@@ -431,7 +445,7 @@ describe('classe · linguetta «Compiti»', () => {
         await waitFor(() => expect(chiamateCompiti()).toHaveLength(3))
         expect(
             dataDaDi(chiamateCompiti()[2]),
-            'L’anno di questa linguetta è l’anno SCOLASTICO (1° agosto), non l’anno solare di ' +
+            'L’anno di questa linguetta è l’anno SCOLASTICO (1° settembre), non l’anno solare di ' +
                 '`annoFiscale()`, che sta in un modulo di fatturazione e parla di data documento.',
         ).toBe(DA_ANNO)
 
@@ -532,19 +546,48 @@ describe('classe · linguetta «Compiti»', () => {
             `Chi clicca «Anno scolastico» per vedere DI PIÙ non può vedere DI MENO: ` +
                 `anno=${daAnno}, 90 giorni=${da90}.`,
         ).toBe(true)
-        expect(daAnno, 'l’anno scolastico 2026/2027 apre il 1° agosto 2026').toBe('2026-08-01')
+        expect(daAnno, 'l’anno scolastico 2026/2027 apre il 1° settembre 2026').toBe('2026-09-01')
     })
 
-    it('(9) il tetto vero: al 31 luglio di un anno BISESTILE il clamp ferma l’anno a 364 giorni', async () => {
-        // Perché proprio questo giorno. L'anno scolastico apre il 1° agosto,
-        // quindi la distanza massima la si ha il 31 luglio: 364 giorni in un anno
-        // normale, **365** quando in mezzo cade un 29 febbraio (1/8/2027 →
-        // 31/7/2028). E 365 è il margine ZERO del controllo della route
+    it('(8-bis) con il calendario della sede, «Anno scolastico» chiede la data d’inizio di QUEL calendario, non il 1° settembre', async () => {
+        // Il 18/09/2026 il predefinito darebbe 2026-09-01 (DA_ANNO). Questa sede comincia il 2026/27 il 17 agosto:
+        // la pagina deve far arrivare il suo calendario alla funzione (se passasse `undefined` uscirebbe DA_ANNO).
+        calendarioServito = [
+            {
+                scuola_id: 'scu-1',
+                righe: [
+                    {
+                        annoId: 'a-2026', annoSedeId: 's-2026', annoInizio: 2026, inizio: '2026-08-17', fine: '2027-08-31',
+                        ultimoGiornoAperto: '2027-07-15', preparaSuccessivoDal: '2027-03-01', stato: 'corrente',
+                        domandeAperte: false,
+                    },
+                ],
+            },
+        ]
+        render(<CalendarioProvider><CompitiPage /></CalendarioProvider>)
+        await waitFor(() => expect(chiamateCompiti()).toHaveLength(1))
+        // Si aspetta la PRESENZA dell'arrivo del calendario (la sua fetch), poi si lascia girare la catena
+        // promesse -> stato -> effetto che aggiorna il riferimento.
+        await waitFor(() => expect(chiamate.some((u) => u.startsWith('/api/anno/calendario'))).toBe(true))
+        await act(async () => {})
+        await act(async () => {})
+
+        fireEvent.click(screen.getByRole('button', { name: itShared.classeCompitiPeriodoAnno }))
+        await waitFor(() => expect(chiamateCompiti()).toHaveLength(2))
+        expect(dataDaDi(chiamateCompiti()[1])).toBe('2026-08-17')
+        expect(DA_ANNO).toBe('2026-09-01') // il predefinito che NON deve uscire
+    })
+
+    it('(9) il tetto vero: al 31 agosto di un anno BISESTILE il clamp ferma l’anno a 364 giorni', async () => {
+        // Perché proprio questo giorno. L'anno scolastico apre il 1° settembre,
+        // quindi la distanza massima la si ha il 31 agosto: 364 giorni in un anno
+        // normale, **365** quando in mezzo cade un 29 febbraio (1/9/2027 →
+        // 31/8/2028). E 365 è il margine ZERO del controllo della route
         // (`giorni > 365`), che per giunta misura col PROPRIO orologio: il
         // `dataDa` lo calcola il client, e una richiesta composta alle 23:59:59 e
         // valutata un secondo dopo vale 366 → 400, con «Riprova» che ritenta
         // all'infinito perché a invecchiare è la data, non la rete.
-        vi.setSystemTime(new Date('2028-07-31T10:00:00Z'))
+        vi.setSystemTime(new Date('2028-08-31T10:00:00Z'))
         render(<CompitiPage />)
         await waitFor(() => expect(chiamateCompiti()).toHaveLength(1))
 
@@ -555,10 +598,10 @@ describe('classe · linguetta «Compiti»', () => {
         // differenza fra un test e una decorazione.
         const da = dataDaDi(chiamateCompiti()[1])
         const giorni = Math.round(
-            (Date.parse('2028-07-31T00:00:00Z') - Date.parse(`${da}T00:00:00Z`)) / 86_400_000,
+            (Date.parse('2028-08-31T00:00:00Z') - Date.parse(`${da}T00:00:00Z`)) / 86_400_000,
         )
-        expect(giorni, `${da} → 31/07/2028 sono ${giorni} giorni: sopra 364 il margine è zero`).toBeLessThanOrEqual(364)
-        expect(da, 'il 1° agosto 2027 dista 365 giorni: il clamp deve averlo spostato di uno').toBe('2027-08-02')
+        expect(giorni, `${da} → 31/08/2028 sono ${giorni} giorni: sopra 364 il margine è zero`).toBeLessThanOrEqual(364)
+        expect(da, 'il 1° settembre 2027 dista 365 giorni: il clamp deve averlo spostato di uno').toBe('2027-09-02')
     })
 
     it('(10) due click rapidi: la risposta in RITARDO non sovrascrive la più recente', async () => {
@@ -810,11 +853,13 @@ describe('classe · linguetta «Compiti»', () => {
     it('(16) l’anno scolastico si decide sulla STESSA lettura dell’orologio da cui esce «oggi»', async () => {
         // Il difetto vero non si può mettere in scena con l'orologio fermo: nasce
         // dai microsecondi fra due letture di `new Date()` a cavallo della
-        // mezzanotte romana del 1° agosto, quando «oggi» è ancora il 31 luglio e
-        // l'anno scolastico è già quello nuovo — e `dataDa` esce UN GIORNO NEL
-        // FUTURO. Quello che si misura è la condizione che lo rende impossibile:
-        // l'istante viene PASSATO, non riletto.
-        vi.setSystemTime(new Date('2026-07-31T22:30:00Z')) // 1° agosto, 00:30 a Roma
+        // mezzanotte romana del 1° settembre (la soglia di oggi), quando «oggi» è
+        // ancora il 31 agosto e l'anno scolastico è già quello nuovo — e `dataDa`
+        // esce UN GIORNO NEL FUTURO. Quello che si misura è la condizione che lo
+        // rende impossibile: all'anno si passa il GIORNO già letto (`AAAA-MM-GG`),
+        // non un secondo istante riletto. (Dal compito 4.1.S4b la sorgente è
+        // `annoDelGiorno` del modulo dell'anno, con il calendario della sede.)
+        vi.setSystemTime(new Date('2026-08-31T22:30:00Z')) // 1° settembre, 00:30 a Roma
         render(<CompitiPage />)
         await waitFor(() => expect(chiamateCompiti()).toHaveLength(1))
 
@@ -823,21 +868,24 @@ describe('classe · linguetta «Compiti»', () => {
         await waitFor(() => expect(chiamateCompiti()).toHaveLength(2))
 
         expect(spie.annoScolastico).toHaveBeenCalled()
-        const passato = spie.annoScolastico.mock.calls[0][0] as Date | undefined
+        const passato = spie.annoScolastico.mock.calls[0][0] as string
         expect(
             passato,
-            'Senza argomento `annoScolasticoCorrente()` rilegge l’orologio: due letture con la ' +
-                'soglia del 1° agosto in mezzo, e `dataDa` può uscire nel futuro.',
-        ).toBeInstanceOf(Date)
+            'All’anno si passa il giorno di Roma già letto: con un secondo `new Date()` la soglia ' +
+                'cadrebbe fra due letture e `dataDa` può uscire nel futuro.',
+        ).toMatch(/^\d{4}-\d{2}-\d{2}$/)
 
-        // E l'istante passato è lo STESSO giorno civile italiano da cui esce
-        // «oggi»: si ricava dal periodo dei 30 giorni, che è oggi meno 30.
-        const giornoRomano = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' })
+        // Il giorno passato è lo STESSO da cui esce «oggi»: si ricava dal periodo dei
+        // 30 giorni, che è oggi meno 30.
         const oggi = new Date(Date.parse(`${dataDaDi(chiamateCompiti()[0])}T12:00:00Z`) + 30 * 86_400_000)
-        expect(giornoRomano.format(passato as Date)).toBe(giornoRomano.format(oggi))
+            .toISOString()
+            .slice(0, 10)
+        expect(passato).toBe(oggi)
+        expect(oggi).toBe('2026-09-01')
 
         // E il conto finale: l'inizio del periodo non è mai nel futuro.
-        expect(dataDaDi(chiamateCompiti()[1]) <= giornoRomano.format(oggi)).toBe(true)
+        expect(dataDaDi(chiamateCompiti()[1]) <= oggi).toBe(true)
+        expect(dataDaDi(chiamateCompiti()[1])).toBe('2026-09-01')
     })
 
     it('(17) un 200 MALFORMATO è un guasto, e una riga monca non fa cadere il render', async () => {

@@ -8,19 +8,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
+import type { Calendario, RigaCalendario } from '@/lib/anno-scolastico'
 import { estraiTesto } from '@/lib/protocolli/estrai'
 import { redact, redactInput } from '@/lib/logging/redact'
 import { codeHash } from '@/lib/auth/otp-ticket'
 import { formatNumeroProtocollo } from '@/lib/protocolli/segnatura'
 import {
-  annoScolasticoDelGiorno,
   BUCKET_CERTIFICATI,
   BUCKET_FASCICOLO,
   componiDescrizioneUscita,
   datiUscitaDaEvento,
   descrizioneArchivioProtocollata,
   documentoDellAnnoScolastico,
-  fineAnnoScolastico,
   ilFileRestaNelBucket,
   magazziniAmmessi,
   motivoMancatoArchivioDa,
@@ -672,8 +671,9 @@ function conDocumentoInArchivio(
   slug: string,
   id = DOCUMENTO,
   descrizione = 'Documento già emesso',
-  // Dentro l'anno scolastico di `DATI` (`2026/2027`), che comincia il 1° agosto 2026.
-  creatoIl = '2026-08-15T09:00:00.000Z',
+  // Dentro l'anno scolastico di `DATI` (`2026/2027`), che comincia il 1° settembre 2026
+  // (era il 15 agosto, quando la soglia era il 1° agosto: cambia con il modulo dell'anno, 4.1.S1).
+  creatoIl = '2026-09-15T09:00:00.000Z',
 ) {
   h.state.queues['student_documents'] = [
     {
@@ -2591,35 +2591,20 @@ describe('PATCH /api/parent/prestampati/firma — verifica, generazione, archivi
     ).toMatchObject({ document_type: 'permesso_orario', expiry_date: '2026-12-31' })
   })
 
-  it('la scheda sanitaria scade a fine anno scolastico: la §05 la vuole riconfermata ogni anno', async () => {
-    // 🔴 IL DIFETTO CHE QUESTA PROVA CHIUDE, e non lo vedeva nessuno. `05-scheda-sanitaria.md`
-    // §Dopo la firma: «`expiry_date` = fine anno scolastico (va riconfermata ogni anno)». La
-    // rotta però passava da `scadenzaDaRisposte`, che legge `al`, `ricorrenzaFino` e `giorno`
-    // — e nello schema del n. 05 non c'è nessuno dei tre. Il valore era `null` SEMPRE: una
-    // scheda sanitaria di un minore archiviata come se non scadesse mai, e il cron
-    // `notifiche/scadenze-documenti` che non avrebbe mai chiesto la riconferma. Non era una
-    // deviazione dichiarata come quella del n. 07: era un calcolo che nessuno faceva.
-    //
-    // La data si misura sul PRECOMPILATO e non si ricopia: `annoScolastico` è `2026/2027` e
-    // il confine dell'anno scolastico lo fissa `annoScolasticoCorrente()`, che passa all'anno
-    // nuovo il 1° agosto.
+  it('la scheda sanitaria NON scade più: vale fino a revoca (expiry_date nullo)', async () => {
+    // PRIMA (fino al 06/11/2026): `expiry_date` = fine anno scolastico (`2027-07-31`), la §05 la
+    // voleva riconfermata ogni anno. DOPO: risposta 10 del titolare, «i moduli sanitari (scheda
+    // sanitaria, farmaci, dieta) valgono fino a revoca». Il n. 05 passa da `scadenzaDaRisposte`
+    // come tutti gli altri e, non avendo `al` né `ricorrenzaFino` né `giorno`, dà `null`.
     h.state.queues['student_documents'] = [{ data: { id: DOCUMENTO }, error: null }]
 
     const { res, json } = await firma('scheda_sanitaria', RISPOSTE_SANITARIA)
 
     expect(res.status, JSON.stringify(json)).toBe(201)
-    expect(
-      h.state.inserimenti.find((i) => i.tabella === 'student_documents')?.righe,
-    ).toMatchObject({
-      document_type: 'scheda_sanitaria',
-      expiry_date: fineAnnoScolastico(DATI.annoScolastico),
-    })
-    // E il valore atteso è quello, non «una data qualunque»: l'ultimo giorno prima del
-    // ricambio dell'anno scolastico.
-    expect(fineAnnoScolastico('2026/2027')).toBe('2027-07-31')
-    // Una stringa che non descrive un anno scolastico non produce una scadenza inventata.
-    expect(fineAnnoScolastico('2026/2029')).toBeNull()
-    expect(fineAnnoScolastico(null)).toBeNull()
+    const riga = h.state.inserimenti.find((i) => i.tabella === 'student_documents')?.righe
+    expect(riga).toMatchObject({ document_type: 'scheda_sanitaria', expiry_date: null })
+    // Il vecchio valore (la fine dell'anno scolastico del precompilato) non compare in nessun campo.
+    expect(JSON.stringify(riga)).not.toContain('2027-07-31')
   })
 
   it('la dieta speciale si archivia SENZA scadenza, e la decisione è dichiarata', async () => {
@@ -3392,26 +3377,48 @@ describe('PATCH — il delegato che ritira il bambino, risolto in un nome', () =
 // ─── Le due regole che non hanno bisogno di una richiesta ───────────────────────
 
 describe('banco-famiglia — le regole pure che le due porte condividono', () => {
-  it('l’anno scolastico di un giorno cambia il 1° AGOSTO, non a settembre né a gennaio', () => {
-    // Stesso confine di `annoScolasticoCorrente()`: «agosto fa già da ponte verso il nuovo
-    // anno». Un confine diverso qui vorrebbe dire che per qualche settimana il certificato
-    // dichiara un anno e il riuso ne conta un altro, sullo stesso documento.
-    expect(annoScolasticoDelGiorno('2026-07-31')).toBe('2025/2026')
-    expect(annoScolasticoDelGiorno('2026-08-01')).toBe('2026/2027')
-    expect(annoScolasticoDelGiorno('2027-01-15')).toBe('2026/2027')
-    expect(annoScolasticoDelGiorno('non è una data')).toBeNull()
-    expect(annoScolasticoDelGiorno(null)).toBeNull()
+  it('un certificato emesso d’estate appartiene all’anno che si chiude: la soglia è il 1° SETTEMBRE', () => {
+    // PRIMA: `annoScolasticoDelGiorno` cambiava anno il 1° agosto (il test affermava
+    // 2026-08-01 → 2026/2027). DOPO: decide il modulo dell'anno, soglia predefinita 1° settembre
+    // (decisione 2 del titolare: il centro estivo di luglio e agosto è dell'anno che si chiude).
+    expect(documentoDellAnnoScolastico('2026-08-20T10:00:00.000Z', '2025/2026', null)).toBe(true)
+    expect(documentoDellAnnoScolastico('2026-08-20T10:00:00.000Z', '2026/2027', null)).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-09-01T10:00:00.000Z', '2026/2027')).toBe(true)
+    expect(documentoDellAnnoScolastico('2027-01-15T10:00:00.000Z', '2026/2027', null)).toBe(true)
+  })
+
+  it('con il calendario della sede il riuso segue le date della sede, non il 1° settembre', () => {
+    // Una sede che comincia il 2026/27 il 2026-08-17: un certificato del 17/08 è del 2026/2027.
+    const riga = (annoInizio: number, inizio: string, fine: string): RigaCalendario => ({
+      annoId: `anno-${annoInizio}`,
+      annoSedeId: `sede-${annoInizio}`,
+      annoInizio,
+      inizio,
+      fine,
+      ultimoGiornoAperto: fine,
+      preparaSuccessivoDal: inizio,
+      stato: 'corrente',
+      domandeAperte: false,
+    })
+    const calendario: Calendario = [
+      riga(2025, '2025-09-01', '2026-08-16'),
+      riga(2026, '2026-08-17', '2027-08-31'),
+    ]
+    expect(documentoDellAnnoScolastico('2026-08-17T10:00:00.000Z', '2026/2027', calendario)).toBe(true)
+    expect(documentoDellAnnoScolastico('2026-08-17T10:00:00.000Z', '2025/2026', calendario)).toBe(false)
+    // Senza calendario lo stesso giorno è ancora dell'anno che si chiude.
+    expect(documentoDellAnnoScolastico('2026-08-17T10:00:00.000Z', '2025/2026', null)).toBe(true)
   })
 
   it('il giorno di un documento è quello ITALIANO, non quello UTC', () => {
     // 🔴 La trappola già pagata in questo repo (2026-08-01, 01:08): il runtime gira in UTC.
-    // Un certificato emesso il 1° agosto alle 00:30 italiane è `2026-07-31T22:30Z`: contato
-    // in UTC sarebbe dell'anno scolastico SCORSO, e il riscarico ne emetterebbe uno nuovo
-    // il giorno stesso in cui è stato fatto. Due ore, un numero di protocollo.
-    expect(documentoDellAnnoScolastico('2026-07-31T22:30:00.000Z', '2026/2027')).toBe(true)
-    // E il verso opposto: le 23:30 italiane del 31 luglio sono ancora l'anno vecchio.
-    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2026/2027')).toBe(false)
-    expect(documentoDellAnnoScolastico('2026-07-31T21:30:00.000Z', '2025/2026')).toBe(true)
+    // PRIMA il confine era il 1° agosto (`2026-07-31T22:30Z` = 01/08 a Roma); DOPO è il 1°
+    // settembre: `2026-08-31T22:30Z` è il 01/09 a Roma. Contato in UTC sarebbe dell'anno SCORSO,
+    // e il riscarico ne emetterebbe uno nuovo il giorno stesso. Due ore, un numero di protocollo.
+    expect(documentoDellAnnoScolastico('2026-08-31T22:30:00.000Z', '2026/2027')).toBe(true)
+    // E il verso opposto: le 23:30 italiane del 31 agosto sono ancora l'anno vecchio.
+    expect(documentoDellAnnoScolastico('2026-08-31T21:30:00.000Z', '2026/2027')).toBe(false)
+    expect(documentoDellAnnoScolastico('2026-08-31T21:30:00.000Z', '2025/2026')).toBe(true)
   })
 
   it('un istante illeggibile vale «non è di quest’anno», e il verso è dichiarato', () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * GET /api/chat/messages LEGGE LA CODA DELLA CONVERSAZIONE, E PAGINA ALL'INDIETRO (C2, 2026-09-14).
@@ -112,6 +113,7 @@ const adminClient = {
       },
     }),
   },
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(nome: string) {
     const st = {
       filtri: [] as Array<(r: Riga) => boolean>,

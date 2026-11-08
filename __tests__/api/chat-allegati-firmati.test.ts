@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // S32 — LA CHAT ESCE DAL MODELLO DEL LINK ETERNO (percorso applicativo completo).
 //
@@ -93,6 +94,7 @@ const storage = {
 
 const adminClient = {
   storage,
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const st: { filters: Record<string, unknown>; discendente?: boolean } = { filters: {} }
     const b: Record<string, unknown> = {}

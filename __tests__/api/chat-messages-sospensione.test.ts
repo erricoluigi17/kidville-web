@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { NextResponse } from 'next/server'
 
 // M4 — Morosità residua: il genitore SOSPESO non può inviare messaggi in chat.
@@ -26,6 +27,7 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ controparteThread: h.controparte
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento, nomeUtente: h.nomeUtente }))
 
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const b: Record<string, unknown> = {}
     b.select = () => b

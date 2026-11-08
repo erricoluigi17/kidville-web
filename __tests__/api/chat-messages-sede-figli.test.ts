@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 /**
@@ -75,6 +76,7 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 }))
 
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const st = { id: null as unknown }
     const b: Record<string, unknown> = {}

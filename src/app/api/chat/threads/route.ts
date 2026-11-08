@@ -13,9 +13,10 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { abbinamentoConsentito } from '@/lib/chat/rubrica';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto';
+import { guastoLetturaAccessoria, rispostaGuastoDb, rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
 import { schemaAssente } from '@/lib/news/schema-assente';
 import { esitoRiepilogo } from '@/lib/chat/riepilogo-conversazioni';
+import { leggiVisibilita, type RigaThreadVisibile } from '@/lib/anno/visibilita-genitore';
 
 /** Sospensione attiva di una conversazione, esposta al partecipante. Il `motivo`
  *  (testo libero) torna SOLO a chi ha sospeso, mai all'altra parte. */
@@ -45,6 +46,9 @@ const postBodySchema = z.object({
 // invece di quattro letture per conversazione (151 richieste con 37 conversazioni). Se la funzione
 // manca o si guasta, il percorso di prima, con la sua riga di log (`esitoRiepilogo`). In nessuno
 // dei due la GET scrive: la consegna è `POST /api/chat/threads/consegnati`.
+//
+// PR 4.4: quali conversazioni e se si può scrivere li dice `thread_visibili`, su entrambi i percorsi. Schema indietro: tutte
+// quelle di oggi, scrivibili. Un guasto risponde errore: mai la lista larga.
 export const GET = withRoute('chat/threads:GET', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -93,19 +97,29 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             return mappa;
         };
 
+        const visibili = await leggiVisibilita<RigaThreadVisibile>(supabase, 'thread_visibili', userId);
+        if (visibili.stato === 'guasto') return rispostaGuastoGiaRegistrato();
+        const scrivibili = visibili.stato === 'ok'
+            ? new Map(visibili.righe.map((r) => [r.thread_id, r.scrivibile]))
+            : null;
+        const soloVisibili = <T extends { id: string }>(righe: T[]) =>
+            (scrivibili ? righe.filter((t) => scrivibili.has(t.id)) : righe)
+                .map((t) => ({ ...t, scrivibile: scrivibili?.get(t.id) ?? true }));
+
         // ── Il riepilogo: una chiamata. `p_utente` è l'identità del GATE, mai `?userId=`. ──
         const { data: righeRiepilogo, error: erroreRiepilogo } = await supabase.rpc('chat_riepilogo_conversazioni', {
             p_utente: userId,
         });
         const riepilogo = esitoRiepilogo({ data: righeRiepilogo, error: erroreRiepilogo }, 'chat/threads:GET');
         if (riepilogo.esito === 'ok') {
-            const sospensioni = await sospensioniAttive(riepilogo.threads.map((t) => t.id));
-            return NextResponse.json(riepilogo.threads.map((t) => ({ ...t, sospensione: sospensioni.get(t.id) ?? null })));
+            const conversazioni = soloVisibili(riepilogo.threads);
+            const sospensioni = await sospensioniAttive(conversazioni.map((t) => t.id));
+            return NextResponse.json(conversazioni.map((t) => ({ ...t, sospensione: sospensioni.get(t.id) ?? null })));
         }
 
         // ── Il RIPIEGO: il percorso di prima, per il DB della CI e per un riepilogo guasto. ──
         // Cerca thread dove l'utente è teacher o parent
-        const { data: threads, error } = await supabase
+        const { data: tuttiIThread, error } = await supabase
             .from('chat_threads')
             .select('*')
             .or(`teacher_id.eq.${userId},parent_id.eq.${userId}`)
@@ -116,7 +130,9 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        const threadIds = (threads ?? []).map((t) => t.id as string);
+        // Prima delle letture per thread: di una conversazione nascosta non si legge niente.
+        const threads = soloVisibili(tuttiIThread ?? []);
+        const threadIds = threads.map((t) => t.id as string);
         const sospensioniMap = await sospensioniAttive(threadIds);
 
         // Le quattro letture per thread ARRICCHISCONO la lista, non la decidono: la lista è
@@ -131,7 +147,7 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
 
         // Arricchisci con nomi degli interlocutori e conteggio non letti
         const enrichedThreads = await Promise.all(
-            (threads ?? []).map(async (thread) => {
+            threads.map(async (thread) => {
                 // Prendi l'ultimo messaggio
                 const { data: lastMsg, error: errUltimo } = await supabase
                     .from('chat_messages')

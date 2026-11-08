@@ -141,5 +141,6 @@
   "chatSezioniSenzaFamiglie": "Nelle tue sezioni non ci sono famiglie con un account attivo.",
   "chatInvioNonRiuscito": "Il messaggio non è stato inviato. È rimasto qui: riprova.",
   "chatInvioNonRiuscitoRete": "Il messaggio non è partito: connessione assente. È rimasto qui, riprova quando torni online.",
-  "chatInvioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account della famiglia è sospeso."
+  "chatInvioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account della famiglia è sospeso.",
+  "chatSolaLettura": "Questa conversazione è in sola lettura: l’insegnante non segue più questo bambino. Puoi rileggerla, ma non inviare nuovi messaggi."
 }

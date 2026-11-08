@@ -13,6 +13,8 @@ import { zUuid, zLimite } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
+import { esitoThread, logVisibilitaNegata } from '@/lib/anno/visibilita-genitore';
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
 // Dal modulo NEUTRO della chat, non da `@/lib/chat/delivered`: parecchi file di test
 // sostituiscono quest'ultimo per intero con una factory `vi.mock` che espone solo
 // `marcaConsegnati` (si trovano con `grep -rln "vi.mock('@/lib/chat/delivered'"
@@ -295,6 +297,18 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             );
         }
 
+        // PR 4.4: la conversazione di un figlio non più attivo non si legge. Quella in sola lettura sì. Prima del mark-read, che
+        // scrive. Schema indietro: come oggi. Un guasto non apre.
+        const visibilita = await esitoThread(supabase, uid, threadId);
+        if (visibilita === 'guasto') return rispostaGuastoGiaRegistrato();
+        if (visibilita === 'nascosto') {
+            logVisibilitaNegata('chat-nascosta', { thread: threadId, uid }, ['thread']);
+            return NextResponse.json(
+                { error: 'Questo bambino non è più fra quelli attivi: la conversazione non è disponibile.', codice: 'FIGLIO_NON_ATTIVO' },
+                { status: 403 }
+            );
+        }
+
         // ── Il cursore: DOPO il controllo di partecipazione, PRIMA di ogni scrittura ──
         // Il client manda l'id del messaggio più vecchio che ha in mano; l'istante lo legge il
         // server, al microsecondo, dal database. `thread_id` nella stessa lettura: un id di un altro
@@ -573,6 +587,22 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
             });
             return NextResponse.json(
                 { error: 'Non sei autorizzato a scrivere in questo thread' },
+                { status: 403 }
+            );
+        }
+
+        // PR 4.4: `scrivibile` vale per le due parti. La conversazione di un figlio non più attivo risponde allo stesso modo:
+        // chi l'ha ancora aperta sullo schermo riceve il motivo, non un errore che non spiega. Schema indietro: come oggi.
+        const visibilita = await esitoThread(supabase, sender_id, thread_id);
+        if (visibilita === 'guasto') return rispostaGuastoGiaRegistrato();
+        if (visibilita === 'sola-lettura' || visibilita === 'nascosto') {
+            logVisibilitaNegata('chat-sola-lettura', { thread: thread_id, uid: sender_id }, ['thread']);
+            return NextResponse.json(
+                {
+                    error: 'Questa conversazione è in sola lettura: non si possono inviare nuovi messaggi.',
+                    codice: 'CHAT_SOLA_LETTURA',
+                    motivo: 'chat_sola_lettura',
+                },
                 { status: 403 }
             );
         }

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // C5 — Le due guardie server-side di POST /api/chat/messages, esercitate
 // END-TO-END attraverso la route (guardie reali, non mockate):
@@ -31,6 +32,7 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ controparteThread: h.controparte
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento, nomeUtente: h.nomeUtente }))
 
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const b: Record<string, unknown> = {}
     b.select = () => b

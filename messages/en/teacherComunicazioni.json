@@ -141,5 +141,6 @@
   "chatSezioniSenzaFamiglie": "There are no families with an active account in your sections.",
   "chatInvioNonRiuscito": "The message was not sent. It is still here: try again.",
   "chatInvioNonRiuscitoRete": "The message was not sent: no connection. It is still here — try again when you are back online.",
-  "chatInvioNonRiuscitoSospeso": "The message was not sent: the family’s account is suspended."
+  "chatInvioNonRiuscitoSospeso": "The message was not sent: the family’s account is suspended.",
+  "chatSolaLettura": "This conversation is read-only: the teacher no longer follows this child. You can read it, but you cannot send new messages."
 }

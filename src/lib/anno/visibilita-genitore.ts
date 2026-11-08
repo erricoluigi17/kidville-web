@@ -107,6 +107,23 @@ export async function esitoFiglioAttivo(
   return esito.righe.some((r) => r.alunno_id === alunno) ? 'attivo' : 'non-attivo'
 }
 
+/** Una riga per thread: vale per le due parti, il genitore e l'operatore. */
+export interface RigaThreadVisibile {
+  thread_id: string
+  scrivibile: boolean
+}
+
+export type EsitoThread = 'scrivibile' | 'sola-lettura' | 'nascosto' | 'indietro' | 'guasto'
+
+/** Per le route che ricevono l'id di un thread. La partecipazione la controllano loro, prima: qui è solo la visibilità. */
+export async function esitoThread(supabase: SupabaseClient, utente: string, thread: string): Promise<EsitoThread> {
+  const esito = await leggiVisibilita<RigaThreadVisibile>(supabase, 'thread_visibili', utente)
+  if (esito.stato !== 'ok') return esito.stato
+  const riga = esito.righe.find((r) => r.thread_id === thread)
+  if (!riga) return 'nascosto'
+  return riga.scrivibile ? 'scrivibile' : 'sola-lettura'
+}
+
 /**
  * Un rifiuto della visibilità: `warn`, così resta in tabella. Il `403` di `withRoute` è `info`, e un rifiuto nuovo che non lascia
  * niente è la forma del difetto che ha nascosto per un mese una funzione rotta: alla domanda «quante famiglie lo prendono

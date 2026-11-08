@@ -91,6 +91,11 @@ const AMMESSE = new Map<string, readonly string[]>([
     '20261107165503_anno_scrittura.sql',
     ['elimina_alunno_definitivo', 'iscrizioni_sanitari_tick', 'presenze_giustificazioni_retention_tick'],
   ],
+  // PR 4.4 (Ruling R-44-1): i wrapper `*_miei()` sono APERTI ad `authenticated` di proposito, come
+  // `current_parent_student_ids()`: non hanno parametri, prendono l'utente da `auth.uid()` e tornano il solo scope di chi
+  // chiama. Sono l'unica via dal browser, perché le versioni con `p_utente` restano solo `service_role` (lì un genitore
+  // enumererebbe i figli altrui, e lo prova `anno-visibilita-genitore.test.ts`).
+  ['20261108170148_anno_visibilita_genitore_funzioni.sql', ['figli_attivi_miei']],
 ])
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')

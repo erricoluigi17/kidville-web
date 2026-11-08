@@ -35,6 +35,16 @@ export const SCHEMA_BASE = `
 
   CREATE SCHEMA extensions;
 
+  -- PR 4.4: \`auth.uid()\` come su Supabase, legge il \`sub\` delle claim. I wrapper \`*_miei()\` la chiamano.
+  CREATE SCHEMA auth;
+  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $f$
+    SELECT coalesce(
+      NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+      NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+    )::uuid
+  $f$;
+  GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
+
   -- Come su Supabase: ogni oggetto nuovo di \`public\` nasce con i privilegi aperti ad anon e
   -- authenticated. Senza, in PGlite quei ruoli non hanno mai niente e un REVOKE mancante nella
   -- migrazione passerebbe inosservato (il test di sicurezza sarebbe verde anche senza il codice).
@@ -449,7 +459,32 @@ const SUFFISSI_PR2 = {
   M42: '_anno_impostazioni_sede.sql',
   // PR 4.3: sezioni e docenti per anno, fase B dello specchio. Dopo M42 (i compiti successivi aggiungono sezioni in coda al file).
   M43: '_anno_sezioni_docenti_fase_b.sql',
+  // PR 4.4: le funzioni di visibilità del genitore (inerti: nessuna policy). Dopo M43 (i compiti successivi aggiungono sezioni in coda al file).
+  M44a: '_anno_visibilita_genitore_funzioni.sql',
 } as const
+
+/**
+ * PR 4.4 · Le tre tabelle dei legami genitore-figlio, con le chiavi e l'indice veri di produzione e le sole colonne che
+ * contano. NON stanno in `SCHEMA_BASE`, perché le funzioni le trovano con `to_regclass` e il banco senza va provato: chi
+ * le vuole le esegue dopo `creaDbAnnoPr2`.
+ */
+export const SCHEMA_LEGAMI_GENITORE = `
+  CREATE TABLE public.legame_genitori_alunni (
+    genitore_id uuid NOT NULL,
+    alunno_id uuid NOT NULL,
+    PRIMARY KEY (genitore_id, alunno_id)
+  );
+  CREATE TABLE public.parents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    auth_user_id uuid UNIQUE
+  );
+  CREATE TABLE public.student_parents (
+    student_id uuid NOT NULL,
+    parent_id uuid NOT NULL,
+    PRIMARY KEY (student_id, parent_id)
+  );
+  CREATE INDEX idx_student_parents_parent_id ON public.student_parents (parent_id);
+`
 
 /**
  * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
@@ -548,7 +583,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -570,8 +605,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

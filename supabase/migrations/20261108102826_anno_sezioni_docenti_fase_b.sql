@@ -648,3 +648,186 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.propaga_rinomina_sezione() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.propaga_rinomina_sezione() TO service_role;
+
+-- ── 4.3.4 · Fase B: lo specchio si inverte (la frequenza dell'anno attivo comanda, `alunni` ne è la copia) ──────
+-- Da qui la verità di classe, stato, retta e sospensione è la frequenza dell'anno ATTIVO della sede ATTUALE
+-- dell'alunno; `alunni` ne è la copia. Il giro `alunni → frequenze` della fase A si restringe a due compiti che
+-- non si possono togliere finché la FK `frequenze.alunno_id → alunni` obbliga a scrivere prima la scheda:
+--   · `trg_alunni_specchio_frequenza_ins`  (resta com'è): fa NASCERE la frequenza dell'anno attivo di un alunno nuovo;
+--   · `trg_alunni_specchio_frequenza_sede` (nuovo, solo `scuola_id`): il trasferimento (vecchia `trasferito`, nuova viva).
+-- `trg_alunni_specchio_frequenza` (la copia delle 15 colonne) si toglie. La funzione `alunni_specchio_frequenza()` e
+-- l'interruttore `specchio_alunni_attivo` restano fino alla PR 5. Il giro si chiude da solo: il riallineamento non
+-- scrive mai `scuola_id` (il trigger di sede non riparte) e non fa INSERT su `alunni`.
+-- La migrazione NON riallinea tutti gli alunni: con l'invariante 11 a zero non cambierebbe niente, e sarebbe una
+-- scrittura su tutte le righe di minori senza motivo.
+
+-- Precondizione: se la scheda e la frequenza oggi divergono, invertire la direzione butterebbe via la scheda.
+DO $mig$
+DECLARE
+  v_n bigint;
+BEGIN
+  SELECT coalesce(sum(i.righe), 0) INTO v_n FROM public.anno_invarianti() i WHERE i.invariante = '11';
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'FASE_B_INVARIANTE_11_ROSSA'
+      USING DETAIL = format('righe fuori posto nell''invariante 11: %s', v_n),
+            HINT = 'Riallinea scheda e frequenza (invariante 11 a zero) prima di invertire lo specchio.';
+  END IF;
+END
+$mig$;
+
+ALTER TABLE IF EXISTS public.anno_regole
+  ADD COLUMN IF NOT EXISTS specchio_frequenze_attivo boolean NOT NULL DEFAULT true;
+
+-- La copia inversa. Idempotente: scrive solo le colonne che cambiano. Colonne di `alunni` lette da jsonb, come lo
+-- specchio di oggi (un database che non ne ha qualcuna non fa fallire la funzione, la salta).
+--   frequenze                   → alunni
+--   section_id                  → section_id, e classe_sezione = nome della sezione (NULL se non c'è)
+--   stato in_attesa/iscritto    → stato 'iscritto' (resta 'sospeso' o NULL se lo era), archiviato_il NULL
+--   stato ritirato/trasferito/uscito → stato 'ritirato', archiviato_il (quello che c'è; altrimenti il giorno di uscita, o ora)
+--   retta_mensile               → importo_retta_mensile (NULL → 0)
+--   retta_a_carico_di, retta_split_config, intestatario_fatture, giorno_scadenza_pagamenti, gruppo_mensa_id,
+--   sospeso, sospeso_causa, sospeso_motivo, sospeso_il, sospeso_da, usa_pannolino → omonime, invariate
+-- `scuola_id` non si scrive mai.
+CREATE OR REPLACE FUNCTION public.alunni_riallinea_da_frequenze(p_alunno uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_cur   jsonb;
+  v_f     jsonb;
+  v_t     jsonb;
+  v_patch jsonb;
+  v_set   text;
+  v_viva  boolean;
+  v_stato text;
+  v_arch  timestamptz;
+  v_uscita date;
+  v_nome  text;
+  v_oggi  date := public.giorno_roma(now());
+BEGIN
+  SELECT to_jsonb(a) INTO v_cur FROM public.alunni a WHERE a.id = p_alunno;
+  IF v_cur IS NULL OR (v_cur ->> 'scuola_id') IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- La frequenza dell'anno attivo della sede ATTUALE dell'alunno: mai quella di una sede lasciata.
+  SELECT to_jsonb(f) INTO v_f
+    FROM public.frequenze f
+   WHERE f.alunno_id = p_alunno
+     AND f.anno_sede_id = public.anno_attivo((v_cur ->> 'scuola_id')::uuid);
+  IF v_f IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT s.name::text INTO v_nome FROM public.sections s WHERE s.id = (v_f ->> 'section_id')::uuid;
+
+  v_viva := (v_f ->> 'stato') IN ('in_attesa', 'iscritto');
+  IF v_viva THEN
+    -- 'sospeso' (o NULL, che il codice legge «iscritto») si conserva finché la frequenza è viva
+    v_stato := CASE WHEN coalesce(v_cur ->> 'stato', 'iscritto') IN ('iscritto', 'sospeso')
+                    THEN v_cur ->> 'stato' ELSE 'iscritto' END;
+    v_arch := NULL;
+  ELSE
+    v_stato := 'ritirato';
+    v_uscita := (v_f ->> 'data_uscita')::date;
+    v_arch := coalesce((v_cur ->> 'archiviato_il')::timestamptz,
+                       CASE WHEN v_uscita IS NOT NULL AND v_uscita <= v_oggi
+                            THEN ((v_uscita + time '12:00') AT TIME ZONE 'Europe/Rome') ELSE now() END);
+  END IF;
+
+  v_t := jsonb_build_object(
+    'section_id', v_f -> 'section_id',
+    'classe_sezione', v_nome,
+    'stato', v_stato,
+    'archiviato_il', v_arch,
+    'importo_retta_mensile',
+      CASE WHEN jsonb_typeof(v_f -> 'retta_mensile') = 'number' THEN v_f -> 'retta_mensile' ELSE to_jsonb(0) END,
+    'retta_a_carico_di', v_f -> 'retta_a_carico_di',
+    'retta_split_config', v_f -> 'retta_split_config',
+    'intestatario_fatture', v_f -> 'intestatario_fatture',
+    'giorno_scadenza_pagamenti', v_f -> 'giorno_scadenza_pagamenti',
+    'gruppo_mensa_id', v_f -> 'gruppo_mensa_id',
+    'sospeso', v_f -> 'sospeso',
+    'sospeso_causa', v_f -> 'sospeso_causa',
+    'sospeso_motivo', v_f -> 'sospeso_motivo',
+    'sospeso_il', v_f -> 'sospeso_il',
+    'sospeso_da', v_f -> 'sospeso_da',
+    'usa_pannolino', v_f -> 'usa_pannolino');
+
+  -- solo le colonne che alunni ha davvero e che cambiano
+  SELECT jsonb_object_agg(e.k, e.v) INTO v_patch
+    FROM jsonb_each(v_t) AS e(k, v)
+   WHERE v_cur ? e.k AND (v_cur -> e.k) IS DISTINCT FROM e.v;
+  IF v_patch IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT string_agg(format('%I = r.%I', k, k), ', ') INTO v_set FROM jsonb_object_keys(v_patch) AS k;
+  EXECUTE format(
+    'UPDATE public.alunni a SET %s FROM jsonb_populate_record(NULL::public.alunni, $1) r WHERE a.id = $2', v_set)
+    USING v_patch, p_alunno;
+END
+$$;
+
+-- Il trigger su `frequenze`: ricopia solo se la frequenza è quella dell'anno attivo della sede attuale dell'alunno.
+-- FAIL-OPEN: un guasto lascia la scrittura della frequenza com'è e lascia una riga in `app_log` (solo tabella e SQLSTATE).
+-- Un DELETE non fa niente (non c'è nulla da copiare: se manca la frequenza lo vede l'invariante 11).
+CREATE OR REPLACE FUNCTION public.frequenze_specchio_alunni()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_attivo boolean;
+  v_scuola uuid;
+BEGIN
+  SELECT r.specchio_frequenze_attivo INTO v_attivo FROM public.anno_regole r;
+  IF NOT coalesce(v_attivo, false) THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    SELECT a.scuola_id INTO v_scuola FROM public.alunni a WHERE a.id = NEW.alunno_id;
+    IF v_scuola IS NULL OR NEW.anno_sede_id IS DISTINCT FROM public.anno_attivo(v_scuola) THEN
+      RETURN NULL;
+    END IF;
+    PERFORM public.alunni_riallinea_da_frequenze(NEW.alunno_id);
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM public.anno_log_guasto('frequenze', 'specchio-fallito', 'frequenze_specchio_alunni',
+                                   'specchio frequenze → alunni fallito: la scrittura della frequenza è passata',
+                                   'db:anno-specchio:frequenze', SQLSTATE);
+  END;
+  RETURN NULL;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.frequenze_specchio_alunni()         FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.frequenze_specchio_alunni()         TO service_role;
+
+DO $mig$
+BEGIN
+  IF NOT (EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = to_regclass('public.alunni') AND c.relkind IN ('r', 'p'))
+          AND to_regclass('public.frequenze') IS NOT NULL
+          AND to_regprocedure('public.alunni_specchio_frequenza()') IS NOT NULL) THEN
+    RETURN;
+  END IF;
+
+  DROP TRIGGER IF EXISTS trg_alunni_specchio_frequenza ON public.alunni;
+  DROP TRIGGER IF EXISTS trg_alunni_specchio_frequenza_sede ON public.alunni;
+  CREATE TRIGGER trg_alunni_specchio_frequenza_sede
+    AFTER UPDATE OF scuola_id ON public.alunni
+    FOR EACH ROW WHEN (OLD.scuola_id IS DISTINCT FROM NEW.scuola_id)
+    EXECUTE FUNCTION public.alunni_specchio_frequenza();
+
+  DROP TRIGGER IF EXISTS trg_frequenze_specchio_alunni ON public.frequenze;
+  CREATE TRIGGER trg_frequenze_specchio_alunni
+    AFTER INSERT OR UPDATE ON public.frequenze
+    FOR EACH ROW EXECUTE FUNCTION public.frequenze_specchio_alunni();
+END
+$mig$;
+-- ── fine 4.3.4 ──────────────────────────────────────────────────────────────────────────────────

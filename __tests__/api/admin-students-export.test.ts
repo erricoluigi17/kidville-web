@@ -63,6 +63,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
                 if (!assente) return query.select(colonne)
                 const catena = {
                   in: () => catena,
+                  eq: () => catena,
                   is: () => catena,
                   order: () => catena,
                   range: async () => ({
@@ -92,11 +93,11 @@ const alunno = (cognome: string, scuola_id: string, altri: Record<string, unknow
   ...altri,
 })
 
-/** Art. 9 GDPR, documenti, soldi e la sede grezza: nessuna deve stare nella proiezione. */
+/** Art. 9 GDPR, documenti, soldi, e `stato` che varrebbe sempre `iscritto`: nessuna deve stare nella proiezione. */
 const COLONNE_VIETATE = [
   'note_mediche', 'allergies', 'allergeni', 'is_bes_dsa', 'note_bes', 'documento_path', 'importo_retta_mensile',
   'retta_split_config', 'intestatario_fatture', 'invoice_holder_details', 'invoice_holder_type', 'sospeso_motivo',
-  'genitori_separati', 'usa_pannolino', '*',
+  'genitori_separati', 'usa_pannolino', 'stato', '*',
 ]
 
 function richiesta(cookie?: string[]) {
@@ -145,10 +146,13 @@ describe('GET /api/admin/students/export', () => {
     expect(righe.map((r) => r.cognome).sort()).toEqual(['prima', 'seconda'])
   })
 
-  it('è un backup: chi non frequenta più resta nel foglio, e la colonna `stato` lo dice', async () => {
-    h.db.alunni.push(alunno('ritirata', SEDE_A, { stato: 'ritirato', classe_sezione: null }))
+  it('solo gli iscritti: un ritirato non esce, e nemmeno un sospeso', async () => {
+    h.db.alunni.push(
+      alunno('ritirata', SEDE_A, { stato: 'ritirato', classe_sezione: null }),
+      alunno('sospesa', SEDE_A, { stato: 'sospeso' }),
+    )
     const { righe } = (await (await GET(richiesta([SEDE_A]))).json()) as Corpo
-    expect(righe.map((r) => [r.cognome, r.stato]).sort()).toEqual([['prima', 'iscritto'], ['ritirata', 'ritirato']])
+    expect(righe.map((r) => r.cognome)).toEqual(['prima'])
   })
 
   it('il cookie del selettore restringe, e non allarga', async () => {
@@ -169,7 +173,7 @@ describe('GET /api/admin/students/export', () => {
     expect(h.colonneChieste).toHaveLength(1)
     const chieste = h.colonneChieste[0].split(', ')
     for (const colonna of COLONNE_VIETATE) expect(chieste, colonna).not.toContain(colonna)
-    expect(chieste).toEqual(expect.arrayContaining(['nome', 'cognome', 'codice_fiscale', 'classe_sezione', 'stato', 'id']))
+    expect(chieste).toEqual(expect.arrayContaining(['nome', 'cognome', 'codice_fiscale', 'classe_sezione', 'id']))
   })
 
   it('la sede ha un nome, in prima colonna, e l’uuid della sede non esce', async () => {

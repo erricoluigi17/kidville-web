@@ -386,15 +386,6 @@ const AMMESSE: Record<string, Esenzione> = {
       "anagrafica: l'elenco completo della sede è il suo scopo, e l'elenco è un parametro dell'interfaccia — `?elenco=non_iscritti` È la linguetta «Non iscritti» (ritirati e iscritti senza sezione), `?elenco=frequentanti` la linguetta «Alunni». I chiamanti dichiarano il loro (lock a fondo file)",
   },
 
-  // Non è la trappola della mensa: dal foglio non si prenota e non si vende niente.
-  // Se il titolare lo vuole dei soli iscritti, costa una riga: `.eq('stato', STATO_ISCRITTO)`
-  // nella route, e questa voce va tolta (il test delle voci morte lo pretende).
-  'src/app/api/admin/students/export/route.ts::admin/students/export:GET': {
-    scoperte: 1,
-    ragione:
-      'esportazione dell’anagrafica: la schermata promette «backup / report», e un backup che perde i ritirati non è un backup. Chi non frequenta più resta riconoscibile dalla colonna `stato` del foglio, gli anonimizzati restano fuori, e ogni scarico lascia una riga di audit per sede',
-  },
-
   // ── ARCHIVIO DOCUMENTI: dieci anni di conservazione, e la ragione è la stessa
   // dell'anagrafica. Il filtro di stato ESISTE ed è il default: si vedono gli
   // iscritti, e solo la segreteria — non l'insegnante — può chiedere

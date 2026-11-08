@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
+import { STATO_ISCRITTO } from '@/lib/alunni/stato';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { descriviTetto, leggiABlocchi, type EsitoABlocchi } from '@/lib/db/leggi-a-blocchi';
 import { selectResiliente } from '@/lib/supabase/select-resiliente';
@@ -38,12 +39,14 @@ const getQuerySchema = z.object({});
  * quelle colonne dall'elenco di `GET /api/admin/students` (W8). Non essendo mai uscito niente da qui,
  * aprirle sarebbe una scelta nuova, che spetta al titolare e costa una riga.
  *
+ * Nemmeno `stato`: si esportano i soli iscritti, e varrebbe sempre `iscritto`.
+ *
  * `id` in fondo: serve a `leggiABlocchi`, e a ritrovare la riga di un foglio usato come copia.
  */
 const COLONNE = [
     'scuola_id', 'cognome', 'nome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship',
     'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number',
-    'residence_city', 'residence_province', 'zip_code', 'classe_sezione', 'stato', 'data_iscrizione',
+    'residence_city', 'residence_province', 'zip_code', 'classe_sezione', 'data_iscrizione',
     'id',
 ] as const;
 
@@ -100,9 +103,9 @@ export const GET = withRoute('admin/students/export:GET', async (request: NextRe
 
         // A blocchi perché `max_rows` taglia a 1000 senza dirlo. `selectResiliente` toglie la colonna
         // che il DB E2E della CI non ha ancora: legge il `42703` dall'`error` qui sotto e riparte.
-        // Gli anonimizzati restano fuori come dalle due linguette: la loro riga non è più un bambino.
-        // Nessun filtro di stato, di proposito: la schermata promette un backup, e chi non frequenta più
-        // resta nel foglio con la sua colonna `stato` (deroga in `elenchi-operativi-solo-iscritti`).
+        // Solo gli iscritti, come gli altri elenchi operativi: lo stesso ragionamento di `COLONNE`, una copia
+        // scaricata su un computer non si riprende. Gli anonimizzati restano fuori anche per sicurezza: la
+        // loro riga non è più un bambino, e il filtro non deve dipendere da quale stato le resta addosso.
         const letti = await selectResiliente(
             COLONNE,
             async (colonne) => {
@@ -111,6 +114,7 @@ export const GET = withRoute('admin/students/export:GET', async (request: NextRe
                         .from('alunni')
                         .select(colonne.join(', '))
                         .in('scuola_id', plessi)
+                        .eq('stato', STATO_ISCRITTO)
                         .is('anonimizzato_il', null)
                         .order('scuola_id', { ascending: true })
                         .order('cognome', { ascending: true })

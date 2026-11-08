@@ -396,6 +396,12 @@ export function posterioriCheContengono(
 // legate all'alunno), funzioni che scrivono nel registro (65, classi invariate) e schema delle candidature. I bucket (21) non cambiano
 // nemmeno nell'istante. Per indici unici, RLS, FK di sede e funzioni la produzione e' stata interrogata con un'impronta md5 per
 // tabella/elenco e confrontata con la fotografia in repo: sono stati riscaricati solo i pezzi che differivano.
+// 2026-11-08 · ANNO SCOLASTICO, PR 4.3 (sezioni e docenti per anno, fase B): `20261108102826_anno_sezioni_docenti_fase_b.sql` e'
+// dentro la PR e la applica l'integrazione al merge, ma NON e' dichiarata qui: lo SQL non contiene nessun UNIQUE o PRIMARY KEY, nessuna
+// policy ne' RLS, nessun add/drop constraint ne' FK verso `utenti`, quindi nessuna delle tre guardie la segnalerebbe e il lock
+// «nessuna voce morta» (prova 5) rifiuta una dichiarazione che non serve. Aggiunge funzioni, una colonna di `anno_regole`
+// (`specchio_frequenze_attivo`), trigger e la riga 8 di `anno_invarianti`: le fotografie del catalogo non cambiano, salvo il registro
+// delle migrazioni (+1 riga), che la PR-B rigenera dalla produzione dopo il merge. L'elenco resta vuoto.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**

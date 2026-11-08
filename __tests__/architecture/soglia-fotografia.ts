@@ -385,10 +385,18 @@ export function posterioriCheContengono(
 // l'integrazione al merge. Aggiunge `anno_regole.guardia_osserva`, la tabella `anno_guardia_osservazioni` (RLS accesa, nessuna
 // policy), tre funzioni `SECURITY DEFINER` (contatore, log dell'uso, guardia con la firma nuova) e ridefinisce il trigger
 // generico `anno_assegna_e_verifica`: le fotografie del catalogo (indici unici, RLS accesa) si rigenerano dopo il merge.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261107165503_anno_scrittura.sql':
-        'PR 3 anno scolastico, M3: gettoni a lista, osservazione della guardia e le sue tabelle contatore; applicata dall\'integrazione al merge; la voce si toglie nella PR-B (pulizia dopo il merge, quando le fotografie sono rigenerate)',
-}
+// 2026-11-07 · ANNO SCOLASTICO, PR 3 (M3): `20261107165503_anno_scrittura.sql` aggiunge `anno_regole.guardia_osserva` e, su
+// `anno_tabelle`, le colonne `guardia` e `riserva_permanente`; crea `anno_guardia_osservazioni` e `anno_transitorio_usi` (PRIMARY KEY,
+// RLS accesa senza policy); aggiunge le funzioni `anno_oblio_*` e ridefinisce altre funzioni.
+// SVUOTATA l'08/11/2026 (PR-B dopo il merge di #298, `d1440305`): applicata dall'integrazione, una riga sola nel registro
+// (259 migrazioni); fotografie rigenerate dalla produzione — cambiano davvero migrazioni 258 → 259 (`20261107165503_anno_scrittura`),
+// indici unici 290 → 292 (le due chiavi primarie nuove) e RLS accesa 179 → 181 (le due tabelle, nessuna policy nuova: 40 invariate, 74
+// solo-service_role, 99 tabelle con `scuola_id`). Cambiano solo l'istante dello scatto: `anno_tabelle` (46 righe; le colonne nuove
+// `guardia` e `riserva_permanente` non sono nella fotografia), FK di sede (99), FK verso `utenti` (83), tabelle con `scuola_id` (99 e 22
+// legate all'alunno), funzioni che scrivono nel registro (65, classi invariate) e schema delle candidature. I bucket (21) non cambiano
+// nemmeno nell'istante. Per indici unici, RLS, FK di sede e funzioni la produzione e' stata interrogata con un'impronta md5 per
+// tabella/elenco e confrontata con la fotografia in repo: sono stati riscaricati solo i pezzi che differivano.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

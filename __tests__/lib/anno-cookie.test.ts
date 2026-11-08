@@ -232,6 +232,14 @@ describe('resolveAnnoLettura', () => {
   })
 
   it('la sede non ha nessun anno attivo e nessuno è scelto → null', async () => {
+    logger.logEvento.mockClear()
     expect(await resolveAnnoLettura(richiesta(), finto({ senzaAttivo: true }), SEGRETERIA, SEDE)).toBeNull()
+    // il degrado si vede: una riga `info` col motivo (sotto `esito`, l'unica chiave in chiaro per un motivo)
+    const info = logger.logEvento.mock.calls.filter(
+      (c) => c[1] === 'info' && (c[2] as { tipo?: string })?.tipo === 'calendario-non-disponibile',
+    )
+    expect(info).toHaveLength(1)
+    expect(info[0][2]).toMatchObject({ esito: 'nessun-anno-attivo' })
+    expect(redact(info[0][2])).toMatchObject({ esito: 'nessun-anno-attivo' })
   })
 })

@@ -635,11 +635,15 @@ export async function resolveAnnoLettura(
     return null
   }
 
-  const anni = await anniDellaSede(supabase, scuolaId)
+  // Le due letture non dipendono l'una dall'altra: in parallelo. L'esito si valuta nello stesso ordine di prima
+  // (prima gli anni della sede, poi l'anno attivo), quindi cosa succede quando una fallisce non cambia.
+  const [anni, attivo] = await Promise.all([
+    anniDellaSede(supabase, scuolaId),
+    supabase.rpc('anno_attivo', { p_scuola: scuolaId }),
+  ])
   if ('indietro' in anni) return nonDisponibile('schema-indietro')
   if ('guasto' in anni) return guastoAnno(azione, anni.guasto)
 
-  const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
   if (attivo.error) {
     if (schemaAnnoIndietro(attivo.error)) return nonDisponibile('schema-indietro')
     return guastoAnno(azione, attivo.error)

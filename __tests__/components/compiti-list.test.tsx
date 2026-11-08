@@ -202,22 +202,41 @@ describe('il periodo: che cosa arriva a GET /api/parent/primaria', () => {
         expect(chiamate[1]).toContain('dataDa=2026-06-21')
     })
 
-    it('«anno in corso» parte dal 1° agosto dell’anno scolastico, non dal 1° gennaio', () => {
+    it('«anno in corso» parte dal 1° settembre dell’anno scolastico, non dal 1° gennaio', () => {
         // ⚠️ Il 1° gennaio sarebbe `annoFiscale()`, che è l'anno SOLARE della
         // fatturazione: a settembre farebbe partire la bacheca da gennaio
         // (nessun compito) o, peggio, da un anno scolastico già chiuso.
         vi.setSystemTime(new Date('2026-09-19T10:00:00Z'))
-        expect(dataDaDelPeriodo('anno')).toBe('2026-08-01')
+        expect(dataDaDelPeriodo('anno')).toBe('2026-09-01')
 
-        // Luglio appartiene ancora all'anno scolastico aperto in agosto.
+        // Luglio appartiene ancora all'anno scolastico aperto a settembre.
         vi.setSystemTime(new Date('2027-07-15T10:00:00Z'))
-        expect(dataDaDelPeriodo('anno')).toBe('2026-08-01')
+        expect(dataDaDelPeriodo('anno')).toBe('2026-09-01')
+    })
+
+    it('il 20 agosto, senza calendario, «anno» è ancora l’anno che si chiude: 2025-09-01 (con la soglia al 1° agosto era 2026-08-01)', () => {
+        vi.setSystemTime(new Date('2026-08-20T10:00:00Z'))
+        expect(dataDaDelPeriodo('anno')).toBe('2025-09-01')
+        expect(dataDaDelPeriodo('anno', null)).toBe('2025-09-01')
+    })
+
+    it('con il calendario della sede che comincia il 2026/27 il 17 agosto, il 17 agosto «anno» parte da lì', () => {
+        const cal = [
+            {
+                annoId: 'a-2026', annoSedeId: 's-2026', annoInizio: 2026, inizio: '2026-08-17', fine: '2027-08-31',
+                ultimoGiornoAperto: '2027-07-15', preparaSuccessivoDal: '2027-03-01', stato: 'corrente' as const,
+                domandeAperte: false,
+            },
+        ]
+        vi.setSystemTime(new Date('2026-08-17T10:00:00Z'))
+        expect(dataDaDelPeriodo('anno', cal)).toBe('2026-08-17')
     })
 
     it('il tetto del client è più stretto di quello della route: 364 giorni, non 365', () => {
-        // ⚠️ MISURATO, non dedotto (2026-09-19). Dal 1° agosto 2027 al 31 luglio 2028
-        // ci sono **365** giorni esatti — non 366: il 29 febbraio 2028 cade dentro
-        // l'intervallo, ma l'intervallo si ferma un giorno prima del 1° agosto 2028.
+        // ⚠️ MISURATO, non dedotto (2026-09-19; rifatto con la soglia al 1° settembre). Dal
+        // 1° settembre 2027 al 31 agosto 2028 ci sono **365** giorni esatti — non 366: il
+        // 29 febbraio 2028 cade dentro l'intervallo, ma l'intervallo si ferma un giorno prima
+        // del 1° settembre 2028.
         // E quei 365 la route li ACCETTA: il suo refine è `d >= oggi - 365`
         // (`parent/primaria/route.ts:88`), cioè un'uguaglianza, non un `>`. Il
         // clamp a 364 quindi NON serve a evitare un 400 che con «anno in corso»
@@ -226,8 +245,8 @@ describe('il periodo: che cosa arriva a GET /api/parent/primaria', () => {
         // PROPRIO `oggiFiscaleISO()` può passare la mezzanotte italiana, e una data
         // calcolata alle 23:59:59 a 365 giorni esatti diventa «troppo lontana» un
         // secondo dopo. Il margine costa un giorno di registro e chiude la corsa.
-        vi.setSystemTime(new Date('2028-07-31T10:00:00Z'))
-        expect(dataDaDelPeriodo('anno')).toBe('2027-08-02')
+        vi.setSystemTime(new Date('2028-08-31T10:00:00Z'))
+        expect(dataDaDelPeriodo('anno')).toBe('2027-09-02')
     })
 
     it('«30 giorni» conta a Roma anche a mezzanotte passata in UTC', () => {

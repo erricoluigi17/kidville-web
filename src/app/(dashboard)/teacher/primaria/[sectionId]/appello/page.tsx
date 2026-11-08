@@ -10,6 +10,8 @@ import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 import { ritiraCambioAppelloInCoda, rimettiCambioAppelloInCoda } from '@/lib/offline/coda-appello-primaria';
 import { DateField } from '@/components/ui/DateField';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { annoDelGiorno, inizioAnno, type Calendario } from '@/lib/anno-scolastico';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
 import { oraDiRoma, oraDiRomaAdesso } from '@/lib/presenze/orario';
 import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
 import {
@@ -80,13 +82,12 @@ interface RiepilogoAssenze {
   perMateria?: Record<string, RiepilogoMateria>;
 }
 
-function annoScolasticoDefault(): { from: string; to: string } {
-  // Il mese si legge da «oggi ITALIANO», non dai getter del dispositivo: a
-  // cavallo del 31 agosto due utenti in due fusi diversi vedrebbero proposto un
-  // anno scolastico diverso sulla stessa schermata.
-  const [annoOggi, meseOggi] = oggiFiscaleISO().split('-').map(Number);
-  const anno = meseOggi >= 9 ? annoOggi : annoOggi - 1;
-  return { from: `${anno}-09-01`, to: `${anno + 1}-06-30` };
+// Il periodo proposto per il riepilogo: dall'inizio dell'anno del giorno di Roma (calendario della sede; senza, il
+// 1° settembre) fino alla fine delle lezioni, il 30 giugno. Il 30 giugno non è un confine d'anno: il calendario non
+// ha quel campo. Il giorno si legge da «oggi ITALIANO», non dai getter del dispositivo.
+function periodoRiepilogoProposto(oggi: string, calendario: Calendario | null): { from: string; to: string } {
+  const anno = annoDelGiorno(oggi, calendario);
+  return { from: anno.riga?.inizio ?? inizioAnno(anno.annoInizio), to: `${anno.annoInizio + 1}-06-30` };
 }
 
 // HH:MM a Roma da un orario di presenza; '' se assente. Prima erano due copie di
@@ -177,11 +178,18 @@ export default function AppelloPage() {
   const [erroreSalvataggio, setErroreSalvataggio] = useState<string | null>(null);
 
   // Riepilogo ore assenze
-  const defaultPeriodo = annoScolasticoDefault();
+  // La sede è quella della sezione (risposta di /api/primaria/classe); finché non arriva, l'unica sede del contesto,
+  // altrimenti il predefinito. Il periodo proposto è derivato: chi sceglie una data la vince, il calendario no.
+  const [scuolaSezione, setScuolaSezione] = useState<string | null>(null);
+  const calendarioSede = useCalendarioDi(scuolaSezione);
+  const [oggiRiepilogo] = useState(() => oggiFiscaleISO());
+  const defaultPeriodo = periodoRiepilogoProposto(oggiRiepilogo, calendarioSede);
   const [alunniList, setAlunniList] = useState<AlunnoLight[]>([]);
   const [riepilogoAlunnoId, setRiepilogoAlunnoId] = useState('');
-  const [riepilogoDal, setRiepilogoDal] = useState(defaultPeriodo.from);
-  const [riepilogoAl, setRiepilogoAl] = useState(defaultPeriodo.to);
+  const [riepilogoDalScelto, setRiepilogoDal] = useState<string | null>(null);
+  const [riepilogoAlScelto, setRiepilogoAl] = useState<string | null>(null);
+  const riepilogoDal = riepilogoDalScelto ?? defaultPeriodo.from;
+  const riepilogoAl = riepilogoAlScelto ?? defaultPeriodo.to;
   const [riepilogo, setRiepilogo] = useState<RiepilogoAssenze | null>(null);
   const [riepilogoLoading, setRiepilogoLoading] = useState(false);
 
@@ -199,7 +207,12 @@ export default function AppelloPage() {
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setAlunniList(d.data.alunni ?? []); });
+      .then((d) => {
+        if (d.success) {
+          setAlunniList(d.data.alunni ?? []);
+          setScuolaSezione(typeof d.data.section?.scuola_id === 'string' ? d.data.section.scuola_id : null);
+        }
+      });
   }, [sectionId, userId]);
 
   const caricaRiepilogo = useCallback(async () => {

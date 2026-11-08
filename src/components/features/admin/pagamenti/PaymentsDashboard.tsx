@@ -213,9 +213,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     // L'anno scolastico di oggi lo dà il CALENDARIO della sede (`useAnnoDi`); con più sedi (`scuolaId === null`) vale
     // il predefinito. Stato derivato: l'anno scelto a mano batte quello proposto, che segue il calendario quando arriva.
     const oggiStr = dataCivile();
-    const annoScolasticoCorrente = useAnnoDi(scuolaId)(oggiStr).annoInizio;
+    const annoInCorso = useAnnoDi(scuolaId)(oggiStr).annoInizio;
     const [annoScelto, setAnnoScolastico] = useState<number | null>(null);
-    const annoScolastico = annoScelto ?? annoScolasticoCorrente;
+    const annoScolastico = annoScelto ?? annoInCorso;
     /** I mesi scelti (1–12); all'apertura il mese corrente. Cambiando anno si mantengono. */
     const [mesiScelti, setMesiScelti] = useState<number[]>(() => [meseDi(dataCivile())]);
 
@@ -749,7 +749,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     {/* L'anno prima dei mesi: le etichette dei mesi («Ott 2026») dipendono da lui. */}
                     <FiltroAnnoContabilita
                         anno={annoScolastico}
-                        anni={[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1]}
+                        anni={[annoInCorso - 1, annoInCorso, annoInCorso + 1]}
                         onChange={setAnnoScolastico}
                         className="max-sm:w-full"
                     />

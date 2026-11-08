@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslations } from 'next-intl'
 import { CalendarCheck, ChartColumn, PhoneCall, Target, Timer } from 'lucide-react'
 import { SectionTitle, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit'
 import {
   PERSONA_AI,
-  periodoDaSettembre,
+  periodoDallInizioAnno,
   periodoMeseCorrente,
   periodoMeseScorso,
   type ConfrontoSede,
@@ -15,6 +15,7 @@ import {
   type RispostaStatistiche,
   type TotaleStatistiche,
 } from '@/lib/crm/statistiche'
+import { useCalendarioDi } from '@/lib/context/calendario-context'
 import { useRuoloCockpit } from '@/lib/context/admin-identity'
 import { logClient } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
@@ -98,15 +99,18 @@ export function StatisticheCrm({ scuolaId }: { scuolaId: string }) {
   const conConfronto = ruolo === 'admin'
   const regioneRef = useRef<HTMLDivElement>(null)
 
-  // Le scorciatoie si calcolano UNA volta: `new Date()` nel corpo del componente cambierebbe a ogni resa.
-  const [scorciatoie] = useState(() => {
-    const adesso = new Date()
-    return {
+  // `adesso` si legge UNA volta: `new Date()` nel corpo del componente cambierebbe a ogni resa. «Dall'inizio dell'anno»
+  // dipende dal calendario della sede, che arriva dopo: si ricalcola da `adesso` quando cambia, senza riletture.
+  const [adesso] = useState(() => new Date())
+  const calendario = useCalendarioDi(scuolaId)
+  const scorciatoie = useMemo(
+    () => ({
       corrente: periodoMeseCorrente(adesso),
       scorso: periodoMeseScorso(adesso),
-      settembre: periodoDaSettembre(adesso),
-    }
-  })
+      settembre: periodoDallInizioAnno(adesso, calendario),
+    }),
+    [adesso, calendario],
+  )
   const [periodo, setPeriodo] = useState(scorciatoie.corrente)
   const { dal, al } = periodo
 

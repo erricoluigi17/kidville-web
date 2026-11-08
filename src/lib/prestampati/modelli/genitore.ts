@@ -278,7 +278,7 @@ export interface DatiPrestampato {
   richiedente?: DatiGenitore | null
   sede: DatiSede
   scuola: DatiScuola
-  /** Da `annoScolasticoCorrente()`. */
+  /** Dal modulo dell'anno (`annoDelGiorno`, `@/lib/anno-scolastico`). */
   annoScolastico: string
   /** ISO `aaaa-mm-gg` del giorno di emissione. */
   dataOggi: string

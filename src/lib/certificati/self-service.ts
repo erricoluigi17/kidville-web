@@ -1,7 +1,7 @@
 import { componiIndirizzoSede } from '@/lib/scuole/anagrafica'
 
 // Certificati self-service (genitore) — testi puri e testabili, nessun valore
-// cablato: sezione dall'anagrafica alunno, anno da annoScolasticoCorrente(),
+// cablato: sezione dall'anagrafica alunno, anno da `annoDelGiorno`/`annoDiIstante` (`@/lib/anno-scolastico`),
 // dati sede dalla scuola del figlio (scuole + config.anagrafica) con degrado
 // esplicito (righe/clausole omesse) se un dato manca. Mai valori inventati.
 

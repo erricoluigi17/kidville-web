@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { CalendarioProvider } from '@/lib/context/calendario-context'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -87,13 +88,55 @@ describe('l’appello della primaria apre sul giorno civile italiano', () => {
         ).toBe('08/08/2026')
     })
 
+    // Il periodo del riepilogo ore (compito 4.1.S4b): dall'inizio dell'anno di oggi, fino al 30 giugno.
+    it('senza calendario, il 20 agosto il riepilogo propone 2025-09-01 → 2026-06-30', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        vi.setSystemTime(new Date('2026-08-20T12:00:00Z'))
+        render(<AppelloPage />)
+        const dal = screen.getByLabelText(itPrimaria.appelloRiepilogoDalAria) as HTMLInputElement
+        const al = screen.getByLabelText(itPrimaria.appelloRiepilogoAlAria) as HTMLInputElement
+        expect(dal.value).toBe('01/09/2025')
+        expect(al.value).toBe('30/06/2026')
+    })
+
+    it('con il calendario della sede della sezione, il riepilogo parte dall’inizio del SUO anno', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        vi.setSystemTime(new Date('2026-08-20T12:00:00Z'))
+        const riga = {
+            annoId: 'a-2026', annoSedeId: 's-2026', annoInizio: 2026, inizio: '2026-08-17', fine: '2027-08-31',
+            ultimoGiornoAperto: '2027-07-15', preparaSuccessivoDal: '2027-03-01', stato: 'corrente',
+            domandeAperte: false,
+        }
+        fetchMock.mockImplementation(async (url: string) => ({
+            ok: true,
+            status: 200,
+            json: async () => {
+                if (String(url).startsWith('/api/anno/calendario')) {
+                    return { data: [{ scuola_id: 'scu-1', righe: [riga] }] }
+                }
+                if (String(url).startsWith('/api/primaria/classe/')) {
+                    return { success: true, data: { section: { scuola_id: 'scu-1' }, alunni: [] } }
+                }
+                return { success: true, data: [] }
+            },
+        }))
+        render(<CalendarioProvider><AppelloPage /></CalendarioProvider>)
+        // Si aspetta la PRESENZA del valore nuovo, non l'assenza del vecchio.
+        await waitFor(() => {
+            const dal = screen.getByLabelText(itPrimaria.appelloRiepilogoDalAria) as HTMLInputElement
+            expect(dal.value).toBe('17/08/2026')
+        })
+        expect((screen.getByLabelText(itPrimaria.appelloRiepilogoAlAria) as HTMLInputElement).value).toBe('30/06/2027')
+    })
+
     it('nella pagina esiste UNA sola idea di «oggi», e non è quella UTC', () => {
         // Il comportamento dell'anno scolastico non è falsificabile qui — la
         // suite gira già in Europe/Rome, quindi `getMonth()` del dispositivo dà
         // per caso la risposta giusta e un'asserzione a runtime sarebbe verde
         // comunque. Si misura allora la SORGENTE, che è dove sta la causa: nella
         // stessa pagina convivevano tre idee di «oggi» (`oggiIso()` in UTC,
-        // `annoScolasticoDefault()` sui getter locali, e le route chiamate che
+        // `annoScolasticoDefault()` sui getter locali (oggi `periodoRiepilogoProposto`, sul giorno di
+        // `oggiFiscaleISO()`), e le route chiamate che
         // usano `oggiFiscaleISO()`).
         const sorgente = readFileSync(
             join(process.cwd(), 'src/app/(dashboard)/teacher/primaria/[sectionId]/appello/page.tsx'),

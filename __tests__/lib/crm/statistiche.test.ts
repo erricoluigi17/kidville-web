@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { dataCivile } from '@/i18n/config'
 import {
   calcolaStatistiche,
-  periodoDaSettembre,
+  periodoDallInizioAnno,
   periodoMeseCorrente,
   periodoMeseScorso,
   type RigaPersona,
@@ -729,12 +729,39 @@ describe('le scorciatoie del periodo (giorni civili di Roma)', () => {
     expect(periodoMeseScorso(new Date('2028-03-10T12:00:00Z'))).toEqual({ dal: '2028-02-01', al: '2028-02-29' })
   })
 
-  it('da settembre: dal 1° settembre dell’anno scolastico in corso a fine mese', () => {
-    expect(periodoDaSettembre(new Date('2026-11-20T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2026-11-30' })
-    expect(periodoDaSettembre(new Date('2027-01-15T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2027-01-31' })
+  it('dall’inizio dell’anno: dal 1° settembre dell’anno scolastico in corso a fine mese', () => {
+    expect(periodoDallInizioAnno(new Date('2026-11-20T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2026-11-30' })
+    expect(periodoDallInizioAnno(new Date('2027-01-15T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2027-01-31' })
     // a luglio l'anno scolastico in corso è cominciato a settembre dell'anno prima
-    expect(periodoDaSettembre(new Date('2027-07-10T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2027-07-31' })
+    expect(periodoDallInizioAnno(new Date('2027-07-10T12:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2027-07-31' })
     // il 1° settembre ne è già il primo giorno
-    expect(periodoDaSettembre(new Date('2026-09-01T07:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2026-09-30' })
+    expect(periodoDallInizioAnno(new Date('2026-09-01T07:00:00Z'))).toEqual({ dal: '2026-09-01', al: '2026-09-30' })
+  })
+
+  it('il giorno si conta a Roma: le 22:30Z del 31 agosto sono già il 1° settembre', () => {
+    expect(periodoDallInizioAnno(new Date('2026-08-31T22:30:00Z'))).toEqual({ dal: '2026-09-01', al: '2026-09-30' })
+    // e le 21:30Z sono ancora agosto: l'anno è quello che si chiude
+    expect(periodoDallInizioAnno(new Date('2026-08-31T21:30:00Z'))).toEqual({ dal: '2025-09-01', al: '2026-08-31' })
+  })
+
+  it('con il calendario della sede vale il calendario', () => {
+    const riga = (annoInizio: number, inizio: string, fine: string) => ({
+      annoId: `a-${annoInizio}`,
+      annoSedeId: `s-${annoInizio}`,
+      annoInizio,
+      inizio,
+      fine,
+      ultimoGiornoAperto: fine,
+      preparaSuccessivoDal: inizio,
+      stato: 'corrente' as const,
+      domandeAperte: false,
+    })
+    // il 2026/27 di questa sede comincia il 14 settembre: il 10 è ancora il 2025/26
+    const cal = [riga(2025, '2025-09-01', '2026-09-13'), riga(2026, '2026-09-14', '2027-08-31')]
+    expect(periodoDallInizioAnno(new Date('2026-09-10T12:00:00Z'), cal)).toEqual({ dal: '2025-09-01', al: '2026-09-30' })
+    expect(periodoDallInizioAnno(new Date('2026-09-20T12:00:00Z'), cal)).toEqual({ dal: '2026-09-14', al: '2026-09-30' })
+    // e una sede che comincia il 17 agosto
+    const presto = [riga(2026, '2026-08-17', '2027-08-31')]
+    expect(periodoDallInizioAnno(new Date('2026-08-20T12:00:00Z'), presto)).toEqual({ dal: '2026-08-17', al: '2026-08-31' })
   })
 })

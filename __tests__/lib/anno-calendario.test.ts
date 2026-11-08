@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { dataCivile } from '@/i18n/config'
 import {
   annoAttivoDelCalendario,
   annoDelGiorno,
@@ -98,6 +99,39 @@ describe('annoDiIstante', () => {
   it('il fuso del processo non conta', () => {
     process.env.TZ = 'America/Los_Angeles'
     verifica()
+  })
+
+  // Portati da `anno-scolastico.test.ts` (la vecchia `annoScolasticoCorrente`, tolta nel compito 4.1.S4b):
+  // «il giorno si conta a Roma», col confine spostato dal 1° agosto al 1° settembre. Il caso del 31 luglio
+  // 22:30Z (già il 1° agosto a Roma) e quello delle 21:00Z c'erano solo lì; la notte del 1° settembre (ora
+  // legale) c'era già sopra, in `verifica()`.
+  it("31 luglio 22:30Z è già il 1° agosto a Roma, e agosto appartiene ancora all'anno che si chiude", () => {
+    const istante = new Date('2026-07-31T22:30:00.000Z')
+    expect(dataCivile(istante)).toBe('2026-08-01')
+    expect(annoDiIstante(istante).etichetta).toBe('2025/2026')
+    expect(annoDiIstante(new Date('2026-07-31T21:00:00.000Z')).etichetta).toBe('2025/2026')
+  })
+
+  it('concorda SEMPRE col giorno civile italiano, qualunque sia il fuso del processo', () => {
+    for (const tz of ['UTC', 'America/Los_Angeles', 'Pacific/Auckland']) {
+      process.env.TZ = tz
+      for (const iso of [
+        '2026-07-31T22:00:00.000Z',
+        '2026-08-31T21:59:59.000Z',
+        '2026-08-31T22:00:00.000Z',
+        '2026-12-31T23:30:00.000Z',
+        '2027-01-01T00:30:00.000Z',
+      ]) {
+        const istante = new Date(iso)
+        expect(annoDiIstante(istante).annoInizio, `${iso} @ ${tz}`).toBe(annoDelGiorno(dataCivile(istante)).annoInizio)
+      }
+    }
+  })
+
+  it('con il calendario della sede il confine è la mezzanotte di Roma del suo inizio', () => {
+    // riga2026 comincia il 15/09: le 22:30Z del 14 (ora legale) sono già il 15 a Roma, le 21:30Z no.
+    expect(annoDiIstante(new Date('2026-09-14T22:30:00Z'), calendario).annoInizio).toBe(2026)
+    expect(annoDiIstante(new Date('2026-09-14T21:30:00Z'), calendario).annoInizio).toBe(2025)
   })
 })
 

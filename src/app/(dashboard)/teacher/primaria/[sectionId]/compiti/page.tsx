@@ -5,7 +5,8 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { FileText, Image as ImageIcon, Loader2, Paperclip, Users } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
+import { annoDelGiorno, inizioAnno, type Calendario } from '@/lib/anno-scolastico';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
 import { addGiorni, isoToIt } from '@/lib/format/data';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -145,22 +146,19 @@ const GIORNI_INDIETRO_MASSIMI = 364;
  * in Italia non è ancora arrivato. È la stessa correzione già pagata quattro
  * volte in questo repo (appello, registro, conteggi delle email).
  *
- * ⚠️ L'OROLOGIO SI LEGGE UNA VOLTA SOLA, ed è il motivo della riga
- * `new Date(`${oggi}T12:00:00Z`)`. Fino al 2026-09-19 qui c'erano DUE letture —
- * `oggiFiscaleISO()` e il `new Date()` predefinito di `annoScolasticoCorrente()`
- * — con la soglia dell'anno scolastico proprio in mezzo: a cavallo della
- * mezzanotte romana del 1° agosto, per i microsecondi fra le due chiamate,
- * «oggi» poteva essere ancora il 31 luglio mentre l'anno era già quello nuovo, e
- * `dataDa` usciva il 1° agosto, cioè UN GIORNO NEL FUTURO rispetto a oggi.
- * `annoScolasticoCorrente` accetta una `Date` apposta: gliela si passa, derivata
- * dalla stessa lettura. Mezzogiorno UTC del giorno civile italiano cade sempre
- * dentro quello stesso giorno a Roma (UTC+1 o +2), quindi la conversione non
- * sposta di nuovo la data che si sta cercando di tenere ferma.
+ * ⚠️ L'OROLOGIO SI LEGGE UNA VOLTA SOLA: `oggi` si legge qui e l'anno scolastico si ricava da QUEL giorno
+ * (`annoDelGiorno(oggi, calendario)`, che prende una stringa `AAAA-MM-GG` e non rilegge nessun
+ * orologio). Fino al 2026-09-19 c'erano DUE letture — `oggiFiscaleISO()` e il `new Date()`
+ * predefinito della vecchia funzione dell'anno — con la soglia dell'anno scolastico proprio in
+ * mezzo: a cavallo della mezzanotte romana della soglia, per i microsecondi fra le due chiamate,
+ * «oggi» poteva essere ancora il giorno prima mentre l'anno era già quello nuovo, e `dataDa` usciva
+ * UN GIORNO NEL FUTURO rispetto a oggi. Con una lettura sola quella finestra non esiste. Il giorno
+ * è quello di Roma (`oggiFiscaleISO()`), quindi ogni conversione resta sul giorno civile italiano.
  *
- * ⚠️ «Anno» È L'ANNO SCOLASTICO, e lo decide `annoScolasticoCorrente()` — l'unica
- * definizione di anno scolastico che questo repo abbia (soglia al 1° agosto, col
- * giorno contato a Roma). NON `annoFiscale()`: quello vive in
- * `@/lib/format/fiscal-date`, che parla di data documento e di numerazione delle
+ * ⚠️ «Anno» È L'ANNO SCOLASTICO, e lo decide il modulo dell'anno (`@/lib/anno-scolastico`): il
+ * calendario della sede quando c'è (`calendario`), altrimenti la soglia predefinita del 1°
+ * SETTEMBRE — luglio e agosto appartengono all'anno che si chiude. NON `annoFiscale()`: quello
+ * vive in `@/lib/format/fiscal-date`, che parla di data documento e di numerazione delle
  * fatture, ed era un errore di categoria alla sorgente. Si vedeva, misurato: col
  * 1° gennaio come inizio, il 10 gennaio «anno» copriva NOVE giorni — meno di
  * «Ultimi 30 giorni» — e restava più stretto di «Ultimi 90» fino al 31 marzo.
@@ -177,15 +175,16 @@ const GIORNI_INDIETRO_MASSIMI = 364;
  * render: `new Date()` nel render è un disallineamento di idratazione in attesa
  * di accadere. (Stessa regola, stesse parole, del gemello del genitore.)
  */
-function dataDaDelPeriodo(periodo: Periodo): string {
+function dataDaDelPeriodo(periodo: Periodo, calendario?: Calendario | null): string {
   const oggi = oggiFiscaleISO();
   const limite = addGiorni(oggi, -GIORNI_INDIETRO_MASSIMI);
   if (periodo === 'anno') {
-    // `annoScolasticoCorrente()` → «2026/2027»: l'anno che apre è quello del 1° agosto.
-    const inizio = `${annoScolasticoCorrente(new Date(`${oggi}T12:00:00Z`)).slice(0, 4)}-08-01`;
+    // L'inizio dell'anno del giorno di Roma già letto: il calendario della sede, o il 1° settembre.
+    const anno = annoDelGiorno(oggi, calendario);
+    const inizio = anno.riga?.inizio ?? inizioAnno(anno.annoInizio);
     // Confronto lessicografico su `YYYY-MM-DD`: coincide con quello di calendario.
-    // Il clamp morde in un giorno solo — il 31 luglio di un anno bisestile, quando
-    // il 1° agosto precedente dista 365 giorni — ed è esattamente il giorno in cui
+    // Il clamp morde in un giorno solo — il 31 agosto di un anno bisestile, quando
+    // il 1° settembre precedente dista 365 giorni — ed è esattamente il giorno in cui
     // senza di lui la route risponderebbe 400.
     return inizio < limite ? limite : inizio;
   }
@@ -429,6 +428,11 @@ function CompitiClasse() {
   const userId = getCurrentTeacherId(search);
 
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_PREDEFINITO);
+  // La sede: la pagina non la conosce (la sezione non la porta qui), quindi vale l'unica sede del contesto, o il
+  // predefinito. Il calendario arriva dopo il montaggio: la lettura lo trova in un ref e non riparte quando cambia.
+  const calendario = useCalendarioDi();
+  const calendarioRef = useRef(calendario);
+  useEffect(() => { calendarioRef.current = calendario; }, [calendario]);
   const [lettura, setLettura] = useState<Lettura>({
     periodo: PERIODO_PREDEFINITO,
     ...LETTURA_VUOTA,
@@ -502,7 +506,7 @@ function CompitiClasse() {
       // click che deve rispondere subito.
       // `dataDaDelPeriodo` legge l'orologio: si chiama QUI, non nel corpo del
       // render.
-      const dataDa = dataDaDelPeriodo(periodo);
+      const dataDa = dataDaDelPeriodo(periodo, calendarioRef.current);
       const raccolte: VoceCompito[] = [];
       let cursore = cursoreIniziale;
       // Si parte da «guasto» e lo si smentisce solo uscendo bene dal giro: così

@@ -164,7 +164,7 @@ function annoConSecolo(
  * non esiste (31 aprile) o se nessuno dei due secoli dà una data non futura.
  *
  * ⚠️ Il `Date` che esce è la **mezzanotte locale** di quel giorno (`new Date(a, m, g)`),
- * cioè la stessa convenzione con cui la legge `annoScolasticoCorrente` in questo repo:
+ * cioè la convenzione di questo file (non il giorno di Roma di `dataCivile`):
  * il giorno si rilegge con `getFullYear/getMonth/getDate`, non con i getter UTC.
  *
  * @param cf codice fiscale, con o senza spazi, maiuscolo o minuscolo

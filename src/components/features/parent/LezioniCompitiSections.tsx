@@ -5,7 +5,7 @@ import { BookOpen, ClipboardList, FileText, Image as ImageIcon, CalendarClock } 
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { useDateFormat } from '@/lib/i18n/date';
-import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
+import { annoDelGiorno, inizioAnno, type Calendario } from '@/lib/anno-scolastico';
 import { addGiorni } from '@/lib/format/data';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { decidiStatoElenco, opzioniDerivate } from '@/lib/ui/filtri/motore';
@@ -229,22 +229,24 @@ const GIORNI_INDIETRO_MASSIMI = 364;
  * il secondo è UTC, e fra mezzanotte e le due di notte italiane restituisce
  * IERI — un giorno di registro in meno, per chi guarda proprio a quell'ora.
  *
- * ⚠️ «Anno in corso» è l'ANNO SCOLASTICO, e lo decide `annoScolasticoCorrente()`
- * — l'unica definizione di anno scolastico che questo repo ha (soglia al 1°
- * agosto, giorno contato a Roma). NON `annoFiscale()`: quello è l'anno SOLARE a
- * fini di fatturazione, e farebbe partire la bacheca dal 1° gennaio — a ottobre
- * significherebbe «nessun compito», col registro pieno da un mese e mezzo.
+ * ⚠️ «Anno in corso» è l'ANNO SCOLASTICO, e lo decide il modulo dell'anno (`annoDelGiorno`,
+ * `@/lib/anno-scolastico`): il calendario della sede quando c'è (`calendario`), altrimenti la soglia
+ * predefinita del 1° SETTEMBRE (luglio e agosto appartengono all'anno che si chiude). NON
+ * `annoFiscale()`: quello è l'anno SOLARE a fini di fatturazione, e farebbe partire la bacheca dal 1°
+ * gennaio — a ottobre significherebbe «nessun compito», col registro pieno da un mese e mezzo.
+ * «Oggi» si legge UNA volta (sopra) e l'anno si ricava da quel giorno: nessun secondo orologio.
  *
  * Si chiama da un gestore di evento o dentro l'effetto che carica, mai nel
  * corpo del render: `new Date()` nel render è un disallineamento di idratazione.
  */
-export function dataDaDelPeriodo(periodo: PeriodoCompiti): string | null {
+export function dataDaDelPeriodo(periodo: PeriodoCompiti, calendario?: Calendario | null): string | null {
   if (periodo === PERIODO_PREDEFINITO) return null;
   const oggi = oggiFiscaleISO();
   const limite = addGiorni(oggi, -GIORNI_INDIETRO_MASSIMI);
   if (periodo === 'anno') {
-    // `annoScolasticoCorrente()` → «2026/2027»: l'anno che apre è quello del 1° agosto.
-    const inizio = `${annoScolasticoCorrente().slice(0, 4)}-08-01`;
+    // L'inizio dell'anno del giorno di Roma già letto: il calendario della sede, o il 1° settembre.
+    const anno = annoDelGiorno(oggi, calendario);
+    const inizio = anno.riga?.inizio ?? inizioAnno(anno.annoInizio);
     // Confronto lessicografico su `YYYY-MM-DD`: coincide con quello di calendario.
     return inizio < limite ? limite : inizio;
   }

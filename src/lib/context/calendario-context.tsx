@@ -123,3 +123,16 @@ export function useAnnoDi(scuolaId?: string | null): (giorno: string) => AnnoDel
   const cal = (scuolaId ? perSede[scuolaId] : undefined) ?? null;
   return useCallback((giorno: string) => annoDelGiorno(giorno, cal), [cal]);
 }
+
+/**
+ * Il calendario da passare a una funzione di modulo (`periodoStorico`, `dataDaDelPeriodo`…). La sede è quella
+ * che il chiamante conosce; se non ne conosce nessuna e il contesto ne ha UNA sola, è quella (è l'unica che
+ * l'utente vede: non è un'ipotesi). Con più sedi e nessuna indicata: `null`, cioè il predefinito. Mai la prima
+ * di un elenco.
+ */
+export function useCalendarioDi(scuolaId?: string | null): Calendario | null {
+  const { perSede } = useCalendario();
+  if (scuolaId) return perSede[scuolaId] ?? null;
+  const sedi = Object.keys(perSede);
+  return sedi.length === 1 ? perSede[sedi[0]] : null;
+}

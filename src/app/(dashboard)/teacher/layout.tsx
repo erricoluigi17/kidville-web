@@ -6,6 +6,7 @@ import { NavigazioneDocente } from '@/components/features/teacher/NavigazioneDoc
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
+import { CalendarioProvider } from '@/lib/context/calendario-context';
 
 // Cornice persistente dell'area Insegnante: AppBar verde (wordmark + back +
 // campanella) e bottom nav del design (DR) su tutte le rotte /teacher/**.
@@ -25,6 +26,7 @@ export default async function TeacherLayout({ children }: { children: React.Reac
     // sticky sotto la barra (ClasseShell); fallback 0px → /admin invariato.
     // `data-kv-guscio-tablet`: da 744 px la barra in basso lascia il posto a un binario a
     // sinistra, e `--kv-rail-w` (globals.css) dice al contenuto quanto spazio lasciargli.
+    <CalendarioProvider>
     <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
       {/* `focus:text-kidville-yellow-ink`: giallo su verde vale 4,05:1, la
           soglia per un testo 16px/400 è 4,5:1, e la rete di `globals.css` non
@@ -63,5 +65,6 @@ export default async function TeacherLayout({ children }: { children: React.Reac
         <NavigazioneDocente />
       </Suspense>
     </div>
+    </CalendarioProvider>
   );
 }

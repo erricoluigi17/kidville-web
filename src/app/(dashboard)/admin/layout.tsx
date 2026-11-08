@@ -6,6 +6,7 @@ import { AdminBottomNav } from '@/components/features/admin/AdminBottomNav';
 import { CampoNonCoperto } from '@/components/features/shell/CampoNonCoperto';
 import { SedeProvider, SedeScopeBoundary } from '@/lib/context/sede-context';
 import { AdminIdentityProvider } from '@/lib/context/admin-identity';
+import { CalendarioProvider } from '@/lib/context/calendario-context';
 import { requireArea } from '@/lib/auth/area-guard';
 
 // Shell cockpit Direzione/Segreteria, in tre forme (dal 2026-10-18, iPad PR 3):
@@ -34,6 +35,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <AdminIdentityProvider>
       <SedeProvider>
+        <CalendarioProvider>
         <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-admin>
           <AdminTopBarMobile />
           <AdminTopBar />
@@ -53,6 +55,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </div>
           <AdminBottomNav />
         </div>
+        </CalendarioProvider>
       </SedeProvider>
     </AdminIdentityProvider>
   );

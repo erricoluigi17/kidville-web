@@ -9,6 +9,7 @@ import { ColonnaContenuto } from '@/components/features/shell/ColonnaContenuto';
 import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { AvvisiSettimanaliApp } from '@/components/providers/AvvisiSettimanaliApp';
 import { requireArea } from '@/lib/auth/area-guard';
+import { CalendarioProvider } from '@/lib/context/calendario-context';
 
 export default async function ParentLayout({ children }: { children: React.ReactNode }) {
   // Il primo elemento di ogni schermata dell'area riservata — quello che
@@ -22,6 +23,7 @@ export default async function ParentLayout({ children }: { children: React.React
   return (
     // `data-kv-guscio-tablet`: da 744 px la barra in basso lascia il posto a un binario a
     // sinistra, e `--kv-rail-w` (globals.css) dice al contenuto quanto spazio lasciargli.
+    <CalendarioProvider>
     <div className="min-h-screen bg-kidville-cream" data-kv-shell data-kv-guscio-tablet>
       {/* `focus:text-kidville-yellow-ink` e non `focus:text-kidville-yellow`:
           giallo di brand su verde di brand vale 4,05:1 e la soglia per un testo
@@ -80,5 +82,6 @@ export default async function ParentLayout({ children }: { children: React.React
         <NavigazioneGenitore />
       </Suspense>
     </div>
+    </CalendarioProvider>
   );
 }

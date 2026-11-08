@@ -14,6 +14,7 @@ import { creaFetchStrumentato } from '@/lib/logging/supabase-fetch'
 import { conContesto, erroreAnnoDellaRichiesta, segnalaErroreAnno } from '@/lib/logging/context'
 import { withRoute } from '@/lib/logging/with-route'
 import { scriviFrequenza } from '@/lib/anno/frequenze'
+import { impostazioniNonDisponibili } from '@/lib/anno/impostazioni'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const URL_DB = 'https://x.supabase.co/rest/v1/sections'
@@ -256,5 +257,32 @@ describe('withRoute: gli errori dell\'anno già gestiti da una scrittura fail-op
     const res = await route(req())
     expect(res.status).toBe(409)
     expect((await res.json()).codice).toBe('PASSAGGIO_DA_FARE')
+  })
+})
+
+describe('withRoute: il 503 di degrado dello schema dell\'anno (M10)', () => {
+  function erroriDiRoute() {
+    return vi.mocked(logEvento).mock.calls.filter((c) => c[0] === 'route' && c[1] === 'error')
+  }
+
+  it('lo schema indietro risponde 503 CALENDARIO_NON_DISPONIBILE e la route non registra nessun error', async () => {
+    const route = withRoute('t/degrado:GET', async () =>
+      impostazioniNonDisponibili({ code: '42P01', message: 'relation does not exist' }, 'test-degrado'),
+    )
+    const res = await route(req())
+    expect(res.status).toBe(503)
+    expect((await res.json()).codice).toBe('CALENDARIO_NON_DISPONIBILE')
+    expect(erroriDiRoute()).toHaveLength(0)
+    // il degrado resta visibile: la riga info di chi l'ha prodotto
+    expect(
+      vi.mocked(logEvento).mock.calls.some((c) => c[1] === 'info' && (c[2] as { tipo?: string })?.tipo === 'impostazioni-schema-indietro'),
+    ).toBe(true)
+  })
+
+  it('un 503 qualunque, non segnato, riceve ancora il suo error', async () => {
+    const route = withRoute('t/altro503:GET', async () => Response.json({ error: 'giù' }, { status: 503 }))
+    const res = await route(req())
+    expect(res.status).toBe(503)
+    expect(erroriDiRoute()).toHaveLength(1)
   })
 })

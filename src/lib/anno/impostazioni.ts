@@ -8,6 +8,7 @@ import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceDaMessaggio } from '@/lib/anno/tipi'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { segnalaErroreLoggato } from '@/lib/logging/context'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 
@@ -91,6 +92,9 @@ export function impostazioniNonDisponibili(error: ErroreDb, operazione: string):
     operazione,
     error_code: typeof error.code === 'string' ? error.code : undefined,
   })
+  // Degrado previsto, già loggato qui a `info`: segnato come «già loggato» perché `withRoute` non ci aggiunga
+  // un `error` per il 5xx (M10). Ogni altro 503 non passa da qui e resta com'è.
+  segnalaErroreLoggato()
   return NextResponse.json(
     { error: frase('CALENDARIO_NON_DISPONIBILE'), codice: 'CALENDARIO_NON_DISPONIBILE' },
     { status: 503 },

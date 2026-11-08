@@ -487,6 +487,42 @@ export const SCHEMA_LEGAMI_GENITORE = `
 `
 
 /**
+ * PR 4.4 · La galleria e lo storico delle classi: le colonne che la visibilità del genitore legge, con i tipi, i default e
+ * gli indici veri di produzione. Va nella `codaPrima` di `creaDbAnnoPr2`, così il registro li trova come in produzione:
+ * `anno_id`, `target_section_ids` e i trigger li aggiungono le migrazioni. Non si passa insieme a `completo`, che ha una sua
+ * galleria più povera. Chi prova la funzione senza queste tabelle semplicemente non la passa.
+ */
+export const SCHEMA_GALLERIA_GENITORE = `
+  CREATE TABLE public.galleria_media_v2 (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    scuola_id uuid,
+    tag_students uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    is_broadcast boolean DEFAULT false,
+    target_classes text[],
+    created_at timestamptz DEFAULT CURRENT_TIMESTAMP,
+    giorno_competenza date,
+    politica_operazione jsonb,
+    eliminato_il timestamptz
+  );
+  CREATE INDEX idx_galleria_v2_tag_students ON public.galleria_media_v2 USING gin (tag_students);
+  CREATE INDEX idx_galleria_v2_sede_created_attive ON public.galleria_media_v2 (scuola_id, created_at DESC)
+    WHERE eliminato_il IS NULL;
+  CREATE TABLE public.alunni_classi_storico (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid NOT NULL REFERENCES public.alunni(id) ON DELETE CASCADE,
+    scuola_id uuid NOT NULL REFERENCES public.schools(id),
+    section_id uuid NOT NULL,
+    section_nome text NOT NULL DEFAULT '',
+    dal date NOT NULL,
+    al date,
+    fonte text NOT NULL CHECK (fonte IN ('attuale', 'presenza', 'staff', 'trasferimento')),
+    CHECK (al IS NULL OR al >= dal),
+    UNIQUE (alunno_id, scuola_id, section_id, dal, fonte)
+  );
+  CREATE INDEX alunni_classi_storico_alunno ON public.alunni_classi_storico (alunno_id);
+`
+
+/**
  * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
  * `SCHEMA_BASE`, per non cambiare il registro che i test vecchi si aspettano; chi vuole che il registro la veda (e la
  * guardia dell'anno la guardi) la passa nella `codaPrima` di `creaDbAnnoPr2`.

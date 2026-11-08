@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
-import { applicaPr2, creaDbAnnoPr2, SCHEMA_BASE, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
+import { applicaPr2, creaDbAnnoPr2, SCHEMA_BASE, SCHEMA_GALLERIA_GENITORE, SCHEMA_LEGAMI_GENITORE } from '../helpers/schema-anno-pglite'
 
 /**
  * PR 4.4 · CHE COSA VEDE UNA FAMIGLIA. Una regola sola, in SQL.
  *
  * Compito 4.4.1 · `figli_attivi`: un figlio è attivo se la sua frequenza sta nell'anno attivo della sede, è
  * `in_attesa` o `iscritto`, e oggi (giorno di Roma) cade fra `data_ingresso` e `data_uscita`. `sospeso` è un flag.
+ *
+ * Compito 4.4.2 · `media_visibili_genitore`: figlio per figlio, le foto vive della sede della frequenza attiva, dal
+ * giorno da cui il figlio frequenta senza interruzioni, se è taggato, o se la foto è per tutta la sede e lui quel giorno
+ * c'era, o se quel giorno stava in una sezione destinataria.
  *
  * Calendario di prova fisso (`creaAnniFissi`): 2025/26 chiuso, 2026/27 corrente, 2027/28 in_preparazione. L'anno
  * attivo dipende dallo stato e non dalla data, ma il confronto con OGGI sì: le prove che ne dipendono allargano
@@ -18,6 +22,8 @@ const SEDE_B = '22222222-2222-4222-8222-222222222223'
 const SEZ_1 = '55555555-5555-4555-8555-555555555551'
 const SEZ_2 = '55555555-5555-4555-8555-555555555552'
 const SEZ_B = '55555555-5555-4555-8555-555555555553'
+/** Le sezioni della prima sede nell'anno prima: i destinatari di una foto del 2025/26 sono queste. */
+const SEZ_PRIMA = '55555555-5555-4555-8555-555555555554'
 
 const GEN_DUE_FIGLI = '99999999-9999-4999-8999-999999999991'
 const GEN_RITIRATO = '99999999-9999-4999-8999-999999999992'
@@ -61,6 +67,24 @@ async function inRollback(fn: () => Promise<void>) {
   try { await fn() } finally { await db.exec('ROLLBACK') }
 }
 
+/** Il codice dell'errore, dentro una transazione: un savepoint, così l'errore non la rovina. */
+async function codiceErrore(sql: string, params: unknown[] = []): Promise<string> {
+  await db.exec('SAVEPOINT prima_dell_errore')
+  try {
+    await db.query(sql, params)
+  } catch (e) {
+    await db.exec('ROLLBACK TO SAVEPOINT prima_dell_errore')
+    return (e as { code?: string }).code ?? 'senza-codice'
+  }
+  await db.exec('RELEASE SAVEPOINT prima_dell_errore')
+  return 'nessun-errore'
+}
+
+async function comeUtente(ruolo: string, sub: string | null) {
+  await db.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify(sub ? { sub, role: ruolo } : { role: ruolo })])
+  await db.exec(`SET LOCAL ROLE ${ruolo}`)
+}
+
 async function una<T>(sql: string, params: unknown[] = []): Promise<T> {
   const r = await db.query<Record<string, T>>(sql, params)
   return Object.values(r.rows[0])[0] as T
@@ -84,16 +108,69 @@ type DatiFrequenza = {
   uscita?: string | null
   origine?: string
   tipo?: string | null
+  continuaDa?: string | null
 }
 
 /** Di partenza una frequenza `recupero` e `iscritto`, come tutte quelle di produzione. */
 async function frequenza(d: DatiFrequenza): Promise<string> {
   return una<string>(
-    `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine, tipo)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine, tipo, continua_da)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
     [d.alunno, d.annoSede, d.sezione ?? null, d.stato ?? 'iscritto', d.ingresso ?? '2026-09-01', d.uscita ?? null,
-      d.origine ?? 'recupero', d.tipo ?? null])
+      d.origine ?? 'recupero', d.tipo ?? null, d.continuaDa ?? null])
 }
+
+/** Una frequenza venuta da una domanda: `data_ingresso` è vera, e non serve la quota per essere attiva (`in_attesa`). */
+const nuovaIscrizione = (d: DatiFrequenza) =>
+  frequenza({ stato: 'in_attesa', origine: 'domanda', tipo: 'nuova', ...d })
+
+/** Una conferma dell'anno dopo, che si aggancia alla frequenza dell'anno prima. */
+const conferma = (d: DatiFrequenza) =>
+  frequenza({ stato: 'in_attesa', origine: 'conferma', tipo: 'conferma', ...d })
+
+type DatiFoto = {
+  sede?: string
+  tag?: string[]
+  broadcast?: boolean
+  target?: string[] | null
+  classi?: string[] | null
+  /** Il giorno di caricamento (a metà giornata), oppure un istante intero con `il`. */
+  giorno?: string
+  il?: string
+  competenza?: string | null
+  eliminata?: boolean
+}
+
+/** Di partenza una foto del 20/10/2026 nella prima sede, senza tag e senza destinatari. */
+async function foto(d: DatiFoto): Promise<string> {
+  return una<string>(
+    `INSERT INTO public.galleria_media_v2
+       (scuola_id, tag_students, is_broadcast, target_section_ids, target_classes, created_at, giorno_competenza, eliminato_il)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [d.sede ?? SEDE, d.tag ?? [], d.broadcast ?? false, d.target ?? null, d.classi ?? null,
+      d.il ?? `${d.giorno ?? '2026-10-20'}T12:00:00+02:00`, d.competenza ?? null, d.eliminata ? '2026-10-30T10:00:00Z' : null])
+}
+
+/** Una riga dello storico delle classi, `[dal, al)`. */
+async function storico(alunno: string, sezione: string, dal: string, al: string | null = null, fonte = 'attuale', sede = SEDE) {
+  await db.query(
+    `INSERT INTO public.alunni_classi_storico (alunno_id, scuola_id, section_id, dal, al, fonte) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [alunno, sede, sezione, dal, al, fonte])
+}
+
+type Coppia = { media_id: string; alunno_id: string }
+
+async function coppieDi(genitore: string | null): Promise<Coppia[]> {
+  const r = await db.query<Coppia>(`SELECT media_id, alunno_id FROM public.media_visibili_genitore($1)`, [genitore])
+  return r.rows
+}
+
+/** Le foto che un genitore vede, ognuna una volta sola per ogni figlio. */
+async function fotoDi(genitore: string): Promise<string[]> {
+  return (await coppieDi(genitore)).map((x) => x.media_id).sort()
+}
+
+const ordinate = (...id: string[]) => [...id].sort()
 
 /**
  * Oggi secondo il database, con l'anno attivo allargato attorno a oggi perché le date relative ci stiano dentro
@@ -112,8 +189,22 @@ async function giorni(): Promise<{ oggi: string; ieri: string; domani: string; s
   return { oggi, ieri, domani, settimanaScorsa: settimana }
 }
 
+/**
+ * Il passaggio all'anno dopo, dentro `inRollback`: il 2026/27 si chiude e il 2027/28 diventa l'anno attivo, anticipato
+ * attorno a oggi perché una frequenza possa entrarci oggi, qualunque sia il giorno della prova. Restituisce oggi.
+ */
+async function passaAl2027(): Promise<string> {
+  const { ieri, oggi, domani } = await giorni()
+  await db.query(`UPDATE public.anni_sede SET stato = 'chiuso' WHERE id = $1`, [ANNO_2627])
+  await db.query(
+    `UPDATE public.anni_sede
+        SET stato = 'corrente', inizio = $2, fine = $3, prepara_successivo_dal = $2, ultimo_giorno_aperto = $3
+      WHERE id = $1`, [ANNO[2027], ieri, domani])
+  return oggi
+}
+
 beforeAll(async () => {
-  db = await creaDbAnnoPr2({ sedi: [SEDE, SEDE_B], fino: 'M44a' })
+  db = await creaDbAnnoPr2({ sedi: [SEDE, SEDE_B], fino: 'M44a', codaPrima: SCHEMA_GALLERIA_GENITORE })
   await db.exec(SCHEMA_LEGAMI_GENITORE)
 
   const anni = await db.query<{ anno_inizio: number; id: string; anno_id: string; scuola_id: string }>(
@@ -131,6 +222,8 @@ beforeAll(async () => {
   await sezione(SEZ_1, SEDE, 'Girasoli')
   await sezione(SEZ_2, SEDE, 'Margherite')
   await sezione(SEZ_B, SEDE_B, 'Tulipani')
+  await db.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, $3, $4)`,
+    [SEZ_PRIMA, SEDE, 'Girasoli', riga(SEDE, 2025).anno_id])
 
   // Le frequenze le scrive la prova, una per una: lo specchio, che per ogni alunno nuovo ne fa nascere una dell'anno
   // attivo, resta spento solo mentre nascono gli alunni del seme.
@@ -353,22 +446,6 @@ describe('figli_attivi', () => {
   })
 
   describe('chi può chiamarla', () => {
-    /** Il codice dell'errore, dentro una transazione: un savepoint, così l'errore non la rovina. */
-    async function codiceErrore(sql: string, params: unknown[] = []): Promise<string> {
-      await db.exec('SAVEPOINT prima_dell_errore')
-      try {
-        await db.query(sql, params)
-      } catch (e) {
-        await db.exec('ROLLBACK TO SAVEPOINT prima_dell_errore')
-        return (e as { code?: string }).code ?? 'senza-codice'
-      }
-      await db.exec('RELEASE SAVEPOINT prima_dell_errore')
-      return 'nessun-errore'
-    }
-    async function comeUtente(ruolo: string, sub: string | null) {
-      await db.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify(sub ? { sub, role: ruolo } : { role: ruolo })])
-      await db.exec(`SET LOCAL ROLE ${ruolo}`)
-    }
     const miei = async () =>
       (await db.query<Riga>(`SELECT ${COLONNE} FROM public.figli_attivi_miei() ORDER BY alunno_id`)).rows
 
@@ -404,6 +481,645 @@ describe('figli_attivi', () => {
         expect(await miei()).toEqual(attese)
       })
       await inRollback(async () => {
+        await comeUtente('authenticated', null)
+        expect(await miei()).toEqual([])
+      })
+    })
+  })
+})
+
+describe('media_visibili_genitore', () => {
+  describe('la regola del figlio attivo', () => {
+    prova('la foto taggata del proprio figlio attivo è visibile', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_1] })
+        expect(await coppieDi(GEN_DUE_FIGLI)).toEqual([{ media_id: m, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('la foto del figlio di un altro non è visibile', async () => {
+      await inRollback(async () => {
+        await foto({ tag: [FIGLIO_PONTE] })
+        expect(await coppieDi(GEN_DUE_FIGLI)).toEqual([])
+      })
+    })
+
+    prova('un ritirato non vede niente, nemmeno le foto in cui è taggato', async () => {
+      await inRollback(async () => {
+        await foto({ tag: [FIGLIO_RITIRATO] })
+        await foto({ tag: [FIGLIO_RITIRATO], giorno: '2026-09-15' })
+        await foto({ broadcast: true })
+        await storico(FIGLIO_RITIRATO, SEZ_1, '2026-09-01')
+        await foto({ target: [SEZ_1] })
+        expect(await coppieDi(GEN_RITIRATO)).toEqual([])
+      })
+    })
+
+    prova('con due figli, quando uno lascia si perdono solo le foto che arrivavano da lui', async () => {
+      await inRollback(async () => {
+        const insieme = await foto({ tag: [FIGLIO_1, FIGLIO_2] })
+        const soloUno = await foto({ tag: [FIGLIO_1] })
+        const soloAltro = await foto({ tag: [FIGLIO_2] })
+        expect(await fotoDi(GEN_DUE_FIGLI)).toEqual(ordinate(insieme, insieme, soloUno, soloAltro))
+
+        await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = '2026-10-01' WHERE id = $1`, [FREQ_2])
+        const dopo = await coppieDi(GEN_DUE_FIGLI)
+        expect(dopo.every((x) => x.alunno_id === FIGLIO_1)).toBe(true)
+        expect(dopo.map((x) => x.media_id).sort()).toEqual(ordinate(insieme, soloUno))
+      })
+    })
+
+    prova('un trasferito vede solo le foto della sede nuova', async () => {
+      await inRollback(async () => {
+        const { oggi } = await giorni()
+        const vecchia = await frequenza({
+          alunno: FIGLIO_TRASFERITO, annoSede: ANNO_2627, sezione: SEZ_1, stato: 'trasferito', uscita: oggi,
+        })
+        await frequenza({ alunno: FIGLIO_TRASFERITO, annoSede: ATTIVO_B, sezione: SEZ_B, continuaDa: vecchia })
+        await storico(FIGLIO_TRASFERITO, SEZ_1, '2026-09-01', oggi)
+        await storico(FIGLIO_TRASFERITO, SEZ_B, oggi, null, 'trasferimento', SEDE_B)
+        await foto({ tag: [FIGLIO_TRASFERITO] })
+        await foto({ broadcast: true })
+        await foto({ target: [SEZ_1] })
+        const nuova = await foto({ sede: SEDE_B, tag: [FIGLIO_TRASFERITO] })
+        expect(await coppieDi(GEN_TRASFERITO)).toEqual([{ media_id: nuova, alunno_id: FIGLIO_TRASFERITO }])
+      })
+    })
+
+    prova('una foto eliminata non è mai visibile', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15')
+        await foto({ tag: [FIGLIO_DOPPIO], eliminata: true })
+        await foto({ broadcast: true, eliminata: true })
+        await foto({ target: [SEZ_1], eliminata: true })
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('l’output contiene alunno_id: serve all’invariante 7', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_1, FIGLIO_2] })
+        const r = await db.query<Coppia>(
+          `SELECT media_id, alunno_id FROM public.media_visibili_genitore($1) ORDER BY alunno_id`, [GEN_DUE_FIGLI])
+        expect(r.fields.map((c) => c.name)).toEqual(['media_id', 'alunno_id'])
+        expect(r.rows).toEqual([{ media_id: m, alunno_id: FIGLIO_1 }, { media_id: m, alunno_id: FIGLIO_2 }])
+      })
+    })
+
+    prova('un utente senza figli, o nullo, non vede niente', async () => {
+      await inRollback(async () => {
+        await foto({ broadcast: true })
+        expect(await coppieDi('99999999-9999-4999-8999-999999999990')).toEqual([])
+        expect(await coppieDi(null)).toEqual([])
+      })
+    })
+  })
+
+  describe('da quando', () => {
+    prova('una famiglia nuova vede le foto solo dall’ingresso', async () => {
+      await inRollback(async () => {
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, sezione: SEZ_1, ingresso: '2026-10-15' })
+        await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+        const dallIngresso = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-15' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([dallIngresso])
+      })
+    })
+
+    // In produzione tutte le 811 frequenze sono di recupero e la loro `data_ingresso` è una stima (il primo `dal` dello
+    // storico): 175 coppie foto-figlio di 64 bambini vivi hanno la foto prima di quella data, e non devono sparire.
+    prova('la stessa foto prima di data_ingresso: invisibile con origine domanda, visibile con origine recupero', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14' })
+        const f = await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
+        await db.query(`UPDATE public.frequenze SET origine = 'recupero' WHERE id = $1`, [f])
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+      })
+    })
+
+    prova('un recupero vede dall’inizio dell’anno della sede, non da prima', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-08-31' })
+        const primoGiorno = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-09-01' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([primoGiorno])
+      })
+    })
+
+    prova('chi continua dall’anno prima vede anche le foto dell’anno prima', async () => {
+      await inRollback(async () => {
+        const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, continuaDa: prima })
+        const annoPrima = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-03-10' })
+        const annoOra = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-20' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual(ordinate(annoPrima, annoOra))
+      })
+    })
+
+    prova('senza continua_da le foto dell’anno prima non si vedono, anche se la frequenza vecchia c’è', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01' })
+        await nuovaIscrizione({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627 })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-03-10' })
+        const annoOra = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-20' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([annoOra])
+      })
+    })
+
+    // Il passaggio vero: tutte le frequenze di oggi sono recuperi, e la prima conferma si aggancerà a uno di loro.
+    prova('una conferma che continua da un recupero vede dall’inizio dell’anno del recupero, non dalla sua stima', async () => {
+      await inRollback(async () => {
+        const oggi = await passaAl2027()
+        const recupero = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2027], ingresso: oggi, continuaDa: recupero })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-08-31' })
+        const primoGiorno = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-09-01' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([primoGiorno])
+      })
+    })
+
+    prova('una conferma che continua da una domanda vede dal suo ingresso vero', async () => {
+      await inRollback(async () => {
+        const prima = await nuovaIscrizione({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2026-02-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, continuaDa: prima })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-01-31' })
+        const dallIngresso = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-02-01' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([dallIngresso])
+      })
+    })
+
+    prova('la catena si risale fino in fondo', async () => {
+      await inRollback(async () => {
+        const oggi = await passaAl2027()
+        const a = await nuovaIscrizione({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-10-01' })
+        const b = await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, continuaDa: a })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2027], ingresso: oggi, continuaDa: b })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2025-09-20' })
+        const dueAnniPrima = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2025-10-01' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([dueAnniPrima])
+      })
+    })
+
+    // Le decisioni dello stato vecchio: al passaggio chi continua resta com'era, chi esce diventa `uscito` (§4.9).
+    for (const [stato, come] of [['ritirato', 'un ritiro'], ['uscito', 'un’uscita'], ['trasferito', 'un trasferimento']]) {
+      prova(`chi rientra dopo ${come} vede dal giorno della conferma`, async () => {
+        await inRollback(async () => {
+          const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01', stato, uscita: '2026-03-01' })
+          await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-10-15', continuaDa: prima })
+          await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-02-10' })
+          await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-14' })
+          const dallaConferma = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-15' })
+          expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([dallaConferma])
+        })
+      })
+    }
+
+    prova('continua_da verso la frequenza di un altro bambino non apre le foto di prima', async () => {
+      await inRollback(async () => {
+        const altrui = await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO[2025], ingresso: '2025-09-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, continuaDa: altrui })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-03-10' })
+        const annoOra = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-20' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([annoOra])
+      })
+    })
+
+    prova('la catena non passa per un’altra sede: conta l’ingresso nella sede della frequenza attiva', async () => {
+      await inRollback(async () => {
+        const inB = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: PRIMA_B, ingresso: '2025-09-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, continuaDa: inB })
+        await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-03-10' })
+        const annoOra = await foto({ tag: [FIGLIO_ALTRI_ANNI], giorno: '2026-10-20' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([annoOra])
+      })
+    })
+
+    prova('un continua_da che gira su se stesso non blocca la funzione', async () => {
+      await inRollback(async () => {
+        const f = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627 })
+        await db.query(`UPDATE public.frequenze SET continua_da = $1 WHERE id = $1`, [f])
+        const m = await foto({ tag: [FIGLIO_ALTRI_ANNI] })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([m])
+      })
+    })
+  })
+
+  // `giorno_competenza` è quello che decide l'anno della riga nel registro (`anno_tabelle`: data `giorno_competenza`, riserva
+  // `created_at`): la segreteria può pubblicare oggi una foto di un altro giorno, e quel giorno è il suo.
+  describe('il giorno della foto', () => {
+    prova('una foto caricata dopo l’ingresso ma di un giorno prima resta invisibile', async () => {
+      await inRollback(async () => {
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-16', competenza: '2026-10-14' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
+      })
+    })
+
+    prova('una foto caricata prima dell’ingresso ma di un giorno dopo è visibile', async () => {
+      await inRollback(async () => {
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        const m = await foto({ tag: [FIGLIO_IN_ATTESA], giorno: '2026-10-14', competenza: '2026-10-15' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([m])
+      })
+    })
+
+    prova('senza giorno_competenza vale il giorno di Roma, non quello UTC', async () => {
+      await inRollback(async () => {
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        // Il 14 alle 22:30 UTC a Roma è già il 15, a mezzanotte e mezza. Il 14 alle 21:30 UTC è ancora il 14.
+        const giaIl15 = await foto({ tag: [FIGLIO_IN_ATTESA], il: '2026-10-14T22:30:00Z' })
+        await foto({ tag: [FIGLIO_IN_ATTESA], il: '2026-10-14T21:30:00Z' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([giaIl15])
+      })
+    })
+
+    // Il confine ha già le sue prove qui sopra; queste guardano il giorno che decide il periodo e la sezione, fra i quali il
+    // confine non distingue: la catena parte molto prima.
+    describe('dentro la catena', () => {
+      const conBuco = async () => {
+        const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01', uscita: '2026-06-30' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-09-15', continuaDa: prima })
+      }
+
+      prova('il broadcast caricato nel buco ma di un giorno di frequenza arriva; il contrario no', async () => {
+        await inRollback(async () => {
+          await conBuco()
+          const m = await foto({ broadcast: true, giorno: '2026-08-10', competenza: '2026-06-30' })
+          await foto({ broadcast: true, giorno: '2026-10-20', competenza: '2026-08-10' })
+          expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([m])
+        })
+      })
+
+      prova('per il broadcast fa fede il giorno di Roma, non quello UTC', async () => {
+        await inRollback(async () => {
+          await conBuco()
+          // Il 30/06 alle 21:30 UTC a Roma è ancora il 30; alle 22:30 UTC è già il 01/07, nel buco.
+          const m = await foto({ broadcast: true, il: '2026-06-30T21:30:00Z' })
+          await foto({ broadcast: true, il: '2026-06-30T22:30:00Z' })
+          expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([m])
+        })
+      })
+
+      prova('la sezione è quella del giorno di competenza, non di quando la foto è stata caricata', async () => {
+        await inRollback(async () => {
+          await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15', '2026-11-02')
+          await storico(FIGLIO_DOPPIO, SEZ_2, '2026-11-02', null, 'trasferimento')
+          const m = await foto({ target: [SEZ_1], giorno: '2026-11-03', competenza: '2026-11-01' })
+          await foto({ target: [SEZ_2], giorno: '2026-11-03', competenza: '2026-11-01' })
+          expect(await fotoDi(GEN_DOPPIO)).toEqual([m])
+        })
+      })
+
+      prova('la sezione è quella del giorno di Roma, non di quello UTC', async () => {
+        await inRollback(async () => {
+          await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15', '2026-11-02')
+          await storico(FIGLIO_DOPPIO, SEZ_2, '2026-11-02', null, 'trasferimento')
+          // Dopo il 25/10 Roma è a UTC+1: il 01/11 alle 23:30 UTC a Roma è già il 02/11.
+          const m = await foto({ target: [SEZ_2], il: '2026-11-01T23:30:00Z' })
+          await foto({ target: [SEZ_1], il: '2026-11-01T23:30:00Z' })
+          expect(await fotoDi(GEN_DOPPIO)).toEqual([m])
+        })
+      })
+    })
+  })
+
+  describe('la foto per tutta la sede', () => {
+    prova('il broadcast con target vuoto arriva a chi era iscritto in quella sede quel giorno', async () => {
+      await inRollback(async () => {
+        const m = await foto({ broadcast: true })
+        const conVuoto = await foto({ broadcast: true, target: [], classi: [] })
+        expect(await fotoDi(GEN_DOPPIO)).toEqual(ordinate(m, conVuoto))
+        expect(await fotoDi(GEN_PONTE)).toEqual(ordinate(m, conVuoto))
+      })
+    })
+
+    prova('non arriva a chi sta in un’altra sede', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_TRASFERITO, annoSede: ATTIVO_B, sezione: SEZ_B })
+        await foto({ broadcast: true })
+        const inB = await foto({ broadcast: true, sede: SEDE_B })
+        expect(await fotoDi(GEN_TRASFERITO)).toEqual([inB])
+      })
+    })
+
+    prova('non arriva a chi quel giorno non c’era ancora', async () => {
+      await inRollback(async () => {
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        await foto({ broadcast: true, giorno: '2026-10-14' })
+        const dallIngresso = await foto({ broadcast: true, giorno: '2026-10-15' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([dallIngresso])
+      })
+    })
+
+    prova('la catena viva porta i broadcast dell’anno prima, ma non quelli dei giorni in cui il bambino non c’era', async () => {
+      await inRollback(async () => {
+        const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01', uscita: '2026-06-30' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-09-15', continuaDa: prima })
+        const annoPrima = await foto({ broadcast: true, giorno: '2026-03-10' })
+        const ultimoGiorno = await foto({ broadcast: true, giorno: '2026-06-30' })
+        await foto({ broadcast: true, giorno: '2026-07-01' })
+        await foto({ broadcast: true, giorno: '2026-09-14' })
+        const ingresso = await foto({ broadcast: true, giorno: '2026-09-15' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual(ordinate(annoPrima, ultimoGiorno, ingresso))
+      })
+    })
+
+    prova('un anno prima senza uscita finisce con il suo anno: nel buco prima della conferma i broadcast non arrivano', async () => {
+      await inRollback(async () => {
+        const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], ingresso: '2025-09-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, ingresso: '2026-09-15', continuaDa: prima })
+        const ultimoGiorno = await foto({ broadcast: true, giorno: '2026-08-31' })
+        await foto({ broadcast: true, giorno: '2026-09-01' })
+        const ingresso = await foto({ broadcast: true, giorno: '2026-09-15' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual(ordinate(ultimoGiorno, ingresso))
+      })
+    })
+
+    // `figli_attivi` guarda lo stato dell'anno, non il calendario: finché la sede non passa, il figlio frequenta ancora.
+    prova('dopo la fine dell’anno, finché la sede non passa, i broadcast continuano ad arrivare', async () => {
+      await inRollback(async () => {
+        await db.query(
+          `UPDATE public.anni_sede SET fine = '2026-10-31', ultimo_giorno_aperto = '2026-10-31', prepara_successivo_dal = '2026-10-31'
+            WHERE id = $1`, [ANNO_2627])
+        await db.query(`UPDATE public.anni_sede SET inizio = '2026-11-01' WHERE id = $1`, [ANNO[2027]])
+        const dopo = await foto({ broadcast: true, giorno: '2026-11-01' })
+        expect(await fotoDi(GEN_DOPPIO)).toEqual([dopo])
+      })
+    })
+
+    prova('un recupero riceve i broadcast dall’inizio dell’anno, anche prima della sua data_ingresso', async () => {
+      await inRollback(async () => {
+        await frequenza({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, ingresso: '2026-10-15' })
+        await foto({ broadcast: true, giorno: '2026-08-31' })
+        const primoGiorno = await foto({ broadcast: true, giorno: '2026-09-01' })
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([primoGiorno])
+      })
+    })
+
+    // Il trigger traduce i nomi in uuid: un nome che nessuna sezione ha resta nei nomi e lascia gli uuid vuoti. Quella foto
+    // HA dei destinatari, solo che non si sa quali: non è «per tutta la sede». Un guasto non deve aprire dati.
+    prova('un broadcast verso nomi di classe che nessuna sezione ha non arriva a nessuno', async () => {
+      await inRollback(async () => {
+        const m = await foto({ broadcast: true, classi: ['Classe che non esiste'] })
+        const r = await db.query<{ target_section_ids: string[] }>(
+          `SELECT target_section_ids FROM public.galleria_media_v2 WHERE id = $1`, [m])
+        expect(r.rows[0].target_section_ids).toEqual([])
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('senza is_broadcast, senza tag e senza destinatari una foto non arriva a nessuno', async () => {
+      await inRollback(async () => {
+        await foto({})
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+  })
+
+  describe('la foto di una sezione', () => {
+    prova('una foto della sezione A non arriva alla famiglia della sezione B', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15')
+        await storico(FIGLIO_PONTE, SEZ_2, '2026-10-15')
+        const m = await foto({ target: [SEZ_1] })
+        expect(await coppieDi(GEN_PONTE)).toEqual([])
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([{ media_id: m, alunno_id: FIGLIO_DOPPIO }])
+      })
+    })
+
+    prova('una foto con is_broadcast e destinatari arriva solo ai destinatari', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_PONTE, SEZ_2, '2026-10-15')
+        await foto({ broadcast: true, target: [SEZ_1] })
+        expect(await coppieDi(GEN_PONTE)).toEqual([])
+      })
+    })
+
+    prova('vale la sezione di quel giorno, con la semantica [dal, al) dello storico', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15', '2026-11-02')
+        await storico(FIGLIO_DOPPIO, SEZ_2, '2026-11-02', null, 'trasferimento')
+        const ultimoInA = await foto({ target: [SEZ_1], giorno: '2026-11-01' })
+        await foto({ target: [SEZ_2], giorno: '2026-11-01' })
+        await foto({ target: [SEZ_1], giorno: '2026-11-02' })
+        const primoInB = await foto({ target: [SEZ_2], giorno: '2026-11-02' })
+        expect(await fotoDi(GEN_DOPPIO)).toEqual(ordinate(ultimoInA, primoInB))
+      })
+    })
+
+    prova('una foto con più destinatari arriva se uno solo è la sezione del figlio', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15')
+        const m = await foto({ target: [SEZ_2, SEZ_1] })
+        expect(await fotoDi(GEN_DOPPIO)).toEqual([m])
+      })
+    })
+
+    prova('chi continua vede le foto della sua sezione dell’anno prima, chi è nuovo no', async () => {
+      await inRollback(async () => {
+        const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], sezione: SEZ_PRIMA, ingresso: '2025-09-01' })
+        await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, sezione: SEZ_1, continuaDa: prima })
+        await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, sezione: SEZ_1 })
+        await storico(FIGLIO_ALTRI_ANNI, SEZ_PRIMA, '2026-01-10', '2026-01-11', 'presenza')
+        await storico(FIGLIO_IN_ATTESA, SEZ_PRIMA, '2026-01-10', '2026-01-11', 'presenza')
+        const m = await foto({ target: [SEZ_PRIMA], giorno: '2026-01-10' })
+        expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual([m])
+        expect(await fotoDi(GEN_IN_ATTESA)).toEqual([])
+      })
+    })
+
+    prova('la riga dello storico di un’altra sede non conta', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_B, '2026-10-15', null, 'attuale', SEDE_B)
+        await foto({ target: [SEZ_B], sede: SEDE })
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    // Lo storico è nato il 15/10/2026: da quel giorno ha ogni cambio di classe, prima ha solo i giorni con una presenza.
+    // Per quei giorni, se lo storico tace, si guarda la sezione della frequenza; se parla, vale lui.
+    describe('prima del 15/10/2026', () => {
+      prova('se lo storico tace vale la sezione della frequenza di quel giorno', async () => {
+        await inRollback(async () => {
+          const m = await foto({ target: [SEZ_1], giorno: '2026-10-14' })
+          await foto({ target: [SEZ_2], giorno: '2026-10-14' })
+          expect(await coppieDi(GEN_DOPPIO)).toEqual([{ media_id: m, alunno_id: FIGLIO_DOPPIO }])
+        })
+      })
+
+      prova('se lo storico parla vale lui, non la frequenza', async () => {
+        await inRollback(async () => {
+          // Quel giorno c'era la presenza in A; oggi la frequenza dice B.
+          await storico(FIGLIO_PONTE, SEZ_1, '2026-10-01', '2026-10-02', 'presenza')
+          const inA = await foto({ target: [SEZ_1], giorno: '2026-10-01' })
+          await foto({ target: [SEZ_2], giorno: '2026-10-01' })
+          expect(await fotoDi(GEN_PONTE)).toEqual([inA])
+        })
+      })
+
+      prova('il ripiego non apre le foto di prima dell’ingresso', async () => {
+        await inRollback(async () => {
+          await nuovaIscrizione({ alunno: FIGLIO_IN_ATTESA, annoSede: ANNO_2627, sezione: SEZ_1, ingresso: '2026-10-10' })
+          await foto({ target: [SEZ_1], giorno: '2026-10-09' })
+          const dallIngresso = await foto({ target: [SEZ_1], giorno: '2026-10-10' })
+          expect(await fotoDi(GEN_IN_ATTESA)).toEqual([dallIngresso])
+        })
+      })
+
+      prova('il ripiego guarda la frequenza dell’anno della foto, non quella di oggi', async () => {
+        await inRollback(async () => {
+          const prima = await frequenza({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO[2025], sezione: SEZ_PRIMA, ingresso: '2025-09-01' })
+          await conferma({ alunno: FIGLIO_ALTRI_ANNI, annoSede: ANNO_2627, sezione: SEZ_1, continuaDa: prima })
+          const annoPrima = await foto({ target: [SEZ_PRIMA], giorno: '2026-03-10' })
+          await foto({ target: [SEZ_1], giorno: '2026-03-10' })
+          await foto({ target: [SEZ_PRIMA], giorno: '2026-10-01' })
+          const annoOra = await foto({ target: [SEZ_1], giorno: '2026-10-01' })
+          expect(await fotoDi(GEN_ALTRI_ANNI)).toEqual(ordinate(annoPrima, annoOra))
+        })
+      })
+    })
+
+    describe('dal 15/10/2026', () => {
+      prova('se lo storico tace la sezione della frequenza non basta', async () => {
+        await inRollback(async () => {
+          await foto({ target: [SEZ_1], giorno: '2026-10-15' })
+          await foto({ target: [SEZ_1], giorno: '2026-11-01' })
+          expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+        })
+      })
+    })
+  })
+
+  // Una riga per coppia foto-figlio: è la chiave che usano la route (un insieme di foto) e l'invariante 7 (le righe di un figlio).
+  describe('niente doppioni', () => {
+    prova('una foto che arriva per più strade esce una volta sola', async () => {
+      await inRollback(async () => {
+        await storico(FIGLIO_DOPPIO, SEZ_1, '2026-10-15')
+        const tagEDestinatari = await foto({ tag: [FIGLIO_DOPPIO], target: [SEZ_1] })
+        const tagEBroadcast = await foto({ tag: [FIGLIO_DOPPIO], broadcast: true })
+        expect(await coppieDi(GEN_DOPPIO)).toHaveLength(2)
+        expect(await fotoDi(GEN_DOPPIO)).toEqual(ordinate(tagEDestinatari, tagEBroadcast))
+      })
+    })
+
+    prova('un figlio collegato per tutte e due le strade non raddoppia le foto', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_DOPPIO] })
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([{ media_id: m, alunno_id: FIGLIO_DOPPIO }])
+      })
+    })
+
+    prova('un bambino vivo in due sedi: ogni foto esce una volta, attraverso la frequenza della sua sede', async () => {
+      await inRollback(async () => {
+        // La seconda sede non è ancora passata al 2026/27: `figli_attivi` dà due righe per lo stesso bambino.
+        await db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+        await frequenza({ alunno: FIGLIO_PONTE, annoSede: PRIMA_B, sezione: null, ingresso: '2025-09-01' })
+        expect(await figliDi(GEN_PONTE)).toHaveLength(2)
+        const inA = await foto({ tag: [FIGLIO_PONTE] })
+        const inB = await foto({ tag: [FIGLIO_PONTE], sede: SEDE_B, giorno: '2026-03-10' })
+        const perTuttaB = await foto({ broadcast: true, sede: SEDE_B, giorno: '2026-03-10' })
+        // Una foto ha una sede sola, quindi passa da una riga sola di `figli_attivi`.
+        const r = await coppieDi(GEN_PONTE)
+        expect(r.map((x) => x.media_id).sort()).toEqual(ordinate(inA, inB, perTuttaB))
+        expect(new Set(r.map((x) => x.alunno_id))).toEqual(new Set([FIGLIO_PONTE]))
+      })
+    })
+  })
+
+  prova('un figlio attivo senza sezione vede le foto taggate e quelle per la sede, non quelle di una sezione', async () => {
+    await inRollback(async () => {
+      const taggata = await foto({ tag: [FIGLIO_SENZA_SEZIONE] })
+      const perTutti = await foto({ broadcast: true })
+      await foto({ target: [SEZ_1], giorno: '2026-10-01' })
+      await foto({ target: [SEZ_1], giorno: '2026-10-20' })
+      expect(await fotoDi(GEN_SENZA_SEZIONE)).toEqual(ordinate(taggata, perTutti))
+    })
+  })
+
+  describe('schema indietro', () => {
+    prova('senza alunni_classi_storico restano i tag, i broadcast e il ripiego prima del 15/10/2026', async () => {
+      await inRollback(async () => {
+        const taggata = await foto({ tag: [FIGLIO_DOPPIO] })
+        const perTutti = await foto({ broadcast: true })
+        const ripiego = await foto({ target: [SEZ_1], giorno: '2026-10-01' })
+        await foto({ target: [SEZ_1], giorno: '2026-10-20' })
+        await db.exec(`DROP TABLE public.alunni_classi_storico`)
+        expect(await fotoDi(GEN_DOPPIO)).toEqual(ordinate(taggata, perTutti, ripiego))
+      })
+    })
+
+    prova('senza galleria_media_v2 nessuna riga e nessun errore', async () => {
+      await inRollback(async () => {
+        await db.exec(`DROP TABLE public.galleria_media_v2 CASCADE`)
+        expect(await coppieDi(GEN_DOPPIO)).toEqual([])
+      })
+    })
+
+    prova('su una galleria vecchia, senza target_section_ids, M44a non si ferma e non crea gli indici nuovi', async () => {
+      const vecchio = new PGlite()
+      try {
+        await vecchio.exec(SCHEMA_BASE)
+        await vecchio.exec(SCHEMA_GALLERIA_GENITORE)
+        await applicaPr2(vecchio, 'M44a')
+        const r = await vecchio.query<{ indexname: string }>(
+          `SELECT indexname FROM pg_indexes WHERE tablename = 'galleria_media_v2' AND indexname IN ('idx_galleria_v2_broadcast_vive', 'idx_galleria_v2_destinatari_vive')`)
+        expect(r.rows).toEqual([])
+      } finally {
+        await vecchio.close()
+      }
+    })
+  })
+
+  describe('gli indici', () => {
+    prova('ci sono i due nuovi, parziali sulle foto vive, accanto a quello sui tag', async () => {
+      const r = await db.query<{ indexname: string; indexdef: string }>(
+        `SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'galleria_media_v2' ORDER BY indexname`)
+      const per = new Map(r.rows.map((x) => [x.indexname, x.indexdef]))
+      expect(per.get('idx_galleria_v2_broadcast_vive')).toMatch(/\(scuola_id\) WHERE .*is_broadcast.*eliminato_il IS NULL/)
+      expect(per.get('idx_galleria_v2_destinatari_vive')).toMatch(/USING gin \(target_section_ids\) WHERE .*eliminato_il IS NULL/)
+      expect(per.get('idx_galleria_v2_tag_students')).toMatch(/USING gin \(tag_students\)/)
+    })
+  })
+
+  describe('chi può chiamarla', () => {
+    const miei = async () =>
+      (await db.query<Coppia>(`SELECT media_id, alunno_id FROM public.media_visibili_miei()`)).rows
+
+    prova('authenticated non può chiamare media_visibili_genitore(uuid), può chiamare media_visibili_miei()', async () => {
+      await inRollback(async () => {
+        const mia = await foto({ tag: [FIGLIO_1] })
+        await foto({ tag: [FIGLIO_PONTE] })
+        await comeUtente('authenticated', GEN_DUE_FIGLI)
+        expect(await codiceErrore(`SELECT * FROM public.media_visibili_genitore($1)`, [GEN_PONTE])).toBe('42501')
+        expect(await miei()).toEqual([{ media_id: mia, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('anon non può chiamare nessuna delle due', async () => {
+      await inRollback(async () => {
+        await comeUtente('anon', null)
+        expect(await codiceErrore(`SELECT * FROM public.media_visibili_genitore($1)`, [GEN_DUE_FIGLI])).toBe('42501')
+        expect(await codiceErrore(`SELECT * FROM public.media_visibili_miei()`)).toBe('42501')
+      })
+    })
+
+    prova('service_role chiama media_visibili_genitore(uuid) per conto di un genitore', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_1] })
+        await comeUtente('service_role', null)
+        expect(await coppieDi(GEN_DUE_FIGLI)).toEqual([{ media_id: m, alunno_id: FIGLIO_1 }])
+      })
+    })
+
+    prova('media_visibili_miei() dà le righe di chi chiama, e niente a chi non ha claim', async () => {
+      await inRollback(async () => {
+        const m = await foto({ tag: [FIGLIO_PONTE] })
+        const attese = await coppieDi(GEN_PONTE)
+        expect(attese).toEqual([{ media_id: m, alunno_id: FIGLIO_PONTE }])
+        await db.exec('SAVEPOINT prima_del_ruolo')
+        await comeUtente('authenticated', GEN_PONTE)
+        expect(await miei()).toEqual(attese)
+        await db.exec('ROLLBACK TO SAVEPOINT prima_del_ruolo')
         await comeUtente('authenticated', null)
         expect(await miei()).toEqual([])
       })

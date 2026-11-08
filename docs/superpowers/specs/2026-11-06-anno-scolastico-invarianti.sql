@@ -150,20 +150,55 @@ WHERE chiusura.dal IS NOT NULL
   );
 
 
--- 7. Nessun genitore vede la classe di un figlio che non è più attivo -------
+-- 7. Nessun genitore vede qualcosa attraverso un figlio non attivo -----------
 --    (PR 4.4) Ogni cosa che un genitore vede porta con sé il figlio che gliela
---    fa vedere; quel figlio deve avere una frequenza attiva.
-SELECT v.genitore_id, v.oggetto, v.oggetto_id, v.alunno_id
-FROM public.visibilita_genitori_motivata() v
-WHERE NOT EXISTS (
-  SELECT 1 FROM public.frequenze f
-  JOIN public.anni_sede a ON a.id = f.anno_sede_id
-  WHERE f.alunno_id = v.alunno_id
-    AND f.anno_sede_id = public.anno_attivo(a.scuola_id)
-    AND f.stato IN ('in_attesa', 'iscritto')
+--    fa vedere. Non attivo è il figlio senza NESSUNA frequenza viva, in nessuna
+--    sede: chi è ritirato in una sede e iscritto in un'altra è attivo. Si parte
+--    dai soli genitori con un figlio non attivo. Il docente non entra (i suoi thread
+--    li vede sempre) e le voci nemmeno (un ritirato con un dovuto aperto lo paga).
+--    Nella funzione sono quattro righe (galleria_media_v2, avvisi, chat_threads,
+--    frequenze), più «(controllo fallito: <SQLSTATE>)» se una funzione di visibilità
+--    si guasta: qui il guasto è l'errore della query, e questa dice chi è toccato.
+WITH vive AS (
+  SELECT f.id, f.alunno_id
+  FROM public.frequenze f
+  WHERE f.stato IN ('in_attesa', 'iscritto')
+    AND f.anno_sede_id = public.anno_attivo(f.scuola_id)
     AND f.data_ingresso <= public.giorno_roma(now())
     AND (f.data_uscita IS NULL OR f.data_uscita >= public.giorno_roma(now()))
-);
+),
+non_attivi AS (
+  SELECT x.genitore_id, x.alunno_id
+  FROM (
+    SELECT l.genitore_id, l.alunno_id FROM public.legame_genitori_alunni l
+    UNION
+    SELECT p.auth_user_id, sp.student_id
+    FROM public.parents p JOIN public.student_parents sp ON sp.parent_id = p.id
+    WHERE p.auth_user_id IS NOT NULL
+  ) x
+  WHERE x.alunno_id NOT IN (SELECT alunno_id FROM vive)
+)
+SELECT n.genitore_id, 'foto' AS oggetto, v.media_id AS oggetto_id, n.alunno_id
+FROM non_attivi n
+CROSS JOIN LATERAL public.media_visibili_genitore(n.genitore_id) v
+WHERE v.alunno_id = n.alunno_id
+UNION ALL
+SELECT n.genitore_id, 'avviso', v.avviso_id, n.alunno_id
+FROM non_attivi n
+CROSS JOIN LATERAL public.avvisi_visibili_genitore(n.genitore_id) v
+WHERE v.alunno_id = n.alunno_id
+UNION ALL
+SELECT n.genitore_id, 'thread', t.id, n.alunno_id
+FROM non_attivi n
+CROSS JOIN LATERAL public.thread_visibili(n.genitore_id) v
+JOIN public.chat_threads t ON t.id = v.thread_id
+WHERE t.student_id = n.alunno_id
+  AND t.teacher_id IS DISTINCT FROM n.genitore_id
+UNION ALL
+SELECT g.genitore_id, 'frequenza', a.frequenza_id, a.alunno_id
+FROM (SELECT DISTINCT genitore_id FROM non_attivi) g
+CROSS JOIN LATERAL public.figli_attivi(g.genitore_id) a
+WHERE a.frequenza_id NOT IN (SELECT id FROM vive);
 
 
 -- 8. Nessun docente vede una sezione di un anno non ancora passato ----------

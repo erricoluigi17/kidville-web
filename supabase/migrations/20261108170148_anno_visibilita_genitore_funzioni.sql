@@ -701,3 +701,360 @@ $$;
 
 REVOKE ALL ON FUNCTION public.voci_visibili_miei() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.voci_visibili_miei() TO authenticated, service_role;
+
+-- ── 4.4.5 anno_invarianti: la riga 7 ──────────────────────────────────────────────────────────────
+--
+-- La definizione di `20261108102826_anno_sezioni_docenti_fase_b.sql` (M43), identica salvo la riga 7: «nessun genitore vede
+-- qualcosa attraverso un figlio non attivo». Sta qui e non in M44b perché legge solo le funzioni di questo file.
+-- E salvo `r`, che qui è `record` e non `anno_tabelle%ROWTYPE`: quel tipo si risolve quando si crea la funzione, e questo file deve
+-- passare anche sul database senza l'anno del lancio manuale di «DB migrate (CI)». Lì la funzione nasce, e non la chiama nessuno.
+--
+-- IL FIGLIO NON ATTIVO LO DICE IL CATALOGO, non `frequenze_attive`: se una funzione perde il filtro la riga sale, altrimenti sarebbe
+-- vera per costruzione. Si ragiona sul figlio: non è attivo chi non ha NESSUNA frequenza viva, in nessuna sede. Ritirato in una sede e
+-- iscritto in un'altra è attivo, e ciò che vede dalla sede dove è vivo è suo di diritto. Il limite: chi ha solo figli così non viene
+-- guardato, quindi un difetto che apre la sede lasciata si vede qui solo se apre anche i figli non attivi di qualcun altro.
+--
+-- UNA RIGA PER CIÒ CHE SI VEDE, emessa sempre: `galleria_media_v2`, `avvisi`, `chat_threads`, e `frequenze` per una riga di
+-- `figli_attivi` che porta una frequenza non viva (è la «sezione» del §4.17 della specifica: la sezione la dà la frequenza). Nei thread non conta quello in cui il genitore è il docente: il docente vede sempre
+-- la storia dei suoi, e questa riga parla di genitori. Le voci non entrano: quella di un ritirato con un dovuto aperto resta visibile,
+-- per decisione.
+--
+-- IL COSTO non dipende dalle foto: una lettura di `frequenze`, una di ogni tabella dei legami, e le funzioni di visibilità SOLO per
+-- i genitori con un figlio non attivo. La scelta dei figli non attivi è un anti-join sull'elenco dei vivi, quindi cresce con i legami
+-- e non con legami per vivi; i tag li cerca `media_visibili_genitore` con il suo indice GIN, una volta per figlio attivo di quei genitori.
+--
+-- UN GUASTO NON È VERDE. Ogni genitore ha il suo blocco: se una funzione si guasta, la riga `(controllo fallito: <SQLSTATE>)` conta
+-- i genitori che non si è potuto controllare, con il codice dell'ultimo; gli altri si contano e le altre invarianti arrivano.
+-- Il codice sta nella riga perché qui non si scrive in `app_log`: la funzione è STABLE. Senza nessun figlio non attivo le funzioni
+-- girano una volta lo stesso, per un genitore che non c'è: così una funzione sparita o rotta si vede anche quel giorno. Un guasto che
+-- dipende dai dati di un figlio, quel giorno, non si vede: non c'è nessuno a cui farebbe vedere qualcosa.
+CREATE OR REPLACE FUNCTION public.anno_invarianti()
+RETURNS TABLE (invariante text, tabella text, righe bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  r             record;
+  v_guardia_dal timestamptz;
+  v_mappa6      jsonb := '{}'::jsonb;
+  v_ha_nera     boolean;
+  v_ha_anno     boolean;
+  v_fuori       text[];
+  v_cond        text[];
+  v_col         text;
+  v_n           bigint;
+  v_trovata     boolean := false;
+  d             record;
+  v_oggi        date := public.giorno_roma(now());
+  v_figli_vivi  uuid[];
+  v_freq_vive   uuid[];
+  v_genitori    uuid[] := '{}';
+  v_non_attivi  uuid[] := '{}';
+  v_foto        bigint := 0;
+  v_avvisi      bigint := 0;
+  v_thread      bigint := 0;
+  v_frequenze   bigint := 0;
+  v_guasti      bigint := 0;
+  v_guasto      text;
+  v_gen         record;
+BEGIN
+  -- 1. Nessun giorno senza anno, nessun giorno in due anni.
+  SELECT count(*) INTO v_n FROM (
+    SELECT s.scuola_id, g::date
+      FROM (SELECT a.scuola_id, min(a.inizio) AS da, max(a.fine) AS al
+              FROM public.anni_sede a GROUP BY a.scuola_id) s
+     CROSS JOIN LATERAL generate_series(s.da::timestamp, s.al::timestamp, interval '1 day') g
+      LEFT JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND g::date <@ a.periodo
+     GROUP BY s.scuola_id, g::date
+    HAVING count(a.id) <> 1) x;
+  invariante := '1'; tabella := 'anni_sede'; righe := v_n; RETURN NEXT;
+
+  -- 6, prima parte: le violazioni di tutte le tabelle in una volta sola (poi si distribuiscono).
+  SELECT g.guardia_attiva_dal INTO v_guardia_dal FROM public.anno_regole g;
+  v_ha_nera := to_regclass('scatola_nera.modifiche') IS NOT NULL;
+  IF v_ha_nera AND v_guardia_dal IS NOT NULL THEN
+    EXECUTE $q$
+      SELECT coalesce(jsonb_object_agg(x.tabella, x.n), '{}'::jsonb) FROM (
+        SELECT m.tabella, count(*) AS n
+          FROM scatola_nera.modifiche m
+          -- `nessuna` e `solo_contenuto` non guardano gli UPDATE (la scatola nera registra solo UPDATE): non sono un difetto
+          JOIN public.anno_tabelle t ON t.tabella = m.tabella AND t.guardia = 'piena'
+         CROSS JOIN LATERAL (SELECT public.anno_guardia_sede(m.tabella, m.prima) AS sede) s
+          JOIN public.anni_sede a ON a.scuola_id = s.sede AND a.anno_id = (m.prima ->> 'anno_id')::uuid
+         CROSS JOIN LATERAL (SELECT min(st.dal) AS dal FROM public.anni_sede_stati st
+                              WHERE st.anno_sede_id = a.id AND st.stato IN ('in_chiusura', 'chiuso')) ch
+         WHERE m.modificata_il >= $1
+           AND ch.dal IS NOT NULL
+           AND m.modificata_il >= ch.dal
+           -- le modifiche che la guardia lascia passare apposta non sono un difetto
+           AND NOT (
+             coalesce((SELECT bool_and(
+                         c = ANY (public.anno_colonne_esenti(m.tabella))
+                         OR (m.tabella = 'frequenze' AND c IN ('stato', 'quota_pagamento_id')))
+                         FROM unnest(m.cambiate) c), false)
+             AND (m.tabella <> 'frequenze'
+                  OR NOT ('stato' = ANY (m.cambiate))
+                  OR m.cambiate && ARRAY['moduli_completi', 'quota_saldata']))
+           AND NOT EXISTS (SELECT 1 FROM public.correzioni_anno_chiuso_usi u
+                            WHERE u.transazione = m.transazione AND u.tabella = m.tabella
+                              AND (u.riga_id IS NULL OR u.riga_id = m.riga_id))
+         GROUP BY m.tabella) x
+    $q$ INTO v_mappa6 USING v_guardia_dal;
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+    v_ha_anno := public.anno_ha_colonna(r.tabella, 'anno_id');
+
+    -- 2. Nessuna riga fuori dal suo anno (modo `data`).
+    IF r.modo = 'data' THEN
+      invariante := '2'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_fuori_periodo(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 6, seconda parte: una riga per tabella (se c'è la scatola nera).
+    IF v_ha_nera THEN
+      invariante := '6'; tabella := r.tabella; righe := coalesce((v_mappa6 ->> r.tabella)::bigint, 0);
+      RETURN NEXT;
+    END IF;
+
+    -- 9. Nessuna riga nuova con una sezione di un altro anno.
+    IF public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      invariante := '9'; tabella := r.tabella;
+      righe := CASE WHEN v_ha_anno THEN public.anno_righe_sezione_altro_anno(r.tabella) ELSE 0 END;
+      RETURN NEXT;
+    END IF;
+
+    -- 10a. La colonna e il trigger generico (una riga per tabella: 0, 1 o 2 difetti).
+    invariante := '10a'; tabella := r.tabella;
+    righe := (CASE WHEN v_ha_anno THEN 0 ELSE 1 END)
+           + (CASE WHEN EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc pr ON pr.oid = tg.tgfoid
+                                 WHERE tg.tgrelid = to_regclass(format('public.%I', r.tabella))
+                                   AND pr.proname = 'anno_assegna_e_verifica' AND NOT tg.tgisinternal)
+                   THEN 0 ELSE 1 END);
+    RETURN NEXT;
+
+    -- 12. Nessuna riga senza anno e con una sede da cui ricavarlo.
+    invariante := '12'; tabella := r.tabella;
+    righe := CASE WHEN v_ha_anno THEN public.anno_righe_senza_anno_con_sede(r.tabella) ELSE 0 END;
+    RETURN NEXT;
+
+    -- 14. «madre ⇒ FK» (Ruling P5; corretta in 4.2.M): ogni tabella `madre` ha una chiave esterna vera dalla colonna
+    --     `madre_colonna` alla tabella madre. La chiave può essere COMPOSTA (le `votazioni_*` hanno
+    --     `(votazione_id, scuola_id)`): conta se contiene la `madre_colonna` E garantisce davvero la madre, cioè ha una
+    --     colonna sola, oppure è MATCH FULL, oppure tutte le sue colonne sono NOT NULL. Una composta MATCH SIMPLE con una
+    --     colonna che ammette NULL non basta: con quella colonna NULL Postgres non controlla la chiave.
+    IF r.modo = 'madre' THEN
+      invariante := '14'; tabella := r.tabella;
+      righe := CASE WHEN EXISTS (
+                 SELECT 1 FROM pg_constraint c
+                  WHERE c.contype = 'f'
+                    AND c.conrelid = to_regclass(format('public.%I', r.tabella))
+                    AND c.confrelid = to_regclass(format('public.%I', r.madre_tabella))
+                    AND EXISTS (SELECT 1 FROM unnest(c.conkey) AS k(attnum)
+                                  JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = k.attnum
+                                 WHERE at.attname = r.madre_colonna)
+                    AND (cardinality(c.conkey) = 1
+                         OR c.confmatchtype = 'f'
+                         OR NOT EXISTS (SELECT 1 FROM unnest(c.conkey) AS k(attnum)
+                                          JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = k.attnum
+                                         WHERE NOT at.attnotnull))) THEN 0 ELSE 1 END;
+      RETURN NEXT;
+    END IF;
+  END LOOP;
+
+  IF NOT v_ha_nera THEN
+    invariante := '6'; tabella := '(scatola_nera assente)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 3. Nessuna doppia frequenza viva per lo stesso bambino nello stesso anno.
+  SELECT count(*) INTO v_n FROM (
+    SELECT f.alunno_id, f.anno_id FROM public.frequenze f
+     WHERE f.stato IN ('in_attesa', 'iscritto')
+     GROUP BY f.alunno_id, f.anno_id HAVING count(*) > 1) x;
+  invariante := '3'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+
+  -- 4. Nessun «iscritto» senza moduli o senza quota, ricalcolato dalla verità e non dai flag.
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.stato = 'iscritto' AND f.origine <> 'recupero'
+     AND (EXISTS (SELECT 1 FROM public.moduli_richiesti m
+                   WHERE m.anno_sede_id = f.anno_sede_id AND m.lista = f.tipo
+                     AND NOT EXISTS (SELECT 1 FROM public.frequenze_moduli fm
+                                      WHERE fm.frequenza_id = f.id AND fm.modulo_id = m.id))
+          OR q.id IS NULL OR q.stato <> 'pagato');
+  invariante := '4'; tabella := 'frequenze'; righe := v_n; RETURN NEXT;
+  --    4-bis. I flag dicono la verità (vale anche per chi non è «iscritto»).
+  SELECT count(*) INTO v_n
+    FROM public.frequenze f
+    LEFT JOIN public.pagamenti q ON q.id = f.quota_pagamento_id
+   WHERE f.quota_saldata IS DISTINCT FROM (q.id IS NOT NULL AND q.stato = 'pagato');
+  invariante := '4'; tabella := 'frequenze (flag)'; righe := v_n; RETURN NEXT;
+
+  -- 5. Nessuna competenza fuori dal periodo del suo anno.
+  v_n := 0;
+  IF to_regclass('public.pagamenti') IS NOT NULL AND public.anno_ha_colonna('pagamenti', 'anno_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pagamenti p '
+            'JOIN public.anni_sede a ON a.scuola_id = p.scuola_id AND a.anno_id = p.anno_id '
+            'WHERE p.periodo_competenza IS NOT NULL AND NOT (p.periodo_competenza <@ a.periodo)'
+    INTO v_n;
+  END IF;
+  invariante := '5'; tabella := 'pagamenti'; righe := v_n; RETURN NEXT;
+
+  -- 10b. Una tabella con `anno_id` che il registro non conosce.
+  SELECT array_agg(c.relname::text ORDER BY c.relname) INTO v_fuori
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND at.attname = 'anno_id' AND at.attnum > 0 AND NOT at.attisdropped
+     AND c.relname NOT IN ('anni_sede', 'riconciliazione_anno')
+     AND c.relname NOT IN (SELECT t.tabella FROM public.anno_tabelle t);
+  IF v_fuori IS NULL THEN
+    invariante := '10b'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  ELSE
+    FOREACH v_col IN ARRAY v_fuori LOOP
+      invariante := '10b'; tabella := v_col; righe := 1; RETURN NEXT;
+    END LOOP;
+  END IF;
+
+  -- 11. La scheda alunno e la frequenza dell'anno attivo dicono la stessa cosa (solo chi ha la frequenza).
+  --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
+  --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL THEN
+    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    -- Fase B (4.3.4): l'invariante guarda anche ciò che lo specchio inverso scrive in più (sospensione).
+    FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
+                                 'usa_pannolino', 'retta_split_config', 'intestatario_fatture',
+                                 'sospeso', 'sospeso_causa', 'sospeso_motivo', 'sospeso_il', 'sospeso_da'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_attribute x JOIN pg_attribute y ON y.attname = x.attname AND y.atttypid = x.atttypid
+                  WHERE x.attrelid = 'public.alunni'::regclass AND y.attrelid = 'public.frequenze'::regclass
+                    AND x.attname = v_col AND x.attnum > 0 AND y.attnum > 0
+                    AND NOT x.attisdropped AND NOT y.attisdropped) THEN
+        v_cond := v_cond || format('al.%I IS DISTINCT FROM f.%I', v_col, v_col);
+      END IF;
+    END LOOP;
+    -- archiviato ↔ frequenza chiusa (NON `alunni.stato`: la tendina può dire «ritirato» senza archiviare) e retta
+    -- (lo zero di `alunni` è NULL nella frequenza).
+    IF EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = 'public.alunni'::regclass
+                  AND x.attname = 'archiviato_il' AND x.attnum > 0 AND NOT x.attisdropped) THEN
+      v_cond := v_cond || ARRAY['(al.archiviato_il IS NOT NULL) IS DISTINCT FROM (f.stato IN (''ritirato'', ''trasferito'', ''uscito''))'];
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = 'public.alunni'::regclass
+                  AND x.attname = 'importo_retta_mensile' AND x.attnum > 0 AND NOT x.attisdropped) THEN
+      v_cond := v_cond || ARRAY['nullif(al.importo_retta_mensile, 0) IS DISTINCT FROM f.retta_mensile'];
+    END IF;
+    EXECUTE 'SELECT count(*) FROM public.alunni al '
+            'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
+            'WHERE ' || array_to_string(v_cond, ' OR ')
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
+
+  --     11-bis. Un alunno con una sede deve avere la frequenza dell'anno attivo (lo specchio la crea).
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL AND to_regclass('public.frequenze') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.alunni al WHERE al.scuola_id IS NOT NULL '
+            'AND public.anno_attivo(al.scuola_id) IS NOT NULL '
+            'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = al.id '
+            'AND f.anno_sede_id = public.anno_attivo(al.scuola_id))'
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni (senza frequenza)'; righe := v_n; RETURN NEXT;
+
+  -- 13. I nomi di classe e gli uuid di sezione dicono la stessa cosa (una riga per tabella che ha le due colonne).
+  FOR d IN SELECT x.tabella AS t, x.righe AS n FROM public.anno_target_divergenti() x LOOP
+    v_trovata := true;
+    invariante := '13'; tabella := d.t; righe := d.n; RETURN NEXT;
+  END LOOP;
+  IF NOT v_trovata THEN
+    invariante := '13'; tabella := '(nessuna)'; righe := 0; RETURN NEXT;
+  END IF;
+
+  -- 8. I docenti vedono solo sezioni di anni attivi o passati (PR 4.3). Si passa dalla funzione di visibilità
+  --    per ogni docente assegnato e si conta quante delle sezioni che restituisce hanno, nel catalogo
+  --    (`anni_sede.stato`), un anno ancora in preparazione o con le iscrizioni aperte: deve essere zero.
+  v_n := 0;
+  IF to_regclass('public.utenti_sezioni') IS NOT NULL AND to_regclass('public.sections') IS NOT NULL THEN
+    SELECT count(*) INTO v_n
+      FROM (SELECT us.utente_id FROM public.utenti_sezioni us
+             UNION SELECT um.utente_id FROM public.utenti_sezioni_materie um) u
+     CROSS JOIN LATERAL public.sezioni_visibili_docente(u.utente_id) v
+      JOIN public.sections s  ON s.id = v.section_id
+      JOIN public.anni_sede a ON a.scuola_id = s.scuola_id AND a.anno_id = s.anno_id
+     WHERE a.stato::text IN ('in_preparazione', 'iscrizioni_aperte');
+  END IF;
+  invariante := '8'; tabella := 'utenti_sezioni'; righe := v_n; RETURN NEXT;
+
+  -- 7. Nessun genitore vede qualcosa attraverso un figlio non attivo (PR 4.4). Il perché di ogni scelta sta nella testata qui sopra.
+  --    I vivi una volta sola, dal catalogo: una riga per frequenza viva, quindi un bambino vivo in due sedi compare due volte.
+  SELECT coalesce(array_agg(f.alunno_id), '{}'), coalesce(array_agg(f.id), '{}') INTO v_figli_vivi, v_freq_vive
+    FROM public.frequenze f
+   WHERE f.stato IN ('in_attesa', 'iscritto')
+     AND f.anno_sede_id = public.anno_attivo(f.scuola_id)
+     AND f.data_ingresso <= v_oggi
+     AND (f.data_uscita IS NULL OR f.data_uscita >= v_oggi);
+
+  --    Le coppie (genitore, figlio non attivo), per le due strade del legame di `figli_collegati`. `to_regclass` come lì.
+  IF to_regclass('public.legame_genitori_alunni') IS NOT NULL THEN
+    SELECT coalesce(array_agg(l.genitore_id), '{}'), coalesce(array_agg(l.alunno_id), '{}') INTO v_genitori, v_non_attivi
+      FROM public.legame_genitori_alunni l
+     WHERE NOT EXISTS (SELECT 1 FROM unnest(v_figli_vivi) AS v(alunno_id) WHERE v.alunno_id = l.alunno_id);
+  END IF;
+  IF to_regclass('public.student_parents') IS NOT NULL AND to_regclass('public.parents') IS NOT NULL THEN
+    SELECT v_genitori || coalesce(array_agg(p.auth_user_id), '{}'), v_non_attivi || coalesce(array_agg(sp.student_id), '{}')
+      INTO v_genitori, v_non_attivi
+      FROM public.parents p
+      JOIN public.student_parents sp ON sp.parent_id = p.id
+     WHERE p.auth_user_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM unnest(v_figli_vivi) AS v(alunno_id) WHERE v.alunno_id = sp.student_id);
+  END IF;
+
+  --    Nessuno da guardare: le funzioni girano lo stesso, una volta, per un genitore che non c'è.
+  IF cardinality(v_genitori) = 0 THEN
+    v_genitori := ARRAY[NULL::uuid];
+    v_non_attivi := ARRAY[NULL::uuid];
+  END IF;
+
+  --    Le funzioni di visibilità girano solo per loro, e ognuno ha il suo blocco.
+  FOR v_gen IN
+    SELECT x.genitore, array_agg(x.figlio) AS figli
+      FROM unnest(v_genitori, v_non_attivi) AS x(genitore, figlio)
+     GROUP BY x.genitore
+  LOOP
+    BEGIN
+      v_foto := v_foto + (SELECT count(*) FROM public.media_visibili_genitore(v_gen.genitore) v WHERE v.alunno_id = ANY (v_gen.figli));
+      v_avvisi := v_avvisi + (SELECT count(*) FROM public.avvisi_visibili_genitore(v_gen.genitore) v WHERE v.alunno_id = ANY (v_gen.figli));
+      IF to_regclass('public.chat_threads') IS NOT NULL THEN
+        v_thread := v_thread + (SELECT count(*)
+                                  FROM public.thread_visibili(v_gen.genitore) v
+                                  JOIN public.chat_threads t ON t.id = v.thread_id
+                                 WHERE t.student_id = ANY (v_gen.figli)
+                                   AND t.teacher_id IS DISTINCT FROM v_gen.genitore);
+      END IF;
+      v_frequenze := v_frequenze + (SELECT count(*) FROM public.figli_attivi(v_gen.genitore) a WHERE a.frequenza_id <> ALL (v_freq_vive));
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_guasti := v_guasti + 1;
+        v_guasto := SQLSTATE;
+    END;
+  END LOOP;
+
+  invariante := '7'; tabella := 'galleria_media_v2'; righe := v_foto; RETURN NEXT;
+  invariante := '7'; tabella := 'avvisi'; righe := v_avvisi; RETURN NEXT;
+  invariante := '7'; tabella := 'chat_threads'; righe := v_thread; RETURN NEXT;
+  invariante := '7'; tabella := 'frequenze'; righe := v_frequenze; RETURN NEXT;
+  IF v_guasti > 0 THEN
+    invariante := '7'; tabella := format('(controllo fallito: %s)', v_guasto); righe := v_guasti; RETURN NEXT;
+  END IF;
+
+  RETURN;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_invarianti() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_invarianti() TO service_role;

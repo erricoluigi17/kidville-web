@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PGlite } from '@electric-sql/pglite'
-import { creaDbAnno, creaDbAnnoPr2 } from '../helpers/schema-anno-pglite'
+import {
+  creaDbAnno,
+  creaDbAnnoPr2,
+  SCHEMA_AVVISI_CHAT_VOCI_GENITORE,
+  SCHEMA_GALLERIA_GENITORE,
+  SCHEMA_LEGAMI_GENITORE,
+} from '../helpers/schema-anno-pglite'
 
 /**
  * COMPITO 1.5 · LE TABELLE DEL PASSAGGIO E `anno_invarianti()`.
@@ -784,6 +792,442 @@ describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
           WHERE a.stato::text IN ('in_preparazione', 'iscrizioni_aperte')`)
       expect(Number(dalCatalogo.rows[0].n)).toBe(1)
       expect((await riga8())[0].righe).toBe(Number(dalCatalogo.rows[0].n))
+    })
+  })
+})
+
+/**
+ * COMPITO 4.4.5 · l'invariante 7: nessun genitore vede qualcosa attraverso un figlio non attivo.
+ * Banco con la catena fino a M44a. Quattro righe, una per ciò che si può vedere; «passa» vuol dire quattro zeri e nessuna
+ * riga `(controllo fallito: …)`. Il figlio non attivo lo dice il catalogo, non la funzione controllata: per questo le prove
+ * rompono le funzioni e guardano la riga salire. Si parla di genitori: il docente e le voci di pagamento non entrano.
+ */
+describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
+  const S = '22222222-2222-4222-8222-222222222222'
+  const S_B = '22222222-2222-4222-8222-222222222223'
+  const SEZ = '55555555-5555-4555-8555-555555555551'
+  const SEZ_B = '55555555-5555-4555-8555-555555555552'
+
+  const VIVO = '11111111-1111-4111-8111-111111111111'
+  const RITIRATO = '11111111-1111-4111-8111-111111111112'
+  /** Ritirato nella prima sede e iscritto nella seconda: è attivo, e nella prima non vede niente. */
+  const ALTROVE = '11111111-1111-4111-8111-111111111113'
+  /** Parte senza nessuna frequenza: gliela danno le prove. */
+  const SENZA = '11111111-1111-4111-8111-111111111114'
+
+  const GEN_VIVO = '99999999-9999-4999-8999-999999999991'
+  const GEN_MISTO = '99999999-9999-4999-8999-999999999992'
+  const GEN_RITIRATO = '99999999-9999-4999-8999-999999999993'
+  /** Legato al ritirato solo dalla strada `parents` → `student_parents`. */
+  const GEN_PONTE = '99999999-9999-4999-8999-999999999994'
+  const GEN_ALTROVE = '99999999-9999-4999-8999-999999999995'
+  const GEN_SENZA = '99999999-9999-4999-8999-999999999996'
+  const DOC = '77777777-7777-4777-8777-777777777771'
+  /** Docente, e genitore del ritirato: ha un thread da docente su suo figlio, e quello lo vede sempre. */
+  const DOC_GENITORE = '77777777-7777-4777-8777-777777777772'
+  /** Legato dalla stessa strada a un figlio vivo: non va guardato. */
+  const GEN_PONTE_VIVO = '99999999-9999-4999-8999-999999999997'
+  const SCHEDA_PONTE = '88888888-8888-4888-8888-888888888881'
+  const SCHEDA_PONTE_VIVO = '88888888-8888-4888-8888-888888888882'
+  /** Una scheda senza account: nessuno entra da lì, e non c'è nessuno da guardare. */
+  const SCHEDA_SENZA_ACCOUNT = '88888888-8888-4888-8888-888888888883'
+
+  /** I genitori da cui deve partire la riga, cioè quelli con almeno un figlio non attivo. */
+  const CON_FIGLIO_NON_ATTIVO = [GEN_MISTO, GEN_RITIRATO, GEN_PONTE, GEN_SENZA, DOC_GENITORE].sort()
+  const ZERO = { avvisi: 0, chat_threads: 0, frequenze: 0, galleria_media_v2: 0 }
+  /** Con la funzione delle foto rotta: 2 foto del ritirato per 4 genitori, più la foto di `SENZA` per il suo. */
+  const FOTO_NON_ATTIVI = 9
+
+  let d: PGlite
+  let ANNO_PRIMA: string
+  let ANNO_ATTIVO: string
+  let ANNO_DOPO: string
+  let ATTIVO_B: string
+  let PRIMA_B: string
+  let THREAD_DA_DOCENTE: string
+
+  const riga7 = async (): Promise<Record<string, number>> => {
+    const r = await d.query<{ tabella: string; righe: string }>(
+      `SELECT tabella, righe::text FROM public.anno_invarianti() WHERE invariante = '7'`)
+    return Object.fromEntries(r.rows.map((x) => [x.tabella, Number(x.righe)]))
+  }
+  const rollback = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    await d.exec('BEGIN')
+    try { return await fn() } finally { await d.exec('ROLLBACK') }
+  }
+  const coppieFoto = async (genitore: string) =>
+    (await d.query<{ media_id: string; alunno_id: string }>(
+      `SELECT media_id, alunno_id FROM public.media_visibili_genitore($1)`, [genitore])).rows
+
+  const QUALITA = 'STABLE SECURITY DEFINER SET search_path = public, pg_temp'
+  /** Le foto di tutti i figli collegati, attivi o no. Una riga per coppia, come la funzione vera: un figlio per due strade è uno. */
+  const FOTO_SENZA_FILTRO = `
+      SELECT m.id, c.figlio
+        FROM (SELECT DISTINCT unnest(public.figli_collegati(p_utente))) AS c(figlio)
+        JOIN public.galleria_media_v2 m ON m.tag_students @> ARRAY[c.figlio]
+       WHERE m.eliminato_il IS NULL`
+  const fotoSenzaFiltro = () => d.exec(`
+      CREATE OR REPLACE FUNCTION public.media_visibili_genitore(p_utente uuid)
+      RETURNS TABLE (media_id uuid, alunno_id uuid) LANGUAGE sql ${QUALITA}
+      AS $$ ${FOTO_SENZA_FILTRO} $$`)
+  const avvisiSenzaFiltro = () => d.exec(`
+      CREATE OR REPLACE FUNCTION public.avvisi_visibili_genitore(p_utente uuid)
+      RETURNS TABLE (avviso_id uuid, alunno_id uuid) LANGUAGE sql ${QUALITA}
+      AS $$ SELECT v.id, c.figlio FROM (SELECT DISTINCT unnest(public.figli_collegati(p_utente))) AS c(figlio) CROSS JOIN public.avvisi v $$`)
+  const threadSenzaFiltro = () => d.exec(`
+      CREATE OR REPLACE FUNCTION public.thread_visibili(p_utente uuid)
+      RETURNS TABLE (thread_id uuid, scrivibile boolean) LANGUAGE sql ${QUALITA}
+      AS $$ SELECT t.id, true FROM public.chat_threads t WHERE t.parent_id = p_utente OR t.teacher_id = p_utente $$`)
+  /** Da qui passano `figli_attivi` e, con lei, le altre funzioni: senza filtro salgono tutte le righe. */
+  const frequenzeSenzaFiltro = () => d.exec(`
+      CREATE OR REPLACE FUNCTION public.frequenze_attive(p_alunni uuid[])
+      RETURNS TABLE (alunno_id uuid, frequenza_id uuid, section_id uuid, scuola_id uuid) LANGUAGE sql ${QUALITA}
+      AS $$ SELECT f.alunno_id, f.id, f.section_id, f.scuola_id FROM public.frequenze f WHERE f.alunno_id = ANY (p_alunni) $$`)
+
+  const GUASTABILI = [
+    { nome: 'media_visibili_genitore', firma: 'media_visibili_genitore(p_utente uuid)', colonne: 'media_id uuid, alunno_id uuid' },
+    { nome: 'avvisi_visibili_genitore', firma: 'avvisi_visibili_genitore(p_utente uuid)', colonne: 'avviso_id uuid, alunno_id uuid' },
+    { nome: 'thread_visibili', firma: 'thread_visibili(p_utente uuid)', colonne: 'thread_id uuid, scrivibile boolean' },
+    { nome: 'figli_attivi', firma: 'figli_attivi(p_utente uuid)', colonne: 'alunno_id uuid, frequenza_id uuid, section_id uuid, scuola_id uuid' },
+  ]
+
+  /** Allarga l'anno attivo attorno a oggi, perché le date relative ci stiano qualunque sia il giorno della prova. Dentro `rollback`. */
+  const giorni = async () => {
+    await d.query(
+      `UPDATE public.anni_sede
+          SET inizio = least(inizio, public.giorno_roma(now()) - 30), fine = greatest(fine, public.giorno_roma(now()) + 30)
+        WHERE id = $1`, [ANNO_ATTIVO])
+    const r = await d.query<{ oggi: string; ieri: string; domani: string }>(
+      `SELECT public.giorno_roma(now())::text AS oggi, (public.giorno_roma(now()) - 1)::text AS ieri,
+              (public.giorno_roma(now()) + 1)::text AS domani`)
+    return r.rows[0]
+  }
+  const frequenza = (alunno: string, annoSede: string, sezione: string | null, stato = 'iscritto', ingresso = '2026-09-01', uscita: string | null = null) =>
+    d.query(
+      `INSERT INTO public.frequenze (alunno_id, anno_sede_id, section_id, stato, data_ingresso, data_uscita, origine)
+       VALUES ($1, $2, $3, $4, $5, $6, 'recupero')`, [alunno, annoSede, sezione, stato, ingresso, uscita])
+  const foto = async (sede: string, tag: string[]) =>
+    (await d.query<{ id: string }>(
+      `INSERT INTO public.galleria_media_v2 (scuola_id, tag_students, created_at) VALUES ($1, $2, '2026-10-20T12:00:00+02:00') RETURNING id`,
+      [sede, tag])).rows[0].id
+
+  beforeAll(async () => {
+    d = await creaDbAnnoPr2({ sedi: [S, S_B], fino: 'M44a', codaPrima: SCHEMA_GALLERIA_GENITORE })
+    await d.exec(SCHEMA_LEGAMI_GENITORE)
+    await d.exec(SCHEMA_AVVISI_CHAT_VOCI_GENITORE)
+
+    const anni = await d.query<{ anno_inizio: number; id: string; anno_id: string; scuola_id: string }>(
+      `SELECT y.anno_inizio, s.id, s.anno_id, s.scuola_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id`)
+    const anno = (sede: string, n: number) => anni.rows.find((x) => x.scuola_id === sede && x.anno_inizio === n)!
+    ANNO_PRIMA = anno(S, 2025).id
+    ANNO_ATTIVO = anno(S, 2026).id
+    ANNO_DOPO = anno(S, 2027).id
+    ATTIVO_B = anno(S_B, 2026).id
+    PRIMA_B = anno(S_B, 2025).id
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Girasoli', $3)`, [SEZ, S, anno(S, 2026).anno_id])
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Tulipani', $3)`, [SEZ_B, S_B, anno(S_B, 2026).anno_id])
+
+    // Le frequenze le scrive la prova: lo specchio, che ne farebbe nascere una per ogni alunno nuovo, resta spento per gli alunni.
+    await d.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    for (const id of [VIVO, RITIRATO, ALTROVE, SENZA]) await d.query(`INSERT INTO public.alunni (id, scuola_id) VALUES ($1, $2)`, [id, S])
+    await d.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = true`)
+
+    await frequenza(VIVO, ANNO_ATTIVO, SEZ)
+    // Senza data di uscita: lo tiene fuori lo stato e basta, quindi una funzione vera che perde quel filtro fa salire la riga.
+    await frequenza(RITIRATO, ANNO_ATTIVO, SEZ, 'ritirato')
+    await frequenza(ALTROVE, ANNO_ATTIVO, SEZ, 'ritirato', '2026-09-01', '2026-10-01')
+    await frequenza(ALTROVE, ATTIVO_B, SEZ_B, 'iscritto', '2026-09-01')
+
+    const legami: Array<[string, string]> = [
+      [GEN_VIVO, VIVO], [GEN_MISTO, VIVO], [GEN_MISTO, RITIRATO], [GEN_RITIRATO, RITIRATO],
+      [GEN_ALTROVE, ALTROVE], [GEN_SENZA, SENZA], [DOC_GENITORE, RITIRATO],
+    ]
+    for (const [g, a] of legami) await d.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [g, a])
+    const ponti: Array<[string, string | null, string]> = [
+      [SCHEDA_PONTE, GEN_PONTE, RITIRATO], [SCHEDA_PONTE_VIVO, GEN_PONTE_VIVO, VIVO], [SCHEDA_SENZA_ACCOUNT, null, RITIRATO],
+    ]
+    for (const [scheda, account, figlio] of ponti) {
+      await d.query(`INSERT INTO public.parents (id, auth_user_id) VALUES ($1, $2)`, [scheda, account])
+      await d.query(`INSERT INTO public.student_parents (student_id, parent_id) VALUES ($1, $2)`, [figlio, scheda])
+    }
+
+    await foto(S, [VIVO])
+    await foto(S, [RITIRATO])
+    await foto(S, [VIVO, RITIRATO])
+    await foto(S, [ALTROVE])
+    await foto(S_B, [ALTROVE])
+    await foto(S, [SENZA])
+
+    await d.query(
+      `INSERT INTO public.avvisi (scuola_id, target_scope, target_section_ids, scadenza_avviso, created_at)
+       VALUES ($1, 'globale', NULL, now() + interval '1 day', '2026-10-20T12:00:00+02:00'),
+              ($1, 'classi', $2, now() + interval '1 day', '2026-10-20T12:00:00+02:00')`, [S, [SEZ]])
+
+    for (const [docente, genitore, figlio] of [[DOC, GEN_VIVO, VIVO], [DOC, GEN_MISTO, VIVO], [DOC, GEN_MISTO, RITIRATO], [DOC, GEN_RITIRATO, RITIRATO]]) {
+      await d.query(`INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3)`, [docente, genitore, figlio])
+    }
+    THREAD_DA_DOCENTE = (await d.query<{ id: string }>(
+      `INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3) RETURNING id`, [DOC_GENITORE, GEN_RITIRATO, RITIRATO])).rows[0].id
+  }, 120_000)
+  afterAll(async () => { await d.close() })
+
+  prova('la riga 7 passa: nessun genitore vede righe tramite un figlio non attivo', async () => {
+    expect(await riga7()).toEqual(ZERO)
+    // Non è un banco vuoto: il genitore con un figlio vivo e uno ritirato vede foto, avvisi e thread, ma solo dal figlio vivo.
+    const coppie = await coppieFoto(GEN_MISTO)
+    expect(coppie).toHaveLength(2)
+    expect(new Set(coppie.map((x) => x.alunno_id))).toEqual(new Set([VIVO]))
+    const avvisi = await d.query<{ alunno_id: string }>(`SELECT alunno_id FROM public.avvisi_visibili_genitore($1)`, [GEN_MISTO])
+    expect(avvisi.rows.map((x) => x.alunno_id)).toEqual([VIVO, VIVO])
+    expect((await d.query(`SELECT 1 FROM public.thread_visibili($1)`, [GEN_MISTO])).rows).toHaveLength(1)
+  })
+
+  prova('la riga 7 va rossa se media_visibili_genitore perde il filtro sul figlio attivo', async () => {
+    await rollback(async () => {
+      await fotoSenzaFiltro()
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_NON_ATTIVI })
+    })
+    expect(await riga7()).toEqual(ZERO)
+  })
+
+  prova('la riga 7 non è tautologica: coincide con un conteggio fatto a parte dal catalogo', async () => {
+    await rollback(async () => {
+      await fotoSenzaFiltro()
+      // Legami per le due strade ⨝ figli senza una frequenza viva ⨝ tag. L'anno attivo lo dice `anni_sede.stato`, non `anno_attivo`.
+      const dalCatalogo = await d.query<{ n: string }>(
+        `WITH legami AS (
+           SELECT l.genitore_id AS genitore, l.alunno_id AS figlio FROM public.legame_genitori_alunni l
+           UNION
+           SELECT p.auth_user_id, sp.student_id FROM public.parents p JOIN public.student_parents sp ON sp.parent_id = p.id
+            WHERE p.auth_user_id IS NOT NULL
+         )
+         SELECT count(*)::text n
+           FROM legami l
+           JOIN public.galleria_media_v2 m ON m.tag_students @> ARRAY[l.figlio] AND m.eliminato_il IS NULL
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.frequenze f
+              JOIN public.anni_sede a ON a.id = f.anno_sede_id
+             WHERE f.alunno_id = l.figlio
+               AND f.stato IN ('in_attesa', 'iscritto')
+               AND a.stato = 'corrente'
+               AND f.data_ingresso <= public.giorno_roma(now())
+               AND (f.data_uscita IS NULL OR f.data_uscita >= public.giorno_roma(now())))`)
+      expect(Number(dalCatalogo.rows[0].n)).toBe(FOTO_NON_ATTIVI)
+      expect((await riga7()).galleria_media_v2).toBe(Number(dalCatalogo.rows[0].n))
+    })
+  })
+
+  prova('va rossa anche se perdono il filtro gli avvisi', async () => {
+    await rollback(async () => {
+      await avvisiSenzaFiltro()
+      // Due avvisi per il ritirato di quattro genitori e per il figlio senza frequenza del quinto.
+      expect(await riga7()).toEqual({ ...ZERO, avvisi: 10 })
+    })
+  })
+
+  prova('va rossa anche se perdono il filtro i thread, e il thread da docente non conta nemmeno lì', async () => {
+    await rollback(async () => {
+      await threadSenzaFiltro()
+      // I tre di chi è genitore: `DOC, GEN_MISTO`, `DOC, GEN_RITIRATO`, `DOC_GENITORE, GEN_RITIRATO`. Per `DOC_GENITORE` è da docente.
+      expect(await riga7()).toEqual({ ...ZERO, chat_threads: 3 })
+    })
+  })
+
+  prova('se perde il filtro la frequenza attiva salgono tutte le righe, e `figli_attivi` mostra le frequenze non vive', async () => {
+    await rollback(async () => {
+      await frequenzeSenzaFiltro()
+      const r = await riga7()
+      for (const tabella of Object.keys(ZERO)) expect(r[tabella], tabella).toBeGreaterThanOrEqual(1)
+      expect(Object.keys(r).sort()).toEqual(Object.keys(ZERO).sort())
+      // Il ritirato per quattro genitori: `SENZA` non ha frequenze da mostrare.
+      expect(r.frequenze).toBe(4)
+    })
+  })
+
+  prova('un figlio attivo in una sede e non nell’altra non fa diventare rossa la riga', async () => {
+    const r = await d.query<{ stato: string }>(`SELECT stato::text FROM public.frequenze WHERE alunno_id = $1 ORDER BY stato`, [ALTROVE])
+    expect(r.rows.map((x) => x.stato)).toEqual(['iscritto', 'ritirato'])
+    // È il caso che mette alla prova: vede la foto della sede dove è vivo, attraverso un figlio con una frequenza non viva.
+    const coppie = await coppieFoto(GEN_ALTROVE)
+    expect(coppie.map((x) => x.alunno_id)).toEqual([ALTROVE])
+    expect(await riga7()).toEqual(ZERO)
+    // E il genitore non viene nemmeno guardato: con le foto rotte la sua foto dell'altra sede non si conta.
+    await rollback(async () => {
+      await fotoSenzaFiltro()
+      expect(await coppieFoto(GEN_ALTROVE)).toHaveLength(2)
+      expect((await riga7()).galleria_media_v2).toBe(FOTO_NON_ATTIVI)
+    })
+  })
+
+  for (const { nome, firma, colonne } of GUASTABILI) {
+    prova(`${nome} guasta non dà verde, e le altre invarianti arrivano lo stesso`, async () => {
+      await rollback(async () => {
+        await d.exec(`
+          CREATE OR REPLACE FUNCTION public.${firma} RETURNS TABLE (${colonne}) LANGUAGE plpgsql ${QUALITA}
+          AS $$ BEGIN RAISE EXCEPTION 'guasto di prova'; END $$`)
+        expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: P0001)': CON_FIGLIO_NON_ATTIVO.length })
+        const altre = await d.query(`SELECT 1 FROM public.anno_invarianti() WHERE invariante = '1'`)
+        expect(altre.rows).toHaveLength(1)
+        const sopra = await d.query(`SELECT 1 FROM public.anno_invarianti() WHERE righe <> 0 AND invariante = '7'`)
+        expect(sopra.rows).toHaveLength(1)
+      })
+    })
+  }
+
+  prova('una funzione che non c’è più non dà verde: la riga dice il codice', async () => {
+    await rollback(async () => {
+      await d.exec(`ALTER FUNCTION public.avvisi_visibili_genitore(uuid) RENAME TO avvisi_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42883)': CON_FIGLIO_NON_ATTIVO.length })
+    })
+  })
+
+  prova('senza nessun figlio non attivo la riga è a zero, e una funzione rotta non dà verde lo stesso', async () => {
+    const senzaNonAttivi = async () => {
+      await d.query(`DELETE FROM public.legame_genitori_alunni WHERE alunno_id = ANY ($1::uuid[])`, [[RITIRATO, SENZA]])
+      await d.query(`DELETE FROM public.student_parents WHERE student_id = $1`, [RITIRATO])
+    }
+    await rollback(async () => {
+      await senzaNonAttivi()
+      expect(await riga7()).toEqual(ZERO)
+    })
+    for (const { nome, firma, colonne } of GUASTABILI) {
+      await rollback(async () => {
+        await senzaNonAttivi()
+        await d.exec(`
+          CREATE OR REPLACE FUNCTION public.${firma} RETURNS TABLE (${colonne}) LANGUAGE plpgsql ${QUALITA}
+          AS $$ BEGIN RAISE EXCEPTION 'guasto di prova'; END $$`)
+        expect(await riga7(), nome).toEqual({ ...ZERO, '(controllo fallito: P0001)': 1 })
+      })
+    }
+    await rollback(async () => {
+      await senzaNonAttivi()
+      await d.exec(`ALTER FUNCTION public.media_visibili_genitore(uuid) RENAME TO media_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42883)': 1 })
+    })
+  })
+
+  prova('un guasto su un genitore non nasconde ciò che si vede dagli altri', async () => {
+    await rollback(async () => {
+      await d.exec(`
+        CREATE OR REPLACE FUNCTION public.media_visibili_genitore(p_utente uuid)
+        RETURNS TABLE (media_id uuid, alunno_id uuid) LANGUAGE plpgsql ${QUALITA}
+        AS $$ BEGIN
+          IF p_utente = '${GEN_RITIRATO}' THEN RAISE EXCEPTION 'guasto di prova'; END IF;
+          RETURN QUERY ${FOTO_SENZA_FILTRO};
+        END $$`)
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_NON_ATTIVI - 2, '(controllo fallito: P0001)': 1 })
+    })
+  })
+
+  prova('parte dai soli genitori con un figlio non attivo: gli altri non costano una chiamata', async () => {
+    await rollback(async () => {
+      await d.exec(`
+        CREATE OR REPLACE FUNCTION public.media_visibili_genitore(p_utente uuid)
+        RETURNS TABLE (media_id uuid, alunno_id uuid) LANGUAGE plpgsql ${QUALITA}
+        AS $$ BEGIN RAISE NOTICE 'chiamata %', p_utente; END $$`)
+      const chiamati: string[] = []
+      await d.query(`SELECT 1 FROM public.anno_invarianti()`, [], {
+        onNotice: (n) => { if (n.message?.startsWith('chiamata ')) chiamati.push(n.message.slice('chiamata '.length)) },
+      })
+      expect(chiamati.sort()).toEqual(CON_FIGLIO_NON_ATTIVO)
+    })
+  })
+
+  prova('il genitore legato al figlio solo dalla strada anagrafica viene guardato', async () => {
+    await rollback(async () => {
+      await d.query(`DELETE FROM public.legame_genitori_alunni WHERE alunno_id = $1`, [RITIRATO])
+      await fotoSenzaFiltro()
+      // Restano il genitore dalla strada anagrafica, due foto, e la foto di `SENZA`.
+      expect((await riga7()).galleria_media_v2).toBe(3)
+    })
+  })
+
+  prova('un figlio legato per tutte e due le strade non conta due volte', async () => {
+    await rollback(async () => {
+      await d.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_PONTE, RITIRATO])
+      await fotoSenzaFiltro()
+      expect((await riga7()).galleria_media_v2).toBe(FOTO_NON_ATTIVI)
+    })
+  })
+
+  prova('un bambino vivo in due sedi con anni attivi diversi dà due righe in figli_attivi, e la riga resta a zero', async () => {
+    await rollback(async () => {
+      // La seconda sede non è ancora passata al 2026/27: il suo anno attivo è il 2025/26, e `frequenze_una_viva_per_anno` non lo vieta.
+      await d.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE id = $1`, [ATTIVO_B])
+      await frequenza(VIVO, PRIMA_B, null, 'iscritto', '2025-09-01')
+      // `GEN_MISTO` è fra quelli che la riga guarda: ha anche il figlio ritirato.
+      const righe = await d.query(`SELECT 1 FROM public.figli_attivi($1) WHERE alunno_id = $2`, [GEN_MISTO, VIVO])
+      expect(righe.rows).toHaveLength(2)
+      expect(await riga7()).toEqual(ZERO)
+    })
+  })
+
+  const CHE_FREQUENZA: Array<{ nome: string; attivo: boolean; crea: (g: { oggi: string; ieri: string; domani: string }) => Promise<unknown> }> = [
+    { nome: 'iscritto da oggi', attivo: true, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'iscritto', g.oggi) },
+    { nome: 'in attesa, entrato oggi', attivo: true, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'in_attesa', g.oggi) },
+    { nome: 'iscritto, esce oggi', attivo: true, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'iscritto', g.ieri, g.oggi) },
+    { nome: 'ingresso domani', attivo: false, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'in_attesa', g.domani) },
+    { nome: 'uscito ieri', attivo: false, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'iscritto', g.ieri, g.ieri) },
+    { nome: 'ritirato senza data di uscita', attivo: false, crea: (g) => frequenza(SENZA, ANNO_ATTIVO, SEZ, 'ritirato', g.ieri) },
+    { nome: 'solo nell’anno che non è ancora iniziato', attivo: false, crea: () => frequenza(SENZA, ANNO_DOPO, null, 'in_attesa', '2027-09-01') },
+    // Qui lo stato e le date lo lascerebbero dentro: lo tiene fuori solo l'anno.
+    { nome: 'iscritto solo nell’anno chiuso, senza uscita', attivo: false, crea: () => frequenza(SENZA, ANNO_PRIMA, null, 'iscritto', '2025-09-01') },
+  ]
+  for (const { nome, attivo, crea } of CHE_FREQUENZA) {
+    prova(`un figlio con una frequenza così (${nome}) ${attivo ? 'è attivo' : 'non è attivo'} per la riga`, async () => {
+      await rollback(async () => {
+        await crea(await giorni())
+        await fotoSenzaFiltro()
+        // Attivo, la sua foto esce dal conteggio; non attivo, resta dentro.
+        expect((await riga7()).galleria_media_v2).toBe(attivo ? FOTO_NON_ATTIVI - 1 : FOTO_NON_ATTIVI)
+      })
+    })
+  }
+
+  prova('il docente non entra: il suo thread da docente su un figlio ritirato lo vede sempre, e non conta', async () => {
+    const vede = await d.query<{ thread_id: string }>(`SELECT thread_id FROM public.thread_visibili($1)`, [DOC_GENITORE])
+    expect(vede.rows.map((x) => x.thread_id)).toEqual([THREAD_DA_DOCENTE])
+    expect((await riga7()).chat_threads).toBe(0)
+  })
+
+  prova('le voci non entrano: la voce aperta di un ritirato resta visibile, e la riga resta a zero', async () => {
+    await rollback(async () => {
+      const voce = (await d.query<{ id: string }>(
+        `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, stato, importo_pagato, periodo_competenza)
+         VALUES ($1, $2, 'Voce di prova', 100, '2026-10-01', 'da_pagare', 0, '2026-10-01') RETURNING id`, [RITIRATO, S])).rows[0].id
+      const vede = await d.query<{ voce_id: string }>(`SELECT voce_id FROM public.voci_visibili_genitore($1)`, [GEN_RITIRATO])
+      expect(vede.rows.map((x) => x.voce_id)).toEqual([voce])
+      expect(await riga7()).toEqual(ZERO)
+    })
+  })
+
+  prova('la copia nel file di riferimento si lancia e dice quello che dice la funzione', async () => {
+    const testo = readFileSync(join(process.cwd(), 'docs/superpowers/specs/2026-11-06-anno-scolastico-invarianti.sql'), 'utf8')
+    const copia = testo.slice(testo.indexOf('-- 7. Nessun genitore'), testo.indexOf('-- 8. Nessun docente'))
+    expect((await d.query(copia)).rows).toEqual([])
+    await rollback(async () => {
+      await frequenzeSenzaFiltro()
+      const trovate = (await d.query<{ oggetto: string }>(copia)).rows
+      const quante = (oggetto: string) => trovate.filter((x) => x.oggetto === oggetto).length
+      expect({
+        galleria_media_v2: quante('foto'), avvisi: quante('avviso'), chat_threads: quante('thread'), frequenze: quante('frequenza'),
+      }).toEqual(await riga7())
+      expect(trovate.length).toBeGreaterThanOrEqual(4)
+    })
+  })
+
+  prova('dove i legami o i thread non ci sono la riga c’è lo stesso, a zero', async () => {
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.chat_threads RENAME TO chat_threads_altrove`)
+      expect(await riga7()).toEqual(ZERO)
+    })
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.legame_genitori_alunni RENAME TO legami_altrove`)
+      expect(await riga7()).toEqual(ZERO)
+    })
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.student_parents RENAME TO ponte_altrove`)
+      expect(await riga7()).toEqual(ZERO)
     })
   })
 })

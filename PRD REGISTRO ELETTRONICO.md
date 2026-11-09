@@ -1,6 +1,6 @@
-## 🗓️ Changelog — Anno scolastico, PR 4.4: che cosa vede una famiglia — 2026-11-09 (branch `feat/anno-scolastico-genitori`)
+## 🗓️ Changelog — Anno scolastico, PR 4.4: che cosa vede una famiglia — 2026-11-09
 
-**Stato:** 🟡 PR 4.4, in revisione (non ancora mergiata, niente in produzione). **Ha tre migrazioni**, che applica l'integrazione di Supabase al merge: `20261108170148_anno_visibilita_genitore_funzioni.sql` (M44a, le funzioni), `20261108204853_anno_visibilita_genitore_policy.sql` (M44b, cinque regole di accesso e il trigger di broadcast della chat) e `20261108221856_anno_galleria_pagina_genitore.sql` (M44g, la pagina della galleria). Il controllo visivo e la prova dal telefono vero restano da fare.
+**Stato:** ✅ in produzione (#303, `c1141599`, 09/11/2026). **Ha tre migrazioni**, applicate dall'integrazione di Supabase al merge e registrate una volta sola (verificato il 09/11, solo `SELECT` di catalogo): `20261108170148_anno_visibilita_genitore_funzioni.sql` (M44a, le funzioni), `20261108204853_anno_visibilita_genitore_policy.sql` (M44b, cinque regole di accesso e il trigger di broadcast della chat) e `20261108221856_anno_galleria_pagina_genitore.sql` (M44g, la pagina della galleria). Le fotografie dei lock sono rigenerate dalla produzione (migrazioni 264, i cinque testi della RLS). Il controllo visivo e la prova dal telefono vero restano da fare.
 
 **Che cosa cambia per le persone.** Quello che una famiglia vede lo decide il database, in un punto solo (funzioni SQL di visibilità), e non più il confronto per nome di classe. Un figlio che lascia la scuola o cambia classe non lascia foto, avvisi e conversazioni appesi.
 

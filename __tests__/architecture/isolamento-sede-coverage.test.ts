@@ -3034,7 +3034,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // non-rinnova POST), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 609 → 612.
             // 612 → 615 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.10): tre handler nelle due route nuove (frequenze/[id]/moduli
             // GET/PUT, anni/[annoSedeId]/moduli-mancanti GET), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 612 → 615.
-            handlerControllati: 615,
+            // 615 → 617 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.15, C3): due handler nella route esistente `anni/[annoSedeId]/sezioni`
+            // (GET: l'elenco delle classi con la fascia; PATCH: la fascia di una classe), entrambi CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 615 → 617.
+            handlerControllati: 617,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -504,5 +504,6 @@
   "annoConfineUltimoGiornoFuori": "La nuova fine viene prima dell’ultimo giorno aperto di questo anno: cambia prima quella data.",
   "annoConfinePreparaFuori": "La nuova fine viene prima della data da cui si prepara l’anno successivo: cambia prima quella data.",
   "annoConfineUltimoSuccessivoFuori": "L’anno successivo avrebbe l’ultimo giorno aperto prima del suo inizio: cambia prima la sua data.",
-  "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data."
+  "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data.",
+  "annoMancaClassiSenzaFascia": "la fascia di ogni classe (nella scheda Classi: premi «Copia le classi dell’anno in corso» e scegli la fascia)"
 }

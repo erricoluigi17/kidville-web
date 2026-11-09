@@ -12,7 +12,7 @@ import { mascheraSorgente } from '../fixtures/sorgente'
  * spostata) fa scendere un conteggio che qualcuno ritocca per rifarlo quadrare. Qui sta l'INVENTARIO scritto, e ciò che ogni
  * route nuova deve avere perché quei quattro lock la vedano per davvero.
  *
- * Misurato il 2026-11-09 sul ramo della PR 4.5: le route nuove sono 10 file con 16 funzioni (il brief parlava di undici e sedici;
+ * Misurato il 2026-11-09 sul ramo della PR 4.5: le route nuove sono 10 file con 16 funzioni (18 dal 4.5.15: GET e PATCH di `sezioni`) (il brief parlava di undici e sedici;
  * i file sono dieci, le funzioni sono sedici). Per ciascuna:
  *  - ogni funzione HTTP è esportata come `export const METODO = withRoute('<percorso>:<METODO>', …)`, col nome uguale al percorso
  *    (è la forma che `logging-coverage` riconosce, e la colonna `operazione` di `app_log` dice la verità);
@@ -22,7 +22,7 @@ import { mascheraSorgente } from '../fixtures/sorgente'
  *    CONTROLLATE di `isolamento-sede-coverage`, il cui conteggio `handlerControllati` sale con loro.
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
- * Dichiara quanti file e quante funzioni ha trovato (10 / 16, esatti: né di più né di meno) e ha il suo controllo positivo
+ * Dichiara quanti file e quante funzioni ha trovato (10 / 18, esatti: né di più né di meno) e ha il suo controllo positivo
  * su sorgenti finti: una route nuda, senza zod, senza gate o col nome sbagliato fa rosso. Se una route nuova della PR 4.5
  * nasce in un'altra cartella, si aggiunge all'INVENTARIO: il lock non la indovina.
  *
@@ -44,14 +44,14 @@ const INVENTARIO: readonly Voce[] = [
   { file: `${API}/admin/anni/[annoSedeId]/moduli/route.ts`, metodi: ['GET', 'PUT', 'DELETE'], gate: true, sede: 'anno' },
   { file: `${API}/admin/anni/[annoSedeId]/posti/route.ts`, metodi: ['GET', 'PUT'], gate: true, sede: 'anno' },
   { file: `${API}/admin/anni/[annoSedeId]/quote/route.ts`, metodi: ['GET', 'PUT'], gate: true, sede: 'anno' },
-  { file: `${API}/admin/anni/[annoSedeId]/sezioni/route.ts`, metodi: ['POST'], gate: true, sede: 'anno' },
+  { file: `${API}/admin/anni/[annoSedeId]/sezioni/route.ts`, metodi: ['GET', 'PATCH', 'POST'], gate: true, sede: 'anno' },
   { file: `${API}/admin/frequenze/[frequenzaId]/moduli/route.ts`, metodi: ['GET', 'PUT'], gate: true, sede: 'anno' },
   { file: `${API}/admin/iscrizioni/sposta-anno/route.ts`, metodi: ['POST'], gate: true, sede: 'domanda' },
   { file: `${API}/iscrizione/anni/route.ts`, metodi: ['GET'], gate: false, sede: 'pubblica' },
 ]
 
 const FILE_ATTESI = 10
-const FUNZIONI_ATTESE = 16
+const FUNZIONI_ATTESE = 18
 
 const METODI = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS'
 const NUDO = new RegExp(`export\\s+(?:async\\s+)?function\\s+(${METODI})\\b`, 'g')
@@ -185,7 +185,7 @@ export const PUT = withRoute('admin/x/y:PUT', async (request) => {
 })
 
 describe('anno-iscrizioni-route-coperte — le route vere', () => {
-  it('l’inventario è completo e non ha doppioni: 10 file, 16 funzioni (esatti)', () => {
+  it('l’inventario è completo e non ha doppioni: 10 file, 18 funzioni (esatti)', () => {
     expect(INVENTARIO.length).toBe(FILE_ATTESI)
     expect(new Set(INVENTARIO.map((v) => v.file)).size).toBe(FILE_ATTESI)
     expect(INVENTARIO.reduce((n, v) => n + v.metodi.length, 0)).toBe(FUNZIONI_ATTESE)
@@ -201,7 +201,7 @@ describe('anno-iscrizioni-route-coperte — le route vere', () => {
     expect(v, `Le route nuove della 4.5 non hanno tutto ciò che i lock di route pretendono (${v.length}).` + elenco(v)).toEqual([])
   })
 
-  it('le funzioni esportate sono davvero 16 (contate sul sorgente, non sull’inventario)', () => {
+  it('le funzioni esportate sono davvero 18 (contate sul sorgente, non sull’inventario)', () => {
     const n = INVENTARIO.reduce((tot, voce) => tot + [...mascheraSorgente(leggi(voce.file)).senzaCommenti.matchAll(AVVOLTO)].length, 0)
     expect(n).toBe(FUNZIONI_ATTESE)
   })

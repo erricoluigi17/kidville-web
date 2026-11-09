@@ -190,6 +190,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
       case 'infanzia': return t('fasciaInfanzia');
       case 'primaria': return t('fasciaPrimaria');
       case 'spazio_bambini': return t('fasciaSpazioBambini');
+      case 'senza_fascia': return t('fasciaSenzaFascia');
       default: return t('fasciaSenzaSezione');
     }
   };
@@ -211,6 +212,8 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   // Il filtro lo applica la route: `righe` è già la pagina giusta e `totale` è il totale del filtro.
   const visibili = righe;
   const oltre = posti.filter((p) => p.oltre);
+  // Bambini in classi che non hanno la fascia: i posti per fascia non li contano (si sceglie la fascia nella scheda Classi).
+  const senzaFascia = posti.find((p) => p.fascia === 'senza_fascia')?.iscritti ?? 0;
   const filtri: Array<{ id: Filtro; label: string }> =
     vista === 'conferme'
       ? [
@@ -232,6 +235,12 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
           {t('avvisoPosti', { fascia: fascia(p.fascia), iscritti: p.iscritti, posti: p.posti ?? 0 })}
         </p>
       ))}
+
+      {senzaFascia > 0 && (
+        <p role="status" className="mb-3 rounded-input border border-kidville-line bg-kidville-yellow-soft px-3 py-2 font-maven text-sm text-kidville-ink">
+          {t('avvisoSenzaFascia', { n: senzaFascia })}
+        </p>
+      )}
 
       <div role="group" aria-label={t('vistaEtichetta')}>
         <Tabs

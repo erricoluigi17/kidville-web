@@ -85,5 +85,7 @@
   "esitoStatoOra": "Enrolment status: {stato}.",
   "esitoDi": "{nome}: {testo}",
   "esitoRegione": "Result of the last operation",
-  "azioneAggiorna": "Refresh the list"
+  "azioneAggiorna": "Refresh the list",
+  "fasciaSenzaFascia": "Class without a group",
+  "avvisoSenzaFascia": "{n, plural, one {# child is in a class without a group: the places per group do not count them. Choose the group of the classes in the year settings, Classes tab.} other {# children are in classes without a group: the places per group do not count them. Choose the group of the classes in the year settings, Classes tab.}}"
 }

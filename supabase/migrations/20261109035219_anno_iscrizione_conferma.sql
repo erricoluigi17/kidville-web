@@ -25,7 +25,8 @@
 -- Nessun uuid di sede, nessun valore del 2027/28: date, importi e descrizioni vengono da `anni_sede` e `listino_voci`.
 
 -- ── anno_conta_posti ─────────────────────────────────────────────────────────────────────────────
--- Per ogni fascia: quanti `in_attesa` e `iscritto` ci sono (fascia della SEZIONE della frequenza; senza sezione `senza_sezione`),
+-- Per ogni fascia: quanti `in_attesa` e `iscritto` ci sono (fascia della SEZIONE della frequenza; senza sezione `senza_sezione`;
+-- con una sezione che non ha la fascia `senza_fascia` — 4.5.15: prima finiva in `senza_sezione` anche se la classe c'era),
 -- quanti posti autorizzati ci sono (NULL se nessuno li ha dichiarati) e se i primi superano i secondi. Un avviso, mai un blocco.
 CREATE OR REPLACE FUNCTION public.anno_conta_posti(p_anno_sede uuid)
 RETURNS TABLE (fascia text, iscritti bigint, posti integer, oltre boolean)
@@ -35,7 +36,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
   WITH conteggio AS (
-    SELECT coalesce(s.fascia, 'senza_sezione')::text AS fascia, count(*) AS n
+    SELECT coalesce(s.fascia, CASE WHEN f.section_id IS NULL THEN 'senza_sezione' ELSE 'senza_fascia' END)::text AS fascia, count(*) AS n
       FROM public.frequenze f
       LEFT JOIN public.sections s ON s.id = f.section_id
      WHERE f.anno_sede_id = p_anno_sede AND f.stato IN ('in_attesa', 'iscritto')
@@ -284,7 +285,7 @@ BEGIN
     v_quota := jsonb_build_object('esito', NULL, 'pagamento_id', v_f.quota_pagamento_id);
   END IF;
 
-  SELECT coalesce(s.fascia, 'senza_sezione') INTO v_fascia
+  SELECT coalesce(s.fascia, CASE WHEN f.section_id IS NULL THEN 'senza_sezione' ELSE 'senza_fascia' END) INTO v_fascia
     FROM public.frequenze f LEFT JOIN public.sections s ON s.id = f.section_id
    WHERE f.id = v_f.id;
   SELECT coalesce(bool_or(c.oltre), false) INTO v_oltre

@@ -62,5 +62,12 @@
   "classiNotaPreparazione": "The current year’s classes are copied automatically when you open enrolment. If you add a new one beforehand, you can copy it from here too: those already copied are not duplicated.",
   "classiNotaAperte": "If you added a class to the current year, you can copy it here: those already copied are not duplicated. Teachers, timetables and subjects are never copied.",
   "classiCopia": "Copy the current year’s classes",
-  "classiEsito": "Classes copied: {copiate}. Already present: {presenti}."
+  "classiEsito": "Classes copied: {copiate}. Already present: {presenti}.",
+  "classiFasciaIntro": "Each class has a group (nursery, pre-school, primary…): it is used by the fees per group and by the places. The classes of the current year do not change.",
+  "classiFasciaEtichetta": "Group of {classe}",
+  "classiFasciaNessuna": "To be chosen",
+  "classiFasciaSalvata": "Group saved ✓",
+  "classiElencoVuoto": "There are no classes for this year yet: press “Copy the classes of the current year”.",
+  "classiSenzaFascia": "Classes without a group: {n}. Until a class has a group, the fees per group do not apply to its children and the places do not count them.",
+  "classiTutteConFascia": "Every class has a group."
 }

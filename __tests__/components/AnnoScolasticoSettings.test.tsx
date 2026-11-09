@@ -448,7 +448,8 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
     scegli('2027/28')
-    expect(await screen.findByRole('alert')).toHaveTextContent('Le impostazioni dell’anno scolastico non sono ancora disponibili')
+    // Con la lettura che cade, anche l'elenco delle classi (C3) dice il suo errore: il primo avviso è quello dei requisiti.
+    expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent('Le impostazioni dell’anno scolastico non sono ancora disponibili')
     expect(apri()).toHaveAttribute('aria-disabled', 'true')
   })
 

@@ -504,5 +504,6 @@
   "annoConfineUltimoGiornoFuori": "The new end falls before this year’s last open day: change that date first.",
   "annoConfinePreparaFuori": "The new end falls before the date from which the next year is prepared: change that date first.",
   "annoConfineUltimoSuccessivoFuori": "The next year would have its last open day before it starts: change its date first.",
-  "annoConfinePreparaSuccessivoFuori": "The next year would have its preparation date outside its period: change its date first."
+  "annoConfinePreparaSuccessivoFuori": "The next year would have its preparation date outside its period: change its date first.",
+  "annoMancaClassiSenzaFascia": "the group of every class (in the Classes tab: press “Copy the classes of the current year” and choose the group)"
 }

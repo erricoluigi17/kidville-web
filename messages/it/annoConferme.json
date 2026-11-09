@@ -85,5 +85,7 @@
   "esitoStatoOra": "Stato dell’iscrizione: {stato}.",
   "esitoDi": "{nome}: {testo}",
   "esitoRegione": "Esito dell’ultima operazione",
-  "azioneAggiorna": "Aggiorna l’elenco"
+  "azioneAggiorna": "Aggiorna l’elenco",
+  "fasciaSenzaFascia": "Classe senza fascia",
+  "avvisoSenzaFascia": "{n, plural, one {C’è # bambino in una classe senza fascia: i posti per fascia non lo contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.} other {Ci sono # bambini in classi senza fascia: i posti per fascia non li contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.}}"
 }

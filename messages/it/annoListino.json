@@ -62,5 +62,12 @@
   "classiNotaPreparazione": "Le classi dell’anno in corso si copiano da sole quando apri le iscrizioni. Se ne aggiungi una nuova prima di aprire, puoi copiarla anche da qui: quelle già copiate non si duplicano.",
   "classiNotaAperte": "Se hai aggiunto una classe all’anno in corso, puoi copiarla qui: quelle già copiate non si duplicano. Docenti, orari e materie non si copiano mai.",
   "classiCopia": "Copia le classi dell’anno in corso",
-  "classiEsito": "Classi copiate: {copiate}. Già presenti: {presenti}."
+  "classiEsito": "Classi copiate: {copiate}. Già presenti: {presenti}.",
+  "classiFasciaIntro": "Ogni classe ha una fascia (nido, infanzia, primaria…): serve alle quote per fascia e ai posti. Le classi dell’anno in corso non cambiano.",
+  "classiFasciaEtichetta": "Fascia di {classe}",
+  "classiFasciaNessuna": "Da scegliere",
+  "classiFasciaSalvata": "Fascia salvata ✓",
+  "classiElencoVuoto": "Non ci sono ancora classi per questo anno: premi «Copia le classi dell’anno in corso».",
+  "classiSenzaFascia": "Classi senza fascia: {n}. Finché una classe non ha la fascia, le quote per fascia non si applicano ai suoi bambini e i posti non li contano.",
+  "classiTutteConFascia": "Tutte le classi hanno la fascia."
 }

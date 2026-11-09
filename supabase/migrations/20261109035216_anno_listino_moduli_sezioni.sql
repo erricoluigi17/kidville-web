@@ -234,6 +234,10 @@ $$;
 --   aperte (ANNO_NON_MODIFICABILE altrimenti). Rifatta non ne crea altre: una sezione che ha già la sua
 --   continuazione, o un'omonima (stessa forma normalizzata `lower(replace(nome, ' ', ''))` dell'indice unico), conta
 --   fra le `gia_presenti`.
+--   La FASCIA della copia (4.5.15, C3): quella dell'origine se c'è; altrimenti `infanzia` da `school_type = 'infanzia'` e
+--   `primaria` da `school_type = 'primaria'` (i casi certi, senza nominare sedi); il nido resta NULL, perché `nido_1`,
+--   `nido_2`, `primavera` e `spazio_bambini` non si possono indovinare: li sceglie la segreteria
+--   (`anno_sezione_fascia_imposta`). Le classi dell'anno IN CORSO non si toccano: la fascia serve solo all'anno prossimo.
 --   Le colonne sono QUESTE, scritte una per una: nome, grado (`school_type`) e `fascia`, più i tre legami (sede, anno,
 --   `continua_da`). Sono tutte quelle che la tabella `sections` ha oggi oltre a `id` e `created_at`; una colonna che
 --   nascerà dopo NON viene copiata da sola. MAI docenti, orari, materie: sono del passaggio (4.8).
@@ -283,7 +287,10 @@ BEGIN
       v_presenti := v_presenti + 1;
     ELSE
       INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia, continua_da)
-      VALUES (v_a.scuola_id, v_a.anno_id, r.name, r.school_type, r.fascia, r.id);
+      VALUES (v_a.scuola_id, v_a.anno_id, r.name, r.school_type,
+              coalesce(r.fascia,
+                       CASE r.school_type::text WHEN 'infanzia' THEN 'infanzia' WHEN 'primaria' THEN 'primaria' END),
+              r.id);
       v_copiate := v_copiate + 1;
     END IF;
   END LOOP;
@@ -292,11 +299,62 @@ BEGIN
 END
 $$;
 
+-- `anno_sezione_fascia_imposta(anno_sede, section, fascia) → jsonb` (4.5.15, C3): la segreteria sceglie la fascia di una classe
+--   dell'anno che sta preparando. `fascia` NULL la toglie; altrimenti dev'essere dell'elenco chiuso (PARAMETRO_MANCANTE col nome del
+--   campo). L'anno dev'essere `in_preparazione` o `iscrizioni_aperte` (ANNO_NON_MODIFICABILE); la classe dev'essere di QUELL'anno
+--   e di quella sede (SEZIONE_DI_ALTRO_ANNO, SEZIONE_DI_ALTRA_SEDE); una classe che non esiste è PARAMETRO_MANCANTE.
+--   Risposta: {cambiato, anno_sede_id, section_id, fascia}. Rifatta con lo stesso valore non cambia niente.
+CREATE OR REPLACE FUNCTION public.anno_sezione_fascia_imposta(p_anno_sede uuid, p_section uuid, p_fascia text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_a public.anni_sede%ROWTYPE;
+  v_s public.sections%ROWTYPE;
+BEGIN
+  IF p_fascia IS NOT NULL AND p_fascia NOT IN ('nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_bambini') THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'fascia')::text;
+  END IF;
+
+  SELECT * INTO v_a FROM public.anni_sede WHERE id = p_anno_sede FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO' USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+  IF v_a.stato NOT IN ('in_preparazione', 'iscrizioni_aperte') THEN
+    RAISE EXCEPTION 'ANNO_NON_MODIFICABILE'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', v_a.stato)::text;
+  END IF;
+
+  SELECT * INTO v_s FROM public.sections WHERE id = p_section FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'sezione')::text;
+  END IF;
+  IF v_s.scuola_id <> v_a.scuola_id THEN
+    RAISE EXCEPTION 'SEZIONE_DI_ALTRA_SEDE' USING DETAIL = json_build_object('section_id', v_s.id)::text;
+  END IF;
+  IF v_s.anno_id <> v_a.anno_id THEN
+    RAISE EXCEPTION 'SEZIONE_DI_ALTRO_ANNO' USING DETAIL = json_build_object('section_id', v_s.id)::text;
+  END IF;
+
+  IF v_s.fascia IS NOT DISTINCT FROM p_fascia THEN
+    RETURN jsonb_build_object('cambiato', false, 'anno_sede_id', v_a.id, 'section_id', v_s.id, 'fascia', p_fascia);
+  END IF;
+  UPDATE public.sections SET fascia = p_fascia WHERE id = v_s.id;
+  RETURN jsonb_build_object('cambiato', true, 'anno_sede_id', v_a.id, 'section_id', v_s.id, 'fascia', p_fascia);
+END
+$$;
+
 -- ── 6. «Apri le iscrizioni», con le sezioni e le domande dal sito ─────────────────────────────────
 -- Parte dall'ultima definizione (20261108052944_anno_impostazioni_sede.sql). Stessa firma, stessi errori. In più,
 -- NELLA STESSA TRANSAZIONE (un errore a metà non lascia sezioni né cambia stato):
 --   · copia le sezioni dell'anno attivo della sede nell'anno che si apre (solo se l'anno attivo lo precede);
 --   · mette `domande_aperte = true`: senza, il modulo pubblico non offrirebbe mai l'anno appena aperto.
+--   · 4.5.15 (C3), prerequisito `classi_senza_fascia`: se il listino ha almeno UNA quota con una fascia indicata, ogni classe
+--     dell'anno deve avere la fascia. Le classi nascono qui, DOPO gli altri prerequisiti, quindi il controllo viene dopo la copia e
+--     nella stessa transazione: un rifiuto annulla anche la copia. (Senza, una quota per fascia e una classe senza fascia davano
+--     «senza listino» per tutti, e la segreteria non vedeva nessun errore.)
 --   Il risultato porta anche `sezioni_copiate`.
 CREATE OR REPLACE FUNCTION public.anno_apri_iscrizioni(p_anno_sede uuid, p_da uuid)
 RETURNS jsonb
@@ -336,6 +394,15 @@ BEGIN
     v_copia := public.anno_copia_sezioni(v_attivo, v_a.id);
   END IF;
 
+  IF EXISTS (SELECT 1 FROM public.listino_voci l
+              WHERE l.anno_sede_id = v_a.id AND l.voce IN ('quota_conferma', 'quota_nuova')
+                AND l.fascia IS NOT NULL AND l.importo > 0)
+     AND EXISTS (SELECT 1 FROM public.sections z
+                  WHERE z.scuola_id = v_a.scuola_id AND z.anno_id = v_a.anno_id AND z.fascia IS NULL) THEN
+    RAISE EXCEPTION 'PREREQUISITI_MANCANTI'
+      USING DETAIL = json_build_object('mancano', to_jsonb(ARRAY['classi_senza_fascia']))::text;
+  END IF;
+
   UPDATE public.anni_sede SET stato = 'iscrizioni_aperte', domande_aperte = true WHERE id = v_a.id;
   INSERT INTO public.anni_sede_stati (anno_sede_id, stato, da)
   VALUES (v_a.id, 'iscrizioni_aperte', p_da);
@@ -372,6 +439,7 @@ REVOKE ALL ON FUNCTION public.anno_modulo_richiesto_imposta(uuid, text, text, te
 REVOKE ALL ON FUNCTION public.anno_modulo_richiesto_togli(uuid, text, text)                FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_posti_imposta(uuid, text, integer, text)                FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_copia_sezioni(uuid, uuid)                               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_sezione_fascia_imposta(uuid, uuid, text)                FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_apri_iscrizioni(uuid, uuid)                             FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.schools_crea_anni()                                          FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_listino_quota_imposta(uuid, text, text, numeric, date)  TO service_role;
@@ -379,6 +447,7 @@ GRANT EXECUTE ON FUNCTION public.anno_modulo_richiesto_imposta(uuid, text, text,
 GRANT EXECUTE ON FUNCTION public.anno_modulo_richiesto_togli(uuid, text, text)                TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_posti_imposta(uuid, text, integer, text)                TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_copia_sezioni(uuid, uuid)                               TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_sezione_fascia_imposta(uuid, uuid, text)                TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_apri_iscrizioni(uuid, uuid)                             TO service_role;
 GRANT EXECUTE ON FUNCTION public.schools_crea_anni()                                          TO service_role;
 

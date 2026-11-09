@@ -36,6 +36,7 @@ type RigaQuota = { voce: VoceQuota; fascia: string | null; importo: number | nul
 type RigaListino = { voce: string; fascia: string | null; importo: number | null };
 type RigaModulo = { lista: Lista; codice: string; titolo: string; ordine: number };
 type RigaPosti = { fascia: string; posti: number; fonte: string | null };
+type RigaClasse = { id: string; name: string; school_type: string; fascia: string | null };
 
 const FASCE = ['nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_bambini'] as const;
 type Fascia = (typeof FASCE)[number];
@@ -48,7 +49,7 @@ function dataBreve(ymd: string): string {
 }
 
 /** Una chiamata alle route dell'anno. Non lancia mai: una rete caduta è `stato: 0`, e ogni esito non riuscito si registra (fisso, senza dati). */
-async function chiama(metodo: 'GET' | 'PUT' | 'POST' | 'DELETE', url: string, userId: string, corpo?: Record<string, unknown>): Promise<Risposta> {
+async function chiama(metodo: 'GET' | 'PUT' | 'POST' | 'PATCH' | 'DELETE', url: string, userId: string, corpo?: Record<string, unknown>): Promise<Risposta> {
   const operazione = `admin/anni/configurazione:${metodo}`;
   try {
     const res = await fetch(url, {
@@ -128,6 +129,7 @@ const estraiQuote = (d: Record<string, unknown>) =>
   Array.isArray(d.quote) && Array.isArray(d.listino) ? { quote: d.quote as RigaQuota[], listino: d.listino as RigaListino[] } : null;
 const estraiModuli = (d: Record<string, unknown>) => (Array.isArray(d.moduli) ? (d.moduli as RigaModulo[]) : null);
 const estraiPosti = (d: Record<string, unknown>) => (Array.isArray(d.posti) ? (d.posti as RigaPosti[]) : null);
+const estraiClassi = (d: Record<string, unknown>) => (Array.isArray(d.sezioni) ? (d.sezioni as RigaClasse[]) : null);
 
 export function AnnoConfigurazione({
   userId,
@@ -162,10 +164,10 @@ export function AnnoConfigurazione({
    * Restituisce `true` se il server ha detto di sì (chi chiama svuota allora il proprio modulo).
    */
   const scrivi = useCallback(
-    async (area: string, metodo: 'PUT' | 'POST' | 'DELETE', url: string, corpo: Record<string, unknown> | undefined, testo: (dati: Record<string, unknown> | null) => string) => {
+    async (area: string, metodo: 'PUT' | 'POST' | 'PATCH' | 'DELETE', url: string, corpo: Record<string, unknown> | undefined, testo: (dati: Record<string, unknown> | null) => string) => {
       setInCorso(area);
       setEsito(null);
-      const r = await chiama(metodo, url, userId, metodo === 'PUT' ? corpo : undefined);
+      const r = await chiama(metodo, url, userId, metodo === 'PUT' || metodo === 'PATCH' ? corpo : undefined);
       const ok = riuscita(r);
       // Il database è già cambiato: si rilegge anche se il pannello è stato smontato in volo.
       if (ok) onCambiata();
@@ -253,7 +255,7 @@ type Comuni = {
   base: string;
   versione: number;
   inCorso: string | null;
-  scrivi: (area: string, metodo: 'PUT' | 'POST' | 'DELETE', url: string, corpo: Record<string, unknown> | undefined, testo: (dati: Record<string, unknown> | null) => string) => Promise<boolean>;
+  scrivi: (area: string, metodo: 'PUT' | 'POST' | 'PATCH' | 'DELETE', url: string, corpo: Record<string, unknown> | undefined, testo: (dati: Record<string, unknown> | null) => string) => Promise<boolean>;
   esitoDi: (area: string) => React.ReactNode;
   fasciaNome: (f: string | null) => string;
   setEsito: (e: EsitoUi | null) => void;
@@ -558,10 +560,15 @@ function RigaFascia({ c, fascia, attuale }: { c: Comuni; fascia: Fascia; attuale
 function BloccoClassi({ c, stato }: { c: Comuni; stato: 'in_preparazione' | 'iscrizioni_aperte' }) {
   const t = useTranslations('annoListino');
   const area = 'classi';
+  const areaFascia = 'classi-fascia';
+  const lettura = useLettura(`${c.base}/sezioni`, c.userId, c.versione, estraiClassi);
   const copia = () =>
     void c.scrivi(area, 'POST', `${c.base}/sezioni`, undefined, (d) =>
       t('classiEsito', { copiate: typeof d?.copiate === 'number' ? d.copiate : 0, presenti: typeof d?.gia_presenti === 'number' ? d.gia_presenti : 0 }),
     );
+  const scegli = (classe: RigaClasse, valore: string) =>
+    void c.scrivi(areaFascia, 'PATCH', `${c.base}/sezioni`, { section_id: classe.id, fascia: valore === TUTTE ? null : valore }, () => t('classiFasciaSalvata'));
+  const senzaFascia = lettura.fase === 'ok' ? lettura.dati.filter((x) => x.fascia === null).length : 0;
   return (
     <fieldset className="mt-5 border-t border-kidville-line pt-4">
       <legend className={sottoTitolo}>{t('classiTitolo')}</legend>
@@ -572,6 +579,44 @@ function BloccoClassi({ c, stato }: { c: Comuni; stato: 'in_preparazione' | 'isc
         </button>
       </div>
       {c.esitoDi(area)}
+
+      <div className="mt-4">
+        <p className={hint}>{t('classiFasciaIntro')}</p>
+        {lettura.fase !== 'ok' ? (
+          <StatoLettura lettura={lettura} testoErrore={(e) => (e.tipo === 'rete' ? t('erroreRete') : e.tipo === 'permesso' ? t('errorePermesso') : messaggioDaCorpo(e.tipo === 'risposta' ? e.corpo : null, t('erroreLettura')))} />
+        ) : lettura.dati.length === 0 ? (
+          <p className="mt-2 font-maven text-sm text-kidville-sub">{t('classiElencoVuoto')}</p>
+        ) : (
+          <>
+            <p role="status" className={`mt-2 font-maven text-sm ${senzaFascia > 0 ? 'text-kidville-error' : 'text-kidville-success'}`}>
+              {senzaFascia > 0 ? t('classiSenzaFascia', { n: senzaFascia }) : t('classiTutteConFascia')}
+            </p>
+            <ul className="mt-2">
+              {lettura.dati.map((classe) => (
+                <ClasseFascia key={classe.id} classe={classe} c={c} onScegli={scegli} />
+              ))}
+            </ul>
+            {c.esitoDi(areaFascia)}
+          </>
+        )}
+      </div>
     </fieldset>
+  );
+}
+
+function ClasseFascia({ classe, c, onScegli }: { classe: RigaClasse; c: Comuni; onScegli: (classe: RigaClasse, valore: string) => void }) {
+  const t = useTranslations('annoListino');
+  const id = useId();
+  return (
+    <li className={rigaClasse}>
+      <strong className="min-w-0 flex-1 break-words">{classe.name}</strong>
+      <label htmlFor={`${id}-fascia`} className="sr-only">{t('classiFasciaEtichetta', { classe: classe.name })}</label>
+      <select id={`${id}-fascia`} value={classe.fascia ?? TUTTE} disabled={c.inCorso !== null} onChange={(e) => onScegli(classe, e.target.value)} className={input}>
+        <option value={TUTTE}>{t('classiFasciaNessuna')}</option>
+        {FASCE.map((f: Fascia) => (
+          <option key={f} value={f}>{c.fasciaNome(f)}</option>
+        ))}
+      </select>
+    </li>
   );
 }

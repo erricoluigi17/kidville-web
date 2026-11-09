@@ -47,7 +47,7 @@ type EsitoUi = { blocco: Blocco; tipo: 'salvato' | 'invariato' } | { blocco: Blo
 /** `stato: 0` = la richiesta non è arrivata (rete). */
 type Risposta = { stato: number; corpo: unknown };
 
-const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova'];
+const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova', 'classi_senza_fascia'];
 
 /** '2027-09-01' → '1/9/2027'. Stringa su stringa: nessun fuso, nessuna `Date`. */
 function dataBreve(ymd: string): string {
@@ -361,6 +361,7 @@ function DettaglioAnno({
       case 'quota_conferma': return t('annoMancaQuotaConferma');
       case 'quota_nuova': return t('annoMancaQuotaNuova');
       case 'moduli_conferma': return t('annoMancaModuliConferma');
+      case 'classi_senza_fascia': return t('annoMancaClassiSenzaFascia');
       default: return t('annoMancaModuliNuova');
     }
   };

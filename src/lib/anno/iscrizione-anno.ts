@@ -40,7 +40,7 @@ export type RisultatoRegistra = {
   posti_oltre: boolean
   /** C'è solo (e vale `true`) se la frequenza esisteva già viva con un'altra sezione: quella chiesta NON è stata applicata (4.5.15, M4). */
   sezione_ignorata?: boolean
-  /** Solo se era `ritirato` e questa chiamata l'ha riaperta (4.5.16): è l'unica strada che riapre. */
+  /** Solo se era `ritirato` e questa chiamata l'ha riaperta (4.5.16). Le strade che riaprono sono due: `anno_registra_frequenza` (conferma, domanda, import) e `riapriFrequenzaProssima` (il ritorno da «Riporta»). */
   riaperta?: boolean
   /** Solo se era `trasferito` o `uscito`: non si riapre, la domanda è stata collegata e la voce non nasce (4.5.16). */
   chiusa?: boolean
@@ -495,31 +495,31 @@ export async function ritiraConferma(supabase: SupabaseClient, a: RitiroArgs): P
     if (anno.error) return esitoDaErrore(anno.error, OP_RITIRO, 'ritiro-conferma-non-letto')
     if ((anno.data as { stato?: string } | null)?.stato !== 'iscrizioni_aperte') return { ok: false, codice: 'ANNO_NON_APERTO' }
 
-    if (f.origine !== 'conferma') {
-      const lettura_fallita = (e: ErrorePg): EsitoFallito => {
-        if (schemaAnnoIndietro(e)) return esitoDaErrore(e, OP_RITIRO, 'ritiro-conferma-non-letto')
-        logEvento('anno-scolastico', 'warn', { tipo: 'ritiro-conferma-frequenza-non-letta', operazione: OP_RITIRO, error_code: e?.code ?? undefined })
-        return { ok: false, codice: 'SCRITTURA_FALLITA' }
-      }
-      // Una domanda, un inserimento della segreteria, un import: si ritira da qui solo se il bambino FREQUENTA (frequenza viva
-      // nell'anno attivo). Altrimenti arriva l'anno prossimo, e si toglie archiviandolo. Una lettura che fallisce NON è un «no».
-      const attivo = await supabase.rpc('anno_attivo', { p_scuola: f.scuola_id })
-      if (attivo.error) return lettura_fallita(attivo.error)
-      const idAttivo = typeof attivo.data === 'string' ? attivo.data : null
-      let frequenta = false
-      if (idAttivo) {
-        const viva = await supabase
-          .from('frequenze')
-          .select('id')
-          .eq('alunno_id', f.alunno_id)
-          .eq('anno_sede_id', idAttivo)
-          .in('stato', ['in_attesa', 'iscritto'])
-          .limit(1)
-        if (viva.error) return lettura_fallita(viva.error)
-        frequenta = ((viva.data ?? []) as unknown[]).length > 0
-      }
-      if (!frequenta) return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
+    // «Frequenta» si controlla per OGNI origine (4.5.17, C): una riga riaperta da una nuova domanda di chi era uscito conserva
+    // `origine = 'conferma'` ma il bambino non frequenta, e ritirarla lascerebbe una scheda «in arrivo» senza arrivo.
+    const lettura_fallita = (e: ErrorePg): EsitoFallito => {
+      if (schemaAnnoIndietro(e)) return esitoDaErrore(e, OP_RITIRO, 'ritiro-conferma-non-letto')
+      logEvento('anno-scolastico', 'warn', { tipo: 'ritiro-conferma-frequenza-non-letta', operazione: OP_RITIRO, error_code: e?.code ?? undefined })
+      return { ok: false, codice: 'SCRITTURA_FALLITA' }
     }
+    // Una domanda, un inserimento della segreteria, un import: si ritira da qui solo se il bambino FREQUENTA (frequenza viva
+    // nell'anno attivo). Altrimenti arriva l'anno prossimo, e si toglie archiviandolo. Una lettura che fallisce NON è un «no».
+    const attivo = await supabase.rpc('anno_attivo', { p_scuola: f.scuola_id })
+    if (attivo.error) return lettura_fallita(attivo.error)
+    const idAttivo = typeof attivo.data === 'string' ? attivo.data : null
+    let frequenta = false
+    if (idAttivo) {
+      const viva = await supabase
+        .from('frequenze')
+        .select('id')
+        .eq('alunno_id', f.alunno_id)
+        .eq('anno_sede_id', idAttivo)
+        .in('stato', ['in_attesa', 'iscritto'])
+        .limit(1)
+      if (viva.error) return lettura_fallita(viva.error)
+      frequenta = ((viva.data ?? []) as unknown[]).length > 0
+    }
+    if (!frequenta) return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
 
     return await ritiraEToglieQuota(supabase, f, a.attore, OP_RITIRO)
   } catch (err) {

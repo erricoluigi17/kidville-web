@@ -191,6 +191,8 @@ describe('ConfermeClient — le viste e i nomi', () => {
     const riga = rigaDi('CognomeArrivo NomeArrivo')
     expect(within(riga).getByRole('button', { name: itConferme.moduliApri })).toBeInTheDocument()
     expect(within(riga).queryByRole('button', { name: itConferme.azioneConferma })).toBeNull()
+    // 4.5.17 (C): la riga porta `conferma: 'confermato'` e `nuova_frequenza_id` (come quella di un bambino tornato dopo la conferma), ma in «Nuove» «Ritira la conferma» non c'è
+    expect(within(riga).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
     // il filtro delle nuove ha solo «Tutti» e «Mancano moduli»
     expect(screen.queryByRole('button', { name: itConferme.filtroNo })).toBeNull()
     expect(screen.getByRole('button', { name: itConferme.filtroManca })).toBeInTheDocument()

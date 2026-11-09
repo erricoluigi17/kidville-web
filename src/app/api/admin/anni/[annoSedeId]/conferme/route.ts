@@ -23,7 +23,7 @@ type Contesto = { params: Promise<{ annoSedeId: string }> }
  *
  *  · GET  — due viste (`?vista=`). `conferme` (predefinita): per ogni frequenza viva dell'anno attivo, se la famiglia ha confermato,
  *    ha detto «no» o non ha risposto, a che punto sono moduli e quota, se cambia grado. `nuove`: le frequenze vive dell'anno nuovo
- *    con `tipo = 'nuova'`, cioè chi arriva da fuori: senza questa vista la segreteria non avrebbe un posto dove spuntare i loro moduli.
+ *    di chi arriva da fuori (`tipo = 'nuova'`) o di chi non frequenta (torna dopo essere uscito): senza questa vista la segreteria non avrebbe un posto dove spuntare i loro moduli.
  *    Il filtro (`?conferma=`, anche `mancano_moduli`) lo applica la route sul TOTALE. I NOMI li porta la route, e solo della pagina:
  *    nome e cognome da `alunni`, due colonne.
  *  · POST — conferma una frequenza (`anno_conferma`): nasce la frequenza dell'anno prossimo e la voce della quota, senza toccare
@@ -53,6 +53,8 @@ type Nuova = {
   stato: string
   quota_saldata: boolean
   quota_pagamento_id: string | null
+  /** La lista dei moduli di una riga è quella del suo `tipo` (4.5.17, B); `null` (il recupero) non ne ha. */
+  tipo: 'conferma' | 'nuova' | null
 }
 type Sezione = { id: string; name: string | null; school_type: string | null; fascia: string | null }
 
@@ -84,15 +86,19 @@ function lettura(error: ErroreDb, ctx: { operazione: string; annoSedeId: string;
   return rispostaErroreImpostazioni(error, { ...ctx, tipoRifiuto: TIPO_RIFIUTO, lettura: true })
 }
 
-/** Quante spunte ha ciascuna frequenza fra i moduli indicati: TUTTE quelle dell'anno, a blocchi (serve al filtro «mancano moduli»). */
-async function spunteDellAnno(supabase: Db, idModuli: string[]): Promise<{ fatti: Map<string, number> } | { error: ErroreDb }> {
-  const fatti = new Map<string, number>()
+/** Quali moduli ha spuntato ciascuna frequenza fra i moduli indicati: TUTTE quelle dell'anno, a blocchi (serve al filtro «mancano moduli»). */
+async function spunteDellAnno(supabase: Db, idModuli: string[]): Promise<{ fatti: Map<string, Set<string>> } | { error: ErroreDb }> {
+  const fatti = new Map<string, Set<string>>()
   if (idModuli.length === 0) return { fatti }
-  const r = await leggiABlocchi<{ frequenza_id: string }>((da, a) =>
+  const r = await leggiABlocchi<{ frequenza_id: string; modulo_id: string }>((da, a) =>
     supabase.from('frequenze_moduli').select('frequenza_id, modulo_id').in('modulo_id', idModuli).order('id', { ascending: true }).range(da, a),
   )
   if ('error' in r) return { error: r.error }
-  for (const x of r.righe) fatti.set(x.frequenza_id, (fatti.get(x.frequenza_id) ?? 0) + 1)
+  for (const x of r.righe) {
+    const set = fatti.get(x.frequenza_id) ?? new Set<string>()
+    set.add(x.modulo_id)
+    fatti.set(x.frequenza_id, set)
+  }
   return { fatti }
 }
 
@@ -125,11 +131,21 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   }
 
   const dal = (pagina - 1) * limite
-  // I moduli della lista del tipo: `conferma` per chi continua, `nuova` per chi arriva. Servono alle righe e al filtro.
-  const lista = vista === 'nuove' ? 'nuova' : 'conferma'
-  const richiesti = await supabase.from('moduli_richiesti').select('id').eq('anno_sede_id', annoSedeId).eq('lista', lista)
+  // I moduli di una riga sono quelli della lista del suo `tipo` (`conferma` o `nuova`), in tutte e due le viste: è la lista che la route
+  // che spunta (`frequenze/[frequenzaId]/moduli`) usa davvero. Un `tipo` NULL (il recupero) non ne ha (4.5.17, B).
+  const richiesti = await supabase.from('moduli_richiesti').select('id, lista').eq('anno_sede_id', annoSedeId).in('lista', ['conferma', 'nuova'])
   if (richiesti.error) return lettura(richiesti.error, ctx)
-  const idRichiesti = new Set(((Array.isArray(richiesti.data) ? richiesti.data : []) as Array<{ id: string }>).map((m) => m.id))
+  const perLista = { conferma: new Set<string>(), nuova: new Set<string>() }
+  for (const m of (Array.isArray(richiesti.data) ? richiesti.data : []) as Array<{ id: string; lista: 'conferma' | 'nuova' }>) perLista[m.lista]?.add(m.id)
+  const NESSUNO = new Set<string>()
+  const richiestiDi = (tipo: Nuova['tipo']): Set<string> => (tipo ? perLista[tipo] : NESSUNO)
+  const idTutti = [...perLista.conferma, ...perLista.nuova]
+  const mancano = (n: { id: string; tipo: Nuova['tipo'] }, fatti: Map<string, Set<string>>): boolean => {
+    const r = richiestiDi(n.tipo)
+    if (r.size === 0) return false
+    const f = fatti.get(n.id)
+    return [...r].some((m) => !f?.has(m))
+  }
 
   // `partenze` = i bambini dell'anno attivo da mostrare (vista conferme); `nuove` = le frequenze dell'anno nuovo che li riguardano
   // (vista conferme) oppure da mostrare (vista nuove).
@@ -138,39 +154,42 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   let totale = 0
 
   if (vista === 'nuove') {
-    // Le frequenze vive dell'anno nuovo con `tipo = 'nuova'`: chi arriva da fuori. Chi ha confermato (`conferma`) sta nell'altra vista.
-    const colonneNuova = 'id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id'
-    if (conferma === 'tutti') {
-      const elenco = await supabase
-        .from('frequenze')
-        .select(colonneNuova, { count: 'exact' })
-        .eq('anno_sede_id', annoSedeId)
-        .eq('tipo', 'nuova')
-        .in('stato', VIVE)
-        .order('id', { ascending: true })
-        .range(dal, dal + limite - 1)
-      if (elenco.error) return lettura(elenco.error, ctx)
-      nuove = (Array.isArray(elenco.data) ? elenco.data : []) as Nuova[]
-      totale = typeof elenco.count === 'number' ? elenco.count : nuove.length
-    } else {
-      // «Mancano moduli»: vale sul TOTALE, quindi si leggono tutte le nuove dell'anno (poche colonne, a blocchi) e tutte le spunte.
-      const tutte = await leggiABlocchi<Nuova>((da, a) =>
-        supabase
-          .from('frequenze')
-          .select(colonneNuova)
-          .eq('anno_sede_id', annoSedeId)
-          .eq('tipo', 'nuova')
-          .in('stato', VIVE)
-          .order('id', { ascending: true })
-          .range(da, a),
-      )
-      if ('error' in tutte) return lettura(tutte.error, ctx)
-      const spunte = await spunteDellAnno(supabase, [...idRichiesti])
-      if ('error' in spunte) return lettura(spunte.error, ctx)
-      const giuste = tutte.righe.filter((n) => idRichiesti.size > 0 && (spunte.fatti.get(n.id) ?? 0) < idRichiesti.size)
-      totale = giuste.length
-      nuove = giuste.slice(dal, dal + limite)
+    // Le frequenze vive dell'anno nuovo di chi arriva da fuori (`tipo = 'nuova'`) E di chi non frequenta: un bambino tornato dopo essere
+    // uscito, la cui riga si è riaperta come `conferma`, non sta in «Conferme» (non ha una frequenza viva nell'anno attivo) e senza questa
+    // regola non starebbe da nessuna parte (4.5.17, A). Chi frequenta e ha confermato sta nell'altra vista. Si legge a blocchi: il totale
+    // e la pagina restano veri.
+    const colonneNuova = 'id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id, tipo'
+    const tutte = await leggiABlocchi<Nuova>((da, a) =>
+      supabase.from('frequenze').select(colonneNuova).eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+    )
+    if ('error' in tutte) return lettura(tutte.error, ctx)
+    let candidate = tutte.righe
+    if (candidate.some((n) => n.tipo !== 'nuova')) {
+      // Chi frequenta: ha una frequenza viva nell'anno attivo della sede. Se `anno_attivo` non dà un anno, nessuno frequenta.
+      const attivo = await supabase.rpc('anno_attivo', { p_scuola: letta.scuolaId })
+      if (attivo.error) return lettura(attivo.error, ctx)
+      const attivoId = typeof attivo.data === 'string' && attivo.data !== annoSedeId ? attivo.data : null
+      const frequentano = new Set<string>()
+      if (attivoId) {
+        // Anche l'anno di partenza dev'essere dentro il perimetro, come nell'altra vista.
+        const fuoriSedeAttivo = await assertAnnoSedeInScope(supabase, auth.user, attivoId, operazione)
+        if (fuoriSedeAttivo) return fuoriSedeAttivo
+        const f = await leggiABlocchi<{ alunno_id: string }>((da, a) =>
+          supabase.from('frequenze').select('alunno_id').eq('anno_sede_id', attivoId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+        )
+        if ('error' in f) return lettura(f.error, ctx)
+        for (const x of f.righe) frequentano.add(x.alunno_id)
+      }
+      candidate = candidate.filter((n) => n.tipo === 'nuova' || !frequentano.has(n.alunno_id))
     }
+    let giuste = candidate
+    if (conferma === 'mancano_moduli') {
+      const spunte = await spunteDellAnno(supabase, idTutti)
+      if ('error' in spunte) return lettura(spunte.error, ctx)
+      giuste = candidate.filter((n) => mancano(n, spunte.fatti))
+    }
+    totale = giuste.length
+    nuove = giuste.slice(dal, dal + limite)
   } else {
     // L'anno di partenza: l'attivo della sede, anch'esso dentro il perimetro.
     const attivo = await supabase.rpc('anno_attivo', { p_scuola: letta.scuolaId })
@@ -202,8 +221,8 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
         supabase.from('frequenze').select('id, alunno_id, non_rinnova_il').eq('anno_sede_id', partenzaId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
       )
       if ('error' in tutteLePartenze) return lettura(tutteLePartenze.error, ctx)
-      const tutteLeNuove = await leggiABlocchi<{ id: string; alunno_id: string }>((da, a) =>
-        supabase.from('frequenze').select('id, alunno_id').eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+      const tutteLeNuove = await leggiABlocchi<{ id: string; alunno_id: string; tipo: Nuova['tipo'] }>((da, a) =>
+        supabase.from('frequenze').select('id, alunno_id, tipo').eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
       )
       if ('error' in tutteLeNuove) return lettura(tutteLeNuove.error, ctx)
       const confermati = new Set(tutteLeNuove.righe.map((n) => n.alunno_id))
@@ -212,12 +231,12 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
       let giuste: Array<{ id: string }>
       if (conferma === 'mancano_moduli') {
         // Mancano moduli a chi ha confermato (ha una frequenza nuova) e ne ha spuntati meno di quelli richiesti.
-        const spunte = await spunteDellAnno(supabase, [...idRichiesti])
+        const spunte = await spunteDellAnno(supabase, idTutti)
         if ('error' in spunte) return lettura(spunte.error, ctx)
-        const nuovaDi = new Map(tutteLeNuove.righe.map((n) => [n.alunno_id, n.id]))
+        const nuovaDi = new Map(tutteLeNuove.righe.map((n) => [n.alunno_id, n]))
         giuste = tutteLePartenze.righe.filter((p) => {
           const n = nuovaDi.get(p.alunno_id)
-          return !!n && idRichiesti.size > 0 && (spunte.fatti.get(n) ?? 0) < idRichiesti.size
+          return !!n && mancano(n, spunte.fatti)
         })
       } else {
         giuste = tutteLePartenze.righe.filter((p) => statoDi(p) === conferma)
@@ -237,7 +256,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     if (alunniPagina.length > 0) {
       const r = await supabase
         .from('frequenze')
-        .select('id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id')
+        .select('id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id, tipo')
         .eq('anno_sede_id', annoSedeId)
         .in('alunno_id', alunniPagina)
       if (r.error) return lettura(r.error, ctx)
@@ -247,12 +266,13 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   const nuovaDi = new Map(nuove.map((n) => [n.alunno_id, n]))
 
   // Quanti moduli ha spuntato ciascuna frequenza nuova della pagina.
+  const tipoDi = new Map(nuove.map((n) => [n.id, n.tipo]))
   const fatti = new Map<string, number>()
-  if (nuove.length > 0 && idRichiesti.size > 0) {
+  if (nuove.length > 0 && idTutti.length > 0) {
     const r = await supabase.from('frequenze_moduli').select('frequenza_id, modulo_id').in('frequenza_id', nuove.map((n) => n.id))
     if (r.error) return lettura(r.error, ctx)
     for (const x of (Array.isArray(r.data) ? r.data : []) as Array<{ frequenza_id: string; modulo_id: string }>) {
-      if (idRichiesti.has(x.modulo_id)) fatti.set(x.frequenza_id, (fatti.get(x.frequenza_id) ?? 0) + 1)
+      if (richiestiDi(tipoDi.get(x.frequenza_id) ?? null).has(x.modulo_id)) fatti.set(x.frequenza_id, (fatti.get(x.frequenza_id) ?? 0) + 1)
     }
   }
 
@@ -294,7 +314,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     vista === 'nuove'
       ? nuove.map((n) => ({
           // Nella vista delle nuove la riga È la frequenza dell'anno nuovo: `frequenza_id` e `nuova_frequenza_id` coincidono, ed è lì che
-          // si spuntano i moduli. `conferma` non ha senso per chi arriva da fuori (la pagina non mostra la colonna).
+          // si spuntano i moduli. `conferma` non ha senso per chi arriva da fuori o torna dopo essere uscito (la pagina non mostra la colonna).
           frequenza_id: n.id,
           alunno_id: n.alunno_id,
           section_id: n.section_id,
@@ -302,7 +322,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
           nuova_section_id: n.section_id,
           conferma: 'confermato' as Stato,
           non_rinnova_motivo: null,
-          moduli: { fatti: fatti.get(n.id) ?? 0, richiesti: idRichiesti.size },
+          moduli: { fatti: fatti.get(n.id) ?? 0, richiesti: richiestiDi(n.tipo).size },
           quota: quotaDi(n),
           cambia_grado: false,
           stato_frequenza: n.stato,
@@ -323,7 +343,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
             nuova_section_id: confermata ? n.section_id : null,
             conferma,
             non_rinnova_motivo: conferma === 'no' ? p.non_rinnova_motivo : null,
-            moduli: { fatti: confermata ? (fatti.get(n.id) ?? 0) : 0, richiesti: idRichiesti.size },
+            moduli: { fatti: confermata ? (fatti.get(n.id) ?? 0) : 0, richiesti: confermata ? richiestiDi(n.tipo).size : perLista.conferma.size },
             quota: confermata ? quotaDi(n) : ('assente' as StatoQuota),
             cambia_grado: confermata ? cambiaGrado(p.section_id, n.section_id) : false,
             stato_frequenza: confermata ? n.stato : null,

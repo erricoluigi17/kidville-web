@@ -1,0 +1,16 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.7 · «Il cruscotto dell'anno prossimo» · M47 (compiti 4.7.0 e 4.7.1)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.7.0 (scheletro) e lo riempie il compito 4.7.1.
+--
+-- CONTERRÀ solo FUNZIONI DI SOLA LETTURA (`STABLE`, `SECURITY DEFINER`, `SET search_path = public, pg_temp`,
+-- `REVOKE ALL … FROM PUBLIC, anon, authenticated`, `GRANT EXECUTE … TO service_role`):
+--   · `anno_cruscotto(p_anno_sede uuid, p_oggi date DEFAULT NULL) RETURNS jsonb` — i cinque blocchi (posti, risposte, quote,
+--     incrocio moduli/quota, confronto con l'anno prima), tutti numeri e nomi di sezione;
+--   · `anno_quota_piu_voci(p_anno_sede uuid, p_frequenze uuid[] DEFAULT NULL) RETURNS TABLE (frequenza_id uuid)` — le frequenze
+--     vive dell'anno senza voce per cui `anno_quota_voce` direbbe `piu_voci`.
+--
+-- Nessuna scrittura su dati, nessun interruttore del freno, nessuna tabella nuova, nessun uuid di sede, niente
+-- `schools.operativa`; `enrollment_submissions` passa da `to_regclass`.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

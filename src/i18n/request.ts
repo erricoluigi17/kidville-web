@@ -92,6 +92,8 @@ export default getRequestConfig(async () => {
     annoConferme: (await import(`../../messages/${locale}/annoConferme.json`)).default,
     annoPubblico: (await import(`../../messages/${locale}/annoPubblico.json`)).default,
     annoFamiglia: (await import(`../../messages/${locale}/annoFamiglia.json`)).default,
+    // Il cruscotto dell'anno prossimo (PR 4.7): la pagina «Anno prossimo». Nasce vuoto nel compito 4.7.0; lo riempie chi ha la schermata.
+    annoCruscotto: (await import(`../../messages/${locale}/annoCruscotto.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

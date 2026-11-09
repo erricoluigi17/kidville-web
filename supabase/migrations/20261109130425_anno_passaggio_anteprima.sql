@@ -239,6 +239,16 @@ BEGIN
    WHERE NOT EXISTS (SELECT 1 FROM public.utenti_sezioni x WHERE x.utente_id = us.utente_id AND x.section_id = sn.id)
   ON CONFLICT (passaggio_id, utente_id, sezione_a_id) DO NOTHING;
 
+  -- (giro 1, B5) Il docente che nel frattempo non è più sulla classe vecchia non segue più la classe nuova: la sua copia si toglie.
+  -- Le `aggiunta` (scelte a mano) e le `tolta` (decise a mano) restano.
+  DELETE FROM public.passaggi_anno_docenti d
+   WHERE d.passaggio_id = v_p.id AND d.origine = 'copiata'
+     AND NOT EXISTS (SELECT 1
+                       FROM public.utenti_sezioni us
+                       JOIN public.sections sn ON sn.id = d.sezione_a_id
+                       JOIN public.sections so ON so.id = sn.continua_da AND so.id = us.section_id
+                      WHERE us.utente_id = d.utente_id AND so.anno_id = v_da.anno_id AND so.scuola_id = v_da.scuola_id);
+
   SELECT jsonb_build_object(
            'continua',     count(*) FILTER (WHERE r.esito = 'continua'),
            'cambia_grado', count(*) FILTER (WHERE r.esito = 'cambia_grado'),

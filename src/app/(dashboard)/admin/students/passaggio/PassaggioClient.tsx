@@ -47,7 +47,7 @@ type DocenteApi = { utente_id: string; sezione_a_id: string; origine: 'copiata' 
 type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato'; conteggi: Record<string, number>; apribile_dal: string | null };
 type Letta = { passaggio: PassaggioApi | null; righe: RigaApi[]; totale: number; docenti: DocenteApi[] };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
-type Staff = { id: string; nome: string | null; cognome: string | null };
+type Staff = { id: string; nome: string | null; cognome: string | null; ruolo?: string | null; scuola_id?: string | null };
 type Nome = { nome: string; cognome: string; classe: string | null };
 type Contatori = { esiti: Record<EsitoRiga, number>; daDecidere: RigaApi[]; daDecidereTotale: number };
 type Messaggio = { tipo: 'ok' | 'errore'; testo: string; codice: string | null };
@@ -222,7 +222,11 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     return riuscita(r) && Array.isArray(d) ? { ok: true, dati: d as Staff[] } : { ok: false, stato: r.stato, corpo: r.corpo };
   }, [uid]);
   const staffLetto = useLettura(passaggioId ? 'staff' : null, leggiStaff);
-  const staff = staffLetto.fase === 'ok' ? staffLetto.dati : [];
+  // (giro 1, B5) Nella tendina solo il personale della sede dell'anno, non i genitori né i colleghi delle altre sedi: la route lo rifiuta comunque.
+  const staff = useMemo(
+    () => (staffLetto.fase === 'ok' ? staffLetto.dati.filter((x) => x.ruolo !== 'genitore' && (!sedeCorrente || !x.scuola_id || x.scuola_id === sedeCorrente)) : []),
+    [staffLetto, sedeCorrente],
+  );
 
   // I NOMI: solo dei bambini di cui la pagina mostra una riga. Le route danno uuid; qui si cercano nelle schede (prima chi frequenta,
   // poi chi arriva, poi chi non è più iscritto) e di tutto l'elenco si tiene soltanto ciò che serve a queste righe.

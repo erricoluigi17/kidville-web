@@ -53,7 +53,7 @@
   "successiva": "Avanti",
   "paginaDi": "Pagina {pagina}/{pagine}",
   "docentiTitolo": "Docenti delle classi nuove",
-  "docentiNota": "Sono i docenti delle classi di partenza, copiati sulle classi nuove. Puoi toglierne o aggiungerne.",
+  "docentiNota": "Sono i docenti delle classi di partenza, copiati sulle classi nuove. Puoi toglierne o aggiungerne. «Togli» vale per la classe nuova: sulla classe di partenza il docente resta fino alla conferma.",
   "docentiVuoto": "Nessun docente copiato.",
   "docenteSenzaNome": "Docente senza nome",
   "docenteCopiata": "copiato",

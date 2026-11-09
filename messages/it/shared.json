@@ -866,5 +866,7 @@
   "errorePassaggioNonTrovato": "Questo passaggio non esiste più. Aggiorna la pagina.",
   "erroreAnteprimaVecchia": "L’anteprima non è più aggiornata: dopo averla calcolata qualcosa è cambiato. Calcolala di nuovo.",
   "erroreRigheDaDecidere": "Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.",
-  "erroreRigaNonValida": "Questa correzione non è ammessa. Per ritirare un bambino nuovo o registrare una conferma usa la pagina «Conferme»."
+  "erroreRigaNonValida": "Questa correzione non è ammessa per questo bambino. Nel passaggio si può cambiare la classe o far uscire chi continua; per una famiglia che torna dopo la conferma usa «Conferma tardiva» in questa pagina.",
+  "erroreDocenteNonValido": "Questa persona non può avere la classe: scegli un docente di questa sede.",
+  "erroreAlunnoSenzaIscrizione": "Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno»."
 }

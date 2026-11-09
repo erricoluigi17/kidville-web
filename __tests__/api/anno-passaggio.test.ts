@@ -37,6 +37,7 @@ type Query = { tabella: string; colonne?: string; filtri: Record<string, unknown
 const h = vi.hoisted(() => ({
   user: null as null | { id: string; role: string; scuola_id: string },
   anni: {} as Record<string, { id: string; scuola_id: string; stato: string; ultimo_giorno_aperto?: string }>,
+  utenti: {} as Record<string, { id: string; ruolo: string; scuola_id: string | null }>,
   /** I passaggi non annullati, per anno nuovo (`a_anno_sede_id`). */
   passaggi: {} as Record<string, unknown>,
   righe: [] as Array<Record<string, unknown>>,
@@ -101,6 +102,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         const errore = h.errLettura[tabella]
         if (errore) return { data: null, error: errore }
         if (tabella === 'anni_sede') return { data: h.anni[String(q.filtri.id ?? '')] ?? null, error: null }
+        if (tabella === 'utenti') return { data: h.utenti[String(q.filtri.id ?? '')] ?? null, error: null }
         if (tabella === 'passaggi_anno') return { data: h.passaggi[String(q.filtri.a_anno_sede_id ?? '')] ?? null, error: null }
         return { data: null, error: null }
       }
@@ -179,6 +181,7 @@ beforeEach(() => {
   }
   h.righe = []
   h.docenti = []
+  h.utenti = { [DOC]: { id: DOC, ruolo: 'docente', scuola_id: SEDE_A } }
   h.errLettura = {}
   h.query = []
   h.scritture = []
@@ -570,6 +573,33 @@ describe('PUT passaggio/righe', () => {
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('PUT passaggio/docenti', () => {
+  // Giro 1, B5: si aggiunge solo personale DI QUESTA SEDE e non un genitore; togliere non controlla (chi è in elenco si toglie sempre).
+  it.each([
+    ['un genitore', { id: DOC, ruolo: 'genitore', scuola_id: SEDE_A }],
+    ['un collega di un’altra sede', { id: DOC, ruolo: 'docente', scuola_id: SEDE_B }],
+    ['una persona senza sede', { id: DOC, ruolo: 'docente', scuola_id: null }],
+  ])('422 DOCENTE_NON_VALIDO per %s: la funzione non viene chiamata', async (_nome, utente) => {
+    h.utenti = { [DOC]: utente }
+    const res = await docente(CORPO_DOCENTE)
+    expect(res.status).toBe(422)
+    expect((await res.json()).codice).toBe('DOCENTE_NON_VALIDO')
+    expect(h.rpc).toHaveLength(0)
+  })
+
+  it('422 DOCENTE_NON_VALIDO per un uuid che non è nessuno', async () => {
+    h.utenti = {}
+    const res = await docente(CORPO_DOCENTE)
+    expect(res.status).toBe(422)
+    expect(h.rpc).toHaveLength(0)
+  })
+
+  it('«tolta» non controlla chi è: un genitore finito per errore in elenco si toglie', async () => {
+    h.utenti = { [DOC]: { id: DOC, ruolo: 'genitore', scuola_id: SEDE_B } }
+    const res = await docente({ ...CORPO_DOCENTE, origine: 'tolta' })
+    expect(res.status).toBe(200)
+    expect(h.rpc).toHaveLength(1)
+  })
+
   it('passa alla funzione docente, sezione e origine', async () => {
     const res = await docente(CORPO_DOCENTE)
     expect(res.status).toBe(200)

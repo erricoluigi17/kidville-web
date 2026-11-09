@@ -89,6 +89,10 @@ export const CODICI_ANNO = [
   'ANTEPRIMA_VECCHIA',
   'RIGHE_DA_DECIDERE',
   'RIGA_NON_VALIDA',
+  // Giro di correzione 1: un docente che non si può mettere su una classe (B5); un bambino da riportare fra gli iscritti che nell'anno in
+  // corso non ha nessuna iscrizione (B7: la via è la «Conferma tardiva» del passaggio).
+  'DOCENTE_NON_VALIDO',
+  'ALUNNO_SENZA_ISCRIZIONE',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]

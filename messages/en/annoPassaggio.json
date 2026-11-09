@@ -53,7 +53,7 @@
   "successiva": "Next",
   "paginaDi": "Page {pagina}/{pagine}",
   "docentiTitolo": "Teachers of the new classes",
-  "docentiNota": "These are the teachers of the old classes, copied onto the new ones. You can remove or add some.",
+  "docentiNota": "These are the teachers of the old classes, copied onto the new ones. You can remove or add some. “Remove” applies to the new class: on the old class the teacher stays until you confirm.",
   "docentiVuoto": "No teacher copied.",
   "docenteSenzaNome": "Teacher without a name",
   "docenteCopiata": "copied",

@@ -351,6 +351,20 @@ describe('docenti del passaggio', () => {
     })
   })
 
+  // Giro 1, B5: il docente che nel frattempo lascia la classe vecchia non segue più la nuova; le scelte a mano (aggiunta, tolta) restano.
+  it('un’anteprima rifatta toglie la copia di chi non è più sulla classe vecchia, e lascia le scelte a mano', async () => {
+    await inRollback(b.db, async () => {
+      const r = await anteprima()
+      await imposta(r.passaggio_id, DOCENTE_2, b.sezioni.girasoliNuova, 'aggiunta')
+      await b.db.query(`DELETE FROM public.utenti_sezioni WHERE utente_id = $1 AND section_id = $2`, [DOCENTE_1, b.sezioni.girasoli])
+      const due = await anteprima()
+      expect(await docenti(due.passaggio_id)).toEqual([
+        { utente_id: DOCENTE_2, sezione_a_id: b.sezioni.farfalleNuova, origine: 'copiata' },
+        { utente_id: DOCENTE_2, sezione_a_id: b.sezioni.girasoliNuova, origine: 'aggiunta' },
+      ])
+    })
+  })
+
   it('chi è già assegnato alla sezione nuova non compare', async () => {
     await inRollback(b.db, async () => {
       await b.db.query(`INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2)`, [DOCENTE_1, b.sezioni.girasoliNuova])

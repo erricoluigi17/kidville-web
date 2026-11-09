@@ -3662,6 +3662,9 @@ export const CODICI_ERRORE = {
     ANTEPRIMA_VECCHIA: 'erroreAnteprimaVecchia',
     RIGHE_DA_DECIDERE: 'erroreRigheDaDecidere',
     RIGA_NON_VALIDA: 'erroreRigaNonValida',
+    /** Giro 1 del passaggio: 422 `DOCENTE_NON_VALIDO` (B5) · 409 `ALUNNO_SENZA_ISCRIZIONE` (B7). */
+    DOCENTE_NON_VALIDO: 'erroreDocenteNonValido',
+    ALUNNO_SENZA_ISCRIZIONE: 'erroreAlunnoSenzaIscrizione',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

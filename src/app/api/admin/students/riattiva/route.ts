@@ -13,7 +13,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 import { classeEsisteInOgniSede } from '../route';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
-import { rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
+import { erroreAnno, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 import { iscrizioniDelBambino, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
 import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo';
 
@@ -217,6 +217,15 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                 supabase, plessi, alunnoId, ruolo: auth.user.role, attoreId: auth.user.id, attore: auth.user,
                 prima: prima as unknown as Record<string, unknown>, frequenza: prossimaDaRiprendere,
             });
+        }
+        // (giro 1, B7) Nessuna frequenza nell'anno in corso e nessuna che viene: è il bambino uscito col passaggio d'anno. Rimetterlo
+        // `iscritto` lo lascerebbe senza frequenza, fuori dall'app delle famiglie e dall'elenco della maestra, con un esito positivo.
+        // Si dice dove farlo: la «Conferma tardiva» del passaggio.
+        if (annoSedeId && !iscrizioni.haFrequenzaAttiva) {
+            logEvento('anno-scolastico', 'warn', {
+                tipo: 'riattiva-senza-iscrizione', operazione: 'admin/students/riattiva:POST', alunno: alunnoId, error_code: 'ALUNNO_SENZA_ISCRIZIONE',
+            });
+            return erroreAnno({ message: 'ALUNNO_SENZA_ISCRIZIONE' }, 'admin/students/riattiva:POST')!;
         }
         // Ogni iscrizione RITIRATA di un anno che viene (conferma, domanda, segreteria, import) si riapre dalla pagina delle conferme
         // con «Conferma»; una trasferita o uscita no, e non si dice (4.5.16, C).

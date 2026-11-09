@@ -272,6 +272,16 @@ export function erroreAnno(
         { ...dettagli, error: frase('RIGA_NON_VALIDA'), codice: 'RIGA_NON_VALIDA' },
         { status: 422 },
       )
+    case 'DOCENTE_NON_VALIDO':
+      return NextResponse.json(
+        { error: frase('DOCENTE_NON_VALIDO'), codice: 'DOCENTE_NON_VALIDO' },
+        { status: 422 },
+      )
+    case 'ALUNNO_SENZA_ISCRIZIONE':
+      return NextResponse.json(
+        { error: frase('ALUNNO_SENZA_ISCRIZIONE'), codice: 'ALUNNO_SENZA_ISCRIZIONE' },
+        { status: 409 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(

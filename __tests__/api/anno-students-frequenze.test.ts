@@ -112,6 +112,11 @@ const dbBase = (): DBFinto => ({
     { id: `anno-di-${SEDE_B}`, scuola_id: SEDE_B, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' },
   ],
   gruppi_mensa: [],
+  // (giro 1, B7) Chi si riporta fra gli iscritti ha una frequenza nell'anno in corso (chiusa il giorno dell'archiviazione, quindi
+  // conta): senza, la route rifiuta con ALUNNO_SENZA_ISCRIZIONE (provato in coda a questo file).
+  frequenze: [
+    { id: 'fr-r', alunno_id: ALU_R, anno_sede_id: `anno-di-${SEDE_A}`, stato: 'ritirato', data_uscita: '2026-08-01' },
+  ],
   alunni: [
     alunno(ALU_A, SEDE_A, SEC_A),
     alunno(ALU_A2, SEDE_A, SEC_A),
@@ -276,6 +281,24 @@ describe('POST /api/admin/students/riattiva', () => {
     const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
     expect(res.status).toBe(500)
     expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  // Giro 1, B7: il bambino uscito col passaggio d'anno (frequenza dell'anno in corso chiusa PRIMA dell'archiviazione, o assente)
+  // non si rimette `iscritto` da qui: la scheda resterebbe senza frequenza, con un 200 che dice il falso.
+  it('senza nessuna frequenza nell’anno in corso: 409 ALUNNO_SENZA_ISCRIZIONE, la scheda non cambia', async () => {
+    h.db.frequenze = []
+    const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_SENZA_ISCRIZIONE')
+    expect(h.db.alunni.find((r) => r.id === ALU_R)!.stato).toBe('ritirato')
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  it('frequenza chiusa PRIMA del giorno dell’archiviazione (è uscito col passaggio): 409 anche così', async () => {
+    h.db.frequenze = [{ id: 'fr-r', alunno_id: ALU_R, anno_sede_id: `anno-di-${SEDE_A}`, stato: 'ritirato', data_uscita: '2026-07-15' }]
+    const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_SENZA_ISCRIZIONE')
   })
 })
 

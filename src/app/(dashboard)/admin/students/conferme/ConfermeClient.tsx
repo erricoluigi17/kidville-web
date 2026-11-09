@@ -147,7 +147,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   const [versione, setVersione] = useState(0);
   const [filtro, setFiltro] = useState<Filtro>('tutti');
 
-  const lettura = useLettura(`${base}/conferme?pagina=${pagina}`, uid, versione, estraiElenco);
+  const lettura = useLettura(`${base}/conferme?pagina=${pagina}&conferma=${filtro}`, uid, versione, estraiElenco);
   const nomi = useLettura(`/api/admin/students?elenco=frequentanti&limit=${LIMITE_ELENCO_ALUNNI}`, uid, 0, estraiNomi);
   const sezioni = useLettura('/api/admin/sections/scoped?grado=primaria', uid, 0, estraiSezioni);
   const primarie = useMemo(() => (sezioni.fase === 'ok' ? sezioni.dati.filter((s) => s.school_type === 'primaria') : []), [sezioni]);
@@ -179,7 +179,8 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
 
   const { righe, totale, limite, posti } = lettura.dati;
   const pagine = Math.max(1, Math.ceil(totale / limite));
-  const visibili = righe.filter((r) => filtro === 'tutti' || r.conferma === filtro);
+  // Il filtro lo applica la route: `righe` è già la pagina giusta e `totale` è il totale del filtro.
+  const visibili = righe;
   const oltre = posti.filter((p) => p.oltre);
 
   return (
@@ -192,7 +193,10 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
 
       <Tabs
         value={filtro}
-        onChange={(v) => setFiltro(v as Filtro)}
+        onChange={(v) => {
+          setFiltro(v as Filtro);
+          setPagina(1);
+        }}
         options={[
           { id: 'tutti', label: t('filtroTutti') },
           { id: 'confermato', label: t('filtroConfermati') },
@@ -200,7 +204,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
           { id: 'non_risposto', label: t('filtroNonRisposto') },
         ]}
       />
-      <p className={hint}>{t('totaleBambini', { totale })} · {t('filtroNota')}</p>
+      <p className={hint}>{t('totaleBambini', { totale })}</p>
 
       {visibili.length === 0 ? (
         <p className="mt-4 font-maven text-sm text-kidville-sub">{t('vuoto')}</p>

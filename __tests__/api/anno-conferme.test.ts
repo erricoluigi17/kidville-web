@@ -43,6 +43,8 @@ const h = vi.hoisted(() => ({
   /** Le frequenze dell'anno NUOVO: la lettura di `frequenze` con `anno_sede_id` = anno nuovo risponde con queste. */
   nuove: [] as unknown[],
   conteggio: null as null | number,
+  /** Se true, le letture APPLICANO davvero `eq`/`in`/`order`/`range` alle righe di `tabelle` e contano il totale: serve a misurare il filtro. */
+  applica: false,
   errLettura: {} as Record<string, { code?: string; message?: string }>,
   query: [] as Array<{ tabella: string; filtri: Record<string, unknown>; range?: [number, number] }>,
   rpc: [] as Array<{ nome: string; args: Record<string, unknown> }>,
@@ -71,14 +73,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const q: Query = { tabella, filtri: {} }
       h.query.push(q)
       const b: Record<string, unknown> = {}
+      const cond: Array<(r: Record<string, unknown>) => boolean> = []
+      let ordine: string | null = null
       b.select = () => b
-      b.order = () => b
+      b.order = (c: string) => {
+        ordine = c
+        return b
+      }
       b.eq = (c: string, v: unknown) => {
         q.filtri[c] = v
+        cond.push((r) => r[c] === v)
         return b
       }
       b.in = (c: string, v: unknown) => {
         q.filtri[`in:${c}`] = v
+        cond.push((r) => (v as unknown[]).includes(r[c]))
         return b
       }
       b.range = (da: number, a: number) => {
@@ -95,6 +104,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }
       b.then = (ok: (v: unknown) => unknown) => {
         const errore = h.errLettura[tabella]
+        if (h.applica && !errore) {
+          let r = ((h.tabelle[tabella] ?? []) as Array<Record<string, unknown>>).filter((x) => cond.every((c) => c(x)))
+          if (ordine) r = [...r].sort((a, c) => String(a[ordine as string]).localeCompare(String(c[ordine as string])))
+          const totale = r.length
+          if (q.range) r = r.slice(q.range[0], q.range[1] + 1)
+          return Promise.resolve({ data: r, error: null, count: totale }).then(ok)
+        }
         const righe = tabella === 'frequenze' && q.filtri.anno_sede_id === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' ? h.nuove : (h.tabelle[tabella] ?? [])
         return Promise.resolve(
           errore ? { data: null, error: errore, count: null } : { data: righe, error: null, count: h.conteggio ?? righe.length },
@@ -155,6 +171,7 @@ beforeEach(() => {
   h.tabelle = {}
   h.nuove = []
   h.conteggio = null
+  h.applica = false
   h.errLettura = {}
   h.query = []
   h.rpc = []
@@ -505,5 +522,84 @@ describe('POST non-rinnova', () => {
     expect(e).toHaveLength(1)
     expect(e[0].campi).toMatchObject({ esito: 'segnato', entita_id: F1, utente: UTENTE, entita_tipo: 'trasloco' })
     expect(JSON.stringify(redact(e[0].campi))).not.toContain('[redatto')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// GET con il filtro `?conferma=` — lo applica la ROUTE, sul totale e non sulla pagina (giro di correzione 1)
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('GET conferme — filtro lato route', () => {
+  const idF = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+  const idA = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+  const idN = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+  const NO = '2027-02-01T10:00:00Z'
+
+  /** Sette bambini dell'anno in corso (+ uno già ritirato che non conta) e le loro frequenze nell'anno nuovo, in UNA tabella come nel database. */
+  beforeEach(() => {
+    h.applica = true
+    const partenza = (n: number, extra: Record<string, unknown> = {}, stato = 'iscritto') => ({
+      id: idF(n), alunno_id: idA(n), anno_sede_id: ATTIVO_A, section_id: S_INF, stato, non_rinnova_il: null, non_rinnova_motivo: null, ...extra,
+    })
+    const nuova = (n: number, stato: string) => ({
+      id: idN(n), alunno_id: idA(n), anno_sede_id: NUOVO_A, section_id: null, stato, quota_saldata: false, quota_pagamento_id: null,
+    })
+    h.tabelle.frequenze = [
+      partenza(1), partenza(2, { non_rinnova_il: NO, non_rinnova_motivo: 'trasloco' }), partenza(3), partenza(4),
+      partenza(5, { non_rinnova_il: NO, non_rinnova_motivo: 'altro' }), partenza(6), partenza(7),
+      partenza(8, {}, 'ritirato'),
+      nuova(1, 'in_attesa'), nuova(4, 'iscritto'), nuova(7, 'ritirato'),
+    ]
+    h.tabelle.sections = [{ id: S_INF, school_type: 'infanzia', fascia: 'infanzia' }]
+  })
+
+  const ids = (data: { righe: Array<{ frequenza_id: string }> }) => data.righe.map((r) => r.frequenza_id)
+
+  it('«non hanno risposto»: il totale è dei soli non risposti e la seconda pagina porta quelli che restano', async () => {
+    const p1 = (await (await leggi('?conferma=non_risposto&limite=2&pagina=1')).json()).data
+    expect(ids(p1)).toEqual([idF(3), idF(6)])
+    expect(p1.totale).toBe(3)
+    const p2 = (await (await leggi('?conferma=non_risposto&limite=2&pagina=2')).json()).data
+    expect(ids(p2)).toEqual([idF(7)]) // la conferma poi ritirata vale «non ha risposto»
+    expect(p2.totale).toBe(3)
+    for (const r of [...p1.righe, ...p2.righe]) expect(r.conferma).toBe('non_risposto')
+  })
+
+  it('«confermati»: solo chi ha una frequenza viva nell’anno nuovo, con i dati della sua nuova frequenza', async () => {
+    const { data } = await (await leggi('?conferma=confermato&limite=10')).json()
+    expect(ids(data)).toEqual([idF(1), idF(4)])
+    expect(data.totale).toBe(2)
+    expect(data.righe.map((r: { nuova_frequenza_id: string }) => r.nuova_frequenza_id)).toEqual([idN(1), idN(4)])
+  })
+
+  it('«non rinnovano»: solo chi ha detto no e non ha poi confermato, col suo motivo', async () => {
+    const { data } = await (await leggi('?conferma=no&limite=10')).json()
+    expect(ids(data)).toEqual([idF(2), idF(5)])
+    expect(data.totale).toBe(2)
+    expect(data.righe.map((r: { non_rinnova_motivo: string }) => r.non_rinnova_motivo)).toEqual(['trasloco', 'altro'])
+  })
+
+  it('chi ha detto no e poi ha confermato è «confermato», non «no»', async () => {
+    ;(h.tabelle.frequenze as Array<Record<string, unknown>>).push({
+      id: idN(2), alunno_id: idA(2), anno_sede_id: NUOVO_A, section_id: null, stato: 'iscritto', quota_saldata: false, quota_pagamento_id: null,
+    })
+    const no = (await (await leggi('?conferma=no&limite=10')).json()).data
+    expect(ids(no)).toEqual([idF(5)])
+    const si = (await (await leggi('?conferma=confermato&limite=10')).json()).data
+    expect(ids(si)).toEqual([idF(1), idF(2), idF(4)])
+  })
+
+  it('senza filtro (o «tutti») torna l’elenco intero, ritirati dell’anno in corso esclusi', async () => {
+    for (const q of ['', '?conferma=tutti']) {
+      const { data } = await (await leggi(`${q}${q ? '&' : '?'}limite=100`)).json()
+      expect(data.totale).toBe(7)
+      expect(ids(data)).toEqual([1, 2, 3, 4, 5, 6, 7].map(idF))
+    }
+  })
+
+  it('400 per un filtro fuori dall’elenco chiuso, senza leggere niente', async () => {
+    const res = await leggi('?conferma=boh')
+    expect(res.status).toBe(400)
+    expect(h.query.filter((x) => x.tabella === 'frequenze')).toEqual([])
   })
 })

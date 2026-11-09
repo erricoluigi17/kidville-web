@@ -63,6 +63,5 @@
   "paginaDi": "Pagina {pagina}/{pagine}",
   "precedente": "Precedente",
   "successiva": "Successiva",
-  "totaleBambini": "Totale: {totale}",
-  "filtroNota": "Il filtro vale per i bambini di questa pagina."
+  "totaleBambini": "Totale: {totale}"
 }

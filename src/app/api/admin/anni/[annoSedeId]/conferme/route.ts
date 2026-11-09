@@ -57,7 +57,12 @@ const VIVE = ['in_attesa', 'iscritto']
 const getQuerySchema = z.object({
   pagina: z.coerce.number().int().min(1).max(10_000).default(1),
   limite: zLimite({ predefinito: 100, max: 200 }),
+  /** Elenco chiuso: il filtro lo applica la route, sul totale. */
+  conferma: z.enum(['tutti', 'confermato', 'no', 'non_risposto']).default('tutti'),
 })
+
+/** Quante righe leggere per volta quando si classifica tutto l'anno (sotto il tetto delle righe per richiesta di PostgREST). */
+const BLOCCO = 500
 
 /** Una lettura che è andata male: lo schema dell'anno non c'è ancora (503), oppure un guasto vero (500, loggato). */
 function lettura(error: { code?: string; message?: string }, ctx: { operazione: string; annoSedeId: string; utente: string }) {
@@ -76,7 +81,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
 
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
-  const { pagina, limite } = q.data
+  const { pagina, limite, conferma } = q.data
 
   const supabase = await createAdminClient()
   const letta: { scuolaId?: string } = {}
@@ -104,16 +109,57 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
 
   // Le frequenze vive dell'anno attivo, una pagina per volta.
   const dal = (pagina - 1) * limite
-  const elenco = await supabase
-    .from('frequenze')
-    .select('id, alunno_id, section_id, non_rinnova_il, non_rinnova_motivo', { count: 'exact' })
-    .eq('anno_sede_id', partenzaId)
-    .in('stato', VIVE)
-    .order('id', { ascending: true })
-    .range(dal, dal + limite - 1)
-  if (elenco.error) return lettura(elenco.error, ctx)
-  const partenze = (Array.isArray(elenco.data) ? elenco.data : []) as Partenza[]
-  const totale = typeof elenco.count === 'number' ? elenco.count : partenze.length
+  const colonne = 'id, alunno_id, section_id, non_rinnova_il, non_rinnova_motivo'
+  let partenze: Partenza[]
+  let totale: number
+  if (conferma === 'tutti') {
+    const elenco = await supabase
+      .from('frequenze')
+      .select(colonne, { count: 'exact' })
+      .eq('anno_sede_id', partenzaId)
+      .in('stato', VIVE)
+      .order('id', { ascending: true })
+      .range(dal, dal + limite - 1)
+    if (elenco.error) return lettura(elenco.error, ctx)
+    partenze = (Array.isArray(elenco.data) ? elenco.data : []) as Partenza[]
+    totale = typeof elenco.count === 'number' ? elenco.count : partenze.length
+  } else {
+    // Il filtro vale sul TOTALE, non sulla pagina: chi ha risposto lo dice l'anno nuovo, quindi si leggono (poche colonne, a blocchi)
+    // tutte le frequenze vive di partenza e tutti i bambini già confermati, si classifica, e solo la pagina chiesta porta il resto.
+    const leggi = async <T,>(
+      pezzo: (da: number, a: number) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>,
+    ): Promise<{ righe: T[] } | { error: { code?: string; message?: string } }> => {
+      const righe: T[] = []
+      for (let da = 0; ; da += BLOCCO) {
+        const r = await pezzo(da, da + BLOCCO - 1)
+        if (r.error) return { error: r.error }
+        const blocco = (Array.isArray(r.data) ? r.data : []) as T[]
+        righe.push(...blocco)
+        if (blocco.length < BLOCCO) return { righe }
+      }
+    }
+    const tutteLePartenze = await leggi<Pick<Partenza, 'id' | 'alunno_id' | 'non_rinnova_il'>>((da, a) =>
+      supabase.from('frequenze').select('id, alunno_id, non_rinnova_il').eq('anno_sede_id', partenzaId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+    )
+    if ('error' in tutteLePartenze) return lettura(tutteLePartenze.error, ctx)
+    const tutteLeNuove = await leggi<{ alunno_id: string }>((da, a) =>
+      supabase.from('frequenze').select('alunno_id').eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+    )
+    if ('error' in tutteLeNuove) return lettura(tutteLeNuove.error, ctx)
+    const confermati = new Set(tutteLeNuove.righe.map((n) => n.alunno_id))
+    const statoDi = (p: { alunno_id: string; non_rinnova_il: string | null }): Stato =>
+      confermati.has(p.alunno_id) ? 'confermato' : p.non_rinnova_il ? 'no' : 'non_risposto'
+    const giuste = tutteLePartenze.righe.filter((p) => statoDi(p) === conferma)
+    totale = giuste.length
+    const idPagina = giuste.slice(dal, dal + limite).map((p) => p.id)
+    partenze = []
+    if (idPagina.length > 0) {
+      const r = await supabase.from('frequenze').select(colonne).eq('anno_sede_id', partenzaId).in('id', idPagina)
+      if (r.error) return lettura(r.error, ctx)
+      const perId = new Map(((Array.isArray(r.data) ? r.data : []) as Partenza[]).map((p) => [p.id, p]))
+      partenze = idPagina.map((i) => perId.get(i)).filter((p): p is Partenza => !!p)
+    }
+  }
 
   // Cosa c'è già nell'anno nuovo per quei bambini.
   const alunni = partenze.map((p) => p.alunno_id)

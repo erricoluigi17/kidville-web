@@ -854,5 +854,6 @@
   "erroreImportoNonValido": "L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.",
   "erroreAlunnoEliminazioneInArrivo": "Questo bambino è «in arrivo» (la domanda è per l’anno prossimo): prima archivialo dalla sua scheda, diventa «ritirato», e poi puoi eliminarlo.",
   "erroreFrequenzaNonTrovata": "Questa iscrizione non esiste più. Aggiorna la pagina.",
-  "erroreFrequenzaNonDiConferma": "Questa iscrizione non nasce da una conferma: si toglie dalla scheda del bambino, non da qui."
+  "erroreFrequenzaNonDiConferma": "Questa iscrizione non nasce da una conferma: si toglie dalla scheda del bambino, non da qui.",
+  "erroreAlunnoInArrivoSenzaClasse": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia."
 }

@@ -785,6 +785,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
      * `undefined` e la scheda torna a comportarsi come prima. Assente ≠ archiviato.
      */
     const archiviato = student.archiviato_il != null;
+    // Un bambino la cui domanda è per l'anno prossimo (4.5.15, C2): lo stato si legge «In arrivo» e non si cambia da qui, e la classe
+    // non esiste ancora. Lo stato è quello della scheda come l'ha letta il server, non quello che l'operatore sta digitando.
+    const inArrivo = student.stato === 'in_arrivo';
     const archiviatoIl = typeof student.archiviato_il === 'string'
         ? formattaIstante(student.archiviato_il, locale, { day: '2-digit', month: '2-digit', year: 'numeric' })
         : '';
@@ -1049,7 +1052,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     name="classe_sezione"
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
+                                    disabled={inArrivo}
+                                    aria-describedby={inArrivo ? 'dettaglio-classe-in-arrivo' : undefined}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green disabled:cursor-not-allowed disabled:bg-kidville-cream disabled:text-kidville-sub"
                                 >
                                     <option value="">{t('detailNessuna')}</option>
                                     {sections.map(s => (
@@ -1061,6 +1066,12 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                         vuota e sembrerebbe che il bambino non abbia classe. */}
                                     {classeFuoriElenco && <option value={classeFuoriElenco}>{classeFuoriElenco}</option>}
                                 </select>
+                                {/* Una tendina spenta senza una ragione scritta è un guasto agli occhi di chi la preme. */}
+                                {inArrivo && (
+                                    <p id="dettaglio-classe-in-arrivo" className="font-maven text-[11px] text-kidville-sub mt-1">
+                                        {t('detailClasseInArrivo')}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="dettaglio-stato" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
@@ -1079,6 +1090,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     e farebbe lo stesso danno. E il gate VERO è comunque sul
                                     server (409 `STATO_ALUNNO_ARCHIVIATO`): questo è cortesia,
                                     non protezione — dalla console del browser si aggira. */}
+                                {/* «In arrivo» non è uno stato che la tendina offra (`STATI_TENDINA`, lock `stati-alunno-classificati`): per chi lo è
+                                    si mostra uno stato in sola lettura al posto della tendina, e lo stato non si può cambiare da qui. */}
+                                {inArrivo ? (
+                                <input
+                                    id="dettaglio-stato"
+                                    type="text"
+                                    readOnly
+                                    value={t('statoInArrivo')}
+                                    aria-describedby="dettaglio-stato-in-arrivo"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-sub bg-kidville-cream cursor-not-allowed"
+                                />
+                                ) : (
                                 <select
                                     id="dettaglio-stato"
                                     value={(form.stato as string) ?? 'iscritto'}
@@ -1091,6 +1114,12 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     <option value="ritirato">{t('statoRitirato')}</option>
                                     <option value="sospeso">{t('statoSospeso')}</option>
                                 </select>
+                                )}
+                                {inArrivo && (
+                                    <p id="dettaglio-stato-in-arrivo" className="font-maven text-[11px] text-kidville-sub mt-1">
+                                        {t('detailStatoInArrivo')}
+                                    </p>
+                                )}
                                 {/* Un comando spento senza una ragione scritta è un guasto agli
                                     occhi di chi lo preme: qui si dice perché, e dove si va. */}
                                 {archiviato && (

@@ -9,10 +9,10 @@
  * Fino al 2026-10-09 si chiamava «Non più iscritti» e leggeva `?stato=ritirato`:
  * un iscritto senza sezione non stava né qui né — di fatto — da nessuna parte,
  * perché registro, appello e mensa lavorano per sezione. Ora legge
- * `?elenco=non_iscritti` (ritirati e senza sezione, anonimizzati esclusi), che
- * la rotta definisce come complemento ESATTO di `?elenco=frequentanti` della
- * linguetta «Alunni»: ogni scheda non anonimizzata sta in una delle due, e in
- * una sola. Il gruppo «Ritirati» è `eNonPiuIscritto(stato)`; tutto il resto che
+ * `?elenco=non_iscritti` (ritirati e senza sezione, anonimizzati esclusi, e NON i
+ * bambini «in arrivo»): con `?elenco=frequentanti` della linguetta «Alunni» e
+ * `?elenco=in_arrivo` della linguetta «In arrivo» (4.5.15) la rotta divide le
+ * schede non anonimizzate: ognuna sta in uno solo dei tre elenchi. Il gruppo «Ritirati» è `eNonPiuIscritto(stato)`; tutto il resto che
  * arriva (iscritto, sospeso, stato vuoto o anomalo SENZA sezione) è «senza
  * sezione» — la stessa regola della rotta, non una seconda.
  *
@@ -200,6 +200,15 @@ function sembraUnaRiga(v: unknown): v is AlunnoArchiviato {
  * di `caricaElenco` in `/admin/students`.
  */
 export function useAlunniArchiviati(): EsitoAlunniArchiviati {
+    return useElencoAlunni('non_iscritti', 'alunni-archiviati');
+}
+
+/**
+ * Lo stesso hook per ogni elenco che `admin/students:GET` dichiara (`elenco=…`): la linguetta «In arrivo» (4.5.15) legge
+ * `in_arrivo` con gli stessi stati, lo stesso guasto detto e la stessa rilettura. `prefisso` apre i messaggi di log
+ * (`alunni-archiviati-non-caricati`, `alunni-in-arrivo-non-caricati`): quale elenco si è rotto si legge nel log.
+ */
+export function useElencoAlunni(elenco: 'non_iscritti' | 'in_arrivo', prefisso: string): EsitoAlunniArchiviati {
     const { reFetchKey } = useSediAttive();
     const [fase, setFase] = useState<'caricamento' | 'pronto' | 'errore'>('caricamento');
     const [righe, setRighe] = useState<AlunnoArchiviato[]>([]);
@@ -226,7 +235,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
             // Ritirati e iscritti senza sezione, anonimizzati esclusi: il
             // complemento esatto dell'elenco «Alunni» (`elenco=frequentanti`).
             const res = await fetch(
-                `/api/admin/students?elenco=non_iscritti&limit=${LIMITE_ELENCO_ALUNNI}`,
+                `/api/admin/students?elenco=${elenco}&limit=${LIMITE_ELENCO_ALUNNI}`,
                 { headers: { 'x-sedi': reFetchKey } },
             ).catch((e: unknown) => {
                 motivo = nomeErrore(e);
@@ -240,7 +249,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
                 setErrore(null);
                 logClient({
                     livello: 'error', evento: 'fetch',
-                    messaggio: `alunni-archiviati-non-caricati: ${motivo}`,
+                    messaggio: `${prefisso}-non-caricati: ${motivo}`,
                     route: '/admin/students',
                 });
                 return;
@@ -251,7 +260,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
                 setErrore(detto);
                 logClient({
                     livello: 'error', evento: 'fetch',
-                    messaggio: 'alunni-archiviati-non-caricati',
+                    messaggio: `${prefisso}-non-caricati`,
                     route: '/admin/students', stato: res.status,
                 });
                 return;
@@ -267,7 +276,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
                 setErrore(null);
                 logClient({
                     livello: 'error', evento: 'fetch',
-                    messaggio: `alunni-archiviati-corpo-inatteso: ${motivo || 'forma'}`,
+                    messaggio: `${prefisso}-corpo-inatteso: ${motivo || 'forma'}`,
                     route: '/admin/students', stato: res.status,
                 });
                 return;
@@ -282,7 +291,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
                     livello: 'error', evento: 'fetch',
                     // I conteggi nel messaggio, non in campi propri: `EventoClient` ha
                     // uno schema chiuso, e sono numeri (nessun dato personale).
-                    messaggio: `alunni-archiviati-righe-illeggibili: ${(corpo as unknown[]).length - valide.length} scartate su ${(corpo as unknown[]).length}`,
+                    messaggio: `${prefisso}-righe-illeggibili: ${(corpo as unknown[]).length - valide.length} scartate su ${(corpo as unknown[]).length}`,
                     route: '/admin/students', stato: res.status,
                 });
                 return;
@@ -307,7 +316,7 @@ export function useAlunniArchiviati(): EsitoAlunniArchiviati {
                 setRicaricando(false);
             }
         }
-    }, [reFetchKey]);
+    }, [reFetchKey, elenco, prefisso]);
 
     useEffect(() => {
         void carica();

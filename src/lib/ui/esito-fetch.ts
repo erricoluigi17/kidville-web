@@ -1425,6 +1425,11 @@ export const CODICI_ERRORE = {
      */
     STATO_ALUNNO_ARCHIVIATO: 'erroreStatoAlunnoArchiviato',
     /**
+     * 422 — la PATCH dell'anagrafica assegna una classe a un bambino `in_arrivo` (4.5.15, C2). Non frequenta ancora: il vincolo
+     * `alunni_in_arrivo_senza_sezione` lo vieta, e la scheda tiene la tendina spenta. Prima il vincolo rispondeva con un 500 generico.
+     */
+    ALUNNO_IN_ARRIVO_SENZA_CLASSE: 'erroreAlunnoInArrivoSenzaClasse',
+    /**
      * 503 — le colonne dell'archiviazione non esistono in questo database, e
      * NIENTE è stato scritto (`archivia` e `riattiva`).
      *

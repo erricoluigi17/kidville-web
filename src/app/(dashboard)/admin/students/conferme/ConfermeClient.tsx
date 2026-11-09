@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { btnPrimary, hint, input, label } from '@/components/features/admin/settings/ui';
 import { Tabs } from '@/components/ui/cockpit';
@@ -474,7 +475,18 @@ function RigaConferma({
     <>
       <tr className="border-b border-kidville-line align-top">
         <td className="py-3 pr-3">
-          <strong>{nome}</strong>
+          {/* Nelle «nuove» il bambino è `in_arrivo`: non sta in «Alunni» e la sua scheda si apre da qui (4.5.15, C2). */}
+          {vista === 'nuove' ? (
+            <Link
+              href={`/admin/students/${r.alunno_id}?kind=child`}
+              aria-label={t('apriScheda', { nome })}
+              className="underline-offset-2 hover:underline focus-visible:underline"
+            >
+              <strong>{nome}</strong>
+            </Link>
+          ) : (
+            <strong>{nome}</strong>
+          )}
           <span className="block text-xs text-kidville-sub">{r.classe ? t('classeOggi', { classe: r.classe }) : t('senzaClasse')}</span>
         </td>
         <td className="py-3 pr-3">

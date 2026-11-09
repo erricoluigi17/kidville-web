@@ -102,5 +102,6 @@
   "esitoRitirata": "Confirmation withdrawn.",
   "esitoRitirataQuotaTolta": "The fee was removed.",
   "esitoRitirataQuotaPagata": "The fee has already been paid: refunds or reversals are handled in accounting.",
-  "esitoRitirataQuotaErrore": "The confirmation is withdrawn, but the fee could not be removed: check it in accounting."
+  "esitoRitirataQuotaErrore": "The confirmation is withdrawn, but the fee could not be removed: check it in accounting.",
+  "apriScheda": "Open the record of {nome}"
 }

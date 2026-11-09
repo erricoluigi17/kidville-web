@@ -54,6 +54,20 @@ describe('GET /api/admin/search', () => {
     expect((await GET(req('q=ross'))).status).toBe(401)
   })
 
+  it('un bambino IN ARRIVO si trova e porta alla SUA scheda, con «In arrivo» al posto della classe che non ha (4.5.15, C2)', async () => {
+    h.rows['alunni'] = [
+      { id: 'al-arr', nome: 'Piccolo', cognome: 'Prova', classe_sezione: null, stato: 'in_arrivo' },
+      { id: 'al-isc', nome: 'Grande', cognome: 'Prova', classe_sezione: null, stato: 'iscritto' },
+    ]
+    const res = await GET(req('q=prova'))
+    expect(res.status).toBe(200)
+    const { data } = await res.json()
+    expect(data.alunni).toEqual([
+      { id: 'al-arr', label: 'Piccolo Prova', sub: 'In arrivo', href: '/admin/students/al-arr?kind=child' },
+      { id: 'al-isc', label: 'Grande Prova', sub: 'Alunno', href: '/admin/students/al-isc?kind=child' },
+    ])
+  })
+
   it('400 senza q (schema zod)', async () => {
     expect((await GET(req(''))).status).toBe(400)
   })
@@ -81,7 +95,7 @@ describe('GET /api/admin/search', () => {
     const j = await res.json()
     expect(j.success).toBe(true)
     expect(j.data.alunni).toEqual([
-      { id: 'al-1', label: 'Rosa Rossi', sub: 'Girasoli', href: '/admin/students' },
+      { id: 'al-1', label: 'Rosa Rossi', sub: 'Girasoli', href: '/admin/students/al-1?kind=child' },
     ])
     expect(j.data.utenti).toEqual([
       { id: 'ut-1', label: 'Remo Rossini', sub: 'Docente', href: '/admin/staff' },

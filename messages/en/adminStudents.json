@@ -880,5 +880,17 @@
   "arcEsitoTornaInArrivo": "{nome}: back among the children arriving next year, and their enrolment for next year is open again.",
   "arcEsitoConfermaDaRifare": "The confirmation for next year was closed when the child was archived and does not reopen on its own: it has to be done again from the confirmations page.",
   "detailPageRiattivatoInArrivo": "{nome}: back among the children arriving next year, and their enrolment for next year is open again",
-  "detailPageConfermaDaRifare": "The confirmation for next year has to be done again from the confirmations page."
+  "detailPageConfermaDaRifare": "The confirmation for next year has to be done again from the confirmations page.",
+  "inArrivoTab": "Arriving",
+  "inArrivoTitolo": "Children arriving next year",
+  "inArrivoSottotitolo": "They have already applied for next year and are not attending yet. Open their record from here to fix a detail or archive them.",
+  "inArrivoCaricamento": "Loading the children arriving…",
+  "inArrivoErroreTesto": "The list of children arriving did not load. Try again.",
+  "inArrivoCercaEtichetta": "Search among the children arriving",
+  "inArrivoVuotoTitolo": "No child arriving",
+  "inArrivoVuotoTesto": "When you approve an application for next year, the child shows up here.",
+  "inArrivoTabellaDidascalia": "The children arriving next year, with their date of birth and the command to open their record.",
+  "statoInArrivo": "Arriving",
+  "detailClasseInArrivo": "This child arrives next year and is not attending yet: a class will be assigned when they start.",
+  "detailStatoInArrivo": "The status changes on its own when next year starts. To take them off the list use “Archive”."
 }

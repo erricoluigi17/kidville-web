@@ -71,6 +71,13 @@ describe('GET /api/admin/students?elenco=…', () => {
     expect([...f, ...n].sort()).toEqual(attese)
     expect([...f, ...n]).not.toContain('n-in-arrivo')
   })
+  it('in_arrivo = SOLO chi aspetta l’anno dopo (anonimizzati esclusi): le tre liste sono disgiunte (4.5.15, C2)', async () => {
+    h.db.alunni.push(riga('o-in-arrivo-anonimizzato', 'in_arrivo', null, '2026-09-01T00:00:00Z'))
+    const inArrivo = await ids('elenco=in_arrivo')
+    expect(inArrivo).toEqual(['n-in-arrivo'])
+    const altre = [...(await ids('elenco=frequentanti')), ...(await ids('elenco=non_iscritti'))]
+    expect(altre.filter((x) => inArrivo.includes(x))).toEqual([])
+  })
   it('un valore sconosciuto è un 400, non «tutto»', async () => {
     const res = await GET(new Request('http://localhost/api/admin/students?elenco=tutti') as never)
     expect(res.status).toBe(400)

@@ -170,6 +170,19 @@ describe('ConfermeClient — le viste e i nomi', () => {
   })
 })
 
+describe('ConfermeClient — la scheda del bambino in arrivo (4.5.15, C2)', () => {
+  it('nelle «Nuove iscrizioni» il nome apre la SUA scheda; nella vista delle conferme il nome resta testo', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    // Controllo POSITIVO sul resto: nella vista delle conferme (chi frequenta già) non c'è alcun collegamento alla scheda.
+    expect(screen.queryByRole('link', { name: /CognomeProva NomeProva/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    const link = screen.getByRole('link', { name: /CognomeArrivo NomeArrivo/ })
+    expect(link.getAttribute('href')).toBe(`/admin/students/${AL2}?kind=child`)
+  })
+})
+
 describe('ConfermeClient — il filtro «mancano moduli» sta nella route', () => {
   it('passa `conferma=mancano_moduli` e riparte dalla pagina 1', async () => {
     render(<ConfermeClient />)

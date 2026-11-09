@@ -590,6 +590,7 @@ export async function eseguiDomanda(
   // di toccare l'anagrafica.
   const annoProssimo = await annoProssimoDellaDomanda(supabase, domanda.id, scuolaId)
   if (annoProssimo === 'non-aperto') return fallisci("l'anno della domanda non ha le iscrizioni aperte")
+  if (annoProssimo === 'non-leggibile') return fallisci("l'anno della domanda non si è potuto leggere")
   let sezioniProssimo: Map<string, string> | null = null
   if (annoProssimo) {
     const sezioni = await sezioniDellAnnoDellaSede(supabase, scuolaId, annoProssimo.annoId, 'iscrizioni/import:eseguiDomanda')

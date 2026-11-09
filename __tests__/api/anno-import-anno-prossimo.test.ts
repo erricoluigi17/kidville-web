@@ -52,7 +52,7 @@ let db: DBFinto
 let scritture: Scrittura[]
 let rpcRegistra: ((args: Record<string, unknown>) => { data: unknown; error: unknown }) | null
 
-function client(opts: { annoDomanda?: string | null; alunni?: Riga[]; anni?: Riga[] } = {}) {
+function client(opts: { annoDomanda?: string | null; alunni?: Riga[]; anni?: Riga[]; errori?: Record<string, { code: string; message?: string }> } = {}) {
   scritture = []
   db = {
     sections: [
@@ -73,6 +73,7 @@ function client(opts: { annoDomanda?: string | null; alunni?: Riga[]; anni?: Rig
   const ok = async () => ({ data: null, error: null })
   return creaFintoSupabase(db, [], {
     scritture,
+    errori: opts.errori,
     rpc: {
       iscrizioni_segna_creato: ok, iscrizioni_chiudi: ok, iscrizioni_annulla: ok, iscrizioni_rinvia: ok,
       anno_attivo: () => ({ data: ANNO_SEDE_OGGI, error: null }),
@@ -185,6 +186,50 @@ describe('eseguiDomanda · il percorso di oggi non cambia', () => {
     const esito = await eseguiDomanda(client({ annoDomanda: null }), domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
     expect(esito.esito).toBe('inviata')
     expect(db.alunni[0]).toMatchObject({ stato: 'iscritto', classe_sezione: '4 ANNI A', importo_retta_mensile: 150 })
+    expect(registrazioni()).toEqual([])
+  })
+})
+
+describe('eseguiDomanda · la lettura di anno_id cade (revisione, giro 1)', () => {
+  const senzaScritture = () => {
+    expect(scritture.filter((s) => s.tabella !== 'enrollment_submissions')).toEqual([])
+    expect(sulleTabelle('alunni')).toEqual([])
+    expect(registrazioni()).toEqual([])
+    expect(h.invitaGenitore).not.toHaveBeenCalled()
+  }
+
+  it('errore NON di schema (timeout, permessi): la domanda 2027 fallisce, zero scritture su alunni', async () => {
+    const c = client({ errori: { enrollment_submissions: { code: '57014', message: 'timeout' } } })
+    const esito = await eseguiDomanda(c, domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
+    expect(esito.esito).toBe('errore')
+    senzaScritture()
+  })
+
+  it('eccezione durante la lettura: è un guasto, non un ripiego — zero scritture su alunni', async () => {
+    const c = client()
+    const vero = c.from.bind(c)
+    ;(c as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (t === 'enrollment_submissions') throw new Error('rete caduta')
+      return vero(t)
+    }
+    const esito = await eseguiDomanda(c, domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
+    expect(esito.esito).toBe('errore')
+    senzaScritture()
+  })
+
+  it('colonna anno_id assente (schema indietro, PGRST204): il percorso di oggi resta com\'è', async () => {
+    const c = client({ errori: { enrollment_submissions: { code: 'PGRST204', message: 'colonna assente' } } })
+    const esito = await eseguiDomanda(c, domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
+    expect(esito.esito).toBe('inviata')
+    expect(db.alunni[0]).toMatchObject({ stato: 'iscritto', classe_sezione: '4 ANNI A', importo_retta_mensile: 150 })
+    expect(registrazioni()).toEqual([])
+  })
+
+  it('domanda inesistente (data nulla): il percorso di oggi', async () => {
+    const c = client()
+    db.enrollment_submissions = []
+    const esito = await eseguiDomanda(c, domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
+    expect(esito.esito).toBe('inviata')
     expect(registrazioni()).toEqual([])
   })
 })

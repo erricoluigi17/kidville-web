@@ -5,6 +5,7 @@ import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { anniDellaSede } from '@/lib/anno/lettura'
 import { annoDellaDomanda } from '@/lib/anno/iscrizione-anno'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 
 /**
  * APPROVARE UNA DOMANDA PER L'ANNO PROSSIMO: le poche regole che la route `admin/iscrizioni` (PATCH) e l'import massivo
@@ -43,19 +44,27 @@ export type AnnoProssimo = { annoSedeId: string; annoId: string }
 /**
  * Per l'IMPORT MASSIVO, che riceve una domanda già caricata senza il suo `anno_id`: lo legge qui e dice se è per l'anno
  * prossimo. NON LANCIA MAI.
- *  · `null`           → il percorso di oggi: `anno_id` assente o non leggibile (colonna assente: la CI), anno attivo, schema
- *                       dell'anno indietro. Una domanda storica non diventa mai un errore;
+ *  · `null`           → il percorso di oggi: domanda inesistente, `anno_id` assente, colonna/schema dell'anno assente (la CI,
+ *                       `schemaAnnoIndietro`), anno attivo. Una domanda storica non diventa mai un errore;
  *  · `'non-aperto'`   → l'anno della domanda non ha le iscrizioni aperte: l'import non scrive niente (come il 409 della route);
+ *  · `'non-leggibile'`→ la lettura di `anno_id` è caduta per un motivo che NON è lo schema indietro (timeout, permessi,
+ *                       eccezione): non si sa di che anno è la domanda, e ripiegare su oggi scriverebbe classe e retta di oggi
+ *                       a una domanda dell'anno prossimo, in silenzio. Chi chiama fa fallire la domanda come `'non-aperto'`;
  *  · `{ annoSedeId, annoId }` → il ramo dell'anno prossimo.
  */
 export async function annoProssimoDellaDomanda(
   supabase: SupabaseClient,
   domandaId: string,
   scuolaId: string,
-): Promise<AnnoProssimo | 'non-aperto' | null> {
+): Promise<AnnoProssimo | 'non-aperto' | 'non-leggibile' | null> {
   try {
     const { data, error } = await supabase.from('enrollment_submissions').select('anno_id').eq('id', domandaId).maybeSingle()
-    if (error || !data) return null
+    if (error) {
+      if (schemaAnnoIndietro(error)) return null
+      logEvento('anno-scolastico', 'error', { tipo: 'anno-domanda-non-letto', operazione: 'anno/domanda-anno-prossimo:annoProssimoDellaDomanda', entita_id: domandaId, error_code: error.code ?? undefined })
+      return 'non-leggibile'
+    }
+    if (!data) return null
     const annoId = (data as { anno_id?: string | null }).anno_id ?? null
     if (!annoId) return null
     const anno = await annoDellaDomanda(supabase, scuolaId, annoId)
@@ -63,8 +72,8 @@ export async function annoProssimoDellaDomanda(
     if (anno.tipo === 'non-aperto') return 'non-aperto'
     return null
   } catch (err) {
-    logEvento('anno-scolastico', 'warn', { tipo: 'anno-domanda-non-letto', operazione: 'anno/domanda-anno-prossimo:annoProssimoDellaDomanda', entita_id: domandaId }, err)
-    return null
+    logEvento('anno-scolastico', 'error', { tipo: 'anno-domanda-non-letto', operazione: 'anno/domanda-anno-prossimo:annoProssimoDellaDomanda', entita_id: domandaId }, err)
+    return 'non-leggibile'
   }
 }
 

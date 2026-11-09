@@ -12,6 +12,7 @@ import { puoInviarePiattaformaUnica } from '@/lib/sidi/sequenza'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { eInArrivo } from '@/lib/alunni/stato'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `scuola_id`: la sede di cui si trasmettono le associazioni. Vedi la nota in
@@ -19,7 +20,8 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // sulla sede primaria.
 const postQuerySchema = z.object({ scuola_id: zUuid.optional() })
 
-type NestedCf = { codice_fiscale?: string | null } | { codice_fiscale?: string | null }[] | null
+type AlunnoCf = { codice_fiscale?: string | null; stato?: string | null }
+type NestedCf = AlunnoCf | AlunnoCf[] | null
 type NestedPf = { fiscal_code?: string | null } | { fiscal_code?: string | null }[] | null
 const one = <T>(v: T | T[] | null): T | null => (Array.isArray(v) ? v[0] ?? null : v)
 
@@ -51,7 +53,7 @@ export const POST = withRoute('admin/sidi/piattaforma-unica:POST', async (reques
       // forma già in produzione in `admin/sidi/legami:GET`.
       const { data: rows, error: errLegami } = await supabase
         .from('student_parents')
-        .select('relation_type, validato_sidi, alunni!inner(codice_fiscale, scuola_id), parents(fiscal_code)')
+        .select('relation_type, validato_sidi, alunni!inner(codice_fiscale, scuola_id, stato), parents(fiscal_code)')
         .eq('alunni.scuola_id', scuolaId)
         .eq('validato_sidi', true)
       const { data: settings, error: errSettings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
@@ -65,12 +67,16 @@ export const POST = withRoute('admin/sidi/piattaforma-unica:POST', async (reques
         return NextResponse.json({ error: 'Lettura dei legami di sede non riuscita: trasmissione annullata' }, { status: 500 })
       }
 
-      const legami = ((rows ?? []) as unknown as { relation_type: string; alunni: NestedCf; parents: NestedPf }[]).map((r) => ({
-        student_cf: one(r.alunni)?.codice_fiscale ?? null,
-        parent_cf: one(r.parents)?.fiscal_code ?? null,
-        relation_type: r.relation_type,
-        validato: true,
-      }))
+      // Al Ministero si comunicano i FREQUENTANTI: il codice fiscale di un bambino «in arrivo» (la domanda è per l'anno dopo) non
+      // parte. Il filtro è qui e non in query perché uno stato vuoto (NULL) deve restare.
+      const legami = ((rows ?? []) as unknown as { relation_type: string; alunni: NestedCf; parents: NestedPf }[])
+        .filter((r) => !eInArrivo(one(r.alunni)?.stato))
+        .map((r) => ({
+          student_cf: one(r.alunni)?.codice_fiscale ?? null,
+          parent_cf: one(r.parents)?.fiscal_code ?? null,
+          relation_type: r.relation_type,
+          validato: true,
+        }))
       const flusso = buildGenitoriAlunni({ legami })
       const xml = serializeGenitoriAlunni(flusso)
 

@@ -305,3 +305,52 @@ describe('i figli attivi e la voce della quota', () => {
     })
   })
 })
+
+describe('la fotografia `anno_fotografa`', () => {
+  /** Quanti alunni di S1 la fotografia conta «senza frequenza nell'anno attivo». Va chiamata DENTRO `inRollback`. */
+  async function senzaFrequenza(): Promise<number> {
+    await db.query(`SELECT public.anno_fotografa('prima', ARRAY['alunni'])`)
+    return Number(await una<string>(
+      `SELECT coalesce(sum(valore), 0)::text FROM public.riconciliazione_anno
+        WHERE tabella = 'alunni' AND voce = 'alunni_senza_frequenza' AND scuola_id = $1
+          AND transazione = txid_current() AND id = (SELECT max(id) FROM public.riconciliazione_anno WHERE voce = 'alunni_senza_frequenza' AND scuola_id = $1)`,
+      [S1]))
+  }
+
+  prova('un `in_arrivo` non è un alunno «senza frequenza»: il confronto prima/dopo del passaggio non lo conta', async () => {
+    await inRollback(async () => {
+      await giorni()
+      const prima = await senzaFrequenza()
+      await nuovoAlunno(AL, 'in_arrivo')
+      expect(await senzaFrequenza()).toBe(prima)
+    })
+  })
+
+  prova('PROVA DEL ROSSO: un `iscritto` con sede e senza frequenza lo fa salire di uno', async () => {
+    await inRollback(async () => {
+      await giorni()
+      const prima = await senzaFrequenza()
+      await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+      await nuovoAlunno(AL, 'iscritto')
+      await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = true`)
+      expect(await senzaFrequenza()).toBe(prima + 1)
+    })
+  })
+})
+
+describe('il CHECK `alunni_in_arrivo_senza_sezione`', () => {
+  prova('un `in_arrivo` con una sezione non può esistere; senza sezione sì', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL, 'in_arrivo')
+      const sez = await una<string>(`INSERT INTO public.sections (scuola_id, name) VALUES ($1, 'Girasoli') RETURNING id`, [S1])
+      await expect(db.query(`UPDATE public.alunni SET section_id = $2 WHERE id = $1`, [AL, sez])).rejects.toThrow(/alunni_in_arrivo_senza_sezione/)
+    })
+  })
+
+  prova('è riapplicabile e convalidato', async () => {
+    const sql = readFileSync(join(CARTELLA, readdirSync(CARTELLA).find((x) => x.endsWith('_anno_alunno_in_arrivo.sql'))!), 'utf8')
+    await db.exec(sql)
+    expect(await una<boolean>(`SELECT convalidated FROM pg_constraint WHERE conname = 'alunni_in_arrivo_senza_sezione'`)).toBe(true)
+  })
+})

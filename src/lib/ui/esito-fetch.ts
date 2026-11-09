@@ -1356,6 +1356,11 @@ export const CODICI_ERRORE = {
      */
     ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA: 'erroreAlunnoEliminazioneArchiviaPrima',
     /**
+     * 409 — il bambino è «in arrivo» (domanda per l'anno dopo): si tratta da iscritto, quindi prima si archivia
+     * (diventa «ritirato») e poi si elimina.
+     */
+    ALUNNO_ELIMINAZIONE_IN_ARRIVO: 'erroreAlunnoEliminazioneInArrivo',
+    /**
      * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
      * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
      * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.

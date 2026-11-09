@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser } from '@/lib/auth/require-staff';
 import { z } from 'zod';
-import { STATO_ISCRITTO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
+import { STATO_ISCRITTO, STATO_IN_ARRIVO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
@@ -636,8 +636,13 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
                     .or(`stato.is.null,stato.not.in.(${STATI_NON_PIU_ISCRITTO.join(',')})`)
                     .is('anonimizzato_il', null);
             } else if (elenco === 'non_iscritti') {
+                // «Senza sezione» è anche l'impronta di chi ha fatto domanda per l'anno DOPO (`in_arrivo`): non è un ex
+                // alunno, e qui comparirebbe con «Elimina definitivamente». Fuori da questa linguetta, e dal suo conteggio.
+                // `stato.is.null` è esplicito (in SQL `NULL <> 'in_arrivo'` dà NULL): uno stato vuoto resta fra i non iscritti
+                // se non ha la sezione, come prima. Il bambino in arrivo si trova ancora dalla ricerca (senza `elenco`).
                 query = query
                     .or(`stato.in.(${STATI_NON_PIU_ISCRITTO.join(',')}),section_id.is.null`)
+                    .or(`stato.is.null,stato.neq.${STATO_IN_ARRIVO}`)
                     .is('anonimizzato_il', null);
             }
             return query;

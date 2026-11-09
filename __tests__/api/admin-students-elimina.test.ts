@@ -251,6 +251,18 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
   })
 
+  it('un bambino IN ARRIVO (domanda per l’anno dopo, senza sezione) non si elimina: 409 ALUNNO_ELIMINAZIONE_IN_ARRIVO, «archivia, poi elimina»', async () => {
+    h.db.alunni[0] = { ...h.db.alunni[0], stato: 'in_arrivo', section_id: null }
+    for (const corpo of [{ mode: 'dryrun' }, { mode: 'execute', scelta: 'elimina' }] as const) {
+      const res = await POST(req({ alunno_id: AL, ...corpo }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_IN_ARRIVO')
+    }
+    expect(h.bonificaTracce).not.toHaveBeenCalled()
+    expect(h.rimossi).toEqual([])
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
   it('execute su stato NULL con una sezione (frequenta: il default è «iscritto»): 409 e nessun effetto', async () => {
     h.db.alunni[0] = { ...h.db.alunni[0], stato: null, section_id: 'sez-1' }
     const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
@@ -456,6 +468,7 @@ describe('execute — elimina', () => {
   it.each<{ code: string; status: number; codice: string }>([
     { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'in_arrivo', status: 409, codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO' },
     { code: 'gia_anonimizzato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
     { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },
@@ -522,6 +535,7 @@ describe('execute — elimina', () => {
   it.each<{ code: string; status: number; codice: string }>([
     { code: 'non_trovato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'frequentante', status: 409, codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE' },
+    { code: 'in_arrivo', status: 409, codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO' },
     { code: 'gia_anonimizzato', status: 404, codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
     { code: 'registro_primaria', status: 409, codice: 'REGISTRO_PRIMARIA_DA_CONSERVARE' },
     { code: 'ha_pagamenti', status: 409, codice: 'ALUNNO_ELIMINAZIONE_HA_PAGAMENTI' },

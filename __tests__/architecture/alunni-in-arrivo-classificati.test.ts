@@ -73,6 +73,10 @@ export const MOTIVI = {
   'figli-collegati': 'parte da `getFigliDiGenitore` (tutti i legami), non da `getFigliAttiviDiGenitore`: la famiglia lo riceve',
   'riempimento-senza-stato': 'rilegge tutte le schede della sede e ne ricava una frequenza dell’anno attivo',
   'guardia-senza-sezione': 'tratta «senza sezione» come «non frequentante»',
+  // ─ no-già, dopo il 4.5.4-bis
+  'esclude-in-arrivo': 'esclude `in_arrivo` per nome (filtro per stato, o rifiuto con un codice proprio): lo ha deciso il 4.5.4-bis',
+  'oblio-dopo-archiviazione': 'l’oblio tratta un bambino in arrivo da iscritto: lo si archivia prima (diventa «ritirato») e poi lo si anonimizza, come per chi frequenta',
+  'funzione-tolta': 'la funzione non esiste più (un `DROP FUNCTION` successivo, che il censimento non vede): non c’è niente da correggere',
 } as const
 export type Motivo = keyof typeof MOTIVI
 
@@ -92,10 +96,10 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/admin/dashboard/route.ts::admin/dashboard:GET': ['no-già', 'stato'],
   'src/app/api/admin/debug-mensa-auth/route.ts::admin/debug-mensa-auth:GET': ['sì', 'diagnostica'],
   'src/app/api/admin/documents-merge/route.ts::admin/documents-merge:GET': ['no-già', 'sezione'],
-  'src/app/api/admin/gdpr/candidates/route.ts::admin/gdpr/candidates:GET': ['no', 'sonda-stati'],
-  'src/app/api/admin/gdpr/erase/route.ts::admin/gdpr/erase:POST': ['sì', 'oblio'],
-  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:GET': ['sì', 'oblio'],
-  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:POST': ['sì', 'oblio'],
+  'src/app/api/admin/gdpr/candidates/route.ts::admin/gdpr/candidates:GET': ['no-già', 'esclude-in-arrivo'],
+  'src/app/api/admin/gdpr/erase/route.ts::admin/gdpr/erase:POST': ['no-già', 'oblio-dopo-archiviazione'],
+  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:GET': ['no-già', 'oblio-dopo-archiviazione'],
+  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:POST': ['no-già', 'oblio-dopo-archiviazione'],
   'src/app/api/admin/import/anagrafiche/route.ts::admin/import/anagrafiche:POST': ['sì', 'ricerca'],
   'src/app/api/admin/iscrizioni/elenco/export/route.ts::admin/iscrizioni/elenco/export:GET': ['no-già', 'stato'],
   'src/app/api/admin/iscrizioni/route.ts::admin/iscrizioni:PATCH': ['sì', 'ricerca'],
@@ -113,11 +117,11 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/admin/sidi/frequentanti/route.ts::admin/sidi/frequentanti:POST': ['no-già', 'filtro-nel-codice'],
   'src/app/api/admin/students/[id]/route.ts::admin/students/[id]:GET': ['sì', 'anagrafica'],
   'src/app/api/admin/students/archivia/route.ts::admin/students/archivia:POST': ['sì', 'anagrafica'],
-  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': ['no', 'guardia-senza-sezione'],
+  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/admin/students/export/route.ts::admin/students/export:GET': ['no-già', 'stato'],
   'src/app/api/admin/students/libera-spazio/route.ts::admin/students/libera-spazio:POST': ['sì', 'anagrafica'],
   'src/app/api/admin/students/riattiva/route.ts::admin/students/riattiva:POST': ['sì', 'anagrafica'],
-  'src/app/api/admin/students/route.ts::admin/students:GET': ['no', 'elenca-tutti'],
+  'src/app/api/admin/students/route.ts::admin/students:GET': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/admin/students/route.ts::admin/students:PATCH': ['sì', 'anagrafica'],
   'src/app/api/admin/students/route.ts::admin/students:POST': ['no-già', 'scrittura'],
   'src/app/api/admin/students/route.ts::bersagliInScope': ['no-già', 'ids'],
@@ -127,7 +131,7 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/attendance/daily/route.ts::attendance/daily:POST': ['no-già', 'puntuale'],
   'src/app/api/attendance/monthly/route.ts::attendance/monthly:GET': ['no-già', 'sezione'],
   'src/app/api/avvisi/[id]/risposte/route.ts::avvisi/[id]/risposte:POST': ['no-già', 'puntuale'],
-  'src/app/api/avvisi/route.ts::listaAvvisiGenitore': ['no', 'figli-collegati'],
+  'src/app/api/avvisi/route.ts::listaAvvisiGenitore': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/chat/threads/route.ts::chat/threads:GET': ['no-già', 'puntuale'],
   'src/app/api/debug-supabase/route.ts::debug-supabase:GET': ['sì', 'diagnostica'],
   'src/app/api/debug/scrutini/route.ts::debug/scrutini:GET': ['no-già', 'ids'],
@@ -172,7 +176,7 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/pagamenti/solleciti/run/route.ts::pagamenti/solleciti/run:POST': ['no-già', 'sospensione'],
   'src/app/api/pagamenti/transazioni/route.ts::pagamenti/transazioni:POST': ['sì', 'ricevute'],
   'src/app/api/panic-alert/route.ts::panic-alert:POST': ['no-già', 'puntuale'],
-  'src/app/api/parent/forms/route.ts::parent/forms:GET': ['no', 'figli-collegati'],
+  'src/app/api/parent/forms/route.ts::parent/forms:GET': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/parent/giustifiche-didattiche/route.ts::parent/giustifiche-didattiche:PATCH': ['no-già', 'puntuale'],
   'src/app/api/parent/giustifiche-didattiche/route.ts::parent/giustifiche-didattiche:POST': ['no-già', 'puntuale'],
   'src/app/api/parent/mensa/allergie/route.ts::parent/mensa/allergie:GET': ['no-già', 'puntuale'],
@@ -240,8 +244,8 @@ const LETTURE: Record<string, Voce> = {
   'src/lib/forms/persist-submission.ts::persistSignedSubmission': ['no-già', 'puntuale'],
   'src/lib/forms/signed-archive.ts::ensureSignedSubmissionPdf': ['no-già', 'puntuale'],
   'src/lib/gallery/privacy.ts::alunniSenzaConsenso': ['no-già', 'ids'],
-  'src/lib/gallery/pubblicazione-video-automatica.ts::leggiPerimetro': ['no', 'gate-negativo'],
-  'src/lib/gallery/tag-scope.ts::assertTagStudentsInScope': ['no', 'gate-negativo'],
+  'src/lib/gallery/pubblicazione-video-automatica.ts::leggiPerimetro': ['no-già', 'esclude-in-arrivo'],
+  'src/lib/gallery/tag-scope.ts::assertTagStudentsInScope': ['no-già', 'esclude-in-arrivo'],
   'src/lib/gallery/vista-sede.ts::alunniTaggatiDellaSede': ['no-già', 'ids'],
   'src/lib/gdpr/account-oblio.ts::decidiELibera': ['sì', 'oblio'],
   'src/lib/gdpr/esegui.ts::anonimizzaAlunno': ['sì', 'oblio'],
@@ -262,7 +266,7 @@ const LETTURE: Record<string, Voce> = {
   'src/lib/news/digest.ts::emailFamiglie': ['no-già', 'stato'],
   'src/lib/news/notifiche.ts::genitoriDiGrado': ['no-già', 'stato'],
   'src/lib/news/permanenza-consenso.ts::verificaPermanenzaConsenso': ['no-già', 'ids'],
-  'src/lib/news/target.ts::caricaFigliConTarget': ['no', 'figli-collegati'],
+  'src/lib/news/target.ts::caricaFigliConTarget': ['no-già', 'esclude-in-arrivo'],
   'src/lib/notifiche/destinatari.ts::genitoriDiClassi': ['no-già', 'stato'],
   'src/lib/notifiche/destinatari.ts::genitoriDiScuola': ['no-già', 'stato'],
   'src/lib/pagamenti/conciliazione-registra.ts::registraConciliazione': ['sì', 'ricevute'],
@@ -280,7 +284,7 @@ const LETTURE: Record<string, Voce> = {
   'src/lib/primaria/notifiche.ts::scuolaDiAlunno': ['no-già', 'puntuale'],
   'src/lib/primaria/pagella-store.ts::loadPagellaData': ['no-già', 'puntuale'],
   'src/lib/sidi/import-apply.ts::applySidiRecords': ['sì', 'ricerca'],
-  'src/lib/storici/generazioni.ts::opzioniStorici': ['no', 'elenca-tutti'],
+  'src/lib/storici/generazioni.ts::opzioniStorici': ['no-già', 'esclude-in-arrivo'],
   'src/lib/storici/scope.ts::preparaContestoStorico': ['no-già', 'ids'],
   'src/lib/votazioni/aventi-diritto.ts::calcolaGenitoriDelleClassi': ['no-già', 'stato'],
 }
@@ -298,8 +302,8 @@ const INCORPORATE: Record<string, Voce> = {
   'src/app/api/admin/parents/[id]/route.ts::admin/parents/[id]:GET#incorporata': ['sì', 'anagrafica'],
   'src/app/api/admin/presenze/realtime/route.ts::admin/presenze/realtime:GET#incorporata': ['no-già', 'incorporata-da-tabella-operativa'],
   'src/app/api/admin/primaria/fascicolo-audit/route.ts::admin/primaria/fascicolo-audit:GET#incorporata': ['no-già', 'incorporata-da-tabella-operativa'],
-  'src/app/api/admin/sidi/legami/route.ts::admin/sidi/legami:GET#incorporata': ['no', 'elenca-tutti'],
-  'src/app/api/admin/sidi/piattaforma-unica/route.ts::admin/sidi/piattaforma-unica:POST#incorporata': ['no', 'elenca-tutti'],
+  'src/app/api/admin/sidi/legami/route.ts::admin/sidi/legami:GET#incorporata': ['no-già', 'esclude-in-arrivo'],
+  'src/app/api/admin/sidi/piattaforma-unica/route.ts::admin/sidi/piattaforma-unica:POST#incorporata': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/admin/students/[id]/route.ts::admin/students/[id]:GET#incorporata': ['sì', 'anagrafica'],
   'src/app/api/attendance/delegates/route.ts::attendance/delegates:GET#incorporata': ['no-già', 'incorporata-da-tabella-operativa'],
   'src/app/api/debug/scrutini/route.ts::debug/scrutini:GET#incorporata': ['no-già', 'incorporata-da-tabella-operativa'],
@@ -325,16 +329,16 @@ const INCORPORATE: Record<string, Voce> = {
 /** Le funzioni SQL vive che toccano `alunni`. */
 const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::alunni_riallinea_da_frequenze': ['sì', 'funzione-di-anno'],
-  'sql::anno_fotografa': ['no', 'elenca-tutti'],
+  'sql::anno_fotografa': ['no-già', 'esclude-in-arrivo'],
   'sql::anno_invarianti': ['sì', 'funzione-di-anno'],
-  'sql::anno_riempi': ['no', 'riempimento-senza-stato'],
+  'sql::anno_riempi': ['no-già', 'funzione-tolta'],
   'sql::anno_sede_della_riga': ['no-già', 'funzione-puntuale'],
   'sql::anno_sede_sql': ['no-già', 'funzione-puntuale'],
   'sql::chat_riepilogo_conversazioni': ['no-già', 'incorporata-da-tabella-operativa'],
   'sql::chat_vigilanza_ricerca': ['no-già', 'incorporata-da-tabella-operativa'],
   'sql::crm_aggancia_alunno': ['sì', 'anagrafica'],
   'sql::crm_quota_passa': ['sì', 'ricevute'],
-  'sql::elimina_alunno_definitivo': ['no', 'guardia-senza-sezione'],
+  'sql::elimina_alunno_definitivo': ['no-già', 'esclude-in-arrivo'],
   'sql::fn_scuola_id_da_alunno': ['no-già', 'funzione-puntuale'],
   'sql::frequenza_segue_classe_alunno': ['no-già', 'funzione-per-sezione'],
   'sql::frequenze_specchio_alunni': ['sì', 'funzione-di-anno'],
@@ -355,88 +359,11 @@ const FUNZIONI_SQL: Record<string, Voce> = {
 }
 
 /**
- * LA LISTA DI LAVORO DEL 4.5.4-bis. Ogni `no`, e ogni `sì` che oggi esclude, con che cosa cambia per le persone e che cosa
- * toccare. Il 4.5.4-bis la SVUOTA: un `no` corretto diventa `no-già` con la ragione «filtra per stato», e la sua riga sparisce
- * di qui. Finché c'è una riga qui, il difetto è aperto.
+ * LA LISTA DI LAVORO DEL 4.5.4-bis: SVUOTATA. Ogni `no`, e ogni `sì` che escludeva, è stato corretto o riclassificato con la sua
+ * ragione (`esclude-in-arrivo`, `oblio-dopo-archiviazione`, `funzione-tolta`); i due `sì` che escludevano (la ricerca del CRM e i
+ * legami familiari) ora lo trovano. Una riga nuova qui è un difetto aperto: ogni `no` deve avere la sua, e il lock sotto lo verifica.
  */
-export const DA_CORREGGERE: Record<string, { persone: string; correzione: string }> = {
-  'src/app/api/admin/gdpr/erase/route.ts::admin/gdpr/erase:POST': {
-    persone: 'Una famiglia che chiede l’oblio per un bambino in arrivo (domanda per l’anno dopo) si sente rispondere che non è «non più iscritto»: la richiesta non è evadibile dal prodotto.',
-    correzione: 'Decidere se l’oblio ammette `in_arrivo` (probabile sì: nessun dato scolastico da proteggere) e in tal caso aggiungerlo al gate di `erase` (riga 112) senza toccare `eNonPiuIscritto`.',
-  },
-  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:GET': {
-    persone: 'Nell’elenco delle richieste la Direzione vede i figli in arrivo contati come «iscritti» (riga 130), quindi un numero che non descrive ciò che l’oblio farebbe.',
-    correzione: 'Contare `in_arrivo` come categoria propria o fra gli anonimizzabili, coerente con la decisione su `erase`.',
-  },
-  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:POST': {
-    persone: 'L’esecuzione di una richiesta lascia intatto il figlio in arrivo (riga 293 lo tratta come iscritto mantenuto): i suoi dati restano dopo un’istanza di cancellazione della famiglia.',
-    correzione: 'Stessa decisione di `erase`: includere `in_arrivo` fra i figli anonimizzabili, o dichiarare in risposta che è stato trattenuto e perché.',
-  },
-  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': {
-    persone: 'Per la route, «non iscritto» è «ritirato OPPURE senza sezione» (righe 293-294): la segreteria può cancellare per intero un bambino in arrivo come se fosse un ex alunno.',
-    correzione: 'Respingere `in_arrivo` con un codice proprio, come per `elimina_alunno_definitivo`; la cancellazione di una domanda passa dal suo flusso di annullamento.',
-  },
-  'sql::anno_fotografa': {
-    persone: 'La fotografia «alunni senza frequenza» conta i bambini in arrivo: il confronto prima/dopo del passaggio d’anno vede una differenza che non c’è.',
-    correzione: 'Escludere `in_arrivo` dal conteggio, come fa la 11-bis delle invarianti.',
-  },
-  'sql::anno_riempi': {
-    persone: 'Se il riempimento dell’anno gira dopo che esistono bambini in arrivo, dà a ciascuno una frequenza dell’anno attivo (e lo specchio lo fa «iscritto»).',
-    correzione: 'Saltare `stato = in_arrivo` nel `WITH base` quando la colonna esiste.',
-  },
-  'sql::elimina_alunno_definitivo': {
-    persone: 'Per la funzione, «senza sezione» vuol dire «eliminabile»: un bambino in arrivo si può cancellare per intero come se fosse un ex alunno.',
-    correzione: 'Respingere `in_arrivo` con un codice proprio (esiste già il flusso di annullamento della domanda).',
-  },
-  'src/app/api/admin/crm/alunni/route.ts::admin/crm/alunni:GET': {
-    persone: 'Il CRM non trova un bambino in arrivo quando cerca l’alunno a cui agganciare una pratica: ne crea un secondo.',
-    correzione: 'Ammettere `in_arrivo` (`.in(\'stato\', [iscritto, in_arrivo])`).',
-  },
-  'src/app/api/admin/gdpr/candidates/route.ts::admin/gdpr/candidates:GET': {
-    persone: 'La sonda conta `in_arrivo` come stato fuori elenco e lo scrive in app_log a ogni apertura dell’elenco dell’oblio: un allarme falso, nessun effetto per le famiglie.',
-    correzione: 'Togliere `in_arrivo` dal conteggio dei fuori elenco (`STATI_AMMESSI_IN_COLONNA`), non dall’elenco dei candidati.',
-  },
-  'src/app/api/admin/legami-familiari/route.ts::admin/legami-familiari:GET': {
-    persone: 'La ricerca del bambino a cui collegare un genitore non trova un bambino in arrivo: la segreteria non può correggerne il legame.',
-    correzione: 'Ammettere `in_arrivo` nella ricerca (è una ricerca di segreteria, non un canale verso le famiglie).',
-  },
-  'src/app/api/admin/sidi/legami/route.ts::admin/sidi/legami:GET#incorporata': {
-    persone: 'L’elenco dei legami da confermare prima della Piattaforma Unica include i genitori di chi non è ancora iscritto.',
-    correzione: 'Filtrare per sezione o per `stato <> in_arrivo` sull’alunno incorporato.',
-  },
-  'src/app/api/admin/sidi/piattaforma-unica/route.ts::admin/sidi/piattaforma-unica:POST#incorporata': {
-    persone: 'Il codice fiscale di un bambino che non è ancora iscritto finirebbe nell’invio alla Piattaforma Unica del Ministero.',
-    correzione: 'Escludere `in_arrivo` dall’invio: al Ministero si comunicano solo i frequentanti.',
-  },
-  'src/app/api/admin/students/route.ts::admin/students:GET': {
-    persone: 'La linguetta «Non iscritti» è «ritirato OPPURE senza sezione»: un bambino che ha appena fatto domanda ci compare tra gli ex alunni, con il pulsante «Elimina definitivamente».',
-    correzione: 'Escludere `in_arrivo` da `non_iscritti` (e dal conteggio dei non iscritti) e dargli la sua linguetta o il suo filtro.',
-  },
-  'src/app/api/avvisi/route.ts::listaAvvisiGenitore': {
-    persone: 'La famiglia di un bambino in arrivo vede gli avvisi della scuola e della classe come se frequentasse.',
-    correzione: 'Partire da `getFigliAttiviDiGenitore` (la funzione SQL `figli_attivi`) invece che da `getFigliDiGenitore`.',
-  },
-  'src/app/api/parent/forms/route.ts::parent/forms:GET': {
-    persone: 'La famiglia di un bambino in arrivo riceve i moduli della classe (da confermare con il titolare: forse i moduli di iscrizione sì).',
-    correzione: 'Partire da `getFigliAttiviDiGenitore`, salvo i moduli di iscrizione, se il titolare li vuole.',
-  },
-  'src/lib/gallery/pubblicazione-video-automatica.ts::leggiPerimetro': {
-    persone: 'Il perimetro dei bambini ripresi in un video automatico accetta chi non è ancora a scuola.',
-    correzione: 'Escludere `in_arrivo` dal perimetro (oltre a `eNonPiuIscritto`).',
-  },
-  'src/lib/gallery/tag-scope.ts::assertTagStudentsInScope': {
-    persone: 'Un bambino che non è ancora a scuola può essere taggato in una foto della sede, via API: la sua famiglia ne vedrebbe la foto.',
-    correzione: 'Il gate deve respingere `in_arrivo` oltre a `eNonPiuIscritto`.',
-  },
-  'src/lib/news/target.ts::caricaFigliConTarget': {
-    persone: 'La famiglia di un bambino in arrivo entra nel target delle news e del digest.',
-    correzione: 'Partire da `getFigliAttiviDiGenitore`.',
-  },
-  'src/lib/storici/generazioni.ts::opzioniStorici': {
-    persone: 'L’elenco dei bambini per le stampe storiche (registri, fascicoli) mostra chi non ha ancora cominciato.',
-    correzione: 'Filtrare `stato <> in_arrivo` nelle due letture di `alunni`.',
-  },
-}
+export const DA_CORREGGERE: Record<string, { persone: string; correzione: string }> = {}
 
 // ───────────────────────────── il lettore ─────────────────────────────
 
@@ -589,7 +516,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 14, 'no-già': 189, sì: 61, daCorreggere: 19 },
+      { no: 0, 'no-già': 206, sì: 58, daCorreggere: 0 },
     )
   })
 

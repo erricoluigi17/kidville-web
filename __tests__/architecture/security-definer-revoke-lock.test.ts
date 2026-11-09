@@ -95,6 +95,10 @@ const AMMESSE = new Map<string, readonly string[]>([
     '20261107165503_anno_scrittura.sql',
     ['elimina_alunno_definitivo', 'iscrizioni_sanitari_tick', 'presenze_giustificazioni_retention_tick'],
   ],
+  // PR 4.5 (compito 4.5.4-bis, M45b): `CREATE OR REPLACE` (dentro `to_regprocedure`) di `elimina_alunno_definitivo`, **già esistente**,
+  // per respingere il bambino «in arrivo». L'ACL non cambia: la funzione è revocata ad anon/authenticated da
+  // 20261008220540, e il blocco `DO` non crea nulla dove la funzione non c'è (il database della CI), quindi non nasce mai aperta.
+  ['20261109035213_anno_alunno_in_arrivo.sql', ['elimina_alunno_definitivo']],
   // PR 4.4 (Ruling R-44-1): i wrapper `*_miei()` sono APERTI ad `authenticated` di proposito, come
   // `current_parent_student_ids()`: non hanno parametri, prendono l'utente da `auth.uid()` e tornano il solo scope di chi
   // chiama. Sono l'unica via dal browser, perché le versioni con `p_utente` restano solo `service_role` (lì un genitore

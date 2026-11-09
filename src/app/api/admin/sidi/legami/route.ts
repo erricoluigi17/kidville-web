@@ -9,6 +9,19 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
+import { eInArrivo } from '@/lib/alunni/stato'
+
+/** L'incorporata `alunni!inner` è un oggetto; per prudenza si accetta anche un elenco di uno. */
+function unoSolo<T>(v: unknown): T | undefined {
+  return (Array.isArray(v) ? v[0] : v) as T | undefined
+}
+function senzaStato(v: unknown): unknown {
+  const uno = unoSolo<Record<string, unknown>>(v)
+  if (!uno || typeof uno !== 'object') return v
+  const { stato: _stato, ...resto } = uno
+  void _stato
+  return resto
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso (userId è consumato dal gate)
@@ -37,12 +50,18 @@ export const GET = withRoute('admin/sidi/legami:GET', async (request: NextReques
       const plessi = await resolveScuoleAttive(request, supabase, auth.user)
       const { data, error } = await supabase
         .from('student_parents')
-        .select('student_id, parent_id, relation_type, is_primary, validato_sidi, alunni!inner(nome, cognome, scuola_id), parents(first_name, last_name, fiscal_code)')
+        .select('student_id, parent_id, relation_type, is_primary, validato_sidi, alunni!inner(nome, cognome, scuola_id, stato), parents(first_name, last_name, fiscal_code)')
         .in('alunni.scuola_id', plessi)
         .order('student_id', { ascending: true })
       // È l'elenco da confermare prima della Piattaforma Unica: un guasto non è «nessun legame».
       if (error) return rispostaGuastoDb('admin/sidi/legami:GET', 'db:student_parents', error)
-      return NextResponse.json({ success: true, data: data ?? [] })
+      // Al Ministero si comunicano i frequentanti: i genitori di un bambino «in arrivo» (la domanda è per l'anno dopo) non sono
+      // da confermare adesso. Il filtro è qui e non in query perché uno stato vuoto (NULL) deve restare. Lo stato serve a
+      // questo e non alla segreteria: non esce.
+      const legami = ((data ?? []) as unknown as Array<{ alunni: unknown }>)
+        .filter((r) => !eInArrivo(unoSolo<{ stato?: string | null }>(r.alunni)?.stato))
+        .map((r) => ({ ...r, alunni: senzaStato(r.alunni) }))
+      return NextResponse.json({ success: true, data: legami })
     } catch (err) {
       logErrore({ operazione: 'admin/sidi/legami:GET', stato: 500 }, err)
       const msg = err instanceof Error ? err.message : 'Errore interno'

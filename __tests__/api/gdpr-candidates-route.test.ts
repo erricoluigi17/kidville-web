@@ -168,6 +168,33 @@ describe('GET /api/admin/gdpr/candidates — chi l’elenco chiuso lascia fuori'
     expect(riga![2].n_stati).toBe(3)
   })
 
+  it('il bambino IN ARRIVO (domanda per l’anno dopo) è uno stato valido: non entra fra i candidati e non fa suonare l’allarme', async () => {
+    h.alunni = [
+      { id: 'al-1', nome: 'Marco', cognome: 'Rossi', classe_sezione: 'A', stato: 'ritirato' },
+      { id: 'al-2', nome: 'Gaia', cognome: 'Blu', classe_sezione: 'C', stato: 'iscritto' },
+      { id: 'al-3', nome: 'Ivo', cognome: 'Verdi', classe_sezione: null, stato: 'in_arrivo' },
+    ]
+    h.links = []
+    const json = await (await GET(get())).json()
+    expect(json.map((a: { id: string }) => a.id)).toEqual(['al-1'])
+
+    const riga = rigaGdpr()
+    expect(riga![1]).toBe('info')
+    expect(riga![2]).toMatchObject({ esito: 'candidati-elencati', n_candidati: 1, n_esclusi: 0, tipo: 'nessuno' })
+  })
+
+  it('un refuso resta un allarme anche accanto a un bambino in arrivo: solo `in_arrivo` esce dal conteggio', async () => {
+    h.alunni = [
+      { id: 'al-1', nome: 'Ivo', cognome: 'Verdi', classe_sezione: null, stato: 'in_arrivo' },
+      { id: 'al-2', nome: 'Sara', cognome: 'Neri', classe_sezione: 'B', stato: 'boh' },
+    ]
+    h.links = []
+    await GET(get())
+    const riga = rigaGdpr()
+    expect(riga![1]).toBe('warn')
+    expect(riga![2]).toMatchObject({ n_esclusi: 1, tipo: 'boh' })
+  })
+
   it('la riga ARRIVA in tabella leggibile: passa la redazione senza essere oscurata', async () => {
     // Il presidio che manca a quasi tutti i log: `logEvento` è stato chiamato,
     // ma `app_log` riceve il risultato di `redact()`. `tipo` è in lista bianca e

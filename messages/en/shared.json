@@ -851,5 +851,6 @@
   "erroreAnnoNonModificabile": "This school year can no longer be changed from here.",
   "erroreAnnoNonOfferto": "This school year does not offer that service or age group.",
   "erroreIscrizioniChiuse": "Enrolment for this school year is closed.",
-  "erroreImportoNonValido": "The amount is not valid: enter a figure greater than zero, with at most two decimals."
+  "erroreImportoNonValido": "The amount is not valid: enter a figure greater than zero, with at most two decimals.",
+  "erroreAlunnoEliminazioneInArrivo": "This child is “incoming” (the application is for next school year): archive them first from their record, the status becomes “withdrawn”, and then you can delete them."
 }

@@ -6,7 +6,7 @@ import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaAlunno, bonificaAuditScritture, bonificaTracceTestualiAlunno } from '@/lib/gdpr/esegui'
 import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE } from '@/lib/gdpr/chiavi-condivise'
-import { eNonPiuIscritto } from '@/lib/alunni/stato'
+import { eInArrivo, eNonPiuIscritto } from '@/lib/alunni/stato'
 import { RUOLI_ELIMINA_DEFINITIVO } from '@/lib/alunni/archiviazione'
 import {
   contaPerEliminazione,
@@ -141,6 +141,11 @@ function rispostaAlRifiutoDelDb(code: string | undefined, effettiGiaAvvenuti: Ef
           codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE',
           effetti,
         },
+        { status: 409 },
+      )
+    case 'in_arrivo':
+      return NextResponse.json(
+        { error: 'Prima archivia il bambino', codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO', effetti },
         { status: 409 },
       )
     case 'registro_primaria':
@@ -286,6 +291,22 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       return NextResponse.json(
         { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
         { status: 404 },
+      )
+    }
+
+    // Un bambino «in arrivo» (la domanda è per l'anno dopo) non ha sezione, ma NON è un non iscritto: lo si tratta da iscritto.
+    // Prima lo si archivia (diventa «ritirato»), poi lo si elimina.
+    if (eInArrivo(alunno.stato as string | null)) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-in-arrivo',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: 'in_arrivo',
+      })
+      return NextResponse.json(
+        { error: 'Prima archivia il bambino', codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO' },
+        { status: 409 },
       )
     }
 

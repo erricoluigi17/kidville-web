@@ -247,6 +247,34 @@ describe('elimina_alunno_definitivo — chi si può eliminare', () => {
     await sentinellaIntatta(FRATELLO)
   })
 
+  it('un bambino IN ARRIVO (domanda per l’anno dopo, senza sezione) non si elimina: «senza sezione» non vuol dire «ex alunno»', async () => {
+    const IN_ARRIVO = '10000000-0000-4000-8000-000000000006'
+    await db.exec(`INSERT INTO public.alunni (id, scuola_id, stato, section_id, classe_sezione) VALUES ('${IN_ARRIVO}', '${SEDE}', 'in_arrivo', NULL, NULL)`)
+    await sentinella(IN_ARRIVO)
+    for (const soloVerifica of [true, false]) {
+      expect(await elimina(IN_ARRIVO, false, soloVerifica)).toMatchObject({ ok: false, code: 'in_arrivo' })
+    }
+    expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${IN_ARRIVO}'`)).toBe(1)
+    await sentinellaIntatta(IN_ARRIVO)
+  })
+
+  it('«archivia, poi elimina»: lo stesso bambino, ritirato dall’archiviazione, si elimina', async () => {
+    const IN_ARRIVO = '10000000-0000-4000-8000-000000000007'
+    await db.exec(`INSERT INTO public.alunni (id, scuola_id, stato, section_id, classe_sezione) VALUES ('${IN_ARRIVO}', '${SEDE}', 'in_arrivo', NULL, NULL)`)
+    expect(await elimina(IN_ARRIVO, false, true)).toMatchObject({ ok: false, code: 'in_arrivo' })
+    // ciò che fa la route di archiviazione: stato «ritirato» e sezione staccata
+    await db.exec(`UPDATE public.alunni SET stato = 'ritirato', section_id = NULL WHERE id = '${IN_ARRIVO}'`)
+    expect(await elimina(IN_ARRIVO, false, true)).toMatchObject({ ok: true, code: 'ammissibile' })
+    expect(await elimina(IN_ARRIVO)).toMatchObject({ ok: true, code: 'eliminato' })
+    expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${IN_ARRIVO}'`)).toBe(0)
+  })
+
+  it('il CHECK `alunni_in_arrivo_senza_sezione`: un «in arrivo» con una sezione non può esistere', async () => {
+    await expect(
+      db.exec(`INSERT INTO public.alunni (id, scuola_id, stato, section_id) VALUES ('10000000-0000-4000-8000-000000000008', '${SEDE}', 'in_arrivo', '${SEZ}')`),
+    ).rejects.toThrow(/alunni_in_arrivo_senza_sezione/)
+  })
+
   it('risponde «non_trovato» su un id che non esiste', async () => {
     expect(await elimina('99999999-0000-4000-8000-000000000099')).toMatchObject({ ok: false, code: 'non_trovato' })
   })

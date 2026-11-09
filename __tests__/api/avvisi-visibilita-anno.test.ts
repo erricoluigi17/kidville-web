@@ -308,3 +308,35 @@ describe('POST /api/avvisi/[id]/risposte, famiglia', () => {
     expect((await aderisci(AV_ALTRA_SEDE, FIGLIO)).status).toBe(403)
   })
 })
+
+// ─── PR 4.5 · il bambino «in arrivo» e lo schema indietro ───────────────────────────────────────────────────────────────────
+// Dove la funzione `figli_attivi` non c'è (la CI) la bacheca riparte dai figli COLLEGATI. Un bambino la cui domanda è per l'anno dopo
+// è collegato, ha una sede e nessuna classe: senza un filtro sullo stato la famiglia riceverebbe gli avvisi della scuola come se
+// frequentasse. Il finto database filtra davvero: il bambino è una riga con `stato = 'in_arrivo'`.
+describe('GET /api/avvisi, famiglia · il bambino in arrivo, con lo schema indietro', () => {
+  const ARRIVO = '11111111-1111-4111-8111-111111111119'
+  const AV_GLOBALE = 'aaaaaaaa-0000-4000-8000-000000000009'
+  const schemaIndietro: Rpc = () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })
+
+  beforeEach(() => {
+    h.coppie = schemaIndietro
+    h.figliAttivi = schemaIndietro
+    h.db.avvisi = [avviso(AV_GLOBALE, { target_scope: 'globale', target_classes: null, tipo: 'info' })]
+    h.db.alunni = [
+      { id: FIGLIO, nome: 'n', cognome: 'c', classe_sezione: 'Girasoli', scuola_id: SEDE, stato: 'iscritto' },
+      { id: ARRIVO, nome: 'n', cognome: 'c', classe_sezione: null, scuola_id: SEDE, stato: 'in_arrivo' },
+    ]
+  })
+
+  it('un genitore il cui SOLO figlio è in arrivo non riceve nessun avviso della scuola', async () => {
+    h.getFigliDiGenitore.mockResolvedValue([ARRIVO])
+    expect(await bacheca()).toEqual([])
+  })
+
+  it('con un fratello che frequenta, gli avvisi arrivano per lui e il bambino in arrivo non è fra i figli offerti', async () => {
+    h.getFigliDiGenitore.mockResolvedValue([FIGLIO, ARRIVO])
+    const feed = await bacheca()
+    expect(feed.map((a) => a.id)).toEqual([AV_GLOBALE])
+    expect(feed[0].figli.map((f) => f.student_id)).toEqual([FIGLIO])
+  })
+})

@@ -6,7 +6,7 @@ import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { STATI_NON_PIU_ISCRITTO, STATO_ISCRITTO, eNonPiuIscritto } from '@/lib/alunni/stato'
+import { STATI_NON_PIU_ISCRITTO, STATO_ISCRITTO, eInArrivo, eNonPiuIscritto } from '@/lib/alunni/stato'
 import { alunniConRegistroPrimaria } from '@/lib/alunni/registro-primaria'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -127,7 +127,8 @@ export const GET = withRoute('admin/gdpr/candidates:GET', async (request: NextRe
     const letti = (tutti ?? []) as { stato: string | null }[]
     const fuoriElenco = letti
       .map((a) => a.stato ?? STATO_ISCRITTO)
-      .filter((s: string) => s !== STATO_ISCRITTO && !eNonPiuIscritto(s))
+      // `in_arrivo` è uno stato VALIDO (la domanda è per l'anno dopo), non un'anomalia: fuori dal candidato, e fuori dall'allarme.
+      .filter((s: string) => s !== STATO_ISCRITTO && !eNonPiuIscritto(s) && !eInArrivo(s))
 
     // ⚠️ IL SEPARATORE NON È UNA SCELTA ESTETICA. `tipo` è in lista bianca, ma
     // «la chiave apre, il VALORE conferma»: esce in chiaro solo se ha la forma di

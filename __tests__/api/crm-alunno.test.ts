@@ -483,6 +483,16 @@ describe('GET /api/admin/crm/alunni — la ricerca fra gli alunni della sede', (
     expect(data.map((r: { id: string }) => r.id)).toEqual([uuidN(1)])
   })
 
+  it('il bambino IN ARRIVO (domanda per l’anno dopo) si trova: la segreteria gli aggancia la pratica invece di crearne un secondo', async () => {
+    h.db.alunni = [
+      alunno(uuidN(1), 'Bimbo', 'Iscritto', SEDE_A),
+      alunno(uuidN(2), 'Bimbo', 'InArrivo', SEDE_A, { stato: 'in_arrivo' }),
+      alunno(uuidN(3), 'Bimbo', 'Ritirato', SEDE_A, { stato: 'ritirato' }),
+    ]
+    const { data } = await (await cerca(`scuolaId=${SEDE_A}&q=bimbo`)).json()
+    expect(data.map((r: { id: string }) => r.id).sort()).toEqual([uuidN(1), uuidN(2)])
+  })
+
   it('al massimo 20 risultati', async () => {
     h.db.alunni = Array.from({ length: 25 }, (_, i) => alunno(uuidN(100 + i), 'Bimbo', `Cognome${i}`, SEDE_A))
     const { data } = await (await cerca(`scuolaId=${SEDE_A}&q=bimbo`)).json()

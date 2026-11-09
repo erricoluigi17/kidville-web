@@ -65,7 +65,7 @@ import { oggiRoma, type ContestoNotificaOperazione } from '@/lib/storici/retroat
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { eNonPiuIscritto } from '@/lib/alunni/stato'
+import { eInArrivo, eNonPiuIscritto } from '@/lib/alunni/stato'
 import { profiloStaffRevocato, type AppRole } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi'
@@ -772,9 +772,11 @@ async function leggiPerimetro(ctx: Contesto, scuolaId: string, tag: string[]): P
   const dentro = new Map(righe.map((r) => [r.id.toLowerCase(), r]))
   // Un bambino che non torna indietro non è della sede (trasferito, cancellato); uno che torna ma non frequenta più
   // (`ritirato`, o archiviato per l'oblio) esce comunque. `eNonPiuIscritto` è l'allowlist del repo: uno stato mai visto non lo toglie.
+  // Esce anche chi è «in arrivo» (la domanda è per l'anno dopo): è della sede, non è ritirato, ma non è ancora a scuola e la sua
+  // famiglia non deve vedere un video di cui non sa niente.
   const effettivi = tag.filter((id) => {
     const riga = dentro.get(id)
-    return riga !== undefined && !eNonPiuIscritto(riga.stato)
+    return riga !== undefined && !eNonPiuIscritto(riga.stato) && !eInArrivo(riga.stato)
   })
   const consensi: Record<string, boolean> = {}
   for (const id of effettivi) consensi[id] = dentro.get(id)?.consenso_privacy === true

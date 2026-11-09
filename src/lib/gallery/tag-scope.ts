@@ -52,7 +52,7 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede'
-import { eNonPiuIscritto } from '@/lib/alunni/stato'
+import { eInArrivo, eNonPiuIscritto } from '@/lib/alunni/stato'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 /**
@@ -185,7 +185,9 @@ export async function assertTagStudentsInScope(
   // Uno stato mai visto, un refuso o una colonna vuota NON bloccano — nella
   // direzione «rifiuto un'operazione a una maestra» si sbaglia dalla parte di
   // chi lascia lavorare, e il caso vero (l'archiviato) è dichiarato lì.
-  const nonIscritti = ids.filter((id) => eNonPiuIscritto(statoDi.get(id)))
+  // E chi è «in arrivo» (la domanda è per l'anno dopo): ha la scheda e la sede ma non è ancora a scuola, e non è ritirato, quindi
+  // `eNonPiuIscritto` non lo ferma. Stesso rifiuto, stesso codice: la sua famiglia non deve vedere una foto di cui non sa niente.
+  const nonIscritti = ids.filter((id) => eNonPiuIscritto(statoDi.get(id)) || eInArrivo(statoDi.get(id)))
   if (nonIscritti.length > 0) {
     logEvento('galleria', 'warn', {
       operazione,

@@ -14,6 +14,10 @@
 --
 -- Nessun uuid di sede, nessun valore del 2027/28. Niente dato di produzione toccato: nessun bambino ha oggi lo stato
 -- `in_arrivo`, e il CHECK allargato non sposta nessuna riga.
+--   5. `elimina_alunno_definitivo` respinge l'`in_arrivo` (compito 4.5.4-bis), 6. `anno_fotografa` non lo conta fra gli alunni
+--      senza frequenza, 7. il CHECK `alunni_in_arrivo_senza_sezione`.
+--
+-- distruttiva approvata: nessuna riga cancellata alla migrazione; le `DELETE FROM` stanno nel corpo di `elimina_alunno_definitivo`, ridefinita col suo stesso testo più un rifiuto in testa, e girano solo quando qualcuno la chiama
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 
 -- ── 1 · Il CHECK ────────────────────────────────────────────────────────────────────────────────
@@ -566,3 +570,469 @@ REVOKE ALL ON FUNCTION public.alunni_specchio_frequenza() FROM PUBLIC, anon, aut
 REVOKE ALL ON FUNCTION public.anno_invarianti()           FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.alunni_specchio_frequenza() TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_invarianti()           TO service_role;
+
+-- ── 5 · `elimina_alunno_definitivo` respinge il bambino «in arrivo» (compito 4.5.4-bis) ─────────────────────────────────
+-- Per la funzione «senza sezione» voleva dire «eliminabile»: un bambino la cui domanda è per l'anno dopo, che una sezione non
+-- ce l'ha, si poteva cancellare per intero come un ex alunno. Ora ha un codice proprio (`in_arrivo`): prima si archivia
+-- (lo stato diventa `ritirato`), poi si elimina. Il testo è quello dell'ULTIMA definizione (`20261107165503_anno_scrittura.sql`,
+-- stessa guardia `to_regprocedure`: il database della CI non ha la funzione, e un `CREATE OR REPLACE` la creerebbe senza i
+-- `REVOKE`), con il solo controllo in più, prima di quello sulla sezione.
+DO $do$
+BEGIN
+  IF to_regprocedure('public.elimina_alunno_definitivo(uuid,boolean,boolean)') IS NOT NULL THEN
+    EXECUTE $def$
+CREATE OR REPLACE FUNCTION public.elimina_alunno_definitivo(p_alunno uuid, p_con_pagamenti boolean DEFAULT false, p_solo_verifica boolean DEFAULT false)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_alunno    record;
+  v_pagamenti int;
+  v_bloccati  int;
+  v_ricevute  int;
+  v_n         int;
+  v_righe     jsonb := '{}'::jsonb;
+begin
+  -- Anno scolastico (M3): l'oblio è l'unica scrittura che può toccare un anno chiuso senza gettone.
+  perform set_config('anno_chiuso.oblio', 'on', true);
+  if p_alunno is null then
+    raise exception 'elimina_alunno_definitivo: p_alunno obbligatorio';
+  end if;
+
+  select id, stato, section_id, anonimizzato_il
+    into v_alunno
+    from public.alunni
+   where id = p_alunno
+   for update;
+
+  if not found then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'non_trovato');
+  end if;
+  if v_alunno.anonimizzato_il is not null then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'gia_anonimizzato');
+  end if;
+  -- Un bambino «in arrivo» (la domanda è per l'anno dopo) non ha sezione ma NON è un ex alunno: lo si tratta da iscritto.
+  -- Prima si archivia (lo stato diventa «ritirato»), poi si elimina. Va PRIMA del controllo sulla sezione, che altrimenti
+  -- lo lascerebbe passare.
+  if v_alunno.stato = 'in_arrivo' then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'in_arrivo');
+  end if;
+  -- Elenco chiuso degli stati, mai la negazione di 'iscritto'. `stato` è
+  -- nullable (DEFAULT 'iscritto') e un NULL non è un ritiro (`eNonPiuIscritto`):
+  -- senza il coalesce `NULL = any(…)` darebbe NULL, `not (NULL or false)` NULL,
+  -- e l'if NON scatterebbe — cioè lascerebbe eliminare chi frequenta.
+  if not (coalesce(v_alunno.stato = any(public.stati_alunno_non_piu_iscritto()), false)
+          or v_alunno.section_id is null) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'frequentante');
+  end if;
+
+  -- IL SECONDO LOCK: i pagamenti del bambino, PRIMA di controllarli.
+  -- Il `for update` sulla scheda ferma solo chi scrive su `alunni` (o inserisce
+  -- un pagamento nuovo per lui). Non ferma chi scrive una riga FIGLIA di un
+  -- pagamento P che esiste già: un incasso, un abbinamento, la quota di un
+  -- fratello, una voce in fatture_coda. Se quella transazione non ha ancora
+  -- confermato quando i controlli qui sotto guardano P, la sua riga è invisibile:
+  -- il controllo dice «pulito», la delete di P aspetta che l'altra confermi, e poi
+  -- porta via in CASCADE l'incasso appena registrato — rispondendo ok: true.
+  -- Chi inserisce una riga figlia prende sul padre, per il controllo della FK, un
+  -- lock FOR KEY SHARE; FOR UPDATE è in conflitto con quello. Da qui in poi chi
+  -- scrive o ha già confermato (e i controlli lo vedono), o aspetta la fine di
+  -- questa transazione e fallisce con 23503 perché P non c'è più.
+  perform 1 from public.pagamenti where alunno_id = p_alunno for update;
+
+  -- registro-primaria:inizio
+  if exists (select 1 from public.valutazioni where alunno_id = p_alunno)
+     or exists (select 1 from public.pagelle where alunno_id = p_alunno)
+     or exists (select 1 from public.scrutinio_giudizi where alunno_id = p_alunno)
+     or exists (select 1 from public.scrutinio_comportamento where alunno_id = p_alunno)
+     or exists (select 1 from public.note_disciplinari where alunno_id = p_alunno)
+     or exists (select 1 from public.certificati_competenze where alunno_id = p_alunno) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'registro_primaria');
+  end if;
+  -- registro-primaria:fine
+
+  -- La ricevuta di una pagella (fase 7): registro della primaria come la pagella,
+  -- fuori dai marcatori perché l'elenco qui sopra è la copia di quello in TS.
+  if exists (select 1 from public.pagella_ricezioni where alunno_id = p_alunno) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'registro_primaria');
+  end if;
+
+  select count(*) into v_pagamenti from public.pagamenti where alunno_id = p_alunno;
+  select count(*) into v_ricevute from public.ricevute_emesse where alunno_id = p_alunno;
+
+  if v_pagamenti > 0 or v_ricevute > 0 then
+    if not coalesce(p_con_pagamenti, false) then
+      perform set_config('anno_chiuso.oblio', 'off', true);
+      return jsonb_build_object('ok', false, 'code', 'ha_pagamenti', 'pagamenti', v_pagamenti);
+    end if;
+    -- Un pagamento è contabilità vera se ha una ricevuta, una fattura, un
+    -- bonifico abbinato, un incasso, quote di un ALTRO alunno appese a lui
+    -- (la cascata su parent_payment_id le porterebbe via), oppure una voce
+    -- ancora viva in fatture_coda (vedi il commento di testa della migrazione
+    -- 20261008220540).
+    select count(*) into v_bloccati
+      from public.pagamenti p
+     where p.alunno_id = p_alunno
+       and (exists (select 1 from public.ricevute_emesse r where r.pagamento_id = p.id)
+         or exists (select 1 from public.fatture_emesse f where f.pagamento_id = p.id)
+         or exists (select 1 from public.riconciliazione_movimenti m where m.pagamento_id = p.id)
+         or exists (select 1 from public.incassi i where i.pagamento_id = p.id)
+         or exists (select 1 from public.pagamenti c
+                     where c.parent_payment_id = p.id
+                       and c.alunno_id is distinct from p_alunno)
+         or exists (select 1 from public.fatture_coda q
+                     where q.pagamento_id = p.id
+                       and q.stato <> 'tolta'));
+    if v_bloccati > 0 or v_ricevute > 0 then
+      perform set_config('anno_chiuso.oblio', 'off', true);
+      return jsonb_build_object('ok', false, 'code', 'pagamenti_non_cancellabili',
+                                'bloccati', v_bloccati, 'ricevute', v_ricevute);
+    end if;
+  end if;
+
+  -- La sola verifica si ferma QUI: dopo ogni controllo (e ogni lock) qui sopra,
+  -- prima della prima cancellazione qui sotto.
+  if coalesce(p_solo_verifica, false) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', true, 'code', 'ammissibile');
+  end if;
+
+  -- Le cancellazioni: prima ciò che bloccherebbe la DELETE finale, poi la scheda.
+  delete from public.solleciti where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('solleciti', v_n);
+
+  delete from public.pagamenti where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('pagamenti', v_n);
+
+  delete from public.eventi_diario where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('diario', v_n);
+
+  delete from public.legame_genitori_alunni where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('legami', v_n);
+
+  delete from public.armadietto where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('armadietto', v_n);
+
+  delete from public.ticket_mensa where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('ticket_mensa', v_n);
+
+  delete from public.forms_submissions where student_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('moduli', v_n);
+
+  -- Certificati medici e fascicolo: i FILE li ha già tolti la route; qui va via
+  -- l'indice. Prima della fase 7 lo faceva la cascata senza dirlo.
+  delete from public.certificati_medici where alunno_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('certificati_medici', v_n);
+
+  delete from public.student_documents where student_id = p_alunno;
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('fascicolo', v_n);
+
+  update public.galleria_media
+     set tag_alunni = array_remove(tag_alunni, p_alunno)
+   where p_alunno = any(tag_alunni);
+  get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('tag_galleria', v_n);
+
+  -- Copia di sicurezza del diario creata a mano il 2026-09-08, senza migrazione:
+  -- esiste solo in produzione, quindi la si nomina solo se c'è.
+  if to_regclass('public.backup_diario_vuote_20260908') is not null then
+    execute 'delete from public.backup_diario_vuote_20260908 where alunno_id = $1' using p_alunno;
+    get diagnostics v_n = row_count; v_righe := v_righe || jsonb_build_object('backup_diario', v_n);
+  end if;
+
+  -- Il resto (presenze, deleghe, chat, servizi, registro_destinatari, ...) segue
+  -- in CASCADE: nessuna di quelle catene ha un freno RESTRICT. retta_a_carico_di
+  -- dei fratelli va a NULL da sé.
+  delete from public.alunni where id = p_alunno;
+
+  perform set_config('anno_chiuso.oblio', 'off', true);
+  return jsonb_build_object('ok', true, 'code', 'eliminato', 'righe', v_righe);
+end;
+$function$;
+    $def$;
+  END IF;
+END
+$do$;
+
+-- ── 6 · `anno_fotografa` non conta il bambino «in arrivo» fra gli alunni senza frequenza ────────────────────────────────
+-- Come la 11-bis delle invarianti: l'«in arrivo» non ha la frequenza dell'anno attivo per costruzione, e contarlo farebbe
+-- divergere il confronto prima/dopo del passaggio d'anno per un caso normale. Testo dell'ULTIMA definizione
+-- (`20261107012110_anno_strumenti.sql`), con la sola condizione in più sulla voce `alunni_senza_frequenza`.
+CREATE OR REPLACE FUNCTION public.anno_fotografa(p_fase text, p_tabelle text[] DEFAULT NULL)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r       record;
+  c       record;
+  v_tot   bigint := 0;
+  v_sede  text;
+  v_t     text;
+  v_prima timestamptz;
+  v_nuova text;
+  v_cond  text;
+BEGIN
+  IF p_fase IS NULL OR p_fase NOT IN ('prima', 'dopo', 'finale') THEN
+    RAISE EXCEPTION 'FASE_NON_VALIDA';
+  END IF;
+
+  FOR r IN SELECT * FROM public.anno_tabelle ORDER BY tabella LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (r.tabella = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', r.tabella)) IS NULL;
+
+    v_t := format('public.%I', r.tabella);
+    v_sede := public.anno_sede_sql(r.tabella, 't');
+    v_prima := NULL;
+    IF p_fase <> 'prima' THEN
+      -- l'istante in cui l'ULTIMA fotografia `prima` di questa tabella ha cominciato a scrivere (con clock_timestamp()
+      -- le righe di una stessa fotografia hanno istanti diversi: il minimo della sua transazione, non il massimo di tutte)
+      SELECT min(x.eseguita_il) INTO v_prima
+        FROM public.riconciliazione_anno x
+       WHERE x.fase = 'prima' AND x.tabella = r.tabella
+         AND x.transazione = (SELECT y.transazione FROM public.riconciliazione_anno y
+                               WHERE y.fase = 'prima' AND y.tabella = r.tabella
+                               ORDER BY y.eseguita_il DESC, y.id DESC LIMIT 1);
+    END IF;
+    -- le righe nate dopo la fotografia `prima` di QUESTA tabella
+    v_nuova := CASE WHEN v_prima IS NOT NULL AND r.colonna_creazione IS NOT NULL
+                    THEN format('t.%I::timestamptz >= %L::timestamptz', r.colonna_creazione, v_prima) END;
+
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe',
+      format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+    -- Il totale, SEMPRE una riga (un aggregato senza GROUP BY): una tabella svuotata o riempita da zero deve
+    -- comparire nella fotografia, o la differenza non la vedrebbe (`righe` per sede, a tabella vuota, non scrive niente).
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_totale',
+      format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t', v_t));
+    -- Senza una colonna di creazione propria le righe nuove non si distinguono dalle perse: la tabella non e
+    -- confrontabile (`anno_riconciliazione_differenze` la salta) e il suo conteggio resta qui, visibile.
+    IF r.colonna_creazione IS NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'non_confrontabili',
+        format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t', v_t));
+    END IF;
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_per_anno',
+      format('SELECT %s AS scuola_id, t.anno_id AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_id IS NOT NULL GROUP BY 1, 2', v_sede, v_t));
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_senza_anno',
+      format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_id IS NULL GROUP BY 1', v_sede, v_t));
+    -- la sede non ricavabile: una riga così, a controlli rigidi, può restare senza anno (tabelle `sede_facoltativa`)
+    IF r.modo <> 'madre' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_senza_sede',
+        format('SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s IS NULL', v_t, v_sede));
+    END IF;
+    IF v_nuova IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'righe_nuove',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_sede, v_t, v_nuova));
+    END IF;
+
+    -- La sezione della riga è di un altro anno (tutte le righe, non solo quelle dopo `controlli_rigidi_dal`).
+    IF r.tabella <> 'sections' AND public.anno_ha_colonna(r.tabella, 'section_id') THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:sezione_altro_anno:' || r.tabella,
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t JOIN public.sections s ON s.id = t.section_id '
+               || 'WHERE t.anno_id IS NOT NULL AND s.anno_id IS NOT NULL AND t.anno_id <> s.anno_id GROUP BY 1', v_sede, v_t));
+    END IF;
+
+    IF r.tabella = 'pagamenti' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_importo',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo), 0)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_importo_pagato',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo_pagato), 0)::numeric AS valore FROM %s t GROUP BY 1', v_sede, v_t));
+      IF v_nuova IS NOT NULL THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'euro_nuove',
+          format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(t.importo), 0)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_sede, v_t, v_nuova));
+      END IF;
+      -- per quale strada il riempimento ha trovato l'anno di una voce: competenza, scadenza o creazione
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_competenza',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NOT NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_scadenza',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NULL AND t.%I IS NOT NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data, r.colonna_data_riserva));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:via_creazione',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.%I IS NULL AND t.%I IS NULL GROUP BY 1',
+               v_sede, v_t, r.colonna_data, r.colonna_data_riserva));
+      -- competenza oltre la fine dell'ultimo anno che la sede ha in questo momento
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:pagamenti_anno_successivo',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore '
+               || 'FROM (SELECT %s AS sede, t.%I AS giorno FROM %s t WHERE t.%I IS NOT NULL) q '
+               || 'WHERE q.giorno > (SELECT max(s.fine) FROM public.anni_sede s WHERE s.scuola_id = q.sede) GROUP BY 1',
+               v_sede, r.colonna_data, v_t, r.colonna_data));
+      -- Una voce senza competenza con l'anno DICHIARATO diverso da quello della scadenza è legittima (una quota
+      -- 2027/28 con scadenza a febbraio 2027): non è un errore, la segreteria deve solo poterla vedere.
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:pagamenti_anno_diverso_da_scadenza',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore '
+               || 'FROM (SELECT %s AS sede, t.anno_id AS anno, t.%I AS giorno FROM %s t '
+               || 'WHERE t.%I IS NULL AND t.%I IS NOT NULL AND t.anno_id IS NOT NULL) q '
+               || 'WHERE q.anno IS DISTINCT FROM public.anno_di(q.sede, q.giorno) GROUP BY 1',
+               v_sede, r.colonna_data_riserva, v_t, r.colonna_data, r.colonna_data_riserva));
+
+    ELSIF r.tabella = 'enrollment_submissions' THEN
+      -- L'anno della domanda: il suo, o quello attivo della sede. Il 15/09 e il 01/09 sono di QUELL'anno.
+      v_cond := format('SELECT t.scuola_id AS sede, public.giorno_roma(t.created_at) AS giorno, '
+                       || '(SELECT y.anno_inizio FROM public.anni_scolastici y WHERE y.id = coalesce(t.anno_id, '
+                       || '(SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(t.scuola_id)))) AS base '
+                       || 'FROM %s t WHERE t.scuola_id IS NOT NULL', v_t);
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:domande_dopo_15_09',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+               || 'WHERE q.base IS NOT NULL AND q.giorno > make_date(q.base::int, 9, 15) GROUP BY 1', v_cond));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:domande_prima_1_09',
+        format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+               || 'WHERE q.base IS NOT NULL AND q.giorno < make_date(q.base::int, 9, 1) GROUP BY 1', v_cond));
+
+    ELSIF r.tabella = 'crm_bambini' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:crm_non_indicato',
+        format('SELECT %s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.anno_ingresso = %L GROUP BY 1',
+               v_sede, v_t, 'non_indicato'));
+
+    ELSIF r.tabella = 'frequenze' THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'recuperi',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.origine = %L GROUP BY 1',
+               v_t, 'recupero'));
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_da_listino',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE t.retta_mensile IS NULL GROUP BY 1', v_t));
+      -- sedi senza `retta_default_importo`: la retta senza fascia diventa 150 € (come fa oggi la generazione).
+      -- Il valore sta in `admin_settings` (una riga per sede); il ripiego sulla colonna di `schools` resta per i
+      -- database che hanno quella forma.
+      v_cond := NULL;
+      IF to_regclass('public.admin_settings') IS NOT NULL AND public.anno_ha_colonna('admin_settings', 'retta_default_importo') THEN
+        v_cond := 'NOT EXISTS (SELECT 1 FROM public.admin_settings x WHERE x.scuola_id = t.scuola_id AND x.retta_default_importo > 0)';
+      ELSIF public.anno_ha_colonna('schools', 'retta_default_importo') THEN
+        v_cond := 'EXISTS (SELECT 1 FROM public.schools s WHERE s.id = t.scuola_id AND s.retta_default_importo IS NULL)';
+      END IF;
+      IF v_cond IS NOT NULL THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:retta_default_assente_150',
+          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t WHERE %s GROUP BY 1', v_t, v_cond));
+      END IF;
+      -- ingresso/uscita che il riempimento ha dovuto portare all'inizio dell'anno
+      IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
+        v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:ingresso_portato_a_inizio_anno',
+          format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
+                 || 'JOIN public.anni_sede a ON a.id = t.anno_sede_id WHERE t.data_ingresso = a.inizio '
+                 || 'AND EXISTS (SELECT 1 FROM public.alunni_classi_storico h WHERE h.alunno_id = t.alunno_id AND h.dal < a.inizio) GROUP BY 1', v_t));
+      END IF;
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, r.tabella, 'ambiguo:uscita_portata_a_inizio_anno',
+        format('SELECT t.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM %s t '
+               || 'JOIN public.anni_sede a ON a.id = t.anno_sede_id WHERE t.data_uscita IS NOT NULL AND t.data_uscita = a.inizio GROUP BY 1', v_t));
+    END IF;
+  END LOOP;
+
+  -- I nomi di classe (testo) che nessuna sezione dell'anno ATTIVO della sede ha: si contano, non si leggono.
+  FOR c IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', true), ('forms_templates', 'target_classes', true),
+      ('galleria_media_v2', 'target_classes', true), ('news_posts', 'target_classes', true),
+      ('video_intents', 'classi_destinatarie', true), ('mensa_class_menu_assignment', 'classe', false)
+    ) AS v(tab, col, e_array) LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (c.tab = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', c.tab)) IS NULL OR NOT public.anno_ha_colonna(c.tab, c.col);
+    v_t := format('public.%I', c.tab);
+    v_sede := public.anno_sede_sql(c.tab, 't');
+    v_cond := CASE WHEN c.e_array
+                   THEN format('SELECT %s AS sede, v.voce FROM %s t CROSS JOIN LATERAL unnest(coalesce(t.%I, %L::text[])) AS v(voce)', v_sede, v_t, c.col, '{}')
+                   ELSE format('SELECT %s AS sede, t.%I AS voce FROM %s t', v_sede, c.col, v_t) END;
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, c.tab, 'ambiguo:nomi_classe_non_abbinati:' || c.tab,
+      format('SELECT q.sede AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM (%s) q '
+             || 'WHERE q.sede IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = q.sede '
+             || 'AND s.anno_id = (SELECT x.anno_id FROM public.anni_sede x WHERE x.id = public.anno_attivo(q.sede)) '
+             || 'AND lower(replace(s.name, %L, %L)) = lower(replace(q.voce, %L, %L))) GROUP BY 1',
+             v_cond, ' ', '', ' ', ''));
+  END LOOP;
+
+  -- Le righe con nomi di classe il cui anno non ha NESSUNA sezione nella sede (es. gli avvisi dell'estate 2026, nel 2025/26): gli uuid
+  -- sono quelli del riempimento e non si possono ricalcolare. Lo stesso anno della riga che usa `anno_target_divergenti`.
+  FOR c IN SELECT * FROM (VALUES
+      ('avvisi', 'target_classes', true), ('forms_templates', 'target_classes', true),
+      ('galleria_media_v2', 'target_classes', true), ('news_posts', 'target_classes', true),
+      ('video_intents', 'classi_destinatarie', true), ('mensa_class_menu_assignment', 'classe', false)
+    ) AS v(tab, col, e_array) LOOP
+    CONTINUE WHEN p_tabelle IS NOT NULL AND NOT (c.tab = ANY (p_tabelle));
+    CONTINUE WHEN to_regclass(format('public.%I', c.tab)) IS NULL OR NOT public.anno_ha_colonna(c.tab, c.col);
+    v_sede := public.anno_sede_sql(c.tab, 't');
+    v_cond := CASE
+      WHEN public.anno_ha_colonna(c.tab, 'anno_id') THEN 't.anno_id'
+      WHEN public.anno_ha_colonna(c.tab, 'attivo_dal') THEN format('public.anno_di(%s, t.attivo_dal)', v_sede)
+      WHEN public.anno_ha_colonna(c.tab, 'created_at') THEN format('public.anno_di(%s, public.giorno_roma(t.created_at::timestamptz))', v_sede)
+      ELSE 'NULL::uuid' END;
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, c.tab, 'ambiguo:classi_in_anno_senza_sezioni:' || c.tab,
+      format('SELECT %1$s AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.%2$I t '
+             || 'WHERE %1$s IS NOT NULL AND %3$s IS NOT NULL AND %4$s '
+             || 'AND NOT EXISTS (SELECT 1 FROM public.sections s WHERE s.scuola_id = %1$s AND s.anno_id = %3$s) GROUP BY 1',
+             v_sede, c.tab, v_cond,
+             CASE WHEN c.e_array THEN format('cardinality(coalesce(t.%I, %L::text[])) > 0', c.col, '{}')
+                  ELSE format('t.%I IS NOT NULL', c.col) END));
+  END LOOP;
+
+  -- Gli incassi non hanno anno (anno solare): solo il totale per sede, via la voce di pagamento.
+  IF (p_tabelle IS NULL OR 'incassi' = ANY (p_tabelle))
+     AND to_regclass('public.incassi') IS NOT NULL AND to_regclass('public.pagamenti') IS NOT NULL THEN
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'incassi', 'euro_incassi',
+      'SELECT p.scuola_id AS scuola_id, NULL::uuid AS anno_id, coalesce(sum(i.importo), 0)::numeric AS valore '
+      || 'FROM public.incassi i JOIN public.pagamenti p ON p.id = i.pagamento_id GROUP BY 1');
+  END IF;
+
+  -- Gli alunni: la tabella non è nel registro, ma il riempimento e lo specchio li toccano.
+  IF (p_tabelle IS NULL OR 'alunni' = ANY (p_tabelle)) AND to_regclass('public.alunni') IS NOT NULL THEN
+    v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'ambiguo:alunni_senza_sede',
+      'SELECT NULL::uuid AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a WHERE a.scuola_id IS NULL');
+    IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'ambiguo:alunni_senza_storico',
+        'SELECT a.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a '
+        || 'WHERE a.scuola_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.alunni_classi_storico h WHERE h.alunno_id = a.id) GROUP BY 1');
+    END IF;
+    -- gli alunni con sede ma senza frequenza nell'anno attivo della sede (chi non ha sede non conta)
+    IF to_regclass('public.frequenze') IS NOT NULL THEN
+      v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'alunni_senza_frequenza',
+        'SELECT a.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a '
+        || 'WHERE a.scuola_id IS NOT NULL AND public.anno_attivo(a.scuola_id) IS NOT NULL AND a.stato IS DISTINCT FROM ''in_arrivo'' '
+        || 'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(a.scuola_id)) GROUP BY 1');
+    END IF;
+  END IF;
+
+  RETURN v_tot;
+END
+$$;
+
+-- ── 7 · Un «in arrivo» non ha una sezione: lo dice il database ─────────────────────────────────────────────────────────
+-- Il bambino esce dagli elenchi staccandosi dalla sezione, e l'«in arrivo» ha la stessa impronta: se qualcosa gli desse una
+-- sezione comparirebbe fra i frequentanti senza passare dal passaggio d'anno. La guardia conta le righe che violerebbero il
+-- vincolo prima di aggiungerlo: se ce ne fossero il `VALIDATE` farebbe fallire l'integrazione al merge, e il vincolo non
+-- nasce (lo dice il log). Riapplicabile: se c'è già, non si tocca.
+DO $$
+DECLARE
+  fuori bigint;
+BEGIN
+  IF to_regclass('public.alunni') IS NULL THEN RETURN; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'alunni' AND column_name IN ('stato', 'section_id')
+     HAVING count(*) = 2
+  ) THEN RETURN; END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'public.alunni'::regclass AND conname = 'alunni_in_arrivo_senza_sezione'
+  ) THEN RETURN; END IF;
+
+  SELECT count(*) INTO fuori FROM public.alunni WHERE stato = 'in_arrivo' AND section_id IS NOT NULL;
+  IF fuori > 0 THEN
+    RAISE WARNING 'anno_alunno_in_arrivo: % righe in_arrivo con una sezione, vincolo alunni_in_arrivo_senza_sezione non aggiunto', fuori;
+    RETURN;
+  END IF;
+
+  ALTER TABLE public.alunni
+    ADD CONSTRAINT alunni_in_arrivo_senza_sezione
+    CHECK (stato IS DISTINCT FROM 'in_arrivo' OR section_id IS NULL) NOT VALID;
+  ALTER TABLE public.alunni
+    VALIDATE CONSTRAINT alunni_in_arrivo_senza_sezione;
+END $$;
+
+-- ── 8 · I permessi ────────────────────────────────────────────────────────────────────────────────────────────────────
+-- `CREATE OR REPLACE` conserva i privilegi che c'erano. `elimina_alunno_definitivo` resta com'era (revocata ad anon e
+-- authenticated da `20261008220540_alunni_elimina_definitivo.sql`; dentro `to_regprocedure`, dove la funzione non c'è non nasce
+-- aperta): è nell'elenco AMMESSE del lock dei SECURITY DEFINER, come già per M3. `anno_fotografa` si riscrive lo stesso.
+REVOKE ALL ON FUNCTION public.anno_fotografa(text, text[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_fotografa(text, text[]) TO service_role;

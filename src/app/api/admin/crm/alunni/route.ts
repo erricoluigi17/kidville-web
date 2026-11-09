@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveScuoleAttive, restringiSedi } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
-import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATO_IN_ARRIVO, STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { requireCrm } from '@/lib/crm/accesso'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { logEvento } from '@/lib/logging/logger'
@@ -31,6 +31,8 @@ import { zUuid } from '@/lib/validation/common'
  * Si cerca fra chi è iscritto (`STATO_ISCRITTO`, come ogni elenco operativo di sede intera: lo impone il lock
  * `elenchi-operativi-solo-iscritti`). Un alunno ritirato o sospeso non si offre: collegargli un bambino farebbe
  * passare la quota d'iscrizione nella contabilità di chi non frequenta più.
+ * Si cerca anche fra chi è «in arrivo» (`STATO_IN_ARRIVO`: la domanda è per l'anno dopo): la quota d'iscrizione è proprio la sua, e
+ * se la ricerca non lo trovasse la segreteria ne creerebbe un secondo. È una ricerca di segreteria, non un canale verso le famiglie.
  *
  * ─── IL TESTO ────────────────────────────────────────────────────────────────
  * `q` ha almeno due caratteri DOPO la pulizia. Si tolgono `%`, `,`, `(` e `)` (che nella stringa del filtro
@@ -78,7 +80,7 @@ export const GET = withRoute('admin/crm/alunni:GET', async (request: NextRequest
     .from('alunni')
     .select('id, nome, cognome, data_nascita')
     .eq('scuola_id', scuole[0])
-    .eq('stato', STATO_ISCRITTO)
+    .in('stato', [STATO_ISCRITTO, STATO_IN_ARRIVO])
     .or(`nome.ilike.%${testo}%,cognome.ilike.%${testo}%`)
     .order('cognome', { ascending: true })
     .order('nome', { ascending: true })

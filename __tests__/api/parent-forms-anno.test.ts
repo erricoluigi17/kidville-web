@@ -153,3 +153,35 @@ describe('GET /api/parent/forms', () => {
     expect(r.map((m) => [m.form_id, m.student.id])).toEqual([[MODULO_A, FIGLIO_B]])
   })
 })
+
+// ─── PR 4.5 · il bambino «in arrivo» e lo schema indietro ───────────────────────────────────────────────────────────────────
+// Dove la funzione `figli_attivi` non c'è, i moduli si abbinano per NOME di classe ai figli collegati. Un bambino la cui domanda è
+// per l'anno dopo è collegato: se per un residuo avesse un nome di classe, riceverebbe i moduli di quella classe. Il genitore
+// dell'anno prossimo vede solo la voce della quota: nemmeno i moduli, quelli di iscrizione compresi.
+describe('GET /api/parent/forms · il bambino in arrivo, con lo schema indietro', () => {
+  const ARRIVO = '11111111-1111-4111-8111-111111111119'
+
+  beforeEach(() => {
+    h.figliAttivi = (() => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } })) as Rpc
+    h.db.alunni = [
+      { id: FIGLIO_A, nome: 'n', cognome: 'c', classe_sezione: 'Girasoli', scuola_id: SEDE, stato: 'iscritto' },
+      { id: ARRIVO, nome: 'n', cognome: 'c', classe_sezione: 'Girasoli', scuola_id: SEDE, stato: 'in_arrivo' },
+    ]
+  })
+
+  it('un genitore il cui solo figlio è in arrivo non riceve nessun modulo', async () => {
+    h.db.legame_genitori_alunni = [{ genitore_id: GEN_A, alunno_id: ARRIVO }]
+
+    expect(await moduli()).toEqual([])
+  })
+
+  it('con un fratello che frequenta, il modulo è per lui soltanto', async () => {
+    h.db.legame_genitori_alunni = [{ genitore_id: GEN_A, alunno_id: FIGLIO_A }, { genitore_id: GEN_A, alunno_id: ARRIVO }]
+
+    const r = await moduli()
+
+    // Senza la funzione i moduli si abbinano per nome di classe (arrivano entrambi): quel che conta è CHI li riceve.
+    expect(r.length).toBeGreaterThan(0)
+    expect([...new Set(r.map((m) => m.student.id))]).toEqual([FIGLIO_A])
+  })
+})

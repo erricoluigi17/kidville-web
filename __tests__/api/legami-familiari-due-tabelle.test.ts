@@ -542,6 +542,19 @@ describe('GET — la ricerca non esce dai plessi consentiti', () => {
     expect(ids).not.toContain(ALUNNO_B)
   })
 
+  it('il bambino IN ARRIVO (domanda per l’anno dopo) si trova: la segreteria può correggerne il legame; un ritirato no', async () => {
+    h.db.alunni.push(
+      { id: 'e0000000-0000-4000-8000-0000000000a1', scuola_id: SEDE_A, nome: 'Bambino', cognome: 'InArrivo', stato: 'in_arrivo', section_id: null, classe_sezione: null },
+      { id: 'e0000000-0000-4000-8000-0000000000a2', scuola_id: SEDE_A, nome: 'Bambino', cognome: 'Ritirato', stato: 'ritirato', section_id: null, classe_sezione: null },
+    )
+
+    const { alunni } = await (await get('tipo=alunni&q=Bambino')).json()
+    const ids = (alunni as { id: string }[]).map((a) => a.id)
+
+    expect(ids).toContain('e0000000-0000-4000-8000-0000000000a1')
+    expect(ids).not.toContain('e0000000-0000-4000-8000-0000000000a2')
+  })
+
   it('un genitore di un ALTRO plesso non si può usare come filtro: 403', async () => {
     const res = await get(`tipo=alunni&q=Bambino&parent_id=${PARENT_ALTRA_SEDE}`)
     expect(res.status).toBe(403)

@@ -1,1 +1,9 @@
-{}
+{
+  "titolo": "Moduli da rifirmare",
+  "testo": "Con il nuovo anno scolastico questi moduli vanno firmati di nuovo. Tocca «Firma» per aprire il modulo.",
+  "voce": "{modulo} · {nome}",
+  "firmatoIl": "Firmato il {data}",
+  "firma": "Firma",
+  "firmaAria": "Firma: {modulo} · {nome}",
+  "altri": "{n, plural, one {E un altro modulo, che compare dopo questi.} other {E altri # moduli, che compaiono dopo questi.}}"
+}

@@ -1366,3 +1366,67 @@ describe('PrestampatiGenitore — il PDF si SALVA con l’helper (NAT3c)', () =>
     expect(screen.getByRole('button', { name: itGenitore.salvaDiNuovo })).toBeInTheDocument()
   })
 })
+
+describe('PrestampatiGenitore — aperto dalla fascia «Moduli da rifirmare» (4.8.6)', () => {
+  it('con due figli e il figlio indicato da fuori: legge l’elenco di QUEL figlio senza che si scelga dalla tendina', async () => {
+    armaFetch({ elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_B.id) }] })
+    render(<PrestampatiGenitore figli={[FIGLIO_A, FIGLIO_B]} alunnoIniziale={FIGLIO_B.id} />)
+
+    expect(await screen.findByText(itGenitore.modelli.schedaSanitaria)).toBeInTheDocument()
+    expect(chiamate('elenco')).toHaveLength(1)
+    expect(chiamate('elenco')[0]).toContain(FIGLIO_B.id)
+    expect((screen.getByLabelText(itGenitore.scegliFiglio) as HTMLSelectElement).value).toBe(FIGLIO_B.id)
+  })
+
+  it('un figlio indicato che non è fra i figli dell’utente si ignora: nessuna chiamata finché non si sceglie', async () => {
+    armaFetch({ elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_B.id) }] })
+    render(<PrestampatiGenitore figli={[FIGLIO_A, FIGLIO_B]} alunnoIniziale="c1000000-0000-4000-8000-00000000000c" />)
+
+    expect((screen.getByLabelText(itGenitore.scegliFiglio) as HTMLSelectElement).value).toBe('')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('con il modulo indicato: arriva l’elenco e si apre direttamente la compilazione di quel modulo', async () => {
+    armaFetch({
+      elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id) }],
+      dettaglio: [{ ok: true, status: 200, corpo: dettaglioServito(FIGLIO_A.id) }],
+    })
+    render(
+      <PrestampatiGenitore
+        figli={[FIGLIO_A, FIGLIO_B]}
+        alunnoIniziale={FIGLIO_A.id}
+        moduloIniziale={MODELLO_SANITARIO.slug}
+      />,
+    )
+
+    // Il campo del modulo è la prova che siamo nel passo «compila», senza aver toccato l'elenco.
+    expect(await screen.findByLabelText(new RegExp(CAMPO_PEDIATRA.etichetta.split(' —')[0]))).toBeInTheDocument()
+    expect(chiamate('dettaglio')).toHaveLength(1)
+    expect(chiamate('dettaglio')[0]).toContain(`slug=${MODELLO_SANITARIO.slug}`)
+  })
+
+  it('un modulo non firmabile ora (lo firma la Scuola) non si apre: resta l’elenco', async () => {
+    armaFetch({ elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id, [MODELLO_CERTIFICATO]) }] })
+    render(
+      <PrestampatiGenitore
+        figli={[FIGLIO_A]}
+        alunnoIniziale={FIGLIO_A.id}
+        moduloIniziale={MODELLO_CERTIFICATO.slug}
+      />,
+    )
+
+    expect(await screen.findByRole('button', { name: itGenitore.certificatoGenera })).toBeInTheDocument()
+    expect(chiamate('dettaglio')).toHaveLength(0)
+  })
+
+  it('senza il modulo indicato resta il comportamento di sempre: l’elenco, e il dettaglio solo al tocco', async () => {
+    armaFetch({ elenco: [{ ok: true, status: 200, corpo: elencoServito(FIGLIO_A.id) }] })
+    render(<PrestampatiGenitore figli={[FIGLIO_A, FIGLIO_B]} alunnoIniziale={FIGLIO_A.id} />)
+
+    expect(await screen.findByText(itGenitore.modelli.schedaSanitaria)).toBeInTheDocument()
+    expect(chiamate('dettaglio')).toHaveLength(0)
+  })
+})

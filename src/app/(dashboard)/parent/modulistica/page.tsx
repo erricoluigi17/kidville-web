@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 import { PrestampatiGenitore } from '@/components/features/prestampati/PrestampatiGenitore';
+import { FasciaModuliDaRifirmare } from '@/components/features/parent/FasciaModuliDaRifirmare';
 import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
@@ -211,6 +212,8 @@ function ContenutoModulistica() {
    */
   const [motivoAssenzaFigli, setMotivoAssenzaFigli] = useState<MotivoFiglioNascosto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /** Il modulo da rifirmare scelto dalla fascia in cima: apre il pannello dei prestampati su quel figlio e quel modulo. */
+  const [rifirma, setRifirma] = useState<{ alunnoId: string; slug: string; giro: number } | null>(null);
   /**
    * Una lettura FALLITA non è mai «nessun risultato», e nemmeno «vuoto»: le tre
    * cose si somigliano a schermo e chiedono all'utente gesti opposti — riprova,
@@ -658,29 +661,44 @@ function ContenutoModulistica() {
         subtitle={t('modulisticaSottotitolo')}
       />
 
+      {/* I moduli che il passaggio d'anno ha reso da firmare di nuovo. Compare solo se ce n'è almeno uno; «Firma»
+          apre il flusso dei prestampati (scheda Certificati) sul figlio e sul modulo di quella riga. Si monta a
+          caricamento finito perché i nomi dei figli arrivano da `/api/parent/students`. */}
+      {!isLoading && (
+        <FasciaModuliDaRifirmare
+          userId={parentId}
+          figli={children}
+          onFirma={(alunnoId, slug) => {
+            setActiveTab('certificati');
+            setCompilingForm(null);
+            setRifirma((prec) => ({ alunnoId, slug, giro: (prec?.giro ?? 0) + 1 }));
+          }}
+        />
+      )}
+
       {/* Tabs */}
       <div className="mt-5 flex gap-4 mb-6 overflow-x-auto border-b border-kidville-line scrollbar-none pb-1">
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'compilare' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => { setActiveTab('compilare'); setCompilingForm(null); }}
+          onClick={() => { setActiveTab('compilare'); setCompilingForm(null); setRifirma(null); }}
         >
           <Clock size={16} /> {t('modulisticaTabCompilare')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'archivio' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => { setActiveTab('archivio'); setCompilingForm(null); }}
+          onClick={() => { setActiveTab('archivio'); setCompilingForm(null); setRifirma(null); }}
         >
           <Archive size={16} /> {t('modulisticaTabArchivio')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'certificati' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => { setActiveTab('certificati'); setCompilingForm(null); }}
+          onClick={() => { setActiveTab('certificati'); setCompilingForm(null); setRifirma(null); }}
         >
           <Award size={16} /> {t('modulisticaTabCertificati')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'medici' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => { setActiveTab('medici'); setCompilingForm(null); }}
+          onClick={() => { setActiveTab('medici'); setCompilingForm(null); setRifirma(null); }}
         >
           <HeartPulse size={16} /> {t('modulisticaTabMedici')}
         </button>
@@ -971,7 +989,15 @@ function ContenutoModulistica() {
                   generano e si riscaricano — tutto da qui dentro, dove il figlio si sceglie
                   una volta sola. I due riquadri «Scarica PDF» che stavano sotto sono spariti
                   insieme al loro generatore: vedi il blocco più su in questo file. */}
-              <PrestampatiGenitore figli={children} inAttesa={figliInAttesa} motivoAssenza={motivoAssenzaFigli} />
+              {/* `key`: ogni «Firma» della fascia rimonta il pannello, che legge figlio e modulo solo alla nascita. */}
+              <PrestampatiGenitore
+                key={rifirma?.giro ?? 0}
+                figli={children}
+                inAttesa={figliInAttesa}
+                motivoAssenza={motivoAssenzaFigli}
+                alunnoIniziale={rifirma?.alunnoId}
+                moduloIniziale={rifirma?.slug}
+              />
             </div>
           )}
 

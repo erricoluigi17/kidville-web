@@ -3,7 +3,7 @@
 -- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
 --
 -- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempiono i compiti 4.5.5 (parte 1) e 4.5.6 (parte 2,
--- in fondo al file). Nessuna logica qui. Sta DOPO M45d: `anno_quota_voce` legge `listino_voci.scadenza`, che nasce lì.
+-- in fondo al file). Sta DOPO M45d: `anno_quota_voce` legge `listino_voci.scadenza`, che nasce lì.
 --
 -- CONTERRÀ:
 --   · 4.5.5: `anno_registra_frequenza`, `anno_quota_voce`, `anno_quota_collega`, `anno_conta_posti`;
@@ -196,11 +196,12 @@ $$;
 -- `retta_split_config`, `intestatario_fatture`, `giorno_scadenza_pagamenti`, `gruppo_mensa_id`, `usa_pannolino`; ogni altra
 -- chiave (la sospensione, lo stato) è ignorata. Se la frequenza c'è già la restituisce (`creata:false`) e, se arriva una
 -- domanda e la riga non ne ha una, la collega: una frequenza ritirata non si riapre e non riceve una voce (`quota` NULL).
--- MAI blocca per i posti: `posti_oltre` è un avviso.
+-- MAI blocca per i posti: `posti_oltre` è un avviso. `p_da` (4.5.6) è chi ha fatto il gesto: finisce in `pagamenti.creato_da` della voce
+-- nuova; chi non lo passa (la domanda pubblica) lascia l'autore vuoto, come prima.
 -- Risposta: {frequenza_id, creata, quota, pagamento_id, posti_oltre}.
 CREATE OR REPLACE FUNCTION public.anno_registra_frequenza(
   p_alunno uuid, p_anno_sede uuid, p_tipo text, p_origine text, p_domanda uuid,
-  p_section uuid, p_data_ingresso date, p_campi jsonb)
+  p_section uuid, p_data_ingresso date, p_campi jsonb, p_da uuid DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -278,7 +279,7 @@ BEGIN
   END IF;
 
   IF v_f.stato IN ('in_attesa', 'iscritto') THEN
-    v_quota := public.anno_quota_voce(v_f.id, NULL);
+    v_quota := public.anno_quota_voce(v_f.id, p_da);
   ELSE
     v_quota := jsonb_build_object('esito', NULL, 'pagamento_id', v_f.quota_pagamento_id);
   END IF;
@@ -298,8 +299,183 @@ $$;
 REVOKE ALL ON FUNCTION public.anno_conta_posti(uuid)                                                   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_quota_voce(uuid, uuid, date)                                        FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_quota_collega(uuid, uuid)                                           FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_conta_posti(uuid)                                                   TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_quota_voce(uuid, uuid, date)                                        TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_quota_collega(uuid, uuid)                                           TO service_role;
-GRANT EXECUTE ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb, uuid) TO service_role;
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- COMPITO 4.5.6 · la conferma per l'anno prossimo e il «non rinnova»
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- Due funzioni. Nessuna scrive `alunni`, `section_id`, `classe_sezione` o `importo_retta_mensile`, né la frequenza dell'anno
+-- attivo (salvo i due campi del «no» in `anno_non_rinnova`, che sono PROPRIO di quella frequenza): una conferma per l'anno
+-- prossimo non cambia un dato dell'anno in corso. La frequenza nuova e la sua voce le scrive `anno_registra_frequenza`.
+
+-- ── anno_conferma ────────────────────────────────────────────────────────────────────────────────
+-- La famiglia conferma: dalla frequenza VIVA di partenza (`in_attesa`/`iscritto`, FREQUENZA_NON_VIVA altrimenti) nasce la
+-- frequenza `in_attesa` di tipo `conferma`, origine `conferma`, `continua_da` = la partenza, nell'anno aperto della STESSA sede
+-- (SEDE_DIVERSA; ANNO_NON_APERTO se non ha le iscrizioni aperte; ANNO_NON_COERENTE se è l'anno della partenza stessa).
+--   · sezione: `p_section` se data; altrimenti la CONTINUAZIONE della sezione di partenza (`sections.continua_da`, nell'anno nuovo);
+--     senza continuazione resta NULL e la conferma passa;
+--   · `p_cambia_grado = true` (la spunta «va alla primaria» della pagina) esige `p_section`: SEZIONE_OBBLIGATORIA. Nessuna sezione
+--     può dire da sola che il bambino cambia scuola, per questo è una spunta;
+--   · `cambia_grado` nel risultato: `p_cambia_grado`, oppure `school_type` diverso fra la sezione di partenza e quella d'arrivo,
+--     oppure `fascia` diversa quando le sezioni ne hanno una tutte e due;
+--   · si riportano i campi di famiglia (`retta_esente`, `retta_a_carico_di`, `retta_split_config`, `intestatario_fatture`,
+--     `giorno_scadenza_pagamenti`, `gruppo_mensa_id`, `usa_pannolino`); NON si riportano `retta_mensile` (la retta personalizzata
+--     di un anno non vale per il successivo: il risultato dice se c'era, `retta_personalizzata_precedente`) né la sospensione;
+--   · la quota la fa `anno_registra_frequenza` → `anno_quota_voce`, `tipo 'conferma'`, con la fascia della sezione d'arrivo;
+--   · idempotente: rifatta restituisce la stessa frequenza (`creata:false`). Se quella dell'anno prossimo è stata ritirata non si
+--     riapre da qui: FREQUENZA_NON_VIVA. «Non rinnova» già segnato non impedisce la conferma (la famiglia ha cambiato idea) e la
+--     partenza non viene toccata.
+-- Risposta: {frequenza_id, creata, cambia_grado, retta_personalizzata_precedente, quota, pagamento_id, posti_oltre}.
+CREATE OR REPLACE FUNCTION public.anno_conferma(
+  p_frequenza uuid, p_anno_sede_nuovo uuid, p_section uuid, p_da uuid, p_cambia_grado boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_p        public.frequenze%ROWTYPE;
+  v_n        public.anni_sede%ROWTYPE;
+  v_sezione  uuid := p_section;
+  v_tipo_p   text;
+  v_fascia_p text;
+  v_tipo_n   text;
+  v_fascia_n text;
+  v_cambia   boolean;
+  v_campi    jsonb;
+  v_r        jsonb;
+  v_nuova    uuid;
+  v_stato    text;
+BEGIN
+  SELECT * INTO v_p FROM public.frequenze WHERE id = p_frequenza FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'frequenza')::text;
+  END IF;
+  IF v_p.stato NOT IN ('in_attesa', 'iscritto') THEN
+    RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('frequenza_id', v_p.id, 'stato', v_p.stato)::text;
+  END IF;
+
+  SELECT * INTO v_n FROM public.anni_sede WHERE id = p_anno_sede_nuovo FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO' USING DETAIL = json_build_object('anno_sede_id', p_anno_sede_nuovo)::text;
+  END IF;
+  IF v_n.scuola_id IS DISTINCT FROM v_p.scuola_id THEN
+    RAISE EXCEPTION 'SEDE_DIVERSA' USING DETAIL = json_build_object('anno_sede_id', v_n.id)::text;
+  END IF;
+  IF v_n.id = v_p.anno_sede_id THEN
+    RAISE EXCEPTION 'ANNO_NON_COERENTE' USING DETAIL = json_build_object('anno_sede_id', v_n.id)::text;
+  END IF;
+  IF v_n.stato <> 'iscrizioni_aperte' THEN
+    RAISE EXCEPTION 'ANNO_NON_APERTO' USING DETAIL = json_build_object('anno_sede_id', v_n.id, 'stato', v_n.stato)::text;
+  END IF;
+
+  IF v_sezione IS NULL THEN
+    IF coalesce(p_cambia_grado, false) THEN
+      RAISE EXCEPTION 'SEZIONE_OBBLIGATORIA' USING DETAIL = json_build_object('frequenza_id', v_p.id)::text;
+    END IF;
+    -- la continuazione della sezione di partenza, se l'anno nuovo ce l'ha
+    IF v_p.section_id IS NOT NULL THEN
+      SELECT s.id INTO v_sezione
+        FROM public.sections s
+       WHERE s.continua_da = v_p.section_id AND s.anno_id = v_n.anno_id AND s.scuola_id = v_n.scuola_id
+       ORDER BY s.id
+       LIMIT 1;
+    END IF;
+  END IF;
+
+  SELECT s.school_type::text, s.fascia INTO v_tipo_p, v_fascia_p FROM public.sections s WHERE s.id = v_p.section_id;
+  SELECT s.school_type::text, s.fascia INTO v_tipo_n, v_fascia_n FROM public.sections s WHERE s.id = v_sezione;
+  v_cambia := coalesce(p_cambia_grado, false)
+    OR (v_p.section_id IS NOT NULL AND v_sezione IS NOT NULL
+        AND (v_tipo_p IS DISTINCT FROM v_tipo_n
+             OR (v_fascia_p IS NOT NULL AND v_fascia_n IS NOT NULL AND v_fascia_p <> v_fascia_n)));
+
+  -- I campi di famiglia (la lista bianca di `anno_registra_frequenza`); la retta e la sospensione restano fuori.
+  v_campi := jsonb_build_object(
+    'retta_esente', v_p.retta_esente,
+    'retta_a_carico_di', v_p.retta_a_carico_di,
+    'retta_split_config', v_p.retta_split_config,
+    'intestatario_fatture', v_p.intestatario_fatture,
+    'giorno_scadenza_pagamenti', v_p.giorno_scadenza_pagamenti,
+    'gruppo_mensa_id', v_p.gruppo_mensa_id,
+    'usa_pannolino', v_p.usa_pannolino);
+
+  v_r := public.anno_registra_frequenza(v_p.alunno_id, v_n.id, 'conferma', 'conferma', NULL, v_sezione, NULL, v_campi, p_da);
+  v_nuova := (v_r ->> 'frequenza_id')::uuid;
+
+  SELECT f.stato INTO v_stato FROM public.frequenze f WHERE f.id = v_nuova;
+  IF v_stato NOT IN ('in_attesa', 'iscritto') THEN
+    -- la frequenza dell'anno prossimo è stata ritirata: da qui non si riapre (e `registra` non le ha dato una voce)
+    RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('frequenza_id', v_nuova, 'stato', v_stato)::text;
+  END IF;
+
+  UPDATE public.frequenze SET continua_da = v_p.id WHERE id = v_nuova AND continua_da IS NULL;
+
+  RETURN jsonb_build_object(
+    'frequenza_id', v_nuova,
+    'creata', (v_r ->> 'creata')::boolean,
+    'cambia_grado', v_cambia,
+    'retta_personalizzata_precedente', v_p.retta_mensile IS NOT NULL,
+    'quota', v_r -> 'quota',
+    'pagamento_id', v_r -> 'pagamento_id',
+    'posti_oltre', (v_r ->> 'posti_oltre')::boolean);
+END
+$$;
+
+-- ── anno_non_rinnova ─────────────────────────────────────────────────────────────────────────────
+-- Il «no» della famiglia, scritto sulla frequenza di PARTENZA (`non_rinnova_il`, `non_rinnova_motivo`). Il motivo è un codice di
+-- un elenco chiuso (`altra_scuola`, `trasloco`, `fine_ciclo`, `motivi_economici`, `altro`) o NULL; altro → PARAMETRO_MANCANTE.
+-- `p_attivo = false` azzera tutti e due i campi. Segnare il «no» su una frequenza non viva → FREQUENZA_NON_VIVA. Non toglie né
+-- impedisce la conferma. `p_da` è chi ha fatto il gesto: oggi non c'è una colonna dove scriverlo (lo registra il log della route).
+-- Risposta: {frequenza_id, non_rinnova, cambiato}.
+CREATE OR REPLACE FUNCTION public.anno_non_rinnova(p_frequenza uuid, p_attivo boolean, p_motivo text, p_da uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_f      public.frequenze%ROWTYPE;
+BEGIN
+  IF p_attivo IS NULL THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'attivo')::text;
+  END IF;
+  SELECT * INTO v_f FROM public.frequenze WHERE id = p_frequenza FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'frequenza')::text;
+  END IF;
+
+  IF NOT p_attivo THEN
+    IF v_f.non_rinnova_il IS NULL AND v_f.non_rinnova_motivo IS NULL THEN
+      RETURN jsonb_build_object('frequenza_id', v_f.id, 'non_rinnova', false, 'cambiato', false);
+    END IF;
+    UPDATE public.frequenze SET non_rinnova_il = NULL, non_rinnova_motivo = NULL WHERE id = v_f.id;
+    RETURN jsonb_build_object('frequenza_id', v_f.id, 'non_rinnova', false, 'cambiato', true);
+  END IF;
+
+  IF p_motivo IS NOT NULL AND p_motivo NOT IN ('altra_scuola', 'trasloco', 'fine_ciclo', 'motivi_economici', 'altro') THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'motivo')::text;
+  END IF;
+  IF v_f.stato NOT IN ('in_attesa', 'iscritto') THEN
+    RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('frequenza_id', v_f.id, 'stato', v_f.stato)::text;
+  END IF;
+
+  IF v_f.non_rinnova_il IS NOT NULL AND v_f.non_rinnova_motivo IS NOT DISTINCT FROM p_motivo THEN
+    RETURN jsonb_build_object('frequenza_id', v_f.id, 'non_rinnova', true, 'cambiato', false);
+  END IF;
+  -- la data del primo «no» resta quella: cambiare il motivo non la sposta
+  UPDATE public.frequenze
+     SET non_rinnova_il = coalesce(non_rinnova_il, now()), non_rinnova_motivo = p_motivo
+   WHERE id = v_f.id;
+  RETURN jsonb_build_object('frequenza_id', v_f.id, 'non_rinnova', true, 'cambiato', true);
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.anno_conferma(uuid, uuid, uuid, uuid, boolean)  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.anno_non_rinnova(uuid, boolean, text, uuid)      FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_conferma(uuid, uuid, uuid, uuid, boolean)  TO service_role;
+GRANT EXECUTE ON FUNCTION public.anno_non_rinnova(uuid, boolean, text, uuid)      TO service_role;

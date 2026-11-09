@@ -26,7 +26,8 @@
       "/cancellazione-account/conferma": "Conferma cancellazione",
       "/admin/storici": "Storici e stampe",
       "/admin/votazioni": "Votazioni",
-      "/parent/votazioni": "Votazioni"
+      "/parent/votazioni": "Votazioni",
+      "/admin/students/conferme": "Conferme per l’anno prossimo"
     },
     "segmenti": {
       "alunni": "Alunni",

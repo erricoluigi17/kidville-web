@@ -2665,7 +2665,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (POST). CONTROLLATA, nessuna esenzione: gate `requireStaff`, e la sede della domanda dev'essere fra quelle
             // di `scuoleDiUtente` (403 `SEDE_NON_ACCESSIBILE`) PRIMA di qualunque scrittura; l'UPDATE ha anche
             // `.eq('status','pending')`. Misurato rieseguendo il lock: 394 → 395.
-            routeConServiceRole: 395,
+            // 395 → 397 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.6): entrano `admin/anni/[annoSedeId]/conferme` e
+            // `conferme/non-rinnova`. CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope` sull'anno
+            // nuovo E sull'anno della frequenza di partenza, prima di ogni lettura o scrittura.
+            // Misurato rieseguendo il lock: 395 → 397.
+            routeConServiceRole: 397,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3015,7 +3019,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 608 → 609 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.8): `admin/iscrizioni/sposta-anno:POST`
             // (vedi `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
             // Misurato rieseguendo il lock: 608 → 609.
-            handlerControllati: 609,
+            // 609 → 612 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.6): tre handler nelle due route sopra (conferme GET/POST,
+            // non-rinnova POST), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 609 → 612.
+            handlerControllati: 612,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useLocale, useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
+import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import type { CruscottoAnno } from '@/lib/anno/cruscotto-tipi';
 
@@ -38,6 +39,8 @@ type RigaSenzaFirma = { frequenza_id: string; alunno_id: string; nome: string | 
 
 const PAGINA_SENZA_FIRMA = 50;
 const PAGINA_CONFERME = '/admin/students/conferme';
+/** «Tutte le iscrizioni dell'anno» in una lista sola: è la lista il cui totale è uguale ai numeri dell'incrocio e dei moduli. */
+const TUTTO_L_ANNO = `${PAGINA_CONFERME}?vista=nuove&ambito=anno`;
 
 /** Una GET. Non lancia mai: una rete caduta è `stato: 0`, e ogni esito non riuscito si registra (fisso, senza dati). */
 async function leggi(url: string, userId: string): Promise<Risposta> {
@@ -92,7 +95,11 @@ const collegamento = 'font-maven text-sm font-semibold text-kidville-green under
 export function CruscottoClient() {
   const t = useTranslations('annoCruscotto');
   const anno = useAnnoOpzionale();
+  const { sedeCorrente, loading } = useSediAttive();
   const effettivo = anno?.effettivo ?? null;
+  // Con più sedi attive l'anno non ha una sede: la cosa da chiedere è la SEDE, non l'anno (revisione finale, B2).
+  if (loading) return <p role="status" className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>;
+  if (!sedeCorrente) return <SedeNotice cosa={t('sedeCosa')} />;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
   if (effettivo.attivo) return <p className="font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>;
   if (effettivo.stato !== 'iscrizioni_aperte') return <p className="font-maven text-sm text-kidville-sub">{t('annoNonAperto')}</p>;
@@ -256,8 +263,8 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
       <Blocco titolo={t('incrocioTitolo')}>
         <p className="mb-3 font-maven text-sm text-kidville-sub">{t('incrocioIntro', { n: inc.totale })}</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Numero valore={inc.moduli_senza_quota} etichetta={t('incrocioModuliSenzaQuota')} href={`${PAGINA_CONFERME}?conferma=moduli_senza_quota`} />
-          <Numero valore={inc.quota_senza_moduli} etichetta={t('incrocioQuotaSenzaModuli')} href={`${PAGINA_CONFERME}?conferma=quota_senza_moduli`} />
+          <Numero valore={inc.moduli_senza_quota} etichetta={t('incrocioModuliSenzaQuota')} href={`${TUTTO_L_ANNO}&conferma=moduli_senza_quota`} />
+          <Numero valore={inc.quota_senza_moduli} etichetta={t('incrocioQuotaSenzaModuli')} href={`${TUTTO_L_ANNO}&conferma=quota_senza_moduli`} />
           <Numero valore={inc.entrambi} etichetta={t('incrocioEntrambi')} />
           <Numero valore={inc.nessuno_dei_due} etichetta={t('incrocioNessuno')} />
         </div>
@@ -283,7 +290,7 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
                   <span className="text-kidville-sub">({m.lista === 'conferma' ? t('moduloListaConferma') : t('moduloListaNuova')})</span>
                   <span>{t('moduloMancanti', { n: m.mancanti })}</span>
                   {m.mancanti > 0 && (
-                    <Link href={`${PAGINA_CONFERME}?${m.lista === 'nuova' ? 'vista=nuove&' : ''}conferma=mancano_moduli`} className={collegamento}>
+                    <Link href={`${TUTTO_L_ANNO}&conferma=mancano_moduli&modulo=${m.modulo_id}`} className={collegamento}>
                       {t('moduloApriMancanti')}
                     </Link>
                   )}
@@ -305,6 +312,7 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
               <li>{t('confrontoRiga', { anno: t('confrontoQuestoAnno'), domande: c.confronto.questo_anno.domande, conferme: c.confronto.questo_anno.conferme })}</li>
               <li>{t('confrontoRiga', { anno: c.confronto.anno_prima_etichetta, domande: c.confronto.anno_prima.domande, conferme: c.confronto.anno_prima.conferme })}</li>
             </ul>
+            <p className="mt-2 font-maven text-sm text-kidville-sub">{t('confrontoNota')}</p>
             {c.confronto.ricostruito && <p className="mt-2 font-maven text-sm text-kidville-sub">{t('confrontoRicostruito')}</p>}
           </>
         )}

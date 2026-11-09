@@ -2,9 +2,9 @@
   "titolo": "Conferme per l’anno prossimo",
   "sottotitolo": "Chi ha confermato, chi ha detto di no e chi non ha ancora risposto. Una conferma non cambia niente dell’anno in corso.",
   "eyebrow": "Iscrizioni",
-  "nessunAnno": "Scegli dal selettore in alto l’anno con le iscrizioni aperte per vedere le conferme.",
+  "nessunAnno": "Scegli con il selettore dell’anno l’anno con le iscrizioni aperte per vedere le conferme.",
   "annoNonAperto": "Le iscrizioni di questo anno non sono aperte: le conferme si raccolgono quando lo sono.",
-  "annoAttivo": "Questo è l’anno in corso. Scegli dal selettore in alto l’anno con le iscrizioni aperte.",
+  "annoAttivo": "Questo è l’anno in corso. Scegli con il selettore dell’anno l’anno con le iscrizioni aperte.",
   "caricamento": "Caricamento delle conferme…",
   "riprova": "Riprova",
   "erroreRete": "Non riesco a collegarmi. Controlla la connessione e riprova.",
@@ -106,6 +106,10 @@
   "esitoRitirataQuotaPagata": "La quota è già stata pagata: rimborso o storno si fanno dalla contabilità.",
   "esitoRitirataQuotaErrore": "La conferma è ritirata, ma la quota non si è riusciti a toglierla: controllala nella contabilità.",
   "apriScheda": "Apri la scheda di {nome}",
-  "filtroModuliSenzaQuota": "Moduli fatti, quota non pagata",
-  "filtroQuotaSenzaModuli": "Quota pagata, moduli incompleti"
+  "filtroModuliSenzaQuota": "Moduli consegnati, quota da saldare",
+  "filtroQuotaSenzaModuli": "Quota saldata, mancano moduli",
+  "ambitoAnnoNota": "Stai guardando tutte le iscrizioni dell’anno, conferme e nuove insieme: sono i bambini che contano i numeri del cruscotto.",
+  "ambitoAnnoModuloNota": "Stai guardando le iscrizioni dell’anno a cui manca un solo modulo, conferme e nuove insieme.",
+  "ambitoAnnoEsci": "Vedi solo le nuove iscrizioni",
+  "sedeCosa": "le conferme dell’anno prossimo"
 }

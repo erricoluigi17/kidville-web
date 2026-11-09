@@ -182,7 +182,7 @@ BEGIN
   ), riga AS (
     SELECT v.id, v.quota_saldata, v.moduli_completi, v.quota_pagamento_id,
            (pv.frequenza_id IS NOT NULL) AS piu_voci,
-           r.importo AS stima, p.importo AS importo, p.importo_pagato AS pagato
+           r.importo AS stima, p.importo AS importo, coalesce(p.sconto, 0) AS sconto, p.importo_pagato AS pagato
       FROM vive v
       LEFT JOIN piu pv ON pv.frequenza_id = v.id
       LEFT JOIN public.pagamenti p ON p.id = v.quota_pagamento_id
@@ -209,7 +209,7 @@ BEGIN
       'assenti', count(*) FILTER (WHERE NOT r.quota_saldata AND r.quota_pagamento_id IS NULL),
       'senza_listino', count(*) FILTER (WHERE NOT r.quota_saldata AND r.quota_pagamento_id IS NULL AND NOT r.piu_voci AND r.stima IS NULL),
       'euro_incassati', round(coalesce(sum(r.pagato), 0), 2),
-      'euro_da_incassare', round(coalesce(sum(greatest(r.importo - r.pagato, 0)), 0), 2),
+      'euro_da_incassare', round(coalesce(sum(greatest(r.importo - r.sconto - r.pagato, 0)), 0), 2),
       'euro_assenti_stimati', round(coalesce(sum(r.stima) FILTER (WHERE NOT r.quota_saldata AND r.quota_pagamento_id IS NULL AND NOT r.piu_voci), 0), 2),
       'ritirati_con_voce', (SELECT n FROM ritirate),
       'euro_ritirati_incassati', round((SELECT incassato FROM ritirate), 2)),
@@ -242,7 +242,7 @@ BEGIN
     END IF;
     SELECT count(*) INTO v_conf_ora
       FROM public.frequenze f
-     WHERE f.anno_sede_id = p_anno_sede AND f.tipo = 'conferma' AND public.giorno_roma(f.creata_il) <= v_oggi;
+     WHERE f.anno_sede_id = p_anno_sede AND f.tipo = 'conferma' AND f.stato IN ('in_attesa', 'iscritto') AND public.giorno_roma(f.creata_il) <= v_oggi;
     v_ricostr := EXISTS (SELECT 1 FROM public.frequenze f WHERE f.anno_sede_id = v_prec.id)
                  AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.anno_sede_id = v_prec.id AND f.origine <> 'recupero');
     IF v_ricostr THEN

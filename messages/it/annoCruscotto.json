@@ -2,9 +2,9 @@
   "titolo": "Anno prossimo, a che punto siamo",
   "sottotitolo": "Iscritti, risposte delle famiglie, quote e moduli dell’anno che si apre, in un colpo d’occhio. Sono numeri: i nomi stanno nelle liste che si aprono da qui.",
   "eyebrow": "Iscrizioni",
-  "nessunAnno": "Scegli dal selettore in alto l’anno con le iscrizioni aperte per vedere a che punto siamo.",
-  "annoNonAperto": "Le iscrizioni di questo anno non sono aperte: il cruscotto compare quando lo sono.",
-  "annoAttivo": "Questo è l’anno in corso. Scegli dal selettore in alto l’anno con le iscrizioni aperte.",
+  "nessunAnno": "Scegli con il selettore dell’anno l’anno con le iscrizioni aperte per vedere a che punto siamo.",
+  "annoNonAperto": "Le iscrizioni di questo anno non sono aperte: il cruscotto compare quando lo sono. Si aprono da Impostazioni, nella voce «Anno scolastico», con «Apri le iscrizioni».",
+  "annoAttivo": "Questo è l’anno in corso. Scegli con il selettore dell’anno l’anno con le iscrizioni aperte.",
   "caricamento": "Caricamento del cruscotto…",
   "riprova": "Riprova",
   "nonDisponibile": "Non disponibile: il database di questa sede non ha ancora l’aggiornamento che serve al cruscotto.",
@@ -64,7 +64,9 @@
   "confrontoIntro": "Lo stesso giorno di un anno fa ({giorno}).",
   "confrontoRiga": "{anno}: {domande, plural, one {# domanda} other {# domande}}, {conferme, plural, one {# conferma} other {# conferme}}",
   "confrontoQuestoAnno": "Quest’anno",
-  "confrontoRicostruito": "Per l’anno scorso le conferme non avevano una data vera: sono ricostruite dalla data di creazione dei bambini, e quindi sono approssimate.",
+  "confrontoNota": "Quest’anno le conferme ritirate non si contano, come in «Hanno confermato».",
+  "confrontoRicostruito": "Per l’anno scorso le conferme non avevano una data vera: sono ricostruite dalla data di creazione dei bambini, e le domande si contano solo da quando esiste il modulo online (prima non ci sono dati). I numeri dell’anno scorso sono approssimati.",
   "confrontoVuoto": "Non c’è un anno precedente con cui confrontare.",
-  "aggiorna": "Aggiorna"
+  "aggiorna": "Aggiorna",
+  "sedeCosa": "il cruscotto dell’anno prossimo"
 }

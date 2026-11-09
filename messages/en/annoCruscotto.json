@@ -2,9 +2,9 @@
   "titolo": "Next year, where we stand",
   "sottotitolo": "Enrolments, family replies, fees and forms for the year that is opening, at a glance. These are numbers: names are in the lists that open from here.",
   "eyebrow": "Enrolments",
-  "nessunAnno": "Choose the year with enrolments open from the selector above to see where we stand.",
-  "annoNonAperto": "Enrolments for this year are not open: the dashboard appears when they are.",
-  "annoAttivo": "This is the current year. Choose the year with enrolments open from the selector above.",
+  "nessunAnno": "Choose the year with enrolments open using the year selector to see where we stand.",
+  "annoNonAperto": "Enrolments for this year are not open: the dashboard appears when they are. They open from Settings, under “School year”, with “Open enrolments”.",
+  "annoAttivo": "This is the current year. Choose the year with enrolments open using the year selector.",
   "caricamento": "Loading the dashboard…",
   "riprova": "Try again",
   "nonDisponibile": "Not available: this location’s database does not have the update the dashboard needs yet.",
@@ -64,7 +64,9 @@
   "confrontoIntro": "The same day a year ago ({giorno}).",
   "confrontoRiga": "{anno}: {domande, plural, one {# application} other {# applications}}, {conferme, plural, one {# confirmation} other {# confirmations}}",
   "confrontoQuestoAnno": "This year",
-  "confrontoRicostruito": "Last year’s confirmations had no real date: they are rebuilt from the children’s creation dates, so they are approximate.",
+  "confrontoNota": "This year withdrawn confirmations are not counted, as in “Confirmed”.",
+  "confrontoRicostruito": "Last year’s confirmations had no real date: they are rebuilt from the children’s creation dates, and applications are only counted since the online form exists (there is no data before that). Last year’s numbers are approximate.",
   "confrontoVuoto": "There is no earlier year to compare with.",
-  "aggiorna": "Refresh"
+  "aggiorna": "Refresh",
+  "sedeCosa": "the next-year dashboard"
 }

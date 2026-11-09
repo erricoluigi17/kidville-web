@@ -32,7 +32,9 @@ vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   useAnnoOpzionale: () => h.anno,
 }))
 vi.mock('@/lib/context/sede-context', () => ({
-  useSediAttive: () => ({ sedeCorrente: h.sede }),
+  useSediAttive: () => ({ sedeCorrente: h.sede, loading: false }),
+  // Il vero `SedeNotice` legge il contesto delle sedi (provato altrove): qui basta vedere che compare e con quale frase.
+  SedeNotice: ({ cosa }: { cosa?: string }) => <div data-testid="sede-notice">{cosa}</div>,
 }))
 vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
@@ -573,5 +575,67 @@ describe('ConfermeClient — 4.7.4: «più voci» dal server e filtri aperti dal
     render(<ConfermeClient />)
     await screen.findByText('CognomeArrivo NomeArrivo')
     expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('conferma=no'))).toBe(false)
+  })
+})
+
+describe('ConfermeClient — revisione finale: il perimetro del cruscotto, il filtro che resta, la sede', () => {
+  const MOD = '71717171-7171-4717-8717-717171717171'
+
+  it('`?vista=nuove&ambito=anno&conferma=…` passa il perimetro alla route e lo dice sopra la tabella', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=moduli_senza_quota&ambito=anno'))).toBe(true)
+    expect(screen.getByText(itConferme.ambitoAnnoNota)).toBeInTheDocument()
+    expect(screen.queryByText(itConferme.nuoveNota)).toBeNull()
+  })
+
+  it('`&modulo=` si passa solo con «Mancano moduli», e il pulsante toglie il perimetro e rilegge le sole Nuove', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}`
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes(`ambito=anno&modulo=${MOD}`))).toBe(true)
+    expect(screen.getByText(itConferme.ambitoAnnoModuloNota)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: itConferme.ambitoAnnoEsci }))
+    await waitFor(() => expect(screen.queryByText(itConferme.ambitoAnnoModuloNota)).toBeNull())
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).toContain('vista=nuove')
+    expect(ultimo).toContain('conferma=mancano_moduli')
+    expect(ultimo).not.toContain('ambito=')
+    expect(ultimo).not.toContain('modulo=')
+  })
+
+  it('un `modulo` che non è un uuid si ignora', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=non-un-uuid'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('modulo='))).toBe(false)
+  })
+
+  it('cambiare vista toglie il perimetro ma TIENE il filtro, se nell’altra vista esiste', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaConferme }))
+    await waitFor(() => expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=conferme&conferma=moduli_senza_quota'))).toBe(true))
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).not.toContain('ambito=')
+  })
+
+  it('cambiare vista azzera il filtro che nell’altra vista non esiste («Hanno confermato» non c’è nelle Nuove)', async () => {
+    q.query = 'conferma=confermato'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    await waitFor(() => expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=tutti'))).toBe(true))
+  })
+
+  it('con più sedi attive chiede la SEDE, non l’anno, e non legge niente', async () => {
+    h.sede = null
+    render(<ConfermeClient />)
+    expect(await screen.findByTestId('sede-notice')).toHaveTextContent(itConferme.sedeCosa)
+    expect(screen.queryByText(itConferme.nessunAnno)).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+    h.sede = 'ffffffff-ffff-4fff-8fff-ffffffffff01'
   })
 })

@@ -154,7 +154,8 @@ beforeAll(async () => {
       ALTER TABLE public.pagamenti
         ADD COLUMN obbligatorio boolean NOT NULL DEFAULT false,
         ADD COLUMN gruppo text,
-        ADD COLUMN creato_da uuid;
+        ADD COLUMN creato_da uuid,
+        ADD COLUMN sconto numeric NOT NULL DEFAULT 0;
     `,
   })
   await db.exec(SCHEMA_LEGAMI_GENITORE)
@@ -237,6 +238,19 @@ describe('anno_cruscotto: i cinque blocchi', () => {
       await db.query(`UPDATE public.pagamenti SET stato = 'parziale', importo_pagato = 40 WHERE id = $1`, [voceF1])
       const c = await cruscotto()
       expect(c.quota).toMatchObject({ saldate: 1, da_pagare: 2, euro_incassati: 140, euro_da_incassare: 160 })
+    })
+  })
+
+  prova('«Da incassare» sottrae lo sconto (come `residuoEffettivo`) e non scende sotto zero', async () => {
+    await inRollback(async () => {
+      const { f2 } = await seme()
+      const voceF2 = await una<string>(`SELECT quota_pagamento_id FROM public.frequenze WHERE id = $1`, [f2])
+      // seme: la voce di F2 vale 100 e non è pagata → senza sconto restano 100 da incassare
+      expect((await cruscotto()).quota).toMatchObject({ euro_da_incassare: 100 })
+      await db.query(`UPDATE public.pagamenti SET sconto = 30 WHERE id = $1`, [voceF2])
+      expect((await cruscotto()).quota).toMatchObject({ euro_incassati: 200, euro_da_incassare: 70 })
+      await db.query(`UPDATE public.pagamenti SET sconto = 150 WHERE id = $1`, [voceF2])
+      expect((await cruscotto()).quota).toMatchObject({ euro_da_incassare: 0 })
     })
   })
 
@@ -327,8 +341,9 @@ describe('anno_cruscotto: il confronto con la stessa data dell\'anno prima', () 
         ricostruito: true,
         giorno_anno_prima: '2026-02-10',
         anno_prima_etichetta: '2026/27',
-        // F1, F2, F3, F5? No: `conferma` con `creata_il` fino al 10/02/2027: F1, F2, F3, F7 (F4 è del 01/03/2027).
-        questo_anno: { domande: 2, conferme: 4 },
+        // `conferma` VIVE con `creata_il` fino al 10/02/2027: F1, F2, F3 (F4 è del 01/03/2027; F7 è ritirata e, come in «Hanno confermato»,
+        // non conta: revisione finale, secondario 6).
+        questo_anno: { domande: 2, conferme: 3 },
         // Prima: 3 domande entro il 10/02/2026 compreso; 3 bambini creati prima di quel giorno hanno una frequenza nel 2026/27.
         anno_prima: { domande: 3, conferme: 3 },
       })

@@ -76,11 +76,20 @@ const getQuerySchema = z
     vista: z.enum(VISTE).default('conferme'),
     /** Elenco chiuso: il filtro lo applica la route, sul totale. Nelle nuove iscrizioni hanno senso solo quelli di `FILTRI_SULLA_NUOVA`. */
     conferma: z.enum(FILTRI).default('tutti'),
+    /**
+     * `anno` (solo con `vista=nuove`): TUTTE le frequenze vive dell'anno nuovo, conferme e nuove insieme, in una lista sola. È la lista che
+     * il cruscotto apre dai numeri che contano tutte le iscrizioni dell'anno (4.7, B1): senza, un numero conta 3 bambini e la lista ne mostra 2.
+     */
+    ambito: z.enum(['anno']).optional(),
+    /** Con `conferma=mancano_moduli`: solo chi non ha consegnato QUESTO modulo (il numero per modulo del cruscotto, 4.7 secondari 1 e 2). */
+    modulo: zUuid.optional(),
   })
   .refine((q) => q.vista === 'conferme' || (FILTRI_SULLA_NUOVA as readonly string[]).includes(q.conferma), {
     path: ['conferma'],
     message: 'Filtro non valido per le nuove iscrizioni',
   })
+  .refine((q) => q.ambito === undefined || q.vista === 'nuove', { path: ['ambito'], message: 'L’ambito vale solo per le nuove iscrizioni' })
+  .refine((q) => q.modulo === undefined || q.conferma === 'mancano_moduli', { path: ['modulo'], message: 'Il modulo vale solo con «mancano moduli»' })
 
 type Db = Awaited<ReturnType<typeof createAdminClient>>
 type ErroreDb = { code?: string; message?: string }
@@ -118,7 +127,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
 
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
-  const { pagina, limite, conferma, vista } = q.data
+  const { pagina, limite, conferma, vista, ambito, modulo: moduloScelto } = q.data
 
   const supabase = await createAdminClient()
   const letta: { scuolaId?: string } = {}
@@ -151,6 +160,8 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     const r = richiestiDi(n.tipo)
     if (r.size === 0) return false
     const f = fatti.get(n.id)
+    // Con un modulo scelto: lo richiede la lista della riga e la riga non lo ha spuntato (come il conteggio di `moduli-mancanti`).
+    if (moduloScelto) return r.has(moduloScelto) && !f?.has(moduloScelto)
     return [...r].some((m) => !f?.has(m))
   }
 
@@ -171,7 +182,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     )
     if ('error' in tutte) return lettura(tutte.error, ctx)
     let candidate = tutte.righe
-    if (candidate.some((n) => n.tipo !== 'nuova')) {
+    if (ambito !== 'anno' && candidate.some((n) => n.tipo !== 'nuova')) {
       // Chi frequenta: ha una frequenza viva nell'anno attivo della sede. Se `anno_attivo` non dà un anno, nessuno frequenta.
       const attivo = await supabase.rpc('anno_attivo', { p_scuola: letta.scuolaId })
       if (attivo.error) return lettura(attivo.error, ctx)

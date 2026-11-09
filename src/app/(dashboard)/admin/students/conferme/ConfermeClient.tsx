@@ -8,7 +8,7 @@ import { btnPrimary, hint, input, label } from '@/components/features/admin/sett
 import { Tabs } from '@/components/ui/cockpit';
 import { useAdminIdentity, useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
-import { useSediAttive } from '@/lib/context/sede-context';
+import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
@@ -156,12 +156,17 @@ const estraiModuli = (r: Risposta): ModuloApi[] | null => {
 
 const secondario =
   'inline-flex items-center gap-2 rounded-pill border-2 border-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.05em] text-kidville-green transition-transform hover:bg-kidville-green-soft active:scale-95 disabled:pointer-events-none disabled:opacity-45';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MOTIVI = ['altra_scuola', 'trasloco', 'fine_ciclo', 'motivi_economici', 'altro'] as const;
 
 export function ConfermeClient() {
   const t = useTranslations('annoConferme');
   const anno = useAnnoOpzionale();
+  const { sedeCorrente, loading } = useSediAttive();
   const effettivo = anno?.effettivo ?? null;
+  // Con più sedi attive l'anno non ha una sede: la cosa da chiedere è la SEDE, non l'anno (revisione finale, B2).
+  if (loading) return <p role="status" className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>;
+  if (!sedeCorrente) return <SedeNotice cosa={t('sedeCosa')} />;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
   if (effettivo.attivo) return <p className="font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>;
   if (effettivo.stato !== 'iscrizioni_aperte') return <p className="font-maven text-sm text-kidville-sub">{t('annoNonAperto')}</p>;
@@ -184,6 +189,11 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
     filtroUrl && FILTRI_NOTI.includes(filtroUrl) && (vistaUrl === 'conferme' || FILTRI_DELLE_NUOVE.includes(filtroUrl)) ? filtroUrl : 'tutti';
   const [vista, setVista] = useState<Vista>(vistaUrl);
   const [filtro, setFiltro] = useState<Filtro>(filtroUrlValido);
+  // «Tutte le iscrizioni dell'anno» (`ambito=anno`, solo nelle Nuove) e «un solo modulo» (`modulo=`, solo con «Mancano moduli»): sono i
+  // perimetri dei numeri del cruscotto. Valgono finché non si cambia vista o filtro, oppure si tolgono con il pulsante.
+  const [ambito, setAmbito] = useState<boolean>(vistaUrl === 'nuove' && dallUrl?.get('ambito') === 'anno');
+  const moduloUrl = dallUrl?.get('modulo') ?? '';
+  const [modulo, setModulo] = useState<string>(filtroUrlValido === 'mancano_moduli' && UUID.test(moduloUrl) ? moduloUrl : '');
   // Le righe lavorate dopo l'ultima lettura: quello che il server ha risposto a una spunta, per frequenza.
   const [aggiornate, setAggiornate] = useState<Record<string, Aggiornamento>>({});
   // L'esito dell'ultima operazione: qui sopra la tabella, non dentro la riga (vedi la testata).
@@ -192,7 +202,12 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   const [esitiQuota, setEsitiQuota] = useState<Record<string, EsitoQuota | null>>({});
   const ricordaQuota = useCallback((frequenzaId: string, e: EsitoQuota | null) => setEsitiQuota((v) => ({ ...v, [frequenzaId]: e })), []);
 
-  const lettura = useLettura(`${base}/conferme?pagina=${pagina}&vista=${vista}&conferma=${filtro}`, uid, versione, estraiElenco);
+  const lettura = useLettura(
+    `${base}/conferme?pagina=${pagina}&vista=${vista}&conferma=${filtro}${ambito ? '&ambito=anno' : ''}${modulo ? `&modulo=${modulo}` : ''}`,
+    uid,
+    versione,
+    estraiElenco,
+  );
   const sezioni = useLettura('/api/admin/sections/scoped?grado=primaria', uid, 0, estraiSezioni);
   // Con un anno di UNA sede in lavorazione (l'unico caso in cui questa pagina si apre) la sede è `sedeCorrente`. Un utente con più
   // plessi riceve i gruppi di tutti: offrire la primaria di un'altra sede farebbe scegliere una classe che il server rifiuta.
@@ -282,7 +297,10 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
           value={vista}
           onChange={(v) => {
             setVista(v as Vista);
-            setFiltro('tutti');
+            // Il filtro resta se esiste anche nella vista nuova (quelli delle Nuove sono un sottoinsieme); il perimetro del cruscotto no.
+            setFiltro((f) => ((v === 'nuove' ? FILTRI_DELLE_NUOVE : FILTRI_NOTI).includes(f) ? f : 'tutti'));
+            setAmbito(false);
+            setModulo('');
             setPagina(1);
             riparti();
           }}
@@ -296,12 +314,30 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
         value={filtro}
         onChange={(v) => {
           setFiltro(v as Filtro);
+          if (v !== 'mancano_moduli') setModulo('');
           setPagina(1);
           riparti();
         }}
         options={filtri}
       />
-      {vista === 'nuove' && <p className={hint}>{t('nuoveNota')}</p>}
+      {vista === 'nuove' && !ambito && <p className={hint}>{t('nuoveNota')}</p>}
+      {ambito && (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className={hint}>{modulo ? t('ambitoAnnoModuloNota') : t('ambitoAnnoNota')}</p>
+          <button
+            type="button"
+            className={secondario}
+            onClick={() => {
+              setAmbito(false);
+              setModulo('');
+              setPagina(1);
+              riparti();
+            }}
+          >
+            {t('ambitoAnnoEsci')}
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <p className={hint}>{t('totaleBambini', { totale })}</p>
         <button type="button" className={secondario} onClick={rilegge}>{t('azioneAggiorna')}</button>

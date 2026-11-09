@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itCruscotto from '../../messages/it/annoCruscotto.json'
+import enCruscotto from '../../messages/en/annoCruscotto.json'
+import itConfermeCat from '../../messages/it/annoConferme.json'
+import enConfermeCat from '../../messages/en/annoConferme.json'
 
 // =============================================================================
 // PR 4.7 · compito 4.7.3 · LA PAGINA «ANNO PROSSIMO, A CHE PUNTO SIAMO».
@@ -14,11 +17,18 @@ import itCruscotto from '../../messages/it/annoCruscotto.json'
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'errore-di-rete' }))
 
 const h = vi.hoisted(() => ({
+  /** La sede corrente: `null` = più sedi attive e nessuna scelta (la situazione dell'amministratore di tre plessi). */
+  sede: 'ffffffff-ffff-4fff-8fff-ffffffffff01' as string | null,
   anno: { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } } as unknown,
 }))
 vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
   useAnnoOpzionale: () => h.anno,
+}))
+vi.mock('@/lib/context/sede-context', () => ({
+  useSediAttive: () => ({ sedeCorrente: h.sede, loading: false }),
+  // Il vero `SedeNotice` legge il contesto delle sedi (provato altrove): qui basta vedere che compare e con quale frase.
+  SedeNotice: ({ cosa }: { cosa?: string }) => <div data-testid="sede-notice">{cosa}</div>,
 }))
 vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
@@ -153,7 +163,8 @@ describe('CruscottoClient — i collegamenti alla pagina Conferme', () => {
       (screen.getByRole('link', { name: `${etichetta}: ${itCruscotto.apriLista}` }) as HTMLAnchorElement).getAttribute('href')
     expect(href(itCruscotto.rispostaConfermati)).toBe('/admin/students/conferme?conferma=confermato')
     expect(href(itCruscotto.rispostaNo)).toBe('/admin/students/conferme?conferma=no')
-    expect(href(itCruscotto.incrocioModuliSenzaQuota)).toBe('/admin/students/conferme?conferma=moduli_senza_quota')
+    // l'incrocio apre la lista di TUTTE le iscrizioni dell'anno: è l'unica il cui totale è uguale al numero (revisione finale, B1)
+    expect(href(itCruscotto.incrocioModuliSenzaQuota)).toBe('/admin/students/conferme?vista=nuove&ambito=anno&conferma=moduli_senza_quota')
     // non_risposto è 0 e quota_senza_moduli è 0: niente collegamento a una lista vuota
     expect(screen.queryByRole('link', { name: `${itCruscotto.rispostaNonRisposto}: ${itCruscotto.apriLista}` })).toBeNull()
     expect(screen.queryByRole('link', { name: `${itCruscotto.incrocioQuotaSenzaModuli}: ${itCruscotto.apriLista}` })).toBeNull()
@@ -162,11 +173,11 @@ describe('CruscottoClient — i collegamenti alla pagina Conferme', () => {
     expect(nuove).toContain('/admin/students/conferme?vista=nuove')
   })
 
-  it('un modulo che manca porta all’elenco giusto: la lista «nuova» apre la vista delle nuove', async () => {
+  it('un modulo che manca porta all’elenco di QUEL modulo, qualunque sia la sua lista', async () => {
     s.moduli = ok({ moduli: [{ ...MODULI[1], mancanti: 4 }] })
     render(<CruscottoClient />)
     const link = await screen.findByRole('link', { name: itCruscotto.moduloApriMancanti })
-    expect(link.getAttribute('href')).toBe('/admin/students/conferme?vista=nuove&conferma=mancano_moduli')
+    expect(link.getAttribute('href')).toBe(`/admin/students/conferme?vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${M_CARTACEO}`)
   })
 })
 
@@ -237,5 +248,43 @@ describe('CruscottoClient — chi non ha firmato in app', () => {
     fireEvent.click(screen.getByRole('button', { name: itCruscotto.firmaMostra }))
     const riquadro = (await screen.findByText(itCruscotto.firmaVuoto)).closest('div') as HTMLElement
     expect(within(riquadro).getByText(itCruscotto.firmaVuoto)).toBeInTheDocument()
+  })
+})
+
+describe('CruscottoClient — più sedi attive (revisione finale, B2)', () => {
+  it('chiede la SEDE, non l’anno: compare l’avviso con la frase del cruscotto e non parte nessuna lettura', async () => {
+    h.sede = null
+    render(<CruscottoClient />)
+    const avviso = await screen.findByTestId('sede-notice')
+    expect(avviso).toHaveTextContent(itCruscotto.sedeCosa)
+    // la frase vecchia, che mandava a un selettore dell'anno che non risolve nulla, non c'è più
+    expect(screen.queryByText(itCruscotto.nessunAnno)).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+    h.sede = 'ffffffff-ffff-4fff-8fff-ffffffffff01'
+  })
+
+  it('le frasi parlano del «selettore dell’anno» e dicono dove si aprono le iscrizioni', () => {
+    expect(itCruscotto.nessunAnno).not.toMatch(/in alto/)
+    expect(itCruscotto.annoAttivo).not.toMatch(/in alto/)
+    expect(enCruscotto.nessunAnno).not.toMatch(/above/)
+    expect(itCruscotto.annoNonAperto).toMatch(/Impostazioni/)
+    expect(enCruscotto.annoNonAperto).toMatch(/Settings/)
+  })
+})
+
+describe('CruscottoClient — una dicitura sola per lo stesso caso (secondario 11)', () => {
+  it('l’incrocio ha lo stesso nome sul numero del cruscotto e sul filtro della pagina Conferme, in italiano e in inglese', () => {
+    expect(itConfermeCat.filtroModuliSenzaQuota).toBe(itCruscotto.incrocioModuliSenzaQuota)
+    expect(itConfermeCat.filtroQuotaSenzaModuli).toBe(itCruscotto.incrocioQuotaSenzaModuli)
+    expect(enConfermeCat.filtroModuliSenzaQuota).toBe(enCruscotto.incrocioModuliSenzaQuota)
+    expect(enConfermeCat.filtroQuotaSenzaModuli).toBe(enCruscotto.incrocioQuotaSenzaModuli)
+  })
+})
+
+describe('CruscottoClient — il confronto', () => {
+  it('dice che le conferme ritirate non si contano e che le domande hanno un dato solo dal modulo online', async () => {
+    render(<CruscottoClient />)
+    expect(await screen.findByText(itCruscotto.confrontoNota)).toBeInTheDocument()
+    expect(itCruscotto.confrontoRicostruito).toMatch(/modulo online/)
   })
 })

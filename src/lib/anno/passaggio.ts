@@ -354,12 +354,21 @@ export type PassaggioLetto = {
   /** AAAA-MM-GG: il primo giorno dell'anno NUOVO (`anni_sede.inizio`); dal quel giorno le famiglie vedono la classe nuova. `null` se non si legge. */
   inizio_anno_nuovo: string | null
 }
+/** (giro 1, S19) I numeri che la pagina vuole a ogni correzione, in UNA risposta: righe per esito, righe con un avviso aperto e le prime da decidere. */
+export type ContatoriPassaggio = {
+  esiti: Record<EsitoRigaPassaggio, number>
+  avvisi: Record<AvvisoPassaggio, number>
+  /** Le righe con un avviso (senza doppioni), al più `daDecidereMax` per avviso. */
+  daDecidere: RigaLettaPassaggio[]
+}
 export type LetturaPassaggio = {
   passaggio: PassaggioLetto | null
   righe: RigaLettaPassaggio[]
   /** Il totale delle righe che passano il filtro (conteggio esatto del database), non quelle della pagina. */
   totale: number
   docenti: DocenteLettoPassaggio[]
+  /** Solo se richiesti (`FiltriLettura.contatori`). */
+  contatori?: ContatoriPassaggio
 }
 export type EsitoLettura = EsitoPassaggio<LetturaPassaggio>
 
@@ -370,6 +379,8 @@ export type FiltriLettura = {
   pagina: number
   /** Righe per pagina: da 1 a `TETTO_MASSIMO`. */
   tetto: number
+  /** Se > 0, la risposta porta anche i `contatori` (al più questo numero di righe «da decidere» per avviso, tetto `TETTO_MASSIMO`). */
+  contatori?: number
 }
 
 /** Quanto può chiedere al massimo una pagina. */
@@ -438,6 +449,43 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
       .order('utente_id', { ascending: true })
     if (docenti.error) return guasto(docenti.error)
 
+    let contatori: ContatoriPassaggio | undefined
+    const max = Math.min(TETTO_MASSIMO, Math.trunc(f.contatori ?? 0))
+    if (max > 0) {
+      const perEsito = await Promise.all(
+        ESITI_PASSAGGIO.map((e) => supabase.from('passaggi_anno_righe').select('alunno_id', { count: 'exact', head: true }).eq('passaggio_id', riga.id).eq('esito', e)),
+      )
+      const perAvviso = await Promise.all(
+        AVVISI_PASSAGGIO.map((a) =>
+          supabase.from('passaggi_anno_righe').select(COLONNE_RIGA, { count: 'exact' }).eq('passaggio_id', riga.id).eq('avviso', a).order('alunno_id', { ascending: true }).range(0, max - 1),
+        ),
+      )
+      const rotto = [...perEsito, ...perAvviso].find((r) => r.error)
+      if (rotto?.error) return guasto(rotto.error)
+      const esiti = {} as Record<EsitoRigaPassaggio, number>
+      ESITI_PASSAGGIO.forEach((e, i) => { esiti[e] = perEsito[i].count ?? 0 })
+      const avvisi = {} as Record<AvvisoPassaggio, number>
+      const viste = new Set<string>()
+      const daDecidere: RigaLettaPassaggio[] = []
+      AVVISI_PASSAGGIO.forEach((a, i) => {
+        avvisi[a] = perAvviso[i].count ?? 0
+        for (const r of (perAvviso[i].data ?? []) as unknown as RigaLettaPassaggio[]) {
+          if (viste.has(r.alunno_id)) continue
+          viste.add(r.alunno_id)
+          daDecidere.push({
+            alunno_id: r.alunno_id,
+            esito: r.esito,
+            avviso: r.avviso ?? null,
+            eccezione: r.eccezione === true,
+            sezione_da_id: r.sezione_da_id ?? null,
+            sezione_a_id: r.sezione_a_id ?? null,
+            frequenza_a_id: r.frequenza_a_id ?? null,
+          })
+        }
+      })
+      contatori = { esiti, avvisi, daDecidere }
+    }
+
     return {
       ok: true,
       passaggio: { id: riga.id, stato: riga.stato, conteggi: soloNumeri(riga.conteggi), apribile_dal: apribileDal, inizio_anno_nuovo: inizioAnnoNuovo },
@@ -456,6 +504,7 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
         sezione_a_id: d.sezione_a_id,
         origine: d.origine,
       })),
+      ...(contatori ? { contatori } : {}),
     }
   } catch (err) {
     logErrore({ operazione: OP_LETTURA }, err)

@@ -240,7 +240,8 @@ export function erroreAnno(
         { status: 409 },
       )
     case 'PASSAGGIO_NON_ANNULLABILE':
-      // `dettagli.conteggi`: quante righe d'uso ha il nuovo anno, per tabella (il `DETAIL` della funzione).
+      // I conteggi (quante righe d'uso ha il nuovo anno, per tabella: il `DETAIL` della funzione) arrivano già dentro `dettagli.conteggi`
+      // (li incapsula `rispostaPassaggioNonRiuscito`) e finiscono nel corpo sotto `conteggi`, NON a livello alto.
       return NextResponse.json(
         { ...dettagli, error: frase('PASSAGGIO_NON_ANNULLABILE'), codice: 'PASSAGGIO_NON_ANNULLABILE' },
         { status: 409 },

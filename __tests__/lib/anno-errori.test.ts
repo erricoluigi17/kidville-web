@@ -72,7 +72,9 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['PASSAGGIO_NON_TROVATO', 404, 'Questo passaggio non esiste più. Aggiorna la pagina.'],
     ['ANTEPRIMA_VECCHIA', 409, 'L’anteprima non è più aggiornata: dopo averla calcolata qualcosa è cambiato. Calcolala di nuovo.'],
     ['RIGHE_DA_DECIDERE', 409, 'Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.'],
-    ['RIGA_NON_VALIDA', 422, 'Questa correzione non è ammessa. Per ritirare un bambino nuovo o registrare una conferma usa la pagina «Conferme».'],
+    ['RIGA_NON_VALIDA', 422, 'Questa operazione non è ammessa per questo bambino così com’è ora. Ricarica la pagina e guarda la sua riga.'],
+    ['DOCENTE_NON_VALIDO', 422, 'Questa persona non può avere la classe: scegli un docente di questa sede.'],
+    ['ALUNNO_SENZA_ISCRIZIONE', 409, 'Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno».'],
   ]
 
   it('i dettagli della route finiscono nel corpo accanto al codice, senza toccare stato e frase', async () => {

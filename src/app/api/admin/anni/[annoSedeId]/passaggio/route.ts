@@ -35,6 +35,8 @@ const getQuerySchema = z.object({
   esito: z.enum(ESITI_PASSAGGIO).optional(),
   /** Elenco chiuso: i segnali che la segreteria deve chiudere. */
   avviso: z.enum(AVVISI_PASSAGGIO).optional(),
+  /** Se c'è, la risposta porta anche i contatori (esiti, avvisi, prime righe «da decidere»): al più questo numero per avviso. */
+  contatori: z.coerce.number().int().min(1).max(200).optional(),
 })
 
 export const GET = withRoute('admin/anni/[annoSedeId]/passaggio:GET', async (request: NextRequest, context: Contesto) => {
@@ -49,14 +51,14 @@ export const GET = withRoute('admin/anni/[annoSedeId]/passaggio:GET', async (req
 
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
-  const { pagina, tetto, esito, avviso } = q.data
+  const { pagina, tetto, esito, avviso, contatori } = q.data
 
   const supabase = await createAdminClient()
   const fuoriSede = await assertAnnoSedeInScope(supabase, auth.user, annoSedeId, operazione)
   if (fuoriSede) return fuoriSede
   const ctx = { operazione, annoSedeId, utente: auth.user.id, tipoRifiuto: TIPO_RIFIUTO, lettura: true }
 
-  const letto = await leggiPassaggio(supabase, annoSedeId, { esito, avviso, pagina, tetto })
+  const letto = await leggiPassaggio(supabase, annoSedeId, { esito, avviso, pagina, tetto, contatori })
   if (!letto.ok || 'saltata' in letto) return rispostaPassaggioNonRiuscito(letto, ctx)
 
   logEvento('anno-scolastico', 'info', {
@@ -68,7 +70,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/passaggio:GET', async (req
   })
   return NextResponse.json({
     success: true,
-    data: { passaggio: letto.passaggio, righe: letto.righe, totale: letto.totale, pagina, tetto, docenti: letto.docenti },
+    data: { passaggio: letto.passaggio, righe: letto.righe, totale: letto.totale, pagina, tetto, docenti: letto.docenti, ...(letto.contatori ? { contatori: letto.contatori } : {}) },
   })
 })
 

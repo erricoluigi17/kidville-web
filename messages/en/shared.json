@@ -866,7 +866,7 @@
   "errorePassaggioNonTrovato": "This changeover no longer exists. Refresh the page.",
   "erroreAnteprimaVecchia": "The preview is out of date: something changed after it was calculated. Calculate it again.",
   "erroreRigheDaDecidere": "Some rows need a decision before confirming: children without a new class or with a warning still open.",
-  "erroreRigaNonValida": "This operation is not allowed for this child as things stand. Reload the page and look at their row: a late confirmation needs a class to put them in.",
+  "erroreRigaNonValida": "This operation is not allowed for this child as things stand. Reload the page and look at their row.",
   "erroreDocenteNonValido": "This person cannot be given the class: choose a teacher from this location.",
   "erroreAlunnoSenzaIscrizione": "This child has no enrolment in the current year, so they cannot be put back among the enrolled from here. If they left in the year changeover, use “Late confirmation” on the “Year changeover” page."
 }

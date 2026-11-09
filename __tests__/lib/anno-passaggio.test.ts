@@ -348,7 +348,7 @@ describe('leggiPassaggio', () => {
     const r = await leggiPassaggio(client, A_ANNO, { pagina: 3, tetto: 20 })
     expect(r).toEqual({
       ok: true,
-      passaggio: { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-09-01' },
+      passaggio: { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-09-01', inizio_anno_nuovo: null },
       righe: [RIGA],
       totale: 57,
       docenti: [{ utente_id: UTENTE, sezione_a_id: SEZIONE, origine: 'copiata' }],

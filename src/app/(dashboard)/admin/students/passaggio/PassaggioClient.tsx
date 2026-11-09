@@ -128,6 +128,20 @@ function testoErrore(t: ReturnType<typeof useTranslations>, r: Risposta): string
   return messaggioDaCorpo(r.corpo, t('erroreGenerico'));
 }
 
+/** «presenze: 12, foto e video: 3»: i conteggi di un annullo rifiutato, con il nome leggibile della tabella (se non lo conosce, il nome stesso). */
+const TABELLE_USO = [
+  'presenze', 'eventi_diario', 'valutazioni', 'note_disciplinari', 'registro_orario', 'giustifiche_didattiche', 'armadietto',
+  'armadietto_richieste', 'mensa_prenotazioni', 'mensa_alternative', 'galleria_media_v2', 'video_intents', 'avvisi', 'forms_submissions',
+  'form_submissions', 'chat_messages', 'student_documents', 'frequenze_dopo_la_conferma',
+] as const;
+function elencoUso(t: ReturnType<typeof useTranslations>, conteggi: unknown): string {
+  if (!conteggi || typeof conteggi !== 'object') return '';
+  return Object.entries(conteggi as Record<string, unknown>)
+    .filter(([, n]) => typeof n === 'number' && n > 0)
+    .map(([tab, n]) => `${(TABELLE_USO as readonly string[]).includes(tab) ? t(`uso_${tab}` as never) : tab}: ${n as number}`)
+    .join(', ');
+}
+
 const secondario =
   'inline-flex items-center gap-2 rounded-pill border-2 border-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.05em] text-kidville-green transition-transform hover:bg-kidville-green-soft active:scale-95 disabled:pointer-events-none disabled:opacity-45';
 
@@ -137,10 +151,10 @@ export function PassaggioClient() {
   const effettivo = anno?.effettivo ?? null;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
   // `key`: cambiato l'anno si riparte da zero (filtro, pagina, esito).
-  return <Passaggio key={effettivo.annoSedeId} annoSedeId={effettivo.annoSedeId} />;
+  return <Passaggio key={effettivo.annoSedeId} annoSedeId={effettivo.annoSedeId} puoCalcolare={!effettivo.attivo && effettivo.stato === 'iscrizioni_aperte'} />;
 }
 
-function Passaggio({ annoSedeId }: { annoSedeId: string }) {
+function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcolare: boolean }) {
   const t = useTranslations('annoPassaggio');
   const locale = useLocale();
   const { userId } = useAdminIdentity();
@@ -173,30 +187,15 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
   // I contatori e il blocco «Da decidere» si leggono dal server con richieste piccole (un solo bambino per esito, una manciata di
   // righe per avviso): così i numeri sono sempre quelli del database e non dipendono da come l'anteprima ha scritto i conteggi.
   const leggiContatori = useCallback(async (): Promise<Esito<Contatori>> => {
-    const [perEsito, perAvviso] = await Promise.all([
-      Promise.all(ESITI.map((e) => chiama('GET', `${base}?esito=${e}&pagina=1&tetto=1`, uid))),
-      Promise.all(AVVISI.map((a) => chiama('GET', `${base}?avviso=${a}&pagina=1&tetto=${RIGHE_DA_DECIDERE_MAX}`, uid))),
-    ]);
-    const guasto = [...perEsito, ...perAvviso].find((r) => !riuscita(r) || !estraiLetta(r));
-    if (guasto) return { ok: false, stato: guasto.stato, corpo: guasto.corpo };
+    const r = await chiama('GET', `${base}?pagina=1&tetto=1&contatori=${RIGHE_DA_DECIDERE_MAX}`, uid);
+    const c = riuscita(r) ? (dati(r.corpo) as { contatori?: { esiti?: Record<string, number>; avvisi?: Record<string, number>; daDecidere?: RigaApi[] } } | null)?.contatori : null;
+    if (!c || !c.esiti || !c.avvisi) return { ok: false, stato: r.stato, corpo: r.corpo };
     const esiti = {} as Record<EsitoRiga, number>;
-    ESITI.forEach((e, i) => {
-      esiti[e] = estraiLetta(perEsito[i])?.totale ?? 0;
+    ESITI.forEach((e) => {
+      esiti[e] = c.esiti?.[e] ?? 0;
     });
-    const viste = new Set<string>();
-    const daDecidere: RigaApi[] = [];
-    let daDecidereTotale = 0;
-    for (const r of perAvviso) {
-      const l = estraiLetta(r);
-      if (!l) continue;
-      daDecidereTotale += l.totale;
-      for (const riga of l.righe) {
-        if (viste.has(riga.alunno_id)) continue;
-        viste.add(riga.alunno_id);
-        daDecidere.push(riga);
-      }
-    }
-    return { ok: true, dati: { esiti, daDecidere, daDecidereTotale } };
+    const daDecidereTotale = AVVISI.reduce((somma, a) => somma + (c.avvisi?.[a] ?? 0), 0);
+    return { ok: true, dati: { esiti, daDecidere: Array.isArray(c.daDecidere) ? c.daDecidere : [], daDecidereTotale } };
   }, [base, uid]);
   const contatori = useLettura(passaggioId ? `${base}|c|${versione}` : null, leggiContatori);
 
@@ -237,21 +236,20 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
   }, [elenco, daDecidere]);
   const chiaveNomi = idInVista.join(',');
   const leggiNomi = useCallback(async (): Promise<Esito<Record<string, Nome>>> => {
-    const cercati = new Set(chiaveNomi ? chiaveNomi.split(',') : []);
+    const cercati = chiaveNomi ? chiaveNomi.split(',') : [];
     const trovati: Record<string, Nome> = {};
-    for (const nome of ['frequentanti', 'in_arrivo', 'non_iscritti']) {
-      if (cercati.size === 0) break;
-      const r = await chiama('GET', `/api/admin/students?elenco=${nome}&limit=1000`, uid);
+    // (giro 1, S20) Solo nome, cognome e classe, dei soli bambini di queste righe: a blocchi di 100.
+    for (let da = 0; da < cercati.length; da += 100) {
+      const blocco = cercati.slice(da, da + 100);
+      const r = await chiama('GET', `${base}/nomi?ids=${blocco.join(',')}`, uid);
       const lista = dati(r.corpo);
       if (!riuscita(r) || !Array.isArray(lista)) continue;
-      for (const a of lista as Array<{ id: string; nome?: string | null; cognome?: string | null; classe_sezione?: string | null }>) {
-        if (!cercati.has(a.id)) continue;
-        trovati[a.id] = { nome: a.nome ?? '', cognome: a.cognome ?? '', classe: a.classe_sezione ?? null };
-        cercati.delete(a.id);
+      for (const a of lista as Array<{ id: string; nome?: string | null; cognome?: string | null; classe?: string | null }>) {
+        trovati[a.id] = { nome: a.nome ?? '', cognome: a.cognome ?? '', classe: a.classe ?? null };
       }
     }
     return { ok: true, dati: trovati };
-  }, [chiaveNomi, uid]);
+  }, [base, chiaveNomi, uid]);
   const nomiLetti = useLettura(chiaveNomi ? `nomi|${chiaveNomi}` : null, leggiNomi);
   const nomi = nomiLetti.fase === 'ok' ? nomiLetti.dati : {};
   const nomeDi = (id: string): string => {
@@ -272,7 +270,9 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     setOccupato(false);
     if (!riuscita(r)) {
       const c = (r.corpo as { codice?: unknown } | null)?.codice;
-      setMessaggio({ tipo: 'errore', testo: testoErrore(t, r), codice: typeof c === 'string' ? c : null });
+      // (giro 1, S7) L'annullo rifiutato dice anche COSA c'è nell'anno nuovo: i conteggi per tabella, con un nome leggibile.
+      const uso = c === 'PASSAGGIO_NON_ANNULLABILE' ? elencoUso(t, (r.corpo as { conteggi?: unknown } | null)?.conteggi) : '';
+      setMessaggio({ tipo: 'errore', testo: uso ? `${testoErrore(t, r)} ${t('annulloMotivi', { elenco: uso })}` : testoErrore(t, r), codice: typeof c === 'string' ? c : null });
       return false;
     }
     setMessaggio({ tipo: 'ok', testo: ok, codice: null });
@@ -293,7 +293,7 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     const corpo: Record<string, unknown> =
       valore === VALORE_ESCE
         ? { alunno_id: r.alunno_id, esito: 'esce' }
-        : { alunno_id: r.alunno_id, esito: r.esito, section_id: valore };
+        : { alunno_id: r.alunno_id, esito: r.esito === 'esce' ? 'continua' : r.esito, section_id: valore };
     return scrivi('PUT', '/righe', corpo, t('esitoCorretto', { nome: nomeDi(r.alunno_id) }));
   };
 
@@ -307,6 +307,10 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
   const annulla = async () => {
     setDialogo(null);
     if (passaggioId) await scrivi('POST', '/annulla', {}, t('esitoAnnullato'), () => setAnnullato(true));
+  };
+  const scarta = async () => {
+    setDialogo(null);
+    if (passaggioId) await scrivi('POST', '/annulla', {}, t('esitoScartata'), () => setAnnullato(true));
   };
   const tardiva = (r: RigaApi, sezioneId: string) =>
     passaggioId
@@ -357,7 +361,12 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     return (
       <div>
         <p className="font-maven text-sm text-kidville-green">{annullato ? t('statoAnnullato') : t('nessunaAnteprima')}</p>
-        <button type="button" className={`${btnPrimary} mt-3`} disabled={occupato} onClick={calcola}>{t('azioneCalcola')}</button>
+        {/* (giro 1, S17) Il passaggio si calcola sull'anno con le iscrizioni aperte: dall'anno in corso si rimanda al selettore. */}
+        {puoCalcolare ? (
+          <button type="button" className={`${btnPrimary} mt-3`} disabled={occupato} onClick={calcola}>{t('azioneCalcola')}</button>
+        ) : (
+          <p className={hint}>{t('rimandoSelettore')}</p>
+        )}
         {esitoMessaggio}
       </div>
     );
@@ -415,6 +424,7 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
             {t('azioneConferma')}
           </button>
           <button type="button" className={secondario} disabled={occupato} onClick={calcola}>{t('azioneRicalcola')}</button>
+          <button type="button" className={secondario} disabled={occupato} onClick={scarta}>{t('azioneScarta')}</button>
           <button type="button" className={secondario} onClick={rilegge}>{t('azioneAggiorna')}</button>
           {numeroDaDecidere > 0 && <span id="passaggio-spenta" className={hint}>{t('azioneConfermaSpentaDecidere')}</span>}
         </div>
@@ -462,11 +472,11 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
               t={t}
               r={r}
               nome={nomeDi(r.alunno_id)}
-              classeDa={nomi[r.alunno_id]?.classe ?? nomeSezione(r.sezione_da_id)}
+              classeDa={nomeSezione(r.sezione_da_id) ?? nomi[r.alunno_id]?.classe ?? null}
               classeA={nomeSezione(r.sezione_a_id)}
               sezioni={sezioni}
               puoCorreggere={inAnteprima}
-              puoTardiva={confermato && (r.esito === 'esce' || r.esito === 'non_risposto') && !r.frequenza_a_id}
+              puoTardiva={confermato && (r.esito === 'esce' || r.esito === 'non_risposto')}
               occupato={occupato}
               corregge={corregge}
               tardiva={tardiva}
@@ -538,7 +548,7 @@ function etichettaEsito(t: T, e: EsitoRiga): string {
 }
 
 /** Una classe nuova si può correggere solo su chi continua, cambia grado o è nuovo; `esce` solo se non è «nuovo» (si ritira da «Conferme»). */
-const correggibile = (e: EsitoRiga) => e === 'continua' || e === 'cambia_grado' || e === 'nuova';
+const correggibile = (r: RigaApi) => r.esito === 'continua' || r.esito === 'cambia_grado' || r.esito === 'nuova' || (r.esito === 'esce' && r.eccezione);
 
 function RigaElenco({
   t, r, nome, classeDa, classeA, avviso, sezioni, puoCorreggere, puoTardiva, occupato, corregge, tardiva,
@@ -567,7 +577,7 @@ function RigaElenco({
         <span className="block text-xs text-kidville-sub">{t('classeA', { classe: classeA ?? t('senzaClasse') })}</span>
         {avviso && <span className="block text-xs text-kidville-error">{avviso}</span>}
       </div>
-      {puoCorreggere && correggibile(r.esito) && (
+      {puoCorreggere && correggibile(r) && (
         <div className="min-w-0 basis-56">
           <label className="sr-only" htmlFor={`${id}-sezione`}>{t('correggiEtichetta', { nome })}</label>
           <select
@@ -577,9 +587,9 @@ function RigaElenco({
             disabled={occupato}
             onChange={(e) => corregge(r, e.target.value)}
           >
-            <option value="">{t('correggiScegli')}</option>
+            <option value="">{r.esito === 'esce' ? t('correggiRiporta') : t('correggiScegli')}</option>
             {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            {r.esito !== 'nuova' && <option value={VALORE_ESCE}>{t('correggiEsce')}</option>}
+            {r.esito !== 'nuova' && r.esito !== 'esce' && <option value={VALORE_ESCE}>{t('correggiEsce')}</option>}
           </select>
         </div>
       )}
@@ -587,10 +597,10 @@ function RigaElenco({
         <div className="flex min-w-0 basis-56 flex-col gap-2">
           <label className="sr-only" htmlFor={`${id}-tardiva`}>{t('tardivaClasse', { nome })}</label>
           <select id={`${id}-tardiva`} className={`${input} min-h-11 w-full`} value={sezioneTardiva} onChange={(e) => setSezioneTardiva(e.target.value)}>
-            <option value="">{t('tardivaClasseDefault')}</option>
+            <option value="">{t('tardivaClasseScegli')}</option>
             {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <button type="button" className={secondario} disabled={occupato} onClick={() => tardiva(r, sezioneTardiva)}>{t('azioneTardiva')}</button>
+          <button type="button" className={secondario} disabled={occupato || sezioneTardiva === ''} onClick={() => tardiva(r, sezioneTardiva)}>{t('azioneTardiva')}</button>
         </div>
       )}
     </li>

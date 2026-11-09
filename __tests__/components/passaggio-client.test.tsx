@@ -66,7 +66,7 @@ const riga = (alunno_id: string, esito: Esito, extra: Partial<RigaS> = {}): Riga
 
 /** Lo stato del «server»: cambia quando la pagina scrive, e le letture successive lo riflettono. */
 const s = {
-  passaggio: null as null | { id: string; stato: 'anteprima' | 'confermato'; conteggi: Record<string, number>; apribile_dal: string | null },
+  passaggio: null as null | { id: string; stato: 'anteprima' | 'confermato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null },
   righe: [] as RigaS[],
   conferma409: null as null | string,
   annulla409: null as null | string,
@@ -105,11 +105,20 @@ function lettura(params: URLSearchParams): Risposta {
   if (esito) righe = righe.filter((r) => r.esito === esito)
   if (avviso) righe = righe.filter((r) => r.avviso === avviso)
   const tetto = Number(params.get('tetto') ?? 25)
+  const max = Number(params.get('contatori') ?? 0)
+  const contatori = max > 0
+    ? {
+        esiti: Object.fromEntries((['continua', 'cambia_grado', 'nuova', 'esce', 'non_risposto'] as const).map((e) => [e, s.righe.filter((r) => r.esito === e).length])),
+        avvisi: Object.fromEntries((['ritirato_tendina', 'senza_sezione'] as const).map((a) => [a, s.righe.filter((r) => r.avviso === a).length])),
+        daDecidere: s.righe.filter((r) => r.avviso !== null).slice(0, max),
+      }
+    : undefined
   return ok({
     passaggio: s.passaggio,
     righe: righe.slice(0, tetto),
     totale: righe.length,
     docenti: [{ utente_id: DOC1, sezione_a_id: S_A1, origine: 'copiata' }],
+    ...(contatori ? { contatori } : {}),
   })
 }
 
@@ -118,13 +127,16 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
     return ok([{ scuolaId: SEDE, sezioni: [
       { id: S_A1, name: 'Sezione Nuova A', school_type: 'infanzia' },
       { id: S_A2, name: 'Sezione Nuova B', school_type: 'infanzia' },
+      { id: S_DA, name: 'Sezione Partenza', school_type: 'infanzia' },
     ] }])
   }
   if (url.includes('/api/admin/staff')) return { status: 200, body: { success: true, data: [{ id: DOC1, nome: 'NomeDocente', cognome: 'CognomeDocente', ruolo: 'docente' }] } }
-  if (url.includes('/api/admin/students?')) {
-    return { status: 200, body: url.includes('elenco=frequentanti') ? nomiStudenti : [] }
-  }
   const base = `/api/admin/anni/${ANNO}/passaggio`
+  if (url.includes(`${base}/nomi`) && metodo === 'GET') {
+    const ids = (new URL(url, 'http://x').searchParams.get('ids') ?? '').split(',')
+    const inRighe = new Set(s.righe.map((r) => r.alunno_id))
+    return ok(nomiStudenti.filter((a) => ids.includes(a.id) && inRighe.has(a.id)).map((a) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe: a.classe_sezione })))
+  }
   if (url.includes(`${base}/righe`) && metodo === 'PUT') return ok({ alunno_id: body.alunno_id, esito: body.esito, eccezione: true })
   if (url.includes(`${base}/docenti`) && metodo === 'PUT') return ok({ utente_id: body.utente_id })
   if (url.includes(`${base}/conferma-tardiva`) && metodo === 'POST') return ok({ frequenza_id: 'f', creata: true })
@@ -134,7 +146,7 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
     return ok({ passaggio_id: PASS, gia_confermato: false })
   }
   if (url.includes(`${base}/annulla`) && metodo === 'POST') {
-    if (s.annulla409) return { status: 409, body: { error: 'x', codice: s.annulla409 } }
+    if (s.annulla409) return { status: 409, body: { error: 'x', codice: s.annulla409, conteggi: { presenze: 12, galleria_media_v2: 3, tabella_nuova: 2 } } }
     s.passaggio = null
     s.righe = []
     return ok({ passaggio_id: PASS })
@@ -154,7 +166,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2027-07-10T10:00:00Z'))
   h.sede = SEDE
   h.anno = { effettivo: { annoSedeId: ANNO, attivo: false, stato: 'iscrizioni_aperte' } }
-  s.passaggio = { id: PASS, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-07-01' }
+  s.passaggio = { id: PASS, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-07-01', inizio_anno_nuovo: '2027-09-15' }
   s.righe = RIGHE_BASE()
   s.conferma409 = null
   s.annulla409 = null
@@ -293,14 +305,17 @@ describe('PassaggioClient · le scritture', () => {
     expect(link.getAttribute('href')).toBe('/admin/students/conferme')
   })
 
-  it('«Conferma il passaggio» apre il dialogo che conta le famiglie che usciranno, e il sì fa la POST giusta', async () => {
+  it('«Conferma il passaggio» apre il dialogo che conta i bambini che usciranno, dice le date e il sì fa la POST giusta', async () => {
     render(<PassaggioClient />)
     await screen.findByText('CognomeUno NomeUno')
     await waitFor(() => expect((pulsanteConferma() as HTMLButtonElement).disabled).toBe(false))
     await screen.findByRole('button', { name: /Non hanno risposto\s*2/ })
     fireEvent.click(pulsanteConferma())
     const dialogo = await screen.findByRole('dialog')
-    expect(within(dialogo).getByText(/2 famiglie non hanno risposto e usciranno/)).toBeTruthy()
+    expect(within(dialogo).getByText(/2 bambini le cui famiglie non hanno risposto usciranno/)).toBeTruthy()
+    // Giro 1, B3: quanti perdono subito l'accesso (1 «esce» + 2 senza risposta) e fino a quando le altre famiglie vedono la classe com'è ora.
+    expect(within(dialogo).getByText(/3 bambini perdono subito l’accesso all’app delle famiglie/)).toBeTruthy()
+    expect(within(dialogo).getByText(/fino al 14 settembre 2027; dal 15 settembre 2027 vedono la classe nuova/)).toBeTruthy()
     expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(0)
     fireEvent.click(within(dialogo).getByRole('button', { name: itPassaggio.dialogoSi }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(1))
@@ -342,7 +357,12 @@ describe('PassaggioClient · confermato e annullato', () => {
     await screen.findByText(itPassaggio.statoConfermato)
     fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneAnnulla }))
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: itPassaggio.dialogoAnnullaSi }))
-    expect((await screen.findByRole('alert')).textContent).toBe(itShared.errorePassaggioNonAnnullabile)
+    // Giro 1, S7: la frase del codice, poi che cosa c'è nell'anno nuovo (nome leggibile; una tabella che non si conosce con il suo nome).
+    const avviso = (await screen.findByRole('alert')).textContent ?? ''
+    expect(avviso.startsWith(itShared.errorePassaggioNonAnnullabile)).toBe(true)
+    expect(avviso).toContain('presenze: 12')
+    expect(avviso).toContain('foto e video: 3')
+    expect(avviso).toContain('tabella_nuova: 2')
     expect(chiamate('POST', '/passaggio/annulla')).toHaveLength(1)
     expect(corpoDi(chiamate('POST', '/passaggio/annulla')[0])).toEqual({})
   })
@@ -364,5 +384,55 @@ describe('PassaggioClient · confermato e annullato', () => {
     fireEvent.click(within(riga2).getByRole('button', { name: itPassaggio.azioneTardiva }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma-tardiva')).toHaveLength(1))
     expect(corpoDi(chiamate('POST', '/passaggio/conferma-tardiva')[0])).toEqual({ alunno_id: AL2, section_id: S_A2 })
+  })
+})
+
+describe('PassaggioClient · giro di correzione 1', () => {
+  it('S1 · un «Esce» scelto a mano ha la tendina «Continua in questa classe», e la correzione manda `continua` con la classe', async () => {
+    s.righe = [riga(AL1, 'esce', { sezione_a_id: null, eccezione: true }), ...RIGHE_BASE().slice(1)]
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeUno NomeUno')
+    const tendina = (await screen.findByLabelText('Classe nuova di CognomeUno NomeUno')) as HTMLSelectElement
+    expect(within(tendina).getByRole('option', { name: itPassaggio.correggiRiporta })).toBeTruthy()
+    expect(within(tendina).queryByRole('option', { name: itPassaggio.correggiEsce })).toBeNull()
+    fireEvent.change(tendina, { target: { value: S_A1 } })
+    await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
+    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'continua', section_id: S_A1 })
+  })
+
+  it('S1 · «Scarta l’anteprima» chiama l’annullo e ripropone di calcolarla', async () => {
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeUno NomeUno')
+    fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneScarta }))
+    await waitFor(() => expect(chiamate('POST', '/passaggio/annulla')).toHaveLength(1))
+    expect(await screen.findByText(itPassaggio.statoAnnullato)).toBeTruthy()
+  })
+
+  it('S3 · la conferma tardiva non ha una classe predefinita: il pulsante resta spento finché non se ne sceglie una', async () => {
+    s.passaggio = { id: PASS, stato: 'confermato', conteggi: {}, apribile_dal: '2027-07-01', inizio_anno_nuovo: '2027-09-15' }
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeDue NomeDue')
+    const riga2 = screen.getByText('CognomeDue NomeDue').closest('li') as HTMLElement
+    const pulsante = within(riga2).getByRole('button', { name: itPassaggio.azioneTardiva }) as HTMLButtonElement
+    expect(pulsante.disabled).toBe(true)
+    fireEvent.change(await screen.findByLabelText('Classe per la conferma tardiva di CognomeDue NomeDue'), { target: { value: S_A2 } })
+    expect(pulsante.disabled).toBe(false)
+  })
+
+  it('S17 · sull’anno in corso, senza passaggio, rimanda al selettore invece di proporre il calcolo', async () => {
+    s.passaggio = null
+    s.righe = []
+    h.anno = { effettivo: { annoSedeId: ANNO, attivo: true, stato: 'corrente' } }
+    render(<PassaggioClient />)
+    expect(await screen.findByText(itPassaggio.rimandoSelettore)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: itPassaggio.azioneCalcola })).toBeNull()
+  })
+
+  it('S15 · la classe di PARTENZA viene dalla riga, non dalla scheda del bambino', async () => {
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeUno NomeUno')
+    // `nomiStudenti` dice «Sezione Vecchia» (la scheda, già spostata sulla classe nuova); la riga dice S_DA, «Sezione Partenza».
+    expect(screen.queryAllByText('Da: Sezione Partenza').length).toBeGreaterThan(0)
+    expect(screen.queryAllByText('Da: Sezione Vecchia')).toHaveLength(0)
   })
 })

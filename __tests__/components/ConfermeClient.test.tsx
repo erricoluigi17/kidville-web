@@ -241,6 +241,19 @@ describe('ConfermeClient — il selettore della primaria offre le classi della S
     expect(await screen.findByText(itConferme.nessunaPrimaria)).toBeInTheDocument()
     expect(screen.queryByText('PRIMA A DUE')).toBeNull()
   })
+
+  it('4.5.16 H (4.5.6): scelta una classe di primaria, la POST di conferma porta `section_id` e `cambia_grado: true`', async () => {
+    h.gruppi = [
+      { scuolaId: SEDE_ANNO, scuolaNome: 'Sede Uno', sezioni: [{ id: 's-uno-a', name: 'PRIMA A UNO', school_type: 'primaria' }] },
+    ]
+    await opzioniPrimaria()
+    const sel = (await screen.findByLabelText(itConferme.sezioneArrivo)) as HTMLSelectElement
+    fireEvent.change(sel, { target: { value: 's-uno-a' } })
+    fireEvent.click(screen.getByRole('button', { name: itConferme.azioneConferma }))
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).length).toBeGreaterThan(0))
+    const posts = chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).filter(([u]) => !String(u).includes('/quota'))
+    expect(JSON.parse(posts[0][1].body)).toEqual({ frequenza_id: F_PART, section_id: 's-uno-a', cambia_grado: true })
+  })
 })
 
 describe('ConfermeClient — il filtro «mancano moduli» sta nella route', () => {

@@ -142,9 +142,9 @@ describe('quote, moduli e posti: i prerequisiti dell’apertura', () => {
     expect(await quote(A27)).toBe(0)
   })
 
-  it('una scadenza nel passato → SCADENZA_NEL_PASSATO e niente scritto; oggi e il futuro passano (4.5.15)', async () => {
+  it('una scadenza nel passato → SCADENZA_QUOTA_NEL_PASSATO e niente scritto; oggi e il futuro passano (4.5.15)', async () => {
     const e = await errore(db.query(`SELECT public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 100, public.giorno_roma(now()) - 1)`, [A27]))
-    expect(e.codice).toBe('SCADENZA_NEL_PASSATO')
+    expect(e.codice).toBe('SCADENZA_QUOTA_NEL_PASSATO')
     expect(await quote(A27)).toBe(0)
     expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 100, public.giorno_roma(now()))`, [A27])).toMatchObject({ cambiato: true })
   })

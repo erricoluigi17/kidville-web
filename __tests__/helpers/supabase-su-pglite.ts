@@ -73,7 +73,8 @@ class Query implements PromiseLike<Risultato> {
       const c = ident(f.colonna)
       switch (f.op) {
         case 'eq': params.push(f.valore); return `${c} = $${params.length}`
-        case 'neq': params.push(f.valore); return `${c} IS DISTINCT FROM $${params.length}`
+        // PostgREST: `c <> v`. Una riga con `c` NULL NON passa (era IS DISTINCT FROM: la faceva passare, 4.5.16).
+        case 'neq': params.push(f.valore); return `${c} <> $${params.length}`
         case 'lt': params.push(f.valore); return `${c} < $${params.length}`
         case 'gt': params.push(f.valore); return `${c} > $${params.length}`
         case 'in': params.push(f.valore); return `${c} = ANY ($${params.length})`

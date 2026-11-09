@@ -62,7 +62,7 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['ISCRIZIONI_CHIUSE', 409, 'Le iscrizioni per questo anno scolastico sono chiuse.'],
     ['IMPORTO_NON_VALIDO', 422, 'L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.'],
     ['FREQUENZA_NON_DI_CONFERMA', 409, 'Questo bambino arriva l’anno prossimo e non frequenta ancora: la sua iscrizione si toglie archiviandolo dalla sua scheda.'],
-    ['SCADENZA_NEL_PASSATO', 422, 'La scadenza non può essere già passata: scegli una data da oggi in poi, oppure lasciala vuota.'],
+    ['SCADENZA_QUOTA_NEL_PASSATO', 422, 'La scadenza non può essere già passata: scegli una data da oggi in poi, oppure lasciala vuota.'],
   ]
 
   it('i dettagli della route finiscono nel corpo accanto al codice, senza toccare stato e frase', async () => {

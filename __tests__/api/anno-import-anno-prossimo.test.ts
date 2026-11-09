@@ -124,6 +124,13 @@ describe('eseguiDomanda · domanda per l’anno PROSSIMO', () => {
     }])
   })
 
+  it('4.5.16 H: la classe non applicata (`sezione_ignorata`) e la riapertura contano nell\u2019esito come «iscrizioni da guardare», non solo nel log', async () => {
+    rpcRegistra = () => ({ data: { frequenza_id: 'freq-x', creata: false, quota: 'gia_collegata', pagamento_id: null, posti_oltre: false, sezione_ignorata: true }, error: null })
+    const esito = await eseguiDomanda(client(), domanda, datiCon([figlio('Bimbo')]), [assegna(0, 'Bimbo')], SEDE_A)
+    expect(esito.esito).toBe('inviata')
+    expect(esito).toMatchObject({ iscrizioniDaGuardare: 1, quotaDaControllare: 0 })
+  })
+
   it('«la paga il fratello»: il collegamento sta nella frequenza, nessun UPDATE di alunni', async () => {
     const dati = datiCon([figlio('Bimbo'), figlio('Bimba', { data_nascita: '2023-01-02' })])
     await eseguiDomanda(client(), domanda, dati, [assegna(0, 'Bimbo'), assegna(1, 'Bimba', { retta: 0, aCaricoDi: 'Prova Bimbo' })], SEDE_A)

@@ -2910,6 +2910,7 @@ export const CODICI_ERRORE = {
     SCADENZE_INCOERENTI: 'erroreScadenzeIncoerenti',
     /** 400 — una delle due scadenze è già passata al momento del salvataggio. */
     SCADENZA_NEL_PASSATO: 'erroreScadenzaNelPassato',
+    SCADENZA_QUOTA_NEL_PASSATO: 'erroreScadenzaQuotaNelPassato',
     /** «Ritira la conferma» su una frequenza che non nasce da una conferma (4.5.15): 409. */
     FREQUENZA_NON_DI_CONFERMA: 'erroreFrequenzaNonDiConferma',
     /**

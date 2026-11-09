@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import itSettings from '../../messages/it/adminSettings.json'
+import itAnno from '../../messages/it/annoListino.json'
 import { SEDE_A } from '../fixtures/sedi'
 import type { RigaCalendario } from '@/lib/anno-scolastico'
 import type { StatoAnno } from '@/lib/anno/tipi'
@@ -11,7 +12,7 @@ import type { StatoAnno } from '@/lib/anno/tipi'
 // PR 4.2 · compito 4.2.7 · LA SEZIONE «ANNO SCOLASTICO» NELLE IMPOSTAZIONI.
 //
 // È la schermata che la segreteria usa davvero per spostare il confine fra due anni, fissare le date del
-// registro e aprire le iscrizioni (le domande dal sito hanno solo una riga informativa fino alla 4.5). Le regole stanno nel database e nelle
+// registro, aprire le iscrizioni e sospendere o riaprire le domande dal sito (4.5). Le regole stanno nel database e nelle
 // route (4.2.4): qui si prova che la schermata le DICA invece di nasconderle — il rifiuto con i numeri, il
 // 403 con le parole, ciò che si digitava ancora lì — e che non scriva mai quando non deve.
 //
@@ -98,7 +99,11 @@ beforeEach(() => {
   fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
     const metodo = init?.method ?? 'GET'
     if (retePatch && metodo !== 'GET') return Promise.reject(new TypeError('rete'))
-    const r = metodo === 'PATCH' ? rispostaPatch : metodo === 'POST' ? rispostaPost : rispostaGet
+    // Le letture di quote, moduli e posti (AnnoConfigurazione, 4.5.3) hanno la loro forma; `rispostaGet` è «che cosa manca».
+    const config = metodo === 'GET' ? /\/(quote|moduli|posti)$/.exec(String(url)) : null
+    const r = config
+      ? ok(config[1] === 'quote' ? { quote: [], listino: [] } : config[1] === 'moduli' ? { moduli: [] } : { posti: [] })
+      : metodo === 'PATCH' ? rispostaPatch : metodo === 'POST' ? rispostaPost : rispostaGet
     return Promise.resolve({ ok: r.status < 400, status: r.status, json: async () => r.body })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -374,7 +379,16 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
 
   it('mentre controlla non si può aprire, e lo dice', async () => {
     let sciogli: (r: unknown) => void = () => {}
-    fetchMock.mockImplementationOnce(() => new Promise((res) => { sciogli = res }))
+    // Si trattiene solo la lettura di «che cosa manca» (l'URL dell'anno): quote, moduli e posti rispondono subito.
+    const normale = fetchMock.getMockImplementation()!
+    let trattenuta = false
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (!trattenuta && String(url) === `/api/admin/anni/${S27}` && (init?.method ?? 'GET') === 'GET') {
+        trattenuta = true
+        return new Promise((res) => { sciogli = res })
+      }
+      return normale(url, init)
+    })
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
     scegli('2027/28')
@@ -447,31 +461,69 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
 })
 
 describe('Impostazioni → Anno scolastico: le domande dal sito', () => {
-  // Fino alla 4.5 il modulo pubblico non guarda l'interruttore: le domande arrivano sempre nell'anno in corso.
-  // La schermata non deve far credere il contrario, quindi dice la verità e non offre nessun comando.
-  it('una sola riga che dice la verità, e nessun pulsante per le domande, per ogni anno non chiuso', async () => {
+  // Dalla 4.5 il modulo pubblico guarda l'interruttore `domande_aperte`: la schermata lo mostra e lo cambia, anno per anno.
+  const sospendi = () => screen.getByRole('button', { name: itSettings.annoDomandeSospendi })
+  const riapri = () => screen.getByRole('button', { name: itSettings.annoDomandeRiapri })
+
+  it('con le domande aperte dice «aperte» e offre «Sospendi le domande», non «Riapri»', async () => {
     h.perSede = { [SEDE_A]: treAnni({ domandeAperte: true }) }
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
-    for (const anno of ['2026/27', '2027/28']) {
-      scegli(anno)
-      const nota = await screen.findByRole('note')
-      expect(nota).toHaveTextContent(itSettings.annoDomandeNota)
-      expect(screen.getAllByRole('note')).toHaveLength(1)
-      const nomi = screen.queryAllByRole('button').map((x) => x.textContent ?? '')
-      expect(nomi.some((n) => /domande/i.test(n))).toBe(false)
-    }
-    expect(chiamate('PATCH')).toHaveLength(0)
+    expect(screen.getByText(itSettings.annoDomandeAperte)).toBeInTheDocument()
+    expect(sospendi()).toBeEnabled()
+    expect(screen.queryByRole('button', { name: itSettings.annoDomandeRiapri })).toBeNull()
   })
 
-  it('non c’è più il vecchio stato «aperte»/«sospese»: la riga non dipende da domande_aperte', async () => {
-    for (const aperte of [true, false]) {
-      h.perSede = { [SEDE_A]: treAnni({ domandeAperte: aperte }) }
-      const { unmount } = monta()
-      expect(await screen.findByRole('note')).toHaveTextContent(itSettings.annoDomandeNota)
-      expect(screen.queryByText(/sospese|sono aperte/i)).toBeNull()
-      unmount()
-    }
+  it('con le domande sospese dice «sospese» e offre «Riapri le domande»', async () => {
+    h.perSede = { [SEDE_A]: treAnni({ domandeAperte: false }) }
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    expect(screen.getByText(itSettings.annoDomandeSospese)).toBeInTheDocument()
+    expect(riapri()).toBeEnabled()
+    expect(screen.queryByRole('button', { name: itSettings.annoDomandeSospendi })).toBeNull()
+  })
+
+  it('«Sospendi» manda azione «domande» con aperte=false all’anno scelto, con l’identità di sessione, e rilegge il calendario', async () => {
+    h.perSede = { [SEDE_A]: treAnni({ domandeAperte: true }) }
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(sospendi())
+    await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
+    const c = ultima('PATCH')!
+    expect(c.url).toBe(`/api/admin/anni/${S26}`)
+    expect(c.body).toEqual({ azione: 'domande', aperte: false })
+    expect(c.headers['x-user-id']).toBe(USER)
+    await waitFor(() => expect(h.ricarica).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText(itSettings.salvato)).toBeInTheDocument()
+  })
+
+  it('«Riapri» manda aperte=true; vale per l’anno scelto, non per quello in corso', async () => {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    fireEvent.click(await screen.findByRole('button', { name: itSettings.annoDomandeRiapri }))
+    await waitFor(() => expect(chiamate('PATCH')).toHaveLength(1))
+    expect(ultima('PATCH')!.url).toBe(`/api/admin/anni/${S27}`)
+    expect(ultima('PATCH')!.body).toEqual({ azione: 'domande', aperte: true })
+  })
+
+  it('un rifiuto si dice sotto il blocco e non rilegge il calendario', async () => {
+    h.perSede = { [SEDE_A]: treAnni({ domandeAperte: true }) }
+    rispostaPatch = { status: 403, body: { error: 'Accesso negato', codice: 'SEDE_NON_ACCESSIBILE' } }
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(sospendi())
+    expect(await screen.findByRole('alert')).toHaveTextContent(itSettings.annoPermesso)
+    expect(h.ricarica).not.toHaveBeenCalled()
+  })
+
+  it('un anno chiuso non ha il comando delle domande', async () => {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2025/26')
+    await screen.findByText(itSettings.annoChiusoSolaLettura)
+    expect(screen.queryByRole('button', { name: itSettings.annoDomandeSospendi })).toBeNull()
+    expect(screen.queryByRole('button', { name: itSettings.annoDomandeRiapri })).toBeNull()
   })
 })
 
@@ -605,5 +657,107 @@ describe('Impostazioni → Anno scolastico: scrittura in volo e pannello smontat
     await screen.findByLabelText(itSettings.annoFineTitolo)
     fireEvent.click(salvaDi(itSettings.annoFineTitolo))
     expect(await screen.findByText(itSettings.salvato)).toBeInTheDocument()
+  })
+})
+
+describe('Impostazioni → Anno scolastico: quote, moduli, posti e classi (4.5.3)', () => {
+  const ANNO = `/api/admin/anni/${S27}`
+  const conf = (n: string) => screen.getByRole('group', { name: n })
+
+  /** Le letture di quote/moduli/posti vengono da `dati`; ogni altra chiamata va com'è. */
+  function conDati(dati: { quote?: unknown[]; listino?: unknown[]; moduli?: unknown[]; posti?: unknown[] }, put?: Risposta) {
+    const normale = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      const m = /\/(quote|moduli|posti|sezioni)$/.exec(String(url))
+      const metodo = init?.method ?? 'GET'
+      if (m && metodo === 'GET') {
+        const corpo = m[1] === 'quote' ? { quote: dati.quote ?? [], listino: dati.listino ?? [] } : m[1] === 'moduli' ? { moduli: dati.moduli ?? [] } : { posti: dati.posti ?? [] }
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: corpo }) })
+      }
+      if (m && put) return Promise.resolve({ ok: put.status < 400, status: put.status, json: async () => put.body })
+      if (m) return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: { cambiato: true, copiate: 2, gia_presenti: 1 } }) })
+      return normale(url, init)
+    })
+  }
+
+  async function apri2027() {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    await screen.findByText(itAnno.introConfigurazione)
+  }
+
+  it('ogni campo parte vuoto: nessun importo predefinito', async () => {
+    conDati({})
+    await apri2027()
+    const quota = await screen.findByRole('group', { name: itAnno.quotaConfermaTitolo })
+    expect((within(quota).getByLabelText(itAnno.etichettaImporto) as HTMLInputElement).value).toBe('')
+    expect((within(quota).getByLabelText(itAnno.etichettaScadenza) as HTMLInputElement).value).toBe('')
+  })
+
+  it('un importo non valido si rifiuta senza chiamare il server e la bozza resta', async () => {
+    conDati({})
+    await apri2027()
+    const quota = await screen.findByRole('group', { name: itAnno.quotaConfermaTitolo })
+    const campo = within(quota).getByLabelText(itAnno.etichettaImporto) as HTMLInputElement
+    fireEvent.change(campo, { target: { value: '0' } })
+    fireEvent.click(within(quota).getByRole('button', { name: itAnno.salva }))
+    expect(await within(quota).findByRole('alert')).toHaveTextContent(itAnno.importoNonValido)
+    expect(campo.value).toBe('0')
+    expect(chiamate('PUT')).toHaveLength(0)
+  })
+
+  it('salvare la quota manda un NUMERO (la virgola vale il punto), poi rilegge «che cosa manca»', async () => {
+    conDati({})
+    await apri2027()
+    const prima = chiamate('GET').filter(([u]) => String(u) === ANNO).length
+    const quota = await screen.findByRole('group', { name: itAnno.quotaNuovaTitolo })
+    fireEvent.change(within(quota).getByLabelText(itAnno.etichettaImporto), { target: { value: '120,50' } })
+    fireEvent.click(within(quota).getByRole('button', { name: itAnno.salva }))
+    await waitFor(() => expect(chiamate('PUT')).toHaveLength(1))
+    const c = ultima('PUT')!
+    expect(c.url).toBe(`${ANNO}/quote`)
+    expect(c.body).toEqual({ voce: 'quota_nuova', fascia: null, importo: 120.5, scadenza: null })
+    expect(await screen.findByText(itAnno.quotaSalvata)).toBeInTheDocument()
+    await waitFor(() => expect(chiamate('GET').filter(([u]) => String(u) === ANNO).length).toBe(prima + 1))
+  })
+
+  it('un modulo nuovo ha un codice stabile dal titolo e va in fondo', async () => {
+    conDati({ moduli: [{ lista: 'nuova', codice: 'privacy', titolo: 'Privacy', ordine: 3 }] })
+    await apri2027()
+    fireEvent.click(screen.getByRole('button', { name: itAnno.schedaModuli }))
+    const blocco = await screen.findByRole('group', { name: itAnno.moduliNuovaTitolo })
+    expect(await within(blocco).findByText('Privacy')).toBeInTheDocument()
+    fireEvent.change(within(blocco).getByLabelText(itAnno.moduloTitoloEtichetta), { target: { value: 'Delega al ritiro' } })
+    fireEvent.click(within(blocco).getByRole('button', { name: itAnno.moduloAggiungi }))
+    await waitFor(() => expect(chiamate('PUT')).toHaveLength(1))
+    expect(ultima('PUT')!.body).toEqual({ lista: 'nuova', codice: 'delega_al_ritiro', titolo: 'Delega al ritiro', ordine: 4 })
+  })
+
+  it('un 422 del server si dice con le parole del server sotto il blocco, senza perdere la bozza', async () => {
+    conDati({}, { status: 422, body: { error: 'Importo non valido', codice: 'IMPORTO_NON_VALIDO' } })
+    await apri2027()
+    const quota = await screen.findByRole('group', { name: itAnno.quotaConfermaTitolo })
+    const campo = within(quota).getByLabelText(itAnno.etichettaImporto) as HTMLInputElement
+    fireEvent.change(campo, { target: { value: '90' } })
+    fireEvent.click(within(quota).getByRole('button', { name: itAnno.salva }))
+    expect(await within(quota).findByRole('alert')).toBeInTheDocument()
+    expect(campo.value).toBe('90')
+  })
+
+  it('«Copia le classi» chiama la route e dice quante', async () => {
+    conDati({})
+    await apri2027()
+    fireEvent.click(screen.getByRole('button', { name: itAnno.classiCopia }))
+    await waitFor(() => expect(chiamate('POST').some(([u]) => String(u) === `${ANNO}/sezioni`)).toBe(true))
+    expect(await screen.findByText('Classi copiate: 2. Già presenti: 1.')).toBeInTheDocument()
+  })
+
+  it('un anno in corso non ha la configurazione', async () => {
+    conDati({})
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    expect(screen.queryByText(itAnno.introConfigurazione)).toBeNull()
+    expect(conf).toBeDefined()
   })
 })

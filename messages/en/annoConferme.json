@@ -114,5 +114,6 @@
   "sedeCosa": "next-year confirmations",
   "ambitoAnnoModuloNotaSenzaTitolo": "You are looking at the enrolments of the year that are missing this form. Confirmations and new ones together.",
   "ambitoAnnoTogliModulo": "Remove the form filter",
-  "classeAnnoNuovo": "Class next year: {classe}"
+  "classeAnnoNuovo": "Class next year: {classe}",
+  "rimandoPassaggio": "Year changeover"
 }

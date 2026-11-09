@@ -114,5 +114,6 @@
   "sedeCosa": "le conferme dell’anno prossimo",
   "ambitoAnnoModuloNotaSenzaTitolo": "Stai guardando le iscrizioni dell’anno a cui manca questo modulo. Conferme e nuove insieme.",
   "ambitoAnnoTogliModulo": "Togli il filtro del modulo",
-  "classeAnnoNuovo": "Classe dell’anno prossimo: {classe}"
+  "classeAnnoNuovo": "Classe dell’anno prossimo: {classe}",
+  "rimandoPassaggio": "Passaggio d’anno"
 }

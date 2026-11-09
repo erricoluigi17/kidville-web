@@ -407,6 +407,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
       )}
 
       <p className={`${hint} mt-3`}>{t('annullareNota')}</p>
+      <p className={hint}><Link href="/admin/students/passaggio" className="underline underline-offset-2">{t('rimandoPassaggio')}</Link></p>
 
       {pagine > 1 && (
         <nav className="mt-4 flex items-center gap-3" aria-label={t('paginaDi', { pagina, pagine })}>

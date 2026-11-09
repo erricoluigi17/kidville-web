@@ -96,7 +96,7 @@
   "esitoAnnullato": "The changeover is cancelled.",
   "esitoTardiva": "Late confirmation recorded for {nome}.",
   "esitoRegione": "Outcome of the last operation",
-  "dialogoFinestra": "Families of children who continue see the class as it is now until {fino}; from {dal} they see the new class. The teacher of the new class already finds it open for writing, the old one stays read-only.",
+  "dialogoFinestra": "Families of children who continue see the class as it is now until {fino}; they see the new class from {dal}. The teacher of the new class already finds it open for writing, the old one stays read-only.",
   "dialogoAccessoSubito": "{n, plural, one {# child loses access to the families’ app right away and no longer appears in the teachers’ lists.} other {# children lose access to the families’ app right away and no longer appear in the teachers’ lists.}}",
   "annulloMotivi": "The new year already has: {elenco}.",
   "uso_presenze": "attendance",

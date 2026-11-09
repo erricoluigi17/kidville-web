@@ -31,22 +31,6 @@ const putSchema = z
   })
   .strict()
 
-/** Il personale della sede dell'anno, non un genitore. `errore` = non lo so (la lettura è caduta): la route risponde 500, non indovina. */
-async function docenteAmmesso(supabase: Awaited<ReturnType<typeof createAdminClient>>, annoSedeId: string, utenteId: string): Promise<'si' | 'no' | 'errore'> {
-  const [anno, utente] = await Promise.all([
-    supabase.from('anni_sede').select('scuola_id').eq('id', annoSedeId).maybeSingle(),
-    supabase.from('utenti').select('id, ruolo, scuola_id').eq('id', utenteId).maybeSingle(),
-  ])
-  if (anno.error || utente.error) {
-    logErrore({ operazione: 'admin/anni/[annoSedeId]/passaggio/docenti:PUT' }, anno.error ?? utente.error)
-    return 'errore'
-  }
-  if (!anno.data || !utente.data) return 'no'
-  const u = utente.data as { ruolo: string | null; scuola_id: string | null }
-  if (u.ruolo === 'genitore') return 'no'
-  return u.scuola_id && u.scuola_id === (anno.data as { scuola_id: string }).scuola_id ? 'si' : 'no'
-}
-
 export const PUT = withRoute('admin/anni/[annoSedeId]/passaggio/docenti:PUT', async (request: NextRequest, context: Contesto) => {
   const auth = await requireStaff(request, [...STAFF])
   if (auth.response) return auth.response
@@ -66,15 +50,32 @@ export const PUT = withRoute('admin/anni/[annoSedeId]/passaggio/docenti:PUT', as
   if (fuoriSede) return fuoriSede
   const ctx = { operazione, annoSedeId, utente: auth.user.id, tipoRifiuto: TIPO_RIFIUTO }
 
+  /** Il personale della sede dell'anno, non un genitore. `errore` = non lo so (la lettura è caduta): la route risponde 500, non indovina. */
+  const docenteAmmesso = async (utenteId: string): Promise<'si' | 'no' | 'errore'> => {
+    const [anno, utente] = await Promise.all([
+      supabase.from('anni_sede').select('scuola_id').eq('id', annoSedeId).maybeSingle(),
+      supabase.from('utenti').select('id, ruolo, scuola_id').eq('id', utenteId).maybeSingle(),
+    ])
+    if (anno.error || utente.error) {
+      logErrore({ operazione: 'admin/anni/[annoSedeId]/passaggio/docenti:PUT' }, anno.error ?? utente.error)
+      return 'errore'
+    }
+    if (!anno.data || !utente.data) return 'no'
+    const u = utente.data as { ruolo: string | null; scuola_id: string | null }
+    if (u.ruolo === 'genitore') return 'no'
+    return u.scuola_id && u.scuola_id === (anno.data as { scuola_id: string }).scuola_id ? 'si' : 'no'
+  }
+
   const passaggio = await passaggioDellAnno(supabase, annoSedeId, ctx)
   if ('response' in passaggio) return passaggio.response
 
   // (giro 1, B5) Aggiungere = mettere una persona su una classe: dev'essere del personale di QUESTA sede e non un genitore. Togliere
   // no: chi è già in elenco si può sempre togliere.
   if (corpo.origine === 'aggiunta') {
-    const ammesso = await docenteAmmesso(supabase, annoSedeId, corpo.utente_id)
+    const ammesso = await docenteAmmesso(corpo.utente_id)
     if (ammesso === 'errore') {
-      return NextResponse.json({ error: 'Non è stato possibile controllare il docente.', codice: 'DOCENTE_NON_CONTROLLATO' }, { status: 500 })
+      // Una lettura caduta non è «docente valido»: 500 `SCRITTURA_FALLITA` (il codice che la pagina sa già tradurre), il SQLSTATE l'ha già scritto `logErrore`.
+      return rispostaPassaggioNonRiuscito({ ok: false, codice: 'SCRITTURA_FALLITA' }, ctx)
     }
     if (ammesso === 'no') {
       logEvento('anno-scolastico', 'warn', { tipo: 'passaggio-docente-non-valido', operazione, entita_id: passaggio.passaggioId, utente: auth.user.id, error_code: 'DOCENTE_NON_VALIDO' })

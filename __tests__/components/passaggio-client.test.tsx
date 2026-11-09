@@ -315,7 +315,7 @@ describe('PassaggioClient · le scritture', () => {
     expect(within(dialogo).getByText(/2 bambini le cui famiglie non hanno risposto usciranno/)).toBeTruthy()
     // Giro 1, B3: quanti perdono subito l'accesso (1 «esce» + 2 senza risposta) e fino a quando le altre famiglie vedono la classe com'è ora.
     expect(within(dialogo).getByText(/3 bambini perdono subito l’accesso all’app delle famiglie/)).toBeTruthy()
-    expect(within(dialogo).getByText(/fino al 14 settembre 2027; dal 15 settembre 2027 vedono la classe nuova/)).toBeTruthy()
+    expect(within(dialogo).getByText(/fino al 14 settembre 2027; la classe nuova la vedono dal 15 settembre 2027/)).toBeTruthy()
     expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(0)
     fireEvent.click(within(dialogo).getByRole('button', { name: itPassaggio.dialogoSi }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(1))

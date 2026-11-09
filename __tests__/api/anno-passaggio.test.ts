@@ -602,6 +602,14 @@ describe('PUT passaggio/docenti', () => {
     expect(h.rpc).toHaveLength(0)
   })
 
+  it('una lettura caduta del docente non diventa «valido»: 500 SCRITTURA_FALLITA, la funzione non viene chiamata', async () => {
+    h.errLettura = { utenti: { code: 'XX000', message: 'guasto' } }
+    const res = await docente(CORPO_DOCENTE)
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('SCRITTURA_FALLITA')
+    expect(h.rpc).toHaveLength(0)
+  })
+
   it('«tolta» non controlla chi è: un genitore finito per errore in elenco si toglie', async () => {
     h.utenti = { [DOC]: { id: DOC, ruolo: 'genitore', scuola_id: SEDE_B } }
     const res = await docente({ ...CORPO_DOCENTE, origine: 'tolta' })

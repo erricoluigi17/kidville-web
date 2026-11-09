@@ -2696,6 +2696,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope` sull'anno nuovo prima di ogni lettura o
             // scrittura; il passaggio lo trova il server dall'anno dell'URL (mai dal corpo); l'anteprima verifica anche l'anno di partenza.
             // Misurato rieseguendo il lock: 401 → 407.
+
+            // 407 → 408 il 2026-11-10 (giro 1, S6): entra `admin/anni/[annoSedeId]/passaggio/nomi` (GET). CONTROLLATA: `requireStaff`, `assertAnnoSedeInScope`,
+            // e i nomi si leggono solo fra le righe del passaggio di QUELL'anno (porta `leggiNomiDelPassaggio`). Misurato: 407 → 408.
             routeConServiceRole: 404,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
@@ -3059,6 +3062,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 622 → 623 il 2026-11-09 (PR 4.7, 4.7.2): `senza-firma-app:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
             // 619 → 626 il 2026-11-09 (PR 4.8, 4.8.8): le sette funzioni HTTP delle sei route del passaggio, tutte CONTROLLATE;
             // `handlerEsentati` non cambia (108).
+
+            // 626 → 627 il 2026-11-10 (giro 1): `passaggio/nomi:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
             handlerControllati: 623,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;

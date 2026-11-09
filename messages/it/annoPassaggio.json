@@ -96,7 +96,7 @@
   "esitoAnnullato": "Il passaggio è annullato.",
   "esitoTardiva": "Conferma tardiva registrata per {nome}.",
   "esitoRegione": "Esito dell’ultima operazione",
-  "dialogoFinestra": "Le famiglie dei bambini che continuano vedono la classe com’è ora fino al {fino}; dal {dal} vedono la classe nuova. La maestra della classe nuova la trova già in scrittura, la vecchia resta solo da leggere.",
+  "dialogoFinestra": "Le famiglie dei bambini che continuano vedono la classe com’è ora fino al {fino}; la classe nuova la vedono dal {dal}. La maestra della classe nuova la trova già in scrittura, la vecchia resta solo da leggere.",
   "dialogoAccessoSubito": "{n, plural, one {# bambino perde subito l’accesso all’app delle famiglie e non compare più negli elenchi delle maestre.} other {# bambini perdono subito l’accesso all’app delle famiglie e non compaiono più negli elenchi delle maestre.}}",
   "annulloMotivi": "Nell’anno nuovo c’è già: {elenco}.",
   "uso_presenze": "presenze",

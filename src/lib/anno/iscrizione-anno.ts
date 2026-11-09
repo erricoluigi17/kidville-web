@@ -754,13 +754,26 @@ export async function ricreaQuotaProssima(
   supabase: SupabaseClient,
   a: { alunnoId: string; frequenza: FrequenzaDellAnnoCheViene; attoreId?: string | null },
 ): Promise<QuotaEsito | null> {
+  const r = await generaQuotaProssima(supabase, a)
+  return r ? r.quota : null
+}
+
+/**
+ * Come `ricreaQuotaProssima`, ma riporta anche l'uuid della voce (la route «Genera la quota» delle Conferme lo risponde, 4.5.16 F).
+ * Chi chiama verifica PRIMA che la frequenza sia viva: da 4.5.16 `anno_registra_frequenza` su una frequenza ritirata la RIAPRE.
+ * NON LANCIA MAI; `null` = non riuscita (il guasto è nel log) o nessuna voce toccata.
+ */
+export async function generaQuotaProssima(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; frequenza: FrequenzaDellAnnoCheViene; attoreId?: string | null },
+): Promise<{ quota: QuotaEsito; pagamento_id: string | null } | null> {
   try {
     const f = a.frequenza
     const tipo = f.tipo === 'conferma' ? 'conferma' : 'nuova'
     const origine = (['domanda', 'conferma', 'segreteria', 'import'] as const).find((o) => o === f.origine) ?? 'segreteria'
     const q = await registraFrequenzaPerAnno(supabase, { alunnoId: a.alunnoId, annoSedeId: f.anno_sede_id, tipo, origine, da: a.attoreId ?? null })
-    if (!q.ok || 'saltata' in q) return null
-    return q.quota
+    if (!q.ok || 'saltata' in q || !q.quota) return null
+    return { quota: q.quota, pagamento_id: q.pagamento_id ?? null }
   } catch (err) {
     logErrore({ operazione: OP_RIPRISTINO }, err)
     return null

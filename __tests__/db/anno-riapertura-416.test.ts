@@ -53,6 +53,7 @@ import { POST as ARCHIVIA } from '@/app/api/admin/students/archivia/route'
 import { POST as RIATTIVA } from '@/app/api/admin/students/riattiva/route'
 import { POST as CONFERMA } from '@/app/api/admin/anni/[annoSedeId]/conferme/route'
 import { POST as RITIRA } from '@/app/api/admin/anni/[annoSedeId]/conferme/ritira/route'
+import { POST as QUOTA } from '@/app/api/admin/anni/[annoSedeId]/conferme/quota/route'
 import { registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
 import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo'
 
@@ -317,6 +318,105 @@ describe('A · una sola strada per riaprire: `anno_registra_frequenza`', () => {
       expect(reg).not.toHaveProperty('riaperta')
       expect(reg).not.toHaveProperty('chiusa')
       expect(await voci(AL)).toHaveLength(1)
+    })
+  })
+})
+
+describe('F · «Genera la quota» dalla frequenza dell\u2019anno nuovo', () => {
+  const quota = async (anno: string, corpo: unknown) => {
+    const r = await QUOTA(
+      new NextRequest('http://localhost/api/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corpo) }),
+      { params: Promise.resolve({ annoSedeId: anno }) })
+    return { status: r.status, corpo: (await r.json()) as { data?: Rec; codice?: string } }
+  }
+  /** Un anno aperto il cui listino della «nuova» è stato tolto dopo l'apertura: la domanda approvata ha la frequenza, la voce no (`senza_listino`). */
+  async function apriSenzaListino(): Promise<string> {
+    const a = await apri()
+    await db.query(`DELETE FROM public.listino_voci WHERE anno_sede_id = $1 AND voce = 'quota_nuova'`, [a])
+    return a
+  }
+  const freqNuova = (anno: string) => una<string>(`SELECT id FROM public.frequenze WHERE alunno_id = $1 AND anno_sede_id = $2`, [AL, anno])
+
+  prova('senza listino: 200 `senza_listino`; messo il listino, la stessa richiesta fa nascere la voce (`creata`, con il suo uuid); rifatta, la riprende', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL, 'in_arrivo')
+      const a = await apriSenzaListino()
+      await approvaPerAnnoProssimo(AL, a)
+      const f = await freqNuova(a)
+      const senza = await quota(a, { frequenza_id: f })
+      expect(senza.status).toBe(200)
+      expect(senza.corpo.data).toMatchObject({ frequenza_id: f, quota: 'senza_listino', pagamento_id: null })
+      expect(await voci(AL)).toHaveLength(0)
+
+      await db.query(`SELECT public.anno_listino_quota_imposta($1, 'quota_nuova', NULL, 200, NULL)`, [a])
+      const creata = await quota(a, { frequenza_id: f })
+      expect(creata.status).toBe(200)
+      expect(creata.corpo.data).toMatchObject({ frequenza_id: f, quota: 'creata' })
+      expect(typeof creata.corpo.data!.pagamento_id).toBe('string')
+      expect(await voci(AL)).toHaveLength(1)
+
+      const di_nuovo = await quota(a, { frequenza_id: f })
+      expect(di_nuovo.corpo.data).toMatchObject({ quota: 'gia_collegata', pagamento_id: creata.corpo.data!.pagamento_id })
+      expect(await voci(AL), 'nessuna voce doppia').toHaveLength(1)
+    })
+  })
+
+  prova('due voci già lì: `piu_voci`, e la richiesta non ne crea una terza', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL, 'in_arrivo')
+      const a = await apri()
+      await approvaPerAnnoProssimo(AL, a)
+      const f = await freqNuova(a)
+      const voceId = await una<string>(`SELECT id FROM public.pagamenti WHERE alunno_id = $1`, [AL])
+      await db.query(
+        `INSERT INTO public.pagamenti SELECT (jsonb_populate_record(null::public.pagamenti, to_jsonb(p) || jsonb_build_object('id', gen_random_uuid()))).* FROM public.pagamenti p WHERE p.id = $1`,
+        [voceId])
+      // la frequenza non ha la voce collegata (com'è per una domanda approvata con più voci «Iscrizione» già in contabilità)
+      await db.query(`UPDATE public.frequenze SET quota_pagamento_id = NULL WHERE id = $1`, [f])
+      expect(await voci(AL)).toHaveLength(2)
+      const r = await quota(a, { frequenza_id: f })
+      expect(r.status).toBe(200)
+      expect(r.corpo.data).toMatchObject({ quota: 'piu_voci', pagamento_id: null })
+      expect(await voci(AL)).toHaveLength(2)
+    })
+  })
+
+  prova('una frequenza di un ALTRO anno: 404 FREQUENZA_NON_TROVATA, e non si scrive niente', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const a = await apri()
+      const f26 = await una<string>(
+        `SELECT f.id FROM public.frequenze f JOIN public.anni_sede s ON s.id = f.anno_sede_id WHERE f.alunno_id = $1 AND s.stato = 'corrente'`, [AL])
+      const r = await quota(a, { frequenza_id: f26 })
+      expect(r.status).toBe(404)
+      expect(r.corpo.codice).toBe('FREQUENZA_NON_TROVATA')
+      expect(await voci(AL)).toHaveLength(0)
+    })
+  })
+
+  prova('una frequenza RITIRATA: 409 FREQUENZA_NON_VIVA prima di registrare, quindi NON si riapre e non nasce una voce', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL, 'in_arrivo')
+      const a = await apri()
+      await approvaPerAnnoProssimo(AL, a)
+      const f = await freqNuova(a)
+      expect((await ARCHIVIA(new NextRequest('http://localhost/api/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ alunno_id: AL }) }))).status).toBe(200)
+      expect(await una<string>(`SELECT stato FROM public.frequenze WHERE id = $1`, [f])).toBe('ritirato')
+      const r = await quota(a, { frequenza_id: f })
+      expect(r.status).toBe(409)
+      expect(r.corpo.codice).toBe('FREQUENZA_NON_VIVA')
+      expect(await una<string>(`SELECT stato FROM public.frequenze WHERE id = $1`, [f])).toBe('ritirato')
+      expect(await voci(AL)).toHaveLength(0)
+    })
+  })
+
+  prova('corpo con campi in più o uuid sbagliato: 400; anno nell\u2019URL non valido: 400', async () => {
+    await inRollback(async () => {
+      const a = ANNO_SEDE[`${S1}:2027`]
+      expect((await quota(a, { frequenza_id: '11111111-1111-4111-8111-111111111111', extra: 1 })).status).toBe(400)
+      expect((await quota(a, { frequenza_id: 'non-un-uuid' })).status).toBe(400)
+      expect((await quota('non-un-anno', { frequenza_id: '11111111-1111-4111-8111-111111111111' })).status).toBe(400)
     })
   })
 })

@@ -406,8 +406,9 @@ function RigaConferma({
   // «Assente» ha tre significati: la riga non è ancora confermata («Non ancora»), la quota non è nata perché il listino non c'era
   // («Quota da generare»), o ci sono più voci da guardare («Più voci»). Solo il secondo e il terzo hanno un'azione.
   const confermata = r.conferma === 'confermato' || vista === 'nuove';
-  // Il pulsante c'è solo nella vista delle conferme: la route riparte dalla frequenza dell'anno in corso. Le «nuove» non ne hanno una.
-  const quotaDaGenerare = vista === 'conferme' && quota === 'assente' && confermata && esitoQuota !== 'piu_voci';
+  // Il pulsante c'è in tutte e due le viste (4.5.16, F): la route «quota» riparte dalla frequenza dell'anno NUOVO, che ogni riga
+  // confermata ha (`nuova_frequenza_id`), anche quella di un bambino che arriva da fuori e non ha una frequenza di oggi.
+  const quotaDaGenerare = !!r.nuova_frequenza_id && quota === 'assente' && confermata && esitoQuota !== 'piu_voci';
   const quotaTesto =
     quota === 'saldata'
       ? t('quotaSaldata')
@@ -470,11 +471,11 @@ function RigaConferma({
           .join(' '),
     );
   };
-  // Stessa route della conferma: ripetibile, la voce nasce solo se manca.
+  // La route «quota» (4.5.16, F): ripetibile, la voce nasce solo se manca. Parte dalla frequenza dell'anno nuovo, come il ritiro.
   const generaQuota = () =>
     scrivi(
-      `/api/admin/anni/${annoSedeId}/conferme`,
-      { frequenza_id: r.frequenza_id },
+      `/api/admin/anni/${annoSedeId}/conferme/quota`,
+      { frequenza_id: r.nuova_frequenza_id ?? '' },
       (d) => (d?.quota === 'senza_listino' ? t('esitoQuotaSenzaListino') : d?.quota === 'piu_voci' ? t('esitoQuotaPiuVoci') : t('esitoQuotaGenerata')),
       (d) => ricordaQuota(r.frequenza_id, d?.quota === 'senza_listino' || d?.quota === 'piu_voci' ? d.quota : null),
     );

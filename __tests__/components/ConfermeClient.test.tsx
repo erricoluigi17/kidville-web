@@ -65,6 +65,7 @@ const s = {
   ritiroRifiutato: false, // 4.5.16 (B): la route risponde 409 FREQUENZA_NON_DI_CONFERMA (bambino che non frequenta ancora)
   extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
+  quotaArrivo: 'assente' as 'assente' | 'da_pagare', // la quota del bambino in arrivo, che «Genera la quota» fa nascere (4.5.16, F)
 }
 const fetchMock = vi.fn()
 
@@ -76,7 +77,7 @@ const rigaConferma = () => ({
 })
 const rigaNuova = () => ({
   frequenza_id: F_NUOVA_ARRIVO, alunno_id: AL2, section_id: null, conferma: 'confermato', nuova_frequenza_id: F_NUOVA_ARRIVO, nuova_section_id: null,
-  non_rinnova_motivo: null, moduli: { fatti: 0, richiesti: 2 }, quota: 'assente', cambia_grado: false,
+  non_rinnova_motivo: null, moduli: { fatti: 0, richiesti: 2 }, quota: s.quotaArrivo, cambia_grado: false,
   stato_frequenza: 'in_attesa', nome: 'NomeArrivo', cognome: 'CognomeArrivo', classe: null,
 })
 
@@ -91,6 +92,14 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
     return ok({ frequenza_id: F_NUOVA, ritirata: true, quota: s.quotaRitiro })
   }
   if (url.includes('/conferme/non-rinnova')) return ok({ frequenza_id: F_PART, non_rinnova: true, cambiato: true })
+  if (url.includes(`/api/admin/anni/${ANNO}/conferme/quota`) && metodo === 'POST') {
+    if (body.frequenza_id === F_NUOVA_ARRIVO) {
+      if (s.quotaPost === 'creata') s.quotaArrivo = 'da_pagare'
+      return ok({ frequenza_id: F_NUOVA_ARRIVO, quota: s.quotaPost, pagamento_id: null })
+    }
+    s.quota = s.quotaPost === 'creata' ? 'da_pagare' : 'assente'
+    return ok({ frequenza_id: F_NUOVA, quota: s.quotaPost, pagamento_id: null })
+  }
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`) && metodo === 'POST') {
     s.confermata = true
     s.quota = s.quotaPost === 'creata' ? 'da_pagare' : 'assente'
@@ -137,6 +146,7 @@ beforeEach(() => {
   s.quotaPost = 'creata'
   s.extraPost = {}
   s.ritiroRifiutato = false
+  s.quotaArrivo = 'assente'
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
@@ -384,15 +394,46 @@ describe('ConfermeClient — l’esito della quota (4.5.15, I1)', () => {
     const nome = await screen.findByText('CognomeProva NomeProva')
     expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaDaGenerare)
     fireEvent.click(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneGeneraQuota }))
-    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).length).toBe(1))
-    expect(JSON.parse(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`)[0][1].body)).toEqual({ frequenza_id: F_PART })
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`).length).toBe(1))
+    expect(JSON.parse(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`)[0][1].body)).toEqual({ frequenza_id: F_NUOVA })
     expect(await screen.findByRole('status')).toHaveTextContent(itConferme.esitoQuotaSenzaListino)
     // il listino adesso c'è: stessa riga, stesso pulsante, la voce nasce
     s.quotaPost = 'creata'
     fireEvent.click(await screen.findByRole('button', { name: itConferme.azioneGeneraQuota }))
-    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).length).toBe(2))
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`).length).toBe(2))
     await waitFor(() => expect(screen.queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull())
     expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaDaPagare)
+  })
+
+  it('nelle «Nuove iscrizioni» «Genera la quota» c\u2019è, chiama la route nuova con la frequenza dell\u2019anno NUOVO, e la riga si aggiorna (4.5.16, F)', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    const nome = await screen.findByText('CognomeArrivo NomeArrivo')
+    const riga = nome.closest('tr') as HTMLElement
+    expect(colonnaQuota(riga)).toHaveTextContent(itConferme.quotaDaGenerare)
+    const pulsante = within(riga).getByRole('button', { name: itConferme.azioneGeneraQuota })
+    // sta nella stessa tabella scorrevole di «Conferma» e «Ritira»: a 375 px si raggiunge scorrendo, non è tagliato fuori
+    expect(pulsante.closest('.overflow-x-auto')).not.toBeNull()
+    fireEvent.click(pulsante)
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`)).toHaveLength(1))
+    expect(String(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`)[0][0])).toBe(`/api/admin/anni/${ANNO}/conferme/quota`)
+    expect(JSON.parse(chiamate('POST', `/api/admin/anni/${ANNO}/conferme/quota`)[0][1].body)).toEqual({ frequenza_id: F_NUOVA_ARRIVO })
+    // niente passa dalla route di conferma, che riparte dalla frequenza di oggi
+    expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).filter(([u]) => !String(u).endsWith('/quota'))).toHaveLength(0)
+    await waitFor(() => expect(colonnaQuota(rigaDi('CognomeArrivo NomeArrivo'))).toHaveTextContent(itConferme.quotaDaPagare))
+    expect(within(rigaDi('CognomeArrivo NomeArrivo')).queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
+  })
+
+  it('nelle «Nuove» «piu_voci» ha il suo messaggio e non nasce una voce doppia (la risposta lo ridice)', async () => {
+    s.quotaPost = 'piu_voci'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    const riga = (await screen.findByText('CognomeArrivo NomeArrivo')).closest('tr') as HTMLElement
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.azioneGeneraQuota }))
+    expect(await screen.findByRole('status')).toHaveTextContent(itConferme.esitoQuotaPiuVoci)
+    expect(within(rigaDi('CognomeArrivo NomeArrivo')).queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
   })
 
   it('«piu_voci» ha il suo stato e il suo messaggio, diversi da «senza listino», e non offre «Genera la quota»', async () => {

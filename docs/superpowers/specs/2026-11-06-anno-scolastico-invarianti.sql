@@ -151,42 +151,82 @@ WHERE chiusura.dal IS NOT NULL
 
 
 -- 7. Nessun genitore vede qualcosa attraverso un figlio non attivo -----------
---    (PR 4.4) Ogni cosa che un genitore vede porta con sé il figlio che gliela
---    fa vedere. Non attivo è il figlio senza NESSUNA frequenza viva, in nessuna
---    sede: chi è ritirato in una sede e iscritto in un'altra è attivo. Si parte
---    dai soli genitori con un figlio non attivo. Il docente non entra (i suoi thread
---    li vede sempre) e le voci nemmeno (un ritirato con un dovuto aperto lo paga).
---    Nella funzione sono quattro righe (galleria_media_v2, avvisi, chat_threads,
---    frequenze), più «(controllo fallito: <SQLSTATE>)» se una funzione di visibilità
---    si guasta: qui il guasto è l'errore della query, e questa dice chi è toccato.
+--    (PR 4.4) Ogni riga che una funzione restituisce si rifà sul catalogo, per
+--    coppia (figlio, sede), senza fidarsi del figlio che la funzione ci scrive
+--    sopra. Si guardano i soli genitori con una coppia non viva: un figlio senza
+--    nessuna frequenza viva, o con una frequenza in una sede dove non è vivo.
+--    Chi è ritirato in una sede e iscritto in un'altra è attivo, ma della sede
+--    lasciata non vede più niente. Una foto non torna se il figlio non è di quel
+--    genitore, se la sua coppia con la sede della foto non è viva, o se non è per
+--    lui: né il suo tag, né un broadcast senza destinatari, né una delle sue classi
+--    di quella sede, di qualunque anno. Un avviso non torna se la sede non è viva
+--    per lui o, quando non è `globale`, se non tocca la sua sezione di adesso.
+--    La riga controlla chi e dove, non quando: il periodo di una foto e la scadenza
+--    di un avviso restano alle prove delle funzioni. Il docente non entra (i suoi
+--    thread li vede sempre) e le voci nemmeno (un ritirato con un dovuto aperto lo
+--    paga). Nella funzione sono quattro righe (galleria_media_v2, avvisi,
+--    chat_threads, frequenze), più «(controllo fallito: <SQLSTATE>)» se una funzione
+--    di visibilità si guasta: qui il guasto è l'errore della query, e questa dice
+--    chi è toccato.
 WITH vive AS (
-  SELECT f.id, f.alunno_id
+  SELECT f.id, f.alunno_id, f.scuola_id, f.section_id
   FROM public.frequenze f
   WHERE f.stato IN ('in_attesa', 'iscritto')
     AND f.anno_sede_id = public.anno_attivo(f.scuola_id)
     AND f.data_ingresso <= public.giorno_roma(now())
     AND (f.data_uscita IS NULL OR f.data_uscita >= public.giorno_roma(now()))
 ),
+legami AS (
+  SELECT l.genitore_id, l.alunno_id FROM public.legame_genitori_alunni l
+  UNION
+  SELECT p.auth_user_id, sp.student_id
+  FROM public.parents p JOIN public.student_parents sp ON sp.parent_id = p.id
+  WHERE p.auth_user_id IS NOT NULL
+),
 non_attivi AS (
-  SELECT x.genitore_id, x.alunno_id
-  FROM (
-    SELECT l.genitore_id, l.alunno_id FROM public.legame_genitori_alunni l
-    UNION
-    SELECT p.auth_user_id, sp.student_id
-    FROM public.parents p JOIN public.student_parents sp ON sp.parent_id = p.id
-    WHERE p.auth_user_id IS NOT NULL
-  ) x
-  WHERE x.alunno_id NOT IN (SELECT alunno_id FROM vive)
+  SELECT l.genitore_id, l.alunno_id
+  FROM legami l
+  WHERE NOT EXISTS (SELECT 1 FROM vive v WHERE v.alunno_id = l.alunno_id)
+),
+guardati AS (
+  SELECT DISTINCT l.genitore_id
+  FROM legami l
+  WHERE NOT EXISTS (SELECT 1 FROM vive v WHERE v.alunno_id = l.alunno_id)
+     OR EXISTS (
+       SELECT 1 FROM public.frequenze f
+       WHERE f.alunno_id = l.alunno_id
+         AND NOT EXISTS (SELECT 1 FROM vive v WHERE v.alunno_id = f.alunno_id AND v.scuola_id = f.scuola_id)
+     )
 )
-SELECT n.genitore_id, 'foto' AS oggetto, v.media_id AS oggetto_id, n.alunno_id
-FROM non_attivi n
-CROSS JOIN LATERAL public.media_visibili_genitore(n.genitore_id) v
-WHERE v.alunno_id = n.alunno_id
+SELECT g.genitore_id, 'foto' AS oggetto, v.media_id AS oggetto_id, v.alunno_id
+FROM guardati g
+CROSS JOIN LATERAL public.media_visibili_genitore(g.genitore_id) v
+LEFT JOIN public.galleria_media_v2 m ON m.id = v.media_id
+WHERE NOT EXISTS (SELECT 1 FROM legami l WHERE l.genitore_id = g.genitore_id AND l.alunno_id = v.alunno_id)
+   OR NOT EXISTS (SELECT 1 FROM vive x WHERE x.alunno_id = v.alunno_id AND x.scuola_id = m.scuola_id)
+   OR (m.tag_students @> ARRAY[v.alunno_id]
+       OR (m.is_broadcast = true
+           AND coalesce(cardinality(m.target_section_ids), 0) = 0
+           AND coalesce(cardinality(m.target_classes), 0) = 0)
+       OR EXISTS (
+         SELECT 1 FROM public.frequenze f
+         WHERE f.alunno_id = v.alunno_id AND f.scuola_id = m.scuola_id AND f.section_id = ANY (m.target_section_ids)
+       )
+       OR EXISTS (
+         SELECT 1 FROM public.alunni_classi_storico h
+         WHERE h.alunno_id = v.alunno_id AND h.scuola_id = m.scuola_id AND h.section_id = ANY (m.target_section_ids)
+       )) IS NOT TRUE
 UNION ALL
-SELECT n.genitore_id, 'avviso', v.avviso_id, n.alunno_id
-FROM non_attivi n
-CROSS JOIN LATERAL public.avvisi_visibili_genitore(n.genitore_id) v
-WHERE v.alunno_id = n.alunno_id
+SELECT g.genitore_id, 'avviso', v.avviso_id, v.alunno_id
+FROM guardati g
+CROSS JOIN LATERAL public.avvisi_visibili_genitore(g.genitore_id) v
+LEFT JOIN public.avvisi a ON a.id = v.avviso_id
+WHERE NOT EXISTS (SELECT 1 FROM legami l WHERE l.genitore_id = g.genitore_id AND l.alunno_id = v.alunno_id)
+   OR NOT EXISTS (
+     SELECT 1 FROM vive x
+     WHERE x.alunno_id = v.alunno_id AND x.scuola_id = a.scuola_id
+       AND (a.target_scope = 'globale' OR x.section_id = ANY (a.target_section_ids))
+   )
 UNION ALL
 SELECT n.genitore_id, 'thread', t.id, n.alunno_id
 FROM non_attivi n
@@ -196,7 +236,7 @@ WHERE t.student_id = n.alunno_id
   AND t.teacher_id IS DISTINCT FROM n.genitore_id
 UNION ALL
 SELECT g.genitore_id, 'frequenza', a.frequenza_id, a.alunno_id
-FROM (SELECT DISTINCT genitore_id FROM non_attivi) g
+FROM guardati g
 CROSS JOIN LATERAL public.figli_attivi(g.genitore_id) a
 WHERE a.frequenza_id NOT IN (SELECT id FROM vive);
 

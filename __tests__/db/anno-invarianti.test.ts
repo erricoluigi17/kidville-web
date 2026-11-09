@@ -799,14 +799,21 @@ describe('anno_invarianti · l’invariante 8 (PR 4.3)', () => {
 /**
  * COMPITO 4.4.5 · l'invariante 7: nessun genitore vede qualcosa attraverso un figlio non attivo.
  * Banco con la catena fino a M44a. Quattro righe, una per ciò che si può vedere; «passa» vuol dire quattro zeri e nessuna
- * riga `(controllo fallito: …)`. Il figlio non attivo lo dice il catalogo, non la funzione controllata: per questo le prove
- * rompono le funzioni e guardano la riga salire. Si parla di genitori: il docente e le voci di pagamento non entrano.
+ * riga `(controllo fallito: …)`. Figlio e sede li dice il catalogo, non la funzione controllata: per questo le prove rompono le
+ * funzioni e guardano la riga salire, anche quando la funzione mette sulla riga un'etichetta falsa. Accanto, i casi leciti che
+ * devono restare a zero. Si parla di genitori: il docente e le voci di pagamento non entrano.
  */
 describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   const S = '22222222-2222-4222-8222-222222222222'
   const S_B = '22222222-2222-4222-8222-222222222223'
   const SEZ = '55555555-5555-4555-8555-555555555551'
   const SEZ_B = '55555555-5555-4555-8555-555555555552'
+  /** La classe del ritirato: il figlio vivo della stessa famiglia sta in un'altra. */
+  const SEZ_ALTRA = '55555555-5555-4555-8555-555555555553'
+  /** Non è la sezione di nessuna frequenza: di lei resta solo una riga di storico, se una prova la scrive. */
+  const SEZ_STORICO = '55555555-5555-4555-8555-555555555554'
+  /** Una classe dell'anno prima. */
+  const SEZ_PRIMA = '55555555-5555-4555-8555-555555555555'
 
   const VIVO = '11111111-1111-4111-8111-111111111111'
   const RITIRATO = '11111111-1111-4111-8111-111111111112'
@@ -832,11 +839,11 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   /** Una scheda senza account: nessuno entra da lì, e non c'è nessuno da guardare. */
   const SCHEDA_SENZA_ACCOUNT = '88888888-8888-4888-8888-888888888883'
 
-  /** I genitori da cui deve partire la riga, cioè quelli con almeno un figlio non attivo. */
-  const CON_FIGLIO_NON_ATTIVO = [GEN_MISTO, GEN_RITIRATO, GEN_PONTE, GEN_SENZA, DOC_GENITORE].sort()
+  /** I genitori da cui deve partire la riga, cioè quelli con almeno una coppia (figlio, sede) non viva. */
+  const GUARDATI = [GEN_MISTO, GEN_RITIRATO, GEN_PONTE, GEN_SENZA, DOC_GENITORE, GEN_ALTROVE].sort()
   const ZERO = { avvisi: 0, chat_threads: 0, frequenze: 0, galleria_media_v2: 0 }
-  /** Con la funzione delle foto rotta: 2 foto del ritirato per 4 genitori, più la foto di `SENZA` per il suo. */
-  const FOTO_NON_ATTIVI = 9
+  /** Con la funzione delle foto rotta: 2 foto del ritirato per 4 genitori, la foto di `SENZA` per il suo, e quella della sede lasciata. */
+  const FOTO_FUORI = 10
 
   let d: PGlite
   let ANNO_PRIMA: string
@@ -845,6 +852,10 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   let ATTIVO_B: string
   let PRIMA_B: string
   let THREAD_DA_DOCENTE: string
+  let FOTO_SOLO_RITIRATO: string
+  let FOTO_SEDE_LASCIATA: string
+  let AVVISO_GLOBALE: string
+  let AVVISO_CLASSE_DEL_RITIRATO: string
 
   const riga7 = async (): Promise<Record<string, number>> => {
     const r = await d.query<{ tabella: string; righe: string }>(
@@ -866,14 +877,38 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
         FROM (SELECT DISTINCT unnest(public.figli_collegati(p_utente))) AS c(figlio)
         JOIN public.galleria_media_v2 m ON m.tag_students @> ARRAY[c.figlio]
        WHERE m.eliminato_il IS NULL`
-  const fotoSenzaFiltro = () => d.exec(`
+  const fotoCosi = (corpo: string) => d.exec(`
       CREATE OR REPLACE FUNCTION public.media_visibili_genitore(p_utente uuid)
       RETURNS TABLE (media_id uuid, alunno_id uuid) LANGUAGE sql ${QUALITA}
-      AS $$ ${FOTO_SENZA_FILTRO} $$`)
-  const avvisiSenzaFiltro = () => d.exec(`
+      AS $$ ${corpo} $$`)
+  const avvisiCosi = (corpo: string) => d.exec(`
       CREATE OR REPLACE FUNCTION public.avvisi_visibili_genitore(p_utente uuid)
       RETURNS TABLE (avviso_id uuid, alunno_id uuid) LANGUAGE sql ${QUALITA}
-      AS $$ SELECT v.id, c.figlio FROM (SELECT DISTINCT unnest(public.figli_collegati(p_utente))) AS c(figlio) CROSS JOIN public.avvisi v $$`)
+      AS $$ ${corpo} $$`)
+  const fotoSenzaFiltro = () => fotoCosi(FOTO_SENZA_FILTRO)
+  const avvisiSenzaFiltro = () => avvisiCosi(
+    `SELECT v.id, c.figlio FROM (SELECT DISTINCT unnest(public.figli_collegati(p_utente))) AS c(figlio) CROSS JOIN public.avvisi v`)
+  // Le rotture che partono da `figli_attivi`: non aprono mai un figlio non attivo per nome, e la riga le deve vedere lo stesso.
+  /** Lo scambio fra `figli_collegati` e `figli_attivi`: il tag guarda tutti i figli, l'etichetta resta quella del figlio vivo. */
+  const FOTO_ETICHETTA_FALSA = `
+      SELECT m.id, a.alunno_id FROM public.figli_attivi(p_utente) a
+        JOIN public.galleria_media_v2 m ON m.scuola_id = a.scuola_id AND m.eliminato_il IS NULL
+       WHERE m.tag_students && public.figli_collegati(p_utente)`
+  const FOTO_SENZA_SEDE = `
+      SELECT m.id, a.alunno_id FROM public.figli_attivi(p_utente) a
+        JOIN public.galleria_media_v2 m ON m.tag_students @> ARRAY[a.alunno_id] AND m.eliminato_il IS NULL`
+  /** Tiene la sede e basta: ogni foto della sede, intestata a ogni figlio attivo che ha lì. */
+  const FOTO_DI_TUTTA_LA_SEDE = `
+      SELECT m.id, a.alunno_id FROM public.figli_attivi(p_utente) a
+        JOIN public.galleria_media_v2 m ON m.scuola_id = a.scuola_id AND m.eliminato_il IS NULL`
+  const AVVISI_SENZA_SEZIONE = `
+      SELECT a.id, f.alunno_id FROM public.figli_attivi(p_utente) f
+        JOIN public.avvisi a ON a.scuola_id = f.scuola_id
+       WHERE a.scadenza_avviso >= now()`
+  const AVVISI_SENZA_SEDE = `
+      SELECT a.id, f.alunno_id FROM public.figli_attivi(p_utente) f
+        JOIN public.avvisi a ON a.target_scope = 'globale' OR f.section_id = ANY (a.target_section_ids)
+       WHERE a.scadenza_avviso >= now()`
   const threadSenzaFiltro = () => d.exec(`
       CREATE OR REPLACE FUNCTION public.thread_visibili(p_utente uuid)
       RETURNS TABLE (thread_id uuid, scrivibile boolean) LANGUAGE sql ${QUALITA}
@@ -910,6 +945,26 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     (await d.query<{ id: string }>(
       `INSERT INTO public.galleria_media_v2 (scuola_id, tag_students, created_at) VALUES ($1, $2, '2026-10-20T12:00:00+02:00') RETURNING id`,
       [sede, tag])).rows[0].id
+  const fotoCon = async (c: { sede?: string; tag?: string[]; broadcast?: boolean; target?: string[] | null; classi?: string[] | null; giorno?: string }) =>
+    (await d.query<{ id: string }>(
+      `INSERT INTO public.galleria_media_v2 (scuola_id, tag_students, is_broadcast, target_section_ids, target_classes, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [c.sede ?? S, c.tag ?? [], c.broadcast ?? false, c.target ?? null, c.classi ?? null, `${c.giorno ?? '2026-10-20'}T12:00:00+02:00`])).rows[0].id
+  const avvisoCon = async (sede: string, scope: string, target: string[] | null) =>
+    (await d.query<{ id: string }>(
+      `INSERT INTO public.avvisi (scuola_id, target_scope, target_section_ids, scadenza_avviso, created_at)
+       VALUES ($1, $2, $3, now() + interval '1 day', '2026-10-20T12:00:00+02:00') RETURNING id`, [sede, scope, target])).rows[0].id
+  const coppieAvvisi = async (genitore: string) =>
+    (await d.query<{ avviso_id: string; alunno_id: string }>(
+      `SELECT avviso_id, alunno_id FROM public.avvisi_visibili_genitore($1)`, [genitore])).rows
+  /** Il figlio vivo, nella stessa sede, continua da una frequenza dell'anno prima in un'altra classe. */
+  const viveDaUnAnno = async () => {
+    await frequenza(VIVO, ANNO_PRIMA, SEZ_PRIMA, 'iscritto', '2025-09-01', '2026-06-30')
+    await d.query(
+      `UPDATE public.frequenze n SET continua_da = v.id
+         FROM public.frequenze v
+        WHERE n.alunno_id = $1 AND n.anno_sede_id = $2 AND v.alunno_id = $1 AND v.anno_sede_id = $3`, [VIVO, ANNO_ATTIVO, ANNO_PRIMA])
+  }
 
   beforeAll(async () => {
     d = await creaDbAnnoPr2({ sedi: [S, S_B], fino: 'M44a', codaPrima: SCHEMA_GALLERIA_GENITORE })
@@ -926,6 +981,9 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     PRIMA_B = anno(S_B, 2025).id
     await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Girasoli', $3)`, [SEZ, S, anno(S, 2026).anno_id])
     await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Tulipani', $3)`, [SEZ_B, S_B, anno(S_B, 2026).anno_id])
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Rose', $3)`, [SEZ_ALTRA, S, anno(S, 2026).anno_id])
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Viole', $3)`, [SEZ_STORICO, S, anno(S, 2026).anno_id])
+    await d.query(`INSERT INTO public.sections (id, scuola_id, name, anno_id) VALUES ($1, $2, 'Gigli', $3)`, [SEZ_PRIMA, S, anno(S, 2025).anno_id])
 
     // Le frequenze le scrive la prova: lo specchio, che ne farebbe nascere una per ogni alunno nuovo, resta spento per gli alunni.
     await d.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
@@ -934,7 +992,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
 
     await frequenza(VIVO, ANNO_ATTIVO, SEZ)
     // Senza data di uscita: lo tiene fuori lo stato e basta, quindi una funzione vera che perde quel filtro fa salire la riga.
-    await frequenza(RITIRATO, ANNO_ATTIVO, SEZ, 'ritirato')
+    await frequenza(RITIRATO, ANNO_ATTIVO, SEZ_ALTRA, 'ritirato')
     await frequenza(ALTROVE, ANNO_ATTIVO, SEZ, 'ritirato', '2026-09-01', '2026-10-01')
     await frequenza(ALTROVE, ATTIVO_B, SEZ_B, 'iscritto', '2026-09-01')
 
@@ -952,16 +1010,15 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     }
 
     await foto(S, [VIVO])
-    await foto(S, [RITIRATO])
+    FOTO_SOLO_RITIRATO = await foto(S, [RITIRATO])
     await foto(S, [VIVO, RITIRATO])
-    await foto(S, [ALTROVE])
+    FOTO_SEDE_LASCIATA = await foto(S, [ALTROVE])
     await foto(S_B, [ALTROVE])
     await foto(S, [SENZA])
 
-    await d.query(
-      `INSERT INTO public.avvisi (scuola_id, target_scope, target_section_ids, scadenza_avviso, created_at)
-       VALUES ($1, 'globale', NULL, now() + interval '1 day', '2026-10-20T12:00:00+02:00'),
-              ($1, 'classi', $2, now() + interval '1 day', '2026-10-20T12:00:00+02:00')`, [S, [SEZ]])
+    AVVISO_GLOBALE = await avvisoCon(S, 'globale', null)
+    await avvisoCon(S, 'classi', [SEZ])
+    AVVISO_CLASSE_DEL_RITIRATO = await avvisoCon(S, 'classi', [SEZ_ALTRA])
 
     for (const [docente, genitore, figlio] of [[DOC, GEN_VIVO, VIVO], [DOC, GEN_MISTO, VIVO], [DOC, GEN_MISTO, RITIRATO], [DOC, GEN_RITIRATO, RITIRATO]]) {
       await d.query(`INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3)`, [docente, genitore, figlio])
@@ -985,7 +1042,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   prova('la riga 7 va rossa se media_visibili_genitore perde il filtro sul figlio attivo', async () => {
     await rollback(async () => {
       await fotoSenzaFiltro()
-      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_NON_ATTIVI })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_FUORI })
     })
     expect(await riga7()).toEqual(ZERO)
   })
@@ -993,7 +1050,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   prova('la riga 7 non è tautologica: coincide con un conteggio fatto a parte dal catalogo', async () => {
     await rollback(async () => {
       await fotoSenzaFiltro()
-      // Legami per le due strade ⨝ figli senza una frequenza viva ⨝ tag. L'anno attivo lo dice `anni_sede.stato`, non `anno_attivo`.
+      // Legami per le due strade ⨝ tag ⨝ nessuna frequenza viva del figlio nella sede della foto. L'anno attivo lo dice `anni_sede.stato`, non `anno_attivo`.
       const dalCatalogo = await d.query<{ n: string }>(
         `WITH legami AS (
            SELECT l.genitore_id AS genitore, l.alunno_id AS figlio FROM public.legame_genitori_alunni l
@@ -1008,11 +1065,12 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
             SELECT 1 FROM public.frequenze f
               JOIN public.anni_sede a ON a.id = f.anno_sede_id
              WHERE f.alunno_id = l.figlio
+               AND f.scuola_id = m.scuola_id
                AND f.stato IN ('in_attesa', 'iscritto')
                AND a.stato = 'corrente'
                AND f.data_ingresso <= public.giorno_roma(now())
                AND (f.data_uscita IS NULL OR f.data_uscita >= public.giorno_roma(now())))`)
-      expect(Number(dalCatalogo.rows[0].n)).toBe(FOTO_NON_ATTIVI)
+      expect(Number(dalCatalogo.rows[0].n)).toBe(FOTO_FUORI)
       expect((await riga7()).galleria_media_v2).toBe(Number(dalCatalogo.rows[0].n))
     })
   })
@@ -1020,8 +1078,9 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   prova('va rossa anche se perdono il filtro gli avvisi', async () => {
     await rollback(async () => {
       await avvisiSenzaFiltro()
-      // Due avvisi per il ritirato di quattro genitori e per il figlio senza frequenza del quinto.
-      expect(await riga7()).toEqual({ ...ZERO, avvisi: 10 })
+      // Tre avvisi per il ritirato di quattro genitori, per il figlio senza frequenza del quinto e per chi ha lasciato la sede del sesto,
+      // più l'avviso dell'altra classe intestato al figlio vivo del genitore misto.
+      expect(await riga7()).toEqual({ ...ZERO, avvisi: 19 })
     })
   })
 
@@ -1039,8 +1098,8 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
       const r = await riga7()
       for (const tabella of Object.keys(ZERO)) expect(r[tabella], tabella).toBeGreaterThanOrEqual(1)
       expect(Object.keys(r).sort()).toEqual(Object.keys(ZERO).sort())
-      // Il ritirato per quattro genitori: `SENZA` non ha frequenze da mostrare.
-      expect(r.frequenze).toBe(4)
+      // Il ritirato per quattro genitori e la sede lasciata per il quinto: `SENZA` non ha frequenze da mostrare.
+      expect(r.frequenze).toBe(5)
     })
   })
 
@@ -1051,11 +1110,181 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     const coppie = await coppieFoto(GEN_ALTROVE)
     expect(coppie.map((x) => x.alunno_id)).toEqual([ALTROVE])
     expect(await riga7()).toEqual(ZERO)
-    // E il genitore non viene nemmeno guardato: con le foto rotte la sua foto dell'altra sede non si conta.
+    // Il thread su quel figlio resta suo: è vivo, anche se altrove. I thread guardano i soli figli non attivi.
     await rollback(async () => {
-      await fotoSenzaFiltro()
-      expect(await coppieFoto(GEN_ALTROVE)).toHaveLength(2)
-      expect((await riga7()).galleria_media_v2).toBe(FOTO_NON_ATTIVI)
+      await d.query(`INSERT INTO public.chat_threads (teacher_id, parent_id, student_id) VALUES ($1, $2, $3)`, [DOC, GEN_ALTROVE, ALTROVE])
+      expect((await d.query(`SELECT 1 FROM public.thread_visibili($1)`, [GEN_ALTROVE])).rows).toHaveLength(1)
+      expect(await riga7()).toEqual(ZERO)
+    })
+  })
+
+  prova('va rossa se la foto del figlio ritirato si apre al genitore con l’etichetta del figlio vivo', async () => {
+    await rollback(async () => {
+      await fotoCosi(FOTO_ETICHETTA_FALSA)
+      expect(await coppieFoto(GEN_MISTO)).toContainEqual({ media_id: FOTO_SOLO_RITIRATO, alunno_id: VIVO })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1 })
+    })
+  })
+
+  prova('va rossa se le foto perdono il filtro di sede: chi lascia una sede non si porta dietro le sue foto', async () => {
+    await rollback(async () => {
+      await fotoCosi(FOTO_SENZA_SEDE)
+      expect(await coppieFoto(GEN_ALTROVE)).toContainEqual({ media_id: FOTO_SEDE_LASCIATA, alunno_id: ALTROVE })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1 })
+      // Lo stesso se quel genitore ha anche un figlio ritirato, che fino a ieri lo faceva guardare senza guardare il figlio vivo altrove.
+      await d.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_ALTROVE, RITIRATO])
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1 })
+      // E lo storico non rende viva quella sede: chi la lascia lo storico lì ce l'ha.
+      await d.query(
+        `INSERT INTO public.alunni_classi_storico (alunno_id, scuola_id, section_id, dal, al, fonte) VALUES ($1, $2, $3, '2026-09-01', '2026-10-01', 'attuale')`,
+        [ALTROVE, S, SEZ])
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1 })
+    })
+  })
+
+  prova('va rossa se gli avvisi perdono il filtro sulla sezione: l’avviso della classe del ritirato, intestato al figlio vivo', async () => {
+    await rollback(async () => {
+      await avvisiCosi(AVVISI_SENZA_SEZIONE)
+      expect(await coppieAvvisi(GEN_MISTO)).toContainEqual({ avviso_id: AVVISO_CLASSE_DEL_RITIRATO, alunno_id: VIVO })
+      expect(await riga7()).toEqual({ ...ZERO, avvisi: 1 })
+    })
+  })
+
+  prova('va rossa se gli avvisi perdono il filtro di sede: l’avviso per tutti della sede lasciata', async () => {
+    await rollback(async () => {
+      await avvisiCosi(AVVISI_SENZA_SEDE)
+      expect(await coppieAvvisi(GEN_ALTROVE)).toContainEqual({ avviso_id: AVVISO_GLOBALE, alunno_id: ALTROVE })
+      expect(await riga7()).toEqual({ ...ZERO, avvisi: 1 })
+    })
+  })
+
+  prova('va rossa anche con l’etichetta di un bambino di un’altra famiglia, vivo e taggato davvero', async () => {
+    await rollback(async () => {
+      await fotoCosi(`SELECT m.id, '${VIVO}'::uuid FROM public.galleria_media_v2 m WHERE p_utente = '${GEN_RITIRATO}' AND m.tag_students @> ARRAY['${VIVO}'::uuid]`)
+      await avvisiCosi(`SELECT a.id, '${VIVO}'::uuid FROM public.avvisi a WHERE p_utente = '${GEN_RITIRATO}' AND a.id = '${AVVISO_GLOBALE}'`)
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 2, avvisi: 1 })
+    })
+  })
+
+  prova('una riga senza etichetta, o che non corrisponde a niente, si conta invece di sparire', async () => {
+    const NESSUNO = '00000000-0000-4000-8000-000000000000'
+    await rollback(async () => {
+      await fotoCosi(`SELECT m.id, NULL::uuid FROM public.galleria_media_v2 m WHERE p_utente = '${GEN_RITIRATO}' AND m.id = '${FOTO_SOLO_RITIRATO}'`)
+      await avvisiCosi(`SELECT a.id, NULL::uuid FROM public.avvisi a WHERE p_utente = '${GEN_RITIRATO}' AND a.id = '${AVVISO_GLOBALE}'`)
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1, avvisi: 1 })
+    })
+    await rollback(async () => {
+      await fotoCosi(`SELECT '${NESSUNO}'::uuid, '${VIVO}'::uuid WHERE p_utente = '${GEN_MISTO}'`)
+      await avvisiCosi(`SELECT '${NESSUNO}'::uuid, '${VIVO}'::uuid WHERE p_utente = '${GEN_MISTO}'`)
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 1, avvisi: 1 })
+    })
+  })
+
+  prova('una foto che non è per quel figlio si conta anche nella sua sede viva: destinatari altrui, broadcast con destinatari, solo nomi', async () => {
+    await rollback(async () => {
+      await fotoCosi(FOTO_DI_TUTTA_LA_SEDE)
+      // Di partenza, per il figlio vivo: le foto del ritirato, della sede lasciata e di `SENZA`. Le sue e quelle in cui è taggato non contano.
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 3 })
+      await fotoCon({ target: [SEZ_ALTRA] })
+      await fotoCon({ broadcast: true, target: [SEZ_ALTRA] })
+      await fotoCon({ broadcast: true, target: [], classi: ['Una classe che non c’è'] })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 6 })
+      // Una classe che lo storico dà a un altro bambino, e una foto senza nessuna indicazione: `is_broadcast` NULL non la apre.
+      await d.query(
+        `INSERT INTO public.alunni_classi_storico (alunno_id, scuola_id, section_id, dal, al, fonte)
+         VALUES ($1, $3, $4, '2026-09-01', '2026-10-01', 'attuale'), ($2, $3, $4, '2026-09-01', '2026-10-01', 'attuale')`,
+        [RITIRATO, ALTROVE, S, SEZ_STORICO])
+      await fotoCon({ target: [SEZ_STORICO] })
+      const senzaIndicazioni = await fotoCon({})
+      await d.query(`UPDATE public.galleria_media_v2 SET is_broadcast = NULL WHERE id = $1`, [senzaIndicazioni])
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 8 })
+      // Nella sede dove è vivo, una classe che ha avuto solo nella sede lasciata non vale: né dalla frequenza, né dallo storico.
+      await fotoCon({ sede: S_B, target: [SEZ] })
+      await fotoCon({ sede: S_B, target: [SEZ_STORICO] })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 10 })
+      // Queste invece sono per lui.
+      await fotoCon({ broadcast: true })
+      await fotoCon({ target: [SEZ] })
+      await fotoCon({ sede: S_B, target: [SEZ_B] })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: 10 })
+    })
+  })
+
+  const FOTO_LECITE: Array<{ nome: string; genitore: string; figlio: string; crea: () => Promise<string> }> = [
+    { nome: 'il broadcast della sede viva', genitore: GEN_MISTO, figlio: VIVO, crea: () => fotoCon({ broadcast: true, target: [], classi: [] }) },
+    { nome: 'il broadcast con i destinatari NULL', genitore: GEN_MISTO, figlio: VIVO, crea: () => fotoCon({ broadcast: true }) },
+    { nome: 'il broadcast della sede dove il figlio è vivo, dopo che ne ha lasciata un’altra', genitore: GEN_ALTROVE, figlio: ALTROVE, crea: () => fotoCon({ sede: S_B, broadcast: true }) },
+    { nome: 'la foto per la sua classe', genitore: GEN_MISTO, figlio: VIVO, crea: () => fotoCon({ target: [SEZ], giorno: '2026-10-01' }) },
+    { nome: 'la foto col suo tag, anche se ha i destinatari di un’altra classe', genitore: GEN_MISTO, figlio: VIVO, crea: () => fotoCon({ tag: [VIVO], target: [SEZ_ALTRA] }) },
+    {
+      nome: 'la foto per una classe che di lui dice solo lo storico',
+      genitore: GEN_MISTO,
+      figlio: VIVO,
+      crea: async () => {
+        await d.query(
+          `INSERT INTO public.alunni_classi_storico (alunno_id, scuola_id, section_id, dal, al, fonte) VALUES ($1, $2, $3, '2026-09-01', '2026-10-01', 'attuale')`,
+          [VIVO, S, SEZ_STORICO])
+        return fotoCon({ target: [SEZ_STORICO], giorno: '2026-09-15' })
+      },
+    },
+    {
+      nome: 'la foto dell’anno prima per la sua classe di allora, se continua',
+      genitore: GEN_MISTO,
+      figlio: VIVO,
+      crea: async () => {
+        await viveDaUnAnno()
+        return fotoCon({ target: [SEZ_PRIMA], giorno: '2026-03-01' })
+      },
+    },
+    {
+      nome: 'la foto dell’anno prima col suo tag, se continua',
+      genitore: GEN_MISTO,
+      figlio: VIVO,
+      crea: async () => {
+        await viveDaUnAnno()
+        return fotoCon({ tag: [VIVO], giorno: '2026-03-01' })
+      },
+    },
+    {
+      nome: 'il broadcast dell’anno prima, se continua',
+      genitore: GEN_MISTO,
+      figlio: VIVO,
+      crea: async () => {
+        await viveDaUnAnno()
+        return fotoCon({ broadcast: true, giorno: '2026-03-01' })
+      },
+    },
+  ]
+  for (const { nome, genitore, figlio, crea } of FOTO_LECITE) {
+    prova(`non è una fuga: ${nome}`, async () => {
+      await rollback(async () => {
+        const id = await crea()
+        expect(await coppieFoto(genitore)).toContainEqual({ media_id: id, alunno_id: figlio })
+        expect(await riga7()).toEqual(ZERO)
+      })
+    })
+  }
+
+  prova('non è una fuga: l’avviso per tutti con degli uuid rimasti, e quelli della sede dove il figlio è vivo', async () => {
+    await rollback(async () => {
+      const rimasti = await avvisoCon(S, 'globale', [SEZ_ALTRA])
+      expect(await coppieAvvisi(GEN_MISTO)).toContainEqual({ avviso_id: rimasti, alunno_id: VIVO })
+      const perTutti = await avvisoCon(S_B, 'globale', null)
+      const perLaClasse = await avvisoCon(S_B, 'classi', [SEZ_B])
+      const visti = await coppieAvvisi(GEN_ALTROVE)
+      expect(visti).toContainEqual({ avviso_id: perTutti, alunno_id: ALTROVE })
+      expect(visti).toContainEqual({ avviso_id: perLaClasse, alunno_id: ALTROVE })
+      expect(await riga7()).toEqual(ZERO)
+    })
+  })
+
+  prova('non è una fuga: l’avviso per tutti a un figlio senza sezione', async () => {
+    await rollback(async () => {
+      await frequenza(SENZA, ANNO_ATTIVO, null)
+      // `GEN_MISTO` è fra quelli che la riga guarda: ha anche il figlio ritirato.
+      await d.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_MISTO, SENZA])
+      expect((await coppieAvvisi(GEN_MISTO)).filter((x) => x.alunno_id === SENZA)).toEqual([{ avviso_id: AVVISO_GLOBALE, alunno_id: SENZA }])
+      expect(await riga7()).toEqual(ZERO)
     })
   })
 
@@ -1065,7 +1294,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
         await d.exec(`
           CREATE OR REPLACE FUNCTION public.${firma} RETURNS TABLE (${colonne}) LANGUAGE plpgsql ${QUALITA}
           AS $$ BEGIN RAISE EXCEPTION 'guasto di prova'; END $$`)
-        expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: P0001)': CON_FIGLIO_NON_ATTIVO.length })
+        expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: P0001)': GUARDATI.length })
         const altre = await d.query(`SELECT 1 FROM public.anno_invarianti() WHERE invariante = '1'`)
         expect(altre.rows).toHaveLength(1)
         const sopra = await d.query(`SELECT 1 FROM public.anno_invarianti() WHERE righe <> 0 AND invariante = '7'`)
@@ -1077,13 +1306,13 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
   prova('una funzione che non c’è più non dà verde: la riga dice il codice', async () => {
     await rollback(async () => {
       await d.exec(`ALTER FUNCTION public.avvisi_visibili_genitore(uuid) RENAME TO avvisi_altrove`)
-      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42883)': CON_FIGLIO_NON_ATTIVO.length })
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42883)': GUARDATI.length })
     })
   })
 
-  prova('senza nessun figlio non attivo la riga è a zero, e una funzione rotta non dà verde lo stesso', async () => {
+  prova('senza nessuna coppia non viva la riga è a zero, e una funzione rotta non dà verde lo stesso', async () => {
     const senzaNonAttivi = async () => {
-      await d.query(`DELETE FROM public.legame_genitori_alunni WHERE alunno_id = ANY ($1::uuid[])`, [[RITIRATO, SENZA]])
+      await d.query(`DELETE FROM public.legame_genitori_alunni WHERE alunno_id = ANY ($1::uuid[])`, [[RITIRATO, SENZA, ALTROVE]])
       await d.query(`DELETE FROM public.student_parents WHERE student_id = $1`, [RITIRATO])
     }
     await rollback(async () => {
@@ -1104,6 +1333,31 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
       await d.exec(`ALTER FUNCTION public.media_visibili_genitore(uuid) RENAME TO media_altrove`)
       expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42883)': 1 })
     })
+    // Una colonna che la riga legge da sola: la pianifica lei, anche quando il corpo della funzione non viene raggiunto.
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.galleria_media_v2 RENAME COLUMN tag_students TO tag_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42703)': GUARDATI.length })
+    })
+    await rollback(async () => {
+      await senzaNonAttivi()
+      await d.exec(`ALTER TABLE public.galleria_media_v2 RENAME COLUMN tag_students TO tag_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42703)': 1 })
+    })
+    await rollback(async () => {
+      await senzaNonAttivi()
+      await d.exec(`ALTER TABLE public.alunni_classi_storico RENAME COLUMN section_id TO sezione_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42703)': 1 })
+    })
+  })
+
+  prova('uno storico senza la colonna delle classi non spegne le altre invarianti: la riga dice il codice', async () => {
+    // `to_regclass` dice che la tabella c'è, non che ha quelle colonne: letto fuori dal blocco per genitore, esplode tutta la funzione.
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.alunni_classi_storico RENAME COLUMN section_id TO sezione_altrove`)
+      expect(await riga7()).toEqual({ ...ZERO, '(controllo fallito: 42703)': GUARDATI.length })
+      const altre = await d.query(`SELECT 1 FROM public.anno_invarianti() WHERE invariante = '1'`)
+      expect(altre.rows).toHaveLength(1)
+    })
   })
 
   prova('un guasto su un genitore non nasconde ciò che si vede dagli altri', async () => {
@@ -1115,21 +1369,33 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
           IF p_utente = '${GEN_RITIRATO}' THEN RAISE EXCEPTION 'guasto di prova'; END IF;
           RETURN QUERY ${FOTO_SENZA_FILTRO};
         END $$`)
-      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_NON_ATTIVI - 2, '(controllo fallito: P0001)': 1 })
+      expect(await riga7()).toEqual({ ...ZERO, galleria_media_v2: FOTO_FUORI - 2, '(controllo fallito: P0001)': 1 })
     })
   })
 
-  prova('parte dai soli genitori con un figlio non attivo: gli altri non costano una chiamata', async () => {
-    await rollback(async () => {
+  prova('parte dai soli genitori con una coppia (figlio, sede) non viva: gli altri non costano una chiamata', async () => {
+    const chiamati = async () => {
       await d.exec(`
         CREATE OR REPLACE FUNCTION public.media_visibili_genitore(p_utente uuid)
         RETURNS TABLE (media_id uuid, alunno_id uuid) LANGUAGE plpgsql ${QUALITA}
         AS $$ BEGIN RAISE NOTICE 'chiamata %', p_utente; END $$`)
-      const chiamati: string[] = []
+      const visti: string[] = []
       await d.query(`SELECT 1 FROM public.anno_invarianti()`, [], {
-        onNotice: (n) => { if (n.message?.startsWith('chiamata ')) chiamati.push(n.message.slice('chiamata '.length)) },
+        onNotice: (n) => { if (n.message?.startsWith('chiamata ')) visti.push(n.message.slice('chiamata '.length)) },
       })
-      expect(chiamati.sort()).toEqual(CON_FIGLIO_NON_ATTIVO)
+      return visti.sort()
+    }
+    await rollback(async () => {
+      expect(await chiamati()).toEqual(GUARDATI)
+    })
+    // L'anno prima nella stessa sede non conta: la sede è viva. L'anno prima in un'altra sede sì: è una sede lasciata.
+    await rollback(async () => {
+      await frequenza(VIVO, ANNO_PRIMA, SEZ_PRIMA, 'iscritto', '2025-09-01', '2026-06-30')
+      expect(await chiamati()).toEqual(GUARDATI)
+    })
+    await rollback(async () => {
+      await frequenza(VIVO, PRIMA_B, null, 'iscritto', '2025-09-01', '2026-06-30')
+      expect(await chiamati()).toEqual([...GUARDATI, GEN_VIVO, GEN_PONTE_VIVO].sort())
     })
   })
 
@@ -1137,8 +1403,8 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     await rollback(async () => {
       await d.query(`DELETE FROM public.legame_genitori_alunni WHERE alunno_id = $1`, [RITIRATO])
       await fotoSenzaFiltro()
-      // Restano il genitore dalla strada anagrafica, due foto, e la foto di `SENZA`.
-      expect((await riga7()).galleria_media_v2).toBe(3)
+      // Restano il genitore dalla strada anagrafica, due foto, la foto di `SENZA` e quella della sede lasciata.
+      expect((await riga7()).galleria_media_v2).toBe(4)
     })
   })
 
@@ -1146,7 +1412,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     await rollback(async () => {
       await d.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [GEN_PONTE, RITIRATO])
       await fotoSenzaFiltro()
-      expect((await riga7()).galleria_media_v2).toBe(FOTO_NON_ATTIVI)
+      expect((await riga7()).galleria_media_v2).toBe(FOTO_FUORI)
     })
   })
 
@@ -1158,6 +1424,13 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
       // `GEN_MISTO` è fra quelli che la riga guarda: ha anche il figlio ritirato.
       const righe = await d.query(`SELECT 1 FROM public.figli_attivi($1) WHERE alunno_id = $2`, [GEN_MISTO, VIVO])
       expect(righe.rows).toHaveLength(2)
+      expect(await riga7()).toEqual(ZERO)
+      // Le foto col suo tag le vede da tutte e due le sedi, e nessuna delle due è una fuga.
+      const qui = await foto(S, [VIVO])
+      const li = await foto(S_B, [VIVO])
+      const coppie = await coppieFoto(GEN_MISTO)
+      expect(coppie).toContainEqual({ media_id: qui, alunno_id: VIVO })
+      expect(coppie).toContainEqual({ media_id: li, alunno_id: VIVO })
       expect(await riga7()).toEqual(ZERO)
     })
   })
@@ -1179,7 +1452,7 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
         await crea(await giorni())
         await fotoSenzaFiltro()
         // Attivo, la sua foto esce dal conteggio; non attivo, resta dentro.
-        expect((await riga7()).galleria_media_v2).toBe(attivo ? FOTO_NON_ATTIVI - 1 : FOTO_NON_ATTIVI)
+        expect((await riga7()).galleria_media_v2).toBe(attivo ? FOTO_FUORI - 1 : FOTO_FUORI)
       })
     })
   }
@@ -1205,20 +1478,56 @@ describe('anno_invarianti · l’invariante 7 (PR 4.4)', () => {
     const testo = readFileSync(join(process.cwd(), 'docs/superpowers/specs/2026-11-06-anno-scolastico-invarianti.sql'), 'utf8')
     const copia = testo.slice(testo.indexOf('-- 7. Nessun genitore'), testo.indexOf('-- 8. Nessun docente'))
     expect((await d.query(copia)).rows).toEqual([])
-    await rollback(async () => {
-      await frequenzeSenzaFiltro()
-      const trovate = (await d.query<{ oggetto: string }>(copia)).rows
-      const quante = (oggetto: string) => trovate.filter((x) => x.oggetto === oggetto).length
-      expect({
-        galleria_media_v2: quante('foto'), avvisi: quante('avviso'), chat_threads: quante('thread'), frequenze: quante('frequenza'),
-      }).toEqual(await riga7())
-      expect(trovate.length).toBeGreaterThanOrEqual(4)
-    })
+    const stati: Array<[string, () => Promise<unknown>, number]> = [
+      ['frequenze senza filtro', frequenzeSenzaFiltro, 4],
+      ['foto senza filtro', fotoSenzaFiltro, FOTO_FUORI],
+      ['avvisi senza filtro', avvisiSenzaFiltro, 19],
+      ['thread senza filtro', threadSenzaFiltro, 3],
+      ['foto con l’etichetta falsa', () => fotoCosi(FOTO_ETICHETTA_FALSA), 1],
+      ['foto senza sede', () => fotoCosi(FOTO_SENZA_SEDE), 1],
+      ['foto di tutta la sede', () => fotoCosi(FOTO_DI_TUTTA_LA_SEDE), 3],
+      ['avvisi senza sezione', () => avvisiCosi(AVVISI_SENZA_SEZIONE), 1],
+      ['avvisi senza sede', () => avvisiCosi(AVVISI_SENZA_SEDE), 1],
+      ['l’etichetta di un’altra famiglia', async () => {
+        await fotoCosi(`SELECT m.id, '${VIVO}'::uuid FROM public.galleria_media_v2 m WHERE p_utente = '${GEN_RITIRATO}' AND m.tag_students @> ARRAY['${VIVO}'::uuid]`)
+        await avvisiCosi(`SELECT a.id, '${VIVO}'::uuid FROM public.avvisi a WHERE p_utente = '${GEN_RITIRATO}' AND a.id = '${AVVISO_GLOBALE}'`)
+      }, 3],
+    ]
+    for (const [nome, rompi, almeno] of stati) {
+      await rollback(async () => {
+        await rompi()
+        const trovate = (await d.query<{ oggetto: string }>(copia)).rows
+        const quante = (oggetto: string) => trovate.filter((x) => x.oggetto === oggetto).length
+        expect({
+          galleria_media_v2: quante('foto'), avvisi: quante('avviso'), chat_threads: quante('thread'), frequenze: quante('frequenza'),
+        }, nome).toEqual(await riga7())
+        expect(trovate.length, nome).toBeGreaterThanOrEqual(almeno)
+      })
+    }
+    // E i casi leciti restano leciti anche lì.
+    for (const { nome, crea } of FOTO_LECITE) {
+      await rollback(async () => {
+        await crea()
+        expect((await d.query(copia)).rows, nome).toEqual([])
+      })
+    }
   })
 
-  prova('dove i legami o i thread non ci sono la riga c’è lo stesso, a zero', async () => {
+  prova('dove i legami, le foto, gli avvisi, lo storico o i thread non ci sono la riga c’è lo stesso, a zero', async () => {
     await rollback(async () => {
       await d.exec(`ALTER TABLE public.chat_threads RENAME TO chat_threads_altrove`)
+      expect(await riga7()).toEqual(ZERO)
+    })
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.galleria_media_v2 RENAME TO galleria_altrove`)
+      expect(await riga7()).toEqual(ZERO)
+    })
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.avvisi RENAME TO avvisi_altrove`)
+      expect(await riga7()).toEqual(ZERO)
+    })
+    await rollback(async () => {
+      await d.exec(`ALTER TABLE public.alunni_classi_storico RENAME TO storico_altrove`)
       expect(await riga7()).toEqual(ZERO)
     })
     await rollback(async () => {

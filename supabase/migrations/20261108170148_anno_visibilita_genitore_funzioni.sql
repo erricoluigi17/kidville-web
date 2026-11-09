@@ -709,23 +709,43 @@ GRANT EXECUTE ON FUNCTION public.voci_visibili_miei() TO authenticated, service_
 -- E salvo `r`, che qui è `record` e non `anno_tabelle%ROWTYPE`: quel tipo si risolve quando si crea la funzione, e questo file deve
 -- passare anche sul database senza l'anno del lancio manuale di «DB migrate (CI)». Lì la funzione nasce, e non la chiama nessuno.
 --
--- IL FIGLIO NON ATTIVO LO DICE IL CATALOGO, non `frequenze_attive`: se una funzione perde il filtro la riga sale, altrimenti sarebbe
--- vera per costruzione. Si ragiona sul figlio: non è attivo chi non ha NESSUNA frequenza viva, in nessuna sede. Ritirato in una sede e
--- iscritto in un'altra è attivo, e ciò che vede dalla sede dove è vivo è suo di diritto. Il limite: chi ha solo figli così non viene
--- guardato, quindi un difetto che apre la sede lasciata si vede qui solo se apre anche i figli non attivi di qualcun altro.
+-- FIGLIO E SEDE LI DICE IL CATALOGO, non le funzioni controllate. Ogni riga che una funzione restituisce si rifà sulle tabelle, per
+-- coppia (figlio, sede): se si fidasse di `alunno_id`, una funzione che apre la foto del ritirato e la intesta al fratello vivo
+-- resterebbe verde, e lo scambio fra `figli_collegati` e `figli_attivi` è l'errore più naturale fra quelle due. Una coppia è viva se il
+-- figlio ha lì una frequenza viva: ritirato in una sede e iscritto in un'altra è attivo, ma della sede lasciata non vede più niente.
 --
--- UNA RIGA PER CIÒ CHE SI VEDE, emessa sempre: `galleria_media_v2`, `avvisi`, `chat_threads`, e `frequenze` per una riga di
--- `figli_attivi` che porta una frequenza non viva (è la «sezione» del §4.17 della specifica: la sezione la dà la frequenza). Nei thread non conta quello in cui il genitore è il docente: il docente vede sempre
--- la storia dei suoi, e questa riga parla di genitori. Le voci non entrano: quella di un ritirato con un dovuto aperto resta visibile,
--- per decisione.
+-- UNA RIGA PER CIÒ CHE SI VEDE, emessa sempre.
+--   · `galleria_media_v2`: si leggono le frequenze dei figli di quel genitore, quindi un'etichetta altrui o NULL non trova niente. La
+--     riga non torna se la coppia con la sede della foto non è viva, o se la foto non è per lui, cioè non ha il suo tag, non è un
+--     broadcast senza destinatari, e fra i destinatari non ha nessuna delle sue classi in quella sede. Le classi sono tutte quelle di
+--     `frequenze` e dello storico, di qualunque anno e stato: più largo di quello che guarda la funzione, perché una foto storica di un
+--     bambino che continua può puntare a una sezione di un anno passato. Lo storico dà le classi, mai la coppia viva: chi lascia una sede
+--     lo storico lì ce l'ha.
+--   · `avvisi`: la stessa decisione di `avvisi_visibili_genitore` rifatta sulla frequenza viva. La sede, e per un avviso non `globale`
+--     la sua sezione di adesso fra i destinatari.
+--   · `chat_threads`: legge `student_id` dal thread e guarda i figli non attivi, senza nessuna frequenza viva. Un thread sul figlio vivo
+--     altrove è lecito. Non conta quello in cui il genitore è il docente: il docente vede sempre la storia dei suoi.
+--   · `frequenze`: una riga di `figli_attivi` che porta una frequenza non viva (è la «sezione» del §4.17: la sezione la dà la frequenza).
+-- Le voci non entrano: quella di un ritirato con un dovuto aperto resta visibile, per decisione.
 --
--- IL COSTO non dipende dalle foto: una lettura di `frequenze`, una di ogni tabella dei legami, e le funzioni di visibilità SOLO per
--- i genitori con un figlio non attivo. La scelta dei figli non attivi è un anti-join sull'elenco dei vivi, quindi cresce con i legami
--- e non con legami per vivi; i tag li cerca `media_visibili_genitore` con il suo indice GIN, una volta per figlio attivo di quei genitori.
+-- SI GUARDANO i genitori con almeno una coppia non viva: un figlio senza nessuna frequenza viva, o con una frequenza in una sede dove
+-- non è vivo. Il limite, per come è: gli altri non si guardano, e una funzione rotta si vede da chi è guardato. Un difetto che colpisce
+-- solo chi ha tutti i figli vivi dappertutto, o il giorno in cui nessuno ha una coppia non viva, qui non si vede. E la riga controlla chi
+-- e dove, non quando: una foto di prima dell'ingresso, un broadcast fuori dal periodo, una classe che non era la sua quel giorno o un
+-- avviso scaduto restano alle prove di `anno-visibilita-genitore`.
+--
+-- IL COSTO non dipende dalle foto dei genitori che non si guardano: due letture di `frequenze`, una di ogni tabella dei legami, e le
+-- funzioni di visibilità e lo storico SOLO per i guardati. Le frequenze e lo storico dei suoi figli si leggono una volta per genitore:
+-- ogni riga restituita guarda quelle poche, non gli elenchi interi. La scelta dei guardati è un hash join sull'elenco dei vivi, quindi
+-- cresce con i legami e non con legami per vivi; i tag li cerca `media_visibili_genitore` con il suo indice GIN, una volta per figlio
+-- attivo di quei genitori. Un guardato con un figlio vivo costa più di uno con i soli figli ritirati: `media_visibili_genitore` gli
+-- restituisce tutte le sue foto, e ognuna si rilegge per chiave.
 --
 -- UN GUASTO NON È VERDE. Ogni genitore ha il suo blocco: se una funzione si guasta, la riga `(controllo fallito: <SQLSTATE>)` conta
 -- i genitori che non si è potuto controllare, con il codice dell'ultimo; gli altri si contano e le altre invarianti arrivano.
--- Il codice sta nella riga perché qui non si scrive in `app_log`: la funzione è STABLE. Senza nessun figlio non attivo le funzioni
+-- Nel blocco sta anche la lettura dello storico: `to_regclass` dice che la tabella c'è, non che ha quelle colonne. Fuori restano le
+-- letture di `frequenze` e dei legami: una colonna sparita lì fa fallire tutta la funzione, come per le altre invarianti, e non è verde.
+-- Il codice sta nella riga perché qui non si scrive in `app_log`: la funzione è STABLE. Senza nessuna coppia non viva le funzioni
 -- girano una volta lo stesso, per un genitore che non c'è: così una funzione sparita o rotta si vede anche quel giorno. Un guasto che
 -- dipende dai dati di un figlio, quel giorno, non si vede: non c'è nessuno a cui farebbe vedere qualcosa.
 CREATE OR REPLACE FUNCTION public.anno_invarianti()
@@ -751,8 +771,12 @@ DECLARE
   v_oggi        date := public.giorno_roma(now());
   v_figli_vivi  uuid[];
   v_freq_vive   uuid[];
+  v_lasciate    uuid[];
   v_genitori    uuid[] := '{}';
-  v_non_attivi  uuid[] := '{}';
+  v_figli       uuid[] := '{}';
+  v_st_alunni   uuid[] := '{}';
+  v_st_scuole   uuid[] := '{}';
+  v_st_sezioni  uuid[] := '{}';
   v_foto        bigint := 0;
   v_avvisi      bigint := 0;
   v_thread      bigint := 0;
@@ -991,7 +1015,7 @@ BEGIN
   invariante := '8'; tabella := 'utenti_sezioni'; righe := v_n; RETURN NEXT;
 
   -- 7. Nessun genitore vede qualcosa attraverso un figlio non attivo (PR 4.4). Il perché di ogni scelta sta nella testata qui sopra.
-  --    I vivi una volta sola, dal catalogo: una riga per frequenza viva, quindi un bambino vivo in due sedi compare due volte.
+  --    Le frequenze vive una volta sola, dal catalogo: un bambino vivo in due sedi compare due volte.
   SELECT coalesce(array_agg(f.alunno_id), '{}'), coalesce(array_agg(f.id), '{}') INTO v_figli_vivi, v_freq_vive
     FROM public.frequenze f
    WHERE f.stato IN ('in_attesa', 'iscritto')
@@ -999,41 +1023,90 @@ BEGIN
      AND f.data_ingresso <= v_oggi
      AND (f.data_uscita IS NULL OR f.data_uscita >= v_oggi);
 
-  --    Le coppie (genitore, figlio non attivo), per le due strade del legame di `figli_collegati`. `to_regclass` come lì.
+  --    I bambini con una sede in cui hanno una frequenza e nessuna viva: è la coppia (figlio, sede) non viva.
+  SELECT coalesce(array_agg(DISTINCT x.alunno_id), '{}') INTO v_lasciate
+    FROM (SELECT f.alunno_id
+            FROM public.frequenze f
+           GROUP BY f.alunno_id, f.scuola_id
+          HAVING NOT bool_or(f.id = ANY (v_freq_vive))) x;
+
+  --    Tutte le coppie (genitore, figlio), per le due strade del legame di `figli_collegati`. `to_regclass` come lì.
   IF to_regclass('public.legame_genitori_alunni') IS NOT NULL THEN
-    SELECT coalesce(array_agg(l.genitore_id), '{}'), coalesce(array_agg(l.alunno_id), '{}') INTO v_genitori, v_non_attivi
-      FROM public.legame_genitori_alunni l
-     WHERE NOT EXISTS (SELECT 1 FROM unnest(v_figli_vivi) AS v(alunno_id) WHERE v.alunno_id = l.alunno_id);
+    SELECT coalesce(array_agg(l.genitore_id), '{}'), coalesce(array_agg(l.alunno_id), '{}') INTO v_genitori, v_figli
+      FROM public.legame_genitori_alunni l;
   END IF;
   IF to_regclass('public.student_parents') IS NOT NULL AND to_regclass('public.parents') IS NOT NULL THEN
-    SELECT v_genitori || coalesce(array_agg(p.auth_user_id), '{}'), v_non_attivi || coalesce(array_agg(sp.student_id), '{}')
-      INTO v_genitori, v_non_attivi
+    SELECT v_genitori || coalesce(array_agg(p.auth_user_id), '{}'), v_figli || coalesce(array_agg(sp.student_id), '{}')
+      INTO v_genitori, v_figli
       FROM public.parents p
       JOIN public.student_parents sp ON sp.parent_id = p.id
-     WHERE p.auth_user_id IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM unnest(v_figli_vivi) AS v(alunno_id) WHERE v.alunno_id = sp.student_id);
+     WHERE p.auth_user_id IS NOT NULL;
   END IF;
 
-  --    Nessuno da guardare: le funzioni girano lo stesso, una volta, per un genitore che non c'è.
-  IF cardinality(v_genitori) = 0 THEN
-    v_genitori := ARRAY[NULL::uuid];
-    v_non_attivi := ARRAY[NULL::uuid];
-  END IF;
-
-  --    Le funzioni di visibilità girano solo per loro, e ognuno ha il suo blocco.
+  --    Le funzioni di visibilità girano solo per chi ha una coppia non viva, e ognuno ha il suo blocco. Nessuno da guardare: girano
+  --    lo stesso, una volta, per un genitore che non c'è.
   FOR v_gen IN
-    SELECT x.genitore, array_agg(x.figlio) AS figli
-      FROM unnest(v_genitori, v_non_attivi) AS x(genitore, figlio)
-     GROUP BY x.genitore
+    WITH guardati AS (
+      SELECT x.genitore,
+             array_agg(x.figlio) AS figli,
+             coalesce(array_agg(x.figlio) FILTER (WHERE vivo.alunno_id IS NULL), '{}') AS non_attivi
+        FROM unnest(v_genitori, v_figli) AS x(genitore, figlio)
+        LEFT JOIN (SELECT DISTINCT y.alunno_id FROM unnest(v_figli_vivi) AS y(alunno_id)) vivo ON vivo.alunno_id = x.figlio
+        LEFT JOIN unnest(v_lasciate) AS lasciata(alunno_id) ON lasciata.alunno_id = x.figlio
+       GROUP BY x.genitore
+      HAVING bool_or(vivo.alunno_id IS NULL OR lasciata.alunno_id IS NOT NULL)
+    )
+    SELECT g.genitore, g.figli, g.non_attivi FROM guardati g
+    UNION ALL
+    SELECT NULL::uuid, '{}'::uuid[], '{}'::uuid[] WHERE NOT EXISTS (SELECT 1 FROM guardati)
   LOOP
     BEGIN
-      v_foto := v_foto + (SELECT count(*) FROM public.media_visibili_genitore(v_gen.genitore) v WHERE v.alunno_id = ANY (v_gen.figli));
-      v_avvisi := v_avvisi + (SELECT count(*) FROM public.avvisi_visibili_genitore(v_gen.genitore) v WHERE v.alunno_id = ANY (v_gen.figli));
+      IF to_regclass('public.galleria_media_v2') IS NOT NULL THEN
+        -- Lo storico in array, come in `media_visibili_genitore`: la query delle foto resta statica anche dove la tabella non c'è.
+        IF to_regclass('public.alunni_classi_storico') IS NOT NULL THEN
+          SELECT coalesce(array_agg(h.alunno_id), '{}'), coalesce(array_agg(h.scuola_id), '{}'), coalesce(array_agg(h.section_id), '{}')
+            INTO v_st_alunni, v_st_scuole, v_st_sezioni
+            FROM public.alunni_classi_storico h
+           WHERE h.alunno_id = ANY (v_gen.figli);
+        END IF;
+        v_foto := v_foto + (WITH sue AS MATERIALIZED (
+                              SELECT f.alunno_id, f.scuola_id, f.section_id, f.id = ANY (v_freq_vive) AS viva
+                                FROM public.frequenze f
+                               WHERE f.alunno_id = ANY (v_gen.figli)
+                              UNION ALL
+                              SELECT h.alunno_id, h.scuola_id, h.section_id, false
+                                FROM unnest(v_st_alunni, v_st_scuole, v_st_sezioni) AS h(alunno_id, scuola_id, section_id)
+                            )
+                            SELECT count(*)
+                              FROM public.media_visibili_genitore(v_gen.genitore) v
+                              LEFT JOIN public.galleria_media_v2 m ON m.id = v.media_id
+                             WHERE NOT EXISTS (SELECT 1 FROM sue s WHERE s.viva AND s.alunno_id = v.alunno_id AND s.scuola_id = m.scuola_id)
+                                OR (m.tag_students @> ARRAY[v.alunno_id]
+                                    OR (m.is_broadcast = true
+                                        AND coalesce(cardinality(m.target_section_ids), 0) = 0
+                                        AND coalesce(cardinality(m.target_classes), 0) = 0)
+                                    OR EXISTS (SELECT 1 FROM sue s
+                                                WHERE s.alunno_id = v.alunno_id AND s.scuola_id = m.scuola_id
+                                                  AND s.section_id = ANY (m.target_section_ids))) IS NOT TRUE);
+      END IF;
+      IF to_regclass('public.avvisi') IS NOT NULL THEN
+        v_avvisi := v_avvisi + (WITH vive AS MATERIALIZED (
+                                  SELECT f.alunno_id, f.scuola_id, f.section_id
+                                    FROM public.frequenze f
+                                   WHERE f.alunno_id = ANY (v_gen.figli) AND f.id = ANY (v_freq_vive)
+                                )
+                                SELECT count(*)
+                                  FROM public.avvisi_visibili_genitore(v_gen.genitore) v
+                                  LEFT JOIN public.avvisi a ON a.id = v.avviso_id
+                                 WHERE NOT EXISTS (SELECT 1 FROM vive s
+                                                    WHERE s.alunno_id = v.alunno_id AND s.scuola_id = a.scuola_id
+                                                      AND (a.target_scope = 'globale' OR s.section_id = ANY (a.target_section_ids))));
+      END IF;
       IF to_regclass('public.chat_threads') IS NOT NULL THEN
         v_thread := v_thread + (SELECT count(*)
                                   FROM public.thread_visibili(v_gen.genitore) v
                                   JOIN public.chat_threads t ON t.id = v.thread_id
-                                 WHERE t.student_id = ANY (v_gen.figli)
+                                 WHERE t.student_id = ANY (v_gen.non_attivi)
                                    AND t.teacher_id IS DISTINCT FROM v_gen.genitore);
       END IF;
       v_frequenze := v_frequenze + (SELECT count(*) FROM public.figli_attivi(v_gen.genitore) a WHERE a.frequenza_id <> ALL (v_freq_vive));

@@ -1,3 +1,55 @@
+## 🗓️ Changelog — Anno scolastico, PR 4.4: che cosa vede una famiglia — 2026-11-09 (branch `feat/anno-scolastico-genitori`)
+
+**Stato:** 🟡 PR 4.4, in revisione (non ancora mergiata, niente in produzione). **Ha tre migrazioni**, che applica l'integrazione di Supabase al merge: `20261108170148_anno_visibilita_genitore_funzioni.sql` (M44a, le funzioni), `20261108204853_anno_visibilita_genitore_policy.sql` (M44b, cinque regole di accesso e il trigger di broadcast della chat) e `20261108221856_anno_galleria_pagina_genitore.sql` (M44g, la pagina della galleria). Il controllo visivo e la prova dal telefono vero restano da fare.
+
+**Che cosa cambia per le persone.** Quello che una famiglia vede lo decide il database, in un punto solo (funzioni SQL di visibilità), e non più il confronto per nome di classe. Un figlio che lascia la scuola o cambia classe non lascia foto, avvisi e conversazioni appesi.
+
+| Area | Stato | Che cosa cambia |
+|---|---|---|
+| Galleria | 🟡 in revisione | Solo per un figlio attivo (403 `FIGLIO_NON_ATTIVO`). La pagina viene da `galleria_pagina_genitore` (M44g), al massimo 100 righe. La regola di accesso su `galleria_media_v2` passa da `media_visibili_miei()` |
+| Chat | 🟡 in revisione | `thread_visibili` decide lista e apertura. Le liste portano `scrivibile`; il POST di `messages` risponde 403 `CHAT_SOLA_LETTURA` e il campo si disabilita dicendo perché. Un thread nascosto risponde 403 in lettura. La rubrica propone solo i docenti della sezione attuale del figlio attivo. Il badge conta le sole conversazioni visibili. Il canale di broadcast segue la stessa regola |
+| Avvisi | 🟡 in revisione | Lista e adesione per `avvisi_visibili_genitore`; l'adesione di un alunno fuori dall'avviso risponde 403 `ADESIONE_ALUNNO_FUORI_AVVISO` |
+| News | 🟡 in revisione | Per `target_section_ids` e per la sede della frequenza (anche il digest). Gli uuid di sezione non escono nella risposta. Regola di accesso su `news_posts` riscritta |
+| Moduli | 🟡 in revisione | `parent/forms` per uuid di sezione, nella sede della frequenza |
+| Mensa | 🟡 in revisione | Il genitore agisce solo su un figlio attivo. Una data fuori dall'anno attivo: la lettura ritaglia, prenotazione e disdetta rispondono 422 `DATA_FUORI_ANNO`. Lo staff non cambia |
+| Pagamenti | 🟡 in revisione | Lista e dettaglio per `voci_visibili_genitore`; la voce del ritirato con dovuto aperto resta. Una divisa senza la propria quota risponde 403 «non ancora disponibile». **`pagamenti/famiglia` non cambia**: è `requireStaff` e la usano solo `TransazioniPanel` e `pagante-comune`; con il filtro `visibile_dal` la cassa non vedrebbe più le voci future |
+
+**Un genitore con zero figli attivi** (tutti ritirati, con legami presenti): `GuardiaSenzaFigli` sostituisce la pagina con un pannello che dice che cosa fare, salvo le rotte che funzionano senza un figlio scelto (home, pagamenti, chat, avvisi, news, modulistica, forms, votazioni, profilo, onboarding). Prima l'app poteva restare «sempre in caricamento». Avvisi, news, moduli e lista chat rispondono 200 vuoto; galleria e mensa, che chiedono un bambino preciso, 403 `FIGLIO_NON_ATTIVO`.
+
+**Come funziona, in SQL e in codice.**
+- `getFigliAttiviDiGenitore` decide su `figli_attivi`, con `motivoNascosto` applicato sopra. Il modulo `src/lib/anno/visibilita-genitore.ts` (`leggiVisibilita`) dà tre esiti: `ok`, `indietro` (schema assente: comportamento di oggi, con un log `info`) e `guasto`, che **non apre mai**: lista vuota (o 500) e un log `error`.
+- **Le cinque regole di accesso riscritte in M44b** hanno lo stesso nome, comando e ruolo di prima: `galleria_media_v2`, `chat_threads`, `chat_messages`, `pagamenti` e `news_posts`, tutte con `( SELECT … )` valutate una volta sola. Il ramo staff e `service_role` sono invariati. Il tutto sta in un `DO` che esce se `frequenze` non esiste: senza lo schema dell'anno restano le regole di oggi. I wrapper `*_miei()` girano con la sessione dell'utente, quindi sotto RLS.
+- **Confine di visibilità delle frequenze di recupero.** `origine = 'recupero' AND giorno_roma(creata_il) <= DATE '2026-11-07'` ⇒ il confine è l'`inizio` dell'anno; altrimenti è `data_ingresso`. Le righe del riempimento hanno una data d'ingresso stimata, e senza questa regola 175 coppie foto-figlio di bambini vivi sparirebbero; le frequenze di recupero create dopo, dallo specchio o da una data scelta dalla segreteria, hanno la data vera.
+- **Le sole scritture che cambiano al merge** sono quelle di `anno_traduci_classi_trg`, ridefinita in M44a. Tutto il resto di M44a sono funzioni nuove, `SECURITY DEFINER`, solo `service_role` (i wrapper `*_miei()` anche `authenticated`).
+- **Manopola della chat.** `anno_regole.chat_sola_lettura_dal_passaggio` nasce **spenta**, e la accende la PR 4.8: a manopola spenta le conversazioni con un docente non più assegnato restano scrivibili come oggi, e il filtro sul figlio attivo vale comunque.
+- **Invariante 7 in `anno_invarianti()`**: nessun genitore vede qualcosa attraverso un figlio non attivo. Quattro righe: `galleria_media_v2`, `avvisi`, `chat_threads`, `frequenze`. Ogni riga che una funzione di visibilità restituisce si rifà sul catalogo, per coppia (figlio, sede), senza fidarsi del figlio che la funzione ci scrive sopra. Si guardano i soli genitori con una coppia non viva. Una funzione di visibilità sparita o che fallisce in ingresso dà la riga `(controllo fallito: <SQLSTATE>)` anche se nessuno ha una coppia non viva. **Costo:** la lettura di `galleria_media_v2` la sceglie il pianificatore; ai volumi di oggi è una scansione intera, una volta per ogni guardato con un figlio vivo, e quel costo cresce anche con le foto totali, finché non conviene un indice. **Limiti:** (1) i genitori senza coppie non vive non si guardano; (2) una coppia è nota solo se il figlio ha o ha avuto una frequenza in quella sede; (3) la riga controlla chi e dove, non quando (foto di prima dell'ingresso, broadcast fuori periodo, avviso scaduto restano alle prove di `anno-visibilita-genitore`); (4) le classi sono larghe di proposito; (5) **un guasto che dipende dai dati di un figlio non si vede il giorno in cui nessuno ha una coppia non viva**: la sonda non ha figli, e un guasto nel corpo su colonne che la riga non legge resta non visto. **Il controllo notturno di `anno_invarianti()` non esiste ancora**: si costruisce nella PR 4.5, e finché manca un rosso della riga 7 lo vede solo chi lancia la `SELECT`.
+- **Prestampati**: ogni voce del catalogo dichiara una `durata` (`fino_a_revoca` per scheda sanitaria, farmaci e dieta, `anno` per le altre quattordici). `GET /api/parent/prestampati/da-rifirmare` dice quali moduli vanno rifirmati: oggi la sola `delega_ritiro`, per chi ha frequentato un anno prima dell'attivo e l'ha firmata entro l'ultimo giorno aperto dell'anno precedente. **La delega di ritiro non si firma in app**; l'elenco di chi non ha mai firmato arriva con la PR 4.5. La rifirma riguarda solo `delega_ritiro`.
+- **Esportazione degli alunni**: passa da `GET /api/admin/students/export`, gate `requireStaff`, solo gli iscritti, una sede dichiarata, a blocchi, con audit `export_anagrafica_alunni` per sede e un 500 `ANAGRAFICA_EXPORT_NON_LETTA` invece di un file a metà. **È la prima esportazione di codice fiscale e indirizzo mai esistita**: prima la pagina leggeva con il client del browser e, per la RLS di `alunni`, il file tornava vuoto (a uno staff che è anche genitore, con i soli propri figli). Ora è un clic da segreteria e coordinatori. Il lock `__tests__/offline/syncEngine-nessun-accesso-diretto.test.ts` (792 file guardati) dice che il browser non legge le tabelle della famiglia.
+- **Prove sul database non migrato.** Ogni route toccata ha il suo test di «schema indietro» (comportamento di oggi, senza `500`); in questo compito si sono aggiunti quelli del digest delle news e del suo dettaglio.
+
+**Chi ne risente** (contato il 09/11/2026):
+
+| Che cosa | Numero | Effetto |
+|---|---|---|
+| frequenze / vive | 811 / 794 | — |
+| foto vive / di tipo broadcast | 10.612 / 0 | — |
+| coppie foto-figlio | 50.026 | — |
+| coppie con figlio non vivo | 55, di 5 bambini ritirati | la galleria si svuota al deploy (decisione 16) |
+| coppie di bambini vivi con foto prima di `data_ingresso` | 175 (misura 08/11) | restano visibili, per la regola del recupero |
+| vivi senza sezione | 5 | restano nascosti come oggi |
+| conversazioni | 1.130 | — |
+| con figlio non vivo | 7 | spariscono dalla lista del genitore |
+| senza legame fra genitore e bambino | 1 | il genitore la perde |
+| con un docente non più assegnato | 82 | restano scrivibili finché la manopola è spenta |
+| voci divise fra genitori | 5 | ciascun genitore vede la propria quota, come già per la RLS |
+| genitori con una coppia non viva / di cui con un figlio vivo | 8 / 5 | sono quelli che la riga 7 guarda |
+| news con scope `classi` senza sede | 0 | nessuno perde una news |
+| invarianti non a zero | 0 | — |
+
+**Limite noto, non cambiato.** Una foto di classe retrodatata a un anno precedente, pubblicata dalla segreteria, viene accettata senza avviso e non arriva a nessuno: la conta `anno_target_divergenti`.
+
+**Che cosa resta aperto.** Il controllo notturno e l'elenco di chi non ha firmato la delega (PR 4.5), la manopola della chat (PR 4.8), il tempo delle funzioni su una famiglia reale (non misurato), la PR-B che svuota `MIGRAZIONI_ATTESE_AL_MERGE` rigenerando le fotografie dalla produzione.
+
 ## 🗓️ Changelog — Sezioni e docenti per anno, fase B — 2026-11-08
 
 **Stato:** ✅ in produzione (#302, `c1f81e36`, 08/11/2026 alle 17:46 di Roma). **Ha una migrazione** (`20261108102826_anno_sezioni_docenti_fase_b.sql`), applicata dall'integrazione di Supabase al merge. **Verificato dopo** (08/11, solo `SELECT`): la migrazione è registrata una volta; invarianti a zero; su `alunni` restano `trg_alunni_specchio_frequenza_ins` e `trg_alunni_specchio_frequenza_sede`, su `frequenze` c'è `trg_frequenze_specchio_alunni`; le funzioni nuove le esegue solo `service_role`; `get_advisors` senza `ERROR`. Misure di produzione dell'08/11/2026 (solo lettura): 811 alunni con frequenza attiva, divergenza fra scheda e frequenza 0, tutte le invarianti a 0, `utenti_sezioni_materie` 113 righe di cui 0 senza assegnazione diretta. Oggi tutte le 44 sezioni sono del 2026/27. **Una cosa cambia subito, ed è voluta**: una docente tolta da una classe perde davvero l'accesso (vedi sotto, «conta la riga diretta»); il resto non cambia di visibile finché non nascono sezioni del 2027/28.

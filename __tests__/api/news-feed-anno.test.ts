@@ -73,6 +73,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 import { GET as FEED } from '@/app/api/news/feed/route'
 import { GET as DETTAGLIO } from '@/app/api/news/feed/[id]/route'
 import { GET as DIGESTS } from '@/app/api/news/digest/route'
+import { GET as DIGEST_DETTAGLIO } from '@/app/api/news/digest/[id]/route'
 
 const req = (percorso: string) => ({
   url: `http://test${percorso}`,
@@ -282,5 +283,37 @@ describe('GET /api/news/digest, famiglia', () => {
     const body = await res.json() as { edizioni: Array<{ id: string }> }
 
     expect(body.edizioni.map((e) => e.id)).toEqual([DIGEST])
+  })
+
+  it('schema indietro: l’edizione della sede del figlio, come oggi', async () => {
+    h.figliAttivi = (() => ({ data: null, error: { code: 'PGRST202', message: 'assente' } })) as Rpc
+
+    const res = await DIGESTS(req('/api/news/digest'))
+    const body = await res.json() as { edizioni: Array<{ id: string }> }
+
+    expect(res.status).toBe(200)
+    expect(body.edizioni.map((e) => e.id)).toEqual([DIGEST])
+  })
+})
+
+describe('GET /api/news/digest/[id], famiglia', () => {
+  it('un figlio attivo: si apre', async () => {
+    const res = await DIGEST_DETTAGLIO(req(`/api/news/digest/${DIGEST}`), ctx(DIGEST))
+
+    expect(res.status).toBe(200)
+  })
+
+  it('nessun figlio attivo: 404, non si rivela l’edizione', async () => {
+    h.figliAttivi = (() => ({ data: [], error: null })) as Rpc
+
+    expect((await DIGEST_DETTAGLIO(req(`/api/news/digest/${DIGEST}`), ctx(DIGEST))).status).toBe(404)
+  })
+
+  it('schema indietro: si apre come oggi', async () => {
+    h.figliAttivi = (() => ({ data: null, error: { code: 'PGRST202', message: 'assente' } })) as Rpc
+
+    const res = await DIGEST_DETTAGLIO(req(`/api/news/digest/${DIGEST}`), ctx(DIGEST))
+
+    expect(res.status).toBe(200)
   })
 })

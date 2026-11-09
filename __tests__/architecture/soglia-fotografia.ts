@@ -417,7 +417,7 @@ export function posterioriCheContengono(
 // policy nasce o sparisce (40 invariate), cambiano i cinque testi. La vede la guardia di `rls-per-sede.test.ts`, «nessuna migrazione più
 // recente della fotografia tocca le policy». L'altra migrazione della PR, `20261108170148_anno_visibilita_genitore_funzioni.sql`, crea
 // solo funzioni: nessuna guardia la vede e qui non va dichiarata (il lock «nessuna voce morta» la rifiuterebbe). Dopo il merge, rigenerando
-// dalla produzione, cambiano davvero la fotografia della RLS (i cinque `using_expr`) e quella delle migrazioni (+2). Si toglie nella PR-B.
+// dalla produzione, cambiano davvero la fotografia della RLS (i cinque `using_expr`) e quella delle migrazioni (+3, con `20261108221856_anno_galleria_pagina_genitore.sql`, che crea solo una funzione). Si toglie nella PR-B.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
     '20261108204853_anno_visibilita_genitore_policy.sql':
         'PR 4.4 anno scolastico: la applica l\'integrazione al merge, cinque regole di accesso riscritte con lo stesso nome; si toglie nella PR-B rigenerando la fotografia della RLS dalla produzione.',

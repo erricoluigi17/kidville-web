@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { Tabs } from '@/components/ui/cockpit';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -19,21 +19,24 @@ import { btnPrimary, hint, input, label } from './ui';
  *  · NESSUN importo, data o titolo predefinito: ogni campo parte vuoto o da ciò che il database ha già. Le quote le decide la segreteria.
  *  · Un rifiuto non cancella ciò che si stava digitando: i campi tengono la bozza, l'errore sta sotto il blocco.
  *  · Lo stato d'errore è un CODICE (`ErroreUi`) tradotto al render.
- *  · Retta e servizi si vedono ma non si scrivono da qui (le scrive la 4.6).
+ *  · La retta mensile (PR 4.6) sta nella scheda «Rette»: importo per fascia o per tutte, e i mesi in cui si genera. Il servizio mensile
+ *    ha la sua route ma non una schermata: vuole una categoria da scegliere.
  *  · Nel messaggio di un rifiuto passano solo parole del catalogo: mai righe di bambini (qui non ce ne sono).
  */
 
-type Scheda = 'quote' | 'moduli' | 'posti';
+type Scheda = 'quote' | 'rette' | 'moduli' | 'posti';
 type Lista = 'conferma' | 'nuova';
 type VoceQuota = 'quota_conferma' | 'quota_nuova';
 
-type ErroreUi = { tipo: 'rete' } | { tipo: 'permesso' } | { tipo: 'campo'; chiave: 'importo' | 'titolo' | 'posti' } | { tipo: 'risposta'; corpo: unknown };
+type ErroreUi = { tipo: 'rete' } | { tipo: 'permesso' } | { tipo: 'campo'; chiave: 'importo' | 'titolo' | 'posti' | 'mesi' } | { tipo: 'risposta'; corpo: unknown };
 type EsitoUi = { area: string; tipo: 'ok'; testo: string } | { area: string; tipo: 'errore'; errore: ErroreUi };
 
 type Risposta = { stato: number; corpo: unknown };
 
 type RigaQuota = { voce: VoceQuota; fascia: string | null; importo: number | null; scadenza: string | null };
 type RigaModulo = { lista: Lista; codice: string; titolo: string; ordine: number };
+type RigaRetta = { voce: string; fascia: string | null; payment_category_id: string | null; importo: number | null; mesi: number[] | null };
+type LetturaRette = { rette: RigaRetta[]; mesiEffettivi: number[]; fasceInUso: string[] };
 type RigaPosti = { fascia: string; posti: number; fonte: string | null };
 type RigaClasse = { id: string; name: string; school_type: string; fascia: string | null };
 
@@ -126,6 +129,12 @@ function useLettura<T>(url: string, userId: string, versione: number, estrai: (d
 
 const estraiQuote = (d: Record<string, unknown>) =>
   Array.isArray(d.quote) ? { quote: d.quote as RigaQuota[] } : null;
+const estraiRette = (d: Record<string, unknown>): LetturaRette | null => {
+  const mesi = (d.mesi_effettivi as { retta?: unknown } | null | undefined)?.retta;
+  return Array.isArray(d.rette) && Array.isArray(mesi) && Array.isArray(d.fasce_in_uso)
+    ? { rette: (d.rette as RigaRetta[]).filter((r) => r.voce === 'retta'), mesiEffettivi: mesi as number[], fasceInUso: d.fasce_in_uso as string[] }
+    : null;
+};
 const estraiModuli = (d: Record<string, unknown>) => (Array.isArray(d.moduli) ? (d.moduli as RigaModulo[]) : null);
 const estraiPosti = (d: Record<string, unknown>) => (Array.isArray(d.posti) ? (d.posti as RigaPosti[]) : null);
 const estraiClassi = (d: Record<string, unknown>) => (Array.isArray(d.sezioni) ? (d.sezioni as RigaClasse[]) : null);
@@ -198,7 +207,7 @@ export function AnnoConfigurazione({
   const testoErrore = (e: ErroreUi): string => {
     if (e.tipo === 'rete') return t('erroreRete');
     if (e.tipo === 'permesso') return t('errorePermesso');
-    if (e.tipo === 'campo') return e.chiave === 'importo' ? t('importoNonValido') : e.chiave === 'titolo' ? t('moduloTitoloVuoto') : t('postiNonValidi');
+    if (e.tipo === 'campo') return e.chiave === 'importo' ? t('importoNonValido') : e.chiave === 'titolo' ? t('moduloTitoloVuoto') : e.chiave === 'mesi' ? t('retteMesiVuoti') : t('postiNonValidi');
     return messaggioDaCorpo(e.corpo, t('erroreGenerico'));
   };
 
@@ -236,11 +245,13 @@ export function AnnoConfigurazione({
         onChange={scegli}
         options={[
           { id: 'quote', label: t('schedaQuote') },
+          { id: 'rette', label: t('schedaRette') },
           { id: 'moduli', label: t('schedaModuli') },
           { id: 'posti', label: t('schedaPosti') },
         ]}
       />
       {scheda === 'quote' && <SchedaQuote {...comuni} />}
+      {scheda === 'rette' && <SchedaRette {...comuni} />}
       {scheda === 'moduli' && <SchedaModuli {...comuni} />}
       {scheda === 'posti' && <SchedaPosti {...comuni} />}
 
@@ -369,6 +380,117 @@ function BloccoQuota({ c, voce, titolo, nota, righe }: { c: Comuni; voce: VoceQu
         </button>
       </div>
       <p id={`${id}-scadenza-hint`} className={hint}>{t('scadenzaNota')}</p>
+      {c.esitoDi(area)}
+    </fieldset>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Rette
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/** I mesi dell'anno scolastico, da settembre ad agosto: l'ordine in cui la segreteria li legge. */
+const MESI_ANNO = [9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+const stessiMesi = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((m) => b.includes(m));
+
+function SchedaRette(c: Comuni) {
+  const t = useTranslations('annoListino');
+  const lettura = useLettura(`${c.base}/rette`, c.userId, c.versione, estraiRette);
+  if (lettura.fase !== 'ok') return <StatoLettura lettura={lettura} testoErrore={(e) => (e.tipo === 'rete' ? t('erroreRete') : e.tipo === 'permesso' ? t('errorePermesso') : messaggioDaCorpo(e.tipo === 'risposta' ? e.corpo : null, t('erroreLettura')))} />;
+  return <BloccoRetta c={c} dati={lettura.dati} />;
+}
+
+function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
+  const t = useTranslations('annoListino');
+  const lingua = useLocale();
+  const id = useId();
+  const area = 'rette';
+  const { rette, mesiEffettivi, fasceInUso } = dati;
+  // La bozza parte vuota (nessun importo scelto per la segreteria); i mesi partono da quelli che valgono ora, decisi dal database.
+  const [fascia, setFascia] = useState<string>(TUTTE);
+  const [importo, setImporto] = useState('');
+  const [mesi, setMesi] = useState<number[]>(mesiEffettivi);
+  const occupato = c.inCorso !== null;
+  const nomeMese = (m: number) => new Intl.DateTimeFormat(lingua, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2027, m - 1, 1)));
+
+  const salva = async () => {
+    const n = importoDa(importo);
+    if (n === null) return c.setEsito({ area, tipo: 'errore', errore: { tipo: 'campo', chiave: 'importo' } });
+    // I mesi si scelgono solo per la riga «Tutte le fasce», e si mandano solo se sono cambiati: lasciati com'erano restano «come sempre».
+    const perTutte = fascia === TUTTE;
+    if (perTutte && mesi.length === 0) return c.setEsito({ area, tipo: 'errore', errore: { tipo: 'campo', chiave: 'mesi' } });
+    const mandaMesi = perTutte && !stessiMesi(mesi, mesiEffettivi);
+    const corpo = { voce: 'retta', fascia: perTutte ? null : fascia, importo: n, ...(mandaMesi ? { mesi: [...mesi].sort((a, b) => a - b) } : {}) };
+    const ok = await c.scrivi(area, 'PUT', `${c.base}/rette`, corpo, (d) => (d?.cambiato === false ? t('nessunaModifica') : t('retteSalvata')));
+    if (ok) setImporto('');
+  };
+  const togli = (r: RigaRetta) => void c.scrivi(area, 'PUT', `${c.base}/rette`, { voce: 'retta', fascia: r.fascia, importo: null }, () => t('retteTolta'));
+  const modifica = (r: RigaRetta) => {
+    c.setEsito(null);
+    setFascia(r.fascia ?? TUTTE);
+    setImporto(r.importo === null ? '' : String(r.importo).replace('.', ','));
+  };
+  const scegliMese = (m: number, acceso: boolean) => setMesi((prima) => (acceso ? [...prima, m] : prima.filter((x) => x !== m)));
+  // Un 150,00 è quasi sempre l'importo copiato dal listino precedente: una nota neutra, mai un blocco.
+  const copiata = rette.some((r) => r.importo === 150);
+
+  return (
+    <fieldset className="mt-4 first:mt-0">
+      <legend className={sottoTitolo}>{t('retteTitolo')}</legend>
+      <p className={hint}>{t('retteNota')}</p>
+      {fasceInUso.length === 0 && <p className={hint}>{t('retteSenzaFasce')}</p>}
+      {copiata && <p className={hint}>{t('retteCopiata')}</p>}
+      {rette.length === 0 ? (
+        <p className="mt-2 font-maven text-sm text-kidville-sub">{t('retteNessuna')}</p>
+      ) : (
+        <ul className="mt-2">
+          {rette.map((r) => (
+            <li key={r.fascia ?? 'tutte'} className={rigaClasse}>
+              <strong>{c.fasciaNome(r.fascia)}</strong>
+              <span>{r.importo === null ? '' : formatEuro(r.importo)}</span>
+              <button type="button" className={btnSecondario} disabled={occupato} onClick={() => modifica(r)}>
+                {t('modifica')}
+              </button>
+              <button type="button" className={btnSecondario} disabled={occupato} onClick={() => togli(r)}>
+                {t('togli')}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-3">
+        <div>
+          <label htmlFor={`${id}-fascia`} className={label}>{t('etichettaFascia')}</label>
+          <select id={`${id}-fascia`} value={fascia} onChange={(e) => setFascia(e.target.value)} className={input}>
+            <option value={TUTTE}>{t('fasciaTutte')}</option>
+            {FASCE.map((f: Fascia) => (
+              <option key={f} value={f}>{c.fasciaNome(f)}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={`${id}-importo`} className={label}>{t('etichettaImporto')}</label>
+          <input id={`${id}-importo`} type="text" inputMode="decimal" autoComplete="off" value={importo} onChange={(e) => setImporto(e.target.value)} className={`${input} w-32`} />
+        </div>
+        <button type="button" onClick={() => void salva()} disabled={occupato} className={btnPrimary}>
+          {c.inCorso === area ? t('salvataggioInCorso') : t('salva')}
+        </button>
+      </div>
+      {fascia === TUTTE && (
+        <fieldset className="mt-4">
+          <legend className={label}>{t('retteMesiTitolo')}</legend>
+          <p className={hint}>{t('retteMesiNota')}</p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
+            {MESI_ANNO.map((m) => (
+              <label key={m} className="flex items-center gap-1.5 font-maven text-sm text-kidville-ink">
+                <input type="checkbox" checked={mesi.includes(m)} onChange={(e) => scegliMese(m, e.target.checked)} />
+                {nomeMese(m)}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
       {c.esitoDi(area)}
     </fieldset>
   );

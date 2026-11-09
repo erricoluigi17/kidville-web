@@ -32,6 +32,7 @@ interface StudentRecord { id: string; nome?: string; cognome?: string; [k: strin
 
 function AnagraficaDetailInner() {
     const t = useTranslations('adminStudents');
+    const tAnno = useTranslations('annoFamiglia');
     const params = useParams<{ id: string }>();
     const search = useSearchParams();
     const router = useRouter();
@@ -78,9 +79,9 @@ function AnagraficaDetailInner() {
         load();
     }, [id, isParent, isStaff]);
 
-    const flash = (msg: string) => {
+    const flash = (msg: string, attesaMs = 900) => {
         setToast(msg);
-        setTimeout(goBack, 900);
+        setTimeout(goBack, attesaMs);
     };
 
     const handleSaveStudent = async (data: Record<string, unknown> & { id: string }) => {
@@ -89,6 +90,14 @@ function AnagraficaDetailInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }).catch(() => null);
+        if (res?.ok) {
+            // Data d'ingresso futura (4.5.11): è un avviso, non un errore. La scheda è salvata; l'avviso resta in pagina più a lungo.
+            const corpo = await res.json().catch(() => null) as { avviso?: string } | null;
+            if (corpo?.avviso === 'data-ingresso-futura') {
+                flash(`✅ ${t('detailPageSalvaOk')} ⚠️ ${tAnno('dataIngressoFuturaAvviso')}`, 5000);
+                return;
+            }
+        }
         flash(res?.ok ? `✅ ${t('detailPageSalvaOk')}` : `❌ ${t('erroreSalvataggio')}`);
     };
 

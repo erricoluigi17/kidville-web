@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 import { logEvento } from '@/lib/logging/logger'
 import { annoAttivoDiSede } from '@/lib/anno/frequenze'
 import { erroreAnno } from '@/lib/anno/errori'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
+import { dataCivile } from '@/i18n/config'
 
 /**
  * LA REGOLA DELLA DATA D'ISCRIZIONE (consegna 8 della PR 4.1, Ruling I3) — UN SOLO POSTO, per il POST e per il PATCH di
@@ -18,14 +20,26 @@ import { erroreAnno } from '@/lib/anno/errori'
  * Schema indietro (il DB della CI) o sede senza anno attivo → `dataIngresso: null`, `annoSedeId: null`: si scrive solo
  * `alunni`. Un periodo che non si riesce a leggere non blocca la scrittura (warn col solo codice): la regola decide solo
  * il caso certo.
+ *
+ * PR 4.5.11 · UNA DATA FUTURA È UN AVVISO, NON UN ERRORE. Se la data d'ingresso (dopo l'adattamento all'inizio dell'anno) cade DOPO
+ * oggi (giorno di Roma) ma dentro l'anno, la scheda si salva comunque e la risposta porta `avviso: 'data-ingresso-futura'`: da quel
+ * giorno il bambino comparirà alla famiglia e negli elenchi, non prima. Il log è `info` e non porta la data.
  */
+export const AVVISO_DATA_INGRESSO_FUTURA = 'data-ingresso-futura' as const
+
 export type EsitoDataIngresso =
-  | { ok: true; dataIngresso: string | null; annoSedeId: string | null }
+  | { ok: true; dataIngresso: string | null; annoSedeId: string | null; avviso: typeof AVVISO_DATA_INGRESSO_FUTURA | null }
   | { ok: false; response: NextResponse }
 
 export async function risolviDataIngresso(
   supabase: SupabaseClient,
-  { scuolaId, dataIscrizione, operazione }: { scuolaId: string | null | undefined; dataIscrizione: unknown; operazione: string },
+  { scuolaId, dataIscrizione, operazione, oggi = dataCivile() }: {
+    scuolaId: string | null | undefined
+    dataIscrizione: unknown
+    operazione: string
+    /** Il giorno di Roma (`YYYY-MM-DD`); si passa solo nelle prove. */
+    oggi?: string
+  },
 ): Promise<EsitoDataIngresso> {
   let dataIngresso =
     typeof dataIscrizione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dataIscrizione) ? dataIscrizione : null
@@ -48,5 +62,61 @@ export async function risolviDataIngresso(
       }
     }
   }
-  return { ok: true, dataIngresso, annoSedeId }
+  // Futura solo se la scheda ha davvero una frequenza dove scrivere la data: senza anno attivo (o schema indietro) non c'è niente da avvisare.
+  const futura = Boolean(dataIngresso && annoSedeId && dataIngresso > oggi)
+  if (futura) logEvento('anno-scolastico', 'info', { tipo: AVVISO_DATA_INGRESSO_FUTURA, operazione })
+  return { ok: true, dataIngresso, annoSedeId, avviso: futura ? AVVISO_DATA_INGRESSO_FUTURA : null }
+}
+
+/**
+ * PR 4.5.11 · «L'ISCRIZIONE COMINCIA IL …» — la data d'ingresso futura di una famiglia che non ha ancora nessun figlio attivo.
+ *
+ * Le frequenze non sono leggibili dal browser: la lettura passa dal server (`GET /api/parent/students`) e ne esce la sola data.
+ * Si guardano le frequenze VIVE (`in_attesa`, `iscritto`) con `data_ingresso` dopo oggi (giorno di Roma) in QUALUNQUE anno non
+ * ancora cominciato, non solo nell'anno attivo: la famiglia nuova che arriva l'anno prossimo ha la frequenza nel 2027/28.
+ *
+ * `data` è valorizzata solo se OGNI figlio collegato ha una frequenza così: se uno ne ha un'altra (ritirato, o nessuna) la frase
+ * «comincia il …» direbbe il falso, e si ripiega sul pannello di sempre. È la data più vicina fra i figli.
+ *  · `indietro` = il database non ha lo schema dell'anno (la CI): comportamento di oggi, riga `info`;
+ *  · `guasto` = ogni altro errore, e anche un'eccezione: il chiamante NON deve dire né «comincia il …» né «nessuna iscrizione».
+ */
+export type EsitoIngressoFuturo =
+  | { stato: 'ok'; data: string | null }
+  | { stato: 'indietro' }
+  | { stato: 'guasto' }
+
+export async function ingressoFuturoDeiFigli(
+  supabase: SupabaseClient,
+  alunni: readonly string[],
+  { oggi = dataCivile() }: { oggi?: string } = {},
+): Promise<EsitoIngressoFuturo> {
+  if (alunni.length === 0) return { stato: 'ok', data: null }
+  try {
+    const { data, error } = await supabase
+      .from('frequenze')
+      .select('alunno_id, data_ingresso')
+      .in('alunno_id', [...alunni])
+      .in('stato', ['in_attesa', 'iscritto'])
+      .gt('data_ingresso', oggi)
+    if (error) {
+      const codice = (error as { code?: string }).code ?? null
+      if (schemaAnnoIndietro(error)) {
+        logEvento('anno-scolastico', 'info', { tipo: 'ingresso-futuro-schema-indietro', error_code: codice })
+        return { stato: 'indietro' }
+      }
+      logEvento('anno-scolastico', 'warn', { tipo: 'ingresso-futuro-non-letto', error_code: codice }, error)
+      return { stato: 'guasto' }
+    }
+    const primaPerFiglio = new Map<string, string>()
+    for (const r of (data ?? []) as { alunno_id: string; data_ingresso: string }[]) {
+      if (typeof r.alunno_id !== 'string' || typeof r.data_ingresso !== 'string') continue
+      const gia = primaPerFiglio.get(r.alunno_id)
+      if (!gia || r.data_ingresso < gia) primaPerFiglio.set(r.alunno_id, r.data_ingresso)
+    }
+    if (!alunni.every((id) => primaPerFiglio.has(id))) return { stato: 'ok', data: null }
+    return { stato: 'ok', data: [...primaPerFiglio.values()].sort()[0] ?? null }
+  } catch (err) {
+    logEvento('anno-scolastico', 'warn', { tipo: 'ingresso-futuro-non-letto' }, err)
+    return { stato: 'guasto' }
+  }
 }

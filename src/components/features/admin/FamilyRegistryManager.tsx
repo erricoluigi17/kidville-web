@@ -18,6 +18,7 @@ interface TabDef {
 
 export function FamilyRegistryManager() {
     const tr = useTranslations('adminStudents');
+    const tAnno = useTranslations('annoFamiglia');
     const [tabs, setTabs] = useState<TabDef[]>([
         { id: 'alunno', label: tr('familyTabAlunno'), type: 'student', removable: false },
         { id: 'madre', label: tr('ruoloMadre'), type: 'adult', removable: false, defaultRole: 'mother' },
@@ -122,6 +123,9 @@ export function FamilyRegistryManager() {
                 const nonInviate = credenziali.filter(c => !c.inviata);
                 if (nonInviate.length) {
                     showToast({ type: 'error', message: tr('familyCredenzialiNonInviate', { lista: nonInviate.map(c => c.label).join(', ') }) });
+                } else if ((student as { avviso?: string }).avviso === 'data-ingresso-futura') {
+                    // Data d'ingresso futura (4.5.11): la scheda è creata, e la segreteria lo legge. Un avviso, non un errore.
+                    showToast({ type: 'success', message: tAnno('dataIngressoFuturaAvviso') });
                 }
             }
             setSavedSummary({ studentName, parents: results.filter(r => r.ok).length, failed, credenziali });

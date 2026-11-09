@@ -3,16 +3,36 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
-import { getFigliAttiviDiGenitore } from '@/lib/anagrafiche/legami'
+import { getFigliAttiviDiGenitore, getFigliDiGenitoreEsito } from '@/lib/anagrafiche/legami'
+import { ingressoFuturoDeiFigli, type EsitoIngressoFuturo } from '@/lib/anno/data-ingresso'
 import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo'
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { guastoLetturaAccessoria } from '@/lib/db/guasto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireUser), non dall'handler.
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
+/**
+ * PR 4.5.11 · «L'ISCRIZIONE COMINCIA IL …». Quando i figli ci sono ma sono tutti nascosti, si guarda se ognuno ha una frequenza viva
+ * con ingresso futuro (in qualunque anno non ancora cominciato: le frequenze non sono leggibili dal browser, quindi si legge qui).
+ * Esce la sola data. Un'eccezione, o un elenco di legami non completo, vale `guasto`: né la frase nuova né «nessuna iscrizione».
+ */
+async function leggiIngressoFuturo(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  accountId: string,
+): Promise<EsitoIngressoFuturo> {
+  try {
+    const legami = await getFigliDiGenitoreEsito(supabase, accountId)
+    if (!legami.completo) return { stato: 'guasto' }
+    return await ingressoFuturoDeiFigli(supabase, legami.figli)
+  } catch (err) {
+    logEvento('anno-scolastico', 'warn', { tipo: 'ingresso-futuro-non-letto', operazione: 'parent/students:GET' }, err)
+    return { stato: 'guasto' }
+  }
+}
 
 // GET /api/parent/students?userId=  — lista degli alunni collegati al genitore.
 export const GET = withRoute('parent/students:GET', async (request: Request) => {
@@ -89,7 +109,7 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
     // (`nascosti` tutti a zero). Il client cade allora sulla frase di prima, cioè
     // sul comportamento di ieri — un campo nuovo non deve poter svuotare una
     // schermata che oggi funziona.
-    const motivoAssenza: MotivoFiglioNascosto | null = !inAttesa
+    let motivoAssenza: MotivoFiglioNascosto | null = !inAttesa
       ? null
       : esito.nascosti['senza-sezione'] > 0
         ? 'senza-sezione'
@@ -116,12 +136,26 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
     // una risposta riuscita: offline resta il comportamento di sempre.
     const senzaFigli = rows.length === 0 && esito.totaleLegami === 0 && esito.completo
 
+    // ── PR 4.5.11: UN FIGLIO CHE ENTRA PIÙ AVANTI NON È «NESSUNA ISCRIZIONE ATTIVA» ─────────────────
+    //
+    // Un figlio con una frequenza futura è nascosto fino a quel giorno e finisce fra i `ritirato`, anche se non ha lasciato nessuno.
+    // `ingresso_futuro` porta la sola data (`YYYY-MM-DD`) e solo quando OGNI figlio collegato ha una frequenza viva che comincia
+    // dopo oggi. ⚠️ Se la lettura è guastata, il motivo `ritirato` non si può più sostenere: potrebbe essere proprio un figlio
+    // futuro, e «nessuna iscrizione attiva» sarebbe falso. Si ripiega sul pannello generico (`null`), mai sulla frase sbagliata.
+    let ingressoFuturo: string | null = null
+    if (inAttesa) {
+      const futuro = await leggiIngressoFuturo(supabase, auth.user.id)
+      if (futuro.stato === 'ok') ingressoFuturo = futuro.data
+      else if (futuro.stato === 'guasto' && motivoAssenza === 'ritirato') motivoAssenza = null
+    }
+
     if (rows.length === 0) {
       return NextResponse.json({
         success: true,
         data: [],
         senza_figli: senzaFigli,
         in_attesa: inAttesa,
+        ingresso_futuro: ingressoFuturo,
         // `in_attesa` resta, e non è ridondanza: è il campo che i chiamanti già
         // scritti leggono. Toglierlo per «tenere un campo solo» spegnerebbe la
         // schermata di cortesia su ogni client più vecchio del server, cioè
@@ -167,7 +201,7 @@ export const GET = withRoute('parent/students:GET', async (request: Request) => 
       }
     })
 
-    return NextResponse.json({ success: true, data: enriched, senza_figli: false, in_attesa: false, motivo_assenza: null })
+    return NextResponse.json({ success: true, data: enriched, senza_figli: false, in_attesa: false, ingresso_futuro: null, motivo_assenza: null })
   } catch (err) {
     logErrore({ operazione: 'parent/students:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

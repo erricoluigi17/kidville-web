@@ -220,5 +220,6 @@
   "modulisticaScaricaAutorizzazione": "Download signed authorization",
   "modulisticaFirmaPdfNonDisponibile": "Signature recorded, PDF unavailable",
   "modulisticaRiprovaDocumento": "Try downloading the document again",
-  "modulisticaDocumentoScaricato": "Document delivered: choose where to save it"
+  "modulisticaDocumentoScaricato": "Document delivered: choose where to save it",
+  "inAttesaPagamenti": "Go to payments"
 }

@@ -220,5 +220,6 @@
   "modulisticaScaricaAutorizzazione": "Scarica autorizzazione firmata",
   "modulisticaFirmaPdfNonDisponibile": "Firma registrata, PDF non disponibile",
   "modulisticaRiprovaDocumento": "Riprova a scaricare il documento",
-  "modulisticaDocumentoScaricato": "Documento consegnato: scegli dove salvarlo"
+  "modulisticaDocumentoScaricato": "Documento consegnato: scegli dove salvarlo",
+  "inAttesaPagamenti": "Vai ai pagamenti"
 }

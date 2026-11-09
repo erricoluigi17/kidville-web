@@ -117,11 +117,11 @@ const accese = async () =>
   (await db.query<{ invariante: string; tabella: string; righe: number }>(
     `SELECT invariante, tabella, righe::int AS righe FROM public.anno_invarianti() WHERE righe > 0 ORDER BY 1, 2`)).rows
 const archivia = async (id: string) => {
-  const r = await ARCHIVIA(richiesta({ alunno_id: id }), undefined as never)
+  const r = await ARCHIVIA(richiesta({ alunno_id: id }))
   return { status: r.status, corpo: (await r.json()) as Rec }
 }
 const riattiva = async (id: string) => {
-  const r = await RIATTIVA(richiesta({ alunno_id: id }), undefined as never)
+  const r = await RIATTIVA(richiesta({ alunno_id: id }))
   return { status: r.status, corpo: (await r.json()) as Rec }
 }
 

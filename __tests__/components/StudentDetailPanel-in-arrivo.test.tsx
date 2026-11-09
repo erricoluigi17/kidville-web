@@ -33,7 +33,7 @@ import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPan
 const IN_ARRIVO = { id: 'al-arr', nome: 'Piccolo', cognome: 'InArrivoProva', scuola_id: SEDE_A, stato: 'in_arrivo', classe_sezione: null }
 const ISCRITTO = { id: 'al-isc', nome: 'Grande', cognome: 'IscrittoProva', scuola_id: SEDE_A, stato: 'iscritto', classe_sezione: 'GIRASOLI' }
 
-const monta = (student: Record<string, unknown>) =>
+const monta = (student: Parameters<typeof StudentDetailPanel>[0]["student"]) =>
   render(
     <StudentDetailPanel
       student={student}

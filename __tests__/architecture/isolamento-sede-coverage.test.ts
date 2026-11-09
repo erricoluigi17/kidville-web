@@ -2669,7 +2669,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `conferme/non-rinnova`. CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope` sull'anno
             // nuovo E sull'anno della frequenza di partenza, prima di ogni lettura o scrittura.
             // Misurato rieseguendo il lock: 395 → 397.
-            routeConServiceRole: 397,
+            // 397 → 399 il 2026-11-09 (PR 4.5, 4.5.10): le due route nuove dei moduli, entrambe con gate di sede.
+            routeConServiceRole: 399,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3021,7 +3022,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Misurato rieseguendo il lock: 608 → 609.
             // 609 → 612 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.6): tre handler nelle due route sopra (conferme GET/POST,
             // non-rinnova POST), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 609 → 612.
-            handlerControllati: 612,
+            // 612 → 615 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.10): tre handler nelle due route nuove (frequenze/[id]/moduli
+            // GET/PUT, anni/[annoSedeId]/moduli-mancanti GET), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 612 → 615.
+            handlerControllati: 615,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

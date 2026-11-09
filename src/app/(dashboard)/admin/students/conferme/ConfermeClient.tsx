@@ -1,31 +1,40 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { btnPrimary, hint, input, label } from '@/components/features/admin/settings/ui';
 import { Tabs } from '@/components/ui/cockpit';
-import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 /**
- * LE CONFERME PER L'ANNO PROSSIMO (PR 4.5, compito 4.5.6).
+ * LE CONFERME PER L'ANNO PROSSIMO (PR 4.5, compiti 4.5.6 e 4.5.10).
  *
- * Il selettore dell'anno (4.2) sceglie l'anno nuovo: qui compare solo se ha le iscrizioni aperte. Per ogni bambino dell'anno in
- * corso la segreteria vede se la famiglia ha confermato, ha detto «no» o non ha risposto, a che punto sono moduli e quota, e può
- * registrare la conferma o il «non rinnova». Le regole stanno nel database e nelle route `/api/admin/anni/[annoSedeId]/conferme*`.
+ * Il selettore dell'anno (4.2) sceglie l'anno nuovo: qui compare solo se ha le iscrizioni aperte. Due viste:
+ *  · «Conferme» — per ogni bambino dell'anno in corso la segreteria vede se la famiglia ha confermato, ha detto «no» o non ha
+ *    risposto, a che punto sono moduli e quota, e può registrare la conferma o il «non rinnova»;
+ *  · «Nuove iscrizioni» — i bambini che arrivano da fuori: senza questa vista non avrebbero un posto dove spuntare i moduli, e la loro
+ *    iscrizione non diventerebbe mai «iscritto».
+ * In tutte e due, chi ha una frequenza dell'anno nuovo ha il pannello dei moduli: la segreteria spunta, il DATABASE ricalcola i flag e lo
+ * stato (qui non si scrive mai `moduli_completi`, `quota_saldata` o `stato`: si riporta quello che il server risponde).
+ * Le regole stanno nel database e nelle route `/api/admin/anni/[annoSedeId]/conferme*` e `/api/admin/frequenze/[id]/moduli`.
  *
  * ─── COSE CHE NON SI TOCCANO ─────────────────────────────────────────────────
- *  · La route risponde SOLO con uuid, stati e numeri: i nomi li compone questa pagina dall'anagrafica che ha già (mai nei log).
+ *  · I nomi li porta la route, solo della pagina (mai nei log): questa pagina non scarica più l'elenco delle schede.
  *  · Chi cambia grado sceglie la sezione e spunta «va alla primaria»: nessuna sezione può dire da sola che il bambino cambia scuola.
  *  · I posti sono un avviso, mai un blocco. Annullare una conferma NON ha un pulsante: la frequenza dell'anno prossimo si ritira dalla scheda.
- *  · Un rifiuto non cancella la scelta fatta nella riga: l'errore compare sotto la riga.
+ *  · L'ESITO NON VIVE DENTRO LA RIGA. Un filtro («Mancano moduli», «Non hanno risposto») fa uscire dall'elenco la riga appena lavorata, e con
+ *    lei il messaggio: l'esito sta in un posto sopra la tabella, e resta leggibile finché la segreteria non cambia vista, filtro o pagina.
+ *    Una spunta NON rilegge l'elenco: la riga si aggiorna con la risposta del server e resta dov'è finché non si ricarica (pulsante
+ *    «Aggiorna l'elenco»), così la segreteria non vede sparire sotto le dita la riga su cui sta lavorando.
+ *  · Un rifiuto non cancella la scelta fatta nella riga, e la casella di un modulo resta com'era.
  */
 
 type Conferma = 'confermato' | 'no' | 'non_risposto';
-type Filtro = 'tutti' | Conferma;
+type Vista = 'conferme' | 'nuove';
+type Filtro = 'tutti' | Conferma | 'mancano_moduli';
 type StatoQuota = 'saldata' | 'da_pagare' | 'assente';
 
 type RigaApi = {
@@ -39,17 +48,32 @@ type RigaApi = {
   moduli: { fatti: number; richiesti: number };
   quota: StatoQuota;
   cambia_grado: boolean;
+  stato_frequenza: string | null;
+  nome: string | null;
+  cognome: string | null;
+  classe: string | null;
 };
 type Posti = { fascia: string; iscritti: number; posti: number | null; oltre: boolean };
 type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[] };
-type Nome = { nome: string; classe: string | null };
 type Sezione = { id: string; name: string; school_type: string };
+type ModuloApi = {
+  modulo_id: string;
+  codice: string;
+  titolo: string;
+  ordine: number;
+  spuntato: boolean;
+  spuntato_il: string | null;
+  firmato_in_app_il: string | null;
+};
+/** Ciò che il server ha risposto a una spunta, applicato alla riga senza rileggere l'elenco. */
+type Aggiornamento = { fatti: number; stato: string; quotaSaldata: boolean };
+type Esito = { tipo: 'ok' | 'errore'; testo: string };
 
 type Risposta = { stato: number; corpo: unknown };
 type Lettura<T> = { fase: 'carico' } | { fase: 'ok'; dati: T } | { fase: 'errore'; stato: number; corpo: unknown };
 
 /** Una chiamata. Non lancia mai: una rete caduta è `stato: 0`, e ogni esito non riuscito si registra (fisso, senza dati). */
-async function chiama(metodo: 'GET' | 'POST', url: string, userId: string, corpo?: Record<string, unknown>): Promise<Risposta> {
+async function chiama(metodo: 'GET' | 'POST' | 'PUT', url: string, userId: string, corpo?: Record<string, unknown>): Promise<Risposta> {
   const operazione = `admin/students/conferme:${metodo}`;
   try {
     const res = await fetch(url, {
@@ -103,24 +127,16 @@ const estraiElenco = (r: Risposta): Elenco | null => {
   };
 };
 
-/** L'anagrafica dei bambini (nome e classe di oggi), una volta sola: la route delle conferme non porta nomi. */
-const estraiNomi = (r: Risposta): Map<string, Nome> | null => {
-  const righe = r.corpo;
-  if (!Array.isArray(righe)) return null;
-  const nomi = new Map<string, Nome>();
-  for (const s of righe as Array<{ id?: string; nome?: string; cognome?: string; classe_sezione?: string | null }>) {
-    if (typeof s.id === 'string') {
-      nomi.set(s.id, { nome: `${s.cognome ?? ''} ${s.nome ?? ''}`.trim(), classe: s.classe_sezione ?? null });
-    }
-  }
-  return nomi;
-};
-
 /** Le sezioni dell'anno scelto nel selettore (la route legge il cookie dell'anno): servono quelle della primaria. */
 const estraiSezioni = (r: Risposta): Sezione[] | null => {
   const gruppi = (r.corpo as { data?: unknown } | null)?.data;
   if (!Array.isArray(gruppi)) return null;
   return (gruppi as Array<{ sezioni?: Sezione[] }>).flatMap((g) => (Array.isArray(g.sezioni) ? g.sezioni : []));
+};
+
+const estraiModuli = (r: Risposta): ModuloApi[] | null => {
+  const m = dataDi(r)?.moduli;
+  return Array.isArray(m) ? (m as ModuloApi[]) : null;
 };
 
 const secondario =
@@ -145,13 +161,26 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   const base = `/api/admin/anni/${annoSedeId}`;
   const [pagina, setPagina] = useState(1);
   const [versione, setVersione] = useState(0);
+  const [vista, setVista] = useState<Vista>('conferme');
   const [filtro, setFiltro] = useState<Filtro>('tutti');
+  // Le righe lavorate dopo l'ultima lettura: quello che il server ha risposto a una spunta, per frequenza.
+  const [aggiornate, setAggiornate] = useState<Record<string, Aggiornamento>>({});
+  // L'esito dell'ultima operazione: qui sopra la tabella, non dentro la riga (vedi la testata).
+  const [esito, setEsito] = useState<Esito | null>(null);
 
-  const lettura = useLettura(`${base}/conferme?pagina=${pagina}&conferma=${filtro}`, uid, versione, estraiElenco);
-  const nomi = useLettura(`/api/admin/students?elenco=frequentanti&limit=${LIMITE_ELENCO_ALUNNI}`, uid, 0, estraiNomi);
+  const lettura = useLettura(`${base}/conferme?pagina=${pagina}&vista=${vista}&conferma=${filtro}`, uid, versione, estraiElenco);
   const sezioni = useLettura('/api/admin/sections/scoped?grado=primaria', uid, 0, estraiSezioni);
   const primarie = useMemo(() => (sezioni.fase === 'ok' ? sezioni.dati.filter((s) => s.school_type === 'primaria') : []), [sezioni]);
-  const rilegge = useCallback(() => setVersione((v) => v + 1), []);
+  // Una rilettura (dopo una conferma) NON toglie l'esito: la riga può uscire dal filtro, il messaggio no.
+  const rilegge = useCallback(() => {
+    setAggiornate({});
+    setVersione((v) => v + 1);
+  }, []);
+  const riparti = useCallback(() => {
+    setAggiornate({});
+    setEsito(null);
+  }, []);
+  const aggiorna = useCallback((frequenzaId: string, a: Aggiornamento) => setAggiornate((x) => ({ ...x, [frequenzaId]: a })), []);
 
   const fascia = (codice: string): string => {
     switch (codice) {
@@ -182,6 +211,19 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   // Il filtro lo applica la route: `righe` è già la pagina giusta e `totale` è il totale del filtro.
   const visibili = righe;
   const oltre = posti.filter((p) => p.oltre);
+  const filtri: Array<{ id: Filtro; label: string }> =
+    vista === 'conferme'
+      ? [
+          { id: 'tutti', label: t('filtroTutti') },
+          { id: 'confermato', label: t('filtroConfermati') },
+          { id: 'no', label: t('filtroNo') },
+          { id: 'non_risposto', label: t('filtroNonRisposto') },
+          { id: 'mancano_moduli', label: t('filtroManca') },
+        ]
+      : [
+          { id: 'tutti', label: t('filtroTutti') },
+          { id: 'mancano_moduli', label: t('filtroManca') },
+        ];
 
   return (
     <div>
@@ -191,30 +233,55 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
         </p>
       ))}
 
+      <div role="group" aria-label={t('vistaEtichetta')}>
+        <Tabs
+          value={vista}
+          onChange={(v) => {
+            setVista(v as Vista);
+            setFiltro('tutti');
+            setPagina(1);
+            riparti();
+          }}
+          options={[
+            { id: 'conferme', label: t('vistaConferme') },
+            { id: 'nuove', label: t('vistaNuove') },
+          ]}
+        />
+      </div>
       <Tabs
         value={filtro}
         onChange={(v) => {
           setFiltro(v as Filtro);
           setPagina(1);
+          riparti();
         }}
-        options={[
-          { id: 'tutti', label: t('filtroTutti') },
-          { id: 'confermato', label: t('filtroConfermati') },
-          { id: 'no', label: t('filtroNo') },
-          { id: 'non_risposto', label: t('filtroNonRisposto') },
-        ]}
+        options={filtri}
       />
-      <p className={hint}>{t('totaleBambini', { totale })}</p>
+      {vista === 'nuove' && <p className={hint}>{t('nuoveNota')}</p>}
+      <div className="flex flex-wrap items-center gap-3">
+        <p className={hint}>{t('totaleBambini', { totale })}</p>
+        <button type="button" className={secondario} onClick={rilegge}>{t('azioneAggiorna')}</button>
+      </div>
+
+      {esito && (
+        <p
+          role={esito.tipo === 'errore' ? 'alert' : 'status'}
+          aria-label={t('esitoRegione')}
+          className={`mt-3 rounded-input border border-kidville-line px-3 py-2 font-maven text-sm ${esito.tipo === 'errore' ? 'text-kidville-error' : 'text-kidville-success'}`}
+        >
+          {esito.testo}
+        </p>
+      )}
 
       {visibili.length === 0 ? (
-        <p className="mt-4 font-maven text-sm text-kidville-sub">{t('vuoto')}</p>
+        <p className="mt-4 font-maven text-sm text-kidville-sub">{vista === 'nuove' ? t('vuotoNuove') : t('vuoto')}</p>
       ) : (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left font-maven text-sm text-kidville-green">
             <thead>
               <tr className="border-b border-kidville-line text-xs uppercase text-kidville-sub">
                 <th scope="col" className="py-2 pr-3">{t('colBambino')}</th>
-                <th scope="col" className="py-2 pr-3">{t('colRisposta')}</th>
+                <th scope="col" className="py-2 pr-3">{vista === 'conferme' ? t('colRisposta') : t('colStato')}</th>
                 <th scope="col" className="py-2 pr-3">{t('colModuli')}</th>
                 <th scope="col" className="py-2 pr-3">{t('colQuota')}</th>
                 <th scope="col" className="py-2">{t('colAzioni')}</th>
@@ -225,11 +292,14 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
                 <RigaConferma
                   key={r.frequenza_id}
                   r={r}
+                  vista={vista}
+                  aggiornata={aggiornate[r.nuova_frequenza_id ?? r.frequenza_id] ?? null}
                   annoSedeId={annoSedeId}
                   userId={uid}
-                  nome={nomi.fase === 'ok' ? (nomi.dati.get(r.alunno_id) ?? null) : null}
                   primarie={primarie}
                   rilegge={rilegge}
+                  segnala={setEsito}
+                  aggiorna={aggiorna}
                 />
               ))}
             </tbody>
@@ -241,31 +311,35 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
 
       {pagine > 1 && (
         <nav className="mt-4 flex items-center gap-3" aria-label={t('paginaDi', { pagina, pagine })}>
-          <button type="button" className={secondario} disabled={pagina <= 1} onClick={() => setPagina((p) => p - 1)}>{t('precedente')}</button>
+          <button type="button" className={secondario} disabled={pagina <= 1} onClick={() => { setPagina((p) => p - 1); riparti(); }}>{t('precedente')}</button>
           <span className="font-maven text-sm text-kidville-sub">{t('paginaDi', { pagina, pagine })}</span>
-          <button type="button" className={secondario} disabled={pagina >= pagine} onClick={() => setPagina((p) => p + 1)}>{t('successiva')}</button>
+          <button type="button" className={secondario} disabled={pagina >= pagine} onClick={() => { setPagina((p) => p + 1); riparti(); }}>{t('successiva')}</button>
         </nav>
       )}
     </div>
   );
 }
 
-type Esito = { tipo: 'ok' | 'errore'; testo: string };
-
 function RigaConferma({
   r,
+  vista,
+  aggiornata,
   annoSedeId,
   userId,
-  nome,
   primarie,
   rilegge,
+  segnala,
+  aggiorna,
 }: {
   r: RigaApi;
+  vista: Vista;
+  aggiornata: Aggiornamento | null;
   annoSedeId: string;
   userId: string;
-  nome: Nome | null;
   primarie: Sezione[];
   rilegge: () => void;
+  segnala: (e: Esito) => void;
+  aggiorna: (frequenzaId: string, a: Aggiornamento) => void;
 }) {
   const t = useTranslations('annoConferme');
   const id = useId();
@@ -273,8 +347,9 @@ function RigaConferma({
   const [sezione, setSezione] = useState('');
   const [motivo, setMotivo] = useState('');
   const [occupata, setOccupata] = useState(false);
-  const [esito, setEsito] = useState<Esito | null>(null);
+  const [moduliAperti, setModuliAperti] = useState(false);
 
+  const nome = `${r.cognome ?? ''} ${r.nome ?? ''}`.trim() || t('bambinoSenzaNome');
   const motivi: Array<[string, string]> = [
     ['', t('motivoNessuno')],
     [MOTIVI[0], t('motivoAltraScuola')],
@@ -284,21 +359,22 @@ function RigaConferma({
     [MOTIVI[4], t('motivoAltro')],
   ];
   const statoTesto = r.conferma === 'confermato' ? t('statoConfermato') : r.conferma === 'no' ? t('statoNo') : t('statoNonRisposto');
-  const quotaTesto = r.quota === 'saldata' ? t('quotaSaldata') : r.quota === 'da_pagare' ? t('quotaDaPagare') : t('quotaAssente');
+  // Quello che il server ha risposto a una spunta vale più della lettura di prima.
+  const statoFrequenza = aggiornata?.stato ?? r.stato_frequenza;
+  const statoFrequenzaTesto = statoFrequenza === 'iscritto' ? t('statoIscritto') : statoFrequenza === 'in_attesa' ? t('statoInAttesa') : null;
+  const fatti = aggiornata?.fatti ?? r.moduli.fatti;
+  const quota: StatoQuota = aggiornata ? (aggiornata.quotaSaldata ? 'saldata' : r.quota === 'saldata' ? 'da_pagare' : r.quota) : r.quota;
+  const quotaTesto = quota === 'saldata' ? t('quotaSaldata') : quota === 'da_pagare' ? t('quotaDaPagare') : t('quotaAssente');
 
   const scrivi = async (url: string, corpo: Record<string, unknown>, ok: (d: Record<string, unknown> | null) => string): Promise<void> => {
     setOccupata(true);
-    setEsito(null);
     const risposta = await chiama('POST', url, userId, corpo);
     setOccupata(false);
     if (!riuscita(risposta)) {
-      setEsito({
-        tipo: 'errore',
-        testo: risposta.stato === 0 ? t('erroreRete') : risposta.stato === 403 ? t('errorePermesso') : messaggioDaCorpo(risposta.corpo, t('erroreGenerico')),
-      });
+      segnala({ tipo: 'errore', testo: t('esitoDi', { nome, testo: testoErrore(t, risposta) }) });
       return;
     }
-    setEsito({ tipo: 'ok', testo: ok(dataDi(risposta)) });
+    segnala({ tipo: 'ok', testo: t('esitoDi', { nome, testo: ok(dataDi(risposta)) }) });
     rilegge();
   };
 
@@ -326,62 +402,187 @@ function RigaConferma({
     <>
       <tr className="border-b border-kidville-line align-top">
         <td className="py-3 pr-3">
-          <strong>{nome?.nome || t('bambinoSenzaNome')}</strong>
-          <span className="block text-xs text-kidville-sub">{nome?.classe ? t('classeOggi', { classe: nome.classe }) : t('senzaClasse')}</span>
+          <strong>{nome}</strong>
+          <span className="block text-xs text-kidville-sub">{r.classe ? t('classeOggi', { classe: r.classe }) : t('senzaClasse')}</span>
         </td>
         <td className="py-3 pr-3">
-          <span>{statoTesto}</span>
-          {r.cambia_grado && <span className="block text-xs text-kidville-sub">{t('cambiaGrado')}</span>}
+          {vista === 'conferme' && <span>{statoTesto}</span>}
+          {vista === 'conferme' && r.cambia_grado && <span className="block text-xs text-kidville-sub">{t('cambiaGrado')}</span>}
+          {statoFrequenzaTesto && (vista === 'nuove' ? <span>{statoFrequenzaTesto}</span> : <span className="block text-xs text-kidville-sub">{statoFrequenzaTesto}</span>)}
         </td>
-        <td className="py-3 pr-3">{t('moduliFatti', { fatti: r.moduli.fatti, richiesti: r.moduli.richiesti })}</td>
+        <td className="py-3 pr-3">{t('moduliFatti', { fatti, richiesti: r.moduli.richiesti })}</td>
         <td className="py-3 pr-3">{quotaTesto}</td>
         <td className="py-3">
-          {r.conferma !== 'confermato' && (
-            <div className="flex flex-col gap-2">
-              <label className="flex cursor-pointer items-center gap-2" htmlFor={`${id}-primaria`}>
-                <input id={`${id}-primaria`} type="checkbox" className="h-4 w-4 rounded accent-kidville-green" checked={vaPrimaria} onChange={(e) => setVaPrimaria(e.target.checked)} />
-                <span>{t('vaAllaPrimaria')}</span>
-              </label>
-              {vaPrimaria && (
-                primarie.length === 0 ? (
-                  <p className={hint}>{t('nessunaPrimaria')}</p>
-                ) : (
-                  <div>
-                    <label className={label} htmlFor={`${id}-sezione`}>{t('sezioneArrivo')}</label>
-                    <select id={`${id}-sezione`} className={input} value={sezione} onChange={(e) => setSezione(e.target.value)}>
-                      <option value="">{t('sezioneScegli')}</option>
-                      {primarie.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                )
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className={btnPrimary} disabled={occupata || (vaPrimaria && !sezione)} onClick={conferma}>{t('azioneConferma')}</button>
-                {r.conferma === 'no' ? (
-                  <button type="button" className={secondario} disabled={occupata} onClick={() => nonRinnova(false)}>{t('azioneAnnullaNo')}</button>
-                ) : (
-                  <>
-                    <label className="sr-only" htmlFor={`${id}-motivo`}>{t('motivoEtichetta')}</label>
-                    <select id={`${id}-motivo`} className={input} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-                      {motivi.map(([valore, testo]) => <option key={valore} value={valore}>{testo}</option>)}
-                    </select>
-                    <button type="button" className={secondario} disabled={occupata} onClick={() => nonRinnova(true)}>{t('azioneNonRinnova')}</button>
-                  </>
+          <div className="flex flex-col gap-2">
+            {vista === 'conferme' && r.conferma !== 'confermato' && (
+              <>
+                <label className="flex cursor-pointer items-center gap-2" htmlFor={`${id}-primaria`}>
+                  <input id={`${id}-primaria`} type="checkbox" className="h-4 w-4 rounded accent-kidville-green" checked={vaPrimaria} onChange={(e) => setVaPrimaria(e.target.checked)} />
+                  <span>{t('vaAllaPrimaria')}</span>
+                </label>
+                {vaPrimaria && (
+                  primarie.length === 0 ? (
+                    <p className={hint}>{t('nessunaPrimaria')}</p>
+                  ) : (
+                    <div>
+                      <label className={label} htmlFor={`${id}-sezione`}>{t('sezioneArrivo')}</label>
+                      <select id={`${id}-sezione`} className={input} value={sezione} onChange={(e) => setSezione(e.target.value)}>
+                        <option value="">{t('sezioneScegli')}</option>
+                        {primarie.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                  )
                 )}
-              </div>
-            </div>
-          )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" className={btnPrimary} disabled={occupata || (vaPrimaria && !sezione)} onClick={conferma}>{t('azioneConferma')}</button>
+                  {r.conferma === 'no' ? (
+                    <button type="button" className={secondario} disabled={occupata} onClick={() => nonRinnova(false)}>{t('azioneAnnullaNo')}</button>
+                  ) : (
+                    <>
+                      <label className="sr-only" htmlFor={`${id}-motivo`}>{t('motivoEtichetta')}</label>
+                      <select id={`${id}-motivo`} className={input} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+                        {motivi.map(([valore, testo]) => <option key={valore} value={valore}>{testo}</option>)}
+                      </select>
+                      <button type="button" className={secondario} disabled={occupata} onClick={() => nonRinnova(true)}>{t('azioneNonRinnova')}</button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+            {r.nuova_frequenza_id && (
+              <button
+                type="button"
+                className={secondario}
+                aria-expanded={moduliAperti}
+                aria-controls={`${id}-moduli`}
+                onClick={() => setModuliAperti((v) => !v)}
+              >
+                {moduliAperti ? t('moduliChiudi') : t('moduliApri')}
+              </button>
+            )}
+          </div>
         </td>
       </tr>
-      {esito && (
-        <tr>
-          <td colSpan={5} className="pb-2">
-            <p role={esito.tipo === 'errore' ? 'alert' : 'status'} className={`font-maven text-sm ${esito.tipo === 'errore' ? 'text-kidville-error' : 'text-kidville-success'}`}>
-              {esito.testo}
-            </p>
+      {moduliAperti && r.nuova_frequenza_id && (
+        <tr id={`${id}-moduli`} className="border-b border-kidville-line">
+          <td colSpan={5} className="pb-3">
+            <PannelloModuli
+              frequenzaId={r.nuova_frequenza_id}
+              nome={nome}
+              userId={userId}
+              segnala={segnala}
+              aggiorna={aggiorna}
+            />
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+function testoErrore(t: ReturnType<typeof useTranslations>, r: Risposta): string {
+  if (r.stato === 0) return t('erroreRete');
+  if (r.stato === 403) return t('errorePermesso');
+  return messaggioDaCorpo(r.corpo, t('erroreGenerico'));
+}
+
+/**
+ * Il pannello dei moduli di una frequenza dell'anno nuovo. Sta nella riga, ma NON più largo dello schermo: dentro una tabella che scorre in
+ * orizzontale resta appiccicato a sinistra e largo al massimo quanto la finestra, così su un tablet o un telefono non esce dal bordo.
+ * Le caselle sono alte almeno 44 px (bersaglio da toccare con un dito).
+ */
+function PannelloModuli({
+  frequenzaId,
+  nome,
+  userId,
+  segnala,
+  aggiorna,
+}: {
+  frequenzaId: string;
+  nome: string;
+  userId: string;
+  segnala: (e: Esito) => void;
+  aggiorna: (frequenzaId: string, a: Aggiornamento) => void;
+}) {
+  const t = useTranslations('annoConferme');
+  const locale = useLocale();
+  const url = `/api/admin/frequenze/${frequenzaId}/moduli`;
+  const [versione, setVersione] = useState(0);
+  const lettura = useLettura(url, userId, versione, estraiModuli);
+  // Le caselle cambiate in questa sessione: valgono finché il server non risponde diversamente.
+  const [cambiati, setCambiati] = useState<Record<string, boolean>>({});
+  const [occupato, setOccupato] = useState<string | null>(null);
+
+  const giorno = (iso: string): string => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d);
+  };
+
+  const cambia = async (m: ModuloApi, moduli: ModuloApi[], nuovo: boolean): Promise<void> => {
+    setOccupato(m.modulo_id);
+    const risposta = await chiama('PUT', url, userId, { modulo_id: m.modulo_id, spuntato: nuovo });
+    setOccupato(null);
+    if (!riuscita(risposta)) {
+      // La casella resta com'era: il rifiuto non cambia niente, e lo dice in italiano (`MODULO_NON_RICHIESTO`, `ANNO_CHIUSO`…).
+      segnala({ tipo: 'errore', testo: t('esitoDi', { nome, testo: testoErrore(t, risposta) }) });
+      return;
+    }
+    const d = dataDi(risposta);
+    const stato = typeof d?.stato === 'string' ? d.stato : 'in_attesa';
+    const dopo = { ...cambiati, [m.modulo_id]: nuovo };
+    const fatti = moduli.filter((x) => (dopo[x.modulo_id] ?? x.spuntato)).length;
+    setCambiati(dopo);
+    aggiorna(frequenzaId, { fatti, stato, quotaSaldata: d?.quota_saldata === true });
+    segnala({
+      tipo: 'ok',
+      testo: t('esitoDi', {
+        nome,
+        testo: `${nuovo ? t('esitoModuloSpuntato', { titolo: m.titolo }) : t('esitoModuloTolto', { titolo: m.titolo })} ${t('esitoStatoOra', { stato: stato === 'iscritto' ? t('statoIscritto') : t('statoInAttesa') })}`,
+      }),
+    });
+  };
+
+  return (
+    <div className="sticky left-0 w-[min(100%,calc(100vw-2.5rem))] rounded-input border border-kidville-line bg-kidville-white p-3">
+      {lettura.fase === 'carico' && <p role="status" className="font-maven text-sm text-kidville-sub">{t('moduliCaricamento')}</p>}
+      {lettura.fase === 'errore' && (
+        <div>
+          <p role="alert" className="font-maven text-sm text-kidville-error">{testoErrore(t, { stato: lettura.stato, corpo: lettura.corpo })}</p>
+          <button type="button" className={`${secondario} mt-3`} onClick={() => setVersione((v) => v + 1)}>{t('riprova')}</button>
+        </div>
+      )}
+      {lettura.fase === 'ok' && (
+        lettura.dati.length === 0 ? (
+          <p className="font-maven text-sm text-kidville-sub">{t('moduliNessuno')}</p>
+        ) : (
+          <ul aria-label={t('moduliElenco', { nome })} className="m-0 flex list-none flex-col gap-1 p-0">
+            {lettura.dati.map((m) => {
+              const spuntato = cambiati[m.modulo_id] ?? m.spuntato;
+              return (
+                <li key={m.modulo_id}>
+                  <label className="flex min-h-11 cursor-pointer items-center gap-3 py-1 font-maven text-sm text-kidville-green">
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 shrink-0 rounded accent-kidville-green"
+                      checked={spuntato}
+                      disabled={occupato !== null}
+                      onChange={(e) => cambia(m, lettura.dati, e.target.checked)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block break-words">{m.titolo}</span>
+                      {m.firmato_in_app_il && (
+                        <span className="block text-xs text-kidville-sub">
+                          {t('firmatoInApp', { data: giorno(m.firmato_in_app_il) })}. {t('firmatoInAppNota')}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )
+      )}
+    </div>
   );
 }

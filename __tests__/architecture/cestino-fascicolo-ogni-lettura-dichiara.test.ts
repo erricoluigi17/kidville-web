@@ -280,6 +280,9 @@ const COPERTE_ATTESE: Record<string, number> = {
   'src/app/api/parent/prestampati/route.ts': 2,
   // Le firme dei figli che hanno frequentato un anno prima dell'attivo: oggi nessuno, quindi oggi non parte.
   'src/app/api/parent/prestampati/da-rifirmare/route.ts': 1,
+  // La spunta dei moduli (4.5.10): il tipo e la data delle firme DI UN BAMBINO, solo se un modulo richiesto è del registro, per dire «firmato in
+  // app il…» accanto alla spunta. Colonne `document_type, created_at`: nessun file, nessuna diagnosi. Passa dal registro degli accessi.
+  'src/app/api/admin/frequenze/[frequenzaId]/moduli/route.ts': 1,
   'src/app/api/prestampati/genera/route.ts': 1,
   // `fascicoloAncheNelCestino`: il preventivo dell'oblio (l'esecuzione cancella anche il cestino)
   'src/lib/gdpr/cosa-distrugge.ts': 1,
@@ -310,8 +313,9 @@ const COPERTE_ATTESE: Record<string, number> = {
  * (RPC). Il riconoscitore non si è rotto: l'occorrenza è sparita dal sorgente, e la cintura che
  * quella riga portava vive ora nell'SQL di M3 e nel ripiego, entrambi provati da test.
  * 2026-11 · 29 (PR 4.4, 4.4.9): la lettura dichiarata di `parent/prestampati/da-rifirmare`. Alzata, non abbassata.
+ * 2026-11 · 30 (PR 4.5, 4.5.10): la lettura dichiarata di `admin/frequenze/[frequenzaId]/moduli`. Alzata, non abbassata.
  */
-const SOGLIA_VISTE = 29
+const SOGLIA_VISTE = 30
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Le funzioni edge (Deno): il filtro del cestino scritto a mano

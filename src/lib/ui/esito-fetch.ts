@@ -3636,6 +3636,8 @@ export const CODICI_ERRORE = {
     ANNO_NON_OFFERTO: 'erroreAnnoNonOfferto',
     ISCRIZIONI_CHIUSE: 'erroreIscrizioniChiuse',
     IMPORTO_NON_VALIDO: 'erroreImportoNonValido',
+    /** La spunta dei moduli (compito 4.5.10): 404 `FREQUENZA_NON_TROVATA`, la risposta di `rispostaFrequenzaNonTrovata`. */
+    FREQUENZA_NON_TROVATA: 'erroreFrequenzaNonTrovata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

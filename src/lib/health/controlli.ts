@@ -482,14 +482,14 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'Orario (`35 * * * *`), PR 4.8 giro 2: la migrazione è nella PR 4.8 e non è ancora nella fotografia delle ' +
             'applicate (il lock `cron-sorvegliato-e-applicato` vieta un nome in `JOB_CRON` prima). Il giorno dell’inizio dell’anno nuovo ricopia le schede dei bambini sulla ' +
             'classe nuova ed è idempotente. Nel frattempo lo sorveglia `cron-esiti`; logga anche il successo, con i conteggi. ' +
-            'Passa in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B, dopo la rigenerazione della fotografia.',
+            'Passa in `JOB_CRON` con `finestraMs` 3 × `ORA` con la PR-B della 4.8, che sta nella parte B della 4.9, dopo la rigenerazione della fotografia e il primo battito visto in `app_log`.',
     },
     {
         nome: 'anno-invarianti',
         perche:
             'Notturno (`17 3 * * *`). La migrazione è in produzione dal 09/11/2026 e la fotografia la contiene, ma il suo ' +
             'primo battito arriva solo alle 03:17 del giorno dopo: entrato in `JOB_CRON` prima, `/api/health` si sarebbe ' +
-            'acceso fino a quella notte. Il nome passa in `JOB_CRON` con `finestraMs` 26 × `ORA` nella prossima PR-B, ' +
+            'acceso fino a quella notte. Il nome passa in `JOB_CRON` con `finestraMs` 26 × `ORA` nella prossima PR-B (parte B della 4.9), ' +
             'a primo battito visto in `app_log`. ' +
             'Nel frattempo lo sorveglia `cron-esiti`. Batte sempre `ok` (il lavoro è girato): che i dati siano a ' +
             'posto lo dice la riga `error` che scrive se un’invariante non è zero, e il controllo `anno-invarianti`.',

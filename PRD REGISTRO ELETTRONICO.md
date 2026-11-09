@@ -1,3 +1,52 @@
+## 🗓️ Changelog — Anno scolastico, PR 4.8: il passaggio d'anno — 2026-11-10 (ramo `worktree-agent-a3d120749d086cbea`)
+
+**Stato:** 🟡 in revisione, fino al merge. **Ha tre migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file (nessuna mano le applica: il freno SQL ferma `apply_migration`): `20261109182420_anno_passaggio_anteprima.sql` (M48a), `20261109182421_anno_passaggio_didattica.sql` (M48c) e `20261109182422_anno_passaggio_conferma.sql` (M48b). Provate in PGlite (Postgres 18; la produzione è la 17), su route vere, in quattro giri di revisione. **Nessun controllo visivo nel browser, nessuna prova da telefono, nessun `pg_cron` reale** (il corpo del job è provato sul banco, non il suo orario).
+
+| Area | Stato | Che cosa è |
+|---|---|---|
+| Passaggio d'anno (anteprima, correzioni, conferma, annullo) | 🟡 in revisione | `/admin/students/passaggio`, nel menu della segreteria e raggiungibile dal cruscotto dell'anno prossimo: per ogni bambino dell'anno che finisce propone un esito (continua, cambia grado, nuovo, esce, non ha risposto), si corregge a mano, poi UNA PERSONA conferma. Il passaggio non parte da solo |
+| Conferma tardiva | 🟡 in revisione | Chi non aveva risposto e poi conferma si porta nell'anno nuovo con la «Conferma tardiva» (la quota parte quando il bambino entra) |
+| Docenti della classe nuova | 🟡 in revisione | Il pannello assegna i docenti alle classi dell'anno nuovo; chi era già assegnato resta assegnato e la pagina lo dice |
+| Finestra di agosto | 🟡 in revisione | Dalla conferma all'inizio dell'anno nuovo (al massimo tutto agosto) le schede dei bambini non cambiano e la famiglia e la scuola continuano a vedere l'anno che finisce; l'1 settembre il job orario `passaggio-ricopia-schede` porta le schede nelle classi nuove |
+| Moduli da rifirmare | 🟡 in revisione | La famiglia vede in cima a «Modulistica» i moduli annuali da rifirmare per l'anno che viene |
+| Cruscotto → passaggio | 🟡 in revisione | Nel cruscotto dell'anno prossimo (4.7), sotto le risposte delle famiglie, il rimando «Apri il passaggio d'anno» (stessi tre ruoli del menu; l'anno lo porta il selettore) |
+| Invarianti `15` e `15-bis` | 🟡 in revisione | La `15` (storico senza riga aperta) e la `15-bis` (scheda archiviata con una classe) entrano in `anno_invarianti()` |
+
+**Che cosa fa.** Prepara e fa il passaggio dei bambini dall'anno che finisce all'anno nuovo: crea le frequenze dell'anno nuovo (origine `passaggio`), archivia chi esce e chi non ha risposto (la quota ancora da pagare su chi esce il passaggio non la toglie, e lo dice), e porta le schede nelle classi nuove all'inizio. Si può annullare finché nell'anno nuovo non è stato registrato niente (presenze, diario, foto e simili); le quote già create restano. Le funzioni di lettura (`frequenze_attive`, `anno_visibile`, lo storico delle classi, lo specchio fra schede e frequenze) seguono l'anno **che si vede**, non quello che è già attivo.
+
+**Che cosa NON fa.** Non gira da solo (la conferma la dà una persona). Non chiude il vecchio anno (lo fa la 4.9). Non rinnova `locker_config`. **La conferma non porta la retta** (decisione del titolare): la frequenza nuova ha `retta_mensile` nulla, e il primo addebito di settembre esce dal listino della classe (verificato sul codice di `rette_da_generare` della 4.6: la retta della frequenza, se c'è, batte la fascia, che batte il listino senza fascia; lo 0 della scheda non è mai letto). Chi aveva una retta personalizzata la ritrova a mano sulla frequenza nuova.
+
+**La finestra di agosto.** Dalla conferma all'inizio dell'anno nuovo l'anno **attivo** è il nuovo e l'anno **visibile** è il vecchio. In quei giorni: le schede non cambiano (resta la classe vecchia, fuori chi esce), la famiglia vede il figlio nell'anno vecchio, le route di scrittura (PATCH, POST, archivia, import delle domande, «Riattiva») sanno in quale anno scrivere. Il job orario `passaggio-ricopia-schede` (`35 * * * *`, separato da `anni_tick`, che non è toccato) ricopia le schede il giorno dell'inizio ed è idempotente.
+
+**I Ruling.**
+- **R6, con la specifica cambiata:** lo specchio segue l'anno visibile (`alunni_riallinea_da_frequenze`, `frequenze_specchio_alunni`, `alunni_specchio_frequenza`, le invarianti 7, 11 e 11-bis). La frase «chi è archiviato dopo la conferma non risorge all'inizio» era scritta senza prova nel giro 2 e smentita dal revisore: è vera solo dal giro 3, per `continua`, `cambia_grado` e `nuova`, con i test NB2/K2.
+- **NB1-NB4 (giri 3 e 4):** NB1 il form intero salvato in agosto non rompe la scheda; NB2 l'archiviazione in finestra chiude anche la frequenza nuova; NB3 il bambino nato in agosto (POST, INSERT, import della domanda) nasce «in arrivo», senza classe sulla scheda e con la frequenza nuova; NB4 chi è archiviato nella finestra non ritrova la classe l'1 settembre (la ricopia gli toglie classe e frequenza nuova, la `15-bis` lo sorveglia).
+- **NS12:** la retta e il giorno di scadenza salvati in agosto per chi non ha la frequenza dell'anno visibile vanno sulla frequenza dell'anno nuovo e non si perdono l'1 settembre. Se la lettura che lo decide fallisce, il PATCH ripiega sull'anno visibile e lo scrive nel log (`warn`, N5).
+- **N1 (chiusura):** il bambino GIÀ in anagrafica che il passaggio non conosce (nato nella finestra in una classe del solo anno vecchio, il centro estivo) e a cui è stata importata una domanda per l'anno nuovo, l'1 settembre entra nella classe nuova: la ricopia prende ogni scheda non archiviata con una frequenza viva nell'anno nuovo e nessuna riga del passaggio (prima solo gli «in arrivo»).
+- **ETL della modulistica:** un bambino nuovo nato da un modulo con una classe del nuovo anno nasce «in arrivo», come per il POST (passa dallo specchio d'INSERT). **Non provato, da collaudo.**
+
+**Da dire al titolare.**
+1. **La conferma non porta la retta.** Il primo addebito esce dal listino; una retta personalizzata va rimessa a mano sulla frequenza nuova.
+2. **Il bambino del centro estivo SENZA domanda per l'anno nuovo** resta nell'anno vecchio e, dal 1° settembre, la `11` («alunni senza frequenza») lo segnala ogni notte: va deciso a mano (iscriverlo all'anno nuovo o archiviarlo). Con una domanda importata il caso si chiude da solo.
+
+**Caso aperto, decisione del titolare in attesa — «Riattiva» nella finestra.** Un bambino archiviato e poi riattivato in agosto, dopo la conferma, torna `iscritto` nella classe che si vede e la sua frequenza nuova viene riaperta, ma la frequenza dell'anno che si vede resta chiusa: fino al 01/09 la famiglia non vede il bambino riattivato ad agosto, e l'invariante `11` lo segnala. L'1 settembre la ricopia sistema tutto (prova: `__tests__/db/anno-passaggio-chiusura.test.ts`, marcata `it.fails` finché non si decide). Decisione del titolare in attesa.
+
+**Che cosa cambia per le persone.**
+
+| Chi | Che cosa vede |
+|---|---|
+| Segreteria, coordinatori, amministratore | La pagina «Passaggio d'anno» nel menu e dal cruscotto: anteprima, correzioni per bambino, docenti delle classi nuove, conferma, annullo, conferma tardiva |
+| Docenti | In agosto niente cambia; l'1 settembre vedono diario e appello della classe nuova con i bambini giusti |
+| Genitori | In agosto vedono il figlio come prima; dall'1 settembre l'anno nuovo; in cima a «Modulistica» i moduli annuali da rifirmare |
+
+**Route.** `GET|POST /api/admin/anni/[annoSedeId]/passaggio`, `PUT …/righe`, `PUT …/docenti`, `GET …/nomi`, `POST …/conferma`, `POST …/annulla`, `POST …/conferma-tardiva`: tutte con `PassaggioClient.tsx` come chiamante (cercato con `grep`); `GET /api/parent/prestampati/da-rifirmare` ora ha il suo chiamante in `FasciaModuliDaRifirmare` (`parent/modulistica`).
+
+**Sul DB della CI non migrato** (senza M48) le operazioni del passaggio si saltano con un log `info` («schema indietro») e le altre pagine non si rompono.
+
+**Dopo il merge (verifiche `SELECT`, in sola lettura).** (1) Le tre version applicate sono quelle dei file. (2) `anno_invarianti()` senza righe con `righe > 0` salvo i casi noti. (3) Esattamente **un** job `passaggio_ricopia_schede` (`35 * * * *`) in `cron.job`, e **nessun** job che chiami `passaggio_conferma`, `passaggio_anteprima` o `passaggio_annulla`. (4) Il primo battito `cron:passaggio-ricopia-schede` in `app_log`. **PR-B (parte B della 4.9):** rigenerare la fotografia delle migrazioni (+3), togliere le tre voci da `IN_CODA` in `migrazioni-complete.test.ts`, far entrare `passaggio-ricopia-schede` e `anno-invarianti` in `JOB_CRON`, riportare questo blocco a ✅.
+
+**Consegne alla 4.9.** Il lock `anni-tick-non-fa-il-passaggio` e la guardia della 3-B sono della 4.9 (la 4.8 non tocca `anni_tick`, così il lock resta verde); il testo del 403 «anno passato» per `in_chiusura` lo riprende la 4.9; in `anno_invarianti()` la 4.9 riparte dal corpo con la `15` e la `15-bis` (il suo `16` resta suo). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-8-difetti-secondari.md`.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (#306, `554ec69b`, in produzione il 09/11/2026)
 
 **Stato:** ✅ in `main` con la #306 (squash `554ec69b`), 09/11/2026. **Ha una migrazione**, applicata dall'integrazione di Supabase al merge con la version del proprio file: `20261109165244_anno_cruscotto.sql` (M47). Solo due funzioni di LETTURA nuove (`anno_cruscotto`, `anno_quota_piu_voci`): nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno, nessuna riga scritta in produzione. Provata in PGlite (Postgres 18; la produzione è la 17) su route vere; nessun controllo visivo nel browser e nessuna prova da telefono.

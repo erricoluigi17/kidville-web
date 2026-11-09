@@ -471,6 +471,24 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'riprende da solo il giorno in cui torna attivo.',
     },
     {
+        nome: 'anni-tick',
+        perche:
+            'Orario (`10 * * * *`), ma la migrazione è nella PR 4.5 e il lock `cron-sorvegliato-e-applicato` ' +
+            'vieta un nome in `JOB_CRON` prima che il suo `cron.schedule` sia nella fotografia delle migrazioni ' +
+            'applicate. Il nome passa in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B, dopo la rigenerazione ' +
+            'della fotografia. Nel frattempo lo sorveglia `cron-esiti` (cron_ultimo_esito), e `anno` dice se ' +
+            'l’anno successivo manca oltre il suo giorno. Batte `ok` anche a vuoto (fino al 01/09/2027 non ha ' +
+            'niente da creare) o `ok-parziale` se una sede ha fallito.',
+    },
+    {
+        nome: 'anno-invarianti',
+        perche:
+            'Notturno (`17 3 * * *`), stessa ragione di `anni-tick`: la migrazione è nella PR 4.5. Il nome passa ' +
+            'in `JOB_CRON` con `finestraMs` 26 × `ORA` nella PR-B, dopo la rigenerazione della fotografia. ' +
+            'Nel frattempo lo sorveglia `cron-esiti`. Batte sempre `ok` (il lavoro è girato): che i dati siano a ' +
+            'posto lo dice la riga `error` che scrive se un’invariante non è zero, e il controllo `anno-invarianti`.',
+    },
+    {
         nome: 'app-log-purge',
         perche:
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
@@ -1605,6 +1623,78 @@ export async function controlloCronEsiti(supabase: SupabaseClient, adesso: numbe
     })
 }
 
+/** I tre numeri di `salute_anno()`. Niente nomi, niente uuid: la risposta della funzione è già solo conteggi. */
+interface SaluteAnno {
+    sedi_senza_successivo: number
+    in_ritardo_giorni: number
+    invarianti_non_zero: number
+}
+
+function leggiSaluteAnno(data: unknown): SaluteAnno | null {
+    if (typeof data !== 'object' || data === null) return null
+    const d = data as Record<string, unknown>
+    const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+    const sedi = n(d.sedi_senza_successivo)
+    const ritardo = n(d.in_ritardo_giorni)
+    const invarianti = n(d.invarianti_non_zero)
+    if (sedi === null || ritardo === null || invarianti === null) return null
+    return { sedi_senza_successivo: sedi, in_ritardo_giorni: ritardo, invarianti_non_zero: invarianti }
+}
+
+/**
+ * Legge `salute_anno()` e lascia ai due controlli il giudizio. Una funzione assente (`PGRST202`, `42883`) è la stessa
+ * assenza di ogni RPC nuova: `rpcNonInstallata` (tollerata 30 minuti dalla build, poi `degradato`; sul database della CI,
+ * dove la migrazione non c'è, il tick non è nemmeno programmato). Un altro errore è `degradato` subito, col solo codice.
+ */
+async function leggiSalute(
+    supabase: SupabaseClient,
+    adesso: number,
+): Promise<{ salute: SaluteAnno } | { valutazione: Valutazione }> {
+    const { data, error } = await supabase.rpc('salute_anno')
+    if (error) {
+        const codice = codiceDi(error)
+        if (RPC_SALUTE_ASSENTE.has(codice)) return { valutazione: rpcNonInstallata('salute_anno', codice, adesso) }
+        return { valutazione: { esito: 'degradato', dettaglio: `lettura salute dell’anno ${codice}` } }
+    }
+    const salute = leggiSaluteAnno(data)
+    if (salute === null) return { valutazione: { esito: 'degradato', dettaglio: 'risposta di salute_anno illeggibile' } }
+    return { salute }
+}
+
+/**
+ * `anno` — l'anno successivo di ogni sede è stato creato quando doveva? Il tick orario (`anni_tick`) lo crea il giorno
+ * stesso di `prepara_successivo_dal`: una sede che lo aspetta da UN giorno o più vuol dire che il job non gira o che per
+ * quella sede ha fallito. Esce il solo numero. Il giorno stesso non è un ritardo (il tick gira ogni ora). Le invarianti
+ * non entrano qui: vanno in `controlloAnnoInvarianti`, perché un dato storto non è un servizio rotto.
+ * Oggi, in produzione, il primo giorno utile è il 01/09/2027: fino ad allora il controllo è `ok` a vuoto.
+ */
+export async function controlloAnno(supabase: SupabaseClient, adesso: number): Promise<Controllo> {
+    return misura('anno', 'degradato', async () => {
+        const letto = await leggiSalute(supabase, adesso)
+        if ('valutazione' in letto) return letto.valutazione
+        const { sedi_senza_successivo: sedi, in_ritardo_giorni: giorni } = letto.salute
+        if (sedi > 0 && giorni >= 1) {
+            return { esito: 'degradato', dettaglio: `${sedi} sedi senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
+        }
+        return { esito: 'ok', dettaglio: 'anno successivo in regola' }
+    })
+}
+
+/**
+ * `anno-invarianti` — le invarianti dell'anno scolastico, dall'ultimo giro notturno (`anno_invarianti_notturno`). Sta in
+ * `eseguiQualita` (risponde sempre 200 e non accende nessun allarme): una invariante non a zero dice che i dati sono storti,
+ * non che il sito non serve le famiglie. La riga `error` con il dettaglio la scrive già il job di notte.
+ */
+export async function controlloAnnoInvarianti(supabase: SupabaseClient, adesso: number): Promise<Controllo> {
+    return misura('anno-invarianti', 'degradato', async () => {
+        const letto = await leggiSalute(supabase, adesso)
+        if ('valutazione' in letto) return letto.valutazione
+        const n = letto.salute.invarianti_non_zero
+        if (n > 0) return { esito: 'degradato', dettaglio: `${n} invarianti dell’anno non a zero` }
+        return { esito: 'ok', dettaglio: 'invarianti dell’anno a zero' }
+    })
+}
+
 /**
  * Il bucket e il prefisso della sonda di `storage`. Un bucket PRIVATO (le fatture) e un prefisso che
  * non esiste: la `list` prova che l'API dello Storage risponde, che arriva al suo database e che il
@@ -1828,6 +1918,7 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
         controlloAuditDocente(supabase, adesso, opzioni.ambiente),
         Promise.resolve(controlloRegione()),
         controlloCronEsiti(supabase, adesso),
+        controlloAnno(supabase, adesso),
         controlloStorage(supabase),
         controlloEmail(supabase, adesso, opzioni.ambiente),
         controlloPush(supabase, adesso, opzioni.ambiente),
@@ -1837,12 +1928,12 @@ export async function eseguiSalute(supabase: SupabaseClient, opzioni: OpzioniSal
 }
 
 /**
- * LA QUALITÀ DEI DATI — a parte, e non accende nessun allarme. Oggi è un controllo solo
- * (`sezione-testo-allineato`); qui entreranno gli altri che dicono «i dati sono storti», non «il
+ * LA QUALITÀ DEI DATI — a parte, e non accende nessun allarme. Oggi sono due
+ * (`sezione-testo-allineato` e `anno-invarianti`); qui entreranno gli altri che dicono «i dati sono storti», non «il
  * servizio è rotto». Un monitor collegato a `/api/health` non deve mai dipenderne.
  */
-export async function eseguiQualita(supabase: SupabaseClient): Promise<Salute> {
+export async function eseguiQualita(supabase: SupabaseClient, adesso: number = Date.now()): Promise<Salute> {
     const t0 = Date.now()
-    const controlli = await Promise.all([controlloTestoClasse(supabase)])
+    const controlli = await Promise.all([controlloTestoClasse(supabase), controlloAnnoInvarianti(supabase, adesso)])
     return conIdentita({ stato: aggrega(controlli), ms: Date.now() - t0, controlli })
 }

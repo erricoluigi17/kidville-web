@@ -287,4 +287,5 @@ export const CODICI_INTERNI = [
   'TABELLA_NON_NEL_RIEMPIMENTO', // 20261107012110_anno_strumenti.sql
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
+  'ANNI_TICK_OGGI_NON_AMMESSO', // 20261109035209_anno_tick.sql (`anni_tick` con un giorno di oggi per una sede che non è di prova né di simulazione: solo l'editor SQL, mai una route)
 ] as const

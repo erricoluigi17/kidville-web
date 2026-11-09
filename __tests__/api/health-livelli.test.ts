@@ -47,7 +47,11 @@ function dbSano(): DBFinto {
 }
 
 function montaDb(db: DBFinto, errori: Record<string, ErrorePostgrest> = {}): void {
-    const finto = creaFintoSupabase(db, [], { errori })
+    // `/api/health/qualita` legge anche `salute_anno` (le invarianti dell'anno, dall'ultimo giro notturno): qui è sana.
+    const finto = creaFintoSupabase(db, [], {
+        errori,
+        rpc: { salute_anno: () => ({ data: { sedi_senza_successivo: 0, in_ritardo_giorni: 0, invarianti_non_zero: 0 }, error: null }) },
+    })
     supa.createAdminClient.mockResolvedValue(Object.assign(finto, { auth: { admin: { getUserById: auth.getUserById } } }))
 }
 
@@ -179,7 +183,7 @@ describe('GET /api/health/qualita', () => {
 
         expect(stato).toBe(200)
         expect(corpo.stato).toBe('ok')
-        expect(corpo.controlli.map((c) => c.nome)).toEqual(['sezione-testo-allineato'])
+        expect(corpo.controlli.map((c) => c.nome)).toEqual(['sezione-testo-allineato', 'anno-invarianti'])
     })
 
     it('con 2 alunni col testo diverso dal nome della sezione dice «degraded» MA risponde 200', async () => {

@@ -30,7 +30,7 @@ vi.mock('@/lib/supabase/server-client', () => supa)
 const auth = vi.hoisted(() => ({ getUserById: vi.fn() }))
 
 // Le RPC che la salute chiama (e quella del tetto condiviso, che NON deve chiamare) e lo Storage.
-const rpc = vi.hoisted(() => ({ tetto: vi.fn(), cronEsiti: vi.fn(), migrazioni: vi.fn() }))
+const rpc = vi.hoisted(() => ({ tetto: vi.fn(), cronEsiti: vi.fn(), migrazioni: vi.fn(), anno: vi.fn() }))
 const storage = vi.hoisted(() => ({ from: vi.fn(), list: vi.fn() }))
 
 import { GET } from '@/app/api/health/route'
@@ -119,6 +119,7 @@ function montaDb(db: DBFinto, errori: Record<string, ErrorePostgrest> = {}): voi
             tetto_frequenza_consuma: rpc.tetto,
             salute_cron_esiti: rpc.cronEsiti,
             salute_migrazioni: rpc.migrazioni,
+            salute_anno: rpc.anno,
         },
     })
     supa.createAdminClient.mockResolvedValue(
@@ -163,6 +164,7 @@ beforeEach(() => {
         error: null,
     })
     rpc.migrazioni.mockResolvedValue({ data: [{ ultima: '20261020000000', numero: 232 }], error: null })
+    rpc.anno.mockResolvedValue({ data: { sedi_senza_successivo: 0, in_ritardo_giorni: 0, invarianti_non_zero: 0 }, error: null })
     storage.from.mockReturnValue({ list: storage.list })
     storage.list.mockResolvedValue({ data: [], error: null })
     // Le tre chiavi che `next.config.ts` fissa alla build (Compito 10): in un test non c'è build.
@@ -189,6 +191,7 @@ describe('GET /api/health', () => {
         // Non basta lo stato aggregato: se un controllo sparisse dall'elenco,
         // l'aggregato resterebbe 'ok' e nessuno se ne accorgerebbe.
         expect(corpo.controlli.map((c) => c.nome).sort()).toEqual([
+            'anno',
             'audit-docente',
             'auth',
             'coda-fatture',

@@ -117,7 +117,7 @@
   "spCategorie": "Categorie pagamento",
   "spCategoriaSistemaHint": " = categoria di sistema (non eliminabile).",
   "spRettaMorosita": "Retta e morosità",
-  "spRettaDefault": "Retta default (€)",
+  "spRettaDefault": "Retta mensile",
   "spGiornoScadenza": "Giorno scadenza retta — default per tutti (1-28)",
   "spGiornoScadenzaHint": "Personalizzabile per singolo alunno dall’anagrafica (Dati economici).",
   "spVisibileDalGiorno": "Visibile dal giorno (mese prec.)",
@@ -505,5 +505,7 @@
   "annoConfinePreparaFuori": "La nuova fine viene prima della data da cui si prepara l’anno successivo: cambia prima quella data.",
   "annoConfineUltimoSuccessivoFuori": "L’anno successivo avrebbe l’ultimo giorno aperto prima del suo inizio: cambia prima la sua data.",
   "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data.",
-  "annoMancaClassiSenzaFascia": "la fascia di ogni classe (nella scheda Classi: premi «Copia le classi dell’anno in corso» e scegli la fascia)"
+  "annoMancaClassiSenzaFascia": "la fascia di ogni classe (nella scheda Classi: premi «Copia le classi dell’anno in corso» e scegli la fascia)",
+  "spRettaDefaultNota": "La retta non si decide più qui: sta nel listino dell’anno scolastico, per fascia e con i mesi in cui si genera.",
+  "spRettaDefaultLink": "Vai ad Anno scolastico → Rette"
 }

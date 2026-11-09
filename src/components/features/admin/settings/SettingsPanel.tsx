@@ -394,7 +394,7 @@ function RettaMorositaSettings({ userId }: Props) {
             '/api/admin/settings',
             {
                 method: 'PATCH', headers: hdr(userId), body: JSON.stringify({
-                    retta_default_importo: s.retta_default_importo, retta_giorno_scadenza: s.retta_giorno_scadenza,
+                    retta_giorno_scadenza: s.retta_giorno_scadenza,
                     retta_giorno_visibilita: s.retta_giorno_visibilita,
                     retta_auto_enabled: s.retta_auto_enabled, insoluto_tolleranza_giorni: s.insoluto_tolleranza_giorni,
                 }),
@@ -407,8 +407,9 @@ function RettaMorositaSettings({ userId }: Props) {
         <section className={card}>
             <h3 className={h3}><Euro size={16} /> {t('spRettaMorosita')}</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div><label className={label}>{t('spRettaDefault')}</label>
-                    <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
+                <div><span className={label}>{t('spRettaDefault')}</span>
+                    <p className="font-maven text-[11px] text-kidville-sub mt-0.5">{t('spRettaDefaultNota')}</p>
+                    <Link href={`?userId=${userId}&sezione=anno`} className="font-maven text-xs font-bold text-kidville-green underline">{t('spRettaDefaultLink')}</Link></div>
                 <div><label className={label}>{t('spGiornoScadenza')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
                     <p className="font-maven text-[10px] text-kidville-sub mt-0.5">{t('spGiornoScadenzaHint')}</p></div>

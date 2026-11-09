@@ -130,12 +130,19 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
     const res = await PATCH(req({
       scuola_id: SEDE_A,
       fattura_causale_template: 'Retta {periodo} - {alunno}',
-      retta_default_importo: 160,
+      retta_giorno_scadenza: 12,
     }))
     expect(res.status).toBe(200)
     expect(h.upserted).not.toHaveProperty('fattura_causale_template')
     // …e il resto della stessa PATCH passa comunque.
-    expect(h.upserted?.retta_default_importo).toBe(160)
+    expect(h.upserted?.retta_giorno_scadenza).toBe(12)
+  })
+
+  it('NON accetta più retta_default_importo (PR 4.6): la retta si decide nel listino dell’anno', async () => {
+    const res = await PATCH(req({ scuola_id: SEDE_A, retta_default_importo: 160, retta_giorno_scadenza: 12 }))
+    expect(res.status).toBe(200)
+    expect(h.upserted).not.toHaveProperty('retta_default_importo')
+    expect(h.upserted?.retta_giorno_scadenza).toBe(12)
   })
 })
 

@@ -60,6 +60,8 @@ function righeAgosto(): Riga[] {
 type Opzioni = {
   righe?: Riga[]; indietro?: boolean; inserimentoFallisce?: boolean
   guardia?: boolean; regoleErrore?: string
+  /** La lettura di prova di `listino_voci.scadenza` (4.5.15, I4) fallisce con questo codice. */
+  listinoErrore?: string
 }
 
 function finto(o: Opzioni = {}) {
@@ -89,6 +91,9 @@ function finto(o: Opzioni = {}) {
           if (tabella === 'anno_regole') {
             if (o.regoleErrore) return Promise.resolve({ data: null, error: { code: o.regoleErrore, message: 'x' } }).then(ok)
             return Promise.resolve({ data: [{ guardia_attiva: o.guardia ?? true }], error: null }).then(ok)
+          }
+          if (tabella === 'listino_voci' && o.listinoErrore) {
+            return Promise.resolve({ data: null, error: { code: o.listinoErrore, message: 'x' } }).then(ok)
           }
           const dati = tabella === 'anni_sede'
             ? righe.filter((r) => filtri.every(([c, v]) => (r as Record<string, unknown>)[c] === v))
@@ -459,6 +464,50 @@ describe('annoPerScritturaPubblica', () => {
     expect(annoPerScritturaPubblica.length).toBeLessThanOrEqual(3)
     // Un cookie nel processo non cambia niente: la funzione non ha modo di leggerlo.
     expect(annoPerScritturaPubblica.toString()).not.toMatch(/cookie/i)
+  })
+})
+
+describe('annoPerScritturaPubblica · la finestra del deploy (4.5.15, I4)', () => {
+  // `domande_aperte` nasce spento per tutte le righe e lo riempie M45d, la stessa migrazione che crea `listino_voci.scadenza`.
+  // Finché la colonna non c'è, "nessun anno offerto" non vuol dire "iscrizioni chiuse": vuol dire "il riempimento non è ancora passato".
+  const eventi = (tipo: string) => logger.logEvento.mock.calls.filter((c) => c[2]?.tipo === tipo)
+  beforeEach(() => logger.logEvento.mockClear())
+
+  it('colonna ASSENTE (42703): la domanda si accetta come oggi (schema indietro), non è "chiuso"', async () => {
+    const { supabase } = finto({ listinoErrore: '42703' })
+    expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: null, annoId: null, schemaIndietro: true })
+    expect(eventi('anno-pubblico-chiuso')).toHaveLength(0)
+  })
+
+  it('colonna presente e flag spento: chiuso, e il log sale a `warn` perché a essere chiuso è il corrente', async () => {
+    const { supabase } = finto()
+    expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: null, annoId: null, chiuso: true })
+    const chiuso = eventi('anno-pubblico-chiuso')
+    expect(chiuso).toHaveLength(1)
+    expect(chiuso[0][1]).toBe('warn')
+  })
+
+  it('colonna presente, flag spento e NESSUN corrente (solo anni chiusi o in preparazione): chiuso, log `info`', async () => {
+    const righe = righeNormali().filter((r) => r.stato !== 'corrente')
+    const { supabase } = finto({ righe })
+    expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: null, annoId: null, chiuso: true })
+    expect(eventi('anno-pubblico-chiuso')[0][1]).toBe('info')
+  })
+
+  it('errore GENERICO nella lettura di prova: non si chiude, la domanda si accetta e si dice con un `warn`', async () => {
+    const { supabase } = finto({ listinoErrore: '57014' })
+    expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: null, annoId: null, schemaIndietro: true })
+    expect(eventi('anno-pubblico-chiuso')).toHaveLength(0)
+    const sonda = eventi('anno-pubblico-sonda-listino-fallita')
+    expect(sonda).toHaveLength(1)
+    expect(sonda[0][1]).toBe('warn')
+  })
+
+  it('con un anno che accetta domande la lettura di prova non serve: nemmeno la si tenta', async () => {
+    const righe = righeNormali()
+    righe[1].domande_aperte = true
+    const { supabase } = finto({ righe, listinoErrore: '42703' })
+    expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: S2, annoId: A2 })
   })
 })
 

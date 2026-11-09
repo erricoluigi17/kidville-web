@@ -858,7 +858,7 @@
   "erroreFrequenzaNonTrovata": "This enrolment no longer exists. Refresh the page.",
   "erroreFrequenzaNonDiConferma": "This child starts next year and is not attending yet: their enrolment is removed by archiving them from their record.",
   "erroreAlunnoInArrivoSenzaClasse": "This child arrives next year and is not attending yet: a class will be assigned when they start.",
-  "errorePassaggioNonPronto": "The year changeover cannot be done yet: the new year must have enrolment open and the current year must be the campus’s active one.",
+  "errorePassaggioNonPronto": "The year changeover cannot be done yet: the new year must have enrolment open and the current year must be the active one of the location.",
   "errorePassaggioTroppoPresto": "It is too early for the year changeover: it can be done from the day after the last open day of the current year.",
   "errorePassaggioGiaConfermato": "The year changeover has already been confirmed.",
   "errorePassaggioNonAnnullabile": "The changeover can no longer be cancelled: attendance or other data has already been recorded in the new year.",

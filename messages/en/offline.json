@@ -28,7 +28,8 @@
       "/admin/votazioni": "Elections",
       "/parent/votazioni": "Elections",
       "/admin/students/conferme": "Confirmations for next year",
-      "/admin/students/anno-prossimo": "Next year, where we stand"
+      "/admin/students/anno-prossimo": "Next year, where we stand",
+      "/admin/students/passaggio": "School year changeover"
     },
     "segmenti": {
       "alunni": "Students",

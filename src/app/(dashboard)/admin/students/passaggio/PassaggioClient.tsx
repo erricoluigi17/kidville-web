@@ -59,8 +59,8 @@ type Lettura<T> = { fase: 'carico' } | { fase: 'ok'; dati: T } | { fase: 'errore
 const ESITI: readonly EsitoRiga[] = ['continua', 'cambia_grado', 'nuova', 'esce', 'non_risposto'];
 const AVVISI: readonly Avviso[] = ['ritirato_tendina', 'senza_sezione'];
 /** Righe per pagina dell'elenco, e quante righe «Da decidere» si portano in vista per tipo di avviso. */
-const TETTO = 25;
-const TETTO_DA_DECIDERE = 50;
+const PER_PAGINA = 25;
+const RIGHE_DA_DECIDERE_MAX = 50;
 const VALORE_ESCE = '__esce__';
 const PERCORSO_CONFERME = '/admin/students/conferme';
 
@@ -162,7 +162,7 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     const q = new URLSearchParams();
     if (filtro !== 'tutti') q.set('esito', filtro);
     q.set('pagina', String(pagina));
-    q.set('tetto', String(TETTO));
+    q.set('tetto', String(PER_PAGINA));
     const r = await chiama('GET', `${base}?${q.toString()}`, uid);
     const d = riuscita(r) ? estraiLetta(r) : null;
     return d ? { ok: true, dati: d } : { ok: false, stato: r.stato, corpo: r.corpo };
@@ -175,7 +175,7 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
   const leggiContatori = useCallback(async (): Promise<Esito<Contatori>> => {
     const [perEsito, perAvviso] = await Promise.all([
       Promise.all(ESITI.map((e) => chiama('GET', `${base}?esito=${e}&pagina=1&tetto=1`, uid))),
-      Promise.all(AVVISI.map((a) => chiama('GET', `${base}?avviso=${a}&pagina=1&tetto=${TETTO_DA_DECIDERE}`, uid))),
+      Promise.all(AVVISI.map((a) => chiama('GET', `${base}?avviso=${a}&pagina=1&tetto=${RIGHE_DA_DECIDERE_MAX}`, uid))),
     ]);
     const guasto = [...perEsito, ...perAvviso].find((r) => !riuscita(r) || !estraiLetta(r));
     if (guasto) return { ok: false, stato: guasto.stato, corpo: guasto.corpo };
@@ -363,7 +363,7 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
   // La data di OGGI serve solo a spegnere il pulsante; la guardia vera è del server (409 PASSAGGIO_TROPPO_PRESTO).
   const nonAncora = !!passaggio.apribile_dal && oggiFiscaleISO() < passaggio.apribile_dal;
   const confermaSpenta = occupato || nonAncora || contatori.fase !== 'ok' || numeroDaDecidere > 0;
-  const pagine = Math.max(1, Math.ceil(totale / TETTO));
+  const pagine = Math.max(1, Math.ceil(totale / PER_PAGINA));
 
   const opzioniFiltro: Array<{ id: Filtro; label: string; count?: number }> = [
     { id: 'tutti', label: t('contTutti'), count: tuttiContati },

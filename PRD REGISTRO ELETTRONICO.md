@@ -1,14 +1,14 @@
-## 🗓️ Changelog — Anno scolastico, PR 4.6: le rette e i servizi dal listino — 2026-11-09 (ramo `worktree-agent-aeef99a24913dc91e`)
+## 🗓️ Changelog — Anno scolastico, PR 4.6: le rette e i servizi dal listino — 2026-11-09 (#305, `611d6f19`, in produzione il 09/11/2026)
 
-**Stato:** 🟡 in revisione, fino al merge. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109153822_anno_rette_dal_listino.sql` (M46a) e `20261109153825_anno_listino_rette_scrittura.sql` (M46b). Solo funzioni: nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno. Provate in PGlite (Postgres 18; la produzione è la 17), nessun controllo visivo e nessuna prova da telefono. Le rette già generate non si toccano: nessuna migrazione scrive su `pagamenti`.
+**Stato:** ✅ in `main` con la #305 (squash `611d6f19`), 09/11/2026. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109153822_anno_rette_dal_listino.sql` (M46a) e `20261109153825_anno_listino_rette_scrittura.sql` (M46b). Solo funzioni: nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno. Provate in PGlite (Postgres 18; la produzione è la 17), nessun controllo visivo e nessuna prova da telefono. Le rette già generate non si toccano: nessuna migrazione scrive su `pagamenti`.
 
 | Area | Stato | Che cosa è |
 |---|---|---|
-| Retta di ogni bambino dal listino dell'anno | 🟡 in revisione | La retta è quella del bambino, altrimenti quella del listino per la sua fascia, altrimenti quella del listino senza fascia. Il `150` scritto dentro la funzione non c'è più (M46a); un lock vieta di rimetterlo |
-| Generazione per un anno qualunque | 🟡 in revisione | Pagamenti › Genera rette sceglie l'anno; l'anteprima e la conferma contano le frequenze dell'anno, da un predicato solo (`rette_da_generare`); i mesi vengono dal listino (`listino_mesi`, vuoto = settembre-giugno) |
-| Scheda «Rette» nelle impostazioni di sede | 🟡 in revisione | Si scrive la retta di base dell'anno e, se serve, i mesi (M46b, `PUT /api/admin/anni/{id}/rette`); sugli anni in corso, in chiusura e chiusi la scheda mostra solo le rette (le altre schede riguardano le iscrizioni dell'anno prossimo); si scrive negli anni in preparazione, con iscrizioni aperte e in corso, mentre in chiusura e chiuso è in sola lettura |
-| Impostazioni › Retta e morosità | 🟡 in revisione | La casella della retta predefinita non c'è più; accanto al rimando si legge la retta di base dell'anno in corso, dal listino. `admin_settings.retta_default_importo` resta come specchio, scritto solo per l'anno corrente |
-| Servizi mensili per anno | 🟡 in revisione | `servizi_da_generare` e `genera_servizi_anno` leggono la frequenza viva dell'anno e i mesi del listino |
+| Retta di ogni bambino dal listino dell'anno | ✅ in produzione | La retta è quella del bambino, altrimenti quella del listino per la sua fascia, altrimenti quella del listino senza fascia. Il `150` scritto dentro la funzione non c'è più (M46a); un lock vieta di rimetterlo |
+| Generazione per un anno qualunque | ✅ in produzione | Pagamenti › Genera rette sceglie l'anno; l'anteprima e la conferma contano le frequenze dell'anno, da un predicato solo (`rette_da_generare`); i mesi vengono dal listino (`listino_mesi`, vuoto = settembre-giugno) |
+| Scheda «Rette» nelle impostazioni di sede | ✅ in produzione | Si scrive la retta di base dell'anno e, se serve, i mesi (M46b, `PUT /api/admin/anni/{id}/rette`); sugli anni in corso, in chiusura e chiusi la scheda mostra solo le rette (le altre schede riguardano le iscrizioni dell'anno prossimo); si scrive negli anni in preparazione, con iscrizioni aperte e in corso, mentre in chiusura e chiuso è in sola lettura |
+| Impostazioni › Retta e morosità | ✅ in produzione | La casella della retta predefinita non c'è più; accanto al rimando si legge la retta di base dell'anno in corso, dal listino. `admin_settings.retta_default_importo` resta come specchio, scritto solo per l'anno corrente |
+| Servizi mensili per anno | ✅ in produzione | `servizi_da_generare` e `genera_servizi_anno` leggono la frequenza viva dell'anno e i mesi del listino |
 
 **Che cosa cambia per le persone.**
 

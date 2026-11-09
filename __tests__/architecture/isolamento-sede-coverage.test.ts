@@ -2689,7 +2689,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 402 → 403 il 2026-11-09 (anno scolastico, PR 4.7, compito 4.7.6): entra `admin/anni/[annoSedeId]/cruscotto` (GET). CONTROLLATA,
             // nessuna esenzione: gate `requireStaff`, `assertAnnoSedeInScope` sull'anno prima di ogni lettura; la route non nomina nessun bambino.
             // Misurato rieseguendo il lock: 402 → 403.
-            routeConServiceRole: 403,
+            // 403 → 404 il 2026-11-09 (PR 4.7, 4.7.2): entra `admin/anni/[annoSedeId]/senza-firma-app` (GET). CONTROLLATA, nessuna esenzione:
+            // gate `requireStaff`, `assertAnnoSedeInScope`; i nomi sono SOLO della pagina e ogni bambino mostrato passa dal registro degli accessi.
+            routeConServiceRole: 404,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3049,7 +3051,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 618 → 619 il 2026-11-09 (4.5.16, F): `conferme/quota:POST`, CONTROLLATO; `handlerEsentati` non cambia (108).
             // 619 → 621 il 2026-11-09 (4.6.4): `rette:GET` e `rette:PUT`, entrambi CONTROLLATI; `handlerEsentati` non cambia (108).
             // 621 → 622 il 2026-11-09 (PR 4.7, 4.7.6): `cruscotto:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
-            handlerControllati: 622,
+            // 622 → 623 il 2026-11-09 (PR 4.7, 4.7.2): `senza-firma-app:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
+            handlerControllati: 623,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

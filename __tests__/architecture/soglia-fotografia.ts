@@ -431,6 +431,11 @@ export function posterioriCheContengono(
 // dichiarazione che nessuna guardia vede. Dopo il merge cambia solo la fotografia delle migrazioni (+2): rigenerata dalla produzione il 09/11/2026
 // nella PR-B (#305, `611d6f19`; 271 migrazioni applicate; la fotografia delle funzioni che scrivono nel registro riletta, contenuto identico: 66).
 // La dichiarazione resta vuota: le due migrazioni sono applicate, e nessuna guardia le segnalava.
+// 2026-11-09 · PR 4.7 (`20261109165244_anno_cruscotto.sql`): dentro la PR, la applica l'integrazione al merge, e NON è dichiarata qui. Crea soltanto
+// funzioni di LETTURA (`anno_cruscotto`, `anno_quota_piu_voci`): nessun UNIQUE o PRIMARY KEY, nessuna policy né RLS, nessuna FK verso `utenti`,
+// nessuna tabella con `scuola_id`, nessun bucket, nessuno schema delle candidature, nessuna scrittura nel registro dell'anno. Nessuna delle guardie
+// la segnalerebbe e il lock «nessuna voce morta» rifiuterebbe una dichiarazione che non serve. Dopo il merge cambia solo la fotografia delle
+// migrazioni (+1), che la PR-B rigenera dalla produzione.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
 }
 

@@ -17,7 +17,7 @@ import { fileSorgente, mascheraSorgente } from '../fixtures/sorgente'
  * `conferme` non si accontenta di `conferme/quota`.
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
- * Dichiara quante route ha visto (14, esatte: una route nuova nella cartella cambia il numero e si ferma qui, a decidere se ha un
+ * Dichiara quante route ha visto (15, esatte: una route nuova nella cartella cambia il numero e si ferma qui, a decidere se ha un
  * chiamante) e quante chiamate ha riconosciuto; ha il controllo positivo su sorgenti finti (un chiamante vero si vede, una
  * citazione in un commento no, un percorso più lungo non conta per uno più corto) e la PROVA ROSSA su una route finta che nessuno chiama.
  *
@@ -35,8 +35,8 @@ const CARTELLE_CHIAMANTI = ['src/app/(dashboard)', 'src/components', 'src/lib'] 
 /** Le route che per scelta non hanno un chiamante in questa interfaccia. Parte VUOTA: ogni voce vuole la sua ragione. */
 const SENZA_CHIAMANTE_AMMESSO: Record<string, string> = {}
 
-/** Quante route ci sono oggi in quelle due cartelle (misurato il 2026-11-09, ramo PR 4.7). */
-const ROUTE_ATTESE = 14
+/** Quante route ci sono oggi in quelle due cartelle (misurato il 2026-11-09, ramo PR 4.7, dopo l'allineamento alla 4.6: la route `rette` è una in più). */
+const ROUTE_ATTESE = 15
 
 const CHIUSURA = '[`\'"?]'
 const escapa = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

@@ -272,15 +272,19 @@ describe('4.5.16 (C) · riattivare', () => {
       await nuovoAlunno(AL)
       const a = await apri()
       expect((await archivia(AL)).status).toBe(200)
-      await approvaPerAnnoProssimo(AL, a, true)
-      expect((await archivia(AL)).status).toBe(200)
-      // ⚠️ MISURA (4.5.16): `archivia` riscrive l'uscita della riga già chiusa col giorno di OGGI (la frequenza si scrive prima di
-      // `alunni`, `campiFrequenzaDaAlunno`), quindi nel flusso reale le due date coincidono e la regola «uscita precedente
-      // all'archiviazione» non scatta. Qui l'uscita si riporta indietro a mano, come farebbe una correzione o un import: è la sola
-      // condizione in cui la regola decide. Vedi il report, dubbi.
+      // Si retrodata SOLO la prima uscita, prima che arrivi la domanda (come farebbe una correzione o un import). Dopo il secondo
+      // archivia non si ritocca niente: per un `in_arrivo` la frequenza di oggi è storia e `archivia` non la riscrive (4.5.16, C-bis).
       await db.query(
         `UPDATE public.frequenze f SET data_ingresso = public.giorno_roma(now()) - 30, data_uscita = public.giorno_roma(now()) - 5
            FROM public.anni_sede s WHERE f.anno_sede_id = s.id AND s.stato = 'corrente' AND f.alunno_id = $1`, [AL])
+      await approvaPerAnnoProssimo(AL, a, true)
+      expect((await alunno(AL)).stato).toBe('in_arrivo')
+      expect((await archivia(AL)).status).toBe(200)
+      const uscitaVecchia = await una<string>(
+        `SELECT to_char(f.data_uscita, 'YYYY-MM-DD') FROM public.frequenze f JOIN public.anni_sede s ON s.id = f.anno_sede_id
+          WHERE f.alunno_id = $1 AND s.stato = 'corrente'`, [AL])
+      expect(uscitaVecchia, 'la seconda archiviazione non riscrive la storia: l\u2019uscita resta quella di cinque giorni fa').toBe(
+        await una<string>(`SELECT to_char(public.giorno_roma(now()) - 5, 'YYYY-MM-DD')`, []))
 
       const ri = await riattiva(AL)
       expect(ri.status).toBe(200)
@@ -288,6 +292,7 @@ describe('4.5.16 (C) · riattivare', () => {
       expect((await alunno(AL)).stato).toBe('in_arrivo')
       const f = await frequenze(AL)
       expect(f.map((x) => `${x.anno_inizio}:${x.stato}`), 'l\u2019iscrizione dell\u2019anno dopo è viva, quella di oggi resta chiusa').toEqual(['2026:ritirato', '2027:in_attesa'])
+      expect(await accese(), 'invarianti a zero').toEqual([])
     })
   })
 

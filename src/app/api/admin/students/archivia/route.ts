@@ -232,7 +232,10 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // `gruppo_mensa_id` a NULL), poi `alunni`. Se la frequenza non si scrive, la scheda resta com'era. In fase A:
         // `alunni` e poi la frequenza, fail-open.
         const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
-        const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+        // Un bambino «in arrivo» non frequenta l'anno attivo: la sua frequenza di oggi, se c'è, è storia (la prima uscita) e
+        // archiviarlo non la riscrive (4.5.16, C-bis). Si scrive solo la scheda; la memoria della classe va nello stesso UPDATE.
+        // Le iscrizioni degli anni che vengono le chiude, come sempre, `chiudiFrequenzeAperte` più sotto.
+        const annoSedeId = prima.stato === 'in_arrivo' ? null : await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
 
         // La frequenza si scrive per prima, e lo specchio ricopia in `alunni` stato, archiviato_il e il distacco dalla
         // classe: se poi l'UPDATE di `alunni` fallisse, la memoria di dov'era il bambino andrebbe persa (la scheda non ha

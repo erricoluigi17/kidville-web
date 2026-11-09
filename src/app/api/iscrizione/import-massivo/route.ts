@@ -374,7 +374,7 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
     const contatoriPerSede = new Map<string, ContatoriSede>()
     const perSede = (sede: string): ContatoriSede => {
       const c = contatoriPerSede.get(sede) ?? {
-        inviate: 0, fallite: 0, daControllare: 0, duplicate: 0, restano: 0, gia: 0, emailSpedite: 0, quotaDaControllare: 0,
+        inviate: 0, fallite: 0, daControllare: 0, duplicate: 0, restano: 0, gia: 0, emailSpedite: 0, quotaDaControllare: 0, iscrizioniDaGuardare: 0,
       }
       contatoriPerSede.set(sede, c)
       return c
@@ -712,6 +712,7 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
         emailQuestoGiro += esito.emailSpedite
         perSede(scuolaId).emailSpedite += esito.emailSpedite
         perSede(scuolaId).quotaDaControllare += esito.quotaDaControllare ?? 0
+        perSede(scuolaId).iscrizioniDaGuardare += esito.iscrizioniDaGuardare ?? 0
 
         if (esito.esito === 'inviata') { inviate++; perSede(scuolaId).inviate++ }
         else if (esito.esito === 'gia_invitata') { gia++; perSede(scuolaId).gia++ }
@@ -818,6 +819,7 @@ interface ContatoriSede {
   emailSpedite: number
   /** Frequenze dell'anno prossimo nate senza una voce di quota chiara (4.5.15, I1). */
   quotaDaControllare: number
+  iscrizioniDaGuardare: number
 }
 
 /** Il riepilogo di fine giro, alla casella della sede. */
@@ -840,6 +842,9 @@ async function mandaRiepilogo(
     `Non riuscite (riprovano domani): ${n.fallite}`,
     ...(n.quotaDaControllare > 0
       ? [`Quote dell'anno prossimo da generare o controllare: ${n.quotaDaControllare} (in Conferme, «Genera la quota»)`]
+      : []),
+    ...(n.iscrizioniDaGuardare > 0
+      ? [`Iscrizioni dell'anno prossimo da guardare: ${n.iscrizioniDaGuardare} (la classe scelta non è stata applicata perché c'era già la sua, oppure l'iscrizione risulta chiusa per trasferimento o uscita e la domanda è stata collegata senza riaprirla)`]
       : []),
   ]
   const coda = n.quotaEsaurita

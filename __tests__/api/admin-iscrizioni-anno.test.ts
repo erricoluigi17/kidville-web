@@ -335,6 +335,24 @@ describe('domanda per l’anno PROSSIMO — bambino che ESISTE', () => {
     expect(json.warnings.join(' ')).toContain('la classe scelta non è stata applicata')
   })
 
+  it('iscrizione chiusa e riaperta dalla domanda: lo dice, e non dice «già confermato» (4.5.16, A)', async () => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-vecchia', creata: false, quota: 'creata', pagamento_id: 'pag-1', posti_oltre: false, riaperta: true }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect(json.warnings.join(' ')).toContain('era chiusa ed è stata riaperta')
+    expect(json.warnings.join(' ')).not.toContain('già confermato')
+  })
+
+  it('iscrizione trasferita o uscita: la domanda si collega senza riaprirla, e lo dice (4.5.16, A)', async () => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-vecchia', creata: false, quota: null, pagamento_id: null, posti_oltre: false, chiusa: true }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect(json.warnings.join(' ')).toContain('chiusa per trasferimento o uscita')
+    expect(json.warnings.join(' ')).not.toContain('già confermato')
+  })
+
   it('frequenza già esistente con la STESSA classe: nessun avviso sulla classe', async () => {
     conCodice()
     h.db.alunni = [scheda()]

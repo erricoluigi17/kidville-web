@@ -46,6 +46,8 @@
   "motivoEconomici": "Motivi economici",
   "motivoAltro": "Altro",
   "esitoConfermato": "Conferma registrata.",
+  "esitoRiaperta": "Iscrizione dell’anno prossimo riaperta: era stata chiusa.",
+  "esitoSezioneIgnorata": "La classe scelta non è stata applicata: per l’anno prossimo il bambino ha già la sua.",
   "esitoGiaConfermato": "Era già confermato: non è cambiato niente.",
   "esitoPostiOltre": "I posti autorizzati sono superati: la conferma è registrata lo stesso.",
   "esitoRettaPersonalizzata": "La retta personalizzata di quest’anno non si riporta: l’anno prossimo vale il listino.",

@@ -200,11 +200,15 @@ $$;
 -- dell'alunno (SEDE_DIVERSA). `p_campi` è una LISTA BIANCA: `retta_mensile`, `retta_esente`, `retta_a_carico_di`,
 -- `retta_split_config`, `intestatario_fatture`, `giorno_scadenza_pagamenti`, `gruppo_mensa_id`, `usa_pannolino`; ogni altra
 -- chiave (la sospensione, lo stato) è ignorata. Se la frequenza c'è già la restituisce (`creata:false`) e, se arriva una
--- domanda e la riga non ne ha una, la collega: una frequenza ritirata non si riapre e non riceve una voce (`quota` NULL).
+-- domanda e la riga non ne ha una, la collega. Una frequenza `ritirato` si RIAPRE qui, e solo qui (4.5.16): torna `in_attesa` senza uscita
+-- (mai `iscritto` a mano: lo porta il trigger), con la sezione chiesta se c'e', la domanda nuova al posto della vecchia e i `p_campi`
+-- presenti (le chiavi assenti restano); `tipo` e `origine` restano quelli della riga; la voce la fa `anno_quota_voce` perche' la riga
+-- e' di nuovo viva. Una frequenza `trasferito` o `uscito` non si riapre: `chiusa: true`, `quota` NULL.
 -- MAI blocca per i posti: `posti_oltre` è un avviso. `p_da` (4.5.6) è chi ha fatto il gesto: finisce in `pagamenti.creato_da` della voce
 -- nuova; chi non lo passa (la domanda pubblica) lascia l'autore vuoto, come prima.
 -- Risposta: {frequenza_id, creata, quota, pagamento_id, posti_oltre} e, SOLO se la frequenza c'era gia' con un'altra sezione,
--- `sezione_ignorata: true` (la sezione chiesta non e' stata applicata: la classe non cambia da qui).
+-- `sezione_ignorata: true` (la sezione chiesta non e' stata applicata: la classe non cambia da qui); `riaperta: true` se era ritirata
+-- e l'ha riaperta; `chiusa: true` se e' trasferita o uscita e non si e' toccata.
 CREATE OR REPLACE FUNCTION public.anno_registra_frequenza(
   p_alunno uuid, p_anno_sede uuid, p_tipo text, p_origine text, p_domanda uuid,
   p_section uuid, p_data_ingresso date, p_campi jsonb, p_da uuid DEFAULT NULL)
@@ -225,6 +229,8 @@ DECLARE
   v_fascia text;
   v_oltre  boolean;
   v_ignorata boolean := false;
+  v_riaperta boolean := false;
+  v_chiusa   boolean := false;
 BEGIN
   IF p_tipo IS NULL OR p_tipo NOT IN ('conferma', 'nuova') THEN
     RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'tipo')::text;
@@ -260,7 +266,35 @@ BEGIN
     END IF;
     -- 4.5.15 (M4): la frequenza c'e' gia' e la sezione NON si cambia da qui (la classe la sposta la segreteria, con il suo gesto).
     -- Ma chi ha chiesto una sezione diversa deve saperlo: il silenzio farebbe credere che sia stata applicata.
-    v_ignorata := p_section IS NOT NULL AND v_f.section_id IS DISTINCT FROM p_section;
+    IF v_f.stato = 'ritirato' THEN
+      -- 4.5.16: la STESSA riga (la coppia bambino-anno e' unica) si riapre. Le chiavi presenti in `p_campi` valgono, con la lista
+      -- bianca dell'INSERT; quelle assenti restano come sono. `tipo` e `origine` non cambiano.
+      UPDATE public.frequenze f SET
+        stato = 'in_attesa',
+        data_uscita = NULL,
+        section_id = coalesce(p_section, f.section_id),
+        domanda_id = coalesce(p_domanda, f.domanda_id),
+        retta_mensile = CASE WHEN v_campi ? 'retta_mensile'
+          THEN CASE WHEN nullif(v_campi ->> 'retta_mensile', '')::numeric > 0 THEN nullif(v_campi ->> 'retta_mensile', '')::numeric END
+          ELSE f.retta_mensile END,
+        retta_esente = CASE WHEN v_campi ? 'retta_esente' THEN coalesce((v_campi ->> 'retta_esente')::boolean, false) ELSE f.retta_esente END,
+        retta_a_carico_di = CASE WHEN v_campi ? 'retta_a_carico_di' THEN (v_campi ->> 'retta_a_carico_di')::uuid ELSE f.retta_a_carico_di END,
+        retta_split_config = CASE WHEN v_campi ? 'retta_split_config' THEN nullif(v_campi -> 'retta_split_config', 'null'::jsonb) ELSE f.retta_split_config END,
+        intestatario_fatture = CASE WHEN v_campi ? 'intestatario_fatture' THEN nullif(v_campi -> 'intestatario_fatture', 'null'::jsonb) ELSE f.intestatario_fatture END,
+        giorno_scadenza_pagamenti = CASE WHEN v_campi ? 'giorno_scadenza_pagamenti'
+          THEN CASE WHEN nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer BETWEEN 1 AND 28 THEN nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer END
+          ELSE f.giorno_scadenza_pagamenti END,
+        gruppo_mensa_id = CASE WHEN v_campi ? 'gruppo_mensa_id' THEN (v_campi ->> 'gruppo_mensa_id')::uuid ELSE f.gruppo_mensa_id END,
+        usa_pannolino = CASE WHEN v_campi ? 'usa_pannolino' THEN coalesce((v_campi ->> 'usa_pannolino')::boolean, false) ELSE f.usa_pannolino END
+       WHERE f.id = v_f.id;
+      SELECT * INTO v_f FROM public.frequenze WHERE id = v_f.id;
+      v_riaperta := true;
+    ELSIF v_f.stato IN ('in_attesa', 'iscritto') THEN
+      v_ignorata := p_section IS NOT NULL AND v_f.section_id IS DISTINCT FROM p_section;
+    ELSE
+      -- `trasferito` o `uscito`: non si riapre da qui. La domanda e' stata collegata (sopra); la voce non nasce.
+      v_chiusa := true;
+    END IF;
   ELSE
     v_retta := nullif(v_campi ->> 'retta_mensile', '')::numeric;
     v_giorno := nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer;
@@ -303,7 +337,9 @@ BEGIN
   RETURN jsonb_build_object('frequenza_id', v_f.id, 'creata', v_creata,
                             'quota', v_quota -> 'esito', 'pagamento_id', v_quota -> 'pagamento_id',
                             'posti_oltre', v_oltre)
-         || CASE WHEN v_ignorata THEN jsonb_build_object('sezione_ignorata', true) ELSE '{}'::jsonb END;
+         || CASE WHEN v_ignorata THEN jsonb_build_object('sezione_ignorata', true) ELSE '{}'::jsonb END
+         || CASE WHEN v_riaperta THEN jsonb_build_object('riaperta', true) ELSE '{}'::jsonb END
+         || CASE WHEN v_chiusa THEN jsonb_build_object('chiusa', true) ELSE '{}'::jsonb END;
 END
 $$;
 
@@ -361,6 +397,7 @@ DECLARE
   v_r        jsonb;
   v_nuova    uuid;
   v_stato    text;
+  v_sez_reale uuid;
 BEGIN
   SELECT * INTO v_p FROM public.frequenze WHERE id = p_frequenza FOR UPDATE;
   IF NOT FOUND THEN
@@ -398,13 +435,6 @@ BEGIN
     END IF;
   END IF;
 
-  SELECT s.school_type::text, s.fascia INTO v_tipo_p, v_fascia_p FROM public.sections s WHERE s.id = v_p.section_id;
-  SELECT s.school_type::text, s.fascia INTO v_tipo_n, v_fascia_n FROM public.sections s WHERE s.id = v_sezione;
-  v_cambia := coalesce(p_cambia_grado, false)
-    OR (v_p.section_id IS NOT NULL AND v_sezione IS NOT NULL
-        AND (v_tipo_p IS DISTINCT FROM v_tipo_n
-             OR (v_fascia_p IS NOT NULL AND v_fascia_n IS NOT NULL AND v_fascia_p <> v_fascia_n)));
-
   -- I campi di famiglia (la lista bianca di `anno_registra_frequenza`); la retta e la sospensione restano fuori.
   v_campi := jsonb_build_object(
     'retta_esente', v_p.retta_esente,
@@ -415,24 +445,27 @@ BEGIN
     'gruppo_mensa_id', v_p.gruppo_mensa_id,
     'usa_pannolino', v_p.usa_pannolino);
 
-  -- Una conferma ritirata (4.5.15, «Ritira la conferma») si rifà: la STESSA riga si riapre (la coppia bambino-anno è unica),
-  -- `in_attesa` e senza uscita. Mai `iscritto` a mano: se moduli e quota sono a posto lo porta il trigger. Una frequenza chiusa per
-  -- altro (`trasferito`, `uscito`) non si riapre da qui: FREQUENZA_NON_VIVA, più sotto. La voce della quota, se manca, la rifà
-  -- `anno_registra_frequenza` (la frequenza è di nuovo viva).
-  UPDATE public.frequenze f
-     SET stato = 'in_attesa', data_uscita = NULL
-   WHERE f.alunno_id = v_p.alunno_id AND f.anno_sede_id = v_n.id AND f.stato = 'ritirato' AND f.origine = 'conferma';
-
+  -- Una frequenza ritirata (4.5.15, «Ritira la conferma») si rifà: la riapre `anno_registra_frequenza`, e solo lui (4.5.16), con la
+  -- sezione calcolata qui sopra. Una frequenza chiusa per altro (`trasferito`, `uscito`) non si riapre: FREQUENZA_NON_VIVA, più sotto.
   v_r := public.anno_registra_frequenza(v_p.alunno_id, v_n.id, 'conferma', 'conferma', NULL, v_sezione, NULL, v_campi, p_da);
   v_nuova := (v_r ->> 'frequenza_id')::uuid;
 
-  SELECT f.stato INTO v_stato FROM public.frequenze f WHERE f.id = v_nuova;
+  SELECT f.stato, f.section_id INTO v_stato, v_sez_reale FROM public.frequenze f WHERE f.id = v_nuova;
   IF v_stato NOT IN ('in_attesa', 'iscritto') THEN
     -- la frequenza dell'anno prossimo è stata ritirata: da qui non si riapre (e `registra` non le ha dato una voce)
     RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('frequenza_id', v_nuova, 'stato', v_stato)::text;
   END IF;
 
   UPDATE public.frequenze SET continua_da = v_p.id WHERE id = v_nuova AND continua_da IS NULL;
+
+  -- 4.5.16: `cambia_grado` si calcola dalla sezione che la riga ha DAVVERO dopo la registrazione, non da quella chiesta: se la
+  -- sezione e' stata ignorata (la riga c'era viva con un'altra) non si dice che cambia grado, a meno della spunta `p_cambia_grado`.
+  SELECT s.school_type::text, s.fascia INTO v_tipo_p, v_fascia_p FROM public.sections s WHERE s.id = v_p.section_id;
+  SELECT s.school_type::text, s.fascia INTO v_tipo_n, v_fascia_n FROM public.sections s WHERE s.id = v_sez_reale;
+  v_cambia := coalesce(p_cambia_grado, false)
+    OR (v_p.section_id IS NOT NULL AND v_sez_reale IS NOT NULL
+        AND (v_tipo_p IS DISTINCT FROM v_tipo_n
+             OR (v_fascia_p IS NOT NULL AND v_fascia_n IS NOT NULL AND v_fascia_p <> v_fascia_n)));
 
   RETURN jsonb_build_object(
     'frequenza_id', v_nuova,
@@ -441,7 +474,9 @@ BEGIN
     'retta_personalizzata_precedente', v_p.retta_mensile IS NOT NULL,
     'quota', v_r -> 'quota',
     'pagamento_id', v_r -> 'pagamento_id',
-    'posti_oltre', (v_r ->> 'posti_oltre')::boolean);
+    'posti_oltre', (v_r ->> 'posti_oltre')::boolean)
+    || CASE WHEN (v_r ->> 'sezione_ignorata')::boolean THEN jsonb_build_object('sezione_ignorata', true) ELSE '{}'::jsonb END
+    || CASE WHEN (v_r ->> 'riaperta')::boolean THEN jsonb_build_object('riaperta', true) ELSE '{}'::jsonb END;
 END
 $$;
 

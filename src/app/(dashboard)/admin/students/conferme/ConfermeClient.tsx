@@ -443,7 +443,8 @@ function RigaConferma({
       { frequenza_id: r.frequenza_id, ...(vaPrimaria ? { section_id: sezione, cambia_grado: true } : {}) },
       (d) =>
         [
-          d?.creata === false ? t('esitoGiaConfermato') : t('esitoConfermato'),
+          d?.riaperta === true ? t('esitoRiaperta') : d?.creata === false ? t('esitoGiaConfermato') : t('esitoConfermato'),
+          d?.sezione_ignorata === true ? t('esitoSezioneIgnorata') : '',
           d?.posti_oltre === true ? t('esitoPostiOltre') : '',
           d?.retta_personalizzata_precedente === true ? t('esitoRettaPersonalizzata') : '',
           d?.quota === 'senza_listino' ? t('esitoQuotaSenzaListino') : '',

@@ -37,8 +37,12 @@ export type RisultatoRegistra = {
   quota: QuotaEsito | null
   pagamento_id: string | null
   posti_oltre: boolean
-  /** C'è solo (e vale `true`) se la frequenza esisteva già con un'altra sezione: quella chiesta NON è stata applicata (4.5.15, M4). */
+  /** C'è solo (e vale `true`) se la frequenza esisteva già viva con un'altra sezione: quella chiesta NON è stata applicata (4.5.15, M4). */
   sezione_ignorata?: boolean
+  /** Solo se era `ritirato` e questa chiamata l'ha riaperta (4.5.16): è l'unica strada che riapre. */
+  riaperta?: boolean
+  /** Solo se era `trasferito` o `uscito`: non si riapre, la domanda è stata collegata e la voce non nasce (4.5.16). */
+  chiusa?: boolean
 }
 
 export type CodiceIscrizione = CodiceAnno | 'SCRITTURA_FALLITA'
@@ -133,6 +137,8 @@ export async function registraFrequenzaPerAnno(supabase: SupabaseClient, a: Regi
       entita_id: data.frequenza_id,
       posti_oltre: data.posti_oltre === true,
       sezione_ignorata: data.sezione_ignorata === true,
+      riaperta: data.riaperta === true,
+      chiusa: data.chiusa === true,
     })
     if (data.quota) logEsitoQuota(data.quota, OPERAZIONE, data.pagamento_id)
     return { ok: true, ...data }
@@ -156,6 +162,10 @@ export type RisultatoConferma = {
   quota: QuotaEsito | null
   pagamento_id: string | null
   posti_oltre: boolean
+  /** Come in `RisultatoRegistra`: la sezione chiesta non è stata applicata (la riga c'era viva con un'altra). */
+  sezione_ignorata?: boolean
+  /** La conferma ha riaperto una frequenza ritirata (4.5.16). */
+  riaperta?: boolean
 }
 export type EsitoConferma = ({ ok: true } & RisultatoConferma) | EsitoFallito
 
@@ -203,6 +213,8 @@ export async function confermaIscrizione(supabase: SupabaseClient, a: ConfermaAr
       utente: a.da,
       cambia_grado: data.cambia_grado === true,
       posti_oltre: data.posti_oltre === true,
+      sezione_ignorata: data.sezione_ignorata === true,
+      riaperta: data.riaperta === true,
     })
     if (data.quota) logEsitoQuota(data.quota, OP_CONFERMA, data.pagamento_id)
     return { ok: true, ...data }

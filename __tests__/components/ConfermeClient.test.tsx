@@ -62,6 +62,7 @@ const s = {
   confermata: false,
   quota: 'da_pagare' as 'da_pagare' | 'assente', // la quota che il server legge per la riga
   quotaRitiro: 'tolta' as string, // l'esito della voce che «Ritira la conferma» risponde
+  extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
 }
 const fetchMock = vi.fn()
@@ -89,7 +90,7 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`) && metodo === 'POST') {
     s.confermata = true
     s.quota = s.quotaPost === 'creata' ? 'da_pagare' : 'assente'
-    return ok({ frequenza_id: F_NUOVA, creata: true, cambia_grado: false, retta_personalizzata_precedente: false, quota: s.quotaPost, pagamento_id: null, posti_oltre: false })
+    return ok({ frequenza_id: F_NUOVA, creata: true, cambia_grado: false, retta_personalizzata_precedente: false, quota: s.quotaPost, pagamento_id: null, posti_oltre: false, ...s.extraPost })
   }
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`)) {
     const q = new URL(url, 'http://localhost').searchParams
@@ -130,6 +131,7 @@ beforeEach(() => {
   s.confermata = false
   s.quota = 'da_pagare'
   s.quotaPost = 'creata'
+  s.extraPost = {}
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
@@ -357,6 +359,18 @@ describe('ConfermeClient — l’esito resta in vista quando la riga esce dal fi
 
 describe('ConfermeClient — l’esito della quota (4.5.15, I1)', () => {
   const colonnaQuota = (riga: HTMLElement) => within(riga).getAllByRole('cell')[3]
+
+  it('conferma che riapre un\u2019iscrizione chiusa, con una classe non applicata: la schermata dice tutte e due le cose (4.5.16, A)', async () => {
+    s.confermato = false
+    s.extraPost = { creata: false, riaperta: true, sezione_ignorata: true }
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneConferma }))
+    const stato = await screen.findByRole('status', { name: itConferme.esitoRegione })
+    expect(stato).toHaveTextContent(itConferme.esitoRiaperta)
+    expect(stato).toHaveTextContent(itConferme.esitoSezioneIgnorata)
+    expect(stato).not.toHaveTextContent(itConferme.esitoGiaConfermato)
+  })
 
   it('una conferma senza listino dice «Quota da generare», e il pulsante riprova sulla stessa route finché la voce non nasce', async () => {
     s.quota = 'assente'

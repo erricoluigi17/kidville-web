@@ -46,6 +46,8 @@
   "motivoEconomici": "Financial reasons",
   "motivoAltro": "Other",
   "esitoConfermato": "Confirmation recorded.",
+  "esitoRiaperta": "Next-year enrolment reopened: it had been closed.",
+  "esitoSezioneIgnorata": "The chosen class was not applied: the child already has one for next year.",
   "esitoGiaConfermato": "Already confirmed: nothing has changed.",
   "esitoPostiOltre": "The authorised places are exceeded: the confirmation is recorded all the same.",
   "esitoRettaPersonalizzata": "This year’s personalised fee does not carry over: next year the price list applies.",

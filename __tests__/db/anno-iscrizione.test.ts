@@ -242,7 +242,7 @@ describe('anno_registra_frequenza: la frequenza dell’anno aperto', () => {
     })
   })
 
-  prova('un bambino con frequenza di origine `domanda` ritirato resta ritirato dopo un secondo `registra`', async () => {
+  prova('un bambino con frequenza di origine `domanda` ritirato viene RIAPERTO da un secondo `registra` (4.5.16 A: una sola strada)', async () => {
     await inRollback(async () => {
       await giorni()
       await nuovoAlunno(AL, 'iscritto')
@@ -256,11 +256,9 @@ describe('anno_registra_frequenza: la frequenza dell’anno aperto', () => {
       expect(await una<string>(`SELECT stato FROM public.alunni WHERE id = $1`, [AL])).toBe('ritirato')
 
       const di_nuovo = await registra({ alunno: AL })
-      // `quota` NULL = «niente toccato»: la voce nata prima resta quella, nessuna nuova
-      expect(di_nuovo).toMatchObject({ creata: false, frequenza_id: r.frequenza_id, quota: null, pagamento_id: r.pagamento_id })
-      expect((await frequenza(r.frequenza_id as string)).stato).toBe('ritirato')
-      expect(await una<string>(`SELECT stato FROM public.alunni WHERE id = $1`, [AL])).toBe('ritirato')
-      expect(await una<number>(`SELECT count(*)::int FROM public.pagamenti WHERE alunno_id = $1`, [AL]), 'nessuna voce nuova per un ritirato: resta quella di prima').toBe(1)
+      // la stessa riga, riaperta: nessuna riga nuova, e lo dice (`riaperta`)
+      expect(di_nuovo).toMatchObject({ creata: false, frequenza_id: r.frequenza_id, riaperta: true })
+      expect((await frequenza(r.frequenza_id as string)).stato).not.toBe('ritirato')
     })
   })
 })

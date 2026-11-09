@@ -409,6 +409,9 @@ export const POST = withRoute('admin/anni/[annoSedeId]/conferme:POST', async (re
       quota: esito.quota,
       pagamento_id: esito.pagamento_id,
       posti_oltre: esito.posti_oltre,
+      // La sezione chiesta non è stata applicata (la riga c'era viva con un'altra) / la conferma ha riaperto una frequenza ritirata.
+      ...(esito.sezione_ignorata === true ? { sezione_ignorata: true } : {}),
+      ...(esito.riaperta === true ? { riaperta: true } : {}),
     },
   })
 })

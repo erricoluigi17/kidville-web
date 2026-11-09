@@ -2298,12 +2298,19 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         } else if ('saltata' in esito) {
           // Lo schema dell'anno c'è (l'anno è stato letto) ma la funzione no: un ambiente a metà. Non è un errore da nascondere.
           warnings.push(`Bambino ${ci + 1}: la frequenza dell'anno prossimo non è stata registrata (funzione non disponibile).`)
+        } else if (esito.riaperta === true) {
+          // 4.5.16: l'iscrizione dell'anno prossimo era stata chiusa (conferma ritirata o bambino archiviato) e la nuova domanda la riapre.
+          warnings.push(`Bambino ${ci + 1}: l'iscrizione dell'anno prossimo era chiusa ed è stata riaperta.`)
+        } else if (esito.chiusa === true) {
+          warnings.push(`Bambino ${ci + 1}: per l'anno prossimo l'iscrizione risulta chiusa per trasferimento o uscita: la domanda è stata collegata senza riaprirla.`)
         } else if (!esito.creata) {
           warnings.push(`Bambino ${ci + 1}: già confermato per l'anno prossimo: la domanda è stata collegata.`)
-          // La classe scelta in approvazione non si applica a una frequenza che c'è già: la segreteria deve saperlo (4.5.15, M4).
-          if (esito.sezione_ignorata === true) {
-            warnings.push(`Bambino ${ci + 1}: la classe scelta non è stata applicata, perché per l'anno prossimo ha già la sua. Se serve cambiarla, si fa da «Conferme».`)
-          }
+        }
+        // La classe scelta in approvazione non si applica a una frequenza viva che c'è già: la segreteria deve saperlo (4.5.15, M4). Il
+        // comando che c'è: per un bambino che frequenta, in «Conferme» si ritira la conferma e si rifà scegliendo la classe; per gli altri
+        // la classe si corregge al passaggio d'anno (4.5.16).
+        if (esito.ok && !('saltata' in esito) && esito.sezione_ignorata === true) {
+          warnings.push(`Bambino ${ci + 1}: la classe scelta non è stata applicata, perché per l'anno prossimo ha già la sua. Se il bambino frequenta, in «Conferme» si ritira la conferma e si rifà scegliendo la classe; altrimenti la classe si corregge al passaggio d'anno.`)
         }
         // L'esito della quota (4.5.15, I1): la frequenza c'è, ma la voce no (o ce n'è più d'una). La segreteria lo deve sapere ora,
         // non scoprirlo a settembre. Il testo dice che cosa fare; la riga si sistema da «Conferme», pulsante «Genera la quota».

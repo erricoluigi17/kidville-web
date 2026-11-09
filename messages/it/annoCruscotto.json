@@ -28,6 +28,8 @@
   "nuoveTitolo": "Nuove iscrizioni",
   "nuoveRiga": "{n, plural, one {# bambino che arriva da fuori o che torna} other {# bambini che arrivano da fuori o che tornano}}",
   "apriLista": "Apri l’elenco",
+  "passaggioIntro": "Quando le risposte sono arrivate, si prepara il passaggio d’anno: chi passa, chi cambia classe, chi esce.",
+  "passaggioApri": "Apri il passaggio d’anno",
   "quoteTitolo": "Quote",
   "quotaSaldate": "Saldate",
   "quotaDaPagare": "Da pagare",

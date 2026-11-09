@@ -2661,7 +2661,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `moduli`, `posti` e `sezioni`. CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope`
             // (la sede dell'anno deve essere fra quelle dell'utente) prima di ogni lettura o scrittura.
             // Misurato rieseguendo il lock: 390 → 394.
-            routeConServiceRole: 394,
+            // 394 → 395 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.8): entra `admin/iscrizioni/sposta-anno`
+            // (POST). CONTROLLATA, nessuna esenzione: gate `requireStaff`, e la sede della domanda dev'essere fra quelle
+            // di `scuoleDiUtente` (403 `SEDE_NON_ACCESSIBILE`) PRIMA di qualunque scrittura; l'UPDATE ha anche
+            // `.eq('status','pending')`. Misurato rieseguendo il lock: 394 → 395.
+            routeConServiceRole: 395,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3008,7 +3012,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 600 → 608 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.3): otto handler nelle quattro route sopra
             // (quote GET/PUT, moduli GET/PUT/DELETE, posti GET/PUT, sezioni POST), tutti CONTROLLATI; `handlerEsentati`
             // non cambia (108). Misurato rieseguendo il lock: 600 → 608.
-            handlerControllati: 608,
+            // 608 → 609 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.8): `admin/iscrizioni/sposta-anno:POST`
+            // (vedi `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // Misurato rieseguendo il lock: 608 → 609.
+            handlerControllati: 609,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

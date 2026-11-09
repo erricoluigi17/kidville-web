@@ -595,9 +595,9 @@ describe('ConfermeClient — revisione finale: il perimetro del cruscotto, il fi
     render(<ConfermeClient />)
     await screen.findByText('CognomeArrivo NomeArrivo')
     expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes(`ambito=anno&modulo=${MOD}`))).toBe(true)
-    expect(screen.getByText(itConferme.ambitoAnnoModuloNota)).toBeInTheDocument()
+    expect(screen.getByText(itConferme.ambitoAnnoModuloNotaSenzaTitolo)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: itConferme.ambitoAnnoEsci }))
-    await waitFor(() => expect(screen.queryByText(itConferme.ambitoAnnoModuloNota)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(itConferme.ambitoAnnoModuloNotaSenzaTitolo)).toBeNull())
     const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
     expect(ultimo).toContain('vista=nuove')
     expect(ultimo).toContain('conferma=mancano_moduli')
@@ -637,5 +637,52 @@ describe('ConfermeClient — revisione finale: il perimetro del cruscotto, il fi
     expect(screen.queryByText(itConferme.nessunAnno)).toBeNull()
     expect(fetchMock).not.toHaveBeenCalled()
     h.sede = 'ffffffff-ffff-4fff-8fff-ffffffffff01'
+  })
+})
+
+describe('ConfermeClient — ri-revisione: modulo di un’altra sede, nota col titolo, etichetta della classe', () => {
+  const MOD = '71717171-7171-4717-8717-717171717171'
+
+  it('N1 · un modulo rifiutato dalla route (422) dice il messaggio e offre di togliere il filtro, non «Totale: 0»', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}`
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url: string, init?: unknown) =>
+      String(url).includes('modulo=')
+        ? Promise.resolve({ ok: false, status: 422, json: async () => ({ error: 'Questo modulo non è richiesto', codice: 'MODULO_NON_RICHIESTO' }) })
+        : base(url, init))
+    render(<ConfermeClient />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Questo modulo non è richiesto')
+    expect(screen.queryByText(/Totale/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: itConferme.ambitoAnnoTogliModulo }))
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).not.toContain('modulo=')
+    expect(ultimo).toContain('ambito=anno')
+  })
+
+  it('N2 · la nota sopra la lista di un modulo lo nomina', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}&titolo=Delega%20al%20ritiro`
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(screen.getByText(itConferme.ambitoAnnoModuloNota.replace('{titolo}', 'Delega al ritiro'))).toBeInTheDocument()
+    expect(itConferme.ambitoAnnoModuloNota).not.toMatch(/un solo modulo/)
+  })
+
+  it('N3 · l’etichetta della classe dice il vero nelle due viste', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    expect(screen.queryAllByText(/Classe dell’anno prossimo/)).toHaveLength(0)
+    // le righe delle Nuove portano la classe dell'anno nuovo: il finto gliene dà una
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: unknown) => {
+      const r = (await base(url, init)) as { ok: boolean; status: number; json: () => Promise<{ data?: { righe?: Array<Record<string, unknown>> } }> }
+      if (!String(url).includes('vista=nuove')) return r
+      const corpo = await r.json()
+      return { ...r, json: async () => ({ ...corpo, data: { ...corpo.data, righe: (corpo.data?.righe ?? []).map((x) => ({ ...x, classe: 'Sezione A' })) } }) }
+    })
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(screen.queryAllByText(/Classe di oggi/)).toHaveLength(0)
+    expect(screen.queryAllByText(/Classe dell’anno prossimo/).length).toBeGreaterThan(0)
   })
 })

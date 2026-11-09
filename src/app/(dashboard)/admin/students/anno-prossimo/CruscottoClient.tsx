@@ -290,7 +290,7 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
                   <span className="text-kidville-sub">({m.lista === 'conferma' ? t('moduloListaConferma') : t('moduloListaNuova')})</span>
                   <span>{t('moduloMancanti', { n: m.mancanti })}</span>
                   {m.mancanti > 0 && (
-                    <Link href={`${TUTTO_L_ANNO}&conferma=mancano_moduli&modulo=${m.modulo_id}`} className={collegamento}>
+                    <Link href={`${TUTTO_L_ANNO}&conferma=mancano_moduli&modulo=${m.modulo_id}&titolo=${encodeURIComponent(m.titolo ?? m.codice)}`} className={collegamento}>
                       {t('moduloApriMancanti')}
                     </Link>
                   )}

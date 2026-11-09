@@ -153,6 +153,11 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   const NESSUNO = new Set<string>()
   const richiestiDi = (tipo: Nuova['tipo']): Set<string> => (tipo ? perLista[tipo] : NESSUNO)
   const idTutti = [...perLista.conferma, ...perLista.nuova]
+  // Un modulo che non è dell'anno di questa sede (cambiata la sede con la lista di un modulo aperta) NON è «zero bambini»: è un rifiuto che
+  // la pagina sa dire (revisione, N1). Prima rispondeva 200 con totale 0, e quello zero era falso.
+  if (moduloScelto && !idTutti.includes(moduloScelto)) {
+    return rispostaErroreImpostazioni({ message: 'MODULO_NON_RICHIESTO' }, { ...ctx, tipoRifiuto: TIPO_RIFIUTO, lettura: true })
+  }
   /** I due casi dell'incrocio moduli/quota (4.7.4), letti dai flag che il database mantiene sulla frequenza. */
   const incrocioModuliQuota = (n: { quota_saldata: boolean; moduli_completi?: boolean | null }, filtro: 'moduli_senza_quota' | 'quota_senza_moduli'): boolean =>
     filtro === 'moduli_senza_quota' ? n.moduli_completi === true && !n.quota_saldata : n.quota_saldata === true && n.moduli_completi !== true

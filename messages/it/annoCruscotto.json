@@ -64,7 +64,7 @@
   "confrontoIntro": "Lo stesso giorno di un anno fa ({giorno}).",
   "confrontoRiga": "{anno}: {domande, plural, one {# domanda} other {# domande}}, {conferme, plural, one {# conferma} other {# conferme}}",
   "confrontoQuestoAnno": "Quest’anno",
-  "confrontoNota": "Quest’anno le conferme ritirate non si contano, come in «Hanno confermato».",
+  "confrontoNota": "Quest’anno le conferme ritirate non si contano.",
   "confrontoRicostruito": "Per l’anno scorso le conferme non avevano una data vera: sono ricostruite dalla data di creazione dei bambini, e le domande si contano solo da quando esiste il modulo online (prima non ci sono dati). I numeri dell’anno scorso sono approssimati.",
   "confrontoVuoto": "Non c’è un anno precedente con cui confrontare.",
   "aggiorna": "Aggiorna",

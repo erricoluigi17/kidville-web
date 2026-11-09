@@ -283,6 +283,21 @@ describe('ogni numero con un link è uguale al totale della lista che il link ap
     })
   })
 
+  prova('un modulo che non è dell’anno di questa sede è un rifiuto 422, non «zero bambini» (cambio sede con la lista aperta)', async () => {
+    await inRollback(async () => {
+      h.db = db
+      await scenario()
+      const estraneo = '22222222-2222-4222-8222-2222222222aa'
+      const r = await CONFERME(get('conferme', `?vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${estraneo}`), contesto(A27()))
+      expect(r.status).toBe(422)
+      expect(((await r.json()) as { codice: string }).codice).toBe('MODULO_NON_RICHIESTO')
+      // controllo positivo: un modulo vero della stessa lista continua a rispondere 200
+      const mod = await una<string>(`SELECT id FROM public.moduli_richiesti WHERE anno_sede_id = $1 AND lista = 'conferma' LIMIT 1`, [A27()])
+      const ok = await CONFERME(get('conferme', `?vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${mod}`), contesto(A27()))
+      expect(ok.status).toBe(200)
+    })
+  })
+
   prova('i parametri nuovi si rifiutano dove non hanno senso', async () => {
     await inRollback(async () => {
       h.db = db

@@ -109,7 +109,10 @@
   "filtroModuliSenzaQuota": "Forms handed in, fee to pay",
   "filtroQuotaSenzaModuli": "Fee paid, forms missing",
   "ambitoAnnoNota": "You are looking at every enrolment of the year, confirmations and new ones together: these are the children the dashboard numbers count.",
-  "ambitoAnnoModuloNota": "You are looking at the enrolments of the year that are missing one form, confirmations and new ones together.",
+  "ambitoAnnoModuloNota": "You are looking at the enrolments of the year that are missing this form: {titolo}. Confirmations and new ones together.",
   "ambitoAnnoEsci": "Show new enrolments only",
-  "sedeCosa": "next-year confirmations"
+  "sedeCosa": "next-year confirmations",
+  "ambitoAnnoModuloNotaSenzaTitolo": "You are looking at the enrolments of the year that are missing this form. Confirmations and new ones together.",
+  "ambitoAnnoTogliModulo": "Remove the form filter",
+  "classeAnnoNuovo": "Class next year: {classe}"
 }

@@ -156,7 +156,12 @@ const estraiModuli = (r: Risposta): ModuloApi[] | null => {
 
 const secondario =
   'inline-flex items-center gap-2 rounded-pill border-2 border-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.05em] text-kidville-green transition-transform hover:bg-kidville-green-soft active:scale-95 disabled:pointer-events-none disabled:opacity-45';
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Il `codice` d'errore del corpo di una risposta rifiutata, se c'è. */
+const codiceDi = (corpo: unknown): string | null => {
+  const c = (corpo as { codice?: unknown } | null)?.codice;
+  return typeof c === 'string' ? c : null;
+};
+const UUID =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MOTIVI = ['altra_scuola', 'trasloco', 'fine_ciclo', 'motivi_economici', 'altro'] as const;
 
 export function ConfermeClient() {
@@ -193,6 +198,9 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   // perimetri dei numeri del cruscotto. Valgono finché non si cambia vista o filtro, oppure si tolgono con il pulsante.
   const [ambito, setAmbito] = useState<boolean>(vistaUrl === 'nuove' && dallUrl?.get('ambito') === 'anno');
   const moduloUrl = dallUrl?.get('modulo') ?? '';
+  // Il titolo serve solo a nominare il modulo nella nota; non va alla route.
+  // Il titolo serve solo a nominare il modulo nella nota; non va alla route. Si legge una volta, come il resto.
+  const [titoloModulo] = useState<string>(() => (dallUrl?.get('titolo') ?? '').slice(0, 120));
   const [modulo, setModulo] = useState<string>(filtroUrlValido === 'mancano_moduli' && UUID.test(moduloUrl) ? moduloUrl : '');
   // Le righe lavorate dopo l'ultima lettura: quello che il server ha risposto a una spunta, per frequenza.
   const [aggiornate, setAggiornate] = useState<Record<string, Aggiornamento>>({});
@@ -226,6 +234,11 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
     setEsito(null);
     setEsitiQuota({});
   }, []);
+  // Il filtro per modulo non vale più (N1): si toglie e si riparte dalla prima pagina.
+  const togliModulo = useCallback(() => {
+    setModulo('');
+    setPagina(1);
+  }, []);
   const aggiorna = useCallback((frequenzaId: string, a: Aggiornamento) => setAggiornate((x) => ({ ...x, [frequenzaId]: a })), []);
 
   const fascia = (codice: string): string => {
@@ -243,12 +256,16 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
 
   if (lettura.fase === 'carico') return <p role="status" className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>;
   if (lettura.fase === 'errore') {
+    // Cambiata la sede con la lista di un modulo aperta: il modulo è di un'altra sede. Non è «zero bambini»: si toglie il filtro (N1).
+    const moduloRifiutato = modulo !== '' && codiceDi(lettura.corpo) === 'MODULO_NON_RICHIESTO';
     return (
       <div>
         <p role="alert" className="font-maven text-sm text-kidville-error">
           {lettura.stato === 0 ? t('erroreRete') : lettura.stato === 403 ? t('errorePermesso') : messaggioDaCorpo(lettura.corpo, t('erroreGenerico'))}
         </p>
-        <button type="button" className={`${secondario} mt-3`} onClick={rilegge}>{t('riprova')}</button>
+        <button type="button" className={`${secondario} mt-3`} onClick={moduloRifiutato ? togliModulo : rilegge}>
+          {moduloRifiutato ? t('ambitoAnnoTogliModulo') : t('riprova')}
+        </button>
       </div>
     );
   }
@@ -323,7 +340,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
       {vista === 'nuove' && !ambito && <p className={hint}>{t('nuoveNota')}</p>}
       {ambito && (
         <div className="flex flex-wrap items-center gap-3">
-          <p className={hint}>{modulo ? t('ambitoAnnoModuloNota') : t('ambitoAnnoNota')}</p>
+          <p className={hint}>{modulo ? (titoloModulo ? t('ambitoAnnoModuloNota', { titolo: titoloModulo }) : t('ambitoAnnoModuloNotaSenzaTitolo')) : t('ambitoAnnoNota')}</p>
           <button
             type="button"
             className={secondario}
@@ -553,7 +570,7 @@ function RigaConferma({
           ) : (
             <strong>{nome}</strong>
           )}
-          <span className="block text-xs text-kidville-sub">{r.classe ? t('classeOggi', { classe: r.classe }) : t('senzaClasse')}</span>
+          <span className="block text-xs text-kidville-sub">{r.classe ? t(vista === 'nuove' ? 'classeAnnoNuovo' : 'classeOggi', { classe: r.classe }) : t('senzaClasse')}</span>
         </td>
         <td className="py-3 pr-3">
           {vista === 'conferme' && <span>{statoTesto}</span>}

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itCruscotto from '../../messages/it/annoCruscotto.json'
 import enCruscotto from '../../messages/en/annoCruscotto.json'
+import enSettings from '../../messages/en/adminSettings.json'
 import itConfermeCat from '../../messages/it/annoConferme.json'
 import enConfermeCat from '../../messages/en/annoConferme.json'
 
@@ -177,7 +178,7 @@ describe('CruscottoClient — i collegamenti alla pagina Conferme', () => {
     s.moduli = ok({ moduli: [{ ...MODULI[1], mancanti: 4 }] })
     render(<CruscottoClient />)
     const link = await screen.findByRole('link', { name: itCruscotto.moduloApriMancanti })
-    expect(link.getAttribute('href')).toBe(`/admin/students/conferme?vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${M_CARTACEO}`)
+    expect(link.getAttribute('href')).toBe(`/admin/students/conferme?vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${M_CARTACEO}&titolo=${encodeURIComponent('Informativa cartacea')}`)
   })
 })
 
@@ -269,6 +270,11 @@ describe('CruscottoClient — più sedi attive (revisione finale, B2)', () => {
     expect(enCruscotto.nessunAnno).not.toMatch(/above/)
     expect(itCruscotto.annoNonAperto).toMatch(/Impostazioni/)
     expect(enCruscotto.annoNonAperto).toMatch(/Settings/)
+    // N6: un nome solo per il comando, quello di `adminSettings.json`
+    expect(enCruscotto.annoNonAperto).toContain(`“${enSettings.annoIscrizioniTitolo}”`)
+    // N5: la nota del confronto non promette un accordo con «Hanno confermato» che non vale
+    expect(itCruscotto.confrontoNota).not.toMatch(/Hanno confermato/)
+    expect(enCruscotto.confrontoNota).not.toMatch(/Confirmed/)
   })
 })
 

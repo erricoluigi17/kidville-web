@@ -2,7 +2,7 @@
 
 Trovati mentre si costruiva il cruscotto e alla revisione finale. Fuori dallo scopo della 4.7: annotati qui con la PR dove vanno.
 
-Corretti nel primo giro di correzione (revisione finale): i rilievi 1, 2, 3, 6, 7, 8, 9, 11 e 12, vedi `.superpowers/pr4-7-esito.md`. La voce 1 che stava qui
+Corretti nel primo giro di correzione (revisione finale): i rilievi 1, 2, 3, 6, 7, 8, 9, 11 e 12, vedi il rapporto del giro di correzione della PR 4.7. La voce 1 che stava qui
 («più frequenze per lo stesso bambino nell'anno nuovo») **era falsa** e si è tolta: il vincolo `frequenze_alunno_anno_sede_key`
 (`20261106200347_anno_scolastico_schema.sql`) impedisce due frequenze dello stesso bambino nello stesso anno, e la prova `23505` lo conferma.
 
@@ -16,3 +16,4 @@ Corretti nel primo giro di correzione (revisione finale): i rilievi 1, 2, 3, 6, 
 8. **`/offline.json`: l'etichetta della rotta si ricorda a mano.** Ogni pagina nuova rompe il lock del Service Worker e obbliga a un bump di versione: costo fisso per ogni pagina di segreteria. Dove: lavoro di robustezza, se si vuole togliere l'accoppiamento.
 9. **Confronto con l'anno prima "ricostruito".** Se l'anno prima è tutto `recupero`, le conferme si ricostruiscono dalla data di creazione dei bambini: è un'approssimazione dichiarata in pagina (ora anche per le domande), ma una volta che l'anno 2026/27 avrà conferme vere il caso sparirà da solo. Nessuna azione.
 10. **`quota_piu_voci` dalla route non distingue "più voci" da "voce eliminata e rigenerabile".** Dopo l'eliminazione di una voce la quota torna "da generare"; se esistono più voci dell'anno la pagina dice "più voci". Corretto per costruzione, ma la segreteria non ha un link diretto alla contabilità filtrata sul bambino. Dove: 4.9 (contabilità).
+11. **Il confronto è asimmetrico.** `20261109130259_anno_cruscotto.sql`: `questo_anno.conferme` esclude le conferme ritirate, `anno_prima.conferme` no (con una sola conferma ritirata nell'anno prima, `anno_prima.conferme` vale 1 anche con `ricostruito` falso). Pesa dal 2028, quando l'anno prima avrà conferme vere e ritirate. Dove: PR piccola prima del 2028 (ri-revisione, N4).

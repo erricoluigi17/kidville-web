@@ -200,7 +200,7 @@ function misura(files: Sorgente[]): Misure {
 
 /**
  * Ogni minimo ha il MISURATO e la DATA. Un minimo che scende si abbassa SCRIVENDO perché sulla stessa riga.
- * Misurato il 2026-11-09 sul ramo della PR 4.5 (1.696 file in src/).
+ * Misurato il 2026-11-09 sul ramo della PR 4.5 (1.715 file in src/).
  */
 const MINIMI: { chiave: keyof Misure; minimo: number; nota: string }[] = [
   { chiave: 'fileLetti', minimo: 1600, nota: 'misurati 1.715 il 2026-11-09; minimo sotto il misurato apposta (esclude solo la cartella vuota)' },

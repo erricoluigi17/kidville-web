@@ -32,13 +32,51 @@ import {
  * resta verde: dice «in una delle due», non «in questa».
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
- * Dichiara quante righe `app_log` ha letto nella migrazione (6), quanti battiti (2), quanti `cron.schedule` (2) e quanti esiti
+ * Dichiara quante righe `app_log` ha letto nelle ultime definizioni delle funzioni (5), quanti battiti (2), quanti `cron.schedule` (2) e quanti esiti
  * ha provato, con un MINIMO ATTESO, e ha il suo controllo positivo su SQL finto. Non vede: un esito costruito a runtime
  * (`'esito', v_variabile`), che qui non c'è e che il lock segnala come illeggibile.
  */
 
 const CWD = process.cwd()
-const MIGRAZIONE = path.join(CWD, 'supabase', 'migrations', '20261109035209_anno_tick.sql')
+const DIR_MIGRAZIONI = path.join(CWD, 'supabase', 'migrations')
+
+interface Migrazione { nome: string; testo: string }
+
+/** L'ULTIMA definizione di `nome` (file con la version più alta che la contiene, ultima del file): lo stesso aiuto di `anni-tick-non-fa-il-passaggio`. */
+function ultimaDefinizione(nome: string, migrazioni: Migrazione[]): { migrazione: string; corpo: string } | null {
+  const ordinate = [...migrazioni].sort((x, y) => (x.nome < y.nome ? 1 : x.nome > y.nome ? -1 : 0))
+  const re = new RegExp(`create\\s+or\\s+replace\\s+function\\s+(?:public\\.)?${nome}\\s*\\(`, 'ig')
+  for (const mig of ordinate) {
+    const t = togliCommentiSql(mig.testo)
+    let ultimo: RegExpExecArray | null = null
+    let h: RegExpExecArray | null
+    re.lastIndex = 0
+    while ((h = re.exec(t)) !== null) ultimo = h
+    if (!ultimo) continue
+    const dopo = t.slice(ultimo.index + ultimo[0].length)
+    const as = /\bas\s+(\$[A-Za-z_0-9]*\$)/i.exec(dopo)
+    if (!as) return { migrazione: mig.nome, corpo: '' }
+    const inizio = as.index + as[0].length
+    const fine = dopo.indexOf(as[1], inizio)
+    return { migrazione: mig.nome, corpo: dopo.slice(inizio, fine < 0 ? undefined : fine) }
+  }
+  return null
+}
+
+/** Il testo delle ULTIME definizioni delle due funzioni dei job: è lì che stanno gli `INSERT INTO app_log` dei battiti. */
+function sqlDelleFunzioni(migrazioni: Migrazione[]): string {
+  return Object.values(JOB).map((f) => ultimaDefinizione(f, migrazioni)?.corpo ?? '').join('\n')
+}
+
+/** Il testo dell'ULTIMA migrazione che programma i job (`cron.schedule('anni-tick' …`): quella che vale per nome, cadenza e funzione lanciata. */
+function sqlDelSchedule(migrazioni: Migrazione[]): string {
+  const ordinate = [...migrazioni].sort((x, y) => (x.nome < y.nome ? 1 : x.nome > y.nome ? -1 : 0))
+  for (const m of ordinate) {
+    const t = togliCommentiSql(m.testo)
+    if (/cron\.schedule\(\s*'anni-tick'/.test(t)) return t
+  }
+  return ''
+}
 
 /** Il nome del job → la funzione che il suo `cron.schedule` lancia. */
 const JOB: Record<string, string> = {
@@ -171,10 +209,17 @@ function violazioniNonBattiti(sql: string, vale = valeComeBattito): string[] {
 
 // ───────────────────────── le misure ─────────────────────────
 
-const SQL = togliCommentiSql(fs.readFileSync(MIGRAZIONE, 'utf8'))
+const MIGRAZIONI: Migrazione[] = fs
+  .readdirSync(DIR_MIGRAZIONI)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((nome) => ({ nome, testo: fs.readFileSync(path.join(DIR_MIGRAZIONI, nome), 'utf8') }))
+/** Le ULTIME definizioni delle funzioni (battiti ed esiti) e l'ULTIMA programmazione dei job (nomi e cadenze). */
+const SQL = sqlDelleFunzioni(MIGRAZIONI)
+const SQL_SCHEDULE = sqlDelSchedule(MIGRAZIONI)
 const RIGHE = righeLog(SQL)
 const BATTITI = RIGHE.filter(eBattito)
-const SCHEDULE = schedule(SQL)
+const SCHEDULE = schedule(SQL_SCHEDULE)
 const ESITI_PROVATI = BATTITI.flatMap((b) => b.esiti ?? []).length + RIGHE.filter((r) => !eBattito(r)).flatMap((r) => r.esiti ?? []).length
 
 const elenco = (v: string[]) => (v.length ? '\n  - ' + v.join('\n  - ') : '')
@@ -244,11 +289,26 @@ describe('anni-tick-sorvegliato — il controllo positivo, su SQL e liste finti'
 })
 
 describe('anni-tick-sorvegliato — la migrazione M45a e controlli.ts', () => {
-  it('ha letto abbastanza: 6 righe app_log, 2 battiti, 2 cron.schedule, almeno 6 esiti provati', () => {
-    expect(RIGHE.length, `righe app_log lette: ${RIGHE.length}`).toBeGreaterThanOrEqual(6)
+  it('ha letto abbastanza: 5 righe app_log nelle funzioni, 2 battiti, 2 cron.schedule, almeno 6 esiti provati (misurati il 2026-11-09)', () => {
+    expect(RIGHE.length, `righe app_log lette: ${RIGHE.length}`).toBeGreaterThanOrEqual(5)
     expect(BATTITI.length, `battiti letti: ${BATTITI.length}`).toBeGreaterThanOrEqual(2)
     expect(SCHEDULE.length, `cron.schedule letti: ${SCHEDULE.length}`).toBeGreaterThanOrEqual(2)
-    expect(ESITI_PROVATI, `esiti provati: ${ESITI_PROVATI}`).toBeGreaterThanOrEqual(7)
+    expect(ESITI_PROVATI, `esiti provati: ${ESITI_PROVATI}`).toBeGreaterThanOrEqual(6)
+  })
+
+  it('legge le ULTIME definizioni: una migrazione più recente che ridefinisce anni_tick con un esito sconosciuto fa rosso', () => {
+    const base = MIGRAZIONI
+    expect(violazioniBattiti(sqlDelleFunzioni(base))).toEqual([])
+    const piuRecente: Migrazione = {
+      nome: '29990101000000_ridefinisce_il_tick.sql',
+      testo: `CREATE OR REPLACE FUNCTION public.anni_tick(p_oggi date DEFAULT NULL, p_scuola uuid DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql AS $$ BEGIN
+        INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+        VALUES ('info', 'cron', 'server', 'm', 'cron:anni-tick', jsonb_build_object('campi', jsonb_build_object('operazione', 'anni-tick', 'esito', 'passaggio-fatto')))
+        ON CONFLICT (fingerprint, giorno) DO NOTHING; RETURN '{}'::jsonb; END $$;`,
+    }
+    const v = violazioniBattiti(sqlDelleFunzioni([...base, piuRecente]))
+    expect(v).toHaveLength(1)
+    expect(v[0]).toContain('passaggio-fatto')
   })
 
   it('anni-tick e anno-invarianti stanno in UNA delle due liste di controlli.ts', () => {
@@ -257,7 +317,7 @@ describe('anni-tick-sorvegliato — la migrazione M45a e controlli.ts', () => {
   })
 
   it('il cron.schedule della M45a coincide con i nomi delle liste e lancia la funzione giusta', () => {
-    const v = violazioniSchedule(SQL)
+    const v = violazioniSchedule(SQL_SCHEDULE)
     expect(v, 'cron.schedule e liste di controlli.ts non coincidono.' + elenco(v)).toEqual([])
     for (const x of SCHEDULE) expect(inJobCron(x.nome) || inNonSorvegliati(x.nome), `${x.nome} non è in nessuna lista`).toBe(true)
   })

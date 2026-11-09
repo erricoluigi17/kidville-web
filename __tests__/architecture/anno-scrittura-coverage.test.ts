@@ -1343,12 +1343,34 @@ function violazioniStatoPerOrigine(a: Analisi): string[] {
   while ((h = re.exec(testo)) !== null) {
     const condizionato = intestazioniAvvolgenti(a.m.struttura, h.index).some((t) => /\borigine\b/.test(t))
     if (!condizionato) continue
-    const dopo = a.m.senzaCommenti.slice(h.index + h[0].length, corpo.al)
+    // la riassegnazione deve stare nello STESSO blocco del `delete` (anche annidata): un `set.stato =` più avanti nella
+    // funzione, fuori da quel blocco, non salva il ramo che scarta lo stato
+    const { chiusa } = bloccoInterno(a.m.struttura, h.index)
+    const dopo = a.m.senzaCommenti.slice(h.index + h[0].length, chiusa)
     if (!/\bset\s*\.\s*stato\s*=(?!=)/.test(dopo)) {
-      out.push(`${a.percorso}:${riga(a.m.originale, h.index)} — \`delete set.stato\` condizionato a \`origine\` e mai riassegnato: la frequenza di una domanda, una conferma o la segreteria non si ritira più`)
+      out.push(`${a.percorso}:${riga(a.m.originale, h.index)} — \`delete set.stato\` condizionato a \`origine\` e mai riassegnato nello stesso blocco: la frequenza di una domanda, una conferma o la segreteria non si ritira più`)
     }
   }
   return out
+}
+
+/** Il blocco `{ … }` più interno che contiene `idx`: posizione della `{` e della `}` che lo chiude (la fine del testo se non si chiude). */
+function bloccoInterno(st: string, idx: number): { aperta: number; chiusa: number } {
+  let liv = 0
+  let aperta = 0
+  for (let i = idx - 1; i >= 0; i--) {
+    if (st[i] === '}') liv++
+    else if (st[i] === '{') {
+      if (liv === 0) { aperta = i; break }
+      liv--
+    }
+  }
+  let prof = 0
+  for (let i = aperta; i < st.length; i++) {
+    if (st[i] === '{') prof++
+    else if (st[i] === '}' && --prof === 0) return { aperta, chiusa: i }
+  }
+  return { aperta, chiusa: st.length }
 }
 
 /** Il tetto di `ESENTI` (i siti `alunni` fuori dalla doppia scrittura) è il numero di oggi (misurato il 2026-11-09) e può solo scendere. */
@@ -1381,6 +1403,14 @@ describe('anno-scrittura-coverage — 8. `scriviFrequenza` scrive lo stato per o
       funzione("  if (f.origine === 'recupero') {\n    set.x = 1\n  } else {\n    delete set.stato\n    delete set.data_uscita\n    if (ritiro) { set.stato = 'ritirato' }\n  }"),
     )
     expect(violazioniStatoPerOrigine(nuova)).toEqual([])
+  })
+
+  it('una riassegnazione FUORI dal blocco del `delete` non salva: il vecchio ramo davanti al codice nuovo è segnalato', () => {
+    const davanti = finto(
+      'src/lib/anno/frequenze.ts',
+      funzione("  if (f.origine !== 'recupero') {\n    delete set.stato\n    delete set.data_uscita\n  }\n  if (ritiro) { set.stato = 'ritirato' }"),
+    )
+    expect(violazioniStatoPerOrigine(davanti)).toHaveLength(1)
   })
 
   it('un `delete set.stato` non legato a origine, o in un commento, non scatta', () => {

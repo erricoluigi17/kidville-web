@@ -7,7 +7,9 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge'
 import { Btn } from '@/components/ui/Btn'
 import { DateField } from '@/components/ui/DateField'
 import { ETICHETTA_CAMPO_FILTRO } from '@/components/ui/BarraFiltri'
+import { useCalendarioDi } from '@/lib/context/calendario-context'
 import { normalizzaEmail } from '@/lib/crm/contatti'
+import { annoDellaScheda, etichettaAnno } from '@/lib/crm/quota-anno'
 import {
   ANNI_INGRESSO,
   ESITI_BAMBINO,
@@ -34,6 +36,7 @@ import { linkTelefono, linkWhatsApp } from './contatti-link'
 import { TONO_ESITO } from './filtri-schede'
 import { ModuloFamiglia, contattoValido, famigliaDaScheda, type DatiFamiglia } from './ModuloFamiglia'
 import { QuotaIscrizione } from './QuotaIscrizione'
+import { SelettoreAnnoScheda, corpoAnno, valoreAnnoIniziale, valoreNelCalendario } from './SelettoreAnnoScheda'
 import { importoLeggibile } from './quota-importo'
 import { chiama, leggiJson, scrittura } from './rete'
 import { AREA, CAMPO, COLLEGAMENTO_PASTIGLIA, MESSAGGIO_ERRORE, RIQUADRO, TESTO_SECONDARIO, TITOLO_SEZIONE } from './stile'
@@ -401,7 +404,7 @@ function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambi
         // che il database ha davvero, senza un effetto che la riallinei.
         <CardBambino key={`${b.id}:${b.aggiornata_il}`} scheda={scheda} bambino={b} rileggi={rileggi} />
       ))}
-      <AggiungiBambino schedaId={scheda.id} rileggi={rileggi} />
+      <AggiungiBambino schedaId={scheda.id} scuolaId={scheda.scuola_id} rileggi={rileggi} />
     </section>
   )
 }
@@ -411,14 +414,14 @@ function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambi
  * `bambino_aggiunto`), invece di aprire una seconda scheda della stessa famiglia. Gli stessi tre campi
  * di «Nuova famiglia»; l'esito parte «aperto».
  */
-function AggiungiBambino({ schedaId, rileggi }: { schedaId: string; rileggi: () => void }) {
+function AggiungiBambino({ schedaId, scuolaId, rileggi }: { schedaId: string; scuolaId: string; rileggi: () => void }) {
   const t = useTranslations('crmSchede')
-  const tc = useTranslations('crmShell')
+  const calendario = useCalendarioDi(scuolaId)
   const id = useId()
   const [aperto, setAperto] = useState(false)
   const [nome, setNome] = useState('')
   const [dataNascita, setDataNascita] = useState('')
-  const [annoIngresso, setAnnoIngresso] = useState<(typeof ANNI_INGRESSO)[number]>('prossimo')
+  const [anno, setAnno] = useState<string>('prossimo')
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
 
@@ -435,7 +438,7 @@ function AggiungiBambino({ schedaId, rileggi }: { schedaId: string; rileggi: () 
     if (!pronto || invio) return
     setInvio(true)
     setErrore(null)
-    const corpo: Record<string, string> = { nome: pulito(nome), annoIngresso }
+    const corpo: Record<string, string> = { nome: pulito(nome), ...corpoAnno(valoreNelCalendario(anno, calendario)) }
     if (dataNascita !== '') corpo.dataNascita = dataNascita
     const res = await chiama('bambino-aggiungi', `${urlScheda(schedaId)}/bambini`, scrittura('POST', corpo))
     if (res === null || !res.ok) {
@@ -485,19 +488,14 @@ function AggiungiBambino({ schedaId, rileggi }: { schedaId: string; rileggi: () 
           <label htmlFor={`${id}-anno`} className={ETICHETTA_CAMPO_FILTRO}>
             {t('nuovaBambinoAnno')}
           </label>
-          <select
+          <SelettoreAnnoScheda
             id={`${id}-anno`}
-            value={annoIngresso}
+            scuolaId={scuolaId}
+            valore={anno}
             disabled={invio}
-            onChange={(e) => setAnnoIngresso(e.target.value as (typeof ANNI_INGRESSO)[number])}
+            onChange={setAnno}
             className={CAMPO}
-          >
-            {ANNI_INGRESSO.map((a) => (
-              <option key={a} value={a}>
-                {etichetta(tc, 'anniIngresso', a)}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       </div>
       {errore !== null && (
@@ -527,10 +525,9 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const [nota, setNota] = useState<string>(b.motivo_nota ?? '')
   // L'anno d'ingresso si cambia anche dopo: la nuova scheda parte da «non indicato», e la quota non si segna
   // finché non è indicato («Indica prima l'anno di ingresso»). Fino al 2026-11-01 la card non aveva il campo.
-  const annoIniziale = (ANNI_INGRESSO as readonly string[]).includes(b.anno_ingresso)
-    ? (b.anno_ingresso as (typeof ANNI_INGRESSO)[number])
-    : 'non_indicato'
-  const [annoIngresso, setAnnoIngresso] = useState<(typeof ANNI_INGRESSO)[number]>(annoIniziale)
+  const calendario = useCalendarioDi(scheda.scuola_id)
+  const annoIniziale = valoreNelCalendario(valoreAnnoIniziale(b, calendario), calendario)
+  const [anno, setAnno] = useState<string>(annoIniziale)
   const [invio, setInvio] = useState(false)
   const [errore, setErrore] = useState<string | null>(null)
 
@@ -539,7 +536,7 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const esitoCambiato = esito !== b.esito
   const motivoCambiato = motivo !== motivoVecchio
   const corpo: Record<string, unknown> = {}
-  if (annoIngresso !== annoIniziale) corpo.annoIngresso = annoIngresso
+  if (valoreNelCalendario(anno, calendario) !== annoIniziale) Object.assign(corpo, corpoAnno(valoreNelCalendario(anno, calendario)))
   if (esitoCambiato) corpo.esito = esito
   if (esito === 'perso') {
     if (esitoCambiato || motivoCambiato) corpo.motivoPerdita = motivo
@@ -574,7 +571,14 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
   const nome = b.nome ?? t('bambinoSenzaNome')
   const meta = [
     b.data_nascita !== null ? t('bambinoNascita', { data: date.dataBreve(b.data_nascita) }) : null,
-    t('bambinoAnno', { anno: (ANNI_INGRESSO as readonly string[]).includes(b.anno_ingresso) ? etichetta(tc, 'anniIngresso', b.anno_ingresso) : b.anno_ingresso }),
+    t('bambinoAnno', {
+      anno:
+        annoDellaScheda(b.anno_id, calendario) !== null
+          ? etichettaAnno(annoDellaScheda(b.anno_id, calendario)!)
+          : (ANNI_INGRESSO as readonly string[]).includes(b.anno_ingresso)
+            ? etichetta(tc, 'anniIngresso', b.anno_ingresso)
+            : b.anno_ingresso,
+    }),
     b.esito_origine === 'automatico' ? t('esitoOrigineAutomatico') : b.esito_origine === 'manuale' ? t('esitoOrigineManuale') : null,
   ].filter((v): v is string => v !== null)
 
@@ -604,19 +608,14 @@ function CardBambino({ scheda, bambino: b, rileggi }: { scheda: SchedaRow; bambi
             <label htmlFor={`${id}-anno`} className={ETICHETTA_CAMPO_FILTRO}>
               {t('nuovaBambinoAnno')}
             </label>
-            <select
+            <SelettoreAnnoScheda
               id={`${id}-anno`}
-              value={annoIngresso}
+              scuolaId={scheda.scuola_id}
+              valore={anno}
               disabled={invio}
-              onChange={(e) => setAnnoIngresso(e.target.value as (typeof ANNI_INGRESSO)[number])}
+              onChange={setAnno}
               className={CAMPO}
-            >
-              {ANNI_INGRESSO.map((a) => (
-                <option key={a} value={a}>
-                  {etichetta(tc, 'anniIngresso', a)}
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label htmlFor={`${id}-esito`} className={ETICHETTA_CAMPO_FILTRO}>

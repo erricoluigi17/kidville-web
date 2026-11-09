@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { clientPerScrittura } from '@/lib/anno/gettone'
 import { assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
+import { risolviAnnoScelto, valoriAnnoScelto, type AnnoSceltoScheda } from '@/lib/crm/anno-scheda'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
 import { ANNI_INGRESSO, ESITI_BAMBINO, MOTIVI_PERDITA } from '@/lib/crm/tipi'
@@ -13,6 +15,13 @@ import { parseBody, parseData } from '@/lib/validation/http'
  * CRM della segreteria · un bambino della scheda: nome, nascita, anno ed ESITO.
  *
  * `PATCH /api/admin/crm/schede/[id]/bambini/[bambinoId]` → `200 { id, modificato }`.
+ *
+ * ── L'anno ───────────────────────────────────────────────────────────────────────────────────────
+ * `annoId` (un anno del calendario della sede, non chiuso) sposta la scheda in quell'anno e scrive INSIEME `anno_id`, `anno_ingresso`
+ * (ricavato) e `quota_anno`: se ne cambiasse uno solo, il trigger `crm_bambini_anno_da_etichetta` ricalcolerebbe l'anno dall'altro.
+ * Un anno che la sede non ha o chiuso è 422; se la quota è già in contabilità l'anno non si sposta (409 `STATO_NON_AMMESSO`: la voce
+ * ha la sua competenza). Se arrivano `annoId` e `annoIngresso` vale `annoId`. Col solo `annoIngresso` (un vecchio client) si scrive
+ * la sola etichetta, com'è sempre stato.
  *
  * ⚠️ La QUOTA non si segna più da qui (dal 31/10/2026): la vecchia spunta `quotaSaldata`/`quotaSaldataIl`
  * è stata sostituita dalla quota con importo, metodo e giorno (`PUT …/quota`), che passa in contabilità.
@@ -48,6 +57,7 @@ const patchBodySchema = z
     nome: z.string().trim().min(1).max(100).optional(),
     dataNascita: dataOppureNulla,
     annoIngresso: z.enum(ANNI_INGRESSO).optional(),
+    annoId: zUuid.optional(),
     esito: z.enum(ESITI_BAMBINO).optional(),
     motivoPerdita: z.enum(MOTIVI_PERDITA).nullable().optional(),
     motivoNota: z
@@ -99,7 +109,7 @@ export const PATCH = withRoute(
     const cambiaEsito = b.esito !== undefined && b.esito !== esitoAttuale
     const esitoFinale = b.esito ?? esitoAttuale
 
-    const patch: Record<string, string | boolean | null> = {}
+    const patch: Record<string, string | number | boolean | null> = {}
     const campiModificati: string[] = []
 
     // nome · nascita · anno: i campi anagrafici, nell'ordine in cui entrano nello storico
@@ -111,7 +121,26 @@ export const PATCH = withRoute(
       patch.data_nascita = b.dataNascita
       campiModificati.push('data_nascita')
     }
-    if (b.annoIngresso !== undefined && b.annoIngresso !== corrente.anno_ingresso) {
+    // L'anno scelto vince sull'etichetta. Si scrive solo se cambia davvero, e mai su una quota già in contabilità.
+    let annoScelto: AnnoSceltoScheda | null = null
+    let annoIdVince = false // con l'anno dichiarato l'etichetta relativa non si scrive da sola (anche se l'anno è lo stesso)
+    if (b.annoId !== undefined) {
+      if (b.annoId.toLowerCase() !== String(corrente.anno_id ?? '').toLowerCase()) {
+        const scelto = await risolviAnnoScelto(request, supabase, auth.user, scuolaId, b.annoId, OPERAZIONE)
+        if (scelto instanceof NextResponse) return scelto
+        if (!('schemaIndietro' in scelto)) {
+          annoScelto = scelto
+          annoIdVince = true
+        }
+      } else {
+        annoIdVince = true
+      }
+    }
+    if (annoScelto) {
+      if (corrente.quota_stato === 'in_contabilita') return statoNonAmmesso()
+      Object.assign(patch, valoriAnnoScelto(annoScelto))
+      campiModificati.push('anno_ingresso')
+    } else if (!annoIdVince && b.annoIngresso !== undefined && b.annoIngresso !== corrente.anno_ingresso) {
       patch.anno_ingresso = b.annoIngresso
       campiModificati.push('anno_ingresso')
     }
@@ -153,7 +182,9 @@ export const PATCH = withRoute(
     // niente di davvero cambiato: nessuna scrittura, nessuna riga di storico
     if (Object.keys(patch).length === 0) return NextResponse.json({ id: bambinoId, modificato: false })
 
-    const { data: scritte, error: erroreScrittura } = await supabase
+    // L'anno scelto può chiedere un gettone (agosto): la scrittura passa dal client che lo porta. Senza anno scelto è il client di sempre.
+    const scrittore = annoScelto ? await clientPerScrittura(supabase, annoScelto.esito) : supabase
+    const { data: scritte, error: erroreScrittura } = await scrittore
       .from('crm_bambini')
       .update({ ...patch, aggiornata_il: new Date().toISOString() })
       .eq('id', bambinoId)

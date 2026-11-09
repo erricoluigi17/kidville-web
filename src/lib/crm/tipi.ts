@@ -177,6 +177,8 @@ export interface BambinoRow {
   /** `yyyy-mm-dd` */
   data_nascita: string | null
   anno_ingresso: AnnoIngresso
+  /** Dalla PR 4.5: l'anno della scheda (`anni_scolastici.id`). Assente sul database senza lo schema dell'anno. */
+  anno_id?: string | null
   esito: EsitoBambino
   motivo_perdita: MotivoPerdita | null
   motivo_nota: string | null

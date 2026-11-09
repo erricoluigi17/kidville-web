@@ -4,6 +4,7 @@ import { dataCivile } from '@/i18n/config'
 import { annoDi } from '@/lib/anno/calendario'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { assertBambinoInScope, assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
+import { annoDiQuotaDellaScheda } from '@/lib/crm/anno-scheda'
 import {
   CODICI_RPC_CRM_ASSENTE,
   codiceErroreDb,
@@ -33,8 +34,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * CRM della segreteria · la quota d'iscrizione di un bambino: segnarla, correggerla, toglierla.
  *
  *  · `PUT    { importo, giorno?, metodo }` → `200 { data: { stato, passaggio } }`. Segna la quota (o la
- *    corregge, se c'era già). `giorno` vuoto = oggi a Roma, mai nel futuro. L'anno NON si sceglie: si ricava
- *    dall'anno di ingresso del bambino. Se il bambino è già un alunno la quota passa subito in contabilità
+ *    corregge, se c'era già). `giorno` vuoto = oggi a Roma, mai nel futuro. L'anno NON si sceglie: è quello
+ *    della scheda (`anno_id`); per una scheda che ha solo l'etichetta si ricava dall'anno di ingresso del bambino. Se il bambino è già un alunno la quota passa subito in contabilità
  *    (`passaggio` dice com'è andata); altrimenti resta «in attesa» e `passaggio` è nullo.
  *  · `DELETE`                              → `200 { data: { stornato } }`. Toglie la quota (per i contanti
  *    storna l'entrata di cassa con un contro-movimento). È anche «È lo stesso pagamento» della spec §5.5.
@@ -184,8 +185,17 @@ export const PUT = withRoute(
       )
     }
 
-    // L'anno in corso è quello del calendario della sede nel giorno di oggi (o il predefinito, soglia 1° settembre).
-    const anno = annoDellaQuota(bambino.anno_ingresso, (await annoDi(supabase, scuolaId, oggi)).annoInizio)
+    // L'ANNO è quello della scheda (`anno_id` → l'anno d'apertura dal calendario della sede): non dipende da «oggi», quindi la stessa
+    // quota segnata il 31/08 o il 01/09 cade nello stesso anno. Una scheda che ha solo l'etichetta `anno_ingresso` (o la cui sede non
+    // conosce l'anno) ricade sul calcolo di sempre: l'anno in corso del calendario della sede nel giorno di oggi (o il predefinito,
+    // soglia 1° settembre). «Non indicato» chiede ancora di indicarlo, anche se la riga ha un `anno_id`: quello è solo il valore di
+    // partenza, non una scelta della segreteria.
+    let anno: number | null = null
+    if (bambino.anno_ingresso !== 'non_indicato') {
+      const dellaScheda = await annoDiQuotaDellaScheda(supabase, scuolaId, bambinoId, OP_PUT)
+      if ('response' in dellaScheda) return dellaScheda.response
+      anno = dellaScheda.anno ?? annoDellaQuota(bambino.anno_ingresso, (await annoDi(supabase, scuolaId, oggi)).annoInizio)
+    }
     if (anno === null) {
       return NextResponse.json(
         { error: 'Indica l’anno di ingresso del bambino prima di segnare la quota.', codice: 'QUOTA_ANNO_MANCANTE' },

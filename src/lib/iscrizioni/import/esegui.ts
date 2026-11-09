@@ -113,7 +113,7 @@ export interface EsitoEsecuzione {
   /**
    * Quante frequenze dell'anno prossimo, già presenti, hanno detto qualcosa che la segreteria deve sapere (4.5.16): la classe scelta
    * dall'import non è stata applicata (`sezione_ignorata`), o l'iscrizione risulta chiusa per trasferimento o uscita e la domanda è stata
-   * collegata senza riaprirla (`chiusa`). Assente = zero.
+   * collegata senza riaprirla (`chiusa`), o è stata riaperta e la famiglia rivede la voce (`riaperta`). Assente = zero.
    */
   iscrizioniDaGuardare?: number
 }
@@ -710,7 +710,8 @@ export async function eseguiDomanda(
       if (!esitoFreq.ok) return fallisci(`frequenza dell'anno prossimo non registrata (${esitoFreq.codice})`)
       if ('saltata' in esitoFreq) return fallisci("frequenza dell'anno prossimo non registrata (funzione non disponibile)")
       if (esitoFreq.quota === 'senza_listino' || esitoFreq.quota === 'piu_voci') quotaDaControllare++
-      if (esitoFreq.sezione_ignorata === true || esitoFreq.chiusa === true) iscrizioniDaGuardare++
+      // Anche `riaperta` (4.5.17, E): una riga riaperta rende di nuovo visibile una voce alla famiglia, e la segreteria lo deve sapere.
+      if (esitoFreq.sezione_ignorata === true || esitoFreq.chiusa === true || esitoFreq.riaperta === true) iscrizioniDaGuardare++
     }
   }
 

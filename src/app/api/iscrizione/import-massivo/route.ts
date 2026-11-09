@@ -844,7 +844,7 @@ async function mandaRiepilogo(
       ? [`Quote dell'anno prossimo da generare o controllare: ${n.quotaDaControllare} (in Conferme, «Genera la quota»)`]
       : []),
     ...(n.iscrizioniDaGuardare > 0
-      ? [`Iscrizioni dell'anno prossimo da guardare: ${n.iscrizioniDaGuardare} (la classe scelta non è stata applicata perché c'era già la sua, oppure l'iscrizione risulta chiusa per trasferimento o uscita e la domanda è stata collegata senza riaprirla)`]
+      ? [`Iscrizioni dell'anno prossimo da guardare: ${n.iscrizioniDaGuardare} (la classe scelta non è stata applicata perché c'era già la sua, l'iscrizione risulta chiusa per trasferimento o uscita e la domanda è stata collegata senza riaprirla, oppure l'iscrizione chiusa è stata riaperta e la famiglia rivede la voce)`]
       : []),
   ]
   const coda = n.quotaEsaurita

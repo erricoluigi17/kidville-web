@@ -287,7 +287,7 @@ describe('GET conferme', () => {
     const per = (f: string) => data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === f)
     expect(per(F1)).toEqual({
       frequenza_id: F1, alunno_id: AL[0], section_id: S_INF, nuova_frequenza_id: N1, nuova_section_id: S_NUOVA_PRIM,
-      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', cambia_grado: true,
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', quota_piu_voci: false, cambia_grado: true,
       stato_frequenza: 'in_attesa', nome: 'NomeProva1', cognome: 'CognomeProva1', classe: 'Sezione Prova A',
     })
     expect(per(F2)).toMatchObject({ conferma: 'no', non_rinnova_motivo: 'trasloco', quota: 'assente', cambia_grado: false, nuova_frequenza_id: null })
@@ -446,14 +446,15 @@ describe('GET conferme — vista=nuove e mancano_moduli', () => {
     const prima = data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[0])
     expect(prima).toEqual({
       frequenza_id: FN[0], alunno_id: NA[0], section_id: S_NUOVA_PRIM, nuova_frequenza_id: FN[0], nuova_section_id: S_NUOVA_PRIM,
-      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 2, richiesti: 2 }, quota: 'assente', cambia_grado: false,
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 2, richiesti: 2 }, quota: 'assente', quota_piu_voci: false, cambia_grado: false,
       stato_frequenza: 'in_attesa', nome: 'Nuovo1', cognome: 'Arrivo1', classe: 'Classe Prova B',
     })
     expect(data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[4])).toMatchObject({ quota: 'saldata', moduli: { fatti: 0, richiesti: 2 } })
     // 4.5.17 (B): le liste si leggono insieme e ogni riga usa quella del suo `tipo` (qui `nuova`: 2 moduli)
     expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri['in:lista']).toEqual(['conferma', 'nuova'])
+    // 4.7.4: la lettura "più voci" sta fra le due (una chiamata per la pagina, sulle frequenze senza voce)
     // 4.5.17 (A): nell'anno nuovo c'è una riga `conferma`, quindi serve l'anno attivo per sapere chi frequenta
-    expect(h.rpc.map((r) => r.nome)).toEqual(['anno_attivo', 'anno_conta_posti'])
+    expect(h.rpc.map((r) => r.nome)).toEqual(['anno_attivo', 'anno_quota_piu_voci', 'anno_conta_posti'])
   })
 
   it('una frequenza non compare in tutte e due le viste: chi ha confermato non è fra le nuove, chi arriva non è fra le conferme', async () => {

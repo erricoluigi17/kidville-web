@@ -53,6 +53,8 @@ type Nuova = {
   stato: string
   quota_saldata: boolean
   quota_pagamento_id: string | null
+  /** Il flag mantenuto dal database (trigger): tutti i moduli richiesti dalla lista della riga sono spuntati. Serve ai due filtri di 4.7.4. */
+  moduli_completi?: boolean | null
   /** La lista dei moduli di una riga è quella del suo `tipo` (4.5.17, B); `null` (il recupero) non ne ha. */
   tipo: 'conferma' | 'nuova' | null
 }
@@ -62,7 +64,9 @@ const VIVE = ['in_attesa', 'iscritto']
 
 /** Le due viste della pagina: i bambini dell'anno attivo che confermano, e le NUOVE iscrizioni dell'anno che si apre. */
 const VISTE = ['conferme', 'nuove'] as const
-const FILTRI = ['tutti', 'confermato', 'no', 'non_risposto', 'mancano_moduli'] as const
+const FILTRI = ['tutti', 'confermato', 'no', 'non_risposto', 'mancano_moduli', 'moduli_senza_quota', 'quota_senza_moduli'] as const
+/** I filtri che guardano solo la frequenza dell'anno nuovo (non la risposta della famiglia): valgono anche nelle «nuove iscrizioni». */
+const FILTRI_SULLA_NUOVA = ['tutti', 'mancano_moduli', 'moduli_senza_quota', 'quota_senza_moduli'] as const
 
 const getQuerySchema = z
   .object({
@@ -70,10 +74,10 @@ const getQuerySchema = z
     limite: zLimite({ predefinito: 100, max: 200 }),
     /** Elenco chiuso. `conferme` è la vista di sempre; `nuove` le frequenze `nuova` dell'anno nuovo. */
     vista: z.enum(VISTE).default('conferme'),
-    /** Elenco chiuso: il filtro lo applica la route, sul totale. Nelle nuove iscrizioni hanno senso solo `tutti` e `mancano_moduli`. */
+    /** Elenco chiuso: il filtro lo applica la route, sul totale. Nelle nuove iscrizioni hanno senso solo quelli di `FILTRI_SULLA_NUOVA`. */
     conferma: z.enum(FILTRI).default('tutti'),
   })
-  .refine((q) => q.vista === 'conferme' || q.conferma === 'tutti' || q.conferma === 'mancano_moduli', {
+  .refine((q) => q.vista === 'conferme' || (FILTRI_SULLA_NUOVA as readonly string[]).includes(q.conferma), {
     path: ['conferma'],
     message: 'Filtro non valido per le nuove iscrizioni',
   })
@@ -140,6 +144,9 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   const NESSUNO = new Set<string>()
   const richiestiDi = (tipo: Nuova['tipo']): Set<string> => (tipo ? perLista[tipo] : NESSUNO)
   const idTutti = [...perLista.conferma, ...perLista.nuova]
+  /** I due casi dell'incrocio moduli/quota (4.7.4), letti dai flag che il database mantiene sulla frequenza. */
+  const incrocioModuliQuota = (n: { quota_saldata: boolean; moduli_completi?: boolean | null }, filtro: 'moduli_senza_quota' | 'quota_senza_moduli'): boolean =>
+    filtro === 'moduli_senza_quota' ? n.moduli_completi === true && !n.quota_saldata : n.quota_saldata === true && n.moduli_completi !== true
   const mancano = (n: { id: string; tipo: Nuova['tipo'] }, fatti: Map<string, Set<string>>): boolean => {
     const r = richiestiDi(n.tipo)
     if (r.size === 0) return false
@@ -158,7 +165,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     // uscito, la cui riga si è riaperta come `conferma`, non sta in «Conferme» (non ha una frequenza viva nell'anno attivo) e senza questa
     // regola non starebbe da nessuna parte (4.5.17, A). Chi frequenta e ha confermato sta nell'altra vista. Si legge a blocchi: il totale
     // e la pagina restano veri.
-    const colonneNuova = 'id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id, tipo'
+    const colonneNuova = 'id, alunno_id, section_id, stato, quota_saldata, quota_pagamento_id, tipo, moduli_completi'
     const tutte = await leggiABlocchi<Nuova>((da, a) =>
       supabase.from('frequenze').select(colonneNuova).eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
     )
@@ -187,6 +194,8 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
       const spunte = await spunteDellAnno(supabase, idTutti)
       if ('error' in spunte) return lettura(spunte.error, ctx)
       giuste = candidate.filter((n) => mancano(n, spunte.fatti))
+    } else if (conferma === 'moduli_senza_quota' || conferma === 'quota_senza_moduli') {
+      giuste = candidate.filter((n) => incrocioModuliQuota(n, conferma))
     }
     totale = giuste.length
     nuove = giuste.slice(dal, dal + limite)
@@ -221,8 +230,8 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
         supabase.from('frequenze').select('id, alunno_id, non_rinnova_il').eq('anno_sede_id', partenzaId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
       )
       if ('error' in tutteLePartenze) return lettura(tutteLePartenze.error, ctx)
-      const tutteLeNuove = await leggiABlocchi<{ id: string; alunno_id: string; tipo: Nuova['tipo'] }>((da, a) =>
-        supabase.from('frequenze').select('id, alunno_id, tipo').eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
+      const tutteLeNuove = await leggiABlocchi<Pick<Nuova, 'id' | 'alunno_id' | 'tipo' | 'quota_saldata' | 'moduli_completi'>>((da, a) =>
+        supabase.from('frequenze').select('id, alunno_id, tipo, quota_saldata, moduli_completi').eq('anno_sede_id', annoSedeId).in('stato', VIVE).order('id', { ascending: true }).range(da, a),
       )
       if ('error' in tutteLeNuove) return lettura(tutteLeNuove.error, ctx)
       const confermati = new Set(tutteLeNuove.righe.map((n) => n.alunno_id))
@@ -237,6 +246,13 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
         giuste = tutteLePartenze.righe.filter((p) => {
           const n = nuovaDi.get(p.alunno_id)
           return !!n && mancano(n, spunte.fatti)
+        })
+      } else if (conferma === 'moduli_senza_quota' || conferma === 'quota_senza_moduli') {
+        // L'incrocio vale per chi ha confermato: i due flag li mantiene il database sulla frequenza dell'anno nuovo.
+        const nuovaDi = new Map(tutteLeNuove.righe.map((n) => [n.alunno_id, n]))
+        giuste = tutteLePartenze.righe.filter((p) => {
+          const n = nuovaDi.get(p.alunno_id)
+          return !!n && incrocioModuliQuota(n, conferma)
         })
       } else {
         giuste = tutteLePartenze.righe.filter((p) => statoDi(p) === conferma)
@@ -310,6 +326,21 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   }
   const quotaDi = (n: Nuova): StatoQuota => (n.quota_saldata ? 'saldata' : n.quota_pagamento_id ? 'da_pagare' : 'assente')
 
+  // «Più voci» (4.7.4): la quota non nasce da sola quando il bambino ha più voci dell'anno da guardare. Prima lo ricordava solo la pagina,
+  // finché non si ricaricava: ora lo dice il database (stessa regola della porta di conferma), con UNA chiamata per la pagina.
+  const piuVoci = new Set<string>()
+  const senzaQuota = nuove.filter((n) => VIVE.includes(n.stato) && !n.quota_pagamento_id).map((n) => n.id)
+  if (senzaQuota.length > 0) {
+    const pv = await supabase.rpc('anno_quota_piu_voci', { p_anno_sede: annoSedeId, p_frequenze: senzaQuota })
+    if (pv.error) {
+      // Schema indietro (la CI): il dato manca e basta, la pagina funziona lo stesso. Ogni altro errore è un guasto vero.
+      if (!schemaAnnoIndietro(pv.error)) return lettura(pv.error, ctx)
+      logEvento('anno-scolastico', 'info', { tipo: 'conferme-piu-voci-schema-indietro', operazione, error_code: pv.error.code ?? undefined })
+    } else {
+      for (const x of (Array.isArray(pv.data) ? pv.data : []) as Array<{ frequenza_id: string }>) piuVoci.add(x.frequenza_id)
+    }
+  }
+
   const righe =
     vista === 'nuove'
       ? nuove.map((n) => ({
@@ -324,6 +355,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
           non_rinnova_motivo: null,
           moduli: { fatti: fatti.get(n.id) ?? 0, richiesti: richiestiDi(n.tipo).size },
           quota: quotaDi(n),
+          quota_piu_voci: piuVoci.has(n.id),
           cambia_grado: false,
           stato_frequenza: n.stato,
           nome: nomi.get(n.alunno_id)?.nome ?? null,
@@ -344,7 +376,9 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
             conferma,
             non_rinnova_motivo: conferma === 'no' ? p.non_rinnova_motivo : null,
             moduli: { fatti: confermata ? (fatti.get(n.id) ?? 0) : 0, richiesti: confermata ? richiestiDi(n.tipo).size : perLista.conferma.size },
-            quota: confermata ? quotaDi(n) : ('assente' as StatoQuota),
+            // Una frequenza ritirata con la voce ancora attaccata (pagata) la famiglia la vede: la vista non deve dire «assente» (4.7.4).
+            quota: n ? quotaDi(n) : ('assente' as StatoQuota),
+            quota_piu_voci: confermata ? piuVoci.has(n.id) : false,
             cambia_grado: confermata ? cambiaGrado(p.section_id, n.section_id) : false,
             stato_frequenza: confermata ? n.stato : null,
             nome: nomi.get(p.alunno_id)?.nome ?? null,

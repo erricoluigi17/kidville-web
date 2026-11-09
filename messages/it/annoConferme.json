@@ -105,5 +105,7 @@
   "esitoRitirataQuotaTolta": "La quota è stata tolta.",
   "esitoRitirataQuotaPagata": "La quota è già stata pagata: rimborso o storno si fanno dalla contabilità.",
   "esitoRitirataQuotaErrore": "La conferma è ritirata, ma la quota non si è riusciti a toglierla: controllala nella contabilità.",
-  "apriScheda": "Apri la scheda di {nome}"
+  "apriScheda": "Apri la scheda di {nome}",
+  "filtroModuliSenzaQuota": "Moduli fatti, quota non pagata",
+  "filtroQuotaSenzaModuli": "Quota pagata, moduli incompleti"
 }

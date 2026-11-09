@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   gruppi: [] as unknown[],
   anno: { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } } as unknown,
 }))
+// 4.7.4: la pagina legge `?vista=` e `?conferma=` all'apertura (il cruscotto rimanda qui). Di solito la query è vuota.
+const q = vi.hoisted(() => ({ query: '' }))
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(q.query) }))
 vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
   useAnnoOpzionale: () => h.anno,
@@ -65,6 +68,7 @@ const s = {
   ritiroRifiutato: false, // 4.5.16 (B): la route risponde 409 FREQUENZA_NON_DI_CONFERMA (bambino che non frequenta ancora)
   extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
+  piuVoci: false, // 4.7.4: `quota_piu_voci` che il server legge per la riga di conferma
   quotaArrivo: 'assente' as 'assente' | 'da_pagare', // la quota del bambino in arrivo, che «Genera la quota» fa nascere (4.5.16, F)
 }
 const fetchMock = vi.fn()
@@ -72,7 +76,7 @@ const fetchMock = vi.fn()
 const rigaConferma = () => ({
   frequenza_id: F_PART, alunno_id: AL1, section_id: null, conferma: s.confermata || s.confermato ? 'confermato' : 'non_risposto',
   nuova_frequenza_id: s.confermata || s.confermato ? F_NUOVA : null, nuova_section_id: null, non_rinnova_motivo: null,
-  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, cambia_grado: false,
+  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, quota_piu_voci: s.piuVoci, cambia_grado: false,
   stato_frequenza: s.confermata || s.confermato ? 'in_attesa' : null, nome: 'NomeProva', cognome: 'CognomeProva', classe: 'Sezione Prova',
 })
 const rigaNuova = () => ({
@@ -147,6 +151,8 @@ beforeEach(() => {
   s.extraPost = {}
   s.ritiroRifiutato = false
   s.quotaArrivo = 'assente'
+  s.piuVoci = false
+  q.query = ''
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
@@ -526,5 +532,46 @@ describe('ConfermeClient — «Ritira la conferma» (4.5.15, C1)', () => {
     render(<ConfermeClient />)
     const nome = await screen.findByText('CognomeProva NomeProva')
     expect(within(nome.closest('tr') as HTMLElement).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
+  })
+})
+
+describe('ConfermeClient — 4.7.4: «più voci» dal server e filtri aperti dall’indirizzo', () => {
+  it('una riga con `quota_piu_voci` dal server mostra «Più voci» e NON offre «Genera la quota», anche dopo un ricaricamento', async () => {
+    s.quota = 'assente'
+    s.piuVoci = true
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    const riga = nome.closest('tr') as HTMLElement
+    expect(within(riga).getByText(itConferme.quotaPiuVoci)).toBeInTheDocument()
+    expect(within(riga).queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
+  })
+
+  it('senza `quota_piu_voci` la stessa riga offre «Genera la quota» (controllo positivo)', async () => {
+    s.quota = 'assente'
+    s.piuVoci = false
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    expect(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneGeneraQuota })).toBeInTheDocument()
+  })
+
+  it('`?conferma=moduli_senza_quota` apre il filtro giusto e lo passa alla route', async () => {
+    q.query = 'conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('conferma=moduli_senza_quota'))).toBe(true)
+  })
+
+  it('`?vista=nuove&conferma=quota_senza_moduli` apre le nuove con quel filtro', async () => {
+    q.query = 'vista=nuove&conferma=quota_senza_moduli'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=quota_senza_moduli'))).toBe(true)
+  })
+
+  it('un filtro che nelle nuove non esiste si ignora', async () => {
+    q.query = 'vista=nuove&conferma=no'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('conferma=no'))).toBe(false)
   })
 })

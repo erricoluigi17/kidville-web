@@ -1,0 +1,11 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.6 · «Rette e servizi dal listino» · M46a (compito 4.6.1)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- CONTERRÀ (lo riempie il compito 4.6.1):
+--   · `listino_mesi`, `listino_periodi`, `rette_da_generare` (il predicato unico di anteprima e generazione);
+--   · `genera_rette_mensili` e `genera_rette_anno` con il parametro `p_anno_sede` in più (la firma a tre argomenti
+--     resta come involucro, nessun DROP);
+--   · `servizi_da_generare` e `genera_servizi_anno` ridefinite (la frequenza dell'anno, i mesi del listino).
+-- Nessun UPDATE di dati, nessun interruttore del freno, nessun uuid di sede.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

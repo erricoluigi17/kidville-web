@@ -1,0 +1,8 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.6 · «Rette e servizi dal listino» · M46b (compito 4.6.2)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- CONTERRÀ (lo riempie il compito 4.6.2):
+--   · `anno_listino_retta_imposta`: la segreteria scrive la retta (e i mesi) del listino dell'anno.
+-- Sta DOPO M46a e non dipende da lei. Nessun UPDATE di dati, nessun uuid di sede.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

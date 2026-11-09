@@ -387,6 +387,7 @@ export type FiltriLettura = {
 export const TETTO_MASSIMO = 200
 
 const OP_LETTURA = 'anno/passaggio:leggiPassaggio'
+const OP_NOMI = 'anno/passaggio:leggiNomiDelPassaggio'
 const COLONNE_RIGA = 'alunno_id, esito, avviso, eccezione, sezione_da_id, sezione_a_id, frequenza_a_id'
 
 /** Il giorno dopo `AAAA-MM-GG`, o `null` se la data non è una data. */
@@ -403,6 +404,40 @@ function soloNumeri(o: unknown): Record<string, number> {
   if (!eOggetto(o)) return fuori
   for (const [k, v] of Object.entries(o)) if (typeof v === 'number' && Number.isFinite(v)) fuori[k] = v
   return fuori
+}
+
+export type NomeDelPassaggio = { id: string; nome: string; cognome: string; classe: string | null }
+export type EsitoNomi = EsitoPassaggio<{ nomi: NomeDelPassaggio[] }>
+
+/**
+ * (giro 1, S20) Nome, cognome e classe dei SOLI bambini che hanno una riga in questo passaggio, fra gli `ids` chiesti (al più `TETTO_MASSIMO`).
+ * Niente codice fiscale, niente note: la pagina deve stampare un nome, non scaricare l'anagrafica. Un uuid che non è una riga del
+ * passaggio non compare. NON LANCIA MAI; ogni `{ error }` si controlla (schema indietro → `saltata`; altro → `SCRITTURA_FALLITA`).
+ */
+export async function leggiNomiDelPassaggio(supabase: SupabaseClient, passaggioId: string, ids: readonly string[]): Promise<EsitoNomi> {
+  const guasto = (e: ErrorePg) => esitoDaErrore(e, OP_NOMI, passaggioId)
+  try {
+    const cercati = Array.from(new Set(ids)).slice(0, TETTO_MASSIMO)
+    if (cercati.length === 0) return { ok: true, nomi: [] }
+    const righe = await supabase.from('passaggi_anno_righe').select('alunno_id').eq('passaggio_id', passaggioId).in('alunno_id', cercati)
+    if (righe.error) return guasto(righe.error)
+    const ammessi = ((righe.data ?? []) as Array<{ alunno_id: string }>).map((r) => r.alunno_id)
+    if (ammessi.length === 0) return { ok: true, nomi: [] }
+    const alunni = await supabase.from('alunni').select('id, nome, cognome, classe_sezione').in('id', ammessi)
+    if (alunni.error) return guasto(alunni.error)
+    return {
+      ok: true,
+      nomi: ((alunni.data ?? []) as Array<{ id: string; nome: string | null; cognome: string | null; classe_sezione: string | null }>).map((a) => ({
+        id: a.id,
+        nome: a.nome ?? '',
+        cognome: a.cognome ?? '',
+        classe: a.classe_sezione ?? null,
+      })),
+    }
+  } catch (err) {
+    logErrore({ operazione: OP_NOMI }, err)
+    return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
 }
 
 /**

@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAnnoSedeInScope } from '@/lib/anno/impostazioni'
-import { passaggioDellAnno } from '@/lib/anno/passaggio-risposte'
-import { logErrore } from '@/lib/logging/logger'
+import { leggiNomiDelPassaggio } from '@/lib/anno/passaggio'
+import { passaggioDellAnno, rispostaPassaggioNonRiuscito } from '@/lib/anno/passaggio-risposte'
 import { withRoute } from '@/lib/logging/with-route'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { zUuid } from '@/lib/validation/common'
@@ -53,27 +53,8 @@ export const GET = withRoute('admin/anni/[annoSedeId]/passaggio/nomi:GET', async
   const passaggio = await passaggioDellAnno(supabase, annoSedeId, ctx)
   if ('response' in passaggio) return passaggio.response
 
-  // Solo i bambini che hanno una riga in questo passaggio.
-  const righe = await supabase.from('passaggi_anno_righe').select('alunno_id').eq('passaggio_id', passaggio.passaggioId).in('alunno_id', ids)
-  if (righe.error) {
-    logErrore({ operazione }, righe.error)
-    return NextResponse.json({ error: 'Non è stato possibile leggere i nomi.', codice: 'SCRITTURA_FALLITA' }, { status: 500 })
-  }
-  const ammessi = ((righe.data ?? []) as Array<{ alunno_id: string }>).map((r) => r.alunno_id)
-  if (ammessi.length === 0) return NextResponse.json({ success: true, data: [] })
-
-  const alunni = await supabase.from('alunni').select('id, nome, cognome, classe_sezione').in('id', ammessi)
-  if (alunni.error) {
-    logErrore({ operazione }, alunni.error)
-    return NextResponse.json({ error: 'Non è stato possibile leggere i nomi.', codice: 'SCRITTURA_FALLITA' }, { status: 500 })
-  }
-  return NextResponse.json({
-    success: true,
-    data: ((alunni.data ?? []) as Array<{ id: string; nome: string | null; cognome: string | null; classe_sezione: string | null }>).map((a) => ({
-      id: a.id,
-      nome: a.nome ?? '',
-      cognome: a.cognome ?? '',
-      classe: a.classe_sezione ?? null,
-    })),
-  })
+  // Solo i bambini che hanno una riga in questo passaggio: lo garantisce la porta, che è l'unica a leggere le tabelle del passaggio.
+  const letti = await leggiNomiDelPassaggio(supabase, passaggio.passaggioId, ids)
+  if (!letti.ok || 'saltata' in letti) return rispostaPassaggioNonRiuscito(letti, ctx)
+  return NextResponse.json({ success: true, data: letti.nomi })
 })

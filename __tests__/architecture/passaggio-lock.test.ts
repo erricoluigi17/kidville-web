@@ -180,3 +180,46 @@ describe('passaggio-ordine-conferma', () => {
     expect(ordine(`SET stato = 'uscito'`, MARCATORI)).toContain('manca: specchio')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// GIRO DI CORREZIONE 1 · S27 — la prova del rosso sui sorgenti VERI.
+// I "controlli positivi" qui sopra girano su testi inventati: provano la regex, non che il lock guardi i file di questo repo. Qui si
+// prende il sorgente vero, lo si guasta in memoria (mai su disco) e si pretende che il lock diventi rosso; il sorgente intatto resta verde.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('passaggio-lock — la prova del rosso sui sorgenti veri', () => {
+  const leggiFile = (percorso: string) => fs.readFileSync(path.join(CWD, percorso), 'utf8')
+
+  it('la porta vera, con una scrittura su passaggi_anno_righe aggiunta in memoria, fa rosso; intatta no', () => {
+    const vera = leggiFile(PORTA)
+    expect(scrittureNellaPorta(mascheraSorgente(vera))).toEqual([])
+    const guasta = `${vera}\nexport const x = (s: any) => s.from('passaggi_anno_righe').update({ esito: 'esce' })\n`
+    expect(scrittureNellaPorta(mascheraSorgente(guasta))).toEqual(['passaggi_anno_righe: update'])
+  })
+
+  it('una route vera, con la chiamata diretta a una funzione del passaggio, fa rosso se non è la porta', () => {
+    const percorso = 'src/app/api/admin/anni/[annoSedeId]/passaggio/nomi/route.ts'
+    const route = leggiFile(percorso)
+    const intatta: Sorgente[] = [{ percorso, m: mascheraSorgente(route) }]
+    expect(violazioniPorta(intatta)).toEqual([])
+    const guasta: Sorgente[] = [{ percorso, m: mascheraSorgente(`${route}\nvoid supabase.rpc('passaggio_conferma', {})\n`) }]
+    expect(violazioniPorta(guasta)).toHaveLength(1)
+    const leggeLaTabella: Sorgente[] = [{ percorso, m: mascheraSorgente(`${route}\nvoid supabase.from('passaggi_anno').select('id')\n`) }]
+    expect(violazioniPorta(leggeLaTabella)).toHaveLength(1)
+  })
+
+  it('la conferma vera, con lo specchio spostato in cima, fa rosso; intatta no', () => {
+    const vera = corpoUltimaConferma()
+    expect(ordine(vera, MARCATORI)).toEqual([])
+    expect(ordine(`PERFORM public.alunni_riallinea_da_frequenze(NULL);\n${vera}`, MARCATORI)).toEqual(['fuori ordine: specchio'])
+    expect(ordine(vera.replace(/SET stato = 'uscito'/g, "SET stato = 'altro'"), MARCATORI)).toEqual(['manca: uscite col vecchio attivo'])
+  })
+
+  it('un file vero fuori dalla porta che importa la porta fa rosso', () => {
+    const percorso = 'src/app/(dashboard)/admin/students/passaggio/page.tsx'
+    const pagina = leggiFile(percorso)
+    const intatto: Sorgente[] = [{ percorso, m: mascheraSorgente(pagina) }]
+    expect(importatoreDellaPorta(intatto)).toEqual([])
+    const guasto: Sorgente[] = [{ percorso, m: mascheraSorgente(`import { confermaPassaggio } from '@/lib/anno/passaggio'\n${pagina}`) }]
+    expect(importatoreDellaPorta(guasto)).toEqual([percorso])
+  })
+})

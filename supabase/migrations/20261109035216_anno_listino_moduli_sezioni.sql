@@ -1,0 +1,18 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.5 · «Preparare e aprire l'anno prossimo» · M45d, listino, moduli, posti e sezioni (compito 4.5.3)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempie il compito 4.5.3. Nessuna logica qui.
+-- Sta PRIMA di M45c: `anno_quota_voce` (M45c) legge `listino_voci.scadenza`, che nasce qui.
+--
+-- CONTERRÀ (compito 4.5.3):
+--   · `listino_voci.scadenza` (la data di scadenza della quota, per sede e anno);
+--   · le quattro RPC di scrittura di quote, moduli e posti;
+--   · `anno_copia_sezioni`, con l'elenco ESPLICITO delle colonne (niente SQL dinamico);
+--   · `anno_apri_iscrizioni` ridefinita: mette anche `domande_aperte = true` (il dialogo già in produzione lo promette);
+--   · `domande_aperte = true` anche alla NASCITA di una sede nuova (`schools_crea_anni` e ciò che chiama), perché dopo
+--     il 4.5.7 il modulo pubblico di una sede nuova non resti chiuso;
+--   · il RIEMPIMENTO `domande_aperte = true` per ogni anno `corrente`: l'unica scrittura su dati della PR, un flag.
+--
+-- Nessun uuid di sede, nessun valore del 2027/28.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

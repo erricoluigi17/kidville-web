@@ -86,6 +86,12 @@ export default getRequestConfig(async () => {
     // risolve solo il primo livello). I codici d'errore stanno in `shared`, non qui.
     votazioniAdmin: (await import(`../../messages/${locale}/votazioniAdmin.json`)).default,
     votazioniGenitore: (await import(`../../messages/${locale}/votazioniGenitore.json`)).default,
+    // Preparare e aprire l'anno prossimo (PR 4.5): UN namespace per superficie, così i compiti paralleli non si pestano i piedi.
+    // Nascono vuoti nel compito 4.5.0; li riempie chi ha la schermata. I codici d'errore stanno in `shared`, non qui.
+    annoListino: (await import(`../../messages/${locale}/annoListino.json`)).default,
+    annoConferme: (await import(`../../messages/${locale}/annoConferme.json`)).default,
+    annoPubblico: (await import(`../../messages/${locale}/annoPubblico.json`)).default,
+    annoFamiglia: (await import(`../../messages/${locale}/annoFamiglia.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

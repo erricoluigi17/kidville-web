@@ -1,0 +1,17 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.5 · «Preparare e aprire l'anno prossimo» · M45c, iscrizione e conferma (compiti 4.5.5 e 4.5.6)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempiono i compiti 4.5.5 (parte 1) e 4.5.6 (parte 2,
+-- in fondo al file). Nessuna logica qui. Sta DOPO M45d: `anno_quota_voce` legge `listino_voci.scadenza`, che nasce lì.
+--
+-- CONTERRÀ:
+--   · 4.5.5: `anno_registra_frequenza`, `anno_quota_voce`, `anno_quota_collega`, `anno_conta_posti`;
+--   · 4.5.6: `anno_conferma` e `anno_non_rinnova`. `anno_conferma` riceve `p_cambia_grado boolean DEFAULT false`, in fondo
+--     alla firma: con `p_cambia_grado = true` e `p_section` NULL solleva `SEZIONE_OBBLIGATORIA`; senza continuazione la
+--     sezione è NULL e la conferma passa. Nel risultato `cambia_grado` è `p_cambia_grado` oppure `school_type`/`fascia`
+--     diverse fra partenza e arrivo.
+--
+-- Una conferma 2027/28 non cambia mai `alunni.section_id`, `classe_sezione` né `importo_retta_mensile`.
+-- Nessun uuid di sede, nessun valore del 2027/28.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,12 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.5 · «Preparare e aprire l'anno prossimo» · M45e, il CRM e l'anno della quota (compito 4.5.9)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempie il compito 4.5.9. Nessuna logica qui.
+--
+-- CONTERRÀ (compito 4.5.9): `crm_quota_passa` ridefinita, partendo dall'ULTIMA definizione presente nelle migrazioni
+-- (`grep -n "FUNCTION public.crm_quota_passa" supabase/migrations/*.sql`, il file con la version più alta), così che la
+-- quota della scheda CRM punti all'anno (`anni_sede.id`) e non a un numero.
+--
+-- Nessun uuid di sede, nessun valore del 2027/28.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

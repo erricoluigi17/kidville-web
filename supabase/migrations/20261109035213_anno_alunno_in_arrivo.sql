@@ -1,0 +1,16 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.5 · «Preparare e aprire l'anno prossimo» · M45b, l'alunno «in arrivo» (compito 4.5.4)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempie il compito 4.5.4. Nessuna logica qui.
+--
+-- CONTERRÀ (compito 4.5.4):
+--   · l'estensione del CHECK `alunni_stato_ammesso` (nato in `20261024235116_iscrizioni_stati_vincolati.sql`, oggi ammette
+--     solo `iscritto`, `ritirato`, `sospeso`) a `in_arrivo`: `DROP CONSTRAINT` + `ADD … NOT VALID` + `VALIDATE`;
+--   · il salto dello specchio all'`INSERT` per lo stato `in_arrivo` (un bambino del 2027/28 non è nell'anno in corso);
+--   · l'invariante 11-bis, copiando `anno_invarianti()` dall'ULTIMA definizione
+--     (`20261108170148_anno_visibilita_genitore_funzioni.sql`, con la riga 7), mai da una più vecchia;
+--   · `data_ingresso` al ritorno, se la prova lo chiede.
+--
+-- Nessun uuid di sede, nessun valore del 2027/28.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

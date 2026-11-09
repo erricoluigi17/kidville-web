@@ -843,5 +843,13 @@
   "erroreAnagraficaExportNonLetta": "Non è stato possibile leggere l’anagrafica per intero: il file non è stato generato. Riprova fra qualche minuto.",
   "erroreFiglioNonAttivo": "Questo bambino non risulta iscritto nell’anno in corso. Per informazioni contatta la segreteria.",
   "erroreChatSolaLettura": "Questa conversazione è in sola lettura: si può rileggere, ma non si possono inviare messaggi.",
-  "erroreDataFuoriAnno": "Questo giorno è fuori dall’anno scolastico in corso: non si può prenotare né disdire."
+  "erroreDataFuoriAnno": "Questo giorno è fuori dall’anno scolastico in corso: non si può prenotare né disdire.",
+  "erroreAnnoNonAperto": "Le iscrizioni per questo anno scolastico non sono ancora aperte.",
+  "erroreFrequenzaNonViva": "Questo bambino non ha più un’iscrizione attiva nell’anno di partenza: non si può confermare.",
+  "erroreSezioneObbligatoria": "Scegli la classe per l’anno nuovo: il bambino cambia grado e non può restare senza.",
+  "erroreSedeDiversa": "La scelta riguarda un’altra sede: controlla la sede e riprova.",
+  "erroreAnnoNonModificabile": "Questo anno scolastico non si può più modificare da qui.",
+  "erroreAnnoNonOfferto": "Questo anno scolastico non offre quel servizio o quella fascia d’età.",
+  "erroreIscrizioniChiuse": "Le iscrizioni per questo anno scolastico sono chiuse.",
+  "erroreImportoNonValido": "L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali."
 }

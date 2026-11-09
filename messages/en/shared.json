@@ -843,5 +843,13 @@
   "erroreAnagraficaExportNonLetta": "The pupil records could not be read in full: the file was not generated. Please try again in a few minutes.",
   "erroreFiglioNonAttivo": "This child is not enrolled in the current school year. Please contact the school office.",
   "erroreChatSolaLettura": "This conversation is read-only: you can read it again, but you cannot send messages.",
-  "erroreDataFuoriAnno": "This day is outside the current school year: it cannot be booked or cancelled."
+  "erroreDataFuoriAnno": "This day is outside the current school year: it cannot be booked or cancelled.",
+  "erroreAnnoNonAperto": "Enrolment for this school year is not open yet.",
+  "erroreFrequenzaNonViva": "This child no longer has an active enrolment in the starting year: it cannot be confirmed.",
+  "erroreSezioneObbligatoria": "Choose the class for the new year: the child changes school level and cannot be left without one.",
+  "erroreSedeDiversa": "This choice refers to a different location: check the location and try again.",
+  "erroreAnnoNonModificabile": "This school year can no longer be changed from here.",
+  "erroreAnnoNonOfferto": "This school year does not offer that service or age group.",
+  "erroreIscrizioniChiuse": "Enrolment for this school year is closed.",
+  "erroreImportoNonValido": "The amount is not valid: enter a figure greater than zero, with at most two decimals."
 }

@@ -1,0 +1,16 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.5 · «Preparare e aprire l'anno prossimo» · M45a, il tick orario (compito 4.5.2)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- TESTATA: il file nasce vuoto nel compito 4.5.0 (scheletro) e lo riempie il compito 4.5.2. Nessuna logica qui.
+--
+-- CONTERRÀ (compito 4.5.2):
+--   · `anni_tick`: crea da solo l'anno successivo quando arriva il suo giorno; solleva `ANNI_TICK_OGGI_NON_AMMESSO`
+--     (codice solo SQL, non HTTP) se gli si passa una data di oggi che non è ammessa;
+--   · `anno_invarianti_notturno` e `salute_anno`, `sedi_simulazione`;
+--   · i job `anni-tick` (`10 * * * *`) e `anno-invarianti` (`17 3 * * *`), programmati solo se `cron.schedule` esiste.
+--   Cambia comportamento solo in apparenza: fino al 01/09/2027 il tick non crea niente.
+--
+-- ORDINE DELLE CINQUE TESTATE: a (questa), b, d, c, e. M45d viene prima di M45c perché `anno_quota_voce` (M45c) legge
+-- `listino_voci.scadenza`, che nasce in M45d. Nessun uuid di sede, nessun valore del 2027/28.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

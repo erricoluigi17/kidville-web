@@ -3617,6 +3617,20 @@ export const CODICI_ERRORE = {
     FIGLIO_NON_ATTIVO: 'erroreFiglioNonAttivo',
     CHAT_SOLA_LETTURA: 'erroreChatSolaLettura',
     DATA_FUORI_ANNO: 'erroreDataFuoriAnno',
+    /**
+     * PREPARARE E APRIRE L'ANNO PROSSIMO (PR 4.5, compito 4.5.0), tradotti da `erroreAnno`:
+     * 409 `ANNO_NON_APERTO` · 409 `FREQUENZA_NON_VIVA` · 422 `SEZIONE_OBBLIGATORIA` · 422 `SEDE_DIVERSA` ·
+     * 409 `ANNO_NON_MODIFICABILE` · 422 `ANNO_NON_OFFERTO` · 409 `ISCRIZIONI_CHIUSE` · 422 `IMPORTO_NON_VALIDO`.
+     * `ANNI_TICK_OGGI_NON_AMMESSO` NON c'è: lo solleva solo il database (il compito 4.5.2 lo mette in `CODICI_INTERNI` di `errori.ts`, insieme al `RAISE`), non arriva a nessuna schermata.
+     */
+    ANNO_NON_APERTO: 'erroreAnnoNonAperto',
+    FREQUENZA_NON_VIVA: 'erroreFrequenzaNonViva',
+    SEZIONE_OBBLIGATORIA: 'erroreSezioneObbligatoria',
+    SEDE_DIVERSA: 'erroreSedeDiversa',
+    ANNO_NON_MODIFICABILE: 'erroreAnnoNonModificabile',
+    ANNO_NON_OFFERTO: 'erroreAnnoNonOfferto',
+    ISCRIZIONI_CHIUSE: 'erroreIscrizioniChiuse',
+    IMPORTO_NON_VALIDO: 'erroreImportoNonValido',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

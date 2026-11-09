@@ -52,6 +52,15 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['STATO_NON_AMMESSO', 409, 'Questa operazione non è possibile nello stato attuale. Aggiorna la pagina e riprova.'],
     ['PREREQUISITI_MANCANTI', 409, 'Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.'],
     ['PARAMETRO_MANCANTE', 400, 'Manca un dato richiesto. Controlla e riprova.'],
+    // PR 4.5, compito 4.5.0: preparare e aprire l'anno prossimo (M45c e M45d).
+    ['ANNO_NON_APERTO', 409, 'Le iscrizioni per questo anno scolastico non sono ancora aperte.'],
+    ['FREQUENZA_NON_VIVA', 409, 'Questo bambino non ha più un’iscrizione attiva nell’anno di partenza: non si può confermare.'],
+    ['SEZIONE_OBBLIGATORIA', 422, 'Scegli la classe per l’anno nuovo: il bambino cambia grado e non può restare senza.'],
+    ['SEDE_DIVERSA', 422, 'La scelta riguarda un’altra sede: controlla la sede e riprova.'],
+    ['ANNO_NON_MODIFICABILE', 409, 'Questo anno scolastico non si può più modificare da qui.'],
+    ['ANNO_NON_OFFERTO', 422, 'Questo anno scolastico non offre quel servizio o quella fascia d’età.'],
+    ['ISCRIZIONI_CHIUSE', 409, 'Le iscrizioni per questo anno scolastico sono chiuse.'],
+    ['IMPORTO_NON_VALIDO', 422, 'L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.'],
   ]
 
   it('i dettagli della route finiscono nel corpo accanto al codice, senza toccare stato e frase', async () => {

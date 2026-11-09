@@ -9,5 +9,9 @@
   "annoChiusoTitolo": "Le iscrizioni sono chiuse",
   "annoChiusoCorpo": "Al momento questa sede non accetta nuove domande di iscrizione. Per informazioni puoi rivolgerti alla segreteria.",
   "annoNonOffertoTitolo": "Quell’anno non accetta più domande",
-  "annoNonOffertoCorpo": "L’anno scolastico che avevi scelto non è più disponibile. Scegline un altro: i dati che hai inserito sono ancora qui."
+  "annoNonOffertoCorpo": "L’anno scolastico che avevi scelto non è più disponibile. Scegline un altro: i dati che hai inserito sono ancora qui.",
+  "annoCambiatoTitolo": "L’anno scolastico è cambiato",
+  "annoCambiatoCorpo": "Le iscrizioni adesso sono aperte per l’anno {anno}. I dati che hai inserito sono ancora qui: premi di nuovo il pulsante di invio per mandare la domanda per quell’anno.",
+  "annoNonOffertoRiprovaTitolo": "La domanda non è stata inviata",
+  "annoNonOffertoRiprovaCorpo": "L’anno scolastico scelto potrebbe non accettare più iscrizioni. I dati che hai inserito sono ancora qui: puoi riprovare a inviare tra poco, oppure rivolgerti alla segreteria."
 }

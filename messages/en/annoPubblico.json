@@ -9,5 +9,9 @@
   "annoChiusoTitolo": "Enrolment is closed",
   "annoChiusoCorpo": "This location is not accepting new enrolment applications at the moment. For information, please contact the school office.",
   "annoNonOffertoTitolo": "That year no longer accepts applications",
-  "annoNonOffertoCorpo": "The school year you chose is no longer available. Please choose another one: the information you entered is still here."
+  "annoNonOffertoCorpo": "The school year you chose is no longer available. Please choose another one: the information you entered is still here.",
+  "annoCambiatoTitolo": "The school year has changed",
+  "annoCambiatoCorpo": "Applications are now open for the school year {anno}. The information you entered is still here: press the submit button again to send your application for that year.",
+  "annoNonOffertoRiprovaTitolo": "Your application was not sent",
+  "annoNonOffertoRiprovaCorpo": "The school year you chose may no longer accept applications. The information you entered is still here: you can try sending again shortly, or contact the school office."
 }

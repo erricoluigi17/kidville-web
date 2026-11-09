@@ -19,6 +19,20 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  * si mostra niente alla famiglia. L'unica notizia che si dà in pagina è «chiuse», e solo quando il server ha
  * detto esplicitamente `chiuso: true`.
  *
+ * ── ANCHE IL SILENZIO È UN GUASTO: IL TETTO DI ATTESA ──
+ * `fetch` non ha un timeout di suo (misurato: un server che accetta la connessione e tace la tiene appesa 150
+ * secondi, vedi la testata di `src/lib/logging/tetto.ts`). Con il link `?scuola=` la forma dei passi aspetta questo
+ * elenco: senza un tetto la famiglia guarderebbe il primo passo senza poter andare avanti. Allo scadere di
+ * `ATTESA_MAX_ANNI_PUBBLICI_MS` l'esito è lo stesso di un 500: nessuna scelta, log `warn` (con un messaggio suo,
+ * per contare le scadenze a parte dalla rete giù), e il modulo procede. Una risposta che arriva DOPO non conta:
+ * cambierebbe la forma dei passi sotto le mani di chi sta già compilando.
+ *
+ * ── SE LA RICARICA FALLISCE, L'ELENCO VECCHIO RESTA ──
+ * `ricarica()` si usa dopo un rifiuto `ANNO_NON_OFFERTO`. Se quella seconda lettura fallisce (o scade) non si
+ * sostituisce l'elenco con «nessuno»: farebbe sparire il passo «anno» e sposterebbe gli indici dei passi mentre la
+ * famiglia legge il messaggio. Resta quello che c'era, e un nuovo invio lo decide il server. `letture` conta le
+ * letture concluse (riuscite o no) e dice a chi ha ricaricato quando ha finito.
+ *
  * ── PERCHÉ NON SI TOCCA LA FORMA DEI PASSI MENTRE L'ELENCO È IN VOLO ──
  * Vale quanto scritto in `EnrollmentWizard` per le sedi: far cambiare forma a `steps` sotto le mani del
  * genitore è il difetto che congelava il modulo. `inCaricamento` serve a chi decide la forma; `attendi()` a chi
@@ -26,6 +40,14 @@ import { logClient, nomeErrore } from '@/lib/logging/client'
  */
 
 export const ROTTA_ANNI = '/api/iscrizione/anni'
+
+/**
+ * Quanto la pagina aspetta l'elenco degli anni prima di andare avanti senza (PR 4.5, 4.5.7-bis). Otto secondi: una
+ * risposta lenta su una rete mobile arriva di solito prima, e oltre quel punto un genitore fermo sul primo passo
+ * legge già «non funziona». Non interrompe la `fetch` (resta in volo, e se risponde dopo non conta): limita
+ * l'ATTESA DELLA PAGINA, come `ATTESA_MAX_STATO_FIGLI_MS`. Dichiarato in `__tests__/lib/logging-tetto.test.ts` (il `;` finale serve al rilevatore di quel lock).
+ */
+export const ATTESA_MAX_ANNI_PUBBLICI_MS = 8_000;
 
 export interface AnnoPubblicoVoce {
   anno_id: string
@@ -69,6 +91,8 @@ export interface AnniPubblici {
   chiuso: boolean
   /** L'elenco di questa sede non è ancora arrivato (mai vero se la sede non è nota). */
   inCaricamento: boolean
+  /** Quante letture dell'elenco si sono concluse (riuscite o no) per questa sede: chi ricarica sa così quando è finita. */
+  letture: number
   /**
    * Si risolve quando l'elenco in volo è arrivato (o è fallito): mai rifiuta. Porta ciò che serve a chi sta
    * per cambiare passo, che col suo `anni` di render sarebbe in ritardo di un giro.
@@ -80,7 +104,10 @@ export interface AnniPubblici {
 
 export function useAnniPubblici({ sedeId }: { sedeId: string | null }): AnniPubblici {
   const [esito, setEsito] = useState<EsitoAnni | null>(null)
+  const [letture, setLetture] = useState(0)
   const [tentativo, setTentativo] = useState(0)
+  /** L'ultimo esito applicato, per non perderlo quando una ricarica fallisce. */
+  const ultimo = useRef<EsitoAnni | null>(null)
   const inVolo = useRef<Promise<{ scelta: boolean; chiuso: boolean }>>(
     Promise.resolve({ scelta: false, chiuso: false }),
   )
@@ -88,36 +115,65 @@ export function useAnniPubblici({ sedeId }: { sedeId: string | null }): AnniPubb
   useEffect(() => {
     if (!sedeId) return
     let annullato = false
+    let concluso = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let chiudiSenzaEsito: () => void = () => {}
     const nessuna = { anni: [] as AnnoPubblicoVoce[], scelta: false, chiuso: false }
-    const concludi = (lista: { anni: AnnoPubblicoVoce[]; scelta: boolean; chiuso: boolean }) => {
-      if (!annullato) setEsito({ sede: sedeId, ...lista })
-      return { scelta: lista.scelta, chiuso: lista.chiuso }
-    }
-    inVolo.current = fetch(`${ROTTA_ANNI}?scuola_id=${encodeURIComponent(sedeId)}`)
-      .then(async (r) => {
-        if (!r.ok) {
-          // `!r.ok` non è un'eccezione: il `catch` qui sotto non scatterebbe.
-          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'iscrizione-anni-non-caricati', stato: r.status })
-          return concludi(nessuna)
+    inVolo.current = new Promise<{ scelta: boolean; chiuso: boolean }>((risolvi) => {
+      /**
+       * Chiude questa lettura, UNA volta sola: la prima fra risposta e scadenza vince, l'altra non conta.
+       * `guasto`: se per questa sede c'è già un elenco (è una ricarica) resta quello, non diventa «nessuno».
+       */
+      const concludi = (lista: { anni: AnnoPubblicoVoce[]; scelta: boolean; chiuso: boolean }, guasto = false) => {
+        if (concluso) return
+        concluso = true
+        if (timer !== undefined) clearTimeout(timer)
+        const precedente = ultimo.current
+        const applicato: EsitoAnni =
+          guasto && precedente !== null && precedente.sede === sedeId ? precedente : { sede: sedeId, ...lista }
+        if (!annullato) {
+          ultimo.current = applicato
+          setEsito(applicato)
+          setLetture((n) => n + 1)
         }
-        const lista = anniValidi(await r.json())
-        if (lista === null) {
-          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'iscrizione-anni-corpo-inatteso', stato: r.status })
-          return concludi(nessuna)
+        risolvi({ scelta: applicato.scelta, chiuso: applicato.chiuso })
+      }
+      // Un effetto annullato (cambio di sede, ricarica) non lascia appesa la promessa di chi la teneva in mano.
+      chiudiSenzaEsito = () => concludi(nessuna, true)
+      timer = setTimeout(() => {
+        // Messaggio PROPRIO: la scadenza (il server non risponde) si conta a parte dalla rete giù.
+        if (!concluso) {
+          logClient({ livello: 'warn', evento: 'fetch', messaggio: 'iscrizione-anni-tetto-scaduto' })
         }
-        return concludi(lista)
-      })
-      .catch((err) => {
-        logClient({
-          livello: 'warn',
-          evento: 'fetch',
-          messaggio: `iscrizione-anni-non-caricati: ${nomeErrore(err)}`,
-          stack: err instanceof Error ? err.stack : undefined,
+        concludi(nessuna, true)
+      }, ATTESA_MAX_ANNI_PUBBLICI_MS)
+      fetch(`${ROTTA_ANNI}?scuola_id=${encodeURIComponent(sedeId)}`)
+        .then(async (r) => {
+          if (!r.ok) {
+            // `!r.ok` non è un'eccezione: il `catch` qui sotto non scatterebbe.
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'iscrizione-anni-non-caricati', stato: r.status })
+            return concludi(nessuna, true)
+          }
+          const lista = anniValidi(await r.json())
+          if (lista === null) {
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'iscrizione-anni-corpo-inatteso', stato: r.status })
+            return concludi(nessuna, true)
+          }
+          return concludi(lista)
         })
-        return concludi(nessuna)
-      })
+        .catch((err) => {
+          logClient({
+            livello: 'warn',
+            evento: 'fetch',
+            messaggio: `iscrizione-anni-non-caricati: ${nomeErrore(err)}`,
+            stack: err instanceof Error ? err.stack : undefined,
+          })
+          concludi(nessuna, true)
+        })
+    })
     return () => {
       annullato = true
+      chiudiSenzaEsito()
     }
   }, [sedeId, tentativo])
 
@@ -130,6 +186,7 @@ export function useAnniPubblici({ sedeId }: { sedeId: string | null }): AnniPubb
     scelta: valido ? esito.scelta : false,
     chiuso: valido ? esito.chiuso : false,
     inCaricamento: sedeId !== null && !valido,
+    letture,
     attendi,
     ricarica,
   }

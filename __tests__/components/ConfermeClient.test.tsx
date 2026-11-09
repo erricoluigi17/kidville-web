@@ -19,11 +19,17 @@ vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => '
 
 const h = vi.hoisted(() => ({
   ruolo: 'segreteria' as string,
+  /** La sede dell'anno in lavorazione, e i gruppi di sezioni che la route per sede restituisce (M1). */
+  sede: 'ffffffff-ffff-4fff-8fff-ffffffffff01' as string | null,
+  gruppi: [] as unknown[],
   anno: { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } } as unknown,
 }))
 vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
   useAnnoOpzionale: () => h.anno,
+}))
+vi.mock('@/lib/context/sede-context', () => ({
+  useSediAttive: () => ({ sedeCorrente: h.sede }),
 }))
 vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
@@ -37,6 +43,8 @@ const F_PART = 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1'
 const F_NUOVA = '91919191-9191-4919-8919-919191919191'
 const F_NUOVA_ARRIVO = 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1'
 const AL1 = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1'
+const SEDE_ANNO = 'ffffffff-ffff-4fff-8fff-ffffffffff01'
+const SEDE_ALTRA = 'ffffffff-ffff-4fff-8fff-ffffffffff02'
 const AL2 = 'a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2'
 const M1 = '71717171-7171-4717-8717-717171717171'
 const M2 = '72727272-7272-4727-8727-727272727272'
@@ -71,7 +79,7 @@ const rigaNuova = () => ({
 })
 
 function risposta(url: string, metodo: string, body: Record<string, unknown>): Risposta {
-  if (url.includes('/api/admin/sections/scoped')) return { status: 200, body: { data: [] } }
+  if (url.includes('/api/admin/sections/scoped')) return { status: 200, body: { data: h.gruppi } }
   if (url.includes('/conferme/ritira')) {
     s.confermato = false
     s.confermata = false
@@ -115,6 +123,8 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
 beforeEach(() => {
   vi.clearAllMocks()
   h.ruolo = 'segreteria'
+  h.sede = SEDE_ANNO
+  h.gruppi = []
   s.spunteConferma = [M1]
   s.confermato = true
   s.confermata = false
@@ -180,6 +190,39 @@ describe('ConfermeClient — la scheda del bambino in arrivo (4.5.15, C2)', () =
     await screen.findByText('CognomeArrivo NomeArrivo')
     const link = screen.getByRole('link', { name: /CognomeArrivo NomeArrivo/ })
     expect(link.getAttribute('href')).toBe(`/admin/students/${AL2}?kind=child`)
+  })
+})
+
+describe('ConfermeClient — il selettore della primaria offre le classi della SEDE dell\u2019anno (4.5.15, M1)', () => {
+  const opzioniPrimaria = async () => {
+    s.confermato = false
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(screen.getByRole('checkbox', { name: itConferme.vaAllaPrimaria }))
+    return screen
+  }
+
+  it('con le primarie di DUE sedi nella risposta, il selettore mostra solo quelle della sede dell\u2019anno', async () => {
+    h.gruppi = [
+      { scuolaId: SEDE_ANNO, scuolaNome: 'Sede Uno', sezioni: [
+        { id: 's-uno-a', name: 'PRIMA A UNO', school_type: 'primaria' },
+        { id: 's-uno-inf', name: 'GIRASOLI UNO', school_type: 'infanzia' },
+      ] },
+      { scuolaId: SEDE_ALTRA, scuolaNome: 'Sede Due', sezioni: [{ id: 's-due-a', name: 'PRIMA A DUE', school_type: 'primaria' }] },
+    ]
+    await opzioniPrimaria()
+    const sel = (await screen.findByLabelText(itConferme.sezioneArrivo)) as HTMLSelectElement
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual([itConferme.sezioneScegli, 'PRIMA A UNO'])
+  })
+
+  it('se la primaria c\u2019è solo in un\u2019altra sede, si dice che questa non ne ha, invece di offrire quella degli altri', async () => {
+    h.gruppi = [
+      { scuolaId: SEDE_ANNO, scuolaNome: 'Sede Uno', sezioni: [{ id: 's-uno-inf', name: 'GIRASOLI UNO', school_type: 'infanzia' }] },
+      { scuolaId: SEDE_ALTRA, scuolaNome: 'Sede Due', sezioni: [{ id: 's-due-a', name: 'PRIMA A DUE', school_type: 'primaria' }] },
+    ]
+    await opzioniPrimaria()
+    expect(await screen.findByText(itConferme.nessunaPrimaria)).toBeInTheDocument()
+    expect(screen.queryByText('PRIMA A DUE')).toBeNull()
   })
 })
 

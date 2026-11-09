@@ -7,6 +7,7 @@ import { btnPrimary, hint, input, label } from '@/components/features/admin/sett
 import { Tabs } from '@/components/ui/cockpit';
 import { useAdminIdentity, useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
+import { useSediAttive } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
@@ -56,7 +57,7 @@ type RigaApi = {
 };
 type Posti = { fascia: string; iscritti: number; posti: number | null; oltre: boolean };
 type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[] };
-type Sezione = { id: string; name: string; school_type: string };
+type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type ModuloApi = {
   modulo_id: string;
   codice: string;
@@ -130,11 +131,17 @@ const estraiElenco = (r: Risposta): Elenco | null => {
   };
 };
 
-/** Le sezioni dell'anno scelto nel selettore (la route legge il cookie dell'anno): servono quelle della primaria. */
+/**
+ * Le sezioni dell'anno scelto nel selettore (la route legge il cookie dell'anno): servono quelle della primaria.
+ * La route risponde a GRUPPI, uno per sede dell'utente: ogni sezione porta con sé la sua sede (`scuola_id`), perché il selettore
+ * ne mostri soltanto le classi della sede dell'anno in lavorazione (4.5.15, M1).
+ */
 const estraiSezioni = (r: Risposta): Sezione[] | null => {
   const gruppi = (r.corpo as { data?: unknown } | null)?.data;
   if (!Array.isArray(gruppi)) return null;
-  return (gruppi as Array<{ sezioni?: Sezione[] }>).flatMap((g) => (Array.isArray(g.sezioni) ? g.sezioni : []));
+  return (gruppi as Array<{ scuolaId?: string; sezioni?: Sezione[] }>).flatMap((g) =>
+    Array.isArray(g.sezioni) ? g.sezioni.map((x) => ({ ...x, scuola_id: g.scuolaId })) : [],
+  );
 };
 
 const estraiModuli = (r: Risposta): ModuloApi[] | null => {
@@ -176,7 +183,13 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
 
   const lettura = useLettura(`${base}/conferme?pagina=${pagina}&vista=${vista}&conferma=${filtro}`, uid, versione, estraiElenco);
   const sezioni = useLettura('/api/admin/sections/scoped?grado=primaria', uid, 0, estraiSezioni);
-  const primarie = useMemo(() => (sezioni.fase === 'ok' ? sezioni.dati.filter((s) => s.school_type === 'primaria') : []), [sezioni]);
+  // Con un anno di UNA sede in lavorazione (l'unico caso in cui questa pagina si apre) la sede è `sedeCorrente`. Un utente con più
+  // plessi riceve i gruppi di tutti: offrire la primaria di un'altra sede farebbe scegliere una classe che il server rifiuta.
+  const { sedeCorrente } = useSediAttive();
+  const primarie = useMemo(
+    () => (sezioni.fase === 'ok' ? sezioni.dati.filter((s) => s.school_type === 'primaria' && s.scuola_id === sedeCorrente) : []),
+    [sezioni, sedeCorrente],
+  );
   // Una rilettura (dopo una conferma) NON toglie l'esito: la riga può uscire dal filtro, il messaggio no.
   const rilegge = useCallback(() => {
     setAggiornate({});

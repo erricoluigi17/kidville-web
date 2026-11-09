@@ -89,6 +89,8 @@ const LETTURE: Record<string, Voce> = {
   // la frequenza dell'anno nuovo contiene proprio l'`in_arrivo`, ed è giusto che compaia con il suo nome; nella vista «Conferme» gli id sono
   // quelli dell'anno attivo, dove l'`in_arrivo` non ha frequenza.
   'src/app/api/admin/anni/[annoSedeId]/conferme/route.ts::admin/anni/[annoSedeId]/conferme:GET': ['no-già', 'ids'],
+  // 4.7.2: nome e cognome dei soli bambini della PAGINA (≤ 50), di cui ha già gli id dalle frequenze vive dell'anno nuovo.
+  'src/app/api/admin/anni/[annoSedeId]/senza-firma-app/route.ts::admin/anni/[annoSedeId]/senza-firma-app:GET': ['no-già', 'ids'],
   'src/app/api/admin/chat/contacts/route.ts::admin/chat/contacts:GET': ['no-già', 'stato'],
   'src/app/api/admin/chat/messages/route.ts::admin/chat/messages:GET': ['no-già', 'puntuale'],
   'src/app/api/admin/chat/messages/scarico/route.ts::admin/chat/messages/scarico:POST': ['no-già', 'puntuale'],
@@ -342,6 +344,11 @@ const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::anno_registra_frequenza': ['no-già', 'funzione-puntuale'],
   // 4.5.15: legge UN alunno per id (la sua frequenza) solo per sapere se la scheda è archiviata o anonimizzata; non fa elenchi.
   'sql::anno_quota_voce': ['no-già', 'funzione-puntuale'],
+  // 4.7.1: il cruscotto dell'anno prossimo conta le frequenze vive dell'anno nuovo, e fra loro ci sono i bambini `in_arrivo` (le
+  // nuove iscrizioni): li conta di proposito, per sede, e si limita a escludere archiviati e anonimizzati. Nessun elenco di nomi.
+  'sql::anno_cruscotto': ['sì', 'funzione-di-anno'],
+  // 4.7.1: stessa regola di `anno_quota_voce` (archiviato/anonimizzato) su un elenco di frequenze dell'anno nuovo: restituisce solo uuid.
+  'sql::anno_quota_piu_voci': ['sì', 'funzione-di-anno'],
   'sql::anno_riempi': ['no-già', 'funzione-tolta'],
   'sql::anno_sede_della_riga': ['no-già', 'funzione-puntuale'],
   'sql::anno_sede_sql': ['no-già', 'funzione-puntuale'],

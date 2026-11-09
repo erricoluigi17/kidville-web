@@ -1,1 +1,13 @@
-{}
+{
+  "annoPassoTitolo": "Anno scolastico",
+  "annoPassoSottotitolo": "Scegli l’anno a cui iscrivere tuo figlio",
+  "annoLegenda": "Anno scolastico di iscrizione",
+  "annoIngressoDurante": "Entra subito, durante l’anno in corso",
+  "annoIngressoInizio": "Entra a inizio anno",
+  "annoErroreScelta": "Scegli un anno scolastico per proseguire",
+  "annoRiepilogoRiga": "Anno scolastico: {anno}",
+  "annoChiusoTitolo": "Le iscrizioni sono chiuse",
+  "annoChiusoCorpo": "Al momento questa sede non accetta nuove domande di iscrizione. Per informazioni puoi rivolgerti alla segreteria.",
+  "annoNonOffertoTitolo": "Quell’anno non accetta più domande",
+  "annoNonOffertoCorpo": "L’anno scolastico che avevi scelto non è più disponibile. Scegline un altro: i dati che hai inserito sono ancora qui."
+}

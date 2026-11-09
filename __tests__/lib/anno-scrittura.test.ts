@@ -420,7 +420,13 @@ describe('annoDellaData', () => {
 
 describe('annoPerScritturaPubblica', () => {
   it('12 · il corrente della sede; annoId ignorato se domande_aperte è false; accettato se è true', async () => {
-    const { supabase } = finto()
+    // 4.5.7: se NESSUN anno ha le domande aperte la porta è chiusa (`chiuso`), non "il corrente comunque".
+    const { supabase: chiuse } = finto()
+    expect(await annoPerScritturaPubblica(chiuse, SEDE)).toEqual({ annoSedeId: null, annoId: null, chiuso: true })
+
+    const righeCorrente = righeNormali()
+    righeCorrente[1].domande_aperte = true
+    const { supabase } = finto({ righe: righeCorrente })
     expect(await annoPerScritturaPubblica(supabase, SEDE)).toEqual({ annoSedeId: S2, annoId: A2 })
     expect(await annoPerScritturaPubblica(supabase, SEDE, { annoId: A3 })).toEqual({ annoSedeId: S2, annoId: A2 })
 
@@ -434,7 +440,10 @@ describe('annoPerScritturaPubblica', () => {
   it('12b · schema indietro; in agosto senza annoId → senzaAnno (mai un rifiuto)', async () => {
     const { supabase: indietro } = finto({ indietro: true })
     expect(await annoPerScritturaPubblica(indietro, SEDE)).toEqual({ annoSedeId: null, annoId: null, schemaIndietro: true })
-    const { supabase: agosto } = finto({ righe: righeAgosto() })
+    // 4.5.7: con tutte le domande sospese sarebbe `chiuso`; qui il nuovo anno le ha aperte e manca solo il `corrente`.
+    const righeAgostoAperte = righeAgosto()
+    righeAgostoAperte[2].domande_aperte = true
+    const { supabase: agosto } = finto({ righe: righeAgostoAperte })
     logger.logEvento.mockClear()
     expect(await annoPerScritturaPubblica(agosto, SEDE)).toEqual({ annoSedeId: null, annoId: null, senzaAnno: true })
     // P18: senza il warn, ad agosto ogni domanda pubblica finirebbe senza anno e nessuno lo vedrebbe.

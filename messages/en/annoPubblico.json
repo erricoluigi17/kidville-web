@@ -1,1 +1,13 @@
-{}
+{
+  "annoPassoTitolo": "School year",
+  "annoPassoSottotitolo": "Choose the year you are enrolling your child for",
+  "annoLegenda": "School year of enrolment",
+  "annoIngressoDurante": "Starts right away, during the current year",
+  "annoIngressoInizio": "Starts at the beginning of the year",
+  "annoErroreScelta": "Choose a school year to continue",
+  "annoRiepilogoRiga": "School year: {anno}",
+  "annoChiusoTitolo": "Enrolment is closed",
+  "annoChiusoCorpo": "This location is not accepting new enrolment applications at the moment. For information, please contact the school office.",
+  "annoNonOffertoTitolo": "That year no longer accepts applications",
+  "annoNonOffertoCorpo": "The school year you chose is no longer available. Please choose another one: the information you entered is still here."
+}

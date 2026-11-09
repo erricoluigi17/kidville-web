@@ -827,5 +827,16 @@
   "tracciaDocenteAppartenenzeStoriche": "Historical class memberships recorded",
   "tracciaDocenteCollegamentiStorici": "Document links verified",
   "tracciaDocenteRettificheStoriche": "Historical corrections recorded",
-  "tracciaDocenteRettificheChat": "Chat messages corrected"
+  "tracciaDocenteRettificheChat": "Chat messages corrected",
+  "ricevutiAnnoPer": "for {anno}",
+  "ricevutiAnnoDomanda": "Application year: {anno}",
+  "ricevutiSpostaAnno": "Move to {anno}",
+  "ricevutiSpostaAnnoGenerico": "Move",
+  "ricevutiSpostaAnnoScegli": "Move this application to the year",
+  "ricevutiSpostaAnnoLavora": "Moving…",
+  "ricevutiSpostaAnnoConferma": "Move this application to {anno}? The classes chosen so far must be chosen again.",
+  "ricevutiSpostaAnnoFatto": "Application moved to {anno}. Choose the classes again.",
+  "ricevutiSpostaAnnoGiaEsaminata": "The application has already been reviewed: the year did not change.",
+  "ricevutiSpostaAnnoNonOfferto": "The location no longer accepts applications for that year. Check the location calendar.",
+  "ricevutiSpostaAnnoErrore": "Could not move the application. Try again shortly."
 }

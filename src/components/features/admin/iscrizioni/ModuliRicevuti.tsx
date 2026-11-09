@@ -12,6 +12,9 @@ import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { useCalendario } from '@/lib/context/calendario-context'
+import { annoAttivoDelCalendario, etichettaAnno, type RigaCalendario } from '@/lib/anno-scolastico'
+import { STATO_DOMANDA_IN_ATTESA } from '@/lib/iscrizioni/stati'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato, apriLinkNellApp } from '@/lib/ui/apri-documento-firmato'
 import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
@@ -207,6 +210,33 @@ export function ModuliRicevuti() {
 
   const { reFetchKey, sedi, effettive } = useSediAttive()
 
+  /**
+   * L'ANNO DELLA DOMANDA (PR 4.5.14). Il calendario di ogni sede viene da `useCalendario().perSede`: l'elenco mostra
+   * domande di più sedi e un hook per sede non si può chiamare in un ciclo. Una domanda senza `anno_id`, o una sede
+   * senza calendario (il database della CI, non migrato), non ha anno: niente etichetta, niente pulsante.
+   */
+  const { perSede } = useCalendario()
+  const [spostando, setSpostando] = useState(false)
+  /** L'esito dell'ultimo spostamento, scritto sotto il pulsante; sparisce aprendo un'altra domanda. */
+  const [esitoSposta, setEsitoSposta] = useState<{ tipo: 'ok' | 'errore'; testo: string } | null>(null)
+
+  const rigaAnnoDi = (r: RigaElenco): RigaCalendario | null => {
+    if (!r.anno_id || !r.scuola_id) return null
+    return perSede[r.scuola_id]?.find((c) => c.annoId === r.anno_id) ?? null
+  }
+  /** `2027/28` se la domanda NON è per l'anno attivo della sua sede; `null` altrimenti (oggi sono quasi tutte così). */
+  const etichettaFuoriAnno = (r: RigaElenco): string | null => {
+    const riga = rigaAnnoDi(r)
+    const attivo = annoAttivoDelCalendario(r.scuola_id ? perSede[r.scuola_id] : null)
+    if (!riga || !attivo || riga.annoId === attivo.annoId) return null
+    return etichettaAnno(riga.annoInizio, 'breve')
+  }
+  /** Gli anni della sede, diversi da quello della domanda, che accettano ancora domande. */
+  const altriAnniAperti = (r: RigaElenco): RigaCalendario[] => {
+    if (!r.anno_id || !r.scuola_id || r.status !== STATO_DOMANDA_IN_ATTESA) return []
+    return (perSede[r.scuola_id] ?? []).filter((c) => c.annoId !== r.anno_id && c.domandeAperte)
+  }
+
   // Con tre plessi la domanda va letta insieme alla sua sede: importare "alla cieca"
   // significa archiviare un bambino di Aversa a Giugliano. L'uuid non dice niente a
   // nessuno, quindi si risolve nel nome del plesso.
@@ -364,6 +394,7 @@ export function ModuliRicevuti() {
     setSelected(null)
     setAprendo(row.id)
     setSezioniDellaDomanda(null)
+    setEsitoSposta(null)
     setAssignments(row.assigned_classes ?? {})
     // Retta e affini NON si precompilano: decisione del titolare del 2026-09-02.
     // Un valore già scritto nel campo è un valore che si conferma senza guardarlo,
@@ -533,6 +564,69 @@ export function ModuliRicevuti() {
     }
   }
 
+  /**
+   * Sposta una domanda IN ATTESA a un altro anno aperto della sua sede (PR 4.5.14, route `sposta-anno` della 4.5.8).
+   * Le classi scelte erano dell'altro anno: si azzerano e si rileggono quelle del nuovo. 409 = qualcuno l'ha già
+   * esaminata (l'anno non cambia, si rilegge l'elenco); 422 = la sede ha chiuso quell'anno nel frattempo (il pulsante resta).
+   * Nei log solo codici di stato: la domanda è un'anagrafica di minori.
+   */
+  async function spostaAnno(destinazione: RigaCalendario) {
+    if (!selected || spostando) return
+    const domanda = selected
+    const anno = etichettaAnno(destinazione.annoInizio, 'breve')
+    if (!confirm(t('ricevutiSpostaAnnoConferma', { anno }))) return
+    const mio = gettoneDettaglio.current
+    setSpostando(true)
+    setEsitoSposta(null)
+    try {
+      const res = await fetch('/api/admin/iscrizioni/sposta-anno', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-sedi': reFetchKey },
+        body: JSON.stringify({ domanda_id: domanda.id, anno_id: destinazione.annoId }),
+      })
+      const json = (await res.json().catch(() => ({}))) as { error?: string; codice?: string }
+      const ancoraAperta = mio === gettoneDettaglio.current
+      if (res.ok) {
+        setRows((prec) => prec.map((r) => (r.id === domanda.id ? { ...r, anno_id: destinazione.annoId } : r)))
+        if (!ancoraAperta) return
+        const spostata = { ...domanda, anno_id: destinazione.annoId }
+        setSelected(spostata)
+        setAssignments({})
+        setSezioniDellaDomanda(null)
+        await caricaSezioniDellAnno(spostata, mio)
+        setEsitoSposta({ tipo: 'ok', testo: t('ricevutiSpostaAnnoFatto', { anno }) })
+        return
+      }
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: `iscrizione-sposta-anno-rifiutato: http ${res.status} ${json.codice ?? 'senza-codice'}`,
+        route: '/admin/iscrizioni',
+      })
+      if (res.status === 409) await load(reFetchKey, filtri.chiaveServer)
+      if (!ancoraAperta) return
+      setEsitoSposta({
+        tipo: 'errore',
+        testo:
+          res.status === 409
+            ? (json.error ?? t('ricevutiSpostaAnnoGiaEsaminata'))
+            : res.status === 422
+              ? t('ricevutiSpostaAnnoNonOfferto')
+              : t('ricevutiSpostaAnnoErrore'),
+      })
+    } catch (e) {
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: `iscrizione-sposta-anno-fallito: ${nomeErrore(e)}`,
+        route: '/admin/iscrizioni',
+      })
+      if (mio === gettoneDettaglio.current) setEsitoSposta({ tipo: 'errore', testo: t('ricevutiSpostaAnnoErrore') })
+    } finally {
+      setSpostando(false)
+    }
+  }
+
   const tutteCaricate = rows.length >= totale
   /**
    * Quale delle cinque schermate rendere.
@@ -621,6 +715,7 @@ export function ModuliRicevuti() {
             {rows.map(row => {
               const nChildren = row.riassunto?.bambini ?? 0
               const nAdults = row.riassunto?.adulti ?? 0
+              const fuoriAnno = etichettaFuoriAnno(row)
               return (
                 <button
                   key={row.id}
@@ -642,6 +737,11 @@ export function ModuliRicevuti() {
                     <span className="flex items-center gap-1 text-kidville-green font-semibold">
                       <MapPin size={13} /> {nomeSede(row.scuola_id)}
                     </span>
+                    {fuoriAnno && (
+                      <span className="rounded-full bg-kidville-warn-soft px-2 py-0.5 text-[10px] font-bold uppercase text-kidville-warn">
+                        {t('ricevutiAnnoPer', { anno: fuoriAnno })}
+                      </span>
+                    )}
                   </div>
                 </button>
               )
@@ -686,6 +786,14 @@ export function ModuliRicevuti() {
                 row={selected}
                 sections={sezioniDellaDomanda ?? sections}
                 nomeSede={nomeSede(selected.scuola_id)}
+                annoDomanda={(() => {
+                  const r = rigaAnnoDi(selected)
+                  return r ? etichettaAnno(r.annoInizio, 'breve') : null
+                })()}
+                altriAnni={altriAnniAperti(selected)}
+                spostando={spostando}
+                esitoSposta={esitoSposta}
+                onSposta={spostaAnno}
                 assignments={assignments}
                 setAssignments={setAssignments}
                 rette={rette}
@@ -729,7 +837,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function DetailPanel({
-  row, sections, nomeSede, assignments, setAssignments,
+  row, sections, nomeSede, annoDomanda, altriAnni, spostando, esitoSposta, onSposta, assignments, setAssignments,
   rette, setRette, retteACarico, setRetteACarico,
   intestatari, setIntestatari, giorniScadenza, setGiorniScadenza,
   referenteIndex, setReferenteIndex,
@@ -738,6 +846,13 @@ function DetailPanel({
   row: SubmissionRow
   sections: Section[]
   nomeSede: string
+  /** `2026/27`, o `null` se la domanda non ha anno o il calendario non c'è. */
+  annoDomanda: string | null
+  /** Gli altri anni della sede che accettano domande: vuoto = niente spostamento. */
+  altriAnni: RigaCalendario[]
+  spostando: boolean
+  esitoSposta: { tipo: 'ok' | 'errore'; testo: string } | null
+  onSposta: (destinazione: RigaCalendario) => void
   assignments: Record<string, string>
   setAssignments: (a: Record<string, string>) => void
   rette: Record<string, string>
@@ -768,6 +883,9 @@ function DetailPanel({
   const children = row.data?.children ?? []
   const adults = row.data?.adults ?? []
   const done = row.status !== 'pending'
+  // L'anno scelto nell'elenco a discesa (solo con più di un altro anno aperto); di default il primo.
+  const [sceltoId, setSceltoId] = useState('')
+  const destinazione = altriAnni.find((a) => a.annoId === sceltoId) ?? altriAnni[0] ?? null
   // Le sezioni sono per plesso e i nomi si ripetono fra sedi ("3 ANNI" esiste in
   // tutte e tre): offrire quelle delle altre sedi porta dritti a un `section_id`
   // NULL, perché il trigger DB risolve il nome SOLO dentro la scuola dell'alunno.
@@ -786,6 +904,57 @@ function DetailPanel({
       <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
         <MapPin size={14} /> {t('ricevutiSede')} <strong>{nomeSede}</strong>
       </p>
+
+      {annoDomanda && (
+        <div className="space-y-2">
+          <p className="font-maven text-sm text-kidville-ink">
+            {t('ricevutiAnnoDomanda', { anno: annoDomanda })}
+          </p>
+          {destinazione && (
+            <div className="flex flex-wrap items-center gap-2">
+              {altriAnni.length > 1 && (
+                <>
+                  <label htmlFor="ricevuti-sposta-anno" className="text-[11px] font-semibold text-kidville-muted uppercase">
+                    {t('ricevutiSpostaAnnoScegli')}
+                  </label>
+                  <select
+                    id="ricevuti-sposta-anno"
+                    value={destinazione.annoId}
+                    onChange={(e) => setSceltoId(e.target.value)}
+                    disabled={spostando}
+                    className="min-w-0 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
+                  >
+                    {altriAnni.map((a) => (
+                      <option key={a.annoId} value={a.annoId}>{etichettaAnno(a.annoInizio, 'breve')}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => onSposta(destinazione)}
+                disabled={spostando}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-kidville-line px-3 py-2 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
+              >
+                {spostando && <Loader2 size={14} className="animate-spin" />}
+                {spostando
+                  ? t('ricevutiSpostaAnnoLavora')
+                  : altriAnni.length > 1
+                    ? t('ricevutiSpostaAnnoGenerico')
+                    : t('ricevutiSpostaAnno', { anno: etichettaAnno(destinazione.annoInizio, 'breve') })}
+              </button>
+            </div>
+          )}
+          {esitoSposta && (
+            <p
+              role={esitoSposta.tipo === 'errore' ? 'alert' : 'status'}
+              className={`text-xs font-maven ${esitoSposta.tipo === 'errore' ? 'text-kidville-error' : 'text-kidville-success'}`}
+            >
+              {esitoSposta.testo}
+            </p>
+          )}
+        </div>
+      )}
 
       {docBloccato && (
         <p role="alert" className={AVVISO_FINESTRA_BLOCCATA}>

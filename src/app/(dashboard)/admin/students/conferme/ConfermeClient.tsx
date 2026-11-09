@@ -17,7 +17,7 @@ import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
  * Il selettore dell'anno (4.2) sceglie l'anno nuovo: qui compare solo se ha le iscrizioni aperte. Due viste:
  *  · «Conferme» — per ogni bambino dell'anno in corso la segreteria vede se la famiglia ha confermato, ha detto «no» o non ha
  *    risposto, a che punto sono moduli e quota, e può registrare la conferma o il «non rinnova»;
- *  · «Nuove iscrizioni» — i bambini che arrivano da fuori: senza questa vista non avrebbero un posto dove spuntare i moduli, e la loro
+ *  · «Nuove iscrizioni» — i bambini che arrivano da fuori o che tornano dopo essere usciti: senza questa vista non avrebbero un posto dove spuntare i moduli, e la loro
  *    iscrizione non diventerebbe mai «iscritto».
  * In tutte e due, chi ha una frequenza dell'anno nuovo ha il pannello dei moduli: la segreteria spunta, il DATABASE ricalcola i flag e lo
  * stato (qui non si scrive mai `moduli_completi`, `quota_saldata` o `stato`: si riporta quello che il server risponde).
@@ -407,7 +407,7 @@ function RigaConferma({
   // («Quota da generare»), o ci sono più voci da guardare («Più voci»). Solo il secondo e il terzo hanno un'azione.
   const confermata = r.conferma === 'confermato' || vista === 'nuove';
   // Il pulsante c'è in tutte e due le viste (4.5.16, F): la route «quota» riparte dalla frequenza dell'anno NUOVO, che ogni riga
-  // confermata ha (`nuova_frequenza_id`), anche quella di un bambino che arriva da fuori e non ha una frequenza di oggi.
+  // confermata ha (`nuova_frequenza_id`), anche quella di un bambino che arriva da fuori (o torna dopo essere uscito) e non ha una frequenza di oggi.
   const quotaDaGenerare = !!r.nuova_frequenza_id && quota === 'assente' && confermata && esitoQuota !== 'piu_voci';
   const quotaTesto =
     quota === 'saldata'

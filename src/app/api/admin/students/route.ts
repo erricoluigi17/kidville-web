@@ -1466,7 +1466,10 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // valore sparirebbe il 01/09, con un 200.
                 if (inFinestra) {
                     const sulVisibile = await supabase.from('frequenze').select('id').eq('alunno_id', id).eq('anno_sede_id', annoVisibileScrittura as string).limit(1);
-                    if (!sulVisibile.error && (sulVisibile.data ?? []).length === 0) annoScrittura = annoAttivoScrittura;
+                    if (sulVisibile.error) {
+                        // (chiusura, N5) Non si ripiega in silenzio: senza la lettura si salva sull'anno visibile, come prima di NS12, e chi guarda i log lo sa.
+                        logEvento('anagrafica', 'warn', { operazione: 'admin/students:PATCH', azione: 'lettura-frequenza-visibile-fallita-ripiego-sul-visibile', alunno: id }, sulVisibile.error);
+                    } else if ((sulVisibile.data ?? []).length === 0) annoScrittura = annoAttivoScrittura;
                 }
                 let classeDelNuovoAnno = false;
                 let classeNelVisibile = false;

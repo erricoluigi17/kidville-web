@@ -1713,11 +1713,15 @@ BEGIN
 
       -- (giro 3, NB3) I bambini iscritti NELLA FINESTRA (dalla segreteria, dopo la conferma) non hanno una riga del passaggio: sono «in arrivo»
       -- con una frequenza viva nell'anno nuovo, che ora è visibile. Entrano anche loro.
+      -- (chiusura, N1) Non solo gli «in arrivo»: anche un bambino GIÀ in anagrafica (`iscritto` nel centro estivo, in una classe del solo anno vecchio)
+      -- a cui è stata importata una domanda per l'anno nuovo ha la frequenza nuova ma la scheda ancora nella classe vecchia, e diario e appello
+      -- leggono la scheda. Basta una frequenza viva nell'anno nuovo e nessuna riga del passaggio; gli archiviati restano fuori. Chi NON ha una domanda
+      -- (nessuna frequenza nuova) non si tocca: lo decide la segreteria dal 01/09.
       FOR v_r IN
         SELECT DISTINCT f.alunno_id FROM public.frequenze f
           JOIN public.alunni al ON al.id = f.alunno_id
          WHERE f.anno_sede_id = v_p.a_anno_sede_id AND f.stato IN ('in_attesa', 'iscritto') AND f.data_ingresso <= v_oggi
-           AND al.stato = 'in_arrivo' AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL
+           AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL
            AND NOT EXISTS (SELECT 1 FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.alunno_id = f.alunno_id)
          ORDER BY f.alunno_id
       LOOP

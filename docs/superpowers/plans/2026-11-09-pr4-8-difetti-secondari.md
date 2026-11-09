@@ -96,5 +96,22 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 - **NS14 · preesistente, NON corretto.** Il `PATCH` del form intero sul `ritornato` toglie la classe alla sua frequenza vecchia e chiusa. **Verificato leggendo il codice, non
   rieseguendo `origin/main`:** il form manda `section_id` (vuoto per un ex alunno che torna) e `campiFrequenzaDaAlunno` lo copia sulla frequenza dell'anno su cui la route scrive;
   prima della 4.8 era l'anno attivo (il vecchio, dove la frequenza chiusa del ritornato sta), oggi è il visibile (lo stesso). Lo storico delle classi conserva la classe.
-- **Centro estivo creato nella finestra → `11-bis` ogni notte dal 01/09.** Il bambino con una classe che esiste solo nell'anno vecchio resta nel vecchio (come oggi), ma non ha
-  una riga del passaggio e il 01/09 non ha la frequenza del nuovo anno. **Per il collaudo:** la segreteria deve decidere a mano, dal 01/09, se iscriverlo all'anno nuovo o archiviarlo.
+- **Centro estivo creato nella finestra, SENZA domanda per l'anno nuovo → resta segnalato dal 01/09** (la `11`, «alunni senza frequenza»; nei documenti precedenti la chiamavo `11-bis`).
+  Il bambino con una classe che esiste solo nell'anno vecchio resta nel vecchio (come oggi), non ha una riga del passaggio e il 01/09 non ha la frequenza del nuovo anno.
+  **Per il collaudo:** la segreteria deve decidere a mano, dal 01/09, se iscriverlo all'anno nuovo o archiviarlo. **Con una domanda importata** (N1, chiusura) il caso si chiude da solo:
+  la ricopia del 01/09 porta la scheda nella classe nuova (prova: `anno-passaggio-chiusura.test.ts`, R2 e R5); l'allarme resta solo per chi la domanda non ce l'ha.
+
+## Chiusura (dopo la ri-revisione del giro 4)
+
+- **N1 · CORRETTO** (migrazione `20261109182422`, secondo giro della ricopia: non solo gli `in_arrivo`, ogni scheda non archiviata con una frequenza viva nell'anno nuovo e nessuna riga del passaggio).
+- **N5 · CORRETTO**: il PATCH che ripiega sull'anno visibile se la lettura `sulVisibile` fallisce scrive un `logEvento` `anagrafica`/`warn` (`lettura-frequenza-visibile-fallita-ripiego-sul-visibile`).
+- **N2 · NON corretto, compensato dalle route.** Un INSERT diretto nella finestra passa allo specchio solo la retta; il giorno di scadenza (B2: giorno 10) sulla frequenza nuova è `null` il 01/09.
+  Le route compensano con `frequenzaDopoInsert` (l'import a mano di R4 porta il giorno 12 fino al 02/09). Restano esposti solo gli INSERT grezzi, e quelli noti (ETL della modulistica, SIDI) non portano campi economici.
+- **N3 · NON corretto, l'allarme c'è.** L'INSERT di una riga GIÀ archiviata con una classe del nuovo anno (B4) resta `ritirato/girasoliNuova/ARCHIVIATO` senza frequenza: la `15-bis` vale 1 per sempre e il
+  diario la elencherebbe. Nel giro 3 la scheda nasceva senza classe, quindi in teoria è una regressione. Nessun chiamante inserisce righe archiviate (controllati i quattro INSERT su `alunni` in `src/`).
+- **N4 · NON corretto, nessun chiamante noto.** L'INSERT `sospeso` con «Girasoli» nella finestra (B6) diventa `in_arrivo`.
+- **ETL della modulistica nella finestra** (`fn_form_submission_etl_sede`): il bambino nuovo nato da un modulo con una classe del nuovo anno nasce `in_arrivo`, come per il POST (passa dallo specchio d'INSERT).
+  **Non provato, da collaudo**: la funzione non entra nel banco senza ricostruire le tabelle della modulistica.
+- **Fuori perimetro, PR a parte:** `GET /api/diary/students` (`route.ts:184-190`) filtra per `section_id` e `anonimizzato_il` ma non per `archiviato_il`. Un `.is('archiviato_il', null)` sarebbe una difesa in
+  profondità contro tutta la famiglia di NB4, oltre alla `15-bis` che la sorveglia.
+- **«Riattiva» nella finestra · DIFETTO, non corretto (decide il coordinatore).** Vedi l'esito, sezione «Chiusura», voce 1.4.

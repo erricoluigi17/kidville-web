@@ -203,6 +203,7 @@ export interface JobCron {
  *   fatture-coda-tick     fatture-coda-tick   ogni 5 min*      30 min  (*salta :02 e :32; dal 2026-09-23)
  *   fascicolo-audit-ip-retention  (stesso nome)  29 4 ogni gg  26 h   (dal 2026-10-25)
  *   cron-esiti            cron-esiti          ogni 10 min      40 min  (dal 2026-10-25)
+ *   anni-tick             anni-tick           10 * * * *       3 h     (dal 2026-11-09)
  *
  * Dal 2026-10-25 (sessione 7 della seconda serie) i job hanno DUE guardie: questa (`cron-battito`, il
  * battito che la route o la funzione scrive in `app_log`) e `cron-esiti` (l'esito che pg_cron e
@@ -396,6 +397,11 @@ export const JOB_CRON: readonly JobCron[] = [
     // di silenzio, invece, non è più un ritardo.
     // Ogni esito del giro (anche «niente da fare» e «finestra della sync») batte `esito: 'ok'`.
     { nome: 'fatture-coda-tick', finestraMs: 30 * MIN },
+    // `anni-tick` (`10 * * * *`, OGNI ORA, `public.anni_tick()`, PR 4.5): crea l'anno successivo di ogni sede nel suo giorno e
+    // batte `ok` anche a vuoto (fino al 01/09/2027 non ha niente da creare) o `ok-parziale` se una sede ha fallito. Entrato qui
+    // il 2026-11-09, nella PR-B della 4.5, con la migrazione già in produzione e il battito già visto in `app_log`.
+    // Finestra 3 × `ORA`: assorbe un giro saltato senza gridare, e non due.
+    { nome: 'anni-tick', finestraMs: 3 * ORA },
     // Notturno di sola SQL (`29 4 * * *`, `fascicolo_audit_ip_retention_tick`): azzera `ip` e
     // `user_agent` del registro degli accessi ai dati dei bambini dopo un anno. Battito
     // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
@@ -471,20 +477,12 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'riprende da solo il giorno in cui torna attivo.',
     },
     {
-        nome: 'anni-tick',
-        perche:
-            'Orario (`10 * * * *`), ma la migrazione è nella PR 4.5 e il lock `cron-sorvegliato-e-applicato` ' +
-            'vieta un nome in `JOB_CRON` prima che il suo `cron.schedule` sia nella fotografia delle migrazioni ' +
-            'applicate. Il nome passa in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B, dopo la rigenerazione ' +
-            'della fotografia. Nel frattempo lo sorveglia `cron-esiti` (cron_ultimo_esito), e `anno` dice se ' +
-            'l’anno successivo manca oltre il suo giorno. Batte `ok` anche a vuoto (fino al 01/09/2027 non ha ' +
-            'niente da creare) o `ok-parziale` se una sede ha fallito.',
-    },
-    {
         nome: 'anno-invarianti',
         perche:
-            'Notturno (`17 3 * * *`), stessa ragione di `anni-tick`: la migrazione è nella PR 4.5. Il nome passa ' +
-            'in `JOB_CRON` con `finestraMs` 26 × `ORA` nella PR-B, dopo la rigenerazione della fotografia. ' +
+            'Notturno (`17 3 * * *`). La migrazione è in produzione dal 09/11/2026 e la fotografia la contiene, ma il suo ' +
+            'primo battito arriva solo alle 03:17 del giorno dopo: entrato in `JOB_CRON` prima, `/api/health` si sarebbe ' +
+            'acceso fino a quella notte. Il nome passa in `JOB_CRON` con `finestraMs` 26 × `ORA` nella prossima PR-B, ' +
+            'a primo battito visto in `app_log`. ' +
             'Nel frattempo lo sorveglia `cron-esiti`. Batte sempre `ok` (il lavoro è girato): che i dati siano a ' +
             'posto lo dice la riga `error` che scrive se un’invariante non è zero, e il controllo `anno-invarianti`.',
     },

@@ -1,16 +1,16 @@
 ## 🗓️ Changelog — Anno scolastico, PR 4.5: le iscrizioni all'anno prossimo e la creazione automatica dell'anno — 2026-11-09 (branch `feat/anno-scolastico-iscrizioni`)
 
-**Stato:** 🟡 in revisione. **Ha cinque migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109035209_anno_tick.sql` (M45a), `20261109035213_anno_alunno_in_arrivo.sql` (M45b), `20261109035216_anno_listino_moduli_sezioni.sql` (M45d), `20261109035219_anno_iscrizione_conferma.sql` (M45c), `20261109035223_anno_crm_anno_id.sql` (M45e). L'ordine è questo e non l'alfabetico: M45d viene prima di M45c, perché la voce della quota (M45c) legge la scadenza che nasce in M45d. La prima commit del ramo è la pulizia dopo la PR 4.4 (la PR-B della 4.4 è già passata). Nessun controllo visivo, nessuna prova da telefono e nessuna prova su un database vero: tutto lo SQL è provato in PGlite. **Nessuna sede ha aperto le iscrizioni dopo il merge**: serve prima che la segreteria scriva quote e moduli.
+**Stato:** ✅ in produzione dal 09/11/2026 (#304, `094a25ed`). **Ha cinque migrazioni**, applicate dall'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109035209_anno_tick.sql` (M45a), `20261109035213_anno_alunno_in_arrivo.sql` (M45b), `20261109035216_anno_listino_moduli_sezioni.sql` (M45d), `20261109035219_anno_iscrizione_conferma.sql` (M45c), `20261109035223_anno_crm_anno_id.sql` (M45e). L'ordine è questo e non l'alfabetico: M45d viene prima di M45c, perché la voce della quota (M45c) legge la scadenza che nasce in M45d. La prima commit del ramo è la pulizia dopo la PR 4.4 (la PR-B della 4.4 è già passata). Nessun controllo visivo, nessuna prova da telefono e nessuna prova su un database vero: tutto lo SQL è provato in PGlite. **Nessuna sede ha aperto le iscrizioni dopo il merge**: serve prima che la segreteria scriva quote e moduli. **Pulizia dopo il merge (09/11/2026).** Le fotografie sono rigenerate dalla produzione: le migrazioni 264 -> 269 (le cinque della 4.5) e le chiavi verso `utenti` (83, identiche, con l'impronta md5 uguale a quella del database); `anno_tabelle` (46), indici unici (292) e tabelle con RLS accesa (181) hanno lo stesso conteggio. `anni-tick` entra in `JOB_CRON` con finestra di 3 ore, perché il suo battito è già in `app_log`; `anno-invarianti` resta fuori fino al primo battito delle 03:17 e passa con la prossima PR-B. La sonda della finestra del deploy sul modulo pubblico (`listino_voci.scadenza`) è tolta: la migrazione che la crea è in produzione.
 
 **Stato per area** (le tabelle di stato di questo PRD stanno nei blocchi datati; questa è la riga di quest'area):
 
 | Area | Stato | Che cosa è |
 |---|---|---|
-| Quote, moduli, posti e classi dell'anno prossimo | 🟡 in revisione | Tre schede nuove nelle impostazioni di sede e la copia delle classi (M45d) |
-| Conferma e «non rinnova» | 🟡 in revisione | Pagina «Conferme» della segreteria (M45c) |
-| Domande per l'anno prossimo | 🟡 in revisione | Il bambino nasce «in arrivo» (M45b); il modulo pubblico fa scegliere l'anno |
-| Creazione automatica dell'anno successivo | 🟡 in revisione | Job orario `anni-tick` e job notturno `anno-invarianti` (M45a) |
-| Quota del CRM per anno | 🟡 in revisione | La scheda sceglie l'anno vero (M45e) |
+| Quote, moduli, posti e classi dell'anno prossimo | ✅ in produzione | Tre schede nuove nelle impostazioni di sede e la copia delle classi (M45d) |
+| Conferma e «non rinnova» | ✅ in produzione | Pagina «Conferme» della segreteria (M45c) |
+| Domande per l'anno prossimo | ✅ in produzione | Il bambino nasce «in arrivo» (M45b); il modulo pubblico fa scegliere l'anno |
+| Creazione automatica dell'anno successivo | ✅ in produzione | Job orario `anni-tick` e job notturno `anno-invarianti` (M45a) |
+| Quota del CRM per anno | ✅ in produzione | La scheda sceglie l'anno vero (M45e) |
 | Il passaggio da un anno all'altro | ⏳ non c'è | Il passaggio resta alla PR 4.8, la chiusura automatica alla 4.9, la guardia dell'anno chiuso alla 3-B: questa PR non cambia lo stato di nessun anno |
 
 **Che cosa cambia per le persone.**

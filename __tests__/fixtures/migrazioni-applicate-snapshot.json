@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-11-09",
-  "generato_alle": "2026-11-09T03:50:03Z",
-  "sha256": "eb1d7173b40d8f079db77c3cfc3c15857c4b43fdc0e796c8eeed8117155a850c",
+  "generato_alle": "2026-11-09T15:35:40Z",
+  "sha256": "2c9fe4fa7eadad95879f096c748300818620eb8069db38a3ad21b81c75246157",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -1059,6 +1059,26 @@
     {
       "version": "20261108221856",
       "name": "anno_galleria_pagina_genitore"
+    },
+    {
+      "version": "20261109035209",
+      "name": "anno_tick"
+    },
+    {
+      "version": "20261109035213",
+      "name": "anno_alunno_in_arrivo"
+    },
+    {
+      "version": "20261109035216",
+      "name": "anno_listino_moduli_sezioni"
+    },
+    {
+      "version": "20261109035219",
+      "name": "anno_iscrizione_conferma"
+    },
+    {
+      "version": "20261109035223",
+      "name": "anno_crm_anno_id"
     }
   ]
 }

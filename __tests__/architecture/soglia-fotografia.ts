@@ -426,8 +426,6 @@ export function posterioriCheContengono(
 // tabelle di `anno_tabelle` (46), indici unici (292), FK di sede (99), FK verso `utenti` (83), tabelle con `scuola_id` (99), RLS accesa
 // (181 tabelle, 74 policy solo-service_role), bucket (21) e schema delle candidature.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261109035213_anno_alunno_in_arrivo.sql':
-        'PR 4.5, compito 4.5.4 (l\'alunno in arrivo: tocca il CHECK di `alunni` con ADD e DROP CONSTRAINT). La applica l\'integrazione al merge, con la version del FILE; la voce si toglie nella PR-B, quando la fotografia la contiene.',
 }
 
 /**

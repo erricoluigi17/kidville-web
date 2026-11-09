@@ -87,5 +87,11 @@
   "esitoRegione": "Esito dell’ultima operazione",
   "azioneAggiorna": "Aggiorna l’elenco",
   "fasciaSenzaFascia": "Classe senza fascia",
-  "avvisoSenzaFascia": "{n, plural, one {C’è # bambino in una classe senza fascia: i posti per fascia non lo contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.} other {Ci sono # bambini in classi senza fascia: i posti per fascia non li contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.}}"
+  "avvisoSenzaFascia": "{n, plural, one {C’è # bambino in una classe senza fascia: i posti per fascia non lo contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.} other {Ci sono # bambini in classi senza fascia: i posti per fascia non li contano. Scegli la fascia delle classi nelle impostazioni dell’anno, scheda Classi.}}",
+  "quotaDaGenerare": "Quota da generare",
+  "quotaPiuVoci": "Più voci: controlla la contabilità",
+  "azioneGeneraQuota": "Genera la quota",
+  "esitoQuotaSenzaListino": "La quota non è stata creata perché il listino dell’anno non ne ha una per questa classe: impostala nelle impostazioni dell’anno e poi premi «Genera la quota».",
+  "esitoQuotaPiuVoci": "Per questo bambino ci sono più voci di quota: controlla la contabilità.",
+  "esitoQuotaGenerata": "La quota è a posto."
 }

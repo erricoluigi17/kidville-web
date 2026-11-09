@@ -48,13 +48,15 @@ const s = {
   elencoVuotoDopoSpunta: false,
   spuntato: false,
   confermata: false,
+  quota: 'da_pagare' as 'da_pagare' | 'assente', // la quota che il server legge per la riga
+  quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
 }
 const fetchMock = vi.fn()
 
 const rigaConferma = () => ({
   frequenza_id: F_PART, alunno_id: AL1, section_id: null, conferma: s.confermata || s.confermato ? 'confermato' : 'non_risposto',
   nuova_frequenza_id: s.confermata || s.confermato ? F_NUOVA : null, nuova_section_id: null, non_rinnova_motivo: null,
-  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: 'da_pagare', cambia_grado: false,
+  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, cambia_grado: false,
   stato_frequenza: s.confermata || s.confermato ? 'in_attesa' : null, nome: 'NomeProva', cognome: 'CognomeProva', classe: 'Sezione Prova',
 })
 const rigaNuova = () => ({
@@ -68,7 +70,8 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
   if (url.includes('/conferme/non-rinnova')) return ok({ frequenza_id: F_PART, non_rinnova: true, cambiato: true })
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`) && metodo === 'POST') {
     s.confermata = true
-    return ok({ frequenza_id: F_NUOVA, creata: true, cambia_grado: false, retta_personalizzata_precedente: false, quota: 'creata', pagamento_id: null, posti_oltre: false })
+    s.quota = s.quotaPost === 'creata' ? 'da_pagare' : 'assente'
+    return ok({ frequenza_id: F_NUOVA, creata: true, cambia_grado: false, retta_personalizzata_precedente: false, quota: s.quotaPost, pagamento_id: null, posti_oltre: false })
   }
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`)) {
     const q = new URL(url, 'http://localhost').searchParams
@@ -104,6 +107,8 @@ beforeEach(() => {
   s.spunteConferma = [M1]
   s.confermato = true
   s.confermata = false
+  s.quota = 'da_pagare'
+  s.quotaPost = 'creata'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
   fetchMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
@@ -278,5 +283,39 @@ describe('ConfermeClient — l’esito resta in vista quando la riga esce dal fi
     await screen.findByRole('status', { name: itConferme.esitoRegione })
     fireEvent.click(screen.getByRole('button', { name: itConferme.filtroTutti }))
     await waitFor(() => expect(screen.queryByRole('status', { name: itConferme.esitoRegione })).toBeNull())
+  })
+})
+
+
+describe('ConfermeClient — l’esito della quota (4.5.15, I1)', () => {
+  const colonnaQuota = (riga: HTMLElement) => within(riga).getAllByRole('cell')[3]
+
+  it('una conferma senza listino dice «Quota da generare», e il pulsante riprova sulla stessa route finché la voce non nasce', async () => {
+    s.quota = 'assente'
+    s.quotaPost = 'senza_listino'
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaDaGenerare)
+    fireEvent.click(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneGeneraQuota }))
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).length).toBe(1))
+    expect(JSON.parse(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`)[0][1].body)).toEqual({ frequenza_id: F_PART })
+    expect(await screen.findByRole('status')).toHaveTextContent(itConferme.esitoQuotaSenzaListino)
+    // il listino adesso c'è: stessa riga, stesso pulsante, la voce nasce
+    s.quotaPost = 'creata'
+    fireEvent.click(await screen.findByRole('button', { name: itConferme.azioneGeneraQuota }))
+    await waitFor(() => expect(chiamate('POST', `/api/admin/anni/${ANNO}/conferme`).length).toBe(2))
+    await waitFor(() => expect(screen.queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull())
+    expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaDaPagare)
+  })
+
+  it('«piu_voci» ha il suo stato e il suo messaggio, diversi da «senza listino», e non offre «Genera la quota»', async () => {
+    s.quota = 'assente'
+    s.quotaPost = 'piu_voci'
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneGeneraQuota }))
+    expect(await screen.findByText(new RegExp(itConferme.esitoQuotaPiuVoci.slice(0, 30)))).toBeInTheDocument()
+    await waitFor(() => expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaPiuVoci))
+    expect(screen.queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
   })
 })

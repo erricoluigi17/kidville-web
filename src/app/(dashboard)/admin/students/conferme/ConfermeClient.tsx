@@ -66,6 +66,8 @@ type ModuloApi = {
   firmato_in_app_il: string | null;
 };
 /** Ciò che il server ha risposto a una spunta, applicato alla riga senza rileggere l'elenco. */
+/** L'esito della voce della quota che il server ha risposto all'ultima conferma di una riga (I1, 4.5.15). */
+type EsitoQuota = 'senza_listino' | 'piu_voci';
 type Aggiornamento = { fatti: number; stato: string; quotaSaldata: boolean };
 type Esito = { tipo: 'ok' | 'errore'; testo: string };
 
@@ -167,6 +169,9 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   const [aggiornate, setAggiornate] = useState<Record<string, Aggiornamento>>({});
   // L'esito dell'ultima operazione: qui sopra la tabella, non dentro la riga (vedi la testata).
   const [esito, setEsito] = useState<Esito | null>(null);
+  // L'esito della quota per riga, finché la pagina è aperta: una rilettura NON lo toglie (dal server si legge solo «assente»).
+  const [esitiQuota, setEsitiQuota] = useState<Record<string, EsitoQuota | null>>({});
+  const ricordaQuota = useCallback((frequenzaId: string, e: EsitoQuota | null) => setEsitiQuota((v) => ({ ...v, [frequenzaId]: e })), []);
 
   const lettura = useLettura(`${base}/conferme?pagina=${pagina}&vista=${vista}&conferma=${filtro}`, uid, versione, estraiElenco);
   const sezioni = useLettura('/api/admin/sections/scoped?grado=primaria', uid, 0, estraiSezioni);
@@ -179,6 +184,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
   const riparti = useCallback(() => {
     setAggiornate({});
     setEsito(null);
+    setEsitiQuota({});
   }, []);
   const aggiorna = useCallback((frequenzaId: string, a: Aggiornamento) => setAggiornate((x) => ({ ...x, [frequenzaId]: a })), []);
 
@@ -309,6 +315,8 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
                   rilegge={rilegge}
                   segnala={setEsito}
                   aggiorna={aggiorna}
+                  esitoQuota={esitiQuota[r.frequenza_id] ?? null}
+                  ricordaQuota={ricordaQuota}
                 />
               ))}
             </tbody>
@@ -339,6 +347,8 @@ function RigaConferma({
   rilegge,
   segnala,
   aggiorna,
+  esitoQuota,
+  ricordaQuota,
 }: {
   r: RigaApi;
   vista: Vista;
@@ -349,6 +359,8 @@ function RigaConferma({
   rilegge: () => void;
   segnala: (e: Esito) => void;
   aggiorna: (frequenzaId: string, a: Aggiornamento) => void;
+  esitoQuota: EsitoQuota | null;
+  ricordaQuota: (frequenzaId: string, e: EsitoQuota | null) => void;
 }) {
   const t = useTranslations('annoConferme');
   const id = useId();
@@ -373,9 +385,28 @@ function RigaConferma({
   const statoFrequenzaTesto = statoFrequenza === 'iscritto' ? t('statoIscritto') : statoFrequenza === 'in_attesa' ? t('statoInAttesa') : null;
   const fatti = aggiornata?.fatti ?? r.moduli.fatti;
   const quota: StatoQuota = aggiornata ? (aggiornata.quotaSaldata ? 'saldata' : r.quota === 'saldata' ? 'da_pagare' : r.quota) : r.quota;
-  const quotaTesto = quota === 'saldata' ? t('quotaSaldata') : quota === 'da_pagare' ? t('quotaDaPagare') : t('quotaAssente');
+  // «Assente» ha tre significati: la riga non è ancora confermata («Non ancora»), la quota non è nata perché il listino non c'era
+  // («Quota da generare»), o ci sono più voci da guardare («Più voci»). Solo il secondo e il terzo hanno un'azione.
+  const confermata = r.conferma === 'confermato' || vista === 'nuove';
+  // Il pulsante c'è solo nella vista delle conferme: la route riparte dalla frequenza dell'anno in corso. Le «nuove» non ne hanno una.
+  const quotaDaGenerare = vista === 'conferme' && quota === 'assente' && confermata && esitoQuota !== 'piu_voci';
+  const quotaTesto =
+    quota === 'saldata'
+      ? t('quotaSaldata')
+      : quota === 'da_pagare'
+        ? t('quotaDaPagare')
+        : esitoQuota === 'piu_voci'
+          ? t('quotaPiuVoci')
+          : confermata
+            ? t('quotaDaGenerare')
+            : t('quotaAssente');
 
-  const scrivi = async (url: string, corpo: Record<string, unknown>, ok: (d: Record<string, unknown> | null) => string): Promise<void> => {
+  const scrivi = async (
+    url: string,
+    corpo: Record<string, unknown>,
+    ok: (d: Record<string, unknown> | null) => string,
+    dopo?: (d: Record<string, unknown> | null) => void,
+  ): Promise<void> => {
     setOccupata(true);
     const risposta = await chiama('POST', url, userId, corpo);
     setOccupata(false);
@@ -384,6 +415,7 @@ function RigaConferma({
       return;
     }
     segnala({ tipo: 'ok', testo: t('esitoDi', { nome, testo: ok(dataDi(risposta)) }) });
+    dopo?.(dataDi(risposta));
     rilegge();
   };
 
@@ -396,9 +428,20 @@ function RigaConferma({
           d?.creata === false ? t('esitoGiaConfermato') : t('esitoConfermato'),
           d?.posti_oltre === true ? t('esitoPostiOltre') : '',
           d?.retta_personalizzata_precedente === true ? t('esitoRettaPersonalizzata') : '',
+          d?.quota === 'senza_listino' ? t('esitoQuotaSenzaListino') : '',
+          d?.quota === 'piu_voci' ? t('esitoQuotaPiuVoci') : '',
         ]
           .filter(Boolean)
           .join(' '),
+      (d) => ricordaQuota(r.frequenza_id, d?.quota === 'senza_listino' || d?.quota === 'piu_voci' ? d.quota : null),
+    );
+  // Stessa route della conferma: ripetibile, la voce nasce solo se manca.
+  const generaQuota = () =>
+    scrivi(
+      `/api/admin/anni/${annoSedeId}/conferme`,
+      { frequenza_id: r.frequenza_id },
+      (d) => (d?.quota === 'senza_listino' ? t('esitoQuotaSenzaListino') : d?.quota === 'piu_voci' ? t('esitoQuotaPiuVoci') : t('esitoQuotaGenerata')),
+      (d) => ricordaQuota(r.frequenza_id, d?.quota === 'senza_listino' || d?.quota === 'piu_voci' ? d.quota : null),
     );
   const nonRinnova = (attivo: boolean) =>
     scrivi(
@@ -457,6 +500,9 @@ function RigaConferma({
                   )}
                 </div>
               </>
+            )}
+            {quotaDaGenerare && (
+              <button type="button" className={secondario} disabled={occupata} onClick={generaQuota}>{t('azioneGeneraQuota')}</button>
             )}
             {r.nuova_frequenza_id && (
               <button

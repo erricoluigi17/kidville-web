@@ -106,6 +106,22 @@ describe('confermaIscrizione', () => {
   })
 })
 
+describe('confermaIscrizione · il livello del log dell’esito della quota (4.5.15, I1)', () => {
+  it.each([
+    ['senza_listino', 'warn'],
+    ['piu_voci', 'warn'],
+    ['creata', 'info'],
+    ['collegata', 'info'],
+    ['gia_collegata', 'info'],
+  ])('esito %s → livello %s', async (quota, livello) => {
+    const { client } = clienteRpc({ data: { ...CONFERMA, quota, pagamento_id: quota === 'senza_listino' ? null : PAG } })
+    await confermaIscrizione(client, { frequenzaId: FREQ, annoSedeNuovoId: ANNO, da: UT })
+    const riga = vi.mocked(logEvento).mock.calls.find((c) => (c[2] as Record<string, unknown>).tipo === 'quota-anno-voce')
+    expect(riga?.[1]).toBe(livello)
+    expect(riga?.[2]).toMatchObject({ esito: quota })
+  })
+})
+
 describe('segnaNonRinnova', () => {
   it('chiama `anno_non_rinnova` col motivo dell’elenco chiuso', async () => {
     const { client, rpc } = clienteRpc({ data: NO })

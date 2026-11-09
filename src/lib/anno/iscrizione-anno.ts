@@ -81,6 +81,19 @@ const eRisultato = (d: unknown): d is RisultatoRegistra =>
   typeof d === 'object' && d !== null && typeof (d as RisultatoRegistra).frequenza_id === 'string'
 
 /**
+ * L'esito della voce della quota, con la voce se c'è: i soli uuid e il codice dell'esito. `senza_listino` e `piu_voci` sono a `warn`
+ * (4.5.15, I1): la famiglia ha confermato e nessuna voce è nata, o ce n'è più d'una da guardare: qualcuno deve accorgersene.
+ */
+function logEsitoQuota(esito: QuotaEsito, operazione: string, pagamentoId: string | null | undefined): void {
+  logEvento('anno-scolastico', esito === 'senza_listino' || esito === 'piu_voci' ? 'warn' : 'info', {
+    tipo: 'quota-anno-voce',
+    esito,
+    operazione,
+    entita_id: pagamentoId ?? undefined,
+  })
+}
+
+/**
  * Registra la frequenza `(alunno, anno aperto)` e fa nascere (o collega) la voce della quota. Idempotente: rifatta con gli
  * stessi argomenti restituisce la stessa frequenza (`creata: false`). Mai blocca per i posti: `posti_oltre` è un avviso.
  */
@@ -111,15 +124,7 @@ export async function registraFrequenzaPerAnno(supabase: SupabaseClient, a: Regi
       entita_id: data.frequenza_id,
       posti_oltre: data.posti_oltre === true,
     })
-    if (data.quota) {
-      // l'esito della voce, con la voce se c'è: i soli uuid
-      logEvento('anno-scolastico', 'info', {
-        tipo: 'quota-anno-voce',
-        esito: data.quota,
-        operazione: OPERAZIONE,
-        entita_id: data.pagamento_id ?? undefined,
-      })
-    }
+    if (data.quota) logEsitoQuota(data.quota, OPERAZIONE, data.pagamento_id)
     return { ok: true, ...data }
   } catch (err) {
     // il client ha lanciato (rete, configurazione): chi chiama non deve cadere per questo
@@ -189,14 +194,7 @@ export async function confermaIscrizione(supabase: SupabaseClient, a: ConfermaAr
       cambia_grado: data.cambia_grado === true,
       posti_oltre: data.posti_oltre === true,
     })
-    if (data.quota) {
-      logEvento('anno-scolastico', 'info', {
-        tipo: 'quota-anno-voce',
-        esito: data.quota,
-        operazione: OP_CONFERMA,
-        entita_id: data.pagamento_id ?? undefined,
-      })
-    }
+    if (data.quota) logEsitoQuota(data.quota, OP_CONFERMA, data.pagamento_id)
     return { ok: true, ...data }
   } catch (err) {
     logErrore({ operazione: OP_CONFERMA }, err)

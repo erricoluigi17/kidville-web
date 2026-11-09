@@ -324,6 +324,26 @@ describe('domanda per l’anno PROSSIMO — bambino che ESISTE', () => {
     expect(json.success).toBe(true)
     expect(json.warnings.join(' ')).toContain('già confermato')
   })
+
+  it.each([
+    ['senza_listino', 'non è stata creata'],
+    ['piu_voci', 'più di una voce'],
+  ])('la voce della quota «%s» arriva nella risposta, con il testo per la segreteria (4.5.15, I1)', async (quota, testo) => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-nuova', creata: true, quota, pagamento_id: null, posti_oltre: false }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect(json.success).toBe(true)
+    expect(json.warnings.join(' ')).toContain(testo)
+  })
+
+  it('con la voce creata l’approvazione non aggiunge avvisi sulla quota', async () => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-nuova', creata: true, quota: 'creata', pagamento_id: 'pag-1', posti_oltre: false }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect((json.warnings ?? []).join(' ')).not.toContain('quota')
+  })
 })
 
 describe('l’anno della domanda decide il percorso', () => {

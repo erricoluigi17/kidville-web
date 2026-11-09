@@ -2299,6 +2299,15 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         } else if (!esito.creata) {
           warnings.push(`Bambino ${ci + 1}: già confermato per l'anno prossimo: la domanda è stata collegata.`)
         }
+        // L'esito della quota (4.5.15, I1): la frequenza c'è, ma la voce no (o ce n'è più d'una). La segreteria lo deve sapere ora,
+        // non scoprirlo a settembre. Il testo dice che cosa fare; la riga si sistema da «Conferme», pulsante «Genera la quota».
+        if (esito.ok && !('saltata' in esito)) {
+          if (esito.quota === 'senza_listino') {
+            warnings.push(`Bambino ${ci + 1}: la quota dell'anno prossimo non è stata creata perché il listino non ne ha una per lui. Impostala nell'anno e poi premi «Genera la quota» in Conferme.`)
+          } else if (esito.quota === 'piu_voci') {
+            warnings.push(`Bambino ${ci + 1}: per l'anno prossimo c'è più di una voce di quota. Controlla la contabilità.`)
+          }
+        }
       }
     }
 

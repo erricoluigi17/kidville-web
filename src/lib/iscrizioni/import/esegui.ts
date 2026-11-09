@@ -105,6 +105,11 @@ export interface EsitoEsecuzione {
    * giornaliero — non «1 per domanda», che con due genitori sarebbe una bugia.
    */
   emailSpedite: number
+  /**
+   * Quante frequenze dell'anno prossimo, create da questa domanda, sono nate senza una voce di quota chiara (4.5.15, I1):
+   * `senza_listino` (nessuna quota nel listino) o `piu_voci` (più voci da guardare). Assente = zero. Chi mostra l'esito lo dice alla segreteria.
+   */
+  quotaDaControllare?: number
 }
 
 /** Il jsonb del form, che porta i campi che `Domanda` non modella. */
@@ -677,6 +682,7 @@ export async function eseguiDomanda(
 
   // La frequenza dell'anno prossimo: tutti gli alunni esistono, quindi anche il fratello che paga ha il suo id. La data d'ingresso
   // la decide la funzione; una frequenza che c'è già (confermata prima) non si tocca, la domanda le viene collegata.
+  let quotaDaControllare = 0
   if (annoProssimo && sezioniProssimo) {
     for (const ass of assegnazioni) {
       const mio = alunnoPerNome.get(normalizzaNome(`${ass.cognome} ${ass.nome}`))
@@ -692,6 +698,7 @@ export async function eseguiDomanda(
       })
       if (!esitoFreq.ok) return fallisci(`frequenza dell'anno prossimo non registrata (${esitoFreq.codice})`)
       if ('saltata' in esitoFreq) return fallisci("frequenza dell'anno prossimo non registrata (funzione non disponibile)")
+      if (esitoFreq.quota === 'senza_listino' || esitoFreq.quota === 'piu_voci') quotaDaControllare++
     }
   }
 
@@ -728,7 +735,7 @@ export async function eseguiDomanda(
       await chiudi(supabase, domanda.id, assegnazioni)
       await agganciaAlCrm(supabase, domanda.id, scuolaId, figliAlunni)
       await invitaGliAltri(supabase, conEmail.slice(1), scuolaId, domanda.id, alunniDellaDomanda)
-      return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: 0 }
+      return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: 0, quotaDaControllare }
     }
     // Nessun gemello da agganciare: la casella risulta conflittuale ma non
     // esiste l'anagrafica che la possiede. È un'incoerenza vera, non un caso
@@ -747,7 +754,7 @@ export async function eseguiDomanda(
     // Il posto nel registro era già preso: l'alunno entra lo stesso, l'email non
     // riparte — ma gli ALTRI genitori possono non aver mai ricevuto la loro.
     const altre = await invitaGliAltri(supabase, conEmail.slice(1), scuolaId, domanda.id, alunniDellaDomanda)
-    return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: altre }
+    return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: altre, quotaDaControllare }
   }
 
   // Chi paga resta il referente: `sincronizzaLegamiRuntime` crea ogni legame con
@@ -768,7 +775,7 @@ export async function eseguiDomanda(
     n: assegnazioni.length,
   })
 
-  return { esito: 'inviata', messageId: invito.messageId, errore: null, emailSpedite: 1 + altre }
+  return { esito: 'inviata', messageId: invito.messageId, errore: null, emailSpedite: 1 + altre, quotaDaControllare }
 }
 
 /**

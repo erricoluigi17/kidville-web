@@ -569,6 +569,17 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'invece scatterebbe di continuo sul primo risveglio di iOS, quando il processo del '
         + 'plugin riparte a freddo. La scadenza ha la sua riga, e non è rumore: sul telefono sano non '
         + 'scatta mai, quindi ogni occorrenza dice che il plugin non risponde.'],
+    ['src/components/features/parent/GuardiaSenzaFigli.tsx',
+        'quanto il guardiano dell\'area famiglia aspetta di sapere se ci sono figli prima di dire che lo stato '
+        + 'non è determinabile (PR 4.5.11, 8 s). Non limita una `fetch` — la lettura dei figli passa da '
+        + '`fetchEsitoFigli` e dalla sua cache, che non si annulla da qui — limita l\'ATTESA DELLA PAGINA: '
+        + 'senza, una lettura appesa lascerebbe una famiglia senza bambino noto davanti a una rotella senza '
+        + 'fine (il difetto «app sempre in caricamento»). Per questo non usa `segnaleConTetto`/`conTetto`, '
+        + 'che interrompono la chiamata: qui la chiamata resta in volo e, se risponde dopo, il messaggio '
+        + 'lascia il posto alla pagina. Scaduto il tempo compare il messaggio con «Riprova», che invalida '
+        + 'la cache e rilegge; con un bambino già noto (cache del telefono) la pagina resta. Otto secondi '
+        + 'perché una rete lenta di un telefono in campagna risponde di solito prima, e perché oltre quel '
+        + 'punto una rotella è già letta come «non funziona».'],
 ]);
 
 /**

@@ -49,15 +49,17 @@ qui la conferma comincia a produrre voci di pagamento. **Non cambiato**: va deci
 - **13 · La fascia dell'anno prossimo viene dalla sezione di oggi.** M46a:171. Stesso bambino: 300 in infanzia, poi 500 quando gli si
   assegna la prima sezione. `sezioni_con_fascia` oggi 0. Da fare: per chi non ha sezione nell'anno, `senza_importo` o un esito che lo
   segnali.
-- **18 · Impostazioni non mostra l'importo corrente accanto al rimando** (piano, riga 223). Scelta: **non mostrato**, e la frase del
-  piano va tolta. `admin_settings.retta_default_importo` è uno specchio storico (150 per le sedi senza impostazioni, aggiornato solo
-  per l'anno corrente): mostrarlo accanto a un rimando verso il listino direbbe un numero che può essere diverso da quello vero.
+- **18 · Impostazioni e l'importo accanto al rimando.** Corretto nel primo giro di correzione: accanto al rimando Impostazioni mostra
+  la retta di base dell'anno in corso **letta dal listino** (la route della scheda Rette, nessuna route nuova), e non scrive nessun
+  numero se manca la riga «per tutte le fasce». Lo specchio `admin_settings.retta_default_importo` non si mostra.
 - **19 · La forma del log `anno-retta-impostata` è diversa dal piano.** Chiavi innocue (uuid, un codice, un flag). Allineare il piano.
 - **22 · Prestazioni dell'anteprima annuale.** Il predicato sulla sede grande: 3591 righe in 1,56 s (misurato). L'anteprima annuale fa
   circa 4 blocchi, cioè circa 6 s (stima, non cronometrata sulla route vera), e il POST la rilegge. Da fare: una sola chiamata con tutti
   i mesi, oppure un riepilogo calcolato dal database.
-- **21 · Il compito 4.6.10 non è fatto** (PRD e `MIGRAZIONI_ATTESE_AL_MERGE`): si fa dopo l'allineamento con `main`, coi nomi delle
-  migrazioni rifatti con `date -u`.
+- **21 · Il compito 4.6.10** è fatto (09/11/2026): PRD, nomi delle migrazioni rifatti con `date -u` (`20261109153822`, `20261109153825`)
+  e corpo della PR in `.superpowers/pr4-6-corpo.md`. `MIGRAZIONI_ATTESE_AL_MERGE` resta vuoto: nessuna guardia segnala le due
+  migrazioni (creano funzioni, nessun UNIQUE, nessuna policy) e il lock «nessuna voce morta» rifiuterebbe una dichiarazione che
+  nessuno vede.
 
 ## Dalla ri-revisione (annotati, non corretti)
 
@@ -83,3 +85,18 @@ route (con la categoria).
 - `genera-servizi/route.ts` non è stato toccato: l'SQL risolve l'anno da sé.
 - `mesi_effettivi` della route rette è per voce (`retta`, `servizio`), non un array unico come nel piano.
 - PGlite è Postgres 18, la produzione è 17: le migrazioni M46a/M46b non sono state provate sul 17.
+
+## Che cosa vale per le PR dopo
+
+| Voce | Per chi | Quando |
+|---|---|---|
+| 14 · la conferma non porta la retta | titolare, poi PR 4.8 | prima di aprire le conferme sul 2027/28 |
+| 15 · pro-rata da `data_ingresso` | chi accende il pro-rata su una sede | rimisurare prima di accenderlo |
+| 6 (dichiarata) · `sospeso` con frequenza viva | titolare | da decidere |
+| 8 · il mese singolo e i mesi del listino; frase «quel mese» per l'anno | prossima PR sulla scheda Rette | testo o avviso |
+| 12 · servizi che non seguono le regole della retta | PR che rende il servizio impostabile da una schermata | `iscrizioni_servizi` è vuota |
+| 13 · la fascia dell'anno prossimo dalla sezione di oggi | PR 4.8 (passaggio d'anno) | quando si assegnano le sezioni |
+| 22 · anteprima annuale (~6 s stimati) | PR 4.7 (cruscotto) o PR 5 | una sola chiamata con tutti i mesi |
+| 6 (ri-revisione) · regola della riga nei due punti | prossima migrazione sul listino | teorico, 0 doppioni |
+| POST annuale che non notifica; specchio dopo «Togli»; commenti col 150 | titolare / PR 5 | da decidere |
+| strada storica di `genera-rette` con ripiego a 150 | PR 5 | quando tutte le migrazioni sono applicate |

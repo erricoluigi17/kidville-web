@@ -33,7 +33,7 @@ const MOD1 = '71717171-7171-4717-8717-717171717171'
 const MOD2 = '72727272-7272-4727-8727-727272727272'
 
 type Esito = { data: unknown; error: { code?: string; message?: string; details?: string | null } | null }
-type Query = { tabella: string; filtri: Record<string, unknown>; range?: [number, number] }
+type Query = { tabella: string; colonne?: string; filtri: Record<string, unknown>; range?: [number, number] }
 
 const h = vi.hoisted(() => ({
   user: null as null | { id: string; role: string; scuola_id: string },
@@ -46,7 +46,7 @@ const h = vi.hoisted(() => ({
   /** Se true, le letture APPLICANO davvero `eq`/`in`/`order`/`range` alle righe di `tabelle` e contano il totale: serve a misurare il filtro. */
   applica: false,
   errLettura: {} as Record<string, { code?: string; message?: string }>,
-  query: [] as Array<{ tabella: string; filtri: Record<string, unknown>; range?: [number, number] }>,
+  query: [] as Array<{ tabella: string; colonne?: string; filtri: Record<string, unknown>; range?: [number, number] }>,
   rpc: [] as Array<{ nome: string; args: Record<string, unknown> }>,
   esiti: {} as Record<string, { data: unknown; error: { code?: string; message?: string; details?: string | null } | null }>,
   gateAmmessi: null as null | readonly string[],
@@ -75,7 +75,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       const cond: Array<(r: Record<string, unknown>) => boolean> = []
       let ordine: string | null = null
-      b.select = () => b
+      b.select = (colonne?: string) => {
+        q.colonne = colonne
+        return b
+      }
       b.order = (c: string) => {
         ordine = c
         return b
@@ -269,9 +272,11 @@ describe('GET conferme', () => {
     h.tabelle.moduli_richiesti = [{ id: MOD1 }, { id: MOD2 }]
     h.tabelle.frequenze_moduli = [{ frequenza_id: N1, modulo_id: MOD1 }, { frequenza_id: N1, modulo_id: '73737373-7373-4737-8737-737373737373' }]
     h.tabelle.sections = [
-      { id: S_INF, school_type: 'infanzia', fascia: 'infanzia' },
-      { id: S_NUOVA_PRIM, school_type: 'primaria', fascia: 'primaria' },
+      { id: S_INF, scuola_id: SEDE_A, name: 'Sezione Prova A', school_type: 'infanzia', fascia: 'infanzia' },
+      { id: S_NUOVA_PRIM, scuola_id: SEDE_A, name: 'Classe Prova B', school_type: 'primaria', fascia: 'primaria' },
     ]
+    // Nomi inventati: la route li porta alle righe della pagina (compito 4.5.10), e solo quelli.
+    h.tabelle.alunni = AL.map((id, i) => ({ id, scuola_id: SEDE_A, nome: `NomeProva${i + 1}`, cognome: `CognomeProva${i + 1}` }))
   })
 
   it('per ogni frequenza viva: stato della conferma, moduli, quota e cambio di grado', async () => {
@@ -283,6 +288,7 @@ describe('GET conferme', () => {
     expect(per(F1)).toEqual({
       frequenza_id: F1, alunno_id: AL[0], section_id: S_INF, nuova_frequenza_id: N1, nuova_section_id: S_NUOVA_PRIM,
       conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', cambia_grado: true,
+      stato_frequenza: 'in_attesa', nome: 'NomeProva1', cognome: 'CognomeProva1', classe: 'Sezione Prova A',
     })
     expect(per(F2)).toMatchObject({ conferma: 'no', non_rinnova_motivo: 'trasloco', quota: 'assente', cambia_grado: false, nuova_frequenza_id: null })
     expect(per(F3)).toMatchObject({ conferma: 'non_risposto', moduli: { fatti: 0, richiesti: 2 }, quota: 'assente' })
@@ -358,23 +364,173 @@ describe('GET conferme', () => {
     expect(h.log.filter((l) => l.fn === 'errore')).toEqual([])
   })
 
-  it('la risposta e il log portano solo uuid, stati, numeri e booleani: nessun nome', async () => {
+  it('la risposta porta nome e cognome SOLO nei campi dedicati; ogni altra foglia e il log restano uuid, stati, numeri e booleani', async () => {
     const corpo = await (await leggi()).json()
-    const ammessi = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|confermato|no|non_risposto|saldata|da_pagare|assente|trasloco)$/
+    const ammessi = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|confermato|no|non_risposto|saldata|da_pagare|assente|trasloco|in_attesa|iscritto)$/
     const foglie: unknown[] = []
-    const visita = (v: unknown): void => {
-      if (v !== null && typeof v === 'object') Object.values(v).forEach(visita)
-      else foglie.push(v)
+    const visita = (v: unknown, chiave?: string): void => {
+      if (v !== null && typeof v === 'object') Object.entries(v).forEach(([k, x]) => visita(x, k))
+      else if (!['nome', 'cognome', 'classe'].includes(chiave ?? '')) foglie.push(v)
     }
     visita(corpo.data.righe)
     for (const f of foglie) {
       if (typeof f === 'string') expect(f, String(f)).toMatch(ammessi)
       else expect(['number', 'boolean', 'object']).toContain(typeof f)
     }
+    // il nome non esce mai nel log
+    expect(JSON.stringify(h.log)).not.toMatch(/NomeProva|CognomeProva|Sezione Prova/)
     const letture = eventi('conferme-lette', 'info')
     expect(letture).toHaveLength(1)
     expect(letture[0].campi).toMatchObject({ n: 4, anno_sede_id: NUOVO_A, utente: UTENTE })
     expect(JSON.stringify(redact(letture[0].campi))).not.toContain('[redatto')
+  })
+
+  it('i nomi li porta la route: due colonne di `alunni`, dentro la sede, solo dei bambini della pagina', async () => {
+    await leggi()
+    const nomi = h.query.find((x) => x.tabella === 'alunni')
+    expect(nomi?.colonne).toBe('id, nome, cognome')
+    expect(nomi?.filtri['in:id']).toEqual(AL)
+    expect(nomi?.filtri.scuola_id).toBe(SEDE_A)
+  })
+
+  it('una lettura dei nomi fallita è un errore, non una pagina di «Bambino non in elenco»', async () => {
+    h.errLettura.alunni = { code: 'XX000', message: 'boom' }
+    expect((await leggi()).status).toBe(500)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// Compito 4.5.10 · la vista delle NUOVE iscrizioni e il filtro «mancano moduli»
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('GET conferme — vista=nuove e mancano_moduli', () => {
+  const NA = [1, 2, 3, 4, 5].map((n) => `b${n}b${n}b${n}b${n}-b${n}b${n}-4b${n}b-8b${n}b-b${n}b${n}b${n}b${n}b${n}b${n}`)
+  const FN = [1, 2, 3, 4, 5].map((n) => `d${n}d${n}d${n}d${n}-d${n}d${n}-4d${n}d-8d${n}d-d${n}d${n}d${n}d${n}d${n}d${n}`)
+  const MNUOVA1 = '81818181-8181-4818-8818-818181818181'
+  const MNUOVA2 = '82828282-8282-4828-8828-828282828282'
+
+  function nuoveDelloScenario() {
+    h.applica = true
+    // 5 frequenze `nuova` vive dell'anno nuovo + una `conferma` + una nuova ritirata + una nuova di un'altra sede
+    h.tabelle.frequenze = [
+      ...FN.map((id, i) => ({ id, alunno_id: NA[i], anno_sede_id: NUOVO_A, tipo: 'nuova', stato: 'in_attesa', section_id: i === 0 ? S_NUOVA_PRIM : null, quota_saldata: i === 4, quota_pagamento_id: i === 4 ? PAG : null })),
+      { id: N1, alunno_id: AL[0], anno_sede_id: NUOVO_A, tipo: 'conferma', stato: 'in_attesa', section_id: null, quota_saldata: false, quota_pagamento_id: null },
+      { id: N4, alunno_id: AL[3], anno_sede_id: NUOVO_A, tipo: 'nuova', stato: 'ritirato', section_id: null, quota_saldata: false, quota_pagamento_id: null },
+      { id: 'fffffff0-ffff-4fff-8fff-fffffffffff0', alunno_id: NA[0], anno_sede_id: NUOVO_B, tipo: 'nuova', stato: 'in_attesa', section_id: null, quota_saldata: false, quota_pagamento_id: null },
+    ]
+    h.tabelle.moduli_richiesti = [
+      { id: MNUOVA1, anno_sede_id: NUOVO_A, lista: 'nuova' },
+      { id: MNUOVA2, anno_sede_id: NUOVO_A, lista: 'nuova' },
+      { id: MOD1, anno_sede_id: NUOVO_A, lista: 'conferma' },
+      { id: MOD2, anno_sede_id: NUOVO_A, lista: 'conferma' },
+    ]
+    // FN[0] ha tutti e due i moduli; FN[1] uno; FN[2..4] nessuno
+    h.tabelle.frequenze_moduli = [
+      { id: 'm1', frequenza_id: FN[0], modulo_id: MNUOVA1 },
+      { id: 'm2', frequenza_id: FN[0], modulo_id: MNUOVA2 },
+      { id: 'm3', frequenza_id: FN[1], modulo_id: MNUOVA1 },
+    ]
+    h.tabelle.sections = [{ id: S_NUOVA_PRIM, scuola_id: SEDE_A, name: 'Classe Prova B', school_type: 'primaria', fascia: 'primaria' }]
+    h.tabelle.alunni = NA.map((id, i) => ({ id, scuola_id: SEDE_A, nome: `Nuovo${i + 1}`, cognome: `Arrivo${i + 1}` }))
+  }
+
+  it('`vista=nuove`: le frequenze `nuova` vive dell’anno nuovo, con nome, moduli della lista nuova, quota e stato', async () => {
+    nuoveDelloScenario()
+    const res = await leggi('?vista=nuove')
+    expect(res.status).toBe(200)
+    const { data } = await res.json()
+    expect(data.totale).toBe(5)
+    expect(data.righe.map((r: { frequenza_id: string }) => r.frequenza_id)).toEqual([...FN].sort())
+    const prima = data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[0])
+    expect(prima).toEqual({
+      frequenza_id: FN[0], alunno_id: NA[0], section_id: S_NUOVA_PRIM, nuova_frequenza_id: FN[0], nuova_section_id: S_NUOVA_PRIM,
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 2, richiesti: 2 }, quota: 'assente', cambia_grado: false,
+      stato_frequenza: 'in_attesa', nome: 'Nuovo1', cognome: 'Arrivo1', classe: 'Classe Prova B',
+    })
+    expect(data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[4])).toMatchObject({ quota: 'saldata', moduli: { fatti: 0, richiesti: 2 } })
+    // la lista dei moduli è `nuova`, non `conferma`
+    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri.lista).toBe('nuova')
+    // niente anno di partenza: non serve
+    expect(h.rpc.map((r) => r.nome)).toEqual(['anno_conta_posti'])
+  })
+
+  it('una frequenza non compare in tutte e due le viste: chi ha confermato non è fra le nuove, chi arriva non è fra le conferme', async () => {
+    nuoveDelloScenario()
+    h.tabelle.frequenze = [
+      ...(h.tabelle.frequenze as unknown[]),
+      { id: F1, alunno_id: AL[0], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: S_INF, non_rinnova_il: null, non_rinnova_motivo: null },
+    ]
+    const nuove = (await (await leggi('?vista=nuove')).json()).data.righe.map((r: { alunno_id: string }) => r.alunno_id)
+    expect(nuove).not.toContain(AL[0])
+    const conferme = (await (await leggi('?vista=conferme')).json()).data.righe.map((r: { alunno_id: string }) => r.alunno_id)
+    for (const n of NA) expect(conferme).not.toContain(n)
+    expect(conferme).toContain(AL[0])
+  })
+
+  it('`vista=nuove&conferma=mancano_moduli` filtra sul TOTALE e la paginazione lo segue (4 su 5, pagine da 3)', async () => {
+    nuoveDelloScenario()
+    const p1 = (await (await leggi('?vista=nuove&conferma=mancano_moduli&limite=3&pagina=1')).json()).data
+    const p2 = (await (await leggi('?vista=nuove&conferma=mancano_moduli&limite=3&pagina=2')).json()).data
+    expect(p1.totale).toBe(4)
+    expect(p2.totale).toBe(4)
+    expect(p1.righe).toHaveLength(3)
+    expect(p2.righe).toHaveLength(1)
+    const ids = [...p1.righe, ...p2.righe].map((r: { frequenza_id: string }) => r.frequenza_id).sort()
+    expect(ids).toEqual([FN[1], FN[2], FN[3], FN[4]].sort())
+    // chi ha tutti i moduli non c'è mai; chi ne ha 1 su 2 sì
+    expect(ids).not.toContain(FN[0])
+  })
+
+  it('senza moduli richiesti nessuno «manca» niente', async () => {
+    nuoveDelloScenario()
+    h.tabelle.moduli_richiesti = []
+    const { data } = await (await leggi('?vista=nuove&conferma=mancano_moduli')).json()
+    expect(data.totale).toBe(0)
+    expect(data.righe).toEqual([])
+  })
+
+  it.each(['?vista=altro', '?vista=nuove&conferma=confermato', '?vista=nuove&conferma=no', '?vista=nuove&conferma=non_risposto', '?conferma=qualcosa'])(
+    '400 per %s, senza chiamare il database',
+    async (query) => {
+      expect((await leggi(query)).status).toBe(400)
+      expect(h.rpc).toEqual([])
+    },
+  )
+
+  it('`conferma=mancano_moduli` nella vista delle conferme: solo chi ha confermato e ha spuntato meno della lista, sul totale', async () => {
+    h.applica = true
+    // 4 partenze (F1..F4): F1 e F3 hanno confermato, F1 con 1 modulo su 2, F3 con 2 su 2; F2 e F4 no
+    const NC3 = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3'
+    h.tabelle.frequenze = [
+      { id: F1, alunno_id: AL[0], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: S_INF, non_rinnova_il: null, non_rinnova_motivo: null },
+      { id: F2, alunno_id: AL[1], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: S_INF, non_rinnova_il: '2027-02-01', non_rinnova_motivo: null },
+      { id: F3, alunno_id: AL[2], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: S_INF, non_rinnova_il: null, non_rinnova_motivo: null },
+      { id: F4, alunno_id: AL[3], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: S_INF, non_rinnova_il: null, non_rinnova_motivo: null },
+      { id: N1, alunno_id: AL[0], anno_sede_id: NUOVO_A, tipo: 'conferma', stato: 'in_attesa', section_id: S_INF, quota_saldata: false, quota_pagamento_id: null },
+      { id: NC3, alunno_id: AL[2], anno_sede_id: NUOVO_A, tipo: 'conferma', stato: 'in_attesa', section_id: S_INF, quota_saldata: false, quota_pagamento_id: null },
+    ]
+    h.tabelle.moduli_richiesti = [
+      { id: MOD1, anno_sede_id: NUOVO_A, lista: 'conferma' },
+      { id: MOD2, anno_sede_id: NUOVO_A, lista: 'conferma' },
+    ]
+    h.tabelle.frequenze_moduli = [
+      { id: 'x1', frequenza_id: N1, modulo_id: MOD1 },
+      { id: 'x2', frequenza_id: NC3, modulo_id: MOD1 },
+      { id: 'x3', frequenza_id: NC3, modulo_id: MOD2 },
+    ]
+    h.tabelle.sections = [{ id: S_INF, scuola_id: SEDE_A, name: 'Sezione Prova A', school_type: 'infanzia', fascia: 'infanzia' }]
+    h.tabelle.alunni = AL.map((id, i) => ({ id, scuola_id: SEDE_A, nome: `NomeProva${i + 1}`, cognome: `CognomeProva${i + 1}` }))
+    const { data } = await (await leggi('?conferma=mancano_moduli')).json()
+    expect(data.totale).toBe(1)
+    expect(data.righe.map((r: { frequenza_id: string }) => r.frequenza_id)).toEqual([F1])
+    expect(data.righe[0].moduli).toEqual({ fatti: 1, richiesti: 2 })
+    // la lista dei moduli è `conferma`
+    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri.lista).toBe('conferma')
+  })
+
+  it('il perimetro vale anche per le nuove: 403 per l’anno di un’altra sede', async () => {
+    nuoveDelloScenario()
+    expect((await leggi('?vista=nuove', NUOVO_B)).status).toBe(403)
   })
 })
 
@@ -550,7 +706,7 @@ describe('GET conferme — filtro lato route', () => {
       partenza(8, {}, 'ritirato'),
       nuova(1, 'in_attesa'), nuova(4, 'iscritto'), nuova(7, 'ritirato'),
     ]
-    h.tabelle.sections = [{ id: S_INF, school_type: 'infanzia', fascia: 'infanzia' }]
+    h.tabelle.sections = [{ id: S_INF, scuola_id: SEDE_A, school_type: 'infanzia', fascia: 'infanzia' }]
   })
 
   const ids = (data: { righe: Array<{ frequenza_id: string }> }) => data.righe.map((r) => r.frequenza_id)

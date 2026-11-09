@@ -266,6 +266,11 @@ export function rispostaCodiceFiscaleGiaUsato(): NextResponse {
   return NextResponse.json({ error: frase('CODICE_FISCALE_GIA_USATO'), codice: 'CODICE_FISCALE_GIA_USATO' }, { status: 409 })
 }
 
+/** 404 quando la frequenza nominata dall'URL non esiste (compito 4.5.10, la spunta dei moduli). Nessun dato nella risposta. */
+export function rispostaFrequenzaNonTrovata(): NextResponse {
+  return NextResponse.json({ error: frase('FREQUENZA_NON_TROVATA'), codice: 'FREQUENZA_NON_TROVATA' }, { status: 404 })
+}
+
 /** 409 su una scheda anonimizzata (diritto all'oblio): non si archivia e non riceve scritture. */
 export function rispostaAlunnoAnonimizzato(): NextResponse {
   return NextResponse.json({ error: frase('ALUNNO_ANONIMIZZATO'), codice: 'ALUNNO_ANONIMIZZATO' }, { status: 409 })

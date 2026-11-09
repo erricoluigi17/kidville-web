@@ -85,6 +85,10 @@ type Voce = readonly [Esito, Motivo]
 /** Le letture e le scritture `.from('alunni')`. */
 const LETTURE: Record<string, Voce> = {
   'src/app/api/admin/anagrafiche/codici-fiscali/route.ts::admin/anagrafiche/codici-fiscali:GET': ['sì', 'ricerca'],
+  // 4.5.10: i NOMI delle righe della pagina (nome e cognome, due colonne) per gli id che arrivano da `frequenze`: nella vista «Nuove iscrizioni»
+  // la frequenza dell'anno nuovo contiene proprio l'`in_arrivo`, ed è giusto che compaia con il suo nome; nella vista «Conferme» gli id sono
+  // quelli dell'anno attivo, dove l'`in_arrivo` non ha frequenza.
+  'src/app/api/admin/anni/[annoSedeId]/conferme/route.ts::admin/anni/[annoSedeId]/conferme:GET': ['no-già', 'ids'],
   'src/app/api/admin/chat/contacts/route.ts::admin/chat/contacts:GET': ['no-già', 'stato'],
   'src/app/api/admin/chat/messages/route.ts::admin/chat/messages:GET': ['no-già', 'puntuale'],
   'src/app/api/admin/chat/messages/scarico/route.ts::admin/chat/messages/scarico:POST': ['no-già', 'puntuale'],
@@ -518,7 +522,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 0, 'no-già': 207, sì: 58, daCorreggere: 0 },
+      { no: 0, 'no-già': 208, sì: 58, daCorreggere: 0 },
     )
   })
 

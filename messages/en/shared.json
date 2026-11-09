@@ -828,7 +828,7 @@
   "erroreParametroMancante": "A required value is missing. Check and try again.",
   "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly.",
   "erroreFrequenzaNonScritta": "The change was not saved: the record has been left as it was. Try again shortly.",
-  "erroreSezioneSolaLettura": "This class belongs to a past school year: you can view it but not change it.",
+  "erroreSezioneSolaLettura": "This class is closed to changes: you can view it but not change it.",
   "annoSelettoreAria": "Change school year",
   "annoOgniSede": "Current year",
   "annoStatoInCorso": "current",

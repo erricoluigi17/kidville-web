@@ -79,6 +79,9 @@ const post = (body: unknown) =>
     body: JSON.stringify(body),
   })
 
+// Il database di questi test non ha ancora lo schema dell'anno (PR 4.6): la route resta sulla strada storica, che è ciò che provano.
+const SCHEMA_ANNO_INDIETRO = { code: '42P01', message: 'relation "anni_sede" does not exist' }
+
 const dbBase = (): DBFinto => ({
   utenti_scuole: [
     { utente_id: ADMIN, scuola_id: SEDE_A },
@@ -87,6 +90,7 @@ const dbBase = (): DBFinto => ({
   ],
   payment_categories: [{ id: CAT_GLOBALE, slug: 'retta', scuola_id: null, nome: 'Retta' }],
   admin_settings: [{ scuola_id: SEDE_B, retta_default_importo: 120 }],
+  anni_sede: [],
   alunni: [],
   pagamenti: [],
   registro_modifiche: [],
@@ -102,7 +106,7 @@ beforeEach(() => {
   h.rette = []
   h.servizi = []
   h.contatore = 0
-  h.errori = {}
+  h.errori = { anni_sede: SCHEMA_ANNO_INDIETRO }
   h.log = []
   h.rpcRette = 'ok'
   h.rpcServizi = 'ok'

@@ -24,6 +24,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.in = () => b
       b.is = () => b
+      b.lte = () => b
+      b.gte = () => b
       b.or = () => b
       b.limit = () => b
       // `leggiABlocchi` (le rette già emesse si leggono a blocchi dal 2026-10-10): il blocco
@@ -36,6 +38,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         error: null,
       })
       b.then = (resolve: (v: unknown) => unknown) => {
+        // Senza lo schema dell'anno (PR 4.6) la route resta sulla strada storica, che è ciò che questi test provano.
+        if (table === 'anni_sede') return resolve({ data: null, error: { code: '42P01', message: 'relation "anni_sede" does not exist' } })
         if (table === 'alunni') {
           if (h.colonnaMancante && selectArg.includes('data_iscrizione')) {
             return resolve({ data: null, error: { code: '42703', message: 'column alunni.data_iscrizione does not exist' } })

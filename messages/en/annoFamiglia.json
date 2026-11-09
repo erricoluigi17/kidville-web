@@ -1,6 +1,6 @@
 {
   "ingressoFuturoTitolo": "Enrolment starts on {data}",
-  "ingressoFuturoTesto": "From that day everything appears here. In the meantime, you can find the enrolment fee under payments. If in doubt, contact the school office.",
+  "ingressoFuturoTesto": "From that day everything appears here. In the meantime, if there is a fee to pay, you will find it under payments. If in doubt, contact the school office.",
   "nonVerificabileTitolo": "Check failed",
   "nonVerificabileTesto": "I can’t verify the enrolment, please try again. If the problem persists, contact the school office.",
   "nonVerificabileRiprova": "Try again",

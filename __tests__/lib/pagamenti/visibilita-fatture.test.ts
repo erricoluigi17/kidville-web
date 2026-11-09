@@ -73,9 +73,10 @@ describe('caricaVisibilitaFatture', () => {
     vi.clearAllMocks()
   })
 
-  it('col filtro spento non aggiunge restrizioni e non legge il ponte genitore', async () => {
+  it('col filtro spento non nasconde lo storico, ma legge il ponte genitore: la quota dell’altro non si vede nemmeno così', async () => {
     const { supabase, lette } = supabaseFinto({
       admin_settings: [{ scuola_id: SEDE_A, fatture_visibilita_attiva_il: null }],
+      parents: [{ id: MADRE, auth_user_id: UTENTE }],
     })
 
     const esito = await caricaVisibilitaFatture(
@@ -88,8 +89,8 @@ describe('caricaVisibilitaFatture', () => {
     expect(esito.esito).toBe('ok')
     if (esito.esito !== 'ok') return
     expect(esito.puoVedere(riga(null, null))).toBe(true)
-    expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(true)
-    expect(lette).toEqual(['admin_settings'])
+    expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(false)
+    expect(lette).toEqual(['admin_settings', 'parents'])
   })
 
   it('una fattura ordinaria intestata a un terzo resta visibile alla madre', async () => {
@@ -360,22 +361,6 @@ describe('caricaVisibilitaFatture sulla voce divisa: ognuno vede solo la propria
     expect(logEvento).not.toHaveBeenCalled()
   })
 
-  it.each(['singolo', 'rata', 'padre', null, undefined])(
-    'filtro spento e voce %s: tutte, e `parents` non si legge',
-    async (tipo) => {
-      const { supabase, lette } = supabaseFinto(conFiltro(SEDE_A, null))
-
-      const esito = await caricaVisibilitaFatture(supabase as never, famiglia, SEDE_A, tipo)
-
-      expect(esito.esito).toBe('ok')
-      if (esito.esito !== 'ok') return
-      expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(true)
-      expect(esito.puoVedere(riga(null, null))).toBe(true)
-      expect(lette).toEqual(['admin_settings'])
-      expect(logEvento).not.toHaveBeenCalled()
-    },
-  )
-
   it('filtro acceso: l’ordinaria dell’altro si vede sulla voce singola, sulla divisa no', async () => {
     const { supabase: suSingola } = supabaseFinto({
       ...conFiltro(SEDE_A, FILTRO_ACCESO),
@@ -491,5 +476,168 @@ describe('caricaVisibilitaFatture sulla voce divisa: ognuno vede solo la propria
     expect(Object.keys(campi).sort()).toEqual(['esito', 'operazione', 'scuola_id'])
     expect(campi.scuola_id).toBe(SEDE_A)
     expect(redact(campi)).toEqual(campi)
+  })
+})
+
+// La divisione in due documenti la decide `genitori_separati`, non `tipo`: `intestatari.ts` divide anche una voce
+// `singolo` o `rata`, e la riga di `pagamenti` resta di quel tipo. Il titolare: «ognuno riceve solo la propria fattura».
+describe('caricaVisibilitaFatture su ogni altra voce: la quota dell’altro non si vede, perché la divisione non dipende dal tipo', () => {
+  const FILTRO_ACCESO = '2026-09-16T10:00:00Z'
+  const conFiltro = (scuola: string, attivo: string | null) => ({
+    admin_settings: [{ scuola_id: scuola, fatture_visibilita_attiva_il: attivo }],
+  })
+  const famiglia = { id: UTENTE, role: 'genitore' as const, scuola_id: SEDE_A }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it.each(['singolo', 'rata', 'padre', null, undefined])(
+    'filtro spento e voce %s: anche una voce non `split` può avere due documenti, quindi la quota dell’altro no; la propria, l’ordinaria e la non classificata sì',
+    async (tipo) => {
+      const { supabase, lette } = supabaseFinto({
+        ...conFiltro(SEDE_A, null),
+        parents: [{ id: MADRE, auth_user_id: UTENTE }],
+      })
+
+      const esito = await caricaVisibilitaFatture(supabase as never, famiglia, SEDE_A, tipo)
+
+      expect(esito.esito).toBe('ok')
+      if (esito.esito !== 'ok') return
+      expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(false)
+      expect(esito.puoVedere(riga('quote_separate', null))).toBe(false)
+      expect(esito.puoVedere(riga('quote_separate', MADRE))).toBe(true)
+      expect(esito.puoVedere(riga('ordinaria', PADRE))).toBe(true)
+      expect(esito.puoVedere(riga('ordinaria', null))).toBe(true)
+      expect(esito.puoVedere(riga(null, PADRE))).toBe(true)
+      expect(esito.puoVedere(riga(null, null))).toBe(true)
+      expect(lette).toEqual(['admin_settings', 'parents'])
+      expect(logEvento).not.toHaveBeenCalled()
+    },
+  )
+
+  it('filtro spento, senza un record `parents`: nessuna quota, e niente delle ordinarie e delle non classificate si nasconde', async () => {
+    const { supabase } = supabaseFinto({ ...conFiltro(SEDE_A, null), parents: [] })
+
+    const esito = await caricaVisibilitaFatture(supabase as never, famiglia, SEDE_A, 'singolo')
+
+    expect(esito.esito).toBe('ok')
+    if (esito.esito !== 'ok') return
+    expect(esito.puoVedere(riga('quote_separate', MADRE))).toBe(false)
+    expect(esito.puoVedere(riga('quote_separate', null))).toBe(false)
+    expect(esito.puoVedere(riga('ordinaria', MADRE))).toBe(true)
+    expect(esito.puoVedere(riga(null, null))).toBe(true)
+  })
+
+  it('filtro acceso: resta com’era, la non classificata si nasconde e la quota vale solo col proprio `parents.id`', async () => {
+    const { supabase } = supabaseFinto({
+      ...conFiltro(SEDE_A, FILTRO_ACCESO),
+      parents: [{ id: MADRE, auth_user_id: UTENTE }],
+    })
+
+    const esito = await caricaVisibilitaFatture(supabase as never, famiglia, SEDE_A, 'singolo')
+
+    expect(esito.esito).toBe('ok')
+    if (esito.esito !== 'ok') return
+    expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(false)
+    expect(esito.puoVedere(riga('quote_separate', MADRE))).toBe(true)
+    expect(esito.puoVedere(riga('ordinaria', PADRE))).toBe(true)
+    expect(esito.puoVedere(riga(null, MADRE))).toBe(false)
+    expect(logEvento).not.toHaveBeenCalled()
+  })
+
+  it.each(['segreteria', 'coordinator', 'admin'] as const)(
+    'filtro spento, %s nel proprio plesso: tutte, perché la consegna la fa lei, e nessuna lettura in più',
+    async (role) => {
+      const { supabase, lette } = supabaseFinto(conFiltro(SEDE_A, null))
+
+      const esito = await caricaVisibilitaFatture(
+        supabase as never,
+        { id: UTENTE, role, scuola_id: SEDE_A },
+        SEDE_A,
+        'singolo',
+      )
+
+      expect(esito.esito).toBe('ok')
+      if (esito.esito !== 'ok') return
+      expect(esito.puoVedere(riga('quote_separate', MADRE))).toBe(true)
+      expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(true)
+      expect(esito.puoVedere(riga('ordinaria', null))).toBe(true)
+      expect(esito.puoVedere(riga(null, null))).toBe(true)
+      expect(lette).toEqual(['admin_settings'])
+    },
+  )
+
+  it('filtro spento, admin con la sede aggiuntiva: tutte, e `parents` non si legge', async () => {
+    const { supabase, lette } = supabaseFinto({
+      ...conFiltro(SEDE_B, null),
+      utenti_scuole: [{ utente_id: UTENTE, scuola_id: SEDE_B }],
+    })
+
+    const esito = await caricaVisibilitaFatture(
+      supabase as never,
+      { id: UTENTE, role: 'admin', scuola_id: SEDE_A },
+      SEDE_B,
+      'singolo',
+    )
+
+    expect(esito.esito).toBe('ok')
+    if (esito.esito !== 'ok') return
+    expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(true)
+    expect(lette).toEqual(['admin_settings', 'utenti_scuole'])
+  })
+
+  it('filtro spento, staff fuori perimetro: lavorare in un’altra sede non apre la quota dell’altro genitore', async () => {
+    const { supabase, lette } = supabaseFinto({
+      ...conFiltro(SEDE_B, null),
+      parents: [{ id: MADRE, auth_user_id: UTENTE }],
+    })
+
+    const esito = await caricaVisibilitaFatture(
+      supabase as never,
+      { id: UTENTE, role: 'segreteria', scuola_id: SEDE_A },
+      SEDE_B,
+      'singolo',
+    )
+
+    expect(esito.esito).toBe('ok')
+    if (esito.esito !== 'ok') return
+    expect(esito.puoVedere(riga('quote_separate', MADRE))).toBe(true)
+    expect(esito.puoVedere(riga('quote_separate', PADRE))).toBe(false)
+    expect(esito.puoVedere(riga('ordinaria', PADRE))).toBe(true)
+    expect(esito.puoVedere(riga(null, null))).toBe(true)
+    expect(lette).toEqual(['admin_settings', 'parents'])
+  })
+
+  it('filtro spento, errore di lettura su `parents`: 500, perché un guasto non diventa un consenso', async () => {
+    const guasto = { code: '42501', message: 'permission denied' }
+    const { supabase } = supabaseFinto({ ...conFiltro(SEDE_A, null), errori: { parents: guasto } })
+
+    const esito = await caricaVisibilitaFatture(supabase as never, famiglia, SEDE_A, 'singolo')
+
+    expect(esito.esito).toBe('errore')
+    if (esito.esito !== 'errore') return
+    expect(esito.response.status).toBe(500)
+    expect(await esito.response.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+    expect(logErrore).toHaveBeenCalledWith(
+      expect.objectContaining({ operazione: 'caricaVisibilitaFatture:parents', stato: 500 }),
+      guasto,
+    )
+  })
+
+  it('filtro spento, errore di lettura sul ponte delle sedi: 500', async () => {
+    const guasto = { code: '42501', message: 'bridge denied' }
+    const { supabase } = supabaseFinto({ ...conFiltro(SEDE_B, null), errori: { utenti_scuole: guasto } })
+
+    const esito = await caricaVisibilitaFatture(
+      supabase as never,
+      { id: UTENTE, role: 'admin', scuola_id: SEDE_A },
+      SEDE_B,
+      'singolo',
+    )
+
+    expect(esito.esito).toBe('errore')
+    if (esito.esito !== 'errore') return
+    expect(esito.response.status).toBe(500)
   })
 })

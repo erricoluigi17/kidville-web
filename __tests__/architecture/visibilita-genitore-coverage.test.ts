@@ -423,17 +423,17 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
   {
     handler: 'pagamenti/fattura/esito:POST',
     tabelle: ['pagamenti'],
-    motivo: 'Registra l’esito di un download e risponde 204: legge `id, scuola_id, alunno_id, tipo` della voce per il gate `assertFatturaInScope`, e la riga la decide `caricaVisibilitaFatture`: su una voce divisa ognuno solo la propria; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
+    motivo: 'Registra l’esito di un download e risponde 204: legge `id, scuola_id, alunno_id, tipo` della voce per il gate `assertFatturaInScope`, e la riga la decide `caricaVisibilitaFatture`: su una voce divisa ognuno solo la propria; su ogni altra voce una riga `quote_separate` vale solo col proprio `parents.id`, le ordinarie si vedono, e le non classificate finché il filtro di sede `fatture_visibilita_attiva_il` è spento.',
   },
   {
     handler: 'pagamenti/fattura/list:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e le righe le decide per documento `caricaVisibilitaFatture`: su una voce divisa ognuno vede solo la propria, e la contabilità nel proprio perimetro tutte; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e le righe le decide per documento `caricaVisibilitaFatture`: la contabilità nel proprio perimetro tutte; su una voce divisa ognuno vede solo la propria; su ogni altra voce una riga `quote_separate` vale solo col proprio `parents.id`, le ordinarie si vedono, e le non classificate finché il filtro di sede `fatture_visibilita_attiva_il` è spento.',
   },
   {
     handler: 'pagamenti/fattura:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e il documento lo decide `caricaVisibilitaFatture`: su una voce divisa ognuno scarica solo il proprio, e la contabilità nel proprio perimetro tutti; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e il documento lo decide `caricaVisibilitaFatture`: la contabilità nel proprio perimetro tutti; su una voce divisa ognuno scarica solo il proprio; su ogni altra voce una riga `quote_separate` vale solo col proprio `parents.id`, le ordinarie si scaricano, e le non classificate finché il filtro di sede `fatture_visibilita_attiva_il` è spento.',
   },
   {
     handler: 'pagamenti/riconciliazione/[id]/contesto:GET',

@@ -59,11 +59,15 @@ function erroreLettura(operazione: string, errore: unknown): EsitoVisibilitaFatt
  *    04/11, «ognuno riceve solo la propria fattura». Una riga con
  *    `parent_registry_id` nullo non la vede nessuna famiglia: la consegna la
  *    segreteria;
- *  - ogni altra voce, filtro di sede spento → nessun filtro aggiuntivo, e
- *    `parents` non si legge;
- *  - ogni altra voce, filtro di sede acceso, famiglia → ordinarie condivise,
- *    quote separate soltanto al loro `parents.id`, storico non classificato
- *    nascosto.
+ *  - ogni altra voce, famiglia e staff fuori scope → le righe `quote_separate`
+ *    solo col proprio `parents.id`, a filtro di sede acceso o spento: la
+ *    divisione in due documenti la decide `genitori_separati`, non `tipo`, e una
+ *    voce `singolo` di genitori separati ne produce due. Le ordinarie restano
+ *    condivise; lo storico non classificato si vede a filtro spento e si
+ *    nasconde a filtro acceso.
+ *
+ * La contabilità si ferma prima di leggere `parents`: la lettura serve solo a
+ * famiglia e staff fuori scope, e un suo guasto dà 500 come gli altri.
  *
  * `tipoVoce` è obbligatorio di proposito, anche se può valere `null`: una route
  * che lo dimentica non compila, e una route che lo perde per strada farebbe
@@ -93,7 +97,6 @@ export async function caricaVisibilitaFatture(
       ?.fatture_visibilita_attiva_il,
   )
   const voceDivisa = tipoVoce === 'split'
-  if (!filtroAttivo && !voceDivisa) return { esito: 'ok', puoVedere: sempre }
 
   const contabile = haUnRuolo(user, RUOLI_CONTABILITA)
   if (contabile && stessoUuid(user.scuola_id, scuolaId)) {
@@ -145,12 +148,13 @@ export async function caricaVisibilitaFatture(
     return { esito: 'ok', puoVedere: (riga) => stessoUuid(parentId, riga.parent_registry_id) }
   }
 
+  // Niente log qui: questo ramo gira a ogni apertura di una voce qualunque.
   return {
     esito: 'ok',
     puoVedere: (riga) => {
+      if (riga.modalita_emissione === 'quote_separate') return stessoUuid(parentId, riga.parent_registry_id)
       if (riga.modalita_emissione === 'ordinaria') return true
-      if (riga.modalita_emissione !== 'quote_separate') return false
-      return stessoUuid(parentId, riga.parent_registry_id)
+      return !filtroAttivo
     },
   }
 }

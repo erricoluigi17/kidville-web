@@ -27,7 +27,8 @@
       "/admin/storici": "Storici e stampe",
       "/admin/votazioni": "Votazioni",
       "/parent/votazioni": "Votazioni",
-      "/admin/students/conferme": "Conferme per l’anno prossimo"
+      "/admin/students/conferme": "Conferme per l’anno prossimo",
+      "/admin/students/anno-prossimo": "Anno prossimo, a che punto siamo"
     },
     "segmenti": {
       "alunni": "Alunni",

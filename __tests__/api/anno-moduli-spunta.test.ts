@@ -559,7 +559,7 @@ describe('GET moduli-mancanti', () => {
     const { moduli } = (await r.json()).data
     const per = Object.fromEntries(moduli.map((m: { modulo_id: string }) => [m.modulo_id, m]))
     // lista nuova: vive sono F_NUOVA e F_NUOVA2 (la ritirata, il recupero e la frequenza dell'altra sede non contano)
-    expect(per[M_PRIVACY]).toEqual({ modulo_id: M_PRIVACY, codice: 'privacy_cartacea', lista: 'nuova', mancanti: 1, frequenze: [F_NUOVA2] })
+    expect(per[M_PRIVACY]).toEqual({ modulo_id: M_PRIVACY, codice: 'privacy_cartacea', titolo: 'Informativa privacy', firma_in_app: false, lista: 'nuova', mancanti: 1, frequenze: [F_NUOVA2] })
     expect(per[M_DELEGA]).toMatchObject({ mancanti: 1, frequenze: [F_NUOVA2] })
     expect(per[M_SANITARIA]).toMatchObject({ mancanti: 2, frequenze: [F_NUOVA, F_NUOVA2] })
     // lista conferma: la sola frequenza di conferma

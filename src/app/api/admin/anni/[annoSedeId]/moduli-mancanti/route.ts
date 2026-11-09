@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAnnoSedeInScope, rispostaErroreImpostazioni } from '@/lib/anno/impostazioni'
 import { leggiABlocchi } from '@/lib/anno/lettura-a-blocchi'
+import { haUnaFirmaInApp } from '@/lib/prestampati/firma-per-anno'
 import { logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { createAdminClient } from '@/lib/supabase/server-client'
@@ -47,13 +48,13 @@ export const GET = withRoute('admin/anni/[annoSedeId]/moduli-mancanti:GET', asyn
 
   const m = await supabase
     .from('moduli_richiesti')
-    .select('id, codice, lista, ordine')
+    .select('id, codice, titolo, lista, ordine')
     .eq('anno_sede_id', annoSedeId)
     .order('lista', { ascending: true })
     .order('ordine', { ascending: true })
     .order('codice', { ascending: true })
   if (m.error) return rispostaErroreImpostazioni(m.error, ctx)
-  const moduli = (Array.isArray(m.data) ? m.data : []) as Array<{ id: string; codice: string; lista: string; ordine: number }>
+  const moduli = (Array.isArray(m.data) ? m.data : []) as Array<{ id: string; codice: string; titolo?: string; lista: string; ordine: number }>
   if (moduli.length === 0) {
     logEvento('anno-scolastico', 'info', { tipo: 'moduli-mancanti-letti', operazione, anno_sede_id: annoSedeId, utente: auth.user.id, n: 0 })
     return NextResponse.json({ success: true, data: { moduli: [] } })
@@ -77,7 +78,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/moduli-mancanti:GET', asyn
 
   const data = moduli.map((x) => {
     const frequenze = f.righe.filter((r) => r.tipo === x.lista && !spuntati.has(`${r.id}:${x.id}`)).map((r) => r.id)
-    return { modulo_id: x.id, codice: x.codice, lista: x.lista, mancanti: frequenze.length, frequenze }
+    return { modulo_id: x.id, codice: x.codice, titolo: x.titolo, lista: x.lista, firma_in_app: haUnaFirmaInApp(x.codice), mancanti: frequenze.length, frequenze }
   })
 
   logEvento('anno-scolastico', 'info', {

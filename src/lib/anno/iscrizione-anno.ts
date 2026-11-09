@@ -9,6 +9,7 @@ import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
 import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
 import { oggiRoma } from '@/lib/storici/retroattivita'
+import { dataCivile } from '@/i18n/config'
 import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 
 /**
@@ -603,6 +604,25 @@ export type IscrizioniDelBambino =
   | { ok: true; haFrequenzaAttiva: boolean; prossime: FrequenzaDellAnnoCheViene[] }
   | { ok: false }
 
+type RigaAttiva = { id: string; stato: string; data_uscita: string | null }
+
+/**
+ * Una riga dell'anno attivo conta come «ha la frequenza attiva» tranne una chiusa PRIMA dell'archiviazione (4.5.16, C): se la
+ * `data_uscita` è precedente al giorno di Roma di `archiviatoIl`, quel bambino non frequentava più quando è stato archiviato (è
+ * un ex alunno tornato `in_arrivo` e riarchiviato), e a riattivarlo deve tornare `in_arrivo`, non `iscritto`.
+ * Con `data_uscita` NULL, con la stessa data o senza `archiviatoIl` la riga conta, come prima.
+ * LIMITE NOTO: un bambino archiviato, tornato e riarchiviato NELLO STESSO giorno ha una `data_uscita` uguale al giorno
+ * dell'archiviazione, e la sua riga conta come attiva: la distinzione non si può fare con le sole date.
+ */
+function contaComeFrequenzaAttiva(righe: RigaAttiva[], archiviatoIl: string | null): boolean {
+  const giornoArchiviazione = archiviatoIl ? dataCivile(new Date(archiviatoIl)) : null
+  return righe.some((r) => {
+    if (!STATI_FREQUENZA_CHIUSI.includes(r.stato)) return true
+    if (!giornoArchiviazione || !r.data_uscita) return true
+    return r.data_uscita >= giornoArchiviazione
+  })
+}
+
 /**
  * Che cosa ha il bambino nell'anno attivo e negli anni che vengono. Serve a «Riporta fra gli iscritti»: chi NON ha la
  * frequenza dell'anno attivo e ne ha una in un anno che viene (viva o chiusa dall'archiviazione) è un bambino «in arrivo», e
@@ -612,11 +632,11 @@ export type IscrizioniDelBambino =
  */
 export async function iscrizioniDelBambino(
   supabase: SupabaseClient,
-  a: { alunnoId: string; annoAttivoId: string | null },
+  a: { alunnoId: string; annoAttivoId: string | null; archiviatoIl?: string | null },
 ): Promise<IscrizioniDelBambino> {
   try {
     if (!a.annoAttivoId) return { ok: true, haFrequenzaAttiva: true, prossime: [] }
-    const attiva = await supabase.from('frequenze').select('id').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoAttivoId).limit(1)
+    const attiva = await supabase.from('frequenze').select('id, stato, data_uscita').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoAttivoId)
     if (attiva.error) {
       // schema indietro (la CI): nessun anno, nessun ritorno da inventare
       if (schemaAnnoIndietro(attiva.error)) return { ok: true, haFrequenzaAttiva: true, prossime: [] }
@@ -644,7 +664,7 @@ export async function iscrizioniDelBambino(
         .filter((f) => f.origine !== 'recupero')
         .map((f) => ({ ...f, chiusa: STATI_FREQUENZA_CHIUSI.includes(f.stato) }))
     }
-    return { ok: true, haFrequenzaAttiva: ((attiva.data ?? []) as unknown[]).length > 0, prossime }
+    return { ok: true, haFrequenzaAttiva: contaComeFrequenzaAttiva((attiva.data ?? []) as RigaAttiva[], a.archiviatoIl ?? null), prossime }
   } catch (err) {
     logErrore({ operazione: OP_RIPRISTINO }, err)
     return { ok: false }

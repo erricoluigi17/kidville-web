@@ -8,7 +8,7 @@ vi.mock('@/lib/logging/logger', () => ({
 }))
 
 import { logEvento, logErrore } from '@/lib/logging/logger'
-import { annoDellaDomanda, registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
+import { annoDellaDomanda, iscrizioniDelBambino, registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
 
 /**
  * COMPITO 4.5.5 · la porta TypeScript dell'iscrizione all'anno prossimo (`src/lib/anno/iscrizione-anno.ts`).
@@ -206,5 +206,40 @@ describe('annoDellaDomanda', () => {
     const client = { rpc: vi.fn(async () => { throw new Error('rete') }) } as unknown as SupabaseClient
     expect(await annoDellaDomanda(client, SEDE, null)).toEqual({ tipo: 'schema-indietro' })
     expect(await annoDellaDomanda(client, SEDE, ANNO_APERTO)).toEqual({ tipo: 'non-aperto' })
+  })
+})
+
+describe('iscrizioniDelBambino · la riga chiusa dell\u2019anno attivo (4.5.16, C)', () => {
+  /** Un client finto per tabella: la lettura dell'anno attivo torna `righeAttive`, quella degli anni che vengono nessuna riga. */
+  function cliente(righeAttive: Array<{ id: string; stato: string; data_uscita: string | null }>) {
+    const catena = (righe: unknown[]) => {
+      const q: Record<string, unknown> = {}
+      for (const m of ['select', 'eq', 'in', 'limit']) q[m] = () => q
+      q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: righe, error: null }).then(ok)
+      return q
+    }
+    return {
+      from: (t: string) => (t === 'frequenze' ? catena(righeAttive) : catena([])),
+    } as unknown as SupabaseClient
+  }
+  const attiva = (client: SupabaseClient, archiviatoIl?: string | null) =>
+    iscrizioniDelBambino(client, { alunnoId: ALUNNO, annoAttivoId: A_ATTIVO, archiviatoIl })
+
+  it('uscita PRECEDENTE al giorno di Roma dell\u2019archiviazione: non conta come frequenza attiva', async () => {
+    const r = await attiva(cliente([{ id: FREQ, stato: 'ritirato', data_uscita: '2026-11-04' }]), '2026-11-09T10:00:00+01:00')
+    expect(r).toMatchObject({ ok: true, haFrequenzaAttiva: false })
+  })
+  it.each([
+    ['uscita NULL', { stato: 'ritirato', data_uscita: null }, '2026-11-09T10:00:00+01:00'],
+    ['uscita dello stesso giorno', { stato: 'ritirato', data_uscita: '2026-11-09' }, '2026-11-09T10:00:00+01:00'],
+    ['archiviatoIl assente', { stato: 'ritirato', data_uscita: '2026-11-04' }, undefined],
+    ['riga viva', { stato: 'iscritto', data_uscita: null }, '2026-11-09T10:00:00+01:00'],
+  ])('%s: conta come frequenza attiva, come prima', async (_nome, riga, quando) => {
+    const r = await attiva(cliente([{ id: FREQ, ...riga }]), quando)
+    expect(r).toMatchObject({ ok: true, haFrequenzaAttiva: true })
+  })
+  it('il giorno è quello di ROMA: 23:30 UTC del 8 è già il 9 a Roma, e un\u2019uscita dell\u20198 è precedente', async () => {
+    const r = await attiva(cliente([{ id: FREQ, stato: 'uscito', data_uscita: '2026-11-08' }]), '2026-11-08T23:30:00Z')
+    expect(r).toMatchObject({ ok: true, haFrequenzaAttiva: false })
   })
 })

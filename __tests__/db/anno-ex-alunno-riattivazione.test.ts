@@ -264,3 +264,60 @@ describe('I3 · archiviare e riattivare un `in_arrivo`', () => {
     })
   })
 })
+
+describe('4.5.16 (C) · riattivare', () => {
+  prova('S2: un ex alunno tornato `in_arrivo` e riarchiviato, la cui frequenza di oggi risulta chiusa PRIMA dell\u2019archiviazione, alla riattivazione torna `in_arrivo` (non `iscritto`)', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const a = await apri()
+      expect((await archivia(AL)).status).toBe(200)
+      await approvaPerAnnoProssimo(AL, a, true)
+      expect((await archivia(AL)).status).toBe(200)
+      // ⚠️ MISURA (4.5.16): `archivia` riscrive l'uscita della riga già chiusa col giorno di OGGI (la frequenza si scrive prima di
+      // `alunni`, `campiFrequenzaDaAlunno`), quindi nel flusso reale le due date coincidono e la regola «uscita precedente
+      // all'archiviazione» non scatta. Qui l'uscita si riporta indietro a mano, come farebbe una correzione o un import: è la sola
+      // condizione in cui la regola decide. Vedi il report, dubbi.
+      await db.query(
+        `UPDATE public.frequenze f SET data_ingresso = public.giorno_roma(now()) - 30, data_uscita = public.giorno_roma(now()) - 5
+           FROM public.anni_sede s WHERE f.anno_sede_id = s.id AND s.stato = 'corrente' AND f.alunno_id = $1`, [AL])
+
+      const ri = await riattiva(AL)
+      expect(ri.status).toBe(200)
+      expect(ri.corpo.torna_in_arrivo).toBe(true)
+      expect((await alunno(AL)).stato).toBe('in_arrivo')
+      const f = await frequenze(AL)
+      expect(f.map((x) => `${x.anno_inizio}:${x.stato}`), 'l\u2019iscrizione dell\u2019anno dopo è viva, quella di oggi resta chiusa').toEqual(['2026:ritirato', '2027:in_attesa'])
+    })
+  })
+
+  prova('un frequentante archiviato OGGI torna `iscritto` come sempre (la sua uscita è di oggi, non precedente)', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      await apri()
+      expect((await archivia(AL)).status).toBe(200)
+      const ri = await riattiva(AL)
+      expect(ri.status).toBe(200)
+      expect(ri.corpo.torna_in_arrivo).toBeFalsy()
+      expect((await alunno(AL)).stato).toBe('iscritto')
+    })
+  })
+
+  prova('un frequentante con una DOMANDA approvata: archiviato e riattivato torna `iscritto`, e la risposta dice che l\u2019iscrizione si riapre da «Conferme»', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const a = await apri()
+      await approvaPerAnnoProssimo(AL, a)
+      expect((await archivia(AL)).status).toBe(200)
+      const ri = await riattiva(AL)
+      expect(ri.status).toBe(200)
+      expect(ri.corpo.torna_in_arrivo).toBeFalsy()
+      expect(ri.corpo.conferma_da_rifare).toBe(true)
+      expect(ri.corpo, 'il campo che nessuno leggeva non c\u2019è più').not.toHaveProperty('iscrizione_prossimo_anno_chiusa')
+      expect((await alunno(AL)).stato).toBe('iscritto')
+      expect((await frequenze(AL)).map((x) => `${x.anno_inizio}:${x.stato}`)).toEqual(['2026:iscritto', '2027:ritirato'])
+    })
+  })
+})

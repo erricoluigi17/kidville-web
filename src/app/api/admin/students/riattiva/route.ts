@@ -202,7 +202,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
          * con la quota. Chi invece una frequenza dell'anno attivo ce l'ha torna `iscritto` come sempre, e la conferma dell'anno
          * prossimo NON si riapre da sola: chiusa dall'archiviazione, si rifà (la risposta lo dice).
          */
-        const iscrizioni = await iscrizioniDelBambino(supabase, { alunnoId, annoAttivoId: annoSedeId });
+        const iscrizioni = await iscrizioniDelBambino(supabase, { alunnoId, annoAttivoId: annoSedeId, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
         if (!iscrizioni.ok) {
             return NextResponse.json(
                 { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
@@ -218,8 +218,9 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                 prima: prima as unknown as Record<string, unknown>, frequenza: prossimaDaRiprendere,
             });
         }
-        const confermaDaRifare = iscrizioni.prossime.some((f) => f.chiusa && f.tipo === 'conferma');
-        const iscrizioneProssimaChiusa = iscrizioni.prossime.some((f) => f.chiusa);
+        // Ogni iscrizione RITIRATA di un anno che viene (conferma, domanda, segreteria, import) si riapre dalla pagina delle conferme
+        // con «Conferma»; una trasferita o uscita no, e non si dice (4.5.16, C).
+        const confermaDaRifare = iscrizioni.prossime.some((f) => f.stato === 'ritirato');
 
         /**
          * Senza sede sulla riga non c'è nessun perimetro entro cui validare la
@@ -424,12 +425,10 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
              */
             spazio_gia_liberato: prima.spazio_liberato_il != null,
             /**
-             * La conferma dell'anno prossimo, chiusa dall'archiviazione, NON si riapre: il bambino torna fra gli iscritti di oggi e la
-             * famiglia la rifà (o la segreteria dalla pagina delle conferme). `iscrizione_prossimo_anno_chiusa` vale per ogni
-             * iscrizione chiusa di un anno che viene, `conferma_da_rifare` solo per le conferme.
+             * L'iscrizione dell'anno prossimo (conferma, domanda, inserimento, import), chiusa dall'archiviazione, NON si riapre: il
+             * bambino torna fra gli iscritti di oggi e la segreteria la riapre dalla pagina delle conferme con «Conferma».
              */
             conferma_da_rifare: confermaDaRifare,
-            iscrizione_prossimo_anno_chiusa: iscrizioneProssimaChiusa,
         });
     } catch (err) {
         logErrore({ operazione: 'admin/students/riattiva:POST', stato: 500 }, err);
@@ -525,7 +524,6 @@ async function riportaInArrivo(a: {
         gruppo_mensa_da_riassegnare: false,
         spazio_gia_liberato: a.prima.spazio_liberato_il != null,
         conferma_da_rifare: false,
-        iscrizione_prossimo_anno_chiusa: false,
     });
 }
 

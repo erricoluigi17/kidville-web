@@ -1666,5 +1666,8 @@
   "genrOrigineTitolo": "Da dove vengono gli importi:",
   "genrOrigineListino": "dal listino: {n}",
   "genrOrigineFascia": "dal listino della fascia: {n}",
-  "genrOrigineFrequenza": "dalla scheda del bambino: {n}"
+  "genrOrigineFrequenza": "dalla scheda del bambino: {n}",
+  "genrErrAnteprima": "Non riesco a preparare l’anteprima.",
+  "genrNonGenerabileInPreparazione": "Questo anno è ancora in preparazione: le rette si generano dal momento in cui si aprono le iscrizioni.",
+  "genrNonGenerabileChiuso": "Questo anno è chiuso: le rette non si generano più."
 }

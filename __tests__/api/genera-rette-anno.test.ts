@@ -153,8 +153,36 @@ describe('GET — anteprima dall’anno', () => {
     h.anno = []
     const res = await GET(get(`periodo=2031-10&scuola_id=${SEDE}`))
     expect(res.status).toBe(404)
-    expect((await res.json()).codice).toBe('ANNO_NON_TROVATO')
+    const corpo = await res.json()
+    // non «questo anno non esiste più»: il mese non cade in nessun anno, e la frase lo dice (con un codice suo, che non ha
+    // una traduzione di catalogo capace di sostituirla)
+    expect(corpo.codice).toBe('MESE_FUORI_DAGLI_ANNI')
+    expect(corpo.error).toMatch(/contiene quel mese/)
     expect(h.rpc).toEqual([])
+  })
+
+  it('un anno NOMINATO che non c’è resta ANNO_NON_TROVATO (404)', async () => {
+    h.anno = []
+    const res = await GET(get(`periodo=2026-10&scuola_id=${SEDE}&anno_sede_id=${ANNO}`))
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('ANNO_NON_TROVATO')
+  })
+
+  it('i numeri sono BAMBINI, non mesi: tre mesi senza retta di uno stesso bambino sono «1»', async () => {
+    h.rpcRette = [
+      riga(AL1, { periodo: '2026-09-01' }),
+      ...['2026-09-01', '2026-10-01', '2026-11-01'].map((periodo) => riga(AL2, { periodo, esito: 'senza_importo', importo: null, origine_importo: null })),
+      ...['2026-09-01', '2026-10-01'].map((periodo) => riga(AL3, { periodo, esito: 'esente', importo: null, origine_importo: null })),
+    ]
+    const { data } = await (await GET(get(`anno=2026&scuola_id=${SEDE}`))).json()
+    expect(data.senza_importo).toBe(1)
+    expect(data.esenti).toBe(1)
+  })
+
+  it('anno in chiusura: le famiglie lo vedono (è ancora l’anno attivo)', async () => {
+    h.anno = [{ id: ANNO, stato: 'in_chiusura' }]
+    const { data } = await (await GET(get(`periodo=2026-10&scuola_id=${SEDE}`))).json()
+    expect(data.visibile_alle_famiglie).toBe(true)
   })
 
   it('mese fuori dall’anno (ANNO_NON_COERENTE) → 422 con il codice', async () => {
@@ -210,6 +238,21 @@ describe('POST — la conferma con l’anno', () => {
     expect((await res.json()).data.visibile_alle_famiglie).toBe(false)
     expect(h.notifiche).toEqual([])
     expect(eventi('notifica-saltata-anno-non-attivo')).toHaveLength(1)
+  })
+
+  it('anno in chiusura: la notifica parte come per l’anno in corso (il genitore vede la voce)', async () => {
+    h.anno = [{ id: ANNO, stato: 'in_chiusura' }]
+    h.pagamentiLetture = [[], [{ alunno_id: AL1, visibile_dal: null }]]
+    const res = await POST(post({ periodo: '2026-10', scuola_id: SEDE }))
+    expect((await res.json()).data.visibile_alle_famiglie).toBe(true)
+    expect(h.notifiche).toHaveLength(1)
+    expect(eventi('notifica-saltata-anno-non-attivo')).toHaveLength(0)
+  })
+
+  it('la risposta della conferma porta anche gli esenti, e conta bambini', async () => {
+    h.rpcRette = [riga(AL1), riga(AL2, { esito: 'esente', importo: null, origine_importo: null }), riga(AL2, { periodo: '2026-11-01', esito: 'esente', importo: null, origine_importo: null })]
+    const { data } = await (await POST(post({ periodo: '2026-10', scuola_id: SEDE }))).json()
+    expect(data.esenti).toBe(1)
   })
 
   it('anno in corso: la notifica parte come sempre per chi non aveva la retta', async () => {

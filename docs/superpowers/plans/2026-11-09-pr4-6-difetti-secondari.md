@@ -1,8 +1,73 @@
-# PR 4.6 · difetti secondari annotati (non corretti in questa PR)
+# PR 4.6 · annotazioni: difetti secondari non corretti e differenze da dichiarare nel corpo della PR
 
-- `genera-servizi/route.ts` non è stato toccato: l'SQL (`servizi_da_generare`, `genera_servizi_anno`) risolve l'anno da sé. Il pannello Genera rette non mostra ancora un riepilogo per i servizi come per le rette.
-- Il servizio ha un listino ma nessuna schermata nella scheda Rette (vuole una categoria): oggi si imposta solo dalla scheda Quote.
-- `mesi_effettivi` della route `rette` è per voce (`retta`, `servizio`), non un array unico come nel piano.
-- La strada storica di `genera-rette` (database senza schema dell'anno) conserva il ripiego a 150 di proposito; va tolta quando tutti i DB hanno le migrazioni M46a/M46b.
-- Il GET di `genera-rette` risponde 404 su `ANNO_NON_TROVATO`: nessun E2E lo tocca, ma un chiamante esterno che passa un mese fuori da ogni anno lo vedrà.
-- PGlite è Postgres 18, la produzione 17: le migrazioni M46a/M46b non sono state provate sul 17.
+Fonte dei numeri: revisione finale Opus del 09/11/2026 (`pr4-6-final-review.md`), misurata in produzione in sola lettura.
+
+## 🟥 DECISIONE DEL TITOLARE (non cambiata dalla PR) · rilievo 14: la conferma non riporta la retta
+
+`20261109035219_anno_iscrizione_conferma.sql:372-373` e `:474`. Quando si conferma una frequenza per l'anno nuovo, la retta non viene
+riportata:
+
+- pagante di famiglia a **400** → passa a **150**;
+- fratello **a carico** → non è più a carico;
+- retta **propria 200** → passa a **150**.
+
+In produzione: **45 bambini a carico** e circa **703 rette personali**, quindi il primo «Conferma» sul 2027/28 cambia molti importi.
+Il flag `retta_personalizzata_precedente` vale true/false/true e la scheda può già segnalarlo. Non è un difetto di questo diff, ma da
+qui la conferma comincia a produrre voci di pagamento. **Non cambiato**: va deciso dal titolare prima di aprire le conferme sul 2027/28.
+
+## Da dichiarare nel corpo della PR (differenze volute, non difetti)
+
+- **5 · Righe che non si generano più.** In produzione, confrontando la funzione vecchia con il predicato nuovo sull'anno in corso:
+  7450 righe contro 7418, **32 in meno, di cui 11 ancora da generare**. Sono 31 bambini con `data_iscrizione` NULL e ingresso dopo il
+  mese. Criterio: la retta di un mese **prima dell'ingresso** non si genera più (il vecchio la chiedeva). Settembre 2026: 31 righe, 21 già
+  generate (restano dove sono: nessuna migrazione tocca `pagamenti`), 10 da fare; ottobre 2026: 1 da fare.
+- **6 · `alunni.stato = 'sospeso'` con frequenza viva ora riceve la retta.** M46a: la frequenza viva decide, non lo stato di oggi. Nessuno
+  scrittore in `src`, 0 casi in produzione: teorico. Va deciso se un sospeso con frequenza viva debba riceverla.
+- **7 · `data_iscrizione` dopo l'ingresso.** Si generano i mesi prima dell'iscrizione. 0 casi in produzione. Se `scriviFrequenzaDopoAlunni`
+  fallisce (è fail-open) l'ingresso resta alla data di oggi: controllare il log di quel ramo. Da riportare nel PRD.
+- **15 · Il pro-rata cambia base: da `data_iscrizione` a `data_ingresso`.** Iscrizione NULL con ingresso 20/09: sconto da 0 a 75.
+  Iscrizione 20/10 con ingresso 01/09: da 75 a 0. Oggi 0 sedi con il pro-rata acceso. **Prima di accenderlo su una sede, rimisurare**: in
+  produzione 672 frequenze hanno l'ingresso a settembre dopo il 01/09 (621 con iscrizione NULL, 51 con data) e solo 92 coincidono con
+  l'inizio, quindi la scelta di `data_ingresso` allarga molto la platea.
+- **24 · `SECURITY DEFINER`.** Le funzioni di M46a passano a `SECURITY DEFINER` con `search_path` fissato; la produzione non lo era.
+  Privilegi misurati: `anon` e `authenticated` falsi, `service_role` vero. Ora scritto nell'intestazione della migrazione.
+- **25 · Nota operativa.** La fonte dell'importo è `frequenze.*`: una correzione a mano via SQL su `alunni.importo_retta_mensile` non
+  conta più, perché lo specchio `alunni` → `frequenze` scatta solo su INSERT e cambio di sede. Gli scrittori dell'app passano già dalla
+  frequenza. Chi interviene a mano deve scrivere `frequenze.retta_mensile`.
+- **Degradazione.** Con un database senza lo schema dell'anno la route torna alla strada storica, che conserva il ripiego a 150 di
+  proposito; va tolto quando tutte le migrazioni sono applicate (PR 5).
+- **Solo uuid e conteggi nei log**; nessun dato di persone.
+
+## Annotati, non corretti (su indicazione del coordinatore)
+
+- **8 · Il mese singolo ignora i mesi del listino.** Luglio si genera anche con mesi senza luglio (come faceva il vecchio), ma il testo
+  della scheda dice «Mesi in cui si genera la retta». Da adattare il testo o avvisare nell'anteprima.
+- **12 · I servizi non seguono le stesse regole della retta.** M46a:490-492 e :505-514. Un bambino in arrivo con sezione solo in frequenza
+  ha la retta e non il servizio; con giorno 12 in frequenza: retta il 12/09, servizio il 05/09 (il commento dice «stesse date»); con
+  ingresso a novembre il servizio parte a settembre. `iscrizioni_servizi` oggi è vuota. Da fare: leggere da `frequenze` come la retta e
+  rispettare ingresso e uscita.
+- **13 · La fascia dell'anno prossimo viene dalla sezione di oggi.** M46a:171. Stesso bambino: 300 in infanzia, poi 500 quando gli si
+  assegna la prima sezione. `sezioni_con_fascia` oggi 0. Da fare: per chi non ha sezione nell'anno, `senza_importo` o un esito che lo
+  segnali.
+- **18 · Impostazioni non mostra l'importo corrente accanto al rimando** (piano, riga 223). Scelta: **non mostrato**, e la frase del
+  piano va tolta. `admin_settings.retta_default_importo` è uno specchio storico (150 per le sedi senza impostazioni, aggiornato solo
+  per l'anno corrente): mostrarlo accanto a un rimando verso il listino direbbe un numero che può essere diverso da quello vero.
+- **19 · La forma del log `anno-retta-impostata` è diversa dal piano.** Chiavi innocue (uuid, un codice, un flag). Allineare il piano.
+- **22 · Prestazioni dell'anteprima annuale.** Il predicato sulla sede grande: 3591 righe in 1,56 s (misurato). L'anteprima annuale fa
+  circa 4 blocchi, cioè circa 6 s (stima, non cronometrata sulla route vera), e il POST la rilegge. Da fare: una sola chiamata con tutti
+  i mesi, oppure un riepilogo calcolato dal database.
+- **21 · Il compito 4.6.10 non è fatto** (PRD e `MIGRAZIONI_ATTESE_AL_MERGE`): si fa dopo l'allineamento con `main`, coi nomi delle
+  migrazioni rifatti con `date -u`.
+
+## Correzione di una nota sbagliata (rilievo 20)
+
+La versione precedente di questo file diceva che il servizio «oggi si imposta solo dalla scheda Quote». **Falso**: la scheda Quote
+scrive solo `quota_*`, e il riquadro di sola lettura è stato tolto. `PUT voce: 'servizio'` e `mesi_effettivi.servizio` **non hanno
+chiamanti**: oggi il servizio **non si imposta da nessuna schermata**. Il listino del servizio resta, per ora, scrivibile solo dalla
+route (con la categoria).
+
+## Altre note già annotate
+
+- `genera-servizi/route.ts` non è stato toccato: l'SQL risolve l'anno da sé.
+- `mesi_effettivi` della route rette è per voce (`retta`, `servizio`), non un array unico come nel piano.
+- PGlite è Postgres 18, la produzione è 17: le migrazioni M46a/M46b non sono state provate sul 17.

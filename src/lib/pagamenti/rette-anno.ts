@@ -120,9 +120,11 @@ export async function leggiRetteDaGenerare(
 export type RiepilogoRette = {
   /** Le righe che la conferma scriverà: `da_generare` e non ancora fatte. */
   candidati: number
+  /** Bambini (distinti) esenti. */
   esenti: number
-  /** Bambini senza una retta né nel loro profilo né nel listino: NON ricevono la voce. */
+  /** Bambini (distinti) senza una retta né nel loro profilo né nel listino: NON ricevono la voce. */
   senzaImporto: number
+  /** Bambini (distinti) la cui retta è a carico di uno che non c'è. */
   paganteAssente: number
   giaGenerati: number
   /** Somma degli importi dei candidati (prima degli sconti). */
@@ -137,11 +139,15 @@ export type RiepilogoRette = {
  */
 export function riepilogoRette(righe: readonly RigaRetta[]): RiepilogoRette {
   const r: RiepilogoRette = { candidati: 0, esenti: 0, senzaImporto: 0, paganteAssente: 0, giaGenerati: 0, totale: 0, perOrigine: {} }
+  // Esenti, senza retta e paganti assenti sono BAMBINI, non mesi: un bambino senza retta per dieci mesi è un bambino.
+  const esenti = new Set<string>()
+  const senzaImporto = new Set<string>()
+  const paganteAssente = new Set<string>()
   for (const x of righe) {
     if (x.gia_generato) r.giaGenerati++
-    if (x.esito === 'esente') r.esenti++
-    else if (x.esito === 'senza_importo' && !x.gia_generato) r.senzaImporto++
-    else if (x.esito === 'pagante_assente' && !x.gia_generato) r.paganteAssente++
+    if (x.esito === 'esente') esenti.add(x.alunno_id)
+    else if (x.esito === 'senza_importo' && !x.gia_generato) senzaImporto.add(x.alunno_id)
+    else if (x.esito === 'pagante_assente' && !x.gia_generato) paganteAssente.add(x.alunno_id)
     else if (x.esito === 'da_generare' && !x.gia_generato) {
       r.candidati++
       r.totale += Number(x.importo ?? 0)
@@ -149,6 +155,9 @@ export function riepilogoRette(righe: readonly RigaRetta[]): RiepilogoRette {
       r.perOrigine[o] = (r.perOrigine[o] ?? 0) + 1
     }
   }
+  r.esenti = esenti.size
+  r.senzaImporto = senzaImporto.size
+  r.paganteAssente = paganteAssente.size
   r.totale = Math.round(r.totale * 100) / 100
   return r
 }

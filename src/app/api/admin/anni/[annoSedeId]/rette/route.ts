@@ -103,6 +103,10 @@ const putSchema = z
     mesi: z.array(z.number().int().min(1).max(12)).max(12).nullable().optional(),
   })
   .strict()
+  // Una sola riga «retta» per fascia: la categoria si dichiara solo per il servizio (altrimenti nascono due righe senza fascia).
+  .refine((c) => !(c.voce === 'retta' && c.categoria_id), { message: 'categoria_id vale solo per il servizio', path: ['categoria_id'] })
+  // Togliere la riga e dare dei mesi insieme perderebbe i mesi in silenzio.
+  .refine((c) => !(c.importo === null && c.mesi), { message: 'senza importo i mesi non si possono dare', path: ['mesi'] })
 
 /** PUT — imposta (o toglie) la riga di retta o di servizio nominata. */
 export const PUT = withRoute('admin/anni/[annoSedeId]/rette:PUT', async (request: NextRequest, context: Contesto) => {

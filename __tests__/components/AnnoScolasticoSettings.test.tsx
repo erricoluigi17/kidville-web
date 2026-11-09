@@ -2,8 +2,8 @@ import { StrictMode } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
-import itSettings from '../../messages/it/adminSettings.json'
 import itAnno from '../../messages/it/annoListino.json'
+import itSettings from '../../messages/it/adminSettings.json'
 import { SEDE_A } from '../fixtures/sedi'
 import type { RigaCalendario } from '@/lib/anno-scolastico'
 import type { StatoAnno } from '@/lib/anno/tipi'
@@ -100,9 +100,10 @@ beforeEach(() => {
     const metodo = init?.method ?? 'GET'
     if (retePatch && metodo !== 'GET') return Promise.reject(new TypeError('rete'))
     // Le letture di quote, moduli e posti (AnnoConfigurazione, 4.5.3) hanno la loro forma; `rispostaGet` è «che cosa manca».
-    const config = metodo === 'GET' ? /\/(quote|moduli|posti)$/.exec(String(url)) : null
+    const config = metodo === 'GET' ? /\/(quote|moduli|posti|rette)$/.exec(String(url)) : null
+    // `rette` (PR 4.6): è la scheda che c'è anche per l'anno in corso, quindi la lettura va servita nella sua forma.
     const r = config
-      ? ok(config[1] === 'quote' ? { quote: [], listino: [] } : config[1] === 'moduli' ? { moduli: [] } : { posti: [] })
+      ? ok(config[1] === 'quote' ? { quote: [], listino: [] } : config[1] === 'moduli' ? { moduli: [] } : config[1] === 'rette' ? { rette: [], mesi_effettivi: { retta: [9, 10, 11, 12, 1, 2, 3, 4, 5, 6], servizio: [9, 10, 11, 12, 1, 2, 3, 4, 5, 6] }, fasce_in_uso: [] } : { posti: [] })
       : metodo === 'PATCH' ? rispostaPatch : metodo === 'POST' ? rispostaPost : rispostaGet
     return Promise.resolve({ ok: r.status < 400, status: r.status, json: async () => r.body })
   })
@@ -453,11 +454,20 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     expect(apri()).toHaveAttribute('aria-disabled', 'true')
   })
 
+  it('B1 · un anno in corso ha la scheda Rette con il titolo dell’anno, e NON le quote, i moduli e i posti', async () => {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    expect(await screen.findByRole('group', { name: /^Retta mensile · anno \d{4}\/\d{2}$/ })).toBeInTheDocument()
+    expect(screen.getByText(itAnno.retteAnnoInCorso)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itAnno.schedaQuote })).toBeNull()
+  })
+
   it('un anno in corso non ha il pulsante «Apri le iscrizioni»', async () => {
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
     expect(screen.queryByRole('button', { name: itSettings.annoIscrizioniTitolo })).toBeNull()
-    expect(chiamate('GET')).toHaveLength(0)
+    // niente lettura di «che cosa manca» per aprire le iscrizioni; resta solo la scheda Rette dell'anno in corso (PR 4.6)
+    for (const [url] of chiamate('GET')) expect(String(url)).toMatch(/\/rette$/)
   })
 })
 
@@ -536,9 +546,11 @@ describe('Impostazioni → Anno scolastico: un anno chiuso è in sola lettura', 
     expect(await screen.findByText(itSettings.annoChiusoSolaLettura)).toBeInTheDocument()
     expect(screen.queryByLabelText(itSettings.annoFineTitolo)).toBeNull()
     expect(screen.queryByLabelText(itSettings.annoUltimoGiorno)).toBeNull()
-    expect(screen.queryByRole('button', { name: itSettings.salva })).toBeNull()
     expect(screen.queryByRole('note')).toBeNull()
-    expect(document.querySelectorAll('input')).toHaveLength(0)
+    // Dell'anno chiuso resta la sola lettura delle rette: ogni campo e ogni pulsante di scrittura è spento.
+    expect(await screen.findByText(itAnno.retteSolaLettura)).toBeInTheDocument()
+    for (const campo of document.querySelectorAll('input, select')) expect(campo).toBeDisabled()
+    expect(screen.getByRole('button', { name: itSettings.salva })).toBeDisabled()
   })
 })
 
@@ -615,7 +627,16 @@ describe('Impostazioni → Anno scolastico: scrittura in volo e pannello smontat
   /** Tiene la prossima fetch (la PATCH) in sospeso finché il test non la scioglie. */
   function patchInSospeso() {
     let sciogli: (r: unknown) => void = () => {}
-    fetchMock.mockImplementationOnce(() => new Promise((res) => { sciogli = res }))
+    // Tiene in sospeso la prossima PATCH (non la prossima fetch qualunque: la scheda Rette dell'anno in corso legge al montaggio).
+    const normale = fetchMock.getMockImplementation()!
+    let presa = false
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (!presa && init?.method === 'PATCH') {
+        presa = true
+        return new Promise((res) => { sciogli = res })
+      }
+      return normale(url, init)
+    })
     return (cambiato: boolean) =>
       sciogli({ ok: true, status: 200, json: async () => ({ success: true, data: { cambiato } }) })
   }

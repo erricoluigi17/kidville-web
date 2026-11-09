@@ -14,6 +14,8 @@
 -- `admin_settings.retta_default_importo`; (3) il pro-rata guarda `frequenze.data_ingresso` e scatta solo se è dopo l'inizio
 -- dell'anno; (4) i controlli sull'anno (stato, sede, periodo). Le formule degli sconti, della scadenza e della visibilità
 -- sono identiche.
+-- (5) NUOVO rispetto alla produzione: tutte le funzioni di questa migrazione sono `SECURITY DEFINER` con `search_path` fissato,
+-- EXECUTE solo a `service_role` (REVOKE a PUBLIC, anon e authenticated): le chiama solo il server, mai il browser.
 --
 -- CONTIENE (nessun DROP, nessun UPDATE di dati, nessun uuid di sede, nessun interruttore del freno):
 --   · `listino_mesi`, `listino_periodi`: i mesi di un anno, da UNA funzione sola (NULL nel listino = settembre-giugno);
@@ -117,7 +119,7 @@ BEGIN
     SELECT x FROM public.listino_periodi(p_anno_sede, 'retta') x WHERE p_periodo IS NULL
   ),
   lis AS (
-    SELECT l.fascia, l.importo FROM public.listino_voci l
+    SELECT l.fascia, l.importo, l.payment_category_id, l.id FROM public.listino_voci l
      WHERE l.anno_sede_id = p_anno_sede AND l.voce = 'retta' AND l.importo > 0
   ),
   vive AS (
@@ -141,8 +143,8 @@ BEGIN
            (f.retta_a_carico_di IS NOT NULL) AS a_carico,
            EXISTS (SELECT 1 FROM vive fp WHERE fp.alunno_id = f.retta_a_carico_di) AS pagante_vivo,
            CASE WHEN f.retta_mensile > 0 THEN f.retta_mensile
-                ELSE COALESCE((SELECT l.importo FROM lis l WHERE sec.fascia IS NOT NULL AND l.fascia = sec.fascia LIMIT 1),
-                              (SELECT l.importo FROM lis l WHERE l.fascia IS NULL LIMIT 1))
+                ELSE COALESCE((SELECT l.importo FROM lis l WHERE sec.fascia IS NOT NULL AND l.fascia = sec.fascia ORDER BY l.payment_category_id NULLS LAST, l.id LIMIT 1),
+                              (SELECT l.importo FROM lis l WHERE l.fascia IS NULL ORDER BY l.payment_category_id NULLS LAST, l.id LIMIT 1))
            END AS importo,
            CASE WHEN f.retta_mensile > 0 THEN 'frequenza'
                 WHEN sec.fascia IS NOT NULL AND EXISTS (SELECT 1 FROM lis l WHERE l.fascia = sec.fascia) THEN 'listino_fascia'

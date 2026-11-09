@@ -821,6 +821,7 @@
   "erroreAnnoNonVisibile": "Questo anno scolastico non è ancora disponibile per te.",
   "erroreAnnoNonAccessibile": "Questo anno scolastico non è disponibile per questa sede.",
   "erroreAnnoNonTrovato": "Questo anno scolastico non esiste più. Aggiorna la pagina.",
+  "erroreMeseFuoriDagliAnni": "Nessun anno scolastico di questa sede contiene quel mese: scegli un mese dentro un anno.",
   "erroreAnnoInChiusura": "L’anno è in chiusura: l’ultimo giorno aperto non si può più cambiare.",
   "erroreDateNonValide": "Le date scelte non sono valide per questo anno scolastico.",
   "errorePrerequisitiMancanti": "Per aprire le iscrizioni mancano ancora dei dati: controlla le quote e i moduli dell’anno.",

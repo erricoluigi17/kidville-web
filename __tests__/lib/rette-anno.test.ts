@@ -123,8 +123,9 @@ describe('riepilogoRette', () => {
       riga({ importo: 280, origine_importo: 'listino_fascia' }),
       riga({ importo: 250, gia_generato: true }), // già fatta: non è un candidato né pesa nel totale
       riga({ esito: 'esente', importo: null, origine_importo: null }),
-      riga({ esito: 'senza_importo', importo: null, origine_importo: null }),
-      riga({ esito: 'senza_importo', importo: null, origine_importo: null }),
+      riga({ esito: 'senza_importo', importo: null, origine_importo: null, alunno_id: 'bambino-1' }),
+      riga({ esito: 'senza_importo', importo: null, origine_importo: null, alunno_id: 'bambino-2', periodo: '2026-09-01' }),
+      riga({ esito: 'senza_importo', importo: null, origine_importo: null, alunno_id: 'bambino-2', periodo: '2026-10-01' }), // stesso bambino, altro mese: è UN bambino
       riga({ esito: 'senza_importo', importo: null, origine_importo: null, gia_generato: true }), // la voce c'è: nulla manca
       riga({ esito: 'pagante_assente', importo: null, origine_importo: null }),
     ])

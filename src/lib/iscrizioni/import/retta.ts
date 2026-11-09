@@ -11,6 +11,8 @@
  * le rette mensili la legge così:
  *
  *     COALESCE(NULLIF(al.importo_retta_mensile, 0), s.retta_default_importo, 150)
+ *   (formula STORICA: dalla PR 4.6 la strada dell'anno non ripiega più su 150, e senza una retta il bambino non riceve la voce;
+ *   lo zero resta comunque da non scrivere).
  *     — supabase/migrations/20260731115341_genera_rette_per_sede.sql:154
  *     — e il gemello in src/app/api/pagamenti/genera-rette/route.ts:52-55
  *
@@ -68,7 +70,7 @@ export function risolviRetta(riga: RigaElenco, fratelli: readonly RigaElenco[]):
       tipo: 'da_controllare',
       motivo:
         riga.retta === 0
-          ? 'La retta è scritta come 0: nel registro lo zero vale «usa la retta di default della sede» (150 €). Se il bambino non deve pagare, va indicato il fratello che paga per lui.'
+          ? 'La retta è scritta come 0: nel registro lo zero vale «usa la retta di riferimento della sede o dell’anno». Se il bambino non deve pagare, va indicato il fratello che paga per lui.'
           : `La retta scritta nel foglio non è una cifra utilizzabile: ${riga.retta}.`,
     }
   }

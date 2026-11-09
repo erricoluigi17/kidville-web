@@ -101,10 +101,13 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
 
     const avvisoServiziNonGenerati = servizi !== null && 'errore' in servizi && servizi.codice === 'SERVIZI_NON_GENERATI';
 
-    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setServizi(null); setSelezione(SELEZIONE_TUTTI); };
+    // Perché l'anteprima non c'è: il server lo dice (mese fuori da ogni anno, anno non coerente…) e va mostrato, non taciuto.
+    const [erroreAnteprima, setErroreAnteprima] = useState<string | null>(null);
+
+    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setServizi(null); setSelezione(SELEZIONE_TUTTI); setErroreAnteprima(null); };
 
     const loadPreview = useCallback(async () => {
-        setLoading(true); setDone(null); setServizi(null);
+        setLoading(true); setDone(null); setServizi(null); setErroreAnteprima(null);
         try {
             const qs = mode === 'anno' ? `anno=${anno}` : `periodo=${periodo}`;
             const res = await fetch(`/api/pagamenti/genera-rette?userId=${userId}&${qs}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
@@ -112,9 +115,12 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             if (j.success) {
                 if (mode === 'anno') { setPreviewAnno({ ...j.data, annoAnteprima: anno }); setPreviewMese(null); }
                 else { setPreviewMese(j.data); setPreviewAnno(null); }
+            } else {
+                setPreviewMese(null); setPreviewAnno(null);
+                setErroreAnteprima(messaggioDaCorpo(j, t('genrErrAnteprima')));
             }
         } finally { setLoading(false); }
-    }, [userId, mode, anno, periodo, scuolaId]);
+    }, [userId, mode, anno, periodo, scuolaId, t]);
 
     const conferma = async () => {
         setLoading(true);
@@ -177,6 +183,11 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
         : alunniBersaglio(candidatiScelta, selezione).length;
     const generazioneSpenta = (mode === 'anno' ? previewAnno?.generazione_attiva : previewMese?.generazione_attiva) === false;
     const hasPreview = mode === 'anno' ? !!previewAnno : !!previewMese;
+    // Gli anni che il server rifiuta (409): «Genera» resta spento e dice perché, invece di lasciare che sia un `alert` a spiegarlo.
+    const statoAnteprima = (mode === 'anno' ? previewAnno : previewMese)?.anno_stato;
+    const motivoNonGenerabile = statoAnteprima === 'in_preparazione' ? t('genrNonGenerabileInPreparazione')
+        : statoAnteprima === 'chiuso' ? t('genrNonGenerabileChiuso')
+        : null;
 
     /**
      * Che anno è, per chi riceve la retta e per chi no. Ogni riga compare solo se ha qualcosa da dire; una risposta di prima
@@ -264,6 +275,10 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             <div role="alert" className={avvisoServiziNonGenerati ? 'rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong' : undefined}>
                 {avvisoServiziNonGenerati ? t('genrServiziNonGenerati') : ''}
             </div>
+
+            {erroreAnteprima !== null && (
+                <p role="alert" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">{erroreAnteprima}</p>
+            )}
 
             {mode === 'anno' && annoAnteprimaScaduta !== null && (
                 <p role="status" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
@@ -387,8 +402,13 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 />
             )}
 
+            {hasPreview && totCandidati > 0 && motivoNonGenerabile && (
+                <p id="genr-non-generabile" role="status" className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">{motivoNonGenerabile}</p>
+            )}
+
             {hasPreview && totCandidati > 0 && (
-                <button onClick={conferma} disabled={loading || selezioneNonValida}
+                <button onClick={conferma} disabled={loading || selezioneNonValida || motivoNonGenerabile !== null}
+                    aria-describedby={motivoNonGenerabile ? 'genr-non-generabile' : undefined}
                     className="mt-3 inline-flex items-center gap-1 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                     <CalendarClock size={15} /> {t('genrGenera')} {quanteSiGenerano} {t('genrRette')}
                 </button>

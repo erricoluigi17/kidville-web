@@ -91,12 +91,40 @@ describe('GeneratoreRette — l’anteprima dell’anno', () => {
   });
 
   it('la conferma scrive sull’anno che l’anteprima ha contato, e a cose fatte dice che nessuno è stato avvisato', async () => {
-    anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: 'in_preparazione', visibile_alle_famiglie: false });
+    anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: 'iscrizioni_aperte', visibile_alle_famiglie: false });
     await anteprimaMensile();
     fireEvent.click(screen.getByRole('button', { name: /Genera 1 rette/ }));
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ anno_sede_id: ANNO_SEDE, scuola_id: 'sede-1' });
     expect(await screen.findByText(new RegExp(itContabilita.genrNessunaNotificaFatto))).toBeInTheDocument();
+  });
+
+  it.each([
+    ['in_preparazione', itContabilita.genrNonGenerabileInPreparazione],
+    ['chiuso', itContabilita.genrNonGenerabileChiuso],
+  ])('anno %s: il server rifiuterebbe la conferma, quindi «Genera» è spento e dice perché', async (stato, frase) => {
+    anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: stato, visibile_alle_famiglie: false });
+    await anteprimaMensile();
+    const genera = screen.getByRole('button', { name: /Genera 1 rette/ });
+    expect(genera).toBeDisabled();
+    expect(screen.getByText(frase)).toBeInTheDocument();
+    expect(genera).toHaveAccessibleDescription(frase);
+  });
+
+  it('anno in chiusura: si genera come nell\'anno in corso (nessun avviso di non visibilità, bottone attivo)', async () => {
+    anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: 'in_chiusura', visibile_alle_famiglie: true });
+    await anteprimaMensile();
+    expect(screen.getByRole('button', { name: /Genera 1 rette/ })).not.toBeDisabled();
+    expect(screen.queryByText(itContabilita.genrNonVisibile)).toBeNull();
+  });
+
+  it('un\'anteprima rifiutata dal server dice perché, con le parole del server', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ error: 'Nessun anno scolastico di questa sede contiene quel mese: scegli un mese dentro un anno.', codice: 'MESE_FUORI_DAGLI_ANNI' }) }));
+    vi.stubGlobal('fetch', f);
+    render(<GeneratoreRette userId="u1" scuolaId="sede-1" />);
+    fireEvent.click(screen.getByRole('button', { name: itContabilita.genrMeseSingolo }));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.genrAnteprima) }));
+    expect(await screen.findByText(/Nessun anno scolastico di questa sede contiene quel mese/)).toBeInTheDocument();
   });
 
   it('una risposta di prima non manda anno_sede_id nella conferma', async () => {

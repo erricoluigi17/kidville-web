@@ -3605,6 +3605,7 @@ export const CODICI_ERRORE = {
     ANNO_NON_VISIBILE: 'erroreAnnoNonVisibile',
     ANNO_NON_ACCESSIBILE: 'erroreAnnoNonAccessibile',
     ANNO_NON_TROVATO: 'erroreAnnoNonTrovato',
+    MESE_FUORI_DAGLI_ANNI: 'erroreMeseFuoriDagliAnni',
     ANNO_IN_CHIUSURA: 'erroreAnnoInChiusura',
     DATE_NON_VALIDE: 'erroreDateNonValide',
     PREREQUISITI_MANCANTI: 'errorePrerequisitiMancanti',

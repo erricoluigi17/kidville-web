@@ -53,6 +53,10 @@ BEGIN
   IF p_fascia IS NOT NULL AND p_fascia NOT IN ('nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_bambini') THEN
     RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'fascia')::text;
   END IF;
+  -- togliere una riga e dare dei mesi insieme non ha senso: i mesi si perderebbero in silenzio
+  IF p_importo IS NULL AND p_mesi IS NOT NULL THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'mesi')::text;
+  END IF;
   -- i mesi: solo sulla riga senza fascia, non vuoti, dentro 1..12
   IF p_mesi IS NOT NULL THEN
     IF p_fascia IS NOT NULL OR cardinality(p_mesi) = 0 THEN

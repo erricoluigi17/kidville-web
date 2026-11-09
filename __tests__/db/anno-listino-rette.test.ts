@@ -77,6 +77,12 @@ describe('anno_listino_retta_imposta', () => {
     expect((await righeListino())[0].mesi).toEqual([9, 10, 11])
   })
 
+  prova('togliere la riga e dare dei mesi insieme è rifiutato: i mesi non si perdono in silenzio', async () => {
+    await imposta(A27(), 'retta', null, 200, [9, 10])
+    expect(await errore(CHIAMA, [A27(), 'retta', null, null, null, '{9,10}'])).toBe('PARAMETRO_MANCANTE')
+    expect(await righeListino()).toEqual([expect.objectContaining({ importo: '200.00', mesi: [9, 10] })])
+  })
+
   prova('mesi NULL non tocca i mesi già scritti', async () => {
     await imposta(A27(), 'retta', null, 200, [9, 10])
     const r = await imposta(A27(), 'retta', null, 220, null)

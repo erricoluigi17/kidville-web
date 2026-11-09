@@ -453,6 +453,7 @@ const patchBodySchema = z.object({
    * mese per bambino. `alunni.importo_retta_mensile = 0` NON significa «non
    * paga»: chi genera le rette legge
    *   COALESCE(NULLIF(importo_retta_mensile, 0), retta_default_importo, 150)
+   * (formula STORICA: dalla PR 4.6 la generazione dell'anno legge `frequenze` e il listino, senza il 150; lo zero resta da non scrivere)
    * e `NULLIF(…, 0)` annulla lo zero, sostituendolo col default di sede. Uno zero
    * accettato qui è una retta piena addebitata a chi non doveva pagare nulla,
    * senza che nessun errore compaia da nessuna parte.

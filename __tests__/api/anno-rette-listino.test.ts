@@ -129,6 +129,8 @@ describe('PUT', () => {
     ['fascia sconosciuta', { ...CORPO, fascia: 'liceo' }],
     ['mese fuori da 1..12', { ...CORPO, mesi: [9, 13] }],
     ['fascia mancante', { voce: 'retta', importo: 100 }],
+    ['categoria su una retta (nascerebbero due righe senza fascia)', { voce: 'retta', fascia: null, importo: 100, categoria_id: CAT }],
+    ['togliere la riga e dare dei mesi insieme', { voce: 'retta', fascia: null, importo: null, mesi: [9, 10] }],
   ])('%s → 400, e la funzione SQL non parte', async (_n, corpo) => {
     expect((await scrivi(corpo)).status).toBe(400)
     expect(h.rpc).toEqual([])

@@ -62,7 +62,8 @@ function firstOfMonth(periodo?: string | null): string {
   return `${dataCivile(new Date()).slice(0, 7)}-01`
 }
 
-// importo retta effettivo = importo personalizzato dell'alunno, altrimenti default globale (150)
+// STRADA STORICA (database senza lo schema dell'anno): importo retta = quello personalizzato dell'alunno, altrimenti il default di sede
+// (150 se la sede non ne ha). La strada dell'anno (`anteprimaDalListino`) non ripiega mai su un numero: legge il listino.
 function importoRetta(a: { importo_retta_mensile?: number | null }, rettaDefault: number): number {
   const personalizzato = Number(a.importo_retta_mensile || 0)
   return personalizzato > 0 ? personalizzato : rettaDefault
@@ -108,8 +109,20 @@ async function categoriaRetta(
   return (diSede ?? globale)?.id ?? null
 }
 
-/** Gli anni che la 4.6 distingue: le rette «arrivano» alle famiglie solo dall'anno in corso. */
-const ANNO_ATTIVO = 'corrente'
+/**
+ * Gli anni che la 4.6 distingue: le rette «arrivano» alle famiglie dall'anno attivo del database (`anno_attivo()`), che è l'anno
+ * `corrente` e, finché non è chiuso, quello `in_chiusura`: il genitore vede la voce e la notifica deve partire.
+ */
+const annoAttivo = (stato: string): boolean => stato === 'corrente' || stato === 'in_chiusura'
+
+/** Il mese (o l'anno) che non cade in nessun anno della sede non è «un anno che non esiste più»: si dice com'è. */
+function annoNonTrovato(operazione: string, nominato: boolean): NextResponse {
+  if (nominato) return erroreAnno({ message: 'ANNO_NON_TROVATO' }, operazione) ?? NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  return NextResponse.json(
+    { error: 'Nessun anno scolastico di questa sede contiene quel mese: scegli un mese dentro un anno.', codice: 'MESE_FUORI_DAGLI_ANNI' },
+    { status: 404 },
+  )
+}
 
 type AnnoScelto = { annoSedeId: string; stato: string }
 
@@ -153,13 +166,14 @@ async function anteprimaDalListino(
     .eq('anno_sede_id', anno.annoSedeId)
     .eq('voce', 'retta')
     .is('fascia', null)
-    .order('importo', { ascending: true })
+    .order('payment_category_id', { ascending: true, nullsFirst: false })
+    .order('id', { ascending: true })
     .limit(1)
   if (errVoce) return rispostaGuastoDb(operazione, 'db:listino_voci', errVoce)
   const rettaDefault = (voce as Array<{ importo: number | null }> | null)?.[0]?.importo ?? null
 
   const riepilogo = riepilogoRette(righe)
-  const visibile = anno.stato === ANNO_ATTIVO
+  const visibile = annoAttivo(anno.stato)
   const comuni = {
     anno_sede_id: anno.annoSedeId,
     anno_stato: anno.stato,
@@ -306,7 +320,7 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
     })
     if (!scelta.ok && scelta.codice === 'errore') return rispostaGuastoDb('pagamenti/genera-rette:GET', 'db:anni_sede', scelta.errore)
     if (!scelta.ok && scelta.codice === 'ANNO_NON_TROVATO') {
-      return erroreAnno({ message: 'ANNO_NON_TROVATO' }, 'pagamenti/genera-rette:GET') ?? NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+      return annoNonTrovato('pagamenti/genera-rette:GET', !!q.data.anno_sede_id)
     }
     if (scelta.ok) {
       const dalListino = await anteprimaDalListino(
@@ -588,13 +602,13 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
     })
     if (!scelta.ok && scelta.codice === 'errore') return rispostaGuastoDb('pagamenti/genera-rette:POST', 'db:anni_sede', scelta.errore, 'scrittura')
     if (!scelta.ok && scelta.codice === 'ANNO_NON_TROVATO') {
-      return erroreAnno({ message: 'ANNO_NON_TROVATO' }, 'pagamenti/genera-rette:POST') ?? NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+      return annoNonTrovato('pagamenti/genera-rette:POST', !!body.anno_sede_id)
     }
     const annoSedeId = scelta.ok ? scelta.annoSedeId : null
     const statoAnno = scelta.ok ? scelta.stato : null
     const riepilogo = annoSedeId ? await riepilogoPrima(supabase, scuolaId, annoSedeId, { periodo: periodoMese, alunnoIds: body.alunno_ids ?? null }) : null
     if (annoSedeId && riepilogo) logRiepilogoRette('pagamenti/genera-rette:POST', scuolaId, annoSedeId, riepilogo)
-    const visibileAlleFamiglie = statoAnno === null ? null : statoAnno === ANNO_ATTIVO
+    const visibileAlleFamiglie = statoAnno === null ? null : annoAttivo(statoAnno)
 
     // --- Generazione ANNUALE ---
     if (annuale) {
@@ -628,7 +642,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
         success: true,
         data: {
           anno_inizio: annoInizio, generati: data, servizi: rispostaServizi(servizi),
-          ...(annoSedeId ? { anno_sede_id: annoSedeId, senza_importo: riepilogo?.senzaImporto ?? null, visibile_alle_famiglie: visibileAlleFamiglie } : {}),
+          ...(annoSedeId ? { anno_sede_id: annoSedeId, senza_importo: riepilogo?.senzaImporto ?? null, esenti: riepilogo?.esenti ?? null, visibile_alle_famiglie: visibileAlleFamiglie } : {}),
         },
       })
     }
@@ -673,7 +687,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
     // nell'elenco e i loro genitori verrebbero avvisati una seconda volta.
     // Le rette di un anno che NON è quello in corso (in preparazione, iscrizioni aperte) si creano ma non si annunciano:
     // le famiglie le vedranno dal momento in cui l'anno diventa quello attivo, e un avviso adesso sarebbe prematuro.
-    if (typeof data === 'number' && data > 0 && statoAnno !== null && statoAnno !== ANNO_ATTIVO) {
+    if (typeof data === 'number' && data > 0 && statoAnno !== null && !annoAttivo(statoAnno)) {
       logEvento('pagamento', 'info', {
         operazione: 'pagamenti/genera-rette:POST', esito: 'notifica-saltata-anno-non-attivo',
         periodo, generati: data, scuola_id: scuolaId, entita_id: annoSedeId as string,
@@ -748,7 +762,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
       success: true,
       data: {
         periodo, generati: data, servizi: rispostaServizi(servizi),
-        ...(annoSedeId ? { anno_sede_id: annoSedeId, senza_importo: riepilogo?.senzaImporto ?? null, visibile_alle_famiglie: visibileAlleFamiglie } : {}),
+        ...(annoSedeId ? { anno_sede_id: annoSedeId, senza_importo: riepilogo?.senzaImporto ?? null, esenti: riepilogo?.esenti ?? null, visibile_alle_famiglie: visibileAlleFamiglie } : {}),
       },
     })
   } catch (err) {

@@ -111,6 +111,14 @@ function Inner() {
         fromUrl && SEZIONI_VALIDE.has(fromUrl) ? (fromUrl as Sezione) : 'pagamenti'
     );
 
+    // L'indirizzo comanda anche DOPO il montaggio: un rimando (es. «Vai ad Anno scolastico») cambia solo la query, e Next non rimonta
+    // la pagina se cambia la sola query. Si confronta durante il render (non in un effetto): all'URL nuovo la sezione lo segue.
+    const [urlVisto, setUrlVisto] = useState(fromUrl);
+    if (fromUrl !== urlVisto) {
+        setUrlVisto(fromUrl);
+        if (fromUrl && SEZIONI_VALIDE.has(fromUrl) && fromUrl !== sezione) setSezione(fromUrl as Sezione);
+    }
+
     const vai = (id: Sezione) => {
         setSezione(id);
         // Identità non risolta: si omette ?userId= (mai 'userId=null'), la sezione resta.

@@ -143,11 +143,16 @@ export function AnnoConfigurazione({
   userId,
   annoSedeId,
   stato,
+  annoEtichetta,
   onCambiata,
 }: {
   userId: string;
   annoSedeId: string;
-  stato: 'in_preparazione' | 'iscrizioni_aperte';
+  /** Tutti gli stati: con le iscrizioni non ancora aperte o aperte c'è tutta la configurazione, per l'anno in corso la sola retta
+   *  (il server rifiuta il resto), per l'anno in chiusura o chiuso la retta si può solo leggere (il database rifiuta la scrittura). */
+  stato: 'in_preparazione' | 'iscrizioni_aperte' | 'corrente' | 'in_chiusura' | 'chiuso';
+  /** L'anno a cui si sta scrivendo, ben visibile sopra la retta (es. «2026/27»). */
+  annoEtichetta?: string;
   /** Qualcosa è cambiato nel database: chi sta sopra rilegge «che cosa manca» per aprire le iscrizioni. */
   onCambiata: () => void;
 }) {
@@ -232,7 +237,19 @@ export function AnnoConfigurazione({
     setScheda(id as Scheda);
   };
 
-  const comuni = { userId, base, versione, inCorso, scrivi, esitoDi, fasciaNome, setEsito };
+  const soloLettura = stato === 'in_chiusura' || stato === 'chiuso';
+  const comuni = { userId, base, versione, inCorso, scrivi, esitoDi, fasciaNome, setEsito, soloLettura };
+
+  // Anno in corso, in chiusura o chiuso: del listino resta la sola retta (le quote, i moduli e i posti li rifiuta il server).
+  if (stato === 'corrente' || stato === 'in_chiusura' || stato === 'chiuso') {
+    return (
+      <fieldset className="mt-5 border-t border-kidville-line pt-4">
+        <legend className={sottoTitolo}>{annoEtichetta ? t('retteAnnoTitolo', { anno: annoEtichetta }) : t('schedaRette')}</legend>
+        <p className="font-maven text-sm text-kidville-sub">{soloLettura ? t('retteSolaLettura') : t('retteAnnoInCorso')}</p>
+        <SchedaRette {...comuni} />
+      </fieldset>
+    );
+  }
 
   return (
     <fieldset className="mt-5 border-t border-kidville-line pt-4">
@@ -268,6 +285,8 @@ type Comuni = {
   scrivi: (area: string, metodo: 'PUT' | 'POST' | 'PATCH' | 'DELETE', url: string, corpo: Record<string, unknown> | undefined, testo: (dati: Record<string, unknown> | null) => string) => Promise<boolean>;
   esitoDi: (area: string) => React.ReactNode;
   fasciaNome: (f: string | null) => string;
+  /** Anno in chiusura o chiuso: si legge e basta. */
+  soloLettura: boolean;
   setEsito: (e: EsitoUi | null) => void;
 };
 
@@ -407,11 +426,16 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
   const id = useId();
   const area = 'rette';
   const { rette, mesiEffettivi, fasceInUso } = dati;
-  // La bozza parte vuota (nessun importo scelto per la segreteria); i mesi partono da quelli che valgono ora, decisi dal database.
+  // La bozza parte dall'importo già salvato per «Tutte le fasce» (per cambiare solo i mesi non si deve riscrivere l'importo); i mesi
+  // partono da quelli che valgono ora, decisi dal database. Senza una riga salvata la casella è vuota: nessun importo è suggerito.
+  const importoDi = (f: string | null): string => {
+    const r = rette.find((x) => x.voce === 'retta' && x.fascia === f);
+    return r && r.importo !== null ? String(r.importo).replace('.', ',') : '';
+  };
   const [fascia, setFascia] = useState<string>(TUTTE);
-  const [importo, setImporto] = useState('');
+  const [importo, setImporto] = useState(() => importoDi(null));
   const [mesi, setMesi] = useState<number[]>(mesiEffettivi);
-  const occupato = c.inCorso !== null;
+  const occupato = c.inCorso !== null || c.soloLettura;
   const nomeMese = (m: number) => {
     const d = new Date(0);
     d.setUTCMonth(m - 1, 1);
@@ -426,14 +450,17 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
     if (perTutte && mesi.length === 0) return c.setEsito({ area, tipo: 'errore', errore: { tipo: 'campo', chiave: 'mesi' } });
     const mandaMesi = perTutte && !stessiMesi(mesi, mesiEffettivi);
     const corpo = { voce: 'retta', fascia: perTutte ? null : fascia, importo: n, ...(mandaMesi ? { mesi: [...mesi].sort((a, b) => a - b) } : {}) };
-    const ok = await c.scrivi(area, 'PUT', `${c.base}/rette`, corpo, (d) => (d?.cambiato === false ? t('nessunaModifica') : t('retteSalvata')));
-    if (ok) setImporto('');
+    await c.scrivi(area, 'PUT', `${c.base}/rette`, corpo, (d) => (d?.cambiato === false ? t('nessunaModifica') : t('retteSalvata')));
   };
   const togli = (r: RigaRetta) => void c.scrivi(area, 'PUT', `${c.base}/rette`, { voce: 'retta', fascia: r.fascia, importo: null }, () => t('retteTolta'));
   const modifica = (r: RigaRetta) => {
     c.setEsito(null);
     setFascia(r.fascia ?? TUTTE);
     setImporto(r.importo === null ? '' : String(r.importo).replace('.', ','));
+  };
+  const scegliFascia = (f: string) => {
+    setFascia(f);
+    setImporto(importoDi(f === TUTTE ? null : f));
   };
   const scegliMese = (m: number, acceso: boolean) => setMesi((prima) => (acceso ? [...prima, m] : prima.filter((x) => x !== m)));
   // Un 150,00 è quasi sempre l'importo copiato dal listino precedente: una nota neutra, mai un blocco.
@@ -466,7 +493,7 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
       <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-3">
         <div>
           <label htmlFor={`${id}-fascia`} className={label}>{t('etichettaFascia')}</label>
-          <select id={`${id}-fascia`} value={fascia} onChange={(e) => setFascia(e.target.value)} className={input}>
+          <select id={`${id}-fascia`} value={fascia} onChange={(e) => scegliFascia(e.target.value)} disabled={c.soloLettura} className={input}>
             <option value={TUTTE}>{t('fasciaTutte')}</option>
             {FASCE.map((f: Fascia) => (
               <option key={f} value={f}>{c.fasciaNome(f)}</option>
@@ -475,7 +502,7 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
         </div>
         <div>
           <label htmlFor={`${id}-importo`} className={label}>{t('etichettaImporto')}</label>
-          <input id={`${id}-importo`} type="text" inputMode="decimal" autoComplete="off" value={importo} onChange={(e) => setImporto(e.target.value)} className={`${input} w-32`} />
+          <input id={`${id}-importo`} type="text" inputMode="decimal" autoComplete="off" value={importo} onChange={(e) => setImporto(e.target.value)} disabled={c.soloLettura} className={`${input} w-32`} />
         </div>
         <button type="button" onClick={() => void salva()} disabled={occupato} className={btnPrimary}>
           {c.inCorso === area ? t('salvataggioInCorso') : t('salva')}
@@ -488,7 +515,7 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
             {MESI_ANNO.map((m) => (
               <label key={m} className="flex items-center gap-1.5 font-maven text-sm text-kidville-ink">
-                <input type="checkbox" checked={mesi.includes(m)} onChange={(e) => scegliMese(m, e.target.checked)} />
+                <input type="checkbox" checked={mesi.includes(m)} disabled={c.soloLettura} onChange={(e) => scegliMese(m, e.target.checked)} />
                 {nomeMese(m)}
               </label>
             ))}

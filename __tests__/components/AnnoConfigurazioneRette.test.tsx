@@ -168,3 +168,66 @@ describe('scheda Rette', () => {
     expect(screen.queryByText('Rette e servizi')).toBeNull()
   })
 })
+
+// ── B1 della revisione: la retta dell'anno IN CORSO si imposta da qui ──────────────────────────────────────────────
+describe('scheda Rette negli anni in corso, in chiusura e chiusi', () => {
+  const monta = (stato: 'corrente' | 'in_chiusura' | 'chiuso') =>
+    render(<AnnoConfigurazione userId={USER} annoSedeId={ANNO} stato={stato} annoEtichetta="2026/27" onCambiata={() => {}} />)
+
+  it('corrente: la scheda c\'è, ha il titolo con l\'anno, dice che le voci già create non cambiano, ed è modificabile', async () => {
+    lettura = { rette: [{ voce: 'retta', fascia: null, payment_category_id: null, importo: 180, mesi: null }] }
+    monta('corrente')
+    const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(screen.getByRole('group', { name: 'Retta mensile · anno 2026/27' })).toBeInTheDocument()
+    expect(screen.getByText(itAnno.retteAnnoInCorso)).toBeInTheDocument()
+    expect(campoImporto(g).value).toBe('180')
+    expect(campoImporto(g)).not.toBeDisabled()
+    fireEvent.change(campoImporto(g), { target: { value: '190' } })
+    fireEvent.click(within(g).getByRole('button', { name: itAnno.salva }))
+    await waitFor(() => expect(puts()).toHaveLength(1))
+    expect(puts()[0][0]).toBe(`/api/admin/anni/${ANNO}/rette`)
+    expect(corpoPut()).toEqual({ voce: 'retta', fascia: null, importo: 190 })
+  })
+
+  it('corrente: le altre schede (quote, moduli, posti) e le classi non compaiono: il server le rifiuta', async () => {
+    monta('corrente')
+    await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(screen.queryByRole('button', { name: itAnno.schedaQuote })).toBeNull()
+    expect(screen.queryByRole('button', { name: itAnno.schedaModuli })).toBeNull()
+    expect(screen.queryByRole('button', { name: itAnno.schedaPosti })).toBeNull()
+  })
+
+  it.each(['in_chiusura', 'chiuso'] as const)('%s: si legge e basta, con la frase, senza pulsanti che scrivono', async (stato) => {
+    lettura = { rette: [{ voce: 'retta', fascia: null, payment_category_id: null, importo: 180, mesi: null }] }
+    monta(stato)
+    const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(screen.getByText(itAnno.retteSolaLettura)).toBeInTheDocument()
+    expect(within(g).getByText('180,00', { exact: false })).toBeInTheDocument()
+    expect(campoImporto(g)).toBeDisabled()
+    expect(within(g).getByRole('button', { name: itAnno.salva })).toBeDisabled()
+    expect(within(g).getByRole('button', { name: itAnno.togli })).toBeDisabled()
+    expect(within(g).getAllByRole('checkbox').every((c) => (c as HTMLInputElement).disabled)).toBe(true)
+  })
+
+  it('sede nuova senza listino: a schermo c\'è la spiegazione di che cosa fare, non un silenzio', async () => {
+    monta('corrente')
+    const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(within(g).getByText(itAnno.retteNessuna)).toBeInTheDocument()
+    expect(itAnno.retteNessuna).toMatch(/Salva/)
+  })
+
+  it('cambiare solo i mesi non obbliga a riscrivere l\'importo: la casella parte da quello salvato', async () => {
+    lettura = { rette: [{ voce: 'retta', fascia: null, payment_category_id: null, importo: 275, mesi: null }] }
+    const g = await apriRette()
+    expect(campoImporto(g).value).toBe('275')
+    fireEvent.click(within(g).getByRole('checkbox', { name: /luglio/i }))
+    fireEvent.click(within(g).getByRole('button', { name: itAnno.salva }))
+    await waitFor(() => expect(puts()).toHaveLength(1))
+    expect(corpoPut()).toMatchObject({ voce: 'retta', fascia: null, importo: 275 })
+    expect((corpoPut().mesi as number[]).includes(7)).toBe(true)
+  })
+
+  it('togliere una retta dice che cosa succede dopo', () => {
+    expect(itAnno.retteTolta).toMatch(/non ricevono/)
+  })
+})

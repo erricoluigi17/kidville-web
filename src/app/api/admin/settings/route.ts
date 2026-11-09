@@ -401,7 +401,7 @@ export const GET = withRoute('admin/settings:GET', async (request: NextRequest) 
 })
 
 // PATCH /api/admin/settings  (staff) — upsert impostazioni
-// Body: { userId, scuola_id?, retta_default_importo?, retta_giorno_scadenza?,
+// Body: { userId, scuola_id?, retta_giorno_scadenza?,   (la retta di base non si scrive più da qui: sta nel listino dell'anno)
 //         retta_auto_enabled?, insoluto_tolleranza_giorni?, ticket_pacchetti? }
 // NB: aruba_config si gestisce dalla route dedicata /api/admin/settings/aruba
 export const PATCH = withRoute('admin/settings:PATCH', async (request: NextRequest) => {

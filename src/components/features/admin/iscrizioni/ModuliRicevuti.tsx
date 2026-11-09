@@ -178,6 +178,7 @@ export function ModuliRicevuti() {
    * `importo_retta_mensile = 0`, e chi genera le rette mensili legge:
    *
    *     COALESCE(NULLIF(importo_retta_mensile, 0), retta_default_importo, 150)
+   *   (formula STORICA: dalla PR 4.6 la generazione dell'anno non ripiega più su 150; lo zero resta da non scrivere)
    *
    * `NULLIF(…, 0)` ANNULLA LO ZERO: ogni bambino importato dal modulo si prendeva
    * 150 €/mese senza che nessuno l'avesse deciso e senza che nessun errore

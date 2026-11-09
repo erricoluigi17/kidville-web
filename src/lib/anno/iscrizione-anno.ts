@@ -37,6 +37,8 @@ export type RisultatoRegistra = {
   quota: QuotaEsito | null
   pagamento_id: string | null
   posti_oltre: boolean
+  /** C'è solo (e vale `true`) se la frequenza esisteva già con un'altra sezione: quella chiesta NON è stata applicata (4.5.15, M4). */
+  sezione_ignorata?: boolean
 }
 
 export type CodiceIscrizione = CodiceAnno | 'SCRITTURA_FALLITA'
@@ -130,6 +132,7 @@ export async function registraFrequenzaPerAnno(supabase: SupabaseClient, a: Regi
       operazione: OPERAZIONE,
       entita_id: data.frequenza_id,
       posti_oltre: data.posti_oltre === true,
+      sezione_ignorata: data.sezione_ignorata === true,
     })
     if (data.quota) logEsitoQuota(data.quota, OPERAZIONE, data.pagamento_id)
     return { ok: true, ...data }

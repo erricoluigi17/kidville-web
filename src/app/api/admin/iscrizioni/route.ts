@@ -2300,6 +2300,10 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           warnings.push(`Bambino ${ci + 1}: la frequenza dell'anno prossimo non è stata registrata (funzione non disponibile).`)
         } else if (!esito.creata) {
           warnings.push(`Bambino ${ci + 1}: già confermato per l'anno prossimo: la domanda è stata collegata.`)
+          // La classe scelta in approvazione non si applica a una frequenza che c'è già: la segreteria deve saperlo (4.5.15, M4).
+          if (esito.sezione_ignorata === true) {
+            warnings.push(`Bambino ${ci + 1}: la classe scelta non è stata applicata, perché per l'anno prossimo ha già la sua. Se serve cambiarla, si fa da «Conferme».`)
+          }
         }
         // L'esito della quota (4.5.15, I1): la frequenza c'è, ma la voce no (o ce n'è più d'una). La segreteria lo deve sapere ora,
         // non scoprirlo a settembre. Il testo dice che cosa fare; la riga si sistema da «Conferme», pulsante «Genera la quota».

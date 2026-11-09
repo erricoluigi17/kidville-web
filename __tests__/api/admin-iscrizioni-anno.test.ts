@@ -326,6 +326,23 @@ describe('domanda per l’anno PROSSIMO — bambino che ESISTE', () => {
     expect(json.warnings.join(' ')).toContain('già confermato')
   })
 
+  it('frequenza già esistente con un\u2019ALTRA classe: la risposta dice che quella scelta non è stata applicata (4.5.15, M4)', async () => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-vecchia', creata: false, quota: 'gia_collegata', pagamento_id: 'pag-1', posti_oltre: false, sezione_ignorata: true }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect(json.success).toBe(true)
+    expect(json.warnings.join(' ')).toContain('la classe scelta non è stata applicata')
+  })
+
+  it('frequenza già esistente con la STESSA classe: nessun avviso sulla classe', async () => {
+    conCodice()
+    h.db.alunni = [scheda()]
+    h.registra = () => ({ data: { frequenza_id: 'freq-vecchia', creata: false, quota: 'gia_collegata', pagamento_id: 'pag-1', posti_oltre: false }, error: null })
+    const json = await (await importa({ assignments: { '0': '3 ANNI' }, rette: { '0': 300 } })).json()
+    expect(json.warnings.join(' ')).not.toContain('classe scelta')
+  })
+
   it.each([
     ['senza_listino', 'non è stata creata'],
     ['piu_voci', 'più di una voce'],

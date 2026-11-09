@@ -189,6 +189,24 @@ describe('anno_registra_frequenza: la frequenza dell’anno aperto', () => {
     })
   })
 
+  prova('su una frequenza GIA\u0027 esistente una sezione diversa non la cambia, e la risposta lo dice (`sezione_ignorata`) — 4.5.15, M4', async () => {
+    await inRollback(async () => {
+      await nuovoAlunno(AL, 'in_arrivo')
+      await apri()
+      const prima = await sezione27('PRIMA SEZIONE', null)
+      const seconda = await sezione27('SECONDA SEZIONE', null)
+      const a = await registra({ alunno: AL, sezione: prima })
+      expect(a).not.toHaveProperty('sezione_ignorata')
+      // Stessa sezione, o nessuna sezione chiesta: niente da segnalare.
+      expect(await registra({ alunno: AL, sezione: prima })).not.toHaveProperty('sezione_ignorata')
+      expect(await registra({ alunno: AL })).not.toHaveProperty('sezione_ignorata')
+      // Un'altra sezione: la frequenza resta dov'era e la risposta dice che la richiesta e' stata ignorata.
+      const b = await registra({ alunno: AL, sezione: seconda })
+      expect(b).toMatchObject({ creata: false, frequenza_id: a.frequenza_id, sezione_ignorata: true })
+      expect((await frequenza(a.frequenza_id as string)).section_id).toBe(prima)
+    })
+  })
+
   prova('un anno `in_preparazione` o `corrente` risponde `ANNO_NON_APERTO`', async () => {
     await inRollback(async () => {
       await nuovoAlunno(AL, 'in_arrivo')

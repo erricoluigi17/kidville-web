@@ -203,7 +203,8 @@ $$;
 -- domanda e la riga non ne ha una, la collega: una frequenza ritirata non si riapre e non riceve una voce (`quota` NULL).
 -- MAI blocca per i posti: `posti_oltre` è un avviso. `p_da` (4.5.6) è chi ha fatto il gesto: finisce in `pagamenti.creato_da` della voce
 -- nuova; chi non lo passa (la domanda pubblica) lascia l'autore vuoto, come prima.
--- Risposta: {frequenza_id, creata, quota, pagamento_id, posti_oltre}.
+-- Risposta: {frequenza_id, creata, quota, pagamento_id, posti_oltre} e, SOLO se la frequenza c'era gia' con un'altra sezione,
+-- `sezione_ignorata: true` (la sezione chiesta non e' stata applicata: la classe non cambia da qui).
 CREATE OR REPLACE FUNCTION public.anno_registra_frequenza(
   p_alunno uuid, p_anno_sede uuid, p_tipo text, p_origine text, p_domanda uuid,
   p_section uuid, p_data_ingresso date, p_campi jsonb, p_da uuid DEFAULT NULL)
@@ -223,6 +224,7 @@ DECLARE
   v_quota  jsonb;
   v_fascia text;
   v_oltre  boolean;
+  v_ignorata boolean := false;
 BEGIN
   IF p_tipo IS NULL OR p_tipo NOT IN ('conferma', 'nuova') THEN
     RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'tipo')::text;
@@ -256,6 +258,9 @@ BEGIN
     IF p_domanda IS NOT NULL AND v_f.domanda_id IS NULL THEN
       UPDATE public.frequenze SET domanda_id = p_domanda WHERE id = v_f.id;
     END IF;
+    -- 4.5.15 (M4): la frequenza c'e' gia' e la sezione NON si cambia da qui (la classe la sposta la segreteria, con il suo gesto).
+    -- Ma chi ha chiesto una sezione diversa deve saperlo: il silenzio farebbe credere che sia stata applicata.
+    v_ignorata := p_section IS NOT NULL AND v_f.section_id IS DISTINCT FROM p_section;
   ELSE
     v_retta := nullif(v_campi ->> 'retta_mensile', '')::numeric;
     v_giorno := nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer;
@@ -297,7 +302,8 @@ BEGIN
 
   RETURN jsonb_build_object('frequenza_id', v_f.id, 'creata', v_creata,
                             'quota', v_quota -> 'esito', 'pagamento_id', v_quota -> 'pagamento_id',
-                            'posti_oltre', v_oltre);
+                            'posti_oltre', v_oltre)
+         || CASE WHEN v_ignorata THEN jsonb_build_object('sezione_ignorata', true) ELSE '{}'::jsonb END;
 END
 $$;
 

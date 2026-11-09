@@ -288,6 +288,73 @@ describe('«Ritira la conferma» dalla route vera', () => {
     })
   })
 
+  // 4.5.16 (B) · il bambino che FREQUENTA e ha una domanda approvata (o un inserimento della segreteria, o un import) ha la riga
+  // `confermato` e il pulsante: il ritiro deve funzionare. Solo chi non frequenta ancora (in arrivo) resta al 409.
+  it.each(['domanda', 'segreteria', 'import'])('un bambino che frequenta, con un\u2019iscrizione di origine «%s»: si ritira da qui, la voce si toglie, «Conferma» la riapre (4.5.16, B)', async (origine) => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const s26 = await sezione(2026, 'Girasoli')
+      const f26 = await partenza(AL, s26)
+      await sezione(2027, 'Girasoli 27', s26)
+      const anno = await apri()
+      const reg = await una<Rec>(`SELECT public.anno_registra_frequenza($1, $2, 'nuova', $3, NULL, NULL, NULL, NULL, $4)`, [AL, anno, origine, UT])
+      expect(reg.quota).toBe('creata')
+      const r = await ritira(anno, reg.frequenza_id as string)
+      expect(r.status).toBe(200)
+      expect(r.corpo.data).toMatchObject({ ritirata: true, quota: 'tolta' })
+      expect((await freq(reg.frequenza_id as string)).stato).toBe('ritirato')
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [reg.pagamento_id])).toBe(0)
+      // la riga si riapre rifacendo «Conferma» (stessa riga, nessuna nuova)
+      const di_nuovo = await CONFERMA(richiesta({ frequenza_id: f26 }), contesto(anno))
+      expect(di_nuovo.status).toBe(200)
+      expect((await di_nuovo.json()).data).toMatchObject({ frequenza_id: reg.frequenza_id, riaperta: true })
+      expect((await freq(reg.frequenza_id as string)).stato).not.toBe('ritirato')
+    })
+  })
+
+  prova('un bambino con la frequenza di quest\u2019anno già chiusa NON frequenta: la sua domanda resta 409 col codice, e non si scrive niente (4.5.16, B)', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const anno = await apri()
+      const reg = await una<Rec>(`SELECT public.anno_registra_frequenza($1, $2, 'nuova', 'domanda', NULL, NULL, NULL, NULL, $3)`, [AL, anno, UT])
+      await db.query(
+        `UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = data_ingresso
+           FROM public.anni_sede s WHERE f.anno_sede_id = s.id AND s.stato = 'corrente' AND f.alunno_id = $1`, [AL])
+      const r = await ritira(anno, reg.frequenza_id as string)
+      expect(r.status).toBe(409)
+      expect(r.corpo.codice).toBe('FREQUENZA_NON_DI_CONFERMA')
+      expect((await freq(reg.frequenza_id as string)).stato).not.toBe('ritirato')
+    })
+  })
+
+  prova('una lettura caduta della frequenza di quest\u2019anno non è «in arrivo»: SCRITTURA_FALLITA, e non si scrive niente (4.5.16, B)', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const anno = await apri()
+      const reg = await una<Rec>(`SELECT public.anno_registra_frequenza($1, $2, 'nuova', 'domanda', NULL, NULL, NULL, NULL, $3)`, [AL, anno, UT])
+      const vera = db
+      // il database vero, ma `anno_attivo` (la lettura che dice qual è l'anno in corso) cade
+      h.db = new Proxy(vera, {
+        get(t, k) {
+          if (k === 'query') {
+            return (sql: string, ...resto: unknown[]) =>
+              /anno_attivo/.test(sql) ? Promise.reject(Object.assign(new Error('rete caduta'), { code: '08006' })) : (t.query.bind(t) as (...a: unknown[]) => unknown)(sql, ...resto)
+          }
+          const v = Reflect.get(t, k, t)
+          return typeof v === 'function' ? v.bind(t) : v
+        },
+      })
+      const r = await ritira(anno, reg.frequenza_id as string)
+      h.db = vera
+      expect(r.status).toBe(500)
+      expect(r.corpo.codice).toBe('SCRITTURA_FALLITA')
+      expect((await freq(reg.frequenza_id as string)).stato).not.toBe('ritirato')
+    })
+  })
+
   prova('una frequenza di un altro anno, o corpo con campi in più: respinti', async () => {
     await inRollback(async () => {
       const { anno, nuova } = await confermato()

@@ -854,6 +854,6 @@
   "erroreImportoNonValido": "The amount is not valid: enter a figure greater than zero, with at most two decimals.",
   "erroreAlunnoEliminazioneInArrivo": "This child is “incoming” (the application is for next school year): archive them first from their record, the status becomes “withdrawn”, and then you can delete them.",
   "erroreFrequenzaNonTrovata": "This enrolment no longer exists. Refresh the page.",
-  "erroreFrequenzaNonDiConferma": "This enrolment does not come from a confirmation: remove it from the child’s record, not from here.",
+  "erroreFrequenzaNonDiConferma": "This child starts next year and is not attending yet: their enrolment is removed by archiving them from their record.",
   "erroreAlunnoInArrivoSenzaClasse": "This child arrives next year and is not attending yet: a class will be assigned when they start."
 }

@@ -62,6 +62,7 @@ const s = {
   confermata: false,
   quota: 'da_pagare' as 'da_pagare' | 'assente', // la quota che il server legge per la riga
   quotaRitiro: 'tolta' as string, // l'esito della voce che «Ritira la conferma» risponde
+  ritiroRifiutato: false, // 4.5.16 (B): la route risponde 409 FREQUENZA_NON_DI_CONFERMA (bambino che non frequenta ancora)
   extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
 }
@@ -81,6 +82,9 @@ const rigaNuova = () => ({
 
 function risposta(url: string, metodo: string, body: Record<string, unknown>): Risposta {
   if (url.includes('/api/admin/sections/scoped')) return { status: 200, body: { data: h.gruppi } }
+  if (url.includes('/conferme/ritira') && s.ritiroRifiutato) {
+    return { status: 409, body: { error: itShared.erroreFrequenzaNonDiConferma, codice: 'FREQUENZA_NON_DI_CONFERMA' } }
+  }
   if (url.includes('/conferme/ritira')) {
     s.confermato = false
     s.confermata = false
@@ -132,6 +136,7 @@ beforeEach(() => {
   s.quota = 'da_pagare'
   s.quotaPost = 'creata'
   s.extraPost = {}
+  s.ritiroRifiutato = false
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
@@ -419,6 +424,18 @@ describe('ConfermeClient — «Ritira la conferma» (4.5.15, C1)', () => {
     // la riga non resta bloccata: ora si può confermare di nuovo
     expect(await within(rigaDi('CognomeProva NomeProva')).findByRole('button', { name: itConferme.azioneConferma })).toBeInTheDocument()
     expect(within(rigaDi('CognomeProva NomeProva')).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
+  })
+
+  it('il pulsante c\u2019è anche sulla riga di chi ha una domanda approvata; se il bambino non frequenta ancora, il rifiuto dice come si toglie (4.5.16, B)', async () => {
+    s.ritiroRifiutato = true
+    render(<ConfermeClient />)
+    const riga = (await screen.findByText('CognomeProva NomeProva')).closest('tr') as HTMLElement
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.azioneRitiraConferma }))
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.ritiraSi }))
+    await waitFor(() => expect(chiamate('POST', '/conferme/ritira')).toHaveLength(1))
+    expect(await screen.findByText(/archiviandolo dalla sua scheda/)).toBeInTheDocument()
+    // niente è cambiato: la riga è sempre confermata, col suo pulsante
+    expect(within(rigaDi('CognomeProva NomeProva')).getByRole('button', { name: itConferme.azioneRitiraConferma })).toBeInTheDocument()
   })
 
   it('«Annulla» non manda niente', async () => {

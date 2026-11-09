@@ -379,6 +379,8 @@ type RigaDaChiudere = {
   origine: string | null
   quota_pagamento_id: string | null
 }
+/** Le origini che il «Ritira la conferma» accetta (4.5.16, B); `recupero` è la riga storica dell'anno in corso e non si ritira. */
+const ORIGINI_RITIRABILI: readonly string[] = ['conferma', 'domanda', 'segreteria', 'import']
 const COLONNE_CHIUSURA = 'id, alunno_id, anno_sede_id, scuola_id, stato, origine, quota_pagamento_id'
 
 /**
@@ -472,9 +474,12 @@ async function togliQuota(supabase: SupabaseClient, f: RigaDaChiudere, attore: A
 }
 
 /**
- * «Ritira la conferma»: la frequenza dell'anno nuovo, nata da una conferma, passa a `ritirato`; la voce della quota si toglie
- * se la contabilità lo permette. Poi si può dire «Non rinnova» o rifare «Conferma» (stessa riga, vedi `anno_conferma`).
- * Una frequenza che non nasce da una conferma (`domanda`, `segreteria`) non si ritira da qui: `FREQUENZA_NON_DI_CONFERMA`.
+ * «Ritira la conferma»: la frequenza dell'anno nuovo passa a `ritirato`; la voce della quota si toglie se la contabilità lo
+ * permette. Poi si può dire «Non rinnova» o rifare «Conferma» (stessa riga, vedi `anno_conferma`).
+ * Vale per ogni frequenza dell'anno aperto di origine `conferma`, `domanda`, `segreteria` o `import` (4.5.16, B) PURCHÉ il bambino
+ * abbia una frequenza VIVA nell'anno attivo: la schermata «Conferme» mostra anche i «Nuovi», e il bottone c'è sulla loro riga
+ * solo quando il bambino frequenta. Chi non frequenta ancora (arriva l'anno prossimo) ha la sua iscrizione e basta: si toglie
+ * archiviandolo dalla scheda, e `FREQUENZA_NON_DI_CONFERMA` lo dice (il codice resta quello di prima, il testo no).
  * Idempotente: su una già ritirata non riscrive niente e riprova solo a togliere la voce, se c'è ancora. Non lancia mai.
  */
 export async function ritiraConferma(supabase: SupabaseClient, a: RitiroArgs): Promise<EsitoRitiro> {
@@ -483,11 +488,37 @@ export async function ritiraConferma(supabase: SupabaseClient, a: RitiroArgs): P
     if (riga.error) return esitoDaErrore(riga.error, OP_RITIRO, 'ritiro-conferma-non-letto')
     const f = riga.data as RigaDaChiudere | null
     if (!f) return { ok: false, codice: 'PARAMETRO_MANCANTE' }
-    if (f.origine !== 'conferma') return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
+    if (!ORIGINI_RITIRABILI.includes(f.origine ?? '')) return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
 
     const anno = await supabase.from('anni_sede').select('stato').eq('id', f.anno_sede_id).maybeSingle()
     if (anno.error) return esitoDaErrore(anno.error, OP_RITIRO, 'ritiro-conferma-non-letto')
     if ((anno.data as { stato?: string } | null)?.stato !== 'iscrizioni_aperte') return { ok: false, codice: 'ANNO_NON_APERTO' }
+
+    if (f.origine !== 'conferma') {
+      const lettura_fallita = (e: ErrorePg): EsitoFallito => {
+        if (schemaAnnoIndietro(e)) return esitoDaErrore(e, OP_RITIRO, 'ritiro-conferma-non-letto')
+        logEvento('anno-scolastico', 'warn', { tipo: 'ritiro-conferma-frequenza-non-letta', operazione: OP_RITIRO, error_code: e?.code ?? undefined })
+        return { ok: false, codice: 'SCRITTURA_FALLITA' }
+      }
+      // Una domanda, un inserimento della segreteria, un import: si ritira da qui solo se il bambino FREQUENTA (frequenza viva
+      // nell'anno attivo). Altrimenti arriva l'anno prossimo, e si toglie archiviandolo. Una lettura che fallisce NON è un «no».
+      const attivo = await supabase.rpc('anno_attivo', { p_scuola: f.scuola_id })
+      if (attivo.error) return lettura_fallita(attivo.error)
+      const idAttivo = typeof attivo.data === 'string' ? attivo.data : null
+      let frequenta = false
+      if (idAttivo) {
+        const viva = await supabase
+          .from('frequenze')
+          .select('id')
+          .eq('alunno_id', f.alunno_id)
+          .eq('anno_sede_id', idAttivo)
+          .in('stato', ['in_attesa', 'iscritto'])
+          .limit(1)
+        if (viva.error) return lettura_fallita(viva.error)
+        frequenta = ((viva.data ?? []) as unknown[]).length > 0
+      }
+      if (!frequenta) return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
+    }
 
     return await ritiraEToglieQuota(supabase, f, a.attore, OP_RITIRO)
   } catch (err) {

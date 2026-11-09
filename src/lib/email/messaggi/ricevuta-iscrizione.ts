@@ -53,6 +53,11 @@ export interface DatiRicevutaIscrizione {
     /** Data e ora d'invio già formattate in Europe/Rome, es. «12/03/2026 alle 18:42». */
     inviataIl: string
     nomeBambino: string
+    /**
+     * L'anno scolastico scelto dalla famiglia (`2027/28`), SOLO quando non è l'anno in corso. Assente ⇒ la
+     * riga si omette: per chi si iscrive all'anno in corso non cambia niente rispetto a prima.
+     */
+    anno?: string | null
     /** Fascia o sezione scelta. Assente ⇒ la riga si omette. */
     sezione?: string | null
     /** Nome del genitore richiedente. Assente ⇒ la riga si omette. */
@@ -70,6 +75,7 @@ export function messaggioRicevutaIscrizione(d: DatiRicevutaIscrizione, sede: Con
     const dichiarato: RigaDati[] = [
         { etichetta: 'Bambino', valore: d.nomeBambino },
         { etichetta: 'Sede scelta', valore: sede.nome },
+        ...(d.anno ? [{ etichetta: 'Anno scolastico', valore: d.anno }] : []),
         ...(d.sezione ? [{ etichetta: 'Sezione', valore: d.sezione }] : []),
         ...(d.genitore ? [{ etichetta: 'Genitore richiedente', valore: d.genitore }] : []),
     ]

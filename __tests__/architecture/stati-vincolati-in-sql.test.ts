@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { STATI_DOMANDA } from '@/lib/iscrizioni/stati'
-import { STATI_NON_PIU_ISCRITTO, STATI_TENDINA } from '@/lib/alunni/stato'
+import { STATI_AMMESSI_IN_COLONNA, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato'
 
 // =============================================================================
 // GLI STATI SONO UNA REGOLA IN DUE LINGUAGGI — robustezza 2, sessione 1 (D11).
@@ -82,7 +82,7 @@ function listaDellaGuardia(sql: string, vincolo: string, colonna: string): strin
 
 const VINCOLI = [
     { vincolo: 'enrollment_submissions_status_ammesso', colonna: 'status', attesi: [...STATI_DOMANDA], fonte: 'STATI_DOMANDA (src/lib/iscrizioni/stati.ts)' },
-    { vincolo: 'alunni_stato_ammesso', colonna: 'stato', attesi: [...STATI_TENDINA], fonte: 'STATI_TENDINA (src/lib/alunni/stato.ts)' },
+    { vincolo: 'alunni_stato_ammesso', colonna: 'stato', attesi: [...STATI_AMMESSI_IN_COLONNA], fonte: 'STATI_AMMESSI_IN_COLONNA (src/lib/alunni/stato.ts: la tendina più «in_arrivo»)' },
 ] as const
 
 describe('lock architettura · gli stati vincolati in SQL dicono quello che dice TypeScript', () => {

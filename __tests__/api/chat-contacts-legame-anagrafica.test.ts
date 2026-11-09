@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // A2 — /api/chat/contacts risolveva i legami leggendo SOLO
 // `legame_genitori_alunni`, in ENTRAMBI i versi: la maestra non vedeva i
@@ -15,7 +16,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    rpc: async () => ({ data: [{ section_id: 'sec1', sola_lettura: false }], error: null }),
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome) ?? { data: [{ section_id: 'sec1', sola_lettura: false }], error: null },
     from: (table: string) => {
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}

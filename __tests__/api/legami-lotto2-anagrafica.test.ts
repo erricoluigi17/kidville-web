@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // A6 · LOTTO 2 — route che risolvono «genitore → figli» leggendo SOLO la tabella
 // runtime `legame_genitori_alunni`. Un genitore arrivato dal form pubblico ha il
@@ -41,6 +42,7 @@ vi.mock('@/lib/security/rate-limit', () => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from(table: string) {
       const righe = () => h.righe[table] ?? []
       const b: Record<string, unknown> = {}

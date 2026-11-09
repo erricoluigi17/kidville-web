@@ -57,7 +57,8 @@ async function divergenti(): Promise<Record<string, number>> {
 }
 
 beforeAll(async () => {
-  db = await creaDbAnnoPr2({ sedi: [S1, S2], fino: 'V2', completo: true })
+  // Fino a M44a e non fino a V2: `anno_traduci_classi_trg` nasce in M1 e lì è ridefinito. Una prova sulla definizione vecchia non proverebbe niente.
+  db = await creaDbAnnoPr2({ sedi: [S1, S2], fino: 'M44a', completo: true })
   const a2728 = await una<string>(`SELECT id FROM public.anni_scolastici WHERE anno_inizio = 2027`)
   GIRASOLI = await una<string>(`INSERT INTO public.sections (scuola_id, name) VALUES ($1, 'Girasoli') RETURNING id`, [S1])
   MARGHERITE = await una<string>(`INSERT INTO public.sections (scuola_id, name) VALUES ($1, 'Margherite') RETURNING id`, [S1])
@@ -102,6 +103,55 @@ describe.each(ARRAY_TABELLE)('$t · $src → $dst', (t) => {
     expect(b.ids).toEqual([GIRASOLI])
   })
 
+  describe('quando i nomi spariscono', () => {
+    const uuidDi = (id: string) => una<string[] | null>(`SELECT ${t.dst} FROM public.${t.t} WHERE id = $1`, [id])
+
+    it('nomi da un valore a NULL, uuid non toccati: anche gli uuid vanno a NULL', async () => {
+      const riga = await inserisci(t, ['Girasoli'])
+      expect(riga.ids).toEqual([GIRASOLI])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL WHERE id = $1`, [riga.id])
+      expect(await uuidDi(riga.id)).toBeNull()
+      expect((await divergenti())[t.t]).toBe(0)
+    })
+
+    it('nomi a NULL e uuid diversi nella stessa scrittura: restano quelli', async () => {
+      const riga = await inserisci(t, ['Girasoli'])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL, ${t.dst} = ARRAY[$2]::uuid[] WHERE id = $1`, [riga.id, MARGHERITE])
+      expect(await uuidDi(riga.id)).toEqual([MARGHERITE])
+    })
+
+    it('nomi a NULL e uuid a NULL nella stessa scrittura: NULL', async () => {
+      const riga = await inserisci(t, ['Girasoli'])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL, ${t.dst} = NULL WHERE id = $1`, [riga.id])
+      expect(await uuidDi(riga.id)).toBeNull()
+    })
+
+    it('nomi a NULL rimettendo gli stessi uuid: non si distingue da chi non li ha toccati, e vanno a NULL', async () => {
+      const riga = await inserisci(t, ['Girasoli'])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL, ${t.dst} = ARRAY[$2]::uuid[] WHERE id = $1`, [riga.id, GIRASOLI])
+      expect(await uuidDi(riga.id)).toBeNull()
+    })
+
+    it('nomi già NULL che restano NULL: gli uuid scritti a mano restano', async () => {
+      const riga = await inserisci(t, null, [FINTO])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL WHERE id = $1`, [riga.id])
+      expect(await uuidDi(riga.id)).toEqual([FINTO])
+    })
+
+    it('nomi vuoti: gli uuid vanno vuoti, e da vuoti a NULL anche gli uuid', async () => {
+      const riga = await inserisci(t, ['Girasoli'])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = '{}' WHERE id = $1`, [riga.id])
+      expect(await uuidDi(riga.id)).toEqual([])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = NULL WHERE id = $1`, [riga.id])
+      expect(await uuidDi(riga.id)).toBeNull()
+    })
+
+    it('un INSERT con nomi NULL non tocca gli uuid, e nessun guasto finisce nel registro', async () => {
+      expect((await inserisci(t, null, [FINTO])).ids).toEqual([FINTO])
+      expect(await avvisiLog()).toEqual([])
+    })
+  })
+
   it('la traduzione guarda solo l\'anno ATTIVO: con una «Girasoli» anche nel 2027/28 sceglie quella del 2026/27', async () => {
     const riga = await inserisci(t, ['girasoli'])
     expect(riga.ids).toEqual([GIRASOLI])
@@ -133,6 +183,48 @@ describe('mensa_class_menu_assignment · classe → section_id', () => {
     const id = await una<string>(`INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe) VALUES ($1, 'Girasoli') RETURNING id`, [S1])
     await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Margherite' WHERE id = $1`, [id])
     expect(await una<string>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [id])).toBe(MARGHERITE)
+  })
+
+  describe('quando il nome sparisce: oggi `classe` è NOT NULL, e il vincolo si toglie solo per queste prove', () => {
+    const sezioneDi = (id: string) => una<string | null>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [id])
+    const senzaVincolo = async (fn: () => Promise<void>) => {
+      await db.exec('BEGIN')
+      try {
+        await db.exec(`ALTER TABLE public.mensa_class_menu_assignment ALTER COLUMN classe DROP NOT NULL`)
+        await fn()
+      } finally {
+        await db.exec('ROLLBACK')
+      }
+    }
+    const conGirasoli = () => una<string>(
+      `INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe) VALUES ($1, 'Girasoli') RETURNING id`, [S1])
+
+    it('nome a NULL, sezione non toccata: anche la sezione va a NULL', async () => {
+      await senzaVincolo(async () => {
+        const id = await conGirasoli()
+        expect(await sezioneDi(id)).toBe(GIRASOLI)
+        await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = NULL WHERE id = $1`, [id])
+        expect(await sezioneDi(id)).toBeNull()
+      })
+    })
+
+    it('nome a NULL e un\'altra sezione nella stessa scrittura: resta quella', async () => {
+      await senzaVincolo(async () => {
+        const id = await conGirasoli()
+        await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = NULL, section_id = $2 WHERE id = $1`, [id, MARGHERITE])
+        expect(await sezioneDi(id)).toBe(MARGHERITE)
+      })
+    })
+
+    it('nome già NULL che resta NULL: la sezione scritta a mano resta', async () => {
+      await senzaVincolo(async () => {
+        const id = await una<string>(
+          `INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, section_id) VALUES ($1, NULL, $2) RETURNING id`, [S1, MARGHERITE])
+        expect(await sezioneDi(id)).toBe(MARGHERITE)
+        await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = NULL WHERE id = $1`, [id])
+        expect(await sezioneDi(id)).toBe(MARGHERITE)
+      })
+    })
   })
 })
 
@@ -244,11 +336,52 @@ describe('un anno senza sezioni nella sede (gli avvisi di luglio e agosto 2026 s
     expect((await divergenti()).avvisi).toBe(1)
   })
 
-  it('(b) un UPDATE dei nomi lascia gli uuid come sono, invece di svuotarli', async () => {
+  it('(b) un UPDATE che rimanda gli stessi nomi lascia gli uuid come sono, invece di ricalcolarli', async () => {
     const id = await avvisoEstivo()
-    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Girasoli', 'Margherite'] WHERE id = $1`, [id])
-    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([GIRASOLI])
+    // Uuid che la traduzione non darebbe mai: se il trigger ricalcolasse, qui si vedrebbe.
+    await db.query(`UPDATE public.avvisi SET target_section_ids = ARRAY[$2]::uuid[] WHERE id = $1`, [id, FINTO])
+    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Girasoli'] WHERE id = $1`, [id])
+    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([FINTO])
     expect((await divergenti()).avvisi).toBe(0)
+  })
+
+  it('(b) un UPDATE che cambia i nomi traduce sull\'anno attivo, come l\'INSERT: gli uuid della classe vecchia non restano', async () => {
+    const id = await avvisoEstivo()
+    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Margherite'] WHERE id = $1`, [id])
+    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([MARGHERITE])
+    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Girasoli', 'Margherite'] WHERE id = $1`, [id])
+    expect((await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).sort()).toEqual([GIRASOLI, MARGHERITE].sort())
+    expect((await divergenti()).avvisi).toBe(0)
+  })
+
+  it('(b) nomi cambiati in uno che nessuna sezione ha: uuid vuoti e un warn, come l\'INSERT', async () => {
+    const id = await avvisoEstivo()
+    await db.query(`UPDATE public.avvisi SET target_classes = ARRAY['Delfini'] WHERE id = $1`, [id])
+    expect(await una<string[]>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toEqual([])
+    const log = await avvisiLog()
+    expect(log).toHaveLength(1)
+    expect(log[0].contesto).toMatchObject({ esito: 'classe-non-abbinata', tabella: 'avvisi', conteggio: 1 })
+  })
+
+  it('(b) nomi a NULL: anche in un anno senza sezioni gli uuid vanno a NULL', async () => {
+    const id = await avvisoEstivo()
+    await db.query(`UPDATE public.avvisi SET target_classes = NULL WHERE id = $1`, [id])
+    expect(await una<string[] | null>(`SELECT target_section_ids FROM public.avvisi WHERE id = $1`, [id])).toBeNull()
+  })
+
+  it('(b) la forma scalare: a nome uguale la sezione resta, a nome cambiato si traduce sull\'anno attivo', async () => {
+    const id = await una<string>(
+      `INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, attivo_dal) VALUES ($1, 'Girasoli', DATE '${ESTATE}') RETURNING id`, [S1])
+    const sezione = () => una<string | null>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [id])
+    // Senza `anno_id` l'INSERT traduce sull'anno della data, che non ha sezioni. Una sezione che la traduzione non darebbe mai,
+    // né su quell'anno né su quello attivo: se il trigger ricalcolasse, qui si vedrebbe.
+    expect(await sezione()).toBeNull()
+    await db.query(`UPDATE public.mensa_class_menu_assignment SET section_id = $2 WHERE id = $1`, [id, GIRASOLI_2728])
+    await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Girasoli' WHERE id = $1`, [id])
+    expect(await sezione()).toBe(GIRASOLI_2728)
+    await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Margherite' WHERE id = $1`, [id])
+    expect(await sezione()).toBe(MARGHERITE)
+    expect((await divergenti()).mensa_class_menu_assignment).toBe(0)
   })
 
   it('(c) anno_fotografa conta la riga come ambiguo:classi_in_anno_senza_sezioni:avvisi, e un avviso normale no', async () => {
@@ -259,5 +392,55 @@ describe('un anno senza sezioni nella sede (gli avvisi di luglio e agosto 2026 s
     const v = await una<number>(
       `SELECT coalesce(sum(valore), 0)::float8 FROM public.riconciliazione_anno WHERE fase = 'prima' AND voce = 'ambiguo:classi_in_anno_senza_sezioni:avvisi'`)
     expect(v).toBe(1)
+  })
+})
+
+// `anno_traduci_classi_trg` è fail-open: una traduzione che si guasta non deve fermare la scrittura di un avviso o di una foto.
+// Il guasto si fabbrica togliendo di mezzo la funzione di traduzione, dentro una transazione che poi si annulla.
+describe('se la traduzione si guasta, la scrittura passa e il guasto resta nel registro', () => {
+  const conTraduzioneRotta = async (fn: () => Promise<void>) => {
+    await db.exec(`BEGIN`)
+    try {
+      await db.exec(`ALTER FUNCTION public.anno_traduci_classi(uuid, text[], uuid) RENAME TO anno_traduci_classi_via`)
+      await fn()
+    } finally {
+      await db.exec(`ROLLBACK`)
+    }
+  }
+
+  it.each(ARRAY_TABELLE)('$t: INSERT e UPDATE passano, gli uuid non cambiano, il registro ha la riga', async (t) => {
+    await conTraduzioneRotta(async () => {
+      const riga = await inserisci(t, ['Girasoli'], [FINTO])
+      expect(riga.ids).toEqual([FINTO])
+      await db.query(`UPDATE public.${t.t} SET ${t.src} = ARRAY['Margherite'] WHERE id = $1`, [riga.id])
+      expect(await una<string[]>(`SELECT ${t.dst} FROM public.${t.t} WHERE id = $1`, [riga.id])).toEqual([FINTO])
+      expect(await una<string[]>(`SELECT ${t.src} FROM public.${t.t} WHERE id = $1`, [riga.id])).toEqual(['Margherite'])
+      // Una riga sola con due occorrenze: l'impronta è per tabella e per giorno.
+      const log = await avvisiLog()
+      expect(log).toHaveLength(1)
+      expect(log[0].livello).toBe('error')
+      expect(log[0].contesto).toMatchObject({ esito: 'traduzione-classi-fallita', tabella: t.t, sqlstate: '42883' })
+      expect(await una<number>(`SELECT occorrenze FROM public.app_log WHERE evento = 'anno-scolastico'`)).toBe(2)
+      expect(JSON.stringify(log)).not.toContain('Girasoli')
+      expect(JSON.stringify(log)).not.toContain('Margherite')
+    })
+  })
+
+  it('la forma scalare: `mensa_class_menu_assignment` passa, la sezione non cambia', async () => {
+    await conTraduzioneRotta(async () => {
+      const sezione = (id: string) => una<string>(`SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [id])
+      const id = await una<string>(`INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, section_id) VALUES ($1, 'Girasoli', $2) RETURNING id`, [S1, GIRASOLI_2728])
+      expect(await sezione(id)).toBe(GIRASOLI_2728)
+      await db.query(`UPDATE public.mensa_class_menu_assignment SET classe = 'Margherite' WHERE id = $1`, [id])
+      expect(await sezione(id)).toBe(GIRASOLI_2728)
+      const log = await avvisiLog()
+      expect(log).toHaveLength(1)
+      expect(log[0].contesto).toMatchObject({ esito: 'traduzione-classi-fallita', tabella: 'mensa_class_menu_assignment' })
+    })
+  })
+
+  it('la transazione annullata rimette la traduzione: il banco non resta rotto', async () => {
+    const riga = await inserisci(ARRAY_TABELLE[0], ['Girasoli'])
+    expect(riga.ids).toEqual([GIRASOLI])
   })
 })

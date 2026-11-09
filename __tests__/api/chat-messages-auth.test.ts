@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { NextResponse } from 'next/server'
 
 // CICLO 2 — chiusura falle di sicurezza sulle route chat (dati/PII di minori):
@@ -59,6 +60,7 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 //  · then (select-list) → chat_messages (msgs) / chat_threads (threadRows) per la PATCH
 // -----------------------------------------------------------------------------
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const state: { table: string; filters: Record<string, unknown> } = { table, filters: {} }
     const b: Record<string, unknown> = {}

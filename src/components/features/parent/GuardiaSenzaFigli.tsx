@@ -4,9 +4,9 @@ import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { UserX } from 'lucide-react';
+import { Hourglass, Info, UserX } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-import { fetchEsitoFigli } from '@/lib/auth/use-parent-identity';
+import { eMotivoNonPiuIscritto, fetchEsitoFigli, type EsitoFigli } from '@/lib/auth/use-parent-identity';
 
 /**
  * Le uniche schermate dell'area famiglia che hanno senso SENZA un bambino: il profilo
@@ -16,21 +16,48 @@ import { fetchEsitoFigli } from '@/lib/auth/use-parent-identity';
  */
 const ROTTE_SENZA_FIGLIO = ['/parent/profilo', '/parent/onboarding'];
 
+/**
+ * Con i legami ma nessun figlio ATTIVO (ritirato, archiviato, senza sezione) passano in più le schermate che non
+ * aspettano uno `studentId`: restano rette da saldare, conversazioni da rileggere, moduli da firmare e schede di voto.
+ * La home è a parte: `/parent` è il prefisso di tutto, e lo stesso pannello lo mostra da sé.
+ *
+ * È l'elenco di chi PASSA, non di chi si ferma: una rotta nuova mostra il pannello, mai uno spinner senza fine.
+ */
+const ROTTE_SENZA_FIGLIO_ATTIVO = [
+  ...ROTTE_SENZA_FIGLIO,
+  '/parent/pagamenti',
+  '/parent/chat',
+  '/parent/avvisi',
+  '/parent/news',
+  '/parent/modulistica',
+  '/parent/forms',
+  '/parent/votazioni',
+];
+
+function eSottoUnaDi(rotte: string[], pathname: string): boolean {
+  return rotte.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+}
+
 export function eRottaSenzaFiglio(pathname: string | null): boolean {
   if (!pathname) return false;
-  return ROTTE_SENZA_FIGLIO.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+  return eSottoUnaDi(ROTTE_SENZA_FIGLIO, pathname);
+}
+
+export function eRottaSenzaFiglioAttivo(pathname: string | null): boolean {
+  if (!pathname) return false;
+  return pathname === '/parent' || eSottoUnaDi(ROTTE_SENZA_FIGLIO_ATTIVO, pathname);
 }
 
 /**
  * Chiede ai figli dell'account — dalla STESSA cache di `useParentIdentity`, quindi
- * senza una richiesta in più — e riferisce una cosa sola: «il server ha letto tutti i
- * legami e non ce n'è nessuno».
+ * senza una richiesta in più — e riferisce l'esito: «il server ha letto tutti i legami e
+ * non ce n'è nessuno», oppure «ci sono, ma nessun figlio è attivo».
  *
  * Sta dentro un `Suspense` perché `useSessionIdentity` legge `useSearchParams`; è un
  * componente a parte, e non il guardiano stesso, proprio per questo: se a sospendersi
  * fosse il guardiano, con lui sparirebbe dal prerender l'intera pagina che avvolge.
  */
-function SondaSenzaFigli({ onEsito }: { onEsito: (senzaFigli: boolean) => void }) {
+function SondaSenzaFigli({ onEsito }: { onEsito: (esito: EsitoFigli | null) => void }) {
   const session = useSessionIdentity();
   useEffect(() => {
     if (!session.ready || !session.userId) return;
@@ -39,7 +66,7 @@ function SondaSenzaFigli({ onEsito }: { onEsito: (senzaFigli: boolean) => void }
     // risposta non ok). In quel caso NON si dice «nessun figlio»: l'assenza di una
     // risposta non è una risposta.
     void fetchEsitoFigli(session.userId).then((esito) => {
-      if (!annullato) onEsito(esito !== null && esito.senzaFigli);
+      if (!annullato) onEsito(esito);
     });
     return () => { annullato = true; };
   }, [session.ready, session.userId, onEsito]);
@@ -55,38 +82,50 @@ function SondaSenzaFigli({ onEsito }: { onEsito: (senzaFigli: boolean) => void }
  * email, due schede), e la famiglia non ha modo di saperlo. Ora lo dice, e dice cosa
  * fare: rivolgersi alla segreteria, o rientrare con l'indirizzo giusto.
  *
+ * Lo stesso vale per chi i legami li ha ma nessun figlio attivo (`in_attesa`): le schermate
+ * costruite su uno `studentId` giravano per sempre. Qui la frase la sceglie il motivo, come
+ * nella home: un bambino ritirato non ha una classe da aspettare.
+ *
  * Avvolge i contenuti dell'area famiglia e li SOSTITUISCE solo quando il server ha
- * dichiarato `senza_figli`. Fino ad allora, e offline, rende i figli come sempre:
- * nessun lampo di pannello per chi un bambino ce l'ha.
+ * dichiarato `senza_figli` o `in_attesa`. Fino ad allora, e offline, rende i figli come
+ * sempre: nessun lampo di pannello per chi un bambino ce l'ha.
  */
 export function GuardiaSenzaFigli({ children }: { children: ReactNode }) {
   const t = useTranslations('parentServizi');
   const pathname = usePathname();
-  const [senzaFigli, setSenzaFigli] = useState(false);
-  const mostraPannello = senzaFigli && !eRottaSenzaFiglio(pathname);
+  const [esito, setEsito] = useState<EsitoFigli | null>(null);
+  const nessunoCollegato = !!esito?.senzaFigli && !eRottaSenzaFiglio(pathname);
+  const nessunoAttivo = !!esito?.inAttesa && !eRottaSenzaFiglioAttivo(pathname);
+  const nonPiuIscritto = eMotivoNonPiuIscritto(esito?.motivoAssenza);
+  // La clessidra promette un'attesa: dove non c'è nessuna attesa da fare resta l'informazione, come nella home.
+  const Icona = nessunoCollegato ? UserX : nonPiuIscritto ? Info : Hourglass;
 
   return (
     <>
       <Suspense fallback={null}>
-        <SondaSenzaFigli onEsito={setSenzaFigli} />
+        <SondaSenzaFigli onEsito={setEsito} />
       </Suspense>
-      {mostraPannello ? (
-        <div className="min-h-screen bg-kidville-cream px-4 pb-[100px] pt-5" data-kv-senza-figli>
+      {nessunoCollegato || nessunoAttivo ? (
+        <div
+          className="min-h-screen bg-kidville-cream px-4 pb-[100px] pt-5"
+          data-kv-senza-figli={nessunoCollegato || undefined}
+          data-kv-senza-figli-attivi={nessunoAttivo || undefined}
+        >
           <div className="rounded-[22px] bg-white px-5 py-8 text-center" style={{ boxShadow: '0 4px 12px -8px rgba(0,0,0,0.18)' }}>
             <span className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[18px] bg-kidville-yellow-soft text-kidville-yellow-dark">
-              <UserX size={24} strokeWidth={1.9} aria-hidden="true" />
+              <Icona size={24} strokeWidth={1.9} aria-hidden="true" />
             </span>
             <h1 className="pt-4 font-barlow text-[19px] font-bold uppercase leading-[1.1] tracking-[0.02em] text-kidville-green">
-              {t('senzaFigliTitolo')}
+              {nessunoCollegato ? t('senzaFigliTitolo') : nonPiuIscritto ? t('nonPiuIscrittoTitolo') : t('inAttesaTitolo')}
             </h1>
             <p className="pt-2 font-maven text-[13.5px] leading-[1.5] text-kidville-sub">
-              {t('senzaFigliTesto')}
+              {nessunoCollegato ? t('senzaFigliTesto') : nonPiuIscritto ? t('nonPiuIscrittoTesto') : t('inAttesaTesto')}
             </p>
             <Link
-              href="/parent/profilo"
+              href={nessunoCollegato ? '/parent/profilo' : '/parent/pagamenti'}
               className="mt-4 inline-flex min-h-[44px] items-center font-barlow text-[13px] font-bold uppercase tracking-[0.02em] text-kidville-green underline"
             >
-              {t('senzaFigliProfilo')}
+              {nessunoCollegato ? t('senzaFigliProfilo') : t('inAttesaPagamenti')}
             </Link>
           </div>
         </div>

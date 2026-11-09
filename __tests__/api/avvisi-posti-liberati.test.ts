@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * POST /api/avvisi/[id]/risposte — LA NOTIFICA «SI SONO LIBERATI DEI POSTI».
@@ -67,6 +68,8 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: h.staffScuola }))
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => ({
         rpc(nome: string, args: Record<string, unknown>) {
+            const indietro = rpcVisibilitaIndietro(nome)
+            if (indietro) return Promise.resolve(indietro)
             if (nome !== 'avviso_adesione_registra') {
                 throw new Error(`rpc non emulata in questo finto: ${nome}`)
             }

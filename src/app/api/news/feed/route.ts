@@ -7,8 +7,9 @@ import { requireUser } from '@/lib/auth/require-staff'
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
-import { caricaFigliConTarget, postVisibileAiFigli, type FiglioTarget, type PostTarget } from '@/lib/news/target'
+import { caricaFigliConTarget, postVisibileAiFigli, senzaSezioniTarget, type FiglioTarget, type PostTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
+import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid, zAnnoMese } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -101,22 +102,28 @@ export const GET = withRoute('news/feed:GET', async (request: NextRequest) => {
       }
     }
 
-    let query = supabase
-      .from('news_posts')
-      .select(FEED_COLS)
-      .eq('stato', 'pubblicata')
-      .or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
-      .order('pinned', { ascending: false })
-      .order('pubblicata_il', { ascending: false })
-    if (categoria_id) query = query.eq('categoria_id', categoria_id)
-    if (testo) query = query.textSearch('search_tsv', testo, { type: 'websearch', config: 'italian' })
-    if (mese && !archivio) {
-      const { inizio, fine } = estremiMese(mese)
-      query = query.gte('pubblicata_il', inizio).lt('pubblicata_il', fine)
+    const leggiFeed = (colonne: string) => {
+      let query = supabase
+        .from('news_posts')
+        .select(colonne)
+        .eq('stato', 'pubblicata')
+        .or(`scuola_id.in.(${sedi.join(',')}),scuola_id.is.null`)
+        .order('pinned', { ascending: false })
+        .order('pubblicata_il', { ascending: false })
+      if (categoria_id) query = query.eq('categoria_id', categoria_id)
+      if (testo) query = query.textSearch('search_tsv', testo, { type: 'websearch', config: 'italian' })
+      if (mese && !archivio) {
+        const { inizio, fine } = estremiMese(mese)
+        query = query.gte('pubblicata_il', inizio).lt('pubblicata_il', fine)
+      }
+      return query.limit(200)
     }
-    query = query.limit(200)
 
-    const { data, error } = await query
+    // PR 4.4: gli uuid delle sezioni solo alla famiglia, e la colonna può non esserci (il database della CI). Senza, la classe
+    // si confronta per nome, come oggi: `schemaAssente` qui sotto spegnerebbe il feed per una colonna che serve a un filtro.
+    const famiglia = agisceComeGenitore(user)
+    const primaLettura = await leggiFeed(famiglia ? `${FEED_COLS}, target_section_ids` : FEED_COLS)
+    const { data, error } = famiglia && schemaAnnoIndietro(primaLettura.error) ? await leggiFeed(FEED_COLS) : primaLettura
     if (error) {
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'feed:GET', esito: 'schema-assente' })
@@ -148,7 +155,7 @@ export const GET = withRoute('news/feed:GET', async (request: NextRequest) => {
     }
 
     if (limit) posts = posts.slice(0, limit)
-    return NextResponse.json({ disponibile: true, posts })
+    return NextResponse.json({ disponibile: true, posts: posts.map(senzaSezioniTarget) })
   } catch (err) {
     logErrore({ operazione: 'news/feed:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

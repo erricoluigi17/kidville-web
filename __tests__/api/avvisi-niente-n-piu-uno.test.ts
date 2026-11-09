@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // T11-F2 — LOCK: `GET /api/avvisi` non deve più interrogare il database
 // UNA VOLTA PER AVVISO.
@@ -54,6 +55,7 @@ vi.mock('@/lib/allegati/storage', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from(tabella: string) {
       h.query[tabella] = (h.query[tabella] ?? 0) + 1
       const st = { ids: [] as string[], parent: null as string | null, gte: null as [string, unknown] | null }

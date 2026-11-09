@@ -25,9 +25,12 @@ const h = vi.hoisted(() => ({
   listeStorage: 0,
   bucket: [] as { name: string }[],
   flagVisibilita: '2026-09-16T12:00:00Z' as string | null,
+  erroreParents: null as { code: string; message: string } | null,
 }))
 
-vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
+const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
+
+vi.mock('@/lib/logging/logger', () => log)
 vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn(async () => ({ user: h.user })),
   requireStaff: vi.fn(async () => ({ user: h.user })),
@@ -35,26 +38,40 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/pagamenti/scope-fattura', () => ({
   assertFatturaInScope: vi.fn(async () => h.scopeResponse),
 }))
+vi.mock('@/lib/security/rate-limit', () => ({
+  rateLimit: vi.fn(async () => ({ ok: true, remaining: 119, retryAfterMs: 0 })),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {
       h.letture.push(table)
       const filtri: Record<string, unknown> = {}
+      let colonne = ''
       const b: Record<string, unknown> = {}
-      b.select = () => b
+      b.select = (scelte = '') => { colonne = scelte; return b }
       b.eq = (colonna: string, valore: unknown) => { filtri[colonna] = valore; return b }
       b.order = () => b
       b.limit = () => b
       b.maybeSingle = async () => {
-        if (table === 'pagamenti') return { data: h.pagamento, error: null }
+        if (table === 'pagamenti') {
+          // Solo le colonne chieste, come il database: una route che smette di leggere `tipo` deve vedere `undefined`.
+          const chieste = colonne.split(',').map((c) => c.trim())
+          const riga = Object.entries(h.pagamento ?? {}).filter(([colonna]) => chieste.includes(colonna))
+          return { data: h.pagamento ? Object.fromEntries(riga) : null, error: null }
+        }
         if (table === 'admin_settings') {
           return { data: { fatture_visibilita_attiva_il: h.flagVisibilita }, error: null }
         }
         if (table === 'parents') {
+          if (h.erroreParents) return { data: null, error: h.erroreParents }
           return {
             data: filtri.auth_user_id === AUTH_PADRE ? { id: PARENT_PADRE } : null,
             error: null,
           }
+        }
+        if (table === 'fatture_emesse') {
+          // `fattura/esito` legge la riga chiesta: la cerca per id, come il database.
+          return { data: h.fatture.find((riga) => riga.id === filtri.id) ?? null, error: null }
         }
         return { data: null, error: null }
       }
@@ -81,6 +98,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET as scarica } from '@/app/api/pagamenti/fattura/route'
 import { GET as elenco } from '@/app/api/pagamenti/fattura/list/route'
+import { POST as registraEsito } from '@/app/api/pagamenti/fattura/esito/route'
 
 const riga = (
   id: string,
@@ -111,6 +129,11 @@ const getPdf = (fatturaId?: string) => scarica(new Request(
 const getList = () => elenco(new Request(
   `http://test/api/pagamenti/fattura/list?pagamento_id=${PAGAMENTO}`,
 ))
+const postEsito = (fatturaId: string) => registraEsito(new Request('http://test/api/pagamenti/fattura/esito', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ pagamento_id: PAGAMENTO, fattura_id: fatturaId, esito: 'visualizzata' }),
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -132,6 +155,7 @@ beforeEach(() => {
   h.downloads = []
   h.listeStorage = 0
   h.flagVisibilita = '2026-09-16T12:00:00Z'
+  h.erroreParents = null
   h.bucket = h.fatture.map((fattura) => ({ name: String(fattura.pdf_path) }))
 })
 
@@ -284,5 +308,178 @@ describe('GET fattura/list: filtro prima del dedupe', () => {
     expect((await getList()).status).toBe(403)
     expect(h.letture).not.toContain('admin_settings')
     expect(h.letture).not.toContain('fatture_emesse')
+  })
+})
+
+// Il titolare, il 04/11: «ognuno riceve solo la propria fattura». Il filtro di sede resta SPENTO: la regola vale lo stesso, ed è la
+// route a doverla attivare passando il `tipo` della voce. Il predicato è quello vero: qui si prova che il tipo gli arriva.
+describe('voce divisa, filtro di sede spento: ognuno vede solo la propria', () => {
+  const eventiFattura = () => log.logEvento.mock.calls.filter(
+    (chiamata) => chiamata[0] === 'fattura' && (chiamata[2] as Riga).operazione === 'pagamenti/fattura/esito',
+  )
+
+  beforeEach(() => {
+    h.flagVisibilita = null
+    h.pagamento = { ...h.pagamento, tipo: 'split' }
+    h.fatture = [
+      riga(FATTURA_PADRE, 11, 'quote_separate', PARENT_PADRE),
+      riga(FATTURA_MADRE, 12, 'quote_separate', PARENT_MADRE),
+    ]
+    h.bucket = h.fatture.map((fattura) => ({ name: String(fattura.pdf_path) }))
+  })
+
+  it('fattura/list:GET: il genitore vede solo la propria riga', async () => {
+    const res = await getList()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.map((fattura: { id: string }) => fattura.id)).toEqual([FATTURA_PADRE])
+  })
+
+  it('fattura/list:GET: l’ordinaria dell’altro e una riga senza registro non escono', async () => {
+    const senzaRegistro = 'c0000000-0000-4000-8000-00000000000c'
+    h.fatture = [
+      riga(FATTURA_PADRE, 11, null, PARENT_PADRE),
+      riga(FATTURA_ORDINARIA, 10, 'ordinaria', PARENT_MADRE),
+      riga(senzaRegistro, 13, 'ordinaria', null),
+    ]
+    const body = await (await getList()).json()
+    expect(body.data.map((fattura: { id: string }) => fattura.id)).toEqual([FATTURA_PADRE])
+  })
+
+  it('fattura:GET col fattura_id dell’altro: 404 FATTURA_NON_TROVATA, e Storage non si tocca', async () => {
+    const res = await getPdf(FATTURA_MADRE)
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_NON_TROVATA')
+    expect(h.downloads).toEqual([])
+  })
+
+  it('fattura:GET senza fattura_id con due quote: esce la propria, senza 409', async () => {
+    const res = await getPdf()
+    expect(res.status).toBe(200)
+    expect(h.downloads).toEqual([`${PAGAMENTO}-11.pdf`])
+  })
+
+  it('fattura:GET senza fattura_id, c’è solo il documento dell’altro: 404, non lo rivela e non serve il ripiego', async () => {
+    h.pagamento = { ...h.pagamento, fattura_pdf_path: 'chiave-dell-altro.pdf' }
+    h.fatture = [riga(FATTURA_MADRE, 12, 'quote_separate', PARENT_MADRE)]
+
+    const res = await getPdf()
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_PDF_NON_DISPONIBILE')
+    expect(h.downloads).toEqual([])
+  })
+
+  it('fattura/esito:POST sulla riga dell’altro: come una riga non visibile, e nessun evento', async () => {
+    const res = await postEsito(FATTURA_MADRE)
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_NON_TROVATA')
+    expect(eventiFattura()).toEqual([])
+  })
+
+  it('fattura/esito:POST sulla propria: 204, e l’evento c’è', async () => {
+    const res = await postEsito(FATTURA_PADRE)
+    expect(res.status).toBe(204)
+    expect(eventiFattura()).toHaveLength(1)
+  })
+
+  it('la contabilità nel proprio plesso le vede tutte, e `parents` non si legge', async () => {
+    h.user = { id: AUTH_PADRE, role: 'segreteria', scuola_id: SCUOLA }
+
+    const body = await (await getList()).json()
+    expect(body.data.map((fattura: { id: string }) => fattura.id)).toEqual([FATTURA_PADRE, FATTURA_MADRE])
+    expect((await getPdf(FATTURA_MADRE)).status).toBe(200)
+    expect((await postEsito(FATTURA_MADRE)).status).toBe(204)
+    expect(h.letture).not.toContain('parents')
+  })
+})
+
+// La divisione in due documenti la decide `genitori_separati`, non `tipo`: una voce `singolo` di genitori separati
+// ne ha due, e il filtro di sede spento non deve aprire al padre il PDF della madre, con codice fiscale e residenza.
+describe('voce singola con due quote, filtro di sede spento: la quota dell’altro non si vede', () => {
+  const NON_CLASSIFICATA = 'c0000000-0000-4000-8000-00000000000c'
+
+  beforeEach(() => {
+    h.flagVisibilita = null
+    h.pagamento = { ...h.pagamento, tipo: 'singolo' }
+    h.fatture = [
+      riga(FATTURA_PADRE, 11, 'quote_separate', PARENT_PADRE),
+      riga(FATTURA_MADRE, 12, 'quote_separate', PARENT_MADRE),
+    ]
+    h.bucket = h.fatture.map((fattura) => ({ name: String(fattura.pdf_path) }))
+  })
+
+  it('fattura/list:GET: la propria, un’ordinaria e una non classificata sì, la quota dell’altro no', async () => {
+    h.fatture = [
+      riga(FATTURA_ORDINARIA, 10, 'ordinaria', PARENT_TERZO),
+      riga(FATTURA_PADRE, 11, 'quote_separate', PARENT_PADRE),
+      riga(FATTURA_MADRE, 12, 'quote_separate', PARENT_MADRE),
+      riga(NON_CLASSIFICATA, 13, null, null),
+    ]
+    h.bucket = h.fatture.map((fattura) => ({ name: String(fattura.pdf_path) }))
+
+    const res = await getList()
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.map((fattura: { id: string }) => fattura.id).sort()).toEqual(
+      [FATTURA_ORDINARIA, FATTURA_PADRE, NON_CLASSIFICATA].sort(),
+    )
+    expect(h.letture).toContain('parents')
+  })
+
+  it('fattura:GET col fattura_id dell’altro: 404 FATTURA_NON_TROVATA, e Storage non si tocca', async () => {
+    const res = await getPdf(FATTURA_MADRE)
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_NON_TROVATA')
+    expect(h.downloads).toEqual([])
+  })
+
+  it('fattura:GET col proprio fattura_id: 200', async () => {
+    const res = await getPdf(FATTURA_PADRE)
+    expect(res.status).toBe(200)
+    expect(h.downloads).toEqual([`${PAGAMENTO}-11.pdf`])
+  })
+
+  it('fattura:GET senza fattura_id con due quote: esce la propria, senza 409', async () => {
+    const res = await getPdf()
+    expect(res.status).toBe(200)
+    expect(h.downloads).toEqual([`${PAGAMENTO}-11.pdf`])
+  })
+
+  it('fattura:GET: l’ordinaria e la non classificata restano scaricabili, niente dello storico si nasconde', async () => {
+    h.fatture = [
+      riga(FATTURA_ORDINARIA, 10, 'ordinaria', PARENT_TERZO),
+      riga(NON_CLASSIFICATA, 13, null, null),
+    ]
+
+    expect((await getPdf(FATTURA_ORDINARIA)).status).toBe(200)
+    expect((await getPdf(NON_CLASSIFICATA)).status).toBe(200)
+    expect(h.downloads).toEqual([`${PAGAMENTO}-10.pdf`, `${PAGAMENTO}-13.pdf`])
+  })
+
+  it('fattura/esito:POST: sulla riga dell’altro 404, sulla propria 204', async () => {
+    const altrui = await postEsito(FATTURA_MADRE)
+    expect(altrui.status).toBe(404)
+    expect((await altrui.json()).codice).toBe('FATTURA_NON_TROVATA')
+    expect((await postEsito(FATTURA_PADRE)).status).toBe(204)
+  })
+
+  it('la contabilità nel proprio plesso le vede tutte, e `parents` non si legge', async () => {
+    h.user = { id: AUTH_PADRE, role: 'segreteria', scuola_id: SCUOLA }
+
+    const body = await (await getList()).json()
+    expect(body.data.map((fattura: { id: string }) => fattura.id)).toEqual([FATTURA_PADRE, FATTURA_MADRE])
+    expect((await getPdf(FATTURA_MADRE)).status).toBe(200)
+    expect((await postEsito(FATTURA_MADRE)).status).toBe(204)
+    expect(h.letture).not.toContain('parents')
+  })
+
+  it('un errore di lettura su `parents`: 500 sulle tre route, e Storage non si tocca', async () => {
+    h.erroreParents = { code: '42501', message: 'permission denied' }
+
+    expect((await getList()).status).toBe(500)
+    expect((await getPdf(FATTURA_PADRE)).status).toBe(500)
+    expect((await postEsito(FATTURA_PADRE)).status).toBe(500)
+    expect(h.downloads).toEqual([])
+    expect(h.listeStorage).toBe(0)
   })
 })

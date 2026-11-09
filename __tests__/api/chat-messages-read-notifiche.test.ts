@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { NextResponse } from 'next/server'
 
 /**
@@ -72,6 +73,7 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 // PostgREST NON lancia: l'esito è sempre un valore di ritorno.
 // ─────────────────────────────────────────────────────────────────────────────
 const adminClient = {
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from(tabella: string) {
         const b: Record<string, unknown> = {}
         const filtriSelect: Record<string, unknown> = {}

@@ -16,8 +16,11 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
-import { guastoLetturaAccessoria, rispostaGuastoDb } from '@/lib/db/guasto'
+import { guastoLetturaAccessoria, rispostaGuastoDb, rispostaGuastoGiaRegistrato } from '@/lib/db/guasto'
 import { RUOLI_GESTIONE_MENSA } from '@/lib/mensa/gestione-staff'
+import { esitoFiglioAttivo, logVisibilitaNegata } from '@/lib/anno/visibilita-genitore'
+import { caricaCalendario, statoCalendario } from '@/lib/anno/calendario'
+import { annoAttivoDelCalendario } from '@/lib/anno-scolastico'
 
 // Ruoli che possono FORZARE prenotazione/disdetta della mensa anche fuori orario
 // (telefonate out-of-hours dei genitori dopo il cutoff), con saldo che può andare
@@ -49,9 +52,43 @@ const deleteQuerySchema = z.object({
   data: zDataYMD,
 })
 
-// Verifica che un genitore sia legato all'alunno (union runtime+anagrafica).
-async function genitoreDiAlunno(supabase: Awaited<ReturnType<typeof createAdminClient>>, genitoreId: string, alunnoId: string) {
-  return genitoreHasFiglio(supabase, genitoreId, alunnoId)
+/**
+ * Il gate del genitore: legato all'alunno (union runtime+anagrafica) e, PR 4.4, figlio attivo per la funzione SQL. Risponde il
+ * rifiuto, o `null` se si prosegue. Schema indietro: basta il legame, come oggi. Un guasto non apre.
+ */
+async function rifiutoGenitore(supabase: Awaited<ReturnType<typeof createAdminClient>>, genitoreId: string, alunnoId: string) {
+  if (!(await genitoreHasFiglio(supabase, genitoreId, alunnoId))) {
+    return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+  }
+  const attivo = await esitoFiglioAttivo(supabase, genitoreId, alunnoId)
+  if (attivo === 'guasto') return rispostaGuastoGiaRegistrato()
+  if (attivo === 'non-attivo') {
+    logVisibilitaNegata('mensa-figlio-non-attivo', { alunno: alunnoId, uid: genitoreId }, ['alunno'])
+    return NextResponse.json(
+      { error: 'Questo bambino non è più fra quelli attivi.', codice: 'FIGLIO_NON_ATTIVO' },
+      { status: 403 },
+    )
+  }
+  return null
+}
+
+/**
+ * PR 4.4: l'anno attivo della sede del bambino, per le date del genitore. `null` = non si controlla, come oggi: il calendario non
+ * c'è ancora (la CI) o la sede non ha un anno attivo, e in quel caso nessun figlio è attivo e il gate ha già risposto.
+ */
+async function annoAttivoDellaSede(supabase: Awaited<ReturnType<typeof createAdminClient>>, scuolaId: string) {
+  const calendario = await caricaCalendario(supabase, scuolaId)
+  if ((await statoCalendario(supabase, scuolaId)) === 'guasto') return 'guasto' as const
+  return annoAttivoDelCalendario(calendario)
+}
+
+function rifiutoDataFuoriAnno(operazione: string, n: number) {
+  // Rifiuto atteso, non un guasto: `info`, come l'orario limite. Solo l'operazione, il codice e un conteggio.
+  logEvento('mensa', 'info', { operazione, esito: 'data-fuori-anno', error_code: 'DATA_FUORI_ANNO', n })
+  return NextResponse.json(
+    { error: 'Questo giorno è fuori dall’anno scolastico in corso.', codice: 'DATA_FUORI_ANNO' },
+    { status: 422 },
+  )
 }
 
 /**
@@ -195,8 +232,9 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
       const fuoriScope = await assertAlunnoInScope(supabase, user, alunnoId)
       if (fuoriScope) return fuoriScope
     }
-    if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
-      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    if (!isStaff) {
+      const rifiuto = await rifiutoGenitore(supabase, user.id, alunnoId)
+      if (rifiuto) return rifiuto
     }
 
     // «Oggi» nel calendario di Roma: fra mezzanotte e le 2 italiane la data UTC è
@@ -223,12 +261,20 @@ export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) 
     // Orario limite (cutoff) per prenotare/disdire "oggi": mostrato in UI così
     // il genitore lo conosce prima di provare (config per scuola, default 09:30).
     let cutoffOra: string | null = null
+    let prenotazioni = pren ?? []
     if (al?.scuola_id) {
       const config = await loadMensaConfig(supabase, al.scuola_id as string)
       cutoffOra = config.cutoffOra
+      // PR 4.4: alla famiglia i pasti dell'anno attivo. Si ritaglia e non si rifiuta: la settimana chiesta dal calendario può stare
+      // a cavallo dell'anno, e un 422 la cancellerebbe tutta.
+      if (!isStaff) {
+        const anno = await annoAttivoDellaSede(supabase, al.scuola_id as string)
+        if (anno === 'guasto') return rispostaGuastoGiaRegistrato()
+        if (anno) prenotazioni = prenotazioni.filter((p) => p.data >= anno.inizio && p.data <= anno.fine)
+      }
     }
 
-    return NextResponse.json({ success: true, data: { saldo, prenotazioni: pren ?? [], cutoffOra } })
+    return NextResponse.json({ success: true, data: { saldo, prenotazioni, cutoffOra } })
   } catch (err) {
     logErrore({ operazione: 'mensa/prenotazioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -263,9 +309,8 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     const origine = isStaff ? 'segreteria' : 'genitore'
     let sospeso = false
     if (!isStaff) {
-      if (!(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
-        return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
-      }
+      const rifiuto = await rifiutoGenitore(supabase, user.id, alunnoId)
+      if (rifiuto) return rifiuto
       // Morosità (Contabilità v2 — «via di mezzo»): un genitore con figlio SOSPESO
       // PUÒ ancora prenotare la mensa, ma SOLO col credito ticket già caricato (mai
       // a debito). Il vincolo saldo scatta più sotto, quando il saldo è noto. Lo
@@ -278,6 +323,14 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     if (errAlunno) return rispostaGuastoDb('mensa/prenotazioni:POST', 'db:alunni', errAlunno)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id as string
+    // PR 4.4: il genitore prenota nell'anno attivo della sede. Tutta la richiesta prima di scalare un ticket: una data fuori non
+    // lascia a metà le altre. Lo staff allo sportello resta libero, come per l'orario limite.
+    if (!isStaff) {
+      const anno = await annoAttivoDellaSede(supabase, scuolaId)
+      if (anno === 'guasto') return rispostaGuastoGiaRegistrato()
+      const fuori = anno ? dates.filter((d) => d < anno.inizio || d > anno.fine) : []
+      if (fuori.length > 0) return rifiutoDataFuoriAnno('mensa/prenotazioni:POST', fuori.length)
+    }
     const config = await loadMensaConfig(supabase, scuolaId)
     // Usa la prima data richiesta per determinare il menu attivo (approx per range)
     const primaData = dates[0]
@@ -433,14 +486,21 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       const fuoriScope = await assertAlunnoInScope(supabase, user, alunnoId)
       if (fuoriScope) return fuoriScope
     }
-    if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
-      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    if (!isStaff) {
+      const rifiuto = await rifiutoGenitore(supabase, user.id, alunnoId)
+      if (rifiuto) return rifiuto
     }
 
     const { data: al, error: errAlunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
     if (errAlunno) return rispostaGuastoDb('mensa/prenotazioni:DELETE', 'db:alunni', errAlunno)
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id as string
+    // PR 4.4: come in prenotazione. Il riaccredito di un pasto dell'anno passato è una rettifica, e la fa lo staff.
+    if (!isStaff) {
+      const anno = await annoAttivoDellaSede(supabase, scuolaId)
+      if (anno === 'guasto') return rispostaGuastoGiaRegistrato()
+      if (anno && (data < anno.inizio || data > anno.fine)) return rifiutoDataFuoriAnno('mensa/prenotazioni:DELETE', 1)
+    }
     const config = await loadMensaConfig(supabase, scuolaId)
 
     // Lo staff (STAFF_FORZA) può disdire anche fuori orario / su date passate:

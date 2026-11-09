@@ -25,6 +25,8 @@ export interface ChatThread {
     unread_count: number;
     /** Sospensione attiva (null/assente = conversazione libera). */
     sospensione?: SospensioneInfo | null;
+    /** `false` = sola lettura (PR 4.4, `thread_visibili`). Assente = si può scrivere. */
+    scrivibile?: boolean;
 }
 
 interface Props {

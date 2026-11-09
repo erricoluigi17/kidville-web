@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
 // =============================================================================
@@ -139,6 +140,8 @@ vi.mock('@/lib/allegati/storage', async (originale) => ({
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => ({
         rpc(nome: string, args: Record<string, unknown>) {
+            const indietro = rpcVisibilitaIndietro(nome)
+            if (indietro) return Promise.resolve(indietro)
             if (nome !== 'avviso_adesione_registra') {
                 throw new Error(`rpc non emulata in questo finto: ${nome}`)
             }

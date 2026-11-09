@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // GET /api/pagamenti compone `causale_suggerita` PER PAGAMENTO col modello per-categoria
 // (admin_settings.causali_config, indicizzato per slug) reso coi dati della voce.
@@ -45,6 +46,7 @@ vi.mock('@/lib/auth/scope', () => ({
 vi.mock('@/lib/anagrafiche/legami', () => ({ getFigliDiGenitore: vi.fn(async () => ['al-1']) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
     from: (table: string) => {
       // La mappa si legge a ogni `from()`, cioè al momento della query: i `beforeEach`
       // riassegnano le liste, e una copia presa all'import resterebbe quella vuota.

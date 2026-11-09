@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * IL LINK DELLA NOTIFICA DI CHAT PORTA LA CONVERSAZIONE, NON SOLO LA PAGINA.
@@ -42,6 +43,7 @@ vi.mock('@/lib/notifiche/destinatari', () => ({ controparteThread: h.controparte
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento, nomeUtente: async () => null }))
 
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const b: Record<string, unknown> = {}
     b.select = () => b

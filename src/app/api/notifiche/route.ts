@@ -70,8 +70,9 @@ const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
  * letti. Sono messaggi che il destinatario ha già letto: nessuno aspetta più niente.
  *
  * I THREAD SONO QUELLI DEL MODULO, l'identità quella del GATE. `threadIds` arriva da
- * `leggiChatNonLetti`, che li legge con l'`or` su `teacher_id`/`parent_id`: sono le
- * conversazioni di cui quella persona fa parte, mai un elenco che venga dal client.
+ * `leggiChatNonLetti`, che li legge con l'`or` su `teacher_id`/`parent_id` e tiene quelli
+ * che `thread_visibili` lascia: sono le conversazioni di cui quella persona fa parte e che
+ * può aprire, mai un elenco che venga dal client.
  *
  * NESSUN `maxDuration` DA DICHIARARE, al contrario di `chat/messages:POST`. Il lavoro dentro
  * `after()` vive nel tetto di durata della piattaforma, e qui il caso peggiore è un UPDATE per

@@ -284,7 +284,7 @@
   "ieFileVuoto": "The file is empty",
   "ieTitolo": "Import / Export records",
   "ieEsportaTitolo": "Export records",
-  "ieEsportaDesc": "Download pupils to Excel (backup / report).",
+  "ieEsportaDesc": "Download the enrolled children’s registry data as an Excel file.",
   "ieGeneraEsportazione": "Generate export",
   "ieImportaTitolo": "Import records",
   "ieImportaDesc": "Download the template, fill it in (pupil + parents) and upload it back.",
@@ -294,6 +294,7 @@
   "ieRigheErrori": "{count, plural, one {# row with errors} other {# rows with errors}} (rows: {righe})",
   "ieComeFunziona": "How it works:",
   "ieComeFunzionaDesc": "the template has a column for each pupil detail and up to two parents. On import the system creates pupils and linked parents, avoiding duplicates via the tax code. The location is the active one.",
+  "ieNessunAlunnoDaEsportare": "No pupils to export in the selected locations.",
 
   "arTitolo": "Locker",
   "arSogliaScortaBassa": "Low stock threshold (pieces)",

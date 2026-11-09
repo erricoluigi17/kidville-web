@@ -31,6 +31,10 @@ import { join } from 'node:path'
 // Eccezioni storiche, dichiarate **funzione per funzione** (non per file intero: un file in
 // allowlist smetterebbe di essere sorvegliato anche per le funzioni che qualcuno gli aggiunge
 // domani). NON aggiungere qui una migrazione NUOVA per aggirare il lock: si aggiunge il REVOKE.
+// L'unico caso in cui una migrazione nuova entra qui, per decisione e non per aggirare niente,
+// è quello dei wrapper `*_miei()` senza parametri della visibilità del genitore (Ruling R-44-1, in
+// fondo a questa lista): prendono l'utente da `auth.uid()` e tornano il solo scope di chi chiama.
+// Una funzione con un parametro `p_utente`, aperta ad `authenticated`, non è mai questo caso.
 //
 // Stato reale misurato sul database di **produzione** il 2026-08-01, in sola lettura
 // (`pg_proc` + `has_function_privilege`): delle 30 funzioni SECURITY DEFINER dello schema
@@ -91,6 +95,11 @@ const AMMESSE = new Map<string, readonly string[]>([
     '20261107165503_anno_scrittura.sql',
     ['elimina_alunno_definitivo', 'iscrizioni_sanitari_tick', 'presenze_giustificazioni_retention_tick'],
   ],
+  // PR 4.4 (Ruling R-44-1): i wrapper `*_miei()` sono APERTI ad `authenticated` di proposito, come
+  // `current_parent_student_ids()`: non hanno parametri, prendono l'utente da `auth.uid()` e tornano il solo scope di chi
+  // chiama. Sono l'unica via dal browser, perché le versioni con `p_utente` restano solo `service_role` (lì un genitore
+  // enumererebbe i figli altrui, e lo prova `anno-visibilita-genitore.test.ts`).
+  ['20261108170148_anno_visibilita_genitore_funzioni.sql', ['figli_attivi_miei', 'media_visibili_miei', 'thread_visibili_miei', 'voci_visibili_miei']],
 ])
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations')

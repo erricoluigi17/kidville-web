@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/funzioni-registro-fotografia.mjs --sql | (esegui su prod) ; node scripts/funzioni-registro-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T23:46:00Z",
-  "sha256": "004d105dc6a78a54ddcf4f143b3e488622b96909fb89312318b0fad4b5410ad2",
+  "generato_il": "2026-11-08",
+  "generato_alle": "2026-11-08T16:53:16Z",
+  "sha256": "3f432e5d19ccae119647e8481947a26918c4610e318042865ef971a2cddac451",
   "funzioni": [
     {
       "funzione": "_video_originale_applica",
@@ -84,6 +84,13 @@
       "funzione": "elimina_voce_ricarica_ticket",
       "tabelle": [
         "pagamenti"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "frequenza_segue_classe_alunno",
+      "tabelle": [
+        "frequenze"
       ],
       "classe": "corrente"
     },

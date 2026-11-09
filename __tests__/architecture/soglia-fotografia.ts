@@ -401,13 +401,27 @@ export function posterioriCheContengono(
 // policy ne' RLS, nessun add/drop constraint ne' FK verso `utenti`, quindi nessuna delle tre guardie la segnalerebbe e il lock
 // «nessuna voce morta» (prova 5) rifiuta una dichiarazione che non serve. Aggiunge funzioni, una colonna di `anno_regole`
 // (`specchio_frequenze_attivo`), trigger, la riga 8 di `anno_invarianti` e l'estensione dell'invariante 11. Cambia davvero, e la PR-B
-// la rigenera dalla produzione dopo il merge: (1) il registro delle migrazioni (+1 riga); (2) la fotografia delle funzioni che scrivono
+// la rigenerava dalla produzione dopo il merge (fatto l'08/11/2026, #302 `c1f81e36`): (1) il registro delle migrazioni (+1 riga); (2) la fotografia delle funzioni che scrivono
 // nel registro (`funzioni-scrivono-registro.json`): `frequenza_segue_classe_alunno` fa `UPDATE public.frequenze` e `frequenze` e' in
 // `anno_tabelle`, quindi entra; le altre funzioni nuove non scrivono tabelle di `anno_tabelle` (`alunni_riallinea_da_frequenze` scrive
 // `alunni`, che non c'e'; `frequenze_specchio_alunni` e' esclusa dal nome; `propaga_rinomina_sezione` e `fn_form_submission_etl`
 // restano come sono). La PR-B aggiorna allora `FUNZIONI_ATTESE` in `funzioni-registro-fotografia.test.ts` e il `minimo` in
 // `anno-scrittura-coverage.test.ts`. (Ondata di correzioni: `sezioni_docente_anno_attivo` e' stata tolta dalla migrazione; non scriveva nel registro, quindi il conto delle funzioni che lo scrivono non cambia.) L'elenco resta vuoto.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+// SVUOTATA l'08/11/2026 (PR-B dopo il merge di #302, `c1f81e36`): la migrazione e' registrata una volta sola; cambiano davvero migrazioni 260 -> 261
+// (`20261108102826_anno_sezioni_docenti_fase_b`) e funzioni che scrivono nel registro 65 -> 66 (`frequenza_segue_classe_alunno`, classe `corrente`).
+// Con l'impronta md5 dalla produzione risultano identici alla fotografia in repo: tabelle di `anno_tabelle` (46), indici unici (292), RLS (40 policy,
+// 74 solo-service_role, 181 tabelle con RLS accesa), FK di sede (99), FK verso `utenti` (83), tabelle con `scuola_id` (99 e 22 legate all'alunno),
+// bucket (21) e schema delle candidature: non sono stati riscaricati.
+// 2026-11-08 · ANNO SCOLASTICO, PR 4.4 (genitori), compito 4.4.4: `20261108204853_anno_visibilita_genitore_policy.sql` riscrive cinque
+// regole di accesso (`chat_threads`, `chat_messages`, `galleria_media_v2`, `pagamenti`, `news_posts`) tenendo gli stessi nomi: nessuna
+// policy nasce o sparisce (40 invariate), cambiano i cinque testi. La vede la guardia di `rls-per-sede.test.ts`, «nessuna migrazione più
+// recente della fotografia tocca le policy». L'altra migrazione della PR, `20261108170148_anno_visibilita_genitore_funzioni.sql`, crea
+// solo funzioni: nessuna guardia la vede e qui non va dichiarata (il lock «nessuna voce morta» la rifiuterebbe). Dopo il merge, rigenerando
+// dalla produzione, cambiano davvero la fotografia della RLS (i cinque `using_expr`) e quella delle migrazioni (+3, con `20261108221856_anno_galleria_pagina_genitore.sql`, che crea solo una funzione). Si toglie nella PR-B.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261108204853_anno_visibilita_genitore_policy.sql':
+        'PR 4.4 anno scolastico: la applica l\'integrazione al merge, cinque regole di accesso riscritte con lo stesso nome; si toglie nella PR-B rigenerando la fotografia della RLS dalla produzione.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

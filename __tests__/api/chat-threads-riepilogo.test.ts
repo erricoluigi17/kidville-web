@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * S7 — LA LISTA DELLE CONVERSAZIONI COSTA POCHE RICHIESTE, E NON SCRIVE (robustezza 2, sessione 12).
@@ -38,6 +39,8 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 const adminClient = {
   rpc(nome: string, argomenti: unknown) {
     h.chiamate.push(`rpc:${nome}`)
+    const indietro = rpcVisibilitaIndietro(nome)
+    if (indietro) return Promise.resolve(indietro)
     h.argomentiRpc.push(argomenti)
     return Promise.resolve(h.rispostaRpc)
   },
@@ -97,7 +100,7 @@ describe('GET /api/chat/threads — col riepilogo', () => {
     expect(res.status).toBe(200)
     const corpo = (await res.json()) as Array<Record<string, unknown>>
     expect(corpo).toHaveLength(N)
-    expect(h.chiamate).toEqual(['rpc:chat_riepilogo_conversazioni', 'from:conversazioni_sospensioni'])
+    expect(h.chiamate).toEqual(['rpc:thread_visibili', 'rpc:chat_riepilogo_conversazioni', 'from:conversazioni_sospensioni'])
     expect(h.chiamate.length).toBeLessThanOrEqual(5)
     expect(corpo[1]).toMatchObject({ id: tid(2), unread_count: 2, sospensione: null })
   })

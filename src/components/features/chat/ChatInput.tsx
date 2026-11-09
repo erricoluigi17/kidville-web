@@ -35,10 +35,16 @@ interface Props {
      * conversazione: la key rimonta il campo, e un campo rimontato riparte dalla bozza della chiave nuova.
      */
     chiaveBozza?: string;
+    /**
+     * Conversazione in sola lettura (PR 4.4, `scrivibile` di `thread_visibili`): il campo è spento e dice perché, invece di
+     * lasciare un bottone che fallisce al clic.
+     */
+    solaLettura?: boolean;
 }
 
-export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props) {
+export function ChatInput({ onSend, disabled: spento, placeholder, chiaveBozza, solaLettura }: Props) {
     const t = useTranslations('teacherComunicazioni');
+    const disabled = spento || solaLettura;
 
     /**
      * La bozza si legge e si scrive sempre sotto la chiave con cui il campo è NATO, non sotto quella di adesso.
@@ -96,6 +102,8 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
     const inviando = chiave ? inVoloNellaConversazione : inviandoLocale;
 
     const handleSend = useCallback(async () => {
+        // Invio da tastiera: il tasto Invio non passa dal bottone spento.
+        if (solaLettura) return;
         // Niente invio con upload in corso: il messaggio partirebbe senza
         // allegato e il file, a upload finito, resterebbe agganciato al composer.
         if (uploading || inviando) return;
@@ -157,7 +165,7 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
             if (chiave) concludiInvio(chiave);
             else setInviandoLocale(false);
         }
-    }, [text, attachment, onSend, uploading, inviando, aggiornaBozza, chiave]);
+    }, [text, attachment, onSend, uploading, inviando, aggiornaBozza, chiave, solaLettura]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -207,6 +215,12 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
 
     return (
         <div className="border-t border-kidville-line bg-white/95 backdrop-blur-xl">
+            {solaLettura && (
+                <p role="status" className="px-4 pt-3 font-maven text-xs text-kidville-sub">
+                    {t('chatSolaLettura')}
+                </p>
+            )}
+
             {/* Attachment preview */}
             {attachment && (
                 <div className="px-4 pt-3 flex items-center gap-2">

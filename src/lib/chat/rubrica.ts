@@ -9,6 +9,7 @@ import {
     type EsitoLegame,
 } from '@/lib/anagrafiche/legami';
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
+import { figliAttiviDi, idDeiFigli } from '@/lib/anno/visibilita-genitore';
 import { logEvento } from '@/lib/logging/logger';
 
 /**
@@ -66,6 +67,12 @@ import { logEvento } from '@/lib/logging/logger';
  * famiglia e un'insegnante è un danno certo per riparare un rischio che non si è
  * materializzato; se un giorno la si vorrà, è una decisione della Direzione su
  * casi nominati, non un effetto collaterale di un rilascio.
+ *
+ * ─── L'ANNO SCOLASTICO (PR 4.4) ──────────────────────────────────────────────
+ *
+ * Dove c'è lo schema dell'anno, il figlio e la sua sezione li dice `figli_attivi`, tanto nella vetrina quanto al gate: un figlio
+ * non attivo non apre conversazioni, e la sezione è quella della frequenza. Schema indietro: `alunni.section_id`, come prima.
+ * Un guasto della funzione è `non-deciso`.
  */
 
 export type MotivoAbbinamento =
@@ -92,6 +99,13 @@ export interface FattoAlunno {
     sectionId: string | null;
     scuolaId: string | null;
     stato: string | null;
+    /**
+     * Le sezioni delle frequenze attive, dove c'è lo schema dell'anno: un bambino vivo in due sedi ne ha due, e vuota vuol dire
+     * senza sezione. `undefined` = schema indietro, e vale `sectionId`.
+     */
+    sezioniAttive?: readonly string[];
+    /** `false` = la funzione non lo dà fra i figli attivi. `undefined` = schema indietro. */
+    attivo?: boolean;
 }
 
 export interface FattoOperatore {
@@ -131,12 +145,14 @@ export function decidiAbbinamento(f: FattiAbbinamento): EsitoAbbinamento {
     if (!f.alunno) return no('non-deciso');
 
     if (!STATI_CON_CANALE_FAMIGLIA.includes(f.alunno.stato as never)) return no('alunno-senza-canale');
+    if (f.alunno.attivo === false) return no('alunno-senza-canale');
     if (!f.operatore) return no('non-deciso');
     if (f.operatore.attivo === false) return no('operatore-non-attivo');
 
     if (f.operatore.ruolo === 'educator') {
-        if (!f.alunno.sectionId) return no('alunno-senza-sezione');
-        return f.operatore.sezioni.includes(f.alunno.sectionId)
+        const sezioni = f.alunno.sezioniAttive ?? (f.alunno.sectionId ? [f.alunno.sectionId] : []);
+        if (sezioni.length === 0) return no('alunno-senza-sezione');
+        return sezioni.some((s) => f.operatore?.sezioni.includes(s))
             ? { consentito: true, motivo: 'consentito' }
             : no('operatore-fuori-sezione');
     }
@@ -155,16 +171,21 @@ export function decidiAbbinamento(f: FattiAbbinamento): EsitoAbbinamento {
     return no('operatore-non-e-insegnante');
 }
 
-/** I fatti, in blocco. Quattro letture fisse, mai una per riga. */
+/** I fatti, in blocco. Letture fisse, mai una per riga. */
 export async function fattiAbbinamento(
     supabase: SupabaseClient,
     args: { operatoreId: string; genitoreId: string; alunnoId: string },
 ): Promise<FattiAbbinamento> {
-    const [legame, alunnoRes, operatoreRes] = await Promise.all([
+    const [legame, alunnoRes, operatoreRes, attivi] = await Promise.all([
         verificaLegameGenitore(supabase, args.genitoreId, args.alunnoId),
         supabase.from('alunni').select('id, section_id, scuola_id, stato').eq('id', args.alunnoId).maybeSingle(),
         supabase.from('utenti').select('id, ruolo, attivo, scuola_id').eq('id', args.operatoreId).maybeSingle(),
+        figliAttiviDi(supabase, args.genitoreId),
     ]);
+
+    // La riga l'ha già scritta `figliAttiviDi`. Un guasto non nega e non apre: è `non-deciso`, 500.
+    if (attivi.stato === 'guasto') return { alunno: null, operatore: null, legame: 'non-deciso' };
+    const frequenze = attivi.stato === 'ok' ? attivi.righe.filter((r) => r.alunno_id === args.alunnoId) : null;
 
     // PostgREST non lancia (AGENTS.md, regola 7): senza questi due rami una lettura
     // negata dalla RLS o uno schema indietro uscirebbero come «il bambino non
@@ -207,7 +228,20 @@ export async function fattiAbbinamento(
     }
 
     return {
-        alunno: a ? { id: a.id, sectionId: a.section_id, scuolaId: a.scuola_id, stato: a.stato } : null,
+        alunno: a
+            ? {
+                id: a.id,
+                sectionId: a.section_id,
+                scuolaId: a.scuola_id,
+                stato: a.stato,
+                ...(frequenze
+                    ? {
+                        attivo: frequenze.length > 0,
+                        sezioniAttive: frequenze.map((r) => r.section_id).filter((s): s is string => !!s),
+                    }
+                    : {}),
+            }
+            : null,
         operatore: u ? { id: u.id, ruolo: u.ruolo, attivo: u.attivo, sezioni, scuole } : null,
         legame,
     };
@@ -271,7 +305,10 @@ const vuota = (motivoVuota: MotivoRubricaVuota | null, errore: { code?: string }
  * `/admin/messaggi`, dove la sua rubrica è per sede e non cambia.
  */
 export async function rubricaDiFamiglia(supabase: SupabaseClient, genitoreId: string): Promise<EsitoRubrica> {
-    const { figli } = await getFigliDiGenitoreEsito(supabase, genitoreId);
+    const attivi = await figliAttiviDi(supabase, genitoreId);
+    if (attivi.stato === 'guasto') return vuota(null, attivi.errore);
+    const frequenze = attivi.stato === 'ok' ? attivi.righe : null;
+    const figli = frequenze ? idDeiFigli(frequenze) : (await getFigliDiGenitoreEsito(supabase, genitoreId)).figli;
     if (figli.length === 0) return vuota('nessun-figlio');
 
     const { data: righeAlunni, error: erroreAlunni } = await supabase
@@ -289,7 +326,15 @@ export async function rubricaDiFamiglia(supabase: SupabaseClient, genitoreId: st
     }>;
     if (alunni.length === 0) return vuota('nessun-figlio');
 
-    const sezioni = [...new Set(alunni.map(a => a.section_id).filter(Boolean))] as string[];
+    // Sezione e sede di ogni bambino: quelle delle frequenze, o quella in anagrafica con lo schema indietro.
+    const postiDi = (a: (typeof alunni)[number]): Array<{ sezione: string; sede: string | null }> =>
+        frequenze
+            ? frequenze
+                .filter((f) => f.alunno_id === a.id && f.section_id)
+                .map((f) => ({ sezione: f.section_id as string, sede: f.scuola_id }))
+            : a.section_id ? [{ sezione: a.section_id, sede: a.scuola_id }] : [];
+
+    const sezioni = [...new Set(alunni.flatMap((a) => postiDi(a).map((p) => p.sezione)))];
     if (sezioni.length === 0) return vuota('figli-senza-sezione');
 
     const { data: legami, error: erroreLegami } = await supabase
@@ -334,16 +379,17 @@ export async function rubricaDiFamiglia(supabase: SupabaseClient, genitoreId: st
     const voci: VoceRubrica[] = [];
     const visti = new Set<string>();
     for (const a of alunni) {
-        if (!a.section_id) continue;
-        for (const utenteId of perSezione.get(a.section_id) ?? []) {
-            const chiave = `${utenteId}:${a.id}`;
-            if (visti.has(chiave)) continue;
-            visti.add(chiave);
-            voci.push({
-                utenteId,
-                ruolo: ammessi.get(utenteId) as AppRole,
-                alunno: { id: a.id, nome: a.nome, cognome: a.cognome, classeSezione: a.classe_sezione, scuolaId: a.scuola_id },
-            });
+        for (const { sezione, sede } of postiDi(a)) {
+            for (const utenteId of perSezione.get(sezione) ?? []) {
+                const chiave = `${utenteId}:${a.id}`;
+                if (visti.has(chiave)) continue;
+                visti.add(chiave);
+                voci.push({
+                    utenteId,
+                    ruolo: ammessi.get(utenteId) as AppRole,
+                    alunno: { id: a.id, nome: a.nome, cognome: a.cognome, classeSezione: a.classe_sezione, scuolaId: sede },
+                });
+            }
         }
     }
     return { voci, motivoVuota: voci.length === 0 ? 'sezione-senza-docenti' : null, errore: null };

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 // Bucket `avvisi_allegati` e `task_allegati` PRIVATI (2026-07-31).
 //
@@ -118,6 +119,7 @@ const storage = {
 
 const adminClient = {
   storage,
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const st: { count: boolean; notNull: string | null; filters: Record<string, unknown>; inserted: Record<string, unknown> | null; updated: Record<string, unknown> | null } =
       { count: false, notNull: null, filters: {}, inserted: null, updated: null }

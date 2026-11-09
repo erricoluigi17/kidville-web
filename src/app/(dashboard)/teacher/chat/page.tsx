@@ -44,6 +44,8 @@ function TeacherChatContent() {
      * della pagina, e un invio fallito su una conversazione mostrava l'avviso sopra un'altra.
      */
     const [erroreInvio, setErroreInvio] = useState<{ threadId: string; tipo: 'rifiutato' | 'rete' | 'sospeso' } | null>(null);
+    // Scoperta da un 403: la lista ricaricata può non avere più quel thread, e il campo deve restare spento lo stesso.
+    const [solaLetturaScoperta, setSolaLetturaScoperta] = useState<string | null>(null);
 
     /**
      * Perché la rubrica è vuota, quando lo è. La rotta lo dice (campo `motivo`),
@@ -153,6 +155,9 @@ function TeacherChatContent() {
             // scatta mai per un docente: guardia trasparente per lo staff.)
             if (esito.motivo === 'conversazione_sospesa') {
                 await chat.ricaricaThreads({ forza: true });
+            } else if (esito.motivo === 'chat_sola_lettura') {
+                setSolaLetturaScoperta(esito.threadId);
+                await chat.ricaricaThreads({ forza: true });
             } else if (esito.motivo === 'account_sospeso') {
                 setErroreInvio({ threadId: esito.threadId, tipo: 'sospeso' });
             } else {
@@ -178,6 +183,7 @@ function TeacherChatContent() {
     const activeThread = selectedThread ? (threads.find(t => t.id === selectedThread.id) ?? selectedThread) : null;
     const susp = activeThread?.sospensione ?? null;
     const suspendedToMe = !!susp && susp.sospesaVerso === teacherId;
+    const solaLettura = !!activeThread && (activeThread.scrivibile === false || solaLetturaScoperta === activeThread.id);
     // L'avviso d'invio si mostra solo sulla conversazione da cui il messaggio è partito.
     const erroreQui = erroreInvio && activeThread && erroreInvio.threadId === activeThread.id ? erroreInvio.tipo : null;
     const controparteId = activeThread ? (activeThread.teacher_id === teacherId ? activeThread.parent_id : activeThread.teacher_id) : '';
@@ -312,7 +318,7 @@ function TeacherChatContent() {
                                 lì, pronto a partire, aprendo la conversazione con un'altra. Dal 2026-09-15 ciò che
                                 non è partito non si perde: torna, per `chiaveBozza`, quando si torna su QUESTA
                                 conversazione (`bozze-chat.ts`, solo in memoria). */}
-                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} solaLettura={solaLettura} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -382,7 +388,7 @@ function TeacherChatContent() {
                                     {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} solaLettura={solaLettura} />
                     </motion.div>
                 )}
             </div>

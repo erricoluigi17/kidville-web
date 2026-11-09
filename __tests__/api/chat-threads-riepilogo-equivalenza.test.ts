@@ -153,7 +153,7 @@ const h = vi.hoisted(() => {
   /** `POST /rpc/<funzione>`: la funzione vera, se c'è; altrimenti l'errore vero di Postgres (42883). */
   async function rpc(funzione: string, argomenti: Record<string, unknown>): Promise<Risposta> {
     stato.chiamate.push(`rpc:${funzione}`)
-    if (stato.rpcForzata) return stato.rpcForzata
+    if (stato.rpcForzata && funzione !== 'thread_visibili') return stato.rpcForzata
     const db = stato.db
     if (!db) throw new Error('database non pronto')
     try {
@@ -346,7 +346,7 @@ describe('GET /api/chat/threads — riepilogo e percorso di prima danno la STESS
     expect(nuovo.stato).toBe(200)
     expect(vecchio.stato).toBe(200)
     // Il riepilogo è stato davvero usato (altrimenti si confronterebbe il percorso di prima con sé stesso).
-    expect(nuovo.chiamate[0]).toBe('rpc:chat_riepilogo_conversazioni')
+    expect(nuovo.chiamate).toContain('rpc:chat_riepilogo_conversazioni')
     expect(nuovo.chiamate.filter((c) => c.startsWith('from:chat_threads') || c.startsWith('from:chat_messages'))).toEqual([])
     expect(vecchio.chiamate).toContain('from:chat_threads')
 
@@ -386,7 +386,7 @@ describe('GET /api/chat/threads — riepilogo e percorso di prima danno la STESS
     h.stato.db = senzaFunzione
     const senza = await lista(UTENTI[3], null)
     expect(senza.stato).toBe(200)
-    expect(senza.chiamate[0]).toBe('rpc:chat_riepilogo_conversazioni')
+    expect(senza.chiamate).toContain('rpc:chat_riepilogo_conversazioni')
     expect(senza.chiamate).toContain('from:chat_threads')
     expect(senza.corpo).toStrictEqual(conFunzione.corpo)
     expect(h.logEvento).toHaveBeenCalledWith('chat', 'info', expect.objectContaining({

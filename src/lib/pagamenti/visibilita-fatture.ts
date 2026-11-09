@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { haRuolo, haUnRuolo, type AppRole, type AppUser } from '@/lib/auth/predicati-ruolo'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 /**
  * Lo snapshot scritto sulla singola riga al momento dell'emissione.
@@ -52,10 +52,26 @@ function erroreLettura(operazione: string, errore: unknown): EsitoVisibilitaFatt
  * documento, usando la sede del pagamento già verificato dal caller.
  *
  * Regole:
- *  - rollout non attivo nella sede → nessun filtro aggiuntivo;
- *  - contabilità nel proprio scope di sede → tutte le righe;
- *  - famiglia → ordinarie condivise, quote separate soltanto al loro
- *    `parents.id`, storico non classificato nascosto.
+ *  - contabilità nel proprio scope di sede → tutte le righe, su ogni voce;
+ *  - voce divisa (`pagamenti.tipo = 'split'`), famiglia e staff fuori scope →
+ *    solo le righe col proprio `parents.id` in `parent_registry_id`, qualunque
+ *    sia `modalita_emissione`, a filtro di sede acceso o spento: il titolare il
+ *    04/11, «ognuno riceve solo la propria fattura». Una riga con
+ *    `parent_registry_id` nullo non la vede nessuna famiglia: la consegna la
+ *    segreteria;
+ *  - ogni altra voce, famiglia e staff fuori scope → le righe `quote_separate`
+ *    solo col proprio `parents.id`, a filtro di sede acceso o spento: la
+ *    divisione in due documenti la decide `genitori_separati`, non `tipo`, e una
+ *    voce `singolo` di genitori separati ne produce due. Le ordinarie restano
+ *    condivise; lo storico non classificato si vede a filtro spento e si
+ *    nasconde a filtro acceso.
+ *
+ * La contabilità si ferma prima di leggere `parents`: la lettura serve solo a
+ * famiglia e staff fuori scope, e un suo guasto dà 500 come gli altri.
+ *
+ * `tipoVoce` è obbligatorio di proposito, anche se può valere `null`: una route
+ * che lo dimentica non compila, e una route che lo perde per strada farebbe
+ * uscire il PDF dell'altro genitore, con codice fiscale e residenza.
  *
  * Ogni errore di lettura necessario produce un 500. Un guasto non viene mai
  * trasformato in un consenso o in un falso «non sei autorizzato».
@@ -64,6 +80,7 @@ export async function caricaVisibilitaFatture(
   supabase: SupabaseClient,
   user: AppUser,
   scuolaId: string,
+  tipoVoce: string | null | undefined,
 ): Promise<EsitoVisibilitaFatture> {
   const { data: impostazioni, error: erroreImpostazioni } = await supabase
     .from('admin_settings')
@@ -79,7 +96,7 @@ export async function caricaVisibilitaFatture(
     (impostazioni as { fatture_visibilita_attiva_il?: string | null } | null)
       ?.fatture_visibilita_attiva_il,
   )
-  if (!filtroAttivo) return { esito: 'ok', puoVedere: sempre }
+  const voceDivisa = tipoVoce === 'split'
 
   const contabile = haUnRuolo(user, RUOLI_CONTABILITA)
   if (contabile && stessoUuid(user.scuola_id, scuolaId)) {
@@ -117,12 +134,27 @@ export async function caricaVisibilitaFatture(
   }
 
   const parentId = (genitore as { id?: string | null } | null)?.id ?? null
+
+  if (voceDivisa) {
+    // `fattura` è in `EVENTI_PERSISTITI`: dice che la regola scatta, ed è il solo
+    // modo di sapere che una route le passa ancora il `tipo`. `distingui` perché
+    // `app_log` deduplica per giorno senza guardare il contesto: senza, la riga
+    // porterebbe la sede della prima chiamata per tutte e tre.
+    logEvento('fattura', 'info', {
+      operazione: 'caricaVisibilitaFatture:voce-divisa',
+      esito: 'solo-la-propria',
+      scuola_id: scuolaId,
+    }, undefined, { distingui: ['scuola_id'] })
+    return { esito: 'ok', puoVedere: (riga) => stessoUuid(parentId, riga.parent_registry_id) }
+  }
+
+  // Niente log qui: questo ramo gira a ogni apertura di una voce qualunque.
   return {
     esito: 'ok',
     puoVedere: (riga) => {
+      if (riga.modalita_emissione === 'quote_separate') return stessoUuid(parentId, riga.parent_registry_id)
       if (riga.modalita_emissione === 'ordinaria') return true
-      if (riga.modalita_emissione !== 'quote_separate') return false
-      return stessoUuid(parentId, riga.parent_registry_id)
+      return !filtroAttivo
     },
   }
 }

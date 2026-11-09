@@ -541,7 +541,7 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     // La lettura non espone niente: quello che esce lo decide il gate qui sotto.
     const { data: pag, error: errPag } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id, fattura_stato, fattura_pdf_path, alunno_id')
+      .select('id, scuola_id, fattura_stato, fattura_pdf_path, alunno_id, tipo')
       .eq('id', pagamentoId)
       .maybeSingle()
     // PostgREST NON LANCIA (AGENTS.md, regola 7): senza questo controllo un guasto
@@ -570,6 +570,7 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
       supabase,
       auth.user,
       pag.scuola_id as string,
+      pag.tipo as string | null,
     )
     if (visibilita.esito === 'errore') return visibilita.response
 

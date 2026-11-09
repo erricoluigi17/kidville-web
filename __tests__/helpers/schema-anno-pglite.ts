@@ -35,6 +35,16 @@ export const SCHEMA_BASE = `
 
   CREATE SCHEMA extensions;
 
+  -- PR 4.4: \`auth.uid()\` come su Supabase, legge il \`sub\` delle claim. I wrapper \`*_miei()\` la chiamano.
+  CREATE SCHEMA auth;
+  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $f$
+    SELECT coalesce(
+      NULLIF(current_setting('request.jwt.claim.sub', true), ''),
+      NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+    )::uuid
+  $f$;
+  GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
+
   -- Come su Supabase: ogni oggetto nuovo di \`public\` nasce con i privilegi aperti ad anon e
   -- authenticated. Senza, in PGlite quei ruoli non hanno mai niente e un REVOKE mancante nella
   -- migrazione passerebbe inosservato (il test di sicurezza sarebbe verde anche senza il codice).
@@ -449,7 +459,119 @@ const SUFFISSI_PR2 = {
   M42: '_anno_impostazioni_sede.sql',
   // PR 4.3: sezioni e docenti per anno, fase B dello specchio. Dopo M42 (i compiti successivi aggiungono sezioni in coda al file).
   M43: '_anno_sezioni_docenti_fase_b.sql',
+  // PR 4.4: le funzioni di visibilità del genitore (inerti: nessuna policy). Dopo M43 (i compiti successivi aggiungono sezioni in coda al file).
+  M44a: '_anno_visibilita_genitore_funzioni.sql',
+  // PR 4.4: le regole di accesso e il trigger di broadcast della chat. Dopo M44a.
+  M44b: '_anno_visibilita_genitore_policy.sql',
+  // PR 4.4: la pagina della galleria di una famiglia, sopra `media_visibili_genitore`. Dopo M44b.
+  M44g: '_anno_galleria_pagina_genitore.sql',
 } as const
+
+/**
+ * PR 4.4 · Le tre tabelle dei legami genitore-figlio, con le chiavi e l'indice veri di produzione e le sole colonne che
+ * contano. NON stanno in `SCHEMA_BASE`, perché le funzioni le trovano con `to_regclass` e il banco senza va provato: chi
+ * le vuole le esegue dopo `creaDbAnnoPr2`.
+ */
+export const SCHEMA_LEGAMI_GENITORE = `
+  CREATE TABLE public.legame_genitori_alunni (
+    genitore_id uuid NOT NULL,
+    alunno_id uuid NOT NULL,
+    PRIMARY KEY (genitore_id, alunno_id)
+  );
+  CREATE TABLE public.parents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    auth_user_id uuid UNIQUE
+  );
+  CREATE TABLE public.student_parents (
+    student_id uuid NOT NULL,
+    parent_id uuid NOT NULL,
+    PRIMARY KEY (student_id, parent_id)
+  );
+  CREATE INDEX idx_student_parents_parent_id ON public.student_parents (parent_id);
+`
+
+/**
+ * PR 4.4 · La galleria e lo storico delle classi: le colonne che la visibilità del genitore legge, con i tipi, i default e
+ * gli indici veri di produzione. Va nella `codaPrima` di `creaDbAnnoPr2`, così il registro li trova come in produzione:
+ * `anno_id`, `target_section_ids` e i trigger li aggiungono le migrazioni. Non si passa insieme a `completo`, che ha una sua
+ * galleria più povera. Chi prova la funzione senza queste tabelle semplicemente non la passa.
+ */
+export const SCHEMA_GALLERIA_GENITORE = `
+  CREATE TABLE public.galleria_media_v2 (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    scuola_id uuid,
+    tag_students uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    is_broadcast boolean DEFAULT false,
+    target_classes text[],
+    created_at timestamptz DEFAULT CURRENT_TIMESTAMP,
+    giorno_competenza date,
+    politica_operazione jsonb,
+    eliminato_il timestamptz
+  );
+  CREATE INDEX idx_galleria_v2_tag_students ON public.galleria_media_v2 USING gin (tag_students);
+  CREATE INDEX idx_galleria_v2_sede_created_attive ON public.galleria_media_v2 (scuola_id, created_at DESC)
+    WHERE eliminato_il IS NULL;
+  CREATE TABLE public.alunni_classi_storico (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    alunno_id uuid NOT NULL REFERENCES public.alunni(id) ON DELETE CASCADE,
+    scuola_id uuid NOT NULL REFERENCES public.schools(id),
+    section_id uuid NOT NULL,
+    section_nome text NOT NULL DEFAULT '',
+    dal date NOT NULL,
+    al date,
+    fonte text NOT NULL CHECK (fonte IN ('attuale', 'presenza', 'staff', 'trasferimento')),
+    CHECK (al IS NULL OR al >= dal),
+    UNIQUE (alunno_id, scuola_id, section_id, dal, fonte)
+  );
+  CREATE INDEX alunni_classi_storico_alunno ON public.alunni_classi_storico (alunno_id);
+`
+
+/**
+ * PR 4.4 · Le colonne che avvisi, chat e voci leggono e che il banco minimo non ha, con i tipi e i vincoli veri di
+ * produzione. `scadenza_avviso` è `NOT NULL` come lì. Si esegue dopo `creaDbAnnoPr2`, come `SCHEMA_LEGAMI_GENITORE`: i test
+ * che non la passano restano sul banco di prima.
+ */
+export const SCHEMA_AVVISI_CHAT_VOCI_GENITORE = `
+  ALTER TABLE public.avvisi
+    ADD COLUMN target_scope character varying(20) DEFAULT 'globale' NOT NULL,
+    ADD COLUMN scadenza date,
+    ADD COLUMN scadenza_avviso timestamptz NOT NULL;
+  ALTER TABLE public.utenti
+    ADD COLUMN ruolo character varying(50),
+    ADD COLUMN archiviato_il timestamptz;
+  CREATE TYPE public.pagamento_tipo AS ENUM ('singolo', 'padre', 'rata', 'split');
+  ALTER TABLE public.pagamenti
+    ADD COLUMN visibile_dal date,
+    ADD COLUMN parent_payment_id uuid REFERENCES public.pagamenti(id) ON DELETE CASCADE,
+    ADD COLUMN tipo public.pagamento_tipo DEFAULT 'singolo' NOT NULL;
+  CREATE TABLE public.pagamenti_quote (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    pagamento_id uuid NOT NULL REFERENCES public.pagamenti(id) ON DELETE CASCADE,
+    adult_id uuid NOT NULL,
+    importo numeric(10,2) NOT NULL,
+    UNIQUE (pagamento_id, adult_id)
+  );
+`
+
+/**
+ * PR 4.4 · `news_posts` con le colonne vere di produzione che la regola di accesso legge: lo stato, il tipo di destinatari, i
+ * gradi e la sede che può essere NULL. Va nella `codaPrima` di `creaDbAnnoPr2`: `target_section_ids` e il trigger li aggiungono
+ * le migrazioni. Non si passa insieme a `completo`, che ha una sua `news_posts` più povera.
+ */
+export const SCHEMA_NEWS_GENITORE = `
+  CREATE TABLE public.news_posts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo text NOT NULL DEFAULT 'articolo' CHECK (tipo IN ('articolo', 'breve', 'instagram')),
+    stato text NOT NULL DEFAULT 'bozza' CHECK (stato IN ('bozza', 'proposta', 'programmata', 'pubblicata', 'nascosta')),
+    titolo text NOT NULL DEFAULT 'Titolo di prova',
+    target_scope text NOT NULL DEFAULT 'globale' CHECK (target_scope IN ('globale', 'grado', 'classi')),
+    target_gradi public.school_type_enum[],
+    target_classes text[],
+    scuola_id uuid,
+    author_id uuid NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+`
 
 /**
  * 4.2.M · `student_documents` nella forma minima del baseline (l'enum ridotto ai valori che servono). NON sta in
@@ -548,7 +670,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -570,8 +692,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

@@ -4,11 +4,13 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
+import { leggiVisibilita, type CoppiaAvviso } from '@/lib/anno/visibilita-genitore';
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { alunniDelleRisposte, nomiGenitoriDelleRisposte } from '@/lib/avvisi/nomi-risposte';
 import { verificaVisibilitaDocente } from '@/lib/avvisi/gate-docente';
+import { avvisoScaduto } from '@/lib/avvisi/scadenze';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { zNumeroPartecipanti } from '@/lib/validation/avvisi';
@@ -534,61 +536,118 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
             );
         }
 
-        const { data: alunno, error: erroreAlunno } = await supabase
-            .from('alunni')
-            .select('scuola_id, classe_sezione')
-            .eq('id', student_id)
-            .maybeSingle();
-        if (erroreAlunno) {
-            logEvento('db', 'error', {
-                operazione: 'avvisi/[id]/risposte:POST',
-                esito: 'alunno-non-letto-per-gate',
-                avviso: avvisoId,
-                alunno: student_id,
-            }, erroreAlunno);
+        // ── PR 4.4 · IL DESTINATARIO LO DICE LA FUNZIONE DELLA BACHECA ───────────
+        //
+        // Ciò che la bacheca offre, il server accetta: tutte e due leggono
+        // `avvisi_visibili_genitore`, e il confronto per nome di cui sopra resta
+        // per lo schema indietro e per l'avviso scaduto.
+        //
+        // ⚠️ La funzione non dà un avviso scaduto a nessuno, ma «scaduto» non è
+        // «non ti riguarda»: chi tocca il bottone fuori tempo deve leggere il
+        // codice del termine, che è di `avviso_adesione_registra`. Si legge la
+        // scadenza soltanto qui, e non nella SELECT qui sopra, che resta di colonne
+        // storiche per il database della CI: se la funzione ha risposto, la colonna
+        // c'è.
+        const visibili = await leggiVisibilita<CoppiaAvviso>(supabase, 'avvisi_visibili_genitore', parent_id);
+        if (visibili.stato === 'guasto') {
             return NextResponse.json(
                 { error: 'Le adesioni non sono disponibili in questo momento.', codice: 'ADESIONI_NON_DISPONIBILI' },
                 { status: 503 },
             );
         }
+        const destinatario = visibili.stato === 'ok'
+            && visibili.righe.some((r) => r.avviso_id === avvisoId && r.alunno_id === student_id);
+        if (visibili.stato === 'ok' && !destinatario) {
+            const { data: termine, error: erroreTermine } = await supabase
+                .from('avvisi')
+                .select('scadenza_avviso')
+                .eq('id', avvisoId)
+                .maybeSingle();
+            if (erroreTermine) {
+                logEvento('db', 'error', {
+                    operazione: 'avvisi/[id]/risposte:POST',
+                    esito: 'termine-non-letto-per-gate',
+                    avviso: avvisoId,
+                }, erroreTermine);
+                return NextResponse.json(
+                    { error: 'Le adesioni non sono disponibili in questo momento.', codice: 'ADESIONI_NON_DISPONIBILI' },
+                    { status: 503 },
+                );
+            }
+            const scadenza = (termine?.scadenza_avviso as string | null | undefined) ?? null;
+            if (!avvisoScaduto(scadenza, new Date().toISOString())) {
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi/[id]/risposte:POST',
+                    esito: 'adesione-alunno-fuori-avviso',
+                    avviso: avvisoId,
+                    alunno: student_id,
+                    uid: parent_id,
+                    tipo: 'funzione',
+                });
+                return NextResponse.json(
+                    { error: 'Questo avviso non riguarda il bambino indicato.', codice: 'ADESIONE_ALUNNO_FUORI_AVVISO' },
+                    { status: 403 },
+                );
+            }
+        }
 
-        const sedeAvviso = (avviso.scuola_id as string | null) ?? null;
-        const sedeAlunno = (alunno?.scuola_id as string | null) ?? null;
-        const classeAlunno = (alunno?.classe_sezione as string | null) ?? null;
-        const classiTarget = ((avviso.target_classes as string[] | null) ?? [])
-            .filter((c): c is string => typeof c === 'string' && c.trim() !== '');
-        // `target_scope = 'classe'` con l'elenco VUOTO vale globale, ed è la
-        // stessa lettura che fanno `POST /api/avvisi` (archivia `null` quando le
-        // classi valide sono zero) e il promemoria delle adesioni. Trattarlo come
-        // «nessuno è destinatario» chiuderebbe l'adesione a tutti su avvisi che
-        // oggi arrivano a tutti.
-        const perClasse = ((avviso.target_scope as string | null) ?? 'globale') === 'classe'
-            && classiTarget.length > 0;
+        if (!destinatario) {
+            const { data: alunno, error: erroreAlunno } = await supabase
+                .from('alunni')
+                .select('scuola_id, classe_sezione')
+                .eq('id', student_id)
+                .maybeSingle();
+            if (erroreAlunno) {
+                logEvento('db', 'error', {
+                    operazione: 'avvisi/[id]/risposte:POST',
+                    esito: 'alunno-non-letto-per-gate',
+                    avviso: avvisoId,
+                    alunno: student_id,
+                }, erroreAlunno);
+                return NextResponse.json(
+                    { error: 'Le adesioni non sono disponibili in questo momento.', codice: 'ADESIONI_NON_DISPONIBILI' },
+                    { status: 503 },
+                );
+            }
 
-        // Fail-closed: un alunno che l'anagrafica non restituisce, o senza sede,
-        // non è destinatario di niente. `genitoreHasFiglio` ha già detto che il
-        // legame c'è: se la riga non si legge, il dato è incoerente e una
-        // scrittura su un dato incoerente è esattamente ciò che si sta chiudendo.
-        const fuoriSede = !sedeAvviso || !sedeAlunno || sedeAlunno !== sedeAvviso;
-        const fuoriClasse = perClasse && (!classeAlunno || !classiTarget.includes(classeAlunno));
-        if (fuoriSede || fuoriClasse) {
-            // Solo uuid, un enumerato e un conteggio: mai il nome del bambino, mai
-            // il titolo dell'avviso, mai il nome della classe — `sezione` sarebbe
-            // in lista bianca, ma qui non serve a diagnosticare e nomina il posto
-            // in cui sta un minore.
-            logEvento('avvisi', 'warn', {
-                operazione: 'avvisi/[id]/risposte:POST',
-                esito: 'adesione-alunno-fuori-avviso',
-                avviso: avvisoId,
-                alunno: student_id,
-                uid: parent_id,
-                tipo: fuoriSede ? 'sede' : 'classe',
-                n_classi: classiTarget.length,
-            });
-            return NextResponse.json(
-                { error: 'Questo avviso non riguarda il bambino indicato.', codice: 'ADESIONE_ALUNNO_FUORI_AVVISO' },
-                { status: 403 },
-            );
+            const sedeAvviso = (avviso.scuola_id as string | null) ?? null;
+            const sedeAlunno = (alunno?.scuola_id as string | null) ?? null;
+            const classeAlunno = (alunno?.classe_sezione as string | null) ?? null;
+            const classiTarget = ((avviso.target_classes as string[] | null) ?? [])
+                .filter((c): c is string => typeof c === 'string' && c.trim() !== '');
+            // `target_scope = 'classe'` con l'elenco VUOTO vale globale, ed è la
+            // stessa lettura che fanno `POST /api/avvisi` (archivia `null` quando le
+            // classi valide sono zero) e il promemoria delle adesioni. Trattarlo come
+            // «nessuno è destinatario» chiuderebbe l'adesione a tutti su avvisi che
+            // oggi arrivano a tutti.
+            const perClasse = ((avviso.target_scope as string | null) ?? 'globale') === 'classe'
+                && classiTarget.length > 0;
+
+            // Fail-closed: un alunno che l'anagrafica non restituisce, o senza sede,
+            // non è destinatario di niente. `genitoreHasFiglio` ha già detto che il
+            // legame c'è: se la riga non si legge, il dato è incoerente e una
+            // scrittura su un dato incoerente è esattamente ciò che si sta chiudendo.
+            const fuoriSede = !sedeAvviso || !sedeAlunno || sedeAlunno !== sedeAvviso;
+            const fuoriClasse = perClasse && (!classeAlunno || !classiTarget.includes(classeAlunno));
+            if (fuoriSede || fuoriClasse) {
+                // Solo uuid, un enumerato e un conteggio: mai il nome del bambino, mai
+                // il titolo dell'avviso, mai il nome della classe — `sezione` sarebbe
+                // in lista bianca, ma qui non serve a diagnosticare e nomina il posto
+                // in cui sta un minore.
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi/[id]/risposte:POST',
+                    esito: 'adesione-alunno-fuori-avviso',
+                    avviso: avvisoId,
+                    alunno: student_id,
+                    uid: parent_id,
+                    tipo: fuoriSede ? 'sede' : 'classe',
+                    n_classi: classiTarget.length,
+                });
+                return NextResponse.json(
+                    { error: 'Questo avviso non riguarda il bambino indicato.', codice: 'ADESIONE_ALUNNO_FUORI_AVVISO' },
+                    { status: 403 },
+                );
+            }
         }
 
         // Morosità: l'adesione all'avviso è un'azione di servizio → bloccata se sospeso.

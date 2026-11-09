@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 
 /**
  * `GET /api/notifiche` PORTA ANCHE IL NUMERO DEI MESSAGGI DI CHAT NON LETTI.
@@ -31,6 +32,7 @@ const h = vi.hoisted(() => {
   }
   function makeClient() {
     return {
+      rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
       from(table: string) {
         const qb: Record<string, unknown> = {}
         const rec = (m: string) => (...args: unknown[]) => { state.calls.push({ table, m, args }); return qb }

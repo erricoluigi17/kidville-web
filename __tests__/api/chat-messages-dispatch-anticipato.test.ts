@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { rpcVisibilitaIndietro } from '../fixtures/finto-supabase'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CASO_PEGGIORE_GIRO_MS } from '@/lib/push/durata-dispatch'
@@ -67,6 +68,7 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 }))
 
 const adminClient = {
+  rpc: async (nome: string) => rpcVisibilitaIndietro(nome),
   from(table: string) {
     const b: Record<string, unknown> = {}
     const filtri: Record<string, unknown> = {}

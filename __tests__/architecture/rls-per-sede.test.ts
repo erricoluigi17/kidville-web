@@ -163,10 +163,17 @@ function sedeSenzaRuolo(p: Policy): boolean {
  *
  * `is_staff_or_admin()` NON lo è: risponde «sei del personale?», che è una domanda
  * sul ruolo. E nemmeno la ricerca del proprio ruolo in `utenti` — vedi sopra.
+ *
+ * Dalla PR 4.4 «anno scolastico» si aggiungono i quattro wrapper `*_miei()`: leggono
+ * `auth.uid()` dentro la funzione, e ogni riga che tornano è dei figli di chi chiama. Dal
+ * testo della regola `auth.uid()` non si vede più, e senza questi nomi la prova sulle
+ * tabelle con `scuola_id` andrebbe rossa su `galleria_media_v2` e `pagamenti` alla prima
+ * fotografia rigenerata dopo il merge. Sono nomi esatti, non un `.*_miei`: un wrapper
+ * nuovo si guarda prima di entrare qui.
  */
 function vincolaLIdentita(p: Policy): boolean {
     if (soloControlloDiRuolo(p)) return false
-    return /auth\.uid\(\)|current_parent_student_ids/.test(espressioni(p))
+    return /auth\.uid\(\)|current_parent_student_ids|\b(media_visibili_miei|thread_visibili_miei|voci_visibili_miei|figli_attivi_miei)\(\)/.test(espressioni(p))
 }
 
 function chiave(p: Policy): string {

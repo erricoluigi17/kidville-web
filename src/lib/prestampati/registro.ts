@@ -246,6 +246,19 @@ function daCampoSegreteria(c: CampoModuloSegreteria): CampoPrestampato {
   }
 }
 
+// ─── La durata ──────────────────────────────────────────────────────────────────
+
+/**
+ * FINO A QUANDO VALE IL FOGLIO (risposta 10 della specifica dell'anno scolastico).
+ *
+ * `anno`: scade con l'anno scolastico. `fino_a_revoca`: resta valido finché qualcuno non lo revoca, e sono
+ * i tre sanitari. I vecchi restano consultabili in ogni caso: la durata non toglie niente dall'archivio.
+ *
+ * ⚠️ `anno` NON vuol dire «da rifirmare»: un certificato o il verbale di un infortunio valgono per l'anno
+ * ma nessuna famiglia li rifirma. Che cosa si rifirma lo decide `@/lib/prestampati/da-rifirmare`.
+ */
+export type DurataPrestampato = 'anno' | 'fino_a_revoca'
+
 // ─── La voce di registro ────────────────────────────────────────────────────────
 
 export interface VocePrestampato {
@@ -269,6 +282,7 @@ export interface VocePrestampato {
   firma: FirmaPrestampatoRichiesta
   protocollo: ProtocolloPrestampato
   archiviazione: ArchiviazionePrestampato
+  durata: DurataPrestampato
   campi: readonly CampoPrestampato[]
 }
 
@@ -295,7 +309,7 @@ function banchiDellaSegreteria(ruoli: readonly RuoloPrestampato[]): readonly Ruo
 }
 
 /**
- * LE TRE COSE CHE `modelli/genitore.ts` NON DICHIARA, decise qui una per una.
+ * LE QUATTRO COSE CHE `modelli/genitore.ts` NON DICHIARA, decise qui una per una.
  *
  *  · **l'etichetta** — là c'è il `titolo`, che è il testo IN MAIUSCOLO stampato sul foglio
  *    («RICHIESTA DI PERMESSO — ENTRATA POSTICIPATA / USCITA ANTICIPATA»): un elenco di
@@ -306,12 +320,14 @@ function banchiDellaSegreteria(ruoli: readonly RuoloPrestampato[]): readonly Ruo
  *  · **l'archiviazione** — regola 3: il PDF finisce in `student_documents` con il suo
  *    `document_type`. I due certificati stanno da entrambe le parti (vanno a un ente *e*
  *    restano nel fascicolo del bambino) e lì vince `student_documents`: è la copia che la
- *    famiglia ritrova, mentre del registro si occupa già `protocollo: 'uscita'`.
+ *    famiglia ritrova, mentre del registro si occupa già `protocollo: 'uscita'`;
+ *  · **la durata** — risposta 10: scadono con l'anno, tranne i tre sanitari che valgono
+ *    fino a revoca.
  *
  * ⚠️ È un `Record` sull'unione ESATTA degli otto slug, e non una regola dedotta dalla
  * firma («firma il legale rappresentante ⇒ esce dalla scuola»): quella dedurrebbe da un
  * campo che parla d'altro e resterebbe verde il giorno in cui i due assi si scollano. Così
- * invece un modello nuovo di là **non compila** finché qualcuno non decide queste tre
+ * invece un modello nuovo di là **non compila** finché qualcuno non decide queste quattro
  * cose — che è l'unico momento in cui le decide una persona.
  *
  * ⚠️ `protocollo: 'uscita'` dice che il foglio consuma un numero **quando lo emette la
@@ -322,48 +338,81 @@ function banchiDellaSegreteria(ruoli: readonly RuoloPrestampato[]): readonly Ruo
  */
 const SCELTE_GENITORE: Record<
   SlugPrestampatoGenitore,
-  { etichetta: string; protocollo: ProtocolloPrestampato; archiviazione: ArchiviazionePrestampato }
+  {
+    etichetta: string
+    protocollo: ProtocolloPrestampato
+    archiviazione: ArchiviazionePrestampato
+    durata: DurataPrestampato
+  }
 > = {
   scheda_sanitaria: {
     etichetta: 'Scheda sanitaria',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'fino_a_revoca',
   },
   autorizzazione_farmaci: {
     etichetta: 'Autorizzazione somministrazione farmaci',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'fino_a_revoca',
   },
   dieta_speciale: {
     etichetta: 'Richiesta dieta speciale',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'fino_a_revoca',
   },
   delega_ritiro: {
     etichetta: 'Delega al ritiro',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'anno',
   },
   permesso_orario: {
     etichetta: 'Permesso entrata posticipata / uscita anticipata',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'anno',
   },
   autorizzazione_uscita: {
     etichetta: 'Autorizzazione uscita didattica / gita',
     protocollo: 'nessuno',
     archiviazione: 'student_documents',
+    durata: 'anno',
   },
   certificato_iscrizione_frequenza: {
     etichetta: 'Certificato di iscrizione e frequenza',
     protocollo: 'uscita',
     archiviazione: 'student_documents',
+    durata: 'anno',
   },
   certificato_bonus_nido: {
     etichetta: 'Certificato per Bonus Asilo Nido INPS',
     protocollo: 'uscita',
     archiviazione: 'student_documents',
+    durata: 'anno',
   },
+}
+
+/**
+ * La durata dei nove della segreteria, in un `Record` sulla loro unione e non dentro `modelli/segreteria.ts`,
+ * per la stessa ragione delle scelte qui sopra: uno slug aggiunto all'unione non compila finché non ha la
+ * sua. Lo slug di là è `string` e il compilatore non vede un modello fuori dall'unione: lì arriva un
+ * `undefined`, e lo ferma il test «ogni voce del catalogo dichiara una durata valida».
+ *
+ * Tutti `anno`: la risposta 10 toglie dall'anno i soli sanitari, e nessuno di questi lo è.
+ */
+const DURATA_SEGRETERIA: Record<SlugPrestampatoSegreteria, DurataPrestampato> = {
+  nulla_osta: 'anno',
+  richiesta_disponibilita: 'anno',
+  sollecito_pagamento: 'anno',
+  verbale_infortunio: 'anno',
+  valutazione_infanzia: 'anno',
+  certificato_competenze: 'anno',
+  certificato_servizio: 'anno',
+  stampe_sezione: 'anno',
+  registro_presenze: 'anno',
 }
 
 function daModelloGenitore(m: ModelloGenitore): VocePrestampato {
@@ -378,13 +427,15 @@ function daModelloGenitore(m: ModelloGenitore): VocePrestampato {
     firma: m.firma,
     protocollo: scelte.protocollo,
     archiviazione: scelte.archiviazione,
+    durata: scelte.durata,
     campi: m.campi.map(daCampoGenitore),
   }
 }
 
 function daVoceSegreteria(v: VoceRegistroPrestampati): VocePrestampato {
+  const slug = v.slug as SlugPrestampatoSegreteria
   return {
-    slug: v.slug as SlugPrestampatoSegreteria,
+    slug,
     etichetta: v.etichetta,
     famiglia: 'segreteria',
     soggetto: v.soggetto,
@@ -392,6 +443,7 @@ function daVoceSegreteria(v: VoceRegistroPrestampati): VocePrestampato {
     firma: requisitoDaBlocco(v.firma),
     protocollo: v.protocollo,
     archiviazione: v.archiviazione,
+    durata: DURATA_SEGRETERIA[slug],
     campi: v.campi.map(daCampoSegreteria),
   }
 }

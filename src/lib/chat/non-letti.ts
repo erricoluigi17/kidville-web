@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
 import { aBlocchi, ID_PER_QUERY, RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi';
+import { leggiVisibilita, type RigaThreadVisibile } from '@/lib/anno/visibilita-genitore';
 import { zUuid } from '@/lib/validation/common';
 
 /**
@@ -41,6 +42,10 @@ import { zUuid } from '@/lib/validation/common';
  * ricetta per un badge che dice 3 e una lista che ne mostra 1 — e a quel punto non si crede
  * più a nessuno dei due.
  *
+ * PER LA STESSA RAGIONE DECIDE `thread_visibili`, come nella lista (PR 4.4): una conversazione
+ * che la lista toglie e la GET dei messaggi rifiuta non si può aprire, quindi i suoi non letti
+ * non scenderebbero mai. Sarebbe un numero che nessun gesto spegne.
+ *
  * NON SI CONTA DALLE NOTIFICHE, e non è un dettaglio d'implementazione: una notifica di chat
  * copre una RAFFICA di messaggi (la route dei messaggi ha un debounce per thread), quindi il
  * numero delle notifiche non è il numero dei messaggi. Sarebbe anche un numero volatile:
@@ -53,8 +58,9 @@ import { zUuid } from '@/lib/validation/common';
  * costringerebbe il chiamante a rifare la stessa query. E il chiamante li usa: la consegna
  * «delivered» (`consegnaSeInAttesa`) gira in questa stessa GET, sugli stessi thread e con la
  * stessa identità. Un giro in più sulla route che esiste per non
- * aggiungere giri sarebbe un controsenso. `threadIds` sono i thread LETTI dalla prima query —
- * con o senza messaggi non letti — e con nessuna conversazione è `[]`.
+ * aggiungere giri sarebbe un controsenso. `threadIds` sono i thread della prima query che
+ * `thread_visibili` lascia — con o senza messaggi non letti — e con nessuna conversazione è
+ * `[]`: un messaggio che la famiglia non può aprire non è «consegnato».
  *
  * ─── PERCHÉ `null` E NON 0 QUANDO QUALCOSA VA STORTO ────────────────────────────────────
  *
@@ -104,7 +110,7 @@ import { zUuid } from '@/lib/validation/common';
 export interface ChatNonLetti {
     /** Messaggi non letti, sommati su tutti i blocchi. */
     totale: number;
-    /** Le conversazioni dell'utente lette dalla prima query, per chi deve riusarle. */
+    /** Le conversazioni visibili dell'utente, per chi deve riusarle. */
     threadIds: string[];
 }
 
@@ -146,23 +152,34 @@ export async function leggiChatNonLetti(
         }
 
         // `?? []`: tolleranza dichiarata in testata, non un `??` di passaggio.
-        const threadIds = (threads ?? []).map((t) => t.id as string);
+        const lette = (threads ?? []).map((t) => t.id as string);
 
         // Nessuna conversazione → nessuna seconda query. È il caso di quasi tutti i genitori
         // nuovi, e gira a ogni poll di ogni persona connessa. `aBlocchi([])` non produrrebbe
         // blocchi comunque: questa uscita anticipata non serve a impedire una query, serve a
         // dire in una riga che il caso è previsto — e a non dipendere da quel dettaglio.
-        if (threadIds.length === 0) return { totale: 0, threadIds: [] };
+        // Risparmia anche la rpc qui sotto.
+        if (lette.length === 0) return { totale: 0, threadIds: [] };
 
-        if (threadIds.length >= RIGHE_MASSIME_POSTGREST) {
+        if (lette.length >= RIGHE_MASSIME_POSTGREST) {
             logEvento('chat', 'warn', {
                 operazione,
                 esito: 'chat-non-letti-thread-troncati',
-                n: threadIds.length,
+                n: lette.length,
             });
             // Si prosegue sui thread che ci sono: un numero un po' basso, con la sua riga di
             // log che lo dichiara, vale più di nessun numero.
         }
+
+        // Vedi la testata. Schema indietro: si conta come prima. Un guasto è «non lo so»; la
+        // riga di log l'ha già scritta `leggiVisibilita`.
+        const visibili = await leggiVisibilita<RigaThreadVisibile>(
+            supabase, 'thread_visibili', utenteId, {}, { successoMuto: true },
+        );
+        if (visibili.stato === 'guasto') return null;
+        const ammessi = visibili.stato === 'ok' ? new Set(visibili.righe.map((r) => r.thread_id)) : null;
+        const threadIds = ammessi ? lette.filter((id) => ammessi.has(id)) : lette;
+        if (threadIds.length === 0) return { totale: 0, threadIds: [] };
 
         let totale = 0;
 

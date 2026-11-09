@@ -12,6 +12,8 @@ import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import type { AppUser } from '@/lib/auth/predicati-ruolo';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
+import { figliAttiviDi, leggiVisibilita, type CoppiaAvviso } from '@/lib/anno/visibilita-genitore';
+import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import {
     avvisoVisibileAlDocente, puoGestireAvviso, vedeTuttiGliAvvisi, RUOLI_GESTIONE_AVVISI,
@@ -489,7 +491,33 @@ async function listaAvvisiStaff(
 
 // ── Ramo GENITORE (G3+m3): parentId dalla SESSIONE, feed unificato dei figli. ─
 async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): Promise<NextResponse> {
-    const figliIds = await getFigliDiGenitore(supabase, parentId);
+    // ── PR 4.4 · CHI RICEVE COSA LO DICE LA FUNZIONE, PER UUID DI SEZIONE ────
+    //
+    // Il confronto per nome qui sotto dava un avviso alla sezione omonima di un
+    // altro anno, e a un figlio ritirato. `avvisi_visibili_genitore` risponde per
+    // coppia (avviso, figlio), sulla frequenza viva. Le sedi della query vengono
+    // dalle stesse frequenze e non da `alunni.scuola_id`: un bambino vivo in due
+    // sedi riceve gli avvisi di entrambe. La query resta quella di oggi per
+    // scadenze e degradi, e le coppie si incrociano in memoria: niente `.in('id')`.
+    //
+    // Schema indietro (la CI): il confronto di oggi, con un `info`. Un guasto non
+    // ci cade mai, risponde errore come ogni lettura di questa route.
+    const [visibili, attivi] = await Promise.all([
+        leggiVisibilita<CoppiaAvviso>(supabase, 'avvisi_visibili_genitore', parentId),
+        figliAttiviDi(supabase, parentId),
+    ]);
+    if (visibili.stato === 'guasto' || attivi.stato === 'guasto') return rispostaGuastoGiaRegistrato();
+    const perFunzione = visibili.stato === 'ok' && attivi.stato === 'ok'
+        ? { coppie: visibili.righe, sedi: [...new Set(attivi.righe.map((r) => r.scuola_id))] }
+        : null;
+    const coppiePerAvviso = new Map<string, Set<string>>();
+    for (const c of perFunzione?.coppie ?? []) {
+        coppiePerAvviso.set(c.avviso_id, (coppiePerAvviso.get(c.avviso_id) ?? new Set<string>()).add(c.alunno_id));
+    }
+
+    const figliIds = perFunzione
+        ? [...new Set(perFunzione.coppie.map((c) => c.alunno_id))]
+        : await getFigliDiGenitore(supabase, parentId);
     if (figliIds.length === 0) return NextResponse.json([]);
 
     const { data: figliRows, error: figliErr } = await supabase
@@ -503,7 +531,8 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
     const figli = (figliRows ?? []) as unknown as Figlio[];
     const classiFigli = new Set(figli.map((f) => f.classe_sezione).filter((c): c is string => !!c));
     // Isolamento di plesso anche lato genitore: un globale di un'altra sede non compare.
-    const scuoleFigli = [...new Set(figli.map((f) => f.scuola_id).filter((s): s is string => !!s))];
+    const scuoleFigli = perFunzione?.sedi
+        ?? [...new Set(figli.map((f) => f.scuola_id).filter((s): s is string => !!s))];
     // Fail-closed: se nessun figlio ha un plesso determinabile non si mostra nulla,
     // così un globale cross-tenant non appare quando scuola_id manca sull'anagrafica.
     if (scuoleFigli.length === 0) return NextResponse.json([]);
@@ -596,6 +625,7 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
     // «le adesioni si chiudono venerdì, ma l'avviso deve restare leggibile fino
     // alla gita». Il bottone lo spegne `adesioni_chiuse`, qui sotto.
     const rilevanti = avvisi.filter((a) => {
+        if (perFunzione) return coppiePerAvviso.has(a.id);
         if (a.target_scope === 'globale') return true;
         return (a.target_classes ?? []).some((c) => classiFigli.has(c));
     });
@@ -640,11 +670,16 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
         // nome, e un omonimo fra due plessi sarebbe già oggi un avviso che arriva
         // alla sezione sbagliata — un difetto diverso, che vive nel filtro
         // `rilevanti` qui sopra e non in questa riga.
-        const figliRiferiti = avviso.target_scope === 'globale'
-            ? figli.filter((f) => !!avviso.scuola_id && f.scuola_id === avviso.scuola_id)
-            : figli.filter(
-                (f) => f.classe_sezione && (avviso.target_classes ?? []).includes(f.classe_sezione),
-            );
+        //
+        // PR 4.4: le coppie della funzione dicono già tutto, e il difetto del nome
+        // omonimo qui sopra sparisce con loro. Il resto è lo schema indietro.
+        const figliRiferiti = perFunzione
+            ? figli.filter((f) => coppiePerAvviso.get(avviso.id)?.has(f.id))
+            : avviso.target_scope === 'globale'
+                ? figli.filter((f) => !!avviso.scuola_id && f.scuola_id === avviso.scuola_id)
+                : figli.filter(
+                    (f) => f.classe_sezione && (avviso.target_classes ?? []).includes(f.classe_sezione),
+                );
         // Risposte del genitore per QUESTO avviso, una riga per figlio: la mappa
         // è già in memoria, indicizzata per avviso e poi per alunno.
         const perFiglio: Map<string, RispostaFiglio> = mieRisposte.get(avviso.id) ?? new Map();

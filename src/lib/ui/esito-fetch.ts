@@ -3605,6 +3605,18 @@ export const CODICI_ERRORE = {
     SCRITTURA_INCOMPLETA: 'erroreScritturaIncompleta',
     CODICE_FISCALE_GIA_USATO: 'erroreCodiceFiscaleGiaUsato',
     ALUNNO_ANONIMIZZATO: 'erroreAlunnoAnonimizzato',
+    // `GET /api/admin/students/export` (PR 4.4, compito 4.4.8): l'anagrafica non si è letta per intero (500) e il foglio
+    // non esce. NON riusa ANAGRAFICA_ELENCO_NON_LETTO, che è l'elenco del docente a schermo: qui si dice che il file non c'è.
+    ANAGRAFICA_EXPORT_NON_LETTA: 'erroreAnagraficaExportNonLetta',
+    /**
+     * CHE COSA VEDE UNA FAMIGLIA (PR 4.4, compito 4.4.6):
+     *  · 403 `FIGLIO_NON_ATTIVO` — il legame c'è, ma il bambino non ha una frequenza viva nell'anno attivo;
+     *  · 403 `CHAT_SOLA_LETTURA` — la conversazione si legge e non si scrive (`thread_visibili`, la manopola della sede);
+     *  · 422 `DATA_FUORI_ANNO` — la mensa non prenota né disdice fuori dall'anno attivo della sede.
+     */
+    FIGLIO_NON_ATTIVO: 'erroreFiglioNonAttivo',
+    CHAT_SOLA_LETTURA: 'erroreChatSolaLettura',
+    DATA_FUORI_ANNO: 'erroreDataFuoriAnno',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

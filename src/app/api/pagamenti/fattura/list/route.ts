@@ -198,7 +198,7 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     // famiglia il perimetro è il LEGAME col bambino e non il plesso.
     const { data: pag, error: errPag } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id, alunno_id')
+      .select('id, scuola_id, alunno_id, tipo')
       .eq('id', pagamento_id)
       .maybeSingle()
     // PostgREST non lancia: senza questo controllo un guasto di lettura sarebbe
@@ -225,6 +225,7 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
       supabase,
       auth.user,
       pag.scuola_id as string,
+      pag.tipo as string | null,
     )
     if (visibilita.esito === 'errore') return visibilita.response
 

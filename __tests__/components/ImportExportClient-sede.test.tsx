@@ -30,9 +30,6 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'e' }))
-vi.mock('@supabase/ssr', () => ({
-  createBrowserClient: () => ({ from: () => ({ select: async () => ({ data: [], error: null }) }) }),
-}))
 vi.mock('xlsx', () => ({
   read: () => ({ SheetNames: ['Foglio1'], Sheets: { Foglio1: {} } }),
   utils: {

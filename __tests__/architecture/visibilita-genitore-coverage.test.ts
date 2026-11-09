@@ -295,12 +295,48 @@ function guardiaMontata(sorgente: string): boolean {
   )
 }
 
+/** Il testo strutturale di ciò che l'handler raggiunge nel SUO file, una voce per dichiarazione: niente commenti, niente stringhe. */
+function dichiarazioniRaggiunte(mod: Modulo, nome: string): string[] {
+  const viste = new Set<string>()
+  const coda = [nome]
+  const out: string[] = []
+  while (coda.length > 0) {
+    const n = coda.pop()!
+    const dich = mod.dichiarazioni.get(n)
+    if (viste.has(n) || !dich) continue
+    viste.add(n)
+    out.push(mod.m.struttura.slice(dich.da, dich.a))
+    coda.push(...dich.riferimenti)
+  }
+  return out
+}
+
+const RE_VISIBILITA_FATTURE = /\bconst\s+visibilita\s*=\s*await\s+caricaVisibilitaFatture\s*\(/
+const RE_FILTRO_DOCUMENTO = /\bdellaSede\.filter\(\s*visibilita\.puoVedere\s*\)/
+// `tutte.length` resta lecito: distingue «non emessa» da «non disponibile» e decide il ripiego sulla chiave del pagamento.
+const RE_RIGHE_NON_FILTRATE = /\b(?:tutte|dellaSede)\b(?!\.length\b)/
+
+/**
+ * L'handler carica il predicato dal suo modulo, filtra le righe della sede, e da lì in poi le righe non filtrate si possono solo
+ * contare. Qui, a differenza del resto del lock, si guarda anche che il risultato venga usato: è ciò che regge l'esenzione.
+ */
+function applicaFiltroPerDocumento(sorgente: string, metodo: string): boolean {
+  const mod = creaModulo(sorgente)
+  if (mod.importati.get('caricaVisibilitaFatture')?.spec !== '@/lib/pagamenti/visibilita-fatture') return false
+  return dichiarazioniRaggiunte(mod, metodo).some((testo) => {
+    const filtro = RE_FILTRO_DOCUMENTO.exec(testo)
+    if (!filtro || !RE_VISIBILITA_FATTURE.test(testo.slice(0, filtro.index))) return false
+    return !RE_RIGHE_NON_FILTRATE.test(testo.slice(filtro.index + filtro[0].length))
+  })
+}
+
 // ─── Le eccezioni ────────────────────────────────────────────────────────────
 
 /**
  * Handler con un ramo genitore che leggono una tabella senza la sua funzione. Una voce che non corrisponde più a niente, o che
- * nomina una tabella in più o in meno, fa fallire il lock: l'elenco non può invecchiare in silenzio. Qui stanno solo letture da cui
- * non esce un contenuto che la funzione nasconderebbe, o porte che alla famiglia sono chiuse. Non ci sta una route da correggere.
+ * nomina una tabella in più o in meno, fa fallire il lock: l'elenco non può invecchiare in silenzio. Qui stanno letture da cui non
+ * esce un contenuto che la funzione nasconderebbe, o porte che alla famiglia sono chiuse. Fanno eccezione le due voci delle
+ * fatture (`FILTRATE_PER_DOCUMENTO`): lo dicono nel motivo, e il lock cade se smettono di applicare il filtro per documento.
  *
  * `pagamenti/ticket`, `parent/submissions` e `forms/signed-pdf` non ci sono perché non leggono queste tabelle (`ticket_mensa`,
  * `forms_submissions`): sarebbero voci morte.
@@ -344,12 +380,12 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
   {
     handler: 'pagamenti/fattura/list:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Legge la voce per il gate `assertFatturaInScope` (legame col bambino): esce il registro delle fatture emesse, documenti fiscali della famiglia che non dipendono dalla visibilità della voce.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e le righe le decide per documento `caricaVisibilitaFatture`, acceso sede per sede da `fatture_visibilita_attiva_il`: finché è spento, un adulto legato al bambino e fuori dalle quote vede elenco e intestatari delle fatture di una voce divisa, e si chiude quando il filtro si accende, salvo le fatture ordinarie, che il filtro lascia condivise.',
   },
   {
     handler: 'pagamenti/fattura:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Legge la voce per il gate `assertFatturaInScope` (legame col bambino): esce il PDF di una fattura emessa, documento fiscale della famiglia che non dipende dalla visibilità della voce.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e il documento lo decide `caricaVisibilitaFatture`, acceso sede per sede da `fatture_visibilita_attiva_il`: finché è spento, un adulto legato al bambino e fuori dalle quote scarica il PDF delle fatture di una voce divisa, e si chiude quando il filtro si accende, salvo le fatture ordinarie, che il filtro lascia condivise.',
   },
   {
     handler: 'pagamenti/riconciliazione/[id]/contesto:GET',
@@ -372,6 +408,9 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
     motivo: 'Il ramo genitore è il rifiuto: `agisceComeGenitore` risponde 403 prima di ogni lettura, e il resto è il semaforo delle gite per chi insegna.',
   },
 ]
+
+/** Le voci di `ESENTI` che valgono solo finché il filtro per documento decide le righe della risposta. */
+const FILTRATE_PER_DOCUMENTO = ['pagamenti/fattura:GET', 'pagamenti/fattura/list:GET'] as const
 
 // ─── Le prove dello scanner, su sorgenti finti ───────────────────────────────
 
@@ -525,6 +564,30 @@ describe('visibilita-genitore-coverage · lo scanner', () => {
     expect(suFinti({}).handlerDi(ROUTE)).toEqual([])
   })
 
+  it('il filtro per documento vale solo se l’handler lo carica, lo applica e ne usa il risultato', () => {
+    const imp = "import { caricaVisibilitaFatture } from '@/lib/pagamenti/visibilita-fatture'\n"
+    const carica = 'const visibilita = await caricaVisibilitaFatture(db, user, sede)\nconst dellaSede = tutte.filter(f)\n'
+    const applica = 'const visibili = dellaSede.filter(visibilita.puoVedere)\n'
+    const buono = handler(`${carica}${applica}return visibili`)
+    const conAiuto = (chiamata: string) => `async function leggi() {\n${carica}${applica}return visibili\n}\n${handler(chiamata)}`
+
+    const casi: [string, string, boolean][] = [
+      ['carica, applica e usa', imp + buono, true],
+      ['dopo il filtro si possono contare le righe', imp + handler(`${carica}${applica}if (tutte.length === 0) return 1\nreturn visibili`), true],
+      ['in una funzione del file che l’handler chiama', imp + conAiuto('return leggi()'), true],
+      ['in una funzione del file che l’handler non chiama', imp + conAiuto('return 1'), false],
+      ['il filtro in un commento', imp + handler(`${carica}// ${applica}return dellaSede`), false],
+      ['il filtro in una stringa', imp + handler(`${carica}const s = 'dellaSede.filter(visibilita.puoVedere)'\nreturn s`), false],
+      ['il filtro nell’altro handler', imp + handler(carica) + handler(`${carica}${applica}return visibili`, 'POST'), false],
+      ['il risultato buttato: escono le righe della sede', imp + handler(`${carica}${applica}return dellaSede`), false],
+      ['il risultato buttato: escono tutte', imp + handler(`${carica}${applica}return tutte.find(f)`), false],
+      ['un predicato non caricato dal suo modulo', imp + handler(`const visibilita = { puoVedere: sempre }\nconst dellaSede = tutte.filter(f)\n${applica}return visibili`), false],
+      ['l’import da un altro modulo', "import { caricaVisibilitaFatture } from '@/lib/prova/finta'\n" + buono, false],
+      ['nessun import', buono, false],
+    ]
+    for (const [descrizione, sorgente, atteso] of casi) expect(applicaFiltroPerDocumento(sorgente, 'GET'), descrizione).toBe(atteso)
+  })
+
   it('la guardia: riconosce il montaggio, e non lo confonde con un commento o con un `children` nudo', () => {
     const imp = "import { GuardiaSenzaFigli } from '@/components/features/parent/GuardiaSenzaFigli';\n"
     expect(guardiaMontata(`${imp}<main><GuardiaSenzaFigli>{children}</GuardiaSenzaFigli></main>`)).toBe(true)
@@ -611,6 +674,22 @@ describe('visibilita-genitore-coverage · il codice di src/', () => {
     ).toEqual([])
     expect(dichiarate.filter((c) => !trovate.includes(c)), 'voce di ESENTI che non corrisponde più a niente: toglila').toEqual([])
   }, TEMPO)
+
+  it('le due voci delle fatture valgono solo finché l’handler applica il filtro per documento', () => {
+    for (const id of FILTRATE_PER_DOCUMENTO) {
+      expect(ESENTI.find((e) => e.handler === id)?.motivo, id).toContain('caricaVisibilitaFatture')
+      const [percorso, metodo] = id.split(':')
+      const sorgente = fs.readFileSync(path.join(API, percorso, 'route.ts'), 'utf8')
+      expect(applicaFiltroPerDocumento(sorgente, metodo), `${id} non applica più caricaVisibilitaFatture alle righe: la voce di ESENTI non ha più ragione`).toBe(true)
+    }
+  })
+
+  it('il predicato delle fatture decide per documento, e si accende per sede', () => {
+    const mod = creaModulo(fs.readFileSync(path.join(RADICE, 'src/lib/pagamenti/visibilita-fatture.ts'), 'utf8'))
+    const dich = mod.dichiarazioni.get('caricaVisibilitaFatture')
+    const corpo = dich ? mod.m.senzaCommenti.slice(dich.da, dich.a) : ''
+    for (const voce of ['fatture_visibilita_attiva_il', 'quote_separate', 'parent_registry_id']) expect(corpo, voce).toContain(voce)
+  })
 
   it('ESENTI: una voce per handler, con una ragione di una riga', () => {
     expect(new Set(ESENTI.map((e) => e.handler)).size).toBe(ESENTI.length)

@@ -41,7 +41,7 @@
 | frequenze vive con `data_ingresso` futura | 0 | dal merge un bambino così non si vede fino a quella data, e la famiglia con quel solo figlio legge «Nessuna iscrizione attiva»; l'avviso alla segreteria arriva con la PR 4.5 |
 | conversazioni | 1.130 | — |
 | con figlio non vivo | 7 | spariscono dalla lista del genitore; per il docente passano in sola lettura |
-| senza legame fra genitore e bambino | 1 | il genitore la perde |
+| senza legame fra genitore e bambino | 1, una delle 7 | il genitore la perde; non ce ne sono con un figlio vivo |
 | con un docente non più assegnato | 82 | restano scrivibili finché la manopola è spenta |
 | voci divise fra genitori | 5 | ciascun genitore vede la propria quota, come già fa la route |
 | documenti su voci divise | 3, su 2 voci | ogni genitore vede solo il proprio |

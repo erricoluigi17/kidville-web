@@ -454,7 +454,7 @@
   "genrMeseCompetenza": "Reference month",
   "genrMeseSingolo": "Single month",
   "genrNessunAlunnoMese": "No student to generate for this month (fees already created).",
-  "genrRettaDefault": "Default fee:",
+  "genrRettaDefault": "Reference tuition:",
   "genrRette": "tuition fees",
   "genrRettePer": "tuition fees for",
   "genrRettePerAS": "tuition fees for S.Y.",
@@ -1656,5 +1656,15 @@
   "quoteRiprovaOk": "The fee has moved to accounting.",
   "quoteRiprovaSedeDiversa": "The linked pupil belongs to another location: the fee cannot move to accounting.",
   "quoteRiprovaCategoriaAssente": "The «Enrolment» payment category is missing in accounting: the fee cannot move.",
-  "quoteRiprovaPer": "Try again for {nome}"
+  "quoteRiprovaPer": "Try again for {nome}",
+  "genrAnnoStato": "School year {stato}.",
+  "genrNonVisibile": "Families will not see this tuition until this year becomes the current one. No notification.",
+  "genrNessunaNotificaFatto": "Families cannot see it yet and receive no notification.",
+  "genrSenzaRetta": "Children without tuition: {n}. They do not get the charge until there is tuition in their profile or in the year’s price list.",
+  "genrSenzaRettaLink": "Set the year’s tuition",
+  "genrAltriSenzaVoce": "Exempt: {esenti}. Paid by a sibling who is not enrolled: {assenti}.",
+  "genrOrigineTitolo": "Where the amounts come from:",
+  "genrOrigineListino": "from the price list: {n}",
+  "genrOrigineFascia": "from the group’s price list: {n}",
+  "genrOrigineFrequenza": "from the child’s profile: {n}"
 }

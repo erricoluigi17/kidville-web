@@ -12,6 +12,7 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi';
+import { anniDiUnAnnoScelto } from '@/lib/anno/domanda-anno-prossimo';
 
 // ============================================================
 // Anagrafica sezioni/classi — gated Segreteria+Direzione (DL-036) + audit (DL-037).
@@ -24,6 +25,9 @@ const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v);
 const getQuerySchema = z.object({
     // Filtro eq su sections.scuola_id: uuid se presente ('' = nessun filtro, come prima).
     scuola_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
+    // `anni_scolastici.id` (PR 4.5.8): le sezioni di QUELL'anno, per la pagina delle domande (le classi proposte per un
+    // bambino sono quelle dell'anno della sua domanda). Assente = come prima (l'anno attivo o quello scelto col cookie).
+    anno_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
 });
 
 const postBodySchema = z.object({
@@ -116,8 +120,14 @@ export const GET = withRoute('admin/sections:GET', async (request: NextRequest) 
 
         const plessi = await resolveScuoleAttive(request, supabase, auth.user);
         // L'elenco mostra UN anno: quello scelto (cookie) da Direzione e segreteria. `null` = DB senza lo schema dell'anno.
-        const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
+        // Un anno chiesto ESPLICITAMENTE (`anno_id`) vince sul cookie: i plessi restano quelli dello scope di chi chiede.
+        const annoChiesto = q.data.anno_id;
+        const anno = annoChiesto
+            ? await anniDiUnAnnoScelto(supabase, plessi, annoChiesto)
+            : await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
         if (anno instanceof NextResponse) return anno;
+        // Nessuna sede ha quell'anno: l'elenco è vuoto (un filtro che non filtra mostrerebbe le sezioni di tutti gli anni).
+        if (anno === 'nessuna') return NextResponse.json([]);
 
         let query = supabase
             .from('sections')

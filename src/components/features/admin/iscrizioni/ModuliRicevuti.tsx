@@ -78,6 +78,8 @@ interface RigaElenco {
   created_at: string
   // Sede per cui la famiglia ha fatto domanda (scelta al passo 0 del wizard).
   scuola_id?: string | null
+  // Anno scolastico della domanda (`anni_scolastici.id`): le classi proposte sono quelle di QUELL'anno (PR 4.5.8).
+  anno_id?: string | null
   riassunto?: { bambini: number; adulti: number; primo_bambino: string | null }
 }
 
@@ -146,6 +148,8 @@ export function ModuliRicevuti() {
   })
   const [caricandoAltre, setCaricandoAltre] = useState(false)
   const [sections, setSections] = useState<Section[]>([])
+  /** Le classi dell'anno della domanda aperta; `null` = quelle dell'elenco (l'anno in corso), come prima. */
+  const [sezioniDellaDomanda, setSezioniDellaDomanda] = useState<Section[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<SubmissionRow | null>(null)
   const [aprendo, setAprendo] = useState<string | null>(null)
@@ -331,10 +335,35 @@ export function ModuliRicevuti() {
    * è di un'altra sede, e un pannello che resta vuoto senza dire niente è
    * peggio di un errore.
    */
+  /**
+   * Le classi proposte per un bambino sono quelle dell'anno DELLA domanda (PR 4.5.8): una domanda per l'anno prossimo sceglie
+   * fra le sezioni di quell'anno, non fra quelle di oggi. Se la lettura cade restano le classi dell'elenco, come prima:
+   * il server rifiuta comunque una classe che non è dell'anno della domanda.
+   */
+  async function caricaSezioniDellAnno(riga: SubmissionRow, mio: number) {
+    try {
+      const sede = riga.scuola_id ? `&scuola_id=${encodeURIComponent(riga.scuola_id)}` : ''
+      const res = await fetch(`/api/admin/sections?anno_id=${encodeURIComponent(String(riga.anno_id))}${sede}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      const json = await res.json()
+      if (mio !== gettoneDettaglio.current) return
+      if (res.ok && Array.isArray(json)) setSezioniDellaDomanda(json as Section[])
+    } catch (e) {
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: `iscrizione-sezioni-anno-non-lette: ${nomeErrore(e)}`,
+        route: '/admin/iscrizioni',
+      })
+    }
+  }
+
   async function openDetail(row: RigaElenco) {
     const mio = ++gettoneDettaglio.current
     setSelected(null)
     setAprendo(row.id)
+    setSezioniDellaDomanda(null)
     setAssignments(row.assigned_classes ?? {})
     // Retta e affini NON si precompilano: decisione del titolare del 2026-09-02.
     // Un valore già scritto nel campo è un valore che si conferma senza guardarlo,
@@ -364,7 +393,10 @@ export function ModuliRicevuti() {
         alert(json?.error ?? t('ricevutiDettaglioNonAperto'))
         return
       }
-      setSelected(json.data as SubmissionRow)
+      const aperta = json.data as SubmissionRow
+      if (aperta.anno_id) await caricaSezioniDellAnno(aperta, mio)
+      if (mio !== gettoneDettaglio.current) return
+      setSelected(aperta)
     } catch (e) {
       logClient({
         livello: 'error',
@@ -652,7 +684,7 @@ export function ModuliRicevuti() {
             ) : selected ? (
               <DetailPanel
                 row={selected}
-                sections={sections}
+                sections={sezioniDellaDomanda ?? sections}
                 nomeSede={nomeSede(selected.scuola_id)}
                 assignments={assignments}
                 setAssignments={setAssignments}

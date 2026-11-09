@@ -121,5 +121,6 @@
   "tardivaClasseScegli": "Choose the class",
   "azioneScarta": "Discard the preview",
   "esitoScartata": "The preview is discarded: calculate another one if needed.",
-  "rimandoSelettore": "The changeover is prepared on the year with open enrolment: choose that year from the selector above."
+  "rimandoSelettore": "The changeover is prepared on the year with open enrolment: choose that year from the selector above.",
+  "correggiContinuaQui": "Continues in this class"
 }

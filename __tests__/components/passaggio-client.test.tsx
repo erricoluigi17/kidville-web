@@ -436,3 +436,15 @@ describe('PassaggioClient · giro di correzione 1', () => {
     expect(screen.queryAllByText('Da: Sezione Vecchia')).toHaveLength(0)
   })
 })
+
+describe('PassaggioClient · S14', () => {
+  it('su un «ritirato» con la classe già proposta c’è il pulsante «Continua in questa classe», che conferma quella classe', async () => {
+    s.righe = [riga(AL1, 'continua', { sezione_a_id: S_A1, avviso: 'ritirato_tendina' }), ...RIGHE_BASE().slice(1)]
+    render(<PassaggioClient />)
+    await screen.findAllByText('CognomeUno NomeUno')
+    const blocco = (await screen.findAllByRole('button', { name: itPassaggio.correggiContinuaQui }))[0]
+    fireEvent.click(blocco)
+    await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
+    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'continua', section_id: S_A1 })
+  })
+})

@@ -593,6 +593,14 @@ function RigaElenco({
           </select>
         </div>
       )}
+      {puoCorreggere && r.avviso === 'ritirato_tendina' && r.sezione_a_id && (
+        // (giro 1, S14) «Resta nella classe proposta» è un gesto: riselezionare la stessa opzione di una tendina non genera nessun evento.
+        <div className="min-w-0 basis-56">
+          <button type="button" className={secondario} disabled={occupato} onClick={() => corregge(r, r.sezione_a_id as string)}>
+            {t('correggiContinuaQui')}
+          </button>
+        </div>
+      )}
       {puoTardiva && (
         <div className="flex min-w-0 basis-56 flex-col gap-2">
           <label className="sr-only" htmlFor={`${id}-tardiva`}>{t('tardivaClasse', { nome })}</label>

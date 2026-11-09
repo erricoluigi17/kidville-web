@@ -61,6 +61,7 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['ANNO_NON_OFFERTO', 422, 'Questo anno scolastico non offre quel servizio o quella fascia d’età.'],
     ['ISCRIZIONI_CHIUSE', 409, 'Le iscrizioni per questo anno scolastico sono chiuse.'],
     ['IMPORTO_NON_VALIDO', 422, 'L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.'],
+    ['FREQUENZA_NON_DI_CONFERMA', 409, 'Questa iscrizione non nasce da una conferma: si toglie dalla scheda del bambino, non da qui.'],
     ['SCADENZA_NEL_PASSATO', 422, 'La scadenza non può essere già passata: scegli una data da oggi in poi, oppure lasciala vuota.'],
   ]
 

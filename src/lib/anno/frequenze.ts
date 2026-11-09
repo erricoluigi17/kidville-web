@@ -172,7 +172,11 @@ export async function scriviFrequenza(
 
     const anno = await supabase.from('anni_sede').select('scuola_id, fine, stato').eq('id', annoSedeId).maybeSingle()
     if (anno.error) return esitoDaErrore(anno.error, 'anno')
-    if (!anno.data) return { ok: true, saltata: 'anno-non-attivo' }
+    if (!anno.data) {
+      // Un anno che non esiste non è un anno «non attivo»: chi chiama ha un uuid sbagliato (4.5.15, minore 4.5.1). Si dice, senza valori.
+      logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-anno-inesistente', operazione: OPERAZIONE })
+      return { ok: true, saltata: 'anno-non-attivo' }
+    }
     const { scuola_id: scuolaId, fine, stato: statoAnno } = anno.data as { scuola_id: string; fine: string; stato: string }
 
     if (annoNonAttivo) {

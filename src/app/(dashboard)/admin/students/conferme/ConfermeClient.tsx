@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { btnPrimary, hint, input, label } from '@/components/features/admin/settings/ui';
 import { Tabs } from '@/components/ui/cockpit';
-import { useAdminIdentity } from '@/lib/context/admin-identity';
+import { useAdminIdentity, useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -368,6 +368,10 @@ function RigaConferma({
   const [sezione, setSezione] = useState('');
   const [motivo, setMotivo] = useState('');
   const [occupata, setOccupata] = useState(false);
+  // Togliere una conferma tocca la contabilità: lo fanno solo admin e segreteria (come l'eliminazione di una voce), e la
+  // coordinatrice non vede il pulsante (la route risponde 403 comunque). Sbaglia verso il nascondere: ruolo ignoto = nascosto.
+  const puoRitirare = ['admin', 'segreteria'].includes(useRuoloCockpit());
+  const [chiediRitiro, setChiediRitiro] = useState(false);
   const [moduliAperti, setModuliAperti] = useState(false);
 
   const nome = `${r.cognome ?? ''} ${r.nome ?? ''}`.trim() || t('bambinoSenzaNome');
@@ -435,6 +439,22 @@ function RigaConferma({
           .join(' '),
       (d) => ricordaQuota(r.frequenza_id, d?.quota === 'senza_listino' || d?.quota === 'piu_voci' ? d.quota : null),
     );
+  const ritira = async () => {
+    setChiediRitiro(false);
+    await scrivi(
+      `/api/admin/anni/${annoSedeId}/conferme/ritira`,
+      { frequenza_id: r.nuova_frequenza_id ?? '' },
+      (d) =>
+        [
+          t('esitoRitirata'),
+          d?.quota === 'tolta' ? t('esitoRitirataQuotaTolta') : '',
+          d?.quota === 'resta-pagata' ? t('esitoRitirataQuotaPagata') : '',
+          d?.quota === 'errore' ? t('esitoRitirataQuotaErrore') : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+    );
+  };
   // Stessa route della conferma: ripetibile, la voce nasce solo se manca.
   const generaQuota = () =>
     scrivi(
@@ -500,6 +520,19 @@ function RigaConferma({
                   )}
                 </div>
               </>
+            )}
+            {vista === 'conferme' && r.conferma === 'confermato' && r.nuova_frequenza_id && puoRitirare && (
+              chiediRitiro ? (
+                <div role="group" aria-label={t('ritiraEtichetta', { nome })} className="rounded-input border border-kidville-line p-2">
+                  <p className={hint}>{t('ritiraDomanda', { nome })}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" className={btnPrimary} disabled={occupata} onClick={ritira}>{t('ritiraSi')}</button>
+                    <button type="button" className={secondario} onClick={() => setChiediRitiro(false)}>{t('ritiraAnnulla')}</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className={secondario} disabled={occupata} onClick={() => setChiediRitiro(true)}>{t('azioneRitiraConferma')}</button>
+              )
             )}
             {quotaDaGenerare && (
               <button type="button" className={secondario} disabled={occupata} onClick={generaQuota}>{t('azioneGeneraQuota')}</button>

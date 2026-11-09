@@ -425,3 +425,29 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   annoAttivoDiSede: async () => null,
 }))
+
+// 4.5.15 · C1: archiviare chiude le frequenze degli anni aperti, con la stessa regola del «Ritira la conferma», e la risposta porta il conteggio.
+const chiusura = vi.hoisted(() => ({
+  chiudi: vi.fn<(c: unknown, a: { alunnoId: string; attore: { id: string } }) => Promise<{ chiuse: number; voci_tolte: number; voci_pagate_rimaste: number; non_riuscite: number }>>(async () => ({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 })),
+}))
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  chiudiFrequenzeAperte: chiusura.chiudi,
+}))
+
+describe('POST /api/admin/students/archivia — le iscrizioni dell’anno prossimo (4.5.15)', () => {
+  it('chiama la chiusura con il bambino e chi archivia, e riporta le voci pagate rimaste', async () => {
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 1, voci_tolte: 0, voci_pagate_rimaste: 1, non_riuscite: 0 })
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(200)
+    expect(chiusura.chiudi).toHaveBeenCalledTimes(1)
+    expect(chiusura.chiudi.mock.calls[0][1]).toMatchObject({ alunnoId: ALU_A, attore: { id: 'seg-1' } })
+    expect(await res.json()).toMatchObject({ success: true, frequenze_chiuse: 1, voci_pagate_rimaste: 1 })
+  })
+
+  it('con un archivio rifiutato (403 di sede) la chiusura non parte', async () => {
+    const res = await POST(post({ alunno_id: ALU_B }))
+    expect(res.status).toBe(403)
+    expect(chiusura.chiudi).not.toHaveBeenCalled()
+  })
+})

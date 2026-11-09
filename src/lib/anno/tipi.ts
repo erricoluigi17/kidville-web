@@ -78,6 +78,7 @@ export const CODICI_ANNO = [
   'ISCRIZIONI_CHIUSE',
   'IMPORTO_NON_VALIDO',
   'SCADENZA_NEL_PASSATO',
+  'FREQUENZA_NON_DI_CONFERMA',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]

@@ -2680,7 +2680,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // nuovo E sull'anno della frequenza di partenza, prima di ogni lettura o scrittura.
             // Misurato rieseguendo il lock: 395 → 397.
             // 397 → 399 il 2026-11-09 (PR 4.5, 4.5.10): le due route nuove dei moduli, entrambe con gate di sede.
-            routeConServiceRole: 399,
+            // 399 → 400 il 2026-11-09 (PR 4.5, 4.5.15, C1): entra `admin/anni/[annoSedeId]/conferme/ritira` (POST). CONTROLLATA, nessuna
+            // esenzione: gate `requireStaff(['admin','segreteria'])`, `assertAnnoSedeInScope` sull'anno nuovo e la frequenza dev'essere di quell'anno.
+            routeConServiceRole: 400,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3036,7 +3038,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // GET/PUT, anni/[annoSedeId]/moduli-mancanti GET), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 612 → 615.
             // 615 → 617 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.15, C3): due handler nella route esistente `anni/[annoSedeId]/sezioni`
             // (GET: l'elenco delle classi con la fascia; PATCH: la fascia di una classe), entrambi CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 615 → 617.
-            handlerControllati: 617,
+            // 617 → 618 il 2026-11-09 (4.5.15, C1): `conferme/ritira:POST`, CONTROLLATO; `handlerEsentati` non cambia (108).
+            handlerControllati: 618,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -18,13 +18,17 @@ import itShared from '../../messages/it/shared.json'
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'errore-di-rete' }))
 
 const h = vi.hoisted(() => ({
+  ruolo: 'segreteria' as string,
   anno: { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } } as unknown,
 }))
 vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
   useAnnoOpzionale: () => h.anno,
 }))
-vi.mock('@/lib/context/admin-identity', () => ({ useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }) }))
+vi.mock('@/lib/context/admin-identity', () => ({
+  useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
+  useRuoloCockpit: () => h.ruolo,
+}))
 
 import { ConfermeClient } from '@/app/(dashboard)/admin/students/conferme/ConfermeClient'
 
@@ -49,6 +53,7 @@ const s = {
   spuntato: false,
   confermata: false,
   quota: 'da_pagare' as 'da_pagare' | 'assente', // la quota che il server legge per la riga
+  quotaRitiro: 'tolta' as string, // l'esito della voce che «Ritira la conferma» risponde
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
 }
 const fetchMock = vi.fn()
@@ -67,6 +72,11 @@ const rigaNuova = () => ({
 
 function risposta(url: string, metodo: string, body: Record<string, unknown>): Risposta {
   if (url.includes('/api/admin/sections/scoped')) return { status: 200, body: { data: [] } }
+  if (url.includes('/conferme/ritira')) {
+    s.confermato = false
+    s.confermata = false
+    return ok({ frequenza_id: F_NUOVA, ritirata: true, quota: s.quotaRitiro })
+  }
   if (url.includes('/conferme/non-rinnova')) return ok({ frequenza_id: F_PART, non_rinnova: true, cambiato: true })
   if (url.includes(`/api/admin/anni/${ANNO}/conferme`) && metodo === 'POST') {
     s.confermata = true
@@ -104,11 +114,13 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.ruolo = 'segreteria'
   s.spunteConferma = [M1]
   s.confermato = true
   s.confermata = false
   s.quota = 'da_pagare'
   s.quotaPost = 'creata'
+  s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
   fetchMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
@@ -317,5 +329,59 @@ describe('ConfermeClient — l’esito della quota (4.5.15, I1)', () => {
     expect(await screen.findByText(new RegExp(itConferme.esitoQuotaPiuVoci.slice(0, 30)))).toBeInTheDocument()
     await waitFor(() => expect(colonnaQuota(rigaDi('CognomeProva NomeProva'))).toHaveTextContent(itConferme.quotaPiuVoci))
     expect(screen.queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
+  })
+})
+
+
+describe('ConfermeClient — «Ritira la conferma» (4.5.15, C1)', () => {
+  it('chiede conferma, manda la frequenza dell’anno NUOVO alla route e la riga torna libera: «Conferma» di nuovo disponibile', async () => {
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    const riga = nome.closest('tr') as HTMLElement
+    expect(within(riga).queryByRole('button', { name: itConferme.azioneConferma })).toBeNull() // confermato: nessuna azione, oggi
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.azioneRitiraConferma }))
+    // niente parte finché non si risponde alla domanda
+    expect(chiamate('POST', '/conferme/ritira')).toHaveLength(0)
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.ritiraSi }))
+    await waitFor(() => expect(chiamate('POST', '/conferme/ritira')).toHaveLength(1))
+    expect(JSON.parse(chiamate('POST', '/conferme/ritira')[0][1].body)).toEqual({ frequenza_id: F_NUOVA })
+    expect(await screen.findByText(new RegExp(itConferme.esitoRitirataQuotaTolta))).toBeInTheDocument()
+    // la riga non resta bloccata: ora si può confermare di nuovo
+    expect(await within(rigaDi('CognomeProva NomeProva')).findByRole('button', { name: itConferme.azioneConferma })).toBeInTheDocument()
+    expect(within(rigaDi('CognomeProva NomeProva')).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
+  })
+
+  it('«Annulla» non manda niente', async () => {
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    const riga = nome.closest('tr') as HTMLElement
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.azioneRitiraConferma }))
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.ritiraAnnulla }))
+    expect(chiamate('POST', '/conferme/ritira')).toHaveLength(0)
+    expect(within(riga).getByRole('button', { name: itConferme.azioneRitiraConferma })).toBeInTheDocument()
+  })
+
+  it('con la quota già pagata la schermata lo dice: rimborso e storno sono della contabilità', async () => {
+    s.quotaRitiro = 'resta-pagata'
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    const riga = nome.closest('tr') as HTMLElement
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.azioneRitiraConferma }))
+    fireEvent.click(within(riga).getByRole('button', { name: itConferme.ritiraSi }))
+    expect(await screen.findByText(new RegExp(itConferme.esitoRitirataQuotaPagata.slice(0, 30)))).toBeInTheDocument()
+  })
+
+  it('la coordinatrice non vede il pulsante (la route le risponde comunque 403)', async () => {
+    h.ruolo = 'coordinator'
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    expect(within(nome.closest('tr') as HTMLElement).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
+  })
+
+  it('un ruolo ignoto (il provider non ha ancora risposto) nasconde il pulsante', async () => {
+    h.ruolo = ''
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    expect(within(nome.closest('tr') as HTMLElement).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
   })
 })

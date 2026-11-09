@@ -319,16 +319,16 @@ describe('anno_conferma: i rifiuti', () => {
     })
   })
 
-  prova('la frequenza dell’anno prossimo ritirata non si riapre da qui: `FREQUENZA_NON_VIVA`, e nessuna voce nuova', async () => {
+  prova('la frequenza dell’anno prossimo chiusa per altro (trasferito) non si riapre da qui: `FREQUENZA_NON_VIVA`, e nessuna voce nuova (la RITIRATA sì, dal 4.5.15: vedi anno-ritiro-conferma)', async () => {
     await inRollback(async () => {
       await giorni()
       await nuovoAlunno(AL)
       const f26 = await partenza(AL)
       await apri()
       const r = await conferma({ frequenza: f26 })
-      await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = data_ingresso WHERE id = $1`, [r.frequenza_id])
+      await db.query(`UPDATE public.frequenze SET stato = 'trasferito', data_uscita = data_ingresso WHERE id = $1`, [r.frequenza_id])
       expect(await errore(SQL_CONFERMA, [f26, ANNO_SEDE[`${S1}:2027`], null, UT, false])).toBe('FREQUENZA_NON_VIVA')
-      expect((await frequenza(r.frequenza_id as string)).stato).toBe('ritirato')
+      expect((await frequenza(r.frequenza_id as string)).stato).toBe('trasferito')
       expect(await conta(`SELECT 1 FROM public.pagamenti WHERE alunno_id = $1`, [AL])).toBe(1)
     })
   })

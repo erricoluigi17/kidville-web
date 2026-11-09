@@ -444,7 +444,14 @@ const RE_HELPER_ORDINE = /\bscriviAlunnoEFrequenza\s*\(/
 const RE_DOPO_INSERT = /\bscriviFrequenzaDopoAlunni\s*\(/
 const RE_FREQUENZA_DA_SOLA = /\bscriviFrequenza\s*\(/
 /** I soli file che possono chiamare `scriviFrequenza`: l'ordine delle due scritture lo decide `scrittura.ts`. */
-const PUO_CHIAMARE_SCRIVI_FREQUENZA = new Set(['src/lib/anno/scrittura.ts', 'src/lib/anno/frequenze.ts'])
+const PUO_CHIAMARE_SCRIVI_FREQUENZA = new Set([
+  'src/lib/anno/scrittura.ts',
+  'src/lib/anno/frequenze.ts',
+  // 4.5.15: la porta dell'iscrizione all'anno prossimo ritira (`ritiraConferma`, `chiudiFrequenzeAperte`) frequenze di anni NON in
+  // corso (`annoNonAttivo`) e non scrive mai `alunni`: non c'è una scheda a cui far precedere la frequenza. È l'archiviazione, nella sua
+  // route, a scrivere la scheda con scriviAlunnoEFrequenza e a chiamare poi la chiusura.
+  'src/lib/anno/iscrizione-anno.ts',
+])
 
 /**
  * Fase B (4.3.5): la frequenza comanda, quindi una scrittura di `alunni` che cambia una colonna copiata (o `classe_sezione`,

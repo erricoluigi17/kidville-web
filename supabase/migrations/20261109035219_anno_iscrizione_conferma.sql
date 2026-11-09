@@ -97,6 +97,10 @@ BEGIN
   IF v_f.stato NOT IN ('in_attesa', 'iscritto') THEN
     RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('frequenza_id', v_f.id, 'stato', v_f.stato)::text;
   END IF;
+  -- Una scheda archiviata o anonimizzata non riceve una voce nuova (4.5.15, minore 4.5.5): l'esito lo dice, la frequenza resta com'è.
+  IF EXISTS (SELECT 1 FROM public.alunni a WHERE a.id = v_f.alunno_id AND (a.archiviato_il IS NOT NULL OR a.anonimizzato_il IS NOT NULL)) THEN
+    RETURN jsonb_build_object('esito', 'scheda_archiviata', 'pagamento_id', NULL);
+  END IF;
 
   SELECT * INTO v_a FROM public.anni_sede WHERE id = v_f.anno_sede_id;
   SELECT y.etichetta_breve INTO v_etichetta FROM public.anni_scolastici y WHERE y.id = v_a.anno_id;
@@ -404,6 +408,14 @@ BEGIN
     'giorno_scadenza_pagamenti', v_p.giorno_scadenza_pagamenti,
     'gruppo_mensa_id', v_p.gruppo_mensa_id,
     'usa_pannolino', v_p.usa_pannolino);
+
+  -- Una conferma ritirata (4.5.15, «Ritira la conferma») si rifà: la STESSA riga si riapre (la coppia bambino-anno è unica),
+  -- `in_attesa` e senza uscita. Mai `iscritto` a mano: se moduli e quota sono a posto lo porta il trigger. Una frequenza chiusa per
+  -- altro (`trasferito`, `uscito`) non si riapre da qui: FREQUENZA_NON_VIVA, più sotto. La voce della quota, se manca, la rifà
+  -- `anno_registra_frequenza` (la frequenza è di nuovo viva).
+  UPDATE public.frequenze f
+     SET stato = 'in_attesa', data_uscita = NULL
+   WHERE f.alunno_id = v_p.alunno_id AND f.anno_sede_id = v_n.id AND f.stato = 'ritirato' AND f.origine = 'conferma';
 
   v_r := public.anno_registra_frequenza(v_p.alunno_id, v_n.id, 'conferma', 'conferma', NULL, v_sezione, NULL, v_campi, p_da);
   v_nuova := (v_r ->> 'frequenza_id')::uuid;

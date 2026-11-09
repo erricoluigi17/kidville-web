@@ -2905,6 +2905,8 @@ export const CODICI_ERRORE = {
     SCADENZE_INCOERENTI: 'erroreScadenzeIncoerenti',
     /** 400 — una delle due scadenze è già passata al momento del salvataggio. */
     SCADENZA_NEL_PASSATO: 'erroreScadenzaNelPassato',
+    /** «Ritira la conferma» su una frequenza che non nasce da una conferma (4.5.15): 409. */
+    FREQUENZA_NON_DI_CONFERMA: 'erroreFrequenzaNonDiConferma',
     /**
      * 400 — la segreteria sta configurando l'intervallo di persone per adesione
      * (minimo, massimo, valore predefinito) e i tre numeri non stanno insieme:

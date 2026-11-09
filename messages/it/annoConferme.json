@@ -59,7 +59,7 @@
   "fasciaPrimaria": "Primaria",
   "fasciaSpazioBambini": "Spazio bambini",
   "fasciaSenzaSezione": "Senza sezione",
-  "annullareNota": "Per annullare una conferma ritira la frequenza dell’anno prossimo dalla scheda del bambino.",
+  "annullareNota": "Per togliere una conferma usa «Ritira la conferma» sulla riga del bambino (lo fanno l’amministrazione e la segreteria). Poi puoi segnare «Non rinnova» o confermare di nuovo.",
   "paginaDi": "Pagina {pagina}/{pagine}",
   "precedente": "Precedente",
   "successiva": "Successiva",
@@ -93,5 +93,14 @@
   "azioneGeneraQuota": "Genera la quota",
   "esitoQuotaSenzaListino": "La quota non è stata creata perché il listino dell’anno non ne ha una per questa classe: impostala nelle impostazioni dell’anno e poi premi «Genera la quota».",
   "esitoQuotaPiuVoci": "Per questo bambino ci sono più voci di quota: controlla la contabilità.",
-  "esitoQuotaGenerata": "La quota è a posto."
+  "esitoQuotaGenerata": "La quota è a posto.",
+  "azioneRitiraConferma": "Ritira la conferma",
+  "ritiraEtichetta": "Ritira la conferma di {nome}",
+  "ritiraDomanda": "Ritirare la conferma di {nome}? L’iscrizione all’anno prossimo si chiude e, se la quota non è stata pagata, la quota viene tolta. Poi puoi segnare «Non rinnova» oppure confermare di nuovo.",
+  "ritiraSi": "Sì, ritira la conferma",
+  "ritiraAnnulla": "Annulla",
+  "esitoRitirata": "Conferma ritirata.",
+  "esitoRitirataQuotaTolta": "La quota è stata tolta.",
+  "esitoRitirataQuotaPagata": "La quota è già stata pagata: rimborso o storno si fanno dalla contabilità.",
+  "esitoRitirataQuotaErrore": "La conferma è ritirata, ma la quota non si è riusciti a toglierla: controllala nella contabilità."
 }

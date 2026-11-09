@@ -875,5 +875,6 @@
   "scadRinnovaDi": "Rinnova il documento di {nome}",
   "dataIscrizioneAnno": "Anno scolastico {anno}",
   "dataIscrizioneFuoriAnno": "La data è dopo la fine dell’anno scolastico in corso. Si può iscrivere solo all’anno in corso: l’iscrizione all’anno prossimo si farà con le iscrizioni.",
-  "dataIscrizioneIngressoDal": "Anno scolastico {anno} · ingresso dal {giorno}"
+  "dataIscrizioneIngressoDal": "Anno scolastico {anno} · ingresso dal {giorno}",
+  "detailArchiviatoQuotePagate": "{n, plural, one {La quota dell’anno prossimo era già stata pagata ed è rimasta: rimborso o storno si fanno dalla contabilità.} other {# quote dell’anno prossimo erano già state pagate e sono rimaste: rimborso o storno si fanno dalla contabilità.}}"
 }

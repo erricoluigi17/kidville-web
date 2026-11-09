@@ -853,5 +853,6 @@
   "erroreIscrizioniChiuse": "Le iscrizioni per questo anno scolastico sono chiuse.",
   "erroreImportoNonValido": "L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.",
   "erroreAlunnoEliminazioneInArrivo": "Questo bambino è «in arrivo» (la domanda è per l’anno prossimo): prima archivialo dalla sua scheda, diventa «ritirato», e poi puoi eliminarlo.",
-  "erroreFrequenzaNonTrovata": "Questa iscrizione non esiste più. Aggiorna la pagina."
+  "erroreFrequenzaNonTrovata": "Questa iscrizione non esiste più. Aggiorna la pagina.",
+  "erroreFrequenzaNonDiConferma": "Questa iscrizione non nasce da una conferma: si toglie dalla scheda del bambino, non da qui."
 }

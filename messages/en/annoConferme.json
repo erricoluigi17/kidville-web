@@ -59,7 +59,7 @@
   "fasciaPrimaria": "Primary school",
   "fasciaSpazioBambini": "Children’s space",
   "fasciaSenzaSezione": "No class",
-  "annullareNota": "To undo a confirmation, withdraw next year’s attendance from the child’s record.",
+  "annullareNota": "To undo a confirmation use “Withdraw the confirmation” on the child’s row (done by administration and the secretary’s office). Afterwards you can mark “Not renewing” or confirm again.",
   "paginaDi": "Page {pagina}/{pagine}",
   "precedente": "Previous",
   "successiva": "Next",
@@ -93,5 +93,14 @@
   "azioneGeneraQuota": "Generate the fee",
   "esitoQuotaSenzaListino": "The fee was not created because the year price list has none for this class: set it in the year settings, then press “Generate the fee”.",
   "esitoQuotaPiuVoci": "This child has more than one fee item: check the accounts.",
-  "esitoQuotaGenerata": "The fee is in order."
+  "esitoQuotaGenerata": "The fee is in order.",
+  "azioneRitiraConferma": "Withdraw the confirmation",
+  "ritiraEtichetta": "Withdraw the confirmation of {nome}",
+  "ritiraDomanda": "Withdraw the confirmation of {nome}? Next year’s enrolment is closed and, if the fee has not been paid, the fee is removed. Afterwards you can mark “Not renewing” or confirm again.",
+  "ritiraSi": "Yes, withdraw the confirmation",
+  "ritiraAnnulla": "Cancel",
+  "esitoRitirata": "Confirmation withdrawn.",
+  "esitoRitirataQuotaTolta": "The fee was removed.",
+  "esitoRitirataQuotaPagata": "The fee has already been paid: refunds or reversals are handled in accounting.",
+  "esitoRitirataQuotaErrore": "The confirmation is withdrawn, but the fee could not be removed: check it in accounting."
 }

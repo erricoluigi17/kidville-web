@@ -211,6 +211,12 @@ export function erroreAnno(
         { ...dettagli, error: frase('IMPORTO_NON_VALIDO'), codice: 'IMPORTO_NON_VALIDO' },
         { status: 422 },
       )
+    case 'FREQUENZA_NON_DI_CONFERMA':
+      // «Ritira la conferma» su una frequenza che non nasce da una conferma (4.5.15): non è la strada giusta.
+      return NextResponse.json(
+        { ...dettagli, error: frase('FREQUENZA_NON_DI_CONFERMA'), codice: 'FREQUENZA_NON_DI_CONFERMA' },
+        { status: 409 },
+      )
     case 'SCADENZA_NEL_PASSATO':
       // La quota con una scadenza già passata (4.5.15): farebbe nascere voci già scadute.
       return NextResponse.json(

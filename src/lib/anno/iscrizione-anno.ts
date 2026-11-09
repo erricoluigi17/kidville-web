@@ -3,6 +3,13 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
+import { scriviFrequenza } from '@/lib/anno/frequenze'
+import { STATO_RITIRATO } from '@/lib/alunni/stato'
+import type { AppUser } from '@/lib/auth/predicati-ruolo'
+import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
+import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
+import { oggiRoma } from '@/lib/storici/retroattivita'
+import { politicaNotificaServizio } from '@/lib/storici/notifiche-servizi'
 
 /**
  * L'ISCRIZIONE ALL'ANNO PROSSIMO: l'unica porta TypeScript per le funzioni SQL che la scrivono (PR 4.5).
@@ -21,7 +28,7 @@ import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
  * riportare la riga intera): del guasto si logga il solo SQLSTATE.
  */
 
-export type QuotaEsito = 'creata' | 'collegata' | 'gia_collegata' | 'piu_voci' | 'senza_listino'
+export type QuotaEsito = 'creata' | 'collegata' | 'gia_collegata' | 'piu_voci' | 'senza_listino' | 'scheda_archiviata'
 
 /** I campi del jsonb di `anno_registra_frequenza`. `quota` è NULL per una frequenza già chiusa (ritirata): non le nasce una voce. */
 export type RisultatoRegistra = {
@@ -314,5 +321,216 @@ export async function annoDellaDomanda(
   } catch (err) {
     logErrore({ operazione: OP_ANNO }, err)
     return annoId === null ? { tipo: 'schema-indietro' } : { tipo: 'non-aperto' }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// 4.5.15 · togliere una conferma: la frequenza si ritira, la voce della quota si toglie solo se la contabilità lo permette
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Che cosa è successo alla voce della quota di una frequenza ritirata:
+ *  · `tolta`         la voce c'era, nessuna guardia la tratteneva ed è stata eliminata (con la riga di audit);
+ *  · `resta-pagata`  la voce c'è e ha incassi, fatture o una transazione: resta, rimborso e storno si fanno dalla contabilità;
+ *  · `nessuna`       alla frequenza non era collegata nessuna voce;
+ *  · `errore`        la voce non si è riusciti a togliere (guasto): la frequenza resta ritirata, un `warn` lo registra.
+ */
+export type EsitoQuotaRitiro = 'tolta' | 'resta-pagata' | 'nessuna' | 'errore'
+
+export type RisultatoRitiro = {
+  frequenza_id: string
+  /** `false` se era già ritirata prima di questa chiamata (si è solo ripresa la voce, se c'era ancora). */
+  ritirata: boolean
+  quota: EsitoQuotaRitiro
+}
+export type EsitoRitiro = ({ ok: true } & RisultatoRitiro) | EsitoFallito
+
+export type RitiroArgs = {
+  /** La frequenza dell'anno NUOVO (non quella di partenza). */
+  frequenzaId: string
+  /** Chi la ritira: serve al contesto delle notifiche e all'audit. */
+  attore: AppUser
+}
+
+const OP_RITIRO = 'anno/iscrizione-anno:ritiraConferma'
+const OP_CHIUSURA = 'anno/iscrizione-anno:chiudiFrequenzeAperte'
+
+type RigaDaChiudere = {
+  id: string
+  alunno_id: string
+  anno_sede_id: string
+  scuola_id: string
+  stato: string
+  origine: string | null
+  quota_pagamento_id: string | null
+}
+const COLONNE_CHIUSURA = 'id, alunno_id, anno_sede_id, scuola_id, stato, origine, quota_pagamento_id'
+
+/**
+ * La frequenza (viva) di un anno non ancora in corso passa a `ritirato` e la voce della sua quota si toglie, se si può.
+ * Le guardie sono quelle dell'eliminazione di una voce (`controllaVoceEliminabile`): incassi, fatture, transazioni, coda delle
+ * fatture. In più una voce già `pagato` o con `importo_pagato` > 0 resta comunque. Nessun rimborso automatico.
+ * Niente stati a metà: se la voce non si toglie per un guasto, la frequenza RESTA ritirata e l'esito dice `errore`.
+ */
+async function ritiraEToglieQuota(supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string): Promise<EsitoRitiro> {
+  let ritirata = false
+  if (f.stato === 'in_attesa' || f.stato === 'iscritto') {
+    const scritta = await scriviFrequenza(supabase, {
+      alunnoId: f.alunno_id,
+      annoSedeId: f.anno_sede_id,
+      campi: { stato: STATO_RITIRATO, data_uscita: oggiRoma() },
+      annoNonAttivo: true,
+    })
+    if (!scritta.ok) return { ok: false, codice: codiceAnnoDa(scritta.codice) ?? 'SCRITTURA_FALLITA' }
+    if ('saltata' in scritta) {
+      // Anno non scrivibile, schema indietro, riga sparita: la frequenza NON è stata ritirata, e si dice.
+      logEvento('anno-scolastico', 'warn', { tipo: 'ritiro-conferma-non-scritto', operazione, entita_id: f.id })
+      return { ok: false, codice: 'SCRITTURA_FALLITA' }
+    }
+    ritirata = true
+  } else if (f.stato !== STATO_RITIRATO) {
+    // trasferito / uscito: un'altra storia, che da qui non si tocca.
+    return { ok: false, codice: 'FREQUENZA_NON_VIVA' }
+  }
+
+  const quota = await togliQuota(supabase, f, attore, operazione)
+  logEvento('anno-scolastico', quota === 'errore' ? 'warn' : 'info', {
+    tipo: 'conferma-ritirata',
+    esito: quota,
+    operazione,
+    entita_id: f.id,
+    utente: attore.id,
+    ritirata,
+  })
+  return { ok: true, frequenza_id: f.id, ritirata, quota }
+}
+
+async function togliQuota(supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string): Promise<EsitoQuotaRitiro> {
+  if (!f.quota_pagamento_id) return 'nessuna'
+  const voceId = f.quota_pagamento_id
+  try {
+    const c = await controllaVoceEliminabile(supabase, voceId, { sedi: [f.scuola_id], perSostituzione: false, operazione })
+    if (!c.ok) {
+      if ('guasto' in c) return 'errore'
+      // La voce non c'è più (404): niente da togliere. Ogni altro rifiuto è contabilità che la trattiene.
+      return c.stato === 404 ? 'nessuna' : 'resta-pagata'
+    }
+    const pagata = c.voce.stato === 'pagato' || Number(c.voce.importo_pagato ?? 0) > 0
+    if (pagata) return 'resta-pagata'
+    // Una voce con i ticket di una ricarica non è una quota: non si tocca da qui.
+    if (c.ticket > 0) return 'errore'
+
+    const { error } = await supabase.from('pagamenti').delete().eq('id', voceId)
+    if (error) {
+      // Un incasso o una fattura arrivati fra la guardia e la DELETE: il freno del database rifiuta, la voce resta.
+      logEvento('anno-scolastico', 'warn', { tipo: 'quota-ritiro-non-tolta', operazione, entita_id: voceId, error_code: error.code ?? undefined })
+      return error.code === '23503' ? 'resta-pagata' : 'errore'
+    }
+
+    // La voce è già cancellata: da qui niente cambia l'esito. Ogni fallimento si dice, nessuno lo cambia.
+    try {
+      await ritiraPendingPagamento(supabase, {
+        pagamentoId: voceId,
+        alunnoId: (c.voce.alunno_id as string | null) ?? null,
+        scuolaId: (c.voce.scuola_id as string | null) ?? null,
+        operazione: politicaNotificaServizio(attore, String(c.voce.periodo_competenza ?? c.voce.scadenza ?? c.voce.creato_il ?? '')),
+      })
+    } catch (err) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'quota-ritiro-avviso-non-ritirato', operazione, entita_id: voceId }, err)
+    }
+    const audit = await supabase.from('registro_modifiche').insert({
+      azione: 'elimina_pagamento',
+      tabella_interessata: 'pagamenti',
+      record_id: voceId,
+      vecchio_valore: c.voce,
+      nuovo_valore: { motivo: 'ritiro-conferma-anno', frequenza_id: f.id },
+      utente_id: attore.id,
+    })
+    if (audit.error) {
+      logEvento('anno-scolastico', 'error', { tipo: 'quota-ritiro-audit-non-scritto', operazione, entita_id: voceId, error_code: audit.error.code ?? undefined })
+    }
+    return 'tolta'
+  } catch (err) {
+    logErrore({ operazione }, err)
+    return 'errore'
+  }
+}
+
+/**
+ * «Ritira la conferma»: la frequenza dell'anno nuovo, nata da una conferma, passa a `ritirato`; la voce della quota si toglie
+ * se la contabilità lo permette. Poi si può dire «Non rinnova» o rifare «Conferma» (stessa riga, vedi `anno_conferma`).
+ * Una frequenza che non nasce da una conferma (`domanda`, `segreteria`) non si ritira da qui: `FREQUENZA_NON_DI_CONFERMA`.
+ * Idempotente: su una già ritirata non riscrive niente e riprova solo a togliere la voce, se c'è ancora. Non lancia mai.
+ */
+export async function ritiraConferma(supabase: SupabaseClient, a: RitiroArgs): Promise<EsitoRitiro> {
+  try {
+    const riga = await supabase.from('frequenze').select(COLONNE_CHIUSURA).eq('id', a.frequenzaId).maybeSingle()
+    if (riga.error) return esitoDaErrore(riga.error, OP_RITIRO, 'ritiro-conferma-non-letto')
+    const f = riga.data as RigaDaChiudere | null
+    if (!f) return { ok: false, codice: 'PARAMETRO_MANCANTE' }
+    if (f.origine !== 'conferma') return { ok: false, codice: 'FREQUENZA_NON_DI_CONFERMA' }
+
+    const anno = await supabase.from('anni_sede').select('stato').eq('id', f.anno_sede_id).maybeSingle()
+    if (anno.error) return esitoDaErrore(anno.error, OP_RITIRO, 'ritiro-conferma-non-letto')
+    if ((anno.data as { stato?: string } | null)?.stato !== 'iscrizioni_aperte') return { ok: false, codice: 'ANNO_NON_APERTO' }
+
+    return await ritiraEToglieQuota(supabase, f, a.attore, OP_RITIRO)
+  } catch (err) {
+    logErrore({ operazione: OP_RITIRO }, err)
+    return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+export type RisultatoChiusura = {
+  /** Le frequenze di anni aperti che erano vive e ora sono ritirate. */
+  chiuse: number
+  /** Le voci di quota tolte. */
+  voci_tolte: number
+  /** Le voci rimaste perché pagate (o fatturate): la segreteria deve saperlo, rimborso e storno sono suoi. */
+  voci_pagate_rimaste: number
+  /** Le frequenze per cui la chiusura o la voce non sono riuscite (guasto): un `warn` per ognuna. */
+  non_riuscite: number
+}
+
+/**
+ * Archiviare un bambino chiude, con la stessa regola del «Ritira la conferma», le frequenze VIVE degli anni NON in corso
+ * (`in_preparazione`, `iscrizioni_aperte`): conferme, iscrizioni di una domanda, inserimenti della segreteria. Vale anche per
+ * un bambino `in_arrivo`. Non lancia mai e non blocca l'archiviazione: ne riporta il conteggio.
+ */
+export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunnoId: string; attore: AppUser }): Promise<RisultatoChiusura> {
+  const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 }
+  try {
+    const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
+    if (anni.error) {
+      if (!schemaAnnoIndietro(anni.error)) logErrore({ operazione: OP_CHIUSURA }, new Error(`anni_sede:${anni.error.code ?? 'senza-codice'}`))
+      return esito
+    }
+    const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
+    if (idAnni.length === 0) return esito
+
+    const righe = await supabase
+      .from('frequenze')
+      .select(COLONNE_CHIUSURA)
+      .eq('alunno_id', a.alunnoId)
+      .in('anno_sede_id', idAnni)
+      .in('stato', ['in_attesa', 'iscritto', STATO_RITIRATO])
+    if (righe.error) {
+      if (!schemaAnnoIndietro(righe.error)) logErrore({ operazione: OP_CHIUSURA }, new Error(`frequenze:${righe.error.code ?? 'senza-codice'}`))
+      return esito
+    }
+    for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
+      // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
+      if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
+      const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
+      if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
+      if (r.ritirata) esito.chiuse++
+      if (r.quota === 'tolta') esito.voci_tolte++
+      else if (r.quota === 'resta-pagata') esito.voci_pagate_rimaste++
+      else if (r.quota === 'errore') esito.non_riuscite++
+    }
+    return esito
+  } catch (err) {
+    logErrore({ operazione: OP_CHIUSURA }, err)
+    return { ...esito, non_riuscite: esito.non_riuscite + 1 }
   }
 }

@@ -10,6 +10,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
@@ -342,6 +343,12 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
          * A log solo uuid, ruolo, un enumerato chiuso e il nome della classe
          * (`sezione`, in lista bianca). Mai nome, cognome o codice fiscale.
          */
+        // Le frequenze VIVE degli anni non ancora in corso (una conferma aperta, un'iscrizione dell'anno prossimo) si chiudono con la
+        // stessa regola di «Ritira la conferma»: la voce della quota si toglie solo se non è pagata. Non blocca l'archiviazione
+        // (la scheda è già scritta): ne riporta il conteggio, e il pannello dice quante voci pagate sono rimaste. Vale anche per
+        // un bambino `in_arrivo`, che non ha una frequenza dell'anno in corso ma ne ha una nell'anno aperto.
+        const chiusura = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+
         logEvento('gdpr', 'info', {
             operazione: 'admin/students/archivia:POST',
             azione: 'alunno-archiviato',
@@ -358,6 +365,9 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             archiviato_il: adesso,
             /** La classe da cui è stato sganciato: la scheda la mostra come «Era in: …». */
             era_in: (prima.classe_sezione as string | null) ?? (daCompletare ? (prima.archiviato_classe_sezione as string | null) : null) ?? null,
+            /** Le iscrizioni dell'anno prossimo chiuse con l'archiviazione, e le voci di quota rimaste perché già pagate (4.5.15). */
+            frequenze_chiuse: chiusura.chiuse,
+            voci_pagate_rimaste: chiusura.voci_pagate_rimaste,
         });
     } catch (err) {
         logErrore({ operazione: 'admin/students/archivia:POST', stato: 500 }, err);

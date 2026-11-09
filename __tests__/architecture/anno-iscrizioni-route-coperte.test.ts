@@ -22,7 +22,7 @@ import { mascheraSorgente } from '../fixtures/sorgente'
  *    CONTROLLATE di `isolamento-sede-coverage`, il cui conteggio `handlerControllati` sale con loro.
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
- * Dichiara quanti file e quante funzioni ha trovato (10 / 18, esatti: né di più né di meno) e ha il suo controllo positivo
+ * Dichiara quanti file e quante funzioni ha trovato (11 / 19, esatti: né di più né di meno) e ha il suo controllo positivo
  * su sorgenti finti: una route nuda, senza zod, senza gate o col nome sbagliato fa rosso. Se una route nuova della PR 4.5
  * nasce in un'altra cartella, si aggiunge all'INVENTARIO: il lock non la indovina.
  *
@@ -38,6 +38,7 @@ interface Voce { file: string; metodi: readonly string[]; gate: boolean; sede: '
 
 /** L'inventario scritto delle route nuove della PR 4.5. Si estende SCRIVENDO, non calcolando. */
 const INVENTARIO: readonly Voce[] = [
+  { file: `${API}/admin/anni/[annoSedeId]/conferme/ritira/route.ts`, metodi: ['POST'], gate: true, sede: 'anno' },
   { file: `${API}/admin/anni/[annoSedeId]/conferme/non-rinnova/route.ts`, metodi: ['POST'], gate: true, sede: 'anno' },
   { file: `${API}/admin/anni/[annoSedeId]/conferme/route.ts`, metodi: ['GET', 'POST'], gate: true, sede: 'anno' },
   { file: `${API}/admin/anni/[annoSedeId]/moduli-mancanti/route.ts`, metodi: ['GET'], gate: true, sede: 'anno' },
@@ -50,8 +51,8 @@ const INVENTARIO: readonly Voce[] = [
   { file: `${API}/iscrizione/anni/route.ts`, metodi: ['GET'], gate: false, sede: 'pubblica' },
 ]
 
-const FILE_ATTESI = 10
-const FUNZIONI_ATTESE = 18
+const FILE_ATTESI = 11
+const FUNZIONI_ATTESE = 19
 
 const METODI = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS'
 const NUDO = new RegExp(`export\\s+(?:async\\s+)?function\\s+(${METODI})\\b`, 'g')
@@ -185,7 +186,7 @@ export const PUT = withRoute('admin/x/y:PUT', async (request) => {
 })
 
 describe('anno-iscrizioni-route-coperte — le route vere', () => {
-  it('l’inventario è completo e non ha doppioni: 10 file, 18 funzioni (esatti)', () => {
+  it('l’inventario è completo e non ha doppioni: 11 file, 19 funzioni (esatti)', () => {
     expect(INVENTARIO.length).toBe(FILE_ATTESI)
     expect(new Set(INVENTARIO.map((v) => v.file)).size).toBe(FILE_ATTESI)
     expect(INVENTARIO.reduce((n, v) => n + v.metodi.length, 0)).toBe(FUNZIONI_ATTESE)
@@ -201,7 +202,7 @@ describe('anno-iscrizioni-route-coperte — le route vere', () => {
     expect(v, `Le route nuove della 4.5 non hanno tutto ciò che i lock di route pretendono (${v.length}).` + elenco(v)).toEqual([])
   })
 
-  it('le funzioni esportate sono davvero 18 (contate sul sorgente, non sull’inventario)', () => {
+  it('le funzioni esportate sono davvero 19 (contate sul sorgente, non sull’inventario)', () => {
     const n = INVENTARIO.reduce((tot, voce) => tot + [...mascheraSorgente(leggi(voce.file)).senzaCommenti.matchAll(AVVOLTO)].length, 0)
     expect(n).toBe(FUNZIONI_ATTESE)
   })

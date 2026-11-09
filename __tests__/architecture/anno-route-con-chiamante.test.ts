@@ -36,7 +36,7 @@ const CARTELLE_CHIAMANTI = ['src/app/(dashboard)', 'src/components', 'src/lib'] 
 const SENZA_CHIAMANTE_AMMESSO: Record<string, string> = {}
 
 /** Quante route ci sono oggi in quelle due cartelle (misurato il 2026-11-09, ramo PR 4.7, dopo l'allineamento alla 4.6: la route `rette` è una in più). */
-const ROUTE_ATTESE = 15
+const ROUTE_ATTESE = 22 // 15 + le sette del passaggio d’anno (PR 4.8)
 
 const CHIUSURA = '[`\'"?]'
 const escapa = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

@@ -40,9 +40,9 @@ const MIGRAZIONI = [
   'supabase/migrations/20261109035219_anno_iscrizione_conferma.sql',
   'supabase/migrations/20261109035223_anno_crm_anno_id.sql',
   // Giro 1 della 4.8 (S26): il lock guarda anche le tre migrazioni del passaggio d'anno e i file nuovi di `src/` della 4.8.
-  'supabase/migrations/20261109130425_anno_passaggio_anteprima.sql',
-  'supabase/migrations/20261109130426_anno_passaggio_didattica.sql',
-  'supabase/migrations/20261109130427_anno_passaggio_conferma.sql',
+  'supabase/migrations/20261109182420_anno_passaggio_anteprima.sql',
+  'supabase/migrations/20261109182421_anno_passaggio_didattica.sql',
+  'supabase/migrations/20261109182422_anno_passaggio_conferma.sql',
 ] as const
 
 /**

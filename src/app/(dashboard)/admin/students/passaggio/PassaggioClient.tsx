@@ -241,7 +241,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
     // (giro 1, S20; giro 2, N7) Solo nome e cognome, dei soli bambini di queste righe: a blocchi di 100.
     for (let da = 0; da < cercati.length; da += 100) {
       const blocco = cercati.slice(da, da + 100);
-      const r = await chiama('GET', `${base}/nomi?ids=${blocco.join(',')}`, uid);
+      const r = await chiama('GET', `/api/admin/anni/${annoSedeId}/passaggio/nomi?ids=${blocco.join(',')}`, uid);
       const lista = dati(r.corpo);
       if (!riuscita(r) || !Array.isArray(lista)) continue;
       for (const a of lista as Array<{ id: string; nome?: string | null; cognome?: string | null }>) {
@@ -266,7 +266,16 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
     dopo?: () => void,
   ): Promise<boolean> => {
     setOccupato(true);
-    const r = await chiama(metodo, `${base}${percorso}`, uid, corpo);
+    // Gli indirizzi stanno scritti per intero: il lock `anno-route-con-chiamante` cerca la route nel testo di chi la chiama.
+    const indirizzi: Record<string, string> = {
+      '': `/api/admin/anni/${annoSedeId}/passaggio`,
+      '/righe': `/api/admin/anni/${annoSedeId}/passaggio/righe`,
+      '/docenti': `/api/admin/anni/${annoSedeId}/passaggio/docenti`,
+      '/conferma': `/api/admin/anni/${annoSedeId}/passaggio/conferma`,
+      '/annulla': `/api/admin/anni/${annoSedeId}/passaggio/annulla`,
+      '/conferma-tardiva': `/api/admin/anni/${annoSedeId}/passaggio/conferma-tardiva`,
+    };
+    const r = await chiama(metodo, indirizzi[percorso] ?? `${base}${percorso}`, uid, corpo);
     setOccupato(false);
     if (!riuscita(r)) {
       const c = (r.corpo as { codice?: unknown } | null)?.codice;

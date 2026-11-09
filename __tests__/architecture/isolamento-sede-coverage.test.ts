@@ -2699,7 +2699,7 @@ describe('coverage-lock isolamento fra sedi', () => {
 
             // 407 → 408 il 2026-11-10 (giro 1, S6): entra `admin/anni/[annoSedeId]/passaggio/nomi` (GET). CONTROLLATA: `requireStaff`, `assertAnnoSedeInScope`,
             // e i nomi si leggono solo fra le righe del passaggio di QUELL'anno (porta `leggiNomiDelPassaggio`). Misurato: 407 → 408.
-            routeConServiceRole: 404,
+            routeConServiceRole: 411, // 404 + le sette route del passaggio d’anno (PR 4.8), tutte CONTROLLATE. Misurato rieseguendo il lock dopo l’allineamento a main.
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3064,7 +3064,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `handlerEsentati` non cambia (108).
 
             // 626 → 627 il 2026-11-10 (giro 1): `passaggio/nomi:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
-            handlerControllati: 623,
+            handlerControllati: 631, // 623 + otto handler del passaggio (PR 4.8, GET/PUT/POST delle sette route), tutti CONTROLLATI; handlerEsentati non cambia (108).
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

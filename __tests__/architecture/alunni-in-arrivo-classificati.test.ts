@@ -548,7 +548,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
 
 
-      { no: 0, 'no-già': 210, sì: 62, daCorreggere: 0 }, // 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
+      { no: 0, 'no-già': 212, sì: 68, daCorreggere: 0 }, // 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
     )
   })
 

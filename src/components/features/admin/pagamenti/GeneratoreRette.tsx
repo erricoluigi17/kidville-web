@@ -211,7 +211,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
         const perOrigine = origini.filter(([k]) => (a.per_origine?.[k] ?? 0) > 0);
         const altri = (a.esenti ?? 0) + (a.pagante_assente ?? 0);
         return (
-            <div className="mb-3 space-y-1.5 font-maven text-xs text-kidville-muted">
+            <div className="mb-3 space-y-1.5 font-maven text-xs text-kidville-sub">
                 {stato && <p>{t('genrAnnoStato', { stato })}</p>}
                 {a.visibile_alle_famiglie === false && a.anno_stato !== 'chiuso' && (
                     <p role="status" className="rounded-card bg-kidville-warn-soft px-3 py-2 text-kidville-warn-strong">{t('genrNonVisibile')}</p>

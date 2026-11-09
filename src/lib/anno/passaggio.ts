@@ -360,6 +360,11 @@ export type ContatoriPassaggio = {
   avvisi: Record<AvvisoPassaggio, number>
   /** Le righe con un avviso (senza doppioni), al più `daDecidereMax` per avviso. */
   daDecidere: RigaLettaPassaggio[]
+  /**
+   * (giro 2, S5) Le voci di quota ancora da pagare (`da_pagare`, `scaduto`) sulle frequenze nuove di chi ESCE: il passaggio non le tocca, la
+   * segreteria deve saperlo. `null` = non si è potuto contare (la pagina non dice un numero inventato).
+   */
+  quoteSuUsciti: number | null
 }
 export type LetturaPassaggio = {
   passaggio: PassaggioLetto | null
@@ -406,7 +411,7 @@ function soloNumeri(o: unknown): Record<string, number> {
   return fuori
 }
 
-export type NomeDelPassaggio = { id: string; nome: string; cognome: string; classe: string | null }
+export type NomeDelPassaggio = { id: string; nome: string; cognome: string }
 export type EsitoNomi = EsitoPassaggio<{ nomi: NomeDelPassaggio[] }>
 
 /**
@@ -423,15 +428,14 @@ export async function leggiNomiDelPassaggio(supabase: SupabaseClient, passaggioI
     if (righe.error) return guasto(righe.error)
     const ammessi = ((righe.data ?? []) as Array<{ alunno_id: string }>).map((r) => r.alunno_id)
     if (ammessi.length === 0) return { ok: true, nomi: [] }
-    const alunni = await supabase.from('alunni').select('id, nome, cognome, classe_sezione').in('id', ammessi)
+    const alunni = await supabase.from('alunni').select('id, nome, cognome').in('id', ammessi)
     if (alunni.error) return guasto(alunni.error)
     return {
       ok: true,
-      nomi: ((alunni.data ?? []) as Array<{ id: string; nome: string | null; cognome: string | null; classe_sezione: string | null }>).map((a) => ({
+      nomi: ((alunni.data ?? []) as Array<{ id: string; nome: string | null; cognome: string | null }>).map((a) => ({
         id: a.id,
         nome: a.nome ?? '',
         cognome: a.cognome ?? '',
-        classe: a.classe_sezione ?? null,
       })),
     }
   } catch (err) {
@@ -518,7 +522,40 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
           })
         }
       })
-      contatori = { esiti, avvisi, daDecidere }
+      // (giro 2, S5) Le quote ancora da pagare su chi esce: la frequenza nuova di chi esce → la sua voce di quota → lo stato del pagamento.
+      // Tre letture a blocchi; una che cade non ferma la pagina (il numero è `null`) ma si registra.
+      let quoteSuUsciti: number | null = 0
+      const uscenti = await supabase
+        .from('passaggi_anno_righe')
+        .select('frequenza_a_id')
+        .eq('passaggio_id', riga.id)
+        .eq('esito', 'esce')
+        .not('frequenza_a_id', 'is', null)
+        .range(0, TETTO_MASSIMO * 5 - 1)
+      if (uscenti.error) {
+        logErrore({ operazione: OP_LETTURA }, uscenti.error)
+        quoteSuUsciti = null
+      } else {
+        const freq = ((uscenti.data ?? []) as Array<{ frequenza_a_id: string | null }>).map((x) => x.frequenza_a_id).filter((x): x is string => !!x)
+        for (let i = 0; i < freq.length && quoteSuUsciti !== null; i += 100) {
+          const quote = await supabase.from('frequenze').select('quota_pagamento_id').in('id', freq.slice(i, i + 100)).not('quota_pagamento_id', 'is', null)
+          if (quote.error) {
+            logErrore({ operazione: OP_LETTURA }, quote.error)
+            quoteSuUsciti = null
+            break
+          }
+          const voci = ((quote.data ?? []) as Array<{ quota_pagamento_id: string | null }>).map((x) => x.quota_pagamento_id).filter((x): x is string => !!x)
+          if (voci.length === 0) continue
+          const aperte = await supabase.from('pagamenti').select('id', { count: 'exact', head: true }).in('id', voci).in('stato', ['da_pagare', 'scaduto'])
+          if (aperte.error) {
+            logErrore({ operazione: OP_LETTURA }, aperte.error)
+            quoteSuUsciti = null
+            break
+          }
+          quoteSuUsciti += aperte.count ?? 0
+        }
+      }
+      contatori = { esiti, avvisi, daDecidere, quoteSuUsciti }
     }
 
     return {

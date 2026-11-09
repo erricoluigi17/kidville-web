@@ -77,7 +77,9 @@ function cronNominaPassaggio(sql: string): string[] {
     const pezzo = sql.slice(h.index, h.index + 600)
     const chiusa = pezzo.search(/\)\s*;/)
     const corpo = chiusa >= 0 ? pezzo.slice(0, chiusa) : pezzo
-    if (/\bpassaggio_\w+/i.test(corpo)) out.push(corpo.slice(0, 80).replace(/\s+/g, ' '))
+    // (giro 2, R6) Unica eccezione: `passaggio_ricopia_schede` ricopia le schede il giorno dell'inizio di un passaggio GIÀ confermato dal
+    // titolare; non calcola, non conferma e non annulla niente. Ogni altra `passaggio_*` da cron resta vietata.
+    if (/\bpassaggio_(?!ricopia_schede\b)\w+/i.test(corpo)) out.push(corpo.slice(0, 80).replace(/\s+/g, ' '))
   }
   return out
 }

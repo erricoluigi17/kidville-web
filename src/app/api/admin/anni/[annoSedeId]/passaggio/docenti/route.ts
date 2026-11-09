@@ -54,15 +54,16 @@ export const PUT = withRoute('admin/anni/[annoSedeId]/passaggio/docenti:PUT', as
   const docenteAmmesso = async (utenteId: string): Promise<'si' | 'no' | 'errore'> => {
     const [anno, utente] = await Promise.all([
       supabase.from('anni_sede').select('scuola_id').eq('id', annoSedeId).maybeSingle(),
-      supabase.from('utenti').select('id, ruolo, scuola_id').eq('id', utenteId).maybeSingle(),
+      supabase.from('utenti').select('id, ruolo, scuola_id, archiviato_il').eq('id', utenteId).maybeSingle(),
     ])
     if (anno.error || utente.error) {
       logErrore({ operazione: 'admin/anni/[annoSedeId]/passaggio/docenti:PUT' }, anno.error ?? utente.error)
       return 'errore'
     }
     if (!anno.data || !utente.data) return 'no'
-    const u = utente.data as { ruolo: string | null; scuola_id: string | null }
-    if (u.ruolo === 'genitore') return 'no'
+    const u = utente.data as { ruolo: string | null; scuola_id: string | null; archiviato_il?: string | null }
+    // (giro 2, R7) Né un genitore né un account archiviato (docente revocato).
+    if (u.ruolo === 'genitore' || u.archiviato_il) return 'no'
     return u.scuola_id && u.scuola_id === (anno.data as { scuola_id: string }).scuola_id ? 'si' : 'no'
   }
 
@@ -92,6 +93,15 @@ export const PUT = withRoute('admin/anni/[annoSedeId]/passaggio/docenti:PUT', as
   })
   if (!esito.ok || 'saltata' in esito) return rispostaPassaggioNonRiuscito(esito, ctx)
 
+  // (giro 2, R5) «Togli» vale per l'elenco del passaggio: chi è GIÀ assegnato alla classe nuova dalla scheda della classe resta assegnato.
+  // La pagina lo dice. Una lettura caduta non cambia l'esito (`resta_assegnato` assente), ma si registra.
+  let restaAssegnato: boolean | undefined
+  if (corpo.origine === 'tolta') {
+    const gia = await supabase.from('utenti_sezioni').select('utente_id').eq('utente_id', corpo.utente_id).eq('section_id', corpo.section_id).limit(1)
+    if (gia.error) logErrore({ operazione }, gia.error)
+    else restaAssegnato = (gia.data ?? []).length > 0
+  }
+
   logEvento('anno-scolastico', 'info', {
     tipo: 'passaggio-docente-impostato',
     operazione,
@@ -102,6 +112,11 @@ export const PUT = withRoute('admin/anni/[annoSedeId]/passaggio/docenti:PUT', as
   })
   return NextResponse.json({
     success: true,
-    data: { utente_id: esito.utente_id ?? corpo.utente_id, sezione_a_id: esito.sezione_a_id ?? corpo.section_id, origine: esito.origine ?? corpo.origine },
+    data: {
+      utente_id: esito.utente_id ?? corpo.utente_id,
+      sezione_a_id: esito.sezione_a_id ?? corpo.section_id,
+      origine: esito.origine ?? corpo.origine,
+      ...(restaAssegnato === undefined ? {} : { resta_assegnato: restaAssegnato }),
+    },
   })
 })

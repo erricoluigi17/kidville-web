@@ -455,6 +455,11 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
     tabelle: ['pagamenti'],
     motivo: 'Il ramo genitore è il rifiuto: `agisceComeGenitore` risponde 403 prima di ogni lettura, e il resto è il semaforo delle gite per chi insegna.',
   },
+  {
+    handler: 'admin/anni/[annoSedeId]/passaggio/docenti:PUT',
+    tabelle: ['pagamenti'],
+    motivo: 'Route di segreteria: il «genitore» è il ruolo che NON si può assegnare a una classe (rifiuto), e il `pagamenti` è la lettura della porta del passaggio che conta le quote ancora da pagare su chi esce (solo `count`, per il GET con i contatori): in questo PUT non esce nessun contenuto.',
+  },
 ]
 
 /** Le voci di `ESENTI` che valgono solo finché il filtro per documento decide le righe della risposta. */
@@ -701,7 +706,7 @@ describe('visibilita-genitore-coverage · il codice di src/', () => {
 
     // Al 09/11/2026: 401 file di route e 611 handler. 94 route leggono una delle sette tabelle: 69 nel proprio file (66 sulle
     // sei del brief, più le 3 che leggono solo `mensa_prenotazioni`) e 33 via libreria, con 8 che fanno tutte e due. 23 hanno un
-    // ramo genitore su quella lettura, per 27 handler: 14 passano dalle funzioni (in 11 route), 13 stanno in ESENTI con 17 coppie
+    // ramo genitore su quella lettura, per 28 handler: 14 passano dalle funzioni (in 11 route), 14 stanno in ESENTI con 18 coppie
     // handler-tabella. I minimi sono esatti di proposito: se scendono, scrivi accanto al numero PERCHÉ.
     expect(file.length, 'file di route letti').toBeGreaterThanOrEqual(401)
     expect(tutti.length, 'handler letti').toBeGreaterThanOrEqual(611)
@@ -714,7 +719,7 @@ describe('visibilita-genitore-coverage · il codice di src/', () => {
     expect(routeCon(passano), 'route che passano dalle funzioni').toBeGreaterThanOrEqual(11)
 
     // Le eccezioni non crescono senza che qualcuno riscriva questa riga: il tetto può solo scendere.
-    expect(ESENTI.length, 'voci in ESENTI').toBeLessThanOrEqual(13)
+    expect(ESENTI.length, 'voci in ESENTI').toBeLessThanOrEqual(14)
     expect(coppie.length).toBe(ESENTI.reduce((n, e) => n + e.tabelle.length, 0))
   }, TEMPO)
 

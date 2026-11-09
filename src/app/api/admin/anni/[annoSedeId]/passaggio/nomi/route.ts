@@ -14,7 +14,7 @@ type Contesto = { params: Promise<{ annoSedeId: string }> }
 /**
  * I NOMI DELLE RIGHE DEL PASSAGGIO (giro di correzione 1, S20). La pagina mostra uuid e deve stampare un nome: prima lo cercava
  * scaricando tre elenchi interi di `admin/students` (`limit=1000`), cioè anche codici fiscali e note mediche di centinaia di bambini
- * per leggerne dieci. Qui escono SOLO nome, cognome e classe, e solo dei bambini che hanno una riga in QUESTO passaggio.
+ * per leggerne dieci. Qui escono SOLO nome e cognome, e solo dei bambini che hanno una riga in QUESTO passaggio.
  *
  * `?ids=uuid,uuid,…` (da 1 a 200). Il passaggio lo trova il SERVER dall'anno dell'URL, già dentro il perimetro dell'utente. Un uuid
  * che non è una riga del passaggio non compare nella risposta (nessun errore: non si dice che esiste). Nei log: mai un nome.

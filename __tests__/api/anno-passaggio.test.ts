@@ -92,6 +92,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return b
       }
       b.limit = () => b
+      b.not = () => b
       b.eq = (c: string, v: unknown) => {
         q.filtri[c] = v
         cond.push((r) => r[c] === v)
@@ -862,13 +863,13 @@ describe('GET passaggio/nomi', () => {
     ]
   })
 
-  it('dà solo nome, cognome e classe, e solo di chi ha una riga in questo passaggio', async () => {
+  it('dà solo nome e cognome, e solo di chi ha una riga in questo passaggio', async () => {
     const res = await chiedi(`${AL_IN},${AL_FUORI}`)
     expect(res.status).toBe(200)
     const corpo = await res.json()
-    expect(corpo.data).toEqual([{ id: AL_IN, nome: 'Prova', cognome: 'Finto', classe: 'Classe X' }])
+    expect(corpo.data).toEqual([{ id: AL_IN, nome: 'Prova', cognome: 'Finto' }])
     expect(JSON.stringify(corpo)).not.toContain('NON-DEVE-USCIRE')
-    expect(h.query.filter((q) => q.tabella === 'alunni').map((q) => q.colonne)).toEqual(['id, nome, cognome, classe_sezione'])
+    expect(h.query.filter((q) => q.tabella === 'alunni').map((q) => q.colonne)).toEqual(['id, nome, cognome'])
   })
 
   it('400 senza ids, con più di 200 uuid o con un valore che non è un uuid; 403 fuori sede; 403 al ruolo sbagliato', async () => {
@@ -901,6 +902,7 @@ describe('GET passaggio con ?contatori=N', () => {
     const { contatori } = (await res.json()).data
     expect(contatori.esiti).toEqual({ continua: 2, cambia_grado: 1, nuova: 0, esce: 1, non_risposto: 0 })
     expect(contatori.avvisi).toEqual({ ritirato_tendina: 1, senza_sezione: 1 })
+    expect(contatori.quoteSuUsciti).toBe(0)
     expect(contatori.daDecidere.map((r: { alunno_id: string }) => r.alunno_id).sort()).toEqual(['a3', 'a4'])
   })
 

@@ -477,6 +477,15 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'riprende da solo il giorno in cui torna attivo.',
     },
     {
+    {
+        nome: 'passaggio-ricopia-schede',
+        perche:
+            'Orario (`35 * * * *`), PR 4.8 giro 2: stessa ragione di `anni-tick` (la migrazione è nella PR 4.8, non ancora ' +
+            'nella fotografia delle applicate). Il giorno dell’inizio dell’anno nuovo ricopia le schede dei bambini sulla ' +
+            'classe nuova ed è idempotente. Nel frattempo lo sorveglia `cron-esiti`; logga anche il successo, con i conteggi. ' +
+            'Passa in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B, dopo la rigenerazione della fotografia.',
+    },
+    {
         nome: 'anno-invarianti',
         perche:
             'Notturno (`17 3 * * *`). La migrazione è in produzione dal 09/11/2026 e la fotografia la contiene, ma il suo ' +

@@ -44,3 +44,21 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 
 - **S24 · PRD non aggiornato** (`PRD REGISTRO ELETTRONICO.md`, compito 4.8.12): da fare prima del merge (`AGENTS.md`, regola 2).
 - **S25 · `public/sw.js` v19 e `classificazione`, conflitto con 4.6 e 4.7**: ordine di merge 4.6, 4.7, 4.8, con bump al merge.
+
+## Giro 2 (annotazioni)
+
+- **Fatti nel giro 2:** S5 (quote ancora da pagare su chi esce: una riga nel dialogo di conferma e nel riepilogo, dal conteggio dei contatori), S10 (avviso
+  nel dialogo di annullo), S15 (la colonna «Da» legge `sezione_da_id`), N4 (a conferma dopo l'inizio il dialogo non cita date passate), N5, N6, N7 (`/nomi`
+  restituisce solo nome e cognome), e il punto 13 qui sopra (l'invariante dello storico è la 15 di `anno_invarianti()`, ridefinita dall'ultima definizione).
+- **S11 · bambino con frequenza viva in un'altra sede: NON fatto.** Tocca cinque posti (CHECK di `passaggi_anno_righe`, `passaggio_calcola`, il conteggio
+  bloccante della conferma, `AVVISI_PASSAGGIO`, pagina e frasi) e la firma SQL su cui è partita la 4.9. Non misurato in produzione: prima di farlo contare con una
+  `SELECT count(*)` i bambini con due frequenze vive in sedi diverse nell'anno nuovo.
+- **N3 · conferma tardiva nella finestra.** Entra all'inizio, come dice la specifica: nella finestra la quota non si crea (scheda archiviata/ancora sull'anno
+  vecchio) ed è rimandata a `passaggio_ricopia_schede` (esito `rimandata_all_inizio`). La pagina oggi non lo dice in modo esplicito.
+- **R7 · la cuoca.** La route classica dei docenti (`admin/sections/[id]/teachers`) ammette la cuoca; la route del passaggio segue la stessa regola. Non
+  cambiato qui: da decidere insieme a quella route.
+- **B2 senza prova dal modulo pubblico.** La correzione è provata sul banco con le righe già a DB; non è stata fatta una domanda vera dal modulo pubblico
+  (non si scrive in produzione).
+- **Quattro prove del revisore non conclusive:** T6, F2, Q06, P22/Q10. Non riprodotte e non classificate come difetti; da rifare dal revisore se servono.
+- **Quote nella finestra:** `passaggio_ricopia_schede` gira ogni ora (`35 * * * *`) e va registrato in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B,
+  dopo la rigenerazione della fotografia (oggi è in `JOB_CRON_NON_SORVEGLIATI`, come `anni-tick`).

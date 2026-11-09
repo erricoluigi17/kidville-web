@@ -53,7 +53,7 @@
   "successiva": "Next",
   "paginaDi": "Page {pagina}/{pagine}",
   "docentiTitolo": "Teachers of the new classes",
-  "docentiNota": "These are the teachers of the old classes, copied onto the new ones. You can remove or add some. “Remove” applies to the new class: on the old class the teacher stays until you confirm.",
+  "docentiNota": "These are the teachers of the old classes, copied onto the new ones. You can remove or add some. “Remove” applies to the new class: on the old class the teacher stays until you confirm. Someone already assigned to the new class from the class page stays assigned even if you remove them here. Archived accounts cannot be added.",
   "docentiVuoto": "No teacher copied.",
   "docenteSenzaNome": "Teacher without a name",
   "docenteCopiata": "copied",
@@ -117,10 +117,14 @@
   "uso_chat_messages": "chat messages",
   "uso_student_documents": "children’s documents",
   "uso_frequenze_dopo_la_conferma": "enrolments recorded after confirmation",
-  "correggiRiporta": "Continues in this class",
+  "correggiRiporta": "To keep them, choose the class",
   "tardivaClasseScegli": "Choose the class",
   "azioneScarta": "Discard the preview",
   "esitoScartata": "The preview is discarded: calculate another one if needed.",
   "rimandoSelettore": "The changeover is prepared on the year with open enrolment: choose that year from the selector above.",
-  "correggiContinuaQui": "Continues in this class"
+  "correggiContinuaQui": "Continues in this class",
+  "esitoDocenteRestaAssegnato": "Removed from the transition list, but still assigned to the new class: the assignment is on the class page and is changed from there.",
+  "dialogoGiaCominciato": "The new year has already started: families of children who continue see the new class right away, and those who leave lose access right away.",
+  "quoteSuUsciti": "{n, plural, one {# fee is still unpaid for a child who leaves: the transition does not remove it.} other {# fees are still unpaid for children who leave: the transition does not remove them.}}",
+  "dialogoAnnullaStorico": "The records have already moved to the new class since {dal}: cancelling returns them to the previous class, but in the class history the days already spent stay on the new class."
 }

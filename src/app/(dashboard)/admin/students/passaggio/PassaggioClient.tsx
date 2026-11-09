@@ -48,8 +48,8 @@ type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato
 type Letta = { passaggio: PassaggioApi | null; righe: RigaApi[]; totale: number; docenti: DocenteApi[] };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type Staff = { id: string; nome: string | null; cognome: string | null; ruolo?: string | null; scuola_id?: string | null };
-type Nome = { nome: string; cognome: string; classe: string | null };
-type Contatori = { esiti: Record<EsitoRiga, number>; daDecidere: RigaApi[]; daDecidereTotale: number };
+type Nome = { nome: string; cognome: string };
+type Contatori = { esiti: Record<EsitoRiga, number>; daDecidere: RigaApi[]; daDecidereTotale: number; quoteSuUsciti: number | null };
 type Messaggio = { tipo: 'ok' | 'errore'; testo: string; codice: string | null };
 
 type Risposta = { stato: number; corpo: unknown };
@@ -188,14 +188,14 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
   // righe per avviso): così i numeri sono sempre quelli del database e non dipendono da come l'anteprima ha scritto i conteggi.
   const leggiContatori = useCallback(async (): Promise<Esito<Contatori>> => {
     const r = await chiama('GET', `${base}?pagina=1&tetto=1&contatori=${RIGHE_DA_DECIDERE_MAX}`, uid);
-    const c = riuscita(r) ? (dati(r.corpo) as { contatori?: { esiti?: Record<string, number>; avvisi?: Record<string, number>; daDecidere?: RigaApi[] } } | null)?.contatori : null;
+    const c = riuscita(r) ? (dati(r.corpo) as { contatori?: { esiti?: Record<string, number>; avvisi?: Record<string, number>; daDecidere?: RigaApi[]; quoteSuUsciti?: number | null } } | null)?.contatori : null;
     if (!c || !c.esiti || !c.avvisi) return { ok: false, stato: r.stato, corpo: r.corpo };
     const esiti = {} as Record<EsitoRiga, number>;
     ESITI.forEach((e) => {
       esiti[e] = c.esiti?.[e] ?? 0;
     });
     const daDecidereTotale = AVVISI.reduce((somma, a) => somma + (c.avvisi?.[a] ?? 0), 0);
-    return { ok: true, dati: { esiti, daDecidere: Array.isArray(c.daDecidere) ? c.daDecidere : [], daDecidereTotale } };
+    return { ok: true, dati: { esiti, daDecidere: Array.isArray(c.daDecidere) ? c.daDecidere : [], daDecidereTotale, quoteSuUsciti: typeof c.quoteSuUsciti === 'number' ? c.quoteSuUsciti : null } };
   }, [base, uid]);
   const contatori = useLettura(passaggioId ? `${base}|c|${versione}` : null, leggiContatori);
 
@@ -238,14 +238,14 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
   const leggiNomi = useCallback(async (): Promise<Esito<Record<string, Nome>>> => {
     const cercati = chiaveNomi ? chiaveNomi.split(',') : [];
     const trovati: Record<string, Nome> = {};
-    // (giro 1, S20) Solo nome, cognome e classe, dei soli bambini di queste righe: a blocchi di 100.
+    // (giro 1, S20; giro 2, N7) Solo nome e cognome, dei soli bambini di queste righe: a blocchi di 100.
     for (let da = 0; da < cercati.length; da += 100) {
       const blocco = cercati.slice(da, da + 100);
       const r = await chiama('GET', `${base}/nomi?ids=${blocco.join(',')}`, uid);
       const lista = dati(r.corpo);
       if (!riuscita(r) || !Array.isArray(lista)) continue;
-      for (const a of lista as Array<{ id: string; nome?: string | null; cognome?: string | null; classe?: string | null }>) {
-        trovati[a.id] = { nome: a.nome ?? '', cognome: a.cognome ?? '', classe: a.classe ?? null };
+      for (const a of lista as Array<{ id: string; nome?: string | null; cognome?: string | null }>) {
+        trovati[a.id] = { nome: a.nome ?? '', cognome: a.cognome ?? '' };
       }
     }
     return { ok: true, dati: trovati };
@@ -262,7 +262,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
     metodo: 'POST' | 'PUT',
     percorso: string,
     corpo: Record<string, unknown>,
-    ok: string,
+    ok: string | ((dati: unknown) => string),
     dopo?: () => void,
   ): Promise<boolean> => {
     setOccupato(true);
@@ -275,7 +275,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
       setMessaggio({ tipo: 'errore', testo: uso ? `${testoErrore(t, r)} ${t('annulloMotivi', { elenco: uso })}` : testoErrore(t, r), codice: typeof c === 'string' ? c : null });
       return false;
     }
-    setMessaggio({ tipo: 'ok', testo: ok, codice: null });
+    setMessaggio({ tipo: 'ok', testo: typeof ok === 'function' ? ok(dati(r.corpo)) : ok, codice: null });
     dopo?.();
     rilegge();
     return true;
@@ -298,7 +298,8 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
   };
 
   const impostaDocente = (utenteId: string, sezioneId: string, origine: 'aggiunta' | 'tolta') =>
-    passaggioId ? scrivi('PUT', '/docenti', { utente_id: utenteId, section_id: sezioneId, origine }, t('esitoDocente')) : undefined;
+    passaggioId ? scrivi('PUT', '/docenti', { utente_id: utenteId, section_id: sezioneId, origine }, (d) =>
+      origine === 'tolta' && (d as { resta_assegnato?: boolean } | null)?.resta_assegnato ? t('esitoDocenteRestaAssegnato') : t('esitoDocente')) : undefined;
 
   const conferma = async () => {
     setDialogo(null);
@@ -362,7 +363,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
       <div>
         <p className="font-maven text-sm text-kidville-green">{annullato ? t('statoAnnullato') : t('nessunaAnteprima')}</p>
         {/* (giro 1, S17) Il passaggio si calcola sull'anno con le iscrizioni aperte: dall'anno in corso si rimanda al selettore. */}
-        {puoCalcolare ? (
+        {puoCalcolare || annullato ? (
           <button type="button" className={`${btnPrimary} mt-3`} disabled={occupato} onClick={calcola}>{t('azioneCalcola')}</button>
         ) : (
           <p className={hint}>{t('rimandoSelettore')}</p>
@@ -379,6 +380,9 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
   const tuttiContati = esiti ? ESITI.reduce((somma, e) => somma + esiti[e], 0) : undefined;
   // La data di OGGI serve solo a spegnere il pulsante; la guardia vera è del server (409 PASSAGGIO_TROPPO_PRESTO).
   const nonAncora = !!passaggio.apribile_dal && oggiFiscaleISO() < passaggio.apribile_dal;
+  // (giro 2, N4) Se il nuovo anno è già cominciato non si citano date già passate; (S5) le quote ancora da pagare su chi esce.
+  const annoGiaCominciato = !!passaggio.inizio_anno_nuovo && oggiFiscaleISO() >= passaggio.inizio_anno_nuovo;
+  const quoteSuUsciti = contatori.fase === 'ok' ? contatori.dati.quoteSuUsciti : null;
   const confermaSpenta = occupato || nonAncora || contatori.fase !== 'ok' || numeroDaDecidere > 0;
   const pagine = Math.max(1, Math.ceil(totale / PER_PAGINA));
 
@@ -411,6 +415,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
             <li>{t('riepilogoUsciti', { n: passaggio.conteggi.usciti ?? 0 })}</li>
             <li>{t('riepilogoCambiaGrado', { n: passaggio.conteggi.cambia_grado ?? 0 })}</li>
             <li>{t('riepilogoDocenti', { n: passaggio.conteggi.docenti_copiati ?? 0 })}</li>
+            {quoteSuUsciti !== null && quoteSuUsciti > 0 && <li>{t('quoteSuUsciti', { n: quoteSuUsciti })}</li>}
           </ul>
           <button type="button" className={`${secondario} mt-3`} disabled={occupato} onClick={() => setDialogo('annulla')}>{t('azioneAnnulla')}</button>
         </section>
@@ -472,7 +477,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
               t={t}
               r={r}
               nome={nomeDi(r.alunno_id)}
-              classeDa={nomeSezione(r.sezione_da_id) ?? nomi[r.alunno_id]?.classe ?? null}
+              classeDa={nomeSezione(r.sezione_da_id)}
               classeA={nomeSezione(r.sezione_a_id)}
               sezioni={sezioni}
               puoCorreggere={inAnteprima}
@@ -504,14 +509,17 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
             {(esiti?.non_risposto ?? 0) > 0 && <li>{t('dialogoNonRisposto', { n: esiti?.non_risposto ?? 0 })}</li>}
             {(esiti?.esce ?? 0) > 0 && <li>{t('dialogoEsce', { n: esiti?.esce ?? 0 })}</li>}
             {(esiti?.cambia_grado ?? 0) > 0 && <li>{t('dialogoCambiaGrado', { n: esiti?.cambia_grado ?? 0 })}</li>}
-            {passaggio.inizio_anno_nuovo ? (
+            {annoGiaCominciato ? (
+              <li>{t('dialogoGiaCominciato')}</li>
+            ) : passaggio.inizio_anno_nuovo ? (
               <li>{t('dialogoFinestra', { fino: giorno(giornoPrima(passaggio.inizio_anno_nuovo)), dal: giorno(passaggio.inizio_anno_nuovo) })}</li>
             ) : (
               <li>{t('dialogoFamiglie')}</li>
             )}
-            {((esiti?.esce ?? 0) + (esiti?.non_risposto ?? 0)) > 0 && (
+            {!annoGiaCominciato && ((esiti?.esce ?? 0) + (esiti?.non_risposto ?? 0)) > 0 && (
               <li>{t('dialogoAccessoSubito', { n: (esiti?.esce ?? 0) + (esiti?.non_risposto ?? 0) })}</li>
             )}
+            {quoteSuUsciti !== null && quoteSuUsciti > 0 && <li>{t('quoteSuUsciti', { n: quoteSuUsciti })}</li>}
           </ul>
           <p className={hint}>{t('dialogoNota')}</p>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -525,6 +533,9 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
         <div className="p-5 font-maven text-sm text-kidville-green">
           <h2 className="m-0 font-barlow text-base font-extrabold uppercase">{t('dialogoAnnullaTitolo')}</h2>
           <p className="mt-3">{t('dialogoAnnullaCorpo')}</p>
+          {annoGiaCominciato && passaggio.inizio_anno_nuovo && (
+            <p className="mt-2">{t('dialogoAnnullaStorico', { dal: giorno(passaggio.inizio_anno_nuovo) })}</p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className={btnPrimary} disabled={occupato} onClick={annulla}>{t('dialogoAnnullaSi')}</button>
             <button type="button" className={secondario} onClick={() => setDialogo(null)}>{t('dialogoNo')}</button>

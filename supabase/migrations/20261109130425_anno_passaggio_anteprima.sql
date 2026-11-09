@@ -56,7 +56,7 @@ $$;
 --                    ritirata, oppure la scheda è `ritirato`;
 --   · `non_risposto` viva nel vecchio, nessuna viva nel nuovo, nessun «no».
 -- Chi non ha nessuna frequenza viva (un archiviato senza iscrizione nuova) non compare.
--- `avviso`: `ritirato_tendina` se la scheda è `ritirato` MA c'è una frequenza nuova viva (la segreteria deve decidere: il bambino non
+-- `avviso`: `ritirato_tendina` se la scheda è `ritirato` (o `sospeso`, giro 2) MA c'è una frequenza nuova viva (la segreteria deve decidere: il bambino non
 -- continua in silenzio); `senza_sezione` se continua, cambia grado o è nuovo e la classe nuova manca.
 -- Non scrive niente.
 CREATE OR REPLACE FUNCTION public.passaggio_calcola(p_da uuid, p_a uuid)
@@ -102,7 +102,7 @@ AS $$
        )
   SELECT e.alunno_id, e.fd_id, e.fa_id, e.sd_id, e.sa_id, e.esito,
          CASE
-           WHEN e.stato_alunno = 'ritirato' AND e.fa_id IS NOT NULL THEN 'ritirato_tendina'
+           WHEN e.stato_alunno IN ('ritirato', 'sospeso') AND e.fa_id IS NOT NULL THEN 'ritirato_tendina'  -- (giro 2, R2) anche «sospeso»
            WHEN e.esito IN ('continua', 'cambia_grado', 'nuova') AND e.sa_id IS NULL THEN 'senza_sezione'
          END,
          e.stato_d

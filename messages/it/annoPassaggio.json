@@ -53,7 +53,7 @@
   "successiva": "Avanti",
   "paginaDi": "Pagina {pagina}/{pagine}",
   "docentiTitolo": "Docenti delle classi nuove",
-  "docentiNota": "Sono i docenti delle classi di partenza, copiati sulle classi nuove. Puoi toglierne o aggiungerne. «Togli» vale per la classe nuova: sulla classe di partenza il docente resta fino alla conferma.",
+  "docentiNota": "Sono i docenti delle classi di partenza, copiati sulle classi nuove. Puoi toglierne o aggiungerne. «Togli» vale per la classe nuova: sulla classe di partenza il docente resta fino alla conferma. Chi è già assegnato alla classe nuova dalla scheda della classe resta assegnato anche se lo togli qui. Non si possono aggiungere account archiviati.",
   "docentiVuoto": "Nessun docente copiato.",
   "docenteSenzaNome": "Docente senza nome",
   "docenteCopiata": "copiato",
@@ -117,10 +117,14 @@
   "uso_chat_messages": "messaggi della chat",
   "uso_student_documents": "documenti dei bambini",
   "uso_frequenze_dopo_la_conferma": "iscrizioni registrate dopo la conferma",
-  "correggiRiporta": "Continua in questa classe",
+  "correggiRiporta": "Per farlo continuare, scegli la classe",
   "tardivaClasseScegli": "Scegli la classe",
   "azioneScarta": "Scarta l’anteprima",
   "esitoScartata": "L’anteprima è scartata: se serve, se ne calcola un’altra.",
   "rimandoSelettore": "Il passaggio si prepara sull’anno con le iscrizioni aperte: scegli quell’anno dal selettore in alto.",
-  "correggiContinuaQui": "Continua in questa classe"
+  "correggiContinuaQui": "Continua in questa classe",
+  "esitoDocenteRestaAssegnato": "Tolto dall’elenco del passaggio, ma resta assegnato alla classe nuova: l’assegnazione è sulla scheda della classe e si cambia da lì.",
+  "dialogoGiaCominciato": "L’anno nuovo è già cominciato: le famiglie dei bambini che continuano vedono la classe nuova subito, e chi esce perde subito l’accesso.",
+  "quoteSuUsciti": "{n, plural, one {# quota è ancora da pagare su un bambino che esce: il passaggio non la toglie.} other {# quote sono ancora da pagare su bambini che escono: il passaggio non le toglie.}}",
+  "dialogoAnnullaStorico": "Le schede sono già passate sulla classe nuova dal {dal}: annullando tornano alla classe di prima, ma nello storico delle classi i giorni già trascorsi restano sulla classe nuova."
 }

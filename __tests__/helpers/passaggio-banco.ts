@@ -87,6 +87,8 @@ export interface BancoPassaggio {
   }
   /** Il giorno del passaggio: il giorno dopo l'ultimo giorno aperto dell'anno vecchio (AAAA-MM-GG), letto dal database. */
   oggi: string
+  /** (giro 2, R6) Il giorno dell'`inizio` dell'anno nuovo (AAAA-MM-GG), letto dal database: da lì le schede passano sulla classe nuova. */
+  inizio: string
 }
 
 export interface OpzioniBancoPassaggio {
@@ -260,6 +262,8 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
   const farfalleNuova = figlie.rows.find((r) => r.continua_da === farfalle)!.id
   const primaria = await sezione(db, SEDE_E2E, e2e.a.annoId, 'Prima A', 'primaria')
 
+  // In produzione `utenti.archiviato_il` c'è (docente revocato): il banco ha solo la chiave, la colonna si aggiunge qui (giro 2, R7).
+  await db.query(`ALTER TABLE public.utenti ADD COLUMN IF NOT EXISTS archiviato_il timestamptz`)
   for (const d of [DOCENTE_1, DOCENTE_2]) await db.query(`INSERT INTO public.utenti (id) VALUES ($1)`, [d])
   await db.query(
     `INSERT INTO public.utenti_sezioni (utente_id, section_id) VALUES ($1, $2), ($1, $3), ($4, $5)`,
@@ -316,11 +320,12 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
   await nuovoAlunno(db, BAMBINI_SIM.nonRisposto, SEDE_SIM, 'iscritto', simVecchia)
 
   const oggi = await una<string>(db, `SELECT (ultimo_giorno_aperto + 1)::text FROM public.anni_sede WHERE id = $1`, [e2e.da.id])
+  const inizio = await una<string>(db, `SELECT inizio::text FROM public.anni_sede WHERE id = $1`, [e2e.a.id])
 
   return {
     db, da: e2e.da.id, a: e2e.a.id, annoDa: e2e.da.annoId, annoA: e2e.a.annoId,
     sim: { da: sim.da.id, a: sim.a.id }, vera: { da: vera.da.id, a: vera.a.id },
     sezioni: { girasoli, farfalle, stelline, girasoliNuova, farfalleNuova, primaria, simVecchia, simNuova },
-    oggi,
+    oggi, inizio,
   }
 }

@@ -30,6 +30,11 @@ const correggi = (p: string, alunno: string, esito: string, sezione: string | nu
   b.db.query(`SELECT public.passaggio_riga_correggi($1::uuid, $2::uuid, $3::text, $4::uuid, $5::uuid)`, [p, alunno, esito, sezione, UTENTE])
 const conferma = (p: string, oggi: string) => una<Rec>(b.db, `SELECT public.passaggio_conferma($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, oggi])
 const annulla = (p: string, oggi: string) => una<Rec>(b.db, `SELECT public.passaggio_annulla($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, oggi])
+/** (giro 2, R6) Il job orario del giorno dell'inizio: le schede passano sulla classe nuova. */
+const ricopia = async (oggi: string) => {
+  await oggiE(oggi)
+  return una<Rec>(b.db, `SELECT public.passaggio_ricopia_schede($1::date, $2::uuid)`, [oggi, SEDE_E2E])
+}
 /** Anteprima e le due decisioni che sbloccano la conferma nel banco. */
 async function prepara(oggi: string): Promise<string> {
   const p = await anteprima(oggi)
@@ -110,9 +115,12 @@ describe('B3 · la finestra fra la conferma e l’inizio dell’anno: le famigli
       // La maestra ha la classe nuova in scrittura e la vecchia in sola lettura (decisione 14 della specifica).
       expect(per.get(b.sezioni.girasoliNuova)).toBe(false)
       expect(per.get(b.sezioni.girasoli)).toBe(true)
-      // Il bambino che continua per lei: la scheda dice già la classe nuova, la frequenza viva quella vecchia.
+      // Il bambino che continua per lei (giro 2, R6): la scheda e la frequenza viva dicono la classe VECCHIA fino all'inizio; dal giorno
+      // dell'inizio la ricopia delle schede la porta sulla nuova.
       const scheda = await una<string>(b.db, `SELECT section_id FROM public.alunni WHERE id = $1`, [BAMBINI.continua])
-      expect(scheda).toBe(b.sezioni.girasoliNuova)
+      expect(scheda).toBe(b.sezioni.girasoli)
+      await ricopia('2027-09-01')
+      expect(await una<string>(b.db, `SELECT section_id FROM public.alunni WHERE id = $1`, [BAMBINI.continua])).toBe(b.sezioni.girasoliNuova)
     })
   })
 
@@ -166,6 +174,7 @@ describe('B2 · un bambino nuovo senza classe ferma la conferma', () => {
       expect((e.detail as { senza_sezione: number }).senza_sezione).toBeGreaterThanOrEqual(1)
       await correggi(p, BAMBINI.nuova, 'nuova', b.sezioni.girasoliNuova)
       expect((await conferma(p, '2027-08-20')).gia_confermato).toBe(false)
+      await ricopia('2027-09-01')
       expect(await una<string>(b.db, `SELECT section_id FROM public.alunni WHERE id = $1`, [BAMBINI.nuova])).toBe(b.sezioni.girasoliNuova)
     })
   })
@@ -224,11 +233,12 @@ describe('S8 · S9 · l’annullo guarda che cosa è successo dopo la conferma',
 
   it('una scheda anonimizzata dopo la conferma non torna «in arrivo»', async () => {
     await inRollback(b.db, async () => {
-      await oggiE('2027-08-20')
-      const p = await prepara('2027-08-20')
-      await conferma(p, '2027-08-20')
+      // a settembre (il nuovo anno è cominciato): la scheda di chi è nuovo è già passata, e l'annullo non deve riportarla «in arrivo»
+      await oggiE('2027-09-10')
+      const p = await prepara('2027-09-10')
+      await conferma(p, '2027-09-10')
       await b.db.query(`UPDATE public.alunni SET anonimizzato_il = now() WHERE id = $1`, [BAMBINI.nuova])
-      await annulla(p, '2027-08-20')
+      await annulla(p, '2027-09-10')
       expect((await scheda(BAMBINI.nuova)).stato).not.toBe('in_arrivo')
     })
   })

@@ -30,6 +30,14 @@ const conferma = (p: string, oggi: string | null = b.oggi) =>
 const annulla = (p: string, oggi: string | null = b.oggi) =>
   una<{ passaggio_id: string; gia_annullato?: boolean; conteggi?: Record<string, number> }>(
     b.db, `SELECT public.passaggio_annulla($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, oggi])
+/** (giro 2, R6) Il giorno dell'inizio le schede passano sulla classe nuova: la ricopia del job orario. */
+const oggiE = (d: string) =>
+  b.db.exec(`CREATE OR REPLACE FUNCTION public.giorno_roma(p_istante timestamptz) RETURNS date LANGUAGE sql STABLE AS $f$ SELECT DATE '${d}' $f$`)
+const ricopia = async (oggi: string = b.inizio, sede: string | null = SEDE_E2E) => {
+  await oggiE(oggi) // il giorno vero lo fissa `giorno_roma` dentro la transazione (il ROLLBACK lo toglie)
+  return una<{ passaggi: number; schede: number; cambiate: number; archiviati: number; quote: number }>(
+    b.db, `SELECT public.passaggio_ricopia_schede($1::date, $2::uuid)`, [oggi, sede])
+}
 const tardiva = (p: string, alunno: string, sezione: string | null = null, oggi: string | null = b.oggi) =>
   una<{ frequenza_id: string; creata: boolean; quota: string | null; pagamento_id: string | null }>(
     b.db, `SELECT public.passaggio_conferma_tardiva($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date)`, [p, alunno, sezione, UTENTE, oggi])
@@ -168,6 +176,13 @@ describe('passaggio_conferma', () => {
       await correggi(p, BAMBINI.continuaB, 'continua', b.sezioni.girasoliNuova)
       const r = await conferma(p)
       expect(r.conteggi).toEqual({ continuano: 4, nuovi: 3, usciti: 3, cambia_grado: 1, docenti_copiati: 2 })
+
+      // (giro 2, R6) Fra la conferma e l'inizio la scheda NON si sposta: chi continua è ancora sulla classe vecchia, chi è nuovo è «in arrivo».
+      expect((await alunno(BAMBINI.continua)).section_id, 'prima dell’inizio').toBe(b.sezioni.girasoli)
+      expect((await alunno(BAMBINI.nuova)).stato, 'prima dell’inizio').toBe('in_arrivo')
+      const giro = await ricopia()
+      expect(giro.passaggi).toBe(1)
+      expect((await ricopia()).passaggi, 'idempotente: rifatta non trova niente').toBe(0)
 
       const fine = await una<string>(b.db, `SELECT fine::text FROM public.anni_sede WHERE id = $1`, [b.da])
       // chi esce: la frequenza vecchia si chiude alla fine dell'anno, la scheda segue
@@ -400,12 +415,13 @@ describe('passaggio_conferma_tardiva', () => {
     })
   })
 
-  it('crea la frequenza di conferma nella continuazione della classe, con la voce della quota, e la scheda torna viva', async () => {
+  it('dopo l’inizio: crea la frequenza di conferma nella continuazione della classe, con la voce della quota, e la scheda torna viva', async () => {
     await inRollback(b.db, async () => {
       const p = await prepara()
       await conferma(p)
+      await ricopia() // da qui `giorno_roma` è il giorno dell'inizio
       expect((await alunno(BAMBINI.no)).archiviato).toBe(true)
-      const r = await tardiva(p, BAMBINI.no)
+      const r = await tardiva(p, BAMBINI.no, null, b.inizio)
       expect(r.creata).toBe(true)
       expect(r.quota).toBe('creata')
       expect(r.pagamento_id).not.toBeNull()
@@ -416,6 +432,22 @@ describe('passaggio_conferma_tardiva', () => {
       expect(vecchia.stato, 'la storia dell’anno vecchio resta').toBe('uscito')
       expect(await alunno(BAMBINI.no)).toMatchObject({ stato: 'iscritto', archiviato: false, section_id: b.sezioni.girasoliNuova })
       expect(await una<boolean>(b.db, `SELECT eccezione FROM public.passaggi_anno_righe WHERE passaggio_id = $1 AND alunno_id = $2`, [p, BAMBINI.no])).toBe(true)
+    })
+  })
+
+  it('(giro 2, N3) nella finestra la tardiva entra all’inizio: la scheda resta com’è, la voce nasce con la ricopia', async () => {
+    await inRollback(b.db, async () => {
+      const p = await prepara()
+      await conferma(p)
+      const r = await tardiva(p, BAMBINI.no)
+      expect(r.creata).toBe(true)
+      expect(r.quota, 'la voce non nasce su una scheda archiviata').toBe('rimandata_all_inizio')
+      expect((await frequenza(BAMBINI.no, b.a)).stato).toBe('in_attesa')
+      expect((await alunno(BAMBINI.no)).archiviato, 'fino all’inizio la scheda resta ritirata').toBe(true)
+      const giro = await ricopia()
+      expect(giro.quote, 'la ricopia crea la voce rimasta').toBe(1)
+      expect(await alunno(BAMBINI.no)).toMatchObject({ stato: 'iscritto', archiviato: false, section_id: b.sezioni.girasoliNuova })
+      expect(await una<string | null>(b.db, `SELECT quota_pagamento_id FROM public.frequenze WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.no, b.a])).not.toBeNull()
     })
   })
 

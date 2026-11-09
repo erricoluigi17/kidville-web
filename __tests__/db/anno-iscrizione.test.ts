@@ -13,7 +13,7 @@ import {
  *  · il genitore dell'anno prossimo vede la voce della quota e nient'altro di quell'anno;
  *  · i posti sono un avviso (`posti_oltre`), mai un blocco.
  *
- * Banco: la catena fino a M45e sul banco minimo + `SCHEMA_ISCRIZIONE_ANNO`. Il banco non si tocca: le colonne di `alunni` e di
+ * Banco: la catena fino a M45c sul banco minimo + `SCHEMA_ISCRIZIONE_ANNO`. Il banco non si tocca: le colonne di `alunni` e di
  * `pagamenti` che mancano si aggiungono qui, in `codaPrima`. Ogni prova gira in una transazione che finisce in `ROLLBACK`.
  * Le date sono FISSE (`p_oggi`) dove la prova guarda una data scritta; dove guarda «oggi» è relativa al giorno della transazione.
  * Gli importi (100, 200, 250) sono esempi di prova. Solo uuid finti.
@@ -127,7 +127,7 @@ async function spuntaModuli(frequenzaId: string, lista: string) {
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
-    sedi: [S1, S2], fino: 'M45e',
+    sedi: [S1, S2], fino: 'M45c',
     codaPrima: SCHEMA_GALLERIA_GENITORE + SCHEMA_ISCRIZIONE_ANNO + `
       ALTER TABLE public.alunni
         ADD COLUMN importo_retta_mensile numeric(10,2) DEFAULT 0,

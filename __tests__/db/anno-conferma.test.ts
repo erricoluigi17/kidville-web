@@ -13,7 +13,7 @@ import {
  *  · non riporta la retta personalizzata né la sospensione; riporta i campi di famiglia;
  *  · `anno_non_rinnova` scrive (o azzera) il motivo del solo elenco chiuso, e la conferma resta possibile.
  *
- * Banco: lo stesso di `anno-iscrizione.test.ts` (catena fino a M45e + `SCHEMA_ISCRIZIONE_ANNO`). Il banco non si tocca: le colonne
+ * Banco: lo stesso di `anno-iscrizione.test.ts` (catena fino a M45c + `SCHEMA_ISCRIZIONE_ANNO`). Il banco non si tocca: le colonne
  * che mancano si aggiungono qui, in `codaPrima`. Ogni prova gira in una transazione che finisce in `ROLLBACK`. Le date sono
  * relative al giorno della transazione (nessuna è scritta nel test). Gli importi (100, 200, 300) sono esempi di prova. Solo uuid finti.
  */
@@ -103,7 +103,7 @@ const nonRinnova = (frequenzaId: string, attivo: boolean, motivo: string | null)
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
-    sedi: [S1, S2], fino: 'M45e',
+    sedi: [S1, S2], fino: 'M45c',
     codaPrima: SCHEMA_GALLERIA_GENITORE + SCHEMA_ISCRIZIONE_ANNO + `
       ALTER TABLE public.alunni
         ADD COLUMN importo_retta_mensile numeric(10,2) DEFAULT 0,

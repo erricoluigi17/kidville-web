@@ -18,7 +18,7 @@ import {
  *  · A → B → A: la prova che DECIDE la correzione di `data_ingresso`;
  *  · un `in_arrivo` non conta fra i figli attivi, ma il genitore vede la voce della sua quota.
  *
- * Banco: la catena fino a M45e sul banco minimo, con `alunni.stato` e il CHECK di oggi (`SCHEMA_ISCRIZIONE_ANNO`). Il banco non
+ * Banco: la catena fino a M45c sul banco minimo, con `alunni.stato` e il CHECK di oggi (`SCHEMA_ISCRIZIONE_ANNO`). Il banco non
  * si tocca: `alunni.anonimizzato_il` si aggiunge qui. Ogni prova gira in una transazione che finisce in `ROLLBACK`. Le date sono
  * RELATIVE al giorno della transazione: `now()` è fisso dentro una transazione, e l'anno attivo si allarga attorno a oggi
  * (`giorni()`), così la prova dice la stessa cosa a qualunque data la si lanci. Solo uuid finti.
@@ -82,7 +82,7 @@ async function frequenzaDelFuturo(alunno: string, sede: string, annoInizio: numb
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
-    sedi: [S1, S2], fino: 'M45e',
+    sedi: [S1, S2], fino: 'M45c',
     codaPrima: SCHEMA_GALLERIA_GENITORE + SCHEMA_ISCRIZIONE_ANNO + 'ALTER TABLE public.alunni ADD COLUMN anonimizzato_il timestamptz, ADD COLUMN archiviato_il timestamptz;',
   })
   await db.exec(SCHEMA_LEGAMI_GENITORE)

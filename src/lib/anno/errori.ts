@@ -211,6 +211,12 @@ export function erroreAnno(
         { ...dettagli, error: frase('IMPORTO_NON_VALIDO'), codice: 'IMPORTO_NON_VALIDO' },
         { status: 422 },
       )
+    case 'SCADENZA_NEL_PASSATO':
+      // La quota con una scadenza già passata (4.5.15): farebbe nascere voci già scadute.
+      return NextResponse.json(
+        { ...dettagli, error: frase('SCADENZA_NEL_PASSATO'), codice: 'SCADENZA_NEL_PASSATO' },
+        { status: 422 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(

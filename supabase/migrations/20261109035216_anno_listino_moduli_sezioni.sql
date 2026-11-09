@@ -26,7 +26,8 @@ ALTER TABLE public.listino_voci ADD COLUMN IF NOT EXISTS scadenza date;
 -- `anno_listino_quota_imposta(anno_sede, voce, fascia, importo, scadenza) → jsonb`
 --   `voce` solo `quota_conferma` | `quota_nuova` (retta e servizi li scrive la 4.6). `fascia` NULL = «per tutte le fasce».
 --   `importo` NULL toglie la riga; altrimenti dev'essere > 0 anche dopo l'arrotondamento ai centesimi e stare nel
---   `numeric(10,2)` della colonna (IMPORTO_NON_VALIDO). L'anno dev'essere `in_preparazione` o `iscrizioni_aperte`
+--   `numeric(10,2)` della colonna (IMPORTO_NON_VALIDO). Una `scadenza` nel passato (giorno di Roma) è SCADENZA_NEL_PASSATO
+--   (4.5.15): un anno scritto male farebbe nascere voci già scadute, candidate ai solleciti automatici. L'anno dev'essere `in_preparazione` o `iscrizioni_aperte`
 --   (ANNO_NON_MODIFICABILE): dopo l'apertura la quota si può correggere, le voci già create non cambiano importo.
 --   Le righe di questa funzione non hanno categoria di pagamento (`payment_categories` la sceglie `anno_quota_voce`).
 --   Risposta: {cambiato, anno_sede_id, voce, fascia, rimossa}.
@@ -68,6 +69,9 @@ BEGIN
 
   IF p_importo <= 0 OR round(p_importo, 2) <= 0 OR p_importo >= 100000000 THEN
     RAISE EXCEPTION 'IMPORTO_NON_VALIDO' USING DETAIL = json_build_object('anno_sede_id', v_a.id)::text;
+  END IF;
+  IF p_scadenza IS NOT NULL AND p_scadenza < public.giorno_roma(now()) THEN
+    RAISE EXCEPTION 'SCADENZA_NEL_PASSATO' USING DETAIL = json_build_object('anno_sede_id', v_a.id)::text;
   END IF;
 
   SELECT * INTO v_r FROM public.listino_voci

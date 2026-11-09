@@ -104,14 +104,14 @@ describe('quote, moduli e posti: i prerequisiti dell’apertura', () => {
   })
 
   it('le quote: nuova, invariata (cambiato false), corretta, per fascia, con scadenza, tolta', async () => {
-    const nuova = await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 120.5, DATE '2027-02-15')`, [A27])
+    const nuova = await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 120.5, DATE '2099-02-15')`, [A27])
     expect(nuova).toMatchObject({ cambiato: true, voce: 'quota_conferma', fascia: null, rimossa: false })
     const riga = await db.query<{ importo: string; scadenza: string; payment_category_id: string | null }>(
       `SELECT importo::text, scadenza::text, payment_category_id FROM public.listino_voci WHERE anno_sede_id = $1 AND voce = 'quota_conferma'`, [A27])
-    expect(riga.rows).toEqual([{ importo: '120.50', scadenza: '2027-02-15', payment_category_id: null }])
+    expect(riga.rows).toEqual([{ importo: '120.50', scadenza: '2099-02-15', payment_category_id: null }])
 
-    expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 120.5, DATE '2027-02-15')`, [A27])).toMatchObject({ cambiato: false })
-    expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 130, DATE '2027-02-15')`, [A27])).toMatchObject({ cambiato: true })
+    expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 120.5, DATE '2099-02-15')`, [A27])).toMatchObject({ cambiato: false })
+    expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 130, DATE '2099-02-15')`, [A27])).toMatchObject({ cambiato: true })
     expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 130, NULL)`, [A27])).toMatchObject({ cambiato: true })
 
     // una fascia è una riga a parte, e la riga senza fascia resta
@@ -140,6 +140,13 @@ describe('quote, moduli e posti: i prerequisiti dell’apertura', () => {
     const e = await errore(db.query(`SELECT public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, ${importo}::numeric, NULL)`, [A27]))
     expect(e.codice).toBe('IMPORTO_NON_VALIDO')
     expect(await quote(A27)).toBe(0)
+  })
+
+  it('una scadenza nel passato → SCADENZA_NEL_PASSATO e niente scritto; oggi e il futuro passano (4.5.15)', async () => {
+    const e = await errore(db.query(`SELECT public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 100, public.giorno_roma(now()) - 1)`, [A27]))
+    expect(e.codice).toBe('SCADENZA_NEL_PASSATO')
+    expect(await quote(A27)).toBe(0)
+    expect(await chiama(`public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 100, public.giorno_roma(now()))`, [A27])).toMatchObject({ cambiato: true })
   })
 
   it('una fascia che non esiste → PARAMETRO_MANCANTE', async () => {

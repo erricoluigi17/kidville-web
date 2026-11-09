@@ -342,6 +342,8 @@ const INCORPORATE: Record<string, Voce> = {
 /** Le funzioni SQL vive che toccano `alunni`. */
 const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::alunni_riallinea_da_frequenze': ['sì', 'funzione-di-anno'],
+  // giro 4 (NB3): lo specchio d'INSERT, per una scheda nata nella finestra con la classe del nuovo anno, la rende «in arrivo» (UPDATE di `alunni`): la funzione di anno che sa del bambino in arrivo.
+  'sql::alunni_specchio_frequenza': ['sì', 'funzione-di-anno'],
   'sql::anno_fotografa': ['no-già', 'esclude-in-arrivo'],
   'sql::anno_invarianti': ['sì', 'funzione-di-anno'],
   // 4.5.5: legge UN alunno per id (la sua sede) e scrive la frequenza dell'anno aperto; non fa elenchi.
@@ -548,7 +550,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
 
 
-      { no: 0, 'no-già': 212, sì: 68, daCorreggere: 0 }, // 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
+      { no: 0, 'no-già': 212, sì: 69, daCorreggere: 0 }, // giro 4: +1 sì (alunni_specchio_frequenza). 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
     )
   })
 

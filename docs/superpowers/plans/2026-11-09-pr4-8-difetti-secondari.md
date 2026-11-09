@@ -85,3 +85,16 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 - **Costo di NB1 da ricordare al collaudo:** nella finestra una modifica della scheda scrive sulla frequenza dell'anno VISIBILE (il vecchio). Una retta cambiata ad
   agosto vale per l'anno in corso e non per il nuovo: per il nuovo si cambia dal listino (scheda Rette). Riga per il collaudo: «cambia la retta di un bambino ad
   agosto e controlla che la retta di settembre sia quella del listino».
+
+## Giro 4 (annotazioni)
+
+- **NS12 · fatto.** Il `PATCH` della scheda nella finestra scrive i campi per anno sull'unica frequenza che ha il bambino quando non ha quella dell'anno visibile
+  (un `nuova` del passaggio, un nato nella finestra): la retta di agosto c'è il 01/09. Alla frequenza dell'anno nuovo non si porta la classe del form.
+- **NS13 · NON fatto, annotato.** Cambiare la classe di chi esce col passaggio (scheda archiviata, nessuna frequenza nuova) risponde 200 senza effetto. Un 409 con una frase
+  vorrebbe un codice d'errore, il testo in `messages/it` e `messages/en`, il lock dei codici e la pagina che lo mostra, per un caso raro e senza danno (il bambino è già fuori).
+  Si fa se la segreteria lo incontra.
+- **NS14 · preesistente, NON corretto.** Il `PATCH` del form intero sul `ritornato` toglie la classe alla sua frequenza vecchia e chiusa. **Verificato leggendo il codice, non
+  rieseguendo `origin/main`:** il form manda `section_id` (vuoto per un ex alunno che torna) e `campiFrequenzaDaAlunno` lo copia sulla frequenza dell'anno su cui la route scrive;
+  prima della 4.8 era l'anno attivo (il vecchio, dove la frequenza chiusa del ritornato sta), oggi è il visibile (lo stesso). Lo storico delle classi conserva la classe.
+- **Centro estivo creato nella finestra → `11-bis` ogni notte dal 01/09.** Il bambino con una classe che esiste solo nell'anno vecchio resta nel vecchio (come oggi), ma non ha
+  una riga del passaggio e il 01/09 non ha la frequenza del nuovo anno. **Per il collaudo:** la segreteria deve decidere a mano, dal 01/09, se iscriverlo all'anno nuovo o archiviarlo.

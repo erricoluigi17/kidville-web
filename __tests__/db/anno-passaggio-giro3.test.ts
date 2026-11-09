@@ -170,7 +170,7 @@ describe('NB1 · il form intero salvato in agosto (PATCH vera) non rompe e non s
 describe('NB2 · l’archiviazione chiude TUTTE le iscrizioni vive del bambino, e la famiglia perde l’accesso lo stesso giorno', () => {
   const famiglia = async (g: string) => ({ figli: await figliAttivi(g), foto: await fotoVisibili(g) })
 
-  async function archiviaEControlla(bambino: string, genitore: string) {
+  async function archiviaEControlla(bambino: string, genitore: string, haFrequenzaVecchia: boolean) {
     await oggiE('2027-08-10')
     await b.db.query(
       `INSERT INTO public.galleria_media_v2 (id, scuola_id, giorno_competenza, target_section_ids, target_classes, is_broadcast)
@@ -181,6 +181,8 @@ describe('NB2 · l’archiviazione chiude TUTTE le iscrizioni vive del bambino, 
     const nuovo = await frequenza(bambino, 'nuovo')
     expect(nuovo?.stato, 'la frequenza dell’anno nuovo è chiusa').toBe('ritirato')
     const vecchio = await frequenza(bambino, 'vecchio')
+    // (giro 4) Non più «se c'è»: chi continua HA la frequenza dell'anno visibile, chi è nuovo no, e lo si dice.
+    expect(Boolean(vecchio), 'la frequenza dell’anno visibile c’è solo per chi continua').toBe(haFrequenzaVecchia)
     if (vecchio) expect(vecchio.stato, 'la frequenza dell’anno visibile è chiusa').toBe('ritirato')
     for (const giorno of ['2027-08-20', '2027-08-31']) {
       await oggiE(giorno)
@@ -191,6 +193,9 @@ describe('NB2 · l’archiviazione chiude TUTTE le iscrizioni vive del bambino, 
     const rr = await ricopia(b.inizio)
     expect(await famiglia(genitore), 'la famiglia il 01/09').toEqual({ figli: [], foto: 0 })
     expect(await scheda(bambino), 'il 01/09 resta archiviato').toContain('ARCHIVIATO')
+    // (giro 4, NB4) E senza classe: né sulla scheda né sulla frequenza chiusa (il diario legge `section_id` senza guardare lo stato).
+    expect((await rows<C>(`SELECT section_id FROM public.alunni WHERE id=$1`, [bambino]))[0].section_id, 'il 01/09 la scheda archiviata non ha classe').toBeNull()
+    expect((await frequenza(bambino, 'nuovo')).section_id ?? null, 'e la frequenza nuova chiusa neanche').toBeNull()
     expect((await frequenza(bambino, 'nuovo')).stato, 'e la sua frequenza nuova resta chiusa').toBe('ritirato')
     expect(Number(rr.archiviati), 'la ricopia lo conta').toBe(1)
     const log = await rows<{ contesto: { campi: C } }>(`SELECT contesto FROM public.app_log WHERE fingerprint LIKE 'passaggio-schede-ricopiate:%'`)
@@ -199,8 +204,8 @@ describe('NB2 · l’archiviazione chiude TUTTE le iscrizioni vive del bambino, 
     expect((await invarianti()).filter((x) => !x.startsWith('13:galleria_media_v2')), 'invarianti').toEqual([])
   }
 
-  prova('I3 · chi continua (esito `continua`), archiviato il 20/08', async () => { await archiviaEControlla(BAMBINI.continuaB, GEN) })
-  prova('K3 · chi è nuovo (esito `nuova`), archiviato il 20/08', async () => { await archiviaEControlla(BAMBINI.nuova, GEN_N) })
+  prova('I3 · chi continua (esito `continua`), archiviato il 20/08', async () => { await archiviaEControlla(BAMBINI.continuaB, GEN, true) })
+  prova('K3 · chi è nuovo (esito `nuova`), archiviato il 20/08', async () => { await archiviaEControlla(BAMBINI.nuova, GEN_N, false) })
 })
 
 describe('NB3 · il bambino creato in agosto con la classe nuova', () => {

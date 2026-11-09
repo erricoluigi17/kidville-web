@@ -227,6 +227,13 @@ BEGIN
     'sospeso_da', v_f -> 'sospeso_da',
     'usa_pannolino', v_f -> 'usa_pannolino');
 
+  -- (giro 4, NB4) Una frequenza NON viva non porta mai la sua classe su una scheda archiviata: l'archiviazione toglie la classe alla scheda
+  -- (fuori dalla finestra anche alla frequenza), e la ricopia del 01/09 non deve rimettergliela. Il diario e l'appello leggono `section_id`
+  -- senza guardare lo stato.
+  IF NOT v_viva THEN
+    v_t := v_t || jsonb_build_object('section_id', NULL::uuid, 'classe_sezione', NULL::text);
+  END IF;
+
   -- Senza una sezione né sulla frequenza né sulla scheda il NOME di classe non si tocca: il testo scritto a mano (o un
   -- nome che nella sede non risolve) non deve sparire solo perché la frequenza non ha una sezione. Se la sezione c'era
   -- e viene svuotata, invece, il nome segue (v_f section_id NULL ma v_cur section_id valorizzato).
@@ -329,6 +336,17 @@ BEGIN
          SELECT 1 FROM public.sections sc
           WHERE sc.id = NEW.section_id AND sc.anno_id IS NOT NULL
             AND sc.anno_id <> (SELECT v.anno_id FROM public.anni_sede v WHERE v.id = public.anno_visibile(NEW.scuola_id, v_oggi))) THEN
+      -- (giro 4, NB3) Una scheda NUOVA (INSERT) nata dentro la finestra con la classe del nuovo anno (il trigger BEFORE l'ha risolta sull'anno attivo)
+      -- diventa quello che il `POST` della segreteria fa di proposito: «in arrivo», senza classe sulla scheda, con la frequenza dell'anno nuovo
+      -- (ingresso all'`inizio`). La classe passa alla frequenza e la scheda ci arriva con la ricopia del 01/09. Senza questo il bambino
+      -- sarebbe `iscritto` in una classe che non ha ancora cominciato, senza nessuna frequenza, e la 11 scatterebbe dal 01/09.
+      IF TG_OP = 'INSERT' AND (v_n ->> 'archiviato_il') IS NULL THEN
+        UPDATE public.alunni SET stato = 'in_arrivo', section_id = NULL, classe_sezione = NULL WHERE id = NEW.id;
+        PERFORM public.anno_registra_frequenza(
+          NEW.id, public.anno_attivo(NEW.scuola_id), 'nuova', 'segreteria', NULL, NEW.section_id, NULL,
+          CASE WHEN (v_n ->> 'importo_retta_mensile')::numeric > 0 THEN jsonb_build_object('retta_mensile', (v_n ->> 'importo_retta_mensile')::numeric) ELSE '{}'::jsonb END,
+          NULL);
+      END IF;
       RETURN NULL;
     END IF;
 
@@ -613,7 +631,11 @@ BEGIN
   v_non_arrivo := CASE WHEN public.anno_ha_colonna('alunni', 'stato')
                        THEN 'AND al.stato IS DISTINCT FROM ''in_arrivo'' ' ELSE '' END;
   IF to_regclass('public.alunni') IS NOT NULL THEN
-    v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
+    -- (giro 4, NB4) Una scheda ARCHIVIATA non ha classe (la 15-bis), mentre la frequenza chiusa può tenere la sua per la storia: quella coppia non è una
+    -- discordanza. Ogni altra differenza di classe resta un allarme.
+    v_cond := ARRAY[CASE WHEN public.anno_ha_colonna('alunni', 'archiviato_il')
+                         THEN 'NOT (al.archiviato_il IS NOT NULL AND al.section_id IS NULL AND f.stato IN (''ritirato'', ''trasferito'', ''uscito'')) AND al.section_id IS DISTINCT FROM f.section_id'
+                         ELSE 'al.section_id IS DISTINCT FROM f.section_id' END];
     -- Fase B (4.3.4): l'invariante guarda anche ciò che lo specchio inverso scrive in più (sospensione).
     FOREACH v_col IN ARRAY ARRAY['retta_a_carico_di', 'gruppo_mensa_id', 'giorno_scadenza_pagamenti',
                                  'usa_pannolino', 'retta_split_config', 'intestatario_fatture',
@@ -838,6 +860,11 @@ BEGIN
   -- 15. (giro 2, R8) Ogni bambino in classe ha una riga aperta nello storico delle classi (le foto e le stampe per giorno la leggono).
   invariante := '15'; tabella := 'alunni_classi_storico (senza riga aperta)'; righe := public.passaggio_storico_senza_riga_aperta(); RETURN NEXT;
 
+  -- 15-bis. (giro 4, NB4) Una scheda ARCHIVIATA non ha una classe: il diario, l'appello e la modulistica leggono `section_id` senza guardare lo stato.
+  -- Numero `15-bis` perché la 4.9 tiene il suo `16`. In produzione vale 0 (misura del 09/11: 17 archiviate nelle sedi vere, nessuna con la classe).
+  invariante := '15-bis'; tabella := 'alunni (archiviata con una classe)';
+  righe := (SELECT count(*) FROM public.alunni al WHERE al.archiviato_il IS NOT NULL AND al.section_id IS NOT NULL); RETURN NEXT;
+
   RETURN;
 END
 $$;
@@ -882,9 +909,14 @@ BEGIN
         -- (giro 3, NB1) L'anno che le schede seguono (`anno_visibile_oggi`), non l'attivo: nella finestra fra la conferma del passaggio e
         -- l'inizio dell'anno nuovo l'attivo è il nuovo, e un nome di classe del vecchio anno non si risolverebbe (section_id a NULL).
         -- Fuori dalla finestra i due anni coincidono: stesso risultato di prima.
-        AND s.anno_id = (SELECT a.anno_id FROM public.anni_sede a
-                          WHERE a.id = public.anno_visibile_oggi(NEW.scuola_id))
+        -- (giro 4, NB3) In un INSERT dentro la finestra il nome si cerca PRIMA nell'anno attivo (il nuovo, come fa il `POST` della segreteria), poi nel
+        -- visibile: con un nome che c'è in tutti e due («Girasoli») le due strade scelgono la stessa classe. Un nome solo del vecchio anno (un centro
+        -- estivo) resta nel vecchio. Fuori dalla finestra l'attivo e il visibile coincidono.
+        AND s.anno_id IN (SELECT a.anno_id FROM public.anni_sede a
+                           WHERE a.id = public.anno_visibile_oggi(NEW.scuola_id)
+                              OR (TG_OP = 'INSERT' AND a.id = public.anno_attivo(NEW.scuola_id)))
         AND lower(replace(s.name, ' ', '')) = lower(replace(NEW.classe_sezione, ' ', ''))
+      ORDER BY (s.anno_id = (SELECT a.anno_id FROM public.anni_sede a WHERE a.id = public.anno_attivo(NEW.scuola_id)) AND TG_OP = 'INSERT') DESC
       LIMIT 1;
 
       -- Nessuna sezione combacia: l'alunno resta senza classe e non comparirà in
@@ -1660,7 +1692,7 @@ BEGIN
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
        WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
-      UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
+      UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso, section_id = NULL
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
        WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND f.id = x.frequenza_a_id

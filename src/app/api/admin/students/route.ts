@@ -1461,6 +1461,13 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 const classeInvariata = inFinestra && classeInviata !== null
                     && normalizzaNomeSezione(classeInviata) === normalizzaNomeSezione(prima.classe_sezione);
                 let annoScrittura: string | null = annoVisibileScrittura;
+                // (giro 4, NS12) Chi non ha una frequenza nell'anno visibile (nato nella finestra, o un `nuova` del passaggio) ha UNA SOLA frequenza, quella
+                // dell'anno nuovo: i campi per anno (retta, giorno di scadenza, data d'iscrizione) vanno lì. Sul visibile non c'è niente da scrivere e il
+                // valore sparirebbe il 01/09, con un 200.
+                if (inFinestra) {
+                    const sulVisibile = await supabase.from('frequenze').select('id').eq('alunno_id', id).eq('anno_sede_id', annoVisibileScrittura as string).limit(1);
+                    if (!sulVisibile.error && (sulVisibile.data ?? []).length === 0) annoScrittura = annoAttivoScrittura;
+                }
                 let classeDelNuovoAnno = false;
                 let classeNelVisibile = false;
                 if (inFinestra && classeInviata !== null && !classeInvariata && sedeScrittura) {
@@ -1522,6 +1529,9 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // Fase B (§4.19): la frequenza dell'anno attivo si scrive PRIMA, e se non si scrive `alunni` resta com'è.
                 // Su un trasferimento l'anno è quello della sede NUOVA: la vecchia frequenza la chiude lo specchio.
                 const campiFreq = campiFrequenzaDaAlunno(updates);
+                // (giro 4, NS12) Sulla frequenza dell'anno NUOVO la classe del form (quella della scheda, che segue ancora il vecchio anno, spesso vuota) non va:
+                // la classe di quella frequenza la decide il passaggio, o la scelta esplicita di una classe nuova (`classeDelNuovoAnno`, qui sotto).
+                if (inFinestra && annoScrittura === annoAttivoScrittura) delete campiFreq.section_id;
                 // La data d'iscrizione ha la stessa regola del POST (`risolviDataIngresso`): dopo la fine dell'anno attivo
                 // 422 PRIMA di scrivere qualunque cosa; prima del suo inizio `alunni.data_iscrizione` resta quella scritta e
                 // `data_ingresso` è il primo giorno dell'anno. L'anno è quello della sede d'arrivo, se c'è un trasferimento.

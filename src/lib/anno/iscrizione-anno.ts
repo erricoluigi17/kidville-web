@@ -289,7 +289,7 @@ const OP_ANNO = 'anno/iscrizione-anno:annoDellaDomanda'
 /**
  * A che anno della sede appartiene una domanda. `annoId` è `anni_scolastici.id` (quello che il modulo pubblico manda), oppure
  * `null` = «come oggi»: l'anno attivo della sede.
- *  · l'anno è l'attivo                       → `attivo`;
+ *  · l'anno è l'attivo                       → `attivo` (ma se è l'attivo NON ancora cominciato della finestra del passaggio → `aperto`);
  *  · l'anno ha le iscrizioni aperte          → `aperto` (la domanda diventa una frequenza dell'anno prossimo);
  *  · ogni altro anno, o uno che la sede non ha → `non-aperto`;
  *  · lo schema dell'anno non c'è (la CI)      → `schema-indietro`: il chiamante fa come oggi.
@@ -331,7 +331,14 @@ export async function annoDellaDomanda(
       ? righe.find((r) => r.id === idAttivo)
       : righe.find((r) => r.anno_id === annoId)
     if (!riga) return { tipo: 'non-aperto' }
-    if (riga.id === idAttivo) return { tipo: 'attivo', annoSedeId: riga.id, annoId: riga.anno_id }
+    if (riga.id === idAttivo) {
+      // (giro 4, NB3) Nella FINESTRA fra la conferma del passaggio e l'inizio, l'anno attivo è il nuovo e non è ancora cominciato: una domanda
+      // per lui vale come una per l'anno prossimo (`aperto`): scheda «in arrivo» e frequenza dell'anno nuovo con ingresso all'inizio, come il
+      // `POST` della segreteria. Come «attivo» nascerebbe `iscritto` nella classe VECCHIA e il 01/09 la ricopia non lo prenderebbe.
+      const finestra = await finestraDiSede(supabase, scuolaId)
+      if (finestra && finestra.attivo === riga.id) return { tipo: 'aperto', annoSedeId: riga.id, annoId: riga.anno_id }
+      return { tipo: 'attivo', annoSedeId: riga.id, annoId: riga.anno_id }
+    }
     if (riga.stato === 'iscrizioni_aperte') return { tipo: 'aperto', annoSedeId: riga.id, annoId: riga.anno_id }
     return { tipo: 'non-aperto' }
   } catch (err) {
@@ -390,13 +397,17 @@ const COLONNE_CHIUSURA = 'id, alunno_id, anno_sede_id, scuola_id, stato, origine
  * fatture. In più una voce già `pagato` o con `importo_pagato` > 0 resta comunque. Nessun rimborso automatico.
  * Niente stati a metà: se la voce non si toglie per un guasto, la frequenza RESTA ritirata e l'esito dice `errore`.
  */
-async function ritiraEToglieQuota(supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string): Promise<EsitoRitiro> {
+async function ritiraEToglieQuota(
+  supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string,
+  /** (giro 4, NB4) Solo l'archiviazione dell'anno della finestra: la frequenza chiusa non tiene la classe, come quella dell'anno visibile. */
+  togliClasse = false,
+): Promise<EsitoRitiro> {
   let ritirata = false
   if (f.stato === 'in_attesa' || f.stato === 'iscritto') {
     const scritta = await scriviFrequenza(supabase, {
       alunnoId: f.alunno_id,
       annoSedeId: f.anno_sede_id,
-      campi: { stato: STATO_RITIRATO, data_uscita: oggiRoma() },
+      campi: togliClasse ? { stato: STATO_RITIRATO, data_uscita: oggiRoma(), section_id: null } : { stato: STATO_RITIRATO, data_uscita: oggiRoma() },
       annoNonAttivo: true,
     })
     if (!scritta.ok) return { ok: false, codice: codiceAnnoDa(scritta.codice) ?? 'SCRITTURA_FALLITA' }
@@ -584,7 +595,7 @@ export async function chiudiFrequenzeAperte(
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
       // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
       if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
-      const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
+      const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA, finestra !== null && f.anno_sede_id === finestra.attivo)
       if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
       if (r.ritirata) esito.chiuse++
       if (r.quota === 'tolta') esito.voci_tolte++

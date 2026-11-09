@@ -82,6 +82,15 @@ BEGIN
     RETURN NULL;
   END IF;
 
+  -- 4.5.5: chi ERA `in_arrivo` e viene ritirato o archiviato non è mai stato nell'anno attivo: se in quello stesso aggiornamento
+  -- cambia anche sede, lo specchio non esce più dal ramo qui sopra (lo stato nuovo non è più `in_arrivo`) e gli inserirebbe una
+  -- frequenza `ritirato` in un anno in cui non ha mai frequentato. La sua frequenza è quella dell'anno aperto, e la chiude la
+  -- 4.5.1. Il ritorno a `iscritto` (il passaggio, 4.8: stato nuovo `iscritto`, non archiviato) NON passa di qui: lo specchio lavora.
+  IF TG_OP = 'UPDATE' AND to_jsonb(OLD) ->> 'stato' = 'in_arrivo'
+     AND (v_n ->> 'stato' IN ('ritirato', 'trasferito', 'uscito') OR (v_n ->> 'archiviato_il') IS NOT NULL) THEN
+    RETURN NULL;
+  END IF;
+
   BEGIN
     IF NEW.scuola_id IS NULL THEN
       RETURN NULL;

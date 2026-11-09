@@ -83,7 +83,7 @@ async function frequenzaDelFuturo(alunno: string, sede: string, annoInizio: numb
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
     sedi: [S1, S2], fino: 'M45e',
-    codaPrima: SCHEMA_GALLERIA_GENITORE + SCHEMA_ISCRIZIONE_ANNO + 'ALTER TABLE public.alunni ADD COLUMN anonimizzato_il timestamptz;',
+    codaPrima: SCHEMA_GALLERIA_GENITORE + SCHEMA_ISCRIZIONE_ANNO + 'ALTER TABLE public.alunni ADD COLUMN anonimizzato_il timestamptz, ADD COLUMN archiviato_il timestamptz;',
   })
   await db.exec(SCHEMA_LEGAMI_GENITORE)
   await db.exec(SCHEMA_AVVISI_CHAT_VOCI_GENITORE)
@@ -352,5 +352,55 @@ describe('il CHECK `alunni_in_arrivo_senza_sezione`', () => {
     const sql = readFileSync(join(CARTELLA, readdirSync(CARTELLA).find((x) => x.endsWith('_anno_alunno_in_arrivo.sql'))!), 'utf8')
     await db.exec(sql)
     expect(await una<boolean>(`SELECT convalidated FROM pg_constraint WHERE conname = 'alunni_in_arrivo_senza_sezione'`)).toBe(true)
+  })
+})
+
+describe('chi era `in_arrivo` e viene archiviato (4.5.5)', () => {
+  /** Il bambino `in_arrivo` con la sua frequenza dell'anno aperto, ritirata come la ritira la 4.5.1 (la prova è del DB, non della route). */
+  async function inArrivoArchiviabile() {
+    await nuovoAlunno(AL, 'in_arrivo')
+    await frequenzaDelFuturo(AL, S1, 2027)
+    await db.query(
+      `UPDATE public.frequenze SET stato = 'ritirato', data_uscita = data_ingresso WHERE alunno_id = $1 AND anno_sede_id = $2`,
+      [AL, ANNO_SEDE[`${S1}:2027`]])
+  }
+  /** Le frequenze di AL negli anni ATTIVI (2026/27 delle due sedi): un bambino che non ha mai frequentato non ne ha. */
+  async function nellAnnoAttivo(): Promise<number> {
+    return Number(await una<string>(
+      `SELECT count(*)::text FROM public.frequenze f JOIN public.anni_sede s ON s.id = f.anno_sede_id
+        WHERE f.alunno_id = $1 AND s.stato = 'corrente'`, [AL]))
+  }
+
+  prova('archiviato e spostato di sede nello stesso aggiornamento: lo specchio vero non gli inserisce una frequenza `ritirato` nell’anno attivo', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await inArrivoArchiviabile()
+      await db.query(`UPDATE public.alunni SET stato = 'ritirato', archiviato_il = now(), scuola_id = $2 WHERE id = $1`, [AL, S2])
+      expect(await nellAnnoAttivo()).toBe(0)
+      expect(await statoDi(AL)).toBe('ritirato')
+      const f = await frequenzeDi(AL)
+      expect(f).toHaveLength(1)
+      expect(f[0].anno_sede_id).toBe(ANNO_SEDE[`${S1}:2027`])
+      expect(f[0].stato).toBe('ritirato')
+    })
+  })
+
+  prova('archiviato senza cambiare sede: nessuna riga nell’anno attivo (lo specchio non scatta, e non deve)', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await inArrivoArchiviabile()
+      await db.query(`UPDATE public.alunni SET stato = 'ritirato', archiviato_il = now() WHERE id = $1`, [AL])
+      expect(await nellAnnoAttivo()).toBe(0)
+      expect(await statoDi(AL)).toBe('ritirato')
+    })
+  })
+
+  prova('il ritorno da `in_arrivo` a `iscritto` (il passaggio, 4.8) non è reso impossibile: con la sede nuova lo specchio scrive la frequenza', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL, 'in_arrivo')
+      await db.query(`UPDATE public.alunni SET stato = 'iscritto', scuola_id = $2 WHERE id = $1`, [AL, S2])
+      expect(await nellAnnoAttivo()).toBe(1)
+    })
   })
 })

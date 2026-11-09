@@ -331,6 +331,8 @@ const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::alunni_riallinea_da_frequenze': ['sì', 'funzione-di-anno'],
   'sql::anno_fotografa': ['no-già', 'esclude-in-arrivo'],
   'sql::anno_invarianti': ['sì', 'funzione-di-anno'],
+  // 4.5.5: legge UN alunno per id (la sua sede) e scrive la frequenza dell'anno aperto; non fa elenchi.
+  'sql::anno_registra_frequenza': ['no-già', 'funzione-puntuale'],
   'sql::anno_riempi': ['no-già', 'funzione-tolta'],
   'sql::anno_sede_della_riga': ['no-già', 'funzione-puntuale'],
   'sql::anno_sede_sql': ['no-già', 'funzione-puntuale'],
@@ -516,7 +518,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 0, 'no-già': 206, sì: 58, daCorreggere: 0 },
+      { no: 0, 'no-già': 207, sì: 58, daCorreggere: 0 },
     )
   })
 

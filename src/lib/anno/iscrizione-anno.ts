@@ -49,21 +49,25 @@ export type RegistraFrequenzaArgs = {
   dataIngresso?: string | null
   /** Lista bianca lato SQL: ogni chiave non ammessa è ignorata. */
   campi?: Record<string, unknown>
+  /** Chi ha fatto il gesto (`utenti.id`): finisce in `pagamenti.creato_da` della voce nuova. Assente = autore vuoto, come prima. */
+  da?: string | null
 }
 
 const OPERAZIONE = 'anno/iscrizione-anno:registraFrequenzaPerAnno'
 
 type ErrorePg = { code?: string | null; message?: string | null } | null | undefined
 
+type EsitoFallito = { ok: true; saltata: 'schema-indietro' } | { ok: false; codice: CodiceIscrizione }
+
 /** Un errore che ha fermato la scrittura: dell'anno → warn col codice; schema indietro → info; altro → logErrore col solo SQLSTATE. */
-function esitoDaErrore(error: ErrorePg, operazione: string): EsitoRegistra {
+function esitoDaErrore(error: ErrorePg, operazione: string, tipoRifiuto = 'frequenza-anno-non-registrata'): EsitoFallito {
   if (schemaAnnoIndietro(error)) {
     logEvento('anno-scolastico', 'info', { tipo: 'iscrizione-anno-schema-indietro', operazione, error_code: error?.code ?? undefined })
     return { ok: true, saltata: 'schema-indietro' }
   }
   const codice = codiceAnnoDa(error?.message)
   if (codice) {
-    logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-anno-non-registrata', error_code: codice, operazione })
+    logEvento('anno-scolastico', 'warn', { tipo: tipoRifiuto, error_code: codice, operazione })
     // Gestito qui, fail-open: la rete di `withRoute` non deve tradurlo se la route risponde 500 per altro.
     segnalaErroreAnnoGestito(codice)
     return { ok: false, codice }
@@ -91,6 +95,8 @@ export async function registraFrequenzaPerAnno(supabase: SupabaseClient, a: Regi
       p_section: a.sectionId ?? null,
       p_data_ingresso: a.dataIngresso ?? null,
       p_campi: a.campi ?? null,
+      // solo se c'è: un chiamante che non lo passa (la domanda pubblica) manda gli stessi argomenti di prima
+      ...(a.da ? { p_da: a.da } : {}),
     })
     if (error) return esitoDaErrore(error, OPERAZIONE)
     if (!eRisultato(data)) {
@@ -118,6 +124,134 @@ export async function registraFrequenzaPerAnno(supabase: SupabaseClient, a: Regi
   } catch (err) {
     // il client ha lanciato (rete, configurazione): chi chiama non deve cadere per questo
     logErrore({ operazione: OPERAZIONE }, err)
+    return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// 4.5.6 · la conferma per l'anno prossimo e il «non rinnova»
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/** I campi del jsonb di `anno_conferma`. */
+export type RisultatoConferma = {
+  frequenza_id: string
+  creata: boolean
+  cambia_grado: boolean
+  retta_personalizzata_precedente: boolean
+  quota: QuotaEsito | null
+  pagamento_id: string | null
+  posti_oltre: boolean
+}
+export type EsitoConferma = ({ ok: true } & RisultatoConferma) | EsitoFallito
+
+export type ConfermaArgs = {
+  /** La frequenza VIVA dell'anno in corso. */
+  frequenzaId: string
+  /** `anni_sede.id` dell'anno con le iscrizioni aperte. */
+  annoSedeNuovoId: string
+  /** Assente = la continuazione della sezione di partenza (o nessuna). */
+  sectionId?: string | null
+  /** Chi conferma (`utenti.id`). */
+  da: string
+  /** La spunta «va alla primaria»: con questa la sezione è obbligatoria (`SEZIONE_OBBLIGATORIA`). */
+  cambiaGrado?: boolean
+}
+
+const OP_CONFERMA = 'anno/iscrizione-anno:confermaIscrizione'
+
+const eConferma = (d: unknown): d is RisultatoConferma =>
+  typeof d === 'object' && d !== null && typeof (d as RisultatoConferma).frequenza_id === 'string'
+
+/**
+ * La famiglia conferma l'iscrizione all'anno aperto: nasce la frequenza `in_attesa` (e la voce della quota) senza toccare un dato
+ * dell'anno in corso. Idempotente. Non lancia mai. Mai blocca per i posti (`posti_oltre` è un avviso).
+ */
+export async function confermaIscrizione(supabase: SupabaseClient, a: ConfermaArgs): Promise<EsitoConferma> {
+  try {
+    const { data, error } = await supabase.rpc('anno_conferma', {
+      p_frequenza: a.frequenzaId,
+      p_anno_sede_nuovo: a.annoSedeNuovoId,
+      p_section: a.sectionId ?? null,
+      p_da: a.da,
+      p_cambia_grado: a.cambiaGrado === true,
+    })
+    if (error) return esitoDaErrore(error, OP_CONFERMA, 'conferma-anno-non-registrata')
+    if (!eConferma(data)) {
+      logErrore({ operazione: OP_CONFERMA }, new Error('iscrizione-anno:risposta-inattesa'))
+      return { ok: false, codice: 'SCRITTURA_FALLITA' }
+    }
+    logEvento('anno-scolastico', 'info', {
+      tipo: 'conferma-anno-registrata',
+      esito: data.creata ? 'creata' : 'esistente',
+      operazione: OP_CONFERMA,
+      entita_id: data.frequenza_id,
+      utente: a.da,
+      cambia_grado: data.cambia_grado === true,
+      posti_oltre: data.posti_oltre === true,
+    })
+    if (data.quota) {
+      logEvento('anno-scolastico', 'info', {
+        tipo: 'quota-anno-voce',
+        esito: data.quota,
+        operazione: OP_CONFERMA,
+        entita_id: data.pagamento_id ?? undefined,
+      })
+    }
+    return { ok: true, ...data }
+  } catch (err) {
+    logErrore({ operazione: OP_CONFERMA }, err)
+    return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+export const MOTIVI_NON_RINNOVA = ['altra_scuola', 'trasloco', 'fine_ciclo', 'motivi_economici', 'altro'] as const
+export type MotivoNonRinnova = (typeof MOTIVI_NON_RINNOVA)[number]
+
+export type RisultatoNonRinnova = { frequenza_id: string; non_rinnova: boolean; cambiato: boolean }
+export type EsitoNonRinnova = ({ ok: true } & RisultatoNonRinnova) | EsitoFallito
+
+export type NonRinnovaArgs = {
+  /** La frequenza di PARTENZA (quella dell'anno in corso). */
+  frequenzaId: string
+  attivo: boolean
+  /** Un codice dell'elenco chiuso, o assente. Mai testo libero. */
+  motivo?: string | null
+  da: string
+}
+
+const OP_NON_RINNOVA = 'anno/iscrizione-anno:segnaNonRinnova'
+
+const eNonRinnova = (d: unknown): d is RisultatoNonRinnova =>
+  typeof d === 'object' && d !== null && typeof (d as RisultatoNonRinnova).frequenza_id === 'string'
+  && typeof (d as RisultatoNonRinnova).non_rinnova === 'boolean'
+
+/** Segna (o toglie) il «no» della famiglia sulla frequenza di partenza. Non lancia mai. */
+export async function segnaNonRinnova(supabase: SupabaseClient, a: NonRinnovaArgs): Promise<EsitoNonRinnova> {
+  try {
+    const { data, error } = await supabase.rpc('anno_non_rinnova', {
+      p_frequenza: a.frequenzaId,
+      p_attivo: a.attivo,
+      p_motivo: a.attivo ? (a.motivo ?? null) : null,
+      p_da: a.da,
+    })
+    if (error) return esitoDaErrore(error, OP_NON_RINNOVA, 'non-rinnova-non-registrato')
+    if (!eNonRinnova(data)) {
+      logErrore({ operazione: OP_NON_RINNOVA }, new Error('iscrizione-anno:risposta-inattesa'))
+      return { ok: false, codice: 'SCRITTURA_FALLITA' }
+    }
+    logEvento('anno-scolastico', 'info', {
+      tipo: 'non-rinnova-registrato',
+      esito: data.non_rinnova ? 'segnato' : 'tolto',
+      operazione: OP_NON_RINNOVA,
+      entita_id: data.frequenza_id,
+      utente: a.da,
+      cambiato: data.cambiato === true,
+      // il codice del motivo (elenco chiuso) sta sotto `entita_tipo`: `motivo` è una radice di testo libero e verrebbe redatta
+      entita_tipo: data.non_rinnova && a.motivo ? a.motivo : undefined,
+    })
+    return { ok: true, ...data }
+  } catch (err) {
+    logErrore({ operazione: OP_NON_RINNOVA }, err)
     return { ok: false, codice: 'SCRITTURA_FALLITA' }
   }
 }

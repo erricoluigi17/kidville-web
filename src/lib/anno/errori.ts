@@ -166,6 +166,63 @@ export function erroreAnno(
         { ...dettagli, error: frase('PARAMETRO_MANCANTE'), codice: 'PARAMETRO_MANCANTE' },
         { status: 400 },
       )
+    // ── Preparare e aprire l'anno prossimo (PR 4.5): le sollevano le funzioni di M45c e M45d.
+    case 'ANNO_NON_APERTO':
+      // L'anno scelto non ha le iscrizioni aperte (né è quello in corso): non si registra niente.
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANNO_NON_APERTO'), codice: 'ANNO_NON_APERTO' },
+        { status: 409 },
+      )
+    case 'FREQUENZA_NON_VIVA':
+      // La conferma parte da una frequenza che non è più viva (ritirato, già trasferito, anno chiuso).
+      return NextResponse.json(
+        { ...dettagli, error: frase('FREQUENZA_NON_VIVA'), codice: 'FREQUENZA_NON_VIVA' },
+        { status: 409 },
+      )
+    case 'SEZIONE_OBBLIGATORIA':
+      // Il bambino cambia grado (p_cambia_grado): senza continuazione la classe nuova va scelta.
+      return NextResponse.json(
+        { ...dettagli, error: frase('SEZIONE_OBBLIGATORIA'), codice: 'SEZIONE_OBBLIGATORIA' },
+        { status: 422 },
+      )
+    case 'SEDE_DIVERSA':
+      return NextResponse.json(
+        { ...dettagli, error: frase('SEDE_DIVERSA'), codice: 'SEDE_DIVERSA' },
+        { status: 422 },
+      )
+    case 'ANNO_NON_MODIFICABILE':
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANNO_NON_MODIFICABILE'), codice: 'ANNO_NON_MODIFICABILE' },
+        { status: 409 },
+      )
+    case 'ANNO_NON_OFFERTO':
+      // L'anno non offre quel servizio o quella fascia (nessuna voce nel listino, nessun posto autorizzato).
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANNO_NON_OFFERTO'), codice: 'ANNO_NON_OFFERTO' },
+        { status: 422 },
+      )
+    case 'ISCRIZIONI_CHIUSE':
+      return NextResponse.json(
+        { ...dettagli, error: frase('ISCRIZIONI_CHIUSE'), codice: 'ISCRIZIONI_CHIUSE' },
+        { status: 409 },
+      )
+    case 'IMPORTO_NON_VALIDO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('IMPORTO_NON_VALIDO'), codice: 'IMPORTO_NON_VALIDO' },
+        { status: 422 },
+      )
+    case 'FREQUENZA_NON_DI_CONFERMA':
+      // «Ritira la conferma» su una frequenza che non nasce da una conferma (4.5.15): non è la strada giusta.
+      return NextResponse.json(
+        { ...dettagli, error: frase('FREQUENZA_NON_DI_CONFERMA'), codice: 'FREQUENZA_NON_DI_CONFERMA' },
+        { status: 409 },
+      )
+    case 'SCADENZA_QUOTA_NEL_PASSATO':
+      // La quota con una scadenza già passata (4.5.15): farebbe nascere voci già scadute.
+      return NextResponse.json(
+        { ...dettagli, error: frase('SCADENZA_QUOTA_NEL_PASSATO'), codice: 'SCADENZA_QUOTA_NEL_PASSATO' },
+        { status: 422 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(
@@ -221,6 +278,11 @@ export function rispostaCodiceFiscaleGiaUsato(): NextResponse {
   return NextResponse.json({ error: frase('CODICE_FISCALE_GIA_USATO'), codice: 'CODICE_FISCALE_GIA_USATO' }, { status: 409 })
 }
 
+/** 404 quando la frequenza nominata dall'URL non esiste (compito 4.5.10, la spunta dei moduli). Nessun dato nella risposta. */
+export function rispostaFrequenzaNonTrovata(): NextResponse {
+  return NextResponse.json({ error: frase('FREQUENZA_NON_TROVATA'), codice: 'FREQUENZA_NON_TROVATA' }, { status: 404 })
+}
+
 /** 409 su una scheda anonimizzata (diritto all'oblio): non si archivia e non riceve scritture. */
 export function rispostaAlunnoAnonimizzato(): NextResponse {
   return NextResponse.json({ error: frase('ALUNNO_ANONIMIZZATO'), codice: 'ALUNNO_ANONIMIZZATO' }, { status: 409 })
@@ -242,4 +304,5 @@ export const CODICI_INTERNI = [
   'TABELLA_NON_NEL_RIEMPIMENTO', // 20261107012110_anno_strumenti.sql
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
+  'ANNI_TICK_OGGI_NON_AMMESSO', // 20261109035209_anno_tick.sql (`anni_tick` con un giorno di oggi per una sede che non è di prova né di simulazione: solo l'editor SQL, mai una route)
 ] as const

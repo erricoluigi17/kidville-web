@@ -41,7 +41,7 @@ const DATA = /^\d{4}-\d{2}-\d{2}$/
 const CODICE_MINUSCOLO = /^[a-z][a-z0-9_]{0,63}$/
 
 const STATI_ANNO = new Set(['in_preparazione', 'iscrizioni_aperte', 'corrente', 'in_chiusura', 'chiuso'])
-const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova']
+const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova', 'classi_senza_fascia']
 
 // ── Piccoli lettori: ciò che non ha la forma attesa non entra né nella risposta né nel log ──────────
 

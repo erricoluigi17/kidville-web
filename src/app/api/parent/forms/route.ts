@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
+import { eInArrivo } from '@/lib/alunni/stato';
 import { figliAttiviDi, idDeiFigli } from '@/lib/anno/visibilita-genitore';
 import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
 import { parseQuery } from '@/lib/validation/http';
@@ -47,14 +48,17 @@ export const GET = withRoute('parent/forms:GET', async (request: NextRequest) =>
       return NextResponse.json([]);
     }
 
-    const { data: students, error: studErr } = await supabase
+    const { data: letti, error: studErr } = await supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione, scuola_id')
+      .select('id, nome, cognome, classe_sezione, scuola_id, stato')
       .in('id', studentIds);
 
-    if (studErr || !students) {
+    if (studErr || !letti) {
       return NextResponse.json({ error: studErr?.message || 'Errore nel caricamento degli alunni' }, { status: 500 });
     }
+    // Il bambino «in arrivo» (la domanda è per l'anno dopo) è collegato ma non frequenta: con la funzione non arriva fin qui,
+    // con lo schema indietro sì. Il genitore dell'anno prossimo vede solo la voce della quota: nessun modulo, nemmeno di iscrizione.
+    const students = letti.filter((s) => !eInArrivo(s.stato as string | null));
 
     // Sedi dei figli. Il genitore NON ha una sede propria (può avere figli in due
     // plessi): le sedi sono quelle dei suoi bambini, e sono l'unico perimetro

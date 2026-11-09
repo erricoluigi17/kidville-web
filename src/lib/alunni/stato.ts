@@ -85,6 +85,18 @@ export const STATO_RITIRATO = 'ritirato'
 export const STATO_SOSPESO = 'sospeso'
 
 /**
+ * Il bambino la cui domanda è per l'ANNO DOPO (anno scolastico, PR 4.5): esiste in `alunni`, senza sezione e senza
+ * frequenza dell'anno attivo, finché il passaggio d'anno non lo porta a `iscritto`.
+ *
+ * NON è nelle tendine, e non deve esserci: nessuno lo sceglie a mano, lo scrive la domanda di iscrizione. Per questo
+ * non è in `STATI_TENDINA` (che il lock `stati-alunno-classificati` confronta con le `<option>`) e non ha un lato in
+ * `LATO_DEL_CONFINE`: non è «non più iscritto», quindi `eAncoraIscritto('in_arrivo')` resta `true` e l'oblio non lo
+ * pesca fra i candidati. Chi lo vede in un elenco lo vede perché quell'elenco non filtra per sezione né per stato:
+ * l'inventario è nel lock `alunni-in-arrivo-classificati`.
+ */
+export const STATO_IN_ARRIVO = 'in_arrivo'
+
+/**
  * GLI STATI CHE IL PRODOTTO SA PRODURRE — le voci delle due tendine.
  *
  * Non è documentazione: è ciò che
@@ -96,6 +108,18 @@ export const STATO_SOSPESO = 'sospeso'
 export const STATI_TENDINA = [STATO_ISCRITTO, STATO_RITIRATO, STATO_SOSPESO] as const
 
 export type StatoTendina = (typeof STATI_TENDINA)[number]
+
+/**
+ * GLI STATI CHE LA COLONNA AMMETTE — quelli del CHECK `alunni_stato_ammesso`: le voci delle tendine più `in_arrivo`
+ * (che la tendina non offre). È ciò che `__tests__/architecture/stati-vincolati-in-sql.test.ts` confronta con l'SQL;
+ * le tendine continuano a essere confrontate con `STATI_TENDINA`.
+ */
+export const STATI_AMMESSI_IN_COLONNA = [...STATI_TENDINA, STATO_IN_ARRIVO] as const
+
+/** Vero solo per il bambino che arriva l'anno dopo. Una colonna vuota o uno stato mai visto non lo è. */
+export function eInArrivo(stato: string | null | undefined): boolean {
+  return stato === STATO_IN_ARRIVO
+}
 
 /** Le due sole parti del confine. Non c'è un «dipende». */
 export type LatoDelConfine = 'ancora-iscritto' | 'non-piu-iscritto'

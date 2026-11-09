@@ -1356,6 +1356,11 @@ export const CODICI_ERRORE = {
      */
     ALUNNO_ELIMINAZIONE_ARCHIVIA_PRIMA: 'erroreAlunnoEliminazioneArchiviaPrima',
     /**
+     * 409 — il bambino è «in arrivo» (domanda per l'anno dopo): si tratta da iscritto, quindi prima si archivia
+     * (diventa «ritirato») e poi si elimina.
+     */
+    ALUNNO_ELIMINAZIONE_IN_ARRIVO: 'erroreAlunnoEliminazioneInArrivo',
+    /**
      * 409 — il registro della primaria (voti, pagelle, scrutini, note, certificati delle
      * competenze) va conservato: né eliminazione né anonimizzazione. Lo usano
      * `admin/students/elimina:POST` e `admin/gdpr/erase:POST`: una regola, una frase.
@@ -1419,6 +1424,11 @@ export const CODICI_ERRORE = {
      * dalla tendina non fa sparire nessuno.
      */
     STATO_ALUNNO_ARCHIVIATO: 'erroreStatoAlunnoArchiviato',
+    /**
+     * 422 — la PATCH dell'anagrafica assegna una classe a un bambino `in_arrivo` (4.5.15, C2). Non frequenta ancora: il vincolo
+     * `alunni_in_arrivo_senza_sezione` lo vieta, e la scheda tiene la tendina spenta. Prima il vincolo rispondeva con un 500 generico.
+     */
+    ALUNNO_IN_ARRIVO_SENZA_CLASSE: 'erroreAlunnoInArrivoSenzaClasse',
     /**
      * 503 — le colonne dell'archiviazione non esistono in questo database, e
      * NIENTE è stato scritto (`archivia` e `riattiva`).
@@ -2900,6 +2910,9 @@ export const CODICI_ERRORE = {
     SCADENZE_INCOERENTI: 'erroreScadenzeIncoerenti',
     /** 400 — una delle due scadenze è già passata al momento del salvataggio. */
     SCADENZA_NEL_PASSATO: 'erroreScadenzaNelPassato',
+    SCADENZA_QUOTA_NEL_PASSATO: 'erroreScadenzaQuotaNelPassato',
+    /** «Ritira la conferma» su una frequenza che non nasce da una conferma (4.5.15): 409. */
+    FREQUENZA_NON_DI_CONFERMA: 'erroreFrequenzaNonDiConferma',
     /**
      * 400 — la segreteria sta configurando l'intervallo di persone per adesione
      * (minimo, massimo, valore predefinito) e i tre numeri non stanno insieme:
@@ -3617,6 +3630,22 @@ export const CODICI_ERRORE = {
     FIGLIO_NON_ATTIVO: 'erroreFiglioNonAttivo',
     CHAT_SOLA_LETTURA: 'erroreChatSolaLettura',
     DATA_FUORI_ANNO: 'erroreDataFuoriAnno',
+    /**
+     * PREPARARE E APRIRE L'ANNO PROSSIMO (PR 4.5, compito 4.5.0), tradotti da `erroreAnno`:
+     * 409 `ANNO_NON_APERTO` · 409 `FREQUENZA_NON_VIVA` · 422 `SEZIONE_OBBLIGATORIA` · 422 `SEDE_DIVERSA` ·
+     * 409 `ANNO_NON_MODIFICABILE` · 422 `ANNO_NON_OFFERTO` · 409 `ISCRIZIONI_CHIUSE` · 422 `IMPORTO_NON_VALIDO`.
+     * `ANNI_TICK_OGGI_NON_AMMESSO` NON c'è: lo solleva solo il database (il compito 4.5.2 lo mette in `CODICI_INTERNI` di `errori.ts`, insieme al `RAISE`), non arriva a nessuna schermata.
+     */
+    ANNO_NON_APERTO: 'erroreAnnoNonAperto',
+    FREQUENZA_NON_VIVA: 'erroreFrequenzaNonViva',
+    SEZIONE_OBBLIGATORIA: 'erroreSezioneObbligatoria',
+    SEDE_DIVERSA: 'erroreSedeDiversa',
+    ANNO_NON_MODIFICABILE: 'erroreAnnoNonModificabile',
+    ANNO_NON_OFFERTO: 'erroreAnnoNonOfferto',
+    ISCRIZIONI_CHIUSE: 'erroreIscrizioniChiuse',
+    IMPORTO_NON_VALIDO: 'erroreImportoNonValido',
+    /** La spunta dei moduli (compito 4.5.10): 404 `FREQUENZA_NON_TROVATA`, la risposta di `rispostaFrequenzaNonTrovata`. */
+    FREQUENZA_NON_TROVATA: 'erroreFrequenzaNonTrovata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

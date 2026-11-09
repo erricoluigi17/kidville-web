@@ -481,7 +481,11 @@
   "annoApriConferma": "Sì, apri le iscrizioni",
   "annoApriFatto": "Iscrizioni aperte ✓",
   "annoDomandeTitolo": "Domande dal sito",
-  "annoDomandeNota": "Le domande dal sito arrivano sempre nell’anno in corso. Per ora non si possono sospendere da qui.",
+  "annoDomandeNota": "Quando le domande sono sospese, il modulo del sito non le accetta per questo anno. Quelle già arrivate restano dove sono.",
+  "annoDomandeAperte": "Le domande dal sito per questo anno sono aperte.",
+  "annoDomandeSospese": "Le domande dal sito per questo anno sono sospese.",
+  "annoDomandeSospendi": "Sospendi le domande",
+  "annoDomandeRiapri": "Riapri le domande",
   "annoPermesso": "Non puoi cambiare gli anni scolastici di questa sede.",
   "annoErroreRete": "Non riesco a contattare il server. Riprova fra poco.",
   "annoConfineRighe": "Non si può: ci sono già {righe, plural, one {# riga} other {# righe}} in quei giorni ({elenco})",
@@ -500,5 +504,6 @@
   "annoConfineUltimoGiornoFuori": "La nuova fine viene prima dell’ultimo giorno aperto di questo anno: cambia prima quella data.",
   "annoConfinePreparaFuori": "La nuova fine viene prima della data da cui si prepara l’anno successivo: cambia prima quella data.",
   "annoConfineUltimoSuccessivoFuori": "L’anno successivo avrebbe l’ultimo giorno aperto prima del suo inizio: cambia prima la sua data.",
-  "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data."
+  "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data.",
+  "annoMancaClassiSenzaFascia": "la fascia di ogni classe (nella scheda Classi: premi «Copia le classi dell’anno in corso» e scegli la fascia)"
 }

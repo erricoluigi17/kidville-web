@@ -12,6 +12,7 @@ import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import type { AppUser } from '@/lib/auth/predicati-ruolo';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
+import { eInArrivo } from '@/lib/alunni/stato';
 import { figliAttiviDi, leggiVisibilita, type CoppiaAvviso } from '@/lib/anno/visibilita-genitore';
 import { rispostaGuastoGiaRegistrato } from '@/lib/db/guasto';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
@@ -149,7 +150,7 @@ function scadenzaEffettiva(a: AvvisoRow): string | null {
     return a.scadenza_avviso ?? a.scadenza ?? null;
 }
 
-type Figlio = { id: string; nome: string | null; classe_sezione: string | null; scuola_id: string | null };
+type Figlio = { id: string; nome: string | null; classe_sezione: string | null; scuola_id: string | null; stato?: string | null };
 type RispostaFiglio = RispostaDelGenitore;
 
 // PostgREST torna 42703 (SELECT) / PGRST204 (INSERT) quando `form_model_id` manca
@@ -522,13 +523,16 @@ async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): P
 
     const { data: figliRows, error: figliErr } = await supabase
         .from('alunni')
-        .select('id, nome, classe_sezione, scuola_id')
+        .select('id, nome, classe_sezione, scuola_id, stato')
         .in('id', figliIds);
     if (figliErr) {
         logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, figliErr);
         return NextResponse.json({ error: figliErr.message }, { status: 500 });
     }
-    const figli = (figliRows ?? []) as unknown as Figlio[];
+    // Un bambino «in arrivo» (la domanda è per l'anno dopo) è collegato alla famiglia ma non frequenta: con la funzione
+    // `figli_attivi` non arriva mai fin qui, con lo schema indietro (la CI) sì. La famiglia di chi non è ancora a scuola non
+    // riceve gli avvisi della scuola: vede solo la voce della quota.
+    const figli = ((figliRows ?? []) as unknown as Figlio[]).filter((f) => !eInArrivo(f.stato));
     const classiFigli = new Set(figli.map((f) => f.classe_sezione).filter((c): c is string => !!c));
     // Isolamento di plesso anche lato genitore: un globale di un'altra sede non compare.
     const scuoleFigli = perFunzione?.sedi

@@ -3,6 +3,9 @@ import {
   STATO_ISCRITTO,
   STATO_RITIRATO,
   STATO_SOSPESO,
+  STATO_IN_ARRIVO,
+  STATI_AMMESSI_IN_COLONNA,
+  eInArrivo,
   STATI_TENDINA,
   STATI_NON_PIU_ISCRITTO,
   STATI_CHE_FREQUENTANO,
@@ -125,5 +128,23 @@ describe('alunni/stato — il confine di «non più iscritto»', () => {
   it('lo stato «iscritto» non autorizza nulla, comunque sia stato archiviato in passato', () => {
     expect(eNonPiuIscritto(STATO_ISCRITTO)).toBe(false)
     expect(eAncoraIscritto(STATO_ISCRITTO)).toBe(true)
+  })
+
+  // Anno scolastico 4.5.4: lo stato del bambino che arriva l'anno dopo. Non è nella tendina (lo scrive la domanda), ma la
+  // colonna lo ammette; e non è «non più iscritto»: l'oblio non lo deve pescare fra i candidati.
+  it('`in_arrivo` è ammesso dalla colonna, non sta nella tendina e non è «non più iscritto»', () => {
+    expect(STATO_IN_ARRIVO).toBe('in_arrivo')
+    expect([...STATI_AMMESSI_IN_COLONNA]).toEqual([...STATI_TENDINA, 'in_arrivo'])
+    expect([...STATI_TENDINA]).not.toContain(STATO_IN_ARRIVO)
+    expect(eNonPiuIscritto(STATO_IN_ARRIVO)).toBe(false)
+    expect(eAncoraIscritto(STATO_IN_ARRIVO)).toBe(true)
+    expect([...STATI_NON_PIU_ISCRITTO]).not.toContain(STATO_IN_ARRIVO)
+  })
+
+  it('`eInArrivo` risponde sì a uno stato solo: né a una colonna vuota, né a un refuso, né a una maiuscola', () => {
+    expect(eInArrivo('in_arrivo')).toBe(true)
+    for (const x of [null, undefined, '', 'In_arrivo', 'in arrivo', ' in_arrivo', STATO_ISCRITTO, STATO_RITIRATO, STATO_SOSPESO]) {
+      expect(eInArrivo(x), String(x)).toBe(false)
+    }
   })
 })

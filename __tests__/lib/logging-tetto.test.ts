@@ -569,6 +569,29 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'invece scatterebbe di continuo sul primo risveglio di iOS, quando il processo del '
         + 'plugin riparte a freddo. La scadenza ha la sua riga, e non è rumore: sul telefono sano non '
         + 'scatta mai, quindi ogni occorrenza dice che il plugin non risponde.'],
+    ['src/components/features/parent/GuardiaSenzaFigli.tsx',
+        'quanto il guardiano dell\'area famiglia aspetta di sapere se ci sono figli prima di dire che lo stato '
+        + 'non è determinabile (PR 4.5.11, 8 s). Non limita una `fetch` — la lettura dei figli passa da '
+        + '`fetchEsitoFigli` e dalla sua cache, che non si annulla da qui — limita l\'ATTESA DELLA PAGINA: '
+        + 'senza, una lettura appesa lascerebbe una famiglia senza bambino noto davanti a una rotella senza '
+        + 'fine (il difetto «app sempre in caricamento»). Per questo non usa `segnaleConTetto`/`conTetto`, '
+        + 'che interrompono la chiamata: qui la chiamata resta in volo e, se risponde dopo, il messaggio '
+        + 'lascia il posto alla pagina. Scaduto il tempo compare il messaggio con «Riprova», che invalida '
+        + 'la cache e rilegge; con un bambino già noto (cache del telefono) la pagina resta. Otto secondi '
+        + 'perché una rete lenta di un telefono in campagna risponde di solito prima, e perché oltre quel '
+        + 'punto una rotella è già letta come «non funziona».'],
+    ['src/components/features/public/wizard/use-anni-pubblici.ts',
+        'quanto il modulo pubblico delle iscrizioni aspetta l\'elenco degli anni che la sede offre prima di '
+        + 'andare avanti senza (PR 4.5.7-bis, 8 s). Col link `?scuola=` la forma dei passi aspetta quell\'elenco: '
+        + 'una `fetch` che accetta la connessione e tace (misurato: 150 s) lascerebbe la famiglia sul primo passo '
+        + 'senza poter proseguire. Come `GuardiaSenzaFigli`, limita l\'ATTESA DELLA PAGINA e non interrompe la '
+        + '`fetch` (non usa `segnaleConTetto`: su iOS 15 `AbortSignal.timeout` manca, e un tetto che sparisce in '
+        + 'silenzio lascerebbe il difetto intero). Allo scadere l\'esito è quello di un 500 — nessuna scelta, il '
+        + 'POST non dichiara l\'anno e lo decide il server — con un log `warn` dal messaggio proprio '
+        + '(`iscrizione-anni-tetto-scaduto`), così le scadenze si contano a parte dalla rete giù. Una risposta '
+        + 'arrivata dopo non conta: cambierebbe la forma dei passi sotto le mani di chi compila. Otto secondi '
+        + 'perché una rete mobile lenta risponde di solito prima, e oltre un genitore fermo sul primo passo legge '
+        + '«non funziona».'],
 ]);
 
 /**

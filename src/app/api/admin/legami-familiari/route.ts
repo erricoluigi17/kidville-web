@@ -8,7 +8,7 @@ import { ripulisciTermineRicerca } from '@/lib/validation/ricerca-testo';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
-import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
+import { STATI_CON_CANALE_FAMIGLIA, STATO_IN_ARRIVO } from '@/lib/alunni/stato';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import {
     RELAZIONI_FAMILIARI,
@@ -261,8 +261,11 @@ export const GET = withRoute('admin/legami-familiari:GET', async (request: Reque
             .in('scuola_id', plessi)
             // Un bambino archiviato o ritirato non si aggiunge a una famiglia
             // dallo sportello: `STATI_CON_CANALE_FAMIGLIA` è il confine, e sta
-            // in un posto solo (`src/lib/alunni/stato.ts`).
-            .in('stato', [...STATI_CON_CANALE_FAMIGLIA])
+            // in un posto solo (`src/lib/alunni/stato.ts`). In più si trova il
+            // bambino «in arrivo» (la domanda è per l'anno dopo): è una RICERCA
+            // della segreteria, non un canale verso le famiglie, e senza di lei
+            // non si potrebbe correggerne il legame prima che cominci.
+            .in('stato', [...STATI_CON_CANALE_FAMIGLIA, STATO_IN_ARRIVO])
             .or(`nome.ilike.${like},cognome.ilike.${like},codice_fiscale.ilike.${like}`)
             .limit(limite);
         if (error) return letturaFallita('ricerca-alunni-non-letta', 'alunni', error);

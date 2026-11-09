@@ -6,10 +6,11 @@ import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { rispostaGuastoDb } from '@/lib/db/guasto'
-import { annoPerScritturaPubblica } from '@/lib/anno/pubblico'
+import { annoPerScritturaPubblica, etichettaAnnoSeNonCorrente } from '@/lib/anno/pubblico'
 import { erroreAnno } from '@/lib/anno/errori'
 import { rispostaErroreInterno } from '@/lib/api/errore-interno'
 import { CONSENSI_FIELDS } from '@/lib/forms/enrollment-template'
@@ -104,6 +105,8 @@ async function inviaRicevutaIscrizione(
     scuolaId: string
     children: Record<string, unknown>[]
     adults: Record<string, unknown>[]
+    /** L'etichetta dell'anno scelto, SOLO se non è il corrente (altrimenti la riga si omette). */
+    anno?: string | null
   },
 ): Promise<void> {
   try {
@@ -135,6 +138,7 @@ async function inviaRicevutaIscrizione(
         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
       }),
       nomeBambino,
+      anno: dati.anno ?? null,
       // Nessuna sezione: il modulo pubblico non la chiede, la assegna la
       // segreteria all'importazione. La riga si omette invece di inventarla.
       genitore: [stringa(referente?.nome), stringa(referente?.cognome)].filter((v) => v !== '').join(' ') || null,
@@ -227,6 +231,9 @@ function normalizzaRecord(rec: unknown, fields: FormField[]): Record<string, unk
 // ricade sul default, gestito nel codice con || come prima.
 const postBodySchema = z.object({
   scuola_id: z.unknown().optional(),
+  // L'anno che la famiglia ha scelto nel modulo (`anni_scolastici.id`). Assente per un cliente che non lo
+  // conosce: allora vale il `corrente`, com'è sempre stato.
+  anno_id: zUuid.nullish(),
   data: z
     .object(
       {
@@ -400,12 +407,28 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
       return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })
     }
 
-    // L'anno della domanda: il `corrente` della sede, mai un cookie (la porta non ha utente) e mai un
-    // rifiuto: se la lettura fallisce o non c'è un `corrente`, la funzione lo dice nei log e la domanda si
-    // scrive SENZA `anno_id` (la riserva permanente del database lo assegna). Una famiglia non perde la
-    // domanda per l'anno. Il primo tentativo e quello di ripiego scrivono lo STESSO `anno_id`.
-    const pubblico = await annoPerScritturaPubblica(supabase, scuolaId)
+    // L'anno della domanda, mai da un cookie (la porta non ha utente):
+    //  · la famiglia ha SCELTO un anno (`anno_id` nel corpo) → quello, o un rifiuto: un anno che la sede non
+    //    offre è 422 `ANNO_NON_OFFERTO` e nessuna riga, perché ripiegare in silenzio sul `corrente` mette un
+    //    bambino nell'anno sbagliato. Se nessun anno accetta domande è 409 `ISCRIZIONI_CHIUSE`;
+    //  · nessuna scelta → il `corrente` (con un `warn` se gli anni offerti sono due o più);
+    //  · se la lettura fallisce, non c'è un `corrente` o lo schema è indietro (DB E2E): nessun rifiuto, la
+    //    funzione lo dice nei log e la domanda si scrive SENZA `anno_id` (la riserva permanente del database
+    //    lo assegna). Una famiglia non perde la domanda per un guasto dell'anno.
+    // Il primo tentativo e quello di ripiego scrivono lo STESSO `anno_id`.
+    const annoScelto = b.data.anno_id ?? undefined
+    const pubblico = await annoPerScritturaPubblica(supabase, scuolaId, { annoId: annoScelto, rigido: annoScelto !== undefined })
+    // Le due frasi e i due codici stanno in `erroreAnno` (409 / 422), l'unico posto in cui un codice dell'anno
+    // diventa una risposta. Il rifiuto lo ha già scritto nei log `annoPerScritturaPubblica`.
+    if ('chiuso' in pubblico) return erroreAnno({ message: 'ISCRIZIONI_CHIUSE' }, OPERAZIONE) as NextResponse
+    if ('nonOfferto' in pubblico) return erroreAnno({ message: 'ANNO_NON_OFFERTO' }, OPERAZIONE) as NextResponse
     const dichiaraAnno: { anno_id?: string } = pubblico.annoId ? { anno_id: pubblico.annoId } : {}
+    // La ricevuta nomina l'anno solo quando non è il `corrente`: lo si legge qui, una volta, solo se la
+    // famiglia ne ha scelto uno (altrimenti è il `corrente` per definizione) e prima di scrivere niente.
+    const annoRicevuta =
+      annoScelto !== undefined && pubblico.annoSedeId
+        ? await etichettaAnnoSeNonCorrente(supabase, pubblico.annoSedeId, pubblico.annoId)
+        : null
 
     const { data: row, error } = await supabase
       .from('enrollment_submissions')
@@ -449,7 +472,7 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
         // non migrato della CI, ed è esattamente il tipo di posto dove una
         // funzione nuova si dimentica: la domanda è registrata, la famiglia ha
         // diritto alla sua conferma qualunque colonna manchi.
-        await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults })
+        await inviaRicevutaIscrizione(supabase, { id: retry.data.id, scuolaId, children, adults, anno: annoRicevuta })
         // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
         programmaAggancioAlCrm(supabase, retry.data.id)
         return NextResponse.json({ id: retry.data.id }, { status: 201 })
@@ -483,7 +506,7 @@ export const POST = withRoute('iscrizione:POST', async (request: NextRequest) =>
       }, e)
     }
 
-    await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults })
+    await inviaRicevutaIscrizione(supabase, { id: row.id, scuolaId, children, adults, anno: annoRicevuta })
     // Il CRM della segreteria, DOPO la risposta e senza poterla cambiare (vedi `programmaAggancioAlCrm`).
     programmaAggancioAlCrm(supabase, row.id)
 

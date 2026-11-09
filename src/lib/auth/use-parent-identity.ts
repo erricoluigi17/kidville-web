@@ -132,7 +132,15 @@ export interface EsitoFigli {
   inAttesa: boolean;
   /** Quale dei tre motivi, per scegliere la frase. `null` = frase generica. */
   motivoAssenza: MotivoFiglioNascosto | null;
+  /**
+   * PR 4.5.11 · `YYYY-MM-DD` del primo ingresso, quando OGNI figlio collegato ha una frequenza viva che comincia più avanti: la
+   * frase è «L'iscrizione comincia il …» e non «Nessuna iscrizione attiva». `null` = non c'è, o il server non l'ha saputo dire
+   * (client più nuovo del server, lettura guastata): il pannello resta quello di sempre. Vale solo dentro `inAttesa`.
+   */
+  ingressoFuturo: string | null;
 }
+
+const FORMA_DATA = /^\d{4}-\d{2}-\d{2}$/;
 
 /** I tre soli valori che il campo può portare: il resto della rete non è un motivo. */
 const MOTIVI_ASSENZA: readonly MotivoFiglioNascosto[] = ['archiviato', 'ritirato', 'senza-sezione'];
@@ -208,7 +216,11 @@ async function caricaFigli(parentId: string): Promise<EsitoFigli | null> {
   // `false`, cioè il comportamento di prima. E vale solo con l'elenco vuoto, e mai
   // insieme a `in_attesa` (un legame c'è, quindi il figlio esiste ma è nascosto).
   const senzaFigli = figli.length === 0 && !inAttesa && body.senza_figli === true;
-  return { figli, senzaFigli, inAttesa, motivoAssenza: inAttesa ? leggiMotivoAssenza(body.motivo_assenza) : null };
+  // Una data malformata non diventa una frase: solo `YYYY-MM-DD`, e solo con l'elenco vuoto e i legami presenti.
+  const ingressoFuturo = inAttesa && typeof body.ingresso_futuro === 'string' && FORMA_DATA.test(body.ingresso_futuro)
+    ? body.ingresso_futuro
+    : null;
+  return { figli, senzaFigli, inAttesa, motivoAssenza: inAttesa ? leggiMotivoAssenza(body.motivo_assenza) : null, ingressoFuturo };
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { CalendarDays } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -9,6 +9,7 @@ import { useAnnoOpzionale, useTestoStatoAnno } from '@/lib/context/anno-context'
 import { useCalendario, useCalendarioDi } from '@/lib/context/calendario-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { AnnoConfigurazione } from './AnnoConfigurazione';
 import { btnPrimary, card, h3, hint, input, label } from './ui';
 
 /**
@@ -25,13 +26,14 @@ import { btnPrimary, card, h3, hint, input, label } from './ui';
  *    (stessa lezione di `AnagraficaSedeSettings`).
  *  · Gli anni vengono dal calendario della 4.1 (nessuna seconda fetch); dopo un salvataggio riuscito si
  *    chiama `ricarica()`. Mentre si rilegge, il modulo resta com'è e i comandi si fermano.
- *  · Le domande dal sito NON hanno un comando: fino alla 4.5 il modulo pubblico non guarda l'interruttore
- *    (`domande_aperte`) e ogni domanda va nell'anno in corso. Una riga lo dice; la route `PATCH azione: 'domande'`
- *    resta, ma da qui non si chiama.
+ *  · Le domande dal sito (PR 4.5) hanno il loro comando: «Sospendi» / «Riapri» per ogni anno, con
+ *    `PATCH azione: 'domande'`. Lo stato che si legge è `domandeAperte` del calendario, che si rilegge a ogni salvataggio.
+ *  · Quote, moduli, posti e classi dell'anno che si prepara stanno in `AnnoConfigurazione`; ogni scrittura riuscita
+ *    rilegge «che cosa manca» per aprire le iscrizioni.
  *  · Nel messaggio di un rifiuto passano solo nomi di tabelle e numeri: mai righe di bambini.
  */
 
-type Blocco = 'confine' | 'date' | 'iscrizioni';
+type Blocco = 'confine' | 'date' | 'iscrizioni' | 'domande';
 
 /** L'errore come CODICE; il testo si compone al render. */
 type ErroreUi =
@@ -45,7 +47,7 @@ type EsitoUi = { blocco: Blocco; tipo: 'salvato' | 'invariato' } | { blocco: Blo
 /** `stato: 0` = la richiesta non è arrivata (rete). */
 type Risposta = { stato: number; corpo: unknown };
 
-const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova'];
+const PREREQUISITI = ['quota_conferma', 'quota_nuova', 'moduli_conferma', 'moduli_nuova', 'classi_senza_fascia'];
 
 /** '2027-09-01' → '1/9/2027'. Stringa su stringa: nessun fuso, nessuna `Date`. */
 function dataBreve(ymd: string): string {
@@ -217,6 +219,9 @@ function DettaglioAnno({
   const [dialogo, setDialogo] = useState(false);
   // Che cosa manca per aprire le iscrizioni: `null` finché non è arrivato.
   const [lettura, setLettura] = useState<{ mancano: string[] } | { errore: ErroreUi } | null>(null);
+  // Sale di uno a ogni modifica di quote, moduli o posti: l'elenco di ciò che manca si rilegge.
+  const [versione, setVersione] = useState(0);
+  const configurazioneCambiata = useCallback(() => setVersione((v) => v + 1), []);
 
   // `vivo`: se si cambia sede (o anno) con una scrittura in volo, il pannello smontato non riceve più stato.
   const vivo = useRef(true);
@@ -244,7 +249,7 @@ function DettaglioAnno({
     return () => {
       active = false;
     };
-  }, [inPreparazione, url, userId]);
+  }, [inPreparazione, url, userId, versione]);
 
   const occupatoOra = inCorso !== null || occupato;
 
@@ -268,6 +273,8 @@ function DettaglioAnno({
     setEsito({ blocco, tipo: cambiato ? 'salvato' : 'invariato' });
     return r;
   };
+
+  const impostaDomande = (aperte: boolean) => void esegui('domande', 'PATCH', url, { azione: 'domande', aperte });
 
   const erroreData = (blocco: Blocco) => setEsito({ blocco, tipo: 'errore', errore: { tipo: 'data' } });
 
@@ -354,6 +361,7 @@ function DettaglioAnno({
       case 'quota_conferma': return t('annoMancaQuotaConferma');
       case 'quota_nuova': return t('annoMancaQuotaNuova');
       case 'moduli_conferma': return t('annoMancaModuliConferma');
+      case 'classi_senza_fascia': return t('annoMancaClassiSenzaFascia');
       default: return t('annoMancaModuliNuova');
     }
   };
@@ -463,6 +471,11 @@ function DettaglioAnno({
             {esitoDi('date')}
           </fieldset>
 
+          {/* ── Quote, moduli, posti e classi (anno in preparazione o con le iscrizioni aperte) ── */}
+          {(riga.stato === 'in_preparazione' || riga.stato === 'iscrizioni_aperte') && (
+            <AnnoConfigurazione userId={userId} annoSedeId={riga.annoSedeId} stato={riga.stato} onCambiata={configurazioneCambiata} />
+          )}
+
           {/* ── Aprire le iscrizioni (solo un anno in preparazione) ────────────────────── */}
           {inPreparazione && (
             <fieldset className={gruppoClasse}>
@@ -498,12 +511,25 @@ function DettaglioAnno({
             </fieldset>
           )}
 
-          {/* ── Le domande dal sito: solo una riga, il comando arriva con la 4.5 ─────────── */}
+          {/* ── Le domande dal sito: sospese o riaperte, anno per anno ─────────────────── */}
           <fieldset className={gruppoClasse}>
             <legend className={legenda}>{t('annoDomandeTitolo')}</legend>
-            <p role="note" className="font-maven text-sm text-kidville-ink">
-              {t('annoDomandeNota')}
+            <p id={`${id}-domande-stato`} role="status" className="font-maven text-sm text-kidville-ink">
+              {riga.domandeAperte ? t('annoDomandeAperte') : t('annoDomandeSospese')}
             </p>
+            <p className={hint}>{t('annoDomandeNota')}</p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => impostaDomande(!riga.domandeAperte)}
+                disabled={occupatoOra}
+                aria-describedby={`${id}-domande-stato`}
+                className={btnPrimary}
+              >
+                {inCorso === 'domande' ? t('salvataggioInCorso') : riga.domandeAperte ? t('annoDomandeSospendi') : t('annoDomandeRiapri')}
+              </button>
+            </div>
+            {esitoDi('domande')}
           </fieldset>
         </>
       )}

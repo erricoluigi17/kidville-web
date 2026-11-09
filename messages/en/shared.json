@@ -624,6 +624,7 @@
   "erroreScadenzaAdesioneMancante": "Check the deadline to sign up: if that date and time is missing or not valid, the notice cannot be saved.",
   "erroreScadenzeIncoerenti": "The sign-up deadline is later than the notice expiry: fix one of the two. The notice was not saved.",
   "erroreScadenzaNelPassato": "One of the two deadlines has already passed: please fix it. The notice was not saved.",
+  "erroreScadenzaQuotaNelPassato": "The due date cannot be in the past: pick a date from today onwards, or leave it empty.",
   "erroreNumeroIntervalloNonValido": "The range of people you set is not valid: check the minimum, the maximum and the suggested value. The notice was not saved.",
   "erroreNumeroPartecipantiRichiesto": "Please indicate how many people will take part: without that number the sign-up cannot be recorded.",
   "erroreNumeroPartecipantiFuoriIntervallo": "The number you entered is outside the range allowed for this notice: please correct it.",
@@ -843,5 +844,17 @@
   "erroreAnagraficaExportNonLetta": "The pupil records could not be read in full: the file was not generated. Please try again in a few minutes.",
   "erroreFiglioNonAttivo": "This child is not enrolled in the current school year. Please contact the school office.",
   "erroreChatSolaLettura": "This conversation is read-only: you can read it again, but you cannot send messages.",
-  "erroreDataFuoriAnno": "This day is outside the current school year: it cannot be booked or cancelled."
+  "erroreDataFuoriAnno": "This day is outside the current school year: it cannot be booked or cancelled.",
+  "erroreAnnoNonAperto": "Enrolment for this school year is not open yet.",
+  "erroreFrequenzaNonViva": "This child no longer has an active enrolment in the starting year: it cannot be confirmed.",
+  "erroreSezioneObbligatoria": "Choose the class for the new year: the child changes school level and cannot be left without one.",
+  "erroreSedeDiversa": "This choice refers to a different location: check the location and try again.",
+  "erroreAnnoNonModificabile": "This school year can no longer be changed from here.",
+  "erroreAnnoNonOfferto": "This school year does not offer that service or age group.",
+  "erroreIscrizioniChiuse": "Enrolment for this school year is closed.",
+  "erroreImportoNonValido": "The amount is not valid: enter a figure greater than zero, with at most two decimals.",
+  "erroreAlunnoEliminazioneInArrivo": "This child has an enrolment for next school year: archive them first from their record, the status becomes “withdrawn”, and then you can delete them.",
+  "erroreFrequenzaNonTrovata": "This enrolment no longer exists. Refresh the page.",
+  "erroreFrequenzaNonDiConferma": "This child starts next year and is not attending yet: their enrolment is removed by archiving them from their record.",
+  "erroreAlunnoInArrivoSenzaClasse": "This child arrives next year and is not attending yet: a class will be assigned when they start."
 }

@@ -69,7 +69,7 @@ import { findAuthUserIdByEmail } from '@/lib/auth/parent-identity'
 import { agganciaDaImport } from '@/lib/crm/aggancio-alunno'
 import { logEvento } from '@/lib/logging/logger'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
-import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATO_ISCRITTO, STATO_IN_ARRIVO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
 import { consensiFotoDellaDomanda } from '@/lib/iscrizioni/consensi-foto'
 import { cercaGemelloGenitore } from '@/lib/iscrizioni/doppioni'
@@ -80,6 +80,15 @@ import { pausaFraEmail } from '@/lib/email/ritmo'
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/scrittura'
 import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
+import { registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
+import {
+  PATCH_RITORNO_IN_ARRIVO,
+  annoProssimoDellaDomanda,
+  campiFrequenzaDellaDomanda,
+  eExAlunno,
+  sezioniDellAnnoDellaSede,
+  type AnnoProssimo,
+} from '@/lib/anno/domanda-anno-prossimo'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -96,6 +105,17 @@ export interface EsitoEsecuzione {
    * giornaliero — non «1 per domanda», che con due genitori sarebbe una bugia.
    */
   emailSpedite: number
+  /**
+   * Quante frequenze dell'anno prossimo, create da questa domanda, sono nate senza una voce di quota chiara (4.5.15, I1):
+   * `senza_listino` (nessuna quota nel listino) o `piu_voci` (più voci da guardare). Assente = zero. Chi mostra l'esito lo dice alla segreteria.
+   */
+  quotaDaControllare?: number
+  /**
+   * Quante frequenze dell'anno prossimo, già presenti, hanno detto qualcosa che la segreteria deve sapere (4.5.16): la classe scelta
+   * dall'import non è stata applicata (`sezione_ignorata`), o l'iscrizione risulta chiusa per trasferimento o uscita e la domanda è stata
+   * collegata senza riaprirla (`chiusa`), o è stata riaperta e la famiglia rivede la voce (`riaperta`). Assente = zero.
+   */
+  iscrizioniDaGuardare?: number
 }
 
 /** Il jsonb del form, che porta i campi che `Domanda` non modella. */
@@ -359,10 +379,16 @@ export async function alunnoDiRiferimento(
   scuolaId: string,
   submissionId: string,
   cacheAnno?: Map<string, string | null>,
+  /**
+   * La domanda è per l'anno PROSSIMO (PR 4.5.8): il bambino nuovo nasce `in_arrivo` senza classe né retta, uno che esiste non
+   * cambia classe né retta (solo chi torna da fuori diventa `in_arrivo`). La frequenza dell'anno aperto la registra
+   * `eseguiDomanda`, con tutti i fratelli già in anagrafica.
+   */
+  annoProssimo?: AnnoProssimo,
 ): Promise<{ id: string } | { errore: string }> {
   const cf = campo(grezzo, 'codice_fiscale')?.toUpperCase() ?? null
-  // Il nome della sezione com'è in anagrafica, non com'è nel foglio.
-  const classe = await nomeCanonicoClasse(supabase, scuolaId, assegnazione.classe)
+  // Il nome della sezione com'è in anagrafica, non com'è nel foglio. (Per l'anno prossimo la classe non si scrive su `alunni`.)
+  const classe = annoProssimo ? assegnazione.classe : await nomeCanonicoClasse(supabase, scuolaId, assegnazione.classe)
   /**
    * La liberatoria foto, dalla PROVA congelata all'invio. Fino al 2026-09-05
    * questo giro non la nominava affatto: le tre colonne cadevano sul default
@@ -379,12 +405,13 @@ export async function alunnoDiRiferimento(
   if (cf) {
     const { data, error } = await supabase
       .from('alunni')
-      .select('id, scuola_id, allergies, note_mediche')
+      .select(annoProssimo ? 'id, scuola_id, allergies, note_mediche, stato, archiviato_il' : 'id, scuola_id, allergies, note_mediche')
       .eq('codice_fiscale', cf)
       .maybeSingle()
     if (error) return { errore: `lettura alunno non riuscita: ${error.message}` }
     if (data) {
-      const trovato = data as { id: string; scuola_id: string } & SanitariScheda
+      // (`unknown` per primo: la colonna scelta dipende dall'anno, e il parser dei tipi non legge un'unione di stringhe)
+      const trovato = data as unknown as { id: string; scuola_id: string; stato?: string | null; archiviato_il?: string | null } & SanitariScheda
       // Lo stesso codice fiscale in un'ALTRA sede non si tocca: sarebbe un
       // trasferimento, e un trasferimento lo decide una persona.
       if (trovato.scuola_id !== scuolaId) {
@@ -399,6 +426,24 @@ export async function alunnoDiRiferimento(
       // job notturno le toglieva poi dalla domanda — il dato della famiglia non
       // arrivava mai in scheda. La regola (riempi il vuoto, non sovrascrivere,
       // aggiungi in coda ciò che è diverso) sta in `@/lib/iscrizioni/sanitari`.
+      if (annoProssimo) {
+        // Della scheda di oggi non si tocca né la classe né la retta: entrano i consensi e i sanitari della famiglia. Chi era
+        // fuori (ritirato o archiviato) e torna diventa `in_arrivo`, senza sezione, altrimenti resterebbe fra i «Non iscritti».
+        const ritorna = eExAlunno(trovato)
+        const daScrivere: Record<string, unknown> = {
+          ...(ritorna ? PATCH_RITORNO_IN_ARRIVO : {}),
+          ...(consensi?.daProva ? consensi.colonne : {}),
+          ...sanitariDaScrivere(trovato, grezzo, new Date()),
+        }
+        if (Object.keys(daScrivere).length > 0) {
+          const esitoAgg = await conDegradoDiColonna(daScrivere, (rec) => supabase.from('alunni').update(rec).eq('id', trovato.id))
+          if (esitoAgg.error) return { errore: `alunno non aggiornato: ${esitoAgg.error.message}` }
+          if (ritorna) {
+            logEvento('anno-scolastico', 'info', { tipo: 'alunno-ritorna-in-arrivo', operazione: 'iscrizioni/import:alunnoDiRiferimento', entita_id: trovato.id, sede_id: scuolaId })
+          }
+        }
+        return { id: trovato.id }
+      }
       const patch: Record<string, unknown> = {
         classe_sezione: classe,
         importo_retta_mensile: assegnazione.retta,
@@ -437,14 +482,19 @@ export async function alunnoDiRiferimento(
     zip_code: campo(grezzo, 'zip_code'),
     allergies: campo(grezzo, 'allergies'),
     note_mediche: campo(grezzo, 'note_mediche'),
-    stato: STATO_ISCRITTO,
-    // La classe si scrive come TESTO: è il trigger `sync_alunno_section_id` a
-    // risolvere `section_id`, confrontando senza maiuscole né spazi. Il testo è
-    // quello CANONICO di `sections.name` (vedi `nomeCanonicoClasse`), non quello
-    // del foglio: le schermate dell'area 0-6 lo confrontano, e una differenza di
-    // spazi apriva la classe senza nessun bambino.
-    classe_sezione: classe,
-    importo_retta_mensile: assegnazione.retta,
+    // Domanda per l'anno PROSSIMO: `in_arrivo`, senza classe né retta (stanno nella frequenza di quell'anno).
+    ...(annoProssimo
+      ? { stato: STATO_IN_ARRIVO }
+      : {
+          stato: STATO_ISCRITTO,
+          // La classe si scrive come TESTO: è il trigger `sync_alunno_section_id` a
+          // risolvere `section_id`, confrontando senza maiuscole né spazi. Il testo è
+          // quello CANONICO di `sections.name` (vedi `nomeCanonicoClasse`), non quello
+          // del foglio: le schermate dell'area 0-6 lo confrontano, e una differenza di
+          // spazi apriva la classe senza nessun bambino.
+          classe_sezione: classe,
+          importo_retta_mensile: assegnazione.retta,
+        }),
     // Liberatorie foto raccolte all'iscrizione, UNA PER CANALE: la galleria
     // riservata alle famiglie della sezione è un'altra cosa dal sito pubblico e
     // dai social (provv. Garante 725 del 27/11/2025). Senza queste righe il
@@ -458,7 +508,7 @@ export async function alunnoDiRiferimento(
   if (error || !data) return { errore: `alunno non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id
-  await frequenzaDopoInsert(supabase, id, scuolaId, record, cacheAnno)
+  if (!annoProssimo) await frequenzaDopoInsert(supabase, id, scuolaId, record, cacheAnno)
   const { error: errSegna } = await supabase.rpc('iscrizioni_segna_creato', {
     p_submission_id: submissionId,
     p_tipo: 'alunno',
@@ -479,6 +529,9 @@ export async function eseguiDomanda(
   assegnazioni: AssegnazioneBambino[],
   scuolaId: string,
   cacheAnno: Map<string, string | null> = new Map(),
+  /** Chi ha chiesto l'esecuzione, se è una persona (`utenti.id`): finisce in `pagamenti.creato_da` della voce di quota. Il giro
+   *  automatico (cron) non ha nessuno da nominare e lo omette: la voce nasce senza autore, come prima (4.5.15, M2). */
+  attoreId?: string | null,
 ): Promise<EsitoEsecuzione> {
   const bambiniGrezzi = Array.isArray(dati.children) ? dati.children : []
   const adultiGrezzi = Array.isArray(dati.adults) ? dati.adults : []
@@ -544,6 +597,26 @@ export async function eseguiDomanda(
     return { esito: 'rinviata', messageId: null, errore: motivo, emailSpedite: 0 }
   }
 
+  // ── 0. L'ANNO DELLA DOMANDA (PR 4.5.8) ────────────────────────────────────
+  // Una domanda per l'anno PROSSIMO (ad iscrizioni aperte) usa lo stesso ramo dell'import a mano: bambino `in_arrivo`, e la
+  // classe scelta e la retta nella frequenza di quell'anno. Ogni altro caso (`anno_id` assente o non leggibile, anno attivo,
+  // schema dell'anno indietro) è il percorso di ieri. Un anno senza le iscrizioni aperte non scrive niente. Si decide PRIMA
+  // di toccare l'anagrafica.
+  const annoProssimo = await annoProssimoDellaDomanda(supabase, domanda.id, scuolaId)
+  if (annoProssimo === 'non-aperto') return fallisci("l'anno della domanda non ha le iscrizioni aperte")
+  if (annoProssimo === 'non-leggibile') return fallisci("l'anno della domanda non si è potuto leggere")
+  let sezioniProssimo: Map<string, string> | null = null
+  if (annoProssimo) {
+    const sezioni = await sezioniDellAnnoDellaSede(supabase, scuolaId, annoProssimo.annoId, 'iscrizioni/import:eseguiDomanda')
+    if (!sezioni.ok) return fallisci("le sezioni dell'anno della domanda non si sono potute leggere")
+    for (const ass of assegnazioni) {
+      if (!sezioni.perNome.has(normalizzaNomeSezione(ass.classe))) {
+        return fallisci("una classe scelta non esiste fra le sezioni dell'anno della domanda")
+      }
+    }
+    sezioniProssimo = sezioni.perNome
+  }
+
   // ── 1. ANAGRAFICA ─────────────────────────────────────────────────────────
   const parentIds: string[] = []
   /** Gli adulti con un'email, in ordine: il primo è il referente. */
@@ -570,7 +643,7 @@ export async function eseguiDomanda(
   const figliAlunni: { figlio: number; alunnoId: string }[] = []
   for (const ass of assegnazioni) {
     const grezzo = bambiniGrezzi[ass.indice]
-    const esito = await alunnoDiRiferimento(supabase, grezzo, ass, scuolaId, domanda.id, cacheAnno)
+    const esito = await alunnoDiRiferimento(supabase, grezzo, ass, scuolaId, domanda.id, cacheAnno, annoProssimo ?? undefined)
     if ('errore' in esito) return fallisci(esito.errore)
     alunnoPerNome.set(normalizzaNome(`${ass.cognome} ${ass.nome}`), esito.id)
     figliAlunni.push({ figlio: ass.indice, alunnoId: esito.id })
@@ -586,6 +659,8 @@ export async function eseguiDomanda(
 
   // La retta a carico di un fratello si scrive DOPO, quando tutti gli alunni
   // della domanda esistono: il fratello che paga può essere uno di loro.
+  /** Per l'anno prossimo: l'alunno → il fratello che paga per lui, che viaggia nella frequenza e non in `alunni`. */
+  const fratelloPaganteDi = new Map<string, string>()
   for (const ass of assegnazioni) {
     if (!ass.aCaricoDi) continue
     const mio = alunnoPerNome.get(normalizzaNome(`${ass.cognome} ${ass.nome}`))
@@ -601,6 +676,10 @@ export async function eseguiDomanda(
         `la retta di ${ass.cognome} ${ass.nome} è a carico di ${ass.aCaricoDi}, che però non risulta ancora in anagrafica: senza il collegamento gli verrebbe generata la retta di default`,
       )
     }
+    if (annoProssimo) {
+      fratelloPaganteDi.set(mio, fratelloId)
+      continue
+    }
     const esitoAc = await scriviSchedaEFrequenza(
       supabase, mio, scuolaId, { retta_a_carico_di: fratelloId },
       () => supabase.from('alunni').update({ retta_a_carico_di: fratelloId }).eq('id', mio),
@@ -608,6 +687,32 @@ export async function eseguiDomanda(
     )
     if (!esitoAc.scritto) return fallisci(`collegamento della retta non scritto: la frequenza dell'anno non è stata scritta (${esitoAc.codice})`)
     if (esitoAc.risultato.error) return fallisci(`collegamento della retta non scritto: ${esitoAc.risultato.error.message}`)
+  }
+
+  // La frequenza dell'anno prossimo: tutti gli alunni esistono, quindi anche il fratello che paga ha il suo id. La data d'ingresso
+  // la decide la funzione; una frequenza che c'è già (confermata prima) non si tocca, la domanda le viene collegata.
+  let quotaDaControllare = 0
+  let iscrizioniDaGuardare = 0
+  if (annoProssimo && sezioniProssimo) {
+    for (const ass of assegnazioni) {
+      const mio = alunnoPerNome.get(normalizzaNome(`${ass.cognome} ${ass.nome}`))
+      if (!mio) continue
+      const esitoFreq = await registraFrequenzaPerAnno(supabase, {
+        alunnoId: mio,
+        annoSedeId: annoProssimo.annoSedeId,
+        tipo: 'nuova',
+        origine: 'domanda',
+        domandaId: domanda.id,
+        sectionId: sezioniProssimo.get(normalizzaNomeSezione(ass.classe)) ?? null,
+        ...(attoreId ? { da: attoreId } : {}),
+        campi: campiFrequenzaDellaDomanda({ importo_retta_mensile: ass.retta }, fratelloPaganteDi.get(mio) ?? null),
+      })
+      if (!esitoFreq.ok) return fallisci(`frequenza dell'anno prossimo non registrata (${esitoFreq.codice})`)
+      if ('saltata' in esitoFreq) return fallisci("frequenza dell'anno prossimo non registrata (funzione non disponibile)")
+      if (esitoFreq.quota === 'senza_listino' || esitoFreq.quota === 'piu_voci') quotaDaControllare++
+      // Anche `riaperta` (4.5.17, E): una riga riaperta rende di nuovo visibile una voce alla famiglia, e la segreteria lo deve sapere.
+      if (esitoFreq.sezione_ignorata === true || esitoFreq.chiusa === true || esitoFreq.riaperta === true) iscrizioniDaGuardare++
+    }
   }
 
   const alunniDellaDomanda = [...alunnoPerNome.values()]
@@ -643,7 +748,7 @@ export async function eseguiDomanda(
       await chiudi(supabase, domanda.id, assegnazioni)
       await agganciaAlCrm(supabase, domanda.id, scuolaId, figliAlunni)
       await invitaGliAltri(supabase, conEmail.slice(1), scuolaId, domanda.id, alunniDellaDomanda)
-      return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: 0 }
+      return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: 0, quotaDaControllare, iscrizioniDaGuardare }
     }
     // Nessun gemello da agganciare: la casella risulta conflittuale ma non
     // esiste l'anagrafica che la possiede. È un'incoerenza vera, non un caso
@@ -662,7 +767,7 @@ export async function eseguiDomanda(
     // Il posto nel registro era già preso: l'alunno entra lo stesso, l'email non
     // riparte — ma gli ALTRI genitori possono non aver mai ricevuto la loro.
     const altre = await invitaGliAltri(supabase, conEmail.slice(1), scuolaId, domanda.id, alunniDellaDomanda)
-    return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: altre }
+    return { esito: 'gia_invitata', messageId: null, errore: null, emailSpedite: altre, quotaDaControllare, iscrizioniDaGuardare }
   }
 
   // Chi paga resta il referente: `sincronizzaLegamiRuntime` crea ogni legame con
@@ -683,7 +788,7 @@ export async function eseguiDomanda(
     n: assegnazioni.length,
   })
 
-  return { esito: 'inviata', messageId: invito.messageId, errore: null, emailSpedite: 1 + altre }
+  return { esito: 'inviata', messageId: invito.messageId, errore: null, emailSpedite: 1 + altre, quotaDaControllare, iscrizioniDaGuardare }
 }
 
 /**

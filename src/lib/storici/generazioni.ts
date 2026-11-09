@@ -11,6 +11,7 @@ import { raccogliScolastico } from './adattatori/scolastici'
 import { raccogliServizio } from './adattatori/servizi'
 import { creaExcelStorico, creaPdfStorico } from './render'
 import { firmaRuoliStorico, utenteStaffStorico } from './permessi'
+import { STATO_IN_ARRIVO } from '@/lib/alunni/stato'
 
 const CATEGORIE_REGISTRO: readonly CategoriaStorico[] = ['primaria_registro', 'primaria_compiti', 'primaria_firme', 'documenti_didattici']
 
@@ -181,15 +182,19 @@ export async function pulisciGenerazioniScadute(db: SupabaseClient): Promise<num
   return n
 }
 
+// Un bambino «in arrivo» (domanda per l'anno dopo) non ha registri né fascicoli da stampare: fuori dalle due letture. `stato.is.null`
+// è esplicito perché in SQL `NULL <> 'in_arrivo'` dà NULL e farebbe sparire chi ha lo stato vuoto.
+const NON_IN_ARRIVO = `stato.is.null,stato.neq.${STATO_IN_ARRIVO}`
+
 export async function opzioniStorici(db: SupabaseClient, user: AppUser, scuolaId: string) {
   const ctxSedi = await import('@/lib/auth/scope')
   const sedi = await ctxSedi.scuoleDiUtente(db, utenteStaffStorico(user))
   if (!sedi.some(s => s.toLowerCase() === scuolaId.toLowerCase())) throw new ErroreStorico(403, 'SEDE_NON_AUTORIZZATA', 'Sede non accessibile.')
-  const alunni = await leggiTutte<{ id: string; nome: string; cognome: string; section_id: string | null; archiviato_il: string | null }>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').eq('scuola_id', scuolaId).is('anonimizzato_il', null).order('cognome').order('id').range(dal, al), 'opzioni-alunni')
+  const alunni = await leggiTutte<{ id: string; nome: string; cognome: string; section_id: string | null; archiviato_il: string | null }>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').eq('scuola_id', scuolaId).is('anonimizzato_il', null).or(NON_IN_ARRIVO).order('cognome').order('id').range(dal, al), 'opzioni-alunni')
   const storico = await leggiTutte<{ alunno_id: string; section_id: string; section_nome: string }>((dal, al) => db.from('alunni_classi_storico').select('alunno_id,section_id,section_nome').eq('scuola_id', scuolaId).order('id').range(dal, al), 'opzioni-storiche')
   const gia = new Set(alunni.map(a => a.id))
   const ex = [...new Set(storico.map(a => a.alunno_id))].filter(id => !gia.has(id))
-  for (let i = 0; i < ex.length; i += 100) alunni.push(...await leggiTutte<typeof alunni[number]>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').in('id', ex.slice(i, i + 100)).is('anonimizzato_il', null).order('cognome').order('id').range(dal, al), 'opzioni-ex-alunni'))
+  for (let i = 0; i < ex.length; i += 100) alunni.push(...await leggiTutte<typeof alunni[number]>((dal, al) => db.from('alunni').select('id,nome,cognome,section_id,archiviato_il').in('id', ex.slice(i, i + 100)).is('anonimizzato_il', null).or(NON_IN_ARRIVO).order('cognome').order('id').range(dal, al), 'opzioni-ex-alunni'))
   const classiStoriche = [...new Map(storico.map(r => [r.section_id, { id: r.section_id, name: r.section_nome || 'Classe archiviata' }])).values()]
   return { categorie: CATALOGO_STORICI.map(c => ({ ...c, disponibile: c.id !== 'documenti_protocolli' || haUnRuolo(user, ['admin', 'segreteria']) })), alunni, classiStoriche }
 }

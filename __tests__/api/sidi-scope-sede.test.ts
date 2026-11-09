@@ -434,6 +434,27 @@ describe('POST /api/admin/sidi/piattaforma-unica — i legami sono quelli di UNA
     })
   })
 
+  it('un bambino IN ARRIVO (domanda per l’anno dopo) non parte per il Ministero: né il suo codice fiscale né il legame', async () => {
+    const CF_ARRIVO = 'CFARRIVO0000000'
+    h.db.student_parents.push({
+      student_id: 'e0000000-0000-4000-8000-0000000000aa',
+      parent_id: PAR_A,
+      relation_type: 'padre',
+      validato_sidi: true,
+      alunni: { codice_fiscale: CF_ARRIVO, scuola_id: SEDE_A, stato: 'in_arrivo' },
+      parents: { fiscal_code: CF_GEN_A },
+    })
+
+    const res = await PIATTAFORMA(
+      req(`http://localhost/api/admin/sidi/piattaforma-unica?scuola_id=${SEDE_A}`, 'POST'),
+    )
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).associazioni).toBe(1)
+    expect(h.trasmissioni[0].xml).not.toContain(CF_ARRIVO)
+    expect(h.trasmissioni[0].xml).toContain(CF_ALUNNO_A)
+  })
+
   it('utente con UNA sola sede ⇒ invariato: solo i legami della sua', async () => {
     comeCoordinatoreA()
     const res = await PIATTAFORMA(req('http://localhost/api/admin/sidi/piattaforma-unica', 'POST'))

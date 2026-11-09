@@ -6,12 +6,12 @@ import { Plus, X } from 'lucide-react'
 import { Btn } from '@/components/ui/Btn'
 import { DateField } from '@/components/ui/DateField'
 import { ETICHETTA_CAMPO_FILTRO } from '@/components/ui/BarraFiltri'
-import { ANNI_INGRESSO, type AnnoIngresso } from '@/lib/crm/tipi'
+import { useCalendarioDi } from '@/lib/context/calendario-context'
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch'
 import { ModuloFamiglia, FAMIGLIA_VUOTA, contattoValido, type DatiFamiglia } from './ModuloFamiglia'
 import { chiama, leggiJson, scrittura } from './rete'
 import { CAMPO, MESSAGGIO_ERRORE, RIQUADRO, TESTO_SECONDARIO, TITOLO_SEZIONE } from './stile'
-import { etichetta } from './vocabolari'
+import { SelettoreAnnoScheda, corpoAnno, valoreNelCalendario } from './SelettoreAnnoScheda'
 
 /**
  * CRM della segreteria · «Nuova famiglia»: i contatti, l'origine, uno o più bambini e le tre domande
@@ -42,10 +42,11 @@ interface BozzaBambino {
   chiave: number
   nome: string
   dataNascita: string
-  annoIngresso: AnnoIngresso
+  /** Un uuid di `anni_scolastici` oppure una delle tre etichette (senza calendario della sede). */
+  anno: string
 }
 
-const nuovoBambino = (chiave: number): BozzaBambino => ({ chiave, nome: '', dataNascita: '', annoIngresso: 'non_indicato' })
+const nuovoBambino = (chiave: number): BozzaBambino => ({ chiave, nome: '', dataNascita: '', anno: 'non_indicato' })
 
 type Fase = { tipo: 'compila' } | { tipo: 'invio' } | { tipo: 'creata' } | { tipo: 'esistente'; schedaId: string }
 
@@ -61,7 +62,7 @@ export function NuovaScheda({
   onAnnulla: () => void
 }) {
   const t = useTranslations('crmSchede')
-  const tc = useTranslations('crmShell')
+  const calendario = useCalendarioDi(scuolaId)
   const id = useId()
   const [dati, setDati] = useState<DatiFamiglia>(FAMIGLIA_VUOTA)
   const [bambini, setBambini] = useState<BozzaBambino[]>([nuovoBambino(0)])
@@ -108,7 +109,7 @@ export function NuovaScheda({
     bambini: bambini.map((b) => ({
       nome: pulito(b.nome),
       ...(b.dataNascita !== '' && { dataNascita: b.dataNascita }),
-      annoIngresso: b.annoIngresso,
+      ...corpoAnno(valoreNelCalendario(b.anno, calendario)),
     })),
     ...(forza && { forza: true }),
   })
@@ -200,18 +201,14 @@ export function NuovaScheda({
                 <label htmlFor={`${id}-anno-${b.chiave}`} className={ETICHETTA_CAMPO_FILTRO}>
                   {t('nuovaBambinoAnno')}
                 </label>
-                <select
+                <SelettoreAnnoScheda
                   id={`${id}-anno-${b.chiave}`}
-                  value={b.annoIngresso}
-                  onChange={(e) => cambiaBambino(b.chiave, { annoIngresso: e.target.value as AnnoIngresso })}
+                  scuolaId={scuolaId}
+                  valore={b.anno}
+                  disabled={bloccato}
+                  onChange={(anno) => cambiaBambino(b.chiave, { anno })}
                   className={CAMPO}
-                >
-                  {ANNI_INGRESSO.map((a) => (
-                    <option key={a} value={a}>
-                      {etichetta(tc, 'anniIngresso', a)}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
           </fieldset>

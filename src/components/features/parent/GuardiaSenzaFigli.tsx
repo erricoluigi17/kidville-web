@@ -1,12 +1,21 @@
 'use client';
 
-import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { Hourglass, Info, UserX } from 'lucide-react';
+import { useLocale, useTranslations } from 'next-intl';
+import { CalendarClock, Hourglass, Info, UserX } from 'lucide-react';
+import { intlDateTime } from '@/i18n/config';
+import { getCurrentStudentId } from '@/lib/auth/current-user';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-import { eMotivoNonPiuIscritto, fetchEsitoFigli, type EsitoFigli } from '@/lib/auth/use-parent-identity';
+import { eMotivoNonPiuIscritto, fetchEsitoFigli, invalidaFigliCache, type EsitoFigli } from '@/lib/auth/use-parent-identity';
+
+/**
+ * Quanto si aspetta la risposta sui figli prima di dire che lo stato non è determinabile. Dopo questo tempo chi non ha nessun
+ * bambino già noto non vede più una rotella senza fine (il difetto per cui una famiglia ha visto l'app «sempre in caricamento»):
+ * vede un messaggio con il pulsante per riprovare. Se la risposta arriva dopo, il messaggio lascia il posto alla pagina.
+ */
+export const ATTESA_MAX_STATO_FIGLI_MS = 8_000;
 
 /**
  * Le uniche schermate dell'area famiglia che hanno senso SENZA un bambino: il profilo
@@ -57,7 +66,7 @@ export function eRottaSenzaFiglioAttivo(pathname: string | null): boolean {
  * componente a parte, e non il guardiano stesso, proprio per questo: se a sospendersi
  * fosse il guardiano, con lui sparirebbe dal prerender l'intera pagina che avvolge.
  */
-function SondaSenzaFigli({ onEsito }: { onEsito: (esito: EsitoFigli | null) => void }) {
+function SondaSenzaFigli({ onEsito, tentativo }: { onEsito: (esito: EsitoFigli | null) => void; tentativo: number }) {
   const session = useSessionIdentity();
   useEffect(() => {
     if (!session.ready || !session.userId) return;
@@ -69,8 +78,19 @@ function SondaSenzaFigli({ onEsito }: { onEsito: (esito: EsitoFigli | null) => v
       if (!annullato) onEsito(esito);
     });
     return () => { annullato = true; };
-  }, [session.ready, session.userId, onEsito]);
+    // `tentativo` rilancia la lettura dal pulsante «Riprova»: è nelle dipendenze apposta.
+  }, [session.ready, session.userId, onEsito, tentativo]);
   return null;
+}
+
+/** Le rotte che per una famiglia con un figlio in arrivo restano raggiungibili: il profilo e i pagamenti (la quota), non la home. */
+function eRottaCheRestaAperta(pathname: string | null): boolean {
+  return eRottaSenzaFiglioAttivo(pathname) && pathname !== '/parent';
+}
+
+/** Il giorno `YYYY-MM-DD` come testo, con lingua e fuso espliciti: la data del database non scivola mai di un giorno. */
+export function testoDataIngresso(giorno: string, locale: string): string {
+  return intlDateTime(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${giorno}T00:00:00Z`));
 }
 
 /**
@@ -92,34 +112,94 @@ function SondaSenzaFigli({ onEsito }: { onEsito: (esito: EsitoFigli | null) => v
  */
 export function GuardiaSenzaFigli({ children }: { children: ReactNode }) {
   const t = useTranslations('parentServizi');
+  const tAnno = useTranslations('annoFamiglia');
+  const locale = useLocale();
   const pathname = usePathname();
   const [esito, setEsito] = useState<EsitoFigli | null>(null);
+  // «Non determinabile»: la lettura è fallita (`null`) o non ha risposto entro l'attesa massima. Mai una rotella senza fine.
+  const [incerto, setIncerto] = useState(false);
+  const [tentativo, setTentativo] = useState(0);
+  const [figlioNoto, setFiglioNoto] = useState(false);
+
+  const alEsito = useCallback((e: EsitoFigli | null) => {
+    setEsito(e);
+    setIncerto(e === null);
+    if (e === null) setFiglioNoto(!!getCurrentStudentId(null));
+  }, []);
+
+  useEffect(() => {
+    if (esito) return;
+    const timer = setTimeout(() => {
+      setFiglioNoto(!!getCurrentStudentId(null));
+      setIncerto(true);
+    }, ATTESA_MAX_STATO_FIGLI_MS);
+    return () => clearTimeout(timer);
+  }, [esito, tentativo]);
+
+  const riprova = () => {
+    invalidaFigliCache();
+    setIncerto(false);
+    setEsito(null);
+    setTentativo((n) => n + 1);
+  };
+
   const nessunoCollegato = !!esito?.senzaFigli && !eRottaSenzaFiglio(pathname);
-  const nessunoAttivo = !!esito?.inAttesa && !eRottaSenzaFiglioAttivo(pathname);
+  // Un figlio che entra più avanti: la frase vera, anche sulla home (che altrimenti mostrerebbe il suo pannello generico).
+  const ingressoFuturo = esito?.inAttesa && esito.ingressoFuturo ? esito.ingressoFuturo : null;
+  const inArrivo = !!ingressoFuturo && !eRottaCheRestaAperta(pathname);
+  const nessunoAttivo = !ingressoFuturo && !!esito?.inAttesa && !eRottaSenzaFiglioAttivo(pathname);
+  // Senza un bambino già noto le pagine non hanno uno `studentId` da aspettare: il messaggio prende il posto dell'attesa.
+  const nonVerificabile = incerto && !esito && !figlioNoto && !eRottaSenzaFiglio(pathname);
   const nonPiuIscritto = eMotivoNonPiuIscritto(esito?.motivoAssenza);
   // La clessidra promette un'attesa: dove non c'è nessuna attesa da fare resta l'informazione, come nella home.
-  const Icona = nessunoCollegato ? UserX : nonPiuIscritto ? Info : Hourglass;
+  const Icona = nessunoCollegato ? UserX : inArrivo ? CalendarClock : nonPiuIscritto ? Info : Hourglass;
 
   return (
     <>
       <Suspense fallback={null}>
-        <SondaSenzaFigli onEsito={setEsito} />
+        <SondaSenzaFigli onEsito={alEsito} tentativo={tentativo} />
       </Suspense>
-      {nessunoCollegato || nessunoAttivo ? (
+      {nonVerificabile ? (
+        <div className="min-h-screen bg-kidville-cream px-4 pb-[100px] pt-5" data-kv-stato-figli-incerto>
+          <div role="alert" className="rounded-[22px] bg-white px-5 py-8 text-center" style={{ boxShadow: '0 4px 12px -8px rgba(0,0,0,0.18)' }}>
+            <span className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[18px] bg-kidville-yellow-soft text-kidville-yellow-dark">
+              <Info size={24} strokeWidth={1.9} aria-hidden="true" />
+            </span>
+            <h1 className="pt-4 font-barlow text-[19px] font-bold uppercase leading-[1.1] tracking-[0.02em] text-kidville-green">
+              {tAnno('nonVerificabileTitolo')}
+            </h1>
+            <p className="pt-2 font-maven text-[13.5px] leading-[1.5] text-kidville-sub">{tAnno('nonVerificabileTesto')}</p>
+            <button
+              type="button"
+              onClick={riprova}
+              className="mt-4 inline-flex min-h-[44px] items-center font-barlow text-[13px] font-bold uppercase tracking-[0.02em] text-kidville-green underline"
+            >
+              {tAnno('nonVerificabileRiprova')}
+            </button>
+          </div>
+        </div>
+      ) : nessunoCollegato || nessunoAttivo || inArrivo ? (
         <div
           className="min-h-screen bg-kidville-cream px-4 pb-[100px] pt-5"
           data-kv-senza-figli={nessunoCollegato || undefined}
           data-kv-senza-figli-attivi={nessunoAttivo || undefined}
+          data-kv-ingresso-futuro={inArrivo || undefined}
         >
           <div className="rounded-[22px] bg-white px-5 py-8 text-center" style={{ boxShadow: '0 4px 12px -8px rgba(0,0,0,0.18)' }}>
             <span className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[18px] bg-kidville-yellow-soft text-kidville-yellow-dark">
               <Icona size={24} strokeWidth={1.9} aria-hidden="true" />
             </span>
             <h1 className="pt-4 font-barlow text-[19px] font-bold uppercase leading-[1.1] tracking-[0.02em] text-kidville-green">
-              {nessunoCollegato ? t('senzaFigliTitolo') : nonPiuIscritto ? t('nonPiuIscrittoTitolo') : t('inAttesaTitolo')}
+              {nessunoCollegato
+                ? t('senzaFigliTitolo')
+                : inArrivo && ingressoFuturo
+                  ? tAnno('ingressoFuturoTitolo', { data: testoDataIngresso(ingressoFuturo, locale) })
+                  : nonPiuIscritto ? t('nonPiuIscrittoTitolo') : t('inAttesaTitolo')}
             </h1>
             <p className="pt-2 font-maven text-[13.5px] leading-[1.5] text-kidville-sub">
-              {nessunoCollegato ? t('senzaFigliTesto') : nonPiuIscritto ? t('nonPiuIscrittoTesto') : t('inAttesaTesto')}
+              {nessunoCollegato
+                ? t('senzaFigliTesto')
+                : inArrivo ? tAnno('ingressoFuturoTesto') : nonPiuIscritto ? t('nonPiuIscrittoTesto') : t('inAttesaTesto')}
             </p>
             <Link
               href={nessunoCollegato ? '/parent/profilo' : '/parent/pagamenti'}

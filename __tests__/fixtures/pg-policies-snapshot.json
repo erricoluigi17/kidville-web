@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T23:45:02Z",
-  "sha256": "f29a7d33117cf09550e37fbd2bc4883eb0fd7bfaff031adbef17c8ee2aabcbb6",
+  "generato_il": "2026-11-09",
+  "generato_alle": "2026-11-09T03:49:58Z",
+  "sha256": "afd1a2478adc63c252b11ff123a25cc6616650c3221da9a5edc5e2aa86986716",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -35,7 +35,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(thread_id IN ( SELECT chat_threads.id FROM chat_threads WHERE ((chat_threads.teacher_id = ( SELECT auth.uid() AS uid)) OR (chat_threads.parent_id = ( SELECT auth.uid() AS uid)) OR (chat_threads.parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = ( SELECT auth.uid() AS uid)))))))",
+      "using_expr": "(thread_id IN ( SELECT v.thread_id FROM thread_visibili_miei() v(thread_id, scrivibile)))",
       "check_expr": ""
     },
     {
@@ -46,7 +46,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((teacher_id = ( SELECT auth.uid() AS uid)) OR (parent_id = ( SELECT auth.uid() AS uid)) OR (parent_id IN ( SELECT parents.id FROM parents WHERE (parents.auth_user_id = ( SELECT auth.uid() AS uid)))))",
+      "using_expr": "(id IN ( SELECT v.thread_id FROM thread_visibili_miei() v(thread_id, scrivibile)))",
       "check_expr": ""
     },
     {
@@ -112,7 +112,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((eliminato_il IS NULL) AND (EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id = ANY (ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))) AND (a.scuola_id = galleria_media_v2.scuola_id)))) AND ((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
+      "using_expr": "(id IN ( SELECT v.media_id FROM media_visibili_miei() v(media_id, alunno_id)))",
       "check_expr": ""
     },
     {
@@ -233,7 +233,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND ((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = u.scuola_id) OR (news_posts.scuola_id IN ( SELECT us.scuola_id FROM utenti_scuole us WHERE (us.utente_id = ( SELECT auth.uid() AS uid)))))))) OR ((stato = 'pubblicata'::text) AND (EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids UNION SELECT lga.alunno_id FROM legame_genitori_alunni lga WHERE (lga.genitore_id = ( SELECT auth.uid() AS uid)))) AND ((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = a.scuola_id)) AND ((news_posts.target_scope = 'globale'::text) OR ((news_posts.target_scope = 'classi'::text) AND ((a.classe_sezione)::text = ANY (news_posts.target_classes))) OR ((news_posts.target_scope = 'grado'::text) AND (EXISTS ( SELECT 1 FROM sections s WHERE ((s.id = a.section_id) AND (s.school_type = ANY (news_posts.target_gradi))))))))))))",
+      "using_expr": "((EXISTS ( SELECT 1 FROM utenti u WHERE ((u.id = ( SELECT auth.uid() AS uid)) AND ((u.ruolo)::text <> 'genitore'::text) AND ((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = u.scuola_id) OR (news_posts.scuola_id IN ( SELECT us.scuola_id FROM utenti_scuole us WHERE (us.utente_id = ( SELECT auth.uid() AS uid)))))))) OR ((stato = 'pubblicata'::text) AND (EXISTS ( SELECT 1 FROM figli_attivi_miei() f(alunno_id, frequenza_id, section_id, scuola_id) WHERE (((news_posts.scuola_id IS NULL) OR (news_posts.scuola_id = f.scuola_id)) AND ((news_posts.target_scope = 'globale'::text) OR ((news_posts.target_scope = 'classi'::text) AND (f.section_id = ANY (news_posts.target_section_ids))) OR ((news_posts.target_scope = 'grado'::text) AND (EXISTS ( SELECT 1 FROM sections s WHERE ((s.id = f.section_id) AND (s.school_type = ANY (news_posts.target_gradi))))))))))))",
       "check_expr": ""
     },
     {
@@ -321,7 +321,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "(alunno_id IN ( SELECT current_parent_student_ids() AS current_parent_student_ids))",
+      "using_expr": "(id IN ( SELECT v.voce_id FROM voci_visibili_miei() v(voce_id)))",
       "check_expr": ""
     },
     {

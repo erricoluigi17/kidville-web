@@ -465,6 +465,13 @@ const SUFFISSI_PR2 = {
   M44b: '_anno_visibilita_genitore_policy.sql',
   // PR 4.4: la pagina della galleria di una famiglia, sopra `media_visibili_genitore`. Dopo M44b.
   M44g: '_anno_galleria_pagina_genitore.sql',
+  // PR 4.5 (cinque testate nate nel compito 4.5.0, una per compito). Si applicano nell'ordine a, b, d, c, e: M45d PRIMA di M45c,
+  // perché `anno_quota_voce` (M45c) legge `listino_voci.scadenza`, che nasce in M45d. Dopo M44g.
+  M45a: '_anno_tick.sql',
+  M45b: '_anno_alunno_in_arrivo.sql',
+  M45d: '_anno_listino_moduli_sezioni.sql',
+  M45c: '_anno_iscrizione_conferma.sql',
+  M45e: '_anno_crm_anno_id.sql',
 } as const
 
 /**
@@ -590,6 +597,36 @@ export const SCHEMA_STUDENT_DOCUMENTS = `
   );
 `
 
+/**
+ * PR 4.5 (compito 4.5.0) · Ciò che i compiti 4.5.4-4.5.9 danno per scontato e che il banco minimo non ha. NON sta in `SCHEMA_BASE`:
+ * `alunni.stato` cambierebbe il comportamento dei test di prima. Chi lo vuole lo passa nella `codaPrima` di `creaDbAnnoPr2`
+ * (le tabelle `alunni` e `payment_categories` ci sono già, le migrazioni della 4.5 ci contano).
+ *  · `alunni.stato` e `stato_cambiato_il`, col CHECK `alunni_stato_ammesso` com'è oggi in produzione (`iscritto`, `ritirato`,
+ *    `sospeso`: M45b lo estende a `in_arrivo`);
+ *  · la categoria di sistema `iscrizione` (`is_sistema`, senza sede) che legge la quota;
+ *  · uno schema `cron` FINTO con `job`, `schedule` e `unschedule`, per i job di M45a (in produzione è `pg_cron`).
+ */
+export const SCHEMA_ISCRIZIONE_ANNO = `
+  ALTER TABLE public.alunni
+    ADD COLUMN stato text NOT NULL DEFAULT 'iscritto',
+    ADD COLUMN stato_cambiato_il timestamptz;
+  ALTER TABLE public.alunni
+    ADD CONSTRAINT alunni_stato_ammesso CHECK (stato IN ('iscritto', 'ritirato', 'sospeso'));
+  ALTER TABLE public.payment_categories ADD COLUMN is_sistema boolean NOT NULL DEFAULT false;
+  INSERT INTO public.payment_categories (scuola_id, nome, slug, is_sistema) VALUES (NULL, 'Iscrizione', 'iscrizione', true);
+
+  CREATE SCHEMA cron;
+  CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, jobname text UNIQUE, schedule text NOT NULL, command text NOT NULL);
+  CREATE FUNCTION cron.schedule(job_name text, schedule text, command text) RETURNS bigint LANGUAGE sql AS $f$
+    INSERT INTO cron.job (jobname, schedule, command) VALUES (job_name, schedule, command)
+    ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command
+    RETURNING jobid
+  $f$;
+  CREATE FUNCTION cron.unschedule(job_id bigint) RETURNS boolean LANGUAGE sql AS $f$
+    WITH d AS (DELETE FROM cron.job WHERE jobid = job_id RETURNING 1) SELECT EXISTS (SELECT 1 FROM d)
+  $f$;
+`
+
 export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
   const suffisso = SUFFISSI_PR2[quale]
   // La sezione M della migrazione 4.2 aggiorna `student_documents`: se il banco non l'ha, la crea nuda (senza registro).
@@ -670,7 +707,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -692,8 +729,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

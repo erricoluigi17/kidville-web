@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-08",
-  "generato_alle": "2026-11-08T16:53:16Z",
-  "sha256": "42ed23a9d4d3d7f710528a3194d2b9a3a9e8dbb2b95ad7fbe0d45be35306774e",
+  "generato_il": "2026-11-09",
+  "generato_alle": "2026-11-09T03:50:03Z",
+  "sha256": "eb1d7173b40d8f079db77c3cfc3c15857c4b43fdc0e796c8eeed8117155a850c",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -1047,6 +1047,18 @@
     {
       "version": "20261108102826",
       "name": "anno_sezioni_docenti_fase_b"
+    },
+    {
+      "version": "20261108170148",
+      "name": "anno_visibilita_genitore_funzioni"
+    },
+    {
+      "version": "20261108204853",
+      "name": "anno_visibilita_genitore_policy"
+    },
+    {
+      "version": "20261108221856",
+      "name": "anno_galleria_pagina_genitore"
     }
   ]
 }

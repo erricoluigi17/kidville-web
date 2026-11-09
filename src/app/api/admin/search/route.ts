@@ -90,7 +90,7 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
   const [alunniRes, utentiRes, sezioniRes, moduliRes] = await Promise.all([
     supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione, codice_fiscale')
+      .select('id, nome, cognome, classe_sezione, stato, codice_fiscale')
       .in('scuola_id', plessi)
       .or(`nome.ilike.${like},cognome.ilike.${like},codice_fiscale.ilike.${like}`)
       .limit(5),
@@ -115,8 +115,10 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
     alunni: (alunniRes.data ?? []).map((a) => ({
       id: a.id as string,
       label: `${a.nome ?? ''} ${a.cognome ?? ''}`.trim() || 'Alunno',
-      sub: (a.classe_sezione as string | null) || 'Alunno',
-      href: '/admin/students',
+      // Un bambino «in arrivo» non ha classe: lo si dice invece di un generico «Alunno».
+      sub: (a.classe_sezione as string | null) || (a.stato === 'in_arrivo' ? 'In arrivo' : 'Alunno'),
+      // La scheda di QUEL bambino (4.5.15): chi non è in «Alunni», come un bambino in arrivo, altrimenti non si raggiunge.
+      href: `/admin/students/${a.id as string}?kind=child`,
     })),
     utenti: (utentiRes.data ?? []).map((u) => ({
       id: u.id as string,

@@ -318,32 +318,99 @@ describe('scriviFrequenza', () => {
     expect(await frequenza(id)).toBeUndefined()
   })
 
-  it('set vuoto dopo lo scarto di stato/data_uscita (frequenza non `recupero`): nessuna scrittura, e lo dice', async () => {
+  it('ritiro su una frequenza di origine domanda scrive stato e uscita', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    await db.query(`UPDATE public.frequenze SET origine = 'domanda', tipo = 'nuova' WHERE alunno_id = $1`, [id])
+    expect((await frequenza(id))?.stato).toBe('in_attesa') // viva, ma non `recupero`
+    const r = await scriviFrequenza(clienteSu(db), {
+      alunnoId: id, annoSedeId: AS1,
+      campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T10:00:00Z', usa_pannolino: true }),
+    })
+    expect(r).toEqual({ ok: true })
+    expect(await frequenza(id)).toMatchObject({ stato: 'ritirato', data_uscita: '2026-10-12', usa_pannolino: true })
+  })
+
+  it('ritiro con uscita prima dell\'ingresso la porta all\'ingresso (origine diversa da recupero)', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    await db.query(`UPDATE public.frequenze SET origine = 'conferma', tipo = 'conferma' WHERE alunno_id = $1`, [id])
+    const r = await scriviFrequenza(clienteSu(db), {
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-08-01T10:00:00Z' }),
+    })
+    expect(r).toEqual({ ok: true })
+    expect(await frequenza(id)).toMatchObject({ stato: 'ritirato', data_uscita: INGRESSO })
+  })
+
+  it('ritiro su una frequenza già chiusa non cambia né stato né uscita', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    await db.query(`UPDATE public.frequenze SET origine = 'segreteria', tipo = 'nuova' WHERE alunno_id = $1`, [id])
+    await db.query(`UPDATE public.frequenze SET stato = 'uscito', data_uscita = DATE '2026-10-01' WHERE alunno_id = $1`, [id])
+    const scritture = { n: 0 }
+    const r = await scriviFrequenza(clienteSu(db, scritture), {
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T10:00:00Z' }),
+    })
+    expect(r).toEqual({ ok: true, saltata: 'nessuna-modifica' })
+    expect(scritture.n).toBe(0)
+    expect(await frequenza(id)).toMatchObject({ stato: 'uscito', data_uscita: '2026-10-01' })
+  })
+
+  it('riapertura di una frequenza viva non tocca lo stato', async () => {
     const id = await nuovoAlunno(1)
     await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
     await db.query(`UPDATE public.frequenze SET origine = 'segreteria', tipo = 'nuova' WHERE alunno_id = $1`, [id])
     const scritture = { n: 0 }
     const r = await scriviFrequenza(clienteSu(db, scritture), {
-      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T22:30:00Z' }),
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: null }),
     })
     expect(r).toEqual({ ok: true, saltata: 'nessuna-modifica' })
     expect(scritture.n).toBe(0)
+    expect(await frequenza(id)).toMatchObject({ stato: 'in_attesa', data_uscita: null })
   })
 
-  it('stato e data_uscita cambiano solo se la frequenza è `recupero`', async () => {
+  it('riapertura di una chiusa scrive in_attesa e mai iscritto', async () => {
     const id = await nuovoAlunno(1)
     await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
     await db.query(`UPDATE public.frequenze SET origine = 'segreteria', tipo = 'nuova' WHERE alunno_id = $1`, [id])
-    const prima = await frequenza(id)
+    await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = DATE '2026-10-01' WHERE alunno_id = $1`, [id])
     const r = await scriviFrequenza(clienteSu(db), {
-      alunnoId: id, annoSedeId: AS1,
-      campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T22:30:00Z', usa_pannolino: true }),
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: null }),
+    })
+    // se il codice scrivesse `iscritto` a mano, il CHECK `frequenze_iscritto_a_posto` lo respingerebbe (quota non pagata)
+    expect(r).toEqual({ ok: true })
+    expect(await frequenza(id)).toMatchObject({ stato: 'in_attesa', data_uscita: null })
+  })
+
+  it('riaprire con un\'altra frequenza viva dello stesso bambino e anno esce SCRITTURA_FALLITA col solo SQLSTATE', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    await db.query(`UPDATE public.frequenze SET origine = 'segreteria', tipo = 'nuova' WHERE alunno_id = $1`, [id])
+    await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = DATE '2026-10-01' WHERE alunno_id = $1`, [id])
+    // un'altra sede, stesso anno scolastico: una seconda frequenza VIVA del bambino (l'indice «una viva per anno» è sull'anno)
+    await db.query(
+      `INSERT INTO public.frequenze (alunno_id, anno_sede_id, origine, tipo, stato, data_ingresso)
+       SELECT $1, id, 'segreteria', 'nuova', 'in_attesa', inizio FROM public.anni_sede
+        WHERE scuola_id = $2 AND anno_id = (SELECT anno_id FROM public.anni_sede WHERE id = $3)`, [id, S2, AS1])
+    const r = await scriviFrequenza(clienteSu(db), {
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: null }),
+    })
+    expect(r).toEqual({ ok: false, codice: 'SCRITTURA_FALLITA' })
+    expect(logErrore).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(logErrore).mock.calls[0][1])).toContain('23505')
+  })
+
+  it('origine recupero invariata (parità con lo specchio, il caso esistente)', async () => {
+    const id = await nuovoAlunno(1)
+    await db.exec(`UPDATE public.anno_regole SET specchio_alunni_attivo = false`)
+    const r = await scriviFrequenza(clienteSu(db), {
+      alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: '2026-10-12T22:30:00Z' }),
     })
     expect(r).toEqual({ ok: true })
-    const dopo = await frequenza(id)
-    expect(dopo?.stato).toBe(prima?.stato)
-    expect(dopo?.data_uscita).toBe(prima?.data_uscita)
-    expect(dopo?.usa_pannolino).toBe(true)
+    expect(await frequenza(id)).toMatchObject({ stato: 'ritirato', data_uscita: '2026-10-13' })
+    const r2 = await scriviFrequenza(clienteSu(db), { alunnoId: id, annoSedeId: AS1, campi: campiFrequenzaDaAlunno({ archiviato_il: null }) })
+    expect(r2).toEqual({ ok: true })
+    expect(await frequenza(id)).toMatchObject({ stato: 'iscritto', data_uscita: null })
   })
 
   it('data_uscita si porta dentro [ingresso, fine] come fa lo specchio', async () => {
@@ -377,6 +444,74 @@ describe('scriviFrequenza', () => {
     expect(r).toEqual({ ok: true, saltata: 'anno-non-attivo' })
     expect(scritture.n).toBe(0)
     expect(await tutteLeFrequenze()).toEqual(prima)
+  })
+
+  describe('annoNonAttivo (la 4.5 scrive gli anni aperti, non solo l\'attivo)', () => {
+    async function frequenzaNel2728(id: string): Promise<void> {
+      await db.query(
+        `INSERT INTO public.frequenze (alunno_id, anno_sede_id, origine, tipo, stato, data_ingresso)
+         SELECT $1, id, 'segreteria', 'conferma', 'in_attesa', inizio FROM public.anni_sede WHERE id = $2`, [id, AS1_2728])
+    }
+
+    it('annoNonAttivo scrive su iscrizioni_aperte', async () => {
+      const id = await nuovoAlunno(1)
+      await frequenzaNel2728(id)
+      await db.query(`UPDATE public.anni_sede SET stato = 'iscrizioni_aperte' WHERE id = $1`, [AS1_2728])
+      const r = await scriviFrequenza(clienteSu(db), { alunnoId: id, annoSedeId: AS1_2728, campi: { usa_pannolino: true }, annoNonAttivo: true })
+      expect(r).toEqual({ ok: true })
+      expect((await frequenza(id, AS1_2728))?.usa_pannolino).toBe(true)
+    })
+
+    it('annoNonAttivo scrive anche su in_preparazione', async () => {
+      const id = await nuovoAlunno(1)
+      await frequenzaNel2728(id)
+      const r = await scriviFrequenza(clienteSu(db), { alunnoId: id, annoSedeId: AS1_2728, campi: { usa_pannolino: true }, annoNonAttivo: true })
+      expect(r).toEqual({ ok: true })
+      expect((await frequenza(id, AS1_2728))?.usa_pannolino).toBe(true)
+    })
+
+    it('annoNonAttivo rifiuta un anno chiuso con warn', async () => {
+      const id = await nuovoAlunno(1)
+      const a2526 = await una<string>(
+        `SELECT s.id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2025`, [S1])
+      await db.query(
+        `INSERT INTO public.frequenze (alunno_id, anno_sede_id, origine, stato, data_ingresso, data_uscita)
+         SELECT $1, id, 'recupero', 'uscito', inizio, inizio FROM public.anni_sede WHERE id = $2`, [id, a2526])
+      const prima = await tutteLeFrequenze()
+      const scritture = { n: 0 }
+      const r = await scriviFrequenza(clienteSu(db, scritture), { alunnoId: id, annoSedeId: a2526, campi: { usa_pannolino: true }, annoNonAttivo: true })
+      expect(r).toEqual({ ok: true, saltata: 'anno-non-attivo' })
+      expect(scritture.n).toBe(0)
+      expect(await tutteLeFrequenze()).toEqual(prima)
+      expect(logEvento).toHaveBeenCalledWith('anno-scolastico', 'warn', expect.objectContaining({ tipo: 'frequenza-anno-non-scrivibile' }))
+    })
+
+    it('annoNonAttivo rifiuta anche un anno in_chiusura (resta alla correzione con gettone)', async () => {
+      const id = await nuovoAlunno(1)
+      await frequenzaNel2728(id)
+      await db.query(`UPDATE public.anni_sede SET stato = 'in_chiusura' WHERE id = $1`, [AS1_2728])
+      const scritture = { n: 0 }
+      const r = await scriviFrequenza(clienteSu(db, scritture), { alunnoId: id, annoSedeId: AS1_2728, campi: { usa_pannolino: true }, annoNonAttivo: true })
+      expect(r).toEqual({ ok: true, saltata: 'anno-non-attivo' })
+      expect(scritture.n).toBe(0)
+    })
+
+    it('senza annoNonAttivo un anno non attivo resta saltato come oggi', async () => {
+      const id = await nuovoAlunno(1)
+      await frequenzaNel2728(id)
+      await db.query(`UPDATE public.anni_sede SET stato = 'iscrizioni_aperte' WHERE id = $1`, [AS1_2728])
+      const scritture = { n: 0 }
+      const r = await scriviFrequenza(clienteSu(db, scritture), { alunnoId: id, annoSedeId: AS1_2728, campi: { usa_pannolino: true } })
+      expect(r).toEqual({ ok: true, saltata: 'anno-non-attivo' })
+      expect(scritture.n).toBe(0)
+      expect(logEvento).not.toHaveBeenCalled()
+    })
+
+    it('annoNonAttivo su un anno che non c\'è: saltata \'anno-non-attivo\'', async () => {
+      const id = await nuovoAlunno(1)
+      const r = await scriviFrequenza(clienteSu(db), { alunnoId: id, annoSedeId: UUID_A, campi: { usa_pannolino: true }, annoNonAttivo: true })
+      expect(r).toEqual({ ok: true, saltata: 'anno-non-attivo' })
+    })
   })
 
   it('anno_sede sconosciuto: saltata \'anno-non-attivo\'', async () => {

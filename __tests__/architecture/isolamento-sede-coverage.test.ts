@@ -127,6 +127,16 @@ const SENZA_COLONNA: Record<string, string> = {
     // ha la sede. Senza gate si legge e si scrive l'assegnazione delle discipline
     // di un altro plesso.
     utenti_sezioni_materie: 'sede della sezione (assertSezioneInScope)',
+    // ── LE TRE TABELLE DELL'ANNO PROSSIMO CHE NON HANNO LA SEDE IN COLONNA (PR 4.5, compito 4.5.12) ───────
+    // Non hanno `scuola_id` (la sede è dell'ANNO a cui puntano, `anni_sede.scuola_id`), quindi la fotografia non poteva
+    // contenerle e il lock non le vedeva. Misurato il 2026-11-09 togliendo di proposito `assertAnnoSedeInScope` dal GET di
+    // `admin/anni/[annoSedeId]/posti`: il lock restava VERDE su una lettura dei posti autorizzati di un'altra sede.
+    // Le usano solo le route nuove della 4.5 (quote, moduli, posti, moduli-mancanti, conferme, frequenze/[id]/moduli).
+    // `frequenze_moduli` NON c'è, apposta: la tocca solo chi tocca anche `frequenze` (che il lock già vede), e la sua unica
+    // lettura fuori da un handler, `spunteDellAnno` di conferme/route.ts, riceve id di moduli già ricavati dall'anno verificato.
+    listino_voci: 'sede dell’anno (assertAnnoSedeInScope)',
+    moduli_richiesti: 'sede dell’anno (assertAnnoSedeInScope)',
+    posti_autorizzati: 'sede dell’anno (assertAnnoSedeInScope)',
 }
 
 /**
@@ -2653,7 +2663,28 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (GET), che porta sul server l'export di `ImportExportClient`. CONTROLLATA, nessuna esenzione: gate
             // `requireStaff`, sedi da `resolveScuoleAttive` (il vuoto nega), e `alunni` si legge con
             // `.in('scuola_id', plessi)`. Misurato rieseguendo il lock: 388 → 389.
-            routeConServiceRole: 389,
+            // 389 → 390 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.7): entra `iscrizione/anni` (GET), la
+            // porta pubblica che dice a una famiglia quali anni accettano domande. CONTROLLATA, nessuna esenzione:
+            // la sede deve essere fra quelle del deployment (`sediReali`) e gli anni si leggono per quella sede.
+            // Espone solo id, etichetta e tipo di ingresso. Misurato rieseguendo il lock: 389 → 390.
+            // 390 → 394 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.3): entrano `admin/anni/[annoSedeId]/quote`,
+            // `moduli`, `posti` e `sezioni`. CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope`
+            // (la sede dell'anno deve essere fra quelle dell'utente) prima di ogni lettura o scrittura.
+            // Misurato rieseguendo il lock: 390 → 394.
+            // 394 → 395 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.8): entra `admin/iscrizioni/sposta-anno`
+            // (POST). CONTROLLATA, nessuna esenzione: gate `requireStaff`, e la sede della domanda dev'essere fra quelle
+            // di `scuoleDiUtente` (403 `SEDE_NON_ACCESSIBILE`) PRIMA di qualunque scrittura; l'UPDATE ha anche
+            // `.eq('status','pending')`. Misurato rieseguendo il lock: 394 → 395.
+            // 395 → 397 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.6): entrano `admin/anni/[annoSedeId]/conferme` e
+            // `conferme/non-rinnova`. CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope` sull'anno
+            // nuovo E sull'anno della frequenza di partenza, prima di ogni lettura o scrittura.
+            // Misurato rieseguendo il lock: 395 → 397.
+            // 397 → 399 il 2026-11-09 (PR 4.5, 4.5.10): le due route nuove dei moduli, entrambe con gate di sede.
+            // 399 → 400 il 2026-11-09 (PR 4.5, 4.5.15, C1): entra `admin/anni/[annoSedeId]/conferme/ritira` (POST). CONTROLLATA, nessuna
+            // esenzione: gate `requireStaff(['admin','segreteria'])`, `assertAnnoSedeInScope` sull'anno nuovo e la frequenza dev'essere di quell'anno.
+            // 400 → 401 il 2026-11-09 (PR 4.5, 4.5.16, F): entra `admin/anni/[annoSedeId]/conferme/quota` (POST). CONTROLLATA, nessuna
+            // esenzione: gate `requireStaff`, `assertAnnoSedeInScope` sull'anno nuovo e la frequenza dev'essere di quell'anno.
+            routeConServiceRole: 401,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2994,7 +3025,24 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 598 → 599 il 2026-11-08 (anno scolastico, PR 4.4, compito 4.4.8): `admin/students/export:GET` (vedi
             // `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
             // Misurato rieseguendo il lock: 598 → 599.
-            handlerControllati: 599,
+            // 599 → 600 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.7): `iscrizione/anni:GET` (vedi
+            // `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // Misurato rieseguendo il lock: 599 → 600.
+            // 600 → 608 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.3): otto handler nelle quattro route sopra
+            // (quote GET/PUT, moduli GET/PUT/DELETE, posti GET/PUT, sezioni POST), tutti CONTROLLATI; `handlerEsentati`
+            // non cambia (108). Misurato rieseguendo il lock: 600 → 608.
+            // 608 → 609 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.8): `admin/iscrizioni/sposta-anno:POST`
+            // (vedi `routeConServiceRole`). Un handler solo, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // Misurato rieseguendo il lock: 608 → 609.
+            // 609 → 612 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.6): tre handler nelle due route sopra (conferme GET/POST,
+            // non-rinnova POST), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 609 → 612.
+            // 612 → 615 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.10): tre handler nelle due route nuove (frequenze/[id]/moduli
+            // GET/PUT, anni/[annoSedeId]/moduli-mancanti GET), tutti CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 612 → 615.
+            // 615 → 617 il 2026-11-09 (anno scolastico, PR 4.5, compito 4.5.15, C3): due handler nella route esistente `anni/[annoSedeId]/sezioni`
+            // (GET: l'elenco delle classi con la fascia; PATCH: la fascia di una classe), entrambi CONTROLLATI; `handlerEsentati` non cambia (108). Misurato: 615 → 617.
+            // 617 → 618 il 2026-11-09 (4.5.15, C1): `conferme/ritira:POST`, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // 618 → 619 il 2026-11-09 (4.5.16, F): `conferme/quota:POST`, CONTROLLATO; `handlerEsentati` non cambia (108).
+            handlerControllati: 619,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

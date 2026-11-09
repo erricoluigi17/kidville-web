@@ -425,3 +425,75 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   annoAttivoDiSede: async () => null,
 }))
+
+// 4.5.15 · C1: archiviare chiude le frequenze degli anni aperti, con la stessa regola del «Ritira la conferma», e la risposta porta il conteggio.
+const chiusura = vi.hoisted(() => ({
+  chiudi: vi.fn<(c: unknown, a: { alunnoId: string; attore: { id: string } }) => Promise<{ chiuse: number; voci_tolte: number; voci_pagate_rimaste: number; non_riuscite: number }>>(async () => ({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 })),
+}))
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  chiudiFrequenzeAperte: chiusura.chiudi,
+}))
+
+describe('POST /api/admin/students/archivia — le iscrizioni dell’anno prossimo (4.5.15)', () => {
+  it('chiama la chiusura con il bambino e chi archivia, e riporta le voci pagate rimaste', async () => {
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 1, voci_tolte: 0, voci_pagate_rimaste: 1, non_riuscite: 0 })
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(200)
+    expect(chiusura.chiudi).toHaveBeenCalledTimes(1)
+    expect(chiusura.chiudi.mock.calls[0][1]).toMatchObject({ alunnoId: ALU_A, attore: { id: 'seg-1' } })
+    expect(await res.json()).toMatchObject({ success: true, frequenze_chiuse: 1, voci_pagate_rimaste: 1 })
+  })
+
+  it('4.5.16 (E): la risposta riporta `iscrizioni_non_chiuse` col conteggio dei guasti (0 se tutto è andato bene)', async () => {
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 2 })
+    const guasto = await POST(post({ alunno_id: ALU_A }))
+    expect(guasto.status).toBe(200)
+    expect(await guasto.json()).toMatchObject({ success: true, iscrizioni_non_chiuse: 2 })
+  })
+
+  it('4.5.16 (E): già archiviato, ma la riprova chiude un\u2019iscrizione: 200 con `gia_archiviato`, senza riscrivere la scheda né l\u2019audit', async () => {
+    h.db.alunni[0].archiviato_il = '2026-08-01T10:00:00.000Z'
+    h.db.alunni[0].archiviato_da = 'seg-1'
+    h.db.alunni[0].stato = 'ritirato'
+    h.db.alunni[0].section_id = null
+    h.db.alunni[0].classe_sezione = null
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 1, voci_tolte: 1, voci_pagate_rimaste: 0, non_riuscite: 0 })
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ success: true, gia_archiviato: true, frequenze_chiuse: 1, iscrizioni_non_chiuse: 0 })
+    expect(scrittureSu('alunni')).toHaveLength(0)
+    expect(scrittureSu('registro_modifiche')).toHaveLength(0)
+    expect(riga(ALU_A)?.archiviato_il).toBe('2026-08-01T10:00:00.000Z')
+  })
+
+  it('4.5.16 (E): già archiviato e la riprova ha di nuovo dei guasti: 200 col conteggio, così la scheda può riproporre «Riprova»', async () => {
+    h.db.alunni[0].archiviato_il = '2026-08-01T10:00:00.000Z'
+    h.db.alunni[0].archiviato_da = 'seg-1'
+    h.db.alunni[0].stato = 'ritirato'
+    h.db.alunni[0].section_id = null
+    h.db.alunni[0].classe_sezione = null
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 1 })
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ gia_archiviato: true, iscrizioni_non_chiuse: 1 })
+  })
+
+  it('4.5.16 (E): già archiviato e niente da chiudere (anche solo voci pagate rimaste): il 409 di sempre', async () => {
+    h.db.alunni[0].archiviato_il = '2026-08-01T10:00:00.000Z'
+    h.db.alunni[0].archiviato_da = 'seg-1'
+    h.db.alunni[0].stato = 'ritirato'
+    h.db.alunni[0].section_id = null
+    h.db.alunni[0].classe_sezione = null
+    chiusura.chiudi.mockResolvedValueOnce({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 1, non_riuscite: 0 })
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_GIA_ARCHIVIATO')
+  })
+
+  it('con un archivio rifiutato (403 di sede) la chiusura non parte', async () => {
+    const res = await POST(post({ alunno_id: ALU_B }))
+    expect(res.status).toBe(403)
+    expect(chiusura.chiudi).not.toHaveBeenCalled()
+  })
+})

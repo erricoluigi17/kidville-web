@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
+import { eInArrivo } from '@/lib/alunni/stato'
 import { figliAttiviDi, type RigaFiglioAttivo } from '@/lib/anno/visibilita-genitore'
 import { logErrore } from '@/lib/logging/logger'
 import type { NewsGrado, NewsScope } from '@/lib/news/tipi'
@@ -91,11 +92,12 @@ export async function caricaFigliConTarget(
 
   const { data, error } = await supabase
     .from('alunni')
-    .select('scuola_id, classe_sezione, section_id, sections:section_id ( school_type )')
+    .select('scuola_id, classe_sezione, section_id, stato, sections:section_id ( school_type )')
     .in('id', figliIds)
   if (error || !data) return []
 
-  return (data as unknown as AlunnoRow[]).map((a) => ({
+  // Un bambino «in arrivo» (la domanda è per l'anno dopo) è collegato ma non frequenta: non è un destinatario di news.
+  return (data as unknown as AlunnoRow[]).filter((a) => !eInArrivo(a.stato)).map((a) => ({
     scuola_id: a.scuola_id ?? null,
     classe_sezione: a.classe_sezione ?? null,
     grado: gradoDiRiga(a),
@@ -127,6 +129,7 @@ async function figliDalleFrequenze(supabase: SupabaseClient, righe: RigaFiglioAt
 }
 
 type AlunnoRow = {
+  stato?: string | null
   scuola_id: string | null
   classe_sezione: string | null
   section_id: string | null

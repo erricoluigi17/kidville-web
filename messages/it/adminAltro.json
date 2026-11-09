@@ -827,5 +827,16 @@
   "tracciaDocenteAppartenenzeStoriche": "Appartenenze storiche registrate",
   "tracciaDocenteCollegamentiStorici": "Collegamenti documentali verificati",
   "tracciaDocenteRettificheStoriche": "Rettifiche storiche registrate",
-  "tracciaDocenteRettificheChat": "Messaggi chat rettificati"
+  "tracciaDocenteRettificheChat": "Messaggi chat rettificati",
+  "ricevutiAnnoPer": "per il {anno}",
+  "ricevutiAnnoDomanda": "Anno della domanda: {anno}",
+  "ricevutiSpostaAnno": "Sposta al {anno}",
+  "ricevutiSpostaAnnoGenerico": "Sposta",
+  "ricevutiSpostaAnnoScegli": "Sposta questa domanda all’anno",
+  "ricevutiSpostaAnnoLavora": "Sto spostando…",
+  "ricevutiSpostaAnnoConferma": "Spostare questa domanda al {anno}? Le classi scelte finora vanno riscelte.",
+  "ricevutiSpostaAnnoFatto": "Domanda spostata al {anno}. Le classi vanno scelte di nuovo.",
+  "ricevutiSpostaAnnoGiaEsaminata": "La domanda è già stata esaminata: l’anno non è cambiato.",
+  "ricevutiSpostaAnnoNonOfferto": "La sede non accetta più domande per quell’anno. Controlla il calendario della sede.",
+  "ricevutiSpostaAnnoErrore": "Non sono riuscito a spostare la domanda. Riprova fra poco."
 }

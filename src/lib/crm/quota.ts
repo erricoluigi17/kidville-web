@@ -33,7 +33,7 @@ import {
 
 // `annoDellaQuota` e `etichettaAnno` vivono in `quota-anno.ts` (calcolo puro, usabile anche dai componenti
 // client: questo file importa il logger del server). Qui si ripubblicano con lo stesso nome.
-export { annoDellaQuota, etichettaAnno } from './quota-anno'
+export { annoDellaQuota, annoDellaScheda, annoIngressoDaAnno, etichettaAnno } from './quota-anno'
 
 /** Il metodo del CRM nell'enum `incasso_metodo`: `carta` → `pos`. */
 export function metodoIncasso(m: MetodoQuota): 'contanti' | 'pos' | 'bonifico' {

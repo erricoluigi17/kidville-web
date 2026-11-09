@@ -32,6 +32,7 @@ interface StudentRecord { id: string; nome?: string; cognome?: string; [k: strin
 
 function AnagraficaDetailInner() {
     const t = useTranslations('adminStudents');
+    const tAnno = useTranslations('annoFamiglia');
     const params = useParams<{ id: string }>();
     const search = useSearchParams();
     const router = useRouter();
@@ -78,9 +79,9 @@ function AnagraficaDetailInner() {
         load();
     }, [id, isParent, isStaff]);
 
-    const flash = (msg: string) => {
+    const flash = (msg: string, attesaMs = 900) => {
         setToast(msg);
-        setTimeout(goBack, 900);
+        setTimeout(goBack, attesaMs);
     };
 
     const handleSaveStudent = async (data: Record<string, unknown> & { id: string }) => {
@@ -89,6 +90,14 @@ function AnagraficaDetailInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }).catch(() => null);
+        if (res?.ok) {
+            // Data d'ingresso futura (4.5.11): è un avviso, non un errore. La scheda è salvata; l'avviso resta in pagina più a lungo.
+            const corpo = await res.json().catch(() => null) as { avviso?: string } | null;
+            if (corpo?.avviso === 'data-ingresso-futura') {
+                flash(`✅ ${t('detailPageSalvaOk')} ⚠️ ${tAnno('dataIngressoFuturaAvviso')}`, 5000);
+                return;
+            }
+        }
         flash(res?.ok ? `✅ ${t('detailPageSalvaOk')}` : `❌ ${t('erroreSalvataggio')}`);
     };
 
@@ -120,7 +129,15 @@ function AnagraficaDetailInner() {
         if (res?.ok) {
             // Il nome nel messaggio non è decorazione: la segreteria lavora su più
             // schede aperte, e «alunno spostato» non dice QUALE.
-            flash(`✅ ${t('detailPageArchiviato', { nome: [student?.nome, student?.cognome].filter(Boolean).join(' ') })}`);
+            // Le quote già pagate dell'anno prossimo restano (4.5.15): rimborso e storno sono della contabilità, e lo si dice.
+            const esito = await res.json().catch(() => null) as { voci_pagate_rimaste?: number; iscrizioni_non_chiuse?: number } | null;
+            const pagate = typeof esito?.voci_pagate_rimaste === 'number' ? esito.voci_pagate_rimaste : 0;
+            // 4.5.16 (E): la scheda è archiviata ma almeno un'iscrizione dell'anno prossimo non si è chiusa. Non si torna alla lista:
+            // l'avviso resta qui, con «Riprova» (la stessa POST, che chiude quel che resta senza riscrivere la scheda).
+            const nonChiuse = typeof esito?.iscrizioni_non_chiuse === 'number' ? esito.iscrizioni_non_chiuse : 0;
+            if (nonChiuse > 0) return { ok: false as const, errore: t('detailArchiviatoNonChiuse', { n: nonChiuse }), riprova: true as const };
+            const nome = [student?.nome, student?.cognome].filter(Boolean).join(' ');
+            flash(`✅ ${t('detailPageArchiviato', { nome })}${pagate > 0 ? ` ⚠️ ${t('detailArchiviatoQuotePagate', { n: pagate })}` : ''}`, pagate > 0 ? 6000 : undefined);
             return { ok: true as const };
         }
         // Il corpo si legge una volta sola, e il `codice` che la rotta manda vale
@@ -155,11 +172,15 @@ function AnagraficaDetailInner() {
         const corpo = res ? await res.json().catch(() => null) : null;
         if (res?.ok) {
             const nome = [student?.nome, student?.cognome].filter(Boolean).join(' ');
-            const senzaClasse = (corpo as { esito_classe?: unknown } | null)?.esito_classe;
+            const esito = corpo as { esito_classe?: unknown; torna_in_arrivo?: unknown; conferma_da_rifare?: unknown } | null;
+            const senzaClasse = esito?.esito_classe;
+            const rifai = esito?.conferma_da_rifare === true ? ` ${t('detailPageConfermaDaRifare')}` : '';
             flash(
-                senzaClasse === 'sparita' || senzaClasse === 'assente'
-                    ? `✅ ${t('detailPageRiattivatoSenzaClasse', { nome })}`
-                    : `✅ ${t('detailPageRiattivato', { nome })}`,
+                esito?.torna_in_arrivo === true
+                    ? `✅ ${t('detailPageRiattivatoInArrivo', { nome })}`
+                    : senzaClasse === 'sparita' || senzaClasse === 'assente'
+                        ? `✅ ${t('detailPageRiattivatoSenzaClasse', { nome })}${rifai}`
+                        : `✅ ${t('detailPageRiattivato', { nome })}${rifai}`,
             );
             return { ok: true as const };
         }

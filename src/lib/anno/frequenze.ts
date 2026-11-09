@@ -127,54 +127,98 @@ function esitoDaErrore(error: ErrorePg, passo: string): EsitoFrequenza {
   return { ok: false, codice: 'SCRITTURA_FALLITA' }
 }
 
+/** Gli stati dell'anno in cui la 4.5 può scrivere una frequenza anche se non è l'attivo (`annoNonAttivo`). */
+const STATI_ANNO_SCRIVIBILI: readonly string[] = ['in_preparazione', 'iscrizioni_aperte', 'corrente']
+/** Gli stati in cui una frequenza è finita: il ritiro non la cambia, la riapertura la riporta `in_attesa`. */
+const STATI_CHIUSI: readonly string[] = ['ritirato', 'trasferito', 'uscito']
+
+/** least(greatest(uscita, ingresso), fine): le date sono AAAA-MM-GG, si confrontano come testo. */
+function portaInUscita(uscita: string, ingresso: string, fine: string): string {
+  return uscita < ingresso ? ingresso : uscita > fine ? fine : uscita
+}
+
 /**
  * Scrive nella frequenza `(alunnoId, annoSedeId)` i `campi` tradotti. NON LANCIA MAI.
  *
  *  - nessun campo → `saltata: 'nessun-campo'`;
  *  - `annoSedeId` che non è l'anno attivo della sua sede (`anno_attivo(scuola_id)`) → `saltata: 'anno-non-attivo'`,
- *    nessuna scrittura (in PR 3 solo l'attivo; la 4.5 abiliterà gli altri);
+ *    nessuna scrittura. Con `annoNonAttivo: true` (la 4.5: conferme e iscrizioni dell'anno prossimo) il controllo
+ *    sull'attivo si salta, MA si scrive solo se l'anno è `in_preparazione`, `iscrizioni_aperte` o `corrente`: un anno
+ *    `in_chiusura`/`chiuso` resta `saltata: 'anno-non-attivo'` con un warn (`frequenza-anno-non-scrivibile`) e si corregge
+ *    col gettone (PR 3-B);
  *  - la frequenza non c'è → `{ ok: true }` e niente: la crea lo specchio, qui non si crea;
- *  - `stato` e `data_uscita` cambiano solo se la frequenza è `origine = 'recupero'` (una frequenza nata da una
- *    domanda ha un suo ciclo di vita), e l'uscita si porta dentro [data_ingresso, fine dell'anno];
+ *  - STATO e USCITA, per ogni origine (4.5.1: dal 4.5.5 nascono frequenze `domanda`, `conferma`, `segreteria`, e il ritiro di
+ *    un bambino deve chiuderle tutte, altrimenti lo specchio `frequenze → alunni` lo rimette fra gli iscritti):
+ *      · `recupero`: come sempre, la patch scrive stato e uscita (l'uscita si porta dentro [data_ingresso, fine]);
+ *      · altra origine, VIVA (`in_attesa`/`iscritto`): ritiro → `ritirato` con l'uscita portata in [ingresso, fine];
+ *        riapertura → niente (resta com'è: lo decide il trigger);
+ *      · altra origine, CHIUSA: ritiro → niente (è già chiusa, l'uscita non si cambia); riapertura → `in_attesa` e
+ *        uscita NULL. MAI `iscritto` scritto a mano (lo ferma `frequenze_iscritto_a_posto`): se moduli e quota sono a posto
+ *        il trigger la porta a `iscritto` da solo;
  *  - `PGRST205` & C. (schema dell'anno assente: la CI) → `saltata: 'schema-indietro'`;
  *  - un errore dell'anno (`SEZIONE_DI_ALTRO_ANNO`…) → `{ ok: false, codice }` e un warn; altro →
- *    `SCRITTURA_FALLITA` e un logErrore. Non decide cosa fare dell'errore: in fase A il chiamante ha già scritto `alunni`
+ *    `SCRITTURA_FALLITA` e un logErrore col solo SQLSTATE (anche il `23505` di una riapertura con un'altra frequenza viva
+ *    dello stesso bambino e anno). Non decide cosa fare dell'errore: in fase A il chiamante ha già scritto `alunni`
  *    e non deve fallire per la frequenza; in fase B `scriviAlunnoEFrequenza` la chiama PRIMA e, se fallisce, non scrive `alunni`.
  */
 export async function scriviFrequenza(
   supabase: SupabaseClient,
-  { alunnoId, annoSedeId, campi }: { alunnoId: string; annoSedeId: string; campi: CampiFrequenza },
+  {
+    alunnoId, annoSedeId, campi, annoNonAttivo = false,
+  }: { alunnoId: string; annoSedeId: string; campi: CampiFrequenza; annoNonAttivo?: boolean },
 ): Promise<EsitoFrequenza> {
   try {
     if (Object.keys(campi).length === 0) return { ok: true, saltata: 'nessun-campo' }
 
-    const anno = await supabase.from('anni_sede').select('scuola_id, fine').eq('id', annoSedeId).maybeSingle()
+    const anno = await supabase.from('anni_sede').select('scuola_id, fine, stato').eq('id', annoSedeId).maybeSingle()
     if (anno.error) return esitoDaErrore(anno.error, 'anno')
-    if (!anno.data) return { ok: true, saltata: 'anno-non-attivo' }
-    const { scuola_id: scuolaId, fine } = anno.data as { scuola_id: string; fine: string }
+    if (!anno.data) {
+      // Un anno che non esiste non è un anno «non attivo»: chi chiama ha un uuid sbagliato (4.5.15, minore 4.5.1). Si dice, senza valori.
+      logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-anno-inesistente', operazione: OPERAZIONE })
+      return { ok: true, saltata: 'anno-non-attivo' }
+    }
+    const { scuola_id: scuolaId, fine, stato: statoAnno } = anno.data as { scuola_id: string; fine: string; stato: string }
 
-    const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
-    if (attivo.error) return esitoDaErrore(attivo.error, 'anno-attivo')
-    if (attivo.data !== annoSedeId) return { ok: true, saltata: 'anno-non-attivo' }
+    if (annoNonAttivo) {
+      if (!STATI_ANNO_SCRIVIBILI.includes(statoAnno)) {
+        // solo il tipo e l'operazione: nessun valore della patch
+        logEvento('anno-scolastico', 'warn', { tipo: 'frequenza-anno-non-scrivibile', operazione: OPERAZIONE })
+        return { ok: true, saltata: 'anno-non-attivo' }
+      }
+    } else {
+      const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
+      if (attivo.error) return esitoDaErrore(attivo.error, 'anno-attivo')
+      if (attivo.data !== annoSedeId) return { ok: true, saltata: 'anno-non-attivo' }
+    }
 
     const riga = await supabase
       .from('frequenze')
-      .select('id, origine, data_ingresso')
+      .select('id, origine, data_ingresso, stato')
       .eq('alunno_id', alunnoId)
       .eq('anno_sede_id', annoSedeId)
       .maybeSingle()
     if (riga.error) return esitoDaErrore(riga.error, 'lettura')
     if (!riga.data) return { ok: true, saltata: 'nessuna-riga' } // la crea lo specchio: qui non si è scritto niente
-    const f = riga.data as { id: string; origine: string; data_ingresso: string }
+    const f = riga.data as { id: string; origine: string; data_ingresso: string; stato: string }
 
     const set: Record<string, unknown> = { ...campi }
-    if (f.origine !== 'recupero') {
+    if (f.origine === 'recupero') {
+      if (typeof set.data_uscita === 'string') set.data_uscita = portaInUscita(set.data_uscita, f.data_ingresso, fine)
+    } else {
+      const chiusa = STATI_CHIUSI.includes(f.stato)
+      const ritiro = set.stato === STATO_RITIRATO
+      const riapertura = set.stato === STATO_ISCRITTO
+      const uscita = set.data_uscita
       delete set.stato
       delete set.data_uscita
-    } else if (typeof set.data_uscita === 'string') {
-      // least(greatest(uscita, ingresso), fine): le date sono AAAA-MM-GG, si confrontano come testo
-      const u = set.data_uscita
-      set.data_uscita = u < f.data_ingresso ? f.data_ingresso : u > fine ? fine : u
+      if (ritiro && !chiusa && typeof uscita === 'string') {
+        set.stato = STATO_RITIRATO
+        set.data_uscita = portaInUscita(uscita, f.data_ingresso, fine)
+      } else if (riapertura && chiusa) {
+        // mai `iscritto` a mano: se moduli e quota sono a posto il trigger la porta a `iscritto`
+        set.stato = 'in_attesa'
+        set.data_uscita = null
+      }
     }
     if (Object.keys(set).length === 0) return { ok: true, saltata: 'nessuna-modifica' }
 

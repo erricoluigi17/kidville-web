@@ -460,6 +460,21 @@ describe('bambini usciti dal perimetro: si pubblica senza di loro', () => {
     expect(logDi('pubblicazione-automatica-riuscita')[0].campi).toMatchObject({ n_tag_effettivi: 1, n_usciti: 2 })
   })
 
+  it('un bambino IN ARRIVO (domanda per l’anno dopo, nella sede ma non a scuola) si TOGLIE come chi è uscito: nessuna famiglia lo vede', async () => {
+    h.alunni = [
+      { id: BAMBINO_A, scuola_id: SEDE, stato: 'iscritto', consenso_privacy: true },
+      { id: BAMBINO_B, scuola_id: SEDE, stato: 'in_arrivo', consenso_privacy: true },
+      { id: BAMBINO_C, scuola_id: SEDE, stato: 'iscritto', consenso_privacy: true },
+    ]
+
+    const esito = await pubblica()
+
+    expect(esito).toMatchObject({ esito: 'pubblicato', segnato: true })
+    expect(rpcDi('video_galleria_pubblica')[0].args.p_tag_effettivi).toEqual([BAMBINO_A, BAMBINO_C])
+    expect(notificheDi('galleria')[0].utenteIds).not.toContain(`genitore-di-${BAMBINO_B}`)
+    expect(logDi('pubblicazione-automatica-riuscita')[0].campi).toMatchObject({ n_tag_effettivi: 2, n_usciti: 1 })
+  })
+
   it('la lettura chiede la SEDE dell’intento e le sole colonne che servono: mai nome e cognome', async () => {
     await pubblica()
 

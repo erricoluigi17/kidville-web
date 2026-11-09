@@ -63,6 +63,7 @@ function getStatoBadge(stato: string) {
         case 'iscritto': return 'bg-kidville-success-soft text-kidville-success-strong border-kidville-success/30';
         case 'ritirato': return 'bg-kidville-line text-kidville-sub border-kidville-line';
         case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn-strong border-kidville-warn/30';
+        case 'in_arrivo': return 'bg-kidville-cream text-kidville-green border-kidville-line';
         default: return 'bg-kidville-line text-kidville-sub border-kidville-line';
     }
 }
@@ -321,7 +322,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                     </td>
                                                     <td className="px-3 py-3">
                                                         <span className={`font-maven text-xs font-bold px-2.5 py-1 rounded-full border capitalize ${getStatoBadge(student.stato || 'iscritto')}`}>
-                                                            {student.stato || 'iscritto'}
+                                                            {student.stato === 'in_arrivo' ? t('statoInArrivo') : (student.stato || 'iscritto')}
                                                         </span>
                                                     </td>
                                                     <td className="px-3 py-3">

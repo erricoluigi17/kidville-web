@@ -10,6 +10,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
@@ -161,6 +162,29 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         }
         const daCompletare = prima.archiviato_il != null && prima.archiviato_da == null;
         if (prima.archiviato_il != null && !daCompletare) {
+            // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
+            // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
+            // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
+            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+            if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
+                logEvento('gdpr', riprova.non_riuscite > 0 ? 'error' : 'info', {
+                    operazione: 'admin/students/archivia:POST',
+                    azione: 'archiviazione-riprovata',
+                    esito: riprova.non_riuscite > 0 ? 'iscrizioni-non-chiuse' : 'iscrizioni-chiuse',
+                    entita_id: alunnoId,
+                    n_non_chiuse: riprova.non_riuscite,
+                    n_chiuse: riprova.chiuse,
+                });
+                return NextResponse.json({
+                    success: true,
+                    gia_archiviato: true,
+                    alunno_id: alunnoId,
+                    archiviato_il: prima.archiviato_il,
+                    frequenze_chiuse: riprova.chiuse,
+                    voci_pagate_rimaste: riprova.voci_pagate_rimaste,
+                    iscrizioni_non_chiuse: riprova.non_riuscite,
+                });
+            }
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId,
             });
@@ -208,7 +232,10 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // `gruppo_mensa_id` a NULL), poi `alunni`. Se la frequenza non si scrive, la scheda resta com'era. In fase A:
         // `alunni` e poi la frequenza, fail-open.
         const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
-        const annoSedeId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+        // Un bambino «in arrivo» non frequenta l'anno attivo: la sua frequenza di oggi, se c'è, è storia (la prima uscita) e
+        // archiviarlo non la riscrive (4.5.16, C-bis). Si scrive solo la scheda; la memoria della classe va nello stesso UPDATE.
+        // Le iscrizioni degli anni che vengono le chiude, come sempre, `chiudiFrequenzeAperte` più sotto.
+        const annoSedeId = prima.stato === 'in_arrivo' ? null : await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
 
         // La frequenza si scrive per prima, e lo specchio ricopia in `alunni` stato, archiviato_il e il distacco dalla
         // classe: se poi l'UPDATE di `alunni` fallisse, la memoria di dov'era il bambino andrebbe persa (la scheda non ha
@@ -342,6 +369,23 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
          * A log solo uuid, ruolo, un enumerato chiuso e il nome della classe
          * (`sezione`, in lista bianca). Mai nome, cognome o codice fiscale.
          */
+        // Le frequenze VIVE degli anni non ancora in corso (una conferma aperta, un'iscrizione dell'anno prossimo) si chiudono con la
+        // stessa regola di «Ritira la conferma»: la voce della quota si toglie solo se non è pagata. Non blocca l'archiviazione
+        // (la scheda è già scritta): ne riporta il conteggio, e il pannello dice quante voci pagate sono rimaste. Vale anche per
+        // un bambino `in_arrivo`, che non ha una frequenza dell'anno in corso ma ne ha una nell'anno aperto.
+        const chiusura = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+        if (chiusura.non_riuscite > 0) {
+            // La scheda è archiviata ma almeno un'iscrizione dell'anno prossimo (o la lettura che la trova) non si è chiusa: la quota
+            // può restare visibile alla famiglia. Livello `error`: il solo conteggio e l'uuid (4.5.16, E).
+            logEvento('gdpr', 'error', {
+                operazione: 'admin/students/archivia:POST',
+                azione: 'alunno-archiviato',
+                esito: 'iscrizioni-non-chiuse',
+                entita_id: alunnoId,
+                n_non_chiuse: chiusura.non_riuscite,
+            });
+        }
+
         logEvento('gdpr', 'info', {
             operazione: 'admin/students/archivia:POST',
             azione: 'alunno-archiviato',
@@ -358,6 +402,11 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             archiviato_il: adesso,
             /** La classe da cui è stato sganciato: la scheda la mostra come «Era in: …». */
             era_in: (prima.classe_sezione as string | null) ?? (daCompletare ? (prima.archiviato_classe_sezione as string | null) : null) ?? null,
+            /** Le iscrizioni dell'anno prossimo chiuse con l'archiviazione, e le voci di quota rimaste perché già pagate (4.5.15). */
+            frequenze_chiuse: chiusura.chiuse,
+            voci_pagate_rimaste: chiusura.voci_pagate_rimaste,
+            /** Le iscrizioni dell'anno prossimo che NON si sono chiuse (guasto): la scheda lo dice e propone «Riprova» (4.5.16, E). */
+            iscrizioni_non_chiuse: chiusura.non_riuscite,
         });
     } catch (err) {
         logErrore({ operazione: 'admin/students/archivia:POST', stato: 500 }, err);

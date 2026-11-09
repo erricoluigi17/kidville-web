@@ -4,12 +4,13 @@ import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck, Archive, Stethoscope } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck, Archive, Stethoscope, CalendarClock } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CodiciFiscaliDaVerificare, useCodiciFiscaliDaVerificare } from '@/components/features/admin/CodiciFiscaliDaVerificare';
 import { AlunniArchiviatiView, useAlunniArchiviati, type FaseSezioni } from '@/components/features/admin/AlunniArchiviatiView';
+import { AlunniInArrivoView, useAlunniInArrivo } from '@/components/features/admin/AlunniInArrivoView';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
@@ -19,11 +20,11 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { fileConsegnato, scaricaDocumento } from '@/lib/native/scarica';
 
-type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici' | 'archiviati';
+type TipoVista = 'child' | 'adult' | 'sections' | 'staff' | 'codici' | 'archiviati' | 'inarrivo';
 
 /** La tab richiesta dall'URL (`?tab=sections` = back-link dal dettaglio sezione). */
 const tabDaQuery = (v: string | null): TipoVista =>
-  v === 'adult' || v === 'sections' || v === 'staff' || v === 'codici' || v === 'archiviati' ? v : 'child';
+  v === 'adult' || v === 'sections' || v === 'staff' || v === 'codici' || v === 'archiviati' || v === 'inarrivo' ? v : 'child';
 
 /**
  * «Questa tab aspetta un elenco dal server?» — e quindi: lo spinner va acceso?
@@ -42,12 +43,12 @@ const tabDaQuery = (v: string | null): TipoVista =>
  * irripetibile: una tab senza elenco non può più accendere uno spinner che
  * nessuno spegnerà, perché è lo stesso predicato a fare entrambe le cose.
  *
- * Le tab che caricano da sé sono TRE: SEZIONI (`SectionsView`), CODICI FISCALI
- * (`CodiciFiscaliDaVerificare`) e NON ISCRITTI (`AlunniArchiviatiView`) —
- * le ultime due hanno il loro hook e i loro stati, perché il numero sulla
- * pillola va saputo prima che qualcuno apra la linguetta.
+ * Le tab che caricano da sé sono QUATTRO: SEZIONI (`SectionsView`), CODICI FISCALI
+ * (`CodiciFiscaliDaVerificare`), NON ISCRITTI (`AlunniArchiviatiView`) e IN ARRIVO
+ * (`AlunniInArrivoView`) — le ultime tre hanno il loro hook e i loro stati, perché
+ * il numero sulla pillola va saputo prima che qualcuno apra la linguetta.
  */
-const attendeElenco = (v: TipoVista) => v !== 'sections' && v !== 'codici' && v !== 'archiviati';
+const attendeElenco = (v: TipoVista) => v !== 'sections' && v !== 'codici' && v !== 'archiviati' && v !== 'inarrivo';
 
 interface Student {
   id: string;
@@ -115,10 +116,10 @@ function AdminStudentsInner() {
    * qualcuno la apra.
    *
    * Il costo è una `GET /api/admin/students?elenco=non_iscritti` in più a ogni
-   * apertura della pagina (ritirati e iscritti senza sezione). Le due letture
-   * dell'anagrafica alunni si DIVIDONO la sede: `elenco=frequentanti` qui sotto e
-   * `elenco=non_iscritti` qui, complementari per costruzione nella rotta — ogni
-   * scheda non anonimizzata sta in una sola delle due linguette. È la stessa
+   * apertura della pagina (ritirati e iscritti senza sezione), e una per «In arrivo».
+   * Le tre letture dell'anagrafica alunni si DIVIDONO la sede: `elenco=frequentanti`
+   * qui sotto, `elenco=non_iscritti` e `elenco=in_arrivo`, disgiunte nella rotta —
+   * ogni scheda non anonimizzata sta in una sola delle tre linguette. È la stessa
    * tabella e lo stesso filtro di sede, ristretta a un elenco: sui 33 alunni
    * misurati in produzione il 2026-08-12 sono decine di righe e meno di un
    * millisecondo di lavoro sul database (vedi la misura, con `EXPLAIN ANALYZE`,
@@ -126,6 +127,8 @@ function AdminStudentsInner() {
    * ordini di grandezza la misura va rifatta, non ricordata.
    */
   const archiviati = useAlunniArchiviati();
+  /** «In arrivo» (4.5.15): i bambini la cui domanda è per l'anno dopo, con la loro scheda a un clic. Stessa forma di «Non iscritti». */
+  const inArrivo = useAlunniInArrivo();
   /**
    * Il ruolo di chi guarda, per la CORTESIA del comando «Libera spazio». Il gate
    * vero è sul server: qui si evita solo di offrire a una segretaria un comando
@@ -583,7 +586,7 @@ function AdminStudentsInner() {
                 visitata prima — o un file vuoto se ci si arriva da `?tab=codici`.
                 Un comando che scarica i dati sbagliati è peggio di un comando
                 assente. */}
-            {viewType !== 'codici' && viewType !== 'archiviati' && (
+            {viewType !== 'codici' && viewType !== 'archiviati' && viewType !== 'inarrivo' && (
               <button
                 onClick={() => void handleExport()}
                 className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
@@ -667,12 +670,19 @@ function AdminStudentsInner() {
             // l'utente ha davanti, e il totale ha già il suo posto (`arcParziale`).
             count: archiviati.fase === 'pronto' ? archiviati.righe.length : undefined,
           },
+          {
+            id: 'inarrivo',
+            label: t('inArrivoTab'),
+            icon: CalendarClock,
+            // Come per «Non iscritti»: il numero compare solo quando è STATO misurato, e conta le righe arrivate.
+            count: inArrivo.fase === 'pronto' ? inArrivo.righe.length : undefined,
+          },
         ]}
       />
 
       {/* Toolbar / Filtri — nascosta per le tab che hanno i propri filtri
           (Sezioni, Codici fiscali e Non iscritti). */}
-      {viewType !== 'sections' && viewType !== 'codici' && viewType !== 'archiviati' && (
+      {viewType !== 'sections' && viewType !== 'codici' && viewType !== 'archiviati' && viewType !== 'inarrivo' && (
       <div className="bg-kidville-white rounded-card p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
         <div className="relative flex-1 w-full">
@@ -743,6 +753,9 @@ function AdminStudentsInner() {
           sezioni={availableSections}
           faseSezioni={faseSezioni}
         />
+      ) : viewType === 'inarrivo' ? (
+        /* Prima del ramo `erroreElenco`, come le altre linguette con la propria lettura. */
+        <AlunniInArrivoView esito={inArrivo} userId={userId} />
       ) : erroreElenco !== null ? (
         /* L'elenco NON è arrivato. Questo riquadro prende il posto di contatori
            e tabella: lasciarli renderebbe «0 alunni» e «Nessun alunno trovato»,

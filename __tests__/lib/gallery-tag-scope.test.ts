@@ -49,6 +49,8 @@ const ARCHIVIATO_A = '11111111-1111-4111-8111-111111111111'
 const ARCHIVIATO_B = '22222222-2222-4222-8222-222222222222'
 /** `'sospeso'` è un bambino che FREQUENTA: la sua pratica è ferma, lui no. */
 const SOSPESO_A = '33333333-3333-4333-8333-333333333333'
+/** Della sede A, la domanda è per l'anno DOPO (`in_arrivo`): non frequenta ancora, e la sua famiglia non vede niente. */
+const IN_ARRIVO_A = '88888888-8888-4888-8888-888888888888'
 /** Un uuid ben formato che non corrisponde a nessun bambino. */
 const NESSUNO = '77777777-7777-4777-8777-777777777777'
 
@@ -81,6 +83,7 @@ beforeEach(() => {
       { id: ARCHIVIATO_A, nome: 'Nome', cognome: 'Archiviato A', scuola_id: SEDE_A, stato: 'ritirato' },
       { id: ARCHIVIATO_B, nome: 'Nome', cognome: 'Archiviato B', scuola_id: SEDE_B, stato: 'ritirato' },
       { id: SOSPESO_A, nome: 'Nome', cognome: 'Sospeso A', scuola_id: SEDE_A, stato: 'sospeso' },
+      { id: IN_ARRIVO_A, nome: 'Nome', cognome: 'InArrivo A', scuola_id: SEDE_A, stato: 'in_arrivo' },
     ],
   }
 })
@@ -365,5 +368,38 @@ describe('assertTagStudentsInScope — l’alunno archiviato', () => {
     )
     expect(res?.status).toBe(403)
     expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+  })
+})
+
+// =============================================================================
+// UN BAMBINO «IN ARRIVO» NON SI TAGGA (PR 4.5, compito 4.5.4-bis)
+//
+// Ha la scheda e una sede, ma la sua domanda è per l'anno dopo: non è a scuola. `eNonPiuIscritto` non lo ferma (non è ritirato), e
+// senza questo ramo un uuid scelto a mano lo metterebbe in una foto della sede.
+// =============================================================================
+describe('assertTagStudentsInScope — il bambino in arrivo', () => {
+  it('della PROPRIA sede ⇒ 403 con lo stesso codice di chi non è iscritto (non quello della sede)', async () => {
+    const res = await assertTagStudentsInScope(client(), [IN_ARRIVO_A], [SEDE_A], 'gallery:POST')
+    expect(res?.status).toBe(403)
+    expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+  })
+
+  it('in mezzo a tag legittimi basta a fermare tutto, e il log porta solo conteggi', async () => {
+    const res = await assertTagStudentsInScope(client(), [MINORE_A, IN_ARRIVO_A], [SEDE_A], 'gallery:PATCH')
+    expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+    expect(JSON.stringify(h.logEvento.mock.calls)).not.toContain(IN_ARRIVO_A)
+    expect(h.logEvento).toHaveBeenCalledWith('galleria', 'warn', expect.objectContaining({ esito: 'tag-alunno-non-iscritto', taggati: 2, nonIscritti: 1 }))
+  })
+
+  it('anche col degrado su DB non migrato lo stato continua a bloccare', async () => {
+    conSedi(SEDE_A)
+    const res = await assertTagStudentsInScope(clientSenzaColonnaSede(), [IN_ARRIVO_A], [SEDE_A], 'gallery:PATCH')
+    expect(res?.status).toBe(403)
+    expect((await res!.json()).codice).toBe('TAG_ALUNNO_NON_ISCRITTO')
+  })
+
+  it('di un ALTRO plesso il motivo resta muto: la sede viene prima', async () => {
+    const res = await assertTagStudentsInScope(client(), [IN_ARRIVO_A], [SEDE_B], 'gallery:POST')
+    expect(JSON.stringify(await res!.json())).toContain('TAG_FUORI_SEDE')
   })
 })

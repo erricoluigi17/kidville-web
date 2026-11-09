@@ -31,6 +31,7 @@ import {
   Wallet,
   FolderOpen,
   Vote,
+  CalendarCheck,
 } from 'lucide-react';
 
 /**
@@ -190,6 +191,10 @@ export const NAV_GROUPS: NavGroup[] = [
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
       { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
       { href: '/admin/storici', label: 'Storici e stampe', labelKey: 'nav_storici', icon: Printer, roles: ['admin', 'coordinator', 'segreteria'] },
+      // Conferme per l'anno prossimo (`/admin/students/conferme`, PR 4.5): chi ha confermato, chi ha detto di no e chi non ha
+      // ancora risposto. Prima la pagina non si raggiungeva da nessun menu. `roles` = i tre di `requireStaff` sulle route
+      // `/api/admin/anni/[annoSedeId]/conferme`: la `cuoca` vedrebbe una voce che risponde 403. Il gate vero è nelle API.
+      { href: '/admin/students/conferme', label: 'Conferme anno prossimo', labelKey: 'nav_conferme_anno', icon: CalendarCheck, roles: ['admin', 'coordinator', 'segreteria'] },
     ],
   },
   {

@@ -352,6 +352,7 @@ const PUBBLICHE: Record<string, string> = {
     // canale da cui in produzione sono arrivate 227 domande vere.
     'iscrizione:POST': 'modulo pubblico: chi si iscrive non ha un account. Tetto 5 invii/10 min per IP + ri-validazione server-side dei campi contro il modello',
     'iscrizione/sedi:GET': 'modulo pubblico: elenco delle sole sedi reali (id e nome, niente anagrafica), tetto 30/10 min per IP. Il wizard deve poter scegliere il plesso PRIMA di esistere come utente',
+    'iscrizione/anni:GET': 'modulo pubblico: gli anni scolastici che accettano domande per una sede (SOLO id, etichetta e tipo di ingresso: niente date, niente stati), sede validata contro `sediReali`, tetto 30/10 min per IP. Il wizard lo chiede prima che chi compila esista come utente',
     'iscrizione/model:GET': "modulo pubblico: restituisce SOLO lo schema dei campi del modello standard, nessun dato personale",
     'iscrizione/upload:POST': 'modulo pubblico: allegato del wizard di iscrizione, su bucket dedicato con nome randomizzato e tetto di dimensione',
     // ── Modulo pubblico «Lavora con noi»: chi si candida non ha un account ───
@@ -927,12 +928,20 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // (va su `public/forms/[token]/submit`), e intanto la route intestava la compilazione al
         // `userId` scritto nel corpo. È la seconda volta dopo `forms/send-otp`: una motivazione
         // plausibile che copriva una porta che nessuno aveva deciso di lasciare aperta.
+        //
+        // 🔺 22 → 23 il 2026-11-09, una SALITA: `iscrizione/anni:GET` (anno scolastico, PR 4.5, compito 4.5.7).
+        // Mi sono fermato, e la domanda è «cosa ottiene un anonimo che passa?»: per la sede che indica, gli
+        // `anni_scolastici.id` con la loro etichetta breve («2027/28») e un tipo d'ingresso. Niente date di
+        // sede, niente stati, niente uuid di `anni_sede`, nessuna riga di una famiglia: lo verifica
+        // `__tests__/api/iscrizione-anni.test.ts` (chiavi ESATTE di ogni voce). È il fratello di
+        // `iscrizione/sedi:GET`, che il wizard chiede nello stesso istante e nelle stesse condizioni (chi compila
+        // non ha un account), e come lui sta dietro un tetto per IP e valida la sede contro `sediReali`.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(22)
+        ).toBe(23)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {

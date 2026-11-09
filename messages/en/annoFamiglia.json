@@ -1,0 +1,8 @@
+{
+  "ingressoFuturoTitolo": "Enrolment starts on {data}",
+  "ingressoFuturoTesto": "From that day everything appears here. In the meantime, if there is a fee to pay, you will find it under payments. If in doubt, contact the school office.",
+  "nonVerificabileTitolo": "Check failed",
+  "nonVerificabileTesto": "I can’t verify the enrolment, please try again. If the problem persists, contact the school office.",
+  "nonVerificabileRiprova": "Try again",
+  "dataIngressoFuturaAvviso": "The start date is in the future: the record is saved, but the family and the lists will see the child only from that day."
+}

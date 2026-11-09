@@ -6,7 +6,7 @@ import { useForm, FieldValues } from 'react-hook-form'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, PartyPopper, Baby, Users,
-  Plus, Trash2, UserPlus, Info, MapPin, AlertTriangle, RefreshCw,
+  Plus, Trash2, UserPlus, Info, MapPin, AlertTriangle, RefreshCw, CalendarDays,
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
@@ -16,6 +16,7 @@ import {
 } from '@/lib/forms/enrollment-template'
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import { LegendaObbligatori } from '@/components/features/public/wizard/pezzi-wizard-pubblico'
+import { useAnniPubblici } from '@/components/features/public/wizard/use-anni-pubblici'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { EMAIL_RIPETUTA_FRA_GENITORI, indiciEmailRipetute } from '@/lib/iscrizioni/email-genitori'
@@ -32,6 +33,7 @@ const slide = {
 
 type Step =
   | { kind: 'sede' }
+  | { kind: 'anno' }
   | { kind: 'child'; index: number }
   | { kind: 'adult'; index: number }
   | { kind: 'consensi' }
@@ -85,6 +87,7 @@ function resolveError(errors: FieldValues, path: string): unknown {
 
 export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null } = {}) {
   const t = useTranslations('public')
+  const ta = useTranslations('annoPubblico')
   // Sede arrivata dal link (?scuola=). La stringa VUOTA vale come assente: è falsy
   // ma non null, e trattata come "sede già decisa" farebbe partire l'invio senza
   // sede pur avendo fatto scegliere il plesso al genitore.
@@ -110,6 +113,24 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [erroreSede, setErroreSede] = useState(false)
   /** L'invio ha fallito: si dice IN PAGINA, non con un `alert()` di sistema. */
   const [erroreInvio, setErroreInvio] = useState(false)
+  /** L'anno scelto dalla famiglia nel passo «anno» (esiste solo con almeno due anni offerti). */
+  const [annoScelto, setAnnoScelto] = useState<string | null>(null)
+  const [erroreAnno, setErroreAnno] = useState(false)
+  /** Il server ha risposto 409 `ISCRIZIONI_CHIUSE` all'invio: si dice in pagina, senza buttare i dati. */
+  const [chiusoDalServer, setChiusoDalServer] = useState(false)
+  /**
+   * Il server ha risposto 422 `ANNO_NON_OFFERTO`: l'anno della domanda non accetta più domande. Cosa si dice dipende da
+   * come torna l'elenco ricaricato (vedi il blocco dopo `steps`): `scegli` (c'è il passo «anno»), `cambiato` (un anno solo,
+   * diverso, e dice quale), `incerto` (l'elenco non è cambiato o non è arrivato: si può riprovare, decide il server).
+   */
+  const [avvisoAnno, setAvvisoAnno] = useState<
+    null | { tipo: 'scegli' } | { tipo: 'cambiato'; anno: string } | { tipo: 'incerto' }
+  >(null)
+  /**
+   * Rifiuto in attesa dell'elenco ricaricato: `letture` = quante letture erano concluse al momento del rifiuto,
+   * `inviato` = l'anno che la domanda portava. Finché c'è, il passo da mostrare non è ancora deciso.
+   */
+  const [rifiuto, setRifiuto] = useState<{ letture: number; inviato: string | null } | null>(null)
   /**
    * Lo stato dell'elenco sedi — `caricamento` → `pronto` | `errore`.
    *
@@ -216,7 +237,27 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
    * sede serva, e far cominciare la domanda significherebbe farla compilare per
    * intero — anagrafica del minore, allergie, documenti — per poi rifiutarla.
    */
-  const formaDecisa = !!sedeDaLink || (statoSedi === 'pronto' && sedi.length > 0)
+  const sedeNota = !!sedeDaLink || (statoSedi === 'pronto' && sedi.length > 0)
+  /**
+   * Gli ANNI che la sede offre (compito 4.5.7). Si chiedono appena la sede è nota: dal link, dalla scelta, oppure
+   * dall'unica sede dell'elenco. Un guasto di questa lettura NON ferma niente (vedi `use-anni-pubblici`).
+   */
+  const sedeAnni = sedeDaLink ?? sedeScelta ?? (statoSedi === 'pronto' && sedi.length === 1 ? sedi[0].id : null)
+  const anni = useAnniPubblici({ sedeId: sedeAnni })
+  /** Il passo «anno» c'è solo con almeno due anni offerti: con uno (o con la lettura fallita) nessuna domanda in più. */
+  const mostraAnno = anni.scelta
+  /** L'anno che parte nel POST: la scelta (se è ancora fra gli offerti) o l'unico offerto. Altrimenti nessuno. */
+  const annoEffettivo = mostraAnno
+    ? (anni.anni.find((a) => a.anno_id === annoScelto)?.anno_id ?? null)
+    : (anni.anni.length === 1 ? anni.anni[0].anno_id : null)
+  /** Le iscrizioni della sede sono chiuse, e la famiglia non ha un'altra sede fra cui scegliere. */
+  const annoChiusoSenzaAlternative = anni.chiuso && !mostraSede
+  /**
+   * Con il passo «sede» la forma dei passi non dipende dagli anni finché la sede non è scelta; senza, la
+   * forma è definitiva solo quando è arrivato anche l'elenco degli anni (altrimenti l'arrivo del passo
+   * «anno» cambierebbe la forma sotto le mani del genitore).
+   */
+  const formaDecisa = sedeNota && (mostraSede || !anni.inCaricamento)
   /** L'elenco non è arrivato: si dice, e si offre di riprovare. */
   const sediNonCaricate = !sedeDaLink && statoSedi === 'errore'
   /**
@@ -247,18 +288,52 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     setStatoSedi('caricamento')
     setTentativoSedi(n => n + 1)
   }
-  /** Scostamento introdotto dal passo sede: sposta di 1 gli indici di tutti i passi. */
-  const offset = mostraSede ? 1 : 0
+  /** Scostamento introdotto dai passi «sede» e «anno»: sposta di 1 ciascuno gli indici di tutti i passi dopo. */
+  const offset = (mostraSede ? 1 : 0) + (mostraAnno ? 1 : 0)
+  /** L'indice del passo «anno», quando esiste. */
+  const passoAnno = mostraSede ? 1 : 0
 
   const steps: Step[] = useMemo(() => {
     const s: Step[] = []
     if (mostraSede) s.push({ kind: 'sede' })
+    if (mostraAnno) s.push({ kind: 'anno' })
     for (let i = 0; i < childCount; i++) s.push({ kind: 'child', index: i })
     for (let i = 0; i < adultCount; i++) s.push({ kind: 'adult', index: i })
     s.push({ kind: 'consensi' })
     s.push({ kind: 'review' })
     return s
-  }, [mostraSede, childCount, adultCount])
+  }, [mostraSede, mostraAnno, childCount, adultCount])
+
+  /**
+   * IL RIFIUTO `ANNO_NON_OFFERTO` SI RISOLVE QUANDO L'ELENCO È TORNATO, e nello stesso render in cui `steps` cambia forma.
+   *
+   * Dopo il rifiuto l'elenco si ricarica e può tornare con un anno solo, con due (nasce il passo «anno»), con nessuno,
+   * o non tornare affatto (resta il vecchio). In ogni caso gli indici dei passi si possono spostare sotto le mani del
+   * genitore: decidere il passo in un effetto, o prima dell'arrivo, lo lascerebbe per un giro su un passo a caso (o con
+   * `step` oltre l'ultimo, e il pulsante che dice «Avanti» invece di «Invia»). Aggiustare lo stato durante il render fa
+   * ripartire il render subito, senza dipingere il passo sbagliato. Si risolve una volta sola (`rifiuto` torna nullo).
+   */
+  if (rifiuto !== null && anni.letture > rifiuto.letture) {
+    const ultimo = Math.max(0, steps.length - 1)
+    const unico = anni.anni.length === 1 ? anni.anni[0] : null
+    setRifiuto(null)
+    setDirection(-1)
+    if (anni.chiuso) {
+      // Nessun anno accetta più domande: vale il messaggio delle iscrizioni chiuse, con i dati al loro posto.
+      setChiusoDalServer(true)
+      setAvvisoAnno(null)
+      setStep(ultimo)
+    } else if (mostraAnno) {
+      setAvvisoAnno({ tipo: 'scegli' })
+      setStep(passoAnno)
+    } else if (unico !== null && unico.anno_id !== rifiuto.inviato) {
+      setAvvisoAnno({ tipo: 'cambiato', anno: unico.etichetta_breve })
+      setStep(ultimo)
+    } else {
+      setAvvisoAnno({ tipo: 'incerto' })
+      setStep(ultimo)
+    }
+  }
 
   const current = steps[Math.min(step, steps.length - 1)]
   const isLast = step === steps.length - 1
@@ -322,6 +397,23 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         return
       }
       setErroreSede(false)
+      // Prima di cambiare passo si sa se il passo «anno» esiste: l'elenco degli anni della sede scelta può
+      // essere ancora in volo, e `steps` non deve cambiare forma dopo che si è avanzato. Se la sede non
+      // accetta domande (`chiuso`) non si avanza: lo dice il messaggio sotto l'elenco delle sedi.
+      const { chiuso } = await anni.attendi()
+      if (chiuso) return
+      setDirection(1)
+      setStep(s => s + 1)
+      return
+    }
+
+    // Passo anno: la scelta è obbligatoria, come quella della sede.
+    if (current.kind === 'anno') {
+      if (!annoEffettivo) {
+        setErroreAnno(true)
+        return
+      }
+      setErroreAnno(false)
       setDirection(1)
       setStep(s => s + 1)
       return
@@ -394,6 +486,14 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         setStep(0)
         return
       }
+      // Lo stesso per l'anno: se il passo c'è e nessun anno è scelto (l'elenco è cambiato dopo un rifiuto),
+      // si torna a farlo scegliere. Un bambino iscritto nell'anno sbagliato è peggio di un passo in più.
+      if (mostraAnno && !annoEffettivo) {
+        setErroreAnno(true)
+        setDirection(-1)
+        setStep(passoAnno)
+        return
+      }
       await handleSubmit()
     } else {
       setDirection(1)
@@ -405,6 +505,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     // Tornare indietro per correggere qualcosa spegne l'errore d'invio: tenerlo
     // acceso lo trasformerebbe in un avviso che si impara a ignorare.
     setErroreInvio(false)
+    setChiusoDalServer(false)
+    setAvvisoAnno(null)
     setDirection(-1)
     setStep(s => Math.max(0, s - 1))
   }
@@ -412,6 +514,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   async function handleSubmit() {
     setSubmitting(true)
     setErroreInvio(false)
+    setChiusoDalServer(false)
+    setAvvisoAnno(null)
     try {
       const all = getValues()
       const children = (all.children ?? []).slice(0, childCount).filter(Boolean)
@@ -432,10 +536,30 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         headers: { 'Content-Type': 'application/json' },
         // Priorità al link (?scuola=), poi alla scelta del genitore. Se nessuna
         // delle due c'è, il server risolve la sede da solo (o risponde 400).
-        body: JSON.stringify({ data, scuola_id: sedeDaLink ?? sedeScelta ?? undefined }),
+        // `anno_id`: l'anno scelto (o l'unico offerto). Assente quando l'elenco degli anni non c'è (database
+        // in ritardo, guasto): allora sceglie il server, come prima di questa modifica.
+        body: JSON.stringify({
+          data,
+          scuola_id: sedeDaLink ?? sedeScelta ?? undefined,
+          anno_id: annoEffettivo ?? undefined,
+        }),
       })
       const json = await res.json()
       if (!res.ok) {
+        // Due rifiuti dell'ANNO che non sono un guasto: si dicono in pagina, con i dati ancora al loro posto.
+        if (res.status === 409 && json?.codice === 'ISCRIZIONI_CHIUSE') {
+          setChiusoDalServer(true)
+          return
+        }
+        if (res.status === 422 && json?.codice === 'ANNO_NON_OFFERTO') {
+          // L'elenco è cambiato mentre si compilava: si riprende l'elenco, e quando torna (nel render, subito dopo `steps`)
+          // si decide dove sta la famiglia e che cosa legge. Vale anche senza il passo «anno»: con un anno solo il
+          // messaggio compare nel punto in cui si trova, non c'è un passo a cui tornare.
+          setAnnoScelto(null)
+          setRifiuto({ letture: anni.letture, inviato: annoEffettivo })
+          anni.ricarica()
+          return
+        }
         // Il server riverifica e risponde 400 con gli errori per campo: mappali
         // sui campi (stessa UI del client) e riporta l'utente all'istanza in errore,
         // invece di un alert generico.
@@ -496,6 +620,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const heading =
     current.kind === 'sede'
       ? { icon: MapPin, title: t('wizardSede'), sub: t('wizardSedeSub') }
+      : current.kind === 'anno'
+      ? { icon: CalendarDays, title: ta('annoPassoTitolo'), sub: ta('annoPassoSottotitolo') }
       : current.kind === 'child'
       ? { icon: Baby, title: `${t('wizardBambino')} ${current.index + 1}`, sub: t('wizardBambinoSub') }
       : current.kind === 'adult'
@@ -603,7 +729,24 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           </div>
         </div>
 
-        {domandaNonPuoCominciare ? (
+        {annoChiusoSenzaAlternative ? (
+          /*
+           * LE ISCRIZIONI DI QUESTA SEDE SONO CHIUSE — e lo si dice PRIMA di far compilare quattro passi.
+           * Il server ha risposto `chiuso: true` (nessun anno accetta domande) e la famiglia non ha un'altra
+           * sede da scegliere: non c'è un invio possibile. Senza «Riprova»: ripetere darebbe la stessa risposta.
+           * Con più sedi il messaggio sta sotto l'elenco delle sedi (passo «sede»), così se ne può scegliere
+           * un'altra.
+           */
+          <div role="alert" className="flex-1 flex flex-col items-center justify-center gap-4 py-10">
+            <div className="w-full rounded-card border border-kidville-error bg-kidville-error-soft px-5 py-4 text-left">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-kidville-error-strong">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                {ta('annoChiusoTitolo')}
+              </h2>
+              <p className="mt-1.5 text-sm leading-relaxed text-kidville-ink">{ta('annoChiusoCorpo')}</p>
+            </div>
+          </div>
+        ) : domandaNonPuoCominciare ? (
           /*
            * NON C'È NESSUNA SEDE SU CUI ISCRIVERSI — e lo si dice.
            *
@@ -778,6 +921,63 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           {t('wizardSedeErrore')}
                         </p>
                       )}
+                      {/* La sede scelta non accetta domande: lo si dice qui, accanto alla scelta, perché se ne
+                          può scegliere un'altra. «Avanti» non avanza (vedi `goNext`). */}
+                      {anni.chiuso && sedeScelta && (
+                        <div role="alert" className="rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3">
+                          <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                            <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                            {ta('annoChiusoTitolo')}
+                          </p>
+                          <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{ta('annoChiusoCorpo')}</p>
+                        </div>
+                      )}
+                    </fieldset>
+                  )}
+
+                  {/* ANNO step — compare solo con almeno due anni che accettano domande */}
+                  {current.kind === 'anno' && (
+                    <fieldset className="space-y-3">
+                      <legend className="sr-only">{ta('annoLegenda')}</legend>
+                      {anni.anni.map(a => {
+                        const scelto = annoEffettivo === a.anno_id
+                        return (
+                          <label
+                            key={a.anno_id}
+                            htmlFor={`anno-${a.anno_id}`}
+                            /* Stesso aspetto, e stesse ragioni di contrasto, delle card di scelta della sede. */
+                            className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border cursor-pointer transition-all ${
+                              scelto
+                                ? 'border-kidville-green bg-kidville-green-soft'
+                                : 'border-kidville-neutral bg-kidville-white hover:border-kidville-green/40'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              id={`anno-${a.anno_id}`}
+                              name="anno"
+                              value={a.anno_id}
+                              checked={scelto}
+                              onChange={() => { setAnnoScelto(a.anno_id); setErroreAnno(false); setAvvisoAnno(null) }}
+                              className="w-4 h-4 accent-kidville-green"
+                            />
+                            <CalendarDays className={`w-4 h-4 flex-shrink-0 ${scelto ? 'text-kidville-green' : 'text-kidville-sub'}`} />
+                            <span className="flex flex-col">
+                              <span className={`text-sm ${scelto ? 'text-kidville-green font-semibold' : 'text-kidville-ink'}`}>
+                                {a.etichetta_breve}
+                              </span>
+                              <span className="text-xs text-kidville-sub">
+                                {a.ingresso === 'durante' ? ta('annoIngressoDurante') : ta('annoIngressoInizio')}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                      {erroreAnno && (
+                        <p role="alert" className="text-xs text-kidville-error-strong">
+                          {ta('annoErroreScelta')}
+                        </p>
+                      )}
                     </fieldset>
                   )}
 
@@ -928,6 +1128,13 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           })}
                         </p>
                       </div>
+                      {mostraAnno && annoEffettivo && (
+                        <p className="px-4 text-sm text-kidville-ink">
+                          {ta('annoRiepilogoRiga', {
+                            anno: anni.anni.find((a) => a.anno_id === annoEffettivo)?.etichetta_breve ?? '',
+                          })}
+                        </p>
+                      )}
                       <p className="text-xs text-kidville-sub leading-relaxed">
                         {t.rich('wizardRiepilogoNota', {
                           b: (chunks) => <strong className="text-kidville-ink">{chunks}</strong>,
@@ -937,6 +1144,40 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                   )}
               </motion.div>
             </div>
+
+            {/* Il server ha detto che le iscrizioni sono chiuse (409): i dati sono ancora qui, e si può
+                tornare indietro a scegliere un'altra sede. */}
+            {chiusoDalServer && (
+              <div role="alert" className="mt-4 rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                  {ta('annoChiusoTitolo')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{ta('annoChiusoCorpo')}</p>
+              </div>
+            )}
+
+            {/* L'anno della domanda non accetta più domande (422): il messaggio sta QUI, nel punto in cui si trova la
+                famiglia — anche con un anno solo, quando il passo «anno» non esiste — e i dati sono ancora al loro posto. */}
+            {avvisoAnno !== null && (
+              <div role="alert" className="mt-4 rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                  {avvisoAnno.tipo === 'scegli'
+                    ? ta('annoNonOffertoTitolo')
+                    : avvisoAnno.tipo === 'cambiato'
+                    ? ta('annoCambiatoTitolo')
+                    : ta('annoNonOffertoRiprovaTitolo')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
+                  {avvisoAnno.tipo === 'scegli'
+                    ? ta('annoNonOffertoCorpo')
+                    : avvisoAnno.tipo === 'cambiato'
+                    ? ta('annoCambiatoCorpo', { anno: avvisoAnno.anno })
+                    : ta('annoNonOffertoRiprovaCorpo')}
+                </p>
+              </div>
+            )}
 
             {/* L'invio è fallito. Sta QUI — sopra i bottoni, dentro la pagina —
                 e non in un `alert()` di sistema: il genitore ha appena premuto
@@ -961,7 +1202,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <div className="flex items-center justify-between gap-3 pt-6 mt-4 border-t border-kidville-line">
               <button
                 onClick={goPrev}
-                disabled={step === 0 || submitting}
+                disabled={step === 0 || submitting || rifiuto !== null}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-sub hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
                 <ArrowLeft className="w-4 h-4" /> {t('wizardIndietro')}
@@ -969,7 +1210,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
 
               <button
                 onClick={goNext}
-                disabled={submitting}
+                disabled={submitting || rifiuto !== null}
                 className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark disabled:opacity-50 text-kidville-yellow font-barlow font-bold uppercase tracking-wide text-sm transition-all"
               >
                 {submitting ? (

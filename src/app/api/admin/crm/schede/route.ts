@@ -7,11 +7,13 @@ import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { clientPerScrittura } from '@/lib/anno/gettone'
 import { erroreAnno } from '@/lib/anno/errori'
 import { annoDelBambino, risolviAnniBambini } from '@/lib/crm/anno-bambini'
+import { risolviAnnoScelto, valoriAnnoScelto, type AnnoSceltoScheda } from '@/lib/crm/anno-scheda'
+import type { EsitoAnno } from '@/lib/anno/tipi'
 import { requireCrm } from '@/lib/crm/accesso'
 import { contattiNormalizzati, normalizzaEmail, normalizzaTelefono } from '@/lib/crm/contatti'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
-import { ANNI_INGRESSO, ESITI_BAMBINO, ORIGINI, type Origine } from '@/lib/crm/tipi'
+import { ANNI_INGRESSO, ESITI_BAMBINO, ORIGINI, type AnnoIngresso, type Origine } from '@/lib/crm/tipi'
 import { descriviTetto, leggiABlocchi, type QueryABlocchi } from '@/lib/db/leggi-a-blocchi'
 import { termineOr } from '@/lib/db/ricerca-postgrest'
 import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
@@ -75,8 +77,11 @@ const zTesto = (max: number) =>
 const bambinoNuovoSchema = z.object({
   nome: z.string().trim().min(1).max(100),
   dataNascita: zOpzionale(zDataYMD),
-  annoIngresso: z.enum(ANNI_INGRESSO),
-})
+  // L'anno si dichiara con `annoId` (un anno del calendario della sede) o, come sempre, con l'etichetta relativa. Se ci sono tutti
+  // e due vale `annoId`.
+  annoIngresso: z.enum(ANNI_INGRESSO).optional(),
+  annoId: zUuid.optional(),
+}).refine((f) => f.annoIngresso !== undefined || f.annoId !== undefined, { message: 'Indica l’anno' })
 
 const postBodySchema = z.object({
   scuolaId: zOpzionale(zUuid),
@@ -92,6 +97,33 @@ const postBodySchema = z.object({
   bambini: z.array(bambinoNuovoSchema).min(1).max(6),
   forza: z.boolean().optional(),
 })
+
+/** Senza bambini da risolvere con l'etichetta non si legge niente: sarebbe un `corrente` richiesto per nulla. */
+async function risolviAniBambiniSeServe(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: Parameters<typeof risolviAnniBambini>[2],
+  scuolaId: string,
+  etichette: Parameters<typeof risolviAnniBambini>[4],
+) {
+  if (etichette.length === 0) return null
+  return risolviAnniBambini(request, supabase, user, scuolaId, etichette)
+}
+
+/** I campi dell'anno di un bambino: quelli dell'anno scelto, oppure l'etichetta con l'anno che ne deriva. */
+function valoriDelBambino(
+  f: { annoIngresso?: AnnoIngresso; annoId?: string },
+  scelti: Map<string, AnnoSceltoScheda>,
+  anni: Awaited<ReturnType<typeof risolviAnniBambini>> | null,
+) {
+  const scelto = f.annoId ? scelti.get(f.annoId.toLowerCase()) : undefined
+  if (scelto) return valoriAnnoScelto(scelto)
+  const etichetta = f.annoIngresso ?? 'non_indicato'
+  return {
+    anno_ingresso: etichetta,
+    ...(anni && !(anni instanceof NextResponse) ? annoDelBambino(anni, etichetta) : {}),
+  }
+}
 
 type ErroreDb = { code?: string; message?: string }
 
@@ -352,9 +384,23 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
   }
 
   // L'anno di ogni bambino, PRIMA di scrivere qualsiasi cosa: senza un `corrente` la scheda non nasce.
-  // Sul registro si scrive con una sola richiesta (i bambini), quindi basta un gettone.
-  const anni = await risolviAnniBambini(request, supabase, auth.user, scuolaId, b.bambini.map((f) => f.annoIngresso))
+  // Chi dichiara un `annoId` lo ha controllato (della sede? non chiuso?); gli altri passano dall'etichetta relativa.
+  // Sul registro si scrive con una sola richiesta (i bambini): i gettoni di tutte le risoluzioni viaggiano insieme.
+  const scelti = new Map<string, AnnoSceltoScheda>()
+  const gettoni: string[] = []
+  for (const id of new Set(b.bambini.flatMap((f) => (f.annoId ? [f.annoId.toLowerCase()] : [])))) {
+    const scelto = await risolviAnnoScelto(request, supabase, auth.user, scuolaId, id, OPERAZIONE_POST)
+    if (scelto instanceof NextResponse) return scelto
+    if ('schemaIndietro' in scelto) continue // database senza lo schema dell'anno: si scrive come prima, con l'etichetta
+    scelti.set(id, scelto)
+    if (scelto.esito.gettoni) gettoni.push(...scelto.esito.gettoni)
+  }
+  const conEtichetta = b.bambini.filter((f) => !(f.annoId && scelti.has(f.annoId.toLowerCase())))
+  const anni = await risolviAniBambiniSeServe(request, supabase, auth.user, scuolaId, conEtichetta.map((f) => f.annoIngresso ?? 'non_indicato'))
   if (anni instanceof NextResponse) return anni
+  if (anni?.scrittura.gettoni) gettoni.push(...anni.scrittura.gettoni)
+  const base: EsitoAnno = anni?.scrittura ?? [...scelti.values()][0]?.esito ?? { annoSedeId: null, annoId: null, stato: null }
+  const esitoScrittura: EsitoAnno = { ...base, gettone: gettoni[0], gettoni: gettoni.length > 0 ? gettoni : undefined }
 
   const { data: creata, error: erroreScheda } = await supabase
     .from('crm_schede')
@@ -379,7 +425,7 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
   if (erroreScheda || !creata) return rispostaErroreDb(erroreScheda ?? {}, OPERAZIONE_POST)
   const schedaId = creata.id as string
 
-  const scrittura = await clientPerScrittura(supabase, anni.scrittura)
+  const scrittura = await clientPerScrittura(supabase, esitoScrittura)
   const { data: figli, error: erroreFigli } = await scrittura
     .from('crm_bambini')
     .insert(
@@ -388,8 +434,7 @@ export const POST = withRoute('admin/crm/schede:POST', async (request: NextReque
         scheda_id: schedaId,
         nome: f.nome,
         data_nascita: f.dataNascita ?? null,
-        anno_ingresso: f.annoIngresso,
-        ...annoDelBambino(anni, f.annoIngresso),
+        ...valoriDelBambino(f, scelti, anni),
       })),
     )
     .select('id')

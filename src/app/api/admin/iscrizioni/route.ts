@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { STATO_ISCRITTO } from '@/lib/alunni/stato'
+import { STATO_ISCRITTO, STATO_IN_ARRIVO } from '@/lib/alunni/stato'
 import { STATI_DOMANDA, STATO_DOMANDA_IN_ATTESA } from '@/lib/iscrizioni/stati'
 import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
@@ -48,6 +48,13 @@ import { scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni } from '@/lib/anno/sc
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
+import { annoDellaDomanda, registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
+import { erroreAnno } from '@/lib/anno/errori'
+import {
+  PATCH_RITORNO_IN_ARRIVO,
+  campiFrequenzaDellaDomanda,
+  eExAlunno,
+} from '@/lib/anno/domanda-anno-prossimo'
 
 // Esito bloccante dell'import: impedisce di marcare l'invio 'approved' (a differenza
 // dei `warnings`, non bloccanti). `dove` = "Adulto N"/"Bambino N", `messaggio` = testo it.
@@ -569,7 +576,8 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     // password c'è `admin/regenerate-credentials`, che la rigenera lasciando
     // traccia. Anche `consents_log` resta fuori: è la prova dei consensi, la
     // legge il server nella PATCH, non serve all'elenco.
-    let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']
+    // `anno_id` (PR 4.5.8): la pagina chiede le classi dell'anno DELLA domanda. Colonna assente (DB della CI) ⇒ la toglie la resilienza.
+    let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at', 'anno_id']
     const attive = await resolveScuoleAttive(request, supabase, auth.user)
     /**
      * La sede chiesta dal filtro INTERSECA le sedi attive, non le sostituisce.
@@ -992,6 +1000,32 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     const children = data.children || []
     const adults = data.adults || []
 
+    // ─── L'ANNO DELLA DOMANDA (PR 4.5.8) ─────────────────────────────────────────
+    // Una domanda per l'anno PROSSIMO (ad iscrizioni aperte) non è una domanda per la classe di oggi: il bambino nuovo nasce
+    // `in_arrivo`, e classe, retta e sezione stanno nella FREQUENZA di quell'anno. Ogni altro caso è il percorso di ieri,
+    // senza una riga cambiata:
+    //  · `anno_id` assente (una domanda storica) → niente `annoDellaDomanda`: oggi risponderebbe «non aperto» se la sede non
+    //    avesse un anno attivo, e una domanda vecchia non diventa un 409;
+    //  · l'anno attivo, o lo schema dell'anno che non c'è (il DB della CI) → come oggi;
+    //  · un anno che non ha le iscrizioni aperte → 409 `ANNO_NON_APERTO`, PRIMA di qualunque scrittura.
+    const annoDellaDomandaId = (sub as { anno_id?: string | null }).anno_id ?? null
+    let annoProssimo: { annoSedeId: string; annoId: string } | null = null
+    if (annoDellaDomandaId) {
+      const annoDomanda = await annoDellaDomanda(supabase, scuolaId, annoDellaDomandaId)
+      if (annoDomanda.tipo === 'aperto') {
+        annoProssimo = { annoSedeId: annoDomanda.annoSedeId, annoId: annoDomanda.annoId }
+      } else if (annoDomanda.tipo === 'non-aperto') {
+        logEvento('anno-scolastico', 'warn', {
+          tipo: 'domanda-anno-non-aperto',
+          operazione: 'admin/iscrizioni:PATCH',
+          error_code: 'ANNO_NON_APERTO',
+          entita_id: id,
+          sede_id: scuolaId,
+        })
+        return erroreAnno({ message: 'ANNO_NON_APERTO' }, 'admin/iscrizioni:PATCH') as NextResponse
+      }
+    }
+
     // Ogni figlio deve avere una classe assegnata
     for (let i = 0; i < children.length; i++) {
       if (!assignments[String(i)]) {
@@ -1140,13 +1174,24 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // tendina. Qui si controlla PRIMA di ogni scrittura, con la stessa normalizzazione
     // del trigger — niente insert parziali, l'invio resta 'pending'.
     // Solo le sezioni dell'anno ATTIVO: il trigger non risolve le altre (e un nome dell'anno dopo non è una classe di oggi).
-    const anniAttiviSede = await anniAttiviDeiPlessi(supabase, [scuolaId])
+    // Una domanda per l'anno PROSSIMO sceglie invece fra le sezioni di QUELL'anno, e ne serve l'id (`section_id` della frequenza).
+    const anniAttiviSede = annoProssimo
+      ? { coppie: [{ sede: scuolaId, annoId: annoProssimo.annoId }], liberi: [] as string[] }
+      : await anniAttiviDeiPlessi(supabase, [scuolaId])
     let ricercaSezioni = supabase
       .from('sections')
-      .select('name')
+      .select(annoProssimo ? 'id, name' : 'name')
       .eq('scuola_id', scuolaId)
     ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anniAttiviSede)
     const { data: sezioniSede, error: sezErr } = await ricercaSezioni
+    /** `nome normalizzato → sections.id` delle sezioni dell'anno aperto (vuota per una domanda dell'anno di oggi). */
+    const idSezioneProssimo = new Map<string, string>()
+    if (annoProssimo && (sezErr || !Array.isArray(sezioniSede))) {
+      // Qui lo schema dell'anno c'è (l'anno è stato letto): senza le sezioni non si sa dove mettere il bambino, e non si scrive niente.
+      for (let ci = 0; ci < children.length; ci++) {
+        errors.push({ dove: `Bambino ${ci + 1}`, messaggio: "Le sezioni dell'anno della domanda non si sono potute leggere: nessuna scrittura è stata fatta, riprovare." })
+      }
+    }
     if (sezErr) {
       // Il controllo si salta, l'import prosegue: il DB E2E della CI non è migrato e
       // un'iscrizione non si blocca per un problema d'infrastruttura. `info` quando è
@@ -1172,6 +1217,11 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       const nomiInSede = new Set(
         (sezioniSede as { name?: unknown }[]).map((s) => normalizzaNomeSezione(s?.name)),
       )
+      if (annoProssimo) {
+        for (const sz of sezioniSede as { id?: unknown; name?: unknown }[]) {
+          if (typeof sz?.id === 'string') idSezioneProssimo.set(normalizzaNomeSezione(sz.name), sz.id)
+        }
+      }
       for (let ci = 0; ci < children.length; ci++) {
         const classe = assignments[String(ci)]
         if (nomiInSede.has(normalizzaNomeSezione(classe))) continue
@@ -1846,6 +1896,73 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       })
     }
 
+    /**
+     * Una scheda che ESISTE GIÀ e la cui domanda è per l'anno PROSSIMO (PR 4.5.8). Della scheda di oggi non si tocca la
+     * classe, la sezione, la retta, il giorno di scadenza e l'intestatario (è il difetto di `aggiornaSchedaEsistente`):
+     * entrano solo i dati dichiarati dalla famiglia (sanitari). L'unica eccezione è un bambino che era FUORI (ritirato o
+     * archiviato) e torna: diventa `in_arrivo`, senza sezione né classe, altrimenti resterebbe fra i «Non iscritti» con
+     * «Elimina definitivamente». Un bambino vivo oggi (iscritto, sospeso) non cambia stato.
+     * Ritorna `false` se la scheda non si è potuta leggere o il ritorno non si è scritto: errore bloccante, e il bambino non
+     * riceve la frequenza.
+     */
+    const aggiornaSchedaPerAnnoProssimo = async (ci: number, c: EnrollmentChild, alunnoId: string): Promise<boolean> => {
+      const { data: oggiRiga, error: errOggi } = await supabase
+        .from('alunni')
+        .select('stato, archiviato_il')
+        .eq('id', alunnoId)
+        .maybeSingle()
+      if (errOggi) {
+        // Senza sapere com'è la scheda non si può dire se torna da fuori: si ferma, e per lui non si è scritto niente.
+        errors.push({ dove: `Bambino ${ci + 1}`, messaggio: "La scheda esistente non si è potuta leggere: riaprire la domanda e riprovare l'import." })
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'scheda-esistente-non-letta', entita: 'bambino', indice: ci + 1, error_code: (errOggi as { code?: string }).code ?? null }, errOggi)
+        return false
+      }
+      const ritorna = eExAlunno(oggiRiga as { stato?: string | null; archiviato_il?: string | null } | null)
+      const scheda: SanitariScheda | null = haSanitari(c)
+        ? await leggiSanitariScheda(supabase, alunnoId, 'admin/iscrizioni:PATCH')
+        : {}
+      const sanitari = scheda ? sanitariDaScrivere(scheda, c, dataDomanda) : {}
+      const daScrivere: Record<string, unknown> = { ...(ritorna ? PATCH_RITORNO_IN_ARRIVO : {}), ...sanitari }
+      if (Object.keys(daScrivere).length === 0) return true
+      const { error: errScheda } = await supabase.from('alunni').update(daScrivere).eq('id', alunnoId)
+      if (errScheda) {
+        const d = descriviErroreDb(errScheda)
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'update-bambino-esistente-fallito', entita: 'bambino', indice: ci + 1, campo: d.campo, codice: d.codice })
+        if (ritorna) {
+          errors.push({ dove: `Bambino ${ci + 1}`, messaggio: d.messaggio })
+          return false
+        }
+        warnings.push(`Bambino ${ci + 1}: scheda esistente non aggiornata (${d.messaggio})`)
+        return true
+      }
+      if (ritorna) {
+        logEvento('anno-scolastico', 'info', { tipo: 'alunno-ritorna-in-arrivo', operazione: 'admin/iscrizioni:PATCH', entita_id: alunnoId, sede_id: scuolaId })
+      }
+      if (scheda && copiaSanitariPresente({ ...scheda, ...sanitari }, c)) sanitariInScheda.add(ci)
+      if (scheda && (Object.keys(sanitari) as CampoSanitario[]).some((k) => normalizzaSanitario(scheda[k]) !== '')) {
+        sanitariAggiuntiAScheda++
+      }
+      await logScrittura(supabase, {
+        attore: auth.user,
+        entitaTipo: 'alunni',
+        entitaId: alunnoId,
+        azione: 'update',
+        scuolaId,
+        // Per NOME di campo, mai per valore (come per l'insert).
+        valoreDopo: {
+          ...(ritorna ? { stato: STATO_IN_ARRIVO } : {}),
+          ...(Object.keys(sanitari).length > 0 ? { sanitari_aggiornati: Object.keys(sanitari).sort() } : {}),
+        },
+      })
+      return true
+    }
+    /** I bambini della domanda a cui NON si registra la frequenza dell'anno dopo (la loro scheda non si è potuta scrivere). */
+    const senzaFrequenzaProssimo = new Set<number>()
+    const aggiornaEsistente = async (ci: number, c: EnrollmentChild, alunnoId: string, classe: string) => {
+      if (!annoProssimo) return aggiornaSchedaEsistente(ci, c, alunnoId, classe)
+      if (!(await aggiornaSchedaPerAnnoProssimo(ci, c, alunnoId))) senzaFrequenzaProssimo.add(ci)
+    }
+
     for (let ci = 0; ci < children.length; ci++) {
       const c = children[ci] as EnrollmentChild
       const classe = assignments[String(ci)]
@@ -1857,7 +1974,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       if (studentId) {
         // Il re-import SOVRASCRIVE la retta esistente (decisione del titolare,
         // 2026-09-02): quello che la segreteria ha appena digitato è la retta.
-        await aggiornaSchedaEsistente(ci, c, studentId, classe)
+        await aggiornaEsistente(ci, c, studentId, classe)
         if (abbinati.has(ci)) {
           // Il riuso di una scheda scelta dalla segreteria si scrive QUI, dove avviene, e
           // non nel pre-flight: un import bloccato da un altro bambino non ha riusato
@@ -1899,7 +2016,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           logEvento('db', 'info', { operazione: 'admin/iscrizioni:PATCH', esito: 'dedup-soft-non-disponibile', entita: 'bambino', indice: ci + 1, codice: (softErr as { code?: string }).code ?? null })
         } else if (soft) {
           studentId = soft.id
-          await aggiornaSchedaEsistente(ci, c, soft.id, classe)
+          await aggiornaEsistente(ci, c, soft.id, classe)
         }
       }
 
@@ -1923,12 +2040,18 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           allergies: c.allergies ?? null,
           note_mediche: c.note_mediche ?? null,
           documento_path: c.documento_path ?? null,
-          classe_sezione: classe,
-          stato: STATO_ISCRITTO,
-          // La retta, il giorno di scadenza e l'intestatario delle fatture, chiesti
-          // al momento dell'import: senza, il bambino nasceva a 0 e la generazione
-          // mensile leggeva lo zero come «150 € di default».
-          ...campiEconomici(ci),
+          // Domanda per l'anno PROSSIMO: il bambino nasce `in_arrivo`, senza classe né retta (stanno nella frequenza di
+          // quell'anno, registrata più sotto). Altrimenti, come sempre, la classe di oggi e i campi economici.
+          ...(annoProssimo
+            ? { stato: STATO_IN_ARRIVO }
+            : {
+                classe_sezione: classe,
+                stato: STATO_ISCRITTO,
+                // La retta, il giorno di scadenza e l'intestatario delle fatture, chiesti
+                // al momento dell'import: senza, il bambino nasceva a 0 e la generazione
+                // mensile leggeva lo zero come «150 € di default».
+                ...campiEconomici(ci),
+              }),
           // Liberatorie foto raccolte al momento dell'iscrizione, UNA PER CANALE.
           // Senza queste righe la famiglia acconsentiva e il bambino restava
           // comunque a `false`: il consenso c'era, ma non era mai arrivato dove
@@ -1959,7 +2082,8 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         studentId = newChild.id
         createdStudents.push({ id: newChild.id, nome: newChild.nome })
-        await frequenzaDopoInsert(newChild.id, childRecord)
+        // La frequenza di un `in_arrivo` non nasce dal trigger (nessuna frequenza dell'anno attivo): la registra il passo dopo.
+        if (!annoProssimo) await frequenzaDopoInsert(newChild.id, childRecord)
         // Scheda nuova: i sanitari sono entrati con l'insert — a meno che il degrado
         // di colonna (DB E2E) non li abbia tolti dal record, e allora restano nella domanda.
         if (copiaSanitariPresente(childRecord as SanitariScheda, c)) sanitariInScheda.add(ci)
@@ -2089,7 +2213,9 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // mese per dieci mesi, senza che nessun errore compaia da nessuna parte.
     let aCaricoScritti = 0
     let aCaricoFalliti = 0
-    for (const [chiave, fratelloIdx] of Object.entries(retteACarico)) {
+    // Domanda per l'anno PROSSIMO: il collegamento «la paga il fratello» non è la retta di oggi, e viaggia nella frequenza
+    // dell'anno aperto (`retta_a_carico_di` in `campi`, qui sotto): nessun UPDATE di `alunni`.
+    for (const [chiave, fratelloIdx] of annoProssimo ? [] : Object.entries(retteACarico)) {
       const figlioId = alunnoIdPerIndice[Number(chiave)]
       const fratelloId = alunnoIdPerIndice[fratelloIdx]
       if (!figlioId || !fratelloId) {
@@ -2140,6 +2266,62 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         scritti: aCaricoScritti,
         falliti: aCaricoFalliti,
       })
+    }
+
+    // ─── LA FREQUENZA DELL'ANNO PROSSIMO (PR 4.5.8) ────────────────────────────────
+    // Tutti i bambini esistono ora, quindi anche il fratello che paga ha il suo id. Per ognuno una frequenza `nuova` di
+    // origine `domanda` nella sezione scelta (dell'anno aperto) con i campi economici digitati: la data d'ingresso la decide
+    // la funzione. Una frequenza che c'è già (confermata prima) non si tocca: la domanda le viene collegata e lo si dice.
+    // Non blocca mai per i posti (`posti_oltre` è un avviso della segreteria, non di questa risposta).
+    if (annoProssimo) {
+      for (let ci = 0; ci < children.length; ci++) {
+        const alunnoId = alunnoIdPerIndice[ci]
+        if (!alunnoId || senzaFrequenzaProssimo.has(ci)) continue
+        const sezioneId = idSezioneProssimo.get(normalizzaNomeSezione(assignments[String(ci)])) ?? null
+        const aCarico = retteACarico[String(ci)]
+        const esito = await registraFrequenzaPerAnno(supabase, {
+          alunnoId,
+          annoSedeId: annoProssimo.annoSedeId,
+          tipo: 'nuova',
+          origine: 'domanda',
+          domandaId: id,
+          sectionId: sezioneId,
+          // Chi approva: la voce di quota che nasce porta il suo nome in `pagamenti.creato_da` (4.5.15, M2).
+          da: auth.user.id,
+          campi: campiFrequenzaDellaDomanda(campiEconomici(ci), aCarico !== undefined ? (alunnoIdPerIndice[aCarico] ?? null) : null),
+        })
+        if (!esito.ok) {
+          errors.push({
+            dove: `Bambino ${ci + 1}`,
+            messaggio: `La frequenza dell'anno prossimo non è stata registrata (${esito.codice}): la domanda resta in attesa, riprovare l'import.`,
+          })
+        } else if ('saltata' in esito) {
+          // Lo schema dell'anno c'è (l'anno è stato letto) ma la funzione no: un ambiente a metà. Non è un errore da nascondere.
+          warnings.push(`Bambino ${ci + 1}: la frequenza dell'anno prossimo non è stata registrata (funzione non disponibile).`)
+        } else if (esito.riaperta === true) {
+          // 4.5.16: l'iscrizione dell'anno prossimo era stata chiusa (conferma ritirata o bambino archiviato) e la nuova domanda la riapre.
+          warnings.push(`Bambino ${ci + 1}: l'iscrizione dell'anno prossimo era chiusa ed è stata riaperta.`)
+        } else if (esito.chiusa === true) {
+          warnings.push(`Bambino ${ci + 1}: per l'anno prossimo l'iscrizione risulta chiusa per trasferimento o uscita: la domanda è stata collegata senza riaprirla.`)
+        } else if (!esito.creata) {
+          warnings.push(`Bambino ${ci + 1}: già confermato per l'anno prossimo: la domanda è stata collegata.`)
+        }
+        // La classe scelta in approvazione non si applica a una frequenza viva che c'è già: la segreteria deve saperlo (4.5.15, M4). Il
+        // comando che c'è: per un bambino che frequenta, in «Conferme» si ritira la conferma e si rifà scegliendo la classe; per gli altri
+        // la classe si corregge al passaggio d'anno (4.5.16).
+        if (esito.ok && !('saltata' in esito) && esito.sezione_ignorata === true) {
+          warnings.push(`Bambino ${ci + 1}: la classe scelta non è stata applicata, perché per l'anno prossimo ha già la sua. Se il bambino frequenta, in «Conferme» si ritira la conferma e si rifà scegliendo la classe; altrimenti la classe si corregge al passaggio d'anno.`)
+        }
+        // L'esito della quota (4.5.15, I1): la frequenza c'è, ma la voce no (o ce n'è più d'una). La segreteria lo deve sapere ora,
+        // non scoprirlo a settembre. Il testo dice che cosa fare; la riga si sistema da «Conferme», pulsante «Genera la quota».
+        if (esito.ok && !('saltata' in esito)) {
+          if (esito.quota === 'senza_listino') {
+            warnings.push(`Bambino ${ci + 1}: la quota dell'anno prossimo non è stata creata perché il listino non ne ha una per lui. Impostala nell'anno e poi premi «Genera la quota» in Conferme.`)
+          } else if (esito.quota === 'piu_voci') {
+            warnings.push(`Bambino ${ci + 1}: per l'anno prossimo c'è più di una voce di quota. Controlla la contabilità.`)
+          }
+        }
+      }
     }
 
     // Evento critico → si logga anche il SUCCESSO, in UNA riga per import (mai una

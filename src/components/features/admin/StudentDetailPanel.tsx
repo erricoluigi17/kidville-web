@@ -141,7 +141,8 @@ interface Props {
      * letto e buttato via. La stessa correzione era GIÀ stata fatta sul ramo dei
      * genitori (`onSave` di `ParentDetailPanel`) e non era mai stata propagata qui.
      */
-    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null }>;
+    /** `riprova`: l'archiviazione è scritta ma un'iscrizione dell'anno prossimo non si è chiusa; il pannello offre «Riprova» (4.5.16, E). */
+    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null; riprova?: boolean }>;
     /**
      * Riporta l'alunno fra gli iscritti (`POST /api/admin/students/riattiva`).
      *
@@ -196,6 +197,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
      * ritrovarsi nella lista con un «❌ Errore» che sta sparendo.
      */
     const [erroreArchiviazione, setErroreArchiviazione] = useState<string | null>(null);
+    /** L'avviso «non si sono chiuse» ha il suo «Riprova» (4.5.16, E). */
+    const [archiviazioneRiprovabile, setArchiviazioneRiprovabile] = useState(false);
     /** Il ritorno è in volo: serve solo all'etichetta del comando. */
     const [riattivazioneInCorso, setRiattivazioneInCorso] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -498,14 +501,20 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
             setConfermaArchiviazione(true);
             return;
         }
+        await eseguiArchiviazione();
+    };
+
+    const eseguiArchiviazione = async () => {
         setArchiviazioneInCorso(true);
         setErroreArchiviazione(null);
+        setArchiviazioneRiprovabile(false);
         try {
             const esito = await onArchive(student.id);
             if (esito?.ok) {
                 setConfermaArchiviazione(false);
                 return;
             }
+            setArchiviazioneRiprovabile(esito?.riprova === true);
             // `errore` assente (rete caduta, corpo non JSON) non vale silenzio: una
             // frase generica è comunque un fatto, «niente» è indistinguibile dal
             // successo — che è il difetto da cui nasce tutta questa correzione.
@@ -785,6 +794,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
      * `undefined` e la scheda torna a comportarsi come prima. Assente ≠ archiviato.
      */
     const archiviato = student.archiviato_il != null;
+    // Un bambino la cui domanda è per l'anno prossimo (4.5.15, C2): lo stato si legge «In arrivo» e non si cambia da qui, e la classe
+    // non esiste ancora. Lo stato è quello della scheda come l'ha letta il server, non quello che l'operatore sta digitando.
+    const inArrivo = student.stato === 'in_arrivo';
     const archiviatoIl = typeof student.archiviato_il === 'string'
         ? formattaIstante(student.archiviato_il, locale, { day: '2-digit', month: '2-digit', year: 'numeric' })
         : '';
@@ -1049,7 +1061,9 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     name="classe_sezione"
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
+                                    disabled={inArrivo}
+                                    aria-describedby={inArrivo ? 'dettaglio-classe-in-arrivo' : undefined}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green disabled:cursor-not-allowed disabled:bg-kidville-cream disabled:text-kidville-sub"
                                 >
                                     <option value="">{t('detailNessuna')}</option>
                                     {sections.map(s => (
@@ -1061,6 +1075,12 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                         vuota e sembrerebbe che il bambino non abbia classe. */}
                                     {classeFuoriElenco && <option value={classeFuoriElenco}>{classeFuoriElenco}</option>}
                                 </select>
+                                {/* Una tendina spenta senza una ragione scritta è un guasto agli occhi di chi la preme. */}
+                                {inArrivo && (
+                                    <p id="dettaglio-classe-in-arrivo" className="font-maven text-[11px] text-kidville-sub mt-1">
+                                        {t('detailClasseInArrivo')}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <label htmlFor="dettaglio-stato" className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
@@ -1079,6 +1099,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     e farebbe lo stesso danno. E il gate VERO è comunque sul
                                     server (409 `STATO_ALUNNO_ARCHIVIATO`): questo è cortesia,
                                     non protezione — dalla console del browser si aggira. */}
+                                {/* «In arrivo» non è uno stato che la tendina offra (`STATI_TENDINA`, lock `stati-alunno-classificati`): per chi lo è
+                                    si mostra uno stato in sola lettura al posto della tendina, e lo stato non si può cambiare da qui. */}
+                                {inArrivo ? (
+                                <input
+                                    id="dettaglio-stato"
+                                    type="text"
+                                    readOnly
+                                    value={t('statoInArrivo')}
+                                    aria-describedby="dettaglio-stato-in-arrivo"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-sub bg-kidville-cream cursor-not-allowed"
+                                />
+                                ) : (
                                 <select
                                     id="dettaglio-stato"
                                     value={(form.stato as string) ?? 'iscritto'}
@@ -1091,6 +1123,12 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                     <option value="ritirato">{t('statoRitirato')}</option>
                                     <option value="sospeso">{t('statoSospeso')}</option>
                                 </select>
+                                )}
+                                {inArrivo && (
+                                    <p id="dettaglio-stato-in-arrivo" className="font-maven text-[11px] text-kidville-sub mt-1">
+                                        {t('detailStatoInArrivo')}
+                                    </p>
+                                )}
                                 {/* Un comando spento senza una ragione scritta è un guasto agli
                                     occhi di chi lo preme: qui si dice perché, e dove si va. */}
                                 {archiviato && (
@@ -1790,6 +1828,16 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                             className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-3 font-maven text-xs text-kidville-error-strong"
                         >
                             {erroreArchiviazione}
+                            {archiviazioneRiprovabile && (
+                                <button
+                                    type="button"
+                                    onClick={eseguiArchiviazione}
+                                    disabled={archiviazioneInCorso}
+                                    className="mt-2 flex min-h-11 w-full items-center justify-center rounded-pill border-2 border-kidville-error/40 bg-kidville-white px-4 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-error-strong disabled:opacity-50"
+                                >
+                                    {t('detailArchiviaRiprova')}
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>

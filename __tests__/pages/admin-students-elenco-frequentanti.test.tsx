@@ -58,6 +58,13 @@ const SENZA_SEZIONE = {
   scuola_id: SEDE_A, stato: 'iscritto', section_id: null,
 }
 
+/** Il bambino la cui domanda è per l'anno dopo: nessuna sezione, nessuna frequenza di quest'anno (4.5.15, C2). */
+const IN_ARRIVO = {
+  id: 'eeee5555-0000-4000-8000-000000000005',
+  nome: 'Piccolo', cognome: 'InArrivoProva', data_nascita: '2023-03-05',
+  scuola_id: SEDE_A, stato: 'in_arrivo', section_id: null,
+}
+
 const fetchMock = vi.fn()
 
 beforeEach(() => {
@@ -75,7 +82,8 @@ beforeEach(() => {
     }
     if (u.pathname === '/api/admin/gruppi-mensa') return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [] }) })
     if (u.pathname === '/api/admin/students') {
-      const righe = u.searchParams.get('elenco') === 'non_iscritti' ? [SENZA_SEZIONE] : []
+      const elenco = u.searchParams.get('elenco')
+      const righe = elenco === 'non_iscritti' ? [SENZA_SEZIONE] : elenco === 'in_arrivo' ? [IN_ARRIVO] : []
       return Promise.resolve({ ok: true, status: 200, headers: new Headers(), json: async () => righe })
     }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
@@ -146,5 +154,23 @@ describe('Anagrafica — lo stato delle sezioni arriva alla linguetta «Non iscr
     const tendina = (await screen.findByRole('combobox', { name: /DiProva/ })) as HTMLSelectElement
     expect(Array.from(tendina.options).map((o) => o.value)).toEqual(['', 'SEZIONE PROVA'])
     expect(screen.queryByText(itAdmin.arcSezioniNonCaricate)).toBeNull()
+  })
+})
+
+describe('Anagrafica — la linguetta «In arrivo» (4.5.15, C2)', () => {
+  it('legge `elenco=in_arrivo` all’apertura, e il conteggio sta sulla pillola prima che si apra la linguetta', async () => {
+    render(<AdminStudentsPage />)
+    await waitFor(() => expect(chiamateAnagrafica().some((u) => u.includes('elenco=in_arrivo'))).toBe(true))
+    const linguetta = await screen.findByRole('button', { name: new RegExp(itAdmin.inArrivoTab, 'i') })
+    await waitFor(() => expect(linguetta.textContent).toMatch(/1\s*$/))
+    // Nessuna chiamata all'anagrafica resta cieca, nemmeno con la terza linguetta.
+    expect(chiamateAnagrafica().filter((u) => !u.includes('elenco='))).toEqual([])
+  })
+
+  it('aprendola, il bambino c’è con il comando che apre la sua scheda', async () => {
+    h.query = 'tab=inarrivo'
+    render(<AdminStudentsPage />)
+    expect(await screen.findByText(/InArrivoProva/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: new RegExp(itAdmin.arcAzioneApriScheda) })).toBeInTheDocument()
   })
 })

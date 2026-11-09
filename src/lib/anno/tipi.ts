@@ -68,10 +68,20 @@ export const CODICI_ANNO = [
   'STATO_NON_AMMESSO',
   'PREREQUISITI_MANCANTI',
   'PARAMETRO_MANCANTE',
+  // PR 4.5: preparare e aprire l'anno prossimo, conferme e nuove iscrizioni (migrazioni M45a-M45e).
+  'ANNO_NON_APERTO',
+  'FREQUENZA_NON_VIVA',
+  'SEZIONE_OBBLIGATORIA',
+  'SEDE_DIVERSA',
+  'ANNO_NON_MODIFICABILE',
+  'ANNO_NON_OFFERTO',
+  'ISCRIZIONI_CHIUSE',
+  'IMPORTO_NON_VALIDO',
+  'SCADENZA_QUOTA_NEL_PASSATO',
+  'FREQUENZA_NON_DI_CONFERMA',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]
-
 /**
  * Il codice in testa a un messaggio d'errore: la prima parola MAIUSCOLA seguita da fine stringa,
  * spazio o due punti (`ANNO_CHIUSO`, `ANNO_CHIUSO: dettaglio`). Una regola sola, in un modulo

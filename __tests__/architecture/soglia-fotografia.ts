@@ -418,9 +418,16 @@ export function posterioriCheContengono(
 // recente della fotografia tocca le policy». L'altra migrazione della PR, `20261108170148_anno_visibilita_genitore_funzioni.sql`, crea
 // solo funzioni: nessuna guardia la vede e qui non va dichiarata (il lock «nessuna voce morta» la rifiuterebbe). Dopo il merge, rigenerando
 // dalla produzione, cambiano davvero la fotografia della RLS (i cinque `using_expr`) e quella delle migrazioni (+3, con `20261108221856_anno_galleria_pagina_genitore.sql`, che crea solo una funzione). Si toglie nella PR-B.
+// SVUOTATA il 09/11/2026 (PR-B dopo il merge di #303, `c1141599`): le tre migrazioni sono registrate una volta sola e le fotografie sono
+// rigenerate dalla produzione. Cambiano davvero: le migrazioni 261 -> 264 (`20261108170148_anno_visibilita_genitore_funzioni`,
+// `20261108204853_anno_visibilita_genitore_policy`, `20261108221856_anno_galleria_pagina_genitore`) e i cinque `using_expr` della RLS
+// (`chat_threads`, `chat_messages`, `galleria_media_v2`, `pagamenti`, `news_posts`; stesse 40 policy con gli stessi nomi). NON cambiano, con
+// l'impronta md5 dal database uguale a quella in repo: funzioni che scrivono nel registro (66: nessuna funzione nuova della 4.4 entra),
+// tabelle di `anno_tabelle` (46), indici unici (292), FK di sede (99), FK verso `utenti` (83), tabelle con `scuola_id` (99), RLS accesa
+// (181 tabelle, 74 policy solo-service_role), bucket (21) e schema delle candidature.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261108204853_anno_visibilita_genitore_policy.sql':
-        'PR 4.4 anno scolastico: la applica l\'integrazione al merge, cinque regole di accesso riscritte con lo stesso nome; si toglie nella PR-B rigenerando la fotografia della RLS dalla produzione.',
+    '20261109035213_anno_alunno_in_arrivo.sql':
+        'PR 4.5, compito 4.5.4 (l\'alunno in arrivo: tocca il CHECK di `alunni` con ADD e DROP CONSTRAINT). La applica l\'integrazione al merge, con la version del FILE; la voce si toglie nella PR-B, quando la fotografia la contiene.',
 }
 
 /**

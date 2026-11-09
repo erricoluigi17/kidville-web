@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { clientPerScrittura } from '@/lib/anno/gettone'
 import { erroreAnno } from '@/lib/anno/errori'
-import { annoDelBambino, risolviAnniBambini } from '@/lib/crm/anno-bambini'
+import { annoDelBambino, risolviAnniBambini, type AnniBambini } from '@/lib/crm/anno-bambini'
+import { risolviAnnoScelto, valoriAnnoScelto } from '@/lib/crm/anno-scheda'
 import { assertSchedaInScope, requireCrm } from '@/lib/crm/accesso'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { registraEvento } from '@/lib/crm/eventi'
@@ -16,17 +17,25 @@ import { parseBody, parseData } from '@/lib/validation/http'
  * CRM della segreteria · un altro bambino nella scheda di una famiglia.
  *
  * `POST /api/admin/crm/schede/[id]/bambini` → `201 { id }`. Il bambino nasce «aperto» (il predefinito del
- * database) nella sede della scheda. Nello storico entra `bambino_aggiunto` con il solo id: il nome di un
+ * database) nella sede della scheda.
+ *
+ * L'ANNO si dice in uno di due modi. `annoId` (un anno del calendario della sede, non chiuso) è la via nuova: si scrivono INSIEME
+ * `anno_id`, `anno_ingresso` (ricavato: `in_corso` per l'anno attivo, `prossimo` per i successivi) e `quota_anno`; un anno che la
+ * sede non ha o chiuso è 422. `annoIngresso` è la via di sempre (un vecchio client): l'anno viene dall'etichetta. Se arrivano
+ * entrambi vale `annoId`. Ne serve uno dei due. Nello storico entra `bambino_aggiunto` con il solo id: il nome di un
  * minore non va nei log né nelle righe di servizio.
  */
 
 const OPERAZIONE = 'admin/crm/schede/[id]/bambini:POST'
 
-const postBodySchema = z.object({
-  nome: z.string().trim().min(1).max(100),
-  dataNascita: zOpzionale(zDataYMD),
-  annoIngresso: z.enum(ANNI_INGRESSO),
-})
+const postBodySchema = z
+  .object({
+    nome: z.string().trim().min(1).max(100),
+    dataNascita: zOpzionale(zDataYMD),
+    annoIngresso: z.enum(ANNI_INGRESSO).optional(),
+    annoId: zUuid.optional(),
+  })
+  .refine((b) => b.annoIngresso !== undefined || b.annoId !== undefined, { message: 'Indica l’anno del bambino' })
 
 export const POST = withRoute('admin/crm/schede/[id]/bambini:POST', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireCrm(request)
@@ -42,9 +51,20 @@ export const POST = withRoute('admin/crm/schede/[id]/bambini:POST', async (reque
   if ('response' in ambito) return ambito.response
   const { id: schedaId, scuola_id: scuolaId } = ambito.scheda
 
-  // L'anno del bambino, nella sede della scheda. Una sola scrittura sul registro: un gettone.
-  const anni = await risolviAnniBambini(request, supabase, auth.user, scuolaId, [body.data.annoIngresso])
-  if (anni instanceof NextResponse) return anni
+  // L'anno del bambino, nella sede della scheda. Una sola scrittura sul registro: un gettone. Con `annoId` si controlla l'anno
+  // scelto; senza (o sul database senza lo schema dell'anno) vale l'etichetta, come sempre.
+  const scelto = body.data.annoId ? await risolviAnnoScelto(request, supabase, auth.user, scuolaId, body.data.annoId, OPERAZIONE) : null
+  if (scelto instanceof NextResponse) return scelto
+  const annoScelto = scelto && !('schemaIndietro' in scelto) ? scelto : null
+  const annoIngresso = body.data.annoIngresso ?? 'non_indicato'
+
+  // Con l'anno scelto non c'è niente da risolvere dall'etichetta: `anni` resta vuoto e non si legge.
+  let anni: AnniBambini = { scrittura: annoScelto?.esito ?? { annoSedeId: null, annoId: null, stato: null } }
+  if (!annoScelto) {
+    const risolti = await risolviAnniBambini(request, supabase, auth.user, scuolaId, [annoIngresso])
+    if (risolti instanceof NextResponse) return risolti
+    anni = risolti
+  }
 
   const scrittura = await clientPerScrittura(supabase, anni.scrittura)
   const { data, error } = await scrittura
@@ -54,8 +74,7 @@ export const POST = withRoute('admin/crm/schede/[id]/bambini:POST', async (reque
       scheda_id: schedaId,
       nome: body.data.nome,
       data_nascita: body.data.dataNascita ?? null,
-      anno_ingresso: body.data.annoIngresso,
-      ...annoDelBambino(anni, body.data.annoIngresso),
+      ...(annoScelto ? valoriAnnoScelto(annoScelto) : { anno_ingresso: annoIngresso, ...annoDelBambino(anni, annoIngresso) }),
     })
     .select('id')
     .single()

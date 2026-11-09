@@ -6,7 +6,8 @@ import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaAlunno, bonificaAuditScritture, bonificaTracceTestualiAlunno } from '@/lib/gdpr/esegui'
 import { contaChiaviCondivise, MOTIVO_CHIAVI_CONDIVISE } from '@/lib/gdpr/chiavi-condivise'
-import { eNonPiuIscritto } from '@/lib/alunni/stato'
+import { eInArrivo, eNonPiuIscritto } from '@/lib/alunni/stato'
+import { haIscrizioneVivaProssima } from '@/lib/anno/iscrizione-anno'
 import { RUOLI_ELIMINA_DEFINITIVO } from '@/lib/alunni/archiviazione'
 import {
   contaPerEliminazione,
@@ -141,6 +142,11 @@ function rispostaAlRifiutoDelDb(code: string | undefined, effettiGiaAvvenuti: Ef
           codice: 'ALUNNO_ELIMINAZIONE_FREQUENTANTE',
           effetti,
         },
+        { status: 409 },
+      )
+    case 'in_arrivo':
+      return NextResponse.json(
+        { error: 'Prima archivia il bambino', codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO', effetti },
         { status: 409 },
       )
     case 'registro_primaria':
@@ -286,6 +292,46 @@ export const POST = withRoute('admin/students/elimina:POST', async (request: Req
       return NextResponse.json(
         { error: 'Alunno non trovato', codice: 'ALUNNO_ELIMINAZIONE_NON_TROVATO' },
         { status: 404 },
+      )
+    }
+
+    // Un bambino «in arrivo» (la domanda è per l'anno dopo) non ha sezione, ma NON è un non iscritto: lo si tratta da iscritto.
+    // Prima lo si archivia (diventa «ritirato»), poi lo si elimina.
+    if (eInArrivo(alunno.stato as string | null)) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-in-arrivo',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: 'in_arrivo',
+      })
+      return NextResponse.json(
+        { error: 'Prima archivia il bambino', codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO' },
+        { status: 409 },
+      )
+    }
+
+    // 4.5.16 (D): un bambino «ritirato» dalla tendina (non archiviato) con un'iscrizione viva per un anno che viene è un bambino che
+    // arriva: eliminarlo cancellerebbe l'iscrizione appena fatta. Prima si archivia (le iscrizioni si chiudono), poi si elimina.
+    // Una lettura caduta NON è «niente iscrizione»: l'eliminazione non è reversibile, e si rifiuta.
+    const prossima = await haIscrizioneVivaProssima(supabase, alunno_id)
+    if (!prossima.ok) {
+      return NextResponse.json(
+        { error: 'Misura non riuscita', codice: 'ALUNNO_ELIMINAZIONE_NON_MISURATA' },
+        { status: 500 },
+      )
+    }
+    if (prossima.ha) {
+      logEvento('gdpr', 'warn', {
+        operazione: OP,
+        esito: 'eliminazione-rifiutata-iscrizione-prossima',
+        entita_tipo: 'alunni',
+        entita_id: alunno_id,
+        tipo: 'iscrizione_prossima',
+      })
+      return NextResponse.json(
+        { error: 'Prima archivia il bambino', codice: 'ALUNNO_ELIMINAZIONE_IN_ARRIVO' },
+        { status: 409 },
       )
     }
 

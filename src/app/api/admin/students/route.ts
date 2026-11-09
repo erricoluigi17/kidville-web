@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser } from '@/lib/auth/require-staff';
 import { z } from 'zod';
-import { STATO_ISCRITTO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
+import { STATO_ISCRITTO, STATO_IN_ARRIVO, STATI_NON_PIU_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
@@ -130,18 +130,33 @@ const postBodySchema = z.object({
     parents: z.array(z.unknown()).optional(),
 });
 
+/** 422: un bambino «in arrivo» non può avere una classe (non frequenta ancora). Frase e codice nel catalogo `CODICI_ERRORE`. */
+function rispostaInArrivoSenzaClasse(): NextResponse {
+    return NextResponse.json(
+        {
+            error: 'Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia.',
+            codice: 'ALUNNO_IN_ARRIVO_SENZA_CLASSE',
+        },
+        { status: 422 },
+    );
+}
+
 const getQuerySchema = z.object({
     scuola_id: z.string().optional(),
     classe_sezione: z.string().optional(),
     stato: z.string().optional(),
     // Quale ELENCO vuole chi chiama (2026-10-08). Assente = la sede intera, come
     // sempre: pagamenti, sezioni e generatori di categoria non lo passano.
-    //  · `frequentanti` — il complemento ESATTO di `non_iscritti` fra le schede non
-    //    anonimizzate: chi ha una sezione e non è ritirato (uno stato NULL o
+    // TRE elenchi che si DIVIDONO le schede non anonimizzate, ognuna in uno solo (4.5.15):
+    //  · `frequentanti` — chi ha una sezione e non è ritirato (uno stato NULL o
     //    anomalo CON sezione sta qui, lato protetto): la linguetta «Alunni»;
-    //  · `non_iscritti` — ritirati (elenco chiuso) o senza sezione, anonimizzati
-    //    esclusi: la linguetta «Non iscritti».
-    elenco: z.enum(['frequentanti', 'non_iscritti']).optional(),
+    //  · `non_iscritti` — ritirati (elenco chiuso) o senza sezione, MA NON `in_arrivo`,
+    //    anonimizzati esclusi: la linguetta «Non iscritti»;
+    //  · `in_arrivo` — i bambini la cui domanda è per l'anno dopo (nessuna sezione, nessuna
+    //    frequenza dell'anno attivo), anonimizzati esclusi: la linguetta «In arrivo».
+    //    Un `in_arrivo` non ha mai una sezione (lo esige il vincolo `alunni_in_arrivo_senza_sezione`),
+    //    quindi non può stare fra i `frequentanti`; e `non_iscritti` lo esclude per stato.
+    elenco: z.enum(['frequentanti', 'non_iscritti', 'in_arrivo']).optional(),
     // Clamp identico al comportamento precedente: default 200 (limit) / 0 (offset),
     // range 1..1000; input non numerico → default, mai 400.
     limit: z.preprocess((v) => Math.min(Math.max(Number(v ?? 200) || 200, 1), 1000), z.number()),
@@ -518,7 +533,8 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             }
         }
 
-        return NextResponse.json({ ...data, parents: parentsResults }, { status: 201 });
+        // Un avviso, non un errore (4.5.11): la data d'ingresso è futura, la scheda è salvata e la segreteria lo legge in pagina.
+        return NextResponse.json({ ...data, parents: parentsResults, ...(ingresso.avviso ? { avviso: ingresso.avviso } : {}) }, { status: 201 });
     } catch (err) {
         logErrore({ operazione: 'admin/students:POST', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
@@ -622,12 +638,16 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
             if (sedeChiesta) query = query.eq('scuola_id', sedeChiesta);
             if (classeSezione) query = query.eq('classe_sezione', classeSezione);
             if (stato) query = query.eq('stato', stato);
-            // COMPLEMENTO ESATTO di `non_iscritti` fra le schede non anonimizzate
-            // (2026-10-09): uno stato NULL o fuori vocabolario CON sezione sta qui
-            // (lato protetto, come `eAncoraIscritto`), ed è anche dove
+            // I TRE ELENCHI SONO DISGIUNTI (4.5.15) e insieme coprono le schede non
+            // anonimizzate: `frequentanti` ha la sezione, `in_arrivo` ha lo stato
+            // `in_arrivo` (e mai una sezione), `non_iscritti` è tutto il resto che
+            // non ha sezione o è ritirato. Un bambino sta in uno solo.
+            //
+            // `frequentanti` (2026-10-09): uno stato NULL o fuori vocabolario CON sezione sta
+            // qui (lato protetto, come `eAncoraIscritto`), ed è anche dove
             // `elimina_alunno_definitivo` risponde 'frequentante'. Per i tre stati
             // della tendina il risultato è identico a `STATI_CHE_FREQUENTANO`: cambia
-            // solo per i valori anomali, che così non spariscono da entrambe le
+            // solo per i valori anomali, che così non spariscono da tutte le
             // linguette. `stato.is.null` è esplicito: in SQL `NULL NOT IN (…)` dà NULL.
             if (elenco === 'frequentanti') {
                 query = query
@@ -635,8 +655,20 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
                     .or(`stato.is.null,stato.not.in.(${STATI_NON_PIU_ISCRITTO.join(',')})`)
                     .is('anonimizzato_il', null);
             } else if (elenco === 'non_iscritti') {
+                // «Senza sezione» è anche l'impronta di chi ha fatto domanda per l'anno DOPO (`in_arrivo`): non è un ex
+                // alunno, e qui comparirebbe con «Elimina definitivamente». Fuori da questa linguetta, e dal suo conteggio:
+                // sta nella sua (`elenco=in_arrivo`).
+                // `stato.is.null` è esplicito (in SQL `NULL <> 'in_arrivo'` dà NULL): uno stato vuoto resta fra i non iscritti
+                // se non ha la sezione, come prima.
                 query = query
                     .or(`stato.in.(${STATI_NON_PIU_ISCRITTO.join(',')}),section_id.is.null`)
+                    .or(`stato.is.null,stato.neq.${STATO_IN_ARRIVO}`)
+                    .is('anonimizzato_il', null);
+            } else if (elenco === 'in_arrivo') {
+                // Costa come «Non iscritti»: la stessa tabella, la stessa sede, ristretta per stato. Un `in_arrivo` archiviato
+                // (ritirato + `archiviato_il`) non ha più lo stato `in_arrivo`: sta fra i non iscritti, ed è lì che torna.
+                query = query
+                    .eq('stato', STATO_IN_ARRIVO)
                     .is('anonimizzato_il', null);
             }
             return query;
@@ -1015,6 +1047,17 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                  * `prima.archiviato_il` è `undefined` e la guardia non scatta: è la
                  * lettura giusta là dove l'archiviazione non esiste ancora.
                  */
+                // Un bambino «in arrivo» non ha una classe di oggi (vincolo `alunni_in_arrivo_senza_sezione`): scegliergliene una dalla
+                // scheda è un errore dell'operatore, e si dice con una frase invece di un 500 generico (4.5.15, C2). Si rifiuta solo
+                // ASSEGNARE una classe: salvare la scheda senza toccarla (la classe vuota) è ciò che fa ogni correzione di un dato.
+                const classeChiestaInArrivo = typeof updates.classe_sezione === 'string' && updates.classe_sezione.trim() !== '';
+                if (prima.stato === STATO_IN_ARRIVO && classeChiestaInArrivo) {
+                    logEvento('anagrafica', 'warn', {
+                        operazione: 'admin/students:PATCH', azione: 'classe-su-in-arrivo-rifiutata', esito: 'rifiutato', alunno: id,
+                    });
+                    return rispostaInArrivoSenzaClasse();
+                }
+
                 const statoChiesto = updates.stato;
                 if (statoChiesto !== undefined && prima.archiviato_il != null && statoChiesto !== prima.stato) {
                     logEvento('gdpr', 'warn', {
@@ -1495,6 +1538,13 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     });
                     return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
                 }
+                // La stessa regola vista dal database (un'altra via per assegnare la sezione): 23514 sul suo vincolo → 422 con la frase.
+                if (error && (error as { code?: string }).code === '23514' && String(error.message).includes('alunni_in_arrivo_senza_sezione')) {
+                    logEvento('anagrafica', 'warn', {
+                        operazione: 'admin/students:PATCH', azione: 'classe-su-in-arrivo-rifiutata', esito: 'vincolo-db', alunno: id,
+                    });
+                    return rispostaInArrivoSenzaClasse();
+                }
                 if (error) throw new Error(error.message);
 
                 // "Giorno di paga" cambiato → riallinea le scadenze delle rette
@@ -1612,7 +1662,9 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     logErrore({ operazione: 'admin/students:PATCH', evento: 'push' }, e);
                 }
 
-                return NextResponse.json(data);
+                // Data d'ingresso futura (4.5.11): avviso, non errore, e solo se la data è stata cambiata con questo salvataggio (la
+                // scheda rimanda sempre la data intera). La forma della risposta non cambia quando non c'è.
+                return NextResponse.json(ingresso.avviso && dataCambiata ? { ...data, avviso: ingresso.avviso } : data);
             } catch (err) {
                 logErrore({ operazione: 'admin/students:PATCH', stato: 500 }, err);
                 return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore durante il salvataggio alunno' }, { status: 500 });

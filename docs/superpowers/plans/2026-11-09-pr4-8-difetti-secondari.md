@@ -13,6 +13,12 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 
 1. **S13 · Retta della scheda da 250 a 0 dopo la conferma** (`src/app/api/pagamenti/genera-rette/route.ts:59-60`). La scheda è specchio di una frequenza nuova con
    `retta_mensile: null`; l'annullo la rimette a 250. Va controllato con la 4.6 chi riempie la retta nuova prima del primo addebito: dipendenza d'ordine fra le PR.
+   **CHIUSO in chiusura (con la 4.6 in `main`): l'addebito è giusto, lo 0 resta sulla scheda.** Prova nel codice: `rette_da_generare` (`20261109153822_anno_rette_dal_listino.sql`, CTE `b`)
+   prende `f.retta_mensile` se `> 0`, altrimenti la retta del **listino** (prima la fascia della classe della frequenza, poi la riga senza fascia); la frequenza della conferma ha
+   `retta_mensile` nulla (il CHECK rifiuta lo 0) e ha la classe nuova, quindi il primo addebito di settembre esce dal listino, non dalla scheda. Il vecchio percorso che legge
+   `alunni.importo_retta_mensile` (`pagamenti/genera-rette/route.ts:59-60`, `importoRetta`) è solo la «strada storica» per un database senza lo schema dell'anno. Prove della 4.6:
+   `__tests__/db/anno-rette-listino.test.ts` (la retta della frequenza batte la fascia, che batte il listino senza fascia; una frequenza «conferma» dell'anno prossimo con ingresso = inizio: nessuno sconto).
+   Resta la decisione del titolare («la conferma non porta la retta»): chi aveva una retta personalizzata la ritrova a mano sulla frequenza nuova.
 2. **S5 · La quota da pagare resta su chi esce.** Il piano (Scelta 2) non tocca `pagamenti`, ma né il dialogo né il riepilogo dicono alla segreteria quante voci
    restano aperte su chi esce. Serve un numero nei contatori (voci `da_pagare` sulle frequenze vecchie di chi esce o non ha risposto) e una riga nel dialogo.
    NON fatto: il conteggio passa dalle quote delle frequenze (`quota_pagamento_id`) e va verificato sul catalogo, non a occhio.

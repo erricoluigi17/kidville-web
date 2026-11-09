@@ -507,5 +507,6 @@
   "annoConfinePreparaSuccessivoFuori": "L’anno successivo avrebbe la data di preparazione fuori dal suo periodo: cambia prima la sua data.",
   "annoMancaClassiSenzaFascia": "la fascia di ogni classe (nella scheda Classi: premi «Copia le classi dell’anno in corso» e scegli la fascia)",
   "spRettaDefaultNota": "La retta non si decide più qui: sta nel listino dell’anno scolastico, per fascia e con i mesi in cui si genera.",
+  "spRettaDefaultAttuale": "Retta di base dell’anno in corso: {importo}",
   "spRettaDefaultLink": "Vai ad Anno scolastico → Rette"
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useSyncExternalStore } from 'react'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 
 import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 import itAdminSettings from '../../messages/it/adminSettings.json'
@@ -93,5 +93,19 @@ describe('Impostazioni · il rimando verso Anno scolastico', () => {
     // la sezione attiva è quella dell'anno: il suo titolo è un'intestazione, e non c'è più il pannello di morosità
     expect((await screen.findAllByRole('heading', { name: itAdminSettings.annoTitolo })).length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: new RegExp(itAdminSettings.spRettaMorosita) })).toBeNull()
+  })
+
+  it('Indietro verso un indirizzo SENZA sezione riporta alla sezione di partenza', async () => {
+    nav.search = 'userId=u1&sezione=anno'
+    render(
+      <SedeProvider>
+        <AdminImpostazioniPage />
+      </SedeProvider>,
+    )
+    expect((await screen.findAllByRole('heading', { name: itAdminSettings.annoTitolo })).length).toBeGreaterThan(0)
+    // come il tasto Indietro: l'indirizzo perde `sezione`
+    nav.search = 'userId=u1'
+    act(() => { nav.ascolti.forEach((f) => f()) })
+    expect(await screen.findByRole('link', { name: itAdminSettings.spRettaDefaultLink })).toBeInTheDocument()
   })
 })

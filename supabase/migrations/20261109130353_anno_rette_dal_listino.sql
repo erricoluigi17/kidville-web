@@ -14,8 +14,11 @@
 -- `admin_settings.retta_default_importo`; (3) il pro-rata guarda `frequenze.data_ingresso` e scatta solo se è dopo l'inizio
 -- dell'anno; (4) i controlli sull'anno (stato, sede, periodo). Le formule degli sconti, della scadenza e della visibilità
 -- sono identiche.
--- (5) NUOVO rispetto alla produzione: tutte le funzioni di questa migrazione sono `SECURITY DEFINER` con `search_path` fissato,
--- EXECUTE solo a `service_role` (REVOKE a PUBLIC, anon e authenticated): le chiama solo il server, mai il browser.
+-- (5) NUOVO rispetto alla produzione: `listino_mesi`, `listino_periodi`, `rette_da_generare`, `servizi_da_generare` e le funzioni a
+-- QUATTRO argomenti di `genera_rette_mensili` / `genera_rette_anno` sono `SECURITY DEFINER` con `search_path` fissato. I tre involucri
+-- a tre argomenti (`genera_rette_mensili`, `genera_rette_anno`) e `genera_servizi_anno` NON lo sono: restano `SECURITY INVOKER` e
+-- chiamano le funzioni sopra. Per tutte vale: EXECUTE solo a `service_role` (REVOKE a PUBLIC, anon e authenticated), le chiama
+-- solo il server, mai il browser.
 --
 -- CONTIENE (nessun DROP, nessun UPDATE di dati, nessun uuid di sede, nessun interruttore del freno):
 --   · `listino_mesi`, `listino_periodi`: i mesi di un anno, da UNA funzione sola (NULL nel listino = settembre-giugno);

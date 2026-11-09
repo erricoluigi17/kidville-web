@@ -454,6 +454,15 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     expect(apri()).toHaveAttribute('aria-disabled', 'true')
   })
 
+  it('un rimando con l’anno apre QUELL’anno, non quello in corso: la retta scritta va sull’anno giusto', async () => {
+    render(<AnnoScolasticoSettings userId={USER} scuolaId={SEDE_A} annoSedeIdIniziale={S27} />)
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    fireEvent.click(screen.getByRole('button', { name: itAnno.schedaRette }))
+    expect(await screen.findByRole('group', { name: 'Retta mensile · anno 2027/28' })).toBeInTheDocument()
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === `/api/admin/anni/${S27}/rette`)).toBe(true))
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes(`/anni/${S26}/`))).toBe(false)
+  })
+
   it('B1 · un anno in corso ha la scheda Rette con il titolo dell’anno, e NON le quote, i moduli e i posti', async () => {
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GeneratoreRette } from '@/components/features/admin/pagamenti/GeneratoreRette';
+import { logClient } from '@/lib/logging/client';
 import itContabilita from '../../messages/it/adminContabilita.json';
 
 // =============================================================================
@@ -9,6 +10,8 @@ import itContabilita from '../../messages/it/adminContabilita.json';
 // sull'anno che l'anteprima ha contato. Una risposta di PRIMA (senza questi campi) si legge come sempre.
 // Solo uuid finti e importi inventati.
 // =============================================================================
+
+vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'errore-di-rete' }));
 
 const ANNO_SEDE = 'b0000000-0000-4000-8000-000000000001';
 
@@ -70,7 +73,8 @@ describe('GeneratoreRette — l’anteprima dell’anno', () => {
     await anteprimaMensile();
     expect(screen.getByText(/Bambini senza una retta: 4\./)).toBeInTheDocument();
     const link = screen.getByRole('link', { name: itContabilita.genrSenzaRettaLink });
-    expect(link.getAttribute('href')).toBe('/admin/impostazioni?userId=u1&sezione=anno');
+    // porta l'anno dell'anteprima: senza, il Salva della scheda Rette cambierebbe la retta dell'anno in corso
+    expect(link.getAttribute('href')).toBe(`/admin/impostazioni?userId=u1&sezione=anno&anno_sede=${ANNO_SEDE}`);
   });
 
   it('esenti e a carico di un fratello non iscritto, e l’origine degli importi (solo quelle presenti)', async () => {
@@ -115,6 +119,21 @@ describe('GeneratoreRette — l’anteprima dell’anno', () => {
     anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: 'in_chiusura', visibile_alle_famiglie: true });
     await anteprimaMensile();
     expect(screen.getByRole('button', { name: /Genera 1 rette/ })).not.toBeDisabled();
+    expect(screen.queryByText(itContabilita.genrNonVisibile)).toBeNull();
+  });
+
+  it('una risposta che non è JSON (un 502 in HTML) dice che l’anteprima non c’è, senza promessa respinta muta', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('Unexpected token <') } })));
+    render(<GeneratoreRette userId="u1" scuolaId="sede-1" />);
+    fireEvent.click(screen.getByRole('button', { name: itContabilita.genrMeseSingolo }));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.genrAnteprima) }));
+    expect(await screen.findByText(itContabilita.genrErrAnteprima)).toBeInTheDocument();
+    expect(logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'error', stato: 502 }));
+  });
+
+  it('anno chiuso: non si dice «finché questo anno non diventa quello in corso»', async () => {
+    anteprima = mese({ anno_sede_id: ANNO_SEDE, anno_stato: 'chiuso', visibile_alle_famiglie: false });
+    await anteprimaMensile();
     expect(screen.queryByText(itContabilita.genrNonVisibile)).toBeNull();
   });
 

@@ -238,7 +238,7 @@ export function AnnoConfigurazione({
   };
 
   const soloLettura = stato === 'in_chiusura' || stato === 'chiuso';
-  const comuni = { userId, base, versione, inCorso, scrivi, esitoDi, fasciaNome, setEsito, soloLettura };
+  const comuni = { userId, base, versione, inCorso, scrivi, esitoDi, fasciaNome, setEsito, soloLettura, stato, annoEtichetta };
 
   // Anno in corso, in chiusura o chiuso: del listino resta la sola retta (le quote, i moduli e i posti li rifiuta il server).
   if (stato === 'corrente' || stato === 'in_chiusura' || stato === 'chiuso') {
@@ -287,6 +287,8 @@ type Comuni = {
   fasciaNome: (f: string | null) => string;
   /** Anno in chiusura o chiuso: si legge e basta. */
   soloLettura: boolean;
+  stato: string;
+  annoEtichetta?: string;
   setEsito: (e: EsitoUi | null) => void;
 };
 
@@ -450,9 +452,13 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
     if (perTutte && mesi.length === 0) return c.setEsito({ area, tipo: 'errore', errore: { tipo: 'campo', chiave: 'mesi' } });
     const mandaMesi = perTutte && !stessiMesi(mesi, mesiEffettivi);
     const corpo = { voce: 'retta', fascia: perTutte ? null : fascia, importo: n, ...(mandaMesi ? { mesi: [...mesi].sort((a, b) => a - b) } : {}) };
-    await c.scrivi(area, 'PUT', `${c.base}/rette`, corpo, (d) => (d?.cambiato === false ? t('nessunaModifica') : t('retteSalvata')));
+    await c.scrivi(area, 'PUT', `${c.base}/rette`, corpo, (d) => (d?.cambiato === false ? t('nessunaModifica') : c.annoEtichetta ? t('retteSalvataAnno', { anno: c.annoEtichetta }) : t('retteSalvata')));
   };
-  const togli = (r: RigaRetta) => void c.scrivi(area, 'PUT', `${c.base}/rette`, { voce: 'retta', fascia: r.fascia, importo: null }, () => t('retteTolta'));
+  const togli = async (r: RigaRetta) => {
+    const ok = await c.scrivi(area, 'PUT', `${c.base}/rette`, { voce: 'retta', fascia: r.fascia, importo: null }, () => t('retteTolta'));
+    // La riga non c'è più: la casella non deve conservare il suo importo (un altro Salva lo riscriverebbe senza che nessuno l'abbia digitato).
+    if (ok && (r.fascia ?? TUTTE) === fascia) setImporto('');
+  };
   const modifica = (r: RigaRetta) => {
     c.setEsito(null);
     setFascia(r.fascia ?? TUTTE);
@@ -464,16 +470,20 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
   };
   const scegliMese = (m: number, acceso: boolean) => setMesi((prima) => (acceso ? [...prima, m] : prima.filter((x) => x !== m)));
   // Un 150,00 è quasi sempre l'importo copiato dal listino precedente: una nota neutra, mai un blocco.
-  const copiata = rette.some((r) => r.importo === 150);
+  // Solo mentre l'anno si prepara: sull'anno in corso o chiuso «controllalo» non ha caselle da toccare.
+  const copiata = (c.stato === 'in_preparazione' || c.stato === 'iscrizioni_aperte') && rette.some((r) => r.importo === 150);
 
   return (
     <fieldset className="mt-4 first:mt-0">
-      <legend className={sottoTitolo}>{t('retteTitolo')}</legend>
+      <legend className={sottoTitolo}>{c.annoEtichetta && (c.stato === 'in_preparazione' || c.stato === 'iscrizioni_aperte') ? t('retteAnnoTitolo', { anno: c.annoEtichetta }) : t('retteTitolo')}</legend>
       <p className={hint}>{t('retteNota')}</p>
       {fasceInUso.length === 0 && <p className={hint}>{t('retteSenzaFasce')}</p>}
       {copiata && <p className={hint}>{t('retteCopiata')}</p>}
       {rette.length === 0 ? (
-        <p className="mt-2 font-maven text-sm text-kidville-sub">{t('retteNessuna')}</p>
+        <>
+          <p className="mt-2 font-maven text-sm text-kidville-sub">{t('retteNessuna')}</p>
+          {!c.soloLettura && <p className="font-maven text-sm text-kidville-sub">{t('retteNessunaScrivi')}</p>}
+        </>
       ) : (
         <ul className="mt-2">
           {rette.map((r) => (
@@ -483,7 +493,7 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
               <button type="button" className={btnSecondario} disabled={occupato} onClick={() => modifica(r)}>
                 {t('modifica')}
               </button>
-              <button type="button" className={btnSecondario} disabled={occupato} onClick={() => togli(r)}>
+              <button type="button" className={btnSecondario} disabled={occupato} onClick={() => void togli(r)}>
                 {t('togli')}
               </button>
             </li>

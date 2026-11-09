@@ -7,6 +7,7 @@ import { useAnnoDi } from '@/lib/context/calendario-context';
 import { etichettaAnno } from '@/lib/anno-scolastico';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
@@ -111,8 +112,12 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
         try {
             const qs = mode === 'anno' ? `anno=${anno}` : `periodo=${periodo}`;
             const res = await fetch(`/api/pagamenti/genera-rette?userId=${userId}&${qs}&scuola_id=${scuolaId}`, { headers: hdr(userId) });
-            const j = await res.json();
-            if (j.success) {
+            // Una risposta che non è JSON (un 502 in HTML) non deve diventare una promessa respinta muta: si dice e si registra.
+            const j = await res.json().catch((err: unknown) => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `rette-anteprima-non-json: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: res.status });
+                return null;
+            });
+            if (j?.success) {
                 if (mode === 'anno') { setPreviewAnno({ ...j.data, annoAnteprima: anno }); setPreviewMese(null); }
                 else { setPreviewMese(j.data); setPreviewAnno(null); }
             } else {
@@ -208,13 +213,13 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
         return (
             <div className="mb-3 space-y-1.5 font-maven text-xs text-kidville-muted">
                 {stato && <p>{t('genrAnnoStato', { stato })}</p>}
-                {a.visibile_alle_famiglie === false && (
+                {a.visibile_alle_famiglie === false && a.anno_stato !== 'chiuso' && (
                     <p role="status" className="rounded-card bg-kidville-warn-soft px-3 py-2 text-kidville-warn-strong">{t('genrNonVisibile')}</p>
                 )}
                 {(a.senza_importo ?? 0) > 0 && (
                     <p role="status" className="rounded-card bg-kidville-warn-soft px-3 py-2 text-kidville-warn-strong">
                         {t('genrSenzaRetta', { n: a.senza_importo ?? 0 })}{' '}
-                        <Link href={`/admin/impostazioni?userId=${userId}&sezione=anno`} className="font-bold underline">{t('genrSenzaRettaLink')}</Link>
+                        <Link href={`/admin/impostazioni?userId=${userId}&sezione=anno${a.anno_sede_id ? `&anno_sede=${a.anno_sede_id}` : ''}`} className="font-bold underline">{t('genrSenzaRettaLink')}</Link>
                     </p>
                 )}
                 {altri > 0 && <p>{t('genrAltriSenzaVoce', { esenti: a.esenti ?? 0, assenti: a.pagante_assente ?? 0 })}</p>}
@@ -276,9 +281,8 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 {avvisoServiziNonGenerati ? t('genrServiziNonGenerati') : ''}
             </div>
 
-            {erroreAnteprima !== null && (
-                <p role="alert" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">{erroreAnteprima}</p>
-            )}
+            {/* L'area live sta SEMPRE nel DOM (un'area nata insieme al testo non viene annunciata). */}
+            <p role="alert" className={erroreAnteprima !== null ? 'mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong' : undefined}>{erroreAnteprima ?? ''}</p>
 
             {mode === 'anno' && annoAnteprimaScaduta !== null && (
                 <p role="status" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">

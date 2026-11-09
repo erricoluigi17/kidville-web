@@ -59,6 +59,18 @@ qui la conferma comincia a produrre voci di pagamento. **Non cambiato**: va deci
 - **21 · Il compito 4.6.10 non è fatto** (PRD e `MIGRAZIONI_ATTESE_AL_MERGE`): si fa dopo l'allineamento con `main`, coi nomi delle
   migrazioni rifatti con `date -u`.
 
+## Dalla ri-revisione (annotati, non corretti)
+
+- **6 · La scrittura del listino sceglie la riga con un'altra regola.** `anno_listino_retta_imposta` (M46b) ordina per `l.id`, mentre
+  `rette_da_generare` (M46a) ordina per `payment_category_id NULLS LAST, l.id`. Con due righe senza fascia il PUT può aggiornare una
+  riga che il generatore non legge. Teorico: in produzione 0 doppioni, e la route non ne crea più (rifiuta `categoria_id` su `retta`).
+  Da fare: stessa regola nei due punti.
+- **8 · In modalità annuale la frase parla di «quel mese».** `genera-rette/route.ts`, risposta `MESE_FUORI_DAGLI_ANNI` per un anno
+  senza `anni_sede` (es. 2028). In produzione gli anni proposti dal selettore esistono. Da fare: una frase distinta per l'anno.
+- **Fuori ambito, da decidere:** il POST annuale non notifica le famiglie (a differenza del mensile); lo specchio `retta_default_importo`
+  resta al vecchio valore dopo «Togli» (pesa solo sulla strada storica); commenti col 150 in `admin/iscrizioni/route.ts` e
+  `ModuliRicevuti.tsx` fuori dall'elenco corretto.
+
 ## Correzione di una nota sbagliata (rilievo 20)
 
 La versione precedente di questo file diceva che il servizio «oggi si imposta solo dalla scheda Quote». **Falso**: la scheda Quote

@@ -213,7 +213,7 @@ describe('scheda Rette negli anni in corso, in chiusura e chiusi', () => {
     monta('corrente')
     const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
     expect(within(g).getByText(itAnno.retteNessuna)).toBeInTheDocument()
-    expect(itAnno.retteNessuna).toMatch(/Salva/)
+    expect(within(g).getByText(itAnno.retteNessunaScrivi)).toBeInTheDocument()
   })
 
   it('cambiare solo i mesi non obbliga a riscrivere l\'importo: la casella parte da quello salvato', async () => {
@@ -225,6 +225,38 @@ describe('scheda Rette negli anni in corso, in chiusura e chiusi', () => {
     await waitFor(() => expect(puts()).toHaveLength(1))
     expect(corpoPut()).toMatchObject({ voce: 'retta', fascia: null, importo: 275 })
     expect((corpoPut().mesi as number[]).includes(7)).toBe(true)
+  })
+
+  it('listino vuoto su un anno in sola lettura: nessun invito a «premere Salva» (Salva è spento)', async () => {
+    monta('chiuso')
+    const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(within(g).getByText(itAnno.retteNessuna)).toBeInTheDocument()
+    expect(within(g).queryByText(new RegExp('premi Salva'))).toBeNull()
+  })
+
+  it('«controllalo» (importo copiato) solo mentre l’anno si prepara, non sull’anno in corso né sugli altri', async () => {
+    lettura = { rette: [{ voce: 'retta', fascia: null, payment_category_id: null, importo: 150, mesi: null }] }
+    monta('corrente')
+    const g = await screen.findByRole('group', { name: itAnno.retteTitolo })
+    expect(within(g).queryByText(itAnno.retteCopiata)).toBeNull()
+  })
+
+  it('l’anno sta nel titolo e in «Retta salvata» anche per gli anni che si preparano', async () => {
+    render(<AnnoConfigurazione userId={USER} annoSedeId={ANNO} stato="in_preparazione" annoEtichetta="2027/28" onCambiata={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: itAnno.schedaRette }))
+    const g = await screen.findByRole('group', { name: 'Retta mensile · anno 2027/28' })
+    fireEvent.change(campoImporto(g), { target: { value: '200' } })
+    fireEvent.click(within(g).getByRole('button', { name: itAnno.salva }))
+    expect(await screen.findByText('Retta salvata per l’anno 2027/28 ✓')).toBeInTheDocument()
+  })
+
+  it('«Togli» svuota la casella: un altro Salva non riscrive l’importo di prima', async () => {
+    lettura = { rette: [{ voce: 'retta', fascia: null, payment_category_id: null, importo: 190, mesi: null }] }
+    const g = await apriRette()
+    expect(campoImporto(g).value).toBe('190')
+    fireEvent.click(within(g).getByRole('button', { name: itAnno.togli }))
+    await waitFor(() => expect(puts()).toHaveLength(1))
+    await waitFor(() => expect(campoImporto(g).value).toBe(''))
   })
 
   it('togliere una retta dice che cosa succede dopo', () => {

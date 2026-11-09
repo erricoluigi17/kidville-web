@@ -106,7 +106,7 @@ function mancanoDa(valore: unknown): string[] | null {
     : null;
 }
 
-export function AnnoScolasticoSettings({ userId, scuolaId }: { userId: string; scuolaId: string }) {
+export function AnnoScolasticoSettings({ userId, scuolaId, annoSedeIdIniziale = null }: { userId: string; scuolaId: string; annoSedeIdIniziale?: string | null }) {
   const t = useTranslations('adminSettings');
   const testoStato = useTestoStatoAnno();
   const calendario = useCalendarioDi(scuolaId);
@@ -140,8 +140,11 @@ export function AnnoScolasticoSettings({ userId, scuolaId }: { userId: string; s
   }
 
   const righe = [...calendario].sort((a, b) => b.annoInizio - a.annoInizio);
+  // Chi arriva da un rimando (es. «Imposta le rette dell'anno» dall'anteprima di un anno futuro) apre QUELL'anno: senza, un Salva
+  // cambierebbe la retta di un altro. Una scelta fatta dall'elenco batte il rimando.
+  const delRimando = annoSedeIdIniziale ? righe.find((r) => r.annoSedeId === annoSedeIdIniziale) : undefined;
   const riga =
-    righe.find((r) => r.annoId === (scelto ?? annoDelSelettore)) ?? annoAttivoDelCalendario(calendario) ?? righe[0];
+    righe.find((r) => r.annoId === scelto) ?? delRimando ?? righe.find((r) => r.annoId === annoDelSelettore) ?? annoAttivoDelCalendario(calendario) ?? righe[0];
   const successivo = calendario.find((r) => r.annoInizio === riga.annoInizio + 1) ?? null;
 
   return (

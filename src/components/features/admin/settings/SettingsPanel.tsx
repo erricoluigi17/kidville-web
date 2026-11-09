@@ -15,6 +15,9 @@ import {
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { CategorieManager } from './CategorieManager';
+import { annoAttivoDelCalendario } from '@/lib/anno-scolastico';
+import { useCalendarioDi } from '@/lib/context/calendario-context';
+import { formatEuro } from '@/lib/format/valuta';
 import { hdr, card, h3, input, label, btnPrimary } from './ui';
 
 interface Props { userId: string; scuolaId: string }
@@ -375,9 +378,28 @@ function FiscaleSettings({ userId, scuolaId }: Props) {
     );
 }
 
-function RettaMorositaSettings({ userId }: Props) {
+function RettaMorositaSettings({ userId, scuolaId }: Props) {
     const t = useTranslations('adminSettings');
     const [s, setS] = useState<Settings | null>(null);
+    // La retta di base dell'anno in corso la dice il LISTINO (la stessa route della scheda Rette), non lo specchio storico di
+    // `admin_settings`: se la lettura non c'è o non ha una riga «per tutte le fasce», accanto al rimando non si scrive niente.
+    const annoInCorso = annoAttivoDelCalendario(useCalendarioDi(scuolaId) ?? [])?.annoSedeId ?? null;
+    const [rettaListino, setRettaListino] = useState<number | null>(null);
+    useEffect(() => {
+        if (!annoInCorso) return;
+        let vivo = true;
+        fetch(`/api/admin/anni/${annoInCorso}/rette`, { headers: hdr(userId) })
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+                const righe = (d?.data?.rette ?? []) as Array<{ voce: string; fascia: string | null; importo: number | null }>;
+                const base = righe.find(x => x.voce === 'retta' && x.fascia === null)?.importo;
+                if (vivo) setRettaListino(typeof base === 'number' ? base : null);
+            })
+            .catch(err => {
+                logClient({ livello: 'warn', evento: 'fetch', messaggio: `settings-retta-listino-non-letta: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
+            });
+        return () => { vivo = false; };
+    }, [annoInCorso, userId]);
     const [saving, setSaving] = useState(false);
     const [errore, setErrore] = useState('');
     useEffect(() => {
@@ -409,6 +431,7 @@ function RettaMorositaSettings({ userId }: Props) {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div><span className={label}>{t('spRettaDefault')}</span>
                     <p className="font-maven text-[11px] text-kidville-sub mt-0.5">{t('spRettaDefaultNota')}</p>
+                    {rettaListino !== null && <p className="font-maven text-xs font-bold text-kidville-green mt-0.5">{t('spRettaDefaultAttuale', { importo: formatEuro(rettaListino) })}</p>}
                     <Link href={`?userId=${userId}&sezione=anno`} className="font-maven text-xs font-bold text-kidville-green underline">{t('spRettaDefaultLink')}</Link></div>
                 <div><label className={label}>{t('spGiornoScadenza')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />

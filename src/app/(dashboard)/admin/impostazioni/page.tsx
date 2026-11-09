@@ -116,7 +116,9 @@ function Inner() {
     const [urlVisto, setUrlVisto] = useState(fromUrl);
     if (fromUrl !== urlVisto) {
         setUrlVisto(fromUrl);
-        if (fromUrl && SEZIONI_VALIDE.has(fromUrl) && fromUrl !== sezione) setSezione(fromUrl as Sezione);
+        // Un indirizzo SENZA `sezione` (Indietro verso l'ingresso dal menu) è la sezione di partenza, non «nessun cambio».
+        const voluta = fromUrl && SEZIONI_VALIDE.has(fromUrl) ? (fromUrl as Sezione) : 'pagamenti';
+        if (voluta !== sezione) setSezione(voluta);
     }
 
     const vai = (id: Sezione) => {
@@ -231,7 +233,7 @@ function Inner() {
                         </h2>
                         {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'sede' && conSede(t('sedeRequiredSede'), (sid) => <AnagraficaSedeSettings userId={userId} scuolaId={sid} />)}
-                        {userId && sezione === 'anno' && conSede(t('sedeRequiredAnno'), (sid) => <AnnoScolasticoSettings userId={userId} scuolaId={sid} />)}
+                        {userId && sezione === 'anno' && conSede(t('sedeRequiredAnno'), (sid) => <AnnoScolasticoSettings userId={userId} scuolaId={sid} annoSedeIdIniziale={params.get('anno_sede')} />)}
                         {/* ⚠️ SENZA `conSede`, ED È L'UNICA. La password non è un
                             affare di plesso: la chiave è `auth.users.id`, e la route
                             che la scrive (`POST /api/account/password`) è una sola per

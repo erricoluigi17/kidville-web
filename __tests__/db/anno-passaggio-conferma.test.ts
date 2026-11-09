@@ -186,8 +186,8 @@ describe('passaggio_conferma', () => {
       for (const nome of ['nuova', 'ritornato', 'inArrivoConConferma'] as const) {
         expect((await alunno(BAMBINI[nome])).stato, nome).toBe('iscritto')
       }
-      // il “ritirato” dalla tendina, tenuto, resta com'era
-      expect((await alunno(BAMBINI.ritiratoTendina)).stato).toBe('ritirato')
+      // il “ritirato” dalla tendina, tenuto dalla segreteria: «continua» è una decisione esplicita, la scheda torna iscritta (giro 1, R2)
+      expect((await alunno(BAMBINI.ritiratoTendina)).stato).toBe('iscritto')
       expect((await frequenza(BAMBINI.ritiratoTendina, b.a)).stato).toBe('in_attesa')
       // chi non era nel passaggio non si tocca
       expect((await frequenza(BAMBINI.ritiratoArchiviato, b.da)).stato).toBe('ritirato')

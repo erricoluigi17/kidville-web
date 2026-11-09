@@ -177,7 +177,7 @@ $$;
 -- Codici: PASSAGGIO_OGGI_NON_AMMESSO (per primo), PASSAGGIO_NON_TROVATO, PASSAGGIO_NON_MODIFICABILE (annullato),
 --   PASSAGGIO_TROPPO_PRESTO (`oggi <= ultimo_giorno_aperto` del vecchio), PASSAGGIO_NON_PRONTO, ANTEPRIMA_VECCHIA (le righe non
 --   coincidono più col ricalcolo, ignorando le eccezioni: DETAIL {righe_diverse}), RIGHE_DA_DECIDERE (DETAIL {senza_sezione,
---   ritirato_tendina}: righe che continuano o cambiano grado senza classe nuova, e “ritirato” dalla tendina da decidere).
+--   ritirato_tendina}: righe che continuano, cambiano grado o sono nuove senza classe nuova, e “ritirato” dalla tendina da decidere).
 -- Rifatta su un passaggio già confermato ritorna `gia_confermato: true` SENZA scrivere niente.
 --
 -- ORDINE OBBLIGATORIO (una transazione; `FOR UPDATE` sui due anni e sul passaggio, sempre in questo ordine):
@@ -264,7 +264,7 @@ BEGIN
     RAISE EXCEPTION 'ANTEPRIMA_VECCHIA' USING DETAIL = json_build_object('righe_diverse', v_diverse)::text;
   END IF;
 
-  SELECT count(*) FILTER (WHERE esito IN ('continua', 'cambia_grado') AND sezione_a_id IS NULL),
+  SELECT count(*) FILTER (WHERE esito IN ('continua', 'cambia_grado', 'nuova') AND sezione_a_id IS NULL),
          count(*) FILTER (WHERE avviso = 'ritirato_tendina'),
          count(*) FILTER (WHERE esito = 'continua'),
          count(*) FILTER (WHERE esito = 'nuova'),
@@ -275,6 +275,11 @@ BEGIN
     RAISE EXCEPTION 'RIGHE_DA_DECIDERE'
       USING DETAIL = json_build_object('senza_sezione', v_senza, 'ritirato_tendina', v_tendina)::text;
   END IF;
+
+  -- 1bis · (giro 1, B6) la scheda dell'alunno com'è ADESSO, perché l'annullo la rimetta: lo specchio di sotto la riscrive.
+  UPDATE public.passaggi_anno_righe r SET scheda_da_prima = al.stato, scheda_archiviata_da_prima = al.archiviato_il
+    FROM public.alunni al
+   WHERE r.passaggio_id = v_p.id AND al.id = r.alunno_id;
 
   -- 2 · le uscite, con il vecchio ancora attivo
   UPDATE public.passaggi_anno_righe r SET stato_da_prima = f.stato
@@ -322,6 +327,13 @@ BEGIN
   UPDATE public.anni_sede SET domande_aperte = false WHERE id = v_da.id;
   UPDATE public.anni_sede SET stato = 'corrente' WHERE id = v_a.id;
   INSERT INTO public.anni_sede_stati (anno_sede_id, stato, da) VALUES (v_a.id, 'corrente', p_da);
+
+  -- 6bis · (giro 1, B6/R2) «continua» scelto dalla segreteria su un bambino con la tendina «ritirato» è una decisione esplicita:
+  -- la scheda torna `iscritto` (e non archiviata). L'annullo la rimette com'era (`scheda_da_prima`).
+  UPDATE public.alunni al SET stato = 'iscritto', archiviato_il = NULL
+    FROM public.passaggi_anno_righe r
+   WHERE r.passaggio_id = v_p.id AND r.tendina_decisa AND r.esito IN ('continua', 'cambia_grado')
+     AND al.id = r.alunno_id AND al.stato = 'ritirato' AND al.anonimizzato_il IS NULL;
 
   -- 7 · lo specchio, ora che l'anno attivo è il nuovo
   FOR v_giro IN
@@ -373,6 +385,7 @@ DECLARE
   v_tornati integer := 0;
   v_ritirati integer := 0;
   v_tolti   integer := 0;
+  v_tardive integer := 0;
 BEGIN
   SELECT * INTO v_p FROM public.passaggi_anno WHERE id = p_passaggio;
   IF NOT FOUND THEN
@@ -411,9 +424,21 @@ BEGIN
       v_uso := v_uso || jsonb_build_object(v_tab.tabella, v_n);
     END IF;
   END LOOP;
+  -- (giro 1, S8) Un'iscrizione registrata DOPO la conferma (non è una conferma tardiva del passaggio) è un uso del nuovo anno: annullare
+  -- la lascerebbe viva in una classe di un anno tornato `iscrizioni_aperte`. Si rifiuta e si dice quante sono.
+  SELECT count(*) INTO v_n FROM public.frequenze f
+   WHERE f.anno_sede_id = v_a.id AND f.stato IN ('in_attesa', 'iscritto')
+     AND f.creata_il > v_p.confermato_il AND f.origine IS DISTINCT FROM 'passaggio';
+  IF v_n > 0 THEN
+    v_uso := v_uso || jsonb_build_object('frequenze_dopo_la_conferma', v_n);
+  END IF;
   IF v_uso <> '{}'::jsonb THEN
     RAISE EXCEPTION 'PASSAGGIO_NON_ANNULLABILE' USING DETAIL = v_uso::text;
   END IF;
+  -- (giro 1, S4) Le conferme tardive del passaggio restano: la frequenza e la voce di quota sono della famiglia. Si dice quante sono.
+  SELECT count(*) INTO v_tardive FROM public.frequenze f
+   WHERE f.anno_sede_id = v_a.id AND f.stato IN ('in_attesa', 'iscritto')
+     AND f.creata_il > v_p.confermato_il AND f.origine = 'passaggio';
 
   -- Gli anni: il nuovo lascia il posto di `corrente` PRIMA che il vecchio lo riprenda.
   UPDATE public.anni_sede SET stato = 'iscrizioni_aperte' WHERE id = v_a.id;
@@ -446,6 +471,11 @@ BEGIN
    USING public.passaggi_anno_docenti d
    WHERE d.passaggio_id = v_p.id AND d.inserita AND us.utente_id = d.utente_id AND us.section_id = d.sezione_a_id;
   GET DIAGNOSTICS v_tolti = ROW_COUNT;
+  -- (giro 1, S12) Con l'assegnazione alla classe se ne vanno anche le sue materie, copiate dalla conferma: altrimenti un «togli» seguito
+  -- da una riconferma lascerebbe le discipline a chi non ha più la classe.
+  DELETE FROM public.utenti_sezioni_materie um
+   USING public.passaggi_anno_docenti d
+   WHERE d.passaggio_id = v_p.id AND d.inserita AND um.utente_id = d.utente_id AND um.section_id = d.sezione_a_id;
   UPDATE public.passaggi_anno_docenti SET inserita = false WHERE passaggio_id = v_p.id AND inserita;
 
   -- I bambini “nuovi” non hanno una frequenza viva nell'anno vecchio, e lo specchio non ha niente da copiare: tornano “in arrivo”, senza
@@ -453,11 +483,20 @@ BEGIN
   -- intestatario) resta com'è: lo riscrive il prossimo specchio.
   UPDATE public.alunni a SET stato = 'in_arrivo', section_id = NULL, classe_sezione = NULL, archiviato_il = NULL
    WHERE a.id IN (SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.esito = 'nuova')
+     AND a.anonimizzato_il IS NULL
      AND NOT EXISTS (SELECT 1 FROM public.frequenze f
                       WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(v_p.scuola_id) AND f.stato IN ('in_attesa', 'iscritto'));
   FOR v_giro IN SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id LOOP
     PERFORM public.alunni_riallinea_da_frequenze(v_giro.alunno_id);
   END LOOP;
+
+  -- (giro 1, B6) La scheda com'era PRIMA della conferma, dove lo specchio l'ha riscritta: chi era «ritirato» o «sospeso» dalla tendina
+  -- lo torna, con la sua archiviazione di prima. Solo se oggi la scheda è `iscritto` (se un collega l'ha cambiata dopo, non si tocca)
+  -- e non è anonimizzata.
+  UPDATE public.alunni al SET stato = r.scheda_da_prima, archiviato_il = r.scheda_archiviata_da_prima
+    FROM public.passaggi_anno_righe r
+   WHERE r.passaggio_id = v_p.id AND r.scheda_da_prima IN ('ritirato', 'sospeso')
+     AND al.id = r.alunno_id AND al.stato = 'iscritto' AND al.anonimizzato_il IS NULL;
 
   UPDATE public.passaggi_anno SET stato = 'annullato', annullato_da = p_da, annullato_il = now() WHERE id = v_p.id;
 
@@ -465,7 +504,8 @@ BEGIN
     jsonb_build_object('n_ripristinati', v_tornati + v_ritirati, 'n_docenti_tolti', v_tolti));
 
   RETURN jsonb_build_object('passaggio_id', v_p.id, 'conteggi', jsonb_build_object(
-    'ripristinati', v_tornati + v_ritirati, 'docenti_tolti', v_tolti, 'vecchio_riaperto', CASE WHEN v_riaperto THEN 1 ELSE 0 END));
+    'ripristinati', v_tornati + v_ritirati, 'docenti_tolti', v_tolti, 'vecchio_riaperto', CASE WHEN v_riaperto THEN 1 ELSE 0 END,
+    'tardive_restano', v_tardive));
 END
 $$;
 

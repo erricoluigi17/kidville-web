@@ -134,4 +134,102 @@ describe('B3 · la finestra fra la conferma e l’inizio dell’anno: le famigli
   })
 })
 
-void errore
+
+const scheda = async (id: string) =>
+  (await rows<{ stato: string; archiviato: boolean }>(`SELECT stato, (archiviato_il IS NOT NULL) AS archiviato FROM public.alunni WHERE id = $1`, [id]))[0]
+const conDetail = async (sql: string, params: unknown[]) => {
+  await b.db.exec('SAVEPOINT s_g1')
+  try {
+    await b.db.query(sql, params)
+  } catch (e) {
+    await b.db.exec('ROLLBACK TO SAVEPOINT s_g1')
+    const x = e as { message?: string; detail?: string }
+    let detail: unknown = x.detail ?? null
+    try { detail = JSON.parse(x.detail ?? 'null') } catch { /* testo */ }
+    return { message: x.message ?? '', detail }
+  }
+  await b.db.exec('RELEASE SAVEPOINT s_g1')
+  return { message: 'nessun-errore', detail: null as unknown }
+}
+
+describe('B2 · un bambino nuovo senza classe ferma la conferma', () => {
+  it('avviso senza_sezione sulla riga e RIGHE_DA_DECIDERE; scelta la classe, si conferma', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      await b.db.query(`UPDATE public.frequenze SET section_id = NULL WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.nuova, b.a])
+      const p = await prepara('2027-08-20')
+      const riga = (await rows<{ avviso: string | null; esito: string }>(
+        `SELECT avviso, esito FROM public.passaggi_anno_righe WHERE passaggio_id = $1 AND alunno_id = $2`, [p, BAMBINI.nuova]))[0]
+      expect(riga).toEqual({ avviso: 'senza_sezione', esito: 'nuova' })
+      const e = await conDetail(`SELECT public.passaggio_conferma($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, '2027-08-20'])
+      expect(e.message).toBe('RIGHE_DA_DECIDERE')
+      expect((e.detail as { senza_sezione: number }).senza_sezione).toBeGreaterThanOrEqual(1)
+      await correggi(p, BAMBINI.nuova, 'nuova', b.sezioni.girasoliNuova)
+      expect((await conferma(p, '2027-08-20')).gia_confermato).toBe(false)
+      expect(await una<string>(b.db, `SELECT section_id FROM public.alunni WHERE id = $1`, [BAMBINI.nuova])).toBe(b.sezioni.girasoliNuova)
+    })
+  })
+})
+
+describe('B6 · la scheda «ritirato» e «sospeso» torna com’era', () => {
+  it('un ritirato tenuto con «continua» torna iscritto, e dopo l’annullo è di nuovo ritirato (non archiviato)', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      const p = await prepara('2027-08-20')
+      await conferma(p, '2027-08-20')
+      expect((await scheda(BAMBINI.ritiratoTendina)).stato).toBe('iscritto')
+      await annulla(p, '2027-08-20')
+      expect(await scheda(BAMBINI.ritiratoTendina)).toEqual({ stato: 'ritirato', archiviato: false })
+    })
+  })
+
+  it('un sospeso che esce torna sospeso dopo l’annullo', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      await b.db.query(`UPDATE public.alunni SET stato = 'sospeso' WHERE id = $1`, [BAMBINI.nonRisposto])
+      const p = await prepara('2027-08-20')
+      await conferma(p, '2027-08-20')
+      await annulla(p, '2027-08-20')
+      expect((await scheda(BAMBINI.nonRisposto)).stato).toBe('sospeso')
+    })
+  })
+
+  it('la tendina messa DOPO una decisione a mano fa tornare la riga da decidere', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      const p = await prepara('2027-08-20')
+      await correggi(p, BAMBINI.continuaB, 'continua', b.sezioni.farfalleNuova)
+      await b.db.query(`UPDATE public.alunni SET stato = 'ritirato' WHERE id = $1`, [BAMBINI.continuaB])
+      await anteprima('2027-08-20')
+      const riga = (await rows<{ avviso: string | null; eccezione: boolean }>(
+        `SELECT avviso, eccezione FROM public.passaggi_anno_righe WHERE passaggio_id = $1 AND alunno_id = $2`, [p, BAMBINI.continuaB]))[0]
+      expect(riga).toEqual({ avviso: 'ritirato_tendina', eccezione: false })
+      expect((await conDetail(`SELECT public.passaggio_conferma($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, '2027-08-20'])).message).toBe('RIGHE_DA_DECIDERE')
+    })
+  })
+})
+
+describe('S8 · S9 · l’annullo guarda che cosa è successo dopo la conferma', () => {
+  it('un’iscrizione nata dopo la conferma blocca l’annullo e viene nominata', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      const p = await prepara('2027-08-20')
+      await conferma(p, '2027-08-20')
+      await b.db.query(`UPDATE public.frequenze SET creata_il = now() + interval '1 hour' WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.nuova, b.a])
+      const e = await conDetail(`SELECT public.passaggio_annulla($1::uuid, $2::uuid, $3::date)`, [p, UTENTE, '2027-08-20'])
+      expect(e.message).toBe('PASSAGGIO_NON_ANNULLABILE')
+      expect(e.detail).toEqual({ frequenze_dopo_la_conferma: 1 })
+    })
+  })
+
+  it('una scheda anonimizzata dopo la conferma non torna «in arrivo»', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-08-20')
+      const p = await prepara('2027-08-20')
+      await conferma(p, '2027-08-20')
+      await b.db.query(`UPDATE public.alunni SET anonimizzato_il = now() WHERE id = $1`, [BAMBINI.nuova])
+      await annulla(p, '2027-08-20')
+      expect((await scheda(BAMBINI.nuova)).stato).not.toBe('in_arrivo')
+    })
+  })
+})

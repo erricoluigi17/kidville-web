@@ -18,7 +18,14 @@ ALTER TABLE public.passaggi_anno_righe
   ADD COLUMN IF NOT EXISTS avviso text
     CONSTRAINT passaggi_anno_righe_avviso_check CHECK (avviso IS NULL OR avviso IN ('ritirato_tendina', 'senza_sezione')),
   ADD COLUMN IF NOT EXISTS stato_da_prima text
-    CONSTRAINT passaggi_anno_righe_stato_da_prima_check CHECK (stato_da_prima IS NULL OR stato_da_prima IN ('in_attesa', 'iscritto'));
+    CONSTRAINT passaggi_anno_righe_stato_da_prima_check CHECK (stato_da_prima IS NULL OR stato_da_prima IN ('in_attesa', 'iscritto')),
+  -- Giro 1 · B6: la scheda dell'alunno com'era PRIMA della conferma (stato e archiviazione), perché l'annullo la rimetta. Le scrive la
+  -- conferma, mai l'anteprima.
+  ADD COLUMN IF NOT EXISTS scheda_da_prima text,
+  ADD COLUMN IF NOT EXISTS scheda_archiviata_da_prima timestamptz,
+  -- Giro 1 · B6: la segreteria ha deciso «continua» su un bambino con la tendina «ritirato». Se la tendina compare DOPO una decisione
+  -- a mano, il ricalcolo non la dà per decisa.
+  ADD COLUMN IF NOT EXISTS tendina_decisa boolean NOT NULL DEFAULT false;
 
 -- ── passaggio_grado_cambia ───────────────────────────────────────────────────────────────────────
 -- Una classe nuova è «di un altro grado» se il tipo di scuola è diverso o se, avendo tutte e due una fascia, le fasce differiscono.
@@ -50,7 +57,7 @@ $$;
 --   · `non_risposto` viva nel vecchio, nessuna viva nel nuovo, nessun «no».
 -- Chi non ha nessuna frequenza viva (un archiviato senza iscrizione nuova) non compare.
 -- `avviso`: `ritirato_tendina` se la scheda è `ritirato` MA c'è una frequenza nuova viva (la segreteria deve decidere: il bambino non
--- continua in silenzio); `senza_sezione` se continua o cambia grado e la classe nuova manca.
+-- continua in silenzio); `senza_sezione` se continua, cambia grado o è nuovo e la classe nuova manca.
 -- Non scrive niente.
 CREATE OR REPLACE FUNCTION public.passaggio_calcola(p_da uuid, p_a uuid)
 RETURNS TABLE (
@@ -96,7 +103,7 @@ AS $$
   SELECT e.alunno_id, e.fd_id, e.fa_id, e.sd_id, e.sa_id, e.esito,
          CASE
            WHEN e.stato_alunno = 'ritirato' AND e.fa_id IS NOT NULL THEN 'ritirato_tendina'
-           WHEN e.esito IN ('continua', 'cambia_grado') AND e.sa_id IS NULL THEN 'senza_sezione'
+           WHEN e.esito IN ('continua', 'cambia_grado', 'nuova') AND e.sa_id IS NULL THEN 'senza_sezione'
          END,
          e.stato_d
     FROM e
@@ -179,7 +186,8 @@ BEGIN
 
   -- Le righe: il calcolo, con sopra le eccezioni della segreteria che reggono ancora.
   INSERT INTO public.passaggi_anno_righe
-    (passaggio_id, alunno_id, frequenza_da_id, frequenza_a_id, sezione_da_id, sezione_a_id, esito, avviso, stato_da_prima, eccezione, modificata_da)
+    (passaggio_id, alunno_id, frequenza_da_id, frequenza_a_id, sezione_da_id, sezione_a_id, esito, avviso, stato_da_prima, eccezione, modificata_da,
+     tendina_decisa)
   SELECT v_p.id, c.alunno_id, c.frequenza_da_id, c.frequenza_a_id, c.sezione_da_id,
          CASE WHEN k.esce THEN NULL WHEN k.sezione THEN o.sezione_a_id ELSE c.sezione_a_id END,
          CASE WHEN k.esce THEN 'esce'
@@ -191,7 +199,8 @@ BEGIN
               ELSE c.avviso END,
          c.stato_da_prima,
          (k.esce OR k.sezione),
-         CASE WHEN k.esce OR k.sezione THEN o.modificata_da END
+         CASE WHEN k.esce OR k.sezione THEN o.modificata_da END,
+         coalesce(k.sezione AND o.tendina_decisa, false)
     FROM public.passaggio_calcola(v_da.id, v_a.id) c
     LEFT JOIN public.passaggi_anno_righe o
            ON o.passaggio_id = v_p.id AND o.alunno_id = c.alunno_id AND o.eccezione
@@ -200,6 +209,7 @@ BEGIN
              (o.id IS NOT NULL AND o.esito IN ('continua', 'cambia_grado', 'nuova')
               AND c.esito IN ('continua', 'cambia_grado', 'nuova')
               AND o.sezione_a_id IS NOT NULL
+              AND (c.avviso IS DISTINCT FROM 'ritirato_tendina' OR o.tendina_decisa)
               AND EXISTS (SELECT 1 FROM public.sections s
                            WHERE s.id = o.sezione_a_id AND s.scuola_id = v_a.scuola_id AND s.anno_id = v_a.anno_id)) AS sezione
     ) k
@@ -212,7 +222,8 @@ BEGIN
         avviso          = EXCLUDED.avviso,
         stato_da_prima  = EXCLUDED.stato_da_prima,
         eccezione       = EXCLUDED.eccezione,
-        modificata_da   = EXCLUDED.modificata_da;
+        modificata_da   = EXCLUDED.modificata_da,
+        tendina_decisa  = EXCLUDED.tendina_decisa;
 
   -- Chi non è più nel giro (la sua iscrizione nuova è stata ritirata e lui non frequentava) esce dalla tabella del passaggio.
   DELETE FROM public.passaggi_anno_righe r
@@ -279,6 +290,7 @@ DECLARE
   v_sez    uuid;
   v_esito  text;
   v_avviso text;
+  v_decisa boolean := false;
 BEGIN
   SELECT * INTO v_p FROM public.passaggi_anno WHERE id = p_passaggio FOR UPDATE;
   IF NOT FOUND THEN
@@ -320,7 +332,7 @@ BEGIN
     END IF;
     v_esito := 'nuova';
     v_sez := coalesce(p_sezione, v_r.sezione_a_id);
-    v_avviso := NULL;  -- spostarla o tenerla è una decisione: l'avviso si chiude
+    v_avviso := CASE WHEN v_sez IS NULL THEN 'senza_sezione' ELSE NULL END;  -- senza una classe l'avviso resta aperto
   ELSIF v_r.esito IN ('continua', 'cambia_grado') THEN
     IF v_target IN ('nuova', 'non_risposto') THEN
       RAISE EXCEPTION 'RIGA_NON_VALIDA' USING HINT = 'esito-non-ammesso';
@@ -333,6 +345,7 @@ BEGIN
       v_sez := coalesce(p_sezione, v_r.sezione_a_id);
       v_esito := CASE WHEN public.passaggio_grado_cambia(v_r.sezione_da_id, v_sez) THEN 'cambia_grado' ELSE 'continua' END;
       v_avviso := CASE WHEN v_sez IS NULL THEN 'senza_sezione' ELSE NULL END;
+      v_decisa := coalesce(v_r.avviso = 'ritirato_tendina', false);
     END IF;
   ELSIF v_r.esito = 'esce' AND v_r.eccezione AND v_r.frequenza_a_id IS NOT NULL THEN
     -- Un «esce» scelto a mano: si può annullare. Torna al calcolo, con la classe scelta ora se c'è.
@@ -364,7 +377,8 @@ BEGIN
   END IF;
 
   UPDATE public.passaggi_anno_righe
-     SET esito = v_esito, sezione_a_id = v_sez, avviso = v_avviso, eccezione = true, modificata_da = p_da
+     SET esito = v_esito, sezione_a_id = v_sez, avviso = v_avviso, eccezione = true, modificata_da = p_da,
+         tendina_decisa = tendina_decisa OR v_decisa
    WHERE id = v_r.id;
 
   RETURN jsonb_build_object('alunno_id', v_r.alunno_id, 'esito', v_esito, 'eccezione', true);

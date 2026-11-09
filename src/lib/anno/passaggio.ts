@@ -351,6 +351,8 @@ export type PassaggioLetto = {
   conteggi: Record<string, number>
   /** AAAA-MM-GG: il giorno dopo l'ultimo giorno aperto dell'anno vecchio; `null` se non si riesce a leggerlo. */
   apribile_dal: string | null
+  /** AAAA-MM-GG: il primo giorno dell'anno NUOVO (`anni_sede.inizio`); dal quel giorno le famiglie vedono la classe nuova. `null` se non si legge. */
+  inizio_anno_nuovo: string | null
 }
 export type LetturaPassaggio = {
   passaggio: PassaggioLetto | null
@@ -417,6 +419,10 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
     const vecchio = await supabase.from('anni_sede').select('ultimo_giorno_aperto').eq('id', riga.da_anno_sede_id).maybeSingle()
     if (vecchio.error) return guasto(vecchio.error)
     const apribileDal = giornoDopo((vecchio.data as { ultimo_giorno_aperto?: unknown } | null)?.ultimo_giorno_aperto)
+    const nuovo = await supabase.from('anni_sede').select('inizio').eq('id', annoSedeNuovoId).maybeSingle()
+    if (nuovo.error) return guasto(nuovo.error)
+    const inizioRaw = (nuovo.data as { inizio?: unknown } | null)?.inizio
+    const inizioAnnoNuovo = typeof inizioRaw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(inizioRaw) ? inizioRaw.slice(0, 10) : null
 
     let q = supabase.from('passaggi_anno_righe').select(COLONNE_RIGA, { count: 'exact' }).eq('passaggio_id', riga.id)
     if (f.esito) q = q.eq('esito', f.esito)
@@ -434,7 +440,7 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
 
     return {
       ok: true,
-      passaggio: { id: riga.id, stato: riga.stato, conteggi: soloNumeri(riga.conteggi), apribile_dal: apribileDal },
+      passaggio: { id: riga.id, stato: riga.stato, conteggi: soloNumeri(riga.conteggi), apribile_dal: apribileDal, inizio_anno_nuovo: inizioAnnoNuovo },
       righe: ((righe.data ?? []) as RigaLettaPassaggio[]).map((r) => ({
         alunno_id: r.alunno_id,
         esito: r.esito,

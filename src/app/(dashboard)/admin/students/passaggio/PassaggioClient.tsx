@@ -44,7 +44,7 @@ type RigaApi = {
   frequenza_a_id: string | null;
 };
 type DocenteApi = { utente_id: string; sezione_a_id: string; origine: 'copiata' | 'aggiunta' | 'tolta' };
-type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato'; conteggi: Record<string, number>; apribile_dal: string | null };
+type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null };
 type Letta = { passaggio: PassaggioApi | null; righe: RigaApi[]; totale: number; docenti: DocenteApi[] };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type Staff = { id: string; nome: string | null; cognome: string | null; ruolo?: string | null; scuola_id?: string | null };
@@ -318,6 +318,10 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
         )
       : undefined;
 
+  const giornoPrima = (iso: string): string => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? iso : new Date(d.getTime() - 86_400_000).toISOString().slice(0, 10);
+  };
   const giorno = (iso: string): string => {
     const d = new Date(`${iso}T00:00:00Z`);
     return Number.isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d);
@@ -490,7 +494,14 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
             {(esiti?.non_risposto ?? 0) > 0 && <li>{t('dialogoNonRisposto', { n: esiti?.non_risposto ?? 0 })}</li>}
             {(esiti?.esce ?? 0) > 0 && <li>{t('dialogoEsce', { n: esiti?.esce ?? 0 })}</li>}
             {(esiti?.cambia_grado ?? 0) > 0 && <li>{t('dialogoCambiaGrado', { n: esiti?.cambia_grado ?? 0 })}</li>}
-            <li>{t('dialogoFamiglie')}</li>
+            {passaggio.inizio_anno_nuovo ? (
+              <li>{t('dialogoFinestra', { fino: giorno(giornoPrima(passaggio.inizio_anno_nuovo)), dal: giorno(passaggio.inizio_anno_nuovo) })}</li>
+            ) : (
+              <li>{t('dialogoFamiglie')}</li>
+            )}
+            {((esiti?.esce ?? 0) + (esiti?.non_risposto ?? 0)) > 0 && (
+              <li>{t('dialogoAccessoSubito', { n: (esiti?.esce ?? 0) + (esiti?.non_risposto ?? 0) })}</li>
+            )}
           </ul>
           <p className={hint}>{t('dialogoNota')}</p>
           <div className="mt-4 flex flex-wrap gap-2">

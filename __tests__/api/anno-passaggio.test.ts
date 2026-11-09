@@ -36,8 +36,9 @@ type Query = { tabella: string; colonne?: string; filtri: Record<string, unknown
 
 const h = vi.hoisted(() => ({
   user: null as null | { id: string; role: string; scuola_id: string },
-  anni: {} as Record<string, { id: string; scuola_id: string; stato: string; ultimo_giorno_aperto?: string }>,
+  anni: {} as Record<string, { id: string; scuola_id: string; stato: string; ultimo_giorno_aperto?: string; inizio?: string }>,
   utenti: {} as Record<string, { id: string; ruolo: string; scuola_id: string | null }>,
+  alunni: [] as Array<Record<string, unknown>>,
   /** I passaggi non annullati, per anno nuovo (`a_anno_sede_id`). */
   passaggi: {} as Record<string, unknown>,
   righe: [] as Array<Record<string, unknown>>,
@@ -85,6 +86,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
         }
       }
       b.order = () => b
+      b.in = (c: string, vs: unknown[]) => {
+        q.filtri[`in:${c}`] = vs
+        cond.push((r) => vs.includes(r[c]))
+        return b
+      }
+      b.limit = () => b
       b.eq = (c: string, v: unknown) => {
         q.filtri[c] = v
         cond.push((r) => r[c] === v)
@@ -109,7 +116,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.then = (ok: (v: unknown) => unknown) => {
         const errore = h.errLettura[tabella]
         if (errore) return Promise.resolve({ data: null, error: errore, count: null }).then(ok)
-        const sorgente = tabella === 'passaggi_anno_righe' ? h.righe : tabella === 'passaggi_anno_docenti' ? h.docenti : []
+        const sorgente = tabella === 'passaggi_anno_righe' ? h.righe : tabella === 'passaggi_anno_docenti' ? h.docenti : tabella === 'alunni' ? h.alunni : []
         let r = sorgente.filter((x) => cond.every((c) => c(x)))
         const totale = r.length
         if (q.range) r = r.slice(q.range[0], q.range[1] + 1)
@@ -136,6 +143,7 @@ import { PUT as docentiPUT } from '@/app/api/admin/anni/[annoSedeId]/passaggio/d
 import { POST as confermaPOST } from '@/app/api/admin/anni/[annoSedeId]/passaggio/conferma/route'
 import { POST as annullaPOST } from '@/app/api/admin/anni/[annoSedeId]/passaggio/annulla/route'
 import { POST as tardivaPOST } from '@/app/api/admin/anni/[annoSedeId]/passaggio/conferma-tardiva/route'
+import { GET as nomiGET } from '@/app/api/admin/anni/[annoSedeId]/passaggio/nomi/route'
 
 const contesto = (id: string) => ({ params: Promise.resolve({ annoSedeId: id }) })
 const url = (parte = '', id = NUOVO_A) => `http://localhost/api/admin/anni/${id}/passaggio${parte}`
@@ -171,7 +179,7 @@ const eventi = (tipo: string) =>
 beforeEach(() => {
   h.user = { id: UTENTE, role: 'segreteria', scuola_id: SEDE_A }
   h.anni = {
-    [NUOVO_A]: { id: NUOVO_A, scuola_id: SEDE_A, stato: 'iscrizioni_aperte' },
+    [NUOVO_A]: { id: NUOVO_A, scuola_id: SEDE_A, stato: 'iscrizioni_aperte', inizio: '2027-09-15' },
     [ATTIVO_A]: { id: ATTIVO_A, scuola_id: SEDE_A, stato: 'corrente', ultimo_giorno_aperto: '2027-07-31' },
     [NUOVO_B]: { id: NUOVO_B, scuola_id: SEDE_B, stato: 'iscrizioni_aperte' },
     [ATTIVO_B]: { id: ATTIVO_B, scuola_id: SEDE_B, stato: 'corrente', ultimo_giorno_aperto: '2027-07-31' },
@@ -182,6 +190,7 @@ beforeEach(() => {
   h.righe = []
   h.docenti = []
   h.utenti = { [DOC]: { id: DOC, ruolo: 'docente', scuola_id: SEDE_A } }
+  h.alunni = []
   h.errLettura = {}
   h.query = []
   h.scritture = []
@@ -359,7 +368,7 @@ describe('GET passaggio', () => {
     const corpo = await res.json()
     expect(corpo.success).toBe(true)
     expect(corpo.data.passaggio).toEqual({
-      id: PASS, stato: 'anteprima', conteggi: { continua: 2, esce: 1 }, apribile_dal: '2027-08-01',
+      id: PASS, stato: 'anteprima', conteggi: { continua: 2, esce: 1 }, apribile_dal: '2027-08-01', inizio_anno_nuovo: '2027-09-15',
     })
     expect(corpo.data.totale).toBe(2)
     expect(corpo.data.pagina).toBe(1)
@@ -824,5 +833,72 @@ describe('POST passaggio/conferma-tardiva', () => {
     expect(e).toHaveLength(1)
     expect(e[0].campi.entita_id).toBe(FREQ)
     expect(e[0].campi.n).toBe(1)
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// GET nomi (giro 1, S20) e contatori nella GET principale (S19)
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('GET passaggio/nomi', () => {
+  const AL_IN = '88888888-8888-4888-8888-888888888881'
+  const AL_FUORI = '88888888-8888-4888-8888-888888888882'
+  const chiedi = (ids: string, id = NUOVO_A) => nomiGET(new Request(url(`/nomi?ids=${ids}`, id)) as never, contesto(id) as never)
+
+  beforeEach(() => {
+    h.righe = [{ passaggio_id: PASS, alunno_id: AL_IN, esito: 'continua' }]
+    h.alunni = [
+      { id: AL_IN, nome: 'Prova', cognome: 'Finto', classe_sezione: 'Classe X', codice_fiscale: 'NON-DEVE-USCIRE', note_mediche: 'NON-DEVE-USCIRE' },
+      { id: AL_FUORI, nome: 'Altro', cognome: 'Finto', classe_sezione: 'Classe Y' },
+    ]
+  })
+
+  it('dà solo nome, cognome e classe, e solo di chi ha una riga in questo passaggio', async () => {
+    const res = await chiedi(`${AL_IN},${AL_FUORI}`)
+    expect(res.status).toBe(200)
+    const corpo = await res.json()
+    expect(corpo.data).toEqual([{ id: AL_IN, nome: 'Prova', cognome: 'Finto', classe: 'Classe X' }])
+    expect(JSON.stringify(corpo)).not.toContain('NON-DEVE-USCIRE')
+    expect(h.query.filter((q) => q.tabella === 'alunni').map((q) => q.colonne)).toEqual(['id, nome, cognome, classe_sezione'])
+  })
+
+  it('400 senza ids, con più di 200 uuid o con un valore che non è un uuid; 403 fuori sede; 403 al ruolo sbagliato', async () => {
+    expect((await chiedi('')).status).toBe(400)
+    expect((await chiedi('non-un-uuid')).status).toBe(400)
+    expect((await chiedi(Array.from({ length: 201 }, (_, i) => `88888888-8888-4888-8888-${String(i).padStart(12, '0')}`).join(','))).status).toBe(400)
+    expect((await chiedi(AL_IN, NUOVO_B)).status).toBe(403)
+    h.user = { id: UTENTE, role: 'genitore', scuola_id: SEDE_A }
+    expect((await chiedi(AL_IN)).status).toBe(403)
+  })
+
+  it('nessun passaggio: 404, e nessuna lettura dei nomi', async () => {
+    h.passaggi = {}
+    const res = await chiedi(AL_IN)
+    expect(res.status).toBe(404)
+    expect(h.query.some((q) => q.tabella === 'alunni')).toBe(false)
+  })
+})
+
+describe('GET passaggio con ?contatori=N', () => {
+  it('porta nella stessa risposta i numeri per esito, per avviso e le prime righe da decidere', async () => {
+    h.righe = [
+      { passaggio_id: PASS, alunno_id: 'a1', esito: 'continua', avviso: null },
+      { passaggio_id: PASS, alunno_id: 'a2', esito: 'esce', avviso: null },
+      { passaggio_id: PASS, alunno_id: 'a3', esito: 'cambia_grado', avviso: 'senza_sezione' },
+      { passaggio_id: PASS, alunno_id: 'a4', esito: 'continua', avviso: 'ritirato_tendina' },
+    ]
+    const res = await leggi('?pagina=1&tetto=1&contatori=50')
+    expect(res.status).toBe(200)
+    const { contatori } = (await res.json()).data
+    expect(contatori.esiti).toEqual({ continua: 2, cambia_grado: 1, nuova: 0, esce: 1, non_risposto: 0 })
+    expect(contatori.avvisi).toEqual({ ritirato_tendina: 1, senza_sezione: 1 })
+    expect(contatori.daDecidere.map((r: { alunno_id: string }) => r.alunno_id).sort()).toEqual(['a3', 'a4'])
+  })
+
+  it('senza il parametro la risposta non porta i contatori; con 0 o 201 è un 400', async () => {
+    expect((await (await leggi('?pagina=1&tetto=1')).json()).data.contatori).toBeUndefined()
+    expect((await leggi('?contatori=0')).status).toBe(400)
+    expect((await leggi('?contatori=201')).status).toBe(400)
   })
 })

@@ -33,6 +33,7 @@ import {
   Vote,
   CalendarCheck,
   Gauge,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 /**
@@ -199,6 +200,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // Il cruscotto dell'anno prossimo (`/admin/students/anno-prossimo`, PR 4.7): iscritti, risposte, quote e moduli per sede. Stessi tre ruoli
       // delle route `/api/admin/anni/[annoSedeId]/cruscotto`.
       { href: '/admin/students/anno-prossimo', label: 'Anno prossimo, a che punto siamo', labelKey: 'nav_cruscotto_anno', icon: Gauge, roles: ['admin', 'coordinator', 'segreteria'] },
+      // Passaggio d'anno (`/admin/students/passaggio`, PR 4.8): anteprima, correzioni, conferma e annullo. Stessi tre ruoli delle route
+      // `/api/admin/anni/[annoSedeId]/passaggio` (giro 1, B4: prima la pagina si raggiungeva solo scrivendo l'indirizzo).
+      { href: '/admin/students/passaggio', label: 'Passaggio d’anno', labelKey: 'nav_passaggio_anno', icon: ArrowRightLeft, roles: ['admin', 'coordinator', 'segreteria'] },
     ],
   },
   {

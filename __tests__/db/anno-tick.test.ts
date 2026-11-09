@@ -478,8 +478,6 @@ describe('il controllo notturno delle invarianti e la salute', () => {
   })
 
   it('`salute_anno`: un anno successivo che manca da due giorni, uno che manca da meno di un giorno, uno che non è ancora il suo giorno', async () => {
-    expect(await statoSalute()).toMatchObject({ sedi_senza_successivo: 0, in_ritardo_giorni: 0 })
-
     // La funzione legge l'orologio: il ritardo si prova in modo RELATIVO (oggi meno N giorni), mai con un giorno scritto qui.
     const crea = async (sede: string, anno: number, giorniDiRitardo: number) => {
       // la sede ha già i suoi anni (li ha dati la catena): si toglie tutto e le si dà un anno solo, con la scadenza voluta
@@ -492,6 +490,12 @@ describe('il controllo notturno delle invarianti e la salute', () => {
            FROM public.anni_scolastici y, (SELECT public.giorno_roma(now()) AS g) x WHERE y.anno_inizio = $2`,
         [sede, anno, giorniDiRitardo])
     }
+    // Anche `SEDE` va resa relativa: la catena le ha dato il 2027/28, che dal 01/09/2027 sarebbe «in ritardo» e farebbe scadere
+    // la prova col calendario. Un anno solo, il cui giorno non è ancora arrivato (oggi + 30), come per l'altra sede.
+    await db3.query(`DELETE FROM public.pagamenti WHERE scuola_id = $1`, [SEDE]) // la voce storta della prova precedente tiene agganciato il suo anno
+    await crea(SEDE, 2091, -30)
+    await crea(SEDE_LATE, 2090, -30)
+    expect(await statoSalute()).toMatchObject({ sedi_senza_successivo: 0, in_ritardo_giorni: 0 })
     await crea(SEDE_LATE, 2090, 2)
     expect(await statoSalute()).toMatchObject({ sedi_senza_successivo: 1, in_ritardo_giorni: 2 })
 

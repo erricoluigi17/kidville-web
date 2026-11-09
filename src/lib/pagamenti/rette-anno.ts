@@ -82,7 +82,7 @@ export async function annoSedeDelPeriodo(
     }
     return { ok: false, codice: 'errore', errore: error }
   }
-  const riga = ((data ?? []) as Array<{ id: string; stato: StatoAnno }>)[0]
+  const riga = ((data ?? []) as unknown as Array<{ id: string; stato: StatoAnno }>)[0]
   if (!riga) return { ok: false, codice: 'ANNO_NON_TROVATO' }
   return { ok: true, annoSedeId: riga.id, stato: riga.stato }
 }

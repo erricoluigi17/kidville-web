@@ -113,6 +113,9 @@ const ANNO_ATTIVO = 'corrente'
 
 type AnnoScelto = { annoSedeId: string; stato: string }
 
+/** Quanti uuid in una sola query `.in('id', …)`. */
+const GRUPPO_ID = 150
+
 /**
  * L'anteprima dal LISTINO e dalle FREQUENZE dell'anno (PR 4.6): chi riceve la retta, di quanto e perché no lo dice
  * `rette_da_generare` (M46a), la stessa funzione che la conferma legge per scrivere. Qui si aggiungono solo i nomi dei bambini
@@ -211,15 +214,24 @@ async function anteprimaDalListino(
   const candidatiRighe = righe.filter(daFare)
   const perAlunno = new Map(candidatiRighe.map((r) => [r.alunno_id, r]))
 
+  // I nomi si leggono PER IDENTITÀ dei soli candidati (a gruppi, perché un uuid ogni 37 caratteri in una query string ha un
+  // limite): chi ha una frequenza viva nell'anno, anche se oggi non è ancora «iscritto», e nessun altro. Il perimetro di sede resta.
   const COLONNE_ALUNNI = 'id, nome, cognome, classe_sezione, section_id, importo_retta_mensile, genitori_separati, scuola_id'
-  const alunniLetti = await leggiABlocchi<Record<string, unknown> & { id: string }>(() =>
-    supabase.from('alunni').select(COLONNE_ALUNNI).eq('scuola_id', scuolaId),
-  )
-  if (!alunniLetti.ok) return rispostaBlocchiFalliti(operazione, 'alunni:rette-candidati', alunniLetti)
+  const alunniLetti: Array<Record<string, unknown> & { id: string }> = []
+  const idCandidati = [...perAlunno.keys()]
+  for (let i = 0; i < idCandidati.length; i += GRUPPO_ID) {
+    const { data, error } = await supabase
+      .from('alunni')
+      .select(COLONNE_ALUNNI)
+      .in('id', idCandidati.slice(i, i + GRUPPO_ID))
+      .eq('scuola_id', scuolaId)
+    if (error) return rispostaGuastoDb(operazione, 'db:alunni', error)
+    alunniLetti.push(...((data ?? []) as Array<Record<string, unknown> & { id: string }>))
+  }
 
   // Chi paga per chi, dalle frequenze dell'anno (è lì che la funzione SQL lo legge).
   const caricoLetto = await leggiABlocchi<{ id: string; retta_a_carico_di: string | null }>(() =>
-    supabase.from('frequenze').select('id, retta_a_carico_di').eq('anno_sede_id', anno.annoSedeId).not('retta_a_carico_di', 'is', null),
+    supabase.from('frequenze').select('id, retta_a_carico_di').eq('anno_sede_id', anno.annoSedeId).eq('scuola_id', scuolaId).not('retta_a_carico_di', 'is', null),
   )
   if (!caricoLetto.ok) return rispostaBlocchiFalliti(operazione, 'frequenze:rette-a-carico', caricoLetto)
   const pagaPer = new Map<string, number>()
@@ -227,7 +239,7 @@ async function anteprimaDalListino(
     if (f.retta_a_carico_di) pagaPer.set(f.retta_a_carico_di, (pagaPer.get(f.retta_a_carico_di) ?? 0) + 1)
   }
 
-  const candidati = alunniLetti.righe
+  const candidati = alunniLetti
     .filter((a) => perAlunno.has(a.id))
     .map((a) => {
       const r = perAlunno.get(a.id) as RigaRetta

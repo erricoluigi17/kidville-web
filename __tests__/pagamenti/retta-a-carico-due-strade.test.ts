@@ -69,3 +69,41 @@ describe('la retta a carico di un fratello vale su entrambe le strade', () => {
     expect(src).toMatch(/personalizzato\s*>\s*0\s*\?\s*personalizzato\s*:\s*rettaDefault/)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR 4.6 · la strada NUOVA. Dal listino dell'anno l'anteprima non ricalcola più niente in TypeScript: legge `rette_da_generare`,
+// la stessa funzione SQL che la conferma legge per scrivere. Le due regole di sopra devono quindi stare lì (una volta sola), e il
+// TypeScript dell'anno non deve riscriverle.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Il testo dell'ULTIMA migrazione che (ri)definisce `rette_da_generare`: è la sola definizione che vale. */
+function ultimaDefinizione(): { file: string; testo: string } {
+  const file = readdirSync(MIGRAZIONI)
+    .filter((f) => f.endsWith('.sql'))
+    .filter((f) => /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+public\.rette_da_generare\b/i.test(readFileSync(join(MIGRAZIONI, f), 'utf8')))
+    .sort()
+  expect(file.length, 'nessuna migrazione definisce rette_da_generare').toBeGreaterThan(0)
+  const ultimo = file[file.length - 1]
+  return { file: ultimo, testo: readFileSync(join(MIGRAZIONI, ultimo), 'utf8') }
+}
+
+describe('la strada nuova: rette_da_generare è l’unica regola dell’anno', () => {
+  it('la funzione SQL legge chi è a carico di un altro e se il pagante è vivo nell’anno', () => {
+    const { testo } = ultimaDefinizione()
+    expect(testo).toMatch(/retta_a_carico_di IS NOT NULL/)
+    expect(testo).toMatch(/pagante_vivo/)
+  })
+
+  it('lo ZERO non vale come «non paga» nemmeno lì: la retta del bambino conta solo se è maggiore di zero, e senza di lei si passa al listino', () => {
+    const { testo } = ultimaDefinizione()
+    expect(testo).toMatch(/f\.retta_mensile\s*>\s*0/)
+    // il ripiego «150» non esiste più da nessuna parte nella definizione
+    expect(testo.replace(/--.*$/gm, '')).not.toMatch(/\b150\b/)
+  })
+
+  it('il TypeScript dell’anno non ricalcola: rette-anno.ts legge la funzione e non nomina colonne di retta', () => {
+    const src = readFileSync(join(ROOT, 'src/lib/pagamenti/rette-anno.ts'), 'utf8')
+    expect(src).toContain("'rette_da_generare'")
+    expect(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')).not.toMatch(/retta_a_carico_di|importo_retta_mensile|retta_mensile/)
+  })
+})

@@ -390,7 +390,7 @@ function BloccoQuota({ c, voce, titolo, nota, righe }: { c: Comuni; voce: VoceQu
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /** I mesi dell'anno scolastico, da settembre ad agosto: l'ordine in cui la segreteria li legge. */
-const MESI_ANNO = [9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8] as const;
+const MESI_ANNO = Array.from({ length: 12 }, (_, i) => ((i + 8) % 12) + 1);
 
 const stessiMesi = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((m) => b.includes(m));
 
@@ -412,7 +412,11 @@ function BloccoRetta({ c, dati }: { c: Comuni; dati: LetturaRette }) {
   const [importo, setImporto] = useState('');
   const [mesi, setMesi] = useState<number[]>(mesiEffettivi);
   const occupato = c.inCorso !== null;
-  const nomeMese = (m: number) => new Intl.DateTimeFormat(lingua, { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2027, m - 1, 1)));
+  const nomeMese = (m: number) => {
+    const d = new Date(0);
+    d.setUTCMonth(m - 1, 1);
+    return new Intl.DateTimeFormat(lingua, { month: 'long', timeZone: 'UTC' }).format(d);
+  };
 
   const salva = async () => {
     const n = importoDa(importo);

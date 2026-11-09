@@ -1279,3 +1279,135 @@ describe('anno-scrittura-coverage — 7. i minimi (un lock cieco è verde)', () 
     expect(ANALISI.length).toBe(misure.fileLetti)
   })
 })
+
+// ───────────────────────── sezione 8: scriviFrequenza non scarta `stato` per origine (4.5.12) ─────────────────────────
+
+/**
+ * Fino alla 4.5.1 `scriviFrequenza` aveva un ramo `if (f.origine !== 'recupero') { delete set.stato; delete set.data_uscita }`:
+ * una frequenza nata da una domanda, una conferma o la segreteria non cambiava stato, e il ritiro di un bambino lasciava
+ * viva la frequenza dell'anno prossimo (lo specchio `frequenze → alunni` lo rimetteva fra gli iscritti). Dalla 4.5.1 lo
+ * stato si scrive per OGNI origine (il ritiro di una frequenza viva la chiude, la riapertura di una chiusa la porta `in_attesa`).
+ *
+ * Il lock rifiuta la forma vecchia: un `delete set.stato` il cui blocco è condizionato a `origine` (anche nel ramo `else` di
+ * un `if` su `origine`) e DOPO il quale la funzione non riassegna mai `set.stato =`. Il `delete` seguito da una
+ * riassegnazione (la forma di oggi: si scarta il valore grezzo e si scrive quello deciso dalla regola) è ammesso.
+ * Non vede: un `stato` scartato con la destrutturazione (`const { stato, ...resto } = campi`) o con un helper.
+ */
+function corpoDiScriviFrequenza(a: Analisi): { dal: number; al: number } | null {
+  const re = /export\s+async\s+function\s+scriviFrequenza\s*\(/.exec(a.m.senzaCommenti)
+  if (!re) return null
+  const prossimo = a.m.senzaCommenti.indexOf('\nexport ', re.index + re[0].length)
+  return { dal: re.index, al: prossimo < 0 ? a.m.senzaCommenti.length : prossimo }
+}
+
+/** Il testo che precede la `{` in `aperta` (fino al `;`, `{` o `}` precedente); per un `else`, anche la condizione dell'`if` che lo apre. */
+function intestazioneDelBlocco(st: string, aperta: number): string {
+  let j = aperta - 1
+  while (j >= 0 && !';{}'.includes(st[j])) j--
+  let testa = st.slice(j + 1, aperta)
+  if (/^\s*else\b/.test(testa) && st[j] === '}') {
+    let liv = 1
+    let k = j - 1
+    while (k >= 0 && liv > 0) {
+      if (st[k] === '}') liv++
+      else if (st[k] === '{') liv--
+      k--
+    }
+    testa += ' ' + intestazioneDelBlocco(st, k + 1)
+  }
+  return testa
+}
+
+/** Le intestazioni di tutti i blocchi che contengono la posizione `idx`, dal più interno al più esterno. */
+function intestazioniAvvolgenti(st: string, idx: number): string[] {
+  const out: string[] = []
+  let liv = 0
+  for (let i = idx - 1; i >= 0; i--) {
+    if (st[i] === '}') liv++
+    else if (st[i] === '{') {
+      if (liv === 0) out.push(intestazioneDelBlocco(st, i))
+      else liv--
+    }
+  }
+  return out
+}
+
+function violazioniStatoPerOrigine(a: Analisi): string[] {
+  const corpo = corpoDiScriviFrequenza(a)
+  if (!corpo) return []
+  const out: string[] = []
+  const re = /\bdelete\s+set\s*(?:\.\s*stato\b|\[\s*(['"`])stato\1\s*\])/g
+  const testo = a.m.senzaCommenti.slice(0, corpo.al)
+  re.lastIndex = corpo.dal
+  let h: RegExpExecArray | null
+  while ((h = re.exec(testo)) !== null) {
+    const condizionato = intestazioniAvvolgenti(a.m.struttura, h.index).some((t) => /\borigine\b/.test(t))
+    if (!condizionato) continue
+    const dopo = a.m.senzaCommenti.slice(h.index + h[0].length, corpo.al)
+    if (!/\bset\s*\.\s*stato\s*=(?!=)/.test(dopo)) {
+      out.push(`${a.percorso}:${riga(a.m.originale, h.index)} — \`delete set.stato\` condizionato a \`origine\` e mai riassegnato: la frequenza di una domanda, una conferma o la segreteria non si ritira più`)
+    }
+  }
+  return out
+}
+
+/** Il tetto di `ESENTI` (i siti `alunni` fuori dalla doppia scrittura) è il numero di oggi (misurato il 2026-11-09) e può solo scendere. */
+const TETTO_ESENTI = 5
+
+describe('anno-scrittura-coverage — 8. `scriviFrequenza` scrive lo stato per ogni origine (4.5.12)', () => {
+  const funzione = (corpo: string) => `export async function scriviFrequenza(supabase, { campi }) {\n  const set = { ...campi }\n${corpo}\n}\nexport const altro = 1\n`
+
+  it('il controllo positivo: la forma vecchia (un `delete set.stato` per origine, senza riassegnare) è segnalata', () => {
+    const vecchia = finto(
+      'src/lib/anno/frequenze.ts',
+      funzione("  if (f.origine !== 'recupero') {\n    delete set.stato\n    delete set.data_uscita\n  } else if (typeof set.data_uscita === 'string') {\n    set.data_uscita = 1\n  }"),
+    )
+    const v = violazioniStatoPerOrigine(vecchia)
+    expect(v).toHaveLength(1)
+    expect(v[0]).toContain('origine')
+  })
+
+  it('il controllo positivo: lo stesso `delete` nel ramo `else` di un `if` su origine è segnalato', () => {
+    const nelElse = finto(
+      'src/lib/anno/frequenze.ts',
+      funzione("  if (f.origine === 'recupero') {\n    set.x = 1\n  } else {\n    delete set.stato\n  }"),
+    )
+    expect(violazioniStatoPerOrigine(nelElse)).toHaveLength(1)
+  })
+
+  it('la forma di oggi (si scarta il grezzo e si riscrive lo stato deciso dalla regola) è pulita', () => {
+    const nuova = finto(
+      'src/lib/anno/frequenze.ts',
+      funzione("  if (f.origine === 'recupero') {\n    set.x = 1\n  } else {\n    delete set.stato\n    delete set.data_uscita\n    if (ritiro) { set.stato = 'ritirato' }\n  }"),
+    )
+    expect(violazioniStatoPerOrigine(nuova)).toEqual([])
+  })
+
+  it('un `delete set.stato` non legato a origine, o in un commento, non scatta', () => {
+    expect(violazioniStatoPerOrigine(finto('src/lib/anno/frequenze.ts', funzione('  if (vuoto) { delete set.stato }')))).toEqual([])
+    expect(violazioniStatoPerOrigine(finto('src/lib/anno/frequenze.ts', funzione("  // if (f.origine !== 'recupero') { delete set.stato }\n  set.a = 1")))).toEqual([])
+  })
+
+  it('il file reale non ha la forma vecchia', () => {
+    const a = PER_PERCORSO.get('src/lib/anno/frequenze.ts')
+    expect(a, 'src/lib/anno/frequenze.ts non esiste più').toBeDefined()
+    const v = violazioniStatoPerOrigine(a!)
+    expect(v, 'scriviFrequenza ha rimesso il ramo che scarta lo stato per origine:' + elenco(v)).toEqual([])
+  })
+
+  it('non è cieco: la funzione si trova, ha il suo ramo per origine e riassegna lo stato', () => {
+    const a = PER_PERCORSO.get('src/lib/anno/frequenze.ts')!
+    const corpo = corpoDiScriviFrequenza(a)
+    expect(corpo, 'scriviFrequenza non si trova più in src/lib/anno/frequenze.ts').not.toBeNull()
+    const testo = a.m.senzaCommenti.slice(corpo!.dal, corpo!.al)
+    expect(testo.length).toBeGreaterThan(800)
+    expect(/\borigine\b/.test(testo), 'scriviFrequenza non guarda più l’origine: il lock va riletto').toBe(true)
+    expect(/\bset\s*\.\s*stato\s*=(?!=)/.test(testo), 'scriviFrequenza non scrive più `set.stato =`').toBe(true)
+  })
+
+  it('ESENTI e il tetto dei calcoli dell’anno non cambiano: i siti fuori dalla doppia scrittura sono 5 e possono solo scendere; le soglie d’anno a mano sono 0', () => {
+    expect(ESENTI.length).toBeLessThanOrEqual(TETTO_ESENTI)
+    expect(TETTO_ANNO_A_MANO).toBe(0)
+    expect(ANNO_A_MANO_DI_OGGI).toEqual([])
+  })
+})

@@ -127,6 +127,16 @@ const SENZA_COLONNA: Record<string, string> = {
     // ha la sede. Senza gate si legge e si scrive l'assegnazione delle discipline
     // di un altro plesso.
     utenti_sezioni_materie: 'sede della sezione (assertSezioneInScope)',
+    // ── LE TRE TABELLE DELL'ANNO PROSSIMO CHE NON HANNO LA SEDE IN COLONNA (PR 4.5, compito 4.5.12) ───────
+    // Non hanno `scuola_id` (la sede è dell'ANNO a cui puntano, `anni_sede.scuola_id`), quindi la fotografia non poteva
+    // contenerle e il lock non le vedeva. Misurato il 2026-11-09 togliendo di proposito `assertAnnoSedeInScope` dal GET di
+    // `admin/anni/[annoSedeId]/posti`: il lock restava VERDE su una lettura dei posti autorizzati di un'altra sede.
+    // Le usano solo le route nuove della 4.5 (quote, moduli, posti, moduli-mancanti, conferme, frequenze/[id]/moduli).
+    // `frequenze_moduli` NON c'è, apposta: la tocca solo chi tocca anche `frequenze` (che il lock già vede), e la sua unica
+    // lettura fuori da un handler, `spunteDellAnno` di conferme/route.ts, riceve id di moduli già ricavati dall'anno verificato.
+    listino_voci: 'sede dell’anno (assertAnnoSedeInScope)',
+    moduli_richiesti: 'sede dell’anno (assertAnnoSedeInScope)',
+    posti_autorizzati: 'sede dell’anno (assertAnnoSedeInScope)',
 }
 
 /**

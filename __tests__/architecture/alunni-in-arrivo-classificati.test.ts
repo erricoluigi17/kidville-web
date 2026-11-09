@@ -113,7 +113,7 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/admin/sidi/frequentanti/route.ts::admin/sidi/frequentanti:POST': ['no-già', 'filtro-nel-codice'],
   'src/app/api/admin/students/[id]/route.ts::admin/students/[id]:GET': ['sì', 'anagrafica'],
   'src/app/api/admin/students/archivia/route.ts::admin/students/archivia:POST': ['sì', 'anagrafica'],
-  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': ['sì', 'anagrafica'],
+  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': ['no', 'guardia-senza-sezione'],
   'src/app/api/admin/students/export/route.ts::admin/students/export:GET': ['no-già', 'stato'],
   'src/app/api/admin/students/libera-spazio/route.ts::admin/students/libera-spazio:POST': ['sì', 'anagrafica'],
   'src/app/api/admin/students/riattiva/route.ts::admin/students/riattiva:POST': ['sì', 'anagrafica'],
@@ -360,6 +360,22 @@ const FUNZIONI_SQL: Record<string, Voce> = {
  * di qui. Finché c'è una riga qui, il difetto è aperto.
  */
 export const DA_CORREGGERE: Record<string, { persone: string; correzione: string }> = {
+  'src/app/api/admin/gdpr/erase/route.ts::admin/gdpr/erase:POST': {
+    persone: 'Una famiglia che chiede l’oblio per un bambino in arrivo (domanda per l’anno dopo) si sente rispondere che non è «non più iscritto»: la richiesta non è evadibile dal prodotto.',
+    correzione: 'Decidere se l’oblio ammette `in_arrivo` (probabile sì: nessun dato scolastico da proteggere) e in tal caso aggiungerlo al gate di `erase` (riga 112) senza toccare `eNonPiuIscritto`.',
+  },
+  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:GET': {
+    persone: 'Nell’elenco delle richieste la Direzione vede i figli in arrivo contati come «iscritti» (riga 130), quindi un numero che non descrive ciò che l’oblio farebbe.',
+    correzione: 'Contare `in_arrivo` come categoria propria o fra gli anonimizzabili, coerente con la decisione su `erase`.',
+  },
+  'src/app/api/admin/gdpr/richieste/route.ts::admin/gdpr/richieste:POST': {
+    persone: 'L’esecuzione di una richiesta lascia intatto il figlio in arrivo (riga 293 lo tratta come iscritto mantenuto): i suoi dati restano dopo un’istanza di cancellazione della famiglia.',
+    correzione: 'Stessa decisione di `erase`: includere `in_arrivo` fra i figli anonimizzabili, o dichiarare in risposta che è stato trattenuto e perché.',
+  },
+  'src/app/api/admin/students/elimina/route.ts::admin/students/elimina:POST': {
+    persone: 'Per la route, «non iscritto» è «ritirato OPPURE senza sezione» (righe 293-294): la segreteria può cancellare per intero un bambino in arrivo come se fosse un ex alunno.',
+    correzione: 'Respingere `in_arrivo` con un codice proprio, come per `elimina_alunno_definitivo`; la cancellazione di una domanda passa dal suo flusso di annullamento.',
+  },
   'sql::anno_fotografa': {
     persone: 'La fotografia «alunni senza frequenza» conta i bambini in arrivo: il confronto prima/dopo del passaggio d’anno vede una differenza che non c’è.',
     correzione: 'Escludere `in_arrivo` dal conteggio, come fa la 11-bis delle invarianti.',
@@ -573,7 +589,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 13, 'no-già': 189, sì: 62, daCorreggere: 15 },
+      { no: 14, 'no-già': 189, sì: 61, daCorreggere: 19 },
     )
   })
 

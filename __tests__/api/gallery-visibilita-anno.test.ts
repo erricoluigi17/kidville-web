@@ -219,6 +219,26 @@ describe('GET /api/gallery, famiglia', () => {
     expect(res.status).toBe(500)
     expect(h.tabelleLette).not.toContain('galleria_media_v2')
   })
+
+  // La via è concreta: `media_visibili_genitore` legge `target_classes`, e la PR 5 toglie quella colonna.
+  it.each(['42703', '42P01'])('una colonna o una tabella sparita nel corpo della pagina (%s) non torna al filtro largo', async (code) => {
+    h.pagina = (() => ({ data: null, error: { code, message: 'assente nel corpo' } })) as Rpc
+
+    const res = await GET(url(`studentId=${FIGLIO_A}`))
+
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+    expect(h.tabelleLette).not.toContain('galleria_media_v2')
+  })
+
+  it.each(['42703', '42P01'])('lo stesso nel corpo di `figli_attivi` (%s): non è schema indietro', async (code) => {
+    h.figliAttivi = (() => ({ data: null, error: { code, message: 'assente nel corpo' } })) as Rpc
+
+    const res = await GET(url(`studentId=${FIGLIO_A}`))
+
+    expect(res.status).toBe(500)
+    expect(h.tabelleLette).not.toContain('galleria_media_v2')
+  })
 })
 
 describe('GET /api/gallery, una docente sul proprio figlio', () => {

@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { logEvento } from '@/lib/logging/logger'
 
 /**
@@ -10,10 +9,11 @@ import { logEvento } from '@/lib/logging/logger'
  * punto del modulo:
  *
  *  · `ok` — la funzione ha risposto, anche con zero righe;
- *  · `indietro` — il database non ha ancora lo schema dell'anno (la CI, la finestra del deploy): la route fa quello che fa
- *    oggi, e resta una riga `info`;
- *  · `guasto` — ogni altro errore. Non si ripiega MAI sulla lista larga: la route risponde vuoto o con un errore, come fa oggi
- *    quando una sua lettura si rompe. Un guasto non deve aprire dati di minori.
+ *  · `indietro` — la funzione stessa non c'è, perché il database non ha ancora lo schema dell'anno (la CI, la finestra del
+ *    deploy): la route fa quello che fa oggi, e resta una riga `info`;
+ *  · `guasto` — ogni altro errore, compresa una colonna o una tabella sparita nel corpo di una funzione che esiste. Non si
+ *    ripiega MAI sulla lista larga: la route risponde vuoto o con un errore, come fa oggi quando una sua lettura si rompe. Un
+ *    guasto non deve aprire dati di minori.
  *
  * Nessuno mocka questo modulo, come `@/lib/alunni/attivo`: `@/lib/anagrafiche/legami` e `@/lib/auth/require-staff` li
  * sostituiscono decine di test con una factory, e un export nuovo là li farebbe esplodere.
@@ -60,6 +60,18 @@ export type FunzioneVisibilita =
 const RIGHE_DA_CONTROLLARE = 1000
 
 /**
+ * Solo «la funzione non esiste»: `PGRST202` da PostgREST, `42883` da Postgres. Qui NON si usa `schemaAnnoIndietro`, che per chi
+ * legge una tabella ha ragione a comprendere anche `42703` e `42P01`. Sotto una funzione quei due codici dicono che la funzione
+ * c'è e dentro manca qualcosa: la lista larga riaprirebbe per tutte le famiglie, senza un 500, il giorno in cui una migrazione
+ * toglie una colonna che una funzione legge.
+ *
+ * ⚠️ LIMITE: un `42883` può arrivare anche dal corpo di una funzione che chiama un helper sparito, e PostgREST lo riporta uguale.
+ * Da qui non si distingue da una funzione assente: quel caso resta `indietro`. Non è muto: il fetch strumentato scrive comunque
+ * una riga `error` per ogni rpc rifiutata.
+ */
+const FUNZIONE_ASSENTE = new Set(['PGRST202', '42883'])
+
+/**
  * Chiama una funzione di visibilità e ne legge l'esito. `utente` è sempre quello del gate, mai un parametro del client.
  */
 export async function leggiVisibilita<T>(
@@ -74,7 +86,7 @@ export async function leggiVisibilita<T>(
   const { data, error } = await supabase.rpc(funzione, { p_utente: utente, ...altri })
   if (error) {
     const err = error as { code?: string; message?: string }
-    if (schemaAnnoIndietro(err)) {
+    if (typeof err.code === 'string' && FUNZIONE_ASSENTE.has(err.code)) {
       logEvento('anno-scolastico', 'info', { operazione, esito: 'schema-indietro', error_code: err.code })
       return { stato: 'indietro' }
     }

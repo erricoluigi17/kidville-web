@@ -22,6 +22,7 @@ interface Pagamento {
   id: string
   scuola_id: string
   alunno_id: string | null
+  tipo: string | null
 }
 
 interface Fattura extends RigaVisibilitaFattura {
@@ -57,7 +58,7 @@ export const POST = withRoute('pagamenti/fattura/esito:POST', async (request: Re
     const supabase = await createAdminClient()
     const { data: pagamento, error: errorePagamento } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id, alunno_id')
+      .select('id, scuola_id, alunno_id, tipo')
       .eq('id', pagamentoId)
       .maybeSingle()
 
@@ -91,6 +92,7 @@ export const POST = withRoute('pagamenti/fattura/esito:POST', async (request: Re
       supabase,
       auth.user,
       rigaPagamento.scuola_id,
+      rigaPagamento.tipo,
     )
     if (visibilita.esito === 'errore') return noStore(visibilita.response)
 

@@ -580,7 +580,9 @@ function testo(v: unknown): string | null {
  * la funzione: lei dà attivo anche un bambino senza sezione o `ritirato` non archiviato, se ha una frequenza viva, e l'app di
  * famiglia quei bambini non li mostra. Schema indietro = il comportamento di prima. Ogni altro errore = nessun figlio ed `errore`
  * valorizzato, come una lettura fallita di `alunni`: il chiamante risponde 500, e la lista larga non esce mai. I figli con il legame
- * e senza frequenza attiva si contano fra i `ritirato`: è la sola frase vera per chi li ha tutti così («non risulta più iscritto»).
+ * e senza frequenza attiva si contano fra i `ritirato`, anche quando non hanno lasciato: un bambino con `data_ingresso` futura è
+ * nascosto fino a quella data, e la famiglia con quel solo figlio legge «Nessuna iscrizione attiva», che per lei non è la frase vera.
+ * L'avviso alla segreteria arriva con la PR 4.5.
  */
 export async function getFigliAttiviDiGenitore(
   supabase: SupabaseClient,

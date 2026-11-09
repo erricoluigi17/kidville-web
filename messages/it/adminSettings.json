@@ -284,7 +284,7 @@
   "ieFileVuoto": "Il file è vuoto",
   "ieTitolo": "Import / Export Anagrafiche",
   "ieEsportaTitolo": "Esporta Anagrafiche",
-  "ieEsportaDesc": "Scarica gli alunni in Excel (backup / report).",
+  "ieEsportaDesc": "Scarica in Excel l’anagrafica degli iscritti.",
   "ieGeneraEsportazione": "Genera Esportazione",
   "ieImportaTitolo": "Importa Anagrafiche",
   "ieImportaDesc": "Scarica il prestampato, compilalo (alunno + genitori) e ricaricalo.",

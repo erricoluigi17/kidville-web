@@ -295,17 +295,17 @@ function guardiaMontata(sorgente: string): boolean {
   )
 }
 
-/** Il testo strutturale di ciò che l'handler raggiunge nel SUO file, una voce per dichiarazione: niente commenti, niente stringhe. */
-function dichiarazioniRaggiunte(mod: Modulo, nome: string): string[] {
+/** Ciò che l'handler raggiunge nel SUO file, una voce per dichiarazione. */
+function dichiarazioniRaggiunte(mod: Modulo, nome: string): Dichiarazione[] {
   const viste = new Set<string>()
   const coda = [nome]
-  const out: string[] = []
+  const out: Dichiarazione[] = []
   while (coda.length > 0) {
     const n = coda.pop()!
     const dich = mod.dichiarazioni.get(n)
     if (viste.has(n) || !dich) continue
     viste.add(n)
-    out.push(mod.m.struttura.slice(dich.da, dich.a))
+    out.push(dich)
     coda.push(...dich.riferimenti)
   }
   return out
@@ -313,19 +313,66 @@ function dichiarazioniRaggiunte(mod: Modulo, nome: string): string[] {
 
 const RE_VISIBILITA_FATTURE = /\bconst\s+visibilita\s*=\s*await\s+caricaVisibilitaFatture\s*\(/
 const RE_FILTRO_DOCUMENTO = /\bdellaSede\.filter\(\s*visibilita\.puoVedere\s*\)/
+// `fattura/esito` legge una riga sola: lì il filtro è una guardia che esce, non un `.filter`.
+const RE_GUARDIA_DOCUMENTO = /\bif\s*\(\s*!rigaFattura\s*\|\|\s*!visibilita\.puoVedere\(\s*rigaFattura\s*\)\s*\)\s*\{\s*return\b/
 // `tutte.length` resta lecito: distingue «non emessa» da «non disponibile» e decide il ripiego sulla chiave del pagamento.
 const RE_RIGHE_NON_FILTRATE = /\b(?:tutte|dellaSede)\b(?!\.length\b)/
+// `pag.tipo`, `rigaPagamento.tipo`. Il resto dell'espressione (`as string | null`) non conta.
+const RE_TIPO_VOCE = /^[A-Za-z_$][\w$]*\.tipo\b/
+
+/** Gli argomenti di una chiamata, spezzati alle virgole di primo livello. Sul testo `struttura`, come `aProfonditaZero`. */
+function argomentiDi(struttura: string, aperta: number): string[] {
+  const fine = fineParentesi(struttura, aperta) - 1
+  const out: string[] = []
+  let livello = 0
+  let inizio = aperta + 1
+  for (let k = aperta + 1; k < fine; k++) {
+    const c = struttura[k]
+    if (c === '(' || c === '{' || c === '[') livello++
+    else if (c === ')' || c === '}' || c === ']') livello--
+    else if (c === ',' && livello === 0) {
+      out.push(struttura.slice(inizio, k))
+      inizio = k + 1
+    }
+  }
+  out.push(struttura.slice(inizio, fine))
+  return out.map((a) => a.trim()).filter(Boolean)
+}
 
 /**
- * L'handler carica il predicato dal suo modulo, filtra le righe della sede, e da lì in poi le righe non filtrate si possono solo
- * contare. Qui, a differenza del resto del lock, si guarda anche che il risultato venga usato: è ciò che regge l'esenzione.
+ * Senza il `tipo` il predicato tratta ogni voce come non divisa, e il PDF dell'altro genitore esce di nuovo senza un rosso: il
+ * compilatore vede un parametro che può valere `undefined`, e non si accorge di una colonna tolta dalla `select`. Si guardano
+ * tutte e due: il quarto argomento è il `tipo` di qualcosa, e nella stessa dichiarazione una lettura di `pagamenti` chiede la colonna.
+ */
+function passaIlTipoDellaVoce(mod: Modulo, dich: Dichiarazione): boolean {
+  const { struttura, senzaCommenti } = mod.m
+  const chiamata = RE_VISIBILITA_FATTURE.exec(struttura.slice(dich.da, dich.a))
+  if (!chiamata) return false
+  if (!RE_TIPO_VOCE.test(argomentiDi(struttura, dich.da + chiamata.index + chiamata[0].length - 1)[3] ?? '')) return false
+  for (const t of senzaCommenti.slice(dich.da, dich.a).matchAll(RE_FROM)) {
+    const i = dich.da + t.index
+    if (t[1] !== 'pagamenti' || !struttura.startsWith('.from', i)) continue
+    for (const s of struttura.slice(i, fineCatena(struttura, i)).matchAll(RE_SELECT)) {
+      const aperta = i + s.index + s[0].length - 1
+      if (/\btipo\b/.test(senzaCommenti.slice(aperta + 1, fineParentesi(struttura, aperta) - 1))) return true
+    }
+  }
+  return false
+}
+
+/**
+ * L'handler legge il `tipo` della voce, carica il predicato dal suo modulo passandoglielo, filtra le righe della sede, e da lì in
+ * poi le righe non filtrate si possono solo contare. Qui, a differenza del resto del lock, si guarda anche che il risultato venga
+ * usato: è ciò che regge l'esenzione.
  */
 function applicaFiltroPerDocumento(sorgente: string, metodo: string): boolean {
   const mod = creaModulo(sorgente)
   if (mod.importati.get('caricaVisibilitaFatture')?.spec !== '@/lib/pagamenti/visibilita-fatture') return false
-  return dichiarazioniRaggiunte(mod, metodo).some((testo) => {
-    const filtro = RE_FILTRO_DOCUMENTO.exec(testo)
+  return dichiarazioniRaggiunte(mod, metodo).some((dich) => {
+    const testo = mod.m.struttura.slice(dich.da, dich.a)
+    const filtro = RE_FILTRO_DOCUMENTO.exec(testo) ?? RE_GUARDIA_DOCUMENTO.exec(testo)
     if (!filtro || !RE_VISIBILITA_FATTURE.test(testo.slice(0, filtro.index))) return false
+    if (!passaIlTipoDellaVoce(mod, dich)) return false
     return !RE_RIGHE_NON_FILTRATE.test(testo.slice(filtro.index + filtro[0].length))
   })
 }
@@ -335,8 +382,9 @@ function applicaFiltroPerDocumento(sorgente: string, metodo: string): boolean {
 /**
  * Handler con un ramo genitore che leggono una tabella senza la sua funzione. Una voce che non corrisponde più a niente, o che
  * nomina una tabella in più o in meno, fa fallire il lock: l'elenco non può invecchiare in silenzio. Qui stanno letture da cui non
- * esce un contenuto che la funzione nasconderebbe, o porte che alla famiglia sono chiuse. Fanno eccezione le due voci delle
- * fatture (`FILTRATE_PER_DOCUMENTO`): lo dicono nel motivo, e il lock cade se smettono di applicare il filtro per documento.
+ * esce un contenuto che la funzione nasconderebbe, o porte che alla famiglia sono chiuse. Fanno eccezione le tre voci delle
+ * fatture (`FILTRATE_PER_DOCUMENTO`): lo dicono nel motivo, e il lock cade se smettono di applicare il filtro per documento o di
+ * passargli il `tipo` della voce.
  *
  * `pagamenti/ticket`, `parent/submissions` e `forms/signed-pdf` non ci sono perché non leggono queste tabelle (`ticket_mensa`,
  * `forms_submissions`): sarebbero voci morte.
@@ -375,17 +423,17 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
   {
     handler: 'pagamenti/fattura/esito:POST',
     tabelle: ['pagamenti'],
-    motivo: 'Registra l’esito di un download: legge `id, scuola_id, alunno_id` della voce per il gate `assertFatturaInScope` e risponde 204.',
+    motivo: 'Registra l’esito di un download e risponde 204: legge `id, scuola_id, alunno_id, tipo` della voce per il gate `assertFatturaInScope`, e la riga la decide `caricaVisibilitaFatture`: su una voce divisa ognuno solo la propria; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
   },
   {
     handler: 'pagamenti/fattura/list:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e le righe le decide per documento `caricaVisibilitaFatture`, acceso sede per sede da `fatture_visibilita_attiva_il`: finché è spento, un adulto legato al bambino e fuori dalle quote vede elenco e intestatari delle fatture di una voce divisa, e si chiude quando il filtro si accende, salvo le fatture ordinarie, che il filtro lascia condivise.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e le righe le decide per documento `caricaVisibilitaFatture`: su una voce divisa ognuno vede solo la propria, e la contabilità nel proprio perimetro tutte; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
   },
   {
     handler: 'pagamenti/fattura:GET',
     tabelle: ['pagamenti'],
-    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e il documento lo decide `caricaVisibilitaFatture`, acceso sede per sede da `fatture_visibilita_attiva_il`: finché è spento, un adulto legato al bambino e fuori dalle quote scarica il PDF delle fatture di una voce divisa, e si chiude quando il filtro si accende, salvo le fatture ordinarie, che il filtro lascia condivise.',
+    motivo: 'Chi è legato al bambino passa dal gate `assertFatturaInScope`, e il documento lo decide `caricaVisibilitaFatture`: su una voce divisa ognuno scarica solo il proprio, e la contabilità nel proprio perimetro tutti; sulle altre voci il filtro per sede `fatture_visibilita_attiva_il`, spento finché non si classificano le fatture.',
   },
   {
     handler: 'pagamenti/riconciliazione/[id]/contesto:GET',
@@ -410,7 +458,7 @@ const ESENTI: readonly { handler: string; tabelle: Tabella[]; motivo: string }[]
 ]
 
 /** Le voci di `ESENTI` che valgono solo finché il filtro per documento decide le righe della risposta. */
-const FILTRATE_PER_DOCUMENTO = ['pagamenti/fattura:GET', 'pagamenti/fattura/list:GET'] as const
+const FILTRATE_PER_DOCUMENTO = ['pagamenti/fattura:GET', 'pagamenti/fattura/list:GET', 'pagamenti/fattura/esito:POST'] as const
 
 // ─── Le prove dello scanner, su sorgenti finti ───────────────────────────────
 
@@ -564,15 +612,31 @@ describe('visibilita-genitore-coverage · lo scanner', () => {
     expect(suFinti({}).handlerDi(ROUTE)).toEqual([])
   })
 
-  it('il filtro per documento vale solo se l’handler lo carica, lo applica e ne usa il risultato', () => {
+  it('il filtro per documento vale solo se l’handler lo carica col tipo della voce, lo applica e ne usa il risultato', () => {
     const imp = "import { caricaVisibilitaFatture } from '@/lib/pagamenti/visibilita-fatture'\n"
-    const carica = 'const visibilita = await caricaVisibilitaFatture(db, user, sede)\nconst dellaSede = tutte.filter(f)\n'
+    const voce = "const { data: voce } = await db.from('pagamenti').select('id, tipo').maybeSingle()\n"
+    const conArgomenti = (argomenti: string, lettura = voce) =>
+      `${lettura}const visibilita = await caricaVisibilitaFatture(${argomenti})\nconst dellaSede = tutte.filter(f)\n`
+    const carica = conArgomenti('db, user, sede, voce.tipo')
     const applica = 'const visibili = dellaSede.filter(visibilita.puoVedere)\n'
     const buono = handler(`${carica}${applica}return visibili`)
     const conAiuto = (chiamata: string) => `async function leggi() {\n${carica}${applica}return visibili\n}\n${handler(chiamata)}`
+    const guardia = 'if (!rigaFattura || !visibilita.puoVedere(rigaFattura)) {\nreturn nega()\n}\n'
 
     const casi: [string, string, boolean][] = [
       ['carica, applica e usa', imp + buono, true],
+      ['una guardia che esce sulla riga sola', imp + handler(`${carica}${guardia}return ok()`), true],
+      ['la guardia che non esce', imp + handler(`${carica}if (!rigaFattura || !visibilita.puoVedere(rigaFattura)) {\nconta()\n}\nreturn ok()`), false],
+      ['la guardia in un commento', imp + handler(`${carica}// ${guardia}return ok()`), false],
+      ['il tipo con la sua forma di cast', imp + handler(`${conArgomenti('db, user, sede, voce.tipo as string | null,')}${applica}return visibili`), true],
+      ['senza il tipo della voce', imp + handler(`${conArgomenti('db, user, sede')}${applica}return visibili`), false],
+      ['il quarto argomento è un null', imp + handler(`${conArgomenti('db, user, sede, null')}${applica}return visibili`), false],
+      ['il quarto argomento è un’altra colonna', imp + handler(`${conArgomenti('db, user, sede, voce.tipologia')}${applica}return visibili`), false],
+      ['il tipo fuori posto', imp + handler(`${conArgomenti('db, voce.tipo, sede, altro')}${applica}return visibili`), false],
+      ['la voce letta senza la colonna', imp + handler(`${conArgomenti('db, user, sede, voce.tipo', "const { data: voce } = await db.from('pagamenti').select('id').maybeSingle()\n")}${applica}return visibili`), false],
+      ['una colonna che somiglia', imp + handler(`${conArgomenti('db, user, sede, voce.tipo', "const { data: voce } = await db.from('pagamenti').select('id, tipo_voce').maybeSingle()\n")}${applica}return visibili`), false],
+      ['la colonna in un commento', imp + handler(`${conArgomenti('db, user, sede, voce.tipo', "const { data: voce } = await db.from('pagamenti').select('id' /* tipo */).maybeSingle()\n")}${applica}return visibili`), false],
+      ['la colonna letta da un’altra tabella', imp + handler(`${conArgomenti('db, user, sede, voce.tipo', "const { data: voce } = await db.from('fatture_emesse').select('id, tipo').maybeSingle()\n")}${applica}return visibili`), false],
       ['dopo il filtro si possono contare le righe', imp + handler(`${carica}${applica}if (tutte.length === 0) return 1\nreturn visibili`), true],
       ['in una funzione del file che l’handler chiama', imp + conAiuto('return leggi()'), true],
       ['in una funzione del file che l’handler non chiama', imp + conAiuto('return 1'), false],
@@ -675,20 +739,20 @@ describe('visibilita-genitore-coverage · il codice di src/', () => {
     expect(dichiarate.filter((c) => !trovate.includes(c)), 'voce di ESENTI che non corrisponde più a niente: toglila').toEqual([])
   }, TEMPO)
 
-  it('le due voci delle fatture valgono solo finché l’handler applica il filtro per documento', () => {
+  it('le tre voci delle fatture valgono solo finché l’handler applica il filtro per documento col tipo della voce', () => {
     for (const id of FILTRATE_PER_DOCUMENTO) {
       expect(ESENTI.find((e) => e.handler === id)?.motivo, id).toContain('caricaVisibilitaFatture')
       const [percorso, metodo] = id.split(':')
       const sorgente = fs.readFileSync(path.join(API, percorso, 'route.ts'), 'utf8')
-      expect(applicaFiltroPerDocumento(sorgente, metodo), `${id} non applica più caricaVisibilitaFatture alle righe: la voce di ESENTI non ha più ragione`).toBe(true)
+      expect(applicaFiltroPerDocumento(sorgente, metodo), `${id} non applica più caricaVisibilitaFatture alle righe, o non le passa il \`tipo\` della voce: la voce di ESENTI non ha più ragione`).toBe(true)
     }
   })
 
-  it('il predicato delle fatture decide per documento, e si accende per sede', () => {
+  it('il predicato delle fatture decide per documento, sulla voce divisa e per sede', () => {
     const mod = creaModulo(fs.readFileSync(path.join(RADICE, 'src/lib/pagamenti/visibilita-fatture.ts'), 'utf8'))
     const dich = mod.dichiarazioni.get('caricaVisibilitaFatture')
     const corpo = dich ? mod.m.senzaCommenti.slice(dich.da, dich.a) : ''
-    for (const voce of ['fatture_visibilita_attiva_il', 'quote_separate', 'parent_registry_id']) expect(corpo, voce).toContain(voce)
+    for (const voce of ['fatture_visibilita_attiva_il', 'quote_separate', 'parent_registry_id', 'tipoVoce', "'split'"]) expect(corpo, voce).toContain(voce)
   })
 
   it('ESENTI: una voce per handler, con una ragione di una riga', () => {

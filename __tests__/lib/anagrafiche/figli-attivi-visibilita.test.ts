@@ -16,6 +16,7 @@ vi.mock('@/lib/logging/logger', async (originale) => {
 })
 
 import { getFigliAttiviDiGenitore } from '@/lib/anagrafiche/legami'
+import { leggiVisibilita } from '@/lib/anno/visibilita-genitore'
 
 const GEN = '99999999-9999-4999-8999-999999999991'
 const ATTIVO = '11111111-1111-4111-8111-111111111111'
@@ -161,5 +162,45 @@ describe('getFigliAttiviDiGenitore sulla funzione SQL', () => {
       esito: 'letta',
       n: 1,
     }))
+  })
+
+  it.each(['42703', '42P01'])('una funzione che si rompe nel corpo (%s) non riapre l’elenco largo', async (code) => {
+    const guasto = { code, message: 'oggetto assente nel corpo della funzione' }
+    const esito = await getFigliAttiviDiGenitore(conRpc(dbBase(), () => ({ data: null, error: guasto })), GEN)
+
+    expect(esito.righe).toEqual([])
+    expect(esito.completo).toBe(false)
+    expect(esito.errore).toEqual(guasto)
+  })
+})
+
+describe('leggiVisibilita: `indietro` vuol dire solo che manca la funzione', () => {
+  const chiama = (code: string) => leggiVisibilita(
+    conRpc(dbBase(), () => ({ data: null, error: { code, message: 'assente' } })),
+    'figli_attivi',
+    GEN,
+  )
+
+  it.each(['PGRST202', '42883'])('%s: `indietro`, con un `info`', async (code) => {
+    expect(await chiama(code)).toEqual({ stato: 'indietro' })
+    expect(h.logEvento).toHaveBeenCalledWith('anno-scolastico', 'info', expect.objectContaining({
+      esito: 'schema-indietro',
+      error_code: code,
+    }))
+  })
+
+  // `schemaAnnoIndietro` li comprende tutti e quattro, e per chi legge una tabella ha ragione. Qui no: la funzione risponde, e
+  // dentro manca qualcosa. Il giorno in cui una migrazione toglie una colonna letta da una funzione, le famiglie tornerebbero al
+  // filtro largo senza un 500.
+  it.each(['42703', '42P01', 'PGRST204', 'PGRST205'])('%s: `guasto`, con un `error`', async (code) => {
+    const esito = await chiama(code)
+
+    expect(esito.stato).toBe('guasto')
+    expect(h.logEvento).toHaveBeenCalledWith('anno-scolastico', 'error', expect.objectContaining({
+      operazione: 'anno/visibilita:figli_attivi',
+      esito: 'lettura-fallita',
+      error_code: code,
+    }), expect.anything())
+    expect(h.logEvento).not.toHaveBeenCalledWith('anno-scolastico', 'info', expect.objectContaining({ esito: 'schema-indietro' }))
   })
 })

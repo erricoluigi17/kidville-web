@@ -236,6 +236,14 @@ describe('EnrollmentWizard · il passo anno', () => {
     expect(screen.queryByRole('button', { name: /invia richiesta/i })).not.toBeInTheDocument()
   })
 
+  it('4.5.16 G · finestra del deploy: nessun anno ma `chiuso: false` (la colonna non c\'è ancora): il modulo NON dice «chiuse» e si compila', async () => {
+    mockFetch({ anni: { tipo: 'ok', anni: [], scelta: false, chiuso: false } })
+    render(<EnrollmentWizard scuolaId={SEDE_A} />)
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Nome bimbo')).toBeInTheDocument())
+    expect(screen.queryByText('Le iscrizioni sono chiuse')).not.toBeInTheDocument()
+  })
+
   it('PIÙ sedi: gli anni si chiedono solo dopo aver scelto la sede, e una sede chiusa non fa avanzare', async () => {
     mockFetch({
       sedi: [{ id: SEDE_A, nome: NOME_SEDE_A }, { id: SEDE_B, nome: NOME_SEDE_B }],

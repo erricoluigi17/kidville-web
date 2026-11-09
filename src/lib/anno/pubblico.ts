@@ -25,6 +25,38 @@ export type AnnoPubblico =
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
+ * ⚠️ LA FINESTRA DEL DEPLOY (4.5.15, I4; 4.5.16, G). `domande_aperte` nasce spento su tutte le righe e lo RIEMPIE M45d, la
+ * stessa migrazione che crea `listino_voci.scadenza`. Fra il codice nuovo e quella migrazione "nessun anno offerto" non vuol
+ * dire "iscrizioni chiuse": vuol dire "il riempimento non è ancora passato", e chiudere il modulo pubblico quel giorno
+ * respingerebbe famiglie vere. Una lettura di prova della colonna distingue i due casi: colonna assente → `{ indietro: true }`
+ * (il comportamento di prima di questa PR); errore di altro genere → non si chiude, si avvisa, e il risultato è lo stesso.
+ * Colonna presente → `null`: il "nessun anno offerto" è vero.
+ *
+ * Una sola funzione, usata da entrambe le porte pubbliche (la scrittura e l'elenco degli anni): prima la sonda stava solo
+ * nella scrittura e l'elenco diceva `chiuso: true` alle famiglie fino al passaggio della migrazione.
+ * Si toglie con la PR-B (quando M45d è in produzione ovunque e la finestra non esiste più).
+ */
+async function sondaFinestraDelDeploy(
+  supabase: SupabaseClient,
+  azione: string,
+  sede: string | undefined,
+): Promise<{ indietro: true } | null> {
+  const sonda = await supabase.from('listino_voci').select('scadenza').limit(1)
+  if (!sonda.error) return null
+  if (schemaAnnoIndietro(sonda.error)) {
+    esitoSchemaIndietro(azione)
+    return { indietro: true }
+  }
+  logEvento('anno-scolastico', 'warn', {
+    tipo: 'anno-pubblico-sonda-listino-fallita',
+    azione,
+    error_code: 'SONDA_LISTINO_FALLITA',
+    scuola_id: sede,
+  })
+  return { indietro: true }
+}
+
+/**
  * L'anno per le porte SENZA utente (il modulo pubblico).
  *
  *  · **Senza `opzioni.annoId`** (un cliente vecchio, o la sede ha un anno solo): il `corrente` della sede,
@@ -66,26 +98,9 @@ export async function annoPerScritturaPubblica(
   // nata, o il riempimento non è ancora passato) non è "chiusa": è senza anno, come sempre, e la domanda si
   // scrive lo stesso (la riserva permanente del database assegna l'anno) con il `warn` qui sotto.
   if (offerti.length === 0 && anni.righe.length > 0) {
-    // ⚠️ LA FINESTRA DEL DEPLOY (4.5.15, I4). `domande_aperte` nasce spento su tutte le righe e lo RIEMPIE M45d, la stessa
-    // migrazione che crea `listino_voci.scadenza`. Fra il codice nuovo e quella migrazione "nessun anno offerto" non vuol dire
-    // "iscrizioni chiuse": vuol dire "il riempimento non è ancora passato", e chiudere il modulo pubblico quel giorno
-    // respingerebbe famiglie vere. Una lettura di prova della colonna distingue i due casi: assente → si comporta come
-    // `indietro` (come prima di questa PR), errore di altro genere → non si chiude, si avvisa.
-    // Questa lettura si toglie con la PR-B (quando M45d è in produzione ovunque e la finestra non esiste più).
-    const sonda = await supabase.from('listino_voci').select('scadenza').limit(1)
-    if (sonda.error) {
-      if (schemaAnnoIndietro(sonda.error)) {
-        const e = esitoSchemaIndietro(azione)
-        return { annoSedeId: null, annoId: null, schemaIndietro: e.schemaIndietro as true }
-      }
-      logEvento('anno-scolastico', 'warn', {
-        tipo: 'anno-pubblico-sonda-listino-fallita',
-        azione,
-        error_code: 'SONDA_LISTINO_FALLITA',
-        scuola_id: sede,
-      })
-      return { annoSedeId: null, annoId: null, schemaIndietro: true }
-    }
+    // ⚠️ LA FINESTRA DEL DEPLOY (4.5.15, I4): vedi `sondaFinestraDelDeploy`.
+    const finestra = await sondaFinestraDelDeploy(supabase, azione, sede)
+    if (finestra) return { annoSedeId: null, annoId: null, schemaIndietro: true }
     // Un `corrente` che non accetta domande è un fatto da vedere (è l'anno in cui le famiglie si iscrivono adesso); un anno
     // chiuso o in preparazione che non le accetta è la vita ordinaria.
     const livello = anni.righe.some((r) => r.stato === 'corrente') ? 'warn' : 'info'
@@ -155,7 +170,12 @@ export async function anniOffertiPubblici(supabase: SupabaseClient, scuolaId: st
   }
   const offerti = anni.righe.filter((r) => r.domande_aperte === true)
   // Chiuso = la sede ha degli anni e nessuno accetta domande (lo stesso criterio di `annoPerScritturaPubblica`).
-  if (offerti.length === 0) return { anni: [], scelta: false, chiuso: anni.righe.length > 0 }
+  if (offerti.length === 0) {
+    if (anni.righe.length > 0 && (await sondaFinestraDelDeploy(supabase, azione, FORMA_UUID.test(scuolaId) ? scuolaId : undefined))) {
+      return { indietro: true }
+    }
+    return { anni: [], scelta: false, chiuso: anni.righe.length > 0 }
+  }
 
   const { data, error } = await supabase
     .from('anni_scolastici')

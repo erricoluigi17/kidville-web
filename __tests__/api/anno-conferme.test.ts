@@ -260,8 +260,8 @@ function datiDelloScenario() {
 }
 function conLeFrequenzeNuove() {
   h.nuove = [
-    { id: N1, alunno_id: AL[0], section_id: S_NUOVA_PRIM, stato: 'in_attesa', quota_saldata: false, quota_pagamento_id: PAG },
-    { id: N4, alunno_id: AL[3], section_id: null, stato: 'ritirato', quota_saldata: false, quota_pagamento_id: null },
+    { id: N1, alunno_id: AL[0], section_id: S_NUOVA_PRIM, stato: 'in_attesa', quota_saldata: false, quota_pagamento_id: PAG, tipo: 'conferma' },
+    { id: N4, alunno_id: AL[3], section_id: null, stato: 'ritirato', quota_saldata: false, quota_pagamento_id: null, tipo: 'conferma' },
   ]
 }
 
@@ -269,7 +269,7 @@ describe('GET conferme', () => {
   beforeEach(() => {
     datiDelloScenario()
     conLeFrequenzeNuove()
-    h.tabelle.moduli_richiesti = [{ id: MOD1 }, { id: MOD2 }]
+    h.tabelle.moduli_richiesti = [{ id: MOD1, lista: 'conferma' }, { id: MOD2, lista: 'conferma' }]
     h.tabelle.frequenze_moduli = [{ frequenza_id: N1, modulo_id: MOD1 }, { frequenza_id: N1, modulo_id: '73737373-7373-4737-8737-737373737373' }]
     h.tabelle.sections = [
       { id: S_INF, scuola_id: SEDE_A, name: 'Sezione Prova A', school_type: 'infanzia', fascia: 'infanzia' },
@@ -415,6 +415,8 @@ describe('GET conferme — vista=nuove e mancano_moduli', () => {
     h.tabelle.frequenze = [
       ...FN.map((id, i) => ({ id, alunno_id: NA[i], anno_sede_id: NUOVO_A, tipo: 'nuova', stato: 'in_attesa', section_id: i === 0 ? S_NUOVA_PRIM : null, quota_saldata: i === 4, quota_pagamento_id: i === 4 ? PAG : null })),
       { id: N1, alunno_id: AL[0], anno_sede_id: NUOVO_A, tipo: 'conferma', stato: 'in_attesa', section_id: null, quota_saldata: false, quota_pagamento_id: null },
+      // chi ha confermato FREQUENTA: ha una frequenza viva nell'anno attivo (4.5.17: è questo che lo tiene fuori dalle nuove)
+      { id: F1, alunno_id: AL[0], anno_sede_id: ATTIVO_A, stato: 'iscritto', section_id: null },
       { id: N4, alunno_id: AL[3], anno_sede_id: NUOVO_A, tipo: 'nuova', stato: 'ritirato', section_id: null, quota_saldata: false, quota_pagamento_id: null },
       { id: 'fffffff0-ffff-4fff-8fff-fffffffffff0', alunno_id: NA[0], anno_sede_id: NUOVO_B, tipo: 'nuova', stato: 'in_attesa', section_id: null, quota_saldata: false, quota_pagamento_id: null },
     ]
@@ -448,10 +450,10 @@ describe('GET conferme — vista=nuove e mancano_moduli', () => {
       stato_frequenza: 'in_attesa', nome: 'Nuovo1', cognome: 'Arrivo1', classe: 'Classe Prova B',
     })
     expect(data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[4])).toMatchObject({ quota: 'saldata', moduli: { fatti: 0, richiesti: 2 } })
-    // la lista dei moduli è `nuova`, non `conferma`
-    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri.lista).toBe('nuova')
-    // niente anno di partenza: non serve
-    expect(h.rpc.map((r) => r.nome)).toEqual(['anno_conta_posti'])
+    // 4.5.17 (B): le liste si leggono insieme e ogni riga usa quella del suo `tipo` (qui `nuova`: 2 moduli)
+    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri['in:lista']).toEqual(['conferma', 'nuova'])
+    // 4.5.17 (A): nell'anno nuovo c'è una riga `conferma`, quindi serve l'anno attivo per sapere chi frequenta
+    expect(h.rpc.map((r) => r.nome)).toEqual(['anno_attivo', 'anno_conta_posti'])
   })
 
   it('una frequenza non compare in tutte e due le viste: chi ha confermato non è fra le nuove, chi arriva non è fra le conferme', async () => {
@@ -524,8 +526,8 @@ describe('GET conferme — vista=nuove e mancano_moduli', () => {
     expect(data.totale).toBe(1)
     expect(data.righe.map((r: { frequenza_id: string }) => r.frequenza_id)).toEqual([F1])
     expect(data.righe[0].moduli).toEqual({ fatti: 1, richiesti: 2 })
-    // la lista dei moduli è `conferma`
-    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri.lista).toBe('conferma')
+    // 4.5.17 (B): le due liste si leggono insieme, e la riga usa quella del suo `tipo` (qui `conferma`)
+    expect(h.query.find((x) => x.tabella === 'moduli_richiesti')?.filtri['in:lista']).toEqual(['conferma', 'nuova'])
   })
 
   it('il perimetro vale anche per le nuove: 403 per l’anno di un’altra sede', async () => {

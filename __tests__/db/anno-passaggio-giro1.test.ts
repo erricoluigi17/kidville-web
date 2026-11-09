@@ -233,3 +233,32 @@ describe('S8 · S9 · l’annullo guarda che cosa è successo dopo la conferma',
     })
   })
 })
+
+describe('S2 · S3 · la conferma tardiva', () => {
+  const tardiva = (p: string, alunno: string, sezione: string | null, oggi: string) =>
+    una<Rec>(b.db, `SELECT public.passaggio_conferma_tardiva($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::date)`, [p, alunno, sezione, UTENTE, oggi])
+
+  it('S2 · l’ingresso è il giorno in cui la famiglia torna, anche quando si riapre la frequenza ritirata', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-09-10')
+      const p = await prepara('2027-09-10')
+      await conferma(p, '2027-09-10')
+      await tardiva(p, BAMBINI.no, null, '2027-09-12')
+      const f = await una<string>(b.db, `SELECT data_ingresso::text FROM public.frequenze WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.no, b.a])
+      expect(f, 'data_ingresso della frequenza nuova').toBe('2027-09-12')
+    })
+  })
+
+  it('S3 · senza una classe in cui metterlo il bambino non torna iscritto e senza classe: RIGA_NON_VALIDA', async () => {
+    await inRollback(b.db, async () => {
+      await oggiE('2027-09-10')
+      const p = await prepara('2027-09-10')
+      await conferma(p, '2027-09-10')
+      // Il bambino «cambiaGradoSenzaSezione» è uscito (correzione di `prepara`) e la sua classe vecchia non ha continuazione.
+      const codice = await errore(b.db, `SELECT public.passaggio_conferma_tardiva($1::uuid, $2::uuid, NULL::uuid, $3::uuid, $4::date)`, [p, BAMBINI.cambiaGradoSenzaSezione, UTENTE, '2027-09-12'])
+      expect(codice).toBe('RIGA_NON_VALIDA')
+      const freq = await rows(`SELECT stato, section_id FROM public.frequenze WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.cambiaGradoSenzaSezione, b.a])
+      expect(freq.some((x) => x.stato === 'in_attesa' || x.stato === 'iscritto'), 'nessuna frequenza viva senza classe').toBe(false)
+    })
+  })
+})

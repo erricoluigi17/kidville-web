@@ -582,7 +582,12 @@ BEGIN
   SELECT * INTO v_f FROM public.frequenze WHERE alunno_id = p_alunno AND anno_sede_id = v_a.id FOR UPDATE;
   IF FOUND THEN
     IF v_f.stato = 'ritirato' THEN
-      UPDATE public.frequenze SET stato = 'in_attesa', data_uscita = NULL, tipo = 'conferma',
+      -- (giro 1, S3) Senza una classe in cui metterlo il bambino tornerebbe iscritto e senza classe: si rifiuta.
+      IF v_sez IS NULL AND v_f.section_id IS NULL THEN
+        RAISE EXCEPTION 'RIGA_NON_VALIDA' USING HINT = 'tardiva-senza-classe';
+      END IF;
+      -- (giro 1, S2) L'ingresso è il giorno in cui la famiglia torna (non quello, vecchio, della frequenza che si riapre).
+      UPDATE public.frequenze SET stato = 'in_attesa', data_uscita = NULL, tipo = 'conferma', data_ingresso = v_ingresso,
              continua_da = coalesce(continua_da, v_fd.id), section_id = coalesce(v_sez, section_id)
        WHERE id = v_f.id;
       v_creata := true;
@@ -590,6 +595,9 @@ BEGIN
       RAISE EXCEPTION 'FREQUENZA_NON_VIVA' USING DETAIL = json_build_object('stato', 1)::text;
     END IF;
   ELSE
+    IF v_sez IS NULL THEN
+      RAISE EXCEPTION 'RIGA_NON_VALIDA' USING HINT = 'tardiva-senza-classe';
+    END IF;
     INSERT INTO public.frequenze
       (alunno_id, anno_sede_id, anno_id, scuola_id, section_id, continua_da, tipo, stato, origine, data_ingresso,
        retta_esente, retta_a_carico_di, retta_split_config, intestatario_fatture, giorno_scadenza_pagamenti, gruppo_mensa_id, usa_pannolino)

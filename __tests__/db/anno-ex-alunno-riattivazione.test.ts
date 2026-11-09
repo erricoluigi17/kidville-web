@@ -59,7 +59,7 @@ import { POST as RIATTIVA } from '@/app/api/admin/students/riattiva/route'
 import { POST as CONFERMA } from '@/app/api/admin/anni/[annoSedeId]/conferme/route'
 import { registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
 import { scriviFrequenza } from '@/lib/anno/frequenze'
-import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo'
+import { PATCH_RITORNO_IN_ARRIVO, eExAlunno } from '@/lib/anno/domanda-anno-prossimo'
 
 type Rec = Record<string, unknown>
 let db: PGlite
@@ -318,6 +318,50 @@ describe('4.5.16 (C) · riattivare', () => {
       expect(ri.corpo, 'il campo che nessuno leggeva non c\u2019è più').not.toHaveProperty('iscrizione_prossimo_anno_chiusa')
       expect((await alunno(AL)).stato).toBe('iscritto')
       expect((await frequenze(AL)).map((x) => `${x.anno_inizio}:${x.stato}`)).toEqual(['2026:iscritto', '2027:ritirato'])
+    })
+  })
+})
+
+describe('4.5.16 (D) · l\u2019ex alunno è solo chi è archiviato', () => {
+  it('`eExAlunno`: vale `archiviato_il`, non `stato`', () => {
+    expect(eExAlunno({ stato: 'ritirato', archiviato_il: null })).toBe(false) // la tendina «Ritirato»
+    expect(eExAlunno({ stato: 'ritirato' })).toBe(false)
+    expect(eExAlunno({ stato: 'iscritto', archiviato_il: null })).toBe(false)
+    expect(eExAlunno({ stato: 'ritirato', archiviato_il: '2026-11-04T10:00:00Z' })).toBe(true)
+    expect(eExAlunno(null)).toBe(false)
+  })
+
+  prova('S4: un «ritirato» dalla tendina con una domanda approvata resta com\u2019è (classe e frequenza di oggi) e ha solo la frequenza dell\u2019anno dopo; una scrittura su quella di oggi non cambia la scheda', async () => {
+    await inRollback(async () => {
+      await giorni()
+      await nuovoAlunno(AL)
+      const s26 = await sezione(2026, 'Girasoli')
+      const f26 = await una<string>(
+        `SELECT f.id FROM public.frequenze f JOIN public.anni_sede s ON s.id = f.anno_sede_id WHERE f.alunno_id = $1 AND s.stato = 'corrente'`, [AL])
+      await db.query(`UPDATE public.frequenze SET section_id = $1 WHERE id = $2`, [s26, f26])
+      const a = await apri()
+      // la tendina: lo stato cambia, l'archiviazione no
+      const t = await cliente().from('alunni').update({ stato: 'ritirato' }).eq('id', AL)
+      expect(t.error).toBeNull()
+      const prima = await alunno(AL)
+      expect(prima.archiviato_il).toBeNull()
+
+      // l'approvazione, com'è dopo la correzione: il bambino NON è un ex alunno, la scheda non si tocca; nasce la frequenza dell'anno dopo
+      const scheda = { stato: prima.stato as string, archiviato_il: prima.archiviato_il as string | null }
+      expect(eExAlunno(scheda)).toBe(false)
+      await approvaPerAnnoProssimo(AL, a, eExAlunno(scheda))
+      expect(await alunno(AL)).toEqual(prima)
+
+      const w = await scriviFrequenza(cliente() as never, { alunnoId: AL, annoSedeId: ANNO_SEDE[`${S1}:2026`], campi: { retta_mensile: 321 } })
+      expect(w.ok).toBe(true)
+      const dopo = await alunno(AL)
+      // la retta si rispecchia sulla scheda (è giusto); lo stato, la classe e l'archiviazione no
+      expect({ stato: dopo.stato, section_id: dopo.section_id, classe_sezione: dopo.classe_sezione, archiviato_il: dopo.archiviato_il },
+        'una scrittura sulla frequenza di oggi non rimette `iscritto`, né tocca la classe')
+        .toEqual({ stato: 'ritirato', section_id: prima.section_id, classe_sezione: prima.classe_sezione, archiviato_il: null })
+      // la tendina non archivia: la frequenza di oggi resta viva (lo specchio la tratta così), e a questa PR non spetta cambiarlo
+      expect((await frequenze(AL)).map((x) => `${x.anno_inizio}:${x.stato}`)).toEqual(['2026:iscritto', '2027:in_attesa'])
+      expect(await accese(), 'nessuna invariante accesa').toEqual([])
     })
   })
 })

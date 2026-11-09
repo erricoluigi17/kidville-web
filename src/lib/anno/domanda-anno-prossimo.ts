@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { logEvento } from '@/lib/logging/logger'
-import { STATO_IN_ARRIVO, STATO_RITIRATO } from '@/lib/alunni/stato'
+import { STATO_IN_ARRIVO } from '@/lib/alunni/stato'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { campiFrequenzaDaAlunno } from '@/lib/anno/frequenze'
 import { anniDellaSede } from '@/lib/anno/lettura'
@@ -20,7 +20,7 @@ import { schemaAnnoIndietro } from '@/lib/anno/schema'
  */
 
 /**
- * Ciò che si scrive su un bambino che ESISTE ed è fuori dalla scuola di oggi (`ritirato` o archiviato) e torna l'anno
+ * Ciò che si scrive su un bambino che ESISTE ed è fuori dalla scuola di oggi (archiviato) e torna l'anno
  * prossimo: senza questo resterebbe fra i «Non iscritti» con «Elimina definitivamente», e l'eliminazione gli cancellerebbe
  * l'iscrizione appena fatta. `in_arrivo` non ha sezione (il vincolo `alunni_in_arrivo_senza_sezione` lo esige).
  * La frequenza dell'anno di oggi (chiusa) NON si tocca: lo specchio non guarda un alunno `in_arrivo`.
@@ -32,10 +32,16 @@ export const PATCH_RITORNO_IN_ARRIVO = {
   classe_sezione: null,
 } as const
 
-/** Un bambino vivo oggi (`iscritto`, `sospeso`) NON cambia stato né classe: la domanda aggiunge solo la frequenza dell'anno dopo. */
+/**
+ * Un bambino vivo oggi (`iscritto`, `sospeso`) NON cambia stato né classe: la domanda aggiunge solo la frequenza dell'anno dopo.
+ * Ex alunno = ARCHIVIATO (`archiviato_il` valorizzato) e basta (4.5.16, D). Un bambino «ritirato» dalla tendina della scheda non è
+ * archiviato: la sua frequenza di oggi resta viva con la sua classe, lo specchio la tratta così, e portarlo `in_arrivo` lo
+ * lascerebbe con una frequenza di oggi viva e `in_arrivo` insieme (alla prima scrittura tornerebbe `iscritto` con la classe).
+ * Per lui la scheda non cambia, e nasce solo la frequenza dell'anno dopo.
+ */
 export function eExAlunno(scheda: { stato?: string | null; archiviato_il?: string | null } | null | undefined): boolean {
   if (!scheda) return false
-  return scheda.stato === STATO_RITIRATO || (scheda.archiviato_il !== null && scheda.archiviato_il !== undefined)
+  return scheda.archiviato_il !== null && scheda.archiviato_il !== undefined
 }
 
 /** L'anno aperto a cui una domanda appartiene: `annoSedeId` (`anni_sede.id`) e `annoId` (`anni_scolastici.id`). */

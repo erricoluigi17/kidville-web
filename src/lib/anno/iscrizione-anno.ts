@@ -671,6 +671,43 @@ export async function iscrizioniDelBambino(
   }
 }
 
+export type EsitoIscrizioneProssima = { ok: true; ha: boolean } | { ok: false }
+
+/**
+ * Il bambino ha una frequenza VIVA (`in_attesa`, `iscritto`) in un anno che viene (in preparazione o con le iscrizioni aperte)?
+ * Serve all'eliminazione definitiva (4.5.16, D): chi ha un'iscrizione per l'anno prossimo non si elimina prima di averlo
+ * archiviato, anche se la sua scheda dice `ritirato` (la tendina non archivia). NON LANCIA MAI: `{ ok: false }` = non so, e chi
+ * chiama RIFIUTA (una lettura caduta non è «niente iscrizione»). Schema indietro (la CI) = nessun anno, quindi `ha: false`.
+ */
+export async function haIscrizioneVivaProssima(supabase: SupabaseClient, alunnoId: string): Promise<EsitoIscrizioneProssima> {
+  try {
+    const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
+    if (anni.error) {
+      if (schemaAnnoIndietro(anni.error)) return { ok: true, ha: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'iscrizione-prossima-non-letta', operazione: OP_RIPRISTINO, error_code: anni.error.code ?? undefined })
+      return { ok: false }
+    }
+    const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
+    if (idAnni.length === 0) return { ok: true, ha: false }
+    const righe = await supabase
+      .from('frequenze')
+      .select('id')
+      .eq('alunno_id', alunnoId)
+      .in('anno_sede_id', idAnni)
+      .in('stato', ['in_attesa', 'iscritto'])
+      .limit(1)
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, ha: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'iscrizione-prossima-non-letta', operazione: OP_RIPRISTINO, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    return { ok: true, ha: ((righe.data ?? []) as unknown[]).length > 0 }
+  } catch (err) {
+    logErrore({ operazione: OP_RIPRISTINO }, err)
+    return { ok: false }
+  }
+}
+
 export type EsitoRiapertura =
   | { ok: true; riaperta: boolean }
   | { ok: false; codice: CodiceIscrizione }

@@ -751,6 +751,18 @@ begin
     perform set_config('anno_chiuso.oblio', 'off', true);
     return jsonb_build_object('ok', false, 'code', 'in_arrivo');
   end if;
+  -- 4.5.16 (D): anche un bambino «ritirato» dalla tendina della scheda (non archiviato) che ha un'iscrizione viva per un anno che
+  -- viene è un bambino che arriva: eliminarlo cancellerebbe l'iscrizione appena fatta. Prima si archivia (le sue iscrizioni si
+  -- chiudono), poi si elimina.
+  if exists (select 1
+               from public.frequenze f
+               join public.anni_sede s on s.id = f.anno_sede_id
+              where f.alunno_id = p_alunno
+                and f.stato in ('in_attesa', 'iscritto')
+                and s.stato in ('in_preparazione', 'iscrizioni_aperte')) then
+    perform set_config('anno_chiuso.oblio', 'off', true);
+    return jsonb_build_object('ok', false, 'code', 'in_arrivo');
+  end if;
   -- Elenco chiuso degli stati, mai la negazione di 'iscritto'. `stato` è
   -- nullable (DEFAULT 'iscritto') e un NULL non è un ritiro (`eNonPiuIscritto`):
   -- senza il coalesce `NULL = any(…)` darebbe NULL, `not (NULL or false)` NULL,

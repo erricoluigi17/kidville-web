@@ -269,6 +269,25 @@ describe('elimina_alunno_definitivo — chi si può eliminare', () => {
     expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${IN_ARRIVO}'`)).toBe(0)
   })
 
+  it('4.5.16 (D): un «ritirato» dalla tendina con una frequenza VIVA in un anno che viene non si elimina; archiviato (frequenza chiusa) sì', async () => {
+    const RIT = '10000000-0000-4000-8000-000000000009'
+    await db.exec(`INSERT INTO public.alunni (id, scuola_id, stato, section_id, classe_sezione) VALUES ('${RIT}', '${SEDE}', 'ritirato', NULL, NULL)`)
+    const anno = await db.query<{ id: string }>(
+      `SELECT s.id FROM public.anni_sede s WHERE s.scuola_id = '${SEDE}' AND s.stato IN ('in_preparazione', 'iscrizioni_aperte') LIMIT 1`)
+    expect(anno.rows.length, 'la catena ha un anno che viene').toBe(1)
+    const f = await db.query<{ id: string }>(
+      `INSERT INTO public.frequenze (alunno_id, anno_sede_id, origine, tipo, stato, data_ingresso) VALUES ('${RIT}', '${anno.rows[0].id}', 'domanda', 'nuova', 'in_attesa', (SELECT inizio FROM public.anni_sede WHERE id = '${anno.rows[0].id}')) RETURNING id`)
+    await sentinella(RIT)
+    for (const soloVerifica of [true, false]) {
+      expect(await elimina(RIT, false, soloVerifica)).toMatchObject({ ok: false, code: 'in_arrivo' })
+    }
+    expect(await numero(`SELECT count(*) FROM public.alunni WHERE id = '${RIT}'`)).toBe(1)
+    await sentinellaIntatta(RIT)
+    // l'archiviazione chiude l'iscrizione: ora si elimina
+    await db.exec(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = data_ingresso WHERE id = '${f.rows[0].id}'`)
+    expect(await elimina(RIT, false, true)).toMatchObject({ ok: true, code: 'ammissibile' })
+  })
+
   it('il CHECK `alunni_in_arrivo_senza_sezione`: un «in arrivo» con una sezione non può esistere', async () => {
     await expect(
       db.exec(`INSERT INTO public.alunni (id, scuola_id, stato, section_id) VALUES ('10000000-0000-4000-8000-000000000008', '${SEDE}', 'in_arrivo', '${SEZ}')`),

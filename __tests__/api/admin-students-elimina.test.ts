@@ -251,6 +251,52 @@ describe('POST /api/admin/students/elimina — chi, su chi', () => {
     expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_FREQUENTANTE')
   })
 
+  describe('4.5.16 (D) · un «ritirato» dalla tendina con un\u2019iscrizione per l\u2019anno prossimo', () => {
+    const conIscrizioneProssima = (stato: string) => {
+      h.db.anni_sede = [{ id: 'as-27', stato: 'iscrizioni_aperte' }, { id: 'as-26', stato: 'corrente' }]
+      h.db.frequenze = [
+        { id: 'f-26', alunno_id: AL, anno_sede_id: 'as-26', stato: 'ritirato' },
+        { id: 'f-27', alunno_id: AL, anno_sede_id: 'as-27', stato },
+      ]
+    }
+
+    it('con una frequenza VIVA in un anno che viene: 409 ALUNNO_ELIMINAZIONE_IN_ARRIVO, in anteprima e in esecuzione, e nessun effetto', async () => {
+      conIscrizioneProssima('in_attesa')
+      for (const corpo of [{ mode: 'dryrun' }, { mode: 'execute', scelta: 'elimina' }] as const) {
+        const res = await POST(req({ alunno_id: AL, ...corpo }))
+        expect(res.status).toBe(409)
+        expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_IN_ARRIVO')
+      }
+      expect(h.bonificaTracce).not.toHaveBeenCalled()
+      expect(h.rpc).not.toHaveBeenCalled()
+      expect(h.rimossi).toEqual([])
+    })
+
+    it('dopo l\u2019archiviazione (la frequenza dell\u2019anno dopo è chiusa) si elimina come sempre', async () => {
+      conIscrizioneProssima('ritirato')
+      const res = await POST(req({ alunno_id: AL, mode: 'dryrun' }))
+      expect(res.status).toBe(200)
+    })
+
+    it('una lettura caduta NON è «niente iscrizione»: l\u2019eliminazione si rifiuta (500), senza effetti', async () => {
+      conIscrizioneProssima('ritirato')
+      h.errori['frequenze:select'] = { code: '08006', message: 'connessione interrotta' }
+      const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+      expect(res.status).toBe(500)
+      expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_NON_MISURATA')
+      expect(h.bonificaTracce).not.toHaveBeenCalled()
+      expect(h.rpc).not.toHaveBeenCalled()
+      expect(h.rimossi).toEqual([])
+    })
+
+    it('la risposta della funzione SQL «in_arrivo» (secondo punto di rifiuto) porta lo stesso codice', async () => {
+      h.verifica.mockResolvedValueOnce({ data: { ok: false, code: 'in_arrivo' }, error: null })
+      const res = await POST(req({ alunno_id: AL, mode: 'execute', scelta: 'elimina' }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).codice).toBe('ALUNNO_ELIMINAZIONE_IN_ARRIVO')
+    })
+  })
+
   it('un bambino IN ARRIVO (domanda per l’anno dopo, senza sezione) non si elimina: 409 ALUNNO_ELIMINAZIONE_IN_ARRIVO, «archivia, poi elimina»', async () => {
     h.db.alunni[0] = { ...h.db.alunni[0], stato: 'in_arrivo', section_id: null }
     for (const corpo of [{ mode: 'dryrun' }, { mode: 'execute', scelta: 'elimina' }] as const) {

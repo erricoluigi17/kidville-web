@@ -8,7 +8,7 @@ vi.mock('@/lib/logging/logger', () => ({
 }))
 
 import { logEvento, logErrore } from '@/lib/logging/logger'
-import { annoDellaDomanda, iscrizioniDelBambino, registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
+import { annoDellaDomanda, chiudiFrequenzeAperte, iscrizioniDelBambino, registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno'
 
 /**
  * COMPITO 4.5.5 · la porta TypeScript dell'iscrizione all'anno prossimo (`src/lib/anno/iscrizione-anno.ts`).
@@ -241,5 +241,43 @@ describe('iscrizioniDelBambino · la riga chiusa dell\u2019anno attivo (4.5.16, 
   it('il giorno è quello di ROMA: 23:30 UTC del 8 è già il 9 a Roma, e un\u2019uscita dell\u20198 è precedente', async () => {
     const r = await attiva(cliente([{ id: FREQ, stato: 'uscito', data_uscita: '2026-11-08' }]), '2026-11-08T23:30:00Z')
     expect(r).toMatchObject({ ok: true, haFrequenzaAttiva: false })
+  })
+})
+
+describe('chiudiFrequenzeAperte · le letture cadute (4.5.16, E)', () => {
+  const attore = { id: 'ut-1', role: 'admin' } as never
+  /** Un client finto per tabella: ogni tabella torna la sua risposta `{ data, error }`. */
+  function cliente(risposte: Record<string, { data?: unknown[]; error?: { code?: string } | null }>) {
+    const catena = (r: { data?: unknown[]; error?: { code?: string } | null }) => {
+      const q: Record<string, unknown> = {}
+      for (const m of ['select', 'eq', 'in', 'limit']) q[m] = () => q
+      q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: r.data ?? [], error: r.error ?? null }).then(ok)
+      return q
+    }
+    return { from: (t: string) => catena(risposte[t] ?? {}) } as unknown as SupabaseClient
+  }
+
+  it('la lettura degli anni caduta conta come una chiusura NON riuscita, e scrive un logErrore col solo codice', async () => {
+    const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { error: { code: '08006' } } }), { alunnoId: ALUNNO, attore })
+    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 1 })
+    expect(logErrore).toHaveBeenCalledTimes(1)
+    expect(String(vi.mocked(logErrore).mock.calls[0][1])).toContain('08006')
+  })
+
+  it('la lettura delle frequenze caduta conta come una chiusura NON riuscita', async () => {
+    const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { data: [{ id: A_APERTO }] }, frequenze: { error: { code: '57014' } } }), { alunnoId: ALUNNO, attore })
+    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 1 })
+    expect(logErrore).toHaveBeenCalledTimes(1)
+  })
+
+  it('lo schema indietro (la CI) resta 0, senza guasti', async () => {
+    for (const code of ['42P01', 'PGRST205']) {
+      vi.mocked(logErrore).mockClear()
+      const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { error: { code } } }), { alunnoId: ALUNNO, attore })
+      expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 })
+      expect(logErrore).not.toHaveBeenCalled()
+    }
+    const r2 = await chiudiFrequenzeAperte(cliente({ anni_sede: { data: [{ id: A_APERTO }] }, frequenze: { error: { code: '42703' } } }), { alunnoId: ALUNNO, attore })
+    expect(r2.non_riuscite).toBe(0)
   })
 })

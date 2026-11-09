@@ -877,6 +877,8 @@
   "dataIscrizioneFuoriAnno": "The date is after the end of the current school year. You can only enrol for the current year: enrolment for next year will be done through the enrolments.",
   "dataIscrizioneIngressoDal": "School year {anno} · joins from {giorno}",
   "detailArchiviatoQuotePagate": "{n, plural, one {Next year’s fee had already been paid and was kept: refunds or reversals are handled in accounting.} other {# fees for next year had already been paid and were kept: refunds or reversals are handled in accounting.}}",
+  "detailArchiviatoNonChiuse": "Archived, but {n, plural, one {# enrolment for next year did not close} other {# enrolments for next year did not close}}: the fee may stay visible to the family.",
+  "detailArchiviaRiprova": "Try again",
   "arcEsitoTornaInArrivo": "{nome}: back among the children arriving next year, and their enrolment for next year is open again.",
   "arcEsitoConfermaDaRifare": "The enrolment for next year was closed when the child was archived and does not reopen on its own: reopen it from the confirmations page with “Confirm”.",
   "detailPageRiattivatoInArrivo": "{nome}: back among the children arriving next year, and their enrolment for next year is open again",

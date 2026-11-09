@@ -130,8 +130,12 @@ function AnagraficaDetailInner() {
             // Il nome nel messaggio non è decorazione: la segreteria lavora su più
             // schede aperte, e «alunno spostato» non dice QUALE.
             // Le quote già pagate dell'anno prossimo restano (4.5.15): rimborso e storno sono della contabilità, e lo si dice.
-            const esito = await res.json().catch(() => null) as { voci_pagate_rimaste?: number } | null;
+            const esito = await res.json().catch(() => null) as { voci_pagate_rimaste?: number; iscrizioni_non_chiuse?: number } | null;
             const pagate = typeof esito?.voci_pagate_rimaste === 'number' ? esito.voci_pagate_rimaste : 0;
+            // 4.5.16 (E): la scheda è archiviata ma almeno un'iscrizione dell'anno prossimo non si è chiusa. Non si torna alla lista:
+            // l'avviso resta qui, con «Riprova» (la stessa POST, che chiude quel che resta senza riscrivere la scheda).
+            const nonChiuse = typeof esito?.iscrizioni_non_chiuse === 'number' ? esito.iscrizioni_non_chiuse : 0;
+            if (nonChiuse > 0) return { ok: false as const, errore: t('detailArchiviatoNonChiuse', { n: nonChiuse }), riprova: true as const };
             const nome = [student?.nome, student?.cognome].filter(Boolean).join(' ');
             flash(`✅ ${t('detailPageArchiviato', { nome })}${pagate > 0 ? ` ⚠️ ${t('detailArchiviatoQuotePagate', { n: pagate })}` : ''}`, pagate > 0 ? 6000 : undefined);
             return { ok: true as const };

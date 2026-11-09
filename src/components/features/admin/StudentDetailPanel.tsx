@@ -141,7 +141,8 @@ interface Props {
      * letto e buttato via. La stessa correzione era GIÀ stata fatta sul ramo dei
      * genitori (`onSave` di `ParentDetailPanel`) e non era mai stata propagata qui.
      */
-    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null }>;
+    /** `riprova`: l'archiviazione è scritta ma un'iscrizione dell'anno prossimo non si è chiusa; il pannello offre «Riprova» (4.5.16, E). */
+    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null; riprova?: boolean }>;
     /**
      * Riporta l'alunno fra gli iscritti (`POST /api/admin/students/riattiva`).
      *
@@ -196,6 +197,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
      * ritrovarsi nella lista con un «❌ Errore» che sta sparendo.
      */
     const [erroreArchiviazione, setErroreArchiviazione] = useState<string | null>(null);
+    /** L'avviso «non si sono chiuse» ha il suo «Riprova» (4.5.16, E). */
+    const [archiviazioneRiprovabile, setArchiviazioneRiprovabile] = useState(false);
     /** Il ritorno è in volo: serve solo all'etichetta del comando. */
     const [riattivazioneInCorso, setRiattivazioneInCorso] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -498,14 +501,20 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
             setConfermaArchiviazione(true);
             return;
         }
+        await eseguiArchiviazione();
+    };
+
+    const eseguiArchiviazione = async () => {
         setArchiviazioneInCorso(true);
         setErroreArchiviazione(null);
+        setArchiviazioneRiprovabile(false);
         try {
             const esito = await onArchive(student.id);
             if (esito?.ok) {
                 setConfermaArchiviazione(false);
                 return;
             }
+            setArchiviazioneRiprovabile(esito?.riprova === true);
             // `errore` assente (rete caduta, corpo non JSON) non vale silenzio: una
             // frase generica è comunque un fatto, «niente» è indistinguibile dal
             // successo — che è il difetto da cui nasce tutta questa correzione.
@@ -1819,6 +1828,16 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                             className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-3 font-maven text-xs text-kidville-error-strong"
                         >
                             {erroreArchiviazione}
+                            {archiviazioneRiprovabile && (
+                                <button
+                                    type="button"
+                                    onClick={eseguiArchiviazione}
+                                    disabled={archiviazioneInCorso}
+                                    className="mt-2 flex min-h-11 w-full items-center justify-center rounded-pill border-2 border-kidville-error/40 bg-kidville-white px-4 font-barlow text-sm font-bold uppercase tracking-wide text-kidville-error-strong disabled:opacity-50"
+                                >
+                                    {t('detailArchiviaRiprova')}
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>

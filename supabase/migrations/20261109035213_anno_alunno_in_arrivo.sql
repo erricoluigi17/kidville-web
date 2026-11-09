@@ -446,6 +446,22 @@ BEGIN
   END IF;
   invariante := '11'; tabella := 'alunni (in arrivo senza arrivo)'; righe := v_n; RETURN NEXT;
 
+  --     11-quater (4.5.16, E). Una scheda ARCHIVIATA non deve avere una frequenza viva in un anno che viene: l'archiviazione la
+  --     chiude (`chiudiFrequenzeAperte`), ma la scheda si scrive prima e la chiusura può non riuscire. In quel caso la quota
+  --     resta visibile alla famiglia: la API lo dice e propone «Riprova», e questa riga è la rete per chi ricarica la pagina senza
+  --     riprovare.
+  v_n := 0;
+  IF to_regclass('public.alunni') IS NOT NULL AND to_regclass('public.frequenze') IS NOT NULL
+     AND to_regclass('public.anni_sede') IS NOT NULL AND public.anno_ha_colonna('alunni', 'archiviato_il') THEN
+    EXECUTE 'SELECT count(*) FROM public.alunni al WHERE al.archiviato_il IS NOT NULL '
+            'AND EXISTS (SELECT 1 FROM public.frequenze f '
+            'JOIN public.anni_sede s ON s.id = f.anno_sede_id '
+            'WHERE f.alunno_id = al.id AND f.stato IN (''in_attesa'', ''iscritto'') '
+            'AND s.stato::text IN (''in_preparazione'', ''iscrizioni_aperte''))'
+    INTO v_n;
+  END IF;
+  invariante := '11'; tabella := 'alunni (archiviato con iscrizione viva)'; righe := v_n; RETURN NEXT;
+
   -- 13. I nomi di classe e gli uuid di sezione dicono la stessa cosa (una riga per tabella che ha le due colonne).
   FOR d IN SELECT x.tabella AS t, x.righe AS n FROM public.anno_target_divergenti() x LOOP
     v_trovata := true;

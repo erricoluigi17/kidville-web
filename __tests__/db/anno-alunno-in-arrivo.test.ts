@@ -212,6 +212,28 @@ describe('le invarianti 11-bis e 11-ter', () => {
   })
 })
 
+describe('l\u2019invariante 11-quater (4.5.16, E): archiviato con un\u2019iscrizione viva per l\u2019anno prossimo', () => {
+  const NOME = 'alunni (archiviato con iscrizione viva)'
+  prova('PROVA DEL ROSSO: una scheda archiviata con una frequenza VIVA in un anno che viene la accende; chiusa la frequenza, si spegne', async () => {
+    await inRollback(async () => {
+      await giorni()
+      const prima = await invariante('11', NOME)
+      await nuovoAlunno(AL, 'in_arrivo')
+      await frequenzaDelFuturo(AL, S1, 2027)
+      expect(await invariante('11', NOME), 'un «in arrivo» NON archiviato non la accende').toBe(prima)
+
+      // l'archiviazione scrive la scheda, ma la chiusura dell'iscrizione non riesce: il seme rotto
+      await db.query(`UPDATE public.alunni SET archiviato_il = now(), stato = 'ritirato' WHERE id = $1`, [AL])
+      expect(await invariante('11', NOME)).toBe(prima + 1)
+
+      // la riprova chiude l'iscrizione: la riga si spegne
+      await db.query(`UPDATE public.frequenze SET stato = 'ritirato', data_uscita = data_ingresso WHERE alunno_id = $1 AND anno_sede_id = $2`,
+        [AL, ANNO_SEDE[`${S1}:2027`]])
+      expect(await invariante('11', NOME)).toBe(prima)
+    })
+  })
+})
+
 describe('il riallineamento dalla frequenza', () => {
   prova('`alunni_riallinea_da_frequenze` porta un `in_arrivo` a `iscritto` quando nasce la frequenza dell’anno attivo', async () => {
     await inRollback(async () => {

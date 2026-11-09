@@ -162,6 +162,29 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         }
         const daCompletare = prima.archiviato_il != null && prima.archiviato_da == null;
         if (prima.archiviato_il != null && !daCompletare) {
+            // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
+            // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
+            // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
+            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+            if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
+                logEvento('gdpr', riprova.non_riuscite > 0 ? 'error' : 'info', {
+                    operazione: 'admin/students/archivia:POST',
+                    azione: 'archiviazione-riprovata',
+                    esito: riprova.non_riuscite > 0 ? 'iscrizioni-non-chiuse' : 'iscrizioni-chiuse',
+                    entita_id: alunnoId,
+                    n_non_chiuse: riprova.non_riuscite,
+                    n_chiuse: riprova.chiuse,
+                });
+                return NextResponse.json({
+                    success: true,
+                    gia_archiviato: true,
+                    alunno_id: alunnoId,
+                    archiviato_il: prima.archiviato_il,
+                    frequenze_chiuse: riprova.chiuse,
+                    voci_pagate_rimaste: riprova.voci_pagate_rimaste,
+                    iscrizioni_non_chiuse: riprova.non_riuscite,
+                });
+            }
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId,
             });
@@ -348,6 +371,17 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // (la scheda è già scritta): ne riporta il conteggio, e il pannello dice quante voci pagate sono rimaste. Vale anche per
         // un bambino `in_arrivo`, che non ha una frequenza dell'anno in corso ma ne ha una nell'anno aperto.
         const chiusura = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+        if (chiusura.non_riuscite > 0) {
+            // La scheda è archiviata ma almeno un'iscrizione dell'anno prossimo (o la lettura che la trova) non si è chiusa: la quota
+            // può restare visibile alla famiglia. Livello `error`: il solo conteggio e l'uuid (4.5.16, E).
+            logEvento('gdpr', 'error', {
+                operazione: 'admin/students/archivia:POST',
+                azione: 'alunno-archiviato',
+                esito: 'iscrizioni-non-chiuse',
+                entita_id: alunnoId,
+                n_non_chiuse: chiusura.non_riuscite,
+            });
+        }
 
         logEvento('gdpr', 'info', {
             operazione: 'admin/students/archivia:POST',
@@ -368,6 +402,8 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             /** Le iscrizioni dell'anno prossimo chiuse con l'archiviazione, e le voci di quota rimaste perché già pagate (4.5.15). */
             frequenze_chiuse: chiusura.chiuse,
             voci_pagate_rimaste: chiusura.voci_pagate_rimaste,
+            /** Le iscrizioni dell'anno prossimo che NON si sono chiuse (guasto): la scheda lo dice e propone «Riprova» (4.5.16, E). */
+            iscrizioni_non_chiuse: chiusura.non_riuscite,
         });
     } catch (err) {
         logErrore({ operazione: 'admin/students/archivia:POST', stato: 500 }, err);

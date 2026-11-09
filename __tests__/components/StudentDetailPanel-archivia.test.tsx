@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 
 /**
  * IL PULSANTE CHE FALLIVA, E IL MESSAGGIO CHE NESSUNO LEGGEVA.
@@ -422,5 +422,43 @@ describe('/admin/students/[id] — sul fallimento NON si naviga', () => {
       await new Promise((r) => setTimeout(r, 1200))
     })
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/admin/students'))
+  })
+})
+
+describe('/admin/students/[id] — l\u2019archiviazione che non ha chiuso un\u2019iscrizione (4.5.16, E)', () => {
+  it('l\u2019avviso resta in pagina (nessun `router.push`), col conteggio al plurale giusto e un «Riprova» che rifà la POST; alla riprova riuscita si torna alla lista', async () => {
+    const risposte = [
+      { ok: true, status: 200, json: async () => ({ success: true, iscrizioni_non_chiuse: 2, voci_pagate_rimaste: 0 }) },
+      { ok: true, status: 200, json: async () => ({ success: true, gia_archiviato: true, iscrizioni_non_chiuse: 0, voci_pagate_rimaste: 0 }) },
+    ]
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url) === '/api/admin/students/archivia') return Promise.resolve(risposte.shift())
+      if (String(url).startsWith('/api/admin/students/alu-1')) return Promise.resolve({ ok: true, json: async () => IDENTITA_ALUNNO })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    render(<AnagraficaDetailPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(ETICHETTA_RIPOSO) }))
+    fireEvent.click(screen.getByRole('button', { name: ETICHETTA_CONFERMA }))
+
+    const avviso = await screen.findByRole('alert')
+    expect(avviso.textContent).toContain('Archiviato, ma 2 iscrizioni dell’anno prossimo non si sono chiuse: la quota può restare visibile alla famiglia.')
+    expect(nav.push).not.toHaveBeenCalled()
+
+    fireEvent.click(within(avviso).getByRole('button', { name: catalogoIt.detailArchiviaRiprova }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/archivia')).toHaveLength(2))
+    await waitFor(() => expect(nav.push).toHaveBeenCalled(), { timeout: 3000 })
+  })
+
+  it('con UNA iscrizione sola il testo è al singolare', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url) === '/api/admin/students/archivia') return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, iscrizioni_non_chiuse: 1 }) })
+      if (String(url).startsWith('/api/admin/students/alu-1')) return Promise.resolve({ ok: true, json: async () => IDENTITA_ALUNNO })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    render(<AnagraficaDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(ETICHETTA_RIPOSO) }))
+    fireEvent.click(screen.getByRole('button', { name: ETICHETTA_CONFERMA }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Archiviato, ma 1 iscrizione dell’anno prossimo non si è chiusa')
   })
 })

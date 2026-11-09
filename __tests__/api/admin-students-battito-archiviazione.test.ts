@@ -169,6 +169,28 @@ describe('admin/students/archivia:POST — il battito di successo', () => {
     expect(battiti('gdpr', 'info').find((c) => c.azione === 'alunno-archiviato')?.sezione).toBe('2 ANNI')
   })
 
+  it('4.5.16 (E): una lettura caduta delle iscrizioni dell\u2019anno prossimo è `error` (solo conteggio e uuid) e la risposta lo dice; lo schema indietro no', async () => {
+    h.db.anni_sede = []
+    h.errori['anni_sede:select'] = { code: '08006', message: 'connessione interrotta' }
+    const res = await ARCHIVIA(archivia({ alunno_id: ALU_A }))
+    expect(res.status).toBe(200)
+    expect((await res.json()).iscrizioni_non_chiuse).toBe(1)
+    const err = battiti('gdpr', 'error').find((c) => c.esito === 'iscrizioni-non-chiuse')
+    expect(err).toMatchObject({ operazione: 'admin/students/archivia:POST', entita_id: ALU_A, n_non_chiuse: 1 })
+    expect(JSON.stringify(err), 'niente che nomini il bambino').not.toContain('AaaSedeA')
+
+    // lo schema indietro (la CI): niente da chiudere, nessun guasto, nessun avviso
+    h.logEvento.mockClear()
+    h.db = dbBase()
+    h.db.anni_sede = []
+    h.errori['anni_sede:select'] = { code: '42P01', message: 'relation "public.anni_sede" does not exist' }
+    const ci = await ARCHIVIA(archivia({ alunno_id: ALU_A }))
+    const corpoCi = await ci.json()
+    expect(ci.status, JSON.stringify(corpoCi)).toBe(200)
+    expect(corpoCi.iscrizioni_non_chiuse).toBe(0)
+    expect(battiti('gdpr', 'error')).toHaveLength(0)
+  })
+
   it('il RIFIUTO non conta come successo: sul 409 il battito del ramo felice non c\'è', async () => {
     // Il controllo negativo del primo test: senza, un `logEvento` messo in cima
     // alla route lo soddisfarebbe, e conterebbe come «archiviato» anche un

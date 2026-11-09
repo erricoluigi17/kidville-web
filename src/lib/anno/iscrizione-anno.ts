@@ -535,7 +535,7 @@ export type RisultatoChiusura = {
   voci_tolte: number
   /** Le voci rimaste perché pagate (o fatturate): la segreteria deve saperlo, rimborso e storno sono suoi. */
   voci_pagate_rimaste: number
-  /** Le frequenze per cui la chiusura o la voce non sono riuscite (guasto): un `warn` per ognuna. */
+  /** Le frequenze per cui la chiusura o la voce non sono riuscite (guasto), più una per ogni lettura caduta (4.5.16, E): un log per ognuna. */
   non_riuscite: number
 }
 
@@ -549,7 +549,12 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
   try {
     const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
     if (anni.error) {
-      if (!schemaAnnoIndietro(anni.error)) logErrore({ operazione: OP_CHIUSURA }, new Error(`anni_sede:${anni.error.code ?? 'senza-codice'}`))
+      // Una lettura caduta NON è «niente da chiudere» (4.5.16, E): conta come non riuscita, perché chi archivia lo deve sapere.
+      // Lo schema indietro (la CI, un ambiente a metà) invece non ha niente da chiudere, e resta 0 senza guasti.
+      if (!schemaAnnoIndietro(anni.error)) {
+        logErrore({ operazione: OP_CHIUSURA }, new Error(`anni_sede:${anni.error.code ?? 'senza-codice'}`))
+        esito.non_riuscite++
+      }
       return esito
     }
     const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
@@ -562,7 +567,10 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
       .in('anno_sede_id', idAnni)
       .in('stato', ['in_attesa', 'iscritto', STATO_RITIRATO])
     if (righe.error) {
-      if (!schemaAnnoIndietro(righe.error)) logErrore({ operazione: OP_CHIUSURA }, new Error(`frequenze:${righe.error.code ?? 'senza-codice'}`))
+      if (!schemaAnnoIndietro(righe.error)) {
+        logErrore({ operazione: OP_CHIUSURA }, new Error(`frequenze:${righe.error.code ?? 'senza-codice'}`))
+        esito.non_riuscite++
+      }
       return esito
     }
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {

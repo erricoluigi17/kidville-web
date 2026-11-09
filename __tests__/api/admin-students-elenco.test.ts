@@ -48,7 +48,7 @@ const ids = async (qs: string) => {
 }
 
 describe('GET /api/admin/students?elenco=…', () => {
-  it('frequentanti = complemento esatto di non_iscritti: CON sezione e non ritirati (stato NULL o anomalo compreso)', async () => {
+  it('frequentanti = CON sezione e non ritirati (stato NULL o anomalo compreso), disgiunto da non_iscritti e da in_arrivo', async () => {
     expect(await ids('elenco=frequentanti')).toEqual(['a-frequenta', 'b-sospeso', 'g-stato-null-con-sezione', 'i-trasferito-con-sezione'])
   })
   it('non_iscritti = ritirati e senza sezione, anonimizzati esclusi; il bambino IN ARRIVO non è un ex alunno e non ci compare', async () => {

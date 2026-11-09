@@ -232,8 +232,8 @@ export function useElencoAlunni(elenco: 'non_iscritti' | 'in_arrivo', prefisso: 
         // ramo dimenticato in «non c'è nessun bambino archiviato».
         let prossima: 'pronto' | 'errore' = 'errore';
         try {
-            // Ritirati e iscritti senza sezione, anonimizzati esclusi: il
-            // complemento esatto dell'elenco «Alunni» (`elenco=frequentanti`).
+            // `non_iscritti`: ritirati e iscritti senza sezione; `in_arrivo`: chi aspetta l'anno dopo. Anonimizzati esclusi
+            // in entrambi. I tre elenchi (con `frequentanti`) sono disgiunti: nessuna scheda sta in due linguette.
             const res = await fetch(
                 `/api/admin/students?elenco=${elenco}&limit=${LIMITE_ELENCO_ALUNNI}`,
                 { headers: { 'x-sedi': reFetchKey } },

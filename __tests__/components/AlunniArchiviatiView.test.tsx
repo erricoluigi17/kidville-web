@@ -213,7 +213,7 @@ describe('useAlunniArchiviati — la lettura che alimenta la pillola', () => {
 
         const [url, opzioni] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }]
         // L'elenco dichiarato (2026-10-09): ritirati e iscritti senza sezione,
-        // complemento esatto di `elenco=frequentanti` della linguetta «Alunni».
+        // disgiunto da `elenco=frequentanti` («Alunni») e da `elenco=in_arrivo`.
         expect(url).toContain('/api/admin/students?elenco=non_iscritti')
         // ⟵ LO SCOPE DI SEDE. Senza `x-sedi` l'elenco non cambia al cambio di
         //    sede: la segreteria di un plesso vedrebbe gli archiviati di un altro.

@@ -821,6 +821,7 @@
   "erroreAnnoNonVisibile": "This school year is not available to you yet.",
   "erroreAnnoNonAccessibile": "This school year is not available for this location.",
   "erroreAnnoNonTrovato": "This school year no longer exists. Refresh the page.",
+  "erroreMeseFuoriDagliAnni": "No school year of this location contains that month: choose a month inside a year.",
   "erroreAnnoInChiusura": "The year is closing: the last open day can no longer be changed.",
   "erroreDateNonValide": "The chosen dates are not valid for this school year.",
   "errorePrerequisitiMancanti": "Some details are still missing before enrolment can open: check the year’s fees and forms.",

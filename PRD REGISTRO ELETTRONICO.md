@@ -1,16 +1,46 @@
+## 🗓️ Changelog — Anno scolastico, PR 4.6: le rette e i servizi dal listino — 2026-11-09 (ramo `worktree-agent-aeef99a24913dc91e`)
+
+**Stato:** 🟡 in revisione, fino al merge. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109153822_anno_rette_dal_listino.sql` (M46a) e `20261109153825_anno_listino_rette_scrittura.sql` (M46b). Solo funzioni: nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno. Provate in PGlite (Postgres 18; la produzione è la 17), nessun controllo visivo e nessuna prova da telefono. Le rette già generate non si toccano: nessuna migrazione scrive su `pagamenti`.
+
+| Area | Stato | Che cosa è |
+|---|---|---|
+| Retta di ogni bambino dal listino dell'anno | 🟡 in revisione | La retta è quella del bambino, altrimenti quella del listino per la sua fascia, altrimenti quella del listino senza fascia. Il `150` scritto dentro la funzione non c'è più (M46a); un lock vieta di rimetterlo |
+| Generazione per un anno qualunque | 🟡 in revisione | Pagamenti › Genera rette sceglie l'anno; l'anteprima e la conferma contano le frequenze dell'anno, da un predicato solo (`rette_da_generare`); i mesi vengono dal listino (`listino_mesi`, vuoto = settembre-giugno) |
+| Scheda «Rette» nelle impostazioni di sede | 🟡 in revisione | Si scrive la retta di base dell'anno e, se serve, i mesi (M46b, `PUT /api/admin/anni/{id}/rette`); sugli anni in corso, in chiusura e chiusi la scheda mostra solo le rette (le altre schede riguardano le iscrizioni dell'anno prossimo); si scrive negli anni in preparazione, con iscrizioni aperte e in corso, mentre in chiusura e chiuso è in sola lettura |
+| Impostazioni › Retta e morosità | 🟡 in revisione | La casella della retta predefinita non c'è più; accanto al rimando si legge la retta di base dell'anno in corso, dal listino. `admin_settings.retta_default_importo` resta come specchio, scritto solo per l'anno corrente |
+| Servizi mensili per anno | 🟡 in revisione | `servizi_da_generare` e `genera_servizi_anno` leggono la frequenza viva dell'anno e i mesi del listino |
+
+**Che cosa cambia per le persone.**
+
+| Chi | Che cosa vede |
+|---|---|
+| Segreteria | Genera le rette di un anno scelto, anche del prossimo, e l'anteprima dice quanti bambini hanno una retta, quanti sono esenti, quanti non hanno nessuna cifra (non ricevono la voce) e quanti dipendono da un pagante che non c'è. Le rette dell'anno non attivo non si notificano e le famiglie non le vedono finché quell'anno non diventa quello in corso. La retta di base dell'anno si scrive nella scheda «Rette» |
+| Docenti | Niente |
+| Genitori | Niente di nuovo: le voci dell'anno prossimo restano invisibili fino al passaggio |
+
+**Differenze volute rispetto a prima** (misurate in produzione in sola lettura): sull'anno in corso la funzione vecchia dava 7450 righe e il predicato nuovo 7418, cioè **32 in meno, di cui 11 ancora da generare**: sono 31 bambini con `data_iscrizione` vuota e ingresso dopo il mese, e la retta di un mese **prima dell'ingresso** non si genera più. Settembre 2026: 31 righe, 21 già generate (restano), 10 da fare; ottobre 2026: 1 da fare. Un bambino con frequenza viva ma stato `sospeso` ora riceve la retta (0 casi in produzione). Il pro-rata guarda `data_ingresso` e non `data_iscrizione`: oggi nessuna sede lo ha acceso, e **prima di accenderlo va rimisurato** (672 frequenze hanno l'ingresso a settembre dopo il 01/09). Chi corregge una retta a mano via SQL deve scrivere `frequenze.retta_mensile`, non `alunni.importo_retta_mensile`.
+
+**Decisione del titolare ancora aperta (secondario 14).** La conferma di una frequenza per l'anno nuovo non riporta la retta: un pagante di famiglia a 400 passa a 150, un fratello a carico non lo è più, una retta propria da 200 passa a 150. In produzione: 45 bambini a carico e circa 703 rette personali. Va deciso prima di aprire le conferme sul 2027/28.
+
+**Il 150 del listino 2027/28 non è deciso, è copiato.** Le cinque righe `retta` degli anni in preparazione valgono 150 perché il listino è stato riempito dal default di sede. La PR non le tocca; la protezione forte (`importo` vuoto, così nessuna voce parte senza cifra) la esegue il titolare dall'editor SQL, e sta nel corpo della PR.
+
+**Che cosa resta aperto.** L'elenco dei difetti secondari annotati, con chi li prende e quando, è in `docs/superpowers/plans/2026-11-09-pr4-6-difetti-secondari.md`. La PR-B toglie le due voci dalle fotografie (le migrazioni passano da 269 a 271) e la strada storica di `genera-rette` col ripiego a 150 va alla PR 5.
+
+---
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.5: le iscrizioni all'anno prossimo e la creazione automatica dell'anno — 2026-11-09 (branch `feat/anno-scolastico-iscrizioni`)
 
-**Stato:** 🟡 in revisione. **Ha cinque migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109035209_anno_tick.sql` (M45a), `20261109035213_anno_alunno_in_arrivo.sql` (M45b), `20261109035216_anno_listino_moduli_sezioni.sql` (M45d), `20261109035219_anno_iscrizione_conferma.sql` (M45c), `20261109035223_anno_crm_anno_id.sql` (M45e). L'ordine è questo e non l'alfabetico: M45d viene prima di M45c, perché la voce della quota (M45c) legge la scadenza che nasce in M45d. La prima commit del ramo è la pulizia dopo la PR 4.4 (la PR-B della 4.4 è già passata). Nessun controllo visivo, nessuna prova da telefono e nessuna prova su un database vero: tutto lo SQL è provato in PGlite. **Nessuna sede ha aperto le iscrizioni dopo il merge**: serve prima che la segreteria scriva quote e moduli.
+**Stato:** ✅ in produzione dal 09/11/2026 (#304, `094a25ed`). **Ha cinque migrazioni**, applicate dall'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109035209_anno_tick.sql` (M45a), `20261109035213_anno_alunno_in_arrivo.sql` (M45b), `20261109035216_anno_listino_moduli_sezioni.sql` (M45d), `20261109035219_anno_iscrizione_conferma.sql` (M45c), `20261109035223_anno_crm_anno_id.sql` (M45e). L'ordine è questo e non l'alfabetico: M45d viene prima di M45c, perché la voce della quota (M45c) legge la scadenza che nasce in M45d. La prima commit del ramo è la pulizia dopo la PR 4.4 (la PR-B della 4.4 è già passata). Nessun controllo visivo, nessuna prova da telefono e nessuna prova su un database vero: tutto lo SQL è provato in PGlite. **Nessuna sede ha aperto le iscrizioni dopo il merge**: serve prima che la segreteria scriva quote e moduli. **Pulizia dopo il merge (09/11/2026).** Le fotografie sono rigenerate dalla produzione: le migrazioni 264 -> 269 (le cinque della 4.5) e le chiavi verso `utenti` (83, identiche, con l'impronta md5 uguale a quella del database); `anno_tabelle` (46), indici unici (292) e tabelle con RLS accesa (181) hanno lo stesso conteggio. `anni-tick` entra in `JOB_CRON` con finestra di 3 ore, perché il suo battito è già in `app_log`; `anno-invarianti` resta fuori fino al primo battito delle 03:17 e passa con la prossima PR-B. La sonda della finestra del deploy sul modulo pubblico (`listino_voci.scadenza`) è tolta: la migrazione che la crea è in produzione.
 
 **Stato per area** (le tabelle di stato di questo PRD stanno nei blocchi datati; questa è la riga di quest'area):
 
 | Area | Stato | Che cosa è |
 |---|---|---|
-| Quote, moduli, posti e classi dell'anno prossimo | 🟡 in revisione | Tre schede nuove nelle impostazioni di sede e la copia delle classi (M45d) |
-| Conferma e «non rinnova» | 🟡 in revisione | Pagina «Conferme» della segreteria (M45c) |
-| Domande per l'anno prossimo | 🟡 in revisione | Il bambino nasce «in arrivo» (M45b); il modulo pubblico fa scegliere l'anno |
-| Creazione automatica dell'anno successivo | 🟡 in revisione | Job orario `anni-tick` e job notturno `anno-invarianti` (M45a) |
-| Quota del CRM per anno | 🟡 in revisione | La scheda sceglie l'anno vero (M45e) |
+| Quote, moduli, posti e classi dell'anno prossimo | ✅ in produzione | Tre schede nuove nelle impostazioni di sede e la copia delle classi (M45d) |
+| Conferma e «non rinnova» | ✅ in produzione | Pagina «Conferme» della segreteria (M45c) |
+| Domande per l'anno prossimo | ✅ in produzione | Il bambino nasce «in arrivo» (M45b); il modulo pubblico fa scegliere l'anno |
+| Creazione automatica dell'anno successivo | ✅ in produzione | Job orario `anni-tick` e job notturno `anno-invarianti` (M45a) |
+| Quota del CRM per anno | ✅ in produzione | La scheda sceglie l'anno vero (M45e) |
 | Il passaggio da un anno all'altro | ⏳ non c'è | Il passaggio resta alla PR 4.8, la chiusura automatica alla 4.9, la guardia dell'anno chiuso alla 3-B: questa PR non cambia lo stato di nessun anno |
 
 **Che cosa cambia per le persone.**

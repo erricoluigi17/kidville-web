@@ -127,6 +127,9 @@ const alunno = (id: string, scuola: string, nome: string): Riga => ({
   data_iscrizione: null,
 })
 
+// Il database di questi test non ha ancora lo schema dell'anno (PR 4.6): la route resta sulla strada storica, che è ciò che provano.
+const SCHEMA_ANNO_INDIETRO = { code: '42P01', message: 'relation "anni_sede" does not exist' }
+
 const dbBase = (): DBFinto => ({
   utenti_scuole: [
     { utente_id: ADMIN, scuola_id: SEDE_A },
@@ -137,6 +140,7 @@ const dbBase = (): DBFinto => ({
     { scuola_id: SEDE_A, retta_default_importo: 150 },
     { scuola_id: SEDE_B, retta_default_importo: 120 },
   ],
+  anni_sede: [],
   alunni: [alunno(ALU_A, SEDE_A, 'Anna'), alunno(ALU_B, SEDE_B, 'Bruno')],
   pagamenti: [],
   registro_modifiche: [],
@@ -150,7 +154,7 @@ beforeEach(() => {
   h.tabelle = []
   h.scritture = []
   h.chiamate = []
-  h.errori = {}
+  h.errori = { anni_sede: SCHEMA_ANNO_INDIETRO }
   h.log = []
   h.requireStaff.mockResolvedValue({ user: { id: ADMIN, role: 'admin', scuola_id: SEDE_A } })
 })
@@ -235,7 +239,7 @@ describe('POST /api/pagamenti/genera-rette — la sede si dichiara', () => {
   })
 
   it('audit non scritto: la risposta resta 200 ma l\'evento è loggato a error', async () => {
-    h.errori = { registro_modifiche: { code: '42501', message: 'permission denied' } }
+    h.errori = { anni_sede: SCHEMA_ANNO_INDIETRO, registro_modifiche: { code: '42501', message: 'permission denied' } }
     const res = await POST(post({ periodo: '2026-09', scuola_id: SEDE_B }))
     expect(res.status).toBe(200)
     const righe = h.log.filter((c) => c[1] === 'error')

@@ -170,6 +170,8 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/pagamenti/export/route.ts::exportAde': ['no-già', 'ids'],
   'src/app/api/pagamenti/famiglia/route.ts::pagamenti/famiglia:GET': ['sì', 'ricevute'],
   'src/app/api/pagamenti/genera-rette/route.ts::pagamenti/genera-rette:GET': ['no-già', 'stato'],
+  // 4.6.6: l'anteprima dell'anno legge i NOMI dei soli candidati che la funzione SQL dell'anno ha già deciso (frequenze vive), per id.
+  'src/app/api/pagamenti/genera-rette/route.ts::anteprimaDalListino': ['sì', 'funzione-di-anno'],
   'src/app/api/pagamenti/genera/route.ts::pagamenti/genera:GET': ['no-già', 'stato'],
   'src/app/api/pagamenti/genera/route.ts::pagamenti/genera:POST': ['sì', 'ricevute'],
   'src/app/api/pagamenti/rate/route.ts::pagamenti/rate:POST': ['sì', 'ricevute'],
@@ -351,13 +353,14 @@ const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::fn_scuola_id_da_alunno': ['no-già', 'funzione-puntuale'],
   'sql::frequenza_segue_classe_alunno': ['no-già', 'funzione-per-sezione'],
   'sql::frequenze_specchio_alunni': ['sì', 'funzione-di-anno'],
-  'sql::genera_rette_mensili': ['no-già', 'funzione-per-stato'],
   'sql::iscrizioni_annulla': ['no-già', 'ids'],
   'sql::iscrizioni_rinvia': ['no-già', 'ids'],
   'sql::iscrizioni_sanitari_tick': ['sì', 'anagrafica'],
   'sql::presenze_giustificazioni_retention_tick': ['no-già', 'funzione-per-stato'],
   'sql::propaga_rinomina_sezione': ['no-già', 'funzione-per-sezione'],
   'sql::registra_transazione_contabile': ['sì', 'ricevute'],
+  // 4.6.0: chi riceve una retta lo decide la frequenza viva nell'anno (non alunni.stato di oggi): ci entrano anche i bambini in arrivo.
+  'sql::rette_da_generare': ['sì', 'funzione-di-anno'],
   'sql::ricarica_ticket_mensa': ['no-già', 'funzione-puntuale'],
   'sql::servizi_da_generare': ['no-già', 'funzione-per-stato'],
   'sql::storici_collega_documento': ['no-già', 'funzione-puntuale'],
@@ -525,7 +528,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 0, 'no-già': 210, sì: 58, daCorreggere: 0 },
+      { no: 0, 'no-già': 209, sì: 60, daCorreggere: 0 }, // 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni)
     )
   })
 

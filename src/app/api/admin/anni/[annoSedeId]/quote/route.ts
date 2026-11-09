@@ -27,8 +27,8 @@ const FASCE = ['nido_1', 'nido_2', 'primavera', 'infanzia', 'primaria', 'spazio_
 type RigaListino = { voce: string; fascia: string | null; importo: number | null; scadenza: string | null }
 
 /**
- * GET — le due quote dell'anno e, in SOLA LETTURA, le righe `retta` e `servizio` del listino (le scrive la 4.6).
- * `{ success: true, data: { quote: [...], listino: [...] } }`.
+ * GET — le due quote dell'anno. Le righe `retta` e `servizio` del listino non passano più da qui: stanno in
+ * `/rette` (PR 4.6). `{ success: true, data: { quote: [...] } }`.
  */
 export const GET = withRoute('admin/anni/[annoSedeId]/quote:GET', async (request: NextRequest, context: Contesto) => {
   const auth = await requireStaff(request, [...STAFF])
@@ -61,10 +61,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/quote:GET', async (request
   }
   const righe = (Array.isArray(data) ? data : []) as RigaListino[]
   const quote = righe.filter((r) => r.voce === 'quota_conferma' || r.voce === 'quota_nuova')
-  const listino = righe
-    .filter((r) => r.voce === 'retta' || r.voce === 'servizio')
-    .map((r) => ({ voce: r.voce, fascia: r.fascia, importo: r.importo }))
-  return NextResponse.json({ success: true, data: { quote, listino } })
+  return NextResponse.json({ success: true, data: { quote } })
 })
 
 /**

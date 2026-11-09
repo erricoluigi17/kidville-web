@@ -472,6 +472,9 @@ const SUFFISSI_PR2 = {
   M45d: '_anno_listino_moduli_sezioni.sql',
   M45c: '_anno_iscrizione_conferma.sql',
   M45e: '_anno_crm_anno_id.sql',
+  // PR 4.6 (due testate, nate nel compito 4.6.0). M46a: le rette e i servizi dal listino; M46b: scrivere il listino. Dopo M45e.
+  M46a: '_anno_rette_dal_listino.sql',
+  M46b: '_anno_listino_rette_scrittura.sql',
 } as const
 
 /**
@@ -707,7 +710,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e → M46a → M46b. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -729,12 +732,54 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e', 'M46a', 'M46b']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined, M46a: undefined, M46b: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)
     if (passo === o.fino) break
   }
   return db
+}
+
+/**
+ * PR 4.6 (compito 4.6.0) · Ciò che le rette e i servizi leggono e che il banco minimo non ha, con i nomi veri delle colonne
+ * di produzione. NON sta in `SCHEMA_BASE`: cambierebbe i test di prima. Si esegue DOPO `creaDbAnnoPr2` (fino a `M45e`, con
+ * `completo: true` e `SCHEMA_ISCRIZIONE_ANNO` in `codaPrima`) e DOPO `SCHEMA_LEGAMI_GENITORE` e `SCHEMA_AVVISI_CHAT_VOCI_GENITORE`
+ * (il tipo `pagamento_tipo` e le colonne `tipo`, `visibile_dal` di `pagamenti` nascono lì). Poi `applicaServiziMensili(db)` e
+ * `applicaPr2(db, 'M46a')`.
+ *  · le colonne di `alunni` e `admin_settings` che leggono `genera_rette_mensili` e `servizi_da_generare`;
+ *  · le colonne di `pagamenti` che la generazione scrive e l'indice unico `uq_pagamenti_categoria_mese` col predicato di produzione;
+ *  · `payment_categories.mensile`;
+ *  · `crea_quote_da_config`, FINTA (non fa niente: le quote dei genitori separati non sono oggetto di queste prove).
+ */
+export const SCHEMA_RETTE = `
+  ALTER TABLE public.alunni
+    ADD COLUMN IF NOT EXISTS data_nascita date,
+    ADD COLUMN IF NOT EXISTS data_iscrizione date,
+    ADD COLUMN IF NOT EXISTS genitori_separati boolean NOT NULL DEFAULT false;
+  ALTER TABLE public.admin_settings
+    ADD COLUMN IF NOT EXISTS retta_giorno_scadenza integer,
+    ADD COLUMN IF NOT EXISTS retta_giorno_visibilita integer,
+    ADD COLUMN IF NOT EXISTS rette_config jsonb,
+    ADD COLUMN IF NOT EXISTS retta_auto_enabled boolean NOT NULL DEFAULT true;
+  ALTER TABLE public.pagamenti
+    ADD COLUMN IF NOT EXISTS sconto numeric(10,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS sconto_motivo text,
+    ADD COLUMN IF NOT EXISTS obbligatorio boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS gruppo text;
+  ALTER TABLE public.payment_categories ADD COLUMN IF NOT EXISTS mensile boolean NOT NULL DEFAULT false;
+  -- come in produzione (pg_indexes): il predicato è quello che l'ON CONFLICT dei servizi deve ripetere identico
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_pagamenti_categoria_mese
+    ON public.pagamenti (alunno_id, categoria_id, periodo_competenza)
+    WHERE categoria_id IS NOT NULL AND tipo = ANY (ARRAY['singolo','padre','split']::public.pagamento_tipo[]) AND periodo_competenza IS NOT NULL;
+  CREATE OR REPLACE FUNCTION public.crea_quote_da_config(p_pagamento uuid, p_alunno uuid, p_importo numeric, p_config jsonb)
+  RETURNS void LANGUAGE plpgsql AS $f$ BEGIN NULL; END $f$;
+`
+
+/** Applica la migrazione dei servizi mensili (iscrizioni_servizi, servizi_da_generare, genera_servizi_*), trovata per nome. */
+export async function applicaServiziMensili(db: PGlite): Promise<void> {
+  const f = readdirSync(CARTELLA).find((x) => x.endsWith('_servizi_mensili.sql'))
+  if (!f) throw new Error('manca supabase/migrations/*_servizi_mensili.sql')
+  await db.exec(readFileSync(join(CARTELLA, f), 'utf8'))
 }

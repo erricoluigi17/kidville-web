@@ -25,8 +25,10 @@ const getQuerySchema = z.object({ scuola_id: zScuolaId })
 // di tipo (tipi/CHECK li fa rispettare il DB): schema volutamente permissivo
 // (z.unknown().optional() — l'.optional() è OBBLIGATORIO: in zod v4 z.unknown()
 // nudo renderebbe la chiave required a runtime).
+// `retta_default_importo` NON è più ammesso (PR 4.6): la retta si decide nel listino dell'anno
+// (`/api/admin/anni/[annoSedeId]/rette`), che riscrive da sé questa colonna per l'anno in corso finché
+// la stima delle domande la legge ancora (si toglie nella PR 5). Una PATCH che la porti viene ignorata da zod.
 const ALLOWED_FIELDS = [
-  'retta_default_importo',
   'retta_giorno_scadenza',
   'retta_giorno_visibilita',
   'retta_auto_enabled',
@@ -399,7 +401,7 @@ export const GET = withRoute('admin/settings:GET', async (request: NextRequest) 
 })
 
 // PATCH /api/admin/settings  (staff) — upsert impostazioni
-// Body: { userId, scuola_id?, retta_default_importo?, retta_giorno_scadenza?,
+// Body: { userId, scuola_id?, retta_giorno_scadenza?,   (la retta di base non si scrive più da qui: sta nel listino dell'anno)
 //         retta_auto_enabled?, insoluto_tolleranza_giorni?, ticket_pacchetti? }
 // NB: aruba_config si gestisce dalla route dedicata /api/admin/settings/aruba
 export const PATCH = withRoute('admin/settings:PATCH', async (request: NextRequest) => {

@@ -196,26 +196,6 @@ describe('GET /api/iscrizione/anni · l\'elenco pubblico', () => {
     expect(corpo.data).toEqual({ anni: [], scelta: false, chiuso: true })
   })
 
-  it('4.5.16 G · finestra del deploy: la colonna `listino_voci.scadenza` ASSENTE → NON chiuso (come prima della PR), con colonna presente → chiuso', async () => {
-    h.db.anni_sede = h.db.anni_sede.map((r) => ({ ...r, domande_aperte: false }))
-    // colonna assente (la migrazione che la crea non è ancora passata): il riempimento di `domande_aperte` non è passato
-    h.errori = { listino_voci: { code: '42703', message: 'column listino_voci.scadenza does not exist' } }
-    const assente = (await (await ELENCO_ANNI(richiestaAnni(SEDE_A))).json()) as CorpoAnni
-    expect(assente.data).toEqual({ anni: [], scelta: false, chiuso: false })
-    // colonna presente e nessun anno offerto: iscrizioni davvero chiuse
-    h.errori = {}
-    const presente = (await (await ELENCO_ANNI(richiestaAnni(SEDE_A))).json()) as CorpoAnni
-    expect(presente.data).toEqual({ anni: [], scelta: false, chiuso: true })
-  })
-
-  it('4.5.16 G · la sonda fallita per un motivo diverso dall\'assenza: non si chiude, si avvisa (nessun errore al cliente)', async () => {
-    h.db.anni_sede = h.db.anni_sede.map((r) => ({ ...r, domande_aperte: false }))
-    h.errori = { listino_voci: { code: '57014', message: 'timeout' } }
-    const corpo = (await (await ELENCO_ANNI(richiestaAnni(SEDE_A))).json()) as CorpoAnni
-    expect(corpo.data).toEqual({ anni: [], scelta: false, chiuso: false })
-    expect(warn('anno-pubblico-sonda-listino-fallita')).toHaveLength(1)
-  })
-
   it('una sede SENZA alcuna riga di anni (appena nata): non è "chiusa", è senza anno — e il POST scrive come sempre', async () => {
     h.db.anni_sede = []
     const corpo = (await (await ELENCO_ANNI(richiestaAnni(SEDE_A))).json()) as CorpoAnni

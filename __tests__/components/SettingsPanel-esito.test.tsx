@@ -163,7 +163,9 @@ describe('SettingsPanel — il campo unico «Causale fattura» non esiste più',
 
         // Si aspetta proprio la PATCH della retta: è quella che portava il campo, e
         // asserire su un elenco ancora vuoto renderebbe il test verde per finta.
-        await waitFor(() => expect(corpiPatch().some((c) => 'retta_default_importo' in c)).toBe(true))
+        await waitFor(() => expect(corpiPatch().some((c) => 'retta_giorno_scadenza' in c)).toBe(true))
+        // La retta mensile non si scrive più da qui (PR 4.6): sta nella scheda Rette dell'anno scolastico.
+        expect(JSON.stringify(corpiPatch())).not.toContain('retta_default_importo')
         expect(JSON.stringify(corpiPatch())).not.toContain('fattura_causale_template')
     })
 })

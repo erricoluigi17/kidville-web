@@ -425,9 +425,11 @@ export function posterioriCheContengono(
 // l'impronta md5 dal database uguale a quella in repo: funzioni che scrivono nel registro (66: nessuna funzione nuova della 4.4 entra),
 // tabelle di `anno_tabelle` (46), indici unici (292), FK di sede (99), FK verso `utenti` (83), tabelle con `scuola_id` (99), RLS accesa
 // (181 tabelle, 74 policy solo-service_role), bucket (21) e schema delle candidature.
+// 2026-11-09 · PR 4.6 (`20261109153822_anno_rette_dal_listino.sql`, `20261109153825_anno_listino_rette_scrittura.sql`): nessuna guardia le segnala.
+// Creano funzioni e riscrivono con CREATE OR REPLACE funzioni esistenti, ma non toccano UNIQUE, chiavi verso `utenti`, policy, tabelle con `scuola_id`,
+// bucket né lo schema delle candidature, e hanno una version più recente della fotografia: il lock «nessuna voce morta» rifiuterebbe una
+// dichiarazione che nessuna guardia vede. Dopo il merge cambia solo la fotografia delle migrazioni (+2).
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261109035213_anno_alunno_in_arrivo.sql':
-        'PR 4.5, compito 4.5.4 (l\'alunno in arrivo: tocca il CHECK di `alunni` con ADD e DROP CONSTRAINT). La applica l\'integrazione al merge, con la version del FILE; la voce si toglie nella PR-B, quando la fotografia la contiene.',
 }
 
 /**

@@ -312,7 +312,7 @@ describe('quote', () => {
     expect((await r.json()).codice).toBe('IMPORTO_NON_VALIDO')
   })
 
-  it('GET separa le quote dalle righe retta e servizio, che restano in sola lettura', async () => {
+  it('GET porta solo le quote: le righe retta e servizio stanno nella route delle rette', async () => {
     h.tabelle.listino_voci = [
       { voce: 'quota_conferma', fascia: null, importo: 120, scadenza: '2027-02-15' },
       { voce: 'retta', fascia: null, importo: 150, scadenza: null },
@@ -323,10 +323,7 @@ describe('quote', () => {
     expect(r.status).toBe(200)
     const { data } = await r.json()
     expect(data.quote.map((q: { voce: string }) => q.voce)).toEqual(['quota_conferma', 'quota_nuova'])
-    expect(data.listino).toEqual([
-      { voce: 'retta', fascia: null, importo: 150 },
-      { voce: 'servizio', fascia: 'infanzia', importo: 30 },
-    ])
+    expect(data).not.toHaveProperty('listino')
     expect(h.rpc).toEqual([])
   })
 })

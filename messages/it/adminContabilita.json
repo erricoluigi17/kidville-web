@@ -454,7 +454,7 @@
   "genrMeseCompetenza": "Mese di competenza",
   "genrMeseSingolo": "Mese singolo",
   "genrNessunAlunnoMese": "Nessun alunno da generare per questo mese (rette già create).",
-  "genrRettaDefault": "Retta default:",
+  "genrRettaDefault": "Retta di riferimento:",
   "genrRette": "rette",
   "genrRettePer": "rette per",
   "genrRettePerAS": "rette per l’A.S.",
@@ -1656,5 +1656,18 @@
   "quoteRiprovaOk": "La quota è passata in contabilità.",
   "quoteRiprovaSedeDiversa": "L’alunno collegato è di un’altra sede: la quota non può passare in contabilità.",
   "quoteRiprovaCategoriaAssente": "Manca la categoria di pagamento «Iscrizione» in contabilità: la quota non può passare.",
-  "quoteRiprovaPer": "Riprova per {nome}"
+  "quoteRiprovaPer": "Riprova per {nome}",
+  "genrAnnoStato": "Anno scolastico {stato}.",
+  "genrNonVisibile": "Le famiglie non vedranno queste rette finché questo anno non diventa quello in corso. Nessuna notifica.",
+  "genrNessunaNotificaFatto": "Le famiglie non le vedono ancora e non ricevono nessuna notifica.",
+  "genrSenzaRetta": "Bambini senza una retta: {n}. Non ricevono la voce finché non c’è una retta nella loro scheda o nel listino dell’anno.",
+  "genrSenzaRettaLink": "Imposta le rette dell’anno",
+  "genrAltriSenzaVoce": "Esenti: {esenti}. A carico di un fratello non iscritto: {assenti}.",
+  "genrOrigineTitolo": "Da dove vengono gli importi:",
+  "genrOrigineListino": "dal listino: {n}",
+  "genrOrigineFascia": "dal listino della fascia: {n}",
+  "genrOrigineFrequenza": "dalla scheda del bambino: {n}",
+  "genrErrAnteprima": "Non riesco a preparare l’anteprima.",
+  "genrNonGenerabileInPreparazione": "Questo anno è ancora in preparazione: le rette si generano dal momento in cui si aprono le iscrizioni.",
+  "genrNonGenerabileChiuso": "Questo anno è chiuso: le rette non si generano più."
 }

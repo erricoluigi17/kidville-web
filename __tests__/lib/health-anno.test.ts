@@ -175,14 +175,19 @@ describe('i due controlli stanno nei livelli giusti', () => {
     })
 })
 
-describe('i due job nuovi non sono sorvegliati dal battito, e il perché è scritto', () => {
-    it('`anni-tick` e `anno-invarianti` stanno in JOB_CRON_NON_SORVEGLIATI con la ragione e in nessun altro posto', () => {
-        for (const nome of ['anni-tick', 'anno-invarianti']) {
-            const voce = JOB_CRON_NON_SORVEGLIATI.find((j) => j.nome === nome)
-            expect(voce, nome).toBeDefined()
-            expect(voce!.perche, nome).toMatch(/PR-B/)
-            expect(voce!.perche, nome).toMatch(/JOB_CRON/)
-            expect(JOB_CRON.some((j) => j.nome === nome), `${nome} non è ancora in JOB_CRON`).toBe(false)
-        }
+describe('i due job dell\'anno: uno sorvegliato dal battito, uno ancora no, e il perché è scritto', () => {
+    it('`anni-tick` è in JOB_CRON con finestra 3 ore e non è più fra i non sorvegliati', () => {
+        const voce = JOB_CRON.find((j) => j.nome === 'anni-tick')
+        expect(voce).toBeDefined()
+        expect(voce!.finestraMs).toBe(3 * 60 * 60 * 1000)
+        expect(JOB_CRON_NON_SORVEGLIATI.some((j) => j.nome === 'anni-tick')).toBe(false)
+    })
+
+    it('`anno-invarianti` sta in JOB_CRON_NON_SORVEGLIATI con la ragione, fino al primo battito visto', () => {
+        const voce = JOB_CRON_NON_SORVEGLIATI.find((j) => j.nome === 'anno-invarianti')
+        expect(voce).toBeDefined()
+        expect(voce!.perche).toMatch(/PR-B/)
+        expect(voce!.perche).toMatch(/JOB_CRON/)
+        expect(JOB_CRON.some((j) => j.nome === 'anno-invarianti')).toBe(false)
     })
 })

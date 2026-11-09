@@ -92,6 +92,7 @@ beforeEach(() => {
     fatture_emesse: [],
     registro_modifiche: [],
     ticket_mensa: [],
+    anni_sede: [],
     mensa_ticket_movimenti: [],
     payment_categories: [{ id: 'c1c1c1c1-1111-4111-8111-cccccccccccc', slug: 'retta', scuola_id: null }],
   } as DBFinto
@@ -117,7 +118,8 @@ describe('generazione · un guasto sui «già generati» non genera di nuovo', (
 
   it('🔴 genera-rette POST mensile: «chi l’aveva già» non letto → 500 PRIMA della RPC (prima: «nuova retta» a tutta la sede)', async () => {
     h.rpc.genera_rette_mensili = () => ({ data: 1, error: null })
-    h.errori = { 'pagamenti:select': GUASTO }
+    // lo schema dell'anno non c'è ancora (PR 4.6): la route resta sulla strada storica, che è ciò che qui si prova
+    h.errori = { anni_sede: { code: '42P01', message: 'relation "anni_sede" does not exist' }, 'pagamenti:select': GUASTO }
     const res = await genereRettePOST(json('/api/pagamenti/genera-rette', 'POST', { periodo: '2026-11-01', scuola_id: SEDE_A }))
     expect(res.status).toBe(500)
     expect(h.rpcChiamate).not.toContain('genera_rette_mensili')

@@ -106,8 +106,8 @@ const dbBase = (): DBFinto => ({
     { id: CAT_B, scuola_id: SEDE_B, nome: 'Gita', slug: 'gita', is_sistema: false, attivo: true, ordine: 4 },
   ],
   admin_settings: [
-    { scuola_id: SEDE_A, retta_default_importo: 150, avvisi_config: { ruoli_pubblicazione: ['admin'] } },
-    { scuola_id: SEDE_B, retta_default_importo: 999, avvisi_config: { ruoli_pubblicazione: ['admin', 'educator'] } },
+    { scuola_id: SEDE_A, retta_default_importo: 150, retta_giorno_scadenza: 5, avvisi_config: { ruoli_pubblicazione: ['admin'] } },
+    { scuola_id: SEDE_B, retta_default_importo: 999, retta_giorno_scadenza: 9, avvisi_config: { ruoli_pubblicazione: ['admin', 'educator'] } },
   ],
 })
 
@@ -398,21 +398,21 @@ describe('POST /api/admin/settings/categorie — la sede si dichiara', () => {
 describe('PATCH /api/admin/settings — la sede dichiarata si valida, non si ripiega', () => {
   it('scuola_id di un\'ALTRA sede: 403, e le impostazioni della PROPRIA non vengono scritte', async () => {
     const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', {
-      scuola_id: SEDE_B, retta_default_importo: 1,
+      scuola_id: SEDE_B, retta_giorno_scadenza: 1,
     }))
     expect(res.status).toBe(403)
-    expect(impostazioni(SEDE_A)?.retta_default_importo).toBe(150)
-    expect(impostazioni(SEDE_B)?.retta_default_importo).toBe(999)
+    expect(impostazioni(SEDE_A)?.retta_giorno_scadenza).toBe(5)
+    expect(impostazioni(SEDE_B)?.retta_giorno_scadenza).toBe(9)
     expect(scrittureSu('admin_settings')).toEqual([])
   })
 
   it('scuola_id della propria sede: 200 e l\'upsert porta quella sede', async () => {
     const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', {
-      scuola_id: SEDE_A, retta_default_importo: 175,
+      scuola_id: SEDE_A, retta_giorno_scadenza: 12,
     }))
     expect(res.status).toBe(200)
-    expect(impostazioni(SEDE_A)?.retta_default_importo).toBe(175)
-    expect(impostazioni(SEDE_B)?.retta_default_importo).toBe(999)
+    expect(impostazioni(SEDE_A)?.retta_giorno_scadenza).toBe(12)
+    expect(impostazioni(SEDE_B)?.retta_giorno_scadenza).toBe(9)
     const scritte = scrittureSu('admin_settings')
     expect(scritte).toHaveLength(1)
     expect(scritte[0].valori[0].scuola_id).toBe(SEDE_A)
@@ -420,20 +420,20 @@ describe('PATCH /api/admin/settings — la sede dichiarata si valida, non si rip
 
   it('admin multi-sede senza scuola_id: 400 e NESSUNA scrittura (la sede si dichiara)', async () => {
     h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
-    const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', { retta_default_importo: 42 }))
+    const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', { retta_giorno_scadenza: 42 }))
     expect(res.status).toBe(400)
     expect(scrittureSu('admin_settings')).toEqual([])
-    expect(impostazioni(SEDE_A)?.retta_default_importo).toBe(150)
+    expect(impostazioni(SEDE_A)?.retta_giorno_scadenza).toBe(5)
   })
 
   it('admin multi-sede che dichiara la SECONDA sede: scrive lì, non sulla sede primaria', async () => {
     h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
     const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', {
-      scuola_id: SEDE_B, retta_default_importo: 220,
+      scuola_id: SEDE_B, retta_giorno_scadenza: 21,
     }))
     expect(res.status).toBe(200)
-    expect(impostazioni(SEDE_B)?.retta_default_importo).toBe(220)
-    expect(impostazioni(SEDE_A)?.retta_default_importo).toBe(150)
+    expect(impostazioni(SEDE_B)?.retta_giorno_scadenza).toBe(21)
+    expect(impostazioni(SEDE_A)?.retta_giorno_scadenza).toBe(5)
   })
 
   it('sede deselezionata nel SedeSelector: 403 invece di scrivere sulla sede selezionata', async () => {
@@ -442,11 +442,11 @@ describe('PATCH /api/admin/settings — la sede dichiarata si valida, non si rip
     // l'operatore vede) né ripiegare su A (scriverebbe nel plesso sbagliato).
     h.requireStaff.mockResolvedValue({ user: ADMIN_TUTTE })
     const res = await SET_PATCH(reqCorpo('/api/admin/settings', 'PATCH', {
-      scuola_id: SEDE_B, retta_default_importo: 7,
+      scuola_id: SEDE_B, retta_giorno_scadenza: 7,
     }, `sedi_attive=${SEDE_A}`))
     expect(res.status).toBe(403)
-    expect(impostazioni(SEDE_A)?.retta_default_importo).toBe(150)
-    expect(impostazioni(SEDE_B)?.retta_default_importo).toBe(999)
+    expect(impostazioni(SEDE_A)?.retta_giorno_scadenza).toBe(5)
+    expect(impostazioni(SEDE_B)?.retta_giorno_scadenza).toBe(9)
     expect(scrittureSu('admin_settings')).toEqual([])
   })
 })

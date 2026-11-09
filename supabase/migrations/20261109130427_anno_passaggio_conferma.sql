@@ -1,0 +1,8 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.8 · «Il passaggio d'anno» · M48b, conferma, annullamento, conferma tardiva (testata del compito 4.8.0)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- Questa testata la riempie il compito 4.8.7 con `passaggio_conferma`, `passaggio_annulla` e `passaggio_conferma_tardiva`.
+-- Si applica per ultima (dopo M48a e M48c). Il passaggio NON gira mai da sé: nessun `cron.schedule`, nessuna chiamata da `anni_tick`.
+-- Nessun uuid di sede, nessun valore del 2027/28, nessuna scrittura su dati alla migrazione.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

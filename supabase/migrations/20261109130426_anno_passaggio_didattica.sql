@@ -1,0 +1,8 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.8 · «Il passaggio d'anno» · M48c, la didattica della classe nuova (testata del compito 4.8.0)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- Questa testata la riempie il compito 4.8.2 con `passaggio_copia_didattica`: materie, campanelle, orario, tempo scuola e obiettivi
+-- della sezione vecchia verso la sua continuazione. Si applica dopo M48a e prima di M48b (che la chiama).
+-- Nessun uuid di sede, nessun valore del 2027/28, nessuna scrittura su dati alla migrazione.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

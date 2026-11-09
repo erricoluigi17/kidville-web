@@ -857,5 +857,14 @@
   "erroreAlunnoEliminazioneInArrivo": "Questo bambino ha un’iscrizione per l’anno prossimo: prima archivialo dalla sua scheda, diventa «ritirato», e poi puoi eliminarlo.",
   "erroreFrequenzaNonTrovata": "Questa iscrizione non esiste più. Aggiorna la pagina.",
   "erroreFrequenzaNonDiConferma": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la sua iscrizione si toglie archiviandolo dalla sua scheda.",
-  "erroreAlunnoInArrivoSenzaClasse": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia."
+  "erroreAlunnoInArrivoSenzaClasse": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia.",
+  "errorePassaggioNonPronto": "Il passaggio d’anno non si può ancora fare: l’anno nuovo deve avere le iscrizioni aperte e l’anno in corso deve essere quello attivo della sede.",
+  "errorePassaggioTroppoPresto": "È troppo presto per il passaggio d’anno: si può fare dal giorno dopo l’ultimo giorno aperto dell’anno in corso.",
+  "errorePassaggioGiaConfermato": "Il passaggio d’anno è già stato confermato.",
+  "errorePassaggioNonAnnullabile": "Il passaggio non si può più annullare: nell’anno nuovo sono già state registrate delle presenze o altri dati.",
+  "errorePassaggioNonModificabile": "Il passaggio non si può più modificare: è già stato confermato o annullato.",
+  "errorePassaggioNonTrovato": "Questo passaggio non esiste più. Aggiorna la pagina.",
+  "erroreAnteprimaVecchia": "L’anteprima non è più aggiornata: dopo averla calcolata qualcosa è cambiato. Calcolala di nuovo.",
+  "erroreRigheDaDecidere": "Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.",
+  "erroreRigaNonValida": "Questa correzione non è ammessa. Per ritirare un bambino nuovo o registrare una conferma usa la pagina «Conferme»."
 }

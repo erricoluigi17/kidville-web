@@ -1,0 +1,9 @@
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ANNO SCOLASTICO, PR 4.8 · «Il passaggio d'anno» · M48a, l'anteprima e le eccezioni (testata del compito 4.8.0)
+-- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE.
+--
+-- Questa testata la riempie il compito 4.8.1 con: due colonne nullable in `passaggi_anno_righe` (`avviso`, `stato_da_prima`) e le
+-- funzioni `passaggio_calcola`, `passaggio_anteprima`, `passaggio_riga_correggi`, `passaggio_docente_imposta`.
+-- Si applica per prima delle tre (a, poi c, poi b: la conferma chiama la copia della didattica).
+-- Nessun uuid di sede, nessun valore del 2027/28, nessuna scrittura su dati.
+-- ════════════════════════════════════════════════════════════════════════════════════════════════

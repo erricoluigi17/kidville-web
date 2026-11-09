@@ -223,6 +223,55 @@ export function erroreAnno(
         { ...dettagli, error: frase('SCADENZA_QUOTA_NEL_PASSATO'), codice: 'SCADENZA_QUOTA_NEL_PASSATO' },
         { status: 422 },
       )
+    // ── Il passaggio d'anno (PR 4.8): le sollevano le funzioni di M48a e M48b. `dettagli` porta i conteggi (mai righe, mai nomi).
+    case 'PASSAGGIO_NON_PRONTO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_PRONTO'), codice: 'PASSAGGIO_NON_PRONTO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_TROPPO_PRESTO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_TROPPO_PRESTO'), codice: 'PASSAGGIO_TROPPO_PRESTO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_GIA_CONFERMATO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_GIA_CONFERMATO'), codice: 'PASSAGGIO_GIA_CONFERMATO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_ANNULLABILE':
+      // `dettagli.conteggi`: quante righe d'uso ha il nuovo anno, per tabella (il `DETAIL` della funzione).
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_ANNULLABILE'), codice: 'PASSAGGIO_NON_ANNULLABILE' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_MODIFICABILE':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_MODIFICABILE'), codice: 'PASSAGGIO_NON_MODIFICABILE' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_TROVATO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_TROVATO'), codice: 'PASSAGGIO_NON_TROVATO' },
+        { status: 404 },
+      )
+    case 'ANTEPRIMA_VECCHIA':
+      // `dettagli.righe_diverse`: quante righe senza eccezione non coincidono più con il calcolo.
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANTEPRIMA_VECCHIA'), codice: 'ANTEPRIMA_VECCHIA' },
+        { status: 409 },
+      )
+    case 'RIGHE_DA_DECIDERE':
+      // `dettagli`: i conteggi delle righe senza classe nuova e di quelle con un avviso aperto.
+      return NextResponse.json(
+        { ...dettagli, error: frase('RIGHE_DA_DECIDERE'), codice: 'RIGHE_DA_DECIDERE' },
+        { status: 409 },
+      )
+    case 'RIGA_NON_VALIDA':
+      return NextResponse.json(
+        { ...dettagli, error: frase('RIGA_NON_VALIDA'), codice: 'RIGA_NON_VALIDA' },
+        { status: 422 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(

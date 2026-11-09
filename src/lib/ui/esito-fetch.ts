@@ -3647,6 +3647,21 @@ export const CODICI_ERRORE = {
     IMPORTO_NON_VALIDO: 'erroreImportoNonValido',
     /** La spunta dei moduli (compito 4.5.10): 404 `FREQUENZA_NON_TROVATA`, la risposta di `rispostaFrequenzaNonTrovata`. */
     FREQUENZA_NON_TROVATA: 'erroreFrequenzaNonTrovata',
+    /**
+     * IL PASSAGGIO D'ANNO (PR 4.8, compito 4.8.0), tradotti da `erroreAnno`:
+     * 409 `PASSAGGIO_NON_PRONTO` · 409 `PASSAGGIO_TROPPO_PRESTO` · 409 `PASSAGGIO_GIA_CONFERMATO` · 409 `PASSAGGIO_NON_ANNULLABILE` ·
+     * 409 `PASSAGGIO_NON_MODIFICABILE` · 404 `PASSAGGIO_NON_TROVATO` · 409 `ANTEPRIMA_VECCHIA` · 409 `RIGHE_DA_DECIDERE` · 422 `RIGA_NON_VALIDA`.
+     * `PASSAGGIO_OGGI_NON_AMMESSO` NON c'è: lo solleva solo il database (sta in `CODICI_INTERNI`).
+     */
+    PASSAGGIO_NON_PRONTO: 'errorePassaggioNonPronto',
+    PASSAGGIO_TROPPO_PRESTO: 'errorePassaggioTroppoPresto',
+    PASSAGGIO_GIA_CONFERMATO: 'errorePassaggioGiaConfermato',
+    PASSAGGIO_NON_ANNULLABILE: 'errorePassaggioNonAnnullabile',
+    PASSAGGIO_NON_MODIFICABILE: 'errorePassaggioNonModificabile',
+    PASSAGGIO_NON_TROVATO: 'errorePassaggioNonTrovato',
+    ANTEPRIMA_VECCHIA: 'erroreAnteprimaVecchia',
+    RIGHE_DA_DECIDERE: 'erroreRigheDaDecidere',
+    RIGA_NON_VALIDA: 'erroreRigaNonValida',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

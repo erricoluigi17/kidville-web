@@ -94,6 +94,10 @@ export default getRequestConfig(async () => {
     annoFamiglia: (await import(`../../messages/${locale}/annoFamiglia.json`)).default,
     // Il cruscotto dell'anno prossimo (PR 4.7): la pagina «Anno prossimo». Nasce vuoto nel compito 4.7.0; lo riempie chi ha la schermata.
     annoCruscotto: (await import(`../../messages/${locale}/annoCruscotto.json`)).default,
+    // Il passaggio d'anno (PR 4.8): la pagina della segreteria e la fascia dei moduli da rifirmare per la famiglia. Nascono vuoti nel
+    // compito 4.8.0. I codici d'errore stanno in `shared`, non qui.
+    annoPassaggio: (await import(`../../messages/${locale}/annoPassaggio.json`)).default,
+    annoRifirma: (await import(`../../messages/${locale}/annoRifirma.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

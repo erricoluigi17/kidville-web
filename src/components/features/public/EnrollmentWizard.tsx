@@ -118,8 +118,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const [erroreAnno, setErroreAnno] = useState(false)
   /** Il server ha risposto 409 `ISCRIZIONI_CHIUSE` all'invio: si dice in pagina, senza buttare i dati. */
   const [chiusoDalServer, setChiusoDalServer] = useState(false)
-  /** Il server ha risposto 422 `ANNO_NON_OFFERTO`: l'anno scelto non accetta più domande. */
-  const [annoNonOfferto, setAnnoNonOfferto] = useState(false)
+  /**
+   * Il server ha risposto 422 `ANNO_NON_OFFERTO`: l'anno della domanda non accetta più domande. Cosa si dice dipende da
+   * come torna l'elenco ricaricato (vedi il blocco dopo `steps`): `scegli` (c'è il passo «anno»), `cambiato` (un anno solo,
+   * diverso, e dice quale), `incerto` (l'elenco non è cambiato o non è arrivato: si può riprovare, decide il server).
+   */
+  const [avvisoAnno, setAvvisoAnno] = useState<
+    null | { tipo: 'scegli' } | { tipo: 'cambiato'; anno: string } | { tipo: 'incerto' }
+  >(null)
+  /**
+   * Rifiuto in attesa dell'elenco ricaricato: `letture` = quante letture erano concluse al momento del rifiuto,
+   * `inviato` = l'anno che la domanda portava. Finché c'è, il passo da mostrare non è ancora deciso.
+   */
+  const [rifiuto, setRifiuto] = useState<{ letture: number; inviato: string | null } | null>(null)
   /**
    * Lo stato dell'elenco sedi — `caricamento` → `pronto` | `errore`.
    *
@@ -293,6 +304,37 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     return s
   }, [mostraSede, mostraAnno, childCount, adultCount])
 
+  /**
+   * IL RIFIUTO `ANNO_NON_OFFERTO` SI RISOLVE QUANDO L'ELENCO È TORNATO, e nello stesso render in cui `steps` cambia forma.
+   *
+   * Dopo il rifiuto l'elenco si ricarica e può tornare con un anno solo, con due (nasce il passo «anno»), con nessuno,
+   * o non tornare affatto (resta il vecchio). In ogni caso gli indici dei passi si possono spostare sotto le mani del
+   * genitore: decidere il passo in un effetto, o prima dell'arrivo, lo lascerebbe per un giro su un passo a caso (o con
+   * `step` oltre l'ultimo, e il pulsante che dice «Avanti» invece di «Invia»). Aggiustare lo stato durante il render fa
+   * ripartire il render subito, senza dipingere il passo sbagliato. Si risolve una volta sola (`rifiuto` torna nullo).
+   */
+  if (rifiuto !== null && anni.letture > rifiuto.letture) {
+    const ultimo = Math.max(0, steps.length - 1)
+    const unico = anni.anni.length === 1 ? anni.anni[0] : null
+    setRifiuto(null)
+    setDirection(-1)
+    if (anni.chiuso) {
+      // Nessun anno accetta più domande: vale il messaggio delle iscrizioni chiuse, con i dati al loro posto.
+      setChiusoDalServer(true)
+      setAvvisoAnno(null)
+      setStep(ultimo)
+    } else if (mostraAnno) {
+      setAvvisoAnno({ tipo: 'scegli' })
+      setStep(passoAnno)
+    } else if (unico !== null && unico.anno_id !== rifiuto.inviato) {
+      setAvvisoAnno({ tipo: 'cambiato', anno: unico.etichetta_breve })
+      setStep(ultimo)
+    } else {
+      setAvvisoAnno({ tipo: 'incerto' })
+      setStep(ultimo)
+    }
+  }
+
   const current = steps[Math.min(step, steps.length - 1)]
   const isLast = step === steps.length - 1
   const progress = ((step + 1) / steps.length) * 100
@@ -464,7 +506,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     // acceso lo trasformerebbe in un avviso che si impara a ignorare.
     setErroreInvio(false)
     setChiusoDalServer(false)
-    setAnnoNonOfferto(false)
+    setAvvisoAnno(null)
     setDirection(-1)
     setStep(s => Math.max(0, s - 1))
   }
@@ -473,7 +515,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     setSubmitting(true)
     setErroreInvio(false)
     setChiusoDalServer(false)
-    setAnnoNonOfferto(false)
+    setAvvisoAnno(null)
     try {
       const all = getValues()
       const children = (all.children ?? []).slice(0, childCount).filter(Boolean)
@@ -510,14 +552,12 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           return
         }
         if (res.status === 422 && json?.codice === 'ANNO_NON_OFFERTO') {
-          // L'elenco è cambiato mentre si compilava: si riprende l'elenco e si torna a far scegliere.
-          setAnnoNonOfferto(true)
+          // L'elenco è cambiato mentre si compilava: si riprende l'elenco, e quando torna (nel render, subito dopo `steps`)
+          // si decide dove sta la famiglia e che cosa legge. Vale anche senza il passo «anno»: con un anno solo il
+          // messaggio compare nel punto in cui si trova, non c'è un passo a cui tornare.
           setAnnoScelto(null)
+          setRifiuto({ letture: anni.letture, inviato: annoEffettivo })
           anni.ricarica()
-          if (mostraAnno) {
-            setDirection(-1)
-            setStep(passoAnno)
-          }
           return
         }
         // Il server riverifica e risponde 400 con gli errori per campo: mappali
@@ -899,15 +939,6 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                   {current.kind === 'anno' && (
                     <fieldset className="space-y-3">
                       <legend className="sr-only">{ta('annoLegenda')}</legend>
-                      {annoNonOfferto && (
-                        <div role="alert" className="rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3">
-                          <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
-                            <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-                            {ta('annoNonOffertoTitolo')}
-                          </p>
-                          <p className="mt-1 text-xs leading-relaxed text-kidville-ink">{ta('annoNonOffertoCorpo')}</p>
-                        </div>
-                      )}
                       {anni.anni.map(a => {
                         const scelto = annoEffettivo === a.anno_id
                         return (
@@ -927,7 +958,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               name="anno"
                               value={a.anno_id}
                               checked={scelto}
-                              onChange={() => { setAnnoScelto(a.anno_id); setErroreAnno(false); setAnnoNonOfferto(false) }}
+                              onChange={() => { setAnnoScelto(a.anno_id); setErroreAnno(false); setAvvisoAnno(null) }}
                               className="w-4 h-4 accent-kidville-green"
                             />
                             <CalendarDays className={`w-4 h-4 flex-shrink-0 ${scelto ? 'text-kidville-green' : 'text-kidville-sub'}`} />
@@ -1126,6 +1157,28 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
               </div>
             )}
 
+            {/* L'anno della domanda non accetta più domande (422): il messaggio sta QUI, nel punto in cui si trova la
+                famiglia — anche con un anno solo, quando il passo «anno» non esiste — e i dati sono ancora al loro posto. */}
+            {avvisoAnno !== null && (
+              <div role="alert" className="mt-4 rounded-card border border-kidville-error bg-kidville-error-soft px-4 py-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-kidville-error-strong">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                  {avvisoAnno.tipo === 'scegli'
+                    ? ta('annoNonOffertoTitolo')
+                    : avvisoAnno.tipo === 'cambiato'
+                    ? ta('annoCambiatoTitolo')
+                    : ta('annoNonOffertoRiprovaTitolo')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-kidville-ink">
+                  {avvisoAnno.tipo === 'scegli'
+                    ? ta('annoNonOffertoCorpo')
+                    : avvisoAnno.tipo === 'cambiato'
+                    ? ta('annoCambiatoCorpo', { anno: avvisoAnno.anno })
+                    : ta('annoNonOffertoRiprovaCorpo')}
+                </p>
+              </div>
+            )}
+
             {/* L'invio è fallito. Sta QUI — sopra i bottoni, dentro la pagina —
                 e non in un `alert()` di sistema: il genitore ha appena premuto
                 «Invia richiesta» e deve leggere, senza chiudere niente, che il
@@ -1149,7 +1202,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <div className="flex items-center justify-between gap-3 pt-6 mt-4 border-t border-kidville-line">
               <button
                 onClick={goPrev}
-                disabled={step === 0 || submitting}
+                disabled={step === 0 || submitting || rifiuto !== null}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-sub hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
                 <ArrowLeft className="w-4 h-4" /> {t('wizardIndietro')}
@@ -1157,7 +1210,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
 
               <button
                 onClick={goNext}
-                disabled={submitting}
+                disabled={submitting || rifiuto !== null}
                 className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark disabled:opacity-50 text-kidville-yellow font-barlow font-bold uppercase tracking-wide text-sm transition-all"
               >
                 {submitting ? (

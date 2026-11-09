@@ -1,7 +1,7 @@
 {
   "configurazioneTitolo": "Quote, moduli, posti e classi",
   "introConfigurazione": "Per aprire le iscrizioni servono le due quote e almeno un modulo per ciascuna lista. I posti sono un’indicazione: superarli non blocca mai un’iscrizione.",
-  "dopoApertura": "Le iscrizioni sono già aperte: quote, moduli e posti si possono ancora correggere, ma le famiglie vedono subito le modifiche.",
+  "dopoApertura": "Le iscrizioni sono già aperte: quote, moduli e posti si possono ancora correggere e le famiglie vedono subito le modifiche. Una quota già creata per un bambino tiene il suo importo: cambiare il listino ora vale per le quote nuove.",
   "schedaQuote": "Quote",
   "schedaModuli": "Moduli",
   "schedaPosti": "Posti",
@@ -53,7 +53,7 @@
   "moduloToglierePerde": "Se togli un modulo, si perdono anche le spunte già fatte dalle famiglie.",
   "moduloSalvato": "Modulo salvato ✓",
   "moduloTolto": "Modulo tolto ✓",
-  "postiIntro": "I posti autorizzati per fascia. Una fascia senza posti non viene offerta.",
+  "postiIntro": "I posti autorizzati per fascia. Servono ad avvisare quando una fascia è piena: non tolgono l’offerta e non bloccano mai un’iscrizione.",
   "postiEtichetta": "Posti",
   "postiFonteEtichetta": "Riferimento dell’autorizzazione (facoltativo)",
   "postiSalvati": "Posti salvati ✓",

@@ -1,7 +1,7 @@
 {
   "configurazioneTitolo": "Fees, forms, places and classes",
   "introConfigurazione": "To open enrolment you need the two fees and at least one form for each list. Places are a guide: exceeding them never blocks an enrolment.",
-  "dopoApertura": "Enrolment is already open: fees, forms and places can still be corrected, but families see the changes straight away.",
+  "dopoApertura": "Enrolment is already open: fees, forms and places can still be corrected, and families see the changes straight away. A fee already created for a child keeps its amount: changing the price list now applies to new fees.",
   "schedaQuote": "Fees",
   "schedaModuli": "Forms",
   "schedaPosti": "Places",
@@ -53,7 +53,7 @@
   "moduloToglierePerde": "Removing a form also removes the ticks families have already made.",
   "moduloSalvato": "Form saved ✓",
   "moduloTolto": "Form removed ✓",
-  "postiIntro": "Authorised places per age group. An age group with no places is not offered.",
+  "postiIntro": "Authorised places per age group. They warn when an age group is full: they never remove the offer or block an enrolment.",
   "postiEtichetta": "Places",
   "postiFonteEtichetta": "Authorisation reference (optional)",
   "postiSalvati": "Places saved ✓",

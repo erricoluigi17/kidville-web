@@ -16,6 +16,9 @@
 -- `in_arrivo`, e il CHECK allargato non sposta nessuna riga.
 --   5. `elimina_alunno_definitivo` respinge l'`in_arrivo` (compito 4.5.4-bis), 6. `anno_fotografa` non lo conta fra gli alunni
 --      senza frequenza, 7. il CHECK `alunni_in_arrivo_senza_sezione`.
+--   8. (4.5.15, I2 e I3) l'ex alunno che torna `in_arrivo` ha la frequenza dell'anno attivo CHIUSA e la scheda no: l'invariante 11 non
+--      lo confronta, e `alunni_riallinea_da_frequenze` (il solo altro specchio che lo toccava) non lo rifà da una frequenza chiusa.
+--      Un archiviato senza frequenza dell'anno attivo (un `in_arrivo` archiviato) non accende la 11-bis né la voce della fotografia.
 --
 -- distruttiva approvata: nessuna riga cancellata alla migrazione; le `DELETE FROM` stanno nel corpo di `elimina_alunno_definitivo`, ridefinita col suo stesso testo più un rifiuto in testa, e girano solo quando qualcuno la chiama
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -209,6 +212,7 @@ DECLARE
   v_guasto      text;
   v_gen         record;
   v_non_arrivo  text;
+  v_non_archiv  text;
 BEGIN
   -- 1. Nessun giorno senza anno, nessun giorno in due anni.
   SELECT count(*) INTO v_n FROM (
@@ -374,6 +378,10 @@ BEGIN
   --     Si confrontano `section_id` e i campi con lo STESSO nome e lo STESSO tipo su `alunni` e
   --     `frequenze`; lo stato e la retta hanno nomi e significati diversi e restano fuori.
   v_n := 0;
+  -- 4.5.15 (I2): un bambino «in arrivo» ha la frequenza dell'anno attivo chiusa (è un ex alunno che torna) e la scheda no: non sono
+  -- due copie della stessa cosa, e non si confrontano. `stato` si nomina solo dove la colonna c'è.
+  v_non_arrivo := CASE WHEN public.anno_ha_colonna('alunni', 'stato')
+                       THEN 'AND al.stato IS DISTINCT FROM ''in_arrivo'' ' ELSE '' END;
   IF to_regclass('public.alunni') IS NOT NULL THEN
     v_cond := ARRAY['al.section_id IS DISTINCT FROM f.section_id'];
     -- Fase B (4.3.4): l'invariante guarda anche ciò che lo specchio inverso scrive in più (sospensione).
@@ -399,7 +407,7 @@ BEGIN
     END IF;
     EXECUTE 'SELECT count(*) FROM public.alunni al '
             'JOIN public.frequenze f ON f.alunno_id = al.id AND f.anno_sede_id = public.anno_attivo(al.scuola_id) '
-            'WHERE ' || array_to_string(v_cond, ' OR ')
+            'WHERE (' || array_to_string(v_cond, ' OR ') || ') ' || v_non_arrivo
     INTO v_n;
   END IF;
   invariante := '11'; tabella := 'alunni'; righe := v_n; RETURN NEXT;
@@ -407,12 +415,14 @@ BEGIN
   --     11-bis. Un alunno con una sede, che NON è «in arrivo», deve avere la frequenza dell'anno attivo (lo specchio la crea).
   --     Un bambino «in arrivo» (PR 4.5) non frequenta ancora: la sua frequenza è dell'anno che viene, e la guarda la 11-ter.
   --     `stato` si nomina solo dove la colonna c'è (il banco minimo e il database della CI possono non averla).
+  --     Nemmeno un archiviato che non ha mai avuto la frequenza dell'anno attivo (4.5.15, I3): un `in_arrivo` archiviato esce da
+  --     «in arrivo» ma non è mai entrato nell'anno attivo, e la sua frequenza è dell'anno che viene (chiusa dall'archiviazione).
   v_n := 0;
-  v_non_arrivo := CASE WHEN public.anno_ha_colonna('alunni', 'stato')
-                       THEN 'AND al.stato IS DISTINCT FROM ''in_arrivo'' ' ELSE '' END;
+  v_non_archiv := CASE WHEN public.anno_ha_colonna('alunni', 'archiviato_il')
+                       THEN 'AND al.archiviato_il IS NULL ' ELSE '' END;
   IF to_regclass('public.alunni') IS NOT NULL AND to_regclass('public.frequenze') IS NOT NULL THEN
     EXECUTE 'SELECT count(*) FROM public.alunni al WHERE al.scuola_id IS NOT NULL '
-            || v_non_arrivo ||
+            || v_non_arrivo || v_non_archiv ||
             'AND public.anno_attivo(al.scuola_id) IS NOT NULL '
             'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = al.id '
             'AND f.anno_sede_id = public.anno_attivo(al.scuola_id))'
@@ -579,6 +589,116 @@ REVOKE ALL ON FUNCTION public.alunni_specchio_frequenza() FROM PUBLIC, anon, aut
 REVOKE ALL ON FUNCTION public.anno_invarianti()           FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.alunni_specchio_frequenza() TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_invarianti()           TO service_role;
+
+-- ── 2-bis · Il riallineamento dalla frequenza non rifà un «in arrivo» da una frequenza chiusa (4.5.15, I2) ───────────────────
+-- Ultima definizione: `20261108102826_anno_sezioni_docenti_fase_b.sql` (4.3.4). Il corpo è quello, riga per riga, con un solo
+-- ramo in più: vedi il commento dentro. I permessi (REVOKE/GRANT) restano quelli della fase B: `CREATE OR REPLACE` li conserva.
+CREATE OR REPLACE FUNCTION public.alunni_riallinea_da_frequenze(p_alunno uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_cur   jsonb;
+  v_f     jsonb;
+  v_t     jsonb;
+  v_patch jsonb;
+  v_set   text;
+  v_viva  boolean;
+  v_stato text;
+  v_arch  timestamptz;
+  v_uscita date;
+  v_nome  text;
+  v_oggi  date := public.giorno_roma(now());
+BEGIN
+  SELECT to_jsonb(a) INTO v_cur FROM public.alunni a WHERE a.id = p_alunno;
+  IF v_cur IS NULL OR (v_cur ->> 'scuola_id') IS NULL THEN
+    RETURN;
+  END IF;
+  -- Una scheda anonimizzata (diritto all'oblio) non si riempie di nuovo: la copia dalla frequenza non riporta niente.
+  IF (v_cur ->> 'anonimizzato_il') IS NOT NULL THEN
+    RETURN;
+  END IF;
+
+  -- La frequenza dell'anno attivo della sede ATTUALE dell'alunno: mai quella di una sede lasciata.
+  SELECT to_jsonb(f) INTO v_f
+    FROM public.frequenze f
+   WHERE f.alunno_id = p_alunno
+     AND f.anno_sede_id = public.anno_attivo((v_cur ->> 'scuola_id')::uuid);
+  IF v_f IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT s.name::text INTO v_nome FROM public.sections s WHERE s.id = (v_f ->> 'section_id')::uuid;
+
+  v_viva := (v_f ->> 'stato') IN ('in_attesa', 'iscritto');
+  -- M45b (4.5.15, I2): un bambino «in arrivo» con la frequenza dell'anno attivo CHIUSA è un ex alunno che torna per l'anno prossimo.
+  -- Quella frequenza è la sua storia, non il suo stato di oggi: ricopiarla lo riporterebbe `ritirato` e archiviato, cioè lo
+  -- rimetterebbe fra i «Non iscritti» con la sua iscrizione dell'anno dopo ancora viva. Con una frequenza VIVA l'arrivo c'è
+  -- stato (è il passaggio, 4.8) e la scheda lo segue come sempre.
+  IF (v_cur ->> 'stato') = 'in_arrivo' AND NOT v_viva THEN
+    RETURN;
+  END IF;
+  IF v_viva THEN
+    -- 'sospeso' (o NULL, che il codice legge «iscritto») si conserva finché la frequenza è viva
+    -- `ritirato` senza `archiviato_il` è la tendina della scheda (non archivia): resta com'è. Una vera riapertura
+    -- (`archiviato_il` valorizzato) torna `iscritto`.
+    v_stato := CASE WHEN (v_cur ->> 'archiviato_il') IS NOT NULL THEN 'iscritto'
+                    WHEN coalesce(v_cur ->> 'stato', 'iscritto') IN ('iscritto', 'sospeso', 'ritirato')
+                    THEN v_cur ->> 'stato' ELSE 'iscritto' END;
+    v_arch := NULL;
+  ELSE
+    v_stato := 'ritirato';
+    v_uscita := (v_f ->> 'data_uscita')::date;
+    v_arch := coalesce((v_cur ->> 'archiviato_il')::timestamptz,
+                       CASE WHEN v_uscita IS NOT NULL AND v_uscita <= v_oggi
+                            THEN ((v_uscita + time '12:00') AT TIME ZONE 'Europe/Rome') ELSE now() END);
+  END IF;
+
+  v_t := jsonb_build_object(
+    'section_id', v_f -> 'section_id',
+    'classe_sezione', v_nome,
+    'stato', v_stato,
+    'archiviato_il', v_arch,
+    'importo_retta_mensile',
+      CASE WHEN jsonb_typeof(v_f -> 'retta_mensile') = 'number' THEN v_f -> 'retta_mensile' ELSE to_jsonb(0) END,
+    'retta_a_carico_di', v_f -> 'retta_a_carico_di',
+    'retta_split_config', v_f -> 'retta_split_config',
+    'intestatario_fatture', v_f -> 'intestatario_fatture',
+    'giorno_scadenza_pagamenti', v_f -> 'giorno_scadenza_pagamenti',
+    'gruppo_mensa_id', v_f -> 'gruppo_mensa_id',
+    'sospeso', v_f -> 'sospeso',
+    'sospeso_causa', v_f -> 'sospeso_causa',
+    'sospeso_motivo', v_f -> 'sospeso_motivo',
+    'sospeso_il', v_f -> 'sospeso_il',
+    'sospeso_da', v_f -> 'sospeso_da',
+    'usa_pannolino', v_f -> 'usa_pannolino');
+
+  -- Senza una sezione né sulla frequenza né sulla scheda il NOME di classe non si tocca: il testo scritto a mano (o un
+  -- nome che nella sede non risolve) non deve sparire solo perché la frequenza non ha una sezione. Se la sezione c'era
+  -- e viene svuotata, invece, il nome segue (v_f section_id NULL ma v_cur section_id valorizzato).
+  IF (v_f ->> 'section_id') IS NULL AND (v_cur ->> 'section_id') IS NULL THEN
+    v_t := v_t - 'classe_sezione';
+  END IF;
+
+  -- solo le colonne che alunni ha davvero e che cambiano
+  SELECT jsonb_object_agg(e.k, e.v) INTO v_patch
+    FROM jsonb_each(v_t) AS e(k, v)
+   WHERE v_cur ? e.k AND (v_cur -> e.k) IS DISTINCT FROM e.v;
+  IF v_patch IS NULL THEN
+    RETURN;
+  END IF;
+
+  SELECT string_agg(format('%I = r.%I', k, k), ', ') INTO v_set FROM jsonb_object_keys(v_patch) AS k;
+  EXECUTE format(
+    'UPDATE public.alunni a SET %s FROM jsonb_populate_record(NULL::public.alunni, $1) r WHERE a.id = $2', v_set)
+    USING v_patch, p_alunno;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) TO service_role;
 
 -- ── 5 · `elimina_alunno_definitivo` respinge il bambino «in arrivo» (compito 4.5.4-bis) ─────────────────────────────────
 -- Per la funzione «senza sezione» voleva dire «eliminabile»: un bambino la cui domanda è per l'anno dopo, che una sezione non
@@ -999,6 +1119,7 @@ BEGIN
       v_tot := v_tot + public.anno_fotografa_scrivi(p_fase, 'alunni', 'alunni_senza_frequenza',
         'SELECT a.scuola_id AS scuola_id, NULL::uuid AS anno_id, count(*)::numeric AS valore FROM public.alunni a '
         || 'WHERE a.scuola_id IS NOT NULL AND public.anno_attivo(a.scuola_id) IS NOT NULL AND a.stato IS DISTINCT FROM ''in_arrivo'' '
+        || CASE WHEN public.anno_ha_colonna('alunni', 'archiviato_il') THEN 'AND a.archiviato_il IS NULL ' ELSE '' END
         || 'AND NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(a.scuola_id)) GROUP BY 1');
     END IF;
   END IF;

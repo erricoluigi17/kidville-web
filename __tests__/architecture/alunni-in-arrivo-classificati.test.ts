@@ -125,6 +125,7 @@ const LETTURE: Record<string, Voce> = {
   'src/app/api/admin/students/export/route.ts::admin/students/export:GET': ['no-già', 'stato'],
   'src/app/api/admin/students/libera-spazio/route.ts::admin/students/libera-spazio:POST': ['sì', 'anagrafica'],
   'src/app/api/admin/students/riattiva/route.ts::admin/students/riattiva:POST': ['sì', 'anagrafica'],
+  'src/app/api/admin/students/riattiva/route.ts::riportaInArrivo': ['no-già', 'puntuale'],
   'src/app/api/admin/students/route.ts::admin/students:GET': ['no-già', 'esclude-in-arrivo'],
   'src/app/api/admin/students/route.ts::admin/students:PATCH': ['sì', 'anagrafica'],
   'src/app/api/admin/students/route.ts::admin/students:POST': ['no-già', 'scrittura'],
@@ -524,7 +525,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 0, 'no-già': 209, sì: 58, daCorreggere: 0 },
+      { no: 0, 'no-già': 210, sì: 58, daCorreggere: 0 },
     )
   })
 

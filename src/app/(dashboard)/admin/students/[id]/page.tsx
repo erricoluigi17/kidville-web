@@ -168,11 +168,15 @@ function AnagraficaDetailInner() {
         const corpo = res ? await res.json().catch(() => null) : null;
         if (res?.ok) {
             const nome = [student?.nome, student?.cognome].filter(Boolean).join(' ');
-            const senzaClasse = (corpo as { esito_classe?: unknown } | null)?.esito_classe;
+            const esito = corpo as { esito_classe?: unknown; torna_in_arrivo?: unknown; conferma_da_rifare?: unknown } | null;
+            const senzaClasse = esito?.esito_classe;
+            const rifai = esito?.conferma_da_rifare === true ? ` ${t('detailPageConfermaDaRifare')}` : '';
             flash(
-                senzaClasse === 'sparita' || senzaClasse === 'assente'
-                    ? `✅ ${t('detailPageRiattivatoSenzaClasse', { nome })}`
-                    : `✅ ${t('detailPageRiattivato', { nome })}`,
+                esito?.torna_in_arrivo === true
+                    ? `✅ ${t('detailPageRiattivatoInArrivo', { nome })}`
+                    : senzaClasse === 'sparita' || senzaClasse === 'assente'
+                        ? `✅ ${t('detailPageRiattivatoSenzaClasse', { nome })}${rifai}`
+                        : `✅ ${t('detailPageRiattivato', { nome })}${rifai}`,
             );
             return { ok: true as const };
         }

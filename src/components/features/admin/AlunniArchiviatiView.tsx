@@ -547,7 +547,7 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                     motivoCorpo = nomeErrore(e);
                     return null;
                 })) as
-                    | { esito_classe?: string; classe_sezione?: string | null; classe_mancante?: string | null; gruppo_mensa_da_riassegnare?: boolean; spazio_gia_liberato?: boolean }
+                    | { esito_classe?: string; classe_sezione?: string | null; classe_mancante?: string | null; gruppo_mensa_da_riassegnare?: boolean; spazio_gia_liberato?: boolean; torna_in_arrivo?: boolean; conferma_da_rifare?: boolean }
                     | null;
                 const nome = nominativo(r);
                 if (corpo === null) {
@@ -575,7 +575,10 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                  */
                 const esitoClasse = typeof corpo?.esito_classe === 'string' ? corpo.esito_classe : null;
                 const testo =
-                    (esitoClasse === 'ripristinata' || esitoClasse === 'conservata') && typeof corpo?.classe_sezione === 'string'
+                    // Un bambino che arrivava l'anno prossimo torna «in arrivo» (4.5.15): non ha una classe di oggi da assegnare.
+                    corpo?.torna_in_arrivo === true
+                        ? t('arcEsitoTornaInArrivo', { nome })
+                        : (esitoClasse === 'ripristinata' || esitoClasse === 'conservata') && typeof corpo?.classe_sezione === 'string'
                         ? t('arcEsitoRientrato', { nome, classe: corpo.classe_sezione })
                         : esitoClasse === 'sparita' && typeof corpo?.classe_mancante === 'string' && corpo.classe_mancante !== ''
                           ? t('arcEsitoRientratoSenzaClasse', { nome, classe: corpo.classe_mancante })
@@ -593,6 +596,7 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                 const code = [
                     corpo?.gruppo_mensa_da_riassegnare === true ? t('arcEsitoMensaDaRiassegnare') : '',
                     corpo?.spazio_gia_liberato === true ? t('arcEsitoSpazioGiaLiberato') : '',
+                    corpo?.conferma_da_rifare === true ? t('arcEsitoConfermaDaRifare') : '',
                 ].filter((c) => c !== '');
                 setMessaggio({ tipo: 'ok', testo: [testo, ...code].join(' ') });
                 // La riga esce da questo elenco: l'unica cosa che resta vera su quel

@@ -4,7 +4,7 @@ import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
 import { scriviFrequenza } from '@/lib/anno/frequenze'
-import { STATO_RITIRATO } from '@/lib/alunni/stato'
+import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
 import { ritiraPendingPagamento } from '@/lib/pagamenti/notifiche-storiche'
@@ -532,5 +532,126 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
   } catch (err) {
     logErrore({ operazione: OP_CHIUSURA }, err)
     return { ...esito, non_riuscite: esito.non_riuscite + 1 }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// 4.5.15 (I3) · riattivare è il contrario di archiviare
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const OP_RIPRISTINO = 'anno/iscrizione-anno:iscrizioniDelBambino'
+const STATI_FREQUENZA_CHIUSI: readonly string[] = [STATO_RITIRATO, 'trasferito', 'uscito']
+
+/** Una frequenza di un anno che viene (in preparazione o con le iscrizioni aperte) di un bambino. */
+export type FrequenzaDellAnnoCheViene = {
+  id: string
+  anno_sede_id: string
+  stato: string
+  tipo: 'conferma' | 'nuova' | null
+  origine: string | null
+  /** Chiusa (ritirata, trasferita, uscita): da riaprire. */
+  chiusa: boolean
+}
+
+export type IscrizioniDelBambino =
+  | { ok: true; haFrequenzaAttiva: boolean; prossime: FrequenzaDellAnnoCheViene[] }
+  | { ok: false }
+
+/**
+ * Che cosa ha il bambino nell'anno attivo e negli anni che vengono. Serve a «Riporta fra gli iscritti»: chi NON ha la
+ * frequenza dell'anno attivo e ne ha una in un anno che viene (viva o chiusa dall'archiviazione) è un bambino «in arrivo», e
+ * torna `in_arrivo` con la sua iscrizione riaperta; chi l'ha torna `iscritto` e la conferma dell'anno dopo, se la segreteria
+ * vuole, si rifà. NON LANCIA MAI: `{ ok: false }` = non so (un `warn` col solo codice), e il chiamante si ferma.
+ * `annoAttivoId` assente (la sede non ha un anno attivo) conta come «ha la frequenza attiva»: non c'è un ritorno da inventare.
+ */
+export async function iscrizioniDelBambino(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoAttivoId: string | null },
+): Promise<IscrizioniDelBambino> {
+  try {
+    if (!a.annoAttivoId) return { ok: true, haFrequenzaAttiva: true, prossime: [] }
+    const attiva = await supabase.from('frequenze').select('id').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoAttivoId).limit(1)
+    if (attiva.error) {
+      // schema indietro (la CI): nessun anno, nessun ritorno da inventare
+      if (schemaAnnoIndietro(attiva.error)) return { ok: true, haFrequenzaAttiva: true, prossime: [] }
+      logEvento('anno-scolastico', 'warn', { tipo: 'iscrizioni-bambino-non-lette', operazione: OP_RIPRISTINO, error_code: attiva.error.code ?? undefined })
+      return { ok: false }
+    }
+    const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
+    if (anni.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'iscrizioni-bambino-non-lette', operazione: OP_RIPRISTINO, error_code: anni.error.code ?? undefined })
+      return { ok: false }
+    }
+    const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
+    let prossime: FrequenzaDellAnnoCheViene[] = []
+    if (idAnni.length > 0) {
+      const righe = await supabase
+        .from('frequenze')
+        .select('id, anno_sede_id, stato, tipo, origine')
+        .eq('alunno_id', a.alunnoId)
+        .in('anno_sede_id', idAnni)
+      if (righe.error) {
+        logEvento('anno-scolastico', 'warn', { tipo: 'iscrizioni-bambino-non-lette', operazione: OP_RIPRISTINO, error_code: righe.error.code ?? undefined })
+        return { ok: false }
+      }
+      prossime = ((righe.data ?? []) as Array<Omit<FrequenzaDellAnnoCheViene, 'chiusa'>>)
+        .filter((f) => f.origine !== 'recupero')
+        .map((f) => ({ ...f, chiusa: STATI_FREQUENZA_CHIUSI.includes(f.stato) }))
+    }
+    return { ok: true, haFrequenzaAttiva: ((attiva.data ?? []) as unknown[]).length > 0, prossime }
+  } catch (err) {
+    logErrore({ operazione: OP_RIPRISTINO }, err)
+    return { ok: false }
+  }
+}
+
+export type EsitoRiapertura =
+  | { ok: true; riaperta: boolean }
+  | { ok: false; codice: CodiceIscrizione }
+
+/**
+ * PRIMO PASSO del ritorno di un bambino «in arrivo»: la frequenza di un anno che viene, chiusa dall'archiviazione, torna `in_attesa`
+ * (senza uscita; il trigger la porta a `iscritto` se moduli e quota sono a posto). Una frequenza già viva (una riattivazione
+ * finita a metà) non si tocca. NON LANCIA MAI. La voce della quota NON nasce qui: `anno_quota_voce` non ne crea una per una scheda
+ * archiviata, e a questo punto la scheda lo è ancora. Dopo aver scritto la scheda si chiama `ricreaQuotaProssima`.
+ */
+export async function riapriFrequenzaProssima(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; frequenza: FrequenzaDellAnnoCheViene },
+): Promise<EsitoRiapertura> {
+  try {
+    const f = a.frequenza
+    if (!f.chiusa) return { ok: true, riaperta: false }
+    const r = await scriviFrequenza(supabase, {
+      alunnoId: a.alunnoId, annoSedeId: f.anno_sede_id, campi: { stato: STATO_ISCRITTO, data_uscita: null }, annoNonAttivo: true,
+    })
+    if (!r.ok) return { ok: false, codice: r.codice as CodiceIscrizione }
+    if ('saltata' in r) return { ok: false, codice: 'SCRITTURA_FALLITA' }
+    return { ok: true, riaperta: true }
+  } catch (err) {
+    logErrore({ operazione: OP_RIPRISTINO }, err)
+    return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+/**
+ * SECONDO PASSO: la voce della quota rinasce (idempotente: se c'è già la riprende, `gia_collegata`). Non blocca il ritorno: il
+ * bambino è già `in_arrivo` con la sua iscrizione, e una voce che non nasce (l'anno non ha le iscrizioni aperte, nessun listino)
+ * si genera dalla pagina delle conferme. Torna l'esito della voce, `null` se la registrazione non è riuscita (il guasto è nel log).
+ */
+export async function ricreaQuotaProssima(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; frequenza: FrequenzaDellAnnoCheViene; attoreId?: string | null },
+): Promise<QuotaEsito | null> {
+  try {
+    const f = a.frequenza
+    const tipo = f.tipo === 'conferma' ? 'conferma' : 'nuova'
+    const origine = (['domanda', 'conferma', 'segreteria', 'import'] as const).find((o) => o === f.origine) ?? 'segreteria'
+    const q = await registraFrequenzaPerAnno(supabase, { alunnoId: a.alunnoId, annoSedeId: f.anno_sede_id, tipo, origine, da: a.attoreId ?? null })
+    if (!q.ok || 'saltata' in q) return null
+    return q.quota
+  } catch (err) {
+    logErrore({ operazione: OP_RIPRISTINO }, err)
+    return null
   }
 }

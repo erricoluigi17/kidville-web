@@ -186,7 +186,7 @@ describe('le invarianti 11-bis e 11-ter', () => {
     })
   })
 
-  prova('l’ultima definizione di `anno_invarianti` è conservata: cambiano solo la 11-bis e la 11-ter (e una variabile)', async () => {
+  prova('l’ultima definizione di `anno_invarianti` è conservata: cambiano solo la 11, la 11-bis e la 11-ter (e due variabili)', async () => {
     const corpo = (file: string) => {
       const sql = readFileSync(join(CARTELLA, file), 'utf8')
       const da = sql.indexOf('CREATE OR REPLACE FUNCTION public.anno_invarianti()')
@@ -199,9 +199,9 @@ describe('le invarianti 11-bis e 11-ter', () => {
     const insiemeVecchia = new Set(vecchia)
     const tolte = vecchia.filter((r) => !insiemeNuova.has(r))
     const aggiunte = nuova.filter((r) => !insiemeVecchia.has(r))
-    // Le righe tolte sono tutte della vecchia 11-bis: nessuna riga delle altre invarianti (7, 8, 13…) è sparita.
+    // Le righe tolte sono tutte della vecchia 11 e 11-bis (4.5.15, I2: la 11 esclude l'«in arrivo»): nessuna riga delle altre invarianti (7, 8, 13…) è sparita.
     for (const r of tolte) {
-      expect(r, `riga tolta fuori dalla 11-bis: ${r}`).toMatch(/11-bis|v_n := 0|anno_attivo|frequenze f|EXECUTE 'SELECT count|INTO v_n|BEGIN$|v_gen\s+record/)
+      expect(r, `riga tolta fuori dalla 11-bis: ${r}`).toMatch(/11-bis|v_n := 0|anno_attivo|frequenze f|EXECUTE 'SELECT count|INTO v_n|BEGIN$|v_gen\s+record|'WHERE ' \|\| array_to_string\(v_cond/)
     }
     // Il cuore delle altre invarianti c'è ancora: la riga 7 (copiare una definizione più vecchia l'avrebbe persa).
     expect(nuova.join('\n')).toContain("invariante := '7'; tabella := 'galleria_media_v2'")

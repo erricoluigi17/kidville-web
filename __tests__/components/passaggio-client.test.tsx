@@ -274,7 +274,7 @@ describe('PassaggioClient · le scritture', () => {
     const tendina = await screen.findByLabelText('Classe nuova di CognomeUno NomeUno')
     fireEvent.change(tendina, { target: { value: S_A2 } })
     await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
-    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ passaggio_id: PASS, alunno_id: AL1, esito: 'continua', section_id: S_A2 })
+    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'continua', section_id: S_A2 })
   })
 
   it('«Esce dalla scuola» manda l’esito `esce` senza sezione', async () => {
@@ -282,7 +282,7 @@ describe('PassaggioClient · le scritture', () => {
     await screen.findByText('CognomeUno NomeUno')
     fireEvent.change(await screen.findByLabelText('Classe nuova di CognomeUno NomeUno'), { target: { value: '__esce__' } })
     await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
-    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ passaggio_id: PASS, alunno_id: AL1, esito: 'esce' })
+    expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'esce' })
   })
 
   it('chi esce o non ha risposto non ha la tendina: ha il rimando «Registra la conferma» verso «Conferme»', async () => {
@@ -304,7 +304,7 @@ describe('PassaggioClient · le scritture', () => {
     expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(0)
     fireEvent.click(within(dialogo).getByRole('button', { name: itPassaggio.dialogoSi }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma')).toHaveLength(1))
-    expect(corpoDi(chiamate('POST', '/passaggio/conferma')[0])).toEqual({ passaggio_id: PASS })
+    expect(corpoDi(chiamate('POST', '/passaggio/conferma')[0])).toEqual({})
     expect(await screen.findByText(itPassaggio.statoConfermato)).toBeTruthy()
   })
 
@@ -344,7 +344,7 @@ describe('PassaggioClient · confermato e annullato', () => {
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: itPassaggio.dialogoAnnullaSi }))
     expect((await screen.findByRole('alert')).textContent).toBe(itShared.errorePassaggioNonAnnullabile)
     expect(chiamate('POST', '/passaggio/annulla')).toHaveLength(1)
-    expect(corpoDi(chiamate('POST', '/passaggio/annulla')[0])).toEqual({ passaggio_id: PASS })
+    expect(corpoDi(chiamate('POST', '/passaggio/annulla')[0])).toEqual({})
   })
 
   it('ANNULLATO: dopo l’annullamento riuscito si può rifare l’anteprima', async () => {
@@ -363,6 +363,6 @@ describe('PassaggioClient · confermato e annullato', () => {
     const riga2 = screen.getByText('CognomeDue NomeDue').closest('li') as HTMLElement
     fireEvent.click(within(riga2).getByRole('button', { name: itPassaggio.azioneTardiva }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma-tardiva')).toHaveLength(1))
-    expect(corpoDi(chiamate('POST', '/passaggio/conferma-tardiva')[0])).toEqual({ passaggio_id: PASS, alunno_id: AL2, section_id: S_A2 })
+    expect(corpoDi(chiamate('POST', '/passaggio/conferma-tardiva')[0])).toEqual({ alunno_id: AL2, section_id: S_A2 })
   })
 })

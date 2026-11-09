@@ -288,28 +288,28 @@ function Passaggio({ annoSedeId }: { annoSedeId: string }) {
     if (!passaggioId || valore === '') return;
     const corpo: Record<string, unknown> =
       valore === VALORE_ESCE
-        ? { passaggio_id: passaggioId, alunno_id: r.alunno_id, esito: 'esce' }
-        : { passaggio_id: passaggioId, alunno_id: r.alunno_id, esito: r.esito, section_id: valore };
+        ? { alunno_id: r.alunno_id, esito: 'esce' }
+        : { alunno_id: r.alunno_id, esito: r.esito, section_id: valore };
     return scrivi('PUT', '/righe', corpo, t('esitoCorretto', { nome: nomeDi(r.alunno_id) }));
   };
 
   const impostaDocente = (utenteId: string, sezioneId: string, origine: 'aggiunta' | 'tolta') =>
-    passaggioId ? scrivi('PUT', '/docenti', { passaggio_id: passaggioId, utente_id: utenteId, section_id: sezioneId, origine }, t('esitoDocente')) : undefined;
+    passaggioId ? scrivi('PUT', '/docenti', { utente_id: utenteId, section_id: sezioneId, origine }, t('esitoDocente')) : undefined;
 
   const conferma = async () => {
     setDialogo(null);
-    if (passaggioId) await scrivi('POST', '/conferma', { passaggio_id: passaggioId }, t('esitoConfermato'));
+    if (passaggioId) await scrivi('POST', '/conferma', {}, t('esitoConfermato'));
   };
   const annulla = async () => {
     setDialogo(null);
-    if (passaggioId) await scrivi('POST', '/annulla', { passaggio_id: passaggioId }, t('esitoAnnullato'), () => setAnnullato(true));
+    if (passaggioId) await scrivi('POST', '/annulla', {}, t('esitoAnnullato'), () => setAnnullato(true));
   };
   const tardiva = (r: RigaApi, sezioneId: string) =>
     passaggioId
       ? scrivi(
           'POST',
           '/conferma-tardiva',
-          { passaggio_id: passaggioId, alunno_id: r.alunno_id, ...(sezioneId ? { section_id: sezioneId } : {}) },
+          { alunno_id: r.alunno_id, ...(sezioneId ? { section_id: sezioneId } : {}) },
           t('esitoTardiva', { nome: nomeDi(r.alunno_id) }),
         )
       : undefined;

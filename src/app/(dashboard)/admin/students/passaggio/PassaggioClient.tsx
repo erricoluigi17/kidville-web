@@ -44,12 +44,12 @@ type RigaApi = {
   frequenza_a_id: string | null;
 };
 type DocenteApi = { utente_id: string; sezione_a_id: string; origine: 'copiata' | 'aggiunta' | 'tolta' };
-type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null };
-type Letta = { passaggio: PassaggioApi | null; righe: RigaApi[]; totale: number; docenti: DocenteApi[] };
+type PassaggioApi = { id: string; stato: 'anteprima' | 'confermato' | 'annullato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null; confermato_il?: string | null };
+type Letta = { passaggio: PassaggioApi | null; righe: RigaApi[]; totale: number; docenti: DocenteApi[]; classi_da?: Record<string, string> };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type Staff = { id: string; nome: string | null; cognome: string | null; ruolo?: string | null; scuola_id?: string | null };
 type Nome = { nome: string; cognome: string };
-type Contatori = { esiti: Record<EsitoRiga, number>; daDecidere: RigaApi[]; daDecidereTotale: number; quoteSuUsciti: number | null };
+type Contatori = { esiti: Record<EsitoRiga, number>; daDecidere: RigaApi[]; daDecidereTotale: number; quoteSuUsciti: number | null; classiDa?: Record<string, string> };
 type Messaggio = { tipo: 'ok' | 'errore'; testo: string; codice: string | null };
 
 type Risposta = { stato: number; corpo: unknown };
@@ -99,6 +99,7 @@ const estraiLetta = (r: Risposta): Letta | null => {
     righe: d.righe as RigaApi[],
     totale: typeof d.totale === 'number' ? d.totale : d.righe.length,
     docenti: Array.isArray(d.docenti) ? (d.docenti as DocenteApi[]) : [],
+    classi_da: eOggetto(d.classi_da) ? (d.classi_da as Record<string, string>) : undefined,
   };
 };
 
@@ -188,14 +189,15 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
   // righe per avviso): così i numeri sono sempre quelli del database e non dipendono da come l'anteprima ha scritto i conteggi.
   const leggiContatori = useCallback(async (): Promise<Esito<Contatori>> => {
     const r = await chiama('GET', `${base}?pagina=1&tetto=1&contatori=${RIGHE_DA_DECIDERE_MAX}`, uid);
-    const c = riuscita(r) ? (dati(r.corpo) as { contatori?: { esiti?: Record<string, number>; avvisi?: Record<string, number>; daDecidere?: RigaApi[]; quoteSuUsciti?: number | null } } | null)?.contatori : null;
+    const corpoC = riuscita(r) ? (dati(r.corpo) as { contatori?: { esiti?: Record<string, number>; avvisi?: Record<string, number>; daDecidere?: RigaApi[]; quoteSuUsciti?: number | null }; classi_da?: Record<string, string> } | null) : null;
+    const c = corpoC?.contatori ?? null;
     if (!c || !c.esiti || !c.avvisi) return { ok: false, stato: r.stato, corpo: r.corpo };
     const esiti = {} as Record<EsitoRiga, number>;
     ESITI.forEach((e) => {
       esiti[e] = c.esiti?.[e] ?? 0;
     });
     const daDecidereTotale = AVVISI.reduce((somma, a) => somma + (c.avvisi?.[a] ?? 0), 0);
-    return { ok: true, dati: { esiti, daDecidere: Array.isArray(c.daDecidere) ? c.daDecidere : [], daDecidereTotale, quoteSuUsciti: typeof c.quoteSuUsciti === 'number' ? c.quoteSuUsciti : null } };
+    return { ok: true, dati: { esiti, daDecidere: Array.isArray(c.daDecidere) ? c.daDecidere : [], daDecidereTotale, quoteSuUsciti: typeof c.quoteSuUsciti === 'number' ? c.quoteSuUsciti : null, classiDa: corpoC?.classi_da } };
   }, [base, uid]);
   const contatori = useLettura(passaggioId ? `${base}|c|${versione}` : null, leggiContatori);
 
@@ -214,6 +216,16 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
     [sezioniLette, sedeCorrente],
   );
   const nomeSezione = useCallback((id: string | null): string | null => sezioni.find((s) => s.id === id)?.name ?? null, [sezioni]);
+  // (giro 3, NS1) La classe di PARTENZA è dell'anno vecchio: l'elenco delle sezioni qui sopra è quello dell'anno nuovo e non la contiene. I nomi
+  // arrivano con le righe (e coi «da decidere»); se mancano si ripiega sull'elenco, come prima.
+  const classiDa = useMemo(
+    () => ({
+      ...(contatori.fase === 'ok' ? (contatori.dati.classiDa ?? {}) : {}),
+      ...(elenco.fase === 'ok' ? (elenco.dati.classi_da ?? {}) : {}),
+    }),
+    [contatori, elenco],
+  );
+  const nomeDa = useCallback((id: string | null): string | null => (id ? classiDa[id] ?? nomeSezione(id) : null), [classiDa, nomeSezione]);
 
   const leggiStaff = useCallback(async (): Promise<Esito<Staff[]>> => {
     const r = await chiama('GET', '/api/admin/staff', uid);
@@ -249,7 +261,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
       }
     }
     return { ok: true, dati: trovati };
-  }, [base, chiaveNomi, uid]);
+  }, [annoSedeId, chiaveNomi, uid]);
   const nomiLetti = useLettura(chiaveNomi ? `nomi|${chiaveNomi}` : null, leggiNomi);
   const nomi = nomiLetti.fase === 'ok' ? nomiLetti.dati : {};
   const nomeDi = (id: string): string => {
@@ -452,6 +464,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
           caricato={contatori.fase === 'ok'}
           nomeDi={nomeDi}
           nomeSezione={nomeSezione}
+          nomeDa={nomeDa}
           sezioni={sezioni}
           occupato={occupato}
           corregge={corregge}
@@ -486,7 +499,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
               t={t}
               r={r}
               nome={nomeDi(r.alunno_id)}
-              classeDa={nomeSezione(r.sezione_da_id)}
+              classeDa={nomeDa(r.sezione_da_id)}
               classeA={nomeSezione(r.sezione_a_id)}
               sezioni={sezioni}
               puoCorreggere={inAnteprima}
@@ -543,7 +556,7 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
           <h2 className="m-0 font-barlow text-base font-extrabold uppercase">{t('dialogoAnnullaTitolo')}</h2>
           <p className="mt-3">{t('dialogoAnnullaCorpo')}</p>
           {annoGiaCominciato && passaggio.inizio_anno_nuovo && (
-            <p className="mt-2">{t('dialogoAnnullaStorico', { dal: giorno(passaggio.inizio_anno_nuovo) })}</p>
+            <p className="mt-2">{t('dialogoAnnullaStorico', { dal: giorno(passaggio.confermato_il && passaggio.confermato_il > passaggio.inizio_anno_nuovo ? passaggio.confermato_il : passaggio.inizio_anno_nuovo) })}</p>
           )}
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className={btnPrimary} disabled={occupato} onClick={annulla}>{t('dialogoAnnullaSi')}</button>
@@ -636,7 +649,7 @@ function RigaElenco({
 }
 
 function BloccoDaDecidere({
-  t, righe, numero, caricato, nomeDi, nomeSezione, sezioni, occupato, corregge,
+  t, righe, numero, caricato, nomeDi, nomeSezione, nomeDa, sezioni, occupato, corregge,
 }: {
   t: T;
   righe: RigaApi[];
@@ -644,6 +657,7 @@ function BloccoDaDecidere({
   caricato: boolean;
   nomeDi: (id: string) => string;
   nomeSezione: (id: string | null) => string | null;
+  nomeDa: (id: string | null) => string | null;
   sezioni: Sezione[];
   occupato: boolean;
   corregge: (r: RigaApi, valore: string) => unknown;
@@ -664,7 +678,7 @@ function BloccoDaDecidere({
                 t={t}
                 r={r}
                 nome={nomeDi(r.alunno_id)}
-                classeDa={nomeSezione(r.sezione_da_id)}
+                classeDa={nomeDa(r.sezione_da_id)}
                 classeA={nomeSezione(r.sezione_a_id)}
                 avviso={r.avviso === 'ritirato_tendina' ? t('avvisoRitiratoTendina') : t('avvisoSenzaSezione')}
                 sezioni={sezioni}

@@ -3,7 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
-import { scriviFrequenza } from '@/lib/anno/frequenze'
+import { finestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
@@ -544,7 +544,10 @@ export type RisultatoChiusura = {
  * (`in_preparazione`, `iscrizioni_aperte`): conferme, iscrizioni di una domanda, inserimenti della segreteria. Vale anche per
  * un bambino `in_arrivo`. Non lancia mai e non blocca l'archiviazione: ne riporta il conteggio.
  */
-export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunnoId: string; attore: AppUser }): Promise<RisultatoChiusura> {
+export async function chiudiFrequenzeAperte(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null },
+): Promise<RisultatoChiusura> {
   const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 }
   try {
     const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
@@ -558,6 +561,11 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
       return esito
     }
     const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
+    // (giro 3, NB2) Nella finestra fra la conferma del passaggio e l'inizio l'anno ATTIVO è il nuovo, `corrente` ma non ancora cominciato:
+    // non è né «in preparazione» né «iscrizioni aperte», e la sua frequenza (nata dal passaggio o dalla segreteria) resterebbe viva dopo
+    // l'archiviazione. Si chiude anche lei: quella dell'anno VISIBILE la chiude la scrittura della scheda, qui sotto nella route.
+    const finestra = await finestraDiSede(supabase, a.scuolaId)
+    if (finestra && !idAnni.includes(finestra.attivo)) idAnni.push(finestra.attivo)
     if (idAnni.length === 0) return esito
 
     const righe = await supabase

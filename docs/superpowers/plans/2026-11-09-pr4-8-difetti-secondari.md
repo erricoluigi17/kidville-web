@@ -48,7 +48,7 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 ## Giro 2 (annotazioni)
 
 - **Fatti nel giro 2:** S5 (quote ancora da pagare su chi esce: una riga nel dialogo di conferma e nel riepilogo, dal conteggio dei contatori), S10 (avviso
-  nel dialogo di annullo), S15 (la colonna «Da» legge `sezione_da_id`), N4 (a conferma dopo l'inizio il dialogo non cita date passate), N5, N6, N7 (`/nomi`
+  nel dialogo di annullo), ~~S15 (la colonna «Da» legge `sezione_da_id`)~~ **S15 NON era fatto nel giro 2: era una regressione («Da: nessuna classe» su ogni riga), chiusa nel giro 3 (NS1)**, N4 (a conferma dopo l'inizio il dialogo non cita date passate), N5, N6, N7 (`/nomi`
   restituisce solo nome e cognome), e il punto 13 qui sopra (l'invariante dello storico è la 15 di `anno_invarianti()`, ridefinita dall'ultima definizione).
 - **S11 · bambino con frequenza viva in un'altra sede: NON fatto.** Tocca cinque posti (CHECK di `passaggi_anno_righe`, `passaggio_calcola`, il conteggio
   bloccante della conferma, `AVVISI_PASSAGGIO`, pagina e frasi) e la firma SQL su cui è partita la 4.9. Non misurato in produzione: prima di farlo contare con una
@@ -62,3 +62,26 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 - **Quattro prove del revisore non conclusive:** T6, F2, Q06, P22/Q10. Non riprodotte e non classificate come difetti; da rifare dal revisore se servono.
 - **Quote nella finestra:** `passaggio_ricopia_schede` gira ogni ora (`35 * * * *`) e va registrato in `JOB_CRON` con `finestraMs` 3 × `ORA` nella PR-B,
   dopo la rigenerazione della fotografia (oggi è in `JOB_CRON_NON_SORVEGLIATI`, come `anni-tick`).
+
+## Giro 3 (annotazioni)
+
+- **Fatti nel giro 3:** NS1 (la colonna «Da» legge la classe dalle righe: `classi_da` dal server), NS2 (battito `cron:passaggio-ricopia-schede` a ogni giro),
+  NS3 (lo storico delle classi nuove parte dal giorno della conferma, non da «oggi»), NS4 (l'invariante 11-quater esenta la tardiva della finestra), NS5 (le quote
+  «da pagare» comprendono il `parziale`), NS6 (il lock accetta la ricopia solo se il comando del cron è quella chiamata e basta), NS8 (il dialogo di annullo dice
+  «dal» il più tardi fra l'inizio dell'anno e il giorno della conferma), NS10 (la data nel commento è quella vera della verifica: md5 del corpo di
+  `anno_invarianti()` = produzione, 09/11).
+- **NS7 · il 01/09 dalle 00:00 alle 00:35 lo stato è misto: NON fatto.** `frequenze_attive` dà già la classe nuova, la scheda e la route delle famiglie ancora la
+  vecchia, finché non gira la ricopia (minuto 35). Priorità bassa, 35 minuti una volta l'anno. Si chiude cambiando il minuto del job (`5 * * * *`) o facendo
+  ricopiare dalla conferma stessa quando l'inizio è già passato; non è stato toccato per non spostare un job già nei lock.
+- **NS9 · `pg_cron` assente: solo `NOTICE`, come `anni-tick`: NON fatto.** Riguarda il database della CI, dove il job non esiste. In produzione il battito di NS2
+  (`cron:passaggio-ricopia-schede`) dice se il job gira; la sua mancanza è il segnale, non il `NOTICE`.
+- **S11 · bambino con frequenza viva in due sedi: NON fatto, ora CON LA MISURA** (09/11, solo conteggi, fatta dalla chat principale). Bambini con frequenze vive
+  in due sedi diverse: **0** nell'anno 2026/27 e **0** nel 2027/28. Il 2027/28 ha **0** frequenze e **0** classi (le iscrizioni non sono ancora aperte).
+  Il rischio è teorico finché non si aprono le iscrizioni; si rimisura il giorno in cui si apre l'anno 2027/28.
+- **P12a (bambino trasferito, conferma rimasta nella sede vecchia) e la retta di settembre, con la 4.6 nel ramo:** `rette_da_generare` calcola `gia_generato` per
+  (alunno, mese, categoria `retta`) **senza filtrare per sede** (`20261109153822_anno_rette_dal_listino.sql`, commento righe 87 e 299-300), quindi la seconda sede che
+  gira trova già la voce e salta il bambino. Due rette dello stesso mese per lo stesso bambino non nascono. **Verificato leggendo l'SQL, non eseguendo il caso sul
+  banco**: la 4.6 non è nel banco di prova del passaggio.
+- **Costo di NB1 da ricordare al collaudo:** nella finestra una modifica della scheda scrive sulla frequenza dell'anno VISIBILE (il vecchio). Una retta cambiata ad
+  agosto vale per l'anno in corso e non per il nuovo: per il nuovo si cambia dal listino (scheda Rette). Riga per il collaudo: «cambia la retta di un bambino ad
+  agosto e controlla che la retta di settembre sia quella del listino».

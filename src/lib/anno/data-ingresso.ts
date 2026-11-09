@@ -33,17 +33,19 @@ export type EsitoDataIngresso =
 
 export async function risolviDataIngresso(
   supabase: SupabaseClient,
-  { scuolaId, dataIscrizione, operazione, oggi = dataCivile() }: {
+  { scuolaId, dataIscrizione, operazione, oggi = dataCivile(), annoSedeId: annoScelto }: {
     scuolaId: string | null | undefined
     dataIscrizione: unknown
     operazione: string
+    /** (giro 3) L'anno in cui la data si scrive, se non è l'attivo: l'anno VISIBILE della finestra, o quello di una classe nuova. */
+    annoSedeId?: string | null
     /** Il giorno di Roma (`YYYY-MM-DD`); si passa solo nelle prove. */
     oggi?: string
   },
 ): Promise<EsitoDataIngresso> {
   let dataIngresso =
     typeof dataIscrizione === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dataIscrizione) ? dataIscrizione : null
-  const annoSedeId = dataIngresso ? await annoAttivoDiSede(supabase, scuolaId) : null
+  const annoSedeId = dataIngresso ? (annoScelto ?? await annoAttivoDiSede(supabase, scuolaId)) : null
   if (dataIngresso && annoSedeId) {
     const periodo = await supabase.from('anni_sede').select('inizio, fine').eq('id', annoSedeId).maybeSingle()
     if (periodo.error) {

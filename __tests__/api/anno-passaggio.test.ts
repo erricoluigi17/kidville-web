@@ -369,7 +369,7 @@ describe('GET passaggio', () => {
     const corpo = await res.json()
     expect(corpo.success).toBe(true)
     expect(corpo.data.passaggio).toEqual({
-      id: PASS, stato: 'anteprima', conteggi: { continua: 2, esce: 1 }, apribile_dal: '2027-08-01', inizio_anno_nuovo: '2027-09-15',
+      id: PASS, stato: 'anteprima', conteggi: { continua: 2, esce: 1 }, apribile_dal: '2027-08-01', inizio_anno_nuovo: '2027-09-15', confermato_il: null,
     })
     expect(corpo.data.totale).toBe(2)
     expect(corpo.data.pagina).toBe(1)

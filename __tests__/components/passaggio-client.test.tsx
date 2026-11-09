@@ -66,12 +66,14 @@ const riga = (alunno_id: string, esito: Esito, extra: Partial<RigaS> = {}): Riga
 
 /** Lo stato del «server»: cambia quando la pagina scrive, e le letture successive lo riflettono. */
 const s = {
-  passaggio: null as null | { id: string; stato: 'anteprima' | 'confermato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null },
+  passaggio: null as null | { id: string; stato: 'anteprima' | 'confermato'; conteggi: Record<string, number>; apribile_dal: string | null; inizio_anno_nuovo?: string | null; confermato_il?: string | null },
   righe: [] as RigaS[],
   conferma409: null as null | string,
   annulla409: null as null | string,
   pending: false,
   lettura: null as null | number, // uno status di errore per la GET principale
+  /** (giro 3, NS1) Come in produzione: l'elenco delle sezioni è quello dell'anno NUOVO, la classe di partenza arriva coi nomi della lettura. */
+  scopedSenzaVecchia: false,
 }
 const fetchMock = vi.fn()
 
@@ -119,6 +121,7 @@ function lettura(params: URLSearchParams): Risposta {
     totale: righe.length,
     docenti: [{ utente_id: DOC1, sezione_a_id: S_A1, origine: 'copiata' }],
     ...(contatori ? { contatori } : {}),
+    ...(s.scopedSenzaVecchia ? { classi_da: { [S_DA]: 'Sezione Partenza' } } : {}),
   })
 }
 
@@ -127,7 +130,7 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
     return ok([{ scuolaId: SEDE, sezioni: [
       { id: S_A1, name: 'Sezione Nuova A', school_type: 'infanzia' },
       { id: S_A2, name: 'Sezione Nuova B', school_type: 'infanzia' },
-      { id: S_DA, name: 'Sezione Partenza', school_type: 'infanzia' },
+      ...(s.scopedSenzaVecchia ? [] : [{ id: S_DA, name: 'Sezione Partenza', school_type: 'infanzia' }]),
     ] }])
   }
   if (url.includes('/api/admin/staff')) return { status: 200, body: { success: true, data: [{ id: DOC1, nome: 'NomeDocente', cognome: 'CognomeDocente', ruolo: 'docente' }] } }
@@ -172,6 +175,7 @@ beforeEach(() => {
   s.annulla409 = null
   s.pending = false
   s.lettura = null
+  s.scopedSenzaVecchia = false
   fetchMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
     if (s.pending) return new Promise(() => {})
     const r = risposta(String(url), init?.method ?? 'GET', init?.body ? JSON.parse(init.body) : {})
@@ -434,6 +438,29 @@ describe('PassaggioClient · giro di correzione 1', () => {
     // `nomiStudenti` dice «Sezione Vecchia» (la scheda, già spostata sulla classe nuova); la riga dice S_DA, «Sezione Partenza».
     expect(screen.queryAllByText('Da: Sezione Partenza').length).toBeGreaterThan(0)
     expect(screen.queryAllByText('Da: Sezione Vecchia')).toHaveLength(0)
+  })
+})
+
+describe('PassaggioClient · giro di correzione 3', () => {
+  it('NS1 · la colonna «Da» legge la classe di partenza dalle righe anche se l’elenco delle sezioni è quello dell’anno nuovo', async () => {
+    s.scopedSenzaVecchia = true
+    s.righe = [...RIGHE_BASE(), RIGA_DA_DECIDERE()]
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeUno NomeUno')
+    expect(screen.queryAllByText('Da: Sezione Partenza').length).toBeGreaterThan(1)
+    expect(screen.queryAllByText(/Da: nessuna classe/i)).toHaveLength(0)
+  })
+})
+
+describe('PassaggioClient · giro 3 · NS8', () => {
+  it('NS8 · il dialogo dell’annullo dice «dal» il giorno della conferma se è dopo l’inizio dell’anno', async () => {
+    s.passaggio = { id: PASS, stato: 'confermato', conteggi: {}, apribile_dal: '2027-06-01', inizio_anno_nuovo: '2027-07-01', confermato_il: '2027-07-05' }
+    render(<PassaggioClient />)
+    await screen.findByText('CognomeDue NomeDue')
+    fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneAnnulla }))
+    const dialogo = await screen.findByText(/Le schede sono già passate sulla classe nuova dal/)
+    expect(dialogo.textContent).toContain('5 luglio 2027')
+    expect(dialogo.textContent).not.toContain('1 luglio 2027')
   })
 })
 

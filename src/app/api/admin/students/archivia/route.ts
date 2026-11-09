@@ -9,7 +9,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { annoVisibileDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
@@ -165,7 +165,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
             // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
-            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null });
             if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
                 logEvento('gdpr', riprova.non_riuscite > 0 ? 'error' : 'info', {
                     operazione: 'admin/students/archivia:POST',
@@ -235,7 +235,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // Un bambino «in arrivo» non frequenta l'anno attivo: la sua frequenza di oggi, se c'è, è storia (la prima uscita) e
         // archiviarlo non la riscrive (4.5.16, C-bis). Si scrive solo la scheda; la memoria della classe va nello stesso UPDATE.
         // Le iscrizioni degli anni che vengono le chiude, come sempre, `chiudiFrequenzeAperte` più sotto.
-        const annoSedeId = prima.stato === 'in_arrivo' ? null : await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+        const annoSedeId = prima.stato === 'in_arrivo' ? null : await annoVisibileDiSede(supabase, (prima.scuola_id as string | null) ?? null);
 
         // La frequenza si scrive per prima, e lo specchio ricopia in `alunni` stato, archiviato_il e il distacco dalla
         // classe: se poi l'UPDATE di `alunni` fallisse, la memoria di dov'era il bambino andrebbe persa (la scheda non ha
@@ -373,7 +373,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // stessa regola di «Ritira la conferma»: la voce della quota si toglie solo se non è pagata. Non blocca l'archiviazione
         // (la scheda è già scritta): ne riporta il conteggio, e il pannello dice quante voci pagate sono rimaste. Vale anche per
         // un bambino `in_arrivo`, che non ha una frequenza dell'anno in corso ma ne ha una nell'anno aperto.
-        const chiusura = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user });
+        const chiusura = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null });
         if (chiusura.non_riuscite > 0) {
             // La scheda è archiviata ma almeno un'iscrizione dell'anno prossimo (o la lettura che la trova) non si è chiusa: la quota
             // può restare visibile alla famiglia. Livello `error`: il solo conteggio e l'uuid (4.5.16, E).

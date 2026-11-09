@@ -3,6 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
+import { oggiRoma } from '@/lib/storici/retroattivita'
 
 /**
  * IL PASSAGGIO D'ANNO: l'unica porta TypeScript per le sette funzioni SQL `passaggio_*` (PR 4.8, migrazioni M48a-M48c) e per la
@@ -353,6 +354,8 @@ export type PassaggioLetto = {
   apribile_dal: string | null
   /** AAAA-MM-GG: il primo giorno dell'anno NUOVO (`anni_sede.inizio`); dal quel giorno le famiglie vedono la classe nuova. `null` se non si legge. */
   inizio_anno_nuovo: string | null
+  /** (giro 3, NS8) AAAA-MM-GG (giorno di Roma): il giorno della conferma. Se è dopo l'inizio, lo storico delle classi nuove parte da qui. `null` se non c'è. */
+  confermato_il?: string | null
 }
 /** (giro 1, S19) I numeri che la pagina vuole a ogni correzione, in UNA risposta: righe per esito, righe con un avviso aperto e le prime da decidere. */
 export type ContatoriPassaggio = {
@@ -361,7 +364,7 @@ export type ContatoriPassaggio = {
   /** Le righe con un avviso (senza doppioni), al più `daDecidereMax` per avviso. */
   daDecidere: RigaLettaPassaggio[]
   /**
-   * (giro 2, S5) Le voci di quota ancora da pagare (`da_pagare`, `scaduto`) sulle frequenze nuove di chi ESCE: il passaggio non le tocca, la
+   * (giro 2, S5) Le voci di quota ancora da pagare (`da_pagare`, `parziale`, `scaduto`) sulle frequenze nuove di chi ESCE: il passaggio non le tocca, la
    * segreteria deve saperlo. `null` = non si è potuto contare (la pagina non dice un numero inventato).
    */
   quoteSuUsciti: number | null
@@ -374,6 +377,12 @@ export type LetturaPassaggio = {
   docenti: DocenteLettoPassaggio[]
   /** Solo se richiesti (`FiltriLettura.contatori`). */
   contatori?: ContatoriPassaggio
+  /**
+   * (giro 3, NS1) Il nome della classe di PARTENZA (dell'anno vecchio) per ogni `sezione_da_id` delle righe della pagina e dei «da decidere»:
+   * l'elenco delle sezioni che la pagina conosce è quello dell'anno nuovo, e senza questo la colonna «Da» diceva «nessuna classe» a chi una
+   * classe ce l'ha. Solo id di sezione e nome della classe (un nome di classe non è un dato di persona). Assente/vuoto = la pagina ripiega.
+   */
+  classi_da?: Record<string, string>
 }
 export type EsitoLettura = EsitoPassaggio<LetturaPassaggio>
 
@@ -458,12 +467,12 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
 
     const p = await supabase
       .from('passaggi_anno')
-      .select('id, stato, conteggi, da_anno_sede_id')
+      .select('id, stato, conteggi, da_anno_sede_id, confermato_il')
       .eq('a_anno_sede_id', annoSedeNuovoId)
       .neq('stato', 'annullato')
       .maybeSingle()
     if (p.error) return guasto(p.error)
-    const riga = p.data as { id: string; stato: StatoPassaggio; conteggi: unknown; da_anno_sede_id: string } | null
+    const riga = p.data as { id: string; stato: StatoPassaggio; conteggi: unknown; da_anno_sede_id: string; confermato_il?: string | null } | null
     if (!riga) return { ok: true, passaggio: null, righe: [], totale: 0, docenti: [] }
 
     const vecchio = await supabase.from('anni_sede').select('ultimo_giorno_aperto').eq('id', riga.da_anno_sede_id).maybeSingle()
@@ -546,7 +555,7 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
           }
           const voci = ((quote.data ?? []) as Array<{ quota_pagamento_id: string | null }>).map((x) => x.quota_pagamento_id).filter((x): x is string => !!x)
           if (voci.length === 0) continue
-          const aperte = await supabase.from('pagamenti').select('id', { count: 'exact', head: true }).in('id', voci).in('stato', ['da_pagare', 'scaduto'])
+          const aperte = await supabase.from('pagamenti').select('id', { count: 'exact', head: true }).in('id', voci).in('stato', ['da_pagare', 'parziale', 'scaduto'])
           if (aperte.error) {
             logErrore({ operazione: OP_LETTURA }, aperte.error)
             quoteSuUsciti = null
@@ -558,9 +567,30 @@ export async function leggiPassaggio(supabase: SupabaseClient, annoSedeNuovoId: 
       contatori = { esiti, avvisi, daDecidere, quoteSuUsciti }
     }
 
+    // (giro 3, NS1) I nomi delle classi di partenza. Una lettura che cade non ferma la pagina: la colonna ripiega sull'elenco che ha già.
+    const idDa = new Set<string>()
+    for (const r of [...((righe.data ?? []) as RigaLettaPassaggio[]), ...(contatori?.daDecidere ?? [])]) {
+      if (typeof r.sezione_da_id === 'string') idDa.add(r.sezione_da_id)
+    }
+    const classiDa: Record<string, string> = {}
+    if (idDa.size > 0) {
+      const nomi = await supabase.from('sections').select('id, name').in('id', [...idDa])
+      if (nomi.error) {
+        logErrore({ operazione: OP_LETTURA }, new Error(`sections:${nomi.error.code ?? 'senza-codice'}`))
+      } else {
+        for (const x of (nomi.data ?? []) as Array<{ id: string; name: string | null }>) {
+          if (typeof x.id === 'string' && typeof x.name === 'string') classiDa[x.id] = x.name
+        }
+      }
+    }
+
     return {
       ok: true,
-      passaggio: { id: riga.id, stato: riga.stato, conteggi: soloNumeri(riga.conteggi), apribile_dal: apribileDal, inizio_anno_nuovo: inizioAnnoNuovo },
+      classi_da: classiDa,
+      passaggio: {
+        id: riga.id, stato: riga.stato, conteggi: soloNumeri(riga.conteggi), apribile_dal: apribileDal, inizio_anno_nuovo: inizioAnnoNuovo,
+        confermato_il: typeof riga.confermato_il === 'string' && !Number.isNaN(Date.parse(riga.confermato_il)) ? oggiRoma(new Date(riga.confermato_il)) : null,
+      },
       righe: ((righe.data ?? []) as RigaLettaPassaggio[]).map((r) => ({
         alunno_id: r.alunno_id,
         esito: r.esito,

@@ -70,7 +70,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/passaggio:GET', async (req
   })
   return NextResponse.json({
     success: true,
-    data: { passaggio: letto.passaggio, righe: letto.righe, totale: letto.totale, pagina, tetto, docenti: letto.docenti, ...(letto.contatori ? { contatori: letto.contatori } : {}) },
+    data: { passaggio: letto.passaggio, righe: letto.righe, totale: letto.totale, pagina, tetto, docenti: letto.docenti, classi_da: letto.classi_da ?? {}, ...(letto.contatori ? { contatori: letto.contatori } : {}) },
   })
 })
 

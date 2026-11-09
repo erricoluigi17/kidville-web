@@ -335,7 +335,8 @@ function clienteLettura(risposte: Record<string, { data?: unknown; error?: Error
 const passi = (c: Chiamata, nome: string) => c.passi.filter(([m]) => m === nome).map(([, a]) => a)
 
 describe('leggiPassaggio', () => {
-  const PASSAGGIO_RIGA = { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, da_anno_sede_id: DA_ANNO }
+  // (giro 3, NS8) 22:30 UTC di luglio sono le 00:30 del giorno dopo a Roma: `confermato_il` esce come GIORNO DI ROMA.
+  const PASSAGGIO_RIGA = { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, da_anno_sede_id: DA_ANNO, confermato_il: '2027-07-05T22:30:00Z' }
   const RIGA = { alunno_id: ALUNNO, esito: 'continua', avviso: null, eccezione: false, sezione_da_id: SEZIONE, sezione_a_id: SEZIONE, frequenza_a_id: null }
 
   it('legge il passaggio NON annullato col suo anno nuovo, le righe a pagine con il totale esatto, i docenti', async () => {
@@ -348,7 +349,8 @@ describe('leggiPassaggio', () => {
     const r = await leggiPassaggio(client, A_ANNO, { pagina: 3, tetto: 20 })
     expect(r).toEqual({
       ok: true,
-      passaggio: { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-09-01', inizio_anno_nuovo: null },
+      passaggio: { id: PASSAGGIO, stato: 'anteprima', conteggi: {}, apribile_dal: '2027-09-01', inizio_anno_nuovo: null, confermato_il: '2027-07-06' },
+      classi_da: {},
       righe: [RIGA],
       totale: 57,
       docenti: [{ utente_id: UTENTE, sezione_a_id: SEZIONE, origine: 'copiata' }],

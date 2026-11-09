@@ -29,7 +29,9 @@ CREATE OR REPLACE FUNCTION public.storici_traccia_classe()
  SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
 AS $$
-declare giorno date := public.giorno_roma(now());  -- = (now() at time zone 'Europe/Rome')::date, ma si può fissare nelle prove
+ -- = (now() at time zone 'Europe/Rome')::date, ma si può fissare nelle prove. (giro 3, NS3) `passaggio_ricopia_schede` fissa il giorno con
+ -- `kidville.storico_giorno` (solo dentro la sua transazione): se il job gira in ritardo la riga di classe parte comunque dall'`inizio`.
+declare giorno date := coalesce(nullif(current_setting('kidville.storico_giorno', true), '')::date, public.giorno_roma(now()));
 begin
   if TG_OP='UPDATE' and new.section_id is not distinct from old.section_id and new.scuola_id is not distinct from old.scuola_id
     and new.archiviato_il is not distinct from old.archiviato_il then return new; end if;
@@ -320,6 +322,16 @@ BEGIN
       RETURN NULL;
     END IF;
 
+    -- (giro 3, NB3) Una classe che appartiene a un anno DIVERSO da quello visibile (la finestra: la classe nuova, l'anno non è cominciato) non si
+    -- copia nella frequenza dell'anno visibile: sarebbe una sezione di un altro anno, e il database direbbe ANNO_NON_COERENTE a ogni scrittura.
+    -- La frequenza di quell'anno la scrive chi ha scelto la classe (`anno_registra_frequenza`), nello stesso anno della classe.
+    IF NEW.section_id IS NOT NULL AND EXISTS (
+         SELECT 1 FROM public.sections sc
+          WHERE sc.id = NEW.section_id AND sc.anno_id IS NOT NULL
+            AND sc.anno_id <> (SELECT v.anno_id FROM public.anni_sede v WHERE v.id = public.anno_visibile(NEW.scuola_id, v_oggi))) THEN
+      RETURN NULL;
+    END IF;
+
     -- la sede cambia: la frequenza viva della sede vecchia si chiude come `trasferito`
     IF TG_OP = 'UPDATE' AND OLD.scuola_id IS NOT NULL AND OLD.scuola_id IS DISTINCT FROM NEW.scuola_id THEN
       SELECT s.* INTO v_old FROM public.anni_sede s WHERE s.id = public.anno_visibile(OLD.scuola_id, v_oggi);
@@ -391,7 +403,7 @@ END
 $$;
 
 -- (giro 2, R6/R8) Copia dell'ULTIMA definizione (`20261109035213_anno_alunno_in_arrivo.sql`, uguale a quella di produzione: md5 del corpo
--- verificato il 2026-11-10). Cambiano: le invarianti 7, 11 e 11-bis guardano l'anno VISIBILE (fra la conferma e l'inizio dell'anno nuovo
+-- edd1d31be3259e7ae7603b53fc4ffdb5, verificato il 2026-11-09 sul database di produzione e sul testo di quella migrazione). Cambiano: le invarianti 7, 11 e 11-bis guardano l'anno VISIBILE (fra la conferma e l'inizio dell'anno nuovo
 -- la scheda segue il vecchio) e nasce la 15, lo storico delle classi.
 CREATE OR REPLACE FUNCTION public.anno_invarianti()
 RETURNS TABLE (invariante text, tabella text, righe bigint)
@@ -677,7 +689,13 @@ BEGIN
             'JOIN public.anni_sede s ON s.id = f.anno_sede_id '
             'WHERE f.alunno_id = al.id AND f.stato IN (''in_attesa'', ''iscritto'') '
             'AND (s.stato::text IN (''in_preparazione'', ''iscrizioni_aperte'') '
-            'OR (s.stato::text = ''corrente'' AND s.inizio > public.giorno_roma(now()))))'
+            'OR (s.stato::text = ''corrente'' AND s.inizio > public.giorno_roma(now()) '
+            -- (giro 3, NS4) La conferma TARDIVA fatta nella finestra è voluta: la scheda (archiviata dal passaggio) torna viva all'inizio, con la
+            -- ricopia. Si riconosce dalla riga del passaggio (`eccezione`, `esce`/`non_risposto`) che punta a QUESTA frequenza, finché le schede
+            -- non sono state ricopiate. Chi è stato archiviato dopo (dalla segreteria) ha la frequenza chiusa dall'archiviazione: non è qui.
+            'AND NOT EXISTS (SELECT 1 FROM public.passaggi_anno_righe x JOIN public.passaggi_anno pt ON pt.id = x.passaggio_id '
+            'WHERE x.frequenza_a_id = f.id AND x.eccezione AND x.esito IN (''esce'', ''non_risposto'') '
+            'AND pt.stato = ''confermato'' AND pt.schede_copiate_il IS NULL))))'
     INTO v_n;
   END IF;
   invariante := '11'; tabella := 'alunni (archiviato con iscrizione viva)'; righe := v_n; RETURN NEXT;
@@ -821,6 +839,219 @@ BEGIN
   invariante := '15'; tabella := 'alunni_classi_storico (senza riga aperta)'; righe := public.passaggio_storico_senza_riga_aperta(); RETURN NEXT;
 
   RETURN;
+END
+$$;
+
+-- ── Giro di correzione 3 · le scritture della segreteria nella finestra ─────────────────────────────────────────
+-- `anno_visibile_oggi(sede)` = `anno_visibile(sede, oggi di Roma)`: l'anno che le SCHEDE seguono. Le route che scrivono la scheda (salvare,
+-- archiviare, assegnare la classe) lavorano su questo anno e non sull'anno attivo, che nella finestra è il nuovo e non è ancora cominciato.
+CREATE OR REPLACE FUNCTION public.anno_visibile_oggi(p_scuola uuid)
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT public.anno_visibile(p_scuola, public.giorno_roma(now()))
+$$;
+REVOKE ALL ON FUNCTION public.anno_visibile_oggi(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_visibile_oggi(uuid) TO service_role;
+
+-- (giro 3, NB1) `sync_alunno_section_id`: copia dell'ULTIMA definizione (`20261106200347_anno_scolastico_schema.sql`); cambia solo l'anno in cui
+-- si risolve il nome della classe (visibile invece di attivo).
+CREATE OR REPLACE FUNCTION public.sync_alunno_section_id()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  -- Solo quando abbiamo un nome classe da risolvere.
+  IF NEW.classe_sezione IS NOT NULL AND length(trim(NEW.classe_sezione)) > 0 THEN
+    -- Risolvi solo se è un INSERT, oppure se classe_sezione è cambiata, oppure se
+    -- section_id non è ancora valorizzato. (Non sovrascrive un section_id impostato
+    -- esplicitamente quando classe_sezione non cambia.)
+    IF TG_OP = 'INSERT'
+       OR NEW.classe_sezione IS DISTINCT FROM OLD.classe_sezione
+       OR NEW.section_id IS NULL THEN
+      -- 1.2 · NOVITÀ: solo le sezioni dell'anno della sede che le schede seguono. Il nome è unico per
+      -- (sede, anno): con due «Girasoli» in due anni, il LIMIT 1 senza anno ne sceglierebbe una a caso.
+      SELECT s.id INTO NEW.section_id
+      FROM public.sections s
+      WHERE s.scuola_id = NEW.scuola_id
+        -- (giro 3, NB1) L'anno che le schede seguono (`anno_visibile_oggi`), non l'attivo: nella finestra fra la conferma del passaggio e
+        -- l'inizio dell'anno nuovo l'attivo è il nuovo, e un nome di classe del vecchio anno non si risolverebbe (section_id a NULL).
+        -- Fuori dalla finestra i due anni coincidono: stesso risultato di prima.
+        AND s.anno_id = (SELECT a.anno_id FROM public.anni_sede a
+                          WHERE a.id = public.anno_visibile_oggi(NEW.scuola_id))
+        AND lower(replace(s.name, ' ', '')) = lower(replace(NEW.classe_sezione, ' ', ''))
+      LIMIT 1;
+
+      -- Nessuna sezione combacia: l'alunno resta senza classe e non comparirà in
+      -- nessun appello né in nessun registro. Prima questo ramo non esisteva e
+      -- l'unico segnale era il silenzio.
+      IF NEW.section_id IS NULL THEN
+        INSERT INTO public.app_log (
+          livello, evento, sorgente, messaggio, fingerprint, scuola_id, contesto
+        )
+        VALUES (
+          'warn', 'anagrafica', 'server',
+          'classe senza sezione corrispondente: l''alunno resta fuori da ogni registro',
+          'db:alunno-senza-sezione:' || coalesce(NEW.scuola_id::text, 'senza-sede'),
+          NEW.scuola_id,
+          jsonb_build_object(
+            'esito', 'alunno-senza-sezione',
+            'operazione', 'sync_alunno_section_id',
+            'sezione', NEW.classe_sezione,
+            'alunno_id', NEW.id,
+            'origine', TG_OP
+          )
+        )
+        ON CONFLICT (fingerprint, giorno) DO UPDATE
+          SET occorrenze = public.app_log.occorrenze + 1,
+              visto_l_ultima = now();
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+-- (giro 3, NB3) `anno_registra_frequenza`: copia dell'ULTIMA definizione (`20261109035219_anno_iscrizione_conferma.sql`, nessuna migrazione
+-- successiva la ridefinisce). Cambia UNA condizione: accetta anche un anno `corrente` non ancora cominciato.
+CREATE OR REPLACE FUNCTION public.anno_registra_frequenza(
+  p_alunno uuid, p_anno_sede uuid, p_tipo text, p_origine text, p_domanda uuid,
+  p_section uuid, p_data_ingresso date, p_campi jsonb, p_da uuid DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_a      public.anni_sede%ROWTYPE;
+  v_scuola uuid;
+  v_f      public.frequenze%ROWTYPE;
+  v_creata boolean := false;
+  v_campi  jsonb := coalesce(p_campi, '{}'::jsonb);
+  v_retta  numeric;
+  v_giorno integer;
+  v_quota  jsonb;
+  v_fascia text;
+  v_oltre  boolean;
+  v_ignorata boolean := false;
+  v_riaperta boolean := false;
+  v_chiusa   boolean := false;
+BEGIN
+  IF p_tipo IS NULL OR p_tipo NOT IN ('conferma', 'nuova') THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'tipo')::text;
+  END IF;
+  IF p_origine IS NULL OR p_origine NOT IN ('domanda', 'conferma', 'segreteria', 'import') THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'origine')::text;
+  END IF;
+  IF jsonb_typeof(v_campi) <> 'object' THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'campi')::text;
+  END IF;
+
+  SELECT * INTO v_a FROM public.anni_sede WHERE id = p_anno_sede FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ANNO_NON_TROVATO' USING DETAIL = json_build_object('anno_sede_id', p_anno_sede)::text;
+  END IF;
+  -- (giro 3, NB3) Un anno `corrente` che non è ancora cominciato (la finestra fra la conferma del passaggio e l'inizio) accetta le
+  -- iscrizioni come un anno con le iscrizioni aperte: agosto è il mese in cui la segreteria iscrive i bambini nuovi.
+  IF v_a.stato <> 'iscrizioni_aperte' AND NOT (v_a.stato = 'corrente' AND v_a.inizio > public.giorno_roma(now())) THEN
+    RAISE EXCEPTION 'ANNO_NON_APERTO'
+      USING DETAIL = json_build_object('anno_sede_id', v_a.id, 'stato', v_a.stato)::text;
+  END IF;
+
+  SELECT a.scuola_id INTO v_scuola FROM public.alunni a WHERE a.id = p_alunno;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PARAMETRO_MANCANTE' USING DETAIL = json_build_object('campo', 'alunno')::text;
+  END IF;
+  IF v_scuola IS DISTINCT FROM v_a.scuola_id THEN
+    RAISE EXCEPTION 'SEDE_DIVERSA' USING DETAIL = json_build_object('anno_sede_id', v_a.id)::text;
+  END IF;
+
+  SELECT * INTO v_f FROM public.frequenze WHERE alunno_id = p_alunno AND anno_sede_id = p_anno_sede FOR UPDATE;
+  IF FOUND THEN
+    IF p_domanda IS NOT NULL AND v_f.domanda_id IS NULL THEN
+      UPDATE public.frequenze SET domanda_id = p_domanda WHERE id = v_f.id;
+    END IF;
+    -- 4.5.15 (M4): la frequenza c'e' gia' e la sezione NON si cambia da qui (la classe la sposta la segreteria, con il suo gesto).
+    -- Ma chi ha chiesto una sezione diversa deve saperlo: il silenzio farebbe credere che sia stata applicata.
+    IF v_f.stato = 'ritirato' THEN
+      -- 4.5.16: la STESSA riga (la coppia bambino-anno e' unica) si riapre. Le chiavi presenti in `p_campi` valgono, con la lista
+      -- bianca dell'INSERT; quelle assenti restano come sono. `tipo` e `origine` non cambiano.
+      UPDATE public.frequenze f SET
+        stato = 'in_attesa',
+        data_uscita = NULL,
+        section_id = coalesce(p_section, f.section_id),
+        domanda_id = coalesce(p_domanda, f.domanda_id),
+        retta_mensile = CASE WHEN v_campi ? 'retta_mensile'
+          THEN CASE WHEN nullif(v_campi ->> 'retta_mensile', '')::numeric > 0 THEN nullif(v_campi ->> 'retta_mensile', '')::numeric END
+          ELSE f.retta_mensile END,
+        retta_esente = CASE WHEN v_campi ? 'retta_esente' THEN coalesce((v_campi ->> 'retta_esente')::boolean, false) ELSE f.retta_esente END,
+        retta_a_carico_di = CASE WHEN v_campi ? 'retta_a_carico_di' THEN (v_campi ->> 'retta_a_carico_di')::uuid ELSE f.retta_a_carico_di END,
+        retta_split_config = CASE WHEN v_campi ? 'retta_split_config' THEN nullif(v_campi -> 'retta_split_config', 'null'::jsonb) ELSE f.retta_split_config END,
+        intestatario_fatture = CASE WHEN v_campi ? 'intestatario_fatture' THEN nullif(v_campi -> 'intestatario_fatture', 'null'::jsonb) ELSE f.intestatario_fatture END,
+        giorno_scadenza_pagamenti = CASE WHEN v_campi ? 'giorno_scadenza_pagamenti'
+          THEN CASE WHEN nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer BETWEEN 1 AND 28 THEN nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer END
+          ELSE f.giorno_scadenza_pagamenti END,
+        gruppo_mensa_id = CASE WHEN v_campi ? 'gruppo_mensa_id' THEN (v_campi ->> 'gruppo_mensa_id')::uuid ELSE f.gruppo_mensa_id END,
+        usa_pannolino = CASE WHEN v_campi ? 'usa_pannolino' THEN coalesce((v_campi ->> 'usa_pannolino')::boolean, false) ELSE f.usa_pannolino END
+       WHERE f.id = v_f.id;
+      SELECT * INTO v_f FROM public.frequenze WHERE id = v_f.id;
+      v_riaperta := true;
+    ELSIF v_f.stato IN ('in_attesa', 'iscritto') THEN
+      v_ignorata := p_section IS NOT NULL AND v_f.section_id IS DISTINCT FROM p_section;
+    ELSE
+      -- `trasferito` o `uscito`: non si riapre da qui. La domanda e' stata collegata (sopra); la voce non nasce.
+      v_chiusa := true;
+    END IF;
+  ELSE
+    v_retta := nullif(v_campi ->> 'retta_mensile', '')::numeric;
+    v_giorno := nullif(v_campi ->> 'giorno_scadenza_pagamenti', '')::integer;
+    INSERT INTO public.frequenze
+      (alunno_id, anno_sede_id, section_id, domanda_id, tipo, stato, origine, data_ingresso,
+       retta_mensile, retta_esente, retta_a_carico_di, retta_split_config, intestatario_fatture,
+       giorno_scadenza_pagamenti, gruppo_mensa_id, usa_pannolino)
+    VALUES
+      (p_alunno, v_a.id, p_section, p_domanda, p_tipo, 'in_attesa', p_origine, coalesce(p_data_ingresso, v_a.inizio),
+       CASE WHEN v_retta > 0 THEN v_retta END,
+       coalesce((v_campi ->> 'retta_esente')::boolean, false),
+       (v_campi ->> 'retta_a_carico_di')::uuid,
+       nullif(v_campi -> 'retta_split_config', 'null'::jsonb),
+       nullif(v_campi -> 'intestatario_fatture', 'null'::jsonb),
+       CASE WHEN v_giorno BETWEEN 1 AND 28 THEN v_giorno END,
+       (v_campi ->> 'gruppo_mensa_id')::uuid,
+       coalesce((v_campi ->> 'usa_pannolino')::boolean, false))
+    ON CONFLICT (alunno_id, anno_sede_id) DO NOTHING
+    RETURNING * INTO v_f;
+    IF FOUND THEN
+      v_creata := true;
+    ELSE
+      -- Un'altra transazione l'ha scritta un attimo prima: è quella.
+      SELECT * INTO v_f FROM public.frequenze WHERE alunno_id = p_alunno AND anno_sede_id = p_anno_sede FOR UPDATE;
+    END IF;
+  END IF;
+
+  IF v_f.stato IN ('in_attesa', 'iscritto') THEN
+    v_quota := public.anno_quota_voce(v_f.id, p_da);
+  ELSE
+    v_quota := jsonb_build_object('esito', NULL, 'pagamento_id', v_f.quota_pagamento_id);
+  END IF;
+
+  SELECT coalesce(s.fascia, CASE WHEN f.section_id IS NULL THEN 'senza_sezione' ELSE 'senza_fascia' END) INTO v_fascia
+    FROM public.frequenze f LEFT JOIN public.sections s ON s.id = f.section_id
+   WHERE f.id = v_f.id;
+  SELECT coalesce(bool_or(c.oltre), false) INTO v_oltre
+    FROM public.anno_conta_posti(v_a.id) c WHERE c.fascia = v_fascia;
+
+  RETURN jsonb_build_object('frequenza_id', v_f.id, 'creata', v_creata,
+                            'quota', v_quota -> 'esito', 'pagamento_id', v_quota -> 'pagamento_id',
+                            'posti_oltre', v_oltre)
+         || CASE WHEN v_ignorata THEN jsonb_build_object('sezione_ignorata', true) ELSE '{}'::jsonb END
+         || CASE WHEN v_riaperta THEN jsonb_build_object('riaperta', true) ELSE '{}'::jsonb END
+         || CASE WHEN v_chiusa THEN jsonb_build_object('chiusa', true) ELSE '{}'::jsonb END;
 END
 $$;
 
@@ -1177,6 +1408,15 @@ BEGIN
     JOIN public.alunni al ON al.id = x.alunno_id
    WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND f.id = x.frequenza_a_id
      AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
+  -- (giro 3, B6/P23) E si chiude anche la frequenza dell'anno VECCHIO che l'annullo rende di nuovo visibile: se restasse viva, la famiglia
+  -- rivedrebbe il bambino (`frequenze_attive`) e l'invariante 11 si accenderebbe ogni notte. L'uscita è il giorno dell'archiviazione, dentro l'anno.
+  UPDATE public.frequenze f SET stato = 'ritirato',
+         data_uscita = least(greatest(public.giorno_roma(al.archiviato_il), f.data_ingresso), v_da.fine)
+    FROM public.passaggi_anno_righe x
+    JOIN public.alunni al ON al.id = x.alunno_id
+   WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado') AND f.id = x.frequenza_da_id
+     AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il
+     AND al.anonimizzato_il IS NULL;
 
   -- Le frequenze, con il vecchio di nuovo anno attivo (lo specchio le segue).
   UPDATE public.frequenze f SET stato = r2.stato_da_prima, data_uscita = NULL
@@ -1386,6 +1626,7 @@ DECLARE
   v_archiviati integer := 0;
   v_quote     integer := 0;
   v_n         integer;
+  v_n2        integer := 0;
   v_c         integer;
   v_s         integer;
   v_a         integer;
@@ -1410,14 +1651,23 @@ BEGIN
     END IF;
 
     BEGIN
-      v_c := 0; v_s := 0; v_a := 0; v_q := 0;
+      v_c := 0; v_s := 0; v_a := 0; v_q := 0; v_n2 := 0;
 
+      -- (giro 3, NB2) Chi è stato archiviato dopo la conferma, per QUALUNQUE esito (anche `nuova`), non rientra in classe. L'archiviazione della
+      -- segreteria ha già chiuso la sua frequenza nuova (`chiudiFrequenzeAperte`): qui si CONTANO (`n_archiviati_dopo`) e, se per qualche
+      -- altra via una frequenza viva fosse rimasta, la si chiude. `esce` e `non_risposto` non hanno una frequenza nuova viva da chiudere.
+      SELECT count(*) INTO v_a
+        FROM public.passaggi_anno_righe x
+        JOIN public.alunni al ON al.id = x.alunno_id
+       WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
       UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
-       WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado') AND f.id = x.frequenza_a_id
+       WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND f.id = x.frequenza_a_id
          AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
-      GET DIAGNOSTICS v_a = ROW_COUNT;
+
+      -- (giro 3, NS3) Lo storico delle classi parte dall'`inizio` (o dalla conferma, se più tarda) anche se il job gira in ritardo.
+      PERFORM set_config('kidville.storico_giorno', greatest(v_inizio, (v_p.confermato_il AT TIME ZONE 'Europe/Rome')::date)::text, true);
 
       FOR v_r IN SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id ORDER BY x.alunno_id LOOP
         SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_prima FROM public.alunni al WHERE al.id = v_r.alunno_id;
@@ -1428,6 +1678,26 @@ BEGIN
           v_c := v_c + 1;
         END IF;
       END LOOP;
+
+      -- (giro 3, NB3) I bambini iscritti NELLA FINESTRA (dalla segreteria, dopo la conferma) non hanno una riga del passaggio: sono «in arrivo»
+      -- con una frequenza viva nell'anno nuovo, che ora è visibile. Entrano anche loro.
+      FOR v_r IN
+        SELECT DISTINCT f.alunno_id FROM public.frequenze f
+          JOIN public.alunni al ON al.id = f.alunno_id
+         WHERE f.anno_sede_id = v_p.a_anno_sede_id AND f.stato IN ('in_attesa', 'iscritto') AND f.data_ingresso <= v_oggi
+           AND al.stato = 'in_arrivo' AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL
+           AND NOT EXISTS (SELECT 1 FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.alunno_id = f.alunno_id)
+         ORDER BY f.alunno_id
+      LOOP
+        SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_prima FROM public.alunni al WHERE al.id = v_r.alunno_id;
+        PERFORM public.alunni_riallinea_da_frequenze(v_r.alunno_id);
+        SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_dopo FROM public.alunni al WHERE al.id = v_r.alunno_id;
+        v_s := v_s + 1; v_n2 := v_n2 + 1;
+        IF v_prima IS DISTINCT FROM v_dopo THEN
+          v_c := v_c + 1;
+        END IF;
+      END LOOP;
+      PERFORM set_config('kidville.storico_giorno', '', true);
 
       FOR v_r IN
         SELECT f.id FROM public.passaggi_anno_righe x
@@ -1441,7 +1711,7 @@ BEGIN
 
       UPDATE public.passaggi_anno SET schede_copiate_il = now() WHERE id = v_p.id;
       PERFORM public.passaggio_log(v_p.scuola_id, 'schede-ricopiate', v_p.id,
-        jsonb_build_object('n_schede', v_s, 'n_cambiate', v_c, 'n_archiviati_dopo', v_a, 'n_quote_tardive', v_q));
+        jsonb_build_object('n_schede', v_s, 'n_cambiate', v_c, 'n_archiviati_dopo', v_a, 'n_quote_tardive', v_q, 'n_nuovi_della_finestra', v_n2));
       v_passaggi := v_passaggi + 1; v_schede := v_schede + v_s; v_cambiate := v_cambiate + v_c;
       v_archiviati := v_archiviati + v_a; v_quote := v_quote + v_q;
     EXCEPTION WHEN OTHERS THEN
@@ -1458,6 +1728,21 @@ BEGIN
       END;
     END;
   END LOOP;
+
+  -- (giro 3, NS2) Il battito del job si scrive SEMPRE, anche a vuoto: «nessun log» non distingue «niente da fare» da «non è partito». Stessa `operazione`
+  -- del log di fallimento. Solo numeri. `simulato` dice che il giorno non era quello vero. Un guasto di scrittura del battito non rompe il giro.
+  BEGIN
+    INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint, contesto)
+    VALUES ('info', 'cron', 'server', 'passaggio_ricopia_schede: giro completato', 'cron:passaggio-ricopia-schede',
+            jsonb_build_object('campi', jsonb_build_object(
+              'operazione', 'passaggio-ricopia-schede', 'esito', 'ok',
+              'passaggi', v_passaggi, 'schede', v_schede, 'cambiate', v_cambiate, 'archiviati', v_archiviati, 'quote', v_quote,
+              'simulato', p_oggi IS NOT NULL)))
+    ON CONFLICT (fingerprint, giorno) DO UPDATE
+      SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now(), contesto = excluded.contesto;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'passaggio_ricopia_schede: battito non scritto [%]', SQLSTATE;
+  END;
 
   RETURN jsonb_build_object('passaggi', v_passaggi, 'schede', v_schede, 'cambiate', v_cambiate, 'archiviati', v_archiviati, 'quote', v_quote);
 END
@@ -1504,5 +1789,8 @@ REVOKE ALL ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) FROM PUBLIC, a
 REVOKE ALL ON FUNCTION public.frequenze_specchio_alunni()         FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.alunni_specchio_frequenza()         FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.anno_invarianti()                   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_alunno_section_id()            FROM PUBLIC, anon, authenticated;  -- (giro 3) funzione di trigger: nessuno la chiama a mano
 GRANT EXECUTE ON FUNCTION public.alunni_riallinea_da_frequenze(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.anno_invarianti()                   TO service_role;
+REVOKE ALL ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_registra_frequenza(uuid, uuid, text, text, uuid, uuid, date, jsonb, uuid) TO service_role;

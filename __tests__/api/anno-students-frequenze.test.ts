@@ -37,6 +37,8 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   scriviFrequenza: h.scriviFrequenza,
   annoAttivoDiSede: h.annoAttivoDiSede,
+  // (giro 3) fuori dalla finestra l'anno visibile è l'attivo: la route dell'archiviazione ora chiede il visibile.
+  annoVisibileDiSede: (c: unknown, sede: string | null) => h.annoAttivoDiSede(c, sede),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/pagamenti/scadenze', async (orig) => ({

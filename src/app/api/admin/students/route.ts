@@ -21,8 +21,10 @@ import { rispostaGuastoDb } from '@/lib/db/guasto';
 import { codiceFiscaleDiAltroAlunno } from '@/lib/alunni/codice-fiscale-doppione';
 import { HEADER_TOTALE } from '@/lib/api/paginazione';
 import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
-import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
-import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte } from '@/lib/anno/scrittura';
+import { annoAttivoDiSede, campiFrequenzaDaAlunno, finestraDiSede } from '@/lib/anno/frequenze';
+import { normalizzaNomeSezione } from '@/lib/alunni/sezione';
+import { registraFrequenzaPerAnno } from '@/lib/anno/iscrizione-anno';
+import { conFaseB, scriviAlunnoEFrequenza, scriviFrequenzaDopoAlunni, segnalaRigheNonScritte, sezioneDelNome } from '@/lib/anno/scrittura';
 import { rispostaCodiceFiscaleGiaUsato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 import { risolviDataIngresso } from '@/lib/anno/data-ingresso';
 import { anniAttiviDeiPlessi, filtraPerAnnoDiSede } from '@/lib/anno/anni-attivi'
@@ -416,6 +418,23 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
         if (!ingresso.ok) return ingresso.response;
         const { dataIngresso, annoSedeId: annoSedeNuovo } = ingresso;
 
+        // (giro 3, NB3) LA FINESTRA fra la conferma del passaggio e l'inizio dell'anno nuovo: la classe scelta è del NUOVO anno (l'attivo, non
+        // ancora cominciato). Il bambino nasce «in arrivo» e senza classe sulla scheda, e la sua frequenza nasce subito nell'anno della classe
+        // (`anno_registra_frequenza`, con la data d'ingresso = inizio dell'anno): la scheda si porta in classe all'inizio con la ricopia.
+        // Una classe del vecchio anno (un centro estivo) resta come oggi: scheda iscritta, frequenza dell'anno visibile dallo specchio.
+        let sezioneNuovoAnno: string | null = null;
+        let annoNuovoAnno: string | null = null;
+        if (typeof body.classe_sezione === 'string' && body.classe_sezione.trim() !== '') {
+            const finestraPost = await finestraDiSede(supabase, sw.scuolaId);
+            if (finestraPost) {
+                const trovata = await sezioneDelNome(supabase, finestraPost.attivo, body.classe_sezione.trim());
+                if (trovata.ok && trovata.id) {
+                    sezioneNuovoAnno = trovata.id;
+                    annoNuovoAnno = finestraPost.attivo;
+                }
+            }
+        }
+
         const record: Record<string, unknown> = {
             scuola_id: sw.scuolaId,
             nome,
@@ -441,10 +460,10 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             invoice_holder_type: body.invoice_holder_type || null,
             invoice_holder_details: body.invoice_holder_details || null,
             // classe/sezione: il trigger DB sincronizza automaticamente section_id.
-            classe_sezione: body.classe_sezione || null,
+            classe_sezione: sezioneNuovoAnno ? null : (body.classe_sezione || null),
             data_iscrizione: body.data_iscrizione || null,
             giorno_scadenza_pagamenti: body.giorno_scadenza_pagamenti ?? null,
-            stato: STATO_ISCRITTO,
+            stato: sezioneNuovoAnno ? STATO_IN_ARRIVO : STATO_ISCRITTO,
         };
 
         let { data, error } = await supabase
@@ -495,7 +514,28 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
         // trigger d'INSERT, qui si completano i campi (fail-open: la scheda esiste già) e la data d'ingresso scelta.
         const campiFreqNuovo = campiFrequenzaDaAlunno(record);
         if (dataIngresso) campiFreqNuovo.data_ingresso = dataIngresso;
-        if (data?.id && Object.keys(campiFreqNuovo).length > 0) {
+        if (sezioneNuovoAnno && annoNuovoAnno && data?.id) {
+            const { data_ingresso: _ingresso, ...campiAnno } = campiFreqNuovo as Record<string, unknown>;
+            void _ingresso;
+            const reg = await registraFrequenzaPerAnno(supabase, {
+                alunnoId: data.id as string,
+                annoSedeId: annoNuovoAnno,
+                tipo: 'nuova',
+                origine: 'segreteria',
+                sectionId: sezioneNuovoAnno,
+                dataIngresso: dataIngresso ?? null,
+                campi: campiAnno,
+                da: auth.user.id,
+            });
+            if (!reg.ok) {
+                // La scheda è appena nata e non ha né genitori né storia: senza la sua frequenza sarebbe un bambino a metà. Si toglie e si dice.
+                const tolta = await supabase.from('alunni').delete().eq('id', data.id).eq('scuola_id', sw.scuolaId);
+                if (tolta.error) {
+                    logEvento('anagrafica', 'error', { operazione: 'admin/students:POST', azione: 'scheda-senza-frequenza-non-tolta', alunno: data.id }, tolta.error);
+                }
+                return rispostaFrequenzaNonScritta(reg.codice, 'admin/students:POST');
+            }
+        } else if (data?.id && Object.keys(campiFreqNuovo).length > 0) {
             const annoSedeId = annoSedeNuovo ?? await annoAttivoDiSede(supabase, (data.scuola_id as string | null) ?? (record.scuola_id as string));
             await scriviFrequenzaDopoAlunni(supabase, { alunnoId: data.id as string, annoSedeId, campi: campiFreqNuovo });
         }
@@ -1401,8 +1441,42 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 const sedeAlunno = sedeAttuale;
                 const nuovaSezione = typeof updates.section_id === 'string' && updates.section_id !== ''
                     ? updates.section_id : null;
-                const nuovaClasse = typeof updates.classe_sezione === 'string' && updates.classe_sezione.trim() !== ''
+                const classeInviata = typeof updates.classe_sezione === 'string' && updates.classe_sezione.trim() !== ''
                     ? updates.classe_sezione.trim() : null;
+
+                // (giro 3, NB1) LA FINESTRA fra la conferma del passaggio e l'inizio dell'anno nuovo: l'anno ATTIVO è già il nuovo
+                // (non ancora cominciato), ma le schede seguono ancora il VECCHIO. La scheda salva il form INTERO, classe compresa:
+                //  · i campi per anno (retta, giorno di scadenza, data d'iscrizione…) vanno nella frequenza dell'anno VISIBILE;
+                //  · la classe rimandata com'era non è un cambio: non si convalida e non si riscrive (prima era un 400 «la classe non
+                //    esiste» per chi passa alla primaria, e una frequenza nuova spostata di classe in silenzio per gli altri);
+                //  · una classe davvero CAMBIATA si risolve nell'anno a cui appartiene, e si scrive la sola frequenza di quell'anno:
+                //    la scheda si porta sulla classe nuova all'inizio, con la ricopia.
+                // Costo, e va detto: una retta cambiata in agosto vale per l'anno in corso e non per il nuovo (quella del nuovo si
+                // cambia dalla sua frequenza). Fuori dalla finestra l'anno attivo e il visibile coincidono: tutto com'era.
+                const sedeScrittura = sedeArrivo ?? sedeAttuale;
+                const finestraScrittura = await finestraDiSede(supabase, sedeScrittura);
+                const annoAttivoScrittura = finestraScrittura?.attivo ?? null;
+                const annoVisibileScrittura = finestraScrittura?.visibile ?? null;
+                const inFinestra = finestraScrittura !== null;
+                const classeInvariata = inFinestra && classeInviata !== null
+                    && normalizzaNomeSezione(classeInviata) === normalizzaNomeSezione(prima.classe_sezione);
+                let annoScrittura: string | null = annoVisibileScrittura;
+                let classeDelNuovoAnno = false;
+                let classeNelVisibile = false;
+                if (inFinestra && classeInviata !== null && !classeInvariata && sedeScrittura) {
+                    const nelNuovo = await sezioneDelNome(supabase, annoAttivoScrittura as string, classeInviata);
+                    if (nelNuovo.ok && nelNuovo.id) {
+                        classeDelNuovoAnno = true;
+                        annoScrittura = annoAttivoScrittura;
+                        delete updates.classe_sezione;
+                        delete updates.section_id;
+                    } else if (nelNuovo.ok) {
+                        // Non c'è nel nuovo anno: se c'è nel vecchio (il bambino cambia classe dentro l'anno che finisce) è valida lo stesso.
+                        const nelVecchio = await sezioneDelNome(supabase, annoVisibileScrittura as string, classeInviata);
+                        classeNelVisibile = nelVecchio.ok && Boolean(nelVecchio.id);
+                    }
+                }
+                const nuovaClasse = classeInvariata || classeDelNuovoAnno ? null : classeInviata;
                 if ((nuovaSezione || nuovaClasse) && !sedeAlunno) {
                     // Senza sede sulla riga non c'è nessun perimetro entro cui
                     // validare la destinazione: si nega, non si indovina.
@@ -1417,7 +1491,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     );
                     if (errSezione) return errSezione;
                 }
-                if (nuovaClasse && sedeAlunno) {
+                if (nuovaClasse && sedeAlunno && !classeNelVisibile) {
                     const errClasse = await classeEsisteInOgniSede(
                         supabase, nuovaClasse, [sedeAlunno], 'admin/students:PATCH',
                     );
@@ -1453,6 +1527,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // `data_ingresso` è il primo giorno dell'anno. L'anno è quello della sede d'arrivo, se c'è un trasferimento.
                 const ingresso = await risolviDataIngresso(supabase, {
                     scuolaId: sedeArrivo ?? sedeAttuale, dataIscrizione: updates.data_iscrizione, operazione: 'admin/students:PATCH',
+                    annoSedeId: annoScrittura,
                 });
                 if (!ingresso.ok) return ingresso.response;
                 // La scheda salva il form INTERO e rimanda sempre la data: si scrive in frequenza solo se è CAMBIATA rispetto a
@@ -1461,13 +1536,19 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // d'indirizzo. (Il 422 sopra la data oltre l'anno resta per ogni data inviata.)
                 const dataCambiata = String(updates.data_iscrizione ?? '').slice(0, 10) !== String(prima.data_iscrizione ?? '').slice(0, 10);
                 if (ingresso.dataIngresso && dataCambiata) campiFreq.data_ingresso = ingresso.dataIngresso;
-                const annoSedeId = Object.keys(campiFreq).length > 0 || nuovaClasse
-                    ? (ingresso.annoSedeId ?? await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale))
+                // (giro 3, NB1) L'anno è quello VISIBILE (o, per una classe cambiata verso il nuovo anno, quello della classe).
+                const annoSedeId = Object.keys(campiFreq).length > 0 || nuovaClasse || classeDelNuovoAnno
+                    ? (ingresso.annoSedeId ?? annoScrittura ?? await annoAttivoDiSede(supabase, sedeArrivo ?? sedeAttuale))
                     : null;
                 const esitoScrittura = await scriviAlunnoEFrequenza(
                     supabase,
-                    { alunnoId: id as string, annoSedeId, campi: campiFreq, classeSezione: nuovaClasse },
+                    // La classe del nuovo anno si risolve nell'anno della classe (`annoSedeId`) e va SOLO nella sua frequenza.
+                    { alunnoId: id as string, annoSedeId, campi: campiFreq, classeSezione: classeDelNuovoAnno ? classeInviata : nuovaClasse },
                     async () => {
+                        if (Object.keys(updates).length === 0) {
+                            // Solo la classe del nuovo anno è cambiata: la scheda non ha niente da scrivere (la classe nuova la porta la ricopia).
+                            return supabase.from('alunni').select().eq('id', id).in('scuola_id', plessi).single();
+                        }
                         let { data, error } = await supabase
                             .from('alunni')
                             .update(updates)

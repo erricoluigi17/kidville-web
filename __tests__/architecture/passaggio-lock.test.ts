@@ -80,6 +80,12 @@ function cronNominaPassaggio(sql: string): string[] {
     // (giro 2, R6) Unica eccezione: `passaggio_ricopia_schede` ricopia le schede il giorno dell'inizio di un passaggio GIÀ confermato dal
     // titolare; non calcola, non conferma e non annulla niente. Ogni altra `passaggio_*` da cron resta vietata.
     if (/\bpassaggio_(?!ricopia_schede\b)\w+/i.test(corpo)) out.push(corpo.slice(0, 80).replace(/\s+/g, ' '))
+    // (giro 3, NS6) L'eccezione vale solo se il comando del job è QUELLA chiamata e nient'altro: il taglio al primo `);` qui sopra
+    // lascerebbe passare un secondo statement nella stessa stringa (`SELECT …ricopia_schede(); SELECT …passaggio_conferma(…)`).
+    else if (/\bpassaggio_ricopia_schede\b/i.test(corpo)) {
+      const comando = /,\s*(\$[A-Za-z_]*\$)([\s\S]*?)\1\s*\)/.exec(pezzo)?.[2] ?? /,\s*'((?:[^']|'')*)'\s*\)/.exec(pezzo)?.[1] ?? ''
+      if (!/^\s*select\s+public\.passaggio_ricopia_schede\(\s*\)\s*;?\s*$/i.test(comando)) out.push(`comando non solo la ricopia: ${comando.slice(0, 60).replace(/\s+/g, ' ')}`)
+    }
   }
   return out
 }
@@ -164,6 +170,10 @@ describe('passaggio-non-da-cron', () => {
     expect(importatoreDellaPorta(finto)).toEqual(['src/app/api/x/route.ts'])
     expect(cronNominaPassaggio(`SELECT cron.schedule('x', '0 3 * * *', $$SELECT public.passaggio_conferma(a, b)$$);`)).toHaveLength(1)
     expect(cronNominaPassaggio(`SELECT cron.schedule('x', '0 3 * * *', $$SELECT public.altro()$$);`)).toEqual([])
+    // (giro 3, NS6) la ricopia da sola passa; la ricopia con un secondo statement nella stessa stringa NO.
+    expect(cronNominaPassaggio(`SELECT cron.schedule('x', '35 * * * *', $cron$ SELECT public.passaggio_ricopia_schede(); $cron$);`)).toEqual([])
+    expect(cronNominaPassaggio(`SELECT cron.schedule('x', '35 * * * *', $cron$ SELECT public.passaggio_ricopia_schede(); SELECT public.passaggio_conferma(a, b); $cron$);`)).toHaveLength(1)
+    expect(cronNominaPassaggio(`SELECT cron.schedule('x', '35 * * * *', 'SELECT public.passaggio_ricopia_schede(); DELETE FROM alunni');`)).toHaveLength(1)
   })
 })
 

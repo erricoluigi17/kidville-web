@@ -56,7 +56,7 @@ import path from 'node:path';
  *    sessione scaduta e una password sbagliata sono risposte corrette, e una riga per ognuna
  *    sarebbe la tabella di rumore in cui gli errori veri non si trovano più). Quindi: le chiamate
  *    Supabase del browser **non hanno tetto**, e i loro 4xx **non arrivano in tabella**. È un
- *    buco noto, non coperto qui, e i tre file che costruiscono un client di browser sono elencati
+ *    buco noto, non coperto qui, e i due file che costruiscono un client di browser sono elencati
  *    in `CLIENT_DI_BROWSER` perché almeno l'inventario resti vero.
  *  · **Che il client venga USATO bene.** Il lock vede da dove arriva, non se il chiamante
  *    controlla l'`{ error }` che riceve. Quello è mestiere della revisione e di
@@ -93,10 +93,6 @@ const MIDDLEWARE = 'src/middleware.ts';
  */
 const CLIENT_DI_BROWSER = new Map<string, string>([
     ['src/lib/supabase/browser-client.ts', 'il singleton `getSupabase()`: è il client che dovrebbero usare tutti.'],
-    ['src/components/features/admin/ImportExportClient.tsx',
-        'si costruisce un client proprio invece di usare `getSupabase()`. Non è coperto da questo lock, '
-        + 'ma è un secondo singleton di fatto: due client sulla stessa pagina significano due sessioni '
-        + 'da tenere allineate.'],
     ['src/lib/offline/syncEngine.ts',
         'idem, nel motore di sincronizzazione offline. Qui la duplicazione ha una ragione in più — gira '
         + 'fuori dal ciclo di React, su risveglio della rete — ma resta un client non strumentato.'],
@@ -107,10 +103,6 @@ const CLIENT_DI_BROWSER = new Map<string, string>([
  * grezzo. Non costruisce un client, ma parla lo stesso col nostro database.
  */
 const FETCH_VERSO_SUPABASE = new Map<string, string>([
-    ['src/components/features/admin/ImportExportClient.tsx',
-        'FALSO POSITIVO dichiarato: nomina `NEXT_PUBLIC_SUPABASE_URL` per costruire il proprio client '
-        + 'di browser, e il suo unico `fetch` va a `/api/admin/import/anagrafiche`, cioè a una NOSTRA '
-        + 'route — che è avvolta in `withRoute` e parla col database dal server, strumentata.'],
     ['src/lib/offline/syncEngine.ts',
         'FALSO POSITIVO dichiarato, stessa forma: i suoi cinque `fetch` vanno tutti a `/api/**` nostre. '
         + 'Nessuno di essi esce verso l\'host Supabase.'],

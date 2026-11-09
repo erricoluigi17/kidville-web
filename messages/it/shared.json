@@ -840,6 +840,7 @@
   "erroreScritturaIncompleta": "La modifica è stata salvata solo in parte: la frequenza dell’anno è aggiornata, la scheda no. Riprova: se il guasto era passeggero, il nuovo tentativo completa il lavoro.",
   "erroreCodiceFiscaleGiaUsato": "Questo codice fiscale è già registrato su un’altra scheda: controlla che sia scritto bene (potrebbe essere un doppione da sistemare) e salva di nuovo. Non è stato modificato niente.",
   "erroreAlunnoAnonimizzato": "Questa scheda è stata anonimizzata e non si può archiviare o modificare: nessuna modifica è stata registrata.",
+  "erroreAnagraficaExportNonLetta": "Non è stato possibile leggere l’anagrafica per intero: il file non è stato generato. Riprova fra qualche minuto.",
   "erroreFiglioNonAttivo": "Questo bambino non risulta iscritto nell’anno in corso. Per informazioni contatta la segreteria.",
   "erroreChatSolaLettura": "Questa conversazione è in sola lettura: si può rileggere, ma non si possono inviare messaggi.",
   "erroreDataFuoriAnno": "Questo giorno è fuori dall’anno scolastico in corso: non si può prenotare né disdire."

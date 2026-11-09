@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Upload, Download, Loader2, CheckCircle, FileSpreadsheet, FileDown, AlertTriangle } from 'lucide-react';
-import { createBrowserClient } from '@supabase/ssr';
 import { buildTemplateCsv } from '@/lib/import/template';
 import { SedeRequired } from '@/lib/context/sede-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -26,20 +25,28 @@ export function ImportExportClient() {
     const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
     const [importError, setImportError] = useState<string | null>(null);
 
-    const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
     const handleExport = async () => {
         setIsExporting(true);
         try {
-            const { data, error } = await supabase.from('alunni').select('*');
-            if (error) throw error;
+            // Dalla route, non dal browser: con la RLS di `alunni` uno staff leggeva zero righe senza
+            // errore, e scaricava un file vuoto come se fosse riuscito. Sede e colonne le decide il server.
+            const res = await fetch('/api/admin/students/export');
+            if (!res.ok) {
+                // Il motivo l'ha già scritto la route. Qui basta lo stato, e il corpo non si tocca.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `anagrafica-esportazione-rifiutata: ${res.status}`, route: '/admin/tools' });
+                alert(t('ieErroreEsportazione'));
+                return;
+            }
+            const { righe } = (await res.json()) as { righe: Record<string, unknown>[] };
+            // Nessun bambino nelle sedi scelte: si dice, invece di consegnare un foglio bianco.
+            if (righe.length === 0) {
+                alert(t('ieNessunAlunnoDaEsportare'));
+                return;
+            }
 
             // xlsx caricato on-demand solo quando serve.
             const XLSX = await import('xlsx');
-            const worksheet = XLSX.utils.json_to_sheet(data);
+            const worksheet = XLSX.utils.json_to_sheet(righe);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Alunni');
             // NON `XLSX.writeFile`: sul web crea un'ancora `download` su un `blob:`, che nella
@@ -55,8 +62,8 @@ export function ImportExportClient() {
             });
             if (!fileConsegnato(esito)) alert(t('ieErroreEsportazione'));
         } catch (error) {
-            // `error` qui è l'errore PostgREST di `select * from alunni`: il suo `.message`
-            // riecheggia colonne e filtri dell'anagrafica dei bambini. Esce solo la classe.
+            // Rete caduta o foglio non costruito: il `.message` può riecheggiare i dati che si
+            // stavano trattando, cioè l'anagrafica dei bambini. Esce solo la classe.
             logClient({ livello: 'error', evento: 'fetch', messaggio: `anagrafica-esportazione-fallita: ${nomeErrore(error)}`, route: '/admin/tools' });
             alert(t('ieErroreEsportazione'));
         } finally {

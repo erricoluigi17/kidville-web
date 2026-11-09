@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   nativo: false,
   write: vi.fn(),
   writeFile: vi.fn(),
+  logClient: vi.fn(),
+  jsonToSheet: vi.fn(() => ({})),
 }))
 
 vi.mock('@/lib/native/scarica', async (importOriginal) => ({
@@ -35,15 +37,17 @@ vi.mock('@/lib/push/native-register', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/push/native-register')>()),
   isNativeApp: () => h.nativo,
 }))
-vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
+vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: () => 'Error' }))
+// Nessun client di browser: se il componente tornasse a costruirne uno, il test esplode invece di
+// passare su un finto che risponde sempre.
 vi.mock('@supabase/ssr', () => ({
-  createBrowserClient: () => ({
-    from: () => ({ select: async () => ({ data: [{ id: 'x', nome: 'Prova' }], error: null }) }),
-  }),
+  createBrowserClient: () => {
+    throw new Error('ImportExportClient non deve più leggere dal browser')
+  },
 }))
 vi.mock('xlsx', () => ({
   utils: {
-    json_to_sheet: () => ({}),
+    json_to_sheet: h.jsonToSheet,
     book_new: () => ({}),
     book_append_sheet: () => undefined,
   },
@@ -151,6 +155,53 @@ describe('EsportaAdesioni — il CSV del server passa all’helper come Blob', (
 })
 
 describe('ImportExportClient — l’XLSX degli alunni e il prestampato CSV', () => {
+  const RIGHE = [{ sede: 'Sede di prova', cognome: 'Provati', nome: 'Alfa' }]
+  const risponde = (corpo: unknown, stato = 200) =>
+    vi.fn(() => Promise.resolve({ ok: stato < 400, status: stato, json: async () => corpo }))
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', risponde({ righe: RIGHE }))
+  })
+
+  it('l’export legge dalla route, e nel foglio vanno le sue righe', async () => {
+    render(<ImportExportClient />)
+    fireEvent.click(screen.getByRole('button', { name: itSettings.ieGeneraEsportazione }))
+
+    await waitFor(() => expect(h.scarica).toHaveBeenCalledTimes(1))
+    expect(fetch).toHaveBeenCalledWith('/api/admin/students/export')
+    expect(h.jsonToSheet).toHaveBeenCalledWith(RIGHE)
+  })
+
+  it('una route che dice no non produce un file: si dice, e nel log va solo lo stato', async () => {
+    vi.stubGlobal('fetch', risponde({ error: 'no', righe: RIGHE }, 500))
+    render(<ImportExportClient />)
+    fireEvent.click(screen.getByRole('button', { name: itSettings.ieGeneraEsportazione }))
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(itSettings.ieErroreEsportazione))
+    expect(h.scarica).not.toHaveBeenCalled()
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ messaggio: 'anagrafica-esportazione-rifiutata: 500' }))
+  })
+
+  it('zero alunni non è un file vuoto che sembra riuscito: è il difetto da cui viene questa route', async () => {
+    vi.stubGlobal('fetch', risponde({ righe: [] }))
+    render(<ImportExportClient />)
+    fireEvent.click(screen.getByRole('button', { name: itSettings.ieGeneraEsportazione }))
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(itSettings.ieNessunAlunnoDaEsportare))
+    expect(h.scarica).not.toHaveBeenCalled()
+    expect(h.jsonToSheet).not.toHaveBeenCalled()
+  })
+
+  it('una rete caduta si dice, e nel log va solo la classe dell’errore', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('dato-che-non-deve-uscire'))))
+    render(<ImportExportClient />)
+    fireEvent.click(screen.getByRole('button', { name: itSettings.ieGeneraEsportazione }))
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(itSettings.ieErroreEsportazione))
+    expect(h.scarica).not.toHaveBeenCalled()
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('dato-che-non-deve-uscire')
+  })
+
   it('l’export NON usa `XLSX.writeFile`: il Blob di `XLSX.write` va all’helper', async () => {
     render(<ImportExportClient />)
     fireEvent.click(screen.getByRole('button', { name: itSettings.ieGeneraEsportazione }))

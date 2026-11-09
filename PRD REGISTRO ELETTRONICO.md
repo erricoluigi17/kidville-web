@@ -76,6 +76,7 @@
 - La salute dell'anno legge il battito notturno invece di rifare le invarianti. Se sbagliato: un'invariante rotta suona con un giorno di ritardo, resta il log `error` notturno.
 
 **Che cosa resta aperto.**
+- **Difetti secondari**, con il motivo per cui non fermano la PR e la PR dove vanno: `docs/superpowers/plans/2026-11-09-pr4-5-difetti-secondari.md`.
 - **PR-B di questa PR**: rigenerare le fotografie dalla produzione (+5 migrazioni, funzioni che scrivono nel registro, FK e indici se cambiano), spostare `anni-tick` e `anno-invarianti` da `JOB_CRON_NON_SORVEGLIATI` a `JOB_CRON` (`finestraMs` 3 × `ORA` e 26 × `ORA`) e togliere la voce di `MIGRAZIONI_ATTESE_AL_MERGE`.
 - **Consegna a PR 5 o prima del 01/09/2027**: la catena di prova `creaDbAnnoPr2` usa `giorno_roma(now())`; da quel giorno creerebbe anche il 2028/29 in tutti i banchi di prova.
 - **Per la PR 4.9**: `anni_tick` riscrive con `CREATE OR REPLACE` per il passo 2; il lock `anni-tick-non-fa-il-passaggio` allora diventa rosso, ed è voluto.

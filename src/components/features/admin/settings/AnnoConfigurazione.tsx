@@ -33,7 +33,6 @@ type EsitoUi = { area: string; tipo: 'ok'; testo: string } | { area: string; tip
 type Risposta = { stato: number; corpo: unknown };
 
 type RigaQuota = { voce: VoceQuota; fascia: string | null; importo: number | null; scadenza: string | null };
-type RigaListino = { voce: string; fascia: string | null; importo: number | null };
 type RigaModulo = { lista: Lista; codice: string; titolo: string; ordine: number };
 type RigaPosti = { fascia: string; posti: number; fonte: string | null };
 type RigaClasse = { id: string; name: string; school_type: string; fascia: string | null };
@@ -126,7 +125,7 @@ function useLettura<T>(url: string, userId: string, versione: number, estrai: (d
 }
 
 const estraiQuote = (d: Record<string, unknown>) =>
-  Array.isArray(d.quote) && Array.isArray(d.listino) ? { quote: d.quote as RigaQuota[], listino: d.listino as RigaListino[] } : null;
+  Array.isArray(d.quote) ? { quote: d.quote as RigaQuota[] } : null;
 const estraiModuli = (d: Record<string, unknown>) => (Array.isArray(d.moduli) ? (d.moduli as RigaModulo[]) : null);
 const estraiPosti = (d: Record<string, unknown>) => (Array.isArray(d.posti) ? (d.posti as RigaPosti[]) : null);
 const estraiClassi = (d: Record<string, unknown>) => (Array.isArray(d.sezioni) ? (d.sezioni as RigaClasse[]) : null);
@@ -285,28 +284,11 @@ function SchedaQuote(c: Comuni) {
   const t = useTranslations('annoListino');
   const lettura = useLettura(`${c.base}/quote`, c.userId, c.versione, estraiQuote);
   if (lettura.fase !== 'ok') return <StatoLettura lettura={lettura} testoErrore={(e) => (e.tipo === 'rete' ? t('erroreRete') : e.tipo === 'permesso' ? t('errorePermesso') : messaggioDaCorpo(e.tipo === 'risposta' ? e.corpo : null, t('erroreLettura')))} />;
-  const { quote, listino } = lettura.dati;
+  const { quote } = lettura.dati;
   return (
     <div>
       <BloccoQuota c={c} voce="quota_conferma" titolo={t('quotaConfermaTitolo')} nota={t('quotaConfermaNota')} righe={quote.filter((q) => q.voce === 'quota_conferma')} />
       <BloccoQuota c={c} voce="quota_nuova" titolo={t('quotaNuovaTitolo')} nota={t('quotaNuovaNota')} righe={quote.filter((q) => q.voce === 'quota_nuova')} />
-      <div className="mt-5 border-t border-kidville-line pt-4">
-        <h5 className={sottoTitolo}>{t('listinoTitolo')}</h5>
-        <p className={hint}>{t('listinoNota')}</p>
-        {listino.length === 0 ? (
-          <p className="mt-2 font-maven text-sm text-kidville-sub">{t('listinoVuoto')}</p>
-        ) : (
-          <ul className="mt-2">
-            {listino.map((r, i) => (
-              <li key={`${r.voce}-${r.fascia ?? ''}-${i}`} className={rigaClasse}>
-                <strong>{r.voce === 'retta' ? t('listinoRetta') : t('listinoServizio')}</strong>
-                <span>{c.fasciaNome(r.fascia)}</span>
-                <span>{r.importo === null ? '' : formatEuro(r.importo)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </div>
   );
 }

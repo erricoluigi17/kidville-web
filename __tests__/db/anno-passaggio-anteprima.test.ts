@@ -358,10 +358,12 @@ describe('docenti del passaggio', () => {
       await imposta(r.passaggio_id, DOCENTE_2, b.sezioni.girasoliNuova, 'aggiunta')
       await b.db.query(`DELETE FROM public.utenti_sezioni WHERE utente_id = $1 AND section_id = $2`, [DOCENTE_1, b.sezioni.girasoli])
       const due = await anteprima()
-      expect(await docenti(due.passaggio_id)).toEqual([
+      // L'ordine delle due righe segue gli uuid delle sezioni, che nascono a caso: l'atteso si ordina allo stesso modo (il test era instabile a pieno carico).
+      const atteso = [
         { utente_id: DOCENTE_2, sezione_a_id: b.sezioni.farfalleNuova, origine: 'copiata' },
         { utente_id: DOCENTE_2, sezione_a_id: b.sezioni.girasoliNuova, origine: 'aggiunta' },
-      ])
+      ].sort((x, y) => (x.sezione_a_id < y.sezione_a_id ? -1 : 1))
+      expect(await docenti(due.passaggio_id)).toEqual(atteso)
     })
   })
 

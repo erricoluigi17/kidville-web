@@ -523,6 +523,9 @@ export async function eseguiDomanda(
   assegnazioni: AssegnazioneBambino[],
   scuolaId: string,
   cacheAnno: Map<string, string | null> = new Map(),
+  /** Chi ha chiesto l'esecuzione, se è una persona (`utenti.id`): finisce in `pagamenti.creato_da` della voce di quota. Il giro
+   *  automatico (cron) non ha nessuno da nominare e lo omette: la voce nasce senza autore, come prima (4.5.15, M2). */
+  attoreId?: string | null,
 ): Promise<EsitoEsecuzione> {
   const bambiniGrezzi = Array.isArray(dati.children) ? dati.children : []
   const adultiGrezzi = Array.isArray(dati.adults) ? dati.adults : []
@@ -694,6 +697,7 @@ export async function eseguiDomanda(
         origine: 'domanda',
         domandaId: domanda.id,
         sectionId: sezioniProssimo.get(normalizzaNomeSezione(ass.classe)) ?? null,
+        ...(attoreId ? { da: attoreId } : {}),
         campi: campiFrequenzaDellaDomanda({ importo_retta_mensile: ass.retta }, fratelloPaganteDi.get(mio) ?? null),
       })
       if (!esitoFreq.ok) return fallisci(`frequenza dell'anno prossimo non registrata (${esitoFreq.codice})`)

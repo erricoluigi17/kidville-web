@@ -203,6 +203,7 @@ describe('domanda per l’anno PROSSIMO — bambino NUOVO', () => {
       p_domanda: DOMANDA,
       p_section: SEZ_2027, // la «3 ANNI» del 2027/28, non quella di oggi
       p_data_ingresso: null, // la data la decide la funzione
+      p_da: 'seg-1', // chi ha approvato: finisce in `pagamenti.creato_da` della voce di quota (4.5.15, M2)
       p_campi: {
         retta_mensile: 300,
         giorno_scadenza_pagamenti: 5,

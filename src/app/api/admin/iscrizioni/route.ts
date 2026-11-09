@@ -2286,6 +2286,8 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           origine: 'domanda',
           domandaId: id,
           sectionId: sezioneId,
+          // Chi approva: la voce di quota che nasce porta il suo nome in `pagamenti.creato_da` (4.5.15, M2).
+          da: auth.user.id,
           campi: campiFrequenzaDellaDomanda(campiEconomici(ci), aCarico !== undefined ? (alunnoIdPerIndice[aCarico] ?? null) : null),
         })
         if (!esito.ok) {

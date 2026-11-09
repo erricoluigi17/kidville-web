@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useTranslations } from 'next-intl';
 import { ClipboardCheck } from 'lucide-react';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
@@ -11,7 +12,10 @@ export default function ConfermePage() {
   return (
     <CockpitPage max={1152}>
       <PageHeader icon={ClipboardCheck} eyebrow={t('eyebrow')} title={t('titolo')} subtitle={t('sottotitolo')} />
-      <ConfermeClient />
+      {/* `ConfermeClient` legge `useSearchParams`: senza questo confine la build non può preparare la pagina in statico. */}
+      <Suspense fallback={null}>
+        <ConfermeClient />
+      </Suspense>
     </CockpitPage>
   );
 }

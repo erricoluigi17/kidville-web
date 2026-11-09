@@ -97,4 +97,24 @@ describe('lock architettura · `useSearchParams()` dentro un confine di sospensi
         'avvolge in `<Suspense fallback={null}>`, come fanno tutte le altre.',
     ).toEqual([])
   })
+
+  /**
+   * Lo stesso vale quando la query la legge un componente FIGLIO nella stessa cartella (`import { X } from './X'`): è il caso di
+   * `admin/students/conferme` (revisione finale della PR 4.7, secondario 3), dove la pagina non nomina `useSearchParams` e il lock
+   * di sopra non la vedeva.
+   */
+  it('nessuna pagina statica monta, senza `<Suspense>`, un componente della sua cartella che legge la query', () => {
+    const figliCheLeggonoLaQuery = (percorso: string): string[] => {
+      const sorgente = senzaCommenti(fs.readFileSync(percorso, 'utf8'))
+      const cartella = path.dirname(percorso)
+      return [...sorgente.matchAll(/from\s+'\.\/([A-Za-z0-9_-]+)'/g)]
+        .map((m) => path.join(cartella, `${m[1]}.tsx`))
+        .filter((f) => fs.existsSync(f) && senzaCommenti(fs.readFileSync(f, 'utf8')).includes('useSearchParams'))
+    }
+    const monta = tutte.filter((p) => !haSegmentoDinamico(p) && figliCheLeggonoLaQuery(p).length > 0)
+    // Il lock deve vedere almeno la pagina delle conferme, altrimenti è verde su niente.
+    expect(monta.some((p) => p.includes('admin/students/conferme'))).toBe(true)
+    const scoperte = monta.filter((p) => !haConfineDiSospensione(fs.readFileSync(p, 'utf8')))
+    expect(scoperte, 'la pagina monta un componente che legge `useSearchParams()`: serve `<Suspense fallback={null}>` sopra').toEqual([])
+  })
 })

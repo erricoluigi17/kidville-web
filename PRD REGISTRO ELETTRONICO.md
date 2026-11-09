@@ -1,14 +1,40 @@
-## 🗓️ Changelog — Anno scolastico, PR 4.6: le rette e i servizi dal listino — 2026-11-09 (ramo `worktree-agent-aeef99a24913dc91e`)
+## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (ramo `worktree-agent-a329c2f7fe5093f06`)
 
-**Stato:** 🟡 in revisione, fino al merge. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109153822_anno_rette_dal_listino.sql` (M46a) e `20261109153825_anno_listino_rette_scrittura.sql` (M46b). Solo funzioni: nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno. Provate in PGlite (Postgres 18; la produzione è la 17), nessun controllo visivo e nessuna prova da telefono. Le rette già generate non si toccano: nessuna migrazione scrive su `pagamenti`.
+**Stato:** 🟡 in revisione, fino al merge. **Ha una migrazione**, che applica l'integrazione di Supabase al merge con la version del proprio file: `20261109165244_anno_cruscotto.sql` (M47). Solo due funzioni di LETTURA nuove (`anno_cruscotto`, `anno_quota_piu_voci`): nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno, nessuna riga scritta in produzione. Provata in PGlite (Postgres 18; la produzione è la 17) su route vere; nessun controllo visivo nel browser e nessuna prova da telefono.
 
 | Area | Stato | Che cosa è |
 |---|---|---|
-| Retta di ogni bambino dal listino dell'anno | 🟡 in revisione | La retta è quella del bambino, altrimenti quella del listino per la sua fascia, altrimenti quella del listino senza fascia. Il `150` scritto dentro la funzione non c'è più (M46a); un lock vieta di rimetterlo |
-| Generazione per un anno qualunque | 🟡 in revisione | Pagamenti › Genera rette sceglie l'anno; l'anteprima e la conferma contano le frequenze dell'anno, da un predicato solo (`rette_da_generare`); i mesi vengono dal listino (`listino_mesi`, vuoto = settembre-giugno) |
-| Scheda «Rette» nelle impostazioni di sede | 🟡 in revisione | Si scrive la retta di base dell'anno e, se serve, i mesi (M46b, `PUT /api/admin/anni/{id}/rette`); sugli anni in corso, in chiusura e chiusi la scheda mostra solo le rette (le altre schede riguardano le iscrizioni dell'anno prossimo); si scrive negli anni in preparazione, con iscrizioni aperte e in corso, mentre in chiusura e chiuso è in sola lettura |
-| Impostazioni › Retta e morosità | 🟡 in revisione | La casella della retta predefinita non c'è più; accanto al rimando si legge la retta di base dell'anno in corso, dal listino. `admin_settings.retta_default_importo` resta come specchio, scritto solo per l'anno corrente |
-| Servizi mensili per anno | 🟡 in revisione | `servizi_da_generare` e `genera_servizi_anno` leggono la frequenza viva dell'anno e i mesi del listino |
+| Pagina «Anno prossimo, a che punto siamo» | 🟡 in revisione | `/admin/students/anno-prossimo`, nel menu della segreteria: posti per fascia e per classe, risposte alle conferme, quote, moduli e quota incrociati, confronto con l'anno prima. Compare solo per un anno con le iscrizioni aperte; con più sedi attive chiede la sede |
+| Numeri con elenco | 🟡 in revisione | Ogni numero con un collegamento apre l'elenco di chi lo compone nella pagina Conferme («tutte le iscrizioni dell'anno», o per un solo modulo); il totale dell'elenco è uguale al numero (prova su route vere) |
+| Chi non ha firmato in app | 🟡 in revisione | Per ogni modulo con firma in app, l'elenco a pagine da 50 di chi non ha firmato; ogni nome mostrato passa dal registro degli accessi al fascicolo |
+| Conferme: «più voci» e quota di chi si ritira | 🟡 in revisione | La riga dice «Più voci» quando l'iscrizione ha più di una voce e non genera la quota; la quota di chi si ritira con una voce resta leggibile |
+| «Da incassare» | 🟡 in revisione | Tiene conto dello sconto, come l'elenco delle voci |
+
+**Che cosa cambia per le persone.**
+
+| Chi | Che cosa vede |
+|---|---|
+| Segreteria, coordinatori, amministratore | La pagina nuova nel menu, con i numeri dell'anno prossimo e i collegamenti agli elenchi; nelle Conferme un perimetro «tutte le iscrizioni dell'anno» che si toglie con un pulsante, il filtro per modulo e la classe etichettata per l'anno giusto |
+| Docenti | Niente |
+| Genitori | Niente |
+
+**Route.** `GET /api/admin/anni/[annoSedeId]/cruscotto` (nuova), `GET /api/admin/anni/[annoSedeId]/senza-firma-app` (nuova), `GET …/conferme` con `ambito=anno` e `modulo=<uuid>` (422 `MODULO_NON_RICHIESTO` se il modulo non è dell'anno di quella sede), `GET …/moduli-mancanti` (che porta anche l'uuid del modulo). Tutte con `requireStaff` e `assertAnnoSedeInScope`.
+
+**Sul DB della CI non migrato** (senza M47) le due letture rispondono 503 «Non disponibile», senza rompere le altre pagine.
+
+**Da fare dopo il merge (PR-B).** Rigenerare dalla produzione la fotografia delle migrazioni (+1) e riportare questo blocco a ✅ con il numero della PR. Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-7-difetti-secondari.md`.
+
+## 🗓️ Changelog — Anno scolastico, PR 4.6: le rette e i servizi dal listino — 2026-11-09 (#305, `611d6f19`, in produzione il 09/11/2026)
+
+**Stato:** ✅ in `main` con la #305 (squash `611d6f19`), 09/11/2026. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261109153822_anno_rette_dal_listino.sql` (M46a) e `20261109153825_anno_listino_rette_scrittura.sql` (M46b). Solo funzioni: nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno. Provate in PGlite (Postgres 18; la produzione è la 17), nessun controllo visivo e nessuna prova da telefono. Le rette già generate non si toccano: nessuna migrazione scrive su `pagamenti`.
+
+| Area | Stato | Che cosa è |
+|---|---|---|
+| Retta di ogni bambino dal listino dell'anno | ✅ in produzione | La retta è quella del bambino, altrimenti quella del listino per la sua fascia, altrimenti quella del listino senza fascia. Il `150` scritto dentro la funzione non c'è più (M46a); un lock vieta di rimetterlo |
+| Generazione per un anno qualunque | ✅ in produzione | Pagamenti › Genera rette sceglie l'anno; l'anteprima e la conferma contano le frequenze dell'anno, da un predicato solo (`rette_da_generare`); i mesi vengono dal listino (`listino_mesi`, vuoto = settembre-giugno) |
+| Scheda «Rette» nelle impostazioni di sede | ✅ in produzione | Si scrive la retta di base dell'anno e, se serve, i mesi (M46b, `PUT /api/admin/anni/{id}/rette`); sugli anni in corso, in chiusura e chiusi la scheda mostra solo le rette (le altre schede riguardano le iscrizioni dell'anno prossimo); si scrive negli anni in preparazione, con iscrizioni aperte e in corso, mentre in chiusura e chiuso è in sola lettura |
+| Impostazioni › Retta e morosità | ✅ in produzione | La casella della retta predefinita non c'è più; accanto al rimando si legge la retta di base dell'anno in corso, dal listino. `admin_settings.retta_default_importo` resta come specchio, scritto solo per l'anno corrente |
+| Servizi mensili per anno | ✅ in produzione | `servizi_da_generare` e `genera_servizi_anno` leggono la frequenza viva dell'anno e i mesi del listino |
 
 **Che cosa cambia per le persone.**
 

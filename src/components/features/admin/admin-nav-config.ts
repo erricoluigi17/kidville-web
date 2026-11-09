@@ -32,6 +32,7 @@ import {
   FolderOpen,
   Vote,
   CalendarCheck,
+  Gauge,
 } from 'lucide-react';
 
 /**
@@ -195,6 +196,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // ancora risposto. Prima la pagina non si raggiungeva da nessun menu. `roles` = i tre di `requireStaff` sulle route
       // `/api/admin/anni/[annoSedeId]/conferme`: la `cuoca` vedrebbe una voce che risponde 403. Il gate vero è nelle API.
       { href: '/admin/students/conferme', label: 'Conferme anno prossimo', labelKey: 'nav_conferme_anno', icon: CalendarCheck, roles: ['admin', 'coordinator', 'segreteria'] },
+      // Il cruscotto dell'anno prossimo (`/admin/students/anno-prossimo`, PR 4.7): iscritti, risposte, quote e moduli per sede. Stessi tre ruoli
+      // delle route `/api/admin/anni/[annoSedeId]/cruscotto`.
+      { href: '/admin/students/anno-prossimo', label: 'Anno prossimo, a che punto siamo', labelKey: 'nav_cruscotto_anno', icon: Gauge, roles: ['admin', 'coordinator', 'segreteria'] },
     ],
   },
   {

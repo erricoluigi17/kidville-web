@@ -2,9 +2,9 @@
   "titolo": "Confirmations for next year",
   "sottotitolo": "Who has confirmed, who has said no and who has not answered yet. A confirmation changes nothing about the current year.",
   "eyebrow": "Enrolment",
-  "nessunAnno": "Pick the year with open enrolment from the selector above to see the confirmations.",
+  "nessunAnno": "Pick the year with open enrolment using the year selector to see the confirmations.",
   "annoNonAperto": "Enrolment for this year is not open: confirmations are collected once it is.",
-  "annoAttivo": "This is the current year. Pick the year with open enrolment from the selector above.",
+  "annoAttivo": "This is the current year. Pick the year with open enrolment using the year selector.",
   "caricamento": "Loading confirmations…",
   "riprova": "Try again",
   "erroreRete": "I cannot connect. Check the connection and try again.",
@@ -105,5 +105,14 @@
   "esitoRitirataQuotaTolta": "The fee was removed.",
   "esitoRitirataQuotaPagata": "The fee has already been paid: refunds or reversals are handled in accounting.",
   "esitoRitirataQuotaErrore": "The confirmation is withdrawn, but the fee could not be removed: check it in accounting.",
-  "apriScheda": "Open the record of {nome}"
+  "apriScheda": "Open the record of {nome}",
+  "filtroModuliSenzaQuota": "Forms handed in, fee to pay",
+  "filtroQuotaSenzaModuli": "Fee paid, forms missing",
+  "ambitoAnnoNota": "You are looking at every enrolment of the year, confirmations and new ones together: these are the children the dashboard numbers count.",
+  "ambitoAnnoModuloNota": "You are looking at the enrolments of the year that are missing this form: {titolo}. Confirmations and new ones together.",
+  "ambitoAnnoEsci": "Show new enrolments only",
+  "sedeCosa": "next-year confirmations",
+  "ambitoAnnoModuloNotaSenzaTitolo": "You are looking at the enrolments of the year that are missing this form. Confirmations and new ones together.",
+  "ambitoAnnoTogliModulo": "Remove the form filter",
+  "classeAnnoNuovo": "Class next year: {classe}"
 }

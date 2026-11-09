@@ -296,6 +296,8 @@ const COPERTE_ATTESE: Record<string, number> = {
   // d'iscrizione chiede se un documento del fascicolo, vivo o nel cestino, nomina ancora un
   // allegato prima di toglierlo dal bucket. Un letterale solo, chiamato per due colonne.
   'src/lib/iscrizioni/percorsi-citati.ts': 1,
+  // 4.7.2: «chi non ha firmato in app» legge i soli metadati (student_id, document_type, created_at) dei documenti VIVI, a gruppi di bambini.
+  'src/lib/anno/senza-firma-app.ts': 1,
 }
 
 /**
@@ -314,8 +316,9 @@ const COPERTE_ATTESE: Record<string, number> = {
  * quella riga portava vive ora nell'SQL di M3 e nel ripiego, entrambi provati da test.
  * 2026-11 · 29 (PR 4.4, 4.4.9): la lettura dichiarata di `parent/prestampati/da-rifirmare`. Alzata, non abbassata.
  * 2026-11 · 30 (PR 4.5, 4.5.10): la lettura dichiarata di `admin/frequenze/[frequenzaId]/moduli`. Alzata, non abbassata.
+ * 2026-11 · 31 (PR 4.7, 4.7.2): la lettura dichiarata di `src/lib/anno/senza-firma-app.ts`. Alzata, non abbassata.
  */
-const SOGLIA_VISTE = 30
+const SOGLIA_VISTE = 31
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Le funzioni edge (Deno): il filtro del cestino scritto a mano

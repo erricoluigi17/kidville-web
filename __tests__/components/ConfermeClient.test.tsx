@@ -24,12 +24,17 @@ const h = vi.hoisted(() => ({
   gruppi: [] as unknown[],
   anno: { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } } as unknown,
 }))
+// 4.7.4: la pagina legge `?vista=` e `?conferma=` all'apertura (il cruscotto rimanda qui). Di solito la query è vuota.
+const q = vi.hoisted(() => ({ query: '' }))
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(q.query) }))
 vi.mock('@/lib/context/anno-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/context/anno-context')>()),
   useAnnoOpzionale: () => h.anno,
 }))
 vi.mock('@/lib/context/sede-context', () => ({
-  useSediAttive: () => ({ sedeCorrente: h.sede }),
+  useSediAttive: () => ({ sedeCorrente: h.sede, loading: false }),
+  // Il vero `SedeNotice` legge il contesto delle sedi (provato altrove): qui basta vedere che compare e con quale frase.
+  SedeNotice: ({ cosa }: { cosa?: string }) => <div data-testid="sede-notice">{cosa}</div>,
 }))
 vi.mock('@/lib/context/admin-identity', () => ({
   useAdminIdentity: () => ({ userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' }),
@@ -65,6 +70,7 @@ const s = {
   ritiroRifiutato: false, // 4.5.16 (B): la route risponde 409 FREQUENZA_NON_DI_CONFERMA (bambino che non frequenta ancora)
   extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
+  piuVoci: false, // 4.7.4: `quota_piu_voci` che il server legge per la riga di conferma
   quotaArrivo: 'assente' as 'assente' | 'da_pagare', // la quota del bambino in arrivo, che «Genera la quota» fa nascere (4.5.16, F)
 }
 const fetchMock = vi.fn()
@@ -72,7 +78,7 @@ const fetchMock = vi.fn()
 const rigaConferma = () => ({
   frequenza_id: F_PART, alunno_id: AL1, section_id: null, conferma: s.confermata || s.confermato ? 'confermato' : 'non_risposto',
   nuova_frequenza_id: s.confermata || s.confermato ? F_NUOVA : null, nuova_section_id: null, non_rinnova_motivo: null,
-  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, cambia_grado: false,
+  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, quota_piu_voci: s.piuVoci, cambia_grado: false,
   stato_frequenza: s.confermata || s.confermato ? 'in_attesa' : null, nome: 'NomeProva', cognome: 'CognomeProva', classe: 'Sezione Prova',
 })
 const rigaNuova = () => ({
@@ -147,6 +153,8 @@ beforeEach(() => {
   s.extraPost = {}
   s.ritiroRifiutato = false
   s.quotaArrivo = 'assente'
+  s.piuVoci = false
+  q.query = ''
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
   s.elencoVuotoDopoSpunta = false
@@ -526,5 +534,155 @@ describe('ConfermeClient — «Ritira la conferma» (4.5.15, C1)', () => {
     render(<ConfermeClient />)
     const nome = await screen.findByText('CognomeProva NomeProva')
     expect(within(nome.closest('tr') as HTMLElement).queryByRole('button', { name: itConferme.azioneRitiraConferma })).toBeNull()
+  })
+})
+
+describe('ConfermeClient — 4.7.4: «più voci» dal server e filtri aperti dall’indirizzo', () => {
+  it('una riga con `quota_piu_voci` dal server mostra «Più voci» e NON offre «Genera la quota», anche dopo un ricaricamento', async () => {
+    s.quota = 'assente'
+    s.piuVoci = true
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    const riga = nome.closest('tr') as HTMLElement
+    expect(within(riga).getByText(itConferme.quotaPiuVoci)).toBeInTheDocument()
+    expect(within(riga).queryByRole('button', { name: itConferme.azioneGeneraQuota })).toBeNull()
+  })
+
+  it('senza `quota_piu_voci` la stessa riga offre «Genera la quota» (controllo positivo)', async () => {
+    s.quota = 'assente'
+    s.piuVoci = false
+    render(<ConfermeClient />)
+    const nome = await screen.findByText('CognomeProva NomeProva')
+    expect(within(nome.closest('tr') as HTMLElement).getByRole('button', { name: itConferme.azioneGeneraQuota })).toBeInTheDocument()
+  })
+
+  it('`?conferma=moduli_senza_quota` apre il filtro giusto e lo passa alla route', async () => {
+    q.query = 'conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('conferma=moduli_senza_quota'))).toBe(true)
+  })
+
+  it('`?vista=nuove&conferma=quota_senza_moduli` apre le nuove con quel filtro', async () => {
+    q.query = 'vista=nuove&conferma=quota_senza_moduli'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=quota_senza_moduli'))).toBe(true)
+  })
+
+  it('un filtro che nelle nuove non esiste si ignora', async () => {
+    q.query = 'vista=nuove&conferma=no'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('conferma=no'))).toBe(false)
+  })
+})
+
+describe('ConfermeClient — revisione finale: il perimetro del cruscotto, il filtro che resta, la sede', () => {
+  const MOD = '71717171-7171-4717-8717-717171717171'
+
+  it('`?vista=nuove&ambito=anno&conferma=…` passa il perimetro alla route e lo dice sopra la tabella', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=moduli_senza_quota&ambito=anno'))).toBe(true)
+    expect(screen.getByText(itConferme.ambitoAnnoNota)).toBeInTheDocument()
+    expect(screen.queryByText(itConferme.nuoveNota)).toBeNull()
+  })
+
+  it('`&modulo=` si passa solo con «Mancano moduli», e il pulsante toglie il perimetro e rilegge le sole Nuove', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}`
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes(`ambito=anno&modulo=${MOD}`))).toBe(true)
+    expect(screen.getByText(itConferme.ambitoAnnoModuloNotaSenzaTitolo)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: itConferme.ambitoAnnoEsci }))
+    await waitFor(() => expect(screen.queryByText(itConferme.ambitoAnnoModuloNotaSenzaTitolo)).toBeNull())
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).toContain('vista=nuove')
+    expect(ultimo).toContain('conferma=mancano_moduli')
+    expect(ultimo).not.toContain('ambito=')
+    expect(ultimo).not.toContain('modulo=')
+  })
+
+  it('un `modulo` che non è un uuid si ignora', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=non-un-uuid'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('modulo='))).toBe(false)
+  })
+
+  it('cambiare vista toglie il perimetro ma TIENE il filtro, se nell’altra vista esiste', async () => {
+    q.query = 'vista=nuove&ambito=anno&conferma=moduli_senza_quota'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaConferme }))
+    await waitFor(() => expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=conferme&conferma=moduli_senza_quota'))).toBe(true))
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).not.toContain('ambito=')
+  })
+
+  it('cambiare vista azzera il filtro che nell’altra vista non esiste («Hanno confermato» non c’è nelle Nuove)', async () => {
+    q.query = 'conferma=confermato'
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    await waitFor(() => expect(chiamate('GET', '/conferme?').some(([url]) => String(url).includes('vista=nuove&conferma=tutti'))).toBe(true))
+  })
+
+  it('con più sedi attive chiede la SEDE, non l’anno, e non legge niente', async () => {
+    h.sede = null
+    render(<ConfermeClient />)
+    expect(await screen.findByTestId('sede-notice')).toHaveTextContent(itConferme.sedeCosa)
+    expect(screen.queryByText(itConferme.nessunAnno)).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+    h.sede = 'ffffffff-ffff-4fff-8fff-ffffffffff01'
+  })
+})
+
+describe('ConfermeClient — ri-revisione: modulo di un’altra sede, nota col titolo, etichetta della classe', () => {
+  const MOD = '71717171-7171-4717-8717-717171717171'
+
+  it('N1 · un modulo rifiutato dalla route (422) dice il messaggio e offre di togliere il filtro, non «Totale: 0»', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}`
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url: string, init?: unknown) =>
+      String(url).includes('modulo=')
+        ? Promise.resolve({ ok: false, status: 422, json: async () => ({ error: 'Questo modulo non è richiesto', codice: 'MODULO_NON_RICHIESTO' }) })
+        : base(url, init))
+    render(<ConfermeClient />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Questo modulo non è richiesto')
+    expect(screen.queryByText(/Totale/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: itConferme.ambitoAnnoTogliModulo }))
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    const ultimo = String(chiamate('GET', '/conferme?').at(-1)![0])
+    expect(ultimo).not.toContain('modulo=')
+    expect(ultimo).toContain('ambito=anno')
+  })
+
+  it('N2 · la nota sopra la lista di un modulo lo nomina', async () => {
+    q.query = `vista=nuove&ambito=anno&conferma=mancano_moduli&modulo=${MOD}&titolo=Delega%20al%20ritiro`
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(screen.getByText(itConferme.ambitoAnnoModuloNota.replace('{titolo}', 'Delega al ritiro'))).toBeInTheDocument()
+    expect(itConferme.ambitoAnnoModuloNota).not.toMatch(/un solo modulo/)
+  })
+
+  it('N3 · l’etichetta della classe dice il vero nelle due viste', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+    expect(screen.queryAllByText(/Classe dell’anno prossimo/)).toHaveLength(0)
+    // le righe delle Nuove portano la classe dell'anno nuovo: il finto gliene dà una
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: unknown) => {
+      const r = (await base(url, init)) as { ok: boolean; status: number; json: () => Promise<{ data?: { righe?: Array<Record<string, unknown>> } }> }
+      if (!String(url).includes('vista=nuove')) return r
+      const corpo = await r.json()
+      return { ...r, json: async () => ({ ...corpo, data: { ...corpo.data, righe: (corpo.data?.righe ?? []).map((x) => ({ ...x, classe: 'Sezione A' })) } }) }
+    })
+    fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
+    await screen.findByText('CognomeArrivo NomeArrivo')
+    expect(screen.queryAllByText(/Classe di oggi/)).toHaveLength(0)
+    expect(screen.queryAllByText(/Classe dell’anno prossimo/).length).toBeGreaterThan(0)
   })
 })

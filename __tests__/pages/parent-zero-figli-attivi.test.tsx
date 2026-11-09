@@ -206,6 +206,9 @@ describe('GuardiaSenzaFigli — zero figli attivi', () => {
 
   it('OFFLINE ⇒ la pagina: l\'assenza di una risposta non è «nessun figlio attivo»', async () => {
     mockPathname = '/parent/diary'
+    // PR 4.5.11: con un bambino già noto (cache del telefono) la pagina resta; senza nessuno noto il guardiano mostra «Non riesco a
+    // verificare l'iscrizione» con il pulsante (`GuardiaSenzaFigli-ingresso-futuro.test.tsx`), mai una rotella senza fine.
+    window.localStorage.setItem('kv_student_id', 'S1')
     fetchMock.mockRejectedValue(new Error('rete giù'))
     montaSegnaposto()
 

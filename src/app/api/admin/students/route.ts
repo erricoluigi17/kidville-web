@@ -518,7 +518,8 @@ export const POST = withRoute('admin/students:POST', async (request: NextRequest
             }
         }
 
-        return NextResponse.json({ ...data, parents: parentsResults }, { status: 201 });
+        // Un avviso, non un errore (4.5.11): la data d'ingresso è futura, la scheda è salvata e la segreteria lo legge in pagina.
+        return NextResponse.json({ ...data, parents: parentsResults, ...(ingresso.avviso ? { avviso: ingresso.avviso } : {}) }, { status: 201 });
     } catch (err) {
         logErrore({ operazione: 'admin/students:POST', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
@@ -1612,7 +1613,9 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     logErrore({ operazione: 'admin/students:PATCH', evento: 'push' }, e);
                 }
 
-                return NextResponse.json(data);
+                // Data d'ingresso futura (4.5.11): avviso, non errore, e solo se la data è stata cambiata con questo salvataggio (la
+                // scheda rimanda sempre la data intera). La forma della risposta non cambia quando non c'è.
+                return NextResponse.json(ingresso.avviso && dataCambiata ? { ...data, avviso: ingresso.avviso } : data);
             } catch (err) {
                 logErrore({ operazione: 'admin/students:PATCH', stato: 500 }, err);
                 return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore durante il salvataggio alunno' }, { status: 500 });

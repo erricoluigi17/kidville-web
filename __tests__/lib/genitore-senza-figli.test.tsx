@@ -129,6 +129,10 @@ describe('GuardiaSenzaFigli', () => {
   })
 
   it('OFFLINE ⇒ la pagina, non il pannello: l\'assenza di risposta non è «nessun figlio»', async () => {
+    // PR 4.5.11: con un bambino già noto (la cache del telefono) la pagina resta. Senza nessun bambino noto non c'è uno
+    // `studentId` da aspettare e il guardiano mostra «Non riesco a verificare l'iscrizione» con il pulsante, mai una rotella
+    // senza fine: lo prova `GuardiaSenzaFigli-ingresso-futuro.test.tsx`.
+    window.localStorage.setItem('kv_student_id', 'S1')
     fetchMock.mockRejectedValue(new Error('offline'))
     montaLaPagina()
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())

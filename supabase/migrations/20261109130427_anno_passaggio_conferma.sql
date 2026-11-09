@@ -13,6 +13,122 @@
 
 ALTER TABLE public.passaggi_anno_docenti ADD COLUMN IF NOT EXISTS inserita boolean NOT NULL DEFAULT false;
 
+-- ── Giro di correzione 1 · B1 · lo storico delle classi non perde la riga aperta ─────────────────
+-- `storici_traccia_classe` (trigger su `alunni`): corpo di produzione del 2026-11-09 (`pg_get_functiondef`), con UNA correzione. La terza
+-- scrittura di classe nello stesso giorno (conferma, annullo, riconferma) cadeva sulla riga di quella mattina, già chiusa con `al` = oggi,
+-- e `ON CONFLICT DO NOTHING` non la riapriva: il bambino restava in classe senza riga aperta, e `media_visibili_genitore` e le stampe
+-- per giorno (`alunni-giorno.ts`) non lo vedevano per tutto l'anno. Ora la riga dello stesso giorno e della stessa classe si RIAPRE.
+-- Cambia per chi legge: niente, se non che il caso sopra torna a funzionare. DA DICHIARARE nel corpo della PR (tocca un trigger vecchio).
+CREATE OR REPLACE FUNCTION public.storici_traccia_classe()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $$
+declare giorno date := public.giorno_roma(now());  -- = (now() at time zone 'Europe/Rome')::date, ma si può fissare nelle prove
+begin
+  if TG_OP='UPDATE' and new.section_id is not distinct from old.section_id and new.scuola_id is not distinct from old.scuola_id
+    and new.archiviato_il is not distinct from old.archiviato_il then return new; end if;
+  if TG_OP='UPDATE' then
+    update public.alunni_classi_storico set al=greatest(dal,giorno)
+    where alunno_id=new.id and al is null;
+  end if;
+  if new.section_id is not null and new.anonimizzato_il is null and new.archiviato_il is null then
+    -- la riga di questa classe aperta e chiusa nello stesso giorno (la mattina stessa) torna aperta
+    update public.alunni_classi_storico set al=null
+    where alunno_id=new.id and scuola_id=new.scuola_id and section_id=new.section_id and dal=giorno and fonte='trasferimento' and al is not null;
+    insert into public.alunni_classi_storico(alunno_id,scuola_id,section_id,section_nome,dal,fonte)
+    values(new.id,new.scuola_id,new.section_id,coalesce((select name from public.sections where id=new.section_id),''),giorno,'trasferimento') on conflict do nothing;
+  end if;
+  begin
+    insert into public.app_log(livello,evento,sorgente,messaggio,fingerprint,contesto)
+    values('info','registro','server','Appartenenza storica registrata','storici-classe-tracciata',jsonb_build_object('alunno_id',new.id,'scuola_id',new.scuola_id))
+      on conflict (fingerprint, giorno) do update
+        set occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now(), contesto = excluded.contesto;
+  exception when others then raise log 'storici: logging appartenenza non riuscito [%]', SQLSTATE;
+  end;
+  return new;
+end $$;
+REVOKE ALL ON FUNCTION public.storici_traccia_classe() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.storici_traccia_classe() TO service_role;
+
+-- L'invariante nuova, «ogni bambino in classe ha una riga aperta di storico», come funzione a sé (misura in produzione il 2026-11-09:
+-- 0 casi su tutte le sedi, quindi può girare di notte). NON ridefinisco `anno_invarianti()`: è una funzione lunga che ogni PR
+-- ridefinisce per intero, e la mia versione più recente cancellerebbe quelle degli altri rami. L'aggancio si fa all'allineamento.
+-- Conta i bambini con una classe, né archiviati né anonimizzati, senza nessuna riga aperta. Senza la tabella dello storico: 0.
+CREATE OR REPLACE FUNCTION public.passaggio_storico_senza_riga_aperta()
+RETURNS bigint
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_n bigint;
+BEGIN
+  IF to_regclass('public.alunni_classi_storico') IS NULL THEN
+    RETURN 0;
+  END IF;
+  SELECT count(*) INTO v_n
+    FROM public.alunni a
+   WHERE a.section_id IS NOT NULL AND a.archiviato_il IS NULL AND a.anonimizzato_il IS NULL
+     AND NOT EXISTS (SELECT 1 FROM public.alunni_classi_storico h WHERE h.alunno_id = a.id AND h.al IS NULL);
+  RETURN v_n;
+END
+$$;
+REVOKE ALL ON FUNCTION public.passaggio_storico_senza_riga_aperta() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.passaggio_storico_senza_riga_aperta() TO service_role;
+
+-- ── Giro di correzione 1 · B3 · la finestra fra la conferma e l'inizio dell'anno nuovo ───────────
+-- Ruling R1 (a): dal giorno della conferma al giorno prima dell'`inizio` del nuovo anno la famiglia vede come prima della conferma.
+-- `anno_visibile(sede, oggi)` = l'anno attivo, tranne quando non è ancora cominciato (`inizio > oggi`): allora vale l'anno il cui
+-- periodo contiene oggi (il vecchio, in chiusura). Prima di una conferma l'anno attivo è già cominciato: il ramo nuovo non scatta mai.
+-- `frequenze_attive` (e con lei `figli_attivi`, le foto, gli avvisi, le chat, `verificaAlunnoAttivo`, la rubrica) legge da qui. Chi esce
+-- ha la frequenza vecchia `uscito`: non c'è. Chi è nuovo ha la frequenza nel nuovo anno, con `data_ingresso` = inizio: non c'è finché non comincia.
+CREATE OR REPLACE FUNCTION public.anno_visibile(p_scuola uuid, p_oggi date)
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+           WHEN a.inizio > p_oggi THEN coalesce(
+             (SELECT v.id FROM public.anni_sede v
+               WHERE v.scuola_id = p_scuola AND v.periodo @> p_oggi AND v.stato IN ('corrente', 'in_chiusura', 'chiuso')
+               LIMIT 1),
+             a.id)
+           ELSE a.id
+         END
+    FROM public.anni_sede a
+   WHERE a.id = public.anno_attivo(p_scuola)
+$$;
+REVOKE ALL ON FUNCTION public.anno_visibile(uuid, date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_visibile(uuid, date) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.frequenze_attive(p_alunni uuid[])
+RETURNS TABLE (alunno_id uuid, frequenza_id uuid, section_id uuid, scuola_id uuid)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_oggi date := public.giorno_roma(now());
+BEGIN
+  RETURN QUERY
+    SELECT f.alunno_id, f.id, f.section_id, f.scuola_id
+      FROM public.frequenze f
+     WHERE f.alunno_id = ANY (p_alunni)
+       AND f.stato IN ('in_attesa', 'iscritto')
+       AND f.anno_sede_id = public.anno_visibile(f.scuola_id, v_oggi)
+       AND f.data_ingresso <= v_oggi
+       AND (f.data_uscita IS NULL OR f.data_uscita >= v_oggi);
+END
+$$;
+REVOKE ALL ON FUNCTION public.frequenze_attive(uuid[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.frequenze_attive(uuid[]) TO service_role;
+
 -- ── passaggio_oggi ───────────────────────────────────────────────────────────────────────────────
 -- Il giorno di oggi per una sede. NULL = oggi a Roma. Un giorno scelto da chi chiama è ammesso SOLO per le sedi di prova
 -- (`e2e00000…`) o messe in `anno_regole.sedi_simulazione`: la stessa porta di `anni_tick` (ANNI_TICK_OGGI_NON_AMMESSO).

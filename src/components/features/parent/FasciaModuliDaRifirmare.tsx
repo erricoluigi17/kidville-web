@@ -161,7 +161,7 @@ export function FasciaModuliDaRifirmare({
                 <div className="font-semibold text-sm text-kidville-ink">
                   {nome ? t('voce', { modulo, nome }) : modulo}
                 </div>
-                <div className="text-xs text-kidville-muted">{t('firmatoIl', { data: dataBreve(r.ultimaFirma) })}</div>
+                <div className="text-xs text-kidville-sub">{t('firmatoIl', { data: dataBreve(r.ultimaFirma) })}</div>
               </div>
               <Btn
                 variant="primary"

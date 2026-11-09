@@ -198,12 +198,46 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
       ADD COLUMN gruppo text,
       ADD COLUMN creato_da uuid;
   `
+  // ── S32 · Il TRIGGER VERO di produzione dello storico delle classi (`storici_traccia_classe`, `pg_get_functiondef` del 2026-11-09,
+  // sola lettura), con le colonne vere della tabella. Con `completo` il banco ha una tabella povera (`alunni_classi_storico` senza
+  // `section_id`): senza il trigger il passaggio non scriveva mai lo storico e una riga rotta (B1) restava verde. M48b ne sostituisce
+  // il corpo con la correzione; qui nasce com'è in produzione, così la prova vede il difetto prima e la correzione dopo.
+  const storico = o.completo ? `
+    ALTER TABLE public.galleria_media_v2
+      ADD COLUMN tag_students uuid[] NOT NULL DEFAULT '{}'::uuid[],
+      ADD COLUMN is_broadcast boolean DEFAULT false,
+      ADD COLUMN eliminato_il timestamptz;
+    ALTER TABLE public.alunni_classi_storico
+      ADD COLUMN section_id uuid NOT NULL,
+      ADD COLUMN section_nome text NOT NULL DEFAULT '',
+      ADD COLUMN fonte text NOT NULL DEFAULT 'attuale',
+      ADD CONSTRAINT storico_al_dopo_dal CHECK (al IS NULL OR al >= dal),
+      ADD CONSTRAINT storico_fonte CHECK (fonte IN ('attuale', 'presenza', 'staff', 'trasferimento')),
+      ADD CONSTRAINT storico_unica UNIQUE (alunno_id, scuola_id, section_id, dal, fonte);
+    CREATE OR REPLACE FUNCTION public.storici_traccia_classe() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $function$
+    declare giorno date := (now() at time zone 'Europe/Rome')::date;
+    begin
+      if TG_OP='UPDATE' and new.section_id is not distinct from old.section_id and new.scuola_id is not distinct from old.scuola_id
+        and new.archiviato_il is not distinct from old.archiviato_il then return new; end if;
+      if TG_OP='UPDATE' then
+        update public.alunni_classi_storico set al=greatest(dal,giorno)
+        where alunno_id=new.id and al is null;
+      end if;
+      if new.section_id is not null and new.anonimizzato_il is null and new.archiviato_il is null then
+        insert into public.alunni_classi_storico(alunno_id,scuola_id,section_id,section_nome,dal,fonte)
+        values(new.id,new.scuola_id,new.section_id,coalesce((select name from public.sections where id=new.section_id),''),giorno,'trasferimento') on conflict do nothing;
+      end if;
+      return new;
+    end $function$;
+    CREATE TRIGGER storici_traccia_classe AFTER INSERT OR UPDATE OF section_id, scuola_id, archiviato_il ON public.alunni
+      FOR EACH ROW EXECUTE FUNCTION public.storici_traccia_classe();
+  ` : ''
   const db = await creaDbAnnoPr2({
     sedi: [SEDE_E2E, SEDE_SIM, SEDE_VERA],
     fino: o.fino ?? 'M48b',
     completo: o.completo,
     codaPrima:
-      (o.completo ? '' : SCHEMA_GALLERIA_GENITORE) + SCHEMA_ISCRIZIONE_ANNO + SCHEMA_PASSAGGIO_DIDATTICA + colonne + (o.codaPrima ?? ''),
+      (o.completo ? '' : SCHEMA_GALLERIA_GENITORE) + SCHEMA_ISCRIZIONE_ANNO + SCHEMA_PASSAGGIO_DIDATTICA + colonne + storico + (o.codaPrima ?? ''),
   })
   await db.exec(SCHEMA_LEGAMI_GENITORE)
   await db.exec(SCHEMA_AVVISI_CHAT_VOCI_GENITORE)

@@ -245,12 +245,12 @@ describe('N1 · il bambino già in anagrafica e sconosciuto al passaggio, con un
   })
 })
 
-// «Riattiva» nella finestra (la route usa `annoAttivoDiSede`, che nella finestra è l'anno NUOVO, non quello che si vede).
-// ESITO: ROSSO. Vedi la sezione «Chiusura» dell'esito (1.4): la prova asserisce il comportamento giusto ed è marcata `fails`
-// finché il coordinatore non decide; non si corregge qui.
+// «Riattiva» nella finestra · CASO 1. La route scriveva contro `annoAttivoDiSede`, che nella finestra è l'anno NUOVO: la frequenza dell'anno
+// che si vede restava `ritirato` (la famiglia non vedeva il bambino fino al 01/09, la 11 suonava). Decisione del titolare (10/11, «Correggi»):
+// nella finestra «Riattiva» riapre le frequenze che l'archiviazione ha chiuso, quella che si vede e, se c'era, quella nuova. Era rosso prima.
 describe('Riattiva nella finestra · archiviato il 10/08, riattivato il 20/08, passaggio il 01/09', () => {
   const stato = async (id: string) => `${await scheda(id)} · vecchio:${(await frequenza(id, 'vecchio'))?.stato ?? 'nessuna'} · nuovo:${(await frequenza(id, 'nuovo'))?.stato ?? 'nessuna'}`
-  it.fails('continuaB: il 20/08 la frequenza dell\'anno che si vede è di nuovo viva e nessun invariante suona; il 02/09 è in farfalleNuova', async () => {
+  it('continuaB: il 20/08 la frequenza dell\'anno che si vede è di nuovo viva e nessun invariante suona; il 02/09 è in farfalleNuova', async () => {
     await b.db.exec('BEGIN')
     h.db = b.db; h.utente = UTENTE; h.sedi = [SEDE_E2E]; h.log.length = 0
     try {
@@ -296,5 +296,84 @@ describe('N5 · il PATCH che ripiega sull’anno visibile lo scrive nel log', ()
     const avvisi = h.log.filter((x) => JSON.stringify(x).includes('lettura-frequenza-visibile-fallita'))
     expect(avvisi, 'un avviso').toHaveLength(1)
     expect((avvisi[0] as unknown[]).slice(0, 3), 'è un evento «anagrafica» di livello warn').toEqual(['evento', 'anagrafica', 'warn'])
+  })
+})
+
+// «Riattiva» nella finestra · CASO 2: archiviato PRIMA della conferma (luglio, il centro estivo che il passaggio non conosce), riattivato il 20/08.
+// La frequenza dell'anno che si vede si riapre; nell'anno nuovo NON se ne inventa nessuna (decide la segreteria, come per il centro estivo).
+describe('Riattiva nella finestra · caso 2: archiviato in luglio (prima della conferma), riattivato il 20/08', () => {
+  prova('si riapre la frequenza che si vede, nessuna ne nasce nell\'anno nuovo; il 20/08 la famiglia lo vede; il 02/09 la 11 lo segnala', async () => {
+    await b.db.query(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1,$2)`, [GEN_N, BAMBINI.ritiratoArchiviato])
+    await oggiE('2027-08-20')
+    expect(await scheda(BAMBINI.ritiratoArchiviato), 'prima: archiviato').toBe('ritirato/-/ARCHIVIATO')
+    expect(await figliAttivi(GEN_N), 'prima: la famiglia non lo vede').not.toContain('ritiratoArchiviato')
+    h.log.length = 0
+    const r = await rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI.ritiratoArchiviato })
+    expect(r.stato, `riattiva: ${String(r.errore)}`).toBe(200)
+    expect(await scheda(BAMBINI.ritiratoArchiviato)).toBe('iscritto/girasoli')
+    expect((await frequenza(BAMBINI.ritiratoArchiviato, 'vecchio'))?.stato, 'la frequenza che si vede è viva').toBe('iscritto')
+    expect(await frequenza(BAMBINI.ritiratoArchiviato, 'nuovo'), 'nell\'anno nuovo non si inventa niente').toBeUndefined()
+    expect(await figliAttivi(GEN_N), 'il 20/08 la famiglia lo vede').toContain('ritiratoArchiviato')
+    expect(await diario(b.sezioni.girasoli, '2027-08-20'), 'il diario della sua classe lo elenca').toContain('ritiratoArchiviato')
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    expect(h.log.filter((x) => JSON.stringify(x).includes('riattiva-finestra-frequenza-nuova-riaperta')), 'nessuna frequenza nuova riaperta: nessun evento').toEqual([])
+    await oggiE(b.inizio)
+    await ricopia(b.inizio)
+    await oggiE('2027-09-02')
+    // Come il centro estivo senza domanda: resta nella classe dell'anno vecchio e la 11 lo segnala, finché la segreteria non gli dà l'iscrizione nuova.
+    expect(await scheda(BAMBINI.ritiratoArchiviato), 'il 02/09 la scheda è dov\'era').toBe('iscritto/girasoli')
+    expect(await invarianti(), 'il 02/09 la 11 lo segnala').toEqual(['11:alunni (senza frequenza)=1'])
+  })
+})
+
+// CASO 3: uscito col passaggio (`no`, `nonRisposto`: la frequenza vecchia è `uscito`, la scheda archiviata). Non è un'archiviazione da disfare:
+// la via giusta è la «Conferma tardiva» del passaggio. Ruling: resta il 409 che c'era (la frase rimanda già alla «Conferma tardiva»), perché
+// lo stato che lascia è coerente: scheda e frequenze intatte, invarianti vuoti il 20/08 e il 02/09, nessun dato visibile a chi non deve vederlo.
+describe('Riattiva nella finestra · caso 3: uscito col passaggio, «Riattiva» il 20/08', () => {
+  for (const k of ['no', 'nonRisposto'] as const) {
+    prova(`${k}: 409 che rimanda alla Conferma tardiva, niente cambia, nessun invariante il 20/08 e il 02/09`, async () => {
+      const prima = await scheda(BAMBINI[k])
+      expect(prima).toBe('ritirato/-/ARCHIVIATO')
+      expect((await frequenza(BAMBINI[k], 'vecchio'))?.stato).toBe('uscito')
+      await oggiE('2027-08-20')
+      h.log.length = 0
+      const r = await rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI[k] })
+      expect(r.stato, `riattiva: ${String(r.errore)}`).toBe(409)
+      expect(String(r.errore), 'la frase rimanda alla Conferma tardiva').toContain('Conferma tardiva')
+      expect(h.log.some((x) => JSON.stringify(x).includes('riattiva-senza-iscrizione')), 'il rifiuto si logga').toBe(true)
+      expect(await scheda(BAMBINI[k]), 'la scheda è com\'era').toBe(prima)
+      expect((await frequenza(BAMBINI[k], 'vecchio'))?.stato, 'la frequenza vecchia è com\'era').toBe('uscito')
+      expect(await frequenza(BAMBINI[k], 'nuovo'), 'nessuna frequenza nuova').toBeUndefined()
+      expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+      await oggiE(b.inizio)
+      await ricopia(b.inizio)
+      await oggiE('2027-09-02')
+      expect(await scheda(BAMBINI[k]), 'il 02/09 la scheda è com\'era').toBe(prima)
+      expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+    })
+  }
+})
+
+// Il cambio di grado: la classe nuova ha un nome diverso dalla vecchia, e la classe che il passaggio aveva dato non si legge da «Riattiva»
+// (la tabella `passaggi_anno_righe` si legge solo dalla porta del passaggio, lock `passaggio-lock`). Le due frequenze tornano vive, la scheda e la
+// frequenza nuova restano SENZA classe: la assegna la segreteria. Prima della correzione la stessa strada lasciava la frequenza che si vede `ritirato`
+// e la `11` accesa fino al 01/09; la mancanza di classe era già così. È un limite noto, non una regressione.
+describe('Riattiva nella finestra · cambio di grado: tornano vive le due frequenze, la classe nuova la dà la segreteria', () => {
+  prova('cambiaGradoConSezione: archiviato il 10/08, riattivato il 20/08', async () => {
+    const nuova = async () => (await frequenza(BAMBINI.cambiaGradoConSezione, 'nuovo'))
+    expect((await nuova())?.stato, 'dopo la conferma: iscrizione nuova in attesa').toBe('in_attesa')
+    await oggiE('2027-08-10')
+    expect((await rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI.cambiaGradoConSezione })).stato).toBe(200)
+    expect((await nuova())?.stato, 'archiviato: anche la nuova è chiusa').toBe('ritirato')
+    await oggiE('2027-08-20')
+    const r = await rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI.cambiaGradoConSezione })
+    expect(r.stato, `riattiva: ${String(r.errore)}`).toBe(200)
+    expect((await frequenza(BAMBINI.cambiaGradoConSezione, 'vecchio'))?.stato, 'la frequenza che si vede è viva').toBe('iscritto')
+    expect((await nuova())?.stato, 'la frequenza nuova è di nuovo in attesa').toBe('in_attesa')
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await oggiE(b.inizio)
+    await ricopia(b.inizio)
+    await oggiE('2027-09-02')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
   })
 })

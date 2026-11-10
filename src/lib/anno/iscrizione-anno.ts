@@ -4,6 +4,7 @@ import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
 import { finestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
+import { sezioneDelNome } from '@/lib/anno/scrittura'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
@@ -614,6 +615,7 @@ export async function chiudiFrequenzeAperte(
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const OP_RIPRISTINO = 'anno/iscrizione-anno:iscrizioniDelBambino'
+const OP_FINESTRA = 'anno/iscrizione-anno:riattivaNellaFinestra'
 const STATI_FREQUENZA_CHIUSI: readonly string[] = [STATO_RITIRATO, 'trasferito', 'uscito']
 
 /** Una frequenza di un anno che viene (in preparazione o con le iscrizioni aperte) di un bambino. */
@@ -761,6 +763,81 @@ export async function riapriFrequenzaProssima(
   } catch (err) {
     logErrore({ operazione: OP_RIPRISTINO }, err)
     return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+export type EsitoFrequenzeDellaFinestra =
+  | { ok: true; nellaFinestra: false }
+  | { ok: true; nellaFinestra: true; annoVisibileId: string; haDaRiaprireVisibile: boolean }
+  | { ok: false }
+
+/**
+ * (chiusura 4.8, «Riattiva» nella finestra) Fra la conferma del passaggio e l'inizio l'anno attivo è il NUOVO e l'anno che si vede è il
+ * vecchio. L'archiviazione in quei giorni chiude TUTTE E DUE le frequenze (NB2): «Riattiva» deve riaprire quelle, non una sola.
+ * Questa dice se siamo nella finestra e se l'anno che si vede ha una frequenza chiusa DALL'ARCHIVIAZIONE (`ritirato`): una `uscito` o
+ * `trasferito` è un'uscita del passaggio, non un'archiviazione, e la sua strada è la «Conferma tardiva». Fuori dalla finestra, e per chi
+ * nell'anno che si vede non ha niente da riaprire (un «in arrivo»), non cambia niente. NON LANCIA MAI: `{ ok: false }` = non so.
+ */
+export async function frequenzeDellaFinestra(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; scuolaId: string | null },
+): Promise<EsitoFrequenzeDellaFinestra> {
+  try {
+    const finestra = await finestraDiSede(supabase, a.scuolaId)
+    if (!finestra) return { ok: true, nellaFinestra: false }
+    const righe = await supabase.from('frequenze').select('stato').eq('alunno_id', a.alunnoId).eq('anno_sede_id', finestra.visibile)
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, nellaFinestra: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'finestra-frequenze-non-lette', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const stati = ((righe.data ?? []) as Array<{ stato: string }>).map((r) => r.stato)
+    return { ok: true, nellaFinestra: true, annoVisibileId: finestra.visibile, haDaRiaprireVisibile: stati.includes(STATO_RITIRATO) }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * SECONDO PASSO della riattivazione nella finestra, a scheda scritta: la frequenza dell'anno NUOVO, se l'archiviazione l'ha chiusa
+ * (`ritirato`), torna viva. L'archiviazione le ha tolto la classe: se la frequenza ne ha ancora una la tiene, altrimenti si ripiega sul NOME della
+ * classe della scheda cercato nell'anno nuovo (`classePerNome`: vale per chi il passaggio ha fatto «continuare»). Se il nome non c'è nell'anno nuovo
+ * (cambio di grado) la frequenza torna viva SENZA classe: la `11` lo segnala e la segreteria gliela assegna. La classe che il passaggio aveva dato
+ * (`passaggi_anno_righe.sezione_a_id`) non si legge da qui: la tabella si legge solo dalla porta del passaggio (lock `passaggio-lock`), che non
+ * si importa fuori dalle sue route. Non c'è frequenza nuova chiusa → niente: non se ne inventa una. NON LANCIA MAI.
+ */
+export async function riapriFrequenzaNuovaDellaFinestra(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; scuolaId: string | null; classePerNome: string | null },
+): Promise<{ ok: true; riaperta: boolean } | { ok: false }> {
+  try {
+    const finestra = await finestraDiSede(supabase, a.scuolaId)
+    if (!finestra) return { ok: true, riaperta: false }
+    const chiuse = await supabase.from('frequenze').select('id, section_id').eq('alunno_id', a.alunnoId).eq('anno_sede_id', finestra.attivo).eq('stato', STATO_RITIRATO)
+    if (chiuse.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'finestra-frequenza-nuova-non-letta', operazione: OP_FINESTRA, error_code: chiuse.error.code ?? undefined })
+      return { ok: false }
+    }
+    let riaperta = false
+    for (const f of (chiuse.data ?? []) as Array<{ id: string; section_id: string | null }>) {
+      let sezione: string | null = f.section_id
+      if (!sezione && a.classePerNome) {
+        const s = await sezioneDelNome(supabase, finestra.attivo, a.classePerNome)
+        sezione = s.ok ? s.id : null
+      }
+      const campi = { stato: STATO_ISCRITTO as 'iscritto', data_uscita: null as string | null, ...(sezione ? { section_id: sezione } : {}) }
+      const r = await scriviFrequenza(supabase, { alunnoId: a.alunnoId, annoSedeId: finestra.attivo, campi, annoNonAttivo: true })
+      if (!r.ok || 'saltata' in r) {
+        logEvento('anno-scolastico', 'error', { tipo: 'finestra-frequenza-nuova-non-riaperta', operazione: OP_FINESTRA, frequenza: f.id })
+        return { ok: false }
+      }
+      riaperta = true
+    }
+    return { ok: true, riaperta }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
   }
 }
 

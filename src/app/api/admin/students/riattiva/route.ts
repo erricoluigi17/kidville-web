@@ -14,7 +14,7 @@ import { classeEsisteInOgniSede } from '../route';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { erroreAnno, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
-import { iscrizioniDelBambino, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
+import { frequenzeDellaFinestra, iscrizioniDelBambino, riapriFrequenzaNuovaDellaFinestra, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
 import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo';
 
 // ============================================================================
@@ -202,7 +202,22 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
          * con la quota. Chi invece una frequenza dell'anno attivo ce l'ha torna `iscritto` come sempre, e la conferma dell'anno
          * prossimo NON si riapre da sola: chiusa dall'archiviazione, si rifà (la risposta lo dice).
          */
-        const iscrizioni = await iscrizioniDelBambino(supabase, { alunnoId, annoAttivoId: annoSedeId, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
+        // (chiusura 4.8) NELLA FINESTRA fra la conferma e l'inizio l'anno attivo è il nuovo e l'anno che si vede è il vecchio. L'archiviazione
+        // di quei giorni chiude tutte e due le frequenze: «Riattiva» riapre quelle, la vecchia (così ad agosto la famiglia lo vede e il diario
+        // lo elenca) e la nuova, se c'era (così il 01/09 la ricopia lo porta nella classe nuova). Vale solo per chi nell'anno che si vede ha una
+        // frequenza `ritirato` da riaprire: un'uscita del passaggio (`uscito`, `trasferito`) o un «in arrivo» seguono la strada di sempre.
+        const finestra = await frequenzeDellaFinestra(supabase, { alunnoId, scuolaId: sede });
+        if (!finestra.ok) {
+            return NextResponse.json(
+                { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
+                { status: 500 },
+            );
+        }
+        const riapreNellaFinestra = finestra.nellaFinestra && finestra.haDaRiaprireVisibile;
+        const annoDiScrittura = riapreNellaFinestra ? finestra.annoVisibileId : annoSedeId;
+        const iscrizioni = riapreNellaFinestra
+            ? { ok: true as const, haFrequenzaAttiva: true, prossime: [] }
+            : await iscrizioniDelBambino(supabase, { alunnoId, annoAttivoId: annoSedeId, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
         if (!iscrizioni.ok) {
             return NextResponse.json(
                 { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
@@ -318,9 +333,21 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // della classe ripristinata la risolve `scriviAlunnoEFrequenza` dal nome), poi `alunni`. Se la frequenza non si
         // scrive, la scheda resta com'era. In fase A: `alunni` e poi la frequenza, fail-open.
         const campiFreq = campiFrequenzaDaAlunno(aggiornamento);
+        // Nella finestra, PRIMA la frequenza dell'anno nuovo (come `riportaInArrivo`: se la scheda poi non si scrive, la riprova rifà la stessa
+        // strada, perché la frequenza nuova viva non si tocca due volte). La classe nuova è quella che il passaggio le aveva dato.
+        if (riapreNellaFinestra) {
+            const nuova = await riapriFrequenzaNuovaDellaFinestra(supabase, { alunnoId, scuolaId: sede, classePerNome: classeDaScrivere });
+            if (!nuova.ok) {
+                return NextResponse.json(
+                    { error: 'Il bambino non è stato riportato fra gli iscritti: la sua iscrizione all\'anno nuovo non si è riaperta, la scheda è rimasta com\'era. Riprova.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (nuova.riaperta) logEvento('anno-scolastico', 'info', { tipo: 'riattiva-finestra-frequenza-nuova-riaperta', operazione: 'admin/students/riattiva:POST', alunno: alunnoId });
+        }
         const esitoScrittura = await scriviAlunnoEFrequenza(
             supabase,
-            { alunnoId, annoSedeId, campi: campiFreq, classeSezione: classeDaScrivere },
+            { alunnoId, annoSedeId: annoDiScrittura, campi: campiFreq, classeSezione: classeDaScrivere },
             () => supabase
                 .from('alunni')
                 .update(aggiornamento)

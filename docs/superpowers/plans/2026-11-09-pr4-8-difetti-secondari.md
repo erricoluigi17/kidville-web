@@ -120,7 +120,7 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
   **Non provato, da collaudo**: la funzione non entra nel banco senza ricostruire le tabelle della modulistica.
 - **Fuori perimetro, PR a parte:** `GET /api/diary/students` (`route.ts:184-190`) filtra per `section_id` e `anonimizzato_il` ma non per `archiviato_il`. Un `.is('archiviato_il', null)` sarebbe una difesa in
   profondità contro tutta la famiglia di NB4, oltre alla `15-bis` che la sorveglia.
-- **«Riattiva» nella finestra · DIFETTO, non corretto (decide il coordinatore).** Vedi l'esito, sezione «Chiusura», voce 1.4.
+- **«Riattiva» nella finestra · CORRETTO (decisione del titolare, 10/11, «Correggi»).** Riapre la frequenza dell'anno che si vede e, se c'era, quella nuova. Limite noto: nel cambio di grado la classe nuova non si ritrova (la assegna la segreteria). Vedi l'esito, sezione «Riattiva».
 - **12 (collegamento dal cruscotto) · FATTO in chiusura.** Sotto le risposte delle famiglie c'è «Apri il passaggio d'anno» (`/admin/students/passaggio`, stessi tre ruoli del menu, l'anno lo porta il selettore). Prova: `__tests__/components/CruscottoClient.test.tsx`.
 - **S13 · CHIUSO** (vedi la voce 1): l'addebito esce dal listino.
 
@@ -129,4 +129,3 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 - **Alla 4.9 (parte A o B):** S21 (`annoDiOggiPerChi` senza chiamanti), S31 (`decidiAbbinamento` e `sezioniDiUtentePerGrado` leggono ancora `alunni.section_id`), la voce 13 (l'invariante `passaggio_storico_senza_riga_aperta()` è dentro `anno_invarianti()` come `15`; il `16` è della 4.9), NS7 (stato misto 00:00-00:35 del 01/09), NS9 (`pg_cron` assente: solo `NOTICE`).
 - **Alla PR-B della 4.8 (parte B della 4.9):** togliere le tre voci da `IN_CODA`, far entrare `passaggio-ricopia-schede` e `anno-invarianti` in `JOB_CRON`, fotografia delle migrazioni (+3), PRD a ✅.
 - **PR a parte:** `GET /api/diary/students` senza `archiviato_il`; S11 (avviso `altra_sede`, tocca cinque posti e la firma SQL del ramo 4.9); S5 (conteggio delle voci aperte su chi esce); S22, S23, S28, S29.
-- **Decisione del titolare in attesa:** «Riattiva» nella finestra (vedi l'esito, «Chiusura», 1.4).

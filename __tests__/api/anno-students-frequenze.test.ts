@@ -48,6 +48,8 @@ vi.mock('@/lib/anno/frequenze', async (orig) => ({
   annoAttivoDiSede: h.annoAttivoDiSede,
   // (giro 3) fuori dalla finestra l'anno visibile è l'attivo: la route dell'archiviazione ora chiede il visibile.
   annoVisibileDiSede: (c: unknown, sede: string | null) => h.annoAttivoDiSede(c, sede),
+  // (giro 9, O-a) Il finto non ha `rpc`: fuori dalla finestra, senza guasto di lettura.
+  leggiFinestraDiSede: async () => ({ finestra: null, guasto: false }),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/pagamenti/scadenze', async (orig) => ({

@@ -255,4 +255,6 @@ describe('admin/students/riattiva:POST — il battito di successo', () => {
 vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   annoAttivoDiSede: async () => null,
+  // (giro 9, O-a) Il finto non ha `rpc`: la lettura della finestra, qui, non è l'oggetto (e una lettura caduta conta come iscrizione non chiusa).
+  leggiFinestraDiSede: async () => ({ finestra: null, guasto: false }),
 }))

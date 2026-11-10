@@ -3,7 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
-import { finestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
+import { finestraDiSede, leggiFinestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
@@ -573,7 +573,11 @@ export async function chiudiFrequenzeAperte(
     // (giro 3, NB2) Nella finestra fra la conferma del passaggio e l'inizio l'anno ATTIVO è il nuovo, `corrente` ma non ancora cominciato:
     // non è né «in preparazione» né «iscrizioni aperte», e la sua frequenza (nata dal passaggio o dalla segreteria) resterebbe viva dopo
     // l'archiviazione. Si chiude anche lei: quella dell'anno VISIBILE la chiude la scrittura della scheda, qui sotto nella route.
-    const finestra = await finestraDiSede(supabase, a.scuolaId)
+    // (Riattiva, giro 9, O-a) Una lettura della finestra CADUTA non è «fuori dalla finestra»: l'anno nuovo non entrerebbe e la route risponderebbe 200
+    // pulito con l'iscrizione ancora viva. Conta come non riuscita (la segreteria vede «Riprova»), e le altre chiusure proseguono.
+    const lettura = await leggiFinestraDiSede(supabase, a.scuolaId)
+    if (lettura.guasto) esito.non_riuscite++
+    const finestra = lettura.finestra
     if (finestra && !idAnni.includes(finestra.attivo)) idAnni.push(finestra.attivo)
     if (idAnni.length === 0) return esito
 

@@ -1832,21 +1832,25 @@ BEGIN
       -- (Riattiva, giro 8, N1) Chi è ARCHIVIATO e non ha una riga del passaggio (l'anteprima esclude gli archiviati: resta archiviato attraverso un
       -- annullo e una riconferma, o è stato archiviato dal pannello nella finestra) ma ha una frequenza nell'anno nuovo: la sua scheda tiene la
       -- retta (e il resto) dell'anno vecchio, mentre da oggi l'anno visibile è il nuovo, e la «11 alunni» suonerebbe ogni notte. Passa dallo
-      -- specchio come gli altri; la difesa 2 di NB4 resta nello specchio (una frequenza non viva non porta la classe su una scheda archiviata)
-      -- e le tracce dell'archiviazione non si toccano (il bambino resta archiviato, con autore e motivo).
+      -- specchio come gli altri.
+      -- (giro 9, NB-8) SOLO se quella frequenza è CHIUSA: la ricopia non rianima MAI una scheda archiviata. Con una frequenza nuova ancora viva (la
+      -- chiusura di «Archivia» è caduta) lo specchio la leggerebbe viva, toglierebbe `archiviato_il` e rimetterebbe il bambino nel diario con
+      -- autore, motivo e memoria cancellati senza audit: resta archiviato con le sue tracce, la «11 alunni» lo segnala e il rimedio è «Riprova».
+      -- Per lo stesso motivo non serve né `data_ingresso <= v_oggi` (conta solo per le frequenze vive) né togliere le tracce (la scheda non torna viva).
+      -- (giro 9, O-c) Solo i bambini di QUESTA sede: chi è passato a un'altra sede (frequenza `trasferito` qui) si allinea all'anno di quella.
+      -- Le tracce dell'archiviazione non si toccano (il bambino resta archiviato, con autore e motivo); la difesa 2 di NB4 sta nello specchio.
       FOR v_r IN
         SELECT DISTINCT f.alunno_id FROM public.frequenze f
           JOIN public.alunni al ON al.id = f.alunno_id
          WHERE f.anno_sede_id = v_p.a_anno_sede_id
+           AND f.stato NOT IN ('in_attesa', 'iscritto')
+           AND al.scuola_id = v_p.scuola_id
            AND al.archiviato_il IS NOT NULL AND al.anonimizzato_il IS NULL
            AND NOT EXISTS (SELECT 1 FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.alunno_id = f.alunno_id)
          ORDER BY f.alunno_id
       LOOP
         SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_prima FROM public.alunni al WHERE al.id = v_r.alunno_id;
         PERFORM public.alunni_riallinea_da_frequenze(v_r.alunno_id);
-        IF (v_prima ->> 2) IS NOT NULL THEN
-          PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_r.alunno_id);
-        END IF;
         SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_dopo FROM public.alunni al WHERE al.id = v_r.alunno_id;
         v_s := v_s + 1; v_n3 := v_n3 + 1;
         IF v_prima IS DISTINCT FROM v_dopo THEN

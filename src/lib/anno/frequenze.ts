@@ -322,23 +322,42 @@ export async function finestraDiSede(
   supabase: SupabaseClient,
   scuolaId: string | null | undefined,
 ): Promise<{ attivo: string; visibile: string } | null> {
-  if (!scuolaId) return null
+  return (await leggiFinestraDiSede(supabase, scuolaId)).finestra
+}
+
+/**
+ * (Riattiva, giro 9, O-a) Come `finestraDiSede`, ma dice anche se una lettura è CADUTA (`guasto`): «non so» non vale «fuori dalla finestra».
+ * Chi scrive in base alla finestra (la chiusura delle iscrizioni all'archiviazione) deve poter distinguere i due casi. Lo schema indietro
+ * (la CI, un ambiente a metà) non è un guasto.
+ */
+export async function leggiFinestraDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+): Promise<{ finestra: { attivo: string; visibile: string } | null; guasto: boolean }> {
+  if (!scuolaId) return { finestra: null, guasto: false }
   try {
     const [att, vis] = await Promise.all([
       supabase.rpc('anno_attivo', { p_scuola: scuolaId }),
       supabase.rpc('anno_visibile_oggi', { p_scuola: scuolaId }),
     ])
     if (att.error || vis.error) {
+      let guasto = false
       for (const e of [att.error, vis.error]) {
-        if (e && !schemaAnnoIndietro(e)) logErrore({ operazione: 'anno/frequenze:finestraDiSede' }, new Error(`finestra:${e.code ?? 'senza-codice'}`))
+        if (e && !schemaAnnoIndietro(e)) {
+          guasto = true
+          logErrore({ operazione: 'anno/frequenze:finestraDiSede' }, new Error(`finestra:${e.code ?? 'senza-codice'}`))
+        }
       }
-      return null
+      return { finestra: null, guasto }
     }
-    if (typeof att.data === 'string' && typeof vis.data === 'string' && att.data !== vis.data) return { attivo: att.data, visibile: vis.data }
+    if (typeof att.data === 'string' && typeof vis.data === 'string' && att.data !== vis.data) {
+      return { finestra: { attivo: att.data, visibile: vis.data }, guasto: false }
+    }
   } catch (err) {
     logErrore({ operazione: 'anno/frequenze:finestraDiSede' }, err)
+    return { finestra: null, guasto: true }
   }
-  return null
+  return { finestra: null, guasto: false }
 }
 
 /**

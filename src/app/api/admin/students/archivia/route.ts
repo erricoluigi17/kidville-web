@@ -9,7 +9,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { annoAttivoDiSede, annoVisibileDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { annoAttivoDiSede, annoVisibileDiSede, campiFrequenzaDaAlunno, letturaAnnoFallita } from '@/lib/anno/frequenze';
 import { archiviatoDalPassaggio, chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
@@ -166,9 +166,16 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
         // mandare alla «Conferma tardiva»). Qui «Archivia» chiude solo ciò che è vivo, come su ogni scheda già archiviata.
         let daCompletareDavvero = daCompletare;
         if (daCompletare) {
-            const dalPassaggio = await archiviatoDalPassaggio(supabase, {
-                alunnoId, annoAttivoId: await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null),
-            });
+            const annoAttivoId = await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null);
+            // (Riattiva, giro 6) «Non so» non vale «no»: se la lettura dell'anno è caduta ci si ferma, senza scrivere (altrimenti `uscito` diventerebbe `ritirato`).
+            if (!annoAttivoId && letturaAnnoFallita(supabase)) {
+                logEvento('anno-scolastico', 'warn', { tipo: 'uscita-passaggio-non-letta', operazione: 'admin/students/archivia:POST', error_code: 'anno-attivo' });
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere la scheda: nessuna modifica è stata registrata.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            const dalPassaggio = await archiviatoDalPassaggio(supabase, { alunnoId, annoAttivoId });
             if (!dalPassaggio.ok) {
                 return NextResponse.json(
                     { error: 'Non è stato possibile leggere la scheda: nessuna modifica è stata registrata.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
@@ -183,6 +190,35 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
             const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null });
             if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
+                // (Riattiva, giro 6, B1-bis) Un'archiviazione della segreteria lascia sempre autore, motivo e audit. Qui «Archivia» ha chiuso qualcosa di
+                // vivo (per esempio la frequenza nuova di una «Conferma tardiva» fatta nella finestra) su una scheda che il passaggio aveva già archiviata:
+                // `archiviato_il` resta quello del passaggio (il criterio di «Riattiva» non cambia), ma l'autore e il motivo si scrivono ora, con l'audit.
+                if (daCompletare && (riprova.chiuse > 0 || riprova.voci_tolte > 0)) {
+                    const autore = { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null };
+                    const { error: errAutore } = await supabase
+                        .from('alunni')
+                        .update(autore)
+                        .eq('id', alunnoId)
+                        .in('scuola_id', plessi)
+                        .select('id')
+                        .single();
+                    if (errAutore) {
+                        if (colonnaAssente(errAutore)) return archivioNonDisponibile('scrittura', alunnoId);
+                        logEvento('gdpr', 'error', {
+                            operazione: 'admin/students/archivia:POST', esito: 'autore-non-scritto', alunno: alunnoId, error_code: (errAutore as { code?: string }).code,
+                        }, errAutore);
+                        return rispostaScritturaIncompleta();
+                    }
+                    await logScrittura(supabase, {
+                        attore: auth.user,
+                        entitaTipo: 'alunni',
+                        entitaId: alunnoId,
+                        azione: 'update',
+                        scuolaId: (prima.scuola_id as string | null) ?? null,
+                        valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null },
+                        valoreDopo: autore,
+                    });
+                }
                 logEvento('gdpr', riprova.non_riuscite > 0 ? 'error' : 'info', {
                     operazione: 'admin/students/archivia:POST',
                     azione: 'archiviazione-riprovata',

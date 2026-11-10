@@ -28,6 +28,12 @@ import { schemaAnnoIndietro } from '@/lib/anno/schema'
 export const PATCH_RITORNO_IN_ARRIVO = {
   stato: STATO_IN_ARRIVO,
   archiviato_il: null,
+  // (Riattiva, giro 6, P3) Quando la scheda torna viva se ne vanno anche le tracce dell'archiviazione: un `iscritto` con l'autore di un'archiviazione
+  // vecchia addosso sembrerebbe a «Riattiva» una riattivazione rimasta a metà.
+  archiviato_da: null,
+  archiviato_motivo: null,
+  archiviato_section_id: null,
+  archiviato_classe_sezione: null,
   section_id: null,
   classe_sezione: null,
 } as const

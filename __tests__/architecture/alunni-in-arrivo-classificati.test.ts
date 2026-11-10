@@ -346,6 +346,8 @@ const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::alunni_specchio_frequenza': ['sì', 'funzione-di-anno'],
   // giro 5 (Riattiva): risponde vero/falso su UN alunno per id («la sua scheda è ancora archiviata dal passaggio?»); non fa elenchi.
   'sql::anno_alunno_archiviato_dal_passaggio': ['no-già', 'funzione-puntuale'],
+  // giro 6 (Riattiva): scrive (toglie le tracce dell'archiviazione) su UN alunno per id, solo se la sua scheda è tornata viva; non fa elenchi.
+  'sql::anno_alunno_toglie_tracce_archiviazione': ['no-già', 'funzione-puntuale'],
   'sql::anno_fotografa': ['no-già', 'esclude-in-arrivo'],
   'sql::anno_invarianti': ['sì', 'funzione-di-anno'],
   // 4.5.5: legge UN alunno per id (la sua sede) e scrive la frequenza dell'anno aperto; non fa elenchi.
@@ -552,7 +554,7 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
 
 
-      { no: 0, 'no-già': 213, sì: 69, daCorreggere: 0 }, // Riattiva giro 5: +1 no-già (anno_alunno_archiviato_dal_passaggio). // giro 4: +1 sì (alunni_specchio_frequenza). 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
+      { no: 0, 'no-già': 214, sì: 69, daCorreggere: 0 }, // Riattiva giro 6: +1 no-già (anno_alunno_toglie_tracce_archiviazione). // Riattiva giro 5: +1 no-già (anno_alunno_archiviato_dal_passaggio). // giro 4: +1 sì (alunni_specchio_frequenza). 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
     )
   })
 

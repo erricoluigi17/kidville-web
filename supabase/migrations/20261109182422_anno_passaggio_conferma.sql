@@ -205,7 +205,7 @@ BEGIN
     v_uscita := (v_f ->> 'data_uscita')::date;
     v_arch := coalesce((v_cur ->> 'archiviato_il')::timestamptz,
                        CASE WHEN v_uscita IS NOT NULL AND v_uscita <= v_oggi
-                            THEN ((v_uscita + time '12:00') AT TIME ZONE 'Europe/Rome') ELSE now() END);
+                            THEN least(now(), ((v_uscita + time '12:00') AT TIME ZONE 'Europe/Rome')) ELSE now() END);
   END IF;
 
   v_t := jsonb_build_object(
@@ -234,13 +234,10 @@ BEGIN
     v_t := v_t || jsonb_build_object('section_id', NULL::uuid, 'classe_sezione', NULL::text);
   END IF;
 
-  -- (Riattiva, giro 5) Quando la scheda archiviata TORNA VIVA le tracce dell'archiviazione (autore, motivo, memoria della classe) se ne vanno con
-  -- `archiviato_il`: una scheda `iscritto` con l'autore di un'archiviazione vecchia addosso è una traccia sbagliata (la «Conferma tardiva» e la
-  -- ricopia del 01/09 la lasciavano). Solo se la scheda ERA archiviata: un'archiviazione rimasta a metà non ha ancora `archiviato_il`.
-  IF v_viva AND (v_cur ->> 'archiviato_il') IS NOT NULL THEN
-    v_t := v_t || jsonb_build_object('archiviato_da', NULL::uuid, 'archiviato_motivo', NULL::text,
-                                     'archiviato_section_id', NULL::uuid, 'archiviato_classe_sezione', NULL::text);
-  END IF;
+  -- (Riattiva, giro 6, P4) Lo specchio NON tocca le tracce dell'archiviazione (autore, motivo, memoria della classe): una scheda `iscritto` che le ha
+  -- ancora addosso è, per «Riattiva», una riattivazione RIMASTA A METÀ (la frequenza riaperta, l'UPDATE di `alunni` caduto) e la riprova la
+  -- completa con l'audit. Le tracce le toglie chi chiude il lavoro: «Riattiva», l'import, e qui `anno_alunno_toglie_tracce_archiviazione`
+  -- (tardiva, annullo, ricopia).
 
   -- Senza una sezione né sulla frequenza né sulla scheda il NOME di classe non si tocca: il testo scritto a mano (o un
   -- nome che nella sede non risolve) non deve sparire solo perché la frequenza non ha una sezione. Se la sezione c'era
@@ -913,12 +910,27 @@ AS $$
       JOIN public.frequenze f ON f.id = r.frequenza_da_id AND f.stato = 'uscito'
      WHERE al.id = p_alunno
        AND al.archiviato_il IS NOT NULL
-       AND (al.archiviato_il <= p.confermato_il
-            OR al.archiviato_il = ((f.data_uscita + time '12:00') AT TIME ZONE 'Europe/Rome'))
+       AND al.archiviato_il <= p.confermato_il
   )
 $$;
 REVOKE ALL ON FUNCTION public.anno_alunno_archiviato_dal_passaggio(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_alunno_archiviato_dal_passaggio(uuid, uuid) TO service_role;
+
+-- (Riattiva, giro 6) Quando una scheda archiviata TORNA VIVA per mano del passaggio (tardiva, annullo, ricopia) se ne vanno anche le tracce
+-- dell'archiviazione. Solo se `archiviato_il` è già vuoto: una scheda ancora archiviata le tiene.
+CREATE OR REPLACE FUNCTION public.anno_alunno_toglie_tracce_archiviazione(p_alunno uuid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  UPDATE public.alunni
+     SET archiviato_da = NULL, archiviato_motivo = NULL, archiviato_section_id = NULL, archiviato_classe_sezione = NULL
+   WHERE id = p_alunno AND archiviato_il IS NULL
+     AND (archiviato_da IS NOT NULL OR archiviato_motivo IS NOT NULL OR archiviato_section_id IS NOT NULL OR archiviato_classe_sezione IS NOT NULL)
+$$;
+REVOKE ALL ON FUNCTION public.anno_alunno_toglie_tracce_archiviazione(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_alunno_toglie_tracce_archiviazione(uuid) TO service_role;
 
 -- (giro 3, NB1) `sync_alunno_section_id`: copia dell'ULTIMA definizione (`20261106200347_anno_scolastico_schema.sql`); cambia solo l'anno in cui
 -- si risolve il nome della classe (visibile invece di attivo).
@@ -1466,10 +1478,16 @@ BEGIN
 
   -- (giro 2, P23) Chi è stato archiviato DOPO la conferma (e non dal passaggio: non è un `esce`) resta archiviato. Si ricorda com'è, perché
   -- lo specchio di sotto lo riscrive dalle frequenze; e si chiude la sua frequenza nuova, che l'archiviazione non ha toccato.
-  SELECT coalesce(jsonb_agg(jsonb_build_object('id', al.id, 'stato', al.stato, 'arch', al.archiviato_il)), '[]'::jsonb) INTO v_post
+  -- (Riattiva, giro 6, P2a/P2b) Con le sue tracce (autore, motivo, memoria della classe): l'annullo disfa il passaggio, non l'archiviazione che la segreteria
+  -- ha fatto DOPO. Vale anche per chi era uscito col passaggio (`esce`, `non_risposto`), tornato con una domanda e archiviato dopo: la sua archiviazione
+  -- ha un istante più tardi della conferma (la sua, del passaggio, è uguale: stessa transazione).
+  SELECT coalesce(jsonb_agg(jsonb_build_object('id', al.id, 'stato', al.stato, 'arch', al.archiviato_il, 'da', al.archiviato_da,
+                                               'motivo', al.archiviato_motivo, 'sez', al.archiviato_section_id, 'classe', al.archiviato_classe_sezione)), '[]'::jsonb) INTO v_post
     FROM public.alunni al
     JOIN public.passaggi_anno_righe x ON x.passaggio_id = v_p.id AND x.alunno_id = al.id
-   WHERE x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il
+   WHERE ((x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il >= v_p.confermato_il)
+       OR (x.esito IN ('esce', 'non_risposto') AND al.archiviato_il > v_p.confermato_il))
+     AND al.archiviato_il IS NOT NULL
      AND al.anonimizzato_il IS NULL;
   UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
     FROM public.passaggi_anno_righe x
@@ -1484,6 +1502,15 @@ BEGIN
     JOIN public.alunni al ON al.id = x.alunno_id
    WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado') AND f.id = x.frequenza_da_id
      AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il
+     AND al.anonimizzato_il IS NULL;
+  -- (Riattiva, giro 6, P2b) Chi era uscito col passaggio e poi è stato archiviato dalla segreteria resta archiviato: la sua frequenza `uscito` non torna
+  -- viva (la sua uscita, adesso, è quella dell'archiviazione).
+  UPDATE public.frequenze f SET stato = 'ritirato',
+         data_uscita = least(greatest(public.giorno_roma(al.archiviato_il), f.data_ingresso), v_da.fine)
+    FROM public.passaggi_anno_righe x
+    JOIN public.alunni al ON al.id = x.alunno_id
+   WHERE x.passaggio_id = v_p.id AND x.esito IN ('esce', 'non_risposto') AND f.id = x.frequenza_da_id
+     AND f.stato = 'uscito' AND al.archiviato_il IS NOT NULL AND al.archiviato_il > v_p.confermato_il
      AND al.anonimizzato_il IS NULL;
 
   -- Le frequenze, con il vecchio di nuovo anno attivo (lo specchio le segue).
@@ -1520,6 +1547,7 @@ BEGIN
                       WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(v_p.scuola_id) AND f.stato IN ('in_attesa', 'iscritto'));
   FOR v_giro IN SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id LOOP
     PERFORM public.alunni_riallinea_da_frequenze(v_giro.alunno_id);
+    PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_giro.alunno_id);
   END LOOP;
 
   -- (giro 1, B6) La scheda com'era PRIMA della conferma, dove lo specchio l'ha riscritta: chi era «ritirato» o «sospeso» dalla tendina
@@ -1531,7 +1559,9 @@ BEGIN
      AND al.id = r.alunno_id AND al.stato = 'iscritto' AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL;
 
   -- (giro 2, P23) Chi era stato archiviato dopo la conferma torna archiviato (lo specchio e i «nuovi → in arrivo» l'avevano riaperto).
-  UPDATE public.alunni al SET stato = coalesce(nullif(x.p ->> 'stato', 'in_arrivo'), 'ritirato'), archiviato_il = (x.p ->> 'arch')::timestamptz
+  UPDATE public.alunni al SET stato = coalesce(nullif(x.p ->> 'stato', 'in_arrivo'), 'ritirato'), archiviato_il = (x.p ->> 'arch')::timestamptz,
+         archiviato_da = (x.p ->> 'da')::uuid, archiviato_motivo = x.p ->> 'motivo',
+         archiviato_section_id = (x.p ->> 'sez')::uuid, archiviato_classe_sezione = x.p ->> 'classe'
     FROM jsonb_array_elements(v_post) AS x(p)
    WHERE al.id = (x.p ->> 'id')::uuid AND al.anonimizzato_il IS NULL;
 
@@ -1652,6 +1682,7 @@ BEGIN
   -- (giro 2, N3) Se il nuovo anno non è ancora cominciato, la scheda resta com'è (lo specchio guarda l'anno visibile, ancora il vecchio): il
   -- bambino entra il giorno dell'`inizio`, come dice la specifica, e la voce nasce allora (`passaggio_ricopia_schede` la crea).
   PERFORM public.alunni_riallinea_da_frequenze(p_alunno);
+  PERFORM public.anno_alunno_toglie_tracce_archiviazione(p_alunno);
   IF v_a.inizio > v_oggi THEN
     v_quota := jsonb_build_object('esito', 'rimandata_all_inizio', 'pagamento_id', NULL);
   ELSE
@@ -1741,6 +1772,9 @@ BEGIN
       FOR v_r IN SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id ORDER BY x.alunno_id LOOP
         SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_prima FROM public.alunni al WHERE al.id = v_r.alunno_id;
         PERFORM public.alunni_riallinea_da_frequenze(v_r.alunno_id);
+        IF (v_prima ->> 2) IS NOT NULL THEN
+          PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_r.alunno_id);
+        END IF;
         SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_dopo FROM public.alunni al WHERE al.id = v_r.alunno_id;
         v_s := v_s + 1;
         IF v_prima IS DISTINCT FROM v_dopo THEN

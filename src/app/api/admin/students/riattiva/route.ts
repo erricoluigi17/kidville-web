@@ -174,7 +174,8 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // ⚠️ Le stesse tracce le lascia anche un'ARCHIVIAZIONE fallita a metà (la memoria è scritta prima della frequenza):
         // un iscritto VERO con la memoria addosso. Lì la classe attuale è quella ricordata e riattivare completa senza
         // spostare nessuno. Se invece la classe attuale è DIVERSA dalla ricordata la memoria è stantia: riscriverla
-        // sposterebbe il bambino, quindi 409. Senza classe attuale non c'è nessuno da spostare.
+        // sposterebbe il bambino, quindi NON la si riscrive: si tolgono le tracce (ramo `tracceStantie`, con audit) e si
+        // risponde 200 `conservata`. Senza classe attuale non c'è nessuno da spostare.
         const attuale = ((prima.classe_sezione as string | null) ?? '').trim();
         const ricordataPrima = ((prima.archiviato_classe_sezione as string | null) ?? '').trim();
         const classeCompatibile = attuale === '' || attuale === ricordataPrima;
@@ -183,6 +184,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // bambino è andato avanti (la ricopia del 01/09 gli ha dato la classe nuova), oppure la memoria è stantia. La classe attuale è giusta e non si tocca:
         // si tolgono le tracce e si risponde il vero (è già fra gli iscritti, con la sua classe).
         const tracceStantie = prima.stato === STATO_ISCRITTO && tracceArchiviazione && !classeCompatibile;
+        const sede0 = (prima.scuola_id as string | null) ?? null;
         if (tracceStantie) {
             const { error: errTracce } = await supabase
                 .from('alunni')
@@ -201,6 +203,15 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                     { status: 500 },
                 );
             }
+            await logScrittura(supabase, {
+                attore: auth.user,
+                entitaTipo: 'alunni',
+                entitaId: alunnoId,
+                azione: 'update',
+                scuolaId: sede0,
+                valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null, archiviato_motivo: prima.archiviato_motivo ?? null, archiviato_classe_sezione: ricordataPrima || null },
+                valoreDopo: { archiviato_da: null, archiviato_motivo: null, archiviato_section_id: null, archiviato_classe_sezione: null },
+            });
             logEvento('gdpr', 'info', {
                 operazione: 'admin/students/riattiva:POST', azione: 'alunno-riattivato', esito: 'riattivato-tracce-tolte', alunno: alunnoId, ruolo: auth.user.role,
             });

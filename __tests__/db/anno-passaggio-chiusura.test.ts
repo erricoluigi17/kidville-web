@@ -1088,9 +1088,8 @@ describe('Riattiva · P2: l\'annullo disfa il passaggio, non l\'archiviazione ch
     await annulla()
     h.audit.length = 0
     const a = await archiviaCorpo('nuova')
-    expect(a.stato, JSON.stringify(a.corpo)).toBe(200)
-    expect(a.corpo.gia_archiviato, 'la scheda non è «da completare»').toBe(true)
-    expect(a.corpo.frequenze_chiuse).toBe(0)
+    expect(a.stato, JSON.stringify(a.corpo)).toBe(409)
+    expect(a.corpo.codice, 'la scheda non è «da completare»').toBe('ALUNNO_GIA_ARCHIVIATO')
     expect(await autoreEMotivo('nuova'), 'autore e motivo come prima').toEqual(prima)
     expect(auditDi('nuova'), 'nessuna riga d\'audit nuova').toEqual([])
   })
@@ -1252,4 +1251,87 @@ describe('Riattiva · `archiviato_il` del passaggio non va mai nel futuro', () =
       expect(await dalPassaggio('nonRisposto'), 'riconfermato').toBe(true)
     } finally { await b.db.exec('ROLLBACK') }
   }, 180_000)
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», SETTIMO GIRO. L'annullo riconosce l'archiviazione della segreteria da un segno suo (autore o motivo diversi da quelli che la scheda aveva
+// alla conferma, `scheda_tracce_da_prima`), non da `archiviato_il`: «Archivia» dopo una «Conferma tardiva» lascia apposta l'istante del passaggio.
+// Q2-D: il passo 6bis toglie le tracce a chi era archiviato a metà e scelto «continua», e l'annullo le rimette. Q1-a: tracce di prima della PR su un iscritto.
+// ---------------------------------------------------------------------------------------------------------------------------------
+async function provaPrima(titolo: string, prima: () => Promise<void>, fn: () => Promise<void>) {
+  it(titolo, async () => {
+    await b.db.exec('BEGIN')
+    h.db = b.db; h.utente = UTENTE; h.sedi = [SEDE_E2E]; h.log.length = 0; h.audit.length = 0
+    try { await oggiE(b.oggi); await prima(); await prepara(); await fn() } finally { await b.db.exec('ROLLBACK') }
+  }, 180_000)
+}
+
+describe('Riattiva · Q2-A: B1-bis seguito dall\'annullo non rianima il bambino e non gli cancella autore e motivo', () => {
+  const dopoLAnnullo = async (k: NomeBambino, prima: C) => {
+    await annulla()
+    expect(await scheda(BAMBINI[k]), 'dopo l\'annullo resta archiviato').toMatch(/\/ARCHIVIATO$/)
+    expect(await autoreEMotivo(k), 'autore e motivo come prima').toEqual(prima)
+    expect(await diario(b.sezioni.farfalle, '2027-08-16'), 'fuori dal diario della classe vecchia').not.toContain(k)
+    expect(await invarianti(), 'invarianti dopo l\'annullo').toEqual([])
+    await prepara()
+    expect(await scheda(BAMBINI[k]), 'dopo la riconferma ancora archiviato').toMatch(/\/ARCHIVIATO$/)
+    expect(await autoreEMotivo(k), 'e con le sue tracce').toEqual(prima)
+    expect(await invarianti(), 'invarianti dopo la riconferma').toEqual([])
+  }
+  prova('Q2-A · nonRisposto: tardiva il 12/08, «Archivia» il 15/08 con motivo, annullo il 16/08', async () => {
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-15')
+    expect((await archiviaCorpo('nonRisposto', 'trasferimento')).stato).toBe(200)
+    const prima = await autoreEMotivo('nonRisposto')
+    expect(prima).toMatchObject({ da: true, motivo: 'trasferimento' })
+    await oggiE('2027-08-16')
+    await dopoLAnnullo('nonRisposto', prima)
+  })
+  prova('Q2-A-bis · cambiaGradoSenzaSezione («esce» con l\'eccezione e la voce della quota), senza tardiva: «Archivia» il 15/08, annullo il 16/08', async () => {
+    await oggiE('2027-08-15')
+    const a = await archiviaCorpo('cambiaGradoSenzaSezione', 'trasferimento')
+    expect(a.stato, JSON.stringify(a.corpo)).toBe(200)
+    const prima = await autoreEMotivo('cambiaGradoSenzaSezione')
+    expect(prima).toMatchObject({ da: true, motivo: 'trasferimento' })
+    await oggiE('2027-08-16')
+    await dopoLAnnullo('cambiaGradoSenzaSezione', prima)
+  })
+  prova('controllo · un «esce» archiviato a metà PRIMA del passaggio (stessi autore e motivo di allora) non conta come «dopo»: l\'annullo lo riporta com\'era', async () => {
+    const prima = await autoreEMotivo('cambiaGradoSenzaSezione')
+    expect(prima.da, 'senza tracce alla conferma').toBe(false)
+    await annulla()
+    expect(await autoreEMotivo('cambiaGradoSenzaSezione')).toEqual(prima)
+    expect((await frequenza(BAMBINI.cambiaGradoSenzaSezione, 'vecchio'))?.stato, 'la sua frequenza vecchia è tornata com\'era').not.toBe('uscito')
+  })
+})
+
+describe('Riattiva · Q2-D: il passo 6bis seguito dall\'annullo rimette autore, motivo e memoria di chi era archiviato a metà', () => {
+  provaPrima('ritiratoTendina archiviato (autore, motivo, memoria) e scelto «continua»: la conferma le toglie, l\'annullo le rimette', async () => {
+    await b.db.query(`UPDATE public.alunni SET archiviato_il = coalesce(archiviato_il, now()), archiviato_da=$2, archiviato_motivo='ritiro', archiviato_classe_sezione='Farfalle' WHERE id=$1`, [BAMBINI.ritiratoTendina, UTENTE])
+  }, async () => {
+    expect(await tracce('ritiratoTendina'), 'dopo la conferma (6bis)').toEqual(SENZA_TRACCE)
+    await annulla()
+    expect(await autoreEMotivo('ritiratoTendina'), 'dopo l\'annullo').toEqual({ da: true, motivo: 'ritiro', memoria: true })
+    expect(await scheda(BAMBINI.ritiratoTendina)).toMatch(/\/ARCHIVIATO$/)
+  })
+})
+
+describe('Riattiva · Q1-a: tracce di prima della PR su un iscritto', () => {
+  prova('continuaB iscritto con le tracce di un\'archiviazione vecchia e la stessa classe: «Riattiva» le toglie con l\'audit e risponde `conservata`, senza «ripristinata»', async () => {
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const prima = await scheda(BAMBINI.continuaB)
+    const classe = (await rows<C>(`SELECT classe_sezione FROM public.alunni WHERE id=$1`, [BAMBINI.continuaB]))[0].classe_sezione
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo='ritiro', archiviato_section_id=$3, archiviato_classe_sezione=$4 WHERE id=$1`,
+      [BAMBINI.continuaB, UTENTE, b.sezioni.farfalle, classe])
+    h.audit.length = 0
+    const r = await riattivaCorpo('continuaB')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.esito_classe, 'niente «ripristinata»').toBe('conservata')
+    expect(await scheda(BAMBINI.continuaB), 'nessuno spostamento').toBe(prima)
+    expect(await tracce('continuaB')).toEqual(SENZA_TRACCE)
+    expect(auditDi('continuaB').length, 'l\'audit').toBeGreaterThan(0)
+    expect(await invarianti()).toEqual([])
+  })
 })

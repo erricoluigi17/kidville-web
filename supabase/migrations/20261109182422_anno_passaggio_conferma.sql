@@ -16,6 +16,10 @@ ALTER TABLE public.passaggi_anno_docenti ADD COLUMN IF NOT EXISTS inserita boole
 -- (giro 2, R6) Il giorno in cui le schede della sede sono state ricopiate sulla classe nuova (NULL = non ancora). Una conferma fatta a
 -- anno nuovo già cominciato la valorizza subito.
 ALTER TABLE public.passaggi_anno ADD COLUMN IF NOT EXISTS schede_copiate_il timestamptz;
+-- (Riattiva, giro 7) Le tracce dell'archiviazione (autore, motivo, sezione e classe ricordate) che la scheda aveva nel momento della conferma. Servono
+-- all'annullo: riconosce l'archiviazione fatta DOPO dalla segreteria da un segno che non dipende da `archiviato_il` (autore o motivo diversi da questi),
+-- e rimette le tracce a chi il passo 6bis le aveva tolte.
+ALTER TABLE public.passaggi_anno_righe ADD COLUMN IF NOT EXISTS scheda_tracce_da_prima jsonb;
 
 -- ── Giro di correzione 1 · B1 · lo storico delle classi non perde la riga aperta ─────────────────
 -- `storici_traccia_classe` (trigger su `alunni`): corpo di produzione del 2026-11-09 (`pg_get_functiondef`), con UNA correzione. La terza
@@ -1286,7 +1290,9 @@ BEGIN
   END IF;
 
   -- 1bis · (giro 1, B6) la scheda dell'alunno com'è ADESSO, perché l'annullo la rimetta: lo specchio di sotto la riscrive.
-  UPDATE public.passaggi_anno_righe r SET scheda_da_prima = al.stato, scheda_archiviata_da_prima = al.archiviato_il
+  UPDATE public.passaggi_anno_righe r SET scheda_da_prima = al.stato, scheda_archiviata_da_prima = al.archiviato_il,
+         scheda_tracce_da_prima = jsonb_build_object('da', al.archiviato_da, 'motivo', al.archiviato_motivo,
+                                                     'sez', al.archiviato_section_id, 'classe', al.archiviato_classe_sezione)
     FROM public.alunni al
    WHERE r.passaggio_id = v_p.id AND al.id = r.alunno_id;
 
@@ -1408,6 +1414,7 @@ DECLARE
   v_tolti   integer := 0;
   v_tardive integer := 0;
   v_post    jsonb;
+  v_dopo    uuid[];
 BEGIN
   SELECT * INTO v_p FROM public.passaggi_anno WHERE id = p_passaggio;
   IF NOT FOUND THEN
@@ -1481,12 +1488,23 @@ BEGIN
   -- (Riattiva, giro 6, P2a/P2b) Con le sue tracce (autore, motivo, memoria della classe): l'annullo disfa il passaggio, non l'archiviazione che la segreteria
   -- ha fatto DOPO. Vale anche per chi era uscito col passaggio (`esce`, `non_risposto`), tornato con una domanda e archiviato dopo: la sua archiviazione
   -- ha un istante più tardi della conferma (la sua, del passaggio, è uguale: stessa transazione).
+  -- (Riattiva, giro 7) Per chi era uscito col passaggio il solo istante non basta: «Archivia» dopo una «Conferma tardiva» lascia APPOSTA l'istante del passaggio
+  -- e scrive autore e motivo. Il segno è questo: la scheda è archiviata e ha un autore o un motivo DIVERSI da quelli che aveva alla conferma
+  -- (`scheda_tracce_da_prima`). Un `esce` già archiviato a metà prima del passaggio ha gli stessi di allora: non conta come «dopo».
+  SELECT coalesce(array_agg(al.id), '{}'::uuid[]) INTO v_dopo
+    FROM public.alunni al
+    JOIN public.passaggi_anno_righe x ON x.passaggio_id = v_p.id AND x.alunno_id = al.id
+   WHERE x.esito IN ('esce', 'non_risposto') AND al.archiviato_il IS NOT NULL AND al.anonimizzato_il IS NULL
+     AND (al.archiviato_il > v_p.confermato_il
+          OR ((al.archiviato_da IS NOT NULL OR al.archiviato_motivo IS NOT NULL)
+              AND (al.archiviato_da IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'da')::uuid
+                   OR al.archiviato_motivo IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'motivo'))));
   SELECT coalesce(jsonb_agg(jsonb_build_object('id', al.id, 'stato', al.stato, 'arch', al.archiviato_il, 'da', al.archiviato_da,
                                                'motivo', al.archiviato_motivo, 'sez', al.archiviato_section_id, 'classe', al.archiviato_classe_sezione)), '[]'::jsonb) INTO v_post
     FROM public.alunni al
     JOIN public.passaggi_anno_righe x ON x.passaggio_id = v_p.id AND x.alunno_id = al.id
    WHERE ((x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il >= v_p.confermato_il)
-       OR (x.esito IN ('esce', 'non_risposto') AND al.archiviato_il > v_p.confermato_il))
+       OR (x.esito IN ('esce', 'non_risposto') AND al.id = ANY (v_dopo)))
      AND al.archiviato_il IS NOT NULL
      AND al.anonimizzato_il IS NULL;
   UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
@@ -1510,7 +1528,7 @@ BEGIN
     FROM public.passaggi_anno_righe x
     JOIN public.alunni al ON al.id = x.alunno_id
    WHERE x.passaggio_id = v_p.id AND x.esito IN ('esce', 'non_risposto') AND f.id = x.frequenza_da_id
-     AND f.stato = 'uscito' AND al.archiviato_il IS NOT NULL AND al.archiviato_il > v_p.confermato_il
+     AND f.stato = 'uscito' AND al.archiviato_il IS NOT NULL AND al.id = ANY (v_dopo)
      AND al.anonimizzato_il IS NULL;
 
   -- Le frequenze, con il vecchio di nuovo anno attivo (lo specchio le segue).
@@ -1522,6 +1540,8 @@ BEGIN
   UPDATE public.frequenze f SET stato = 'in_attesa', data_uscita = NULL
     FROM public.passaggi_anno_righe r2
    WHERE r2.passaggio_id = v_p.id AND r2.esito = 'esce' AND r2.eccezione AND r2.frequenza_a_id IS NOT NULL
+     -- (Riattiva, giro 7) Chi la segreteria ha archiviato dopo la conferma resta archiviato: la sua iscrizione nuova non torna viva (invariante 11).
+     AND NOT (r2.alunno_id = ANY (v_dopo))
      AND f.id = r2.frequenza_a_id AND f.stato = 'ritirato';
   GET DIAGNOSTICS v_ritirati = ROW_COUNT;
 
@@ -1553,7 +1573,10 @@ BEGIN
   -- (giro 1, B6) La scheda com'era PRIMA della conferma, dove lo specchio l'ha riscritta: chi era «ritirato» o «sospeso» dalla tendina
   -- lo torna, con la sua archiviazione di prima. Solo se oggi la scheda è `iscritto` e non archiviata, cioè ancora quella che ha scritto il
   -- passaggio (giro 2, P23: se un collega l'ha cambiata dopo, non si tocca), e non è anonimizzata.
-  UPDATE public.alunni al SET stato = r.scheda_da_prima, archiviato_il = r.scheda_archiviata_da_prima
+  -- (Riattiva, giro 7, Q2-D) Con le sue tracce: il passo 6bis le aveva tolte, l'annullo le rimette com'erano alla conferma.
+  UPDATE public.alunni al SET stato = r.scheda_da_prima, archiviato_il = r.scheda_archiviata_da_prima,
+         archiviato_da = (r.scheda_tracce_da_prima ->> 'da')::uuid, archiviato_motivo = r.scheda_tracce_da_prima ->> 'motivo',
+         archiviato_section_id = (r.scheda_tracce_da_prima ->> 'sez')::uuid, archiviato_classe_sezione = r.scheda_tracce_da_prima ->> 'classe'
     FROM public.passaggi_anno_righe r
    WHERE r.passaggio_id = v_p.id AND r.scheda_da_prima IN ('ritirato', 'sospeso')
      AND al.id = r.alunno_id AND al.stato = 'iscritto' AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL;

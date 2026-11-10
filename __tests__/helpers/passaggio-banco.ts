@@ -200,6 +200,8 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
     ALTER TABLE public.alunni
       ADD COLUMN IF NOT EXISTS archiviato_da uuid, ADD COLUMN IF NOT EXISTS archiviato_motivo text,
       ADD COLUMN IF NOT EXISTS archiviato_section_id uuid, ADD COLUMN IF NOT EXISTS archiviato_classe_sezione text;
+    -- (Riattiva, giro 7) In produzione c'è: la guardia di eliminazione di una voce legge \`incassi\` e, senza la tabella, il banco dava un falso guasto.
+    CREATE TABLE IF NOT EXISTS public.incassi (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pagamento_id uuid, transazione_id uuid, importo numeric, storno_di uuid);
     ALTER TABLE public.pagamenti
       ADD COLUMN obbligatorio boolean NOT NULL DEFAULT false,
       ADD COLUMN gruppo text,

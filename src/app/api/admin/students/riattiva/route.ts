@@ -123,7 +123,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // Lettura minima: nessuna colonna che nomini il bambino.
         const { data: prima, error: errLettura } = await supabase
             .from('alunni')
-            .select('id, scuola_id, stato, classe_sezione, archiviato_il, archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione, spazio_liberato_il')
+            .select('id, scuola_id, stato, section_id, classe_sezione, archiviato_il, archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione, spazio_liberato_il')
             .eq('id', alunnoId)
             .in('scuola_id', plessi)
             .maybeSingle();
@@ -178,7 +178,13 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // risponde 200 `conservata`. Senza classe attuale non c'è nessuno da spostare.
         const attuale = ((prima.classe_sezione as string | null) ?? '').trim();
         const ricordataPrima = ((prima.archiviato_classe_sezione as string | null) ?? '').trim();
-        const classeCompatibile = attuale === '' || attuale === ricordataPrima;
+        // (giro 7, Q1-a) Anche la sezione deve tornare: una riattivazione a metà ha riaperto la frequenza nella sezione che l'archiviazione ricordava, mentre tracce
+        // di un'archiviazione di PRIMA (un ex alunno importato col codice vecchio, poi iscritto in un'altra classe) hanno una sezione diversa. In quel caso le
+        // tracce sono stantie: si tolgono con l'audit e si risponde il vero, senza «ripristinata» e senza spostare nessuno.
+        const sezioneRicordata = (prima.archiviato_section_id as string | null) ?? null;
+        const sezioneAttuale = (prima.section_id as string | null) ?? null;
+        const sezioneCompatibile = sezioneRicordata === null || sezioneAttuale === null || sezioneRicordata === sezioneAttuale;
+        const classeCompatibile = (attuale === '' || attuale === ricordataPrima) && sezioneCompatibile;
         const mezzaRiattivata = prima.stato === STATO_ISCRITTO && tracceArchiviazione && classeCompatibile;
         // (quinto giro, E2) Un iscritto con le tracce di un'archiviazione E una classe diversa dalla ricordata: la riattivazione era rimasta a metà e il
         // bambino è andato avanti (la ricopia del 01/09 gli ha dato la classe nuova), oppure la memoria è stantia. La classe attuale è giusta e non si tocca:

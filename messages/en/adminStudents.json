@@ -610,6 +610,7 @@
   "arcEsitoRientratoSemplice": "{nome}: back among the enrolled.",
   "arcEsitoMensaDaRiassegnare": "The canteen group does not come back on its own: reassign it from their record.",
   "arcEsitoRientratoSenzaClasse": "{nome}: back among the enrolled, but class “{classe}” no longer exists. Assign a new one below, under “Enrolled without a class”.",
+  "arcEsitoRientratoClasseDiAltroAnno": "{nome}: back among the enrolled, but class “{classe}” belongs to another school year. Assign one of the current year below, under “Enrolled without a class”.",
   "arcEsitoSezioneAssegnata": "{nome} is in {classe}: now listed under Students.",
   "arcEsitoSpazioGiaLiberato": "Photos, videos and messages had already been deleted and cannot be recovered.",
   "arcFiltriVuotoTesto": "Nobody matches what you searched for. Try another word.",

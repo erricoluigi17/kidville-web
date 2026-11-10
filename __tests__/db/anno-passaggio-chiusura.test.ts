@@ -87,6 +87,7 @@ import { POST as ARCHIVIA } from '@/app/api/admin/students/archivia/route'
 import { PATCH as STUDENTI_PATCH } from '@/app/api/admin/students/route'
 import { POST as RIATTIVA } from '@/app/api/admin/students/riattiva/route'
 import { POST as TARDIVA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/conferma-tardiva/route'
+import { POST as ANNULLA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/annulla/route'
 import { POST as RITIRA_CONFERMA } from '@/app/api/admin/anni/[annoSedeId]/conferme/ritira/route'
 import { PATCH as ISCRIZIONI_PATCH } from '@/app/api/admin/iscrizioni/route'
 import { GET as DIARIO } from '@/app/api/diary/students/route'
@@ -490,15 +491,21 @@ describe('Riattiva nella finestra · B2 e B3: la classe dell\'anno nuovo è quel
   })
 })
 
-describe('Riattiva nella finestra · O2: chi è entrato con la «Conferma tardiva»', () => {
-  prova('nonRisposto: confermato in ritardo il 12/08, archiviato e riattivato nella finestra → il 02/09 in Farfalle\', nessun invariante', async () => {
+describe('Riattiva nella finestra · O2: chi è entrato con la «Conferma tardiva» e poi viene archiviato nella finestra', () => {
+  prova('nonRisposto: confermato in ritardo il 12/08, «Archivia» il 15/08 non cancella la sua uscita; «Riattiva» manda ancora alla tardiva, che poi porta il 02/09 in Farfalle\'', async () => {
     await oggiE('2027-08-12')
     const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
     expect(t.stato, String(t.corpo?.error)).toBe(200)
-    const r = await archiviaERiattiva('nonRisposto')
-    expect(r.stato, String(r.errore)).toBe(200)
-    expect((await frequenza(BAMBINI.nonRisposto, 'nuovo'))?.stato, 'l\'iscrizione nuova è viva').toBe('in_attesa')
-    expect((await frequenza(BAMBINI.nonRisposto, 'nuovo'))?.section_id).toBe(b.sezioni.farfalleNuova)
+    await oggiE('2027-08-15')
+    const a = await archiviaCorpo('nonRisposto')
+    expect(a.stato, String(a.corpo.error)).toBe(200)
+    expect((await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato, 'la sua uscita del passaggio resta `uscito`').toBe('uscito')
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato, String(r.corpo.error)).toBe(409)
+    expect(String(r.corpo.error)).toContain('Conferma tardiva')
+    const t2 = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
+    expect(t2.stato, String(t2.corpo?.error)).toBe(200)
     expect(await invarianti(), 'invarianti il 20/08').toEqual([])
     await finoAlDueSettembre()
     expect(await scheda(BAMBINI.nonRisposto), 'il 02/09').toBe('iscritto/farfalleNuova')
@@ -662,11 +669,16 @@ describe('Riattiva nella finestra · j: la riprova di una riattivazione rimasta 
   prova('continuaAltraSezione: frequenze già riaperte, scheda no → la riprova del 20/08 lascia Girasoli\' dov\'è e il 02/09 è nel suo diario', async () => {
     await oggiE('2027-08-15')
     expect((await archivia4('continuaAltraSezione')).stato).toBe(200)
+    const tr = (await rows<C>(`SELECT archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione FROM public.alunni WHERE id=$1`, [BAMBINI.continuaAltraSezione]))[0]
     // La prima «Riattiva» ha riaperto la frequenza nuova (con la sua classe) e quella che si vede (Farfalle), poi l'UPDATE di `alunni` è fallito:
     // lo specchio ha già rimesso la scheda `iscritto`, le tracce dell'archiviazione sono ancora lì.
     const vivo = `CASE WHEN (moduli_completi AND quota_saldata) OR origine = 'recupero' THEN 'iscritto' ELSE 'in_attesa' END`
     await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaAltraSezione, b.a])
     await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL, section_id = $3 WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaAltraSezione, b.da, b.sezioni.farfalle])
+    // (quinto giro) Lo specchio, rimettendo viva la scheda, ne toglie anche le tracce: questa è la riprova su una scheda con tracce rimaste da
+    // prima (un dato vecchio, o un guasto fra lo specchio e l'UPDATE di `alunni`). Le si rimette a mano.
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo=$3, archiviato_section_id=$4, archiviato_classe_sezione=$5 WHERE id=$1`,
+      [BAMBINI.continuaAltraSezione, tr.archiviato_da, tr.archiviato_motivo, tr.archiviato_section_id, tr.archiviato_classe_sezione])
     const metà = (await rows<C>(`SELECT stato, archiviato_il IS NOT NULL arch, archiviato_da IS NOT NULL da FROM public.alunni WHERE id=$1`, [BAMBINI.continuaAltraSezione]))[0]
     expect(metà, 'lo stato a metà: iscritto, non archiviato, l\'autore ancora addosso').toEqual({ stato: 'iscritto', arch: false, da: true })
     await oggiE('2027-08-20')
@@ -818,7 +830,287 @@ describe('Riattiva · limite 1: la famiglia non può più ritirare la conferma q
     await oggiE('2027-08-10')
     const nuova = (await rows<C>(`SELECT id FROM public.frequenze WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaB, b.a]))[0].id as string
     const r = await chiama(RITIRA_CONFERMA, 'POST', '', { frequenza_id: nuova })
-    expect(r.stato, 'rifiutato').not.toBe(200)
+    expect(r.stato, 'rifiutato').toBe(409)
+    expect(r.corpo.codice, 'con il codice dell\'anno non aperto').toBe('ANNO_NON_APERTO')
     expect((await frequenza(BAMBINI.continuaB, 'nuovo'))?.stato, 'la frequenza nuova è viva').toBe('in_attesa')
+  })
+})
+
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», QUINTO GIRO. Il 409 verso la «Conferma tardiva» spetta solo a chi è ANCORA archiviato dal passaggio (la funzione SQL
+// `anno_alunno_archiviato_dal_passaggio`): chi è uscito col passaggio, è tornato con una domanda ed è stato archiviato DOPO dalla segreteria si
+// riattiva come ogni altro. «Archivia» non riscrive mai la frequenza `uscito`. Le tracce dell'archiviazione se ne vanno con `archiviato_il`.
+// ---------------------------------------------------------------------------------------------------------------------------------
+async function archiviaCorpo(k: NomeBambino): Promise<{ stato: number; corpo: C }> {
+  const req = new NextRequest('http://localhost/api/admin/students/archivia', {
+    method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: BAMBINI[k] }),
+  })
+  const res = await ARCHIVIA(req)
+  return { stato: res.status, corpo: ((await res.json().catch(() => null)) ?? {}) as C }
+}
+let nDomanda = 0
+// Una domanda per l'anno nuovo importata nella finestra (la strada del test N1), per un bambino del banco a cui si dà un codice fiscale finto.
+async function domandaImportata(k: NomeBambino, cf: string) {
+  await b.db.query(`UPDATE public.alunni SET codice_fiscale=$2, nome=$3, cognome='ProvaR', data_nascita='2023-03-05' WHERE id=$1`, [BAMBINI[k], cf, k])
+  nDomanda++
+  const id = `d4d4d4d4-0000-4000-8000-0000000000${String(nDomanda).padStart(2, '0')}`
+  const dati = {
+    children: [{ nome: k, cognome: 'ProvaR', data_nascita: '2023-03-05', codice_fiscale: cf }],
+    adults: [{ first_name: 'Genitore', last_name: 'ProvaR', email: 'genitore5@example.test', ruolo: 'madre' }],
+  }
+  await b.db.query(`INSERT INTO public.enrollment_submissions (id, scuola_id, anno_id, data, status, created_at) VALUES ($1,$2,$3,$4,'pending','2027-08-14T09:00:00Z')`,
+    [id, SEDE_E2E, b.annoA, JSON.stringify(dati)])
+  const esito = await eseguiDomanda(clienteProvaRoute(b.db) as never,
+    { id, scuolaId: SEDE_E2E, creataIl: '2027-08-14T09:00:00Z', bambini: [], adulti: [] } as never, dati as never,
+    [{ indice: 0, nome: k, cognome: 'ProvaR', classe: 'Girasoli', retta: 150, aCaricoDi: null }] as never, SEDE_E2E)
+  expect(esito.errore, 'l\'import della domanda').toBeFalsy()
+}
+const tracce = async (k: NomeBambino) => (await rows<C>(
+  `SELECT archiviato_da IS NOT NULL da, archiviato_motivo IS NOT NULL motivo, archiviato_section_id IS NOT NULL sez, archiviato_classe_sezione IS NOT NULL memoria
+     FROM public.alunni WHERE id=$1`, [BAMBINI[k]]))[0]
+const SENZA_TRACCE = { da: false, motivo: false, sez: false, memoria: false }
+const frequenzaTipo = async (k: NomeBambino) => (await rows<C>(`SELECT tipo, stato, section_id FROM public.frequenze WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI[k], b.a]))[0]
+const dalPassaggio = async (k: NomeBambino) => (await rows<C>(`SELECT public.anno_alunno_archiviato_dal_passaggio($1,$2) v`, [BAMBINI[k], b.a]))[0].v as boolean
+
+describe('Riattiva · A: uscito col passaggio, tornato con una domanda, archiviato dalla segreteria → «Riattiva» disfa quell\'archiviazione, niente 409', () => {
+  prova('A1 · nella finestra: domanda il 14/08, archiviato il 18/08, riattivato il 20/08 → 200, in_arrivo, il 02/09 in Girasoli\' e nel suo diario', async () => {
+    await oggiE('2027-08-14')
+    await domandaImportata('nonRisposto', 'PRVNRS23C05Z999N')
+    expect((await frequenzaTipo('nonRisposto'))?.stato, 'la domanda ha creato l\'iscrizione nuova').toBeTruthy()
+    await oggiE('2027-08-18')
+    expect((await archiviaCorpo('nonRisposto')).stato).toBe(200)
+    expect(await dalPassaggio('nonRisposto'), 'questa archiviazione è della segreteria, dopo la conferma').toBe(false)
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect((await scheda(BAMBINI.nonRisposto)).startsWith('in_arrivo/'), await scheda(BAMBINI.nonRisposto)).toBe(true)
+    expect((await frequenzaTipo('nonRisposto'))?.tipo, 'la frequenza resta quella della domanda').toBe('nuova')
+    expect(await tracce('nonRisposto'), 'nessuna traccia di archiviazione').toEqual(SENZA_TRACCE)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.nonRisposto), 'il 02/09 in Girasoli\'').toBe('iscritto/girasoliNuova')
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-02'), 'nel suo diario').toContain('nonRisposto')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+  prova('A2 · dopo il 01/09: domanda il 14/08, archiviato il 18/08, riattivato il 10/09 → 200, iscritto in Girasoli\', nel suo diario', async () => {
+    await oggiE('2027-08-14')
+    await domandaImportata('nonRisposto', 'PRVNRS23C05Z999N')
+    await oggiE('2027-08-18')
+    expect((await archiviaCorpo('nonRisposto')).stato).toBe(200)
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(await scheda(BAMBINI.nonRisposto)).toBe('iscritto/girasoliNuova')
+    expect((await frequenzaTipo('nonRisposto'))?.tipo).toBe('nuova')
+    expect(await tracce('nonRisposto'), 'nessuna traccia di archiviazione').toEqual(SENZA_TRACCE)
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-10')).toContain('nonRisposto')
+    expect(await invarianti(), 'invarianti il 10/09').toEqual([])
+  })
+  for (const giornoArch of ['2027-09-03', '2027-09-10'] as const) {
+    prova(`C · dopo il 01/09: tardiva il 03/09 e archiviato il ${giornoArch} → riattivato il 15/09 senza 409`, async () => {
+      await finoAlDueSettembre()
+      await oggiE('2027-09-03')
+      const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
+      expect(t.stato, String(t.corpo?.error)).toBe(200)
+      await oggiE(giornoArch)
+      expect((await archiviaCorpo('nonRisposto')).stato).toBe(200)
+      // Il banco scrive l'archiviazione con l'orologio vero: la si porta al giorno simulato, come in produzione.
+      await b.db.query(`UPDATE public.alunni SET archiviato_il=$2::date + time '09:00' WHERE id=$1`, [BAMBINI.nonRisposto, giornoArch])
+      await b.db.query(`UPDATE public.frequenze SET data_uscita=greatest($3::date, data_ingresso) WHERE alunno_id=$1 AND anno_sede_id=$2 AND stato='ritirato'`, [BAMBINI.nonRisposto, b.a, giornoArch])
+      await oggiE('2027-09-15')
+      const r = await riattivaCorpo('nonRisposto')
+      expect(r.stato, String(r.corpo.error)).toBe(200)
+      expect((await scheda(BAMBINI.nonRisposto)).startsWith('iscritto/'), await scheda(BAMBINI.nonRisposto)).toBe(true)
+      expect(await tracce('nonRisposto'), 'nessuna traccia di archiviazione').toEqual(SENZA_TRACCE)
+      expect(await invarianti(), 'invarianti il 15/09').toEqual([])
+    })
+  }
+  prova('B3 · un `archiviato_da` rimasto da prima su chi è uscito col passaggio non toglie il 409 (nonRisposto, 20/08 e 10/09)', async () => {
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2 WHERE id=$1`, [BAMBINI.nonRisposto, UTENTE])
+    await oggiE('2027-08-20')
+    const r1 = await riattivaCorpo('nonRisposto')
+    expect(r1.stato, `20/08: ${String(r1.corpo.error)}`).toBe(409)
+    expect(String(r1.corpo.error)).toContain('Conferma tardiva')
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const r2 = await riattivaCorpo('nonRisposto')
+    expect(r2.stato, `10/09: ${String(r2.corpo.error)}`).toBe(409)
+    expect(String(r2.corpo.error)).toContain('Conferma tardiva')
+  })
+  prova('la tardiva dopo un\'archiviazione toglie le tracce con `archiviato_il`: scheda viva, nessun autore, nessuna memoria della classe', async () => {
+    await oggiE('2027-08-12')
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo='prova', archiviato_classe_sezione='X' WHERE id=$1`, [BAMBINI.nonRisposto, UTENTE])
+    const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
+    expect(t.stato, String(t.corpo?.error)).toBe(200)
+    await finoAlDueSettembre()
+    expect((await scheda(BAMBINI.nonRisposto)).startsWith('iscritto/'), await scheda(BAMBINI.nonRisposto)).toBe(true)
+    expect(await tracce('nonRisposto')).toEqual(SENZA_TRACCE)
+  })
+})
+
+describe('Riattiva · (i) «Archivia» non riscrive l\'uscita del passaggio', () => {
+  prova('B1 · confermato in ritardo il 12/08, «Archivia» il 15/08: la frequenza resta `uscito`, 200 «già archiviato»; «Riattiva» il 20/08 rimanda alla tardiva, che funziona', async () => {
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-15')
+    const a = await archiviaCorpo('nonRisposto')
+    expect(a.stato, String(a.corpo.error)).toBe(200)
+    expect(a.corpo.gia_archiviato, 'non ha riscritto la scheda').toBe(true)
+    expect((await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato).toBe('uscito')
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato).toBe(409)
+    expect(String(r.corpo.error)).toContain('Conferma tardiva')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await finoAlDueSettembre()
+    expect((await scheda(BAMBINI.nonRisposto)).startsWith('iscritto/'), await scheda(BAMBINI.nonRisposto)).toBe(true)
+    expect(await invarianti()).toEqual([])
+  })
+  prova('B2 · lo stesso con «Riattiva» il 10/09', async () => {
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-15')
+    expect((await archiviaCorpo('nonRisposto')).stato).toBe(200)
+    await finoAlDueSettembre()
+    expect((await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato, 'la sua uscita è ancora `uscito`').toBe('uscito')
+    await oggiE('2027-09-10')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato).toBe(409)
+    expect(String(r.corpo.error)).toContain('Conferma tardiva')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    expect(await invarianti()).toEqual([])
+  })
+  prova('una scheda archiviata dal passaggio e senza niente di vivo: «Archivia» risponde 409 `ALUNNO_GIA_ARCHIVIATO` e non scrive', async () => {
+    await oggiE('2027-08-15')
+    const prima = await scheda(BAMBINI.nonRisposto)
+    const a = await archiviaCorpo('nonRisposto')
+    expect(a.stato, JSON.stringify(a.corpo)).toBe(409)
+    expect(a.corpo.codice).toBe('ALUNNO_GIA_ARCHIVIATO')
+    expect((await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato).toBe('uscito')
+    expect(await scheda(BAMBINI.nonRisposto)).toBe(prima)
+  })
+})
+
+describe('Riattiva · il criterio «archiviato dal passaggio»: `archiviato_il` non dopo la conferma, o a mezzogiorno dell\'uscita', () => {
+  prova('vero com\'è dopo la conferma; falso se la scheda è stata archiviata dopo (segreteria); vero a mezzogiorno dell\'uscita', async () => {
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'come l\'ha lasciata la conferma').toBe(true)
+    expect(await dalPassaggio('continuaB'), 'chi continua non è uscito').toBe(false)
+    const conf = (await rows<C>(`SELECT confermato_il FROM public.passaggi_anno WHERE a_anno_sede_id=$1 AND stato='confermato'`, [b.a]))[0]
+    await b.db.query(`UPDATE public.alunni SET archiviato_il=$2::timestamptz + interval '1 minute' WHERE id=$1`, [BAMBINI.cambiaGradoSenzaSezione, conf.confermato_il])
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'un minuto dopo la conferma: è della segreteria').toBe(false)
+    // Mezzogiorno dell'uscita, con la conferma portata PRIMA di quell'istante: solo il secondo ramo può dire di sì (la conferma di una mattina
+    // dell'ultimo giorno dell'anno vecchio, archiviata dallo specchio a mezzogiorno di quel giorno).
+    const usc = (await rows<C>(`SELECT ((f.data_uscita + time '12:00') AT TIME ZONE 'Europe/Rome') AS mezzogiorno FROM public.frequenze f WHERE f.alunno_id=$1 AND f.anno_sede_id=$2`, [BAMBINI.cambiaGradoSenzaSezione, b.da]))[0]
+    await b.db.query(`UPDATE public.passaggi_anno SET confermato_il=$2::timestamptz - interval '3 days' WHERE a_anno_sede_id=$1 AND stato='confermato'`, [b.a, usc.mezzogiorno])
+    await b.db.query(`UPDATE public.alunni SET archiviato_il=$2::timestamptz WHERE id=$1`, [BAMBINI.cambiaGradoSenzaSezione, usc.mezzogiorno])
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'esattamente a mezzogiorno dell\'uscita').toBe(true)
+    await b.db.query(`UPDATE public.alunni SET archiviato_il=$2::timestamptz + interval '1 hour' WHERE id=$1`, [BAMBINI.cambiaGradoSenzaSezione, usc.mezzogiorno])
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'un\'ora dopo mezzogiorno: della segreteria').toBe(false)
+  })
+  prova('un passaggio annullato non conta; riconfermato, conta di nuovo con la sua `confermato_il`', async () => {
+    expect(await dalPassaggio('cambiaGradoSenzaSezione')).toBe(true)
+    const an = await chiama(ANNULLA, 'POST', '/annulla', {})
+    expect(an.stato, String(an.corpo?.error)).toBe(200)
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'annullato').toBe(false)
+    await prepara()
+    expect(await dalPassaggio('cambiaGradoSenzaSezione'), 'riconfermato').toBe(true)
+  })
+})
+
+describe('Riattiva · guasto delle letture nuove: 500, niente scritto, il warn nel log', () => {
+  prova('la funzione del criterio rotta: «Riattiva» dà 500 `RIATTIVAZIONE_NON_RIUSCITA` e non cambia niente', async () => {
+    await oggiE('2027-08-20')
+    const prima = `${await scheda(BAMBINI.nonRisposto)} · ${(await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato}`
+    h.log.length = 0
+    h.rompiRpc = 'anno_alunno_archiviato_dal_passaggio'
+    let r: { stato: number; corpo: C }
+    try { r = await riattivaCorpo('nonRisposto') } finally { h.rompiRpc = '' }
+    expect(r.stato).toBe(500)
+    expect(r.corpo.codice).toBe('RIATTIVAZIONE_NON_RIUSCITA')
+    expect(h.log.some((x) => JSON.stringify(x).includes('uscita-passaggio-non-letta')), 'il warn').toBe(true)
+    expect(`${await scheda(BAMBINI.nonRisposto)} · ${(await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato}`).toBe(prima)
+  })
+  prova('la stessa lettura rotta in «Archivia» (scheda archiviata senza autore): 500 `ARCHIVIAZIONE_NON_RIUSCITA` e non cambia niente', async () => {
+    await oggiE('2027-08-15')
+    const prima = `${await scheda(BAMBINI.nonRisposto)} · ${(await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato}`
+    h.log.length = 0
+    h.rompiRpc = 'anno_alunno_archiviato_dal_passaggio'
+    let a: { stato: number; corpo: C }
+    try { a = await archiviaCorpo('nonRisposto') } finally { h.rompiRpc = '' }
+    expect(a.stato).toBe(500)
+    expect(a.corpo.codice).toBe('ARCHIVIAZIONE_NON_RIUSCITA')
+    expect(h.log.some((x) => JSON.stringify(x).includes('uscita-passaggio-non-letta')), 'il warn').toBe(true)
+    expect(`${await scheda(BAMBINI.nonRisposto)} · ${(await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato}`).toBe(prima)
+  })
+  prova('la lettura dell\'anno della classe ricordata rotta (k): 500 e niente scritto', async () => {
+    await oggiE('2027-08-20')
+    expect((await archivia4('cambiaGradoConSezione')).stato).toBe(200)
+    await b.db.query(`UPDATE public.frequenze SET section_id = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.cambiaGradoConSezione, b.a])
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const prima = await scheda(BAMBINI.cambiaGradoConSezione)
+    h.log.length = 0
+    h.rompiTabella = 'sections'
+    let r: { stato: number; corpo: C }
+    try { r = await riattivaCorpo('cambiaGradoConSezione') } finally { h.rompiTabella = '' }
+    expect(r.stato).toBe(500)
+    expect(r.corpo.codice).toBe('RIATTIVAZIONE_NON_RIUSCITA')
+    expect(h.log.some((x) => JSON.stringify(x).includes('anno-classe-ricordata-non-letto')), 'il warn').toBe(true)
+    expect(await scheda(BAMBINI.cambiaGradoConSezione)).toBe(prima)
+  })
+})
+
+describe('Riattiva · k: la classe ricordata è di un altro anno → la risposta lo dice', () => {
+  prova('cambiaGradoConSezione: il segnale `classe_di_altro_anno` accompagna `classe_mancante`', async () => {
+    await b.db.query(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1,$2,'Stelline','infanzia'::text::public.school_type_enum,'infanzia')`, [SEDE_E2E, b.annoA])
+    await oggiE('2027-08-20')
+    expect((await archivia4('cambiaGradoConSezione')).stato).toBe(200)
+    await b.db.query(`UPDATE public.frequenze SET section_id = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.cambiaGradoConSezione, b.a])
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const r = await riattivaCorpo('cambiaGradoConSezione')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.classe_mancante).toBe('Stelline')
+    expect(r.corpo.classe_di_altro_anno).toBe(true)
+  })
+})
+
+describe('Riattiva · E2: una riattivazione rimasta a metà nella finestra e riprovata dopo il 01/09', () => {
+  async function aMetà(k: NomeBambino) {
+    await oggiE('2027-08-15')
+    expect((await archivia4(k)).stato).toBe(200)
+    const tr = (await rows<C>(`SELECT archiviato_da, archiviato_motivo, archiviato_section_id, archiviato_classe_sezione FROM public.alunni WHERE id=$1`, [BAMBINI[k]]))[0]
+    const vivo = `CASE WHEN (moduli_completi AND quota_saldata) OR origine = 'recupero' THEN 'iscritto' ELSE 'in_attesa' END`
+    await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI[k], b.a])
+    await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL, section_id = $3 WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI[k], b.da, b.sezioni.farfalle])
+    return tr
+  }
+  prova('lo specchio ha già tolto le tracce: la riprova dopo il 01/09 dice la verità (409 `ALUNNO_NON_ARCHIVIATO`), la classe è già giusta e non si tocca', async () => {
+    await aMetà('continuaAltraSezione')
+    expect(await tracce('continuaAltraSezione'), 'lo specchio le ha tolte con `archiviato_il`').toEqual(SENZA_TRACCE)
+    await finoAlDueSettembre()
+    const prima = await scheda(BAMBINI.continuaAltraSezione)
+    await oggiE('2027-09-10')
+    const r = await riattivaCorpo('continuaAltraSezione')
+    expect(r.stato).toBe(409)
+    expect(r.corpo.codice).toBe('ALUNNO_NON_ARCHIVIATO')
+    expect(await scheda(BAMBINI.continuaAltraSezione)).toBe(prima)
+    expect(prima).toBe('iscritto/girasoliNuova')
+  })
+  prova('con le tracce rimaste da prima (dato vecchio): la riprova le toglie, risponde 200 con la classe attuale e non la tocca', async () => {
+    const tr = await aMetà('continuaAltraSezione')
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo=$3, archiviato_section_id=$4, archiviato_classe_sezione=$5 WHERE id=$1`,
+      [BAMBINI.continuaAltraSezione, tr.archiviato_da, tr.archiviato_motivo, tr.archiviato_section_id, tr.archiviato_classe_sezione])
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const r = await riattivaCorpo('continuaAltraSezione')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.esito_classe).toBe('conservata')
+    expect(await scheda(BAMBINI.continuaAltraSezione), 'la classe non si tocca').toBe('iscritto/girasoliNuova')
+    expect(await tracce('continuaAltraSezione')).toEqual(SENZA_TRACCE)
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-10')).toContain('continuaAltraSezione')
+    expect(await invarianti()).toEqual([])
   })
 })

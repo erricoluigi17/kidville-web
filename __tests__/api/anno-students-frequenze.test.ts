@@ -38,7 +38,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
   frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
-  usciDelPassaggioNellAnnoAttivo: async () => ({ ok: true, esce: false }),
+  archiviatoDalPassaggio: async () => ({ ok: true, si: false }),
   classeRicordataDelloStessoAnno: async () => ({ ok: true, stesso: true }),
 }))
 
@@ -830,12 +830,15 @@ describe('archivia e riattiva — i ritocchi dopo la revisione', () => {
       expect(riga(ALU_R).classe_sezione).toBe('2 ANNI')
     })
 
-    it('classe attuale DIVERSA dalla ricordata (memoria stantia): 409, il bambino NON viene spostato', async () => {
+    it('classe attuale DIVERSA dalla ricordata (memoria stantia): il bambino NON viene spostato; si tolgono le tracce e si risponde il vero (quinto giro, E2)', async () => {
       faseB()
       iscrittoConMemoria('3 ANNI')
       const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
-      expect(res.status).toBe(409)
-      expect(riga(ALU_R).classe_sezione).toBe('3 ANNI')
+      expect(res.status).toBe(200)
+      expect((await res.json()).esito_classe).toBe('conservata')
+      expect(riga(ALU_R).classe_sezione, 'la classe attuale è giusta e non si tocca').toBe('3 ANNI')
+      expect(riga(ALU_R).archiviato_da, 'le tracce se ne vanno').toBeNull()
+      expect(riga(ALU_R).archiviato_classe_sezione).toBeNull()
       expect(h.scriviFrequenza).not.toHaveBeenCalled()
     })
   })

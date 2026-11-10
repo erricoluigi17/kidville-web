@@ -556,7 +556,7 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                     motivoCorpo = nomeErrore(e);
                     return null;
                 })) as
-                    | { esito_classe?: string; classe_sezione?: string | null; classe_mancante?: string | null; gruppo_mensa_da_riassegnare?: boolean; spazio_gia_liberato?: boolean; torna_in_arrivo?: boolean; conferma_da_rifare?: boolean }
+                    | { esito_classe?: string; classe_sezione?: string | null; classe_mancante?: string | null; classe_di_altro_anno?: boolean; gruppo_mensa_da_riassegnare?: boolean; spazio_gia_liberato?: boolean; torna_in_arrivo?: boolean; conferma_da_rifare?: boolean }
                     | null;
                 const nome = nominativo(r);
                 if (corpo === null) {
@@ -590,7 +590,10 @@ export function AlunniArchiviatiView({ esito, ruolo, userId, sezioni = NESSUNA_S
                         : (esitoClasse === 'ripristinata' || esitoClasse === 'conservata') && typeof corpo?.classe_sezione === 'string'
                         ? t('arcEsitoRientrato', { nome, classe: corpo.classe_sezione })
                         : esitoClasse === 'sparita' && typeof corpo?.classe_mancante === 'string' && corpo.classe_mancante !== ''
-                          ? t('arcEsitoRientratoSenzaClasse', { nome, classe: corpo.classe_mancante })
+                          // La classe ricordata esiste, ma è di un ALTRO anno (la riattivazione è dopo l'inizio del nuovo): non «non esiste più», va scelta a mano.
+                          ? (corpo.classe_di_altro_anno === true
+                            ? t('arcEsitoRientratoClasseDiAltroAnno', { nome, classe: corpo.classe_mancante })
+                            : t('arcEsitoRientratoSenzaClasse', { nome, classe: corpo.classe_mancante }))
                           : esitoClasse === 'assente'
                             ? t('arcEsitoRientratoNessunaClasse', { nome })
                             // Corpo assente o `esito_classe` sconosciuto: si annuncia il

@@ -195,6 +195,11 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
     ALTER TABLE public.alunni
       ${o.completo ? '' : 'ADD COLUMN importo_retta_mensile numeric(10,2) DEFAULT 0, ADD COLUMN archiviato_il timestamptz,'}
       ADD COLUMN anonimizzato_il timestamptz;
+    -- (Riattiva, giro 5) Le tracce dell'archiviazione (migrazione 20260812194517) ci sono in produzione: lo specchio, il passo 6bis e l'annullo le
+    -- tolgono insieme ad \`archiviato_il\`, e il banco deve averle perché quelle istruzioni girino.
+    ALTER TABLE public.alunni
+      ADD COLUMN IF NOT EXISTS archiviato_da uuid, ADD COLUMN IF NOT EXISTS archiviato_motivo text,
+      ADD COLUMN IF NOT EXISTS archiviato_section_id uuid, ADD COLUMN IF NOT EXISTS archiviato_classe_sezione text;
     ALTER TABLE public.pagamenti
       ADD COLUMN obbligatorio boolean NOT NULL DEFAULT false,
       ADD COLUMN gruppo text,

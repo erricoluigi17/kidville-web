@@ -9,8 +9,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
-import { annoVisibileDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
-import { chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
+import { annoAttivoDiSede, annoVisibileDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
+import { archiviatoDalPassaggio, chiudiFrequenzeAperte } from '@/lib/anno/iscrizione-anno';
 import { conFaseB, scriviAlunnoEFrequenza } from '@/lib/anno/scrittura';
 import { rispostaAlunnoAnonimizzato, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
 
@@ -161,7 +161,23 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             return rispostaAlunnoAnonimizzato();
         }
         const daCompletare = prima.archiviato_il != null && prima.archiviato_da == null;
-        if (prima.archiviato_il != null && !daCompletare) {
+        // (Riattiva, giro 5, i) Una scheda archiviata dal PASSAGGIO ha `archiviato_da` vuoto come un'archiviazione a metà, ma non è da completare: la
+        // sua frequenza `uscito` è la traccia che il passaggio ha lasciato, e riscriverla in `ritirato` la cancellerebbe (e «Riattiva» non saprebbe più
+        // mandare alla «Conferma tardiva»). Qui «Archivia» chiude solo ciò che è vivo, come su ogni scheda già archiviata.
+        let daCompletareDavvero = daCompletare;
+        if (daCompletare) {
+            const dalPassaggio = await archiviatoDalPassaggio(supabase, {
+                alunnoId, annoAttivoId: await annoAttivoDiSede(supabase, (prima.scuola_id as string | null) ?? null),
+            });
+            if (!dalPassaggio.ok) {
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere la scheda: nessuna modifica è stata registrata.', codice: 'ARCHIVIAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (dalPassaggio.si) daCompletareDavvero = false;
+        }
+        if (prima.archiviato_il != null && !daCompletareDavvero) {
             // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
             // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.

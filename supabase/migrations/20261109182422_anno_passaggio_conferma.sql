@@ -234,6 +234,14 @@ BEGIN
     v_t := v_t || jsonb_build_object('section_id', NULL::uuid, 'classe_sezione', NULL::text);
   END IF;
 
+  -- (Riattiva, giro 5) Quando la scheda archiviata TORNA VIVA le tracce dell'archiviazione (autore, motivo, memoria della classe) se ne vanno con
+  -- `archiviato_il`: una scheda `iscritto` con l'autore di un'archiviazione vecchia addosso è una traccia sbagliata (la «Conferma tardiva» e la
+  -- ricopia del 01/09 la lasciavano). Solo se la scheda ERA archiviata: un'archiviazione rimasta a metà non ha ancora `archiviato_il`.
+  IF v_viva AND (v_cur ->> 'archiviato_il') IS NOT NULL THEN
+    v_t := v_t || jsonb_build_object('archiviato_da', NULL::uuid, 'archiviato_motivo', NULL::text,
+                                     'archiviato_section_id', NULL::uuid, 'archiviato_classe_sezione', NULL::text);
+  END IF;
+
   -- Senza una sezione né sulla frequenza né sulla scheda il NOME di classe non si tocca: il testo scritto a mano (o un
   -- nome che nella sede non risolve) non deve sparire solo perché la frequenza non ha una sezione. Se la sezione c'era
   -- e viene svuotata, invece, il nome segue (v_f section_id NULL ma v_cur section_id valorizzato).
@@ -884,6 +892,34 @@ $$;
 REVOKE ALL ON FUNCTION public.anno_visibile_oggi(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.anno_visibile_oggi(uuid) TO service_role;
 
+-- (Riattiva, giro 5) «Questa scheda è ANCORA archiviata dal passaggio?» Vera se il passaggio CONFERMATO che ha creato l'anno `p_anno_sede` ha chiuso la
+-- frequenza `uscito` di questo bambino (riga `esce` o `non_risposto`) e la scheda ha `archiviato_il` che è del passaggio: non più tardi della
+-- conferma (lo specchio scrive `now()` della transazione della conferma) oppure esattamente a mezzogiorno dell'uscita (lo scrive quando la fine
+-- dell'anno vecchio è già passata o è oggi). Un'archiviazione della segreteria fatta DOPO la conferma ha un istante più tardi: è un'altra
+-- archiviazione, e «Riattiva» la disfa come sempre. Un passaggio annullato ha lo stato `annullato` e non conta; il riconfermato è una riga nuova,
+-- con la sua `confermato_il`. La porta del passaggio resta una sola: questa funzione NON è `passaggio_*` e la route non legge nessuna `passaggi_anno*`.
+CREATE OR REPLACE FUNCTION public.anno_alunno_archiviato_dal_passaggio(p_alunno uuid, p_anno_sede uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM public.alunni al
+      JOIN public.passaggi_anno p ON p.a_anno_sede_id = p_anno_sede AND p.scuola_id = al.scuola_id AND p.stato = 'confermato'
+      JOIN public.passaggi_anno_righe r ON r.passaggio_id = p.id AND r.alunno_id = al.id AND r.esito IN ('esce', 'non_risposto')
+      JOIN public.frequenze f ON f.id = r.frequenza_da_id AND f.stato = 'uscito'
+     WHERE al.id = p_alunno
+       AND al.archiviato_il IS NOT NULL
+       AND (al.archiviato_il <= p.confermato_il
+            OR al.archiviato_il = ((f.data_uscita + time '12:00') AT TIME ZONE 'Europe/Rome'))
+  )
+$$;
+REVOKE ALL ON FUNCTION public.anno_alunno_archiviato_dal_passaggio(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.anno_alunno_archiviato_dal_passaggio(uuid, uuid) TO service_role;
+
 -- (giro 3, NB1) `sync_alunno_section_id`: copia dell'ULTIMA definizione (`20261106200347_anno_scolastico_schema.sql`); cambia solo l'anno in cui
 -- si risolve il nome della classe (visibile invece di attivo).
 CREATE OR REPLACE FUNCTION public.sync_alunno_section_id()
@@ -1300,7 +1336,7 @@ BEGIN
 
   -- 6bis · (giro 1, B6/R2; giro 2: anche «sospeso») «continua» scelto dalla segreteria su un bambino con la tendina «ritirato» o
   -- «sospeso» è una decisione esplicita: la scheda torna `iscritto` (e non archiviata). L'annullo la rimette com'era (`scheda_da_prima`).
-  UPDATE public.alunni al SET stato = 'iscritto', archiviato_il = NULL
+  UPDATE public.alunni al SET stato = 'iscritto', archiviato_il = NULL, archiviato_da = NULL, archiviato_motivo = NULL, archiviato_section_id = NULL, archiviato_classe_sezione = NULL
     FROM public.passaggi_anno_righe r
    WHERE r.passaggio_id = v_p.id AND r.tendina_decisa AND r.esito IN ('continua', 'cambia_grado')
      AND al.id = r.alunno_id AND al.stato IN ('ritirato', 'sospeso') AND al.anonimizzato_il IS NULL;
@@ -1477,7 +1513,7 @@ BEGIN
   -- I bambini “nuovi” non hanno una frequenza viva nell'anno vecchio, e lo specchio non ha niente da copiare: tornano “in arrivo”, senza
   -- classe e non archiviati (com'erano prima dell'arrivo). Prima dello specchio, che li lascia così. Il resto della scheda (retta,
   -- intestatario) resta com'è: lo riscrive il prossimo specchio.
-  UPDATE public.alunni a SET stato = 'in_arrivo', section_id = NULL, classe_sezione = NULL, archiviato_il = NULL
+  UPDATE public.alunni a SET stato = 'in_arrivo', section_id = NULL, classe_sezione = NULL, archiviato_il = NULL, archiviato_da = NULL, archiviato_motivo = NULL, archiviato_section_id = NULL, archiviato_classe_sezione = NULL
    WHERE a.id IN (SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.esito = 'nuova')
      AND a.anonimizzato_il IS NULL
      AND NOT EXISTS (SELECT 1 FROM public.frequenze f

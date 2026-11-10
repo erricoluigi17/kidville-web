@@ -773,6 +773,12 @@ export type EsitoFrequenzeDellaFinestra =
       visibileChiusaDallArchiviazione: boolean
       /** La frequenza dell'anno nuovo (non `recupero`) che QUESTA archiviazione ha chiuso, se c'era. */
       nuovaChiusaDallArchiviazione: (FrequenzaDellAnnoCheViene & { section_id: string | null }) | null
+      /** L'anno che si vede ha una frequenza VIVA (`in_attesa`, `iscritto`): il bambino non è «in arrivo». */
+      visibileViva: boolean
+      /** L'anno che si vede ha una frequenza `uscito`: la scrive SOLO il passaggio (nessuna route, nessun job), quindi il bambino è uscito col passaggio. */
+      visibileUscitaDelPassaggio: boolean
+      /** La frequenza dell'anno nuovo (non `recupero`) ancora VIVA, se c'è: il bambino è «in arrivo» con la sua iscrizione già aperta. */
+      nuovaViva: (FrequenzaDellAnnoCheViene & { section_id: string | null }) | null
     }
   | { ok: false }
 
@@ -828,9 +834,12 @@ export async function frequenzeDellaFinestra(
       logEvento('anno-scolastico', 'warn', { tipo: 'finestra-frequenze-non-lette', operazione: OP_FINESTRA, error_code: nuove.error.code ?? undefined })
       return { ok: false }
     }
-    const visibileChiusa = ((vecchie.data ?? []) as Array<{ stato: string; data_uscita: string | null }>).some((r) => chiusaDaQuestaArchiviazione(r, giorno))
-    const chiusaNuova = ((nuove.data ?? []) as Array<Omit<FrequenzaDellAnnoCheViene, 'chiusa'> & { data_uscita: string | null; section_id: string | null }>)
-      .filter((f) => f.origine !== 'recupero' && chiusaDaQuestaArchiviazione(f, giorno))[0]
+    const righeVecchie = (vecchie.data ?? []) as Array<{ stato: string; data_uscita: string | null }>
+    const visibileChiusa = righeVecchie.some((r) => chiusaDaQuestaArchiviazione(r, giorno))
+    const righeNuove = ((nuove.data ?? []) as Array<Omit<FrequenzaDellAnnoCheViene, 'chiusa'> & { data_uscita: string | null; section_id: string | null }>)
+      .filter((f) => f.origine !== 'recupero')
+    const chiusaNuova = righeNuove.filter((f) => chiusaDaQuestaArchiviazione(f, giorno))[0]
+    const vivaNuova = righeNuove.filter((f) => !STATI_FREQUENZA_CHIUSI.includes(f.stato))[0]
     return {
       ok: true,
       nellaFinestra: true,
@@ -839,7 +848,90 @@ export async function frequenzeDellaFinestra(
       nuovaChiusaDallArchiviazione: chiusaNuova
         ? { id: chiusaNuova.id, anno_sede_id: chiusaNuova.anno_sede_id, stato: chiusaNuova.stato, tipo: chiusaNuova.tipo, origine: chiusaNuova.origine, chiusa: true, section_id: chiusaNuova.section_id }
         : null,
+      visibileViva: righeVecchie.some((r) => !STATI_FREQUENZA_CHIUSI.includes(r.stato)),
+      visibileUscitaDelPassaggio: righeVecchie.some((r) => r.stato === 'uscito'),
+      nuovaViva: vivaNuova
+        ? { id: vivaNuova.id, anno_sede_id: vivaNuova.anno_sede_id, stato: vivaNuova.stato, tipo: vivaNuova.tipo, origine: vivaNuova.origine, chiusa: false, section_id: vivaNuova.section_id }
+        : null,
     }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, quarto giro, k) Il NOME della classe ricordata si cerca solo dentro lo stesso anno in cui la classe stava: le classi «N anni» si
+ * chiamano uguale in anni diversi, e un nome cercato nell'anno sbagliato trova un'altra classe in silenzio. Vero se la classe `sectionId` appartiene
+ * allo stesso anno scolastico di `annoSedeId` (l'anno su cui si scrive). Senza `sectionId` (un'archiviazione di prima che non lo ricordava) o con una
+ * classe che non c'è più non c'è modo di verificare: vero, come è sempre stato. NON LANCIA MAI; `{ ok: false }` = non so, e la route si ferma.
+ */
+export async function classeRicordataDelloStessoAnno(
+  supabase: SupabaseClient,
+  a: { sectionId: string | null; annoSedeId: string | null },
+): Promise<{ ok: true; stesso: boolean } | { ok: false }> {
+  try {
+    if (!a.sectionId || !a.annoSedeId) return { ok: true, stesso: true }
+    const sez = await supabase.from('sections').select('anno_id').eq('id', a.sectionId)
+    if (sez.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anno-classe-ricordata-non-letto', operazione: OP_FINESTRA, error_code: sez.error.code ?? undefined })
+      return { ok: false }
+    }
+    const annoClasse = ((sez.data ?? []) as Array<{ anno_id: string | null }>)[0]?.anno_id ?? null
+    if (!annoClasse) return { ok: true, stesso: true }
+    const anno = await supabase.from('anni_sede').select('anno_id').eq('id', a.annoSedeId)
+    if (anno.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anno-classe-ricordata-non-letto', operazione: OP_FINESTRA, error_code: anno.error.code ?? undefined })
+      return { ok: false }
+    }
+    const annoScrittura = ((anno.data ?? []) as Array<{ anno_id: string | null }>)[0]?.anno_id ?? null
+    if (!annoScrittura) return { ok: true, stesso: true }
+    return { ok: true, stesso: annoClasse === annoScrittura }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, quarto giro, l) DOPO l'inizio dell'anno nuovo non c'è più una finestra, ma l'uscita del passaggio si riconosce lo stesso: l'anno
+ * IMMEDIATAMENTE precedente ha la frequenza `uscito` (la scrive solo il passaggio) e quella dell'anno attivo, se c'è, è una «ritirato» con l'uscita
+ * ancora al primo giorno (`data_uscita <= data_ingresso`: il passaggio la porta lì; un'archiviazione o un ritiro di un giorno dopo la scrivono con la
+ * data di quel giorno). Il bambino che torna con una domanda ha l'anno precedente vuoto, o l'anno attivo vivo, e non rientra qui.
+ * NON LANCIA MAI; `{ ok: false }` = non so, e la route si ferma prima di scrivere.
+ */
+export async function usciDelPassaggioNellAnnoAttivo(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; scuolaId: string | null; annoAttivoId: string | null },
+): Promise<{ ok: true; esce: boolean } | { ok: false }> {
+  try {
+    if (!a.scuolaId || !a.annoAttivoId) return { ok: true, esce: false }
+    const anni = await supabase.from('anni_sede').select('id, inizio').eq('scuola_id', a.scuolaId)
+    if (anni.error) {
+      if (schemaAnnoIndietro(anni.error)) return { ok: true, esce: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'uscita-passaggio-non-letta', operazione: OP_FINESTRA, error_code: anni.error.code ?? undefined })
+      return { ok: false }
+    }
+    const lista = (anni.data ?? []) as Array<{ id: string; inizio: string }>
+    const attivo = lista.find((x) => x.id === a.annoAttivoId)
+    if (!attivo) return { ok: true, esce: false }
+    const precedente = lista.filter((x) => x.inizio < attivo.inizio).sort((x, y) => (x.inizio < y.inizio ? 1 : -1))[0]
+    if (!precedente) return { ok: true, esce: false }
+    const righe = await supabase
+      .from('frequenze')
+      .select('anno_sede_id, stato, origine, data_ingresso, data_uscita')
+      .eq('alunno_id', a.alunnoId)
+      .in('anno_sede_id', [precedente.id, attivo.id])
+    if (righe.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'uscita-passaggio-non-letta', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const tutte = (righe.data ?? []) as Array<{ anno_sede_id: string; stato: string; origine: string | null; data_ingresso: string | null; data_uscita: string | null }>
+    // L'anno precedente conta com'è (le sue righe nascono anche dal recupero, come quelle della finestra); dell'anno attivo si guardano le iscrizioni vere.
+    if (!tutte.some((f) => f.anno_sede_id === precedente.id && f.stato === 'uscito')) return { ok: true, esce: false }
+    const dellAttivo = tutte.filter((f) => f.anno_sede_id === attivo.id && f.origine !== 'recupero')
+    const portataAlPrimoGiorno = dellAttivo.every((f) => f.stato === STATO_RITIRATO && f.data_uscita != null && f.data_ingresso != null && f.data_uscita <= f.data_ingresso)
+    return { ok: true, esce: portataAlPrimoGiorno }
   } catch (err) {
     logErrore({ operazione: OP_FINESTRA }, err)
     return { ok: false }

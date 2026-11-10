@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite'
 import { NextRequest } from 'next/server'
 import { BAMBINI, SEDE_E2E, UTENTE, creaBancoPassaggio, type BancoPassaggio, type NomeBambino } from '../helpers/passaggio-banco'
 
-const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string }))
+const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string, rompiTabella: '' as string }))
 vi.mock('@/lib/logging/logger', async (orig) => {
   const o = await orig<typeof import('@/lib/logging/logger')>()
   const f = (a: unknown[]) => a.map((x) => (x instanceof Error ? x.message : x))
@@ -30,11 +30,23 @@ vi.mock('@/lib/supabase/server-client', async (orig) => {
       }
     },
   })
+  // (quarto giro, n2) Con `h.rompiTabella` ogni lettura di quella tabella risponde con un errore.
+  const rompiTutto = (q: object): object => new Proxy(q, {
+    get(t, prop) {
+      if (prop === 'then') return (ok: (r: unknown) => unknown) => ok({ data: null, error: { message: 'lettura finta fallita', code: 'XX000' } })
+      const v = (t as Record<string | symbol, unknown>)[prop]
+      if (typeof v !== 'function') return v
+      return (...a: unknown[]) => {
+        const r = v.apply(t, a)
+        return r && typeof r === 'object' ? rompiTutto(r) : r
+      }
+    },
+  })
   return {
     ...(await orig<typeof import('@/lib/supabase/server-client')>()),
     createAdminClient: async () => {
       const c = clienteProvaRoute(h.db as PGlite) as unknown as { from: (t: string) => object }
-      return new Proxy(c, { get: (t, prop) => (prop === 'rpc' ? (nome: string, args: unknown) => (h.rompiRpc === nome ? Promise.resolve({ data: null, error: { code: 'XX000', message: 'guasto finto' } }) : (t as unknown as { rpc: (n: string, a: unknown) => unknown }).rpc(nome, args)) : prop === 'from' ? (tab: string) => (tab === 'frequenze' ? avvolgi(t.from(tab), false) : t.from(tab)) : (t as unknown as Record<string | symbol, unknown>)[prop]) })
+      return new Proxy(c, { get: (t, prop) => (prop === 'rpc' ? (nome: string, args: unknown) => (h.rompiRpc === nome ? Promise.resolve({ data: null, error: { code: 'XX000', message: 'guasto finto' } }) : (t as unknown as { rpc: (n: string, a: unknown) => unknown }).rpc(nome, args)) : prop === 'from' ? (tab: string) => (h.rompiTabella !== '' && tab === h.rompiTabella ? rompiTutto(t.from(tab)) : tab === 'frequenze' ? avvolgi(t.from(tab), false) : t.from(tab)) : (t as unknown as Record<string | symbol, unknown>)[prop]) })
     },
   }
 })
@@ -75,6 +87,7 @@ import { POST as ARCHIVIA } from '@/app/api/admin/students/archivia/route'
 import { PATCH as STUDENTI_PATCH } from '@/app/api/admin/students/route'
 import { POST as RIATTIVA } from '@/app/api/admin/students/riattiva/route'
 import { POST as TARDIVA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/conferma-tardiva/route'
+import { POST as RITIRA_CONFERMA } from '@/app/api/admin/anni/[annoSedeId]/conferme/ritira/route'
 import { PATCH as ISCRIZIONI_PATCH } from '@/app/api/admin/iscrizioni/route'
 import { GET as DIARIO } from '@/app/api/diary/students/route'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
@@ -631,5 +644,181 @@ describe('Riattiva nella finestra · S-n3: il ramo «in arrivo» dà lo stesso s
     expect(r.stato).toBe(200)
     expect(r.corpo.avviso_classe_nuova).toBeUndefined()
     expect(h.log.some((x) => JSON.stringify(x).includes('frequenza-nuova-senza-classe'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», QUARTO GIRO. (j) la riprova di una riattivazione rimasta a metà, nella finestra, finisce il lavoro sull'anno che si vede e non cerca
+// nessuna classe per nome; (l, n3) l'uscita del passaggio si riconosce da `uscito` (anche dopo il 01/09), non da `archiviato_da`; (n1) l'«in arrivo»
+// chiuso dalla sola tendina torna `in_arrivo`; (n2) il guasto di `classeDellaFrequenzaChiusa` dà 500 senza scrivere; (k) il nome ricordato si cerca
+// solo nello stesso anno.
+// ---------------------------------------------------------------------------------------------------------------------------------
+async function archivia4(k: NomeBambino) {
+  return rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI[k] })
+}
+const nomeSezione = async (id: string) => (await rows<C>(`SELECT name FROM public.sections WHERE id=$1`, [id]))[0]?.name as string | undefined
+
+describe('Riattiva nella finestra · j: la riprova di una riattivazione rimasta a metà non rimette la classe per nome', () => {
+  prova('continuaAltraSezione: frequenze già riaperte, scheda no → la riprova del 20/08 lascia Girasoli\' dov\'è e il 02/09 è nel suo diario', async () => {
+    await oggiE('2027-08-15')
+    expect((await archivia4('continuaAltraSezione')).stato).toBe(200)
+    // La prima «Riattiva» ha riaperto la frequenza nuova (con la sua classe) e quella che si vede (Farfalle), poi l'UPDATE di `alunni` è fallito:
+    // lo specchio ha già rimesso la scheda `iscritto`, le tracce dell'archiviazione sono ancora lì.
+    const vivo = `CASE WHEN (moduli_completi AND quota_saldata) OR origine = 'recupero' THEN 'iscritto' ELSE 'in_attesa' END`
+    await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaAltraSezione, b.a])
+    await b.db.query(`UPDATE public.frequenze SET stato = ${vivo}, data_uscita = NULL, section_id = $3 WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaAltraSezione, b.da, b.sezioni.farfalle])
+    const metà = (await rows<C>(`SELECT stato, archiviato_il IS NOT NULL arch, archiviato_da IS NOT NULL da FROM public.alunni WHERE id=$1`, [BAMBINI.continuaAltraSezione]))[0]
+    expect(metà, 'lo stato a metà: iscritto, non archiviato, l\'autore ancora addosso').toEqual({ stato: 'iscritto', arch: false, da: true })
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('continuaAltraSezione')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.classe_sezione, 'la classe è quella che si vede, non una di Farfalle\'').toBe(await nomeSezione(b.sezioni.farfalle))
+    expect((await frequenza(BAMBINI.continuaAltraSezione, 'nuovo'))?.section_id, 'la frequenza nuova è com\'era: Girasoli\'').toBe(b.sezioni.girasoliNuova)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.continuaAltraSezione), 'il 02/09').toBe('iscritto/girasoliNuova')
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-02'), 'nel diario di Girasoli\'').toContain('continuaAltraSezione')
+    expect(await diario(b.sezioni.farfalleNuova, '2027-09-02'), 'mai in quello di Farfalle\'').not.toContain('continuaAltraSezione')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+})
+
+describe('Riattiva · l / n3: l\'uscita del passaggio si riconosce da `uscito`, nella finestra e dopo il 01/09', () => {
+  const vecchioUscito = async (k: NomeBambino) => (await frequenza(BAMBINI[k], 'vecchio'))?.stato
+
+  prova('un `archiviato_da` rimasto da prima non toglie il 409 (cambiaGradoSenzaSezione «esce», 20/08)', async () => {
+    await oggiE('2027-08-20')
+    await b.db.query(`UPDATE public.alunni SET archiviato_da = $2 WHERE id=$1`, [BAMBINI.cambiaGradoSenzaSezione, UTENTE])
+    expect(await vecchioUscito('cambiaGradoSenzaSezione')).toBe('uscito')
+    const prima = await scheda(BAMBINI.cambiaGradoSenzaSezione)
+    const r = await riattivaCorpo('cambiaGradoSenzaSezione')
+    expect(r.stato, String(r.corpo.error)).toBe(409)
+    expect(String(r.corpo.error)).toContain('Conferma tardiva')
+    expect(await scheda(BAMBINI.cambiaGradoSenzaSezione), 'la scheda è com\'era').toBe(prima)
+    expect((await frequenza(BAMBINI.cambiaGradoSenzaSezione, 'nuovo'))?.stato, 'la conferma resta chiusa').toBe('ritirato')
+  })
+  prova('un «in arrivo» archiviato SENZA autore non prende il 409: torna `in_arrivo` (era il limite 2)', async () => {
+    await b.db.query(`UPDATE public.frequenze f SET data_ingresso = lower(a.periodo), data_uscita = lower(a.periodo) + 5 FROM public.anni_sede a WHERE a.id = f.anno_sede_id AND f.alunno_id=$1 AND f.anno_sede_id=$2`, [BAMBINI.ritornato, b.da])
+    await oggiE('2027-08-10')
+    expect((await archivia4('ritornato')).stato).toBe(200)
+    await b.db.query(`UPDATE public.alunni SET archiviato_da = NULL WHERE id=$1`, [BAMBINI.ritornato])
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('ritornato')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.torna_in_arrivo).toBe(true)
+    expect((await scheda(BAMBINI.ritornato)).startsWith('in_arrivo'), await scheda(BAMBINI.ritornato)).toBe(true)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+  })
+  prova('una segreteria che archivia a metà (autore non scritto) non prende il 409: la riattivazione riapre', async () => {
+    await oggiE('2027-08-15')
+    expect((await archivia4('continuaB')).stato).toBe(200)
+    await b.db.query(`UPDATE public.alunni SET archiviato_da = NULL, archiviato_motivo = NULL WHERE id=$1`, [BAMBINI.continuaB])
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('continuaB')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(await scheda(BAMBINI.continuaB)).toBe('iscritto/farfalle')
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+  })
+  for (const [k, conClasse] of [['nonRisposto', false], ['cambiaGradoSenzaSezione', true]] as const) {
+    prova(`${k} uscito col passaggio, riattivato il 10/09: 409 con il rimando alla «Conferma tardiva», che poi funziona`, async () => {
+      expect(await vecchioUscito(k)).toBe('uscito')
+      await finoAlDueSettembre()
+      await oggiE('2027-09-10')
+      const prima = await scheda(BAMBINI[k])
+      const r = await riattivaCorpo(k)
+      expect(r.stato, String(r.corpo.error)).toBe(409)
+      expect(String(r.corpo.error)).toContain('Conferma tardiva')
+      expect(await scheda(BAMBINI[k]), 'la scheda è com\'era').toBe(prima)
+      expect([undefined, 'ritirato'], 'nessuna iscrizione viva').toContain((await frequenza(BAMBINI[k], 'nuovo'))?.stato)
+      const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', conClasse ? { alunno_id: BAMBINI[k], section_id: b.sezioni.primaria } : { alunno_id: BAMBINI[k] })
+      expect(t.stato, String(t.corpo?.error)).toBe(200)
+      expect(t.corpo.data && 'quota' in (t.corpo.data as C), 'la «Conferma tardiva» porta anche la voce della quota (qui il listino può non averla)').toBe(true)
+      const viva = (await frequenza(BAMBINI[k], 'nuovo'))?.stato
+      expect(viva !== undefined && viva !== 'ritirato', 'adesso l\'iscrizione è viva').toBe(true)
+      expect(await invarianti(), 'invarianti').toEqual([])
+    })
+  }
+  prova('controllo: confermato in ritardo, poi archiviato e riattivato A OTTOBRE → nessun 409, torna iscritto', async () => {
+    await oggiE('2027-08-12')
+    const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
+    expect(t.stato, String(t.corpo?.error)).toBe(200)
+    await finoAlDueSettembre()
+    await oggiE('2027-10-05')
+    expect((await archivia4('nonRisposto')).stato).toBe(200)
+    // Il banco scrive l'archiviazione con l'orologio vero: la si porta a ottobre a mano, come lo sarebbe in produzione.
+    await b.db.query(`UPDATE public.alunni SET archiviato_il = '2027-10-05T09:00:00+02:00' WHERE id=$1`, [BAMBINI.nonRisposto])
+    await b.db.query(`UPDATE public.frequenze SET data_uscita = '2027-10-05' WHERE alunno_id=$1 AND anno_sede_id=$2 AND stato='ritirato'`, [BAMBINI.nonRisposto, b.a])
+    await oggiE('2027-10-10')
+    const r = await riattivaCorpo('nonRisposto')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect((await scheda(BAMBINI.nonRisposto)).startsWith('iscritto/'), await scheda(BAMBINI.nonRisposto)).toBe(true)
+  })
+})
+
+describe('Riattiva nella finestra · n1: l\'«in arrivo» chiuso dalla sola tendina torna `in_arrivo`, non `iscritto/-`', () => {
+  prova('ritornato: ritirato dalla tendina il 15/08, «Riattiva» il 20/08 → in_arrivo, la sua uscita vecchia resta, la 11 non suona', async () => {
+    await b.db.query(`UPDATE public.frequenze f SET data_ingresso = lower(a.periodo), data_uscita = lower(a.periodo) + 5 FROM public.anni_sede a WHERE a.id = f.anno_sede_id AND f.alunno_id=$1 AND f.anno_sede_id=$2`, [BAMBINI.ritornato, b.da])
+    const vecchia = await frequenza(BAMBINI.ritornato, 'vecchio')
+    await oggiE('2027-08-15')
+    await b.db.query(`UPDATE public.alunni SET stato='ritirato' WHERE id=$1`, [BAMBINI.ritornato])
+    await oggiE('2027-08-20')
+    const r = await riattivaCorpo('ritornato')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.torna_in_arrivo, 'torna in arrivo').toBe(true)
+    expect((await scheda(BAMBINI.ritornato)).startsWith('in_arrivo'), await scheda(BAMBINI.ritornato)).toBe(true)
+    const dopo = await frequenza(BAMBINI.ritornato, 'vecchio')
+    expect(dopo?.stato).toBe('ritirato')
+    expect(dopo?.usc, 'con la sua data d\'uscita').toBe(vecchia?.usc)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+  })
+})
+
+describe('Riattiva · n2: se la classe della frequenza chiusa non si legge, 500 e niente scritto', () => {
+  prova('continuaAltraSezione archiviato il 20/08, riattivato il 10/09 con la lettura delle sezioni rotta', async () => {
+    await oggiE('2027-08-20')
+    expect((await archivia4('continuaAltraSezione')).stato).toBe(200)
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    const prima = await scheda(BAMBINI.continuaAltraSezione)
+    const nuovaPrima = await frequenza(BAMBINI.continuaAltraSezione, 'nuovo')
+    h.log.length = 0
+    h.rompiTabella = 'sections'
+    let r: { stato: number; corpo: C }
+    try { r = await riattivaCorpo('continuaAltraSezione') } finally { h.rompiTabella = '' }
+    expect(r.stato).toBe(500)
+    expect(r.corpo.codice).toBe('RIATTIVAZIONE_NON_RIUSCITA')
+    expect(h.log.some((x) => JSON.stringify(x).includes('classe-frequenza-chiusa-non-letta')), 'il warn').toBe(true)
+    expect(await scheda(BAMBINI.continuaAltraSezione), 'la scheda è com\'era').toBe(prima)
+    expect(await frequenza(BAMBINI.continuaAltraSezione, 'nuovo'), 'la frequenza è com\'era').toEqual(nuovaPrima)
+  })
+})
+
+describe('Riattiva · k: il nome ricordato si cerca solo nello stesso anno', () => {
+  prova('cambiaGradoConSezione: la frequenza nuova ha perso la classe e nell\'anno nuovo c\'è una «Stelline» omonima → non finisce lì', async () => {
+    const omonima = (await rows<C>(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1,$2,'Stelline','infanzia'::text::public.school_type_enum,'infanzia') RETURNING id`, [SEDE_E2E, b.annoA]))[0].id as string
+    SEZ[omonima] = 'stellineNuova'
+    await oggiE('2027-08-20')
+    expect((await archivia4('cambiaGradoConSezione')).stato).toBe(200)
+    await oggiE('2027-08-25')
+    await b.db.query(`UPDATE public.frequenze SET section_id = NULL WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.cambiaGradoConSezione, b.a])
+    await finoAlDueSettembre()
+    await oggiE('2027-09-10')
+    h.log.length = 0
+    const r = await riattivaCorpo('cambiaGradoConSezione')
+    expect(r.stato, String(r.corpo.error)).toBe(200)
+    expect(r.corpo.esito_classe, 'il segnale «classe da assegnare»').toBe('sparita')
+    expect(r.corpo.classe_mancante).toBe('Stelline')
+    expect(await scheda(BAMBINI.cambiaGradoConSezione), 'non è finito nella Stelline dell\'anno nuovo').not.toBe('iscritto/stellineNuova')
+    expect(h.log.some((x) => JSON.stringify(x).includes('classe-ricordata-di-altro-anno')), 'il warn').toBe(true)
+  })
+})
+
+describe('Riattiva · limite 1: la famiglia non può più ritirare la conferma quando l\'anno nuovo è già corrente', () => {
+  prova('continuaB: nella finestra «Ritira la conferma» è rifiutato (anno non aperto), la frequenza nuova resta viva', async () => {
+    await oggiE('2027-08-10')
+    const nuova = (await rows<C>(`SELECT id FROM public.frequenze WHERE alunno_id=$1 AND anno_sede_id=$2`, [BAMBINI.continuaB, b.a]))[0].id as string
+    const r = await chiama(RITIRA_CONFERMA, 'POST', '', { frequenza_id: nuova })
+    expect(r.stato, 'rifiutato').not.toBe(200)
+    expect((await frequenza(BAMBINI.continuaB, 'nuovo'))?.stato, 'la frequenza nuova è viva').toBe('in_attesa')
   })
 })

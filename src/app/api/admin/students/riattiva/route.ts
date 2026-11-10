@@ -14,7 +14,7 @@ import { classeEsisteInOgniSede } from '../route';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { scriviAlunnoEFrequenza, sezioneDelNome } from '@/lib/anno/scrittura';
 import { erroreAnno, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
-import { classeDellaFrequenzaChiusa, frequenzeDellaFinestra, iscrizioniDelBambino, riapriFrequenzaNuovaDellaFinestra, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
+import { classeDellaFrequenzaChiusa, classeRicordataDelloStessoAnno, frequenzeDellaFinestra, iscrizioniDelBambino, usciDelPassaggioNellAnnoAttivo, riapriFrequenzaNuovaDellaFinestra, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
 import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo';
 
 // ============================================================================
@@ -207,10 +207,13 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         // ha chiuso (`ritirato` con la data d'uscita del suo giorno), con la classe che avevano, senza cercare nessuna classe per nome.
         //  · la frequenza che si vede è stata chiusa da lei → la scheda torna `iscritto` su QUELL'anno (così ad agosto la famiglia lo vede e il diario
         //    lo elenca) e, se c'era, la frequenza nuova si riapre (così il 01/09 la ricopia lo porta nella classe nuova);
-        //  · la frequenza che si vede non è sua (un «in arrivo»: non ne ha, o l'ha chiusa mesi prima) ma la nuova sì → torna `in_arrivo` con la sua iscrizione;
-        //  · una scheda archiviata dal passaggio (`archiviato_da` NULL: l'archiviazione della segreteria scrive sempre l'autore) con la frequenza che si vede
-        //    NON chiusa da un'archiviazione (`uscito`, `trasferito`) è un'uscita del passaggio: 409 che rimanda alla «Conferma tardiva», anche se la conferma
-        //    dell'anno nuovo risulta chiusa (sull'anno nuovo la data d'uscita non distingue niente: cade sempre sul primo giorno dell'anno);
+        //  · una riattivazione RIMASTA A METÀ (frequenze già riaperte, scheda no: `archiviato_il` è già vuoto) finisce il lavoro su QUELL'anno e non
+        //    tocca la frequenza nuova, già viva con la sua classe: nessun nome si cerca nell'anno attivo;
+        //  · la frequenza che si vede è `uscito` (la scrive SOLO il passaggio) → è un'uscita del passaggio: 409 che rimanda alla «Conferma tardiva», che
+        //    crea anche la quota (questa no). Vale anche DOPO il 01/09 (`usciDelPassaggioNellAnnoAttivo`), con la conferma nuova chiusa o no: sull'anno
+        //    nuovo la data d'uscita non distingue niente, lo stato `uscito` sì;
+        //  · la frequenza che si vede non è viva né sua (un «in arrivo»: non ne ha, o l'ha chiusa mesi prima) e la nuova è sua o ancora viva → torna
+        //    `in_arrivo` con la sua iscrizione, anche se la scheda l'ha chiusa la sola tendina;
         //  · nient'altro → la strada di sempre (che rimanda alla «Conferma tardiva» se non c'è nessuna iscrizione).
         const finestra = await frequenzeDellaFinestra(supabase, { alunnoId, scuolaId: sede, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
         if (!finestra.ok) {
@@ -220,20 +223,39 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
             );
         }
         const riapreNellaFinestra = finestra.nellaFinestra && finestra.visibileChiusaDallArchiviazione;
-        const annoDiScrittura = finestra.nellaFinestra && riapreNellaFinestra ? finestra.annoVisibileId : annoSedeId;
-        if (finestra.nellaFinestra && !riapreNellaFinestra && finestra.nuovaChiusaDallArchiviazione) {
-            if (prima.archiviato_il != null && prima.archiviato_da == null) {
-                logEvento('anno-scolastico', 'warn', {
-                    tipo: 'riattiva-senza-iscrizione', operazione: 'admin/students/riattiva:POST', alunno: alunnoId, error_code: 'ALUNNO_SENZA_ISCRIZIONE',
-                });
-                return erroreAnno({ message: 'ALUNNO_SENZA_ISCRIZIONE' }, 'admin/students/riattiva:POST')!;
-            }
-            return await riportaInArrivo({
-                supabase, plessi, alunnoId, ruolo: auth.user.role, attoreId: auth.user.id, attore: auth.user,
-                prima: prima as unknown as Record<string, unknown>, frequenza: finestra.nuovaChiusaDallArchiviazione,
+        // Una riattivazione rimasta a metà: la frequenza che si vede è già viva, la scheda è `iscritto` con le tracce addosso e `archiviato_il` è già
+        // vuoto. Riprovare finisce il lavoro su quell'anno, come la prima volta.
+        const ripresaNellaFinestra = finestra.nellaFinestra && !riapreNellaFinestra && mezzaRiattivata && prima.archiviato_il == null && finestra.visibileViva;
+        const suAnnoVisibile = riapreNellaFinestra || ripresaNellaFinestra;
+        const annoDiScrittura = finestra.nellaFinestra && suAnnoVisibile ? finestra.annoVisibileId : annoSedeId;
+        const rispostaUscitaDelPassaggio = () => {
+            logEvento('anno-scolastico', 'warn', {
+                tipo: 'riattiva-senza-iscrizione', operazione: 'admin/students/riattiva:POST', alunno: alunnoId, error_code: 'ALUNNO_SENZA_ISCRIZIONE',
             });
+            return erroreAnno({ message: 'ALUNNO_SENZA_ISCRIZIONE' }, 'admin/students/riattiva:POST')!;
+        };
+        if (finestra.nellaFinestra && !suAnnoVisibile) {
+            if (finestra.visibileUscitaDelPassaggio) return rispostaUscitaDelPassaggio();
+            const daRiprendere = finestra.nuovaChiusaDallArchiviazione ?? (finestra.visibileViva ? null : finestra.nuovaViva);
+            if (daRiprendere) {
+                return await riportaInArrivo({
+                    supabase, plessi, alunnoId, ruolo: auth.user.role, attoreId: auth.user.id, attore: auth.user,
+                    prima: prima as unknown as Record<string, unknown>, frequenza: daRiprendere,
+                });
+            }
         }
-        const iscrizioni = riapreNellaFinestra
+        if (!finestra.nellaFinestra) {
+            // Dopo l'inizio dell'anno nuovo non c'è più una finestra, ma l'uscita del passaggio si riconosce lo stesso.
+            const uscita = await usciDelPassaggioNellAnnoAttivo(supabase, { alunnoId, scuolaId: sede, annoAttivoId: annoSedeId });
+            if (!uscita.ok) {
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (uscita.esce) return rispostaUscitaDelPassaggio();
+        }
+        const iscrizioni = suAnnoVisibile
             ? { ok: true as const, haFrequenzaAttiva: true, prossime: [] }
             : await iscrizioniDelBambino(supabase, { alunnoId, annoAttivoId: annoSedeId, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
         if (!iscrizioni.ok) {
@@ -262,7 +284,8 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         }
         // (terzo giro, h) FUORI dalla finestra, se la frequenza dell'anno attivo l'ha chiusa l'archiviazione e tiene ancora la sua classe (archiviato
         // nella finestra), si riapre con QUELLA: il nome ricordato, cercato nell'anno nuovo, può essere un'altra classe con lo stesso nome.
-        if (!riapreNellaFinestra && classeChiesta === null && annoSedeId) {
+        let classeDellaFrequenzaTrovata = false;
+        if (!suAnnoVisibile && classeChiesta === null && annoSedeId) {
             const dellaFrequenza = await classeDellaFrequenzaChiusa(supabase, { alunnoId, annoSedeId, archiviatoIl: (prima.archiviato_il as string | null) ?? null });
             if (!dellaFrequenza.ok) {
                 return NextResponse.json(
@@ -270,7 +293,29 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
                     { status: 500 },
                 );
             }
-            if (dellaFrequenza.nome !== null) candidata = dellaFrequenza.nome;
+            if (dellaFrequenza.nome !== null) {
+                candidata = dellaFrequenza.nome;
+                classeDellaFrequenzaTrovata = true;
+            }
+        }
+        // (quarto giro, k) Il ripiego per NOME vale solo dentro lo stesso anno della classe ricordata: altrimenti non si cerca nessun nome e si dà il
+        // segnale «classe da assegnare» (esito `sparita`, con il nome ricordato), come per una classe che non c'è più.
+        let classeMancanteDiAltroAnno: string | null = null;
+        if (candidata !== null && classeChiesta === null && !classeDellaFrequenzaTrovata && annoDiScrittura) {
+            const stesso = await classeRicordataDelloStessoAnno(supabase, { sectionId: (prima.archiviato_section_id as string | null) ?? null, annoSedeId: annoDiScrittura });
+            if (!stesso.ok) {
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (!stesso.stesso) {
+                classeMancanteDiAltroAnno = candidata;
+                candidata = null;
+                logEvento('multi_sede', 'warn', {
+                    operazione: 'admin/students/riattiva:POST', esito: 'classe-ricordata-di-altro-anno', alunno: alunnoId, sezione: classeMancanteDiAltroAnno,
+                });
+            }
         }
         // Ogni iscrizione RITIRATA di un anno che viene (conferma, domanda, segreteria, import) si riapre dalla pagina delle conferme
         // con «Conferma»; una trasferita o uscita no, e non si dice (4.5.16, C).
@@ -296,7 +341,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
         /** La classe che verrà scritta; `null` = rientra senza classe. */
         let classeDaScrivere: string | null = null;
         /** La classe RICORDATA che non esiste più: la scheda deve nominarla. */
-        let classeMancante: string | null = null;
+        let classeMancante: string | null = classeMancanteDiAltroAnno;
 
         if (candidata !== null && sede) {
             /**
@@ -319,7 +364,7 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
              * sezione. Si preferisce non riattivare e riprovare.
              */
             // Nella finestra la classe si verifica sull'anno su cui si scrive (il visibile), non sull'attivo: lì la stessa classe può non avere continuazione.
-            const esito = riapreNellaFinestra && finestra.nellaFinestra
+            const esito = suAnnoVisibile && finestra.nellaFinestra
                 ? await classeNellAnno(supabase, candidata, finestra.annoVisibileId)
                 : await classeEsisteInOgniSede(supabase, candidata, [sede], 'admin/students/riattiva:POST');
             if (esito === null) {

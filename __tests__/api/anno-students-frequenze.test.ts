@@ -38,6 +38,8 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
   frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
+  usciDelPassaggioNellAnnoAttivo: async () => ({ ok: true, esce: false }),
+  classeRicordataDelloStessoAnno: async () => ({ ok: true, stesso: true }),
 }))
 
 vi.mock('@/lib/anno/frequenze', async (orig) => ({

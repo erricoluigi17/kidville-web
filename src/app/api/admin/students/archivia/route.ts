@@ -191,37 +191,36 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
             const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null, ancheAnnoVisibile: true });
-            if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
-                // (Riattiva, giro 6, B1-bis) Un'archiviazione della segreteria lascia sempre autore, motivo e audit. Qui «Archivia» ha chiuso qualcosa di
-                // vivo (per esempio la frequenza nuova di una «Conferma tardiva» fatta nella finestra) su una scheda che il passaggio aveva già archiviata:
-                // `archiviato_il` resta quello del passaggio (il criterio di «Riattiva» non cambia), ma l'autore e il motivo si scrivono ora, con l'audit.
-                // (giro 10, R13-c) Anche se la chiusura è caduta (`non_riuscite`): l'archiviazione c'è stata, e senza il suo segno il 01/09 la ricopia rianimerebbe il bambino.
-                if (daCompletare && (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0)) {
-                    const autore = { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null };
-                    const { error: errAutore } = await supabase
-                        .from('alunni')
-                        .update(autore)
-                        .eq('id', alunnoId)
-                        .in('scuola_id', plessi)
-                        .select('id')
-                        .single();
-                    if (errAutore) {
-                        if (colonnaAssente(errAutore)) return archivioNonDisponibile('scrittura', alunnoId);
-                        logEvento('gdpr', 'error', {
-                            operazione: 'admin/students/archivia:POST', esito: 'autore-non-scritto', alunno: alunnoId, error_code: (errAutore as { code?: string }).code,
-                        }, errAutore);
-                        return rispostaScritturaIncompleta();
-                    }
-                    await logScrittura(supabase, {
-                        attore: auth.user,
-                        entitaTipo: 'alunni',
-                        entitaId: alunnoId,
-                        azione: 'update',
-                        scuolaId: (prima.scuola_id as string | null) ?? null,
-                        valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null },
-                        valoreDopo: autore,
-                    });
+            // (Riattiva, giro 11) La segreteria preme «Archivia» su un bambino archiviato dal PASSAGGIO (la scheda non ha un autore): l'archiviazione della segreteria lascia
+            // SEMPRE il suo segno (autore, motivo, audit), anche se non c'è niente da chiudere, perché l'annullo del passaggio non rianimi chi la segreteria ha scelto di
+            // archiviare. Un'archiviazione della segreteria già registrata (`archiviato_da` valorizzato) non si riscrive mai.
+            if (daCompletare) {
+                const autore = { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null };
+                const { error: errAutore } = await supabase
+                    .from('alunni')
+                    .update(autore)
+                    .eq('id', alunnoId)
+                    .in('scuola_id', plessi)
+                    .select('id')
+                    .single();
+                if (errAutore) {
+                    if (colonnaAssente(errAutore)) return archivioNonDisponibile('scrittura', alunnoId);
+                    logEvento('gdpr', 'error', {
+                        operazione: 'admin/students/archivia:POST', esito: 'autore-non-scritto', alunno: alunnoId, error_code: (errAutore as { code?: string }).code,
+                    }, errAutore);
+                    return rispostaScritturaIncompleta();
                 }
+                await logScrittura(supabase, {
+                    attore: auth.user,
+                    entitaTipo: 'alunni',
+                    entitaId: alunnoId,
+                    azione: 'update',
+                    scuolaId: (prima.scuola_id as string | null) ?? null,
+                    valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null },
+                    valoreDopo: autore,
+                });
+            }
+            if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
                 logEvento('gdpr', riprova.non_riuscite > 0 ? 'error' : 'info', {
                     operazione: 'admin/students/archivia:POST',
                     azione: 'archiviazione-riprovata',
@@ -237,6 +236,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                     archiviato_il: prima.archiviato_il,
                     frequenze_chiuse: riprova.chiuse,
                     voci_pagate_rimaste: riprova.voci_pagate_rimaste,
+                    voci_alla_contabilita: riprova.voci_alla_contabilita ?? 0,
                     iscrizioni_non_chiuse: riprova.non_riuscite,
                 });
             }
@@ -253,6 +253,8 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                     archiviato_il: prima.archiviato_il,
                     frequenze_chiuse: 0,
                     voci_pagate_rimaste: 0,
+                    // (giro 11) Una frequenza già ritirata tiene la sua voce: dopo il 01/09 è della contabilità, e la risposta lo dice.
+                    voci_alla_contabilita: riprova.voci_alla_contabilita ?? 0,
                     iscrizioni_non_chiuse: 0,
                 });
             }

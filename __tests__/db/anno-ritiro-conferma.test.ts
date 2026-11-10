@@ -387,7 +387,7 @@ describe('archiviare chiude le frequenze degli anni aperti', () => {
     await inRollback(async () => {
       const { nuova, voce } = await confermato()
       const c = await chiudiFrequenzeAperte(clienteSuPglite(db) as never, { alunnoId: AL, attore })
-      expect(c).toMatchObject({ chiuse: 1, voci_tolte: 1, voci_pagate_rimaste: 0, non_riuscite: 0 })
+      expect(c).toMatchObject({ chiuse: 1, voci_tolte: 1, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 })
       expect((await freq(nuova)).stato).toBe('ritirato')
       expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [voce])).toBe(0)
     })
@@ -423,7 +423,7 @@ describe('archiviare chiude le frequenze degli anni aperti', () => {
       await giorni()
       await nuovoAlunno(AL)
       await apri()
-      expect(await chiudiFrequenzeAperte(clienteSuPglite(db) as never, { alunnoId: AL, attore })).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 })
+      expect(await chiudiFrequenzeAperte(clienteSuPglite(db) as never, { alunnoId: AL, attore })).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 })
     })
   })
 })

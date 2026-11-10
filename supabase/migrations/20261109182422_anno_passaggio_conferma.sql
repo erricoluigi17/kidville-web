@@ -1581,6 +1581,17 @@ BEGIN
    WHERE r.passaggio_id = v_p.id AND r.scheda_da_prima IN ('ritirato', 'sospeso')
      AND al.id = r.alunno_id AND al.stato = 'iscritto' AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL;
 
+  -- (Riattiva, giro 11, M5) Anche una scheda che torna VIVA riprende le tracce che aveva alla conferma (memoria della classe di un'archiviazione rimasta a metà,
+  -- o autore e motivo di una riattivazione a metà): la conferma, la tardiva e il giro qui sopra le avevano tolte, e l'annullo riporta com'era. Solo se la scheda è
+  -- viva (`archiviato_il` NULL) e la fotografia ha almeno una traccia.
+  UPDATE public.alunni al SET archiviato_da = (r.scheda_tracce_da_prima ->> 'da')::uuid, archiviato_motivo = r.scheda_tracce_da_prima ->> 'motivo',
+         archiviato_section_id = (r.scheda_tracce_da_prima ->> 'sez')::uuid, archiviato_classe_sezione = r.scheda_tracce_da_prima ->> 'classe'
+    FROM public.passaggi_anno_righe r
+   WHERE r.passaggio_id = v_p.id AND al.id = r.alunno_id AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL
+     AND r.scheda_tracce_da_prima IS NOT NULL
+     AND (r.scheda_tracce_da_prima ->> 'da' IS NOT NULL OR r.scheda_tracce_da_prima ->> 'motivo' IS NOT NULL
+          OR r.scheda_tracce_da_prima ->> 'sez' IS NOT NULL OR r.scheda_tracce_da_prima ->> 'classe' IS NOT NULL);
+
   -- (giro 2, P23) Chi era stato archiviato dopo la conferma torna archiviato (lo specchio e i «nuovi → in arrivo» l'avevano riaperto).
   UPDATE public.alunni al SET stato = coalesce(nullif(x.p ->> 'stato', 'in_arrivo'), 'ritirato'), archiviato_il = (x.p ->> 'arch')::timestamptz,
          archiviato_da = (x.p ->> 'da')::uuid, archiviato_motivo = x.p ->> 'motivo',

@@ -544,6 +544,11 @@ export type RisultatoChiusura = {
   voci_tolte: number
   /** Le voci rimaste perché pagate (o fatturate): la segreteria deve saperlo, rimborso e storno sono suoi. */
   voci_pagate_rimaste: number
+  /**
+   * (Riattiva, giro 11) Le voci di quota rimaste su frequenze GIÀ ritirate dell'anno che la scheda mostra (dopo il 01/09 sono della contabilità, non di «Riprova»).
+   * La route lo dice alla segreteria invece di rispondere «riuscita» e basta.
+   */
+  voci_alla_contabilita: number
   /** Le frequenze per cui la chiusura o la voce non sono riuscite (guasto), più una per ogni lettura caduta (4.5.16, E): un log per ognuna. */
   non_riuscite: number
 }
@@ -557,7 +562,7 @@ export async function chiudiFrequenzeAperte(
   supabase: SupabaseClient,
   a: { alunnoId: string; attore: AppUser; scuolaId?: string | null; ancheAnnoVisibile?: boolean },
 ): Promise<RisultatoChiusura> {
-  const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 }
+  const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 }
   try {
     const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
     if (anni.error) {
@@ -605,7 +610,7 @@ export async function chiudiFrequenzeAperte(
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
       // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
       if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
-      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) continue
+      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) { esito.voci_alla_contabilita++; continue }
       const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
       if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
       if (r.ritirata) esito.chiuse++

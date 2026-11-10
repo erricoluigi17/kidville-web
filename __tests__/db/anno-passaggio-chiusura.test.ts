@@ -1487,7 +1487,7 @@ describe('Riattiva · O-d: un «esce» con le tracce alla conferma, uguali alla 
     expect(prima).toMatchObject({ da: true, motivo: 'ritiro' })
     await oggiE('2027-08-16')
     await annulla()
-    expect(await autoreEMotivo('nonRisposto'), 'le tracce, stantie su una scheda viva, le toglie l\'annullo (come per ogni scheda che torna viva)').toEqual({ da: false, motivo: null, memoria: false })
+    expect(await autoreEMotivo('nonRisposto'), 'le tracce di prima (giro 11: l\'annullo rimette quelle salvate alla conferma)').toEqual(prima)
     expect(await diario(b.sezioni.farfalle, '2027-08-16'), 'è tornato nel diario della sua classe').toContain('nonRisposto')
     expect(await invarianti(), 'invarianti dopo l\'annullo').toEqual([])
     expect((await frequenza(BAMBINI.nonRisposto, 'vecchio'))?.stato, 'la frequenza vecchia com\'era').toBe(freqPrima)
@@ -1604,6 +1604,75 @@ describe('Riattiva · giro 10', () => {
     expect(await scheda(BAMBINI.nonRisposto)).toMatch(/^[a-z_]+\/-\/ARCHIVIATO$/)
     expect(await autoreEMotivo('nonRisposto')).toMatchObject({ da: true, motivo: 'trasferimento' })
     expect(await diario(b.sezioni.farfalleNuova, '2027-09-02'), 'fuori dal diario').not.toContain('nonRisposto')
+    expect(await invarianti()).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», UNDICESIMO GIRO. La risposta di `riprova: true` dice la voce che resta alla contabilità (1); «Archivia» lascia il segno della segreteria anche
+// senza niente da chiudere (3); l'annullo rimette la memoria della classe che la conferma e la tardiva avevano tolto (5).
+// ---------------------------------------------------------------------------------------------------------------------------------
+describe('Riattiva · giro 11', () => {
+  const archiviaId = async (id: string, motivo?: string, extra: C = {}) => {
+    const res = await ARCHIVIA(new NextRequest('http://localhost/api/admin/students/archivia', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: id, ...(motivo ? { motivo } : {}), ...extra }),
+    }))
+    return { stato: res.status, corpo: ((await res.json().catch(() => null)) ?? {}) as C }
+  }
+  const archiviaConGuasto = async (id: string, motivo?: string) => {
+    h.rompiRpc = 'anno_visibile_oggi'
+    try { return await archiviaId(id, motivo) } finally { h.rompiRpc = '' }
+  }
+  const voceDi = async (id: string) => (await rows<C>(`SELECT quota_pagamento_id IS NOT NULL v, stato FROM public.frequenze WHERE alunno_id=$1 AND anno_sede_id=$2`, [id, b.a]))[0]
+
+  prova('G3 · «nuova» archiviata il 15/08 col guasto, nessuna riprova: il 02/09 la ricopia chiude la frequenza ma la voce resta; `riprova: true` risponde 200 e DICE che la voce resta alla contabilità', async () => {
+    await oggiE('2027-08-15')
+    expect((await archiviaConGuasto(BAMBINI.nuova, 'trasferimento')).stato).toBe(200)
+    await finoAlDueSettembre()
+    expect(await voceDi(BAMBINI.nuova), 'frequenza chiusa con la voce ancora lì').toMatchObject({ v: true, stato: 'ritirato' })
+    const r = await archiviaId(BAMBINI.nuova, undefined, { riprova: true })
+    expect(r.stato, JSON.stringify(r.corpo)).toBe(200)
+    expect(Number(r.corpo.voci_alla_contabilita), 'la voce resta alla contabilità').toBeGreaterThan(0)
+    expect(await voceDi(BAMBINI.nuova), 'la voce non si tocca').toMatchObject({ v: true })
+  })
+  prova('controllo · senza nessuna voce rimasta la risposta non porta l\'avviso', async () => {
+    await oggiE('2027-08-15')
+    const r = await archiviaId(BAMBINI.continuaB, 'ritiro')
+    expect(r.stato).toBe(200)
+    expect(Number(r.corpo.voci_alla_contabilita ?? 0)).toBe(0)
+  })
+
+  for (const guasto of [true, false]) {
+    prova(`D${guasto ? '1' : '2'} · «no» (esce, nessuna tardiva): «Archivia» il 15/08 ${guasto ? 'col guasto' : 'senza guasto'}, poi l'annullo il 16/08: resta archiviato, con autore e motivo, invarianti vuoti`, async () => {
+      await oggiE('2027-08-15')
+      const a = guasto ? await archiviaConGuasto(BAMBINI.no, 'trasferimento') : await archiviaId(BAMBINI.no, 'trasferimento')
+      expect([200, 409], JSON.stringify(a.corpo)).toContain(a.stato)
+      expect(await autoreEMotivo('no'), 'il segno della segreteria c\'è, anche senza niente da chiudere').toMatchObject({ da: true, motivo: 'trasferimento' })
+      await oggiE('2027-08-16')
+      await annulla()
+      expect(await scheda(BAMBINI.no)).toMatch(/\/ARCHIVIATO$/)
+      expect(await autoreEMotivo('no')).toMatchObject({ da: true, motivo: 'trasferimento' })
+      expect(await invarianti()).toEqual([])
+    })
+  }
+  prova('un\'archiviazione della segreteria GIÀ registrata non viene riscritta da un secondo «Archivia»', async () => {
+    await oggiE('2027-08-15')
+    await archiviaId(BAMBINI.no, 'trasferimento')
+    const prima = await autoreEMotivo('no')
+    const r = await archiviaId(BAMBINI.no, 'ritiro')
+    expect([200, 409]).toContain(r.stato)
+    expect(await autoreEMotivo('no'), 'autore e motivo restano quelli di prima').toEqual(prima)
+  })
+
+  provaPrima('M5 · un «esce» con la sola memoria della classe (archiviato a metà prima del passaggio), tardiva e annullo: la memoria della scheda torna com\'era', async () => {
+    await b.db.query(`UPDATE public.alunni SET archiviato_section_id=$2, archiviato_classe_sezione='Farfalle' WHERE id=$1`, [BAMBINI.nonRisposto, b.sezioni.farfalle])
+  }, async () => {
+    const prima = { da: false, motivo: null, memoria: true }
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-16')
+    await annulla()
+    expect(await autoreEMotivo('nonRisposto'), 'la memoria della classe com\'era prima della conferma').toEqual(prima)
     expect(await invarianti()).toEqual([])
   })
 })

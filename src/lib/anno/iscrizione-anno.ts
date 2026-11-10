@@ -779,7 +779,9 @@ export type EsitoFrequenzeDellaFinestra =
 /** Una `ritirato` è «chiusa da questa archiviazione» se la sua uscita non è PRECEDENTE al giorno dell'archiviazione (stessa regola di `contaComeFrequenzaAttiva`, 4.5.16 C). */
 function chiusaDaQuestaArchiviazione(r: { stato: string; data_uscita: string | null }, giorno: string | null): boolean {
   if (r.stato !== STATO_RITIRATO) return false
-  if (!giorno || !r.data_uscita) return true
+  // Senza `archiviato_il` (il solo ritiro dalla tendina) non c'è nessuna archiviazione da disfare: niente si riapre.
+  if (!giorno) return false
+  if (!r.data_uscita) return true
   return r.data_uscita >= giorno
 }
 
@@ -862,6 +864,41 @@ export async function riapriFrequenzaNuovaDellaFinestra(
       return { ok: false }
     }
     return { ok: true, senzaClasse: a.frequenza.section_id === null }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, terzo giro) FUORI dalla finestra: la frequenza dell'anno attivo che l'archiviazione ha chiuso, se tiene ancora la sua classe
+ * (dalla finestra in poi la tiene), dà il NOME di quella classe. «Riattiva» scrive con quello, risolto nello stesso anno in cui la sezione sta: non
+ * cerca per nome nell'anno nuovo una classe che potrebbe essere un'altra con lo stesso nome (le classi «N anni»). Senza una frequenza così
+ * (archiviato fuori dalla finestra: la frequenza ha perso la classe) `nome: null` e resta il ripiego di sempre, il nome ricordato.
+ * NON LANCIA MAI; `{ ok: false }` = non so, e chi chiama si ferma prima di scrivere.
+ */
+export async function classeDellaFrequenzaChiusa(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoSedeId: string; archiviatoIl: string | null },
+): Promise<{ ok: true; nome: string | null } | { ok: false }> {
+  try {
+    const giorno = a.archiviatoIl ? dataCivile(new Date(a.archiviatoIl)) : null
+    const righe = await supabase.from('frequenze').select('section_id, stato, data_uscita').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoSedeId)
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, nome: null }
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-chiusa-non-letta', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const chiusa = ((righe.data ?? []) as Array<{ section_id: string | null; stato: string; data_uscita: string | null }>)
+      .find((r) => r.section_id !== null && chiusaDaQuestaArchiviazione(r, giorno))
+    if (!chiusa?.section_id) return { ok: true, nome: null }
+    const sezione = await supabase.from('sections').select('name').eq('id', chiusa.section_id)
+    if (sezione.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-chiusa-non-letta', operazione: OP_FINESTRA, error_code: sezione.error.code ?? undefined })
+      return { ok: false }
+    }
+    const nome = ((sezione.data ?? []) as Array<{ name: string | null }>)[0]?.name ?? null
+    return { ok: true, nome: nome && nome.trim() !== '' ? nome : null }
   } catch (err) {
     logErrore({ operazione: OP_FINESTRA }, err)
     return { ok: false }

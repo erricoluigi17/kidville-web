@@ -5,7 +5,7 @@ import type { PGlite } from '@electric-sql/pglite'
 import { NextRequest } from 'next/server'
 import { BAMBINI, SEDE_E2E, SEDE_SIM, UTENTE, creaBancoPassaggio, type BancoPassaggio, type NomeBambino } from '../helpers/passaggio-banco'
 
-const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string, rompiTabella: '' as string, rompiUpdate: '' as string, audit: [] as Array<Record<string, unknown>> }))
+const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string, rompiTabella: '' as string, rompiUpdate: '' as string, audit: [] as Array<Record<string, unknown>>, dopoChiusura: null as null | (() => Promise<void>) }))
 vi.mock('@/lib/logging/logger', async (orig) => {
   const o = await orig<typeof import('@/lib/logging/logger')>()
   const f = (a: unknown[]) => a.map((x) => (x instanceof Error ? x.message : x))
@@ -87,6 +87,11 @@ vi.mock('@/lib/email/send', async (orig) => ({ ...(await orig<object>()), sendEm
 vi.mock('@/lib/notifiche/triggers', async (orig) => ({ ...(await orig<object>()), notificaEvento: async () => undefined }))
 vi.mock('@/lib/crm/collegamento', async (orig) => ({ ...(await orig<object>()), segnalaDomandaRespinta: async () => undefined }))
 vi.mock('@/lib/email/ritmo', () => ({ pausaFraEmail: async () => undefined }))
+// (giro 12) Con `h.dopoChiusura` si finge una richiesta che scrive qualcosa subito dopo la chiusura delle iscrizioni e prima del segno (la gara di due «Archivia»).
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => {
+  const v = await orig<typeof import('@/lib/anno/iscrizione-anno')>()
+  return { ...v, chiudiFrequenzeAperte: async (...a: Parameters<typeof v.chiudiFrequenzeAperte>) => { const r = await v.chiudiFrequenzeAperte(...a); if (h.dopoChiusura) await h.dopoChiusura(); return r } }
+})
 vi.mock('@/lib/audit/scrittura', async (orig) => ({ ...(await orig<object>()), logScrittura: async (_c: unknown, a: Record<string, unknown>) => void h.audit.push(a) }))
 
 import { POST as ANTEPRIMA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/route'
@@ -1674,5 +1679,135 @@ describe('Riattiva · giro 11', () => {
     await annulla()
     expect(await autoreEMotivo('nonRisposto'), 'la memoria della classe com\'era prima della conferma').toEqual(prima)
     expect(await invarianti()).toEqual([])
+  })
+})
+
+describe('Riattiva · giro 12', () => {
+  const archiviaId = async (id: string, motivo?: string, extra: C = {}) => {
+    const res = await ARCHIVIA(new NextRequest('http://localhost/api/admin/students/archivia', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: id, ...(motivo ? { motivo } : {}), ...extra }),
+    }))
+    return { stato: res.status, corpo: ((await res.json().catch(() => null)) ?? {}) as C }
+  }
+  const archiviaConGuasto = async (id: string, motivo?: string) => {
+    h.rompiRpc = 'anno_visibile_oggi'
+    try { return await archiviaId(id, motivo) } finally { h.rompiRpc = '' }
+  }
+  // Una voce di quota inventata sulla frequenza di un anno (trigger spenti per la sola scrittura del legame).
+  const dareVoce = async (id: string, anno: string) => {
+    const p = (await rows<C>(`INSERT INTO public.pagamenti (scuola_id, alunno_id, descrizione, importo, scadenza) VALUES ($1, $2, 'quota di prova', 100, DATE '2026-10-01') RETURNING id`, [SEDE_E2E, id]))[0].id
+    await b.db.exec(`SET session_replication_role = replica`)
+    await b.db.query(`UPDATE public.frequenze SET quota_pagamento_id = $1 WHERE alunno_id = $2 AND anno_sede_id = $3`, [p, id, anno])
+    await b.db.exec(`SET session_replication_role = origin`)
+  }
+  const viveConTracce = async () => (await rows<C>(`SELECT count(*)::int n FROM public.alunni WHERE archiviato_il IS NULL AND (archiviato_da IS NOT NULL OR archiviato_motivo IS NOT NULL OR archiviato_section_id IS NOT NULL OR archiviato_classe_sezione IS NOT NULL)`))[0].n as number
+  const motivoDi = async (k: NomeBambino) => (await rows<C>(`SELECT archiviato_motivo m FROM public.alunni WHERE id=$1`, [BAMBINI[k]]))[0].m as string | null
+  const tracceDiUnaRiattivazioneAMeta = async () => {
+    const s = (await rows<C>(`SELECT section_id, classe_sezione FROM public.alunni WHERE id=$1`, [BAMBINI.continua]))[0]
+    await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo='ritiro', archiviato_section_id=$3, archiviato_classe_sezione=$4 WHERE id=$1`, [BAMBINI.continua, UTENTE, s.section_id, s.classe_sezione])
+  }
+
+  provaPrima('P5a · «continua» con le tracce di una riattivazione a metà alla conferma: «Riattiva» il 15/08 la completa, l\'annullo il 16/08 NON le rimette, e un secondo «Riattiva» risponde 409', tracceDiUnaRiattivazioneAMeta, async () => {
+    await oggiE('2027-08-15')
+    const primo = await riattivaCorpo('continua')
+    expect([200, 409], JSON.stringify(primo.corpo)).toContain(primo.stato)
+    await oggiE('2027-08-16')
+    await annulla()
+    expect(await tracce('continua'), 'dopo l\'annullo la scheda viva resta pulita').toEqual(SENZA_TRACCE)
+    expect(await viveConTracce(), 'nessuna scheda viva con tracce').toBe(0)
+    const secondo = await riattivaCorpo('continua')
+    expect(secondo.stato, JSON.stringify(secondo.corpo)).toBe(409)
+    expect(secondo.corpo.codice).toBe('ALUNNO_NON_ARCHIVIATO')
+    expect(await invarianti()).toEqual([])
+  })
+  provaPrima('P5c · come P5a, e nessuno tocca la scheda: riconferma il 17/08, il 02/09 nessuna scheda viva ha tracce', tracceDiUnaRiattivazioneAMeta, async () => {
+    await oggiE('2027-08-15')
+    await riattivaCorpo('continua')
+    await oggiE('2027-08-16')
+    await annulla()
+    await oggiE('2027-08-17')
+    await prepara()
+    await finoAlDueSettembre()
+    expect(await tracce('continua')).toEqual(SENZA_TRACCE)
+    expect(await viveConTracce(), 'nessuna scheda viva con tracce').toBe(0)
+    expect(await invarianti()).toEqual([])
+  })
+
+  prova('K3 · nella finestra: la voce sulla frequenza dell\'anno che la scheda lascia, «Archivia» il 15/08 col guasto e «Riprova»: nessuna voce «alla contabilità»', async () => {
+    await oggiE('2027-08-15')
+    await dareVoce(BAMBINI.continuaB, b.da)
+    expect((await archiviaConGuasto(BAMBINI.continuaB, 'trasferimento')).stato).toBe(200)
+    // La scrittura della scheda ha già ritirato la frequenza dell'anno che lascia (con la sua voce, che resta): è la voce che ogni «Archivia» lascia.
+    await b.db.query(`UPDATE public.frequenze SET stato = 'ritirato' WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.continuaB, b.da])
+    const r = await archiviaId(BAMBINI.continuaB, undefined, { riprova: true })
+    expect(r.stato, JSON.stringify(r.corpo)).toBe(200)
+    expect(Number(r.corpo.voci_alla_contabilita ?? 0), 'la voce di quell\'anno non è una voce «rimasta»').toBe(0)
+  })
+  prova('K1 · «Archivia» senza guasto e poi «Riprova» con la voce sulla frequenza dell\'anno che la scheda lascia: nessuna voce «alla contabilità»', async () => {
+    await oggiE('2027-08-15')
+    await dareVoce(BAMBINI.continuaB, b.da)
+    expect((await archiviaId(BAMBINI.continuaB, 'trasferimento')).stato).toBe(200)
+    const r = await archiviaId(BAMBINI.continuaB, undefined, { riprova: true })
+    expect([200, 409]).toContain(r.stato)
+    expect(Number(r.corpo.voci_alla_contabilita ?? 0)).toBe(0)
+  })
+
+  prova('log del segno · la scrittura del segno si distingue dal 409 senza scrittura (solo uuid e codici)', async () => {
+    await oggiE('2027-08-15')
+    h.log.length = 0
+    expect((await archiviaId(BAMBINI.no, 'trasferimento')).stato).toBe(409)
+    const scritto = h.log.filter((x) => JSON.stringify(x).includes('segno-segreteria'))
+    expect(scritto.length, 'un evento per la scrittura').toBe(1)
+    expect(JSON.stringify(scritto[0])).toContain('"esito":"scritto"')
+    expect(JSON.stringify(scritto[0])).not.toContain('trasferimento')
+    h.log.length = 0
+    expect((await archiviaId(BAMBINI.no, 'trasferimento')).stato).toBe(409)
+    expect(h.log.filter((x) => JSON.stringify(x).includes('segno-segreteria')), 'il secondo «Archivia» non scrive niente').toEqual([])
+    const g = h.log.filter((x) => JSON.stringify(x).includes('gia-archiviato'))
+    expect(g.length).toBe(1)
+    expect(JSON.stringify(g[0])).toContain('"segno":"nessuno"')
+  })
+
+  prova('motivo del segno · «Archivia» con motivo su un segno senza motivo lo completa, e un motivo già registrato non si riscrive mai', async () => {
+    await oggiE('2027-08-15')
+    await archiviaId(BAMBINI.no)
+    expect(await autoreEMotivo('no'), 'segno senza motivo').toMatchObject({ da: true, motivo: null })
+    h.audit.length = 0
+    await archiviaId(BAMBINI.no, 'trasferimento')
+    expect(await motivoDi('no'), 'motivo completato').toBe('trasferimento')
+    expect(h.audit.filter((x) => x.entitaTipo === 'alunni' && x.azione === 'update').length, 'un audit per il completamento').toBe(1)
+    await archiviaId(BAMBINI.no, 'ritiro')
+    expect(await motivoDi('no'), 'il motivo registrato resta').toBe('trasferimento')
+  })
+
+  prova('guardia del segno · se un altro «Archivia» ha scritto l\'autore un attimo prima, il segno non si sovrascrive e non si registra un audit', async () => {
+    await oggiE('2027-08-15')
+    const altro = '99999999-9999-4999-8999-999999999999'
+    h.dopoChiusura = async () => {
+      await b.db.exec(`SET session_replication_role = replica`)
+      await b.db.query(`UPDATE public.alunni SET archiviato_da=$2, archiviato_motivo='ritiro' WHERE id=$1`, [BAMBINI.no, altro])
+      await b.db.exec(`SET session_replication_role = origin`)
+    }
+    h.audit.length = 0; h.log.length = 0
+    try { await archiviaId(BAMBINI.no, 'trasferimento') } finally { h.dopoChiusura = null }
+    const r = (await rows<C>(`SELECT archiviato_da::text da, archiviato_motivo m FROM public.alunni WHERE id=$1`, [BAMBINI.no]))[0]
+    expect(r.da, 'resta l\'autore dell\'altra richiesta').toBe(altro)
+    expect(r.m).toBe('ritiro')
+    expect(h.audit.filter((x) => x.entitaTipo === 'alunni' && x.azione === 'update'), 'niente audit per una scrittura che non c\'è stata').toEqual([])
+    expect(JSON.stringify(h.log.filter((x) => JSON.stringify(x).includes('segno-segreteria')))).toContain('gia-presente')
+  })
+
+  prova('D3c · dopo l\'annullo e la riconferma «Riattiva» su «no» risponde 409 con il codice di sempre (la frase dice anche la via della nuova iscrizione: vedi `anno-errori`)', async () => {
+    await oggiE('2027-08-15')
+    await archiviaId(BAMBINI.no, 'trasferimento')
+    await oggiE('2027-08-16')
+    await annulla()
+    await oggiE('2027-08-17')
+    await prepara()
+    await finoAlDueSettembre()
+    const r = await riattivaCorpo('no')
+    expect(r.stato, JSON.stringify(r.corpo)).toBe(409)
+    expect(r.corpo.codice).toBe('ALUNNO_SENZA_ISCRIZIONE')
+    expect(String(r.corpo.error)).toMatch(/nuova iscrizione/)
   })
 })

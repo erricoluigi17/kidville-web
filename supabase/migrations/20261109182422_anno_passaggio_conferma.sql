@@ -1565,9 +1565,16 @@ BEGIN
      AND a.anonimizzato_il IS NULL
      AND NOT EXISTS (SELECT 1 FROM public.frequenze f
                       WHERE f.alunno_id = a.id AND f.anno_sede_id = public.anno_attivo(v_p.scuola_id) AND f.stato IN ('in_attesa', 'iscritto'));
-  FOR v_giro IN SELECT x.alunno_id FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id LOOP
+  -- (Riattiva, giro 12, R11-a) Le tracce le tocca solo a chi il passaggio ha archiviato o a cui le ha tolte: chi alla conferma era vivo e il
+  -- passaggio non ha archiviato (`continua`/`cambia_grado`/`nuova` con `scheda_archiviata_da_prima` NULL) le tiene com'è (le avesse
+  -- cambiate «Riattiva» nella finestra, l'annullo non le rimette).
+  FOR v_giro IN SELECT x.alunno_id,
+                       (x.esito IN ('continua', 'cambia_grado', 'nuova') AND x.scheda_archiviata_da_prima IS NULL) AS lascia
+                  FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id LOOP
     PERFORM public.alunni_riallinea_da_frequenze(v_giro.alunno_id);
-    PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_giro.alunno_id);
+    IF NOT v_giro.lascia THEN
+      PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_giro.alunno_id);
+    END IF;
   END LOOP;
 
   -- (giro 1, B6) La scheda com'era PRIMA della conferma, dove lo specchio l'ha riscritta: chi era «ritirato» o «sospeso» dalla tendina
@@ -1588,6 +1595,7 @@ BEGIN
          archiviato_section_id = (r.scheda_tracce_da_prima ->> 'sez')::uuid, archiviato_classe_sezione = r.scheda_tracce_da_prima ->> 'classe'
     FROM public.passaggi_anno_righe r
    WHERE r.passaggio_id = v_p.id AND al.id = r.alunno_id AND al.archiviato_il IS NULL AND al.anonimizzato_il IS NULL
+     AND NOT (r.esito IN ('continua', 'cambia_grado', 'nuova') AND r.scheda_archiviata_da_prima IS NULL)  -- (giro 12, R11-a)
      AND r.scheda_tracce_da_prima IS NOT NULL
      AND (r.scheda_tracce_da_prima ->> 'da' IS NOT NULL OR r.scheda_tracce_da_prima ->> 'motivo' IS NOT NULL
           OR r.scheda_tracce_da_prima ->> 'sez' IS NOT NULL OR r.scheda_tracce_da_prima ->> 'classe' IS NOT NULL);

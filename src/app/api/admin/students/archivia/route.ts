@@ -190,19 +190,26 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
             // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
-            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null, ancheAnnoVisibile: true });
+            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null, ancheAnnoVisibile: true, archiviatoIl: prima.archiviato_il as string });
             // (Riattiva, giro 11) La segreteria preme «Archivia» su un bambino archiviato dal PASSAGGIO (la scheda non ha un autore): l'archiviazione della segreteria lascia
             // SEMPRE il suo segno (autore, motivo, audit), anche se non c'è niente da chiudere, perché l'annullo del passaggio non rianimi chi la segreteria ha scelto di
             // archiviare. Un'archiviazione della segreteria già registrata (`archiviato_da` valorizzato) non si riscrive mai.
-            if (daCompletare) {
-                const autore = { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null };
-                const { error: errAutore } = await supabase
+            // (Riattiva, giro 12) Il motivo: un «Archivia» con motivo su un segno SENZA motivo lo completa (il pannello manda il motivo solo al primo tentativo), e un motivo
+            // già registrato non si riscrive mai. Ogni scrittura guarda ancora `NULL` nella colonna che scrive: due «Archivia» insieme non si sovrascrivono.
+            const completaMotivo = !daCompletare && prima.archiviato_da != null && prima.archiviato_motivo == null && motivo != null;
+            let segno: 'scritto' | 'motivo-completato' | 'gia-presente' | 'nessuno' = 'nessuno';
+            if (daCompletare || completaMotivo) {
+                const autore = daCompletare
+                    ? { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null }
+                    : { archiviato_motivo: motivo as string };
+                const scrittura = supabase
                     .from('alunni')
                     .update(autore)
                     .eq('id', alunnoId)
-                    .in('scuola_id', plessi)
-                    .select('id')
-                    .single();
+                    .in('scuola_id', plessi);
+                const { data: scritte, error: errAutore } = await (daCompletare
+                    ? scrittura.is('archiviato_da', null)
+                    : scrittura.is('archiviato_motivo', null)).select('id');
                 if (errAutore) {
                     if (colonnaAssente(errAutore)) return archivioNonDisponibile('scrittura', alunnoId);
                     logEvento('gdpr', 'error', {
@@ -210,14 +217,23 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                     }, errAutore);
                     return rispostaScritturaIncompleta();
                 }
-                await logScrittura(supabase, {
-                    attore: auth.user,
-                    entitaTipo: 'alunni',
-                    entitaId: alunnoId,
-                    azione: 'update',
-                    scuolaId: (prima.scuola_id as string | null) ?? null,
-                    valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null },
-                    valoreDopo: autore,
+                if (((scritte ?? []) as unknown[]).length === 0) {
+                    // Nessuna riga: un'altra richiesta ha scritto il segno un attimo prima (o la scheda non è più di questa sede). Non si scrive né si registra l'audit.
+                    segno = 'gia-presente';
+                } else {
+                    segno = daCompletare ? 'scritto' : 'motivo-completato';
+                    await logScrittura(supabase, {
+                        attore: auth.user,
+                        entitaTipo: 'alunni',
+                        entitaId: alunnoId,
+                        azione: 'update',
+                        scuolaId: (prima.scuola_id as string | null) ?? null,
+                        valorePrima: { stato: prima.stato ?? null, archiviato_da: prima.archiviato_da ?? null },
+                        valoreDopo: autore,
+                    });
+                }
+                logEvento('gdpr', 'info', {
+                    operazione: 'admin/students/archivia:POST', azione: 'segno-segreteria', esito: segno, alunno: alunnoId, con_motivo: motivo != null,
                 });
             }
             if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
@@ -259,7 +275,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                 });
             }
             logEvento('gdpr', 'info', {
-                operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId,
+                operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId, segno,
             });
             return NextResponse.json(
                 { error: 'Questo bambino è già fra i «non più iscritti».', codice: 'ALUNNO_GIA_ARCHIVIATO' },

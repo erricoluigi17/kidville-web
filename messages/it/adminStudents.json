@@ -878,7 +878,7 @@
   "dataIscrizioneFuoriAnno": "La data è dopo la fine dell’anno scolastico in corso. Si può iscrivere solo all’anno in corso: l’iscrizione all’anno prossimo si farà con le iscrizioni.",
   "dataIscrizioneIngressoDal": "Anno scolastico {anno} · ingresso dal {giorno}",
   "detailArchiviatoQuotePagate": "{n, plural, one {La quota dell’anno prossimo era già stata pagata ed è rimasta: rimborso o storno si fanno dalla contabilità.} other {# quote dell’anno prossimo erano già state pagate e sono rimaste: rimborso o storno si fanno dalla contabilità.}}",
-  "detailArchiviatoVociContabilita": "{n, plural, one {La voce della quota è rimasta alla contabilità: si gestisce da lì.} other {# voci di quota sono rimaste alla contabilità: si gestiscono da lì.}}",
+  "detailArchiviatoVociContabilita": "{n, plural, one {La voce della quota di un’iscrizione chiusa dopo l’archiviazione è rimasta alla contabilità: questo «Riprova» non la toglie, si gestisce da lì.} other {# voci di quota di iscrizioni chiuse dopo l’archiviazione sono rimaste alla contabilità: questo «Riprova» non le toglie, si gestiscono da lì.}}",
   "detailArchiviatoNonChiuse": "Archiviato, ma {n, plural, one {# iscrizione dell’anno prossimo non si è chiusa} other {# iscrizioni dell’anno prossimo non si sono chiuse}}: la quota può restare visibile alla famiglia.",
   "detailArchiviaRiprova": "Riprova",
   "arcEsitoTornaInArrivo": "{nome}: torna fra i bambini in arrivo, e la sua iscrizione per l’anno prossimo è di nuovo aperta.",

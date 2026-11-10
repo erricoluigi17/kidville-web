@@ -386,6 +386,8 @@ type RigaDaChiudere = {
   stato: string
   origine: string | null
   quota_pagamento_id: string | null
+  /** Solo nella chiusura dell'«Archivia» (giro 12): serve a capire se l'iscrizione era già cominciata quando la scheda è stata archiviata. */
+  data_ingresso?: string | null
 }
 /** Le origini che il «Ritira la conferma» accetta (4.5.16, B); `recupero` è la riga storica dell'anno in corso e non si ritira. */
 const ORIGINI_RITIRABILI: readonly string[] = ['conferma', 'domanda', 'segreteria', 'import']
@@ -560,7 +562,7 @@ export type RisultatoChiusura = {
  */
 export async function chiudiFrequenzeAperte(
   supabase: SupabaseClient,
-  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null; ancheAnnoVisibile?: boolean },
+  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null; ancheAnnoVisibile?: boolean; archiviatoIl?: string | null },
 ): Promise<RisultatoChiusura> {
   const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 }
   try {
@@ -596,7 +598,7 @@ export async function chiudiFrequenzeAperte(
 
     const righe = await supabase
       .from('frequenze')
-      .select(COLONNE_CHIUSURA)
+      .select(`${COLONNE_CHIUSURA}, data_ingresso`)
       .eq('alunno_id', a.alunnoId)
       .in('anno_sede_id', idAnni)
       .in('stato', ['in_attesa', 'iscritto', STATO_RITIRATO])
@@ -610,7 +612,13 @@ export async function chiudiFrequenzeAperte(
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
       // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
       if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
-      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) { esito.voci_alla_contabilita++; continue }
+      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) {
+        // (Riattiva, giro 12) Si conta solo la voce di un'iscrizione che alla data dell'archiviazione NON era ancora cominciata (la ricopia del 01/09 l'ha chiusa
+        // dopo, e la voce è rimasta): quella della frequenza dell'anno che la scheda stava lasciando è la voce che ogni «Archivia» lascia, non un guasto.
+        const giornoArch = a.archiviatoIl ? dataCivile(new Date(a.archiviatoIl)) : null
+        if (giornoArch && f.data_ingresso && f.data_ingresso > giornoArch) esito.voci_alla_contabilita++
+        continue
+      }
       const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
       if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
       if (r.ritirata) esito.chiuse++

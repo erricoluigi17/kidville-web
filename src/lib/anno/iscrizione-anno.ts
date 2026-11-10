@@ -3,7 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
-import { finestraDiSede, leggiFinestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoVisibileDiSede, finestraDiSede, leggiFinestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
@@ -555,7 +555,7 @@ export type RisultatoChiusura = {
  */
 export async function chiudiFrequenzeAperte(
   supabase: SupabaseClient,
-  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null },
+  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null; ancheAnnoVisibile?: boolean },
 ): Promise<RisultatoChiusura> {
   const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 }
   try {
@@ -579,6 +579,14 @@ export async function chiudiFrequenzeAperte(
     if (lettura.guasto) esito.non_riuscite++
     const finestra = lettura.finestra
     if (finestra && !idAnni.includes(finestra.attivo)) idAnni.push(finestra.attivo)
+    // (Riattiva, giro 10, S9-1) «Riprova» su una scheda GIÀ archiviata: dal 01/09 l'anno nuovo è `corrente` e non è più fra quelli letti qui sopra, ma una frequenza
+    // ancora viva nell'anno che la scheda mostra è proprio ciò che «Riprova» deve chiudere. Solo per il ramo «già archiviato» della route.
+    // Di quell'anno si chiude SOLO ciò che è ancora vivo: la voce di una frequenza già ritirata è della contabilità, non di «Riprova».
+    let annoSoloVive: string | null = null
+    if (a.ancheAnnoVisibile && a.scuolaId) {
+      const visibile = await annoVisibileDiSede(supabase, a.scuolaId)
+      if (visibile && !idAnni.includes(visibile)) { idAnni.push(visibile); annoSoloVive = visibile }
+    }
     if (idAnni.length === 0) return esito
 
     const righe = await supabase
@@ -597,6 +605,7 @@ export async function chiudiFrequenzeAperte(
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
       // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
       if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
+      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) continue
       const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
       if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
       if (r.ritirata) esito.chiuse++
@@ -969,6 +978,36 @@ export async function classeDellaFrequenzaChiusa(
     const sezione = await supabase.from('sections').select('name').eq('id', chiusa.section_id)
     if (sezione.error) {
       logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-chiusa-non-letta', operazione: OP_FINESTRA, error_code: sezione.error.code ?? undefined })
+      return { ok: false }
+    }
+    const nome = ((sezione.data ?? []) as Array<{ name: string | null }>)[0]?.name ?? null
+    return { ok: true, nome: nome && nome.trim() !== '' ? nome : null }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (Riattiva, giro 10, R10-c) La classe della frequenza VIVA di un anno: la riprova di una «Riattiva» rimasta a metà, dopo il 01/09, trova la frequenza già
+ * riaperta con la sua classe e la scheda no. La scheda deve seguire la frequenza, come fa lo specchio. `nome: null` = nessuna frequenza viva con una classe.
+ */
+export async function classeDellaFrequenzaViva(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoSedeId: string },
+): Promise<{ ok: true; nome: string | null } | { ok: false }> {
+  try {
+    const righe = await supabase.from('frequenze').select('section_id, stato').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoSedeId).in('stato', ['in_attesa', 'iscritto'])
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, nome: null }
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-viva-non-letta', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const viva = ((righe.data ?? []) as Array<{ section_id: string | null }>).find((r) => r.section_id !== null)
+    if (!viva?.section_id) return { ok: true, nome: null }
+    const sezione = await supabase.from('sections').select('name').eq('id', viva.section_id)
+    if (sezione.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-viva-non-letta', operazione: OP_FINESTRA, error_code: sezione.error.code ?? undefined })
       return { ok: false }
     }
     const nome = ((sezione.data ?? []) as Array<{ name: string | null }>)[0]?.name ?? null

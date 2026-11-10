@@ -1706,6 +1706,12 @@ BEGIN
   -- bambino entra il giorno dell'`inizio`, come dice la specifica, e la voce nasce allora (`passaggio_ricopia_schede` la crea).
   PERFORM public.alunni_riallinea_da_frequenze(p_alunno);
   PERFORM public.anno_alunno_toglie_tracce_archiviazione(p_alunno);
+  -- (Riattiva, giro 10, R13-c) La conferma tardiva è una volontà NUOVA: un segno di archiviazione scritto PRIMA (autore, motivo, memoria della classe) è superato anche se la
+  -- scheda, nella finestra, resta ancora `archiviato_il` (lo specchio guarda l'anno vecchio). Senza, la ricopia lo scambierebbe per un'archiviazione fatta DOPO la tardiva.
+  UPDATE public.alunni
+     SET archiviato_da = NULL, archiviato_motivo = NULL, archiviato_section_id = NULL, archiviato_classe_sezione = NULL
+   WHERE id = p_alunno AND anonimizzato_il IS NULL
+     AND (archiviato_da IS NOT NULL OR archiviato_motivo IS NOT NULL OR archiviato_section_id IS NOT NULL OR archiviato_classe_sezione IS NOT NULL);
   IF v_a.inizio > v_oggi THEN
     v_quota := jsonb_build_object('esito', 'rimandata_all_inizio', 'pagamento_id', NULL);
   ELSE
@@ -1782,13 +1788,28 @@ BEGIN
       SELECT count(*) INTO v_a
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
-       WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
+       WHERE x.passaggio_id = v_p.id AND al.archiviato_il IS NOT NULL
+         AND ((x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il >= v_p.confermato_il)
+              -- (Riattiva, giro 10, R13-c) Chi era uscito col passaggio (`esce`, `non_risposto`), tornato con una «Conferma tardiva» e archiviato DOPO dalla
+              -- segreteria (il segno del giro 7: istante più tardi, oppure autore o motivo diversi da quelli salvati alla conferma): se la chiusura di «Archivia» è
+              -- caduta la sua frequenza nuova è viva e lo specchio lo rianimerebbe. Si chiude come le altre.
+              OR (x.esito IN ('esce', 'non_risposto') AND x.frequenza_a_id IS NOT NULL
+                  AND (al.archiviato_il > v_p.confermato_il
+                       OR ((al.archiviato_da IS NOT NULL OR al.archiviato_motivo IS NOT NULL)
+                           AND (al.archiviato_da IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'da')::uuid
+                                OR al.archiviato_motivo IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'motivo'))))));
       -- (Riattiva, giro 2) La frequenza chiusa TIENE la sua classe, come quella che chiude `chiudiFrequenzeAperte`: la riapre «Riattiva» con quella.
       UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
-       WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND f.id = x.frequenza_a_id
-         AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
+       WHERE x.passaggio_id = v_p.id AND f.id = x.frequenza_a_id
+         AND f.stato IN ('in_attesa', 'iscritto') AND al.archiviato_il IS NOT NULL
+         AND ((x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il >= v_p.confermato_il)
+              OR (x.esito IN ('esce', 'non_risposto')
+                  AND (al.archiviato_il > v_p.confermato_il
+                       OR ((al.archiviato_da IS NOT NULL OR al.archiviato_motivo IS NOT NULL)
+                           AND (al.archiviato_da IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'da')::uuid
+                                OR al.archiviato_motivo IS DISTINCT FROM (x.scheda_tracce_da_prima ->> 'motivo'))))));
 
       -- (giro 3, NS3) Lo storico delle classi parte dall'`inizio` (o dalla conferma, se più tarda) anche se il job gira in ritardo.
       PERFORM set_config('kidville.storico_giorno', greatest(v_inizio, (v_p.confermato_il AT TIME ZONE 'Europe/Rome')::date)::text, true);
@@ -1835,7 +1856,8 @@ BEGIN
       -- specchio come gli altri.
       -- (giro 9, NB-8) SOLO se quella frequenza è CHIUSA: la ricopia non rianima MAI una scheda archiviata. Con una frequenza nuova ancora viva (la
       -- chiusura di «Archivia» è caduta) lo specchio la leggerebbe viva, toglierebbe `archiviato_il` e rimetterebbe il bambino nel diario con
-      -- autore, motivo e memoria cancellati senza audit: resta archiviato con le sue tracce, la «11 alunni» lo segnala e il rimedio è «Riprova».
+      -- autore, motivo e memoria cancellati senza audit: resta archiviato con le sue tracce, la «11 alunni» lo segnala (dalla notte dopo «Archivia») e il rimedio è «Riprova»,
+      -- che da giro 10 chiude la frequenza viva anche dopo il 01/09.
       -- Per lo stesso motivo non serve né `data_ingresso <= v_oggi` (conta solo per le frequenze vive) né togliere le tracce (la scheda non torna viva).
       -- (giro 9, O-c) Solo i bambini di QUESTA sede: chi è passato a un'altra sede (frequenza `trasferito` qui) si allinea all'anno di quella.
       -- Le tracce dell'archiviazione non si toccano (il bambino resta archiviato, con autore e motivo); la difesa 2 di NB4 sta nello specchio.

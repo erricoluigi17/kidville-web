@@ -120,11 +120,11 @@ function AnagraficaDetailInner() {
      * **non si naviga** e l'esito torna alla scheda, che lo mostra in un
      * `role="alert"` dove chi ha premuto lo sta ancora guardando.
      */
-    const handleArchiveStudent = async (alunnoId: string) => {
+    const handleArchiveStudent = async (alunnoId: string, opzioni?: { riprova?: boolean }) => {
         const res = await fetch('/api/admin/students/archivia', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ alunno_id: alunnoId }),
+            body: JSON.stringify({ alunno_id: alunnoId, ...(opzioni?.riprova ? { riprova: true } : {}) }),
         }).catch(() => null);
         if (res?.ok) {
             // Il nome nel messaggio non è decorazione: la segreteria lavora su più

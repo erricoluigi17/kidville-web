@@ -69,6 +69,8 @@ const bodySchema = z.object({
      * riceve «Dati non validi».
      */
     motivo: z.enum(MOTIVI_ARCHIVIAZIONE).optional(),
+    /** (Riattiva, giro 10, R12-c) Il pannello lo manda quando preme «Riprova»: se non c'è più niente da chiudere la riprova è riuscita, non un errore. */
+    riprova: z.boolean().optional(),
 });
 
 export const POST = withRoute('admin/students/archivia:POST', async (request: NextRequest) => {
@@ -77,7 +79,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
 
     const b = await parseBody(request, bodySchema);
     if ('response' in b) return b.response;
-    const { alunno_id: alunnoId, motivo } = b.data;
+    const { alunno_id: alunnoId, motivo, riprova: eUnaRiprova } = b.data;
 
     try {
         const supabase = await createAdminClient();
@@ -188,12 +190,13 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
             // 4.5.16 (E): «Riprova». Se la prima archiviazione non è riuscita a chiudere un'iscrizione dell'anno prossimo (la scheda
             // era già scritta), il secondo giro la chiude. Se ha chiuso o tolto qualcosa, o ha di nuovo dei guasti, risponde 200 con i
             // conteggi e `gia_archiviato: true`, SENZA riscrivere la scheda né l'audit. Se non c'era niente da fare, il 409 di sempre.
-            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null });
+            const riprova = await chiudiFrequenzeAperte(supabase, { alunnoId, attore: auth.user, scuolaId: (prima.scuola_id as string | null) ?? null, ancheAnnoVisibile: true });
             if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
                 // (Riattiva, giro 6, B1-bis) Un'archiviazione della segreteria lascia sempre autore, motivo e audit. Qui «Archivia» ha chiuso qualcosa di
                 // vivo (per esempio la frequenza nuova di una «Conferma tardiva» fatta nella finestra) su una scheda che il passaggio aveva già archiviata:
                 // `archiviato_il` resta quello del passaggio (il criterio di «Riattiva» non cambia), ma l'autore e il motivo si scrivono ora, con l'audit.
-                if (daCompletare && (riprova.chiuse > 0 || riprova.voci_tolte > 0)) {
+                // (giro 10, R13-c) Anche se la chiusura è caduta (`non_riuscite`): l'archiviazione c'è stata, e senza il suo segno il 01/09 la ricopia rianimerebbe il bambino.
+                if (daCompletare && (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0)) {
                     const autore = { archiviato_da: auth.user.id, archiviato_motivo: motivo ?? null };
                     const { error: errAutore } = await supabase
                         .from('alunni')
@@ -235,6 +238,22 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                     frequenze_chiuse: riprova.chiuse,
                     voci_pagate_rimaste: riprova.voci_pagate_rimaste,
                     iscrizioni_non_chiuse: riprova.non_riuscite,
+                });
+            }
+            // (giro 10, R12-c) «Riprova» che trova tutto già chiuso (la prima volta una lettura era caduta, ma la chiusura era riuscita): è riuscita.
+            if (eUnaRiprova === true) {
+                logEvento('gdpr', 'info', {
+                    operazione: 'admin/students/archivia:POST', azione: 'archiviazione-riprovata', esito: 'iscrizioni-gia-chiuse', entita_id: alunnoId,
+                    n_non_chiuse: 0, n_chiuse: 0,
+                });
+                return NextResponse.json({
+                    success: true,
+                    gia_archiviato: true,
+                    alunno_id: alunnoId,
+                    archiviato_il: prima.archiviato_il,
+                    frequenze_chiuse: 0,
+                    voci_pagate_rimaste: 0,
+                    iscrizioni_non_chiuse: 0,
                 });
             }
             logEvento('gdpr', 'info', {

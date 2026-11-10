@@ -1512,3 +1512,98 @@ describe('Riattiva · O-c: la ricopia di una sede non allinea né conta chi è p
     expect(log[0].contesto.campi.n_archiviati_senza_riga, 'nessuno conteggiato in questa sede').toBe(0)
   })
 })
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», DECIMO GIRO. I rimedi dopo un guasto di «Archivia» funzionano anche dal 01/09 (S9-1), un'archiviazione della segreteria lascia sempre il suo
+// segno anche se la chiusura cade (R13-c), la riprova di «Riattiva» porta la scheda nella classe della frequenza viva (R10-c), e un «Riprova» che trova tutto
+// già chiuso non è un errore (R12-c).
+// ---------------------------------------------------------------------------------------------------------------------------------
+describe('Riattiva · giro 10', () => {
+  const NATO = '00000000-0000-4000-8000-0000000000c3'
+  const natoNellaFinestra = async () => {
+    await oggiE('2027-08-12')
+    await b.db.query(`INSERT INTO public.alunni (id, scuola_id, stato, section_id) VALUES ($1, $2, 'iscritto', $3)`, [NATO, SEDE_E2E, b.sezioni.girasoliNuova])
+  }
+  const archiviaId = async (id: string, motivo?: string) => {
+    const res = await ARCHIVIA(new NextRequest('http://localhost/api/admin/students/archivia', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: id, ...(motivo ? { motivo } : {}) }),
+    }))
+    return { stato: res.status, corpo: ((await res.json().catch(() => null)) ?? {}) as C }
+  }
+  const archiviaConGuasto = async (id: string, motivo?: string) => {
+    h.rompiRpc = 'anno_visibile_oggi'
+    try { return await archiviaId(id, motivo) } finally { h.rompiRpc = '' }
+  }
+  const freqNuovaDi = async (id: string) => (await rows<C>(`SELECT stato FROM public.frequenze WHERE alunno_id=$1 AND anno_sede_id=$2`, [id, b.a]))[0]?.stato as string | undefined
+  const dati = async (id: string) => (await rows<C>(`SELECT stato, section_id, archiviato_il IS NOT NULL arch, archiviato_da IS NOT NULL da, archiviato_motivo motivo FROM public.alunni WHERE id=$1`, [id]))[0]
+
+  prova('S9-1 · R10-a senza «Riprova» in agosto: il 02/09 «Riprova» chiude la frequenza viva, la scheda resta archiviata con le sue tracce, invarianti vuoti', async () => {
+    await natoNellaFinestra()
+    await oggiE('2027-08-15')
+    expect((await archiviaConGuasto(NATO, 'trasferimento')).stato).toBe(200)
+    expect(await freqNuovaDi(NATO), 'la chiusura è caduta').toMatch(/^(in_attesa|iscritto)$/)
+    await finoAlDueSettembre()
+    expect((await invarianti()).length, 'la 11 suona').toBeGreaterThan(0)
+    h.audit.length = 0
+    const r = await archiviaId(NATO)
+    expect(r.stato, JSON.stringify(r.corpo)).toBe(200)
+    expect(r.corpo.gia_archiviato).toBe(true)
+    expect(Number(r.corpo.frequenze_chiuse)).toBeGreaterThan(0)
+    expect(await freqNuovaDi(NATO), 'la frequenza è chiusa').toBe('ritirato')
+    expect(await dati(NATO)).toMatchObject({ arch: true, section_id: null, da: true, motivo: 'trasferimento' })
+    expect(await invarianti()).toEqual([])
+    expect((await archiviaId(NATO)).stato, 'una seconda riprova non trova più niente').toBe(409)
+  })
+
+  prova('R10-c · nato nella finestra, archiviato il 15/08, «Riattiva» il 16/08 rimasta a metà (la frequenza riaperta, la scheda no): il 02/09 la riprova porta la scheda nella classe della frequenza, invarianti vuoti', async () => {
+    await natoNellaFinestra()
+    await oggiE('2027-08-15')
+    expect((await archiviaId(NATO, 'trasferimento')).stato).toBe(200)
+    await oggiE('2027-08-16')
+    h.rompiUpdate = 'alunni'
+    try {
+      await RIATTIVA(new NextRequest('http://localhost/api/admin/students/riattiva', {
+        method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: NATO }),
+      }))
+    } finally { h.rompiUpdate = '' }
+    expect(await freqNuovaDi(NATO), 'la frequenza è stata riaperta').toMatch(/^(in_attesa|iscritto)$/)
+    await finoAlDueSettembre()
+    const res = await RIATTIVA(new NextRequest('http://localhost/api/admin/students/riattiva', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: NATO }),
+    }))
+    const corpo = ((await res.json().catch(() => null)) ?? {}) as C
+    expect(res.status, JSON.stringify(corpo)).toBe(200)
+    expect((await dati(NATO)).section_id, 'nella classe della sua frequenza').toBe(b.sezioni.girasoliNuova)
+    expect(corpo.esito_classe, 'la risposta non dice «assente»').not.toBe('assente')
+    expect(await invarianti()).toEqual([])
+  })
+
+  prova('R12-c · fuori dalla finestra, un «Riprova» che trova tutto già chiuso non è un errore (con `riprova: true`); senza il segnale resta il 409 di sempre', async () => {
+    await finoAlDueSettembre()
+    expect((await archiviaCorpo('continuaB', 'ritiro')).stato).toBe(200)
+    const senza = await archiviaCorpo('continuaB')
+    expect(senza.stato, 'senza il segnale: 409 ' + JSON.stringify(senza.corpo)).toBe(409)
+    const res = await ARCHIVIA(new NextRequest('http://localhost/api/admin/students/archivia', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: BAMBINI.continuaB, riprova: true }),
+    }))
+    const corpo = ((await res.json().catch(() => null)) ?? {}) as C
+    expect(res.status, JSON.stringify(corpo)).toBe(200)
+    expect(corpo).toMatchObject({ success: true, gia_archiviato: true, iscrizioni_non_chiuse: 0 })
+    expect(await autoreEMotivo('continuaB'), 'la scheda non è riscritta').toMatchObject({ da: true, motivo: 'ritiro' })
+  })
+
+  prova('R13-c · nonRisposto: tardiva 12/08, «Archivia» 15/08 con la chiusura caduta e nessuna riprova: il 02/09 resta archiviato, senza classe, con autore e motivo, fuori dal diario; invarianti vuoti', async () => {
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-15')
+    const a = await archiviaConGuasto(BAMBINI.nonRisposto, 'trasferimento')
+    expect(a.stato, JSON.stringify(a.corpo)).toBe(200)
+    expect(Number(a.corpo.iscrizioni_non_chiuse), '«Riprova» è offerto').toBeGreaterThan(0)
+    expect(await autoreEMotivo('nonRisposto'), 'il segno c\'è già').toMatchObject({ da: true, motivo: 'trasferimento' })
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.nonRisposto)).toMatch(/^[a-z_]+\/-\/ARCHIVIATO$/)
+    expect(await autoreEMotivo('nonRisposto')).toMatchObject({ da: true, motivo: 'trasferimento' })
+    expect(await diario(b.sezioni.farfalleNuova, '2027-09-02'), 'fuori dal diario').not.toContain('nonRisposto')
+    expect(await invarianti()).toEqual([])
+  })
+})

@@ -14,7 +14,7 @@ import { classeEsisteInOgniSede } from '../route';
 import { annoAttivoDiSede, campiFrequenzaDaAlunno } from '@/lib/anno/frequenze';
 import { scriviAlunnoEFrequenza, sezioneDelNome } from '@/lib/anno/scrittura';
 import { erroreAnno, rispostaFrequenzaNonScritta, rispostaScritturaIncompleta } from '@/lib/anno/errori';
-import { classeDellaFrequenzaChiusa, archiviatoDalPassaggio, classeRicordataDelloStessoAnno, frequenzeDellaFinestra, iscrizioniDelBambino, riapriFrequenzaNuovaDellaFinestra, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
+import { classeDellaFrequenzaChiusa, classeDellaFrequenzaViva, archiviatoDalPassaggio, classeRicordataDelloStessoAnno, frequenzeDellaFinestra, iscrizioniDelBambino, riapriFrequenzaNuovaDellaFinestra, riapriFrequenzaProssima, ricreaQuotaProssima } from '@/lib/anno/iscrizione-anno';
 import { PATCH_RITORNO_IN_ARRIVO } from '@/lib/anno/domanda-anno-prossimo';
 
 // ============================================================================
@@ -340,6 +340,21 @@ export const POST = withRoute('admin/students/riattiva:POST', async (request: Ne
             }
             if (dellaFrequenza.nome !== null) {
                 candidata = dellaFrequenza.nome;
+                classeDellaFrequenzaTrovata = true;
+            }
+        }
+        // (giro 10, R10-c) Una riattivazione rimasta a metà e riprovata DOPO il 01/09: la frequenza dell'anno è già viva, con la sua classe, e la scheda no. La scheda
+        // segue la frequenza (come lo specchio), non una memoria che può mancare o essere di un altro anno.
+        if (!suAnnoVisibile && classeChiesta === null && !classeDellaFrequenzaTrovata && annoSedeId && iscrizioni.haFrequenzaAttiva) {
+            const viva = await classeDellaFrequenzaViva(supabase, { alunnoId, annoSedeId });
+            if (!viva.ok) {
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere le iscrizioni del bambino: non è stato riportato fra gli iscritti.', codice: 'RIATTIVAZIONE_NON_RIUSCITA' },
+                    { status: 500 },
+                );
+            }
+            if (viva.nome !== null) {
+                candidata = viva.nome;
                 classeDellaFrequenzaTrovata = true;
             }
         }

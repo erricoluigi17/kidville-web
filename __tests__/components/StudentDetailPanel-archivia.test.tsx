@@ -447,6 +447,9 @@ describe('/admin/students/[id] — l\u2019archiviazione che non ha chiuso un\u20
 
     fireEvent.click(within(avviso).getByRole('button', { name: catalogoIt.detailArchiviaRiprova }))
     await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/archivia')).toHaveLength(2))
+    const chiamate = fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/archivia')
+    expect(JSON.parse(String((chiamate[0][1] as { body: string }).body)), 'la prima POST non è una riprova').not.toHaveProperty('riprova')
+    expect(JSON.parse(String((chiamate[1][1] as { body: string }).body)), 'la seconda sì').toMatchObject({ riprova: true })
     await waitFor(() => expect(nav.push).toHaveBeenCalled(), { timeout: 3000 })
   })
 

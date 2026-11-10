@@ -1297,7 +1297,7 @@ describe('Riattiva · Q2-A: B1-bis seguito dall\'annullo non rianima il bambino 
     await oggiE('2027-08-16')
     await dopoLAnnullo('cambiaGradoSenzaSezione', prima)
   })
-  prova('controllo · un «esce» archiviato a metà PRIMA del passaggio (stessi autore e motivo di allora) non conta come «dopo»: l\'annullo lo riporta com\'era', async () => {
+  prova('controllo · un «esce» mai archiviato (nessuna traccia alla conferma) non conta come «dopo»: l\'annullo lo riporta com\'era, senza inventargli autore e motivo', async () => {
     const prima = await autoreEMotivo('cambiaGradoSenzaSezione')
     expect(prima.da, 'senza tracce alla conferma').toBe(false)
     await annulla()
@@ -1307,13 +1307,16 @@ describe('Riattiva · Q2-A: B1-bis seguito dall\'annullo non rianima il bambino 
 })
 
 describe('Riattiva · Q2-D: il passo 6bis seguito dall\'annullo rimette autore, motivo e memoria di chi era archiviato a metà', () => {
+  let base: string[] = []
   provaPrima('ritiratoTendina archiviato (autore, motivo, memoria) e scelto «continua»: la conferma le toglie, l\'annullo le rimette', async () => {
     await b.db.query(`UPDATE public.alunni SET archiviato_il = coalesce(archiviato_il, now()), archiviato_da=$2, archiviato_motivo='ritiro', archiviato_classe_sezione='Farfalle' WHERE id=$1`, [BAMBINI.ritiratoTendina, UTENTE])
+    base = await invarianti()
   }, async () => {
     expect(await tracce('ritiratoTendina'), 'dopo la conferma (6bis)').toEqual(SENZA_TRACCE)
     await annulla()
     expect(await autoreEMotivo('ritiratoTendina'), 'dopo l\'annullo').toEqual({ da: true, motivo: 'ritiro', memoria: true })
     expect(await scheda(BAMBINI.ritiratoTendina)).toMatch(/\/ARCHIVIATO$/)
+    expect(await invarianti(), 'invarianti come alla partenza (lo stato di prova, archiviato a mano, non è coerente di suo)').toEqual(base)
   })
 })
 
@@ -1333,5 +1336,61 @@ describe('Riattiva · Q1-a: tracce di prima della PR su un iscritto', () => {
     expect(await tracce('continuaB')).toEqual(SENZA_TRACCE)
     expect(auditDi('continuaB').length, 'l\'audit').toBeGreaterThan(0)
     expect(await invarianti()).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva», OTTAVO GIRO (N1). Chi resta ARCHIVIATO attraverso un annullo e una riconferma (o è archiviato dal pannello nella finestra) non ha una riga
+// nel passaggio: la ricopia del 01/09 allinea anche lui alla frequenza dell'anno nuovo (la retta!), senza toccare le tracce né rimettergli la classe.
+// ---------------------------------------------------------------------------------------------------------------------------------
+describe('Riattiva · N1: con le rette, il 02/09 la «11 alunni» non suona per chi è archiviato senza riga del passaggio', () => {
+  const rette = async () => {
+    for (const k of ['nonRisposto', 'continuaB'] as const)
+      await b.db.query(`UPDATE public.frequenze SET retta_mensile = 300 WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI[k], b.da])
+  }
+  const retteNuove = async () => {
+    await b.db.query(`UPDATE public.frequenze SET retta_mensile = 320 WHERE alunno_id = $1 AND anno_sede_id = $2`, [BAMBINI.continuaB, b.a])
+  }
+  const retta = async (k: NomeBambino) => (await rows<C>(`SELECT nullif(importo_retta_mensile, 0)::text r FROM public.alunni WHERE id=$1`, [BAMBINI[k]]))[0].r
+  const restaArchiviato = async (k: NomeBambino, prima: C) => {
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+    expect(await scheda(BAMBINI[k]), 'archiviato e senza classe').toMatch(/^[a-z_]+\/-\/ARCHIVIATO$/)
+    expect(await autoreEMotivo(k), 'autore e motivo intatti').toEqual(prima)
+  }
+  provaPrima('R9-a · nonRisposto (retta 300): tardiva 12/08, «Archivia» 15/08, annullo e riconferma 16/08, il 02/09', rette, async () => {
+    await oggiE('2027-08-12')
+    expect((await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })).stato).toBe(200)
+    await oggiE('2027-08-15')
+    expect((await archiviaCorpo('nonRisposto', 'trasferimento')).stato).toBe(200)
+    const prima = await autoreEMotivo('nonRisposto')
+    expect(prima).toMatchObject({ da: true, motivo: 'trasferimento' })
+    await oggiE('2027-08-16')
+    await annulla()
+    await prepara()
+    await finoAlDueSettembre()
+    await restaArchiviato('nonRisposto', prima)
+    expect(await retta('nonRisposto'), 'la scheda ha la retta dell\'anno visibile (nessuna sulla frequenza nuova)').toBeNull()
+  })
+  provaPrima('R9-c · continuaB (retta 300, poi 320) archiviato dal pannello nella finestra, annullo e riconferma, il 02/09', rette, async () => {
+    await retteNuove()
+    await oggiE('2027-08-15')
+    expect((await archiviaCorpo('continuaB', 'ritiro')).stato).toBe(200)
+    const prima = await autoreEMotivo('continuaB')
+    expect(prima).toMatchObject({ da: true, motivo: 'ritiro' })
+    await oggiE('2027-08-16')
+    await annulla()
+    await prepara()
+    await retteNuove()
+    await finoAlDueSettembre()
+    await restaArchiviato('continuaB', prima)
+    expect(await retta('continuaB'), 'la retta della frequenza nuova').toBe('320.00')
+  })
+  provaPrima('R9-b · controllo: continuaB archiviato nella finestra senza annullo, il 02/09 gli invarianti restano vuoti', rette, async () => {
+    await retteNuove()
+    await oggiE('2027-08-15')
+    expect((await archiviaCorpo('continuaB', 'ritiro')).stato).toBe(200)
+    const prima = await autoreEMotivo('continuaB')
+    await finoAlDueSettembre()
+    await restaArchiviato('continuaB', prima)
   })
 })

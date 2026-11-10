@@ -1749,6 +1749,7 @@ DECLARE
   v_quote     integer := 0;
   v_n         integer;
   v_n2        integer := 0;
+  v_n3        integer := 0;
   v_c         integer;
   v_s         integer;
   v_a         integer;
@@ -1773,7 +1774,7 @@ BEGIN
     END IF;
 
     BEGIN
-      v_c := 0; v_s := 0; v_a := 0; v_q := 0; v_n2 := 0;
+      v_c := 0; v_s := 0; v_a := 0; v_q := 0; v_n2 := 0; v_n3 := 0;
 
       -- (giro 3, NB2) Chi è stato archiviato dopo la conferma, per QUALUNQUE esito (anche `nuova`), non rientra in classe. L'archiviazione della
       -- segreteria ha già chiuso la sua frequenza nuova (`chiudiFrequenzeAperte`): qui si CONTANO (`n_archiviati_dopo`) e, se per qualche
@@ -1827,6 +1828,31 @@ BEGIN
           v_c := v_c + 1;
         END IF;
       END LOOP;
+
+      -- (Riattiva, giro 8, N1) Chi è ARCHIVIATO e non ha una riga del passaggio (l'anteprima esclude gli archiviati: resta archiviato attraverso un
+      -- annullo e una riconferma, o è stato archiviato dal pannello nella finestra) ma ha una frequenza nell'anno nuovo: la sua scheda tiene la
+      -- retta (e il resto) dell'anno vecchio, mentre da oggi l'anno visibile è il nuovo, e la «11 alunni» suonerebbe ogni notte. Passa dallo
+      -- specchio come gli altri; la difesa 2 di NB4 resta nello specchio (una frequenza non viva non porta la classe su una scheda archiviata)
+      -- e le tracce dell'archiviazione non si toccano (il bambino resta archiviato, con autore e motivo).
+      FOR v_r IN
+        SELECT DISTINCT f.alunno_id FROM public.frequenze f
+          JOIN public.alunni al ON al.id = f.alunno_id
+         WHERE f.anno_sede_id = v_p.a_anno_sede_id
+           AND al.archiviato_il IS NOT NULL AND al.anonimizzato_il IS NULL
+           AND NOT EXISTS (SELECT 1 FROM public.passaggi_anno_righe x WHERE x.passaggio_id = v_p.id AND x.alunno_id = f.alunno_id)
+         ORDER BY f.alunno_id
+      LOOP
+        SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_prima FROM public.alunni al WHERE al.id = v_r.alunno_id;
+        PERFORM public.alunni_riallinea_da_frequenze(v_r.alunno_id);
+        IF (v_prima ->> 2) IS NOT NULL THEN
+          PERFORM public.anno_alunno_toglie_tracce_archiviazione(v_r.alunno_id);
+        END IF;
+        SELECT jsonb_build_array(al.section_id, al.stato, al.archiviato_il) INTO v_dopo FROM public.alunni al WHERE al.id = v_r.alunno_id;
+        v_s := v_s + 1; v_n3 := v_n3 + 1;
+        IF v_prima IS DISTINCT FROM v_dopo THEN
+          v_c := v_c + 1;
+        END IF;
+      END LOOP;
       PERFORM set_config('kidville.storico_giorno', '', true);
 
       FOR v_r IN
@@ -1841,7 +1867,7 @@ BEGIN
 
       UPDATE public.passaggi_anno SET schede_copiate_il = now() WHERE id = v_p.id;
       PERFORM public.passaggio_log(v_p.scuola_id, 'schede-ricopiate', v_p.id,
-        jsonb_build_object('n_schede', v_s, 'n_cambiate', v_c, 'n_archiviati_dopo', v_a, 'n_quote_tardive', v_q, 'n_nuovi_della_finestra', v_n2));
+        jsonb_build_object('n_schede', v_s, 'n_cambiate', v_c, 'n_archiviati_dopo', v_a, 'n_quote_tardive', v_q, 'n_nuovi_della_finestra', v_n2, 'n_archiviati_senza_riga', v_n3));
       v_passaggi := v_passaggi + 1; v_schede := v_schede + v_s; v_cambiate := v_cambiate + v_c;
       v_archiviati := v_archiviati + v_a; v_quote := v_quote + v_q;
     EXCEPTION WHEN OTHERS THEN

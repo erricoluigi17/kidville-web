@@ -3,9 +3,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
 import { NextRequest } from 'next/server'
-import { BAMBINI, SEDE_E2E, UTENTE, creaBancoPassaggio, type BancoPassaggio } from '../helpers/passaggio-banco'
+import { BAMBINI, SEDE_E2E, UTENTE, creaBancoPassaggio, type BancoPassaggio, type NomeBambino } from '../helpers/passaggio-banco'
 
-const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false }))
+const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string }))
 vi.mock('@/lib/logging/logger', async (orig) => {
   const o = await orig<typeof import('@/lib/logging/logger')>()
   const f = (a: unknown[]) => a.map((x) => (x instanceof Error ? x.message : x))
@@ -34,7 +34,7 @@ vi.mock('@/lib/supabase/server-client', async (orig) => {
     ...(await orig<typeof import('@/lib/supabase/server-client')>()),
     createAdminClient: async () => {
       const c = clienteProvaRoute(h.db as PGlite) as unknown as { from: (t: string) => object }
-      return new Proxy(c, { get: (t, prop) => (prop === 'from' ? (tab: string) => (tab === 'frequenze' ? avvolgi(t.from(tab), false) : t.from(tab)) : (t as unknown as Record<string | symbol, unknown>)[prop]) })
+      return new Proxy(c, { get: (t, prop) => (prop === 'rpc' ? (nome: string, args: unknown) => (h.rompiRpc === nome ? Promise.resolve({ data: null, error: { code: 'XX000', message: 'guasto finto' } }) : (t as unknown as { rpc: (n: string, a: unknown) => unknown }).rpc(nome, args)) : prop === 'from' ? (tab: string) => (tab === 'frequenze' ? avvolgi(t.from(tab), false) : t.from(tab)) : (t as unknown as Record<string | symbol, unknown>)[prop]) })
     },
   }
 })
@@ -74,6 +74,7 @@ import { POST as CONFERMA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/co
 import { POST as ARCHIVIA } from '@/app/api/admin/students/archivia/route'
 import { PATCH as STUDENTI_PATCH } from '@/app/api/admin/students/route'
 import { POST as RIATTIVA } from '@/app/api/admin/students/riattiva/route'
+import { POST as TARDIVA } from '@/app/api/admin/anni/[annoSedeId]/passaggio/conferma-tardiva/route'
 import { PATCH as ISCRIZIONI_PATCH } from '@/app/api/admin/iscrizioni/route'
 import { GET as DIARIO } from '@/app/api/diary/students/route'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
@@ -375,5 +376,154 @@ describe('Riattiva nella finestra · cambio di grado: tornano vive le due freque
     await ricopia(b.inizio)
     await oggiE('2027-09-02')
     expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// «Riattiva» nella finestra, SECONDO GIRO. La regola: «Riattiva» DISFA ESATTAMENTE l'archiviazione di quel giorno. Riapre solo le frequenze che
+// lei ha chiuso (`ritirato` con la data d'uscita del suo giorno), con la classe che avevano, senza cercare nessuna classe per nome.
+// Nota sul banco: `archivia` data l'uscita e `archiviato_il` con l'orologio VERO (`oggiRoma()`/`now()`), non con `giorno_roma` finto: per
+// chi era uscito «mesi prima» la data d'uscita si porta indietro a mano.
+// ---------------------------------------------------------------------------------------------------------------------------------
+async function archiviaERiattiva(k: NomeBambino) {
+  await oggiE('2027-08-10')
+  const a = await rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI[k] })
+  expect(a.stato, `archivia ${k}: ${String(a.errore)}`).toBe(200)
+  await oggiE('2027-08-20')
+  return rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI[k] })
+}
+async function finoAlDueSettembre() {
+  await oggiE(b.inizio)
+  await ricopia(b.inizio)
+  await oggiE('2027-09-02')
+}
+
+describe('Riattiva nella finestra · B1 e O1: chi era uscito mesi prima e torna «in arrivo» torna in arrivo, la sua uscita non si cancella', () => {
+  for (const k of ['ritornato', 'inArrivoConConferma'] as const) {
+    prova(`${k}: archiviato il 10/08 e riattivato il 20/08 → in_arrivo, frequenza vecchia intatta, fuori da Girasoli, invarianti vuoti; il 02/09 nella classe nuova`, async () => {
+      // L'uscita di quest'anno è di mesi prima dell'archiviazione di agosto.
+      await b.db.query(`UPDATE public.frequenze f SET data_ingresso = lower(a.periodo), data_uscita = lower(a.periodo) + 5 FROM public.anni_sede a WHERE a.id = f.anno_sede_id AND f.alunno_id=$1 AND f.anno_sede_id=$2`, [BAMBINI[k], b.da])
+      const prima = await frequenza(BAMBINI[k], 'vecchio')
+      expect(prima?.stato).toBe('ritirato')
+      const r = await archiviaERiattiva(k)
+      expect(r.stato, `riattiva: ${String(r.errore)}`).toBe(200)
+      const dopo = await frequenza(BAMBINI[k], 'vecchio')
+      expect(dopo?.stato, 'la frequenza vecchia è com\'era').toBe('ritirato')
+      expect(dopo?.usc, 'con la sua data d\'uscita').toBe(prima?.usc)
+      expect(await scheda(BAMBINI[k]), 'torna in arrivo, senza classe').toBe('in_arrivo/-')
+      expect(await diario(b.sezioni.girasoli, '2027-08-20'), 'il diario di Girasoli non lo elenca').not.toContain(k)
+      const nuova = await frequenza(BAMBINI[k], 'nuovo')
+      expect(nuova?.stato, 'la sua iscrizione nuova è viva').toBe('in_attesa')
+      expect(nuova?.section_id, 'con la classe di prima').toBe(b.sezioni.girasoliNuova)
+      expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+      await finoAlDueSettembre()
+      expect(await scheda(BAMBINI[k]), 'il 02/09 nella classe nuova').toBe('iscritto/girasoliNuova')
+      expect(await diario(b.sezioni.girasoliNuova, '2027-09-02')).toContain(k)
+      expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+    })
+  }
+  prova('nuova (in arrivo dal passaggio): archiviata e riattivata torna in_arrivo con la sua frequenza nuova', async () => {
+    const r = await archiviaERiattiva('nuova')
+    expect(r.stato, String(r.errore)).toBe(200)
+    expect(await scheda(BAMBINI.nuova)).toBe('in_arrivo/-')
+    expect((await frequenza(BAMBINI.nuova, 'nuovo'))?.stato).toBe('in_attesa')
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.nuova), 'il 02/09').toBe('iscritto/girasoliNuova')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+})
+
+describe('Riattiva nella finestra · B2 e B3: la classe dell\'anno nuovo è quella di prima, mai una cercata per nome', () => {
+  prova('B2 · continuaAltraSezione (confermato a mano in Girasoli\') torna in Girasoli\' il 02/09, nel suo diario e non in quello di Farfalle\'', async () => {
+    const r = await archiviaERiattiva('continuaAltraSezione')
+    expect(r.stato, String(r.errore)).toBe(200)
+    expect(await scheda(BAMBINI.continuaAltraSezione), 'il 20/08 è nella classe che si vede').toBe('iscritto/farfalle')
+    expect((await frequenza(BAMBINI.continuaAltraSezione, 'nuovo'))?.section_id, 'la frequenza nuova ha la classe di prima').toBe(b.sezioni.girasoliNuova)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.continuaAltraSezione), 'il 02/09').toBe('iscritto/girasoliNuova')
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-02'), 'nel diario di Girasoli\'').toContain('continuaAltraSezione')
+    expect(await diario(b.sezioni.farfalleNuova, '2027-09-02'), 'non in quello di Farfalle\'').not.toContain('continuaAltraSezione')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+  prova('B3 · cambiaGradoConSezione: due frequenze vive, il 02/09 è in Prima A e la maestra lo vede', async () => {
+    const r = await archiviaERiattiva('cambiaGradoConSezione')
+    expect(r.stato, String(r.errore)).toBe(200)
+    expect(await scheda(BAMBINI.cambiaGradoConSezione), 'il 20/08 nella classe che si vede').toBe('iscritto/stelline')
+    expect((await frequenza(BAMBINI.cambiaGradoConSezione, 'vecchio'))?.stato).toBe('iscritto')
+    const nuova = await frequenza(BAMBINI.cambiaGradoConSezione, 'nuovo')
+    expect(nuova?.stato).toBe('in_attesa')
+    expect(nuova?.section_id, 'Prima A').toBe(b.sezioni.primaria)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    expect(h.log.some((x) => JSON.stringify(x).includes('riattiva-finestra-frequenza-nuova-senza-classe')), 'nessun avviso: la classe c\'è').toBe(false)
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.cambiaGradoConSezione), 'il 02/09').toBe('iscritto/primaria')
+    expect(await diario(b.sezioni.primaria, '2027-09-02'), 'la maestra di Prima A lo vede').toContain('cambiaGradoConSezione')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+  prova('NB4 non torna: la scheda archiviata nella finestra non ha classe, né il 20/08 né dopo la ricopia, anche se la frequenza nuova chiusa la tiene', async () => {
+    await oggiE('2027-08-10')
+    expect((await rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI.continuaAltraSezione })).stato).toBe(200)
+    const chiusa = await frequenza(BAMBINI.continuaAltraSezione, 'nuovo')
+    expect(chiusa?.stato).toBe('ritirato')
+    expect(chiusa?.section_id, 'la frequenza chiusa tiene la sua classe').toBe(b.sezioni.girasoliNuova)
+    await finoAlDueSettembre()
+    const al = (await rows<C>(`SELECT section_id, classe_sezione FROM public.alunni WHERE id=$1`, [BAMBINI.continuaAltraSezione]))[0]
+    expect(al.section_id, 'la scheda archiviata non ha classe').toBeNull()
+    expect(al.classe_sezione ?? null).toBeNull()
+    expect(await diario(b.sezioni.girasoliNuova, '2027-09-02'), 'il diario della classe nuova non lo elenca').not.toContain('continuaAltraSezione')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+})
+
+describe('Riattiva nella finestra · O2: chi è entrato con la «Conferma tardiva»', () => {
+  prova('nonRisposto: confermato in ritardo il 12/08, archiviato e riattivato nella finestra → il 02/09 in Farfalle\', nessun invariante', async () => {
+    await oggiE('2027-08-12')
+    const t = await chiama(TARDIVA, 'POST', '/conferma-tardiva', { alunno_id: BAMBINI.nonRisposto })
+    expect(t.stato, String(t.corpo?.error)).toBe(200)
+    const r = await archiviaERiattiva('nonRisposto')
+    expect(r.stato, String(r.errore)).toBe(200)
+    expect((await frequenza(BAMBINI.nonRisposto, 'nuovo'))?.stato, 'l\'iscrizione nuova è viva').toBe('in_attesa')
+    expect((await frequenza(BAMBINI.nonRisposto, 'nuovo'))?.section_id).toBe(b.sezioni.farfalleNuova)
+    expect(await invarianti(), 'invarianti il 20/08').toEqual([])
+    await finoAlDueSettembre()
+    expect(await scheda(BAMBINI.nonRisposto), 'il 02/09').toBe('iscritto/farfalleNuova')
+    expect(await diario(b.sezioni.farfalleNuova, '2027-09-02')).toContain('nonRisposto')
+    expect(await invarianti(), 'invarianti il 02/09').toEqual([])
+  })
+})
+
+describe('Riattiva nella finestra · S1: un guasto nella lettura della finestra si ferma con un errore, senza scrivere', () => {
+  prova('anno_visibile_oggi rotta: 500, la scheda resta archiviata, le frequenze come erano', async () => {
+    await oggiE('2027-08-10')
+    expect((await rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI.continuaB })).stato).toBe(200)
+    await oggiE('2027-08-20')
+    const prima = `${await scheda(BAMBINI.continuaB)} · ${(await frequenza(BAMBINI.continuaB, 'vecchio'))?.stato} · ${(await frequenza(BAMBINI.continuaB, 'nuovo'))?.stato}`
+    h.rompiRpc = 'anno_visibile_oggi'
+    try {
+      const r = await rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI.continuaB })
+      expect(r.stato, `riattiva con la lettura rotta: ${String(r.errore)}`).toBe(500)
+    } finally { h.rompiRpc = '' }
+    expect(`${await scheda(BAMBINI.continuaB)} · ${(await frequenza(BAMBINI.continuaB, 'vecchio'))?.stato} · ${(await frequenza(BAMBINI.continuaB, 'nuovo'))?.stato}`, 'niente è cambiato').toBe(prima)
+    const r2 = await rotta(RIATTIVA, 'POST', '/api/admin/students/riattiva', { alunno_id: BAMBINI.continuaB })
+    expect(r2.stato, 'la riprova a lettura sana completa il lavoro').toBe(200)
+    expect(await invarianti()).toEqual([])
+  })
+})
+
+describe('Riattiva nella finestra · S2/S3: la classe si verifica sull\'anno che si scrive', () => {
+  prova('cambiaGradoConSezione (Stelline non ha continuazione nell\'anno nuovo): esito «ripristinata», non «sparita»', async () => {
+    await oggiE('2027-08-10')
+    expect((await rotta(ARCHIVIA, 'POST', '/api/admin/students/archivia', { alunno_id: BAMBINI.cambiaGradoConSezione })).stato).toBe(200)
+    await oggiE('2027-08-20')
+    const req = new NextRequest('http://localhost/api/admin/students/riattiva', {
+      method: 'POST', headers: { 'x-user-id': h.utente, 'content-type': 'application/json', 'user-agent': 'prova' }, body: JSON.stringify({ alunno_id: BAMBINI.cambiaGradoConSezione }),
+    })
+    const res = await RIATTIVA(req)
+    const corpo = (await res.json()) as C
+    expect(res.status).toBe(200)
+    expect(corpo.esito_classe, 'la classe c\'è nell\'anno che si vede').toBe('ripristinata')
+    expect(corpo.classe_sezione).toBe('Stelline')
   })
 })

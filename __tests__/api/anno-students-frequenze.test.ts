@@ -33,6 +33,13 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+// (chiusura 4.8) Il finto di questo file non ha `rpc('anno_attivo')`/`rpc('anno_visibile_oggi')`: la finestra del passaggio non è l'oggetto di queste
+// prove (le sue sono in `__tests__/db/anno-passaggio-chiusura.test.ts`, con le route vere). Qui si è fuori dalla finestra.
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
+}))
+
 vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   scriviFrequenza: h.scriviFrequenza,

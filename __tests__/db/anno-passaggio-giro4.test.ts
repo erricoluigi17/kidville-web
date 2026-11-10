@@ -164,7 +164,8 @@ describe('NB4 · chi è archiviato nella finestra NON ritrova la classe nuova il
       expect(await diario(b.sezioni[CLASSE_NUOVA[k]], '2027-09-02'), `${k}: il diario della classe nuova non lo elenca`).not.toContain(k)
       const f = await frequenza(BAMBINI[k], 'nuovo')
       expect(f?.stato, `${k}: la frequenza nuova è chiusa`).toBe('ritirato')
-      expect(f?.section_id ?? null, `${k}: e senza classe`).toBeNull()
+      // (Riattiva, giro 2) La frequenza chiusa tiene la classe (la riapre «Riattiva»); la scheda e il diario no: lo regge la difesa 2.
+      expect(f?.section_id ?? null, `${k}: la frequenza chiusa tiene la sua classe`).not.toBeNull()
     }
     expect(await figliAttivi(GEN), 'la famiglia di continuaB non lo vede il 02/09').toEqual([])
     expect(await figliAttivi(GEN_N), 'né quella di nuova').toEqual([])

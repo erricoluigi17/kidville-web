@@ -1692,7 +1692,8 @@ BEGIN
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
        WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND al.archiviato_il IS NOT NULL AND al.archiviato_il >= v_p.confermato_il;
-      UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso, section_id = NULL
+      -- (Riattiva, giro 2) La frequenza chiusa TIENE la sua classe, come quella che chiude `chiudiFrequenzeAperte`: la riapre «Riattiva» con quella.
+      UPDATE public.frequenze f SET stato = 'ritirato', data_uscita = f.data_ingresso
         FROM public.passaggi_anno_righe x
         JOIN public.alunni al ON al.id = x.alunno_id
        WHERE x.passaggio_id = v_p.id AND x.esito IN ('continua', 'cambia_grado', 'nuova') AND f.id = x.frequenza_a_id

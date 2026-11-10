@@ -120,7 +120,7 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
   **Non provato, da collaudo**: la funzione non entra nel banco senza ricostruire le tabelle della modulistica.
 - **Fuori perimetro, PR a parte:** `GET /api/diary/students` (`route.ts:184-190`) filtra per `section_id` e `anonimizzato_il` ma non per `archiviato_il`. Un `.is('archiviato_il', null)` sarebbe una difesa in
   profondità contro tutta la famiglia di NB4, oltre alla `15-bis` che la sorveglia.
-- **«Riattiva» nella finestra · CORRETTO (decisione del titolare, 10/11, «Correggi»).** Riapre la frequenza dell'anno che si vede e, se c'era, quella nuova. Limite noto: nel cambio di grado la classe nuova non si ritrova (la assegna la segreteria). Vedi l'esito, sezione «Riattiva».
+- **«Riattiva» nella finestra · CORRETTO (decisione del titolare, 10/11, «Correggi»; secondo giro dopo la ri-revisione).** Disfa esattamente l'archiviazione di quel giorno: riapre solo le frequenze che ha chiuso (data d'uscita del suo giorno), con la classe che avevano, senza cercare nessuna classe per nome; l'«in arrivo» torna `in_arrivo`. Nessun limite noto sulla classe. Vedi l'esito, sezione «Riattiva, giro 2».
 - **12 (collegamento dal cruscotto) · FATTO in chiusura.** Sotto le risposte delle famiglie c'è «Apri il passaggio d'anno» (`/admin/students/passaggio`, stessi tre ruoli del menu, l'anno lo porta il selettore). Prova: `__tests__/components/CruscottoClient.test.tsx`.
 - **S13 · CHIUSO** (vedi la voce 1): l'addebito esce dal listino.
 

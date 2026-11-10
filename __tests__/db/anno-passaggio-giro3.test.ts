@@ -193,9 +193,11 @@ describe('NB2 · l’archiviazione chiude TUTTE le iscrizioni vive del bambino, 
     const rr = await ricopia(b.inizio)
     expect(await famiglia(genitore), 'la famiglia il 01/09').toEqual({ figli: [], foto: 0 })
     expect(await scheda(bambino), 'il 01/09 resta archiviato').toContain('ARCHIVIATO')
-    // (giro 4, NB4) E senza classe: né sulla scheda né sulla frequenza chiusa (il diario legge `section_id` senza guardare lo stato).
+    // (giro 4, NB4) E senza classe sulla scheda (il diario legge `section_id` senza guardare lo stato). (Riattiva, giro 2) La frequenza nuova chiusa
+    // INVECE tiene la sua classe: «Riattiva» la riapre con quella. NB4 lo regge `alunni_riallinea_da_frequenze`, che non copia la classe di una
+    // frequenza non viva su una scheda archiviata (e la `15-bis` sorveglia).
     expect((await rows<C>(`SELECT section_id FROM public.alunni WHERE id=$1`, [bambino]))[0].section_id, 'il 01/09 la scheda archiviata non ha classe').toBeNull()
-    expect((await frequenza(bambino, 'nuovo')).section_id ?? null, 'e la frequenza nuova chiusa neanche').toBeNull()
+    expect((await frequenza(bambino, 'nuovo')).section_id ?? null, 'la frequenza nuova chiusa tiene la sua classe').not.toBeNull()
     expect((await frequenza(bambino, 'nuovo')).stato, 'e la sua frequenza nuova resta chiusa').toBe('ritirato')
     expect(Number(rr.archiviati), 'la ricopia lo conta').toBe(1)
     const log = await rows<{ contesto: { campi: C } }>(`SELECT contesto FROM public.app_log WHERE fingerprint LIKE 'passaggio-schede-ricopiate:%'`)

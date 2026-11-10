@@ -233,7 +233,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                     });
                 }
                 logEvento('gdpr', 'info', {
-                    operazione: 'admin/students/archivia:POST', azione: 'segno-segreteria', esito: segno, alunno: alunnoId, con_motivo: motivo != null,
+                    operazione: 'admin/students/archivia:POST', azione: 'segno-segreteria', esito: segno, alunno: alunnoId,
                 });
             }
             if (riprova.chiuse > 0 || riprova.voci_tolte > 0 || riprova.non_riuscite > 0) {
@@ -275,7 +275,7 @@ export const POST = withRoute('admin/students/archivia:POST', async (request: Ne
                 });
             }
             logEvento('gdpr', 'info', {
-                operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId, segno,
+                operazione: 'admin/students/archivia:POST', esito: 'gia-archiviato', alunno: alunnoId,
             });
             return NextResponse.json(
                 { error: 'Questo bambino è già fra i «non più iscritti».', codice: 'ALUNNO_GIA_ARCHIVIATO' },

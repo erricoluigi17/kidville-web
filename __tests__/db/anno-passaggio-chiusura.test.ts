@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import type { PGlite } from '@electric-sql/pglite'
 import { NextRequest } from 'next/server'
+import { redact } from '@/lib/logging/redact'
 import { BAMBINI, SEDE_E2E, SEDE_SIM, UTENTE, creaBancoPassaggio, type BancoPassaggio, type NomeBambino } from '../helpers/passaggio-banco'
 
 const h = vi.hoisted(() => ({ db: null as unknown, utente: '' as string, sedi: [] as string[], log: [] as unknown[], rompiLettura: false, rompiRpc: '' as string, rompiTabella: '' as string, rompiUpdate: '' as string, audit: [] as Array<Record<string, unknown>>, dopoChiusura: null as null | (() => Promise<void>) }))
@@ -1765,7 +1766,11 @@ describe('Riattiva · giro 12', () => {
     expect(h.log.filter((x) => JSON.stringify(x).includes('segno-segreteria')), 'il secondo «Archivia» non scrive niente').toEqual([])
     const g = h.log.filter((x) => JSON.stringify(x).includes('gia-archiviato'))
     expect(g.length).toBe(1)
-    expect(JSON.stringify(g[0])).toContain('"segno":"nessuno"')
+    expect(JSON.stringify(g[0]), 'il segno lo porta già l\'evento `segno-segreteria`: il campo non è nella lista bianca e uscirebbe redatto').not.toContain('"segno"')
+    // Quello che esce davvero in produzione: l'evento del segno ha `esito` e `azione` in chiaro, dopo la redazione.
+    const redatto = JSON.stringify(redact({ azione: 'segno-segreteria', esito: 'motivo-completato' }))
+    expect(redatto).toContain('"esito":"motivo-completato"')
+    expect(redatto).toContain('"azione":"segno-segreteria"')
   })
 
   prova('motivo del segno · «Archivia» con motivo su un segno senza motivo lo completa, e un motivo già registrato non si riscrive mai', async () => {

@@ -131,3 +131,5 @@ anche le tre migrazioni e i file nuovi della 4.8 (S26).
 - **PR a parte:** `GET /api/diary/students` senza `archiviato_il`; S11 (avviso `altra_sede`, tocca cinque posti e la firma SQL del ramo 4.9); S5 (conteggio delle voci aperte su chi esce); S22, S23, S28, S29.
 
 - **«Riattiva» · giro 12 · CORRETTO.** L'annullo non rimette né toglie le tracce a una scheda viva che il passaggio non ha archiviato (`continua`/`cambia_grado`/`nuova`): R11-a, regressione del giro 11. `voci_alla_contabilita` non conta più la voce dell'anno che la scheda lascia; il segno ha log e guardia `NULL`; un motivo mancante si completa, uno registrato non si riscrive. **Non corretto (nuovo):** il pannello non ha un selettore di motivo, quindi dal pannello la «Riprova» lascia il motivo `null`.
+
+- **«Riattiva» · giro 13 · CORRETTO (testi e log).** Il messaggio delle voci alla contabilità parla di iscrizioni *cominciate* dopo l'archiviazione; il 409 non porta più il campo `segno` (redatto in produzione); il completamento del motivo vale per ogni archiviazione con autore e senza motivo e si fa solo via API (su un `esce` O1 fa da segno); il PRD riga 32 descrive il giro 12.

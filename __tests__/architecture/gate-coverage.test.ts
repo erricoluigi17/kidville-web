@@ -90,6 +90,8 @@ const GATE_BASE = [
     'sealDangerous',
     // Legame di famiglia: «questo bambino è tuo figlio» è un'autorizzazione.
     'genitoreHasFiglio',
+    // L'assistente CRM si autentica con una chiave Bearer attiva e legata a una sede.
+    'requireIntegrazioneAi',
 ]
 
 /**
@@ -652,6 +654,9 @@ describe('coverage-lock dei gate di autenticazione', () => {
         for (const nome of ['requireStaff', 'requireDocente', 'requireUser', 'resolveIdentity']) {
             expect(authSrc, `${nome} non esiste più: aggiorna GATE_BASE`).toContain(`export async function ${nome}`)
         }
+        const aiSrc = fs.readFileSync(path.join(LIB_ROOT, 'crm', 'ai', 'accesso.ts'), 'utf8')
+        expect(mascheraSorgente(aiSrc).struttura, 'requireIntegrazioneAi non esiste più: aggiorna GATE_BASE')
+            .toMatch(/\bexport\s+async\s+function\s+requireIntegrazioneAi\s*\(/)
     })
 
     it('ogni handler API ha un gate di identità, e su TUTTE le strade', () => {
@@ -1264,6 +1269,18 @@ describe('il rilevatore riconosce la forma vietata', () => {
 })
 
 describe('il rilevatore NON segnala le forme corrette', () => {
+    it('il gate a chiave CRM protegge la lettura senza una sessione', () => {
+        const src = `
+      export const GET = withRoute('crm/ai/slot:GET', async (request) => {
+        const gate = await requireIntegrazioneAi(request, 'slot')
+        if ('response' in gate) return gate.response
+        const supabase = await createAdminClient()
+        return supabase.from('crm_fasce').select('*').eq('scuola_id', gate.ai.scuolaId)
+      })
+    `
+        expect(scoperti(src)).toEqual([])
+    })
+
     it('gate in testa, query dopo', () => {
         const src = `
       export const GET = withRoute('admin/x:GET', async (request) => {

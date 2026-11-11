@@ -81,6 +81,8 @@ const GATE_BASE = [
   'requireParentOfStudent', 'requireFunzione', 'requireArea',
   'loadAppUser', 'resolveIdentity', 'resolveSessionAppId',
   'sealDangerous', 'genitoreHasFiglio',
+  // La chiave Bearer del CRM si verifica prima di leggere il corpo.
+  'requireIntegrazioneAi',
 ]
 const GATE_SENZA_NOME = String.raw`CRON_SECRET|\bauth\s*\.\s*getUser\s*\(`
 const gateRe = (nomi: string[]) =>
@@ -346,6 +348,9 @@ describe('lock architettura · il corpo si legge dopo il gate, e con la primitiv
     for (const nome of ['requireStaff', 'requireDocente', 'requireUser', 'resolveIdentity']) {
       expect(authSrc, `${nome} non esiste più: aggiorna GATE_BASE`).toContain(`export async function ${nome}`)
     }
+    const aiSrc = fs.readFileSync(path.join(SRC_ROOT, 'lib', 'crm', 'ai', 'accesso.ts'), 'utf8')
+    expect(mascheraSorgente(aiSrc).struttura, 'requireIntegrazioneAi non esiste più: aggiorna GATE_BASE')
+      .toMatch(/\bexport\s+async\s+function\s+requireIntegrazioneAi\s*\(/)
     // E la primitiva deve esistere dove il lock crede che stia.
     expect(
       fs.readFileSync(path.join(RADICE, CASA_DELLA_PRIMITIVA), 'utf8'),
@@ -458,6 +463,17 @@ describe('lock architettura · il corpo si legge dopo il gate, e con la primitiv
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('il rilevatore riconosce la forma vietata', () => {
+  it('R2 · il corpo non può precedere il gate a chiave CRM', () => {
+    const src = `
+      export const POST = withRoute('crm/ai/contatti:POST', async (request) => {
+        const corpo = await parseBody(request, schema)
+        const gate = await requireIntegrazioneAi(request, 'contatto')
+        if ('response' in gate) return gate.response
+      })
+    `
+    expect(fuoriOrdine(src)).toEqual([{ handler: 'POST', riga: 3 }])
+  })
+
   it('R2 · corpo letto sopra il gate (era `primaria/fascicolo:POST`, riga 72 contro 75)', () => {
     const src = `
       export const POST = withRoute('primaria/fascicolo:POST', async (request) => {

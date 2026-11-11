@@ -67,9 +67,12 @@ const conta = async (tabella: string, dove = 'true') =>
 const annulla = async (id: unknown, integrazione = INT_A, sede = SEDE_A) =>
   (await db.query<{ r: Esito }>('SELECT public.crm_ai_annulla($1,$2,$3) AS r', [integrazione, sede, id])).rows[0].r
 
-const richiamo = async (o: { id?: unknown; tel?: string; motivo?: string; integrazione?: string; sede?: string } = {}) =>
-  (await db.query<{ r: Esito }>('SELECT public.crm_ai_richiamo($1,$2,$3,$4,$5,$6) AS r', [
-    o.integrazione ?? INT_A, o.sede ?? SEDE_A, o.id ?? null, o.tel ?? null, o.tel ? TEL_NORM : null, o.motivo ?? 'salute',
+const richiamo = async (o: {
+  id?: unknown; tel?: string; genitore?: string; origine?: string | null; motivo?: string; integrazione?: string; sede?: string
+} = {}) =>
+  (await db.query<{ r: Esito }>('SELECT public.crm_ai_richiamo($1,$2,$3,$4,$5,$6,$7,$8) AS r', [
+    o.integrazione ?? INT_A, o.sede ?? SEDE_A, o.id ?? null, o.tel ?? null, o.tel ? TEL_NORM : null,
+    o.genitore ?? null, o.origine === undefined ? (o.tel ? 'whatsapp' : null) : o.origine, o.motivo ?? 'salute',
   ])).rows[0].r
 
 const ruoliCrm = `
@@ -300,6 +303,40 @@ describe('controlli aggiunti dalla ripresa', () => {
     expect(await conta('crm_bambini')).toBe(2)
   })
 
+  it('un anno mancante non distingue due gemelli con la stessa data', async () => {
+    const { scheda_id: scheda } = await contatto({ bambini: [{ nome: 'Bimbo Prova', data_nascita: NASCITA }] })
+    await db.exec(`UPDATE public.crm_bambini SET esito = 'perso'`)
+    // Riproduce una riga precedente ai vincoli d’anno. La guardia resta attiva.
+    await db.exec(`
+      ALTER TABLE public.crm_bambini ALTER COLUMN anno_id DROP NOT NULL;
+      UPDATE public.anno_regole SET controlli_rigidi = false;
+    `)
+    try {
+      await db.query(`
+        INSERT INTO public.crm_bambini (scheda_id, scuola_id, nome, data_nascita, esito)
+          VALUES ($1, $2, 'Bimba Prova', $3, 'perso')
+      `, [scheda, SEDE_A, NASCITA])
+      await db.exec('UPDATE public.anno_regole SET controlli_rigidi = true')
+      const eventiPrima = await conta('crm_eventi')
+      expect(await conta('crm_bambini', 'anno_id IS NULL')).toBe(1)
+
+      await expect(contatto({ bambini: [{ nome: null, data_nascita: NASCITA }] }))
+        .rejects.toMatchObject({ code: 'P0001', message: 'AMBIGUITA_BAMBINO' })
+      expect(await conta('crm_bambini', `esito = 'perso'`)).toBe(2)
+      expect(await conta('crm_eventi')).toBe(eventiPrima)
+
+      await contatto({ bambini: [{ nome: 'Bimba Prova', data_nascita: NASCITA }] })
+      expect(await conta('crm_bambini', `nome = 'Bimba Prova' AND esito = 'aperto' AND anno_id IS NOT NULL`)).toBe(1)
+      expect(await conta('crm_bambini', `nome = 'Bimbo Prova' AND esito = 'perso'`)).toBe(1)
+    } finally {
+      await db.exec(`
+        DELETE FROM public.crm_bambini WHERE anno_id IS NULL;
+        ALTER TABLE public.crm_bambini ALTER COLUMN anno_id SET NOT NULL;
+        UPDATE public.anno_regole SET controlli_rigidi = true;
+      `)
+    }
+  })
+
   it('due bambini con stessa data e senza nomi non confluiscono in una riga', async () => {
     await expect(contatto({ bambini: [{ nome: null, data_nascita: NASCITA }, { nome: null, data_nascita: NASCITA }] }))
       .rejects.toMatchObject({ code: 'P0001', message: 'AMBIGUITA_BAMBINO' })
@@ -358,6 +395,27 @@ describe('controlli aggiunti dalla ripresa', () => {
     expect(await conta('crm_appuntamenti')).toBe(0)
     expect(await conta('crm_schede')).toBe(0)
     expect((await prenota({ candidati: null })).esito).toBe('creata')
+  })
+
+  it('una candidata già proposta perde l’assegnabilità se archiviata o rimossa dal ponte', async () => {
+    const argomenti = { sede: SEDE_B, integrazione: INT_B, candidati: [P1] }
+    const { rows: [prima] } = await db.query<{ persone: string[] }>(
+      'SELECT public.crm_ai_candidati($1, $2, 45, $3) AS persone', [SEDE_B, FRA_30, `{${P1}}`],
+    )
+    expect(prima.persone).toEqual([P1])
+    try {
+      await db.query('UPDATE public.utenti SET archiviato_il = now() WHERE id = $1', [P1])
+      expect(await prenota(argomenti)).toEqual({ esito: 'fuori_disponibilita' })
+      await db.query('UPDATE public.utenti SET archiviato_il = NULL WHERE id = $1', [P1])
+      await db.query('DELETE FROM public.utenti_scuole WHERE utente_id = $1 AND scuola_id = $2', [P1, SEDE_B])
+      expect(await prenota(argomenti)).toEqual({ esito: 'fuori_disponibilita' })
+      expect(await conta('crm_appuntamenti')).toBe(0)
+      expect(await conta('crm_schede')).toBe(0)
+      expect((await prenota({ ...argomenti, candidati: [P1, P_B] })).assegnata_a).toBe(P_B)
+    } finally {
+      await db.query('UPDATE public.utenti SET archiviato_il = NULL WHERE id = $1', [P1])
+      await db.query('INSERT INTO public.utenti_scuole (utente_id, scuola_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [P1, SEDE_B])
+    }
   })
 
   it('una settimana registrata vuota interrompe l’eredità', async () => {
@@ -434,6 +492,29 @@ describe('richiamo E4', () => {
       AND (scadenza AT TIME ZONE 'Europe/Rome')::time = time '10:30'`)).toBe(1)
     expect(await conta('crm_eventi', `tipo = 'azione_pianificata' AND autore_via = 'ai' AND dati->>'azione_id' = '${r.azione_id}'`)).toBe(1)
     expect(await conta('crm_eventi', `tipo = 'nota' AND autore_via = 'ai' AND testo = 'Passaggio dell’assistente: messaggio sulla salute, da leggere in chat.'`)).toBe(1)
+  })
+
+  it('il primo richiamo via telefono conserva origine e nome della famiglia', async () => {
+    const r = await richiamo({ tel: TEL, genitore: 'Famiglia Prova', origine: 'whatsapp' })
+    expect(r).toMatchObject({ esito: 'ok', creata: true })
+    const { rows } = await db.query(`
+      SELECT origine, genitore_nome, creato_via FROM public.crm_schede WHERE id = $1
+    `, [r.scheda_id])
+    expect(rows).toEqual([{ origine: 'whatsapp', genitore_nome: 'Famiglia Prova', creato_via: 'ai' }])
+
+    const replay = await richiamo({ tel: TEL, genitore: 'Altro Nome', origine: 'instagram' })
+    expect(replay).toEqual({ ...r, creata: false })
+    expect(await conta('crm_schede', `genitore_nome = 'Famiglia Prova' AND origine = 'whatsapp'`)).toBe(1)
+    expect(await conta('crm_azioni')).toBe(1)
+  })
+
+  it('richiede l’origine via telefono e rifiuta metadati estranei quando si usa la scheda', async () => {
+    await expect(richiamo({ tel: TEL, origine: null })).rejects.toMatchObject({ code: '22023' })
+    expect(await conta('crm_schede')).toBe(0)
+    const { scheda_id: scheda } = await contatto()
+    await expect(richiamo({ id: scheda, genitore: 'Famiglia Prova', origine: 'whatsapp' }))
+      .rejects.toMatchObject({ code: '22023' })
+    expect(await conta('crm_azioni')).toBe(0)
   })
 
   it('una nota rifiutata fa annullare anche azione, contatto nuovo ed eventi', async () => {

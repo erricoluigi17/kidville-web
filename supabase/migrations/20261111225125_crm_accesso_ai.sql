@@ -111,16 +111,37 @@ RETURNS uuid[]
   SECURITY INVOKER
   SET search_path = public, pg_temp
 AS $$
+DECLARE
+  v_utenti uuid[];
 BEGIN
+  -- Prima gli utenti, poi il ponte. SHARE conserva ruolo, archiviazione e sede
+  -- fino alla scrittura, e resta compatibile con i KEY SHARE delle chiavi esterne.
+  SELECT array_agg(id) INTO v_utenti
+    FROM (
+      SELECT u.id FROM public.utenti u
+       WHERE u.archiviato_il IS NULL
+         AND u.ruolo IN ('segreteria', 'admin')
+         AND (
+           u.scuola_id = p_scuola_id OR (u.ruolo = 'admin' AND EXISTS (
+             SELECT 1 FROM public.utenti_scuole us WHERE us.utente_id = u.id AND us.scuola_id = p_scuola_id
+           ))
+         )
+       ORDER BY u.id
+       FOR SHARE OF u
+    ) possibili;
+
+  -- Il ponte può essere cambiato mentre si aspettava un utente: si rilegge
+  -- sotto blocco. Una riga cancellata nel frattempo non dà accesso alla sede.
   RETURN (
     SELECT coalesce(array_agg(u.id ORDER BY (u.ruolo <> 'segreteria'),
       lower(coalesce(u.cognome, '')), lower(coalesce(u.nome, '')), u.id), '{}'::uuid[])
       FROM public.utenti u
-     WHERE u.archiviato_il IS NULL
-       AND u.ruolo IN ('segreteria', 'admin')
+     WHERE u.id = ANY (v_utenti)
        AND (
          u.scuola_id = p_scuola_id OR (u.ruolo = 'admin' AND EXISTS (
-           SELECT 1 FROM public.utenti_scuole us WHERE us.utente_id = u.id AND us.scuola_id = p_scuola_id
+           SELECT 1 FROM public.utenti_scuole us
+            WHERE us.utente_id = u.id AND us.scuola_id = p_scuola_id
+            FOR SHARE OF us
          ))
        )
   );
@@ -158,7 +179,8 @@ BEGIN
   END IF;
 
   -- Una scheda anonimizzata non si riusa. Più corrispondenze richiedono
-  -- una verifica umana. Il blocco sulla scheda serializza le scritture sulle figlie.
+  -- una verifica umana. Le operazioni AI serializzano scheda e poi figlie.
+  -- NO KEY UPDATE lascia passare il KEY SHARE dell’evento di quota o annullamento.
   SELECT array_agg(id) INTO v_schede
     FROM (
       SELECT s.id FROM public.crm_schede s
@@ -168,7 +190,7 @@ BEGIN
               OR (p_email_norm IS NOT NULL AND s.email_norm && ARRAY[p_email_norm]))
        ORDER BY s.id
        LIMIT 2
-       FOR UPDATE
+       FOR NO KEY UPDATE
     ) corrispondenze;
   IF cardinality(v_schede) > 1 THEN
     RAISE EXCEPTION 'AMBIGUITA_CONTATTO';
@@ -229,7 +251,7 @@ BEGIN
 
   PERFORM 1 FROM public.crm_schede
    WHERE id = p_scheda_id AND scuola_id = p_scuola_id AND anonimizzata_il IS NULL
-   FOR UPDATE;
+   FOR NO KEY UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'SCHEDA_NON_TROVATA';
   END IF;
@@ -270,10 +292,10 @@ BEGIN
       END IF;
     END IF;
 
-    -- La corrispondenza vale nell’anno richiesto. Si può completare una riga
-    -- preesistente priva di anno. Con più identità compatibili si ferma la richiesta.
+    -- Si può completare una riga preesistente priva di anno. Fra i candidati
+    -- compatibili conta il nome, perché l’anno mancante non distingue i gemelli.
     WITH candidati AS (
-      SELECT c.id, c.nome, c.anno_id FROM public.crm_bambini c
+      SELECT c.id, c.nome FROM public.crm_bambini c
        WHERE c.scheda_id = p_scheda_id AND c.scuola_id = p_scuola_id
          AND (c.anno_id = v_anno OR c.anno_id IS NULL)
          AND (
@@ -283,11 +305,10 @@ BEGIN
                AND b.nome IS NOT NULL AND lower(btrim(c.nome)) = lower(b.nome))
          )
        ORDER BY c.id
-       FOR UPDATE
+       FOR NO KEY UPDATE
     ), possibili AS (
       SELECT id, dense_rank() OVER (ORDER BY
-        (b.nome IS NULL OR lower(btrim(nome)) IS DISTINCT FROM lower(b.nome)),
-        (anno_id IS NULL)
+        (b.nome IS NULL OR lower(btrim(nome)) IS DISTINCT FROM lower(b.nome))
       ) AS priorita FROM candidati
     )
     SELECT array_agg(id) INTO v_corrispondenze FROM possibili WHERE priorita = 1;
@@ -399,12 +420,14 @@ DECLARE
   v_giorno date := (p_inizio AT TIME ZONE 'Europe/Rome')::date;
   v_lunedi date := date_trunc('week', v_giorno::timestamp)::date;
   v_fine timestamptz := p_inizio + make_interval(mins => p_durata_min);
-  v_persone uuid[] := public.crm_ai_persone(p_scuola_id);
+  v_persone uuid[];
 BEGIN
   -- SHARE è compatibile con altre prenotazioni. Blocca chi cambia fasce
   -- o assenze fino alla fine della transazione, inclusi i nuovi inserimenti
   -- che un blocco delle sole righe già trovate non coprirebbe.
   LOCK TABLE public.crm_settimane, public.crm_fasce, public.crm_indisponibilita IN SHARE MODE;
+  -- Si leggono e bloccano le abilitazioni dopo l’eventuale attesa dell’agenda.
+  v_persone := public.crm_ai_persone(p_scuola_id);
 
   RETURN (
     SELECT coalesce(array_agg(c.id ORDER BY c.ordine), '{}'::uuid[])
@@ -588,10 +611,12 @@ BEGIN
     RETURN jsonb_build_object('esito', 'token_non_valido');
   END IF;
 
+  -- La chiave della visita resta invariata: il registro della prenotazione
+  -- può ancora prendere il KEY SHARE richiesto dalla sua chiave esterna.
   SELECT * INTO v_visita FROM public.crm_appuntamenti
    WHERE id = p_appuntamento_id AND scuola_id = p_scuola_id
      AND integrazione_id = p_integrazione_id AND fissato_via = 'ai'
-   FOR UPDATE;
+   FOR NO KEY UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('esito', 'non_trovato');
   END IF;
@@ -614,7 +639,14 @@ GRANT EXECUTE ON FUNCTION public.crm_ai_annulla(uuid, uuid, uuid) TO service_rol
 
 -- ── Il passaggio a una persona ──────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.crm_ai_richiamo(
-  p_integrazione_id uuid, p_scuola_id uuid, p_scheda_id uuid, p_telefono text, p_telefono_norm text, p_motivo text
+  p_integrazione_id uuid,
+  p_scuola_id       uuid,
+  p_scheda_id       uuid,
+  p_telefono        text,
+  p_telefono_norm   text,
+  p_genitore_nome   text,
+  p_origine         text,
+  p_motivo          text
 ) RETURNS jsonb
   LANGUAGE plpgsql
   SECURITY INVOKER
@@ -643,20 +675,28 @@ BEGIN
     WHEN 'vocale' THEN 'vocale non chiaro'
     WHEN 'altro' THEN 'altro'
   END;
-  IF v_testo IS NULL OR (p_scheda_id IS NULL) = (p_telefono_norm IS NULL)
-     OR (p_scheda_id IS NOT NULL AND p_telefono IS NOT NULL) THEN
-    RAISE EXCEPTION 'scheda o telefono e motivo valido sono obbligatori' USING ERRCODE = '22023';
+  IF v_testo IS NULL THEN
+    RAISE EXCEPTION 'motivo non valido' USING ERRCODE = '22023';
+  END IF;
+  IF p_scheda_id IS NULL THEN
+    IF p_telefono IS NULL OR p_telefono_norm IS NULL OR p_origine IS NULL THEN
+      RAISE EXCEPTION 'telefono e origine sono obbligatori senza scheda' USING ERRCODE = '22023';
+    END IF;
+  ELSIF p_telefono IS NOT NULL OR p_telefono_norm IS NOT NULL OR p_genitore_nome IS NOT NULL OR p_origine IS NOT NULL THEN
+    RAISE EXCEPTION 'i recapiti e l’origine valgono per il richiamo da telefono' USING ERRCODE = '22023';
   END IF;
 
+  -- Come nella prenotazione, blocca le abilitazioni prima della scheda.
+  v_persone := public.crm_ai_persone(p_scuola_id);
   -- I due modi di indicare una famiglia prendono lo stesso blocco sulla scheda.
   -- La seconda chiamata vede il richiamo aperto dalla prima, anche se gli arriva via telefono.
   IF v_scheda IS NULL THEN
-    v_scheda := (public.crm_ai_scheda(p_scuola_id, p_telefono, p_telefono_norm, NULL, NULL, NULL, 'ai', 0)
+    v_scheda := (public.crm_ai_scheda(p_scuola_id, p_telefono, p_telefono_norm, NULL, NULL, p_genitore_nome, p_origine, 0)
       ->>'scheda_id')::uuid;
   ELSE
     PERFORM 1 FROM public.crm_schede
      WHERE id = v_scheda AND scuola_id = p_scuola_id AND anonimizzata_il IS NULL
-     FOR UPDATE;
+     FOR NO KEY UPDATE;
     IF NOT FOUND THEN
       RETURN jsonb_build_object('esito', 'non_trovata');
     END IF;
@@ -671,7 +711,6 @@ BEGIN
     RETURN jsonb_build_object('esito', 'ok', 'azione_id', v_azione, 'scheda_id', v_scheda, 'creata', false);
   END IF;
 
-  v_persone := public.crm_ai_persone(p_scuola_id);
   IF cardinality(v_persone) = 0 THEN
     RETURN jsonb_build_object('esito', 'nessun_responsabile');
   END IF;
@@ -695,7 +734,7 @@ BEGIN
 
   RETURN jsonb_build_object('esito', 'ok', 'azione_id', v_azione, 'scheda_id', v_scheda, 'creata', true);
 END $$;
-REVOKE ALL ON FUNCTION public.crm_ai_richiamo(uuid, uuid, uuid, text, text, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.crm_ai_richiamo(uuid, uuid, uuid, text, text, text) TO service_role;
+REVOKE ALL ON FUNCTION public.crm_ai_richiamo(uuid, uuid, uuid, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.crm_ai_richiamo(uuid, uuid, uuid, text, text, text, text, text) TO service_role;
 
 NOTIFY pgrst, 'reload schema';

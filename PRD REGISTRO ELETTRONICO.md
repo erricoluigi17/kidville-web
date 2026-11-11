@@ -1,6 +1,6 @@
 ## Changelog — CRM Assistente Famiglie, base SQL predisposta — 2026-11-11
 
-Il compito 1 prepara le chiavi per sede, il registro delle richieste e le operazioni atomiche per contatti, prenotazioni, annullamenti e richiami. La prenotazione ricontrolla l’agenda nel database e l’annullamento verifica il token autore. Le prove usano PGlite e il calendario scolastico di prova. Migrazione in attesa di applicazione al merge, accesso ancora da attivare.
+Il compito 1 prepara le chiavi per sede, il registro delle richieste e le operazioni atomiche per contatti, prenotazioni, annullamenti e richiami. La prenotazione ricontrolla l’agenda nel database e l’annullamento verifica il token autore. Il richiamo via telefono conserva l’origine del contatto e il nome del genitore quando viene fornito. Le prove usano PGlite e il calendario scolastico di prova. Migrazione in attesa di applicazione al merge, accesso ancora da attivare.
 
 ## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (ramo `worktree-agent-a329c2f7fe5093f06`)
 

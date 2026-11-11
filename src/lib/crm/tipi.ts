@@ -381,6 +381,16 @@ export type EsitoAnnullaAi =
   | { esito: 'annullata'; appuntamento_id: string; gia_annullata: boolean }
   | { esito: 'non_trovato' | 'stato_non_ammesso' | 'token_non_valido' }
 
+/** Argomenti della RPC: l’origine è obbligatoria se il richiamo parte dal telefono. */
+export type ParametriRichiamoAi = {
+  p_integrazione_id: string
+  p_scuola_id: string
+  p_motivo: string
+} & (
+  | { p_scheda_id: string; p_telefono: null; p_telefono_norm: null; p_genitore_nome: null; p_origine: null }
+  | { p_scheda_id: null; p_telefono: string; p_telefono_norm: string; p_genitore_nome: string | null; p_origine: Origine }
+)
+
 export type EsitoRichiamoAi =
   | { esito: 'ok'; azione_id: string; scheda_id: string; creata: boolean }
   | { esito: 'non_trovata' | 'nessun_responsabile' | 'token_non_valido' }

@@ -44,7 +44,9 @@ function rifiutoAnonimo(op: string, codice: 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO'
   const ora = Date.now()
   if (ultimoLogAnonimo === null || ora - ultimoLogAnonimo >= SILENZIO_LOG_MS) {
     ultimoLogAnonimo = ora
-    logEvento('crm', 'warn', { operazione: op, esito: 'ai-rifiutata', error_code: codice, stato })
+    // A interruttore spento anche il logger deve lasciare il database inattivo.
+    const opzioni = codice === 'CRM_AI_SPENTO' ? { persisti: false } : undefined
+    logEvento('crm', 'warn', { operazione: op, esito: 'ai-rifiutata', error_code: codice, stato }, undefined, opzioni)
   }
   const risposta = rifiutoAi(codice, stato)
   if (stato === 401) risposta.headers.set('WWW-Authenticate', 'Bearer')

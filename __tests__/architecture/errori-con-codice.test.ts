@@ -655,6 +655,14 @@ function parametroRifiutoAi(src: string): { inizio: number; codici: string[] } |
     if (!risposta || !ts.isCallExpression(risposta) || risposta.expression.getText(albero) !== 'NextResponse.json') return null;
     const corpo = risposta.arguments[0];
     if (!corpo || !ts.isObjectLiteralExpression(corpo)) return null;
+    // Solo lo spread degli extra può precedere i due campi riservati. In coda una
+    // proprietà calcolata, duplicata o uno spread potrebbe sovrascriverli.
+    const prefisso = corpo.properties.slice(0, -2);
+    const [errore, codice] = corpo.properties.slice(-2);
+    if (prefisso.length > 1 || prefisso.some((p) => !ts.isSpreadAssignment(p) || p.expression.getText(albero) !== 'extra')) return null;
+    if (!errore || !ts.isPropertyAssignment(errore) || errore.name.getText(albero) !== 'error' ||
+        !/^catalogoIt\s*\[\s*CODICI_ERRORE\s*\[\s*codice\s*\]\s*\]$/.test(errore.initializer.getText(albero))) return null;
+    if (!codice || !ts.isShorthandPropertyAssignment(codice) || codice.name.text !== 'codice' || codice.objectAssignmentInitializer) return null;
     const codici: string[] = [];
     for (const valore of tipo.type.types) {
         if (!ts.isLiteralTypeNode(valore) || !ts.isStringLiteral(valore.literal)) return null;
@@ -671,9 +679,7 @@ function inventarioSorgente(file: string, src: string): Errore[] {
         if (!err) return [];
         const cod = props.find((p) => p.nome === 'codice');
         const codice = cod?.valore ?? (cod ? costanteLetterale(src, cod.grezzo ?? '') : null);
-        const codiciDelParametro = parametroAi?.inizio === corpo.inizio && cod?.grezzo === 'codice' &&
-            /^catalogoIt\s*\[\s*CODICI_ERRORE\s*\[\s*codice\s*\]\s*\]$/.test(err.grezzo ?? '')
-            ? parametroAi.codici : [];
+        const codiciDelParametro = parametroAi?.inizio === corpo.inizio ? parametroAi.codici : [];
         return [{
             file,
             riga: corpo.riga,
@@ -749,6 +755,8 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
         const noti = tutti.filter((e) => e.file === 'src/lib/auth/rifiuto-sede.ts');
         expect(noti, 'il costruttore dei dinieghi di sede non è più visto dalla misura').toHaveLength(1);
         expect(noti[0].conCodice, 'il corpo di `rifiutoSede` non risulta portare `codice`').toBe(true);
+        const crm = tutti.filter((e) => e.file === COSTRUTTORE_RIFIUTO_AI && e.codiciDelParametro.length > 0);
+        expect(crm, 'la misura deve leggere il corpo di `rifiutoAi` e tutti i codici del suo parametro').toHaveLength(1);
     });
 
     it('ogni codice usato in src/ è DICHIARATO e tradotto in entrambe le lingue', () => {
@@ -831,6 +839,22 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
         const src = `rifiutoAi('CRM_AI_SPENTO', 404); rifiutoAi("CODICE_INVENTATO", 401)`;
         const usati = codiciRifiutoAiChiamati(src).map((codice) => ({ file, codice }));
         expect(codiciSconosciuti(usati)).toEqual([`${file}: CODICE_INVENTATO`]);
+    });
+
+    it.each([
+        '...extra',
+        "['codice']: extra.codice",
+        "['error']: extra.error",
+        'codice: extra.codice',
+    ])('il costruttore con %s dopo i campi riservati rimane opaco', (coda) => {
+        const src = [
+            "export type CodiceAi = 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO'",
+            'export function rifiutoAi(codice: CodiceAi, stato: number, extra: Record<string, string>) {',
+            `    return NextResponse.json({ error: catalogoIt[CODICI_ERRORE[codice]], codice, ${coda} }, { status: stato })`,
+            '}',
+        ].join('\n');
+        expect(codiciOpachi(inventarioSorgente(COSTRUTTORE_RIFIUTO_AI, src)))
+            .toEqual([`${COSTRUTTORE_RIFIUTO_AI}:3 → codice: codice`]);
     });
 
     it('la lettura delle costanti FUNZIONA (controllo positivo del lettore)', () => {

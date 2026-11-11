@@ -171,6 +171,8 @@ describe('requireIntegrazioneAi', () => {
       ['warn', 'ai-rifiutata', 'CRM_AI_SPENTO'],
       ['warn', 'ai-rifiutata', 'TOKEN_NON_VALIDO'],
     ])
+    expect(h.logEvento.mock.calls[0][4]).toEqual({ persisti: false })
+    expect(h.logEvento.mock.calls[1][4]).toBeUndefined()
   })
 })
 
@@ -217,6 +219,18 @@ describe('chiudiChiamataAi e rifiutoAi', () => {
     expect(await r.json()).toEqual({
       error: 'Questa famiglia ha già una visita in programma.',
       codice: 'GIA_PRENOTATO',
+      inizio: '2026-11-17T08:00:00.000Z',
+    })
+  })
+  it('gli extra non possono sostituire il codice e la frase del catalogo', async () => {
+    const r = rifiutoAi('GIA_PRENOTATO', 409, {
+      codice: 'CODICE_INVENTATO',
+      error: 'Messaggio di prova',
+      inizio: '2026-11-17T08:00:00.000Z',
+    })
+    expect(await r.json()).toEqual({
+      codice: 'GIA_PRENOTATO',
+      error: 'Questa famiglia ha già una visita in programma.',
       inizio: '2026-11-17T08:00:00.000Z',
     })
   })

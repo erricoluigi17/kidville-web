@@ -436,7 +436,10 @@ export function posterioriCheContengono(
 // nessuna tabella con `scuola_id`, nessun bucket, nessuno schema delle candidature, nessuna scrittura nel registro dell'anno. Nessuna delle guardie
 // la segnalerebbe e il lock «nessuna voce morta» rifiuterebbe una dichiarazione che non serve. Dopo il merge cambia solo la fotografia delle
 // migrazioni (+1), che la PR-B rigenera dalla produzione.
+// 2026-11-11 · CRM Assistente Famiglie: due tabelle private, chiavi e indici, e funzioni che scrivono
+// nei bambini del CRM. La applica l’integrazione al merge. Fotografie da aggiornare nella PR-B.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+  '20261111225125_crm_accesso_ai.sql': 'L’integrazione applica al merge tabelle private, vincoli e funzioni CRM; fotografie nella PR-B.',
 }
 
 /**

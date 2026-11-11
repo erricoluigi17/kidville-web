@@ -1,3 +1,7 @@
+## Changelog — CRM Assistente Famiglie, base SQL predisposta — 2026-11-11
+
+Il compito 1 prepara le chiavi per sede, il registro delle richieste e le operazioni atomiche per contatti, prenotazioni, annullamenti e richiami. La prenotazione ricontrolla l’agenda nel database e l’annullamento verifica il token autore. Le prove usano PGlite e il calendario scolastico di prova. Migrazione in attesa di applicazione al merge, accesso ancora da attivare.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (ramo `worktree-agent-a329c2f7fe5093f06`)
 
 **Stato:** 🟡 in revisione, fino al merge. **Ha una migrazione**, che applica l'integrazione di Supabase al merge con la version del proprio file: `20261109165244_anno_cruscotto.sql` (M47). Solo due funzioni di LETTURA nuove (`anno_cruscotto`, `anno_quota_piu_voci`): nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno, nessuna riga scritta in produzione. Provata in PGlite (Postgres 18; la produzione è la 17) su route vere; nessun controllo visivo nel browser e nessuna prova da telefono.

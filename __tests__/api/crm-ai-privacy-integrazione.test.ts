@@ -262,6 +262,54 @@ describe('Privacy della richiesta CRM AI, dal gate ai sink reali', () => {
     expect(righeConsole()).toContainEqual(expect.stringContaining('rid=' + rid + ' evt=route rt=prova/involucro:POST'))
   })
 
+  it.each(['rifiuto', 'eccezione', 'risposta ricostruita'])('la delega AI riconosciuta solo dal nome mantiene l’id fino alla risposta: %s', async (caso) => {
+    if (caso === 'eccezione') h.guasto = new Error(DETTAGLI)
+    const { conGate, withRoute } = await carica()
+    const interno = conGate()
+    const mediano = withRoute('prova/mediano:POST', async (req: Request) => {
+      const res = await interno(req)
+      if (caso !== 'risposta ricostruita') return res
+      return new Response(res.body, { status: res.status })
+    })
+    const esterno = withRoute('prova/esterno:POST', (req: Request) =>
+      req.headers.has('x-prova-delega') ? mediano(req) : new Response(null, { status: 204 }))
+    const [delegata, ordinaria] = await Promise.all([
+      esterno(richiesta({
+        percorso: '/api/prova',
+        token: caso === 'eccezione' ? TOKEN_A : null,
+        intestazioni: { 'x-request-id': TOKEN_A, 'x-prova-delega': '1' },
+      })),
+      esterno(richiesta({ percorso: '/api/prova', intestazioni: { 'x-request-id': 'trace-ordinaria' } })),
+    ])
+    expect(ordinaria.status).toBe(204)
+    expect(ordinaria.headers.get('x-request-id')).toBe('trace-ordinaria')
+    expect(righeConsole()).toContainEqual(expect.stringContaining('KV_OK rid=trace-ordinaria'))
+    const rifiuto = caso !== 'eccezione'
+    const rid = await verificaRisposta(delegata, rifiuto ? 401 : 500, rifiuto
+      ? { error: catalogoIt.erroreCrmAiTokenNonValido, codice: 'TOKEN_NON_VALIDO' }
+      : errore500)
+    expect(righeRpc()).toMatchObject([{ request_id: rid, livello: rifiuto ? 'warn' : 'error' }])
+    if (rifiuto) {
+      for (const nome of ['prova/mediano:POST', 'prova/esterno:POST']) {
+        expect(righeConsole()).toContainEqual(expect.stringContaining('rid=' + rid + ' evt=route rt=' + nome))
+      }
+    }
+  })
+
+  it('una Request distinta conserva il proprio contesto anche se restituisce una risposta del wrapper AI', async () => {
+    const { conGate, withRoute } = await carica()
+    const interno = conGate()
+    const reqAi = richiesta({ percorso: '/api/prova' })
+    const esterno = withRoute<[Request]>('prova/distinta:POST', () => interno(reqAi))
+    const reqEsterno = richiesta({ percorso: '/api/prova', intestazioni: { 'x-request-id': 'trace-distinta' } })
+    const res = await esterno(reqEsterno)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-request-id')).toBe('trace-distinta')
+    expect(righeConsole()).toContainEqual(expect.stringMatching(/KV_OK rid=[\da-f-]+ .*rt=crm\/ai\/slot:POST/))
+    expect(righeConsole()).toContainEqual(expect.stringContaining('KV_OK rid=trace-distinta'))
+    verificaNessunDato([...res.headers])
+  })
+
   it('la traduzione di ANNO_CHIUSO resta attiva anche se l’handler CRM AI lancia', async () => {
     const { conGate, segnalaErroreAnno } = await carica()
     const res = await conGate(ROTTA, () => {

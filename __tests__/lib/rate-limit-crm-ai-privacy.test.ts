@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 type RigaLog = {
   codice?: string
   contesto?: { campi?: Record<string, unknown> }
+  evento: string
   fingerprint: string
   livello: string
   messaggio: string
@@ -155,6 +156,41 @@ describe('Degrado del limitatore CRM AI, fino alla RPC di app_log', () => {
       livello: 'error', codice: 'XX000', messaggio: DIAGNOSI,
       contesto: { campi: { azione: 'eccezione', tipo: 'crm-ai' } },
     }])
+  })
+
+  it('il gruppo CRM AI protegge il vero fetch della RPC prima del log di degrado', async () => {
+    const { createClient } = await import('@supabase/supabase-js')
+    const { creaFetchStrumentato } = await import('@/lib/logging/supabase-fetch')
+    const reteFinta = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+      code: 'P0001:' + NOME,
+      message: TESTO + ' ' + CHIAVE,
+      details: TESTO,
+      hint: TESTO,
+    }, { status: 400 }))
+    const client = createClient('https://test.invalid', 'chiave-finta-limite', {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: creaFetchStrumentato(reteFinta) },
+    })
+    h.tetto.mockImplementation(async (nome, args) => await client.rpc(nome, args))
+    const { rateLimit } = await import('@/lib/security/rate-limit')
+    const { conContesto, contesto } = await import('@/lib/logging/context')
+    const esterno = { requestId: TOKEN, path: '/api/' + NOME, userId: TELEFONO, payload: { body: { nome: NOME } } }
+    const risultato = await conContesto(esterno, async () => {
+      const esito = await rateLimit(CHIAVE, opzioni)
+      expect(contesto()).toMatchObject(esterno)
+      return esito
+    })
+    expect(risultato).toEqual({ ok: true, remaining: 0, retryAfterMs: 0 })
+    expect(reteFinta).toHaveBeenCalledExactlyOnceWith(
+      'https://test.invalid/rest/v1/rpc/tetto_frequenza_consuma',
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining(CHIAVE) }),
+    )
+    await vi.waitFor(() => expect(righe()).toHaveLength(2))
+    senzaDati()
+    expect(righe()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ evento: 'rpc', codice: 'supabase_http', messaggio: 'Errore HTTP Supabase' }),
+      expect.objectContaining({ evento: 'db', codice: CODICE_RIPIEGO, messaggio: DIAGNOSI }),
+    ]))
   })
 
   it('un altro gruppo mantiene i dettagli originali fuori dal contesto verificato', async () => {

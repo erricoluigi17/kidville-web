@@ -1,5 +1,8 @@
 import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
-import { conContesto, conContestoCrmAi, contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato } from './context';
+import {
+    conContesto, conContestoCrmAi, conContestoCompletamentoCrmAi,
+    contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato,
+} from './context';
 import { erroreAnno } from '@/lib/anno/errori';
 import { rispostaCrmNonRiuscita } from '@/lib/crm/errori';
 import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico';
@@ -116,36 +119,11 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         const nomeCrmAi = NOME_CRM_AI.test(nome);
         const crmAi = nomeCrmAi || PATH_CRM_AI.test(path);
 
-        const esegui = async (): Promise<Response> => {
-            // L'id NORMALIZZATO, cioè quello che finirà davvero nei log. È questo che si
-            // riflette sulla risposta: rimandare indietro l'header grezzo del client
-            // significherebbe promettergli una correlazione che non esiste (nei log c'è
-            // un altro id) — e riflettergli un valore arbitrario che lui controlla.
-            const rid = contesto()?.requestId;
-
-            // `unknown` e non `Response`: la firma lo PROMETTE, il runtime no. Il quinto
-            // collaudo ha misurato otto rotte in cui questo valore era la stringa
-            // «TURBOPACK unreachable» (vedi `sospensione.ts`). Dichiararlo `Response`
-            // qui significherebbe che il controllo poche righe più sotto è codice morto
-            // per il compilatore — e non lo è: è l'unica cosa fra un guasto e un 500 muto.
-            let res: unknown;
-            try {
-                res = await handler(...args);
-            } catch (err) {
-                senzaLanciare(() => logErrore(
-                    { operazione: nome, ms: Date.now() - t0, stato: 500 },
-                    crmAi ? erroreCrmAi(err) : err,
-                ));
-                // La rete dell'anno vale anche qui: un'eccezione dopo una scrittura rifiutata
-                // dal database con `ANNO_CHIUSO` è il 500 che la tabella in `retiAnno` traduce.
-                const risposta = retiAnno(undefined, nome) ?? (crmAi ? rispostaCrmNonRiuscita() : null);
-                if (risposta) return rifletti(risposta, rid, crmAi);
-                throw err;
-            }
-
+        const completa = (res: unknown, delegata: boolean): Response => {
             // LA RETE DELL'ANNO (Compito 3.4, D4): prima di registrare l'esito, perché la riga
             // deve dire lo stato che il client vedrà (409), non il 500 che la route ha costruito.
-            res = retiAnno(res, nome) ?? res;
+            // Una risposta delegata ha già attraversato questa traduzione nel wrapper interno.
+            if (!delegata) res = retiAnno(res, nome) ?? res;
 
             // Si registra il valore VERO, quello che l'handler ha davvero restituito:
             // è `registraEsito` a riconoscere «senza Response» e a scriverne la riga.
@@ -178,9 +156,30 @@ export function withRoute<A extends [Request, ...unknown[]]>(
              * risposta. La difesa sta dove sta il collo di bottiglia.
              */
             const finale: Response =
-                statoDi(res) === undefined ? rispostaSenzaHandler(rid) : (res as Response);
+                statoDi(res) === undefined ? rispostaSenzaHandler(contesto()?.requestId) : (res as Response);
 
-            return rifletti(finale, rid, crmAi);
+            return rifletti(finale, contesto()?.requestId, crmAi || delegata);
+        };
+
+        const esegui = async (): Promise<Response> => {
+            // Il runtime può restituire un valore diverso da Response (vedi sospensione.ts).
+            let res: unknown;
+            try {
+                res = await handler(...args);
+            } catch (err) {
+                return conContestoCompletamentoCrmAi(args[0], delegata => {
+                    const protetta = crmAi || delegata;
+                    senzaLanciare(() => logErrore(
+                        { operazione: nome, ms: Date.now() - t0, stato: 500 },
+                        protetta ? erroreCrmAi(err) : err,
+                    ));
+                    // Anche un'eccezione può seguire una scrittura rifiutata con ANNO_CHIUSO.
+                    const risposta = retiAnno(undefined, nome) ?? (protetta ? rispostaCrmNonRiuscita() : null);
+                    if (risposta) return rifletti(risposta, contesto()?.requestId, protetta);
+                    throw err;
+                });
+            }
+            return conContestoCompletamentoCrmAi(args[0], delegata => completa(res, delegata));
         };
 
         // Protegge anche il primo rifiuto del gate, e non riusa un contesto ordinario.

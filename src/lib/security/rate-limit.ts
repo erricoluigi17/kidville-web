@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server-client';
-import { conContesto, contesto, contestoCrmAiAttivo } from '@/lib/logging/context';
+import { conContestoCrmAi, contestoCrmAiAttivo } from '@/lib/logging/context';
 import { logEvento } from '@/lib/logging/logger';
 import { segnaleConTetto } from '@/lib/logging/tetto';
 import { eScadenzaSupabase } from '@/lib/logging/supabase-fetch';
@@ -220,7 +220,7 @@ type MotivoDegrado =
 
 let clientCondiviso: Promise<ClientConRpc | null> | null = null;
 
-function prendiClient(gruppo: string): Promise<ClientConRpc | null> {
+function prendiClient(): Promise<ClientConRpc | null> {
   if (!clientCondiviso) {
     clientCondiviso = createAdminClient()
       .then((c) => c as unknown as ClientConRpc)
@@ -228,7 +228,7 @@ function prendiClient(gruppo: string): Promise<ClientConRpc | null> {
         // Un catch che non logga è un bug (AGENTS.md, regola 6). Qui il motivo è
         // per giunta il più insidioso: senza client il tetto è cieco per SEMPRE,
         // non per una richiesta.
-        degrada('client_assente', 'sconosciuto', undefined, err, gruppo === 'crm-ai');
+        degrada('client_assente', 'sconosciuto', undefined, err);
         clientCondiviso = null; // si riprova alla prossima richiesta
         return null;
       });
@@ -244,14 +244,13 @@ function prendiClient(gruppo: string): Promise<ClientConRpc | null> {
  * personale e in `app_log` non ci entra — la regola 8 di AGENTS.md non ha
  * eccezioni «di diagnostica».
  */
-function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: unknown, gruppoCrmAi = gruppo === 'crm-ai'): void {
+function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: unknown): void {
   const adesso = Date.now();
   if (adesso - ultimoLogDegrado < SILENZIO_LOG_MS) return;
   ultimoLogDegrado = adesso;
   // Il timeout è un degrado previsto: si conta in locale e la richiesta prosegue.
   const livello = motivo === 'rpc_scaduta' ? 'warn' : 'error';
-  const contestoProtetto = contestoCrmAiAttivo();
-  const soloMetadati = gruppoCrmAi || contestoProtetto;
+  const soloMetadati = contestoCrmAiAttivo();
   const campi = {
     operazione: 'security/rate-limit:degrado',
     azione: motivo,
@@ -267,12 +266,8 @@ function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: u
     } catch {
       // Anche un errore con un getter ostile lascia il codice tecnico di ripiego.
     }
-    const scrivi = () => logEvento('db', livello, campi, { code, message: 'Errore del limitatore CRM AI' },
+    logEvento('db', livello, campi, { code, message: 'Errore del limitatore CRM AI' },
       { distingui: ['azione', 'tipo'] });
-    // Se il gruppo viene usato fuori dal wrapper AI, il logger non deve ereditare
-    // l'id, l'utente o il payload dell'eventuale chiamante ordinario.
-    if (contestoProtetto || !contesto()) scrivi();
-    else void conContesto({ requestId: '', path: '/api/crm/ai' }, async () => scrivi());
     return;
   }
   logEvento('db', livello, campi, err);
@@ -310,10 +305,10 @@ function gruppoDi(chiave: string): string {
 async function consumaCondiviso(
   chiave: string,
   opts: RateLimitOptions,
+  gruppo: string,
 ): Promise<RateLimitResult | null> {
-  const gruppo = gruppoDi(chiave);
   try {
-    const supabase = await prendiClient(gruppo);
+    const supabase = await prendiClient();
     if (!supabase) return null;
 
     const query = supabase.rpc('tetto_frequenza_consuma', {
@@ -417,7 +412,12 @@ export async function rateLimit(
   opts: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitResult> {
-  const condiviso = await consumaCondiviso(key, opts);
+  const gruppo = gruppoDi(key);
+  // Anche il fetch che precede il degrado deve vedere il contesto CRM AI.
+  const consuma = () => consumaCondiviso(key, opts, gruppo);
+  const condiviso = await (gruppo === 'crm-ai' && !contestoCrmAiAttivo()
+    ? conContestoCrmAi(null, 'crm/ai/tetto-frequenza', '/api/crm/ai', consuma)
+    : consuma());
   if (condiviso) return condiviso;
   return consumaLocale(key, opts, now);
 }

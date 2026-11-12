@@ -74,7 +74,8 @@ export interface ContestoRichiesta {
 }
 
 const als = new AsyncLocalStorage<ContestoRichiesta>();
-const richiesteCrmAi = new WeakMap<ContestoRichiesta, Request>();
+const richiesteCrmAi = new WeakMap<ContestoRichiesta, Request | null>();
+const delegheCrmAi = new WeakMap<ContestoRichiesta, WeakMap<Request, ContestoRichiesta>>();
 
 /**
  * Guardia di rientranza, su un ALS SEPARATO. Due ragioni, entrambe vincolanti:
@@ -150,18 +151,28 @@ export function conContesto<T>(
 /**
  * Le route CRM AI hanno un contesto di soli metadati. Si riusa solo lo store
  * già protetto della stessa Request; da un contesto esterno non si eredita nulla.
- * `path` e `route` vengono scelti dal wrapper, senza segmenti dell'URL del client.
+ * `path` e `route` vengono scelti dal codice. Il limitatore può aprire uno store
+ * tecnico senza una Request, quando il gruppo CRM AI è l'unico indicatore.
  */
 export function conContestoCrmAi<T>(
-    richiesta: Request,
+    richiesta: Request | null,
     route: string,
     path: string,
     fn: () => Promise<T>,
 ): Promise<T> {
     const corrente = als.getStore();
-    if (corrente && richiesteCrmAi.has(corrente) && richiesteCrmAi.get(corrente) === richiesta) return fn();
+    if (corrente && richiesta && richiesteCrmAi.get(corrente) === richiesta) return fn();
+    const deleghe = corrente && richiesta ? delegheCrmAi.get(corrente) : undefined;
+    const precedente = richiesta && deleghe?.get(richiesta);
+    if (precedente) return als.run(precedente, fn);
+
     const store = { requestId: requestIdSicuro(''), path: pathSicuro(path), route };
     richiesteCrmAi.set(store, richiesta);
+    if (corrente && typeof richiesta === 'object' && richiesta !== null) {
+        const mappa = deleghe ?? new WeakMap<Request, ContestoRichiesta>();
+        mappa.set(richiesta, store);
+        delegheCrmAi.set(corrente, mappa);
+    }
     return als.run(store, fn);
 }
 
@@ -169,6 +180,19 @@ export function conContestoCrmAi<T>(
 export function contestoCrmAiAttivo(): boolean {
     const s = als.getStore();
     return s !== undefined && richiesteCrmAi.has(s);
+}
+
+/**
+ * Completa una Request delegata a un wrapper CRM AI. Il legame vale soltanto
+ * per la stessa Request nello stesso store esterno, anche se cambia la Response.
+ */
+export function conContestoCompletamentoCrmAi<T>(
+    richiesta: Request,
+    completa: (delegata: boolean) => T,
+): T {
+    const corrente = als.getStore();
+    const delegato = corrente && delegheCrmAi.get(corrente)?.get(richiesta);
+    return delegato ? als.run(delegato, () => completa(true)) : completa(false);
 }
 
 /**

@@ -175,7 +175,7 @@ describe('i due controlli stanno nei livelli giusti', () => {
     })
 })
 
-describe('i due job dell\'anno: uno sorvegliato dal battito, uno ancora no, e il perché è scritto', () => {
+describe('i due job dell\'anno: tutti e due sorvegliati dal battito', () => {
     it('`anni-tick` è in JOB_CRON con finestra 3 ore e non è più fra i non sorvegliati', () => {
         const voce = JOB_CRON.find((j) => j.nome === 'anni-tick')
         expect(voce).toBeDefined()
@@ -183,11 +183,10 @@ describe('i due job dell\'anno: uno sorvegliato dal battito, uno ancora no, e il
         expect(JOB_CRON_NON_SORVEGLIATI.some((j) => j.nome === 'anni-tick')).toBe(false)
     })
 
-    it('`anno-invarianti` sta in JOB_CRON_NON_SORVEGLIATI con la ragione, fino al primo battito visto', () => {
-        const voce = JOB_CRON_NON_SORVEGLIATI.find((j) => j.nome === 'anno-invarianti')
+    it('`anno-invarianti` è in JOB_CRON con finestra di 26 ore (il battito c\'è dalla 4.8) e non è più fra i non sorvegliati', () => {
+        const voce = JOB_CRON.find((j) => j.nome === 'anno-invarianti')
         expect(voce).toBeDefined()
-        expect(voce!.perche).toMatch(/PR-B/)
-        expect(voce!.perche).toMatch(/JOB_CRON/)
-        expect(JOB_CRON.some((j) => j.nome === 'anno-invarianti')).toBe(false)
+        expect(voce!.finestraMs).toBe(26 * 60 * 60 * 1000)
+        expect(JOB_CRON_NON_SORVEGLIATI.some((j) => j.nome === 'anno-invarianti')).toBe(false)
     })
 })

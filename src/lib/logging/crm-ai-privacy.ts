@@ -30,7 +30,7 @@ const METODI = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELET
 const ESITI = new Set([
     'ai-rifiutata', 'ai-sedi-ammesse-vuote', 'ai-ultimo-uso-non-scritto',
     'ai-sede-diversa-dalla-chiave', 'ai-chiamata', 'ai-visita-fissata', 'ai-visita-annullata', 'schema-crm-assente',
-    'ai-contatto-creato', 'ai-contatto-gia-presente',
+    'ai-contatto-creato', 'ai-contatto-gia-presente', 'ai-richiamo-in-lista',
     'integrazioni-non-admin', 'sede-filtro-fuori-scope', 'riga-fuori-sede', 'integrazioni-elencate',
     'integrazione-rifiutata', 'integrazione-creata', 'integrazione-revocata', 'integrazione-gia-revocata',
     'config-illeggibile-notifiche_config', 'fail-open', 'notifica-non-inviata', 'notifica-non-accodata',

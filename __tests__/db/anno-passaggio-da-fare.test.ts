@@ -1,4 +1,8 @@
+// @vitest-environment node
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { creaFintoSupabase } from '../fixtures/finto-supabase'
+import { controlloAnno } from '@/lib/health/controlli'
 import {
   BAMBINI, SEDE_E2E, SEDE_VERA, UTENTE, creaBancoPassaggio, errore, inRollback, una,
   type BancoPassaggio,
@@ -20,6 +24,8 @@ import {
  *
  * Ogni prova sta in una transazione che finisce in ROLLBACK. Solo uuid inventati.
  */
+
+vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
 
 let b: BancoPassaggio
 
@@ -342,6 +348,55 @@ describe('`salute_anno()`: le due chiavi nuove', () => {
     await con(giorno(29), async () => {
       await guardia(true)
       expect((await salute()).guardia_spenta_vicina).toBe(0)
+    })
+  })
+
+  // ── (correzioni, giro 3, M1) Il passaggio fatto a guardia spenta: dal giorno dopo la `fine` l'anno vecchio resta `in_chiusura` ──
+  // Il tick non lo chiude (guardia spenta) e scrive `anni-tick-guardia-spenta:<sede>`, che `tasso-errore` non conta più: deve vederlo `anno`.
+  async function passaggioFatto(sede: { da: string; a: string }, statoVecchio: string): Promise<void> {
+    await b.db.query(`SELECT set_config('anno_scolastico.riempimento', 'off', true)`)
+    await b.db.query(`UPDATE public.anni_sede SET stato = $2, domande_aperte = false WHERE id = $1`, [sede.da, statoVecchio])
+    await b.db.query(`UPDATE public.anni_sede SET stato = 'corrente' WHERE id = $1`, [sede.a])
+  }
+  const giornoDopoLaFine = async (annoSede: string) => {
+    const fine = await una<string>(b.db, `SELECT fine::text FROM public.anni_sede WHERE id = $1`, [annoSede])
+    const d = new Date(`${fine}T10:00:00.000Z`)
+    d.setUTCDate(d.getUTCDate() + 1)
+    return d.toISOString()
+  }
+  /** Il controllo `anno` di /api/health, alimentato dalla `salute_anno()` vera del banco. */
+  async function controlloAnnoDalBanco() {
+    const s = await salute()
+    const client = creaFintoSupabase({}, [], { errori: {}, rpc: { salute_anno: () => ({ data: s, error: null }) } as never }) as unknown as SupabaseClient
+    return controlloAnno(client, Date.now())
+  }
+
+  it('(M1) passaggio fatto a guardia spenta, il giorno dopo la `fine`: `guardia_spenta_vicina` conta l’anno rimasto `in_chiusura` e `anno` è `degradato`', async () => {
+    const giorno = await giornoDopoLaFine(b.vera.da)
+    await con(giorno, async () => {
+      await guardia(false)
+      await passaggioFatto(b.vera, 'in_chiusura')
+      const s = await salute()
+      expect(s.passaggio_da_fare, 'il passaggio è fatto').toBe(0)
+      expect(s.guardia_spenta_vicina, 'ma l’anno vecchio è rimasto in_chiusura oltre la fine').toBe(1)
+      expect(await controlloAnnoDalBanco()).toMatchObject({ nome: 'anno', esito: 'degradato' })
+    })
+  })
+
+  it('(M1) non conta: con la guardia accesa, per una sede `e2e00000…`, e per un anno già `chiuso`', async () => {
+    const giorno = await giornoDopoLaFine(b.vera.da)
+    await con(giorno, async () => {
+      await guardia(true)
+      await passaggioFatto(b.vera, 'in_chiusura')
+      expect((await salute()).guardia_spenta_vicina, 'guardia accesa').toBe(0)
+    })
+    await con(giorno, async () => {
+      await guardia(false)
+      await passaggioFatto(b.vera, 'chiuso')
+      await passaggioFatto(b, 'in_chiusura')
+      const s = await salute()
+      expect(s.guardia_spenta_vicina, 'la sede vera ha l’anno chiuso, la sede e2e00000 è esclusa').toBe(0)
+      expect(await controlloAnnoDalBanco()).toMatchObject({ nome: 'anno', esito: 'ok' })
     })
   })
 })

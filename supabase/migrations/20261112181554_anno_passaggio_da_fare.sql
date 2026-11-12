@@ -17,6 +17,7 @@
 --     stato riaperto;
 --   · `anno_colonne_esenti` ha tre righe in più (`periodo_id`, `promemoria_inviato_il`);
 --   · `salute_anno()` porta due chiavi nuove: `passaggio_da_fare` e `guardia_spenta_vicina`. Le tre di prima non cambiano.
+--     `guardia_spenta_vicina` conta anche l'anno rimasto `in_chiusura` oltre la `fine` a guardia spenta.
 -- Mai l'uuid di una sede, niente `schools.operativa`.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1085,8 +1086,9 @@ $$;
 --   · `passaggio_da_fare`: sedi dove un anno successivo (`in_preparazione`/`iscrizioni_aperte`) comincia fra 7 giorni o meno
 --     (`oggi >= inizio - 7`) e nessun anno della sede dal suo inizio in poi è `corrente`: il passaggio non è stato fatto.
 --     Una sede è contata una volta. Fuori: le sedi della prova (`e2e00000…`) e quelle in `sedi_simulazione`.
---   · `guardia_spenta_vicina`: sedi con un anno `corrente` che chiude fra 30 giorni o meno (`oggi >= ultimo_giorno_aperto - 30`)
---     mentre `anno_regole.guardia_attiva` è spenta: il tick non cambierebbe lo stato (M49a). Stesse esclusioni.
+--   · `guardia_spenta_vicina` (il nome resta): sedi con un anno `corrente` che chiude fra 30 giorni o meno (`oggi >= ultimo_giorno_aperto - 30`)
+--     OPPURE con un anno rimasto `in_chiusura` oltre la sua `fine` (`oggi > fine`: il passaggio è fatto ma il tick, a guardia spenta,
+--     non lo chiude), sempre mentre `anno_regole.guardia_attiva` è spenta: il tick non cambierebbe lo stato (M49a). Stesse esclusioni.
 -- Il giorno è `giorno_roma(now())`, mai `CURRENT_DATE`.
 CREATE OR REPLACE FUNCTION public.salute_anno()
 RETURNS jsonb
@@ -1145,8 +1147,8 @@ BEGIN
   ELSE
     SELECT count(DISTINCT c.scuola_id)::integer INTO v_gsv
       FROM public.anni_sede c
-     WHERE c.stato = 'corrente'
-       AND v_oggi >= c.ultimo_giorno_aperto - 30
+     WHERE ((c.stato = 'corrente' AND v_oggi >= c.ultimo_giorno_aperto - 30)
+            OR (c.stato = 'in_chiusura' AND v_oggi > c.fine))
        AND c.scuola_id::text NOT LIKE 'e2e00000%'
        AND NOT EXISTS (SELECT 1 FROM public.anno_regole g WHERE c.scuola_id = ANY (g.sedi_simulazione));
   END IF;

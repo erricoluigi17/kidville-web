@@ -1042,7 +1042,8 @@ export async function controlloTassoErrore(
             .eq('ambiente', ambiente)
             .gte('visto_l_ultima', da)
             // (PR 4.9) Le due righe `error` di `anni_tick` (una per sede e per giorno) le copre già il controllo `anno`
-            // (`passaggio_da_fare` e `guardia_spenta_vicina` di `salute_anno()`): contate qui, tre sedi in ritardo fanno 6 impronte
+            // GRAZIE A `passaggio_da_fare` e a `guardia_spenta_vicina` di `salute_anno()` (che conta anche l'anno rimasto
+            // `in_chiusura` oltre la `fine` a guardia spenta, M1 del giro 3): contate qui, tre sedi in ritardo fanno 6 impronte
             // (soglia 5) e il controllo resterebbe `degradato` 15 minuti al giorno. Nessun'altra impronta di `anni_tick` è esclusa.
             .not('fingerprint', 'like', 'anni-tick-passaggio-da-fare:%')
             .not('fingerprint', 'like', 'anni-tick-guardia-spenta:%')

@@ -39,6 +39,8 @@ type RigaSenzaFirma = { frequenza_id: string; alunno_id: string; nome: string | 
 
 const PAGINA_SENZA_FIRMA = 50;
 const PAGINA_CONFERME = '/admin/students/conferme';
+/** Il passaggio d'anno (PR 4.8): stessa pagina del menu, stessi tre ruoli; l'anno lo porta il selettore, non l'indirizzo. */
+const PAGINA_PASSAGGIO = '/admin/students/passaggio';
 /** «Tutte le iscrizioni dell'anno» in una lista sola: è la lista il cui totale è uguale ai numeri dell'incrocio e dei moduli. */
 const TUTTO_L_ANNO = `${PAGINA_CONFERME}?vista=nuove&ambito=anno`;
 
@@ -238,6 +240,12 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
               {t('apriLista')}
             </Link>
           )}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 font-maven text-sm text-kidville-ink">
+          <span>{t('passaggioIntro')}</span>
+          <Link href={PAGINA_PASSAGGIO} className={collegamento}>
+            {t('passaggioApri')}
+          </Link>
         </div>
       </Blocco>
 

@@ -70,7 +70,7 @@ describe('Menu a 7 voci — struttura decisa il 31/10', () => {
     ['navgruppo_registro', ['/admin/appello', '/admin/diary', '/admin/primaria', '/admin/competenze', '/admin/gallery']],
     ['navgruppo_comunicazione', ['/admin/messaggi', '/admin/avvisi', '/admin/news', '/admin/compiti', '/admin/votazioni', '/admin/moderazione']],
     ['navgruppo_contabilita_servizi', ['/admin/pagamenti', '/admin/coda-fatture', '/admin/mensa', '/admin/mensa/cucina', '/admin/armadietto', '/admin/merchandise']],
-    ['navgruppo_segreteria', ['/admin/crm', '/admin/candidature', '/admin/modulistica', '/admin/documenti-firmati', '/admin/protocolli', '/admin/storici', '/admin/students/conferme', '/admin/students/anno-prossimo']],
+    ['navgruppo_segreteria', ['/admin/crm', '/admin/candidature', '/admin/modulistica', '/admin/documenti-firmati', '/admin/protocolli', '/admin/storici', '/admin/students/conferme', '/admin/students/anno-prossimo', '/admin/students/passaggio']],
     ['navgruppo_impostazioni', ['/admin/impostazioni', '/admin/tools', '/admin/gdpr']],
   ];
 
@@ -78,10 +78,10 @@ describe('Menu a 7 voci — struttura decisa il 31/10', () => {
     expect(NAV_GROUPS.map((g) => [g.titleKey ?? null, g.items.map((i) => i.href)])).toEqual(ATTESO);
   });
 
-  // 27 rotte il 31/10, più `/admin/votazioni` (Comunicazione, 2026-11-02) e `/admin/students/conferme` (Segreteria, 4.5.6) = 29, più `/admin/students/anno-prossimo` (Segreteria, 4.7.3) = 30.
-  it('nessuna voce persa: le 27 rotte di prima più Votazioni, Conferme e Anno prossimo, nessuna doppia', () => {
-    expect(ALL_HREFS).toHaveLength(30);
-    expect(new Set(ALL_HREFS).size).toBe(30);
+  // 27 rotte il 31/10, più `/admin/votazioni` (Comunicazione), `/admin/students/conferme` (4.5.6), `/admin/students/anno-prossimo` (4.7.3) e `/admin/students/passaggio` (4.8, B4) = 31.
+  it('nessuna voce persa: le 27 rotte di prima più Votazioni, Conferme, Anno prossimo e Passaggio d’anno, nessuna doppia', () => {
+    expect(ALL_HREFS).toHaveLength(31);
+    expect(new Set(ALL_HREFS).size).toBe(31);
   });
 
   it.each(['it', 'en'])('link diretti con una voce sola; ogni gruppo con titolo ha icona e titolo nel catalogo %s', async (lingua) => {
@@ -244,6 +244,30 @@ describe('Anno prossimo (cruscotto) — voce nel gruppo Segreteria', () => {
   it('su /admin/students/anno-prossimo si accende la voce del cruscotto e si apre il gruppo Segreteria', () => {
     expect(activeHref('/admin/students/anno-prossimo')).toBe('/admin/students/anno-prossimo');
     expect(gruppoDellaPagina('/admin/students/anno-prossimo')).toBe('navgruppo_segreteria');
+  });
+});
+
+// Il passaggio d'anno (`/admin/students/passaggio`, 4.8 giro 1, B4): prima si raggiungeva solo scrivendo l'indirizzo.
+describe('Passaggio d’anno — voce nel gruppo Segreteria', () => {
+  const segreteria = NAV_GROUPS.find((g) => g.titleKey === 'navgruppo_segreteria');
+  const voce = (segreteria?.items ?? []).find((i) => i.href === '/admin/students/passaggio') as NavItem;
+
+  it('c’è, per i tre ruoli delle route del passaggio, e non per la cuoca', () => {
+    expect(voce).toBeDefined();
+    expect(voce.roles).toEqual(['admin', 'coordinator', 'segreteria']);
+    expect(visibleItem(voce, 'segreteria')).toBe(true);
+    expect(visibleItem(voce, 'cuoca')).toBe(false);
+  });
+
+  it.each(['it', 'en'])('l’etichetta nav_passaggio_anno esiste nel catalogo %s', async (lingua) => {
+    const catalogo = (await import(`../../messages/${lingua}/etichette.json`)).default as Record<string, unknown>;
+    expect(voce.labelKey).toBe('nav_passaggio_anno');
+    expect(typeof catalogo.nav_passaggio_anno).toBe('string');
+  });
+
+  it('su /admin/students/passaggio si accende la sua voce, non l’Anagrafica', () => {
+    expect(activeHref('/admin/students/passaggio')).toBe('/admin/students/passaggio');
+    expect(gruppoDellaPagina('/admin/students/passaggio')).toBe('navgruppo_segreteria');
   });
 });
 

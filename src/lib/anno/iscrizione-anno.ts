@@ -3,7 +3,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { segnalaErroreAnnoGestito } from '@/lib/logging/context'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
 import { codiceAnnoDa, type CodiceAnno } from '@/lib/anno/tipi'
-import { scriviFrequenza } from '@/lib/anno/frequenze'
+import { annoVisibileDiSede, finestraDiSede, leggiFinestraDiSede, scriviFrequenza } from '@/lib/anno/frequenze'
 import { STATO_ISCRITTO, STATO_RITIRATO } from '@/lib/alunni/stato'
 import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { controllaVoceEliminabile } from '@/lib/pagamenti/voce-eliminabile'
@@ -289,7 +289,7 @@ const OP_ANNO = 'anno/iscrizione-anno:annoDellaDomanda'
 /**
  * A che anno della sede appartiene una domanda. `annoId` è `anni_scolastici.id` (quello che il modulo pubblico manda), oppure
  * `null` = «come oggi»: l'anno attivo della sede.
- *  · l'anno è l'attivo                       → `attivo`;
+ *  · l'anno è l'attivo                       → `attivo` (ma se è l'attivo NON ancora cominciato della finestra del passaggio → `aperto`);
  *  · l'anno ha le iscrizioni aperte          → `aperto` (la domanda diventa una frequenza dell'anno prossimo);
  *  · ogni altro anno, o uno che la sede non ha → `non-aperto`;
  *  · lo schema dell'anno non c'è (la CI)      → `schema-indietro`: il chiamante fa come oggi.
@@ -331,7 +331,14 @@ export async function annoDellaDomanda(
       ? righe.find((r) => r.id === idAttivo)
       : righe.find((r) => r.anno_id === annoId)
     if (!riga) return { tipo: 'non-aperto' }
-    if (riga.id === idAttivo) return { tipo: 'attivo', annoSedeId: riga.id, annoId: riga.anno_id }
+    if (riga.id === idAttivo) {
+      // (giro 4, NB3) Nella FINESTRA fra la conferma del passaggio e l'inizio, l'anno attivo è il nuovo e non è ancora cominciato: una domanda
+      // per lui vale come una per l'anno prossimo (`aperto`): scheda «in arrivo» e frequenza dell'anno nuovo con ingresso all'inizio, come il
+      // `POST` della segreteria. Come «attivo» nascerebbe `iscritto` nella classe VECCHIA e il 01/09 la ricopia non lo prenderebbe.
+      const finestra = await finestraDiSede(supabase, scuolaId)
+      if (finestra && finestra.attivo === riga.id) return { tipo: 'aperto', annoSedeId: riga.id, annoId: riga.anno_id }
+      return { tipo: 'attivo', annoSedeId: riga.id, annoId: riga.anno_id }
+    }
     if (riga.stato === 'iscrizioni_aperte') return { tipo: 'aperto', annoSedeId: riga.id, annoId: riga.anno_id }
     return { tipo: 'non-aperto' }
   } catch (err) {
@@ -379,6 +386,8 @@ type RigaDaChiudere = {
   stato: string
   origine: string | null
   quota_pagamento_id: string | null
+  /** Solo nella chiusura dell'«Archivia» (giro 12): serve a capire se l'iscrizione era già cominciata quando la scheda è stata archiviata. */
+  data_ingresso?: string | null
 }
 /** Le origini che il «Ritira la conferma» accetta (4.5.16, B); `recupero` è la riga storica dell'anno in corso e non si ritira. */
 const ORIGINI_RITIRABILI: readonly string[] = ['conferma', 'domanda', 'segreteria', 'import']
@@ -390,7 +399,9 @@ const COLONNE_CHIUSURA = 'id, alunno_id, anno_sede_id, scuola_id, stato, origine
  * fatture. In più una voce già `pagato` o con `importo_pagato` > 0 resta comunque. Nessun rimborso automatico.
  * Niente stati a metà: se la voce non si toglie per un guasto, la frequenza RESTA ritirata e l'esito dice `errore`.
  */
-async function ritiraEToglieQuota(supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string): Promise<EsitoRitiro> {
+async function ritiraEToglieQuota(
+  supabase: SupabaseClient, f: RigaDaChiudere, attore: AppUser, operazione: string,
+): Promise<EsitoRitiro> {
   let ritirata = false
   if (f.stato === 'in_attesa' || f.stato === 'iscritto') {
     const scritta = await scriviFrequenza(supabase, {
@@ -535,6 +546,11 @@ export type RisultatoChiusura = {
   voci_tolte: number
   /** Le voci rimaste perché pagate (o fatturate): la segreteria deve saperlo, rimborso e storno sono suoi. */
   voci_pagate_rimaste: number
+  /**
+   * (Riattiva, giro 11) Le voci di quota rimaste su frequenze GIÀ ritirate dell'anno che la scheda mostra (dopo il 01/09 sono della contabilità, non di «Riprova»).
+   * La route lo dice alla segreteria invece di rispondere «riuscita» e basta.
+   */
+  voci_alla_contabilita: number
   /** Le frequenze per cui la chiusura o la voce non sono riuscite (guasto), più una per ogni lettura caduta (4.5.16, E): un log per ognuna. */
   non_riuscite: number
 }
@@ -544,8 +560,11 @@ export type RisultatoChiusura = {
  * (`in_preparazione`, `iscrizioni_aperte`): conferme, iscrizioni di una domanda, inserimenti della segreteria. Vale anche per
  * un bambino `in_arrivo`. Non lancia mai e non blocca l'archiviazione: ne riporta il conteggio.
  */
-export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunnoId: string; attore: AppUser }): Promise<RisultatoChiusura> {
-  const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 }
+export async function chiudiFrequenzeAperte(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; attore: AppUser; scuolaId?: string | null; ancheAnnoVisibile?: boolean; archiviatoIl?: string | null },
+): Promise<RisultatoChiusura> {
+  const esito: RisultatoChiusura = { chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 }
   try {
     const anni = await supabase.from('anni_sede').select('id').in('stato', ['in_preparazione', 'iscrizioni_aperte'])
     if (anni.error) {
@@ -558,11 +577,28 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
       return esito
     }
     const idAnni = ((anni.data ?? []) as Array<{ id: string }>).map((x) => x.id)
+    // (giro 3, NB2) Nella finestra fra la conferma del passaggio e l'inizio l'anno ATTIVO è il nuovo, `corrente` ma non ancora cominciato:
+    // non è né «in preparazione» né «iscrizioni aperte», e la sua frequenza (nata dal passaggio o dalla segreteria) resterebbe viva dopo
+    // l'archiviazione. Si chiude anche lei: quella dell'anno VISIBILE la chiude la scrittura della scheda, qui sotto nella route.
+    // (Riattiva, giro 9, O-a) Una lettura della finestra CADUTA non è «fuori dalla finestra»: l'anno nuovo non entrerebbe e la route risponderebbe 200
+    // pulito con l'iscrizione ancora viva. Conta come non riuscita (la segreteria vede «Riprova»), e le altre chiusure proseguono.
+    const lettura = await leggiFinestraDiSede(supabase, a.scuolaId)
+    if (lettura.guasto) esito.non_riuscite++
+    const finestra = lettura.finestra
+    if (finestra && !idAnni.includes(finestra.attivo)) idAnni.push(finestra.attivo)
+    // (Riattiva, giro 10, S9-1) «Riprova» su una scheda GIÀ archiviata: dal 01/09 l'anno nuovo è `corrente` e non è più fra quelli letti qui sopra, ma una frequenza
+    // ancora viva nell'anno che la scheda mostra è proprio ciò che «Riprova» deve chiudere. Solo per il ramo «già archiviato» della route.
+    // Di quell'anno si chiude SOLO ciò che è ancora vivo: la voce di una frequenza già ritirata è della contabilità, non di «Riprova».
+    let annoSoloVive: string | null = null
+    if (a.ancheAnnoVisibile && a.scuolaId) {
+      const visibile = await annoVisibileDiSede(supabase, a.scuolaId)
+      if (visibile && !idAnni.includes(visibile)) { idAnni.push(visibile); annoSoloVive = visibile }
+    }
     if (idAnni.length === 0) return esito
 
     const righe = await supabase
       .from('frequenze')
-      .select(COLONNE_CHIUSURA)
+      .select(`${COLONNE_CHIUSURA}, data_ingresso`)
       .eq('alunno_id', a.alunnoId)
       .in('anno_sede_id', idAnni)
       .in('stato', ['in_attesa', 'iscritto', STATO_RITIRATO])
@@ -576,6 +612,13 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
     for (const f of (righe.data ?? []) as RigaDaChiudere[]) {
       // Una già ritirata con la voce ancora lì (un ritiro finito a metà): si riprende la voce. Senza voce, niente da fare.
       if (f.stato === STATO_RITIRATO && !f.quota_pagamento_id) continue
+      if (f.stato === STATO_RITIRATO && f.anno_sede_id === annoSoloVive) {
+        // (Riattiva, giro 12) Si conta solo la voce di un'iscrizione che alla data dell'archiviazione NON era ancora cominciata (la ricopia del 01/09 l'ha chiusa
+        // dopo, e la voce è rimasta): quella della frequenza dell'anno che la scheda stava lasciando è la voce che ogni «Archivia» lascia, non un guasto.
+        const giornoArch = a.archiviatoIl ? dataCivile(new Date(a.archiviatoIl)) : null
+        if (giornoArch && f.data_ingresso && f.data_ingresso > giornoArch) esito.voci_alla_contabilita++
+        continue
+      }
       const r = await ritiraEToglieQuota(supabase, f, a.attore, OP_CHIUSURA)
       if (!r.ok || 'saltata' in r) { esito.non_riuscite++; continue }
       if (r.ritirata) esito.chiuse++
@@ -595,6 +638,7 @@ export async function chiudiFrequenzeAperte(supabase: SupabaseClient, a: { alunn
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const OP_RIPRISTINO = 'anno/iscrizione-anno:iscrizioniDelBambino'
+const OP_FINESTRA = 'anno/iscrizione-anno:riattivaNellaFinestra'
 const STATI_FREQUENZA_CHIUSI: readonly string[] = [STATO_RITIRATO, 'trasferito', 'uscito']
 
 /** Una frequenza di un anno che viene (in preparazione o con le iscrizioni aperte) di un bambino. */
@@ -742,6 +786,248 @@ export async function riapriFrequenzaProssima(
   } catch (err) {
     logErrore({ operazione: OP_RIPRISTINO }, err)
     return { ok: false, codice: 'SCRITTURA_FALLITA' }
+  }
+}
+
+export type EsitoFrequenzeDellaFinestra =
+  | { ok: true; nellaFinestra: false }
+  | {
+      ok: true
+      nellaFinestra: true
+      annoVisibileId: string
+      /** La frequenza dell'anno che si vede è `ritirato` e l'ha chiusa QUESTA archiviazione (la data d'uscita è il giorno dell'archiviazione). */
+      visibileChiusaDallArchiviazione: boolean
+      /** La frequenza dell'anno nuovo (non `recupero`) che QUESTA archiviazione ha chiuso, se c'era. */
+      nuovaChiusaDallArchiviazione: (FrequenzaDellAnnoCheViene & { section_id: string | null }) | null
+      /** L'anno che si vede ha una frequenza VIVA (`in_attesa`, `iscritto`): il bambino non è «in arrivo». */
+      visibileViva: boolean
+      /** La frequenza dell'anno nuovo (non `recupero`) ancora VIVA, se c'è: il bambino è «in arrivo» con la sua iscrizione già aperta. */
+      nuovaViva: (FrequenzaDellAnnoCheViene & { section_id: string | null }) | null
+    }
+  | { ok: false }
+
+/** Una `ritirato` è «chiusa da questa archiviazione» se la sua uscita non è PRECEDENTE al giorno dell'archiviazione (stessa regola di `contaComeFrequenzaAttiva`, 4.5.16 C). */
+function chiusaDaQuestaArchiviazione(r: { stato: string; data_uscita: string | null }, giorno: string | null): boolean {
+  if (r.stato !== STATO_RITIRATO) return false
+  // Senza `archiviato_il` (il solo ritiro dalla tendina) non c'è nessuna archiviazione da disfare: niente si riapre.
+  if (!giorno) return false
+  if (!r.data_uscita) return true
+  return r.data_uscita >= giorno
+}
+
+/**
+ * (chiusura 4.8, «Riattiva» nella finestra) Fra la conferma del passaggio e l'inizio l'anno attivo è il NUOVO e l'anno che si vede è il
+ * vecchio. L'archiviazione di quei giorni chiude le frequenze vive di TUTTI E DUE (NB2): «Riattiva» disfa esattamente quella, cioè riapre
+ * SOLO le frequenze che quell'archiviazione ha chiuso (`ritirato` con la data d'uscita del giorno dell'archiviazione), e le riapre con la
+ * classe che avevano. Una `ritirato` chiusa prima (l'ex alunno tornato «in arrivo»), una `uscito` o `trasferito` (le uscite del passaggio:
+ * la strada è la «Conferma tardiva») non sono dell'archiviazione e non si toccano. Fuori dalla finestra non cambia niente.
+ * NON LANCIA MAI: `{ ok: false }` = non so.
+ */
+export async function frequenzeDellaFinestra(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; scuolaId: string | null; archiviatoIl: string | null },
+): Promise<EsitoFrequenzeDellaFinestra> {
+  try {
+    // Le due letture si fanno QUI e non con `finestraDiSede`, che in dubbio risponde `null` («non sono nella finestra»): per questa riattivazione
+    // un guasto non è «fuori dalla finestra», perché si scriverebbe sull'anno sbagliato. Guasto → `ok: false` e la route si ferma senza scrivere.
+    if (!a.scuolaId) return { ok: true, nellaFinestra: false }
+    // Una dopo l'altra: se la prima manca (schema indietro) la seconda non parte.
+    const att = await supabase.rpc('anno_attivo', { p_scuola: a.scuolaId })
+    const vis = att.error ? { data: null, error: null } : await supabase.rpc('anno_visibile_oggi', { p_scuola: a.scuolaId })
+    const guasto = att.error ?? vis.error
+    if (guasto) {
+      if (schemaAnnoIndietro(guasto)) return { ok: true, nellaFinestra: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'finestra-non-letta', operazione: OP_FINESTRA, error_code: guasto.code ?? undefined })
+      return { ok: false }
+    }
+    if (typeof att.data !== 'string' || typeof vis.data !== 'string' || att.data === vis.data) return { ok: true, nellaFinestra: false }
+    const finestra = { attivo: att.data, visibile: vis.data }
+    const giorno = a.archiviatoIl ? dataCivile(new Date(a.archiviatoIl)) : null
+    const vecchie = await supabase.from('frequenze').select('stato, data_uscita').eq('alunno_id', a.alunnoId).eq('anno_sede_id', finestra.visibile)
+    if (vecchie.error) {
+      if (schemaAnnoIndietro(vecchie.error)) return { ok: true, nellaFinestra: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'finestra-frequenze-non-lette', operazione: OP_FINESTRA, error_code: vecchie.error.code ?? undefined })
+      return { ok: false }
+    }
+    const nuove = await supabase
+      .from('frequenze')
+      .select('id, anno_sede_id, stato, tipo, origine, data_uscita, section_id')
+      .eq('alunno_id', a.alunnoId)
+      .eq('anno_sede_id', finestra.attivo)
+    if (nuove.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'finestra-frequenze-non-lette', operazione: OP_FINESTRA, error_code: nuove.error.code ?? undefined })
+      return { ok: false }
+    }
+    const righeVecchie = (vecchie.data ?? []) as Array<{ stato: string; data_uscita: string | null }>
+    const visibileChiusa = righeVecchie.some((r) => chiusaDaQuestaArchiviazione(r, giorno))
+    const righeNuove = ((nuove.data ?? []) as Array<Omit<FrequenzaDellAnnoCheViene, 'chiusa'> & { data_uscita: string | null; section_id: string | null }>)
+      .filter((f) => f.origine !== 'recupero')
+    const chiusaNuova = righeNuove.filter((f) => chiusaDaQuestaArchiviazione(f, giorno))[0]
+    const vivaNuova = righeNuove.filter((f) => !STATI_FREQUENZA_CHIUSI.includes(f.stato))[0]
+    return {
+      ok: true,
+      nellaFinestra: true,
+      annoVisibileId: finestra.visibile,
+      visibileChiusaDallArchiviazione: visibileChiusa,
+      nuovaChiusaDallArchiviazione: chiusaNuova
+        ? { id: chiusaNuova.id, anno_sede_id: chiusaNuova.anno_sede_id, stato: chiusaNuova.stato, tipo: chiusaNuova.tipo, origine: chiusaNuova.origine, chiusa: true, section_id: chiusaNuova.section_id }
+        : null,
+      visibileViva: righeVecchie.some((r) => !STATI_FREQUENZA_CHIUSI.includes(r.stato)),
+      nuovaViva: vivaNuova
+        ? { id: vivaNuova.id, anno_sede_id: vivaNuova.anno_sede_id, stato: vivaNuova.stato, tipo: vivaNuova.tipo, origine: vivaNuova.origine, chiusa: false, section_id: vivaNuova.section_id }
+        : null,
+    }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, quarto giro, k) Il NOME della classe ricordata si cerca solo dentro lo stesso anno in cui la classe stava: le classi «N anni» si
+ * chiamano uguale in anni diversi, e un nome cercato nell'anno sbagliato trova un'altra classe in silenzio. Vero se la classe `sectionId` appartiene
+ * allo stesso anno scolastico di `annoSedeId` (l'anno su cui si scrive). Senza `sectionId` (un'archiviazione di prima che non lo ricordava) o con una
+ * classe che non c'è più non c'è modo di verificare: vero, come è sempre stato. NON LANCIA MAI; `{ ok: false }` = non so, e la route si ferma.
+ */
+export async function classeRicordataDelloStessoAnno(
+  supabase: SupabaseClient,
+  a: { sectionId: string | null; annoSedeId: string | null },
+): Promise<{ ok: true; stesso: boolean } | { ok: false }> {
+  try {
+    if (!a.sectionId || !a.annoSedeId) return { ok: true, stesso: true }
+    const sez = await supabase.from('sections').select('anno_id').eq('id', a.sectionId)
+    if (sez.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anno-classe-ricordata-non-letto', operazione: OP_FINESTRA, error_code: sez.error.code ?? undefined })
+      return { ok: false }
+    }
+    const annoClasse = ((sez.data ?? []) as Array<{ anno_id: string | null }>)[0]?.anno_id ?? null
+    if (!annoClasse) return { ok: true, stesso: true }
+    const anno = await supabase.from('anni_sede').select('anno_id').eq('id', a.annoSedeId)
+    if (anno.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'anno-classe-ricordata-non-letto', operazione: OP_FINESTRA, error_code: anno.error.code ?? undefined })
+      return { ok: false }
+    }
+    const annoScrittura = ((anno.data ?? []) as Array<{ anno_id: string | null }>)[0]?.anno_id ?? null
+    if (!annoScrittura) return { ok: true, stesso: true }
+    return { ok: true, stesso: annoClasse === annoScrittura }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, quinto giro) La scheda è ANCORA archiviata dal passaggio? Sì se il passaggio confermato dell'anno attivo ha chiuso la frequenza `uscito` di
+ * questo bambino e `archiviato_il` è del passaggio (la funzione SQL `anno_alunno_archiviato_dal_passaggio` lo decide: non più tardi della conferma, o
+ * a mezzogiorno dell'uscita). Chi è uscito col passaggio, poi è tornato con una domanda e infine è stato archiviato dalla segreteria NON è «archiviato
+ * dal passaggio»: la sua archiviazione è dopo la conferma, e «Riattiva» la disfa. Vale nella finestra e dopo il 01/09. La route non legge nessuna
+ * `passaggi_anno*` (la porta è una sola): chiede alla funzione. NON LANCIA MAI; `{ ok: false }` = non so, e chi chiama si ferma prima di scrivere.
+ */
+export async function archiviatoDalPassaggio(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoAttivoId: string | null },
+): Promise<{ ok: true; si: boolean } | { ok: false }> {
+  try {
+    if (!a.annoAttivoId) return { ok: true, si: false }
+    const r = await supabase.rpc('anno_alunno_archiviato_dal_passaggio', { p_alunno: a.alunnoId, p_anno_sede: a.annoAttivoId })
+    if (r.error) {
+      if (schemaAnnoIndietro(r.error)) return { ok: true, si: false }
+      logEvento('anno-scolastico', 'warn', { tipo: 'uscita-passaggio-non-letta', operazione: OP_FINESTRA, error_code: r.error.code ?? undefined })
+      return { ok: false }
+    }
+    return { ok: true, si: r.data === true }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * La frequenza dell'anno NUOVO che l'archiviazione ha chiuso (già letta da `frequenzeDellaFinestra`) torna viva, con la classe che ha ancora:
+ * l'archiviazione nella finestra le lascia la sua classe (la scheda archiviata non la porta, lo garantisce `alunni_riallinea_da_frequenze`).
+ * Nessun nome di classe cercato, nessuna riga del passaggio letta. NON LANCIA MAI; `{ ok: false }` = non riaperta (e il guasto è nel log).
+ */
+export async function riapriFrequenzaNuovaDellaFinestra(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; frequenza: FrequenzaDellAnnoCheViene & { section_id: string | null } },
+): Promise<{ ok: true; senzaClasse: boolean } | { ok: false }> {
+  try {
+    const r = await scriviFrequenza(supabase, {
+      alunnoId: a.alunnoId, annoSedeId: a.frequenza.anno_sede_id, campi: { stato: STATO_ISCRITTO, data_uscita: null }, annoNonAttivo: true,
+    })
+    if (!r.ok || 'saltata' in r) {
+      logEvento('anno-scolastico', 'error', { tipo: 'finestra-frequenza-nuova-non-riaperta', operazione: OP_FINESTRA, frequenza: a.frequenza.id })
+      return { ok: false }
+    }
+    return { ok: true, senzaClasse: a.frequenza.section_id === null }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (chiusura 4.8, terzo giro) FUORI dalla finestra: la frequenza dell'anno attivo che l'archiviazione ha chiuso, se tiene ancora la sua classe
+ * (dalla finestra in poi la tiene), dà il NOME di quella classe. «Riattiva» scrive con quello, risolto nello stesso anno in cui la sezione sta: non
+ * cerca per nome nell'anno nuovo una classe che potrebbe essere un'altra con lo stesso nome (le classi «N anni»). Senza una frequenza così
+ * (archiviato fuori dalla finestra: la frequenza ha perso la classe) `nome: null` e resta il ripiego di sempre, il nome ricordato.
+ * NON LANCIA MAI; `{ ok: false }` = non so, e chi chiama si ferma prima di scrivere.
+ */
+export async function classeDellaFrequenzaChiusa(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoSedeId: string; archiviatoIl: string | null },
+): Promise<{ ok: true; nome: string | null } | { ok: false }> {
+  try {
+    const giorno = a.archiviatoIl ? dataCivile(new Date(a.archiviatoIl)) : null
+    const righe = await supabase.from('frequenze').select('section_id, stato, data_uscita').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoSedeId)
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, nome: null }
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-chiusa-non-letta', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const chiusa = ((righe.data ?? []) as Array<{ section_id: string | null; stato: string; data_uscita: string | null }>)
+      .find((r) => r.section_id !== null && chiusaDaQuestaArchiviazione(r, giorno))
+    if (!chiusa?.section_id) return { ok: true, nome: null }
+    const sezione = await supabase.from('sections').select('name').eq('id', chiusa.section_id)
+    if (sezione.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-chiusa-non-letta', operazione: OP_FINESTRA, error_code: sezione.error.code ?? undefined })
+      return { ok: false }
+    }
+    const nome = ((sezione.data ?? []) as Array<{ name: string | null }>)[0]?.name ?? null
+    return { ok: true, nome: nome && nome.trim() !== '' ? nome : null }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * (Riattiva, giro 10, R10-c) La classe della frequenza VIVA di un anno: la riprova di una «Riattiva» rimasta a metà, dopo il 01/09, trova la frequenza già
+ * riaperta con la sua classe e la scheda no. La scheda deve seguire la frequenza, come fa lo specchio. `nome: null` = nessuna frequenza viva con una classe.
+ */
+export async function classeDellaFrequenzaViva(
+  supabase: SupabaseClient,
+  a: { alunnoId: string; annoSedeId: string },
+): Promise<{ ok: true; nome: string | null } | { ok: false }> {
+  try {
+    const righe = await supabase.from('frequenze').select('section_id, stato').eq('alunno_id', a.alunnoId).eq('anno_sede_id', a.annoSedeId).in('stato', ['in_attesa', 'iscritto'])
+    if (righe.error) {
+      if (schemaAnnoIndietro(righe.error)) return { ok: true, nome: null }
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-viva-non-letta', operazione: OP_FINESTRA, error_code: righe.error.code ?? undefined })
+      return { ok: false }
+    }
+    const viva = ((righe.data ?? []) as Array<{ section_id: string | null }>).find((r) => r.section_id !== null)
+    if (!viva?.section_id) return { ok: true, nome: null }
+    const sezione = await supabase.from('sections').select('name').eq('id', viva.section_id)
+    if (sezione.error) {
+      logEvento('anno-scolastico', 'warn', { tipo: 'classe-frequenza-viva-non-letta', operazione: OP_FINESTRA, error_code: sezione.error.code ?? undefined })
+      return { ok: false }
+    }
+    const nome = ((sezione.data ?? []) as Array<{ name: string | null }>)[0]?.name ?? null
+    return { ok: true, nome: nome && nome.trim() !== '' ? nome : null }
+  } catch (err) {
+    logErrore({ operazione: OP_FINESTRA }, err)
+    return { ok: false }
   }
 }
 

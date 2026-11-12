@@ -142,7 +142,7 @@ interface Props {
      * genitori (`onSave` di `ParentDetailPanel`) e non era mai stata propagata qui.
      */
     /** `riprova`: l'archiviazione è scritta ma un'iscrizione dell'anno prossimo non si è chiusa; il pannello offre «Riprova» (4.5.16, E). */
-    onArchive: (id: string) => Promise<{ ok: boolean; errore?: string | null; riprova?: boolean }>;
+    onArchive: (id: string, opzioni?: { riprova?: boolean }) => Promise<{ ok: boolean; errore?: string | null; riprova?: boolean }>;
     /**
      * Riporta l'alunno fra gli iscritti (`POST /api/admin/students/riattiva`).
      *
@@ -507,9 +507,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     const eseguiArchiviazione = async () => {
         setArchiviazioneInCorso(true);
         setErroreArchiviazione(null);
+        // (giro 10, R12-c) Il secondo tentativo dopo «Archiviato, ma…» è una riprova: se non c'è più niente da chiudere è riuscita, non un 409.
+        const eUnaRiprova = archiviazioneRiprovabile;
         setArchiviazioneRiprovabile(false);
         try {
-            const esito = await onArchive(student.id);
+            const esito = eUnaRiprova ? await onArchive(student.id, { riprova: true }) : await onArchive(student.id);
             if (esito?.ok) {
                 setConfermaArchiviazione(false);
                 return;

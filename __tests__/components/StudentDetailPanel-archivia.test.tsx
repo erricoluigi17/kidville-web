@@ -447,6 +447,9 @@ describe('/admin/students/[id] — l\u2019archiviazione che non ha chiuso un\u20
 
     fireEvent.click(within(avviso).getByRole('button', { name: catalogoIt.detailArchiviaRiprova }))
     await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/archivia')).toHaveLength(2))
+    const chiamate = fetchMock.mock.calls.filter((c) => String(c[0]) === '/api/admin/students/archivia')
+    expect(JSON.parse(String((chiamate[0][1] as { body: string }).body)), 'la prima POST non è una riprova').not.toHaveProperty('riprova')
+    expect(JSON.parse(String((chiamate[1][1] as { body: string }).body)), 'la seconda sì').toMatchObject({ riprova: true })
     await waitFor(() => expect(nav.push).toHaveBeenCalled(), { timeout: 3000 })
   })
 
@@ -460,5 +463,20 @@ describe('/admin/students/[id] — l\u2019archiviazione che non ha chiuso un\u20
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(ETICHETTA_RIPOSO) }))
     fireEvent.click(screen.getByRole('button', { name: ETICHETTA_CONFERMA }))
     expect((await screen.findByRole('alert')).textContent).toContain('Archiviato, ma 1 iscrizione dell’anno prossimo non si è chiusa')
+  })
+})
+
+describe('/admin/students/[id] — la voce della quota che resta alla contabilità (giro 11)', () => {
+  it('con `voci_alla_contabilita` > 0 la risposta riuscita lo dice a chi ha premuto, invece di un «archiviato» e basta', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url) === '/api/admin/students/archivia') return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, gia_archiviato: true, iscrizioni_non_chiuse: 0, voci_alla_contabilita: 1 }) })
+      if (String(url).startsWith('/api/admin/students/alu-1')) return Promise.resolve({ ok: true, json: async () => IDENTITA_ALUNNO })
+      return Promise.resolve({ ok: true, json: async () => [] })
+    })
+    render(<AnagraficaDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(ETICHETTA_RIPOSO) }))
+    fireEvent.click(screen.getByRole('button', { name: ETICHETTA_CONFERMA }))
+    expect(await screen.findByText(/alla contabilità/)).toBeTruthy()
+    expect(catalogoIt.detailArchiviatoVociContabilita).toContain('contabilità')
   })
 })

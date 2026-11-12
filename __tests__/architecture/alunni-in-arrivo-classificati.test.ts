@@ -84,6 +84,10 @@ type Voce = readonly [Esito, Motivo]
 
 /** Le letture e le scritture `.from('alunni')`. */
 const LETTURE: Record<string, Voce> = {
+  // giro 1 (S6): i NOMI delle righe di UN passaggio, per id (max 200) presi dalle righe del passaggio stesso; non è un elenco di bambini della sede.
+  'src/lib/anno/passaggio.ts::leggiNomiDelPassaggio': ['no-già', 'ids'],
+  // giro 2 (B3, fratelli): lo stato dei fratelli, per id, presi dai figli legati al genitore che chiama; serve a distinguere chi ESCE (il fratello nuovo vale) da chi è ritirato.
+  'src/lib/anno/data-ingresso.ts::ingressoFuturoDeiFigli': ['no-già', 'ids'],
   'src/app/api/admin/anagrafiche/codici-fiscali/route.ts::admin/anagrafiche/codici-fiscali:GET': ['sì', 'ricerca'],
   // 4.5.10: i NOMI delle righe della pagina (nome e cognome, due colonne) per gli id che arrivano da `frequenze`: nella vista «Nuove iscrizioni»
   // la frequenza dell'anno nuovo contiene proprio l'`in_arrivo`, ed è giusto che compaia con il suo nome; nella vista «Conferme» gli id sono
@@ -338,6 +342,12 @@ const INCORPORATE: Record<string, Voce> = {
 /** Le funzioni SQL vive che toccano `alunni`. */
 const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::alunni_riallinea_da_frequenze': ['sì', 'funzione-di-anno'],
+  // giro 4 (NB3): lo specchio d'INSERT, per una scheda nata nella finestra con la classe del nuovo anno, la rende «in arrivo» (UPDATE di `alunni`): la funzione di anno che sa del bambino in arrivo.
+  'sql::alunni_specchio_frequenza': ['sì', 'funzione-di-anno'],
+  // giro 5 (Riattiva): risponde vero/falso su UN alunno per id («la sua scheda è ancora archiviata dal passaggio?»); non fa elenchi.
+  'sql::anno_alunno_archiviato_dal_passaggio': ['no-già', 'funzione-puntuale'],
+  // giro 6 (Riattiva): scrive (toglie le tracce dell'archiviazione) su UN alunno per id, solo se la sua scheda è tornata viva; non fa elenchi.
+  'sql::anno_alunno_toglie_tracce_archiviazione': ['no-già', 'funzione-puntuale'],
   'sql::anno_fotografa': ['no-già', 'esclude-in-arrivo'],
   'sql::anno_invarianti': ['sì', 'funzione-di-anno'],
   // 4.5.5: legge UN alunno per id (la sua sede) e scrive la frequenza dell'anno aperto; non fa elenchi.
@@ -360,6 +370,13 @@ const FUNZIONI_SQL: Record<string, Voce> = {
   'sql::fn_scuola_id_da_alunno': ['no-già', 'funzione-puntuale'],
   'sql::frequenza_segue_classe_alunno': ['no-già', 'funzione-per-sezione'],
   'sql::frequenze_specchio_alunni': ['sì', 'funzione-di-anno'],
+  'sql::passaggio_annulla': ['sì', 'funzione-di-anno'],
+  'sql::passaggio_calcola': ['sì', 'funzione-di-anno'],
+  'sql::passaggio_conferma': ['sì', 'funzione-di-anno'],
+  'sql::passaggio_conferma_tardiva': ['sì', 'funzione-di-anno'],
+  // 4.8 giro 2 (R6): ricopia le schede sulla classe nuova il giorno dell'inizio; i nuovi (`in_arrivo`) entrano, è il suo scopo.
+  'sql::passaggio_ricopia_schede': ['sì', 'funzione-di-anno'],
+  'sql::passaggio_storico_senza_riga_aperta': ['sì', 'funzione-di-anno'],
   'sql::iscrizioni_annulla': ['no-già', 'ids'],
   'sql::iscrizioni_rinvia': ['no-già', 'ids'],
   'sql::iscrizioni_sanitari_tick': ['sì', 'anagrafica'],
@@ -535,7 +552,9 @@ describe('lock architettura · ogni lettura di `alunni` ha deciso che cosa fa da
     const conta = (e: Esito) => Object.values(TUTTE).filter(([x]) => x === e).length
     // Se cambiano, la classificazione è cambiata: va riletta, non solo aggiornata questa riga.
     expect({ no: conta('no'), 'no-già': conta('no-già'), sì: conta('sì'), daCorreggere: Object.keys(DA_CORREGGERE).length }).toEqual(
-      { no: 0, 'no-già': 210, sì: 62, daCorreggere: 0 }, // 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
+
+
+      { no: 0, 'no-già': 214, sì: 69, daCorreggere: 0 }, // Riattiva giro 6: +1 no-già (anno_alunno_toglie_tracce_archiviazione). // Riattiva giro 5: +1 no-già (anno_alunno_archiviato_dal_passaggio). // giro 4: +1 sì (alunni_specchio_frequenza). 4.6.6: +2 sì (anteprimaDalListino, rette_da_generare), -1 no-già (genera_rette_mensili non legge più alunni). 4.7: +1 no-già (senza-firma-app), +2 sì (anno_cruscotto, anno_quota_piu_voci)
     )
   })
 

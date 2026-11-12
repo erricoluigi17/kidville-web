@@ -223,6 +223,66 @@ export function erroreAnno(
         { ...dettagli, error: frase('SCADENZA_QUOTA_NEL_PASSATO'), codice: 'SCADENZA_QUOTA_NEL_PASSATO' },
         { status: 422 },
       )
+    // ── Il passaggio d'anno (PR 4.8): le sollevano le funzioni di M48a e M48b. `dettagli` porta i conteggi (mai righe, mai nomi).
+    case 'PASSAGGIO_NON_PRONTO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_PRONTO'), codice: 'PASSAGGIO_NON_PRONTO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_TROPPO_PRESTO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_TROPPO_PRESTO'), codice: 'PASSAGGIO_TROPPO_PRESTO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_GIA_CONFERMATO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_GIA_CONFERMATO'), codice: 'PASSAGGIO_GIA_CONFERMATO' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_ANNULLABILE':
+      // I conteggi (quante righe d'uso ha il nuovo anno, per tabella: il `DETAIL` della funzione) arrivano già dentro `dettagli.conteggi`
+      // (li incapsula `rispostaPassaggioNonRiuscito`) e finiscono nel corpo sotto `conteggi`, NON a livello alto.
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_ANNULLABILE'), codice: 'PASSAGGIO_NON_ANNULLABILE' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_MODIFICABILE':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_MODIFICABILE'), codice: 'PASSAGGIO_NON_MODIFICABILE' },
+        { status: 409 },
+      )
+    case 'PASSAGGIO_NON_TROVATO':
+      return NextResponse.json(
+        { ...dettagli, error: frase('PASSAGGIO_NON_TROVATO'), codice: 'PASSAGGIO_NON_TROVATO' },
+        { status: 404 },
+      )
+    case 'ANTEPRIMA_VECCHIA':
+      // `dettagli.righe_diverse`: quante righe senza eccezione non coincidono più con il calcolo.
+      return NextResponse.json(
+        { ...dettagli, error: frase('ANTEPRIMA_VECCHIA'), codice: 'ANTEPRIMA_VECCHIA' },
+        { status: 409 },
+      )
+    case 'RIGHE_DA_DECIDERE':
+      // `dettagli`: i conteggi delle righe senza classe nuova e di quelle con un avviso aperto.
+      return NextResponse.json(
+        { ...dettagli, error: frase('RIGHE_DA_DECIDERE'), codice: 'RIGHE_DA_DECIDERE' },
+        { status: 409 },
+      )
+    case 'RIGA_NON_VALIDA':
+      return NextResponse.json(
+        { ...dettagli, error: frase('RIGA_NON_VALIDA'), codice: 'RIGA_NON_VALIDA' },
+        { status: 422 },
+      )
+    case 'DOCENTE_NON_VALIDO':
+      return NextResponse.json(
+        { error: frase('DOCENTE_NON_VALIDO'), codice: 'DOCENTE_NON_VALIDO' },
+        { status: 422 },
+      )
+    case 'ALUNNO_SENZA_ISCRIZIONE':
+      return NextResponse.json(
+        { error: frase('ALUNNO_SENZA_ISCRIZIONE'), codice: 'ALUNNO_SENZA_ISCRIZIONE' },
+        { status: 409 },
+      )
     case 'MOTIVO_OBBLIGATORIO':
       // La correzione di un anno chiuso senza motivo. Il motivo è testo libero: non esce mai in un log.
       return NextResponse.json(
@@ -305,4 +365,5 @@ export const CODICI_INTERNI = [
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
   'ANNI_TICK_OGGI_NON_AMMESSO', // 20261109035209_anno_tick.sql (`anni_tick` con un giorno di oggi per una sede che non è di prova né di simulazione: solo l'editor SQL, mai una route)
+  'PASSAGGIO_OGGI_NON_AMMESSO', // 20261109182420_anno_passaggio_anteprima.sql (le funzioni del passaggio con un giorno di oggi per una sede che non è di prova né di simulazione: solo la porta TS di test, mai una route)
 ] as const

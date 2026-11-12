@@ -28,6 +28,8 @@
   "nuoveTitolo": "New enrolments",
   "nuoveRiga": "{n, plural, one {# child coming from outside or returning} other {# children coming from outside or returning}}",
   "apriLista": "Open the list",
+  "passaggioIntro": "Once the replies are in, prepare the year changeover: who moves up, who changes class, who leaves.",
+  "passaggioApri": "Open the year changeover",
   "quoteTitolo": "Fees",
   "quotaSaldate": "Paid",
   "quotaDaPagare": "To pay",

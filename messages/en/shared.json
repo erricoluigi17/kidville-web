@@ -828,7 +828,7 @@
   "erroreParametroMancante": "A required value is missing. Check and try again.",
   "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly.",
   "erroreFrequenzaNonScritta": "The change was not saved: the record has been left as it was. Try again shortly.",
-  "erroreSezioneSolaLettura": "This class belongs to a past school year: you can view it but not change it.",
+  "erroreSezioneSolaLettura": "This class is closed to changes: you can view it but not change it.",
   "annoSelettoreAria": "Change school year",
   "annoOgniSede": "Current year",
   "annoStatoInCorso": "current",
@@ -857,5 +857,16 @@
   "erroreAlunnoEliminazioneInArrivo": "This child has an enrolment for next school year: archive them first from their record, the status becomes “withdrawn”, and then you can delete them.",
   "erroreFrequenzaNonTrovata": "This enrolment no longer exists. Refresh the page.",
   "erroreFrequenzaNonDiConferma": "This child starts next year and is not attending yet: their enrolment is removed by archiving them from their record.",
-  "erroreAlunnoInArrivoSenzaClasse": "This child arrives next year and is not attending yet: a class will be assigned when they start."
+  "erroreAlunnoInArrivoSenzaClasse": "This child arrives next year and is not attending yet: a class will be assigned when they start.",
+  "errorePassaggioNonPronto": "The year changeover cannot be done yet: the new year must have enrolment open and the current year must be the active one of the location.",
+  "errorePassaggioTroppoPresto": "It is too early for the year changeover: it can be done from the day after the last open day of the current year.",
+  "errorePassaggioGiaConfermato": "The year changeover has already been confirmed.",
+  "errorePassaggioNonAnnullabile": "The changeover can no longer be cancelled: attendance or other data has already been recorded in the new year.",
+  "errorePassaggioNonModificabile": "The changeover can no longer be edited: it has already been confirmed or cancelled.",
+  "errorePassaggioNonTrovato": "This changeover no longer exists. Refresh the page.",
+  "erroreAnteprimaVecchia": "The preview is out of date: something changed after it was calculated. Calculate it again.",
+  "erroreRigheDaDecidere": "Some rows need a decision before confirming: children without a new class or with a warning still open.",
+  "erroreRigaNonValida": "This operation is not allowed for this child as things stand. Reload the page and look at their row.",
+  "erroreDocenteNonValido": "This person cannot be given the class: choose a teacher from this location.",
+  "erroreAlunnoSenzaIscrizione": "This child has no enrolment in the current year, so they cannot be put back among the enrolled from here. If they left in the year changeover, use “Late confirmation” on the “Year changeover” page. If instead the changeover was cancelled and confirmed again and “Late confirmation” cannot find their row, a new enrolment is needed."
 }

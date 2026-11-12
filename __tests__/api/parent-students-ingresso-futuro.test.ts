@@ -120,9 +120,21 @@ describe('GET /api/parent/students — ingresso_futuro', () => {
     expect((await chiedi()).body.ingresso_futuro).toBeNull()
   })
 
-  it('con due figli, se UNO non ha un ingresso futuro la frase direbbe il falso: null', async () => {
+  it('(giro 2, B3) con due figli, uno USCITO (ritirato) e uno nuovo: la famiglia legge l’ingresso del nuovo, non «nessuna iscrizione attiva»', async () => {
     h.db.legame_genitori_alunni.push({ genitore_id: GENITORE, alunno_id: FRATELLO })
     h.db.alunni.push({ ...alunnoInArrivo(FRATELLO), stato: 'ritirato' })
+    expect((await chiedi()).body.ingresso_futuro).toBe('2027-09-01')
+  })
+
+  it('(giro 2, B3) il fratello uscito per archiviazione vale come uscito', async () => {
+    h.db.legame_genitori_alunni.push({ genitore_id: GENITORE, alunno_id: FRATELLO })
+    h.db.alunni.push({ ...alunnoInArrivo(FRATELLO), stato: 'iscritto', archiviato_il: '2027-08-01T10:00:00Z' })
+    expect((await chiedi()).body.ingresso_futuro).toBe('2027-09-01')
+  })
+
+  it('con due figli, se UNO è fermo per un’altra ragione (non uscito, senza ingresso futuro) la frase direbbe il falso: null', async () => {
+    h.db.legame_genitori_alunni.push({ genitore_id: GENITORE, alunno_id: FRATELLO })
+    h.db.alunni.push({ ...alunnoInArrivo(FRATELLO), stato: 'iscritto', archiviato_il: null })
     expect((await chiedi()).body.ingresso_futuro).toBeNull()
   })
 

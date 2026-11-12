@@ -79,6 +79,20 @@ export const CODICI_ANNO = [
   'IMPORTO_NON_VALIDO',
   'SCADENZA_QUOTA_NEL_PASSATO',
   'FREQUENZA_NON_DI_CONFERMA',
+  // PR 4.8: il passaggio d'anno (migrazioni M48a-M48c). `PASSAGGIO_OGGI_NON_AMMESSO` lo solleva solo il database: sta in `CODICI_INTERNI`.
+  'PASSAGGIO_NON_PRONTO',
+  'PASSAGGIO_TROPPO_PRESTO',
+  'PASSAGGIO_GIA_CONFERMATO',
+  'PASSAGGIO_NON_ANNULLABILE',
+  'PASSAGGIO_NON_MODIFICABILE',
+  'PASSAGGIO_NON_TROVATO',
+  'ANTEPRIMA_VECCHIA',
+  'RIGHE_DA_DECIDERE',
+  'RIGA_NON_VALIDA',
+  // Giro di correzione 1: un docente che non si può mettere su una classe (B5); un bambino da riportare fra gli iscritti che nell'anno in
+  // corso non ha nessuna iscrizione (B7: la via è la «Conferma tardiva» del passaggio).
+  'DOCENTE_NON_VALIDO',
+  'ALUNNO_SENZA_ISCRIZIONE',
 ] as const
 
 export type CodiceAnno = (typeof CODICI_ANNO)[number]

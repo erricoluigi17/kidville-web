@@ -172,7 +172,7 @@ describe('oggi', () => {
     const { status, corpo } = await chiedi()
 
     expect(status).toBe(200)
-    expect(corpo).toEqual({ success: true, data: [] })
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
     // Nessuno ha un anno prima dell'attivo: il fascicolo non si apre e l'audit resta vuoto.
     expect(h.portate).toEqual([])
     expect(tabelleLette).not.toContain('student_documents')
@@ -183,7 +183,7 @@ describe('oggi', () => {
     h.figli = { righe: [], totaleLegami: 2, nascosti: {}, completo: true, errore: null }
     const { status, corpo } = await chiedi()
     expect(status).toBe(200)
-    expect(corpo).toEqual({ success: true, data: [] })
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
     expect(tabelleLette).toEqual([])
   })
 
@@ -333,7 +333,7 @@ describe('il database della CI, che non ha lo schema dell’anno', () => {
     preparaDb({ anni_sede: ANNI_DOPO }, { frequenze: { code } })
     const { status, corpo } = await chiedi()
     expect(status).toBe(200)
-    expect(corpo).toEqual({ success: true, data: [] })
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
     expect(righeDiLog('error')).toEqual([])
     expect(righeDiLog('info')).toContainEqual(expect.objectContaining({ tipo: 'frequenze-non-disponibili' }))
   })
@@ -345,7 +345,7 @@ describe('il database della CI, che non ha lo schema dell’anno', () => {
     )
     const { status, corpo } = await chiedi()
     expect(status).toBe(200)
-    expect(corpo).toEqual({ success: true, data: [] })
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
     expect(righeDiLog('error')).toEqual([])
   })
 })
@@ -403,5 +403,84 @@ describe('i casi di bordo', () => {
     const { status, corpo } = await chiedi()
     expect(status).toBe(200)
     expect((corpo.data as Array<{ alunno_id: string }>).map((d) => d.alunno_id)).toEqual([FIGLIO_1])
+  })
+})
+
+describe('lo spostamento dell’anno attivo (compito 4.8.6)', () => {
+  const FIRME = [documento(FIGLIO_1, 'delega_ritiro', '2026-10-10T08:00:00Z')]
+  const FREQUENZE = [frequenza(FIGLIO_1, 2026), frequenza(FIGLIO_1, 2027)]
+
+  it('un modulo annuale firmato nell’anno vecchio compare dopo lo spostamento dell’anno attivo, e prima no', async () => {
+    preparaDb({ anni_sede: ANNI_OGGI, frequenze: FREQUENZE, student_documents: FIRME })
+    const prima = await chiedi()
+    expect(prima.corpo).toEqual({ success: true, data: [], totale: 0 })
+
+    preparaDb({ anni_sede: ANNI_DOPO, frequenze: FREQUENZE, student_documents: FIRME })
+    const dopo = await chiedi()
+    expect(dopo.corpo).toEqual({
+      success: true,
+      totale: 1,
+      data: [
+        {
+          alunno_id: FIGLIO_1,
+          moduli: [{ slug: 'delega_ritiro', chiaveEtichetta: 'modelli.delegaRitiro', ultimaFirma: '2026-10-10' }],
+        },
+      ],
+    })
+  })
+
+  it('un sanitario non compare: vale fino a revoca, anche se è l’unica firma dell’anno vecchio', async () => {
+    preparaDb({
+      anni_sede: ANNI_DOPO,
+      frequenze: FREQUENZE,
+      student_documents: [
+        documento(FIGLIO_1, 'scheda_sanitaria', '2026-10-10T08:00:00Z'),
+        documento(FIGLIO_1, 'autorizzazione_farmaci', '2026-10-10T08:00:00Z'),
+        documento(FIGLIO_1, 'dieta_speciale', '2026-10-10T08:00:00Z'),
+      ],
+    })
+    const { status, corpo } = await chiedi()
+    expect(status).toBe(200)
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
+  })
+
+  it('oltre il tetto: i primi 20 (i più vecchi) più il totale vero', async () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `11111111-1111-4111-8111-1111111111${String(i).padStart(2, '0')}`)
+    h.figli.righe = ids.map((id) => figlio(id))
+    preparaDb({
+      anni_sede: ANNI_DOPO,
+      frequenze: ids.flatMap((id) => [frequenza(id, 2026), frequenza(id, 2027)]),
+      // il figlio i firma il giorno 30 - i: chi sta in fondo all'elenco è il più vecchio
+      student_documents: ids.map((id, i) => documento(id, 'delega_ritiro', `2026-10-${String(30 - i).padStart(2, '0')}T08:00:00Z`)),
+    })
+    const { status, corpo } = await chiedi()
+    const data = corpo.data as Array<{ alunno_id: string; moduli: unknown[] }>
+    expect(status).toBe(200)
+    expect(corpo.totale).toBe(25)
+    expect(data.flatMap((d) => d.moduli)).toHaveLength(20)
+    expect(data[0].alunno_id).toBe(ids[24])
+    expect(data.map((d) => d.alunno_id)).not.toContain(ids[0])
+    expect(righeDiLog('info')).toContainEqual(expect.objectContaining({ esito: 'da-rifirmare-calcolato', n: 25 }))
+  })
+
+  it('schema indietro: nessun modulo e nessun totale, senza errori', async () => {
+    preparaDb({ anni_sede: ANNI_DOPO }, { frequenze: { code: 'PGRST205' } })
+    const { status, corpo } = await chiedi()
+    expect(status).toBe(200)
+    expect(corpo).toEqual({ success: true, data: [], totale: 0 })
+    expect(righeDiLog('error')).toEqual([])
+  })
+
+  it('un genitore vede solo i propri figli: le firme di un bambino altrui non entrano mai', async () => {
+    h.figli.righe = [figlio(FIGLIO_1)]
+    preparaDb({
+      anni_sede: ANNI_DOPO,
+      frequenze: [...FREQUENZE, frequenza(ALTRUI, 2026), frequenza(ALTRUI, 2027)],
+      student_documents: [...FIRME, documento(ALTRUI, 'delega_ritiro', '2026-09-02T08:00:00Z')],
+    })
+    const { corpo } = await chiedi()
+    expect((corpo.data as Array<{ alunno_id: string }>).map((d) => d.alunno_id)).toEqual([FIGLIO_1])
+    expect(corpo.totale).toBe(1)
+    expect(h.portate).toEqual([FIGLIO_1])
   })
 })

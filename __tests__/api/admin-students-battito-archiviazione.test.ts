@@ -49,6 +49,14 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, { code: string; message?: string }>,
 }))
 
+// (chiusura 4.8) Il finto di questo file non ha `rpc`: la finestra del passaggio non è l'oggetto di queste prove (le sue sono in
+// `__tests__/db/anno-passaggio-chiusura.test.ts`, con le route vere). Qui si è fuori dalla finestra.
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
+  archiviatoDalPassaggio: async () => ({ ok: true, si: false }),
+  classeRicordataDelloStessoAnno: async () => ({ ok: true, stesso: true }),
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/logging/logger', async (importOriginal) => {
   const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
@@ -247,4 +255,6 @@ describe('admin/students/riattiva:POST — il battito di successo', () => {
 vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   annoAttivoDiSede: async () => null,
+  // (giro 9, O-a) Il finto non ha `rpc`: la lettura della finestra, qui, non è l'oggetto (e una lettura caduta conta come iscrizione non chiusa).
+  leggiFinestraDiSede: async () => ({ finestra: null, guasto: false }),
 }))

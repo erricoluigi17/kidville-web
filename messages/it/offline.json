@@ -28,7 +28,8 @@
       "/admin/votazioni": "Votazioni",
       "/parent/votazioni": "Votazioni",
       "/admin/students/conferme": "Conferme per l’anno prossimo",
-      "/admin/students/anno-prossimo": "Anno prossimo, a che punto siamo"
+      "/admin/students/anno-prossimo": "Anno prossimo, a che punto siamo",
+      "/admin/students/passaggio": "Passaggio d’anno"
     },
     "segmenti": {
       "alunni": "Alunni",

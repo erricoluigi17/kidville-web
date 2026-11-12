@@ -828,7 +828,7 @@
   "erroreParametroMancante": "Manca un dato richiesto. Controlla e riprova.",
   "erroreCalendarioNonDisponibile": "Le impostazioni dell’anno scolastico non sono ancora disponibili. Riprova fra poco.",
   "erroreFrequenzaNonScritta": "La modifica non è stata salvata: la scheda è rimasta com’era. Riprova fra poco.",
-  "erroreSezioneSolaLettura": "Questa classe è di un anno passato: puoi consultarla ma non modificarla.",
+  "erroreSezioneSolaLettura": "Questa classe è chiusa alle modifiche: puoi consultarla ma non modificarla.",
   "annoSelettoreAria": "Cambia anno scolastico",
   "annoOgniSede": "Anno in corso",
   "annoStatoInCorso": "in corso",
@@ -857,5 +857,16 @@
   "erroreAlunnoEliminazioneInArrivo": "Questo bambino ha un’iscrizione per l’anno prossimo: prima archivialo dalla sua scheda, diventa «ritirato», e poi puoi eliminarlo.",
   "erroreFrequenzaNonTrovata": "Questa iscrizione non esiste più. Aggiorna la pagina.",
   "erroreFrequenzaNonDiConferma": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la sua iscrizione si toglie archiviandolo dalla sua scheda.",
-  "erroreAlunnoInArrivoSenzaClasse": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia."
+  "erroreAlunnoInArrivoSenzaClasse": "Questo bambino arriva l’anno prossimo e non frequenta ancora: la classe gli verrà assegnata quando comincia.",
+  "errorePassaggioNonPronto": "Il passaggio d’anno non si può ancora fare: l’anno nuovo deve avere le iscrizioni aperte e l’anno in corso deve essere quello attivo della sede.",
+  "errorePassaggioTroppoPresto": "È troppo presto per il passaggio d’anno: si può fare dal giorno dopo l’ultimo giorno aperto dell’anno in corso.",
+  "errorePassaggioGiaConfermato": "Il passaggio d’anno è già stato confermato.",
+  "errorePassaggioNonAnnullabile": "Il passaggio non si può più annullare: nell’anno nuovo sono già state registrate delle presenze o altri dati.",
+  "errorePassaggioNonModificabile": "Il passaggio non si può più modificare: è già stato confermato o annullato.",
+  "errorePassaggioNonTrovato": "Questo passaggio non esiste più. Aggiorna la pagina.",
+  "erroreAnteprimaVecchia": "L’anteprima non è più aggiornata: dopo averla calcolata qualcosa è cambiato. Calcolala di nuovo.",
+  "erroreRigheDaDecidere": "Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.",
+  "erroreRigaNonValida": "Questa operazione non è ammessa per questo bambino così com’è ora. Ricarica la pagina e guarda la sua riga.",
+  "erroreDocenteNonValido": "Questa persona non può avere la classe: scegli un docente di questa sede.",
+  "erroreAlunnoSenzaIscrizione": "Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno». Se invece il passaggio è stato annullato e riconfermato e la «Conferma tardiva» non trova la sua riga, serve una nuova iscrizione."
 }

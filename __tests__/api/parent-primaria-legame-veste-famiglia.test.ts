@@ -84,7 +84,8 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
-    rpc: async () => ({ data: [], error: null }),
+    // `frequenze_attive` (PR 4.8.3): il bambino ha una frequenza viva nell'anno attivo, quindi la famiglia lo vede.
+    rpc: async (nome: string) => ({ data: nome === 'frequenze_attive' ? [{ alunno_id: ALU }] : [], error: null }),
     from(table: string) {
       const b: Record<string, unknown> = {}
       for (const m of ['select', 'eq', 'in', 'gte', 'lte', 'not', 'order']) b[m] = () => b

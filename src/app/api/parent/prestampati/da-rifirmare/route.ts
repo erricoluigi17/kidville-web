@@ -15,9 +15,11 @@ import { logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import {
   confineRifirma,
+  limitaDaRifirmare,
   moduliDaRifirmare,
+  soloFirmeRinnovabili,
   type FirmaArchiviata,
-  type ModuloDaRifirmare,
+  type GruppoDaRifirmare,
 } from '@/lib/prestampati/da-rifirmare'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseQuery } from '@/lib/validation/http'
@@ -35,8 +37,8 @@ const guasto = () =>
  *
  * Il calcolo e le sue ragioni stanno in `@/lib/prestampati/da-rifirmare`; qui stanno le letture. Il fascicolo si
  * apre solo per chi ha frequentato un anno prima dell'attivo: oggi nessuno, quindi oggi questa route non lo
- * legge affatto. Non ha ancora una schermata: finché non c'è un secondo anno attivo non avrebbe niente da
- * mostrare, e l'elenco della segreteria è della PR 4.5.
+ * legge affatto. La schermata è la fascia in cima a «Modulistica» (`FasciaModuliDaRifirmare`), che compare solo
+ * se l'elenco non è vuoto; l'elenco della segreteria è della PR 4.5.
  *
  * Schema dell'anno assente (il DB della CI): lista vuota con un log `info`. Ogni altro errore è un 500, perché
  * «non l'ho potuto leggere» non diventa «non c'è niente da rifirmare».
@@ -52,11 +54,13 @@ export const GET = withRoute('parent/prestampati/da-rifirmare:GET', async (reque
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
 
-  const risposta = (data: { alunno_id: string; moduli: ModuloDaRifirmare[] }[]) => {
+  // `data` è ordinata (il più vecchio scaduto per primo) e tagliata a `TETTO_DA_RIFIRMARE` moduli; `totale` è il
+  // conto vero di prima del taglio, per la riga «e altri N» della schermata. Con l'elenco vuoto anche `totale` è 0.
+  const risposta = (gruppi: GruppoDaRifirmare[]) => {
+    const { gruppi: data, totale } = limitaDaRifirmare(gruppi)
     // Con i soli errori, «nessun log» non distinguerebbe «non c'è niente da rifirmare» da «non è mai partito».
-    const n = data.reduce((somma, d) => somma + d.moduli.length, 0)
-    logEvento('modulistica', 'info', { operazione: OPERAZIONE, esito: 'da-rifirmare-calcolato', utente, n })
-    return NextResponse.json({ success: true, data })
+    logEvento('modulistica', 'info', { operazione: OPERAZIONE, esito: 'da-rifirmare-calcolato', utente, n: totale })
+    return NextResponse.json({ success: true, data, totale })
   }
 
   const supabase = await createAdminClient()
@@ -151,8 +155,9 @@ export const GET = withRoute('parent/prestampati/da-rifirmare:GET', async (reque
     })
   }
 
+  // Il filtro sul tipo: dopo la lettura (vedi sopra il perché) e prima di raggruppare per figlio.
   const firmeDi = new Map<string, FirmaArchiviata[]>()
-  for (const d of (documenti ?? []) as unknown as (FirmaArchiviata & { student_id: string })[]) {
+  for (const d of soloFirmeRinnovabili((documenti ?? []) as unknown as (FirmaArchiviata & { student_id: string })[])) {
     firmeDi.set(d.student_id, [...(firmeDi.get(d.student_id) ?? []), d])
   }
 

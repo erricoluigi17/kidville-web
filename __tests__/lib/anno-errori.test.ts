@@ -63,6 +63,18 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     ['IMPORTO_NON_VALIDO', 422, 'L’importo non è valido: scrivi una cifra maggiore di zero, con al massimo due decimali.'],
     ['FREQUENZA_NON_DI_CONFERMA', 409, 'Questo bambino arriva l’anno prossimo e non frequenta ancora: la sua iscrizione si toglie archiviandolo dalla sua scheda.'],
     ['SCADENZA_QUOTA_NEL_PASSATO', 422, 'La scadenza non può essere già passata: scegli una data da oggi in poi, oppure lasciala vuota.'],
+    // PR 4.8, compito 4.8.0: il passaggio d'anno (M48a e M48b).
+    ['PASSAGGIO_NON_PRONTO', 409, 'Il passaggio d’anno non si può ancora fare: l’anno nuovo deve avere le iscrizioni aperte e l’anno in corso deve essere quello attivo della sede.'],
+    ['PASSAGGIO_TROPPO_PRESTO', 409, 'È troppo presto per il passaggio d’anno: si può fare dal giorno dopo l’ultimo giorno aperto dell’anno in corso.'],
+    ['PASSAGGIO_GIA_CONFERMATO', 409, 'Il passaggio d’anno è già stato confermato.'],
+    ['PASSAGGIO_NON_ANNULLABILE', 409, 'Il passaggio non si può più annullare: nell’anno nuovo sono già state registrate delle presenze o altri dati.'],
+    ['PASSAGGIO_NON_MODIFICABILE', 409, 'Il passaggio non si può più modificare: è già stato confermato o annullato.'],
+    ['PASSAGGIO_NON_TROVATO', 404, 'Questo passaggio non esiste più. Aggiorna la pagina.'],
+    ['ANTEPRIMA_VECCHIA', 409, 'L’anteprima non è più aggiornata: dopo averla calcolata qualcosa è cambiato. Calcolala di nuovo.'],
+    ['RIGHE_DA_DECIDERE', 409, 'Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.'],
+    ['RIGA_NON_VALIDA', 422, 'Questa operazione non è ammessa per questo bambino così com’è ora. Ricarica la pagina e guarda la sua riga.'],
+    ['DOCENTE_NON_VALIDO', 422, 'Questa persona non può avere la classe: scegli un docente di questa sede.'],
+    ['ALUNNO_SENZA_ISCRIZIONE', 409, 'Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno». Se invece il passaggio è stato annullato e riconfermato e la «Conferma tardiva» non trova la sua riga, serve una nuova iscrizione.'],
   ]
 
   it('i dettagli della route finiscono nel corpo accanto al codice, senza toccare stato e frase', async () => {

@@ -95,6 +95,53 @@ export function confineRifirma(
   return anniPrima.reduce((a, b) => (b.annoInizio > a.annoInizio ? b : a)).ultimoGiornoAperto
 }
 
+const SLUG_CHE_SI_RINNOVANO: ReadonlySet<string> = new Set(MODULI_CHE_SI_RINNOVANO.map((v) => v.slug))
+
+/**
+ * Il filtro sul TIPO: delle righe del fascicolo restano solo quelle di un modulo che si rinnova.
+ *
+ * Sta qui e non nella query perché sul DB della CI uno slug fuori dall'enumerazione risponde `22P02`
+ * (vedi la route). Si applica subito dopo la lettura, prima di raggruppare per figlio: i sanitari (che
+ * valgono fino a revoca), gli atti puntuali e tutto ciò che non è nel catalogo non arrivano al calcolo.
+ */
+export function soloFirmeRinnovabili<T extends FirmaArchiviata>(firme: readonly T[]): T[] {
+  return firme.filter((f) => SLUG_CHE_SI_RINNOVANO.has(f.document_type?.trim() ?? ''))
+}
+
+/** Il tetto di moduli consegnati in una risposta: oltre, la schermata dice «e altri N». */
+export const TETTO_DA_RIFIRMARE = 20
+
+export interface GruppoDaRifirmare {
+  alunno_id: string
+  moduli: ModuloDaRifirmare[]
+}
+
+/**
+ * ORDINE e TETTO. Il più vecchio scaduto va per primo (a pari data: figlio, poi modulo, perché due letture
+ * di fila diano la stessa risposta); si consegnano i primi `tetto` moduli e `totale` è il conto vero di
+ * prima del taglio. I gruppi seguono il loro primo modulo; un gruppo svuotato dal taglio non esiste.
+ */
+export function limitaDaRifirmare(
+  gruppi: readonly GruppoDaRifirmare[],
+  tetto: number = TETTO_DA_RIFIRMARE,
+): { gruppi: GruppoDaRifirmare[]; totale: number } {
+  const piatti = gruppi.flatMap((g) => g.moduli.map((modulo) => ({ alunno_id: g.alunno_id, modulo })))
+  piatti.sort(
+    (a, b) =>
+      a.modulo.ultimaFirma.localeCompare(b.modulo.ultimaFirma) ||
+      a.alunno_id.localeCompare(b.alunno_id) ||
+      a.modulo.slug.localeCompare(b.modulo.slug),
+  )
+  const consegnati = new Map<string, ModuloDaRifirmare[]>()
+  for (const { alunno_id, modulo } of piatti.slice(0, Math.max(0, tetto))) {
+    consegnati.set(alunno_id, [...(consegnati.get(alunno_id) ?? []), modulo])
+  }
+  return {
+    gruppi: [...consegnati].map(([alunno_id, moduli]) => ({ alunno_id, moduli })),
+    totale: piatti.length,
+  }
+}
+
 /** Il giorno di Roma di una firma, o `null` se la data non si legge. */
 function giornoDellaFirma(creataIl: string | null): string | null {
   if (!creataIl) return null
@@ -121,5 +168,6 @@ export function moduliDaRifirmare(firme: readonly FirmaArchiviata[], confine: st
       esito.push({ slug: voce.slug, chiaveEtichetta: chiaveEtichetta(voce.slug), ultimaFirma: ultima })
     }
   }
-  return esito
+  // Dal più vecchio al più recente: chi è scaduto da più tempo viene chiesto per primo.
+  return esito.sort((a, b) => a.ultimaFirma.localeCompare(b.ultimaFirma) || a.slug.localeCompare(b.slug))
 }

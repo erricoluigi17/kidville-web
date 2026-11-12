@@ -523,14 +523,74 @@ describe('(correzioni dopo la revisione finale, F4) un evento differito GIÀ in 
     vi.setSystemTime(new Date('2027-08-01T10:00:00Z'))
     await db.exec('BEGIN')
     let esito = 'nessun-errore'
+    let altraSede = ''
+    let righeErrore: unknown[] = []
     try {
       await db.query(`UPDATE public.anni_sede SET domande_aperte = true WHERE id = $1`, [vecchio])
+      await db.exec('SAVEPOINT prima_del_tick')
       esito = await messaggio(tick(db, null, null))
+      // Se il tick cade la transazione è in errore: si torna al punto prima (quello che il tick aveva scritto sparisce, ed è giusto).
+      if (esito !== 'nessun-errore') await db.exec('ROLLBACK TO SAVEPOINT prima_del_tick')
+      // (giro 2, N3) Si legge DENTRO la transazione, prima del ROLLBACK: dopo non ci sarebbe più niente da leggere, e le due
+      // asserzioni sotto passerebbero anche col codice di prima del giro 1.
+      altraSede = (await stati(db, E(52)))['2026']
+      righeErrore = await righeLog(db, 'anni-tick-stati-errore:')
     } finally {
       await db.exec('ROLLBACK')
     }
-    expect(esito, 'il tick dice subito che c’è una violazione già in coda').toContain('ANNO_CHIUSO_CON_DOMANDE')
-    expect((await stati(db, E(52)))['2026'], 'l’altra sede non è stata toccata').toBe('corrente')
-    expect(await righeLog(db, 'anni-tick-stati-errore:'), 'nessun errore scritto sulle sedi').toEqual([])
+    expect.soft(esito, 'il tick dice subito che c’è una violazione già in coda').toContain('ANNO_CHIUSO_CON_DOMANDE')
+    expect.soft(altraSede, 'l’altra sede non è stata toccata').toBe('corrente')
+    expect.soft(righeErrore, 'nessun errore scritto sulle sedi').toEqual([])
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+describe('(correzioni, giro 2, N2) un evento differito scritto dal PASSO 1 di una sede resta di quella sede', () => {
+  let db: PGlite
+  beforeAll(async () => { db = await creaBanco([E(61), E(62)]) }, 180_000)
+  afterAll(async () => { await db?.close() })
+
+  it('la sede col difetto registra il suo errore, l’altra gira, il giro non cade alla COMMIT', async () => {
+    await riporta(db)
+    // Un trigger di prova: appena il passo 1 della sede 61 crea l'anno successivo, accorcia la `fine` dell'anno prima. Il vincolo
+    // differito `anni_sede_continuita` lo scoprirebbe solo dopo (nel passo 2 della stessa sede, poi in quello di ogni sede che segue).
+    await db.exec(`
+      CREATE FUNCTION public.buco_passo1_di_prova() RETURNS trigger LANGUAGE plpgsql AS $f$
+      BEGIN
+        IF NEW.scuola_id = '${E(61)}'::uuid THEN
+          UPDATE public.anni_sede SET fine = fine - 3
+           WHERE scuola_id = NEW.scuola_id AND id <> NEW.id
+             AND inizio = (SELECT max(x.inizio) FROM public.anni_sede x WHERE x.scuola_id = NEW.scuola_id AND x.id <> NEW.id);
+        END IF;
+        RETURN NULL;
+      END $f$;
+      CREATE TRIGGER buco_passo1_di_prova AFTER INSERT ON public.anni_sede FOR EACH ROW EXECUTE FUNCTION public.buco_passo1_di_prova();
+    `)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2027-09-02T10:00:00Z'))
+    await db.exec('BEGIN')
+    let tickRiuscito = false
+    let errori: string[] = []
+    let allaCommit = 'nessun-errore'
+    let annoDellAltra = ''
+    try {
+      try {
+        await tick(db, null, null)
+        tickRiuscito = true
+      } catch { /* l'asserzione sotto dice che il tick non doveva cadere */ }
+      // Si legge DENTRO la transazione, prima del ROLLBACK: dopo non ci sarebbe più niente da leggere.
+      errori = (await db.query<{ fingerprint: string }>(
+        `SELECT fingerprint FROM public.app_log WHERE fingerprint LIKE 'anni-tick-%errore%' ORDER BY fingerprint`)).rows.map((x) => x.fingerprint)
+      annoDellAltra = String((await stati(db, E(62)))['2026'] ?? '')
+      allaCommit = await messaggio(db.exec('SET CONSTRAINTS ALL IMMEDIATE'))
+    } finally {
+      await db.exec('ROLLBACK')
+      await db.exec(`DROP TRIGGER buco_passo1_di_prova ON public.anni_sede; DROP FUNCTION public.buco_passo1_di_prova()`)
+    }
+    expect(tickRiuscito, 'il tick non cade').toBe(true)
+    expect(errori.every((f) => f.endsWith(E(61))), 'gli errori registrati sono tutti della sede 61').toBe(true)
+    expect(errori.length, 'la sede col difetto registra il suo errore').toBeGreaterThan(0)
+    expect(annoDellAltra, 'l’altra sede ha fatto il suo lavoro: il 2026/27 è chiuso dal 01/09').toBe('chiuso')
+    expect(allaCommit, 'alla COMMIT non cade più niente').toBe('nessun-errore')
   })
 })

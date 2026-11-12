@@ -273,6 +273,12 @@ BEGIN
           RAISE WARNING 'anni_tick: riga dell''anno creato non scritta [%]', SQLSTATE;
         END;
 
+        -- (correzioni, giro 2, N2) Gli eventi differiti scritti da questo passo si eseguono QUI, dentro il blocco della sede: se uno
+        -- fallisce, il blocco lo annulla e lo scarta con sé, e l'errore resta di questa sede. Altrimenti passerebbe al passo 2, poi
+        -- ai passi 2 delle sedi che seguono (ognuna incolpata), e il giro cadrebbe alla COMMIT.
+        SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita IMMEDIATE;
+        SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita DEFERRED;
+
         -- i conteggi si alzano SOLO a lavoro finito: se la copia fallisce, il blocco intero è annullato
         v_creati := v_creati + v_n;
         v_copie := v_copie + 1;
@@ -298,8 +304,8 @@ BEGIN
       -- (giro 1, S1; giro 2, S1) I vincoli DIFFERITI `anni_sede_domande_solo_aperto` e `anni_sede_continuita`: se la sede ha un
       -- buco, lo scoprirebbero alla COMMIT, fuori da questo blocco, e butterebbero giù il giro di TUTTE le sedi. Qui li si
       -- verifica subito: l'errore resta di questa sede (il blocco annulla i suoi cambi di stato) e le altre proseguono.
-      -- Poi tornano differiti, com'erano. La coda è vuota di eventi altrui (svuotata prima del ciclo, F4): qui ci sono solo quelli
-      -- scritti da questa sede (passo 1 e passo 2), e il loro errore è davvero suo.
+      -- Poi tornano differiti, com'erano. La coda è vuota di eventi altrui (svuotata prima del ciclo, F4) e di quelli del passo 1
+      -- (eseguiti in fondo al suo blocco, N2): qui ci sono solo quelli scritti da questo passo 2, e il loro errore è davvero suo.
       SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita IMMEDIATE;
       SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita DEFERRED;
       v_stati := v_stati + coalesce((v_passo2 ->> 'in_chiusura')::integer, 0) + coalesce((v_passo2 ->> 'chiusi')::integer, 0);

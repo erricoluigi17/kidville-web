@@ -777,7 +777,7 @@
   "erroreCrmAiGiaPrenotato": "Questa famiglia ha già una visita in programma.",
   "erroreCrmAiFuoriDisponibilita": "Questo orario non è fra quelli disponibili.",
   "erroreCrmAiChiaveRiusata": "Questa chiave di richiesta è già stata usata per una richiesta diversa.",
-  "erroreCrmAiEtaNonCoperta": "In questa sede non c’è una classe per l’età del bambino.",
+  "erroreCrmAiEtaNonCoperta": "Per la fascia d’età del bambino questa sede non offre al momento un servizio: la segreteria può darti indicazioni.",
   "erroreCrmAiIntegrazioneEsistente": "Questa sede ha già una chiave attiva. Revocala prima di crearne un’altra.",
   "erroreCrmAiNessunResponsabile": "In questa sede non c’è nessuno a cui affidare il richiamo.",
   "erroreCrmQuotaGiornoFuturo": "Il giorno del pagamento non può essere nel futuro.",

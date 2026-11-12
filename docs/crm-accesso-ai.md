@@ -33,7 +33,7 @@ Gli errori con codice hanno in genere la forma `{error, codice}`. Per le decisio
 
 Query obbligatoria `sede`, `dal` e `al` nel formato `AAAA-MM-GG`, `nascita` nel formato `AAAA-MM`. Le date sono civili, nel fuso di Roma, con estremi inclusi. `al` deve essere uguale o successivo a `dal`, al massimo 31 giorni dopo.
 
-**200** — `{sede, gradi, etaCoperta, troncato, slot: [{inizio, fine}]}`. `gradi` può contenere `nido`, `infanzia` e `primaria`. Per offrire la visita, il CRM verifica che la sede abbia una sezione compatibile nel suo anno scolastico attivo. Il risultato non assegna una classe e non conferma l’ammissione. Se la sede non copre l’età, `etaCoperta` è `false` e `slot` è vuoto. Con copertura l’elenco può comunque essere vuoto. Gli orari hanno almeno due ore di anticipo, sono ordinati per inizio e fine e arrivano in ISO. Al massimo 60 coppie. Se `troncato` è `true`, restringi l’intervallo per vedere gli altri orari.
+**200** — `{sede, gradi, etaCoperta, troncato, slot: [{inizio, fine}]}`. `gradi` può contenere `nido`, `infanzia` e `primaria` e indica la fascia d’età: l’assistente può dirla alla famiglia, ma non propone né assegna una classe, che sceglie la segreteria durante la visita. Per offrire la visita, il CRM verifica che la sede offra il servizio per quella fascia; oggi lo ricava dalle sezioni dell’anno scolastico attivo (vedi «Prima di aprire alle sedi vere»). Il risultato non conferma l’ammissione. Se la sede non offre il servizio, `etaCoperta` è `false` e `slot` è vuoto. Con copertura l’elenco può comunque essere vuoto. Gli orari hanno almeno due ore di anticipo, sono ordinati per inizio e fine e arrivano in ISO. Al massimo 60 coppie. Se `troncato` è `true`, restringi l’intervallo per vedere gli altri orari.
 
 **Errori** — quelli comuni, incluso `400` per date, intervallo o parametri non ammessi. Il messaggio non riporta il nome dei parametri sconosciuti. Se occorre verificare la copertura e manca l’anno attivo della sede, la risposta è `500 CRM_OPERAZIONE_NON_RIUSCITA`. Se mancano la funzione o le tabelle di calendario necessarie, la risposta è `503 CRM_NON_INSTALLATO`.
 
@@ -60,7 +60,7 @@ Invia l’header `Idempotency-Key` con un identificativo nuovo per ogni tentativ
 | 409 | `SLOT_OCCUPATO` | Chiedi orari aggiornati con `/slot`. Per la nuova coppia scelta usa una chiave di idempotenza nuova. |
 | 409 | `CRM_OPERAZIONE_NON_RIUSCITA` | Il tentativo risulta ancora in corso. Attendi e ripeti con lo stesso corpo e la stessa chiave. |
 | 422 | `FUORI_DISPONIBILITA` | La coppia non è più prenotabile. Ricarica gli orari. |
-| 422 | `ETA_NON_COPERTA` | Nessuna delle età indicate è coperta dalla sede nell’anno scolastico attivo. |
+| 422 | `ETA_NON_COPERTA` | La sede non offre il servizio per nessuna delle fasce d’età indicate. Non è una scelta di classe. |
 | 422 | `CHIAVE_RIUSATA` | La chiave è già associata a un corpo diverso. Usa una nuova chiave se è davvero un altro tentativo. |
 | 422 | `CONTATTO_OBBLIGATORIO` | Il telefono non è utilizzabile. |
 
@@ -165,3 +165,12 @@ curl -X POST "$BASE_URL/api/crm/ai/richiami" \
 Le risposte delle sette API escludono nomi di famiglie, bambini e personale, email, note, date di nascita complete e dettagli sanitari. Il mese di nascita nelle risposte E2 ed E3 serve per la fascia d’età. Il solo E3 restituisce il primo recapito normalizzato per il passaggio dei nuovi contatti della segreteria. L’accesso alle note delle visite (E5) resta fuori da questa versione.
 
 Il middleware riconosce l’indirizzo delle API AI e le passa al controllo della chiave senza usare una sessione web o rinnovare i cookie. Il controllo dell’interruttore, della chiave e del limite viene prima della lettura del corpo. Il registro tecnico `app_log` usa operazione, esito, stato, identificativi tecnici e tempo della richiesta. I rifiuti anonimi del controllo sono registrati al massimo una volta al minuto per istanza. A interruttore spento il rifiuto non scrive nel database. Il wrapper delle API, il limitatore e il trasporto verso il database evitano di registrare URL con query, corpi, header inviati dal client, token, impronte o errori grezzi. Anche un guasto di rete produce una descrizione tecnica e un codice, quando disponibile. Per ritrovare la richiesta si usa l’`x-request-id` generato dal server.
+
+## Prima di aprire alle sedi vere
+
+Punti noti, rimandati a dopo il collaudo sulla sola Demo.
+
+- **Servizio offerto dalla sede.** La scelta del titolare è che la visita si rifiuti per età solo se la sede non offre proprio quel servizio (nido, infanzia, primaria). Oggi il CRM non ha un dato di sede che lo dica: `posti_autorizzati` e `sections` dipendono dall'anno. `/slot` e `/prenota` leggono quindi le sezioni dell'anno attivo, e una sede che offre il servizio ma non ha ancora aperto le sezioni di quest'anno riceve `etaCoperta: false` o `422 ETA_NON_COPERTA`. Serve un elenco dei servizi per sede (per esempio nelle impostazioni della sede, con le tre sedi vere compilate) oppure la decisione di titolare di accettare le sezioni di qualunque anno come prova che il servizio c'è.
+- **Schede esistenti.** «Registra contatto» (E1) e la prenotazione scrivono su schede già esistenti quando riconoscono la famiglia da telefono o email: salvano un nuovo recapito nel primo campo libero. Da riesaminare con la segreteria prima di aprire alle sedi vere.
+- **Ambiguità.** Due schede con lo stesso numero, o un terzo numero senza campo libero, tornano come errore generico `500 CRM_OPERAZIONE_NON_RIUSCITA`: l'assistente non può distinguere la causa e la verifica spetta alla segreteria.
+- **Blocco in lettura delle disponibilità.** Durante una prenotazione le funzioni SQL bloccano in lettura le disponibilità di tutte le sedi; con più sedi attive e molte richieste insieme può rallentare le prenotazioni delle altre. Da misurare prima di aprire alle tre sedi.

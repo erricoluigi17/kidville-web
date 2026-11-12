@@ -167,9 +167,12 @@ AS $$
 DECLARE
   v_id uuid;
   v_schede uuid[];
+  v_campo_telefono text;
+  v_telefono_noto boolean;
 BEGIN
-  IF p_scuola_id IS NULL OR p_telefono_norm IS NULL OR p_telefono_norm !~ '^[0-9]{9,10}$' OR p_origine IS NULL THEN
-    RAISE EXCEPTION 'sede, telefono normalizzato e origine sono obbligatori' USING ERRCODE = '22023';
+  IF p_scuola_id IS NULL OR nullif(btrim(p_telefono), '') IS NULL OR p_telefono_norm IS NULL
+     OR p_telefono_norm !~ '^[0-9]{9,10}$' OR p_origine IS NULL THEN
+    RAISE EXCEPTION 'sede, telefono originale e normalizzato, e origine sono obbligatori' USING ERRCODE = '22023';
   END IF;
 
   -- Prima il numero, poi l'email: sempre in quest'ordine, così due richieste non si aspettano a vicenda.
@@ -196,7 +199,31 @@ BEGIN
     RAISE EXCEPTION 'AMBIGUITA_CONTATTO';
   END IF;
   IF v_schede IS NOT NULL THEN
-    RETURN jsonb_build_object('scheda_id', v_schede[1], 'creata', false);
+    v_id := v_schede[1];
+    -- La riga è già bloccata. Se il telefono non è noto, la scheda ha
+    -- corrisposto per email: il nuovo recapito entra solo in un campo libero.
+    SELECT CASE
+             WHEN nullif(s.telefono1, '') IS NULL THEN 'telefono1'
+             WHEN nullif(s.telefono2, '') IS NULL THEN 'telefono2'
+           END, s.telefoni_norm && ARRAY[p_telefono_norm]
+      INTO v_campo_telefono, v_telefono_noto
+      FROM public.crm_schede s
+     WHERE s.id = v_id AND s.scuola_id = p_scuola_id;
+    IF NOT v_telefono_noto THEN
+      IF v_campo_telefono IS NULL THEN
+        RAISE EXCEPTION 'RECAPITI_TELEFONICI_COMPLETI';
+      END IF;
+      UPDATE public.crm_schede
+         SET telefono1 = CASE WHEN v_campo_telefono = 'telefono1' THEN p_telefono ELSE telefono1 END,
+             telefono2 = CASE WHEN v_campo_telefono = 'telefono2' THEN p_telefono ELSE telefono2 END,
+             telefoni_norm = array_append(telefoni_norm, p_telefono_norm),
+             aggiornata_il = now()
+       WHERE id = v_id AND scuola_id = p_scuola_id;
+      -- Nello storico il nome del campo, come per una modifica di segreteria.
+      INSERT INTO public.crm_eventi (scheda_id, scuola_id, tipo, autore_via, dati, creato_il)
+      VALUES (v_id, p_scuola_id, 'modificata', 'ai', jsonb_build_object('campi', v_campo_telefono), clock_timestamp());
+    END IF;
+    RETURN jsonb_build_object('scheda_id', v_id, 'creata', false);
   END IF;
 
   INSERT INTO public.crm_schede
@@ -217,7 +244,7 @@ REVOKE ALL ON FUNCTION public.crm_ai_scheda(uuid, text, text, text, text, text, 
 GRANT EXECUTE ON FUNCTION public.crm_ai_scheda(uuid, text, text, text, text, text, text, integer) TO service_role;
 
 COMMENT ON FUNCTION public.crm_ai_scheda(uuid, text, text, text, text, text, text, integer) IS
-  'CRM, accesso AI: trova nella sede la scheda con quel telefono (o quell''email) normalizzato, oppure la crea con creato_via = ai. Prende un blocco consultivo sulla coppia sede+numero: due richieste insieme non creano due schede. Solo service_role.';
+  'CRM, accesso AI: trova una scheda attiva della sede tramite telefono o email normalizzati, oppure la crea con creato_via = ai. Sotto blocchi per sede+telefono, sede+email e riga, aggiunge un telefono nuovo alla scheda riconosciuta per email solo se un campo telefono è libero; salva anche il normalizzato e registra il solo nome del campo nello storico. Schede ambigue o un nuovo numero con entrambi i campi occupati richiedono verifica umana, senza scritture. Solo service_role.';
 
 -- ── 4) crm_ai_bambini: aggiunge alla scheda i bambini che non ci sono ────────
 CREATE OR REPLACE FUNCTION public.crm_ai_bambini(

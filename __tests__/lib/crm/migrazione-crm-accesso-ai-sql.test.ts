@@ -2,9 +2,12 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PGlite } from '@electric-sql/pglite'
+import { schedaPerTelefono } from '@/lib/crm/ai/contatti'
+import { normalizzaTelefonoAi } from '@/lib/crm/ai/telefono'
 import { candidatiPer } from '@/lib/crm/ai/disponibilita'
 import { lunediDi } from '@/lib/crm/settimane'
 import { calcolaSlotLiberi } from '@/lib/crm/slot'
+import { creaFintoSupabase, type Riga } from '../../fixtures/finto-supabase'
 import { creaDbAnnoPr2 } from '../../helpers/schema-anno-pglite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -34,6 +37,9 @@ const TEL = '333 000 0001'
 const TEL_NORM = '3330000001'
 const TEL2 = '333 000 0002'
 const TEL2_NORM = '3330000002'
+const TEL3 = '333 000 0003'
+const TEL3_NORM = '3330000003'
+const EMAIL = { email: 'Prova@Example.com', emailNorm: 'prova@example.com' }
 const NASCITA = '2023-03-15'
 // Fra trenta giorni, alle 08:30 UTC: il test non scade col calendario.
 const FRA_30 = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000 + 30 * 86_400_000 + 8.5 * 3_600_000).toISOString()
@@ -74,9 +80,18 @@ const richiamo = async (o: {
   id?: unknown; tel?: string; genitore?: string; origine?: string | null; motivo?: string; integrazione?: string; sede?: string
 } = {}) =>
   (await db.query<{ r: Esito }>('SELECT public.crm_ai_richiamo($1,$2,$3,$4,$5,$6,$7,$8) AS r', [
-    o.integrazione ?? INT_A, o.sede ?? SEDE_A, o.id ?? null, o.tel ?? null, o.tel ? TEL_NORM : null,
+    o.integrazione ?? INT_A, o.sede ?? SEDE_A, o.id ?? null, o.tel ?? null, o.tel ? normalizzaTelefonoAi(o.tel) : null,
     o.genitore ?? null, o.origine === undefined ? (o.tel ? 'whatsapp' : null) : o.origine, o.motivo ?? 'salute',
   ])).rows[0].r
+
+// La query E2 effettiva applica i filtri PostgREST alle righe scritte dal SQL reale.
+async function statoPerNumero(telefonoNorm: string, sede = SEDE_A) {
+  const { rows } = await db.query<Riga>('SELECT id, scuola_id, anonimizzata_il, telefoni_norm, creata_il, creato_via FROM public.crm_schede')
+  return schedaPerTelefono(creaFintoSupabase({ crm_schede: rows }), sede, telefonoNorm, 'crm/ai/contatti/stato')
+}
+
+const schedeCorrenti = async () =>
+  (await db.query<Riga>('SELECT * FROM public.crm_schede ORDER BY id')).rows
 
 const ruoliCrm = `
   CREATE TABLE public.cassa_movimenti (id uuid PRIMARY KEY);
@@ -253,10 +268,97 @@ describe('crm_ai_registra_contatto', () => {
     expect(seconda.creata).toBe(true)
     expect(seconda.scheda_id).not.toBe(prima.scheda_id)
   })
-  it('riconosce la famiglia anche dalla sola email', async () => {
-    const prima = await contatto({ email: 'Prova@Example.com', emailNorm: 'prova@example.com' })
-    const seconda = await contatto({ tel: TEL2, telNorm: TEL2_NORM, email: 'prova@example.com', emailNorm: 'prova@example.com' })
-    expect(seconda).toEqual({ scheda_id: prima.scheda_id, creata: false })
+})
+
+describe('continuità del recapito fra E1, E2, E4 e prenota', () => {
+  it('A+email, B+email, E2(B), E1(B), E4(B): una sola scheda, recapiti e storico senza doppioni', async () => {
+    const { scheda_id: id } = await contatto({ ...EMAIL, genitore: 'Genitore Prova' })
+    await db.query("UPDATE public.crm_schede SET aggiornata_il = '2000-01-01T00:00:00Z' WHERE id = $1", [id])
+    const [prima] = await schedeCorrenti()
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: null })
+    const nuovo = { ...EMAIL, tel: TEL2, telNorm: TEL2_NORM, genitore: 'Altro Nome', origine: 'whatsapp' }
+    const esistente = { scheda_id: id, creata: false }
+    expect(await contatto(nuovo)).toEqual(esistente)
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: { id, creato_via: 'ai' } })
+    expect(await statoPerNumero(TEL_NORM)).toEqual({ scheda: { id, creato_via: 'ai' } })
+    const [dopo] = await schedeCorrenti()
+    expect(dopo).toEqual({ ...prima, telefono2: TEL2, telefoni_norm: [TEL_NORM, TEL2_NORM], aggiornata_il: expect.any(Date) })
+    expect(dopo.aggiornata_il).not.toEqual(prima.aggiornata_il)
+
+    expect(await contatto({ ...nuovo, tel: '+39 333-0000002' })).toEqual(esistente)
+    expect(await contatto({ tel: TEL2, telNorm: TEL2_NORM })).toEqual(esistente)
+    expect(await schedeCorrenti()).toEqual([dopo])
+    const aggiornamenti = await db.query(
+      "SELECT scheda_id, autore, autore_via, dati, testo FROM public.crm_eventi WHERE tipo = 'modificata'",
+    )
+    expect(aggiornamenti.rows).toEqual([{ scheda_id: id, autore: null, autore_via: 'ai', dati: { campi: 'telefono2' }, testo: null }])
+    const azione = await richiamo({ tel: TEL2 })
+    expect(azione).toMatchObject({ esito: 'ok', scheda_id: id, creata: true })
+    expect(await richiamo({ tel: TEL2 })).toEqual({ ...azione, creata: false })
+    expect(await conta('crm_schede')).toBe(1)
+    expect(await conta('crm_azioni')).toBe(1)
+  })
+
+  it('compila il primo campo libero senza cambiare il secondo recapito e i dati della segreteria', async () => {
+    const { rows: [prima] } = await db.query<Riga>(`
+      INSERT INTO public.crm_schede (scuola_id, telefono1, telefono2, telefoni_norm,
+        email1, email2, email_norm, genitore_nome, origine, routine, paura, desiderio, creato_da)
+      VALUES ($1, '', $2, ARRAY[$3::text], $4, 'segreteria@example.com', ARRAY[$5::text, 'segreteria@example.com'],
+        'Nome di prova', 'telefonata', 'Nota di prova', 'Nota di prova', 'Nota di prova', $6)
+      RETURNING *
+    `, [SEDE_A, TEL, TEL_NORM, EMAIL.email, EMAIL.emailNorm, P2])
+    expect(await contatto({ ...EMAIL, email: 'prova@example.com', tel: TEL2, telNorm: TEL2_NORM, genitore: 'Altro Nome' }))
+      .toEqual({ scheda_id: prima.id, creata: false })
+    expect(await schedeCorrenti()).toEqual([
+      { ...prima, telefono1: TEL2, telefoni_norm: [TEL_NORM, TEL2_NORM], aggiornata_il: expect.any(Date) },
+    ])
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: { id: prima.id, creato_via: 'segreteria' } })
+  })
+
+  it('prenota acquisisce B sulla stessa scheda e il replay non riscrive recapiti o storico', async () => {
+    const { scheda_id: id } = await contatto({ ...EMAIL, genitore: 'Genitore Prova' })
+    const dati = { ...EMAIL, tel: TEL2, telNorm: TEL2_NORM, bambini: [] }
+    const prima = await prenota(dati)
+    expect(prima).toMatchObject({ esito: 'creata', scheda_id: id, scheda_creata: false })
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: { id, creato_via: 'ai' } })
+    const righe = await schedeCorrenti()
+    expect(righe).toMatchObject([{ id, telefono1: TEL, telefono2: TEL2, telefoni_norm: [TEL_NORM, TEL2_NORM] }])
+    expect(await prenota(dati)).toEqual({ ...prima, ripetuta: true })
+    expect(await schedeCorrenti()).toEqual(righe)
+    expect(await conta('crm_eventi', "tipo = 'modificata'")).toBe(1)
+    expect(await conta('crm_appuntamenti')).toBe(1)
+  })
+
+  it('con entrambi i telefoni occupati E1 e prenota rifiutano il terzo recapito senza scritture', async () => {
+    await contatto(EMAIL)
+    await db.query('UPDATE public.crm_schede SET telefono2 = $1, telefoni_norm = ARRAY[$2::text, $3::text]', [TEL2, TEL_NORM, TEL2_NORM])
+    const prima = await schedeCorrenti()
+    const recapito = { ...EMAIL, tel: TEL3, telNorm: TEL3_NORM, bambini: [{ nome: 'Nome Prova', data_nascita: NASCITA }] }
+    const errore = { code: 'P0001', message: 'RECAPITI_TELEFONICI_COMPLETI' }
+    await expect(contatto(recapito)).rejects.toMatchObject(errore)
+    await expect(prenota(recapito)).rejects.toMatchObject(errore)
+    expect(await schedeCorrenti()).toEqual(prima)
+    expect(await conta('crm_eventi')).toBe(1)
+    expect(await conta('crm_ai_richieste')).toBe(0)
+    expect(await conta('crm_bambini')).toBe(0)
+    expect(await conta('crm_appuntamenti')).toBe(0)
+    expect(await statoPerNumero(TEL3_NORM)).toEqual({ scheda: null })
+  })
+
+  it('il numero e l’email in comune fra sedi o con una scheda anonimizzata non fanno riusare la scheda', async () => {
+    const { scheda_id: idA } = await contatto(EMAIL)
+    const { scheda_id: idB } = await contatto({ ...EMAIL, sede: SEDE_B, tel: TEL2, telNorm: TEL2_NORM })
+    expect(idB).not.toBe(idA)
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: null })
+    expect(await statoPerNumero(TEL2_NORM, SEDE_B)).toEqual({ scheda: { id: idB, creato_via: 'ai' } })
+    await db.query('UPDATE public.crm_schede SET anonimizzata_il = now() WHERE id = $1', [idA])
+    const { scheda_id: idNuovo, creata } = await contatto({ ...EMAIL, tel: TEL2, telNorm: TEL2_NORM })
+    expect(creata).toBe(true)
+    expect(idNuovo).not.toBe(idA)
+    expect(idNuovo).not.toBe(idB)
+    expect(await statoPerNumero(TEL_NORM)).toEqual({ scheda: null })
+    expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: { id: idNuovo, creato_via: 'ai' } })
+    expect(await conta('crm_eventi', "tipo = 'modificata'")).toBe(0)
   })
 })
 
@@ -291,8 +393,10 @@ describe('controlli aggiunti dalla ripresa', () => {
     await contatto()
     await contatto({ tel: TEL2, telNorm: TEL2_NORM, email: 'Prova@Example.com', emailNorm: 'prova@example.com' })
     const recapiti = { email: 'Prova@Example.com', emailNorm: 'prova@example.com' }
+    const prima = await schedeCorrenti()
     await expect(contatto(recapiti)).rejects.toMatchObject({ code: 'P0001', message: 'AMBIGUITA_CONTATTO' })
     await expect(prenota(recapiti)).rejects.toMatchObject({ code: 'P0001', message: 'AMBIGUITA_CONTATTO' })
+    expect(await schedeCorrenti()).toEqual(prima)
     expect(await conta('crm_schede')).toBe(2)
     expect(await conta('crm_eventi')).toBe(2)
     expect(await conta('crm_ai_richieste')).toBe(0)

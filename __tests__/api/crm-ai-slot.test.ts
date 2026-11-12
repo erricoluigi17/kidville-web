@@ -333,12 +333,24 @@ describe('GET /api/crm/ai/slot', () => {
     ['più di 31 giorni', { al: '2026-12-18' }],
     ['sede non UUID', { sede: 'giugliano' }],
     ['data impossibile', { dal: '2026-11-31' }],
-    ['campo aggiuntivo', { classe: 'infanzia' }],
     ['fine non rappresentabile', { dal: '9999-12-30', al: '9999-12-31' }],
   ])('validazione: %s → 400 prima di ogni lettura dell’agenda', async (_nome, o) => {
     const r = await chiama(o as Record<string, string>)
     expect(r.status).toBe(400)
     expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
+  })
+
+  it('rifiuta un campo query sconosciuto senza rifletterne il nome o leggere l’agenda', async () => {
+    const sentinella = 'MinoreSentinellaReview'
+    const r = await chiama({ [sentinella]: '1' })
+    expect(r.status).toBe(400)
+    const risposta = await r.json()
+    nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls], [sentinella])
+    expect(risposta).toEqual({
+      error: 'Dati non validi', details: [{ path: '', message: 'Sono presenti campi non ammessi' }],
+    })
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
+    expect(h.annoAttivo).not.toHaveBeenCalled()
   })
 
   it('senza le tabelle delle settimane risponde 503 CRM_NON_INSTALLATO', async () => {

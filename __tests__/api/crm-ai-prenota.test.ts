@@ -459,6 +459,7 @@ describe('POST /api/crm/ai/prenota', () => {
     ['registro', 'XX000', 500, 'CRM_OPERAZIONE_NON_RIUSCITA'],
     ['rpc', 'PGRST202', 503, 'CRM_NON_INSTALLATO'],
     ['rpc', 'XX000', 500, 'CRM_OPERAZIONE_NON_RIUSCITA'],
+    ['rpc', 'P0001', 500, 'CRM_OPERAZIONE_NON_RIUSCITA'],
   ])('un guasto in %s (%s) conserva solo il codice tecnico', async (dove, code, stato, codice) => {
     const error = { code, message: GENITORE, details: NOTA, hint: NOME_BIMBO }
     if (dove === 'registro') h.errori.crm_ai_richieste = error

@@ -10,9 +10,9 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common'
 import { parseQuery } from '@/lib/validation/http'
 
-const querySchema = z
-  .object({ sede: zUuid, dal: zDataYMD, al: zDataYMD, nascita: zAnnoMese })
-  .strict()
+const querySchema = z.strictObject({ sede: zUuid, dal: zDataYMD, al: zDataYMD, nascita: zAnnoMese }, {
+  error: (issue) => issue.code === 'unrecognized_keys' ? 'Sono presenti campi non ammessi' : undefined,
+})
   .refine((q) => q.al >= q.dal, { message: 'La data finale precede quella iniziale', path: ['al'] })
   .refine((q) => q.dal >= addGiorni(q.al, -GIORNI_MAX_AI), { message: `L’intervallo non può superare ${GIORNI_MAX_AI} giorni`, path: ['al'] })
   .refine((q) => q.al < '9999-12-31', { message: 'La data finale è troppo lontana', path: ['al'] })

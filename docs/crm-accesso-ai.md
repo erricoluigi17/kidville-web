@@ -35,7 +35,7 @@ Query obbligatoria `sede`, `dal` e `al` nel formato `AAAA-MM-GG`, `nascita` nel 
 
 **200** — `{sede, gradi, etaCoperta, troncato, slot: [{inizio, fine}]}`. `gradi` può contenere `nido`, `infanzia` e `primaria`. Per offrire la visita, il CRM verifica che la sede abbia una sezione compatibile nel suo anno scolastico attivo. Il risultato non assegna una classe e non conferma l’ammissione. Se la sede non copre l’età, `etaCoperta` è `false` e `slot` è vuoto. Con copertura l’elenco può comunque essere vuoto. Gli orari hanno almeno due ore di anticipo, sono ordinati per inizio e fine e arrivano in ISO. Al massimo 60 coppie. Se `troncato` è `true`, restringi l’intervallo per vedere gli altri orari.
 
-**Errori** — quelli comuni, incluso `400` per date o intervallo non validi. Se occorre verificare la copertura e manca l’anno attivo della sede, la risposta è `500 CRM_OPERAZIONE_NON_RIUSCITA`. Se mancano la funzione o le tabelle di calendario necessarie, la risposta è `503 CRM_NON_INSTALLATO`.
+**Errori** — quelli comuni, incluso `400` per date, intervallo o parametri non ammessi. Il messaggio non riporta il nome dei parametri sconosciuti. Se occorre verificare la copertura e manca l’anno attivo della sede, la risposta è `500 CRM_OPERAZIONE_NON_RIUSCITA`. Se mancano la funzione o le tabelle di calendario necessarie, la risposta è `503 CRM_NON_INSTALLATO`.
 
 ```sh
 curl --get "$BASE_URL/api/crm/ai/slot" \
@@ -64,7 +64,7 @@ Invia l’header `Idempotency-Key` con un identificativo nuovo per ogni tentativ
 | 422 | `CHIAVE_RIUSATA` | La chiave è già associata a un corpo diverso. Usa una nuova chiave se è davvero un altro tentativo. |
 | 422 | `CONTATTO_OBBLIGATORIO` | Il telefono non è utilizzabile. |
 
-Si applicano anche gli errori comuni e gli esiti tecnici della verifica dell’anno attivo descritti per `/slot`. La coppia con fine non successiva all’inizio e una chiave di idempotenza assente o fuori formato danno `400`.
+Si applicano anche gli errori comuni e gli esiti tecnici della verifica dell’anno attivo descritti per `/slot`. La coppia con fine non successiva all’inizio e una chiave di idempotenza assente o fuori formato danno `400`. Quando la richiesta arriva al riconoscimento della famiglia, si applica la stessa regola dei recapiti di E1, compreso il `500` per le schede ambigue o per un nuovo numero senza spazio.
 
 ```sh
 curl -X POST "$BASE_URL/api/crm/ai/prenota" \
@@ -94,7 +94,9 @@ Corpo obbligatorio `sede`, `telefono`, `origine`. Facoltativi `genitoreNome` (1�
 
 **201** — `{schedaId, creata: true, visita: null}`. **200** — `{schedaId, creata: false, visita}` quando la scheda esiste già nella sede, riconosciuta dal telefono o dall’email normalizzati. `visita` è `null` oppure `{id, inizio, stato}`, con stato `in_programma`, `svolto` o `non_presentato`. Questa API registra il contatto senza fissare la visita.
 
-**Errori** — quelli comuni e `422 CONTATTO_OBBLIGATORIO` per recapito inutilizzabile. Una corrispondenza ambigua fra schede dà errore tecnico.
+Se l’email riconduce a una sola scheda attiva della sede e il telefono è nuovo, E1 lo salva nel primo dei due campi telefono libero. Salva insieme il numero originale e quello normalizzato: da quel momento anche E2 ed E4 ritrovano la stessa scheda con il nuovo numero. I recapiti già presenti, il nome, l’origine e le scelte della segreteria restano quelli della scheda. Ripresentare un numero già noto non lo scrive di nuovo.
+
+**Errori** — quelli comuni e `422 CONTATTO_OBBLIGATORIO` per recapito inutilizzabile. Se entrambi i campi telefono sono occupati e il numero è nuovo, o se telefono ed email portano a più schede, E1 e la prenotazione rispondono `500 CRM_OPERAZIONE_NON_RIUSCITA` senza cambiare recapiti, creare schede o unirle. Il codice è lo stesso degli altri errori tecnici. Se il problema si ripete, chiedi una verifica alla segreteria e comunica l’`x-request-id`. Non dare per acquisito il recapito.
 
 ```sh
 curl -X POST "$BASE_URL/api/crm/ai/contatti" \

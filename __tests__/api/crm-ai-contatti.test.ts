@@ -234,12 +234,14 @@ describe('E1 · registra contatto', () => {
     nessunNomeIn(h.logEvento.mock.calls, [NOME_GENITORE, NASCITA, TEL])
   })
 
-  it('un guasto SQL controllato non espone il messaggio ricevuto', async () => {
-    h.rpc.mockResolvedValue({ data: null, error: { code: 'P0001', message: 'AMBIGUITA_CONTATTO ' + TEL } })
+  it.each(['AMBIGUITA_CONTATTO', 'RECAPITI_TELEFONICI_COMPLETI'])('un guasto SQL controllato (%s) non espone il messaggio', async (esito) => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'P0001', message: esito + ' ' + TEL } })
     const r = await registra()
     expect(r.status).toBe(500)
-    expect(await r.json()).toMatchObject({ codice: 'CRM_OPERAZIONE_NON_RIUSCITA' })
+    const risposta = await r.json()
+    expect(risposta).toMatchObject({ codice: 'CRM_OPERAZIONE_NON_RIUSCITA' })
     expect(h.logErrore).toHaveBeenCalledWith(expect.objectContaining({ operazione: 'crm/ai/contatti' }), { code: 'P0001' })
+    nessunNomeIn([risposta, h.logErrore.mock.calls, h.logEvento.mock.calls], [esito, TEL])
   })
 
   it('un esito RPC anomalo non espone il valore ricevuto come ID', async () => {

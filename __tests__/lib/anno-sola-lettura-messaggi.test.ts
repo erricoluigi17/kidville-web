@@ -1,9 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 import { assertSezioneScrivibile, assertSezionePrimariaFirmabile } from '@/lib/auth/scope'
+import { logEvento } from '@/lib/logging/logger'
 import shared from '../../messages/it/shared.json'
 import sharedEn from '../../messages/en/shared.json'
+
+vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: vi.fn() }))
+beforeEach(() => { vi.mocked(logEvento).mockClear() })
 
 /**
  * COMPITO 4.9.4 · UNA CLASSE IN CHIUSURA NON È «DI UN ANNO PASSATO».
@@ -68,6 +72,12 @@ describe('assertSezioneScrivibile · il codice dice in che anno è la classe', (
         const res = await assertSezioneScrivibile(rotto, docente, S_CHIUSURA)
         expect(res?.status).toBe(403)
         expect((await res!.json()).codice).toBe('SEZIONE_SOLA_LETTURA')
+        // (correzioni dopo la revisione finale, F6) Il perché del ripiego si registra, col solo codice dell'errore.
+        const log = vi.mocked(logEvento).mock.calls.filter((c) => (c[2] as { tipo?: string }).tipo === 'stato-anno-sezione-illeggibile')
+        expect(log, 'un solo log del ripiego').toHaveLength(1)
+        expect(log[0][1]).toBe('warn')
+        expect(JSON.stringify(log[0])).toContain('57014')
+        expect(JSON.stringify(log[0]), 'nessun nome, nessun testo libero').not.toMatch(/Mario|@/)
     })
     it('sezione senza anno → SEZIONE_SOLA_LETTURA', async () => {
         const res = await assertSezioneScrivibile(sb(), docente, S_SENZA_ANNO)

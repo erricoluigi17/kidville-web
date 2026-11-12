@@ -17,8 +17,8 @@
 --     toglierebbe la scrittura ai docenti senza che la guardia protegga il resto, e si perderebbe l'unico segnale che qualcosa non è
 --     stato fatto. Conseguenza da dire al titolare: a guardia spenta i docenti SCRIVONO anche in agosto, e la sola lettura arriva
 --     soltanto quando la guardia si accende;
---   · `anni_tick` ridefinita: il passo 1 (crea l'anno successivo) è IDENTICO a quello della 4.5, poi il passo 2 per ogni sede, ognuno
---     nel suo blocco. Il battito `cron:anni-tick` è sempre uno solo, con gli stessi due esiti (`ok`, `ok-parziale`);
+--   · `anni_tick` ridefinita: il passo 1 (crea l'anno successivo) è quello della 4.5 e in fondo al suo blocco svuota la coda dei vincoli
+--     differiti (N2: un errore lì ferma solo la sua sede), poi i passi 2 e 3 per ogni sede, ognuno nel suo blocco. Il battito `cron:anni-tick` è sempre uno solo, con gli stessi due esiti (`ok`, `ok-parziale`);
 --   · `anno_invarianti()` con la riga 16 (nessuna domanda aperta su un anno `in_chiusura` o `chiuso`). Le righe 12 e 14 esistono già:
 --     la bozza del piano diceva «12», la misura dice che il numero libero è 16 (la 15 è dello storico delle classi, 4.8).
 --
@@ -191,7 +191,7 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
--- ── 3 · Il tick: passo 1 (invariato) e passo 2 ──────────────────────────────
+-- ── 3 · Il tick: passo 1 (della 4.5, più lo svuotamento della coda di N2), passo 2 e passo 3 ──────────────────────────────
 
 -- Copia di `anni_tick` della 4.5 (`20261109035209_anno_tick.sql`): il passo 1 è quello della 4.5, con in fondo al suo blocco lo svuotamento
 -- dei vincoli differiti che ha scritto (N2). Cambia che: PRIMA del ciclo si esegue la coda dei vincoli differiti già in coda (F4); DOPO il
@@ -249,7 +249,7 @@ BEGIN
   LOOP
     v_sedi := v_sedi + 1;
 
-    -- ── passo 1: l'anno successivo (identico alla 4.5)
+    -- ── passo 1: l'anno successivo (come nella 4.5; in fondo al blocco lo svuotamento della coda dei vincoli differiti, N2)
     BEGIN
       PERFORM pg_advisory_xact_lock(hashtext('anni_tick:' || r.scuola_id::text));
 

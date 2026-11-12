@@ -100,9 +100,13 @@ describe('(correzioni, giro 2, N4) guardia spenta E passaggio da fare, 3 sedi ve
     expect(impronte.filter((f) => f === 'anni-tick-passaggio-da-fare'), 'una per sede vera').toHaveLength(3)
     expect(esito, 'sei impronte, ma le copre già il controllo `anno`: tasso-errore resta ok').toMatchObject({ nome: 'tasso-errore', esito: 'ok' })
 
-    // Cinque errori veri di altre impronte (soglia 5): il controllo li conta ancora, anche con le due di anni_tick presenti.
+    // Sei errori veri (soglia 5): tre di un'impronta qualunque e tre di `anni-tick-stati-errore`, un'ALTRA impronta di anni_tick
+    // (un errore vero del tick). Il controllo li conta ancora, anche con le due impronte escluse presenti; un filtro `anni-tick-%`
+    // troppo largo nasconderebbe i tre del tick e lascerebbe il controllo `ok`.
     await db.exec(`INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint)
-                   SELECT 'error', 'api', 'server', 'prova', 'errore-vero-di-prova:' || g FROM generate_series(1, 6) g`)
+                   SELECT 'error', 'api', 'server', 'prova', 'errore-vero-di-prova:' || g FROM generate_series(1, 3) g`)
+    await db.exec(`INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint)
+                   SELECT 'error', 'api', 'server', 'prova', 'anni-tick-stati-errore:' || g FROM generate_series(1, 3) g`)
     const dopo = await tassoErrore('2027-08-25T00:20:00Z')
     expect(dopo.esito).toMatchObject({ nome: 'tasso-errore', esito: 'degradato' })
   })

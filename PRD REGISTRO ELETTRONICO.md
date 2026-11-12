@@ -24,7 +24,9 @@
 
 **Anno attivo.** `/slot` e `/prenota` usano le sezioni della sola sede nell’anno scolastico attivo, con errore tecnico se l’anno non è disponibile. La fascia d’età serve a proporre una visita e non determina ammissione o classe.
 
-**Da completare.** Regole e accesso alle note per i richiami E5, registrazione del consenso a WhatsApp per i contatti inseriti a mano, pulizia a 90 giorni del registro di idempotenza, prova di concorrenza in CI, disponibilità e attivazione autorizzata delle tre sedi vere, fasce di visita distinte per grado e integrazione con l’anonimizzazione delle schede a 12 mesi.
+**Da completare.** Regole e accesso alle note per i richiami E5, pulizia a 90 giorni del registro di idempotenza, prova di concorrenza in CI, disponibilità e attivazione autorizzata delle tre sedi vere, fasce di visita distinte per grado e integrazione con l’anonimizzazione delle schede a 12 mesi.
+
+**Deciso.** Consenso a WhatsApp dei contatti inseriti a mano: basta la parola della segretaria, nessuna casella da spuntare (scelta del titolare, 12/11/2026). Il CRM non registra un consenso a parte; un contatto di origine sconosciuta non vale come consenso. L'assistente non propone la classe e può dire le fasce d'età: la classe la propone la segreteria durante la visita.
 
 **Come si prova.** Le suite `__tests__/api/crm-ai-*.test.ts` e `__tests__/api/crm-integrazioni*.test.ts` coprono le API. `__tests__/lib/crm/migrazione-crm-accesso-ai-sql.test.ts` prova le operazioni SQL con dati finti. Il banco PostgreSQL locale a tre sessioni ha superato sette prove di concorrenza su dati sintetici. I test di `__tests__/components/crm/` coprono Assistente e le schede senza bambini. Il Compito 12 è la prova manuale sulla sola Demo dopo autorizzazione. Per i campi e gli esempi aggiornati vale il [contratto delle API](docs/crm-accesso-ai.md), che include `fine` da `/slot` per ogni prenotazione.
 

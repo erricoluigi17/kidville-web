@@ -89,19 +89,21 @@ export function orariPerAssistente(liberi: SlotLibero[]): { inizio: string; fine
   return [...unici.values()].sort((a, b) => a.inizio.localeCompare(b.inizio) || a.fine.localeCompare(b.fine))
 }
 
-/** Privilegia le persone con una propria fascia, poi chi è libero nella fascia della sede. */
+/** Per la coppia offerta, prima chi ha una propria fascia, poi chi è libero nella fascia della sede. */
 export function candidatiPer(
-  liberi: SlotLibero[], inizioIso: string,
+  liberi: SlotLibero[], inizioIso: string, fineIso: string,
 ): { candidati: string[]; durataMin: number; fine: string } | null {
   const inizio = Date.parse(inizioIso)
-  const allInizio = liberi.filter((s) => Date.parse(s.inizio) === inizio)
-  const primo = allInizio[0]
+  const fine = Date.parse(fineIso)
+  if (!Number.isFinite(inizio) || !Number.isFinite(fine) || fine <= inizio) return null
+
+  const corrispondenti = liberi.filter((s) => Date.parse(s.inizio) === inizio && Date.parse(s.fine) === fine)
+  const primo = corrispondenti[0]
   if (!primo) return null
-  const fine = Date.parse(primo.fine)
+
   const dellaPersona: string[] = []
   const dellaSede: string[] = []
-  for (const slot of allInizio) {
-    if (Date.parse(slot.fine) !== fine) continue
+  for (const slot of corrispondenti) {
     if (slot.utenteId !== null) dellaPersona.push(slot.utenteId)
     else dellaSede.push(...(slot.personeLibere ?? []))
   }

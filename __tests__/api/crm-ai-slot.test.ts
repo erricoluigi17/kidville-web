@@ -197,6 +197,17 @@ describe('GET /api/crm/ai/slot', () => {
     expect((await r.json()).slot).toEqual([{ inizio: '2026-10-25T02:30:00.000Z', fine: '2026-10-25T03:00:00.000Z' }])
   })
 
+  it('non pubblica orari che sforano la fascia nel salto di primavera', async () => {
+    vi.setSystemTime(new Date('2026-03-28T08:00:00.000Z'))
+    programma(null, [
+      { giorno_settimana: 7, ora_inizio: '01:30:00', ora_fine: '03:15:00', durata_slot_min: 60 },
+      { giorno_settimana: 7, ora_inizio: '03:15:00', ora_fine: '04:15:00', durata_slot_min: 60 },
+    ], '2026-03-23')
+    const r = await chiama({ dal: '2026-03-29', al: '2026-03-29' })
+    expect(r.status).toBe(200)
+    expect((await r.json()).slot).toEqual([{ inizio: '2026-03-29T01:15:00.000Z', fine: '2026-03-29T02:15:00.000Z' }])
+  })
+
   it('toglie tutti gli orari durante un’assenza della sede', async () => {
     programma(null, [{}])
     h.db.crm_indisponibilita.push({ scuola_id: SEDE_A, utente_id: null, dal: '2026-11-16T23:00:00.000Z', al: '2026-11-17T23:00:00.000Z' })
@@ -355,27 +366,37 @@ describe('disponibilità AI per la prenotazione', () => {
     expect(inizi(agenda.liberi)).toEqual(['2026-11-17T08:45:00.000Z'])
   })
 
-  it('considera distinti due orari con stessa partenza ma fine diversa', () => {
+  it('offre entrambe le durate e raccoglie i candidati della coppia scelta', async () => {
+    programma(U1, [{}])
+    programma(U2, [{ ora_fine: '09:30:00', durata_slot_min: 30 }])
+    programma(null, [{}])
+    const agenda = await caricaAgendaAi(creaFintoSupabase(h.db), SEDE_A, '2026-11-17', '2026-11-17', new Date(), 'crm/ai/prenota')
+    if ('response' in agenda) throw new Error('Agenda non caricata')
+
     const inizio = '2026-11-17T08:00:00.000Z'
-    const fine = '2026-11-17T08:45:00.000Z'
-    const altraFine = '2026-11-17T08:30:00.000Z'
-    expect(orariPerAssistente([
-      { utenteId: U1, inizio, fine },
-      { utenteId: U2, inizio, fine: altraFine },
-      { utenteId: null, inizio, fine, personeLibere: [U1, U2] },
-    ])).toEqual([{ inizio, fine: altraFine }, { inizio, fine }])
+    const fineBreve = '2026-11-17T08:30:00.000Z'
+    const fineLunga = '2026-11-17T08:45:00.000Z'
+    expect(orariPerAssistente(agenda.liberi).filter((s) => s.inizio === inizio)).toEqual([
+      { inizio, fine: fineBreve }, { inizio, fine: fineLunga },
+    ])
+    expect(candidatiPer(agenda.liberi, inizio, fineBreve)).toEqual({
+      candidati: [U2], durataMin: 30, fine: fineBreve,
+    })
+    expect(candidatiPer(agenda.liberi, '2026-11-17T09:00:00+01:00', '2026-11-17T09:45:00+01:00')).toEqual({
+      candidati: [U1, U2], durataMin: 45, fine: fineLunga,
+    })
+    expect(candidatiPer(agenda.liberi, inizio, '2026-11-17T08:35:00.000Z')).toBeNull()
+    expect(candidatiPer(agenda.liberi, '2026-11-17T08:01:00.000Z', fineLunga)).toBeNull()
+    expect(candidatiPer(agenda.liberi, inizio, 'fine non valida')).toBeNull()
   })
 
-  it('sceglie la durata della prima fascia e ordina le persone, confrontando gli istanti', () => {
+  it('preferisce le persone con una propria fascia anche se la fascia di sede è elencata per prima', () => {
     const inizio = '2026-11-17T08:00:00.000Z'
     const fine = '2026-11-17T08:45:00.000Z'
-    const liberi = [
+    expect(candidatiPer([
+      { utenteId: null, inizio, fine, personeLibere: [U1, U2] },
       { utenteId: U2, inizio, fine },
-      { utenteId: U_B, inizio, fine: '2026-11-17T08:30:00.000Z' },
-      { utenteId: null, inizio, fine: '2026-11-17T09:45:00+01:00', personeLibere: [U1, U2] },
-    ]
-    expect(candidatiPer(liberi, '2026-11-17T09:00:00+01:00')).toEqual({ candidati: [U2, U1], durataMin: 45, fine })
-    expect(candidatiPer(liberi, '2026-11-17T08:01:00.000Z')).toBeNull()
+    ], inizio, fine)).toEqual({ candidati: [U2, U1], durataMin: 45, fine })
   })
 })
 

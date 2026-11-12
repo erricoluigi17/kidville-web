@@ -401,6 +401,7 @@ COMMENT ON FUNCTION public.crm_ai_bambini(uuid, uuid, jsonb) IS
 
 -- ── 5) crm_ai_registra_contatto: una famiglia nuova, senza visita ────────────
 CREATE OR REPLACE FUNCTION public.crm_ai_registra_contatto(
+  p_integrazione_id uuid,
   p_scuola_id      uuid,
   p_telefono       text,
   p_telefono_norm  text,
@@ -419,6 +420,11 @@ DECLARE
   v_scheda uuid;
   v_n      integer := 0;
 BEGIN
+  -- Come prenota, annulla e richiamo: una chiave revocata non scrive piu', anche se il gate l'aveva vista attiva.
+  IF p_integrazione_id IS NULL OR p_scuola_id IS NULL
+     OR NOT public.crm_ai_token_attivo(p_integrazione_id, p_scuola_id) THEN
+    RETURN jsonb_build_object('esito', 'token_non_valido');
+  END IF;
   IF p_bambini IS NOT NULL AND jsonb_typeof(p_bambini) = 'array' THEN
     v_n := jsonb_array_length(p_bambini);
   END IF;
@@ -428,10 +434,10 @@ BEGIN
   RETURN v_s;
 END $$;
 
-REVOKE ALL ON FUNCTION public.crm_ai_registra_contatto(uuid, text, text, text, text, text, text, jsonb) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.crm_ai_registra_contatto(uuid, text, text, text, text, text, text, jsonb) TO service_role;
+REVOKE ALL ON FUNCTION public.crm_ai_registra_contatto(uuid, uuid, text, text, text, text, text, text, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.crm_ai_registra_contatto(uuid, uuid, text, text, text, text, text, text, jsonb) TO service_role;
 
-COMMENT ON FUNCTION public.crm_ai_registra_contatto(uuid, text, text, text, text, text, text, jsonb) IS
+COMMENT ON FUNCTION public.crm_ai_registra_contatto(uuid, uuid, text, text, text, text, text, text, jsonb) IS
   'CRM, accesso AI: registra una famiglia che ha chiesto informazioni, senza fissare una visita. Se nella sede c''e'' gia'' una scheda con quel numero o quell''email, torna quella. Solo service_role.';
 
 -- Fasce della settimana effettiva, griglia di Roma e assenze. Le visite

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { expect, vi } from 'vitest'
 import { improntaToken } from '@/lib/crm/ai/token'
+import type { DBFinto, Riga, RispostaRpc } from './finto-supabase'
 import { SEDE_A, SEDE_B } from './sedi'
 
 export const TOKEN_A = 'kvai_' + 'A'.repeat(43)
@@ -46,4 +47,16 @@ export function accendiAi(sedi: string[]): void {
 export function nessunNomeIn(json: unknown, parole: string[]): void {
   const testo = JSON.stringify(json)
   for (const parola of parole) expect(testo).not.toContain(parola)
+}
+
+/**
+ * `crm_ai_token_attivo` del finto client: vera solo se la chiave esiste nella sede indicata e non è revocata.
+ * I test che vogliono una revoca avvenuta DOPO il gate la sostituiscono con `mockResolvedValueOnce`.
+ */
+export function tokenAttivoFinto(db: () => DBFinto): (args: Riga) => RispostaRpc {
+  return ({ p_integrazione_id, p_scuola_id }) => ({
+    data: (db().crm_integrazioni ?? []).some((r) =>
+      r.id === p_integrazione_id && r.scuola_id === p_scuola_id && r.revocata_il === null),
+    error: null,
+  })
 }

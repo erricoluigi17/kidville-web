@@ -49,6 +49,7 @@ export const POST = withRoute('crm/ai/contatti:POST', async (request: NextReques
 
   const supabase = await createAdminClient()
   const { data, error } = await supabase.rpc('crm_ai_registra_contatto', {
+    p_integrazione_id: ai.integrazioneId,
     p_scuola_id: ai.scuolaId,
     p_telefono: telefono,
     p_telefono_norm: telefonoNorm,
@@ -59,6 +60,13 @@ export const POST = withRoute('crm/ai/contatti:POST', async (request: NextReques
     p_bambini: bambini.map(({ nome, dataNascita }) => ({ nome: nome ?? null, data_nascita: dataNascita ?? null })),
   })
   if (error) return chiudiChiamataAi(ai, rispostaErroreDbSchema(erroreDbSoloCodice(error), op))
+
+  if (z.object({ esito: z.literal('token_non_valido') }).safeParse(data).success) {
+    // La chiave è stata revocata dopo il gate: la funzione non ha scritto niente.
+    const risposta = rifiutoAi('TOKEN_NON_VALIDO', 401)
+    risposta.headers.set('WWW-Authenticate', 'Bearer')
+    return chiudiChiamataAi(ai, risposta, { codice: 'TOKEN_NON_VALIDO' })
+  }
 
   const esito = esitoRpcSchema.safeParse(data)
   if (!esito.success) {

@@ -63,10 +63,10 @@ async function prenota(o: Partial<Record<string, unknown>> = {}): Promise<Esito>
   return r.rows[0].r
 }
 async function contatto(o: Partial<Record<string, unknown>> = {}): Promise<Esito> {
-  const p = { sede: SEDE_A, tel: TEL, telNorm: TEL_NORM, email: null, emailNorm: null, genitore: null, origine: 'sito', bambini: [], ...o }
+  const p = { integrazione: INT_A, sede: SEDE_A, tel: TEL, telNorm: TEL_NORM, email: null, emailNorm: null, genitore: null, origine: 'sito', bambini: [], ...o }
   const r = await db.query<{ r: Esito }>(
-    `SELECT public.crm_ai_registra_contatto($1,$2,$3,$4,$5,$6,$7,$8::jsonb) AS r`,
-    [p.sede, p.tel, p.telNorm, p.email, p.emailNorm, p.genitore, p.origine, JSON.stringify(p.bambini)],
+    `SELECT public.crm_ai_registra_contatto($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) AS r`,
+    [p.integrazione, p.sede, p.tel, p.telNorm, p.email, p.emailNorm, p.genitore, p.origine, JSON.stringify(p.bambini)],
   )
   return r.rows[0].r
 }
@@ -261,6 +261,15 @@ describe('crm_ai_registra_contatto', () => {
     expect(await conta('crm_bambini')).toBe(1)
     expect(await conta('crm_bambini', `nome = 'Bimbo Prova' AND data_nascita::text = '${NASCITA}'`)).toBe(1)
   })
+  it('una chiave revocata o di un\'altra sede non registra niente: token_non_valido, nessuna scheda', async () => {
+    await db.query('UPDATE public.crm_integrazioni SET revocata_il = now(), revocata_da = $1 WHERE id = $2', [ADMIN, INT_A])
+    expect(await contatto({ bambini: [{ nome: 'Bimbo Prova', data_nascita: NASCITA }] })).toEqual({ esito: 'token_non_valido' })
+    expect(await contatto({ integrazione: INT_B })).toEqual({ esito: 'token_non_valido' })
+    expect(await contatto({ integrazione: null })).toEqual({ esito: 'token_non_valido' })
+    expect(await conta('crm_schede')).toBe(0)
+    expect(await conta('crm_bambini')).toBe(0)
+    expect(await conta('crm_eventi')).toBe(0)
+  })
   it('una scheda anonimizzata non si riusa: ne nasce una nuova', async () => {
     const prima = await contatto()
     await db.exec(`UPDATE public.crm_schede SET anonimizzata_il = now();`)
@@ -347,7 +356,7 @@ describe('continuità del recapito fra E1, E2, E4 e prenota', () => {
 
   it('il numero e l’email in comune fra sedi o con una scheda anonimizzata non fanno riusare la scheda', async () => {
     const { scheda_id: idA } = await contatto(EMAIL)
-    const { scheda_id: idB } = await contatto({ ...EMAIL, sede: SEDE_B, tel: TEL2, telNorm: TEL2_NORM })
+    const { scheda_id: idB } = await contatto({ ...EMAIL, integrazione: INT_B, sede: SEDE_B, tel: TEL2, telNorm: TEL2_NORM })
     expect(idB).not.toBe(idA)
     expect(await statoPerNumero(TEL2_NORM)).toEqual({ scheda: null })
     expect(await statoPerNumero(TEL2_NORM, SEDE_B)).toEqual({ scheda: { id: idB, creato_via: 'ai' } })

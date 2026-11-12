@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi } from '@/lib/crm/ai/accesso'
+import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, ricontrollaChiaveAttiva } from '@/lib/crm/ai/accesso'
 import { dettagliSchede } from '@/lib/crm/ai/contatti'
 import { rispostaErroreDbSchema } from '@/lib/crm/errori'
 import type { SchedaRow } from '@/lib/crm/tipi'
@@ -31,6 +31,9 @@ export const GET = withRoute('crm/ai/contatti/nuovi:GET', async (request: NextRe
   if (altraSede) return chiudiChiamataAi(ai, altraSede, { codice: 'SEDE_NON_ACCESSIBILE' })
 
   const supabase = await createAdminClient()
+  const revocata = await ricontrollaChiaveAttiva(supabase, ai)
+  if (revocata) return revocata
+
   const { dopo, dopoId } = q.data
   const selezione = supabase.from('crm_schede')
     .select('id, creata_il, telefoni_norm, origine')

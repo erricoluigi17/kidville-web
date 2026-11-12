@@ -6,7 +6,7 @@ L’accesso parte spento. Sul server `CRM_AI_ATTIVO=1` accende le API. `CRM_AI_S
 
 ## Chiave e chiamate
 
-La Direzione sceglie la sede in **CRM → Assistente** e crea una chiave. Se ne può tenere una attiva per sede. Il token intero compare una sola volta. Il CRM conserva l’impronta SHA-256, gli ultimi quattro caratteri mostrati nell’elenco e i metadati di creazione, ultimo uso e revoca. La Direzione può revocarlo. Il programma recupera il token da un archivio locale di segreti, fuori da iCloud, dalle note condivise e dai log.
+La Direzione sceglie la sede in **CRM → Assistente** e crea una chiave. Se ne può tenere una attiva per sede. Il token intero compare una sola volta. Il CRM conserva l’impronta SHA-256, gli ultimi quattro caratteri mostrati nell’elenco e i metadati di creazione, ultimo uso e revoca. La Direzione può revocarlo. Una revoca vale subito: ogni rotta ricontrolla in SQL che la chiave sia ancora attiva per la sua sede prima di leggere o scrivere, e risponde `401 TOKEN_NON_VALIDO` se è stata revocata nel frattempo. Il programma recupera il token da un archivio locale di segreti, fuori da iCloud, dalle note condivise e dai log.
 
 Usa HTTPS e invia `Authorization: Bearer <token>` ad ogni chiamata. La `sede` dichiarata nel corpo o nella query deve essere quella della chiave. Le POST usano `Content-Type: application/json` e accettano i soli campi documentati. Negli esempi `BASE_URL` è l’origine HTTPS autorizzata e `CRM_AI_TOKEN` contiene il token recuperato dal programma. Sostituisci i segnaposto con i valori previsti e serializza il corpo con la libreria JSON del programma.
 

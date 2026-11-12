@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { dataCivile } from '@/i18n/config'
-import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi } from '@/lib/crm/ai/accesso'
+import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, ricontrollaChiaveAttiva } from '@/lib/crm/ai/accesso'
 import { caricaAgendaAi, GIORNI_MAX_AI, orariPerAssistente, sedeCopre, SLOT_MAX_AI } from '@/lib/crm/ai/disponibilita'
 import { gradiPerNascita } from '@/lib/crm/ai/eta'
 import { addGiorni } from '@/lib/format/data'
@@ -29,6 +29,9 @@ export const GET = withRoute('crm/ai/slot:GET', async (request: NextRequest) => 
   if (altraSede) return chiudiChiamataAi(ai, altraSede, { codice: 'SEDE_NON_ACCESSIBILE' })
 
   const supabase = await createAdminClient()
+  const revocata = await ricontrollaChiaveAttiva(supabase, ai)
+  if (revocata) return revocata
+
   const { dal, al, nascita } = q.data
   const adesso = new Date()
   const gradi = gradiPerNascita(nascita, dataCivile(adesso))

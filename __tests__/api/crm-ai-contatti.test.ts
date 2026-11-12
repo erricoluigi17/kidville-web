@@ -4,7 +4,7 @@ import { POST as STATO } from '@/app/api/crm/ai/contatti/stato/route'
 import { GET as NUOVI } from '@/app/api/crm/ai/contatti/nuovi/route'
 import { visitaDi } from '@/lib/crm/ai/contatti'
 import type { AppuntamentoRow } from '@/lib/crm/tipi'
-import { accendiAi, integrazioniFinte, nessunNomeIn, richiestaAi, TOKEN_B } from '../fixtures/crm-ai'
+import { accendiAi, INTEGRAZIONE_A, integrazioniFinte, nessunNomeIn, richiestaAi, TOKEN_B, tokenAttivoFinto } from '../fixtures/crm-ai'
 import { creaFintoSupabase, type DBFinto, type ErrorePostgrest, type Riga, type Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 
@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   scritture: [] as Scrittura[],
   proiezioni: [] as { tabella: string; colonne: string }[],
   rpc: vi.fn(),
+  tokenAttivo: vi.fn(),
   logErrore: vi.fn(),
   logEvento: vi.fn(),
 }))
@@ -24,7 +25,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
     const client = creaFintoSupabase(h.db, h.lette, {
       errori: h.errori,
       scritture: h.scritture,
-      rpc: { crm_ai_registra_contatto: h.rpc },
+      rpc: { crm_ai_registra_contatto: h.rpc, crm_ai_token_attivo: h.tokenAttivo },
       maxRighe: 1000,
     })
     const from = client.from.bind(client)
@@ -101,6 +102,7 @@ beforeEach(() => {
   h.scritture = []
   h.proiezioni = []
   h.rpc.mockReset()
+  h.tokenAttivo.mockReset().mockImplementation(tokenAttivoFinto(() => h.db))
   h.logErrore.mockClear()
   h.logEvento.mockClear()
   h.db = { crm_integrazioni: integrazioniFinte(), crm_schede: [], crm_bambini: [], crm_appuntamenti: [] }
@@ -177,7 +179,7 @@ describe('E1 · registra contatto', () => {
     expect(r.status).toBe(201)
     expect(await r.json()).toEqual({ schedaId: S1, creata: true, visita: null })
     expect(h.rpc).toHaveBeenCalledExactlyOnceWith({
-      p_scuola_id: SEDE_A, p_telefono: '0039 333-0000001', p_telefono_norm: TEL_NORM,
+      p_integrazione_id: INTEGRAZIONE_A, p_scuola_id: SEDE_A, p_telefono: '0039 333-0000001', p_telefono_norm: TEL_NORM,
       p_email: 'Contatto@Example.Invalid', p_email_norm: EMAIL, p_genitore_nome: null, p_origine: 'sito',
       p_bambini: [
         { nome: null, data_nascita: NASCITA },
@@ -190,6 +192,16 @@ describe('E1 · registra contatto', () => {
       esito: 'ai-contatto-creato', scuola_id: SEDE_A, entita_id: S1,
     }))
     nessunNomeIn(h.logEvento.mock.calls, [NOME_BIMBO, NASCITA, TEL_NORM, EMAIL])
+  })
+
+  it('se la chiave è stata revocata dopo il gate, la RPC rifiuta: 401 e nessun dettaglio letto', async () => {
+    h.rpc.mockResolvedValue({ data: { esito: 'token_non_valido' }, error: null })
+    const r = await registra()
+    expect(r.status).toBe(401)
+    expect(r.headers.get('WWW-Authenticate')).toBe('Bearer')
+    expect(await r.json()).toMatchObject({ codice: 'TOKEN_NON_VALIDO' })
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
+    expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ stato: 401, error_code: 'TOKEN_NON_VALIDO' }))
   })
 
   it('risponde 200 con la visita della scheda già nota', async () => {
@@ -250,6 +262,36 @@ describe('E1 · registra contatto', () => {
     expect(r.status).toBe(500)
     nessunNomeIn(await r.json(), [NOME_GENITORE])
     nessunNomeIn(h.logEvento.mock.calls, [NOME_GENITORE])
+  })
+})
+
+describe('E2 ed E3 · la chiave revocata dopo il gate non legge niente', () => {
+  it('E2 · ricontrolla la chiave in SQL prima di leggere le schede', async () => {
+    h.db.crm_schede.push(scheda())
+    h.tokenAttivo.mockResolvedValueOnce({ data: false, error: null })
+    const r = await stato()
+    expect(r.status).toBe(401)
+    expect(r.headers.get('WWW-Authenticate')).toBe('Bearer')
+    expect(await r.json()).toMatchObject({ codice: 'TOKEN_NON_VALIDO' })
+    expect(h.tokenAttivo).toHaveBeenCalledExactlyOnceWith({ p_integrazione_id: INTEGRAZIONE_A, p_scuola_id: SEDE_A })
+    expect(h.lette).not.toContain('crm_schede')
+  })
+
+  it('E3 · ricontrolla la chiave in SQL prima di elencare le schede', async () => {
+    h.db.crm_schede.push(scheda())
+    h.tokenAttivo.mockResolvedValueOnce({ data: false, error: null })
+    const r = await nuovi()
+    expect(r.status).toBe(401)
+    expect(await r.json()).toMatchObject({ codice: 'TOKEN_NON_VALIDO' })
+    expect(h.lette).not.toContain('crm_schede')
+  })
+
+  it('un guasto del controllo non lascia passare e non riporta il testo del DB', async () => {
+    h.tokenAttivo.mockResolvedValueOnce({ data: null, error: { code: 'XX000', message: 'testo-del-db-riservato' } })
+    const r = await stato()
+    expect(r.status).toBeGreaterThanOrEqual(500)
+    expect(JSON.stringify(await r.json())).not.toContain('testo-del-db-riservato')
+    expect(h.lette).not.toContain('crm_schede')
   })
 })
 

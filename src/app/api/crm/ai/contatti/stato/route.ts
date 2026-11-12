@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi } from '@/lib/crm/ai/accesso'
+import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi, ricontrollaChiaveAttiva } from '@/lib/crm/ai/accesso'
 import { dettagliSchede, schedaPerTelefono } from '@/lib/crm/ai/contatti'
 import { normalizzaTelefonoAi } from '@/lib/crm/ai/telefono'
 import { withRoute } from '@/lib/logging/with-route'
@@ -31,6 +31,9 @@ export const POST = withRoute('crm/ai/contatti/stato:POST', async (request: Next
   }
 
   const supabase = await createAdminClient()
+  const revocata = await ricontrollaChiaveAttiva(supabase, ai)
+  if (revocata) return revocata
+
   const trovata = await schedaPerTelefono(supabase, ai.scuolaId, telefonoNorm, op)
   if ('response' in trovata) return chiudiChiamataAi(ai, trovata.response)
   if (!trovata.scheda) {

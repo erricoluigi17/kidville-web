@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server'
 import catalogoIt from '../../../../messages/it/shared.json'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { formaConfronto } from '@/lib/auth/scope'
-import { rispostaErroreDb } from '@/lib/crm/errori'
+import { rispostaErroreDb, rispostaErroreDbSchema } from '@/lib/crm/errori'
 import { logEvento } from '@/lib/logging/logger'
 import { rateLimit } from '@/lib/security/rate-limit'
 import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 import { crmAiAttivo, sedeAmmessaAi, sediAmmesseAi } from './interruttore'
 import { improntaToken, tokenDaRichiesta } from './token'
@@ -104,6 +105,25 @@ export async function requireIntegrazioneAi(
   }
 
   return { ai: { integrazioneId: riga.id, scuolaId: riga.scuola_id, operazione, inizioMs } }
+}
+
+/**
+ * Le rotte di lettura ricontrollano in SQL, con la stessa funzione di prenota, annulla e richiamo, che la chiave
+ * sia ancora attiva per la sua sede: una revoca arrivata dopo il gate non lascia leggere. Torna la risposta già
+ * chiusa e registrata, oppure `null` se si può proseguire. Un guasto del controllo non lascia passare.
+ */
+export async function ricontrollaChiaveAttiva(
+  supabase: SupabaseClient, ai: ContestoAi,
+): Promise<NextResponse | null> {
+  const { data, error } = await supabase.rpc('crm_ai_token_attivo', {
+    p_integrazione_id: ai.integrazioneId,
+    p_scuola_id: ai.scuolaId,
+  })
+  if (error) return chiudiChiamataAi(ai, rispostaErroreDbSchema(erroreDbSoloCodice(error), 'crm/ai:' + ai.operazione))
+  if (data === true) return null
+  const risposta = rifiutoAi('TOKEN_NON_VALIDO', 401)
+  risposta.headers.set('WWW-Authenticate', 'Bearer')
+  return chiudiChiamataAi(ai, risposta, { codice: 'TOKEN_NON_VALIDO' })
 }
 
 export function assertSedeDelToken(ai: ContestoAi, sedeDichiarata: string): NextResponse | null {

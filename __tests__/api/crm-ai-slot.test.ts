@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { creaFintoSupabase, type DBFinto, type ErrorePostgrest, type Riga, type RispostaRpc, type Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
-import { INTEGRAZIONE_A, INTEGRAZIONE_B, TOKEN_B, accendiAi, integrazioniFinte, nessunNomeIn, richiestaAi } from '../fixtures/crm-ai'
+import { INTEGRAZIONE_A, INTEGRAZIONE_B, TOKEN_B, accendiAi, integrazioniFinte, nessunNomeIn, richiestaAi, tokenAttivoFinto } from '../fixtures/crm-ai'
 import { personeDellaSede } from '@/lib/crm/accesso'
 import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { GET } from '@/app/api/crm/ai/slot/route'
@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   scritture: [] as Scrittura[],
   guastoUtenti: null as { lettura: number; errore: ErrorePostgrest | Error } | null,
   annoAttivo: vi.fn<(args: Riga) => RispostaRpc>(),
+  tokenAttivo: vi.fn<(args: Riga) => RispostaRpc>(),
   logErrore: vi.fn(),
   logEvento: vi.fn(),
 }))
@@ -21,7 +22,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => {
     const client = creaFintoSupabase(h.db, h.lette, {
-      errori: h.errori, scritture: h.scritture, rpc: { anno_attivo: h.annoAttivo },
+      errori: h.errori, scritture: h.scritture, rpc: { anno_attivo: h.annoAttivo, crm_ai_token_attivo: h.tokenAttivo },
     })
     const from = client.from.bind(client)
     let lettureUtenti = 0
@@ -60,6 +61,7 @@ beforeEach(() => {
   h.lette = []
   h.scritture = []
   h.guastoUtenti = null
+  h.tokenAttivo.mockReset().mockImplementation(tokenAttivoFinto(() => h.db))
   h.annoAttivo.mockReset().mockImplementation(({ p_scuola }) => ({
     data: p_scuola === SEDE_A ? ANNO_SEDE_A : ANNO_SEDE_B, error: null,
   }))
@@ -135,6 +137,17 @@ describe('GET /api/crm/ai/slot', () => {
     expect(await r.json()).toMatchObject({ codice: 'SEDE_NON_ACCESSIBILE' })
     expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
     expect(h.scritture).toMatchObject([{ tabella: 'crm_integrazioni', operazione: 'update', colpite: [{ id: INTEGRAZIONE_B, scuola_id: SEDE_B }] }])
+  })
+
+  it('ricontrolla la chiave in SQL prima di leggere sezioni e agenda: revocata dopo il gate = 401', async () => {
+    h.tokenAttivo.mockReturnValueOnce({ data: false, error: null })
+    const r = await chiama()
+    expect(r.status).toBe(401)
+    expect(r.headers.get('WWW-Authenticate')).toBe('Bearer')
+    expect(await r.json()).toMatchObject({ codice: 'TOKEN_NON_VALIDO' })
+    expect(h.tokenAttivo).toHaveBeenCalledExactlyOnceWith({ p_integrazione_id: INTEGRAZIONE_A, p_scuola_id: SEDE_A })
+    expect(h.annoAttivo).not.toHaveBeenCalled()
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
   })
 
   it('R8 · dà gli orari liberi della sede, senza persone, nomi o note', async () => {

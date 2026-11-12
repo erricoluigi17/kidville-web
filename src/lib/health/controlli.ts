@@ -1041,6 +1041,11 @@ export async function controlloTassoErrore(
             .eq('sorgente', 'server')
             .eq('ambiente', ambiente)
             .gte('visto_l_ultima', da)
+            // (PR 4.9) Le due righe `error` di `anni_tick` (una per sede e per giorno) le copre già il controllo `anno`
+            // (`passaggio_da_fare` e `guardia_spenta_vicina` di `salute_anno()`): contate qui, tre sedi in ritardo fanno 6 impronte
+            // (soglia 5) e il controllo resterebbe `degradato` 15 minuti al giorno. Nessun'altra impronta di `anni_tick` è esclusa.
+            .not('fingerprint', 'like', 'anni-tick-passaggio-da-fare:%')
+            .not('fingerprint', 'like', 'anni-tick-guardia-spenta:%')
             .limit(RIGHE_MAX_OCCORRENZE)
         if (error) {
             return { esito: 'degradato', dettaglio: `conteggio app_log ${codiceDi(error)}` }
@@ -1728,7 +1733,7 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
             })
         }
         if (passaggio !== null && passaggio > 0) {
-            // Solo `degradato`: la riga `error` la scrive il giro orario di `anni_tick` (una per sede all'ora). Scriverla qui, a ogni lettura
+            // Solo `degradato`: la riga `error` la scrive il giro orario di `anni_tick` (una per sede al giorno). Scriverla qui, a ogni lettura
             // di /api/health, peggiorerebbe da sola il controllo `tasso-errore`.
             return { esito: 'degradato', dettaglio: fraseDelPassaggio(passaggio, letto.salute.passaggio_iniziato) }
         }

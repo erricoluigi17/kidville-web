@@ -87,3 +87,23 @@ describe('F1 · le righe orarie di anni_tick non accendono `tasso-errore`', () =
     expect(spente.map((x) => x.occorrenze)).toEqual([1, 1, 1])
   })
 })
+
+describe('(correzioni, giro 2, N4) guardia spenta E passaggio da fare, 3 sedi vere, primo giro del giorno', () => {
+  it('le sei impronte di anni_tick non accendono `tasso-errore`; un errore vero di un\'altra impronta sì', async () => {
+    await fissaCalendarioAnni(db)
+    await db.exec(`UPDATE public.anno_regole SET guardia_attiva = false, sedi_simulazione = '{}'`)
+    await db.exec(`DELETE FROM public.app_log`)
+    await giraAlle('2027-08-25T00:10:00Z')
+    const { righe, esito } = await tassoErrore('2027-08-25T00:20:00Z')
+    const impronte = righe.map((x) => x.fingerprint.split(':')[0]).sort()
+    expect(impronte.filter((f) => f === 'anni-tick-guardia-spenta'), 'una per sede vera').toHaveLength(3)
+    expect(impronte.filter((f) => f === 'anni-tick-passaggio-da-fare'), 'una per sede vera').toHaveLength(3)
+    expect(esito, 'sei impronte, ma le copre già il controllo `anno`: tasso-errore resta ok').toMatchObject({ nome: 'tasso-errore', esito: 'ok' })
+
+    // Cinque errori veri di altre impronte (soglia 5): il controllo li conta ancora, anche con le due di anni_tick presenti.
+    await db.exec(`INSERT INTO public.app_log (livello, evento, sorgente, messaggio, fingerprint)
+                   SELECT 'error', 'api', 'server', 'prova', 'errore-vero-di-prova:' || g FROM generate_series(1, 6) g`)
+    const dopo = await tassoErrore('2027-08-25T00:20:00Z')
+    expect(dopo.esito).toMatchObject({ nome: 'tasso-errore', esito: 'degradato' })
+  })
+})

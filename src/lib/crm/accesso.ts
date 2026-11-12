@@ -6,6 +6,7 @@ import { formaConfronto, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { logEvento } from '@/lib/logging/logger'
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { rispostaErroreDb, rispostaErroreDbSchema } from './errori'
 import type { AnnoIngresso } from './tipi'
 
@@ -157,36 +158,43 @@ export type PersonaCrm = { id: string; nome: string; cognome: string; ruolo: 'se
  * comparirebbe nell'elenco e poi si prenderebbe 422 da `assertPersonaInScope`.
  *
  * Un guasto nella rilettura finale LANCIA (l'errore di PostgREST, tale e quale): un `[]` direbbe alla
- * schermata «nessuno è disponibile». Un guasto DENTRO `staffScuola` no: lì l'errore si registra (area
- * `notifica`) e l'elenco esce vuoto o parziale — perciò un elenco vuoto lascia una riga `warn` anche
- * qui, nell'area `crm`.
+ * schermata «nessuno è disponibile». Di norma `staffScuola` registra l'errore interno (area
+ * `notifica`) e restituisce un elenco vuoto o parziale — perciò un elenco vuoto lascia una riga `warn` anche
+ * qui, nell'area `crm`. Per l'assistente, `rigoroso` propaga ogni guasto di lettura (solo codice
+ * tecnico), così una lista vuota o parziale non viene scambiata per disponibilità reale.
  */
-export async function personeDellaSede(supabase: SupabaseClient, scuolaId: string): Promise<PersonaCrm[]> {
-  const ids = await staffScuola(supabase, scuolaId, [...RUOLI_CRM])
-  if (ids.length > 0) {
-    const { data, error } = await supabase
-      .from('utenti')
-      .select('id, nome, cognome, ruolo, scuola_id')
-      .in('id', ids)
-      .in('ruolo', [...RUOLI_CRM])
-      .is('archiviato_il', null)
-    if (error) throw error
+export async function personeDellaSede(
+  supabase: SupabaseClient, scuolaId: string, { rigoroso = false }: { rigoroso?: boolean } = {},
+): Promise<PersonaCrm[]> {
+  try {
+    const ids = await staffScuola(supabase, scuolaId, [...RUOLI_CRM], { rigoroso })
+    if (ids.length > 0) {
+      const { data, error } = await supabase
+        .from('utenti')
+        .select('id, nome, cognome, ruolo, scuola_id')
+        .in('id', ids)
+        .in('ruolo', [...RUOLI_CRM])
+        .is('archiviato_il', null)
+      if (error) throw error
 
-    const persone = (data ?? [])
-      .filter(
-        (r) =>
-          r.ruolo === 'admin' ||
-          (typeof r.scuola_id === 'string' && formaConfronto(r.scuola_id) === formaConfronto(scuolaId)),
-      )
-      .map((r) => ({
-        id: r.id as string,
-        nome: (r.nome as string | null) ?? '',
-        cognome: (r.cognome as string | null) ?? '',
-        ruolo: r.ruolo as 'segreteria' | 'admin',
-      }))
-      .sort((a, b) => a.cognome.localeCompare(b.cognome, 'it') || a.nome.localeCompare(b.nome, 'it'))
-    if (persone.length > 0) return persone
+      const persone = (data ?? [])
+        .filter(
+          (r) =>
+            r.ruolo === 'admin' ||
+            (typeof r.scuola_id === 'string' && formaConfronto(r.scuola_id) === formaConfronto(scuolaId)),
+        )
+        .map((r) => ({
+          id: r.id as string,
+          nome: (r.nome as string | null) ?? '',
+          cognome: (r.cognome as string | null) ?? '',
+          ruolo: r.ruolo as 'segreteria' | 'admin',
+        }))
+        .sort((a, b) => a.cognome.localeCompare(b.cognome, 'it') || a.nome.localeCompare(b.nome, 'it'))
+      if (persone.length > 0) return persone
+    }
+    logEvento('crm', 'warn', { operazione: 'crm/accesso:personeDellaSede', esito: 'nessuna-persona-nella-sede', sede_id: scuolaId })
+    return []
+  } catch (errore) {
+    throw rigoroso ? erroreDbSoloCodice(errore) : errore
   }
-  logEvento('crm', 'warn', { operazione: 'crm/accesso:personeDellaSede', esito: 'nessuna-persona-nella-sede', sede_id: scuolaId })
-  return []
 }

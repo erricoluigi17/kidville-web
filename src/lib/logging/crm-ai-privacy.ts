@@ -16,6 +16,8 @@ const OPERAZIONI = new Set([
     'crm_ai_prenota', 'crm_ai_annulla', 'crm_ai_richiamo',
     'sections', 'crm_appuntamenti', 'crm_indisponibilita', 'crm_settimane', 'crm_fasce',
     'utenti', 'utenti_scuole', '?',
+    // Rotte dei contatti CRM AI e tabelle che leggono.
+    'crm/ai/contatti', 'crm/ai/contatti/stato', 'crm/ai/contatti/nuovi', 'crm_schede', 'crm_bambini',
 ]);
 const OPERAZIONE_AI = /^crm\/ai:(?:slot|prenota|annulla|contatto|contatto_stato|contatti_nuovi|richiamo)$/;
 const LETTURA_AI = /^crm\/ai\/(?:slot|prenota)(?::(?:agenda|appuntamenti|indisponibilita|disponibilita|persone|sezioni))?$/;
@@ -27,7 +29,8 @@ const METODI = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELET
 
 const ESITI = new Set([
     'ai-rifiutata', 'ai-sedi-ammesse-vuote', 'ai-ultimo-uso-non-scritto',
-    'ai-sede-diversa-dalla-chiave', 'ai-chiamata', 'ai-visita-fissata', 'schema-crm-assente',
+    'ai-sede-diversa-dalla-chiave', 'ai-chiamata', 'ai-visita-fissata', 'ai-visita-annullata', 'schema-crm-assente',
+    'ai-contatto-creato', 'ai-contatto-gia-presente',
     'integrazioni-non-admin', 'sede-filtro-fuori-scope', 'riga-fuori-sede', 'integrazioni-elencate',
     'integrazione-rifiutata', 'integrazione-creata', 'integrazione-revocata', 'integrazione-gia-revocata',
     'config-illeggibile-notifiche_config', 'fail-open', 'notifica-non-inviata', 'notifica-non-accodata',
@@ -39,7 +42,7 @@ const ESITI = new Set([
     'schema-assente', 'fallito', 'eccezione', 'riga-illeggibile',
 ]);
 const TIPI = new Set([
-    'crm_visita_assegnata', 'crm-ai', 'sconosciuto', 'header-fallback',
+    'crm_visita_assegnata', 'crm_visita_annullata', 'crm-ai', 'sconosciuto', 'header-fallback',
     'non-autenticato', 'utente-sconosciuto', 'ruolo-negato', 'account-archiviato',
     'sedi-utente-ponte-assente', 'sedi-utente-non-risolte', 'sedi-attive-non-accessibili',
     'sede-scrittura-fuori-scope', 'sede-scrittura-cookie-fuori-scope', 'sede-scrittura-ambigua',
@@ -55,7 +58,7 @@ const CODICI = new Set<string>([
     'CRM_AI_SPENTO', 'TOKEN_NON_VALIDO', 'SEDE_NON_AMMESSA', 'SEDE_NON_ACCESSIBILE', 'TROPPE_RICHIESTE',
     'GIA_PRENOTATO', 'SLOT_OCCUPATO', 'FUORI_DISPONIBILITA', 'CHIAVE_RIUSATA', 'ETA_NON_COPERTA',
     'NESSUN_RESPONSABILE', 'CONTATTO_OBBLIGATORIO', 'SCHEDA_NON_TROVATA', 'ELEMENTO_NON_TROVATO',
-    'INTEGRAZIONE_ESISTENTE', 'CRM_OPERAZIONE_NON_RIUSCITA',
+    'STATO_NON_AMMESSO', 'INTEGRAZIONE_ESISTENTE', 'CRM_OPERAZIONE_NON_RIUSCITA',
     'rate_limit_crm_ai', 'supabase_http', 'timeout', 'abort', 'errore_rete',
     'auth_sessione_non_verificata', 'auth_sessione_non_leggibile', 'auth_lookup_identita_fallito',
 ]);

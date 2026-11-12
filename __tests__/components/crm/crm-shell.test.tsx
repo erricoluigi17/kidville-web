@@ -18,7 +18,7 @@ import {
 } from '@/lib/crm/tipi'
 
 /**
- * CRM della segreteria · Compito 1.6 — la cornice: cinque schede guidate da `?tab=` e le etichette
+ * CRM della segreteria · Compito 1.6 — la cornice: sei schede guidate da `?tab=` e le etichette
  * di TUTTI i vocabolari in italiano e in inglese.
  *
  * Le schermate vere sono sostituite da finti che rendono il segnaposto (`data-crm-segnaposto`): il test
@@ -34,8 +34,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }))
 
-// Le cinque schermate delle linguette non sono più segnaposto: le hanno riempite le sessioni 2, 3, 5 e 6, e
-// chiamano il server. Qui si misura la CORNICE (quale schermata monta e con quale sede), quindi ognuna è
+// Le sei schermate chiamano il server. Qui si misura la CORNICE (quale schermata monta e con quale sede), quindi ognuna è
 // sostituita da un finto che rende il segnaposto: le asserzioni su `data-crm-segnaposto` restano vere senza far
 // partire la rete. Le schermate vere hanno i loro test (`schede`, `agenda`, `follow-up`, `statistiche`).
 vi.mock('@/components/features/crm/agenda/AgendaSettimana', async () => {
@@ -68,6 +67,12 @@ vi.mock('@/components/features/crm/statistiche/StatisticheCrm', async () => {
     StatisticheCrm: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="StatisticheCrm" dati={{ 'scuola-id': scuolaId }} />,
   }
 })
+vi.mock('@/components/features/crm/integrazioni/Integrazioni', async () => {
+  const { Segnaposto } = await import('@/components/features/crm/Segnaposto')
+  return {
+    Integrazioni: ({ scuolaId }: { scuolaId: string }) => <Segnaposto nome="integrazioni" dati={{ 'scuola-id': scuolaId }} />,
+  }
+})
 
 /** Quale segnaposto sta a schermo per ciascuna linguetta. */
 const SEGNAPOSTO_DI: Record<(typeof TAB_CRM)[number], string> = {
@@ -76,6 +81,7 @@ const SEGNAPOSTO_DI: Record<(typeof TAB_CRM)[number], string> = {
   schede: 'ElencoSchede',
   disponibilita: 'DisponibilitaPersona',
   statistiche: 'StatisticheCrm',
+  integrazioni: 'integrazioni',
 }
 
 const montati = () =>
@@ -105,18 +111,20 @@ describe('CrmShell · la linguetta aperta la decide ?tab=', () => {
     expect(montati()).toEqual(['AgendaSettimana'])
   })
 
-  it('tabDaParametro ripiega sull’agenda per tutto ciò che non è una delle cinque', () => {
+  it('tabDaParametro ripiega sull’agenda per tutto ciò che non è una delle sei', () => {
     expect(tabDaParametro(null)).toBe('agenda')
     expect(tabDaParametro(undefined)).toBe('agenda')
     expect(tabDaParametro('')).toBe('agenda')
     expect(tabDaParametro('__proto__')).toBe('agenda')
     expect(tabDaParametro('toString')).toBe('agenda')
+    expect(tabDaParametro('integrazioni')).toBe('integrazioni')
+    expect(TAB_CRM).toHaveLength(6)
     for (const t of TAB_CRM) expect(tabDaParametro(t)).toBe(t)
   })
 
-  it('le cinque linguette ci sono tutte, con il loro nome in italiano', () => {
+  it('le sei linguette ci sono tutte, con il loro nome in italiano', () => {
     render(<CrmShell scuolaId={SEDE_A} />)
-    for (const nome of ['Agenda', 'Da richiamare', 'Schede', 'Disponibilità', 'Statistiche']) {
+    for (const nome of ['Agenda', 'Da richiamare', 'Schede', 'Disponibilità', 'Statistiche', 'Assistente']) {
       expect(screen.getByRole('button', { name: nome })).toBeTruthy()
     }
     // La linguetta attiva è dichiarata a chi non vede il colore.
@@ -259,5 +267,5 @@ describe('crmShell · i sei namespace sono montati', () => {
   })
 
   // Il test «i namespace nascono vuoti» è stato tolto all'integrazione (2026-10-31): le sessioni 2–6 hanno
-  // riempito tutti e cinque i namespace delle schermate, e ognuno è letto a schermo dai test della sua schermata.
+  // riempito i namespace delle schermate, e ognuno è letto a schermo dai test della sua schermata.
 })

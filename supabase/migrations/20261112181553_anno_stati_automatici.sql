@@ -193,8 +193,10 @@ $$;
 
 -- ── 3 · Il tick: passo 1 (invariato) e passo 2 ──────────────────────────────
 
--- Copia di `anni_tick` della 4.5 (`20261109035209_anno_tick.sql`): il passo 1 è IDENTICO. Cambia solo che, DOPO il passo 1 di ogni sede
--- e in un blocco suo, gira il passo 2 (`anno_stati_aggiorna`): se uno dei due fallisce non ferma l'altro né le altre sedi. Un errore
+-- Copia di `anni_tick` della 4.5 (`20261109035209_anno_tick.sql`): il passo 1 è quello della 4.5, con in fondo al suo blocco lo svuotamento
+-- dei vincoli differiti che ha scritto (N2). Cambia che: PRIMA del ciclo si esegue la coda dei vincoli differiti già in coda (F4); DOPO il
+-- passo 1 di ogni sede e in un blocco suo gira il passo 2 (`anno_stati_aggiorna`); DOPO il passo 2 gira il passo 3 (il passaggio non fatto a
+-- 7 giorni dall'inizio: una riga `error` per sede e per giorno). Se uno dei passi fallisce non ferma gli altri né le altre sedi. Un errore
 -- scrive un `error` con il solo SQLSTATE e l'uuid. Il battito è uno solo: `ok-parziale` se `errori > 0` — e un cambio dovuto ma saltato
 -- per la guardia spenta conta come errore, perché lo è.
 -- Restituisce {"oggi","sedi","creati","copie","errori","stati"}: `stati` è il numero di cambi di stato fatti in questo giro.

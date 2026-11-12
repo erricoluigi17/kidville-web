@@ -15,7 +15,7 @@ import { SEDE_E2E, SEDE_SIM, SEDE_VERA, UTENTE, creaBancoPassaggio, inRollback, 
  *   D3  fotografia in ordine cronologico, dopo una conferma VERA → riesce (prima: 23505 sull'indice del `corrente`)
  *   D4  simulazione senza conferma (solo il tick)           → riesce; l'anno nato dal tick resta, con la sua cronologia
  *   D5  una sede vera in `sedi_simulazione` con Demo        → si ferma (RIPRISTINO_SEDI_NON_UNA), la sede vera è intatta
- *   D6  `sedi_simulazione` vuoto                            → si ferma (prima: «non tocca niente» e basta)
+ *   D6  sede NON `e2e00000…` con `sedi_simulazione` vuoto   → si ferma (RIPRISTINO_SEDE_NON_DI_PROVA); per la Demo `e2e00000…` l'elenco vuoto va bene
  *   D7  il COMMIT è nella stessa richiesta                  → dopo un errore la transazione resta in errore (il COMMIT non è partito);
  *                                                              dopo il successo la scrittura è definitiva senza un secondo invio
  *   D8  l'annullo dopo la `fine` è il difetto R2 (corretto da un altro agente): qui non si prova.

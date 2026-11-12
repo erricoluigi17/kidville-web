@@ -14,11 +14,11 @@ import path from 'node:path'
  *  · non contiene nessun uuid (la sede e la data sono segnaposto da compilare);
  *  · non nomina `enrollment_submissions` (le domande di iscrizione vere, con i dati di minori) né le tabelle dell'anagrafica
  *    (`alunni`, `tutori`, `genitori`, `utenti`, `anagrafica_*`): le sole tabelle toccate sono quelle della simulazione;
- *  · ogni `DELETE` e ogni `UPDATE` dentro il blocco ha un `WHERE` che passa da `_sedi_simulazione`, la tabella temporanea riempita da
- *    `anno_regole.sedi_simulazione`; non scrive mai con `INSERT`/`TRUNCATE`/`MERGE` su una tabella vera;
+ *  · ogni `DELETE` e ogni `UPDATE` dentro il blocco ha un `WHERE` che passa da `_sedi_simulazione`, la tabella temporanea con la sola sede
+ *    scritta in `c_sede` (già verificata come sede di prova: `e2e00000…` o unica in `anno_regole.sedi_simulazione`); non scrive mai con `INSERT`/`TRUNCATE`/`MERGE` su una tabella vera;
  *  · ha la forma `BEGIN; DO …; COMMIT;` e il COMMIT è UNO, DOPO il blocco: dentro il blocco non c'è nessuna chiusura della
  *    transazione, e dopo il COMMIT restano solo letture;
- *  · il blocco si ferma (RAISE EXCEPTION) per i sei motivi dichiarati in testa.
+ *  · il blocco si ferma (RAISE EXCEPTION) per i sette motivi dichiarati in testa.
  *
  * Non è cieco: dichiara il minimo di istruzioni esaminate, e ha il suo controllo positivo su SQL finto.
  */

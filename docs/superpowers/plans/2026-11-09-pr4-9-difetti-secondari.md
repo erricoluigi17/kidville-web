@@ -20,7 +20,7 @@ Trovati lavorando alla 4.9 e **non corretti** qui perché fuori dal perimetro. N
 
 ## Giro di correzione 1 (revisione finale) · annotati, non corretti
 
-7. **S11 · `tasso-errore` a ondate con la guardia spenta.** Una riga per sede vera, occorrenze cumulate nel giorno UTC: con tre sedi vere la
+7. **S11 · `tasso-errore` a ondate con la guardia spenta. CHIUSA nelle correzioni dopo la revisione finale (giri 1 e 2):** le righe `error` di `anni_tick` sono una al giorno per sede (`DO NOTHING`) e `controlloTassoErrore` esclude le impronte `anni-tick-passaggio-da-fare:%` e `anni-tick-guardia-spenta:%`; prova in `__tests__/db/anno-tick-tasso-errore.test.ts`. Testo originale: Una riga per sede vera, occorrenze cumulate nel giorno UTC: con tre sedi vere la
    soglia di 25 si supera al 9° giro del tick, verso metà mattina, e l'esito è `degradato`. È un calcolo del revisore, non una misura. Già
    `degradato` per `anno` in quei giorni, quindi cambia poco. Da guardare se capita davvero.
 8. **S12 · i gettoni creati e non usati restano fino alla scadenza** (10 minuti): gonfiano i conteggi di chi legge. Ricadono da soli.

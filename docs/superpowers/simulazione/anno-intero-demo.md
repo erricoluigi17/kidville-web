@@ -128,8 +128,8 @@ vecchio non è l'anno attivo), `PASSAGGIO_OGGI_NON_AMMESSO` (la sede non cominci
 ### Se il passo 6 non viene fatto
 
 Se si salta dal passo 4 al 9, e poi al 10, il tick porta il vecchio a `chiuso` e il nuovo resta `iscrizioni_aperte`, senza anno `corrente`.
-In Demo **non** compaiono né l'allarme «sedi con il passaggio d'anno da fare» (`salute_anno()` → `passaggio_da_fare` vale 0 per le sedi in
-simulazione) né `PASSAGGIO_DA_FARE` (confronta l'orologio vero): una presenza datata nel nuovo anno **passa**, mentre una scrittura di **oggi**
+In Demo **non** compaiono né l'allarme «sedi con il passaggio d'anno da fare» (`salute_anno()` → `passaggio_da_fare` vale 0 per le sedi di prova `e2e00000…`, come Demo, e per quelle in
+`sedi_simulazione`) né `PASSAGGIO_DA_FARE` (confronta l'orologio vero): una presenza datata nel nuovo anno **passa**, mentre una scrittura di **oggi**
 cade nel vecchio anno chiuso e, a guardia accesa, prende `ANNO_CHIUSO`. Lo scenario si guarda negli stati, non nei rifiuti.
 
 Ad ogni passo: `SELECT * FROM public.anno_invarianti() WHERE righe <> 0;` → nessuna riga. Un'invariante rossa ferma la simulazione e
@@ -156,7 +156,7 @@ Il file `docs/superpowers/simulazione/ripristino-demo.sql` è **un blocco solo**
 2. Compila i tre punti marcati «DA COMPILARE»: l'uuid di Demo al posto di `<DEMO>`, la data di partenza al posto di `AAAA-MM-GG`, e le righe della
    fotografia al posto di `('AAAA/AA', 'corrente', false)` (una riga per anno: etichetta, stato, domande aperte).
 3. Lo invia **tutto in una volta**. Il `COMMIT` è già nel file, dopo il blocco: **non** si scrive un secondo `COMMIT;` né un `ROLLBACK;`. Se il
-   blocco si ferma da solo (`RIPRISTINO_SEGNAPOSTO`, `RIPRISTINO_SEDI_NON_UNA`, `RIPRISTINO_SEDE_DIVERSA`, `RIPRISTINO_DATA`, `RIPRISTINO_FOTOGRAFIA`,
+   blocco si ferma da solo (`RIPRISTINO_SEGNAPOSTO`, `RIPRISTINO_SEDE_NON_DI_PROVA`, `RIPRISTINO_SEDI_NON_UNA`, `RIPRISTINO_SEDE_DIVERSA`, `RIPRISTINO_DATA`, `RIPRISTINO_FOTOGRAFIA`,
    `RIPRISTINO_CONTEGGI`) l'invio si interrompe lì, il `COMMIT` non parte e **non è cambiato niente**: si corregge ciò che dice il codice e si
    rinvia. Se l'editor risponde «current transaction is aborted», si invia `ROLLBACK;`. Se l'editor rifiutasse più istruzioni in un invio solo,
    si tolgono `BEGIN;` e `COMMIT;`: il blocco da solo è già atomico.

@@ -2,6 +2,8 @@
 
 Il compito 1 prepara le chiavi per sede, il registro delle richieste e le operazioni atomiche per contatti, prenotazioni, annullamenti e richiami. La prenotazione ricontrolla l’agenda nel database e l’annullamento verifica il token autore. Il richiamo via telefono conserva l’origine del contatto e il nome del genitore quando viene fornito. Le prove usano PGlite e il calendario scolastico di prova. Migrazione in attesa di applicazione al merge, accesso ancora da attivare.
 
+Nel cambio d’ora l’agenda e il ricontrollo della prenotazione seguono la stessa griglia di Roma. In primavera si saltano gli inizi inesistenti; in autunno un inizio nell’ora doppia usa la seconda occorrenza (CET). La durata è in minuti effettivi e la visita deve finire nello stesso giorno civile, entro la chiusura sia sull’orologio di Roma sia come istante. Per esempio, nel salto di primavera una visita di 60 minuti dalle 01:30 termina alle 03:30 e non entra in una fascia che chiude alle 03:15.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (ramo `worktree-agent-a329c2f7fe5093f06`)
 
 **Stato:** 🟡 in revisione, fino al merge. **Ha una migrazione**, che applica l'integrazione di Supabase al merge con la version del proprio file: `20261109165244_anno_cruscotto.sql` (M47). Solo due funzioni di LETTURA nuove (`anno_cruscotto`, `anno_quota_piu_voci`): nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno, nessuna riga scritta in produzione. Provata in PGlite (Postgres 18; la produzione è la 17) su route vere; nessun controllo visivo nel browser e nessuna prova da telefono.

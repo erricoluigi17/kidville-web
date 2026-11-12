@@ -2,6 +2,9 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PGlite } from '@electric-sql/pglite'
+import { candidatiPer } from '@/lib/crm/ai/disponibilita'
+import { lunediDi } from '@/lib/crm/settimane'
+import { calcolaSlotLiberi } from '@/lib/crm/slot'
 import { creaDbAnnoPr2 } from '../../helpers/schema-anno-pglite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -437,6 +440,89 @@ describe('controlli aggiunti dalla ripresa', () => {
     await db.query('UPDATE public.crm_indisponibilita SET utente_id = NULL WHERE scuola_id = $1', [SEDE_A])
     expect(await prenota({ chiave: 'chiave-0002', tel: TEL2, telNorm: TEL2_NORM, candidati: [P1, P2] }))
       .toEqual({ esito: 'fuori_disponibilita' })
+  })
+})
+
+describe('crm_ai_candidati · stessa griglia di Roma del motore TypeScript', () => {
+  const primavera = '2026-03-29'
+  const autunno = '2026-10-25'
+  const persone = [P2, P1, ADMIN]
+  const esplicite = [P_B, P2]
+  const iso = (cifre: string) => `${cifre}:00.000Z`
+
+  it.each([
+    {
+      caso: 'primavera, fascia nell’ora inesistente',
+      giorno: primavera, da: '02:00', al: '03:00', durata: 30, attesi: [],
+      rifiutati: ['2026-03-29T01:00', '2026-03-29T01:30'],
+    },
+    {
+      caso: 'primavera, la visita supera la chiusura reale',
+      giorno: primavera, da: '01:30', al: '03:15', durata: 60, attesi: [],
+      rifiutati: ['2026-03-29T00:30'],
+    },
+    {
+      caso: 'primavera, la chiusura nell’ora inesistente non autorizza una fine civile oltre il limite',
+      giorno: primavera, da: '01:30', al: '02:30', durata: 45, attesi: [],
+      rifiutati: ['2026-03-29T00:30'],
+    },
+    {
+      caso: 'primavera, una visita attraversa il salto e una termina alla chiusura',
+      giorno: primavera, da: '01:30', al: '03:45', durata: 45,
+      attesi: [['2026-03-29T00:30', '2026-03-29T01:15'], ['2026-03-29T01:00', '2026-03-29T01:45']],
+      rifiutati: ['2026-03-29T01:15'],
+    },
+    {
+      caso: 'autunno, gli inizi ambigui scelgono solo la seconda occorrenza (CET)',
+      giorno: autunno, da: '02:00', al: '03:00', durata: 30,
+      attesi: [['2026-10-25T01:00', '2026-10-25T01:30'], ['2026-10-25T01:30', '2026-10-25T02:00']],
+      rifiutati: ['2026-10-25T00:00', '2026-10-25T00:30'],
+    },
+    {
+      caso: 'autunno, una fine nella prima 02:30 e un inizio nella seconda 02:30',
+      giorno: autunno, da: '01:30', al: '03:30', durata: 60,
+      attesi: [['2026-10-24T23:30', '2026-10-25T00:30'], ['2026-10-25T01:30', '2026-10-25T02:30']],
+      rifiutati: ['2026-10-25T00:30'],
+    },
+    {
+      caso: 'giorno ordinario, inizio sulla griglia e fine alla chiusura',
+      giorno: '2026-02-22', da: '09:00', al: '10:30', durata: 45,
+      attesi: [['2026-02-22T08:00', '2026-02-22T08:45'], ['2026-02-22T08:45', '2026-02-22T09:30']],
+      rifiutati: ['2026-02-22T08:15', '2026-02-22T09:30'],
+    },
+  ])('$caso · $da–$al da $durata min', async ({ giorno, da, al, durata, attesi, rifiutati }) => {
+    const settimana = lunediDi(giorno)
+    // Qui si prova il controllo della griglia senza l'anticipo di prenota: le date di cambio ora sono fisse.
+    await db.query('DELETE FROM public.crm_settimane WHERE scuola_id = $1', [SEDE_A])
+    await db.query(`
+      WITH settimana AS (
+        INSERT INTO public.crm_settimane (scuola_id, settimana) VALUES ($1, $2::date - 7)
+        RETURNING id, scuola_id
+      )
+      INSERT INTO public.crm_fasce (scuola_id, settimana_id, giorno_settimana, ora_inizio, ora_fine, durata_slot_min)
+        SELECT scuola_id, id, 7, $3, $4, $5 FROM settimana
+    `, [SEDE_A, settimana, da, al, durata])
+
+    const slot = calcolaSlotLiberi({
+      fasce: [{ utenteId: null, settimana, giornoSettimana: 7, oraInizio: da, oraFine: al, durataSlotMin: durata }],
+      persone, indisponibilita: [], appuntamenti: [], dal: giorno, al: giorno,
+      adesso: new Date('2026-01-01T00:00:00.000Z'),
+    })
+    expect(slot.map(({ inizio, fine }) => [inizio, fine])).toEqual(attesi.map((coppia) => coppia.map(iso)))
+
+    for (const partenza of [...attesi.map(([inizio]) => inizio), ...rifiutati]) {
+      const inizio = iso(partenza)
+      const fine = new Date(Date.parse(inizio) + durata * 60_000).toISOString()
+      const tutte = candidatiPer(slot, inizio, fine)?.candidati ?? []
+      for (const candidati of [null, esplicite]) {
+        const { rows: [{ assegnabili }] } = await db.query<{ assegnabili: string[] }>(
+          'SELECT public.crm_ai_candidati($1, $2, $3, $4) AS assegnabili',
+          [SEDE_A, inizio, durata, candidati ? `{${candidati.join(',')}}` : null],
+        )
+        expect(assegnabili, `${inizio} · ${candidati ? 'filtrate' : 'tutte'}`)
+          .toEqual(candidati ? candidati.filter((p) => tutte.includes(p)) : tutte)
+      }
+    }
   })
 })
 

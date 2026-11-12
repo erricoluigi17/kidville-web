@@ -417,9 +417,12 @@ CREATE OR REPLACE FUNCTION public.crm_ai_candidati(
   SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_giorno date := (p_inizio AT TIME ZONE 'Europe/Rome')::date;
+  v_inizio_civile timestamp := p_inizio AT TIME ZONE 'Europe/Rome';
+  v_giorno date := v_inizio_civile::date;
   v_lunedi date := date_trunc('week', v_giorno::timestamp)::date;
-  v_fine timestamptz := p_inizio + make_interval(mins => p_durata_min);
+  v_durata interval := make_interval(mins => p_durata_min);
+  v_fine timestamptz := p_inizio + v_durata;
+  v_fine_civile timestamp := v_fine AT TIME ZONE 'Europe/Rome';
   v_persone uuid[];
 BEGIN
   -- SHARE è compatibile con altre prenotazioni. Blocca chi cambia fasce
@@ -443,15 +446,26 @@ BEGIN
               ORDER BY s.utente_id, s.settimana DESC
            ) settimana
            JOIN public.crm_fasce f ON f.settimana_id = settimana.id AND f.scuola_id = p_scuola_id
+           CROSS JOIN LATERAL (
+             SELECT date_trunc('minute', v_giorno + f.ora_fine) AS fine_civile
+           ) limite
            CROSS JOIN LATERAL generate_series(
-             extract(hour FROM f.ora_inizio)::integer * 60 + extract(minute FROM f.ora_inizio)::integer,
-             extract(hour FROM f.ora_fine)::integer * 60 + extract(minute FROM f.ora_fine)::integer - p_durata_min,
-             p_durata_min
-           ) AS griglia(minuto)
+             date_trunc('minute', v_giorno + f.ora_inizio),
+             limite.fine_civile - v_durata,
+             v_durata
+           ) AS griglia(inizio_civile)
           WHERE f.giorno_settimana = extract(isodow FROM v_giorno)
             AND f.durata_slot_min = p_durata_min
             AND f.ora_fine < time '24:00'
-            AND (v_giorno + make_interval(mins => griglia.minuto)) AT TIME ZONE 'Europe/Rome' = p_inizio
+            -- Il ritorno all'ora civile esclude gli inizi inesistenti. Per l'ora
+            -- doppia la conversione sceglie la seconda occorrenza (CET), come il CRM.
+            AND griglia.inizio_civile = v_inizio_civile
+            AND (griglia.inizio_civile AT TIME ZONE 'Europe/Rome') = p_inizio
+            -- La durata è reale; vale anche il limite scritto sull'orologio,
+            -- perché una chiusura nell'ora saltata si converte a un istante più tardo.
+            AND v_fine_civile::date = v_giorno
+            AND v_fine_civile <= limite.fine_civile
+            AND v_fine <= (limite.fine_civile AT TIME ZONE 'Europe/Rome')
        )
        AND NOT EXISTS (
          SELECT 1 FROM public.crm_indisponibilita i

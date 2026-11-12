@@ -8,7 +8,9 @@ import { conAnno } from '@/lib/anno/tipi'
 import { erroreAnno } from '@/lib/anno/errori'
 import { clientPerScrittura } from '@/lib/anno/gettone'
 import { annoDaEtichetta } from '@/lib/anno/etichetta'
-import { parseBody, parseQuery } from '@/lib/validation/http'
+import { annoDellaRiga } from '@/lib/anno/anno-della-riga'
+import { zCorrezione, type Correzione } from '@/lib/anno/correzione'
+import { parseBody, parseBodyFacoltativo, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -157,6 +159,8 @@ const getQuerySchema = z.object({
 })
 
 const postBodySchema = z.object({
+  // Su un anno chiuso la segreteria registra una CORREZIONE (PR 4.9): il motivo sta nella riga del gettone, mai in un log.
+  correzione: zCorrezione.optional(),
   // La sede si DICHIARA: il client la manda, il server la ri-valida contro i
   // plessi accessibili (è solo `preferita`, non un'autorizzazione).
   scuolaId: zUuid.nullish(),
@@ -168,6 +172,8 @@ const postBodySchema = z.object({
 })
 
 const patchBodySchema = z.object({
+  // Su un anno chiuso la segreteria registra una CORREZIONE (PR 4.9): il motivo sta nella riga del gettone, mai in un log.
+  correzione: zCorrezione.optional(),
   id: zUuid,
   nome: z.string().nullish(),
   ordine: z.union([z.number(), z.string()]).nullish(),
@@ -181,6 +187,33 @@ const patchBodySchema = z.object({
 const deleteQuerySchema = z.object({
   id: zUuid,
 })
+
+// Un DELETE non ha un corpo: chi corregge un anno chiuso lo manda JSON (mai nella URL, che finisce nei log di chiunque).
+const deleteBodySchema = z.object({
+  correzione: zCorrezione.optional(),
+})
+
+/**
+ * Con quale client si scrive su un periodo GIÀ ESISTENTE (PATCH e DELETE). L'anno è quello della riga (`anno_id`): si dichiara a
+ * `resolveAnnoScrittura`, che su un anno `chiuso` risponde 409 `ANNO_CHIUSO` con `correzione_possibile` (la schermata apre il dialogo)
+ * o, con la `correzione`, crea il gettone. Anno corrente, riga storica senza `anno_id` o database senza lo schema dell'anno: il client
+ * di prima, nessun gettone. Va chiamata DOPO i rifiuti sulle date: una richiesta che si rifiuta non crea gettoni.
+ */
+async function clientPerPeriodo(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: Parameters<typeof resolveAnnoScrittura>[2],
+  periodo: { id: string; scuola_id: string },
+  correzione: Correzione | undefined,
+  operazione: string,
+): Promise<{ scrittura: SupabaseClient } | { response: NextResponse }> {
+  const daAnno = await annoDellaRiga(supabase, 'scrutinio_periodi', periodo.id)
+  if ('guasto' in daAnno) return { response: letturaFallita(operazione, 'anno_periodo', daAnno.guasto) }
+  if (!daAnno.annoId) return { scrittura: supabase }
+  const esito = await resolveAnnoScrittura(request, supabase, user, periodo.scuola_id, { dichiarato: daAnno.annoId, correzione })
+  if (esito instanceof NextResponse) return { response: esito }
+  return { scrittura: await clientPerScrittura(supabase, esito) }
+}
 
 // GET /api/admin/primaria/scrutinio-periodi?annoScolastico=&userId=
 // Elenca i periodi di scrutinio configurati per la scuola dello staff.
@@ -247,7 +280,7 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const { scuolaId, annoScolastico, nome, ordine, dataInizio, dataFine } = b.data
+    const { scuolaId, annoScolastico, nome, ordine, dataInizio, dataFine, correzione } = b.data
 
     const supabase = await createAdminClient()
     const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
@@ -277,7 +310,7 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
         logEvento('anno-scolastico', 'warn', { tipo: 'etichetta-non-di-un-anno', azione: operazione })
         return erroreAnno({ message: 'ANNO_NON_DELLA_SEDE' }, operazione) as NextResponse
       }
-      esito = await resolveAnnoScrittura(request, supabase, auth.user, sede.scuolaId!, { dichiarato: daEtichetta.annoId })
+      esito = await resolveAnnoScrittura(request, supabase, auth.user, sede.scuolaId!, { dichiarato: daEtichetta.annoId, correzione })
       if (esito instanceof NextResponse) return esito
     }
 
@@ -314,7 +347,7 @@ export const POST = withRoute('admin/primaria/scrutinio-periodi:POST', async (re
 })
 
 // PATCH /api/admin/primaria/scrutinio-periodi?userId=
-// body: { id, nome?, ordine?, dataInizio?, dataFine?, attivo?, archiviato? }
+// body: { id, nome?, ordine?, dataInizio?, dataFine?, attivo?, archiviato?, correzione? }
 //
 // Le date si controllano sulla riga FINALE (quella salvata unita al corpo), non sul solo corpo: togliere la
 // data di fine a un periodo che ha anche l'inizio lascia una data sola. Se le date cambiano:
@@ -329,7 +362,7 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
 
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
-    const { id, nome, ordine, dataInizio, dataFine, attivo, archiviato } = b.data
+    const { id, nome, ordine, dataInizio, dataFine, attivo, archiviato, correzione } = b.data
 
     const patch: Record<string, unknown> = {}
     if (nome !== undefined) patch.nome = nome
@@ -388,13 +421,17 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
       }
     }
 
-    const { data, error } = await supabase
+    const dove = await clientPerPeriodo(request, supabase, auth.user, riga, correzione, operazione)
+    if ('response' in dove) return dove.response
+    const { data, error } = await dove.scrittura
       .from('scrutinio_periodi')
       .update(patch)
       .eq('id', id)
       .in('scuola_id', plessi)
       .select()
     if (error) {
+      const anno = erroreAnno(error, operazione)
+      if (anno) return anno
       if (archiviato != null && CODICI_COLONNA_ASSENTE.has(error.code ?? '')) {
         logEvento('registro', 'warn', {
           operazione: 'admin/primaria/scrutinio-periodi:PATCH', esito: 'archiviazione-non-disponibile-schema', periodo_id: id, error_code: error.code,
@@ -418,6 +455,10 @@ export const PATCH = withRoute('admin/primaria/scrutinio-periodi:PATCH', async (
         periodo_id: id,
         utente_id: auth.user.id,
       })
+    }
+    if (archiviato == null) {
+      // Anche il resto (nome, ordine, attivo/disattivo, date) lascia il suo battito di successo: «nessun log» non distingue «tutto ok» da «mai partito».
+      logEvento('registro', 'info', { operazione, esito: 'periodo-aggiornato', periodo_id: id, scuola_id: riga.scuola_id })
     }
     let ricalcolo: Ricalcolo = 'non-necessario'
     if (cambiano) {
@@ -446,7 +487,7 @@ function rispostaPeriodoConScrutini(periodoId: string, causa: string, err?: unkn
   )
 }
 
-// DELETE /api/admin/primaria/scrutinio-periodi?id=&userId=
+// DELETE /api/admin/primaria/scrutinio-periodi?id=&userId=   (corpo facoltativo: { correzione } su un anno chiuso)
 export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -455,6 +496,8 @@ export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async
     const q = parseQuery(request, deleteQuerySchema)
     if ('response' in q) return q.response
     const { id } = q.data
+    const b = await parseBodyFacoltativo(request, deleteBodySchema)
+    if ('response' in b) return b.response
 
     const supabase = await createAdminClient()
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
@@ -486,13 +529,17 @@ export const DELETE = withRoute('admin/primaria/scrutinio-periodi:DELETE', async
     }
     if (scrutini && scrutini.length > 0) return rispostaPeriodoConScrutini(id, 'scrutini')
 
-    const { data, error } = await supabase
+    const dove = await clientPerPeriodo(request, supabase, auth.user, periodo, b.data.correzione, 'admin/primaria/scrutinio-periodi:DELETE')
+    if ('response' in dove) return dove.response
+    const { data, error } = await dove.scrittura
       .from('scrutinio_periodi')
       .delete()
       .eq('id', id)
       .in('scuola_id', plessi)
       .select('id')
     if (error) {
+      const anno = erroreAnno(error, 'admin/primaria/scrutinio-periodi:DELETE')
+      if (anno) return anno
       if (figlieTrattengono(error)) return rispostaPeriodoConScrutini(id, 'freno', error)
       logErrore({ operazione: 'admin/primaria/scrutinio-periodi:DELETE', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore interno', codice: 'ELIMINAZIONE_NON_RIUSCITA' }, { status: 500 })

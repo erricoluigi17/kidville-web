@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, resolveScuoleAttive, sezioniVisibili } from '@/lib/auth/scope';
+import { assertAlunnoInScope, assertAlunnoScrivibile, resolveScuoleAttive, sezioniVisibili } from '@/lib/auth/scope';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -104,7 +104,7 @@ export const POST = withRoute('notes:POST', async (request: NextRequest) => {
         // l'intera richiesta: una scrittura parziale su un elenco di minori
         // sarebbe peggio di un rifiuto.
         for (const aid of alunnoIds) {
-            const fuoriScope = await assertAlunnoInScope(supabase, auth.user, aid);
+            const fuoriScope = await assertAlunnoScrivibile(supabase, auth.user, aid);
             if (fuoriScope) return fuoriScope;
         }
 

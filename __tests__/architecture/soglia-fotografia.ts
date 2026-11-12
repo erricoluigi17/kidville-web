@@ -436,7 +436,13 @@ export function posterioriCheContengono(
 // nessuna tabella con `scuola_id`, nessun bucket, nessuno schema delle candidature, nessuna scrittura nel registro dell'anno. Nessuna delle guardie
 // la segnalerebbe e il lock «nessuna voce morta» rifiuterebbe una dichiarazione che non serve. Dopo il merge cambia solo la fotografia delle
 // migrazioni (+1), che la PR-B rigenera dalla produzione.
+// 2026-11-09 · PR 4.9 (`20261112181554_anno_passaggio_da_fare.sql`): dentro la PR, la applica l'integrazione al merge. Cambia i due CHECK della tabella dei
+// gettoni (`correzioni_anno_chiuso_codice_check`, `…_utente_check`: il codice nuovo `passaggio`) con DROP/ADD CONSTRAINT, e il riconoscitore delle chiavi
+// esterne verso `utenti` grida a ogni vincolo toccato. Nessuna chiave esterna cambia: le 83 restano com'erano. Dopo il merge cambia solo la fotografia
+// delle migrazioni, che la PR-B rigenera dalla produzione. (`20261112181553_anno_stati_automatici.sql` NON è dichiarata: un CONSTRAINT TRIGGER non è un
+// `ADD CONSTRAINT` e nessuna guardia la vede.)
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261112181554_anno_passaggio_da_fare.sql': 'PR 4.9: nuovo codice `passaggio` nei CHECK dei gettoni (DROP/ADD CONSTRAINT), nessuna FK cambiata; la applica l\'integrazione al merge e la voce si toglie nella PR-B',
 }
 
 /**

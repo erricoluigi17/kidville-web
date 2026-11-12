@@ -9,6 +9,7 @@ import { DateTimeField } from '@/components/ui/DateTimeField'
 import { Modal } from '@/components/ui/Modal'
 import { TITOLO_MAX, titoloPredefinito, type GenitoreScheda } from '@/lib/votazioni/tipi'
 import { useAnnoDi } from '@/lib/context/calendario-context'
+import { useCorrezioneAnno } from '@/components/features/anno/useCorrezioneAnno'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { idCreato, leggiClassi, scrivi, type ClasseDellaSede, type LetturaClassi } from './chiamate'
 import { cifreLocali } from './scadenza'
@@ -106,6 +107,8 @@ export function NuovaVotazioneForm({
   const [inCorso, setInCorso] = useState(false)
   const [errore, setErrore] = useState('')
   const inviaRef = useRef(false)
+  // Una votazione su un anno già chiuso si apre come CORREZIONE (PR 4.9): il server risponde 409 con `correzione_possibile`.
+  const { inviaConCorrezione, dialogo } = useCorrezioneAnno()
 
   const spuntata = (id: string) => scelte.includes(id)
   const alterna = (id: string) => setScelte((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
@@ -155,6 +158,7 @@ export function NuovaVotazioneForm({
         },
         t('erroreCrea'),
         'votazioni-crea',
+        inviaConCorrezione,
       )
       if (!esito.ok) {
         setErrore(esito.testo)
@@ -324,6 +328,7 @@ export function NuovaVotazioneForm({
           </div>
         </form>
       </div>
+      {dialogo}
     </Modal>
   )
 }

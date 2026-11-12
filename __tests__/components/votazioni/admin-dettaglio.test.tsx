@@ -550,7 +550,8 @@ describe('DettaglioVotazione · «Elimina»', () => {
 
     await waitFor(() => expect(onEliminata).toHaveBeenCalledTimes(1))
     expect(scritture('DELETE')).toHaveLength(1)
-    expect(scritture('DELETE')[0]).toMatchObject({ url: percorso, corpo: null })
+    // Il corpo è JSON e vuoto (non assente): su un anno chiuso la correzione viaggia lì dentro, mai nella URL (PR 4.9).
+    expect(scritture('DELETE')[0]).toMatchObject({ url: percorso, corpo: {} })
     // Non c'è niente da rileggere: la votazione non esiste più.
     expect(letture()).toHaveLength(1)
     expect(onCambiata).not.toHaveBeenCalled()

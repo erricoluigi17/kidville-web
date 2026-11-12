@@ -31,6 +31,7 @@ vi.mock('@/lib/auth/require-staff', async (orig) => ({
 vi.mock('@/lib/auth/scope', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   assertAlunnoInScope: async () => null,
+  assertAlunnoScrivibile: async () => null,
   resolveScuoleAttive: async () => ['sc-1'],
   sezioniVisibili: async () => null,
 }))

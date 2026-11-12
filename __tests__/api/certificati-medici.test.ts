@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser, requireStaff: h.requireStaff, requireDocente: h.requireDocente }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertClasseNomeInScope: async () => null }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertAlunnoScrivibile: async () => null, assertClasseNomeInScope: async () => null }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

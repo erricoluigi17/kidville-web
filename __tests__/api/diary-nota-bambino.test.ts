@@ -27,6 +27,7 @@ vi.mock('@/lib/auth/require-parent', () => ({
 }))
 vi.mock('@/lib/auth/scope', () => ({
   assertAlunnoInScope: async () => null,
+  assertAlunnoScrivibile: async () => null,
   resolveScuoleAttive: h.resolveScuoleAttive,
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))

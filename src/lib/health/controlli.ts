@@ -1620,11 +1620,23 @@ export async function controlloCronEsiti(supabase: SupabaseClient, adesso: numbe
     })
 }
 
-/** I tre numeri di `salute_anno()`. Niente nomi, niente uuid: la risposta della funzione è già solo conteggi. */
+/**
+ * I numeri di `salute_anno()`. Niente nomi, niente uuid: la risposta della funzione è già solo conteggi.
+ * I primi tre ci sono dalla PR 4.5; gli ultimi due (`passaggio_da_fare`, `guardia_spenta_vicina`) dalla PR 4.9 (M49b): `null` =
+ * la funzione installata è quella di prima e le chiavi non ci sono. Non è un errore: è il merge a metà, o il database della CI.
+ */
 interface SaluteAnno {
     sedi_senza_successivo: number
     in_ritardo_giorni: number
     invarianti_non_zero: number
+    passaggio_da_fare: number | null
+    /**
+     * Di `passaggio_da_fare`, le sedi il cui anno nuovo È GIÀ COMINCIATO. Chiave opzionale e nuova: la funzione SQL di oggi non la
+     * scrive (la sua `passaggio_da_fare` conta tutte le sedi con `oggi >= inizio - 7`, prima e dopo l'inizio) e allora si legge
+     * `null`: la frase resta vera in tutti e due i casi. Quando la migrazione la scriverà, il controllo distingue da solo.
+     */
+    passaggio_iniziato: number | null
+    guardia_spenta_vicina: number | null
 }
 
 function leggiSaluteAnno(data: unknown): SaluteAnno | null {
@@ -1635,7 +1647,22 @@ function leggiSaluteAnno(data: unknown): SaluteAnno | null {
     const ritardo = n(d.in_ritardo_giorni)
     const invarianti = n(d.invarianti_non_zero)
     if (sedi === null || ritardo === null || invarianti === null) return null
-    return { sedi_senza_successivo: sedi, in_ritardo_giorni: ritardo, invarianti_non_zero: invarianti }
+    // Chiave assente = funzione di prima (si legge `null`). Chiave presente ma storta = risposta illeggibile, come le altre tre.
+    if ('passaggio_da_fare' in d && n(d.passaggio_da_fare) === null) return null
+    if ('guardia_spenta_vicina' in d && n(d.guardia_spenta_vicina) === null) return null
+    if ('passaggio_iniziato' in d && n(d.passaggio_iniziato) === null) return null
+    const passaggio = 'passaggio_da_fare' in d ? n(d.passaggio_da_fare) : null
+    const iniziato = 'passaggio_iniziato' in d ? n(d.passaggio_iniziato) : null
+    // Più sedi «già cominciate» che sedi da fare è un conto che non torna: risposta illeggibile, non una frase sbagliata.
+    if (iniziato !== null && (passaggio === null || iniziato > passaggio)) return null
+    return {
+        sedi_senza_successivo: sedi,
+        in_ritardo_giorni: ritardo,
+        invarianti_non_zero: invarianti,
+        passaggio_da_fare: passaggio,
+        passaggio_iniziato: iniziato,
+        guardia_spenta_vicina: 'guardia_spenta_vicina' in d ? n(d.guardia_spenta_vicina) : null,
+    }
 }
 
 /**
@@ -1658,6 +1685,23 @@ async function leggiSalute(
     return { salute }
 }
 
+const sedi = (n: number) => `${n} ${n === 1 ? 'sede' : 'sedi'}`
+
+/**
+ * La frase del passaggio d'anno non fatto. «Entro 7 giorni» è vero solo PRIMA dell'inizio dell'anno nuovo: dopo, l'anno è già
+ * cominciato e la frase deve dirlo. Se la funzione SQL dice quante sedi sono già oltre l'inizio (`iniziato`) si usano le due frasi;
+ * se non lo dice (`null`: la funzione di oggi) ne resta una sola, vera in tutti e due i casi.
+ */
+function fraseDelPassaggio(daFare: number, iniziato: number | null): string {
+    if (iniziato === null) {
+        return `${sedi(daFare)} con il passaggio d’anno da fare (a meno di 7 giorni dall’inizio dell’anno nuovo, o già cominciato)`
+    }
+    const frasi: string[] = []
+    if (iniziato > 0) frasi.push(`${sedi(iniziato)} con l’anno nuovo già cominciato e il passaggio d’anno non fatto`)
+    if (daFare - iniziato > 0) frasi.push(`${sedi(daFare - iniziato)} con il passaggio d’anno da fare entro 7 giorni`)
+    return frasi.join('; ')
+}
+
 /**
  * `anno` — l'anno successivo di ogni sede è stato creato quando doveva? Il tick orario (`anni_tick`) lo crea il giorno
  * stesso di `prepara_successivo_dal`: una sede che lo aspetta da UN giorno o più vuol dire che il job non gira o che per
@@ -1669,9 +1713,27 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
     return misura('anno', 'degradato', async () => {
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
-        const { sedi_senza_successivo: sedi, in_ritardo_giorni: giorni } = letto.salute
+        const { sedi_senza_successivo: sedi, in_ritardo_giorni: giorni, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
         if (sedi > 0 && giorni >= 1) {
             return { esito: 'degradato', dettaglio: `${sedi} sedi senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
+        }
+        // PR 4.9. Il passaggio non fatto a una settimana (o meno) dall'inizio dell'anno nuovo è il più grave: l'anno comincia e le
+        // scritture datate lì verrebbero fermate. Poi la guardia spenta a un mese dalla chiusura: il tick non cambierebbe lo stato.
+        // Mai `giu` (regola comune dei controlli nuovi): `degradato`, col solo numero. Chiavi assenti: funzione di prima, come prima.
+        if (passaggio === null || guardia === null) {
+            logEvento('rpc', 'info', {
+                operazione: 'health:anno',
+                esito: 'salute-anno-senza-chiavi-4-9',
+                msg: 'salute_anno non porta ancora passaggio_da_fare e guardia_spenta_vicina: migrazione M49b non applicata',
+            })
+        }
+        if (passaggio !== null && passaggio > 0) {
+            // Solo `degradato`: la riga `error` la scrive il giro orario di `anni_tick` (una per sede all'ora). Scriverla qui, a ogni lettura
+            // di /api/health, peggiorerebbe da sola il controllo `tasso-errore`.
+            return { esito: 'degradato', dettaglio: fraseDelPassaggio(passaggio, letto.salute.passaggio_iniziato) }
+        }
+        if (guardia !== null && guardia > 0) {
+            return { esito: 'degradato', dettaglio: `${guardia} sedi vicine alla chiusura dell’anno con la guardia spenta` }
         }
         return { esito: 'ok', dettaglio: 'anno successivo in regola' }
     })

@@ -91,6 +91,29 @@ describe('AnnoNotice', () => {
     expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
   })
 
+  it('(PR 4.9) con l\'anno in corso e con un altro anno aperto la riga «si sta chiudendo» non c\'è', () => {
+    monta()
+    expect(screen.queryByRole('note')).toBeNull() // l'anno attivo è `corrente`
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' })) // `iscrizioni_aperte`
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  it('(PR 4.9) se l\'anno ATTIVO è `in_chiusura` la riga c\'è anche senza l\'avviso «anno diverso»', () => {
+    h.perSede = { [SEDE_A]: [riga(2026, 'in_chiusura', A26), riga(2027, 'iscrizioni_aperte', A27)] }
+    monta()
+    const nota = screen.getByRole('note')
+    expect(nota).toBeInTheDocument()
+    expect(nota.className).not.toMatch(/\b(fixed|absolute|sticky)\b/) // in flusso: non copre il menu né altri pulsanti
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('(PR 4.9) i docenti (che non scelgono l\'anno) non vedono la riga, nemmeno con l\'anno in chiusura', () => {
+    h.perSede = { [SEDE_A]: [riga(2026, 'in_chiusura', A26), riga(2027, 'iscrizioni_aperte', A27)] }
+    h.ruolo = 'educator'
+    monta()
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
   it('sta in flusso, sotto la barra: sticky (telefono: --kv-appbar-h; da 744 px: top-16), mai fixed né absolute', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))

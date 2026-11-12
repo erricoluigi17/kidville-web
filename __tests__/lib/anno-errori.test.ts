@@ -25,13 +25,21 @@ describe('erroreAnno — i codici dei trigger diventano risposte', () => {
     const r = await corpo(erroreAnno({ code: 'P0001', message: 'ANNO_CHIUSO' }))
     expect(r.stato).toBe(409)
     expect(r.body).toEqual({
-      error: 'Anno scolastico chiuso: servono i permessi di correzione.',
+      error: 'Questo anno scolastico è chiuso: non si può modificare.',
       codice: 'ANNO_CHIUSO',
     })
   })
 
+  it('ANNO_CHIUSO con `correzionePossibile` e `etichetta`: il corpo nomina l’anno; senza `correzionePossibile` l’etichetta non esce', async () => {
+    const con = await corpo(erroreAnno({ message: 'ANNO_CHIUSO' }, 'x', undefined, { correzionePossibile: true, etichetta: '2025/26' }))
+    expect(con.body).toMatchObject({ codice: 'ANNO_CHIUSO', correzione_possibile: true, etichetta: '2025/26' })
+    const senza = await corpo(erroreAnno({ message: 'ANNO_CHIUSO' }, 'x', undefined, { etichetta: '2025/26' }))
+    expect(senza.body).not.toHaveProperty('etichetta')
+    expect(senza.body).not.toHaveProperty('correzione_possibile')
+  })
+
   const TABELLA: [string, number, string][] = [
-    ['PASSAGGIO_DA_FARE', 409, 'Il passaggio all’anno nuovo non è ancora stato fatto: completalo prima di continuare.'],
+    ['PASSAGGIO_DA_FARE', 409, 'Il passaggio all’anno nuovo non è ancora stato fatto: lo completa la segreteria da Passaggio d’anno.'],
     ['CONFINE_CON_RIGHE', 409, 'Non si può spostare la data: ci sono già dati registrati nei giorni che cambierebbero anno.'],
     ['SEZIONE_DI_ALTRO_ANNO', 422, 'La classe scelta appartiene a un altro anno scolastico.'],
     ['SEZIONE_DI_ALTRA_SEDE', 422, 'La classe scelta appartiene a un’altra sede.'],

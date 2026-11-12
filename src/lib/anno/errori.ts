@@ -52,6 +52,8 @@ function avvisaRifiuto(codice: string, operazione: string | undefined): void {
 }
 
 /**
+ * `opzioni.correzionePossibile` (opzionale, PR 4.9): aggiunge `correzione_possibile: true` al corpo del 409 `ANNO_CHIUSO`;
+ * `opzioni.etichetta` ci aggiunge il nome dell'anno corretto (solo insieme a `correzionePossibile`).
  * `dettagli` (opzionale): campi in più per il corpo della risposta, accanto a `error` e `codice`
  * (il motivo di `DATE_NON_VALIDE`, l'elenco di `PREREQUISITI_MANCANTI`, i conteggi di
  * `CONFINE_CON_RIGHE`). Li compone la route che ha letto il `DETAIL` (`impostazioni.ts`): qui non si
@@ -61,11 +63,23 @@ export function erroreAnno(
   error: { code?: string; message?: string } | null | undefined,
   operazione?: string,
   dettagli?: Record<string, unknown>,
+  opzioni?: { correzionePossibile?: boolean; etichetta?: string },
 ): NextResponse | null {
   switch (codiceDa(error)) {
     case 'ANNO_CHIUSO':
       avvisaRifiuto('ANNO_CHIUSO', operazione)
-      return NextResponse.json({ error: frase('ANNO_CHIUSO'), codice: 'ANNO_CHIUSO' }, { status: 409 })
+      // `correzione_possibile` c'è SOLO se chi ha chiamato lo dice (staff su una route che sa chiedere il gettone): è il segnale che
+      // fa aprire il dialogo «Registra come correzione». Senza, il corpo è quello di sempre.
+      return NextResponse.json(
+        {
+          error: frase('ANNO_CHIUSO'),
+          codice: 'ANNO_CHIUSO',
+          ...(opzioni?.correzionePossibile ? { correzione_possibile: true } : {}),
+          // L'anno che si sta per correggere (es. «2025/26»): il dialogo lo dice anche quando la pagina non lo sa. Solo con la correzione.
+          ...(opzioni?.correzionePossibile && opzioni.etichetta ? { etichetta: opzioni.etichetta } : {}),
+        },
+        { status: 409 },
+      )
     case 'PASSAGGIO_DA_FARE':
       avvisaRifiuto('PASSAGGIO_DA_FARE', operazione)
       return NextResponse.json(
@@ -365,5 +379,6 @@ export const CODICI_INTERNI = [
   'ANNO_RIEMPIMENTO_INCOMPLETO', // 20261107023257_anno_vincoli_2.sql
   'OBLIO_NON_AMMESSO', // 20261107165503_anno_scrittura.sql (RPC dell'oblio: coppia fuori dall'allowlist; la 3.6 la tratta come errore di programma)
   'ANNI_TICK_OGGI_NON_AMMESSO', // 20261109035209_anno_tick.sql (`anni_tick` con un giorno di oggi per una sede che non è di prova né di simulazione: solo l'editor SQL, mai una route)
+  'ANNO_CHIUSO_CON_DOMANDE', // 20261112181553_anno_stati_automatici.sql (il vincolo differito: un anno `in_chiusura` o `chiuso` non accetta domande; la SQL lo solleva alla COMMIT, mai una route)
   'PASSAGGIO_OGGI_NON_AMMESSO', // 20261109182420_anno_passaggio_anteprima.sql (le funzioni del passaggio con un giorno di oggi per una sede che non è di prova né di simulazione: solo la porta TS di test, mai una route)
 ] as const

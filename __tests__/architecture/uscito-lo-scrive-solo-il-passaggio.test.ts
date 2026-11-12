@@ -44,6 +44,8 @@ export const LETTURE_SQL: VoceElenco[] = [
   { file: '20261109182422_anno_passaggio_conferma.sql', funzione: 'alunni_specchio_frequenza', contiene: "v_n ->> 'stato' IN (", n: 1, perche: 'lo specchio legge lo stato nuovo per decidere se la scheda è archiviata' },
   { file: '20261109182422_anno_passaggio_conferma.sql', funzione: 'anno_invarianti', contiene: 'THEN \'NOT (al.archiviato_il IS NOT NULL AND al.section_id IS NULL', n: 1, perche: 'invariante: legge lo stato chiuso' },
   { file: '20261109182422_anno_passaggio_conferma.sql', funzione: 'anno_invarianti', contiene: 'IS DISTINCT FROM (f.stato IN (', n: 1, perche: 'invariante: legge lo stato chiuso' },
+  { file: '20261112181553_anno_stati_automatici.sql', funzione: 'anno_invarianti', contiene: 'THEN \'NOT (al.archiviato_il IS NOT NULL AND al.section_id IS NULL', n: 1, perche: 'invariante: legge lo stato chiuso (il corpo della 4.8, ripreso intero dalla 4.9)' },
+  { file: '20261112181553_anno_stati_automatici.sql', funzione: 'anno_invarianti', contiene: 'IS DISTINCT FROM (f.stato IN (', n: 1, perche: 'invariante: legge lo stato chiuso (il corpo della 4.8, ripreso intero dalla 4.9)' },
   { file: '20261109182422_anno_passaggio_conferma.sql', funzione: 'anno_alunno_archiviato_dal_passaggio', contiene: "AND f.stato = 'uscito'", n: 1, perche: 'il criterio di «Riattiva»: LEGGE la frequenza che il passaggio ha chiuso' },
 ]
 

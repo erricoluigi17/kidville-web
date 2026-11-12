@@ -41,6 +41,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: h.requireParentOfStudent }))
 vi.mock('@/lib/auth/scope', () => ({
     assertAlunnoInScope: async () => null,
+    assertAlunnoScrivibile: async () => null,
     assertSezioneInScope: h.assertSezioneInScope,
     assertSezioneScrivibile: h.assertSezioneInScope,
 }))

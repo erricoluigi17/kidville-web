@@ -8,6 +8,7 @@ import { DateField } from '@/components/ui/DateField';
 import { creaMuta } from '@/lib/ui/muta';
 import { dataCivile } from '@/i18n/config';
 import { useAnnoDi } from '@/lib/context/calendario-context';
+import { useCorrezioneAnno } from '@/components/features/anno/useCorrezioneAnno';
 
 interface Periodo {
   id: string; nome: string; anno_scolastico: string; ordine: number;
@@ -31,6 +32,8 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
   const annoProposto = useAnnoDi(scuolaId)(oggi).etichetta;
   const [annoScelto, setAnnoScelto] = useState<string | null>(null);
   const anno = annoScelto ?? annoProposto;
+  // Un periodo di un anno già chiuso si crea come CORREZIONE (PR 4.9): il server risponde 409 con `correzione_possibile`.
+  const { inviaConCorrezione, dialogo } = useCorrezioneAnno(anno);
   const [nome, setNome] = useState('');
   const [dataInizio, setDataInizio] = useState('');
   const [dataFine, setDataFine] = useState('');
@@ -67,12 +70,16 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
    * I due ripieghi sono distinti perché dicono in che STATO è rimasto il dato.
    */
   const { mutaSalva, mutaElimina } = useMemo(() => {
-    const comuni = { route: '/admin/impostazioni', ricarica: load, setErrore: setMsg };
+    // Il server può salvare le date e non riuscire a riassegnare i voti ai quadrimestri (`ricalcolo: 'non-riuscito'`): il dato è
+    // salvato, ma chi ha premuto il pulsante deve saperlo (il motivo è già nel log del server).
+    const avvisoDalSuccesso = (corpo: unknown) =>
+      (corpo as { ricalcolo?: unknown } | null)?.ricalcolo === 'non-riuscito' ? t('periodiRicalcoloNonRiuscito') : null;
+    const comuni = { route: '/admin/impostazioni', ricarica: load, setErrore: setMsg, inviaConCorrezione, avvisoDalSuccesso };
     return {
       mutaSalva: creaMuta({ ...comuni, fallback: t('comuneErroreSalvataggio') }),
       mutaElimina: creaMuta({ ...comuni, fallback: t('comuneErroreEliminazione') }),
     };
-  }, [load, t]);
+  }, [load, t, inviaConCorrezione]);
 
   const aggiungi = async () => {
     setMsg('');
@@ -94,7 +101,8 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
     if (!confirm(t('periodiConfermaElimina'))) return;
     await mutaElimina(
       `/api/admin/primaria/scrutinio-periodi?id=${p.id}&userId=${userId}`,
-      { method: 'DELETE', headers: { 'x-user-id': userId } },
+      // Un DELETE non ha corpo: lo mandiamo JSON (vuoto) perché su un anno chiuso la correzione viaggia lì dentro, mai nella URL.
+      { method: 'DELETE', headers: { 'Content-Type': 'application/json', 'x-user-id': userId }, body: JSON.stringify({}) },
       'primaria-scrutinio-periodo-elimina-respinto',
       p.nome,
     );
@@ -198,6 +206,7 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
           <Plus size={14} /> {t('periodiAggiungiPeriodo')}
         </button>
       </div>
+      {dialogo}
     </div>
   );
 }

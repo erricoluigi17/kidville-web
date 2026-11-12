@@ -28,6 +28,7 @@ import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { useAnnoOpzionale } from '@/lib/context/anno-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
 import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
@@ -99,6 +100,7 @@ export function ElencoClassi() {
   const tShared = useTranslations('shared')
   const tFiltri = useTranslations('adminModulistica')
   const { reFetchKey, sedi } = useSediAttive()
+  const annoDichiarato = useAnnoOpzionale()?.effettivo?.annoId ?? null
   const [elenchi, setElenchi] = useState<ElencoSede[]>([])
   const [caricando, setCaricando] = useState(true)
   const [inCorso, setInCorso] = useState<string | null>(null)
@@ -144,7 +146,9 @@ export function ElencoClassi() {
     try {
       const body = new FormData()
       body.append('file', file)
-      const res = await fetch(`/api/admin/iscrizioni/elenco?scuola_id=${encodeURIComponent(scuolaId)}`, {
+      // L'anno si dichiara: quello che la pagina sta guardando (assente fuori dal contesto: allora decide il server).
+      const annoQuery = annoDichiarato ? `&anno_id=${encodeURIComponent(annoDichiarato)}` : ''
+      const res = await fetch(`/api/admin/iscrizioni/elenco?scuola_id=${encodeURIComponent(scuolaId)}${annoQuery}`, {
         method: 'POST',
         body,
       })

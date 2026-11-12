@@ -6,6 +6,7 @@ import { assertSezioneInScope, resolveAnnoScrittura, assertSezioneScrivibile } f
 import { logScrittura } from '@/lib/audit/scrittura'
 import { annoDaEtichetta } from '@/lib/anno/etichetta'
 import { erroreAnno } from '@/lib/anno/errori'
+import { zCorrezione } from '@/lib/anno/correzione'
 import { seedCertificato, validaScrutinioFinaleClasseQuinta } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -52,6 +53,8 @@ const postBodySchema = z.object({
   sectionId: z.string({ error: 'sectionId obbligatorio' }).min(1, 'sectionId obbligatorio'),
   // opzionale: la guardia truthy resta nell'handler (stringa vuota/null → intera classe, come oggi)
   alunnoId: z.string().nullish(),
+  // Su un anno chiuso la segreteria registra una CORREZIONE (PR 4.9): il motivo sta nella riga del gettone, mai in un log.
+  correzione: zCorrezione.optional(),
 })
 
 const patchBodySchema = z.object({
@@ -152,15 +155,19 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     }
 
     let creati = 0
-    const errori: { alunnoId: string; error?: string; status?: number; codice?: string }[] = []
+    const errori: { alunnoId: string; error?: string; status?: number; codice?: string; correzione_possibile?: true; etichetta?: string }[] = []
     let firstErrStatus: number | undefined
     for (const alunnoId of alunniIds) {
       // L'anno del certificato: quello della sua etichetta, nella sede DELLA SEZIONE (mai quella dell'operatore).
       // Un esito per alunno, perché un gettone vale una sola transazione e ogni certificato è una scrittura.
-      const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione, { dichiarato })
+      const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaSezione, { dichiarato, correzione: body.correzione })
       if (esito instanceof NextResponse) {
-        const rifiuto = (await esito.json()) as { error?: string; codice?: string }
-        errori.push({ alunnoId, error: rifiuto.error, status: esito.status, codice: rifiuto.codice })
+        const rifiuto = (await esito.json()) as { error?: string; codice?: string; correzione_possibile?: boolean; etichetta?: string }
+        errori.push({
+          alunnoId, error: rifiuto.error, status: esito.status, codice: rifiuto.codice,
+          ...(rifiuto.correzione_possibile === true ? { correzione_possibile: true as const } : {}),
+          ...(rifiuto.correzione_possibile === true && typeof rifiuto.etichetta === 'string' ? { etichetta: rifiuto.etichetta } : {}),
+        })
         firstErrStatus = firstErrStatus ?? esito.status
         continue
       }
@@ -182,7 +189,16 @@ export const POST = withRoute('admin/competenze:POST', async (request: NextReque
     }
     // Se nessun certificato è stato creato e c'è un errore di guard, propaga lo status.
     // Il codice di un rifiuto dell'anno (`ANNO_CHIUSO`…) sta in `errori[].codice`, per alunno.
-    if (creati === 0 && firstErrStatus) return NextResponse.json({ error: errori[0].error, errori }, { status: firstErrStatus })
+    // `correzione_possibile` sale in cima, accanto al codice, perché la schermata decida se aprire il dialogo senza scorrere l'elenco.
+    if (creati === 0 && firstErrStatus) {
+      const possibile = errori.some((e) => e.correzione_possibile === true)
+      // L'anno da correggere lo nomina il primo rifiuto che lo sa: il dialogo lo dice anche se la pagina non lo conosce.
+      const etichetta = errori.find((e) => e.correzione_possibile === true && e.etichetta)?.etichetta
+      return NextResponse.json(
+        { error: errori[0].error, errori, ...(possibile ? { codice: 'ANNO_CHIUSO', correzione_possibile: true, ...(etichetta ? { etichetta } : {}) } : {}) },
+        { status: firstErrStatus },
+      )
+    }
     return NextResponse.json({ success: true, creati, totale: alunniIds.length, errori })
   } catch (err) {
     logErrore({ operazione: 'admin/competenze:POST', stato: 500 }, err)

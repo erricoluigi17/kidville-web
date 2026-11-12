@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, assertClasseNomeScrivibile, scuoleDiUtente, assertSezioneScrivibile } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -175,7 +175,7 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
         if (!body.id && body.classi_sezioni && body.classi_sezioni.length > 0) {
             const uniche = [...new Set(body.classi_sezioni)];
             for (const classe of uniche) {
-                const scopeErr = await assertClasseNomeInScope(admin, auth.user, classe);
+                const scopeErr = await assertClasseNomeScrivibile(admin, auth.user, classe);
                 if (scopeErr) return scopeErr;
             }
             // Anche qui la sezione vera, non solo il nome: la riga deve sapere a
@@ -195,7 +195,7 @@ export const POST = withRoute('locker/materials:POST', async (request: NextReque
 
         // Scope per plesso (classe risolta per nome dentro i propri plessi).
         if (body.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, body.classe_sezione);
+            const scopeErr = await assertClasseNomeScrivibile(admin, auth.user, body.classe_sezione);
             if (scopeErr) return scopeErr;
         }
 

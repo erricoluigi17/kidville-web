@@ -98,6 +98,10 @@ export default getRequestConfig(async () => {
     // compito 4.8.0. I codici d'errore stanno in `shared`, non qui.
     annoPassaggio: (await import(`../../messages/${locale}/annoPassaggio.json`)).default,
     annoRifirma: (await import(`../../messages/${locale}/annoRifirma.json`)).default,
+    // Chiusura automatica e correzioni dell'anno chiuso (PR 4.9): il dialogo «Registra come correzione» e le righe che dicono «l'anno si sta
+    // chiudendo». Nascono vuoti nel compito 4.9.0; li riempiono 4.9.3 e 4.9.4. I codici d'errore stanno in `shared`, non qui.
+    annoCorrezione: (await import(`../../messages/${locale}/annoCorrezione.json`)).default,
+    annoChiusura: (await import(`../../messages/${locale}/annoChiusura.json`)).default,
   };
 
   // `timeZone` è la rete di sicurezza di next-intl: senza, i formattatori del

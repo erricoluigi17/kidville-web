@@ -2353,6 +2353,12 @@ export const CODICI_ERRORE = {
     SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
     /** 403 — la classe è di un anno passato e il docente la vede in sola lettura (`assertSezioneScrivibile`). */
     SEZIONE_SOLA_LETTURA: 'erroreSezioneSolaLettura',
+    /**
+     * 403 — la classe è dell'anno che si sta chiudendo (`in_chiusura`: da agosto a settembre): il docente la vede ma non la
+     * scrive, e la frase NON dice «anno passato», perché quell'anno è ancora quello in corso. Solo la Direzione e la segreteria
+     * possono correggerla (`assertSezioneScrivibile`, `assertSezionePrimariaFirmabile`; PR 4.9).
+     */
+    SEZIONE_IN_CHIUSURA: 'erroreSezioneInChiusura',
     /** 403 — questa è la porta del registro di PRIMARIA, e la classe è di un altro grado. */
     CLASSE_NON_DI_PRIMARIA: 'erroreClasseNonDiPrimaria',
     /**

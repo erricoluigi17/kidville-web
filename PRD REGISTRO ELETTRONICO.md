@@ -1,3 +1,50 @@
+## 🗓️ Changelog — Anno scolastico, PR 4.9: la chiusura dell'anno — 2026-11-09 (ramo `worktree-agent-a6aa8e587ce8ffe4a`, sopra `872b1f03`)
+
+**Rebase e pulizia (12/11).** La 4.9 poggia su `main` (4.8 unita come #307, `872b1f03`) e porta con sé, come primo commit, la pulizia della 4.8: PRD ✅, fotografia delle migrazioni rigenerata dalla produzione, tre migrazioni tolte da `IN_CODA`, `passaggio-ricopia-schede` e `anno-invarianti` in `JOB_CRON`. I corpi di `anno_invarianti`, `passaggio_conferma` e `passaggio_annulla` ridefiniti da M49a/M49b partono dal corpo FINALE della 4.8 (tracce dell'archiviazione, 15-bis, NB4) con le sole modifiche della 4.9; le due migrazioni hanno nomi definitivi `20261112181553` e `20261112181554`.
+
+**Stato:** 🟡 in revisione, fino al merge. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261112181553_anno_stati_automatici.sql` (M49a) e `20261112181554_anno_passaggio_da_fare.sql` (M49b). **Nessuna riga di dati viene scritta alla migrazione**; M49b cambia due vincoli CHECK della tabella dei gettoni (nuovo codice `passaggio`) e M49a crea un vincolo differito su `anni_sede`. **La guardia dell'anno chiuso resta SPENTA** (`anno_regole.guardia_attiva = false`): accenderla è una decisione del titolare (vedi sotto).
+
+| Area | Stato | Che cosa è |
+|---|---|---|
+| Il tick cambia lo stato dell'anno | 🟡 in revisione | `anni_tick` (ogni ora, minuto 10) porta l'anno da `corrente` a `in_chiusura` il giorno dopo `ultimo_giorno_aperto` e a `chiuso` il giorno dopo `fine`; non promuove mai un anno a `corrente` (il passaggio lo fa una persona). **A guardia spenta non cambia niente** e scrive un `error` |
+| Domande d'iscrizione | 🟡 in revisione | Un anno `in_chiusura` o `chiuso` non accetta domande (vincolo differito `anni_sede_domande_solo_aperto`); il tick le chiude già a `in_chiusura` |
+| Una sede che esplode non ferma le altre | 🟡 in revisione | Gli errori del passo 2 (anche un calendario non continuo) restano della loro sede: `error` col solo SQLSTATE, battito `ok-parziale` |
+| Correggere un anno chiuso | 🟡 in revisione | Direzione e segreteria: la richiesta riceve 409 `ANNO_CHIUSO` con `correzione_possibile`, il dialogo «Registra come correzione» chiede il motivo (almeno 8 caratteri, resta nel registro `correzioni_anno_chiuso`, mai in un log) e la richiesta riparte. Su 3 schermate: competenze, periodi di scrutinio, votazioni |
+| Sola lettura dei docenti | 🟡 in revisione | Una classe dell'anno che si chiude: 403 `SEZIONE_IN_CHIUSURA` (frase senza «anno passato»); anno chiuso: `SEZIONE_SOLA_LETTURA`. Gate su tutte le route di scrittura dei docenti, con lock per handler |
+| Il passaggio non fatto | 🟡 in revisione | Dal 7° giorno prima dell'`inizio`, `salute_anno()` conta le sedi senza passaggio: `/api/health` resta `degradato`, e il giro orario di `anni_tick` scrive una riga `error` per sede; le scritture datate nell'anno nuovo ricevono 409 `PASSAGGIO_DA_FARE` |
+| Conferma e annullo dopo il tick | 🟡 in revisione | `passaggio_conferma` e `passaggio_annulla` accendono per la loro transazione l'interruttore `anno_passaggio.in_corso`: la guardia le lascia passare e registra un gettone di codice `passaggio` con un uso per riga |
+| Invarianti | 🟡 in revisione | La 6 conta solo l'anno `chiuso`; nuova la 16 (domande aperte su un anno chiuso). La 15 è dello storico delle classi (4.8) |
+| Manuale di prova | 🟡 in revisione | `docs/superpowers/simulazione/anno-intero-demo.md` e il ripristino della sede Demo a blocco unico |
+
+**Tabella «agosto»** (dal giorno dopo l'`ultimo_giorno_aperto`, predefinito 31/07; la sede lo sposta dalle impostazioni dell'anno):
+
+| Chi | `in_chiusura` (agosto) | `chiuso` |
+|---|---|---|
+| Maestra | classi del vecchio anno in sola lettura: ogni scrittura sul registro riceve 403 `SEZIONE_IN_CHIUSURA`. Restano permessi emergenza, bozze di notizie, allegati, incarichi interni | sola lettura (`SEZIONE_SOLA_LETTURA`) |
+| Segreteria e Direzione | scrivono senza motivo e senza gettone (la guardia conta e lascia passare) | scrivono solo registrando una correzione con il motivo |
+| Famiglia | come prima | come prima |
+
+**Da dire al titolare.**
+1. **La sola lettura dei docenti in agosto arriva SOLO con la guardia accesa.** A guardia spenta il tick non cambia stato: nessuna classe è `in_chiusura` e i docenti scrivono anche in agosto.
+2. **Quando accendere la guardia** è una sua decisione (raccomandato: entro il 30/06/2027, dopo due settimane di osservazione senza `anno-chiuso-osservato` inattesi). L'`UPDATE` su `anno_regole` lo esegue lui dall'editor SQL; il freno lo ferma e lo mostra.
+3. **Il gettone del passaggio** è ora un codice vero (`passaggio`), non più `oblio` con un motivo.
+4. **`/api/health` resta `degradato`** (non `giu`) anche per il passaggio non fatto: lo vieta il lock `salute-controlli-nuovi-mai-giu`; il segnale forte è la riga `error` nel log.
+5. **Il ripristino della sede Demo** è a blocco unico e si ferma da solo se un controllo non torna; non è mai stato eseguito su Supabase vero (solo sul banco di prova).
+
+**Persone.**
+
+| Chi | Che cosa vede |
+|---|---|
+| Segreteria, Direzione | In agosto niente di nuovo (scrivono come prima). Su un anno chiuso, il dialogo del motivo. Nella shell di Direzione e segreteria, accanto all'avviso dell'anno, una riga «Anno scolastico … si sta chiudendo, puoi ancora correggerlo» quando l'anno scelto è `in_chiusura` o `chiuso` |
+| Docenti | In agosto (con la guardia accesa) le classi del vecchio anno sono in sola lettura, con una frase che non dice «anno passato» |
+| Genitori | Niente |
+
+**Route.** Gate della sezione scrivibile su: `admin/competenze`, `admin/iscrizioni/elenco`, `admin/primaria/scrutinio-periodi`, `admin/votazioni` e `admin/votazioni/[id]`, `attendance/daily`, `avvisi/[id]`, `diary`, `diary/entries`, `locker/inventory|materials|requests`, `notes`, `teacher/medical-certificates`, `teacher/modulistica`, `video-uploads` (più le route che già passavano da un helper con il gate). Lock: `sezioni-scrivibili-coverage` (per handler, con `SCRITTURE_DOCENTI_SENZA_GATE` per le eccezioni dichiarate).
+
+**Sul DB della CI non migrato** il controllo `anno` non trova le chiavi nuove di `salute_anno()` e scrive una riga `info` (`salute-anno-senza-chiavi-4-9`), come prima.
+
+**Da fare dopo il merge (PR-B).** Rigenerare dalla produzione la fotografia delle migrazioni (+2) e togliere la voce di M49b da `MIGRAZIONI_ATTESE_AL_MERGE`; riportare questo blocco a ✅ con il numero della PR; `passaggio_ricopia_schede` e `anno-invarianti` in `JOB_CRON` dopo il loro primo battito (sono della 4.8). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-9-difetti-secondari.md`.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.8: il passaggio d'anno — 2026-11-10 (#307, `872b1f03`, in produzione il 12/11/2026)
 
 **Stato:** ✅ in `main` con la #307 (squash `872b1f03`), 12/11/2026. **Ha tre migrazioni**, applicate dall'integrazione di Supabase al merge, ciascuna con la version del proprio file (nessuna mano le ha applicate: il freno SQL ferma `apply_migration`): `20261109182420_anno_passaggio_anteprima.sql` (M48a), `20261109182421_anno_passaggio_didattica.sql` (M48c) e `20261109182422_anno_passaggio_conferma.sql` (M48b). Provate in PGlite (Postgres 18; la produzione è la 17), su route vere, in quattro giri di revisione. **Nessun controllo visivo nel browser, nessuna prova da telefono, nessun `pg_cron` reale** (il corpo del job è provato sul banco, non il suo orario).

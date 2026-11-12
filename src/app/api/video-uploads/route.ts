@@ -24,7 +24,7 @@ import {
   hashTokenRinnovoPerPostgres,
   scadenzaTokenRinnovo,
 } from '@/lib/media/video/token-rinnovo'
-import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
+import { assertClasseNomeScrivibile, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { rateLimit } from '@/lib/security/rate-limit'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -292,6 +292,13 @@ export const POST = withRoute('video-uploads:POST', async (request: NextRequest)
     //    di chi li ha scelti: nel log passano i conteggi (lo scrive il modulo).
     let destinatari: DestinatariGalleria | null = null
     if (richiesta.destinatari !== undefined) {
+      // ── Le CLASSI di destinazione sono una scrittura sulla galleria di quella classe: un docente la cui
+      //    classe è di un anno in chiusura (o chiuso) la legge soltanto → 403 `SEZIONE_*`. Direzione e segreteria
+      //    non sono fermate (il gate le lascia passare). Prima dei cancelli di sede: non nomina nessun bambino.
+      for (const classe of new Set(richiesta.destinatari.classi)) {
+        const sola = await assertClasseNomeScrivibile(supabase, auth.user, classe)
+        if (sola) return sola
+      }
       const cancelli = await cancelliDestinatariGalleria(supabase, {
         ruolo: auth.user.role,
         sedeId: scuolaId as string,

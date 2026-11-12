@@ -159,8 +159,9 @@ BEGIN
               'anni-tick-guardia-spenta:' || p_scuola::text,
               jsonb_build_object('campi', jsonb_build_object(
                 'operazione', 'anni-tick', 'esito', 'guardia-spenta', 'n_saltati', v_saltati)))
-      ON CONFLICT (fingerprint, giorno) DO UPDATE
-        SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now(), contesto = excluded.contesto;
+      -- (correzioni dopo la revisione finale, F1) DO NOTHING: UN `error` al giorno per sede. Con la somma delle occorrenze la riga
+      -- varrebbe k al k-esimo tick e `tasso-errore` (soglia 25 sulle occorrenze degli ultimi 15 minuti) si accenderebbe da solo.
+      ON CONFLICT (fingerprint, giorno) DO NOTHING;
     EXCEPTION WHEN OTHERS THEN
       RAISE WARNING 'anno_stati_aggiorna: errore della guardia spenta non registrato [%]', SQLSTATE;
     END;
@@ -313,7 +314,7 @@ BEGIN
     END;
 
     -- ── passo 3 (chiusura A): il passaggio non fatto a 7 giorni o meno dall'inizio dell'anno nuovo è un incidente. UNA riga `error`
-    -- all'ora per sede (la stessa impronta: `app_log` somma le occorrenze nel giorno), col solo numero dei giorni. La salute resta
+    -- al giorno per sede (la stessa impronta: al secondo giro del giorno `ON CONFLICT DO NOTHING` non scrive niente), col solo numero dei giorni. La salute resta
     -- `degradato` (`salute_anno().passaggio_da_fare`, stessa condizione) e non scrive nulla: un log scritto a ogni lettura di
     -- `/api/health` peggiorerebbe da solo il controllo `tasso-errore`. Le sedi di prova e di simulazione non contano.
     BEGIN
@@ -332,8 +333,8 @@ BEGIN
                   'anni-tick-passaggio-da-fare:' || r.scuola_id::text,
                   jsonb_build_object('campi', jsonb_build_object(
                     'operazione', 'anni-tick', 'esito', 'passaggio-da-fare', 'giorni_all_inizio', v_n)))
-          ON CONFLICT (fingerprint, giorno) DO UPDATE
-            SET occorrenze = public.app_log.occorrenze + 1, visto_l_ultima = now(), contesto = excluded.contesto;
+          -- (correzioni dopo la revisione finale, F1) DO NOTHING: UN `error` al giorno per sede, non uno che somma le occorrenze.
+          ON CONFLICT (fingerprint, giorno) DO NOTHING;
         END IF;
       END IF;
     EXCEPTION WHEN OTHERS THEN

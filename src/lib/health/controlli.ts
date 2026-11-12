@@ -1027,7 +1027,7 @@ const RIGHE_MAX_OCCORRENZE = 500
  * Le righe lette portano UNA colonna, `occorrenze`: né `messaggio`, né `stack`, né `contesto`.
  * Il conteggio delle impronte viene da `count: 'exact'`, non dalla lunghezza dell'elenco.
  */
-async function controlloTassoErrore(
+export async function controlloTassoErrore(
     supabase: SupabaseClient,
     adesso: number,
     ambiente: string,

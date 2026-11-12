@@ -294,7 +294,7 @@ describe('`salute_anno()`: le due chiavi nuove', () => {
     })
   })
 
-  it('(chiusura A) il giro orario di anni_tick scrive UNA riga `error` per sede (le occorrenze crescono) da 7 giorni prima dell\'inizio; a 8 giorni, a passaggio fatto e per la sede di prova niente', async () => {
+  it('(chiusura A) il giro orario di anni_tick scrive UNA riga `error` per sede e per giorno (la seconda volta non scrive: occorrenze 1) da 7 giorni prima dell\'inizio; a 8 giorni, a passaggio fatto e per la sede di prova niente', async () => {
     const righe = () => b.db.query<{ occorrenze: number; scuola_id: string; livello: string }>(
       `SELECT occorrenze, scuola_id, livello FROM public.app_log WHERE fingerprint LIKE 'anni-tick-passaggio-da-fare:%'`).then((r) => r.rows)
     await con('2027-08-24T10:00:00.000Z', async () => {
@@ -306,7 +306,7 @@ describe('`salute_anno()`: le due chiavi nuove', () => {
       await b.db.query('SELECT public.anni_tick()')
       const r = await righe()
       expect(r, 'una sola riga, la sede vera; mai la sede di prova').toHaveLength(1)
-      expect(r[0]).toMatchObject({ scuola_id: SEDE_VERA, livello: 'error', occorrenze: 2 })
+      expect(r[0]).toMatchObject({ scuola_id: SEDE_VERA, livello: 'error', occorrenze: 1 })
     })
   })
 

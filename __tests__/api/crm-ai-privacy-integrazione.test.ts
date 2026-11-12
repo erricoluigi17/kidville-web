@@ -41,6 +41,8 @@ vi.mock('@/lib/security/rate-limit', () => ({
     h.limite()
     return { ok: true, remaining: 59, retryAfterMs: 0 }
   },
+  rateLimitLocale: () => ({ ok: true, remaining: 299, retryAfterMs: 0 }),
+  clientIp: () => '203.0.113.1',
 }))
 
 const NOME = 'NomeSinteticoPrivacy'

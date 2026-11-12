@@ -23,7 +23,7 @@ Dove è richiesto `origine`, scegli fra `telefonata`, `whatsapp`, `instagram`, `
 | 403 | `SEDE_NON_AMMESSA` | La sede della chiave non è ammessa sul server. Avvisa il titolare. |
 | 403 | `SEDE_NON_ACCESSIBILE` | La sede richiesta è diversa da quella della chiave. Correggi la richiesta. |
 | 404 | `CRM_AI_SPENTO` | L’accesso è spento. Ferma i tentativi automatici e avvisa il titolare. |
-| 429 | `TROPPE_RICHIESTE` | Il limite è di **60 chiamate al minuto per chiave**, per tutte le rotte insieme. Aspetta i secondi indicati da `Retry-After`. |
+| 429 | `TROPPE_RICHIESTE` | Il limite è di **60 chiamate al minuto per chiave**, per tutte le rotte insieme. Prima ancora di cercare la chiave c'è un tetto largo per indirizzo (300 al minuto, per istanza del server, senza leggere il database) contro i token inventati. Aspetta i secondi indicati da `Retry-After`. |
 | 503 | `CRM_NON_INSTALLATO` | Lo schema richiesto manca in questo ambiente. Ferma i tentativi automatici e avvisa il titolare. |
 | 500 | `CRM_OPERAZIONE_NON_RIUSCITA` | Errore tecnico. Per una prenotazione da riprovare conserva corpo e chiave di idempotenza. Per assistenza comunica l’`x-request-id` della risposta. |
 

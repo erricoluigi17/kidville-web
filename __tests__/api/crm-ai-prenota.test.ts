@@ -27,7 +27,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
     },
   }),
 }))
-vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: async () => ({ ok: true, remaining: 59, retryAfterMs: 0 }) }))
+vi.mock('@/lib/security/rate-limit', () => ({
+  rateLimit: async () => ({ ok: true, remaining: 59, retryAfterMs: 0 }),
+  rateLimitLocale: () => ({ ok: true, remaining: 299, retryAfterMs: 0 }),
+  clientIp: () => '203.0.113.1',
+}))
 vi.mock('@/lib/notifiche/triggers', async (importActual) => ({
   ...(await importActual<typeof import('@/lib/notifiche/triggers')>()),
   notificaEvento: h.notifica,

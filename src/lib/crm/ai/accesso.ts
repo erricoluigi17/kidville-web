@@ -4,7 +4,7 @@ import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { formaConfronto } from '@/lib/auth/scope'
 import { rispostaErroreDb, rispostaErroreDbSchema } from '@/lib/crm/errori'
 import { logEvento } from '@/lib/logging/logger'
-import { rateLimit } from '@/lib/security/rate-limit'
+import { clientIp, rateLimit, rateLimitLocale } from '@/lib/security/rate-limit'
 import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -23,6 +23,14 @@ export interface ContestoAi {
 }
 
 export const LIMITE_CHIAMATE_AI = { limit: 60, windowMs: 60_000 } as const
+
+/**
+ * Tetto per indirizzo, PRIMA di cercare la chiave: un token ben formato ma falso costerebbe una lettura del
+ * database a richiesta. È il limitatore locale già in uso nel repo (nessun accesso al database, per istanza):
+ * qui protegge proprio la lettura, e un contatore condiviso ne costerebbe una a sua volta. Largo, perché un
+ * solo Mac può parlare per le tre sedi (3 chiavi × 60 al minuto = 180).
+ */
+export const LIMITE_IP_AI = { limit: 300, windowMs: 60_000 } as const
 
 export type CodiceAi =
   | 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO' | 'SEDE_NON_AMMESSA' | 'TROPPE_RICHIESTE'
@@ -55,7 +63,21 @@ function rifiutoAnonimo(op: string, codice: 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO'
   return risposta
 }
 
-/** Il gate comune: interruttore, chiave, sede ammessa, limite. */
+let ultimoLogIp: number | null = null
+
+function rifiutoTroppeDaIndirizzo(op: string, retryAfterMs: number): NextResponse {
+  const ora = Date.now()
+  if (ultimoLogIp === null || ora - ultimoLogIp >= SILENZIO_LOG_MS) {
+    ultimoLogIp = ora
+    // Né indirizzo né token nel registro: solo l'esito.
+    logEvento('crm', 'warn', { operazione: op, esito: 'ai-rifiutata', error_code: 'TROPPE_RICHIESTE', stato: 429 })
+  }
+  const risposta = rifiutoAi('TROPPE_RICHIESTE', 429)
+  risposta.headers.set('Retry-After', String(Math.ceil(retryAfterMs / 1000)))
+  return risposta
+}
+
+/** Il gate comune: interruttore, forma del token, tetto per indirizzo, chiave, sede ammessa, limite per chiave. */
 export async function requireIntegrazioneAi(
   request: Request,
   operazione: OperazioneAi,
@@ -66,6 +88,9 @@ export async function requireIntegrazioneAi(
 
   const token = tokenDaRichiesta(request)
   if (token === null) return { response: rifiutoAnonimo(op, 'TOKEN_NON_VALIDO') }
+
+  const perIndirizzo = rateLimitLocale('crm-ai-ip:' + clientIp(request), LIMITE_IP_AI)
+  if (!perIndirizzo.ok) return { response: rifiutoTroppeDaIndirizzo(op, perIndirizzo.retryAfterMs) }
 
   const supabase = await createAdminClient()
   const { data: riga, error } = await supabase

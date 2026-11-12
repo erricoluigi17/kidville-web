@@ -25,16 +25,19 @@ export function integrazioniFinte(): Record<string, unknown>[] {
 
 export function richiestaAi(
   percorso: string,
-  { metodo = 'GET', token = TOKEN_A, corpo, chiave }: {
+  { metodo = 'GET', token = TOKEN_A, corpo, chiave, ip }: {
     metodo?: 'GET' | 'POST' | 'DELETE'
     token?: string | null
     corpo?: unknown
     chiave?: string
+    /** Primo hop di `x-forwarded-for`, come lo riscrive la piattaforma. */
+    ip?: string
   } = {},
 ): NextRequest {
   const headers = new Headers()
   if (token !== null) headers.set('authorization', 'Bearer ' + token)
   if (chiave !== undefined) headers.set('idempotency-key', chiave)
+  if (ip !== undefined) headers.set('x-forwarded-for', ip)
   if (corpo !== undefined) headers.set('content-type', 'application/json')
   return new NextRequest('http://localhost' + percorso, { method: metodo, headers, body: JSON.stringify(corpo) })
 }

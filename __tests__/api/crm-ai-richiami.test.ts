@@ -26,7 +26,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
     rpc: { crm_ai_richiamo: h.rpc },
   }),
 }))
-vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: async () => ({ ok: true, remaining: 59, retryAfterMs: 0 }) }))
+vi.mock('@/lib/security/rate-limit', () => ({
+  rateLimit: async () => ({ ok: true, remaining: 59, retryAfterMs: 0 }),
+  rateLimitLocale: () => ({ ok: true, remaining: 299, retryAfterMs: 0 }),
+  clientIp: () => '203.0.113.1',
+}))
 vi.mock('@/lib/logging/logger', async (importActual) => ({
   ...(await importActual<typeof import('@/lib/logging/logger')>()),
   logErrore: h.logErrore,

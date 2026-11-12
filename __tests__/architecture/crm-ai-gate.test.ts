@@ -177,3 +177,26 @@ describe('CRM AI: ogni handler HTTP verifica la chiave di integrazione', () => {
       .toEqual([{ metodo: 'export *', errore: SENZA_WRAPPER }])
   })
 })
+
+describe('CRM AI: l’ordine dentro il gate', () => {
+  const sorgente = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'crm', 'ai', 'accesso.ts'), 'utf8')
+  const gate = sorgente.slice(sorgente.indexOf('export async function requireIntegrazioneAi'))
+  const posizione = (pezzo: string) => {
+    const n = gate.indexOf(pezzo)
+    expect(n, `manca ${pezzo} nel gate`).toBeGreaterThan(-1)
+    return n
+  }
+
+  it('interruttore, forma del token, tetto per indirizzo, poi la lettura della chiave, poi il tetto per chiave', () => {
+    const ordine = [
+      'crmAiAttivo()', 'tokenDaRichiesta(request)', "rateLimitLocale('crm-ai-ip:'",
+      'createAdminClient()', ".from('crm_integrazioni')", "rateLimit('crm-ai:'",
+    ].map(posizione)
+    expect(ordine).toEqual([...ordine].sort((a, b) => a - b))
+  })
+
+  it('il tetto per indirizzo non apre il database: usa il limitatore locale, non quello condiviso', () => {
+    expect(gate.slice(0, posizione('createAdminClient()'))).not.toMatch(/\brateLimit\(/)
+  })
+})
+

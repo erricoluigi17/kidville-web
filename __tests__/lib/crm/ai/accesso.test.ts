@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   tabelleToccate: [] as string[],
   limite: { ok: true, remaining: 59, retryAfterMs: 0 },
   rateLimit: vi.fn(),
+  rateLimitLocale: vi.fn(),
+  limiteIp: { ok: true, remaining: 299, retryAfterMs: 0 },
   logEvento: vi.fn(),
   logErrore: vi.fn(),
   aperturaClient: vi.fn(),
@@ -29,13 +31,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
     })
   },
 }))
-vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: (...a: unknown[]) => h.rateLimit(...a) }))
+vi.mock('@/lib/security/rate-limit', () => ({
+  rateLimit: (...a: unknown[]) => h.rateLimit(...a),
+  rateLimitLocale: (...a: unknown[]) => h.rateLimitLocale(...a),
+  clientIp: (r: Request) => r.headers.get('x-forwarded-for') ?? 'unknown',
+}))
 vi.mock('@/lib/logging/logger', async (importActual) => {
   const vero = await importActual<typeof import('@/lib/logging/logger')>()
   return { ...vero, logEvento: (...a: unknown[]) => h.logEvento(...a), logErrore: (...a: unknown[]) => h.logErrore(...a) }
 })
 
-import { LIMITE_CHIAMATE_AI, assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi } from '@/lib/crm/ai/accesso'
+import { LIMITE_CHIAMATE_AI, LIMITE_IP_AI, assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi } from '@/lib/crm/ai/accesso'
 
 const corpo = async (r: Response) => (await r.json()) as { error?: string; codice?: string }
 
@@ -47,6 +53,8 @@ beforeEach(() => {
   h.tabelleToccate = []
   h.limite = { ok: true, remaining: 59, retryAfterMs: 0 }
   h.rateLimit = vi.fn(async () => h.limite)
+  h.limiteIp = { ok: true, remaining: 299, retryAfterMs: 0 }
+  h.rateLimitLocale = vi.fn(() => h.limiteIp)
   h.logEvento = vi.fn()
   h.logErrore = vi.fn()
   h.aperturaClient = vi.fn()
@@ -84,6 +92,51 @@ describe('requireIntegrazioneAi', () => {
     expect(h.tabelleToccate).toEqual(token === null || token === 'kvai_corta' ? [] : ['crm_integrazioni'])
     expect(h.scritture).toEqual([])
     expect(h.rateLimit).not.toHaveBeenCalled()
+  })
+  describe('limite per indirizzo, prima di leggere la chiave', () => {
+    it('un token ben formato ma falso, oltre il limite dell’indirizzo: 429 senza aprire il database né leggere crm_integrazioni', async () => {
+      h.limiteIp = { ok: false, remaining: 0, retryAfterMs: 7_200 }
+      const g = await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { token: 'kvai_' + 'Z'.repeat(43), ip: '203.0.113.7' }), 'slot')
+      expect('response' in g && g.response.status).toBe(429)
+      expect('response' in g && g.response.headers.get('retry-after')).toBe('8')
+      expect('response' in g && (await corpo(g.response)).codice).toBe('TROPPE_RICHIESTE')
+      expect(h.aperturaClient).not.toHaveBeenCalled()
+      expect(h.tabelleToccate).toEqual([])
+      expect(h.rateLimit).not.toHaveBeenCalled()
+    })
+    it('conta per indirizzo con una chiave che non contiene il token, e il limite è dichiarato', async () => {
+      await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { token: 'kvai_' + 'Z'.repeat(43), ip: '203.0.113.7' }), 'slot')
+      expect(h.rateLimitLocale).toHaveBeenCalledExactlyOnceWith('crm-ai-ip:203.0.113.7', LIMITE_IP_AI)
+      expect(LIMITE_IP_AI).toEqual({ limit: 300, windowMs: 60_000 })
+      expect(JSON.stringify(h.rateLimitLocale.mock.calls)).not.toContain('ZZZZ')
+    })
+    it('viene dopo l’interruttore e dopo la forma del token, e prima di ogni lettura', async () => {
+      vi.stubEnv('CRM_AI_ATTIVO', '')
+      await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { ip: '203.0.113.7' }), 'slot')
+      vi.stubEnv('CRM_AI_ATTIVO', '1')
+      await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { token: null, ip: '203.0.113.7' }), 'slot')
+      await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { token: 'kvai_corta', ip: '203.0.113.7' }), 'slot')
+      expect(h.rateLimitLocale).not.toHaveBeenCalled()
+
+      const ordine: string[] = []
+      h.rateLimitLocale = vi.fn(() => { ordine.push('ip'); return h.limiteIp })
+      h.aperturaClient = vi.fn(() => { ordine.push('db') })
+      h.rateLimit = vi.fn(async () => { ordine.push('chiave'); return h.limite })
+      await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { ip: '203.0.113.7' }), 'slot')
+      expect(ordine).toEqual(['ip', 'db', 'chiave'])
+    })
+    it('il rifiuto non riporta l’indirizzo né il token nei log, e scrive una riga al minuto', async () => {
+      h.limiteIp = { ok: false, remaining: 0, retryAfterMs: 1_000 }
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.now() + 600_000)
+      const falso = 'kvai_' + 'Y'.repeat(43)
+      for (let n = 0; n < 3; n++) await requireIntegrazioneAi(richiestaAi('/api/crm/ai/slot', { token: falso, ip: '203.0.113.7' }), 'slot')
+      expect(h.logEvento).toHaveBeenCalledTimes(1)
+      expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ error_code: 'TROPPE_RICHIESTE', stato: 429 }))
+      const tutto = JSON.stringify(h.logEvento.mock.calls)
+      expect(tutto).not.toContain('203.0.113.7')
+      expect(tutto).not.toContain(falso)
+    })
   })
   it('una sede fuori dall’elenco delle ammesse → 403 SEDE_NON_AMMESSA', async () => {
     accendiAi([SEDE_B])

@@ -1,5 +1,5 @@
 import { logEvento, type Livello, type OpzioniEvento, type Valore } from './logger';
-import { conContesto, contesto, inLogger, segnalaErroreAnno } from './context';
+import { conContesto, contesto, contestoCrmAiAttivo, inLogger, pathTecnicoChiaviCrm, segnalaErroreAnno } from './context';
 import { codiceAnnoDa } from '@/lib/anno/tipi';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
@@ -474,31 +474,34 @@ const RISORSE_CRM_AI = new Set([
 ]);
 const METODI_HTTP = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
-function inRottaCrmAi(): boolean {
+function pathContestoCrmProtetto(): string | null {
     const c = contesto();
-    return ROTTA_CRM_AI.test(c?.route ?? '') || ROTTA_CRM_AI.test(c?.path ?? '');
+    if (ROTTA_CRM_AI.test(c?.route ?? '') || ROTTA_CRM_AI.test(c?.path ?? '')) return '/api/crm/ai';
+    return pathTecnicoChiaviCrm(c?.route, c?.path);
 }
 
 /** Non lancia: `input` può essere una stringa, una URL o una Request, e in JS qualunque cosa. */
 function descrivi(input: unknown, init: RequestInit | undefined): Descrizione {
     try {
         const { area, nome } = bersaglioDalPath(url(input));
-        const apiAi = area === 'altro' && ROTTA_CRM_AI.test(nome);
+        const apiProtetta = area === 'altro'
+            ? (ROTTA_CRM_AI.test(nome) ? '/api/crm/ai' : pathTecnicoChiaviCrm(undefined, nome))
+            : null;
         const rest = area === 'db' || area === 'rpc';
         const radice = rest ? nome.split('/', 1)[0] : '';
-        const soloMetadati = apiAi || inRottaCrmAi() || radice === 'crm_integrazioni' || radice.startsWith('crm_ai_');
+        const soloMetadati = apiProtetta !== null || pathContestoCrmProtetto() !== null || radice === 'crm_integrazioni' || radice.startsWith('crm_ai_');
         const n = Number(intestazione(init, 'x-retry-count'));
         return {
             area,
             nome: soloMetadati
-                ? (RISORSE_CRM_AI.has(radice) ? radice : apiAi ? 'crm/ai' : '?')
+                ? (RISORSE_CRM_AI.has(radice) ? radice : apiProtetta?.slice('/api/'.length) ?? '?')
                 : redigiNomeBersaglio(nome),
             metodo: metodo(input, init),
             tentativo: Number.isFinite(n) && n > 0 ? n : 0,
             soloMetadati,
         };
     } catch {
-        return { area: 'altro', nome: '?', metodo: 'GET', tentativo: 0, soloMetadati: inRottaCrmAi() };
+        return { area: 'altro', nome: '?', metodo: 'GET', tentativo: 0, soloMetadati: pathContestoCrmProtetto() !== null };
     }
 }
 
@@ -523,13 +526,15 @@ function emetti(
     b: Descrizione, livello: Livello, extra: Record<string, Valore>, err?: unknown, opzioni?: OpzioniEvento,
 ): void {
     const scrivi = () => logEvento(b.area, livello, campiDi(b, extra), err, opzioni);
-    if (!b.soloMetadati || !contesto()) {
+    const c = contesto();
+    // Per la gestione chiavi lo store protetto ha già un RID del server e nessun payload.
+    const chiaviProtette = contestoCrmAiAttivo() && pathTecnicoChiaviCrm(c?.route, c?.path) !== null;
+    if (!b.soloMetadati || !c || chiaviProtette) {
         scrivi();
         return;
     }
-    // Vale solo durante l'emissione (compreso il sink async). Il contesto originale resta
-    // disponibile al chiamante. Non si eredita il requestId: può arrivare da un header esterno.
-    const path = inRottaCrmAi() ? '/api/crm/ai' : '';
+    // Il contesto ordinario può contenere payload e un RID ricevuto dall'esterno.
+    const path = pathContestoCrmProtetto() ?? '';
     void conContesto({ path, requestId: '' }, () => Promise.resolve(scrivi()));
 }
 

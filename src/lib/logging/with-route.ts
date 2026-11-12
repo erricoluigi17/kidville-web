@@ -1,7 +1,7 @@
 import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
 import {
     conContesto, conContestoCrmAi, conContestoCompletamentoCrmAi,
-    contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato,
+    contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato, pathTecnicoChiaviCrm,
 } from './context';
 import { erroreAnno } from '@/lib/anno/errori';
 import { rispostaCrmNonRiuscita } from '@/lib/crm/errori';
@@ -39,8 +39,8 @@ import { logErrore, logEvento, logOk } from './logger';
  *
  * - NON inghiotte le eccezioni: le logga e le RILANCIA. Inghiottirle cambierebbe la
  *   semantica in produzione (Next non vedrebbe più l'errore) e romperebbe i test che
- *   asseriscono i 500 espliciti delle route. Le route CRM AI fanno eccezione: l'errore
- *   grezzo può contenere dati delle famiglie e non deve arrivare neppure a Next.
+ *   asseriscono i 500 espliciti delle route. Le route CRM AI e delle chiavi usano un
+ *   500 di catalogo perché l'errore grezzo può contenere dati riservati.
  *
  * POLITICA DEI LIVELLI (un 4xx non è un guasto del server — ma non sono tutti uguali):
  *
@@ -117,7 +117,10 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         const t0 = Date.now();
         const path = pathDi(args[0]);
         const nomeCrmAi = NOME_CRM_AI.test(nome);
-        const crmAi = nomeCrmAi || PATH_CRM_AI.test(path);
+        const pathChiavi = pathTecnicoChiaviCrm(nome, path);
+        const pathProtetto = nomeCrmAi ? '/api/' + nome.split(':', 1)[0]
+            : PATH_CRM_AI.test(path) ? '/api/crm/ai'
+            : pathChiavi;
 
         const completa = (res: unknown, delegata: boolean): Response => {
             // LA RETE DELL'ANNO (Compito 3.4, D4): prima di registrare l'esito, perché la riga
@@ -158,7 +161,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
             const finale: Response =
                 statoDi(res) === undefined ? rispostaSenzaHandler(contesto()?.requestId) : (res as Response);
 
-            return rifletti(finale, contesto()?.requestId, crmAi || delegata);
+            return rifletti(finale, contesto()?.requestId, pathProtetto !== null || delegata);
         };
 
         const esegui = async (): Promise<Response> => {
@@ -168,10 +171,10 @@ export function withRoute<A extends [Request, ...unknown[]]>(
                 res = await handler(...args);
             } catch (err) {
                 return conContestoCompletamentoCrmAi(args[0], delegata => {
-                    const protetta = crmAi || delegata;
+                    const protetta = pathProtetto !== null || delegata;
                     senzaLanciare(() => logErrore(
                         { operazione: nome, ms: Date.now() - t0, stato: 500 },
-                        protetta ? erroreCrmAi(err) : err,
+                        protetta ? erroreRottaProtetta(err, pathChiavi !== null) : err,
                     ));
                     // Anche un'eccezione può seguire una scrittura rifiutata con ANNO_CHIUSO.
                     const risposta = retiAnno(undefined, nome) ?? (protetta ? rispostaCrmNonRiuscita() : null);
@@ -184,10 +187,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
 
         // Protegge anche il primo rifiuto del gate, e non riusa un contesto ordinario.
         // Il nome canonico preserva la distinzione fra rotte nel registro senza usare l'URL.
-        if (crmAi) {
-            const pathTecnico = nomeCrmAi ? '/api/' + nome.split(':', 1)[0] : '/api/crm/ai';
-            return conContestoCrmAi(args[0], nome, pathTecnico, esegui);
-        }
+        if (pathProtetto) return conContestoCrmAi(args[0], nome, pathProtetto, esegui);
 
         // Rientranza: se siamo GIÀ dentro una richiesta (una route wrappata invocata come
         // funzione da un'altra), si RIUSA il contesto aperto. Aprirne un secondo conierebbe
@@ -205,7 +205,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
     };
 }
 
-function erroreCrmAi(err: unknown): { code: string; message: string } {
+function erroreRottaProtetta(err: unknown, chiavi: boolean): { code: string; message: string } {
     let code: string | undefined;
     try {
         code = erroreDbSoloCodice(err).code;
@@ -214,7 +214,7 @@ function erroreCrmAi(err: unknown): { code: string; message: string } {
     }
     return {
         code: code ?? 'CRM_OPERAZIONE_NON_RIUSCITA',
-        message: 'Eccezione durante una richiesta CRM AI',
+        message: chiavi ? 'Eccezione durante la gestione delle chiavi CRM' : 'Eccezione durante una richiesta CRM AI',
     };
 }
 
@@ -377,16 +377,16 @@ function conSessione(req: unknown): boolean {
 }
 
 /**
- * Rimette l'id di correlazione sulla risposta. Se gli header sono immutabili, per il CRM AI
+ * Rimette l'id di correlazione sulla risposta. Se gli header sono immutabili, per una rotta protetta
  * serve comunque l'id del server: riusa lo stream con una copia degli header. Per le altre
  * route resta la risposta originale.
  */
-function rifletti(res: Response, rid: string | undefined, crmAi: boolean): Response {
+function rifletti(res: Response, rid: string | undefined, protetta: boolean): Response {
     if (!rid) return res;
     try {
         res.headers?.set?.('x-request-id', rid);
     } catch {
-        if (crmAi) {
+        if (protetta) {
             try {
                 const headers = new Headers(res.headers);
                 headers.set('x-request-id', rid);

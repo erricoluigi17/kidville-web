@@ -148,8 +148,20 @@ export function conContesto<T>(
     return als.run(store, fn);
 }
 
+const PATH_CHIAVI_CRM = '/api/admin/crm/integrazioni';
+const FORMA_PATH_CHIAVI_CRM = /^\/api\/admin\/crm\/integrazioni(?:\/([^/]+))?\/?$/;
+
+/** Riconosce le due route delle chiavi e restituisce il pattern, senza riportare l’id richiesto. */
+export function pathTecnicoChiaviCrm(nome = '', path = ''): string | null {
+    if (nome === 'admin/crm/integrazioni:GET' || nome === 'admin/crm/integrazioni:POST') return PATH_CHIAVI_CRM;
+    if (nome === 'admin/crm/integrazioni/[id]:DELETE') return PATH_CHIAVI_CRM + '/[id]';
+    const match = FORMA_PATH_CHIAVI_CRM.exec(path);
+    if (!match) return null;
+    return match[1] ? PATH_CHIAVI_CRM + '/[id]' : PATH_CHIAVI_CRM;
+}
+
 /**
- * Le route CRM AI hanno un contesto di soli metadati. Si riusa solo lo store
+ * Le route CRM AI e di gestione delle chiavi hanno un contesto di soli metadati. Si riusa solo lo store
  * già protetto della stessa Request; da un contesto esterno non si eredita nulla.
  * `path` e `route` vengono scelti dal codice. Il limitatore può aprire uno store
  * tecnico senza una Request, quando il gruppo CRM AI è l'unico indicatore.
@@ -176,7 +188,7 @@ export function conContestoCrmAi<T>(
     return als.run(store, fn);
 }
 
-/** Non basta un nome simile: lo store deve essere stato aperto come CRM AI. */
+/** Verifica che lo store sia stato aperto come contesto di soli metadati. */
 export function contestoCrmAiAttivo(): boolean {
     const s = als.getStore();
     return s !== undefined && richiesteCrmAi.has(s);

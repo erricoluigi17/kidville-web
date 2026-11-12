@@ -790,8 +790,27 @@ describe('vincoli e privilegi effettivi', () => {
       const r = await prenota()
       expect(r.esito).toBe('creata')
       expect((await annulla(r.appuntamento_id)).esito).toBe('annullata')
+      // Registra contatto e richiamo usano crm_ai_persone (FOR SHARE su utenti e utenti_scuole); prenota usa
+      // crm_ai_candidati (LOCK TABLE ... IN SHARE MODE su settimane, fasce e assenze): tutto con i permessi di service_role.
+      expect((await contatto({ tel: TEL3, telNorm: TEL3_NORM })).creata).toBe(true)
+      expect((await richiamo({ tel: TEL2 })).esito).toBe('ok')
     } finally {
       await db.exec('RESET ROLE')
+    }
+  })
+
+  it('il LOCK TABLE ... IN SHARE MODE chiede un privilegio di scrittura: la sola lettura non basterebbe', async () => {
+    // Dimostra da che cosa dipende la prova qui sopra: dai permessi di service_role sulle tabelle del calendario.
+    await db.exec(`
+      CREATE ROLE solo_lettura;
+      GRANT USAGE ON SCHEMA public TO solo_lettura;
+      GRANT SELECT ON public.crm_settimane TO solo_lettura;
+      SET ROLE solo_lettura;
+    `)
+    try {
+      await expect(db.exec('BEGIN; LOCK TABLE public.crm_settimane IN SHARE MODE;')).rejects.toMatchObject({ code: '42501' })
+    } finally {
+      await db.exec('ROLLBACK; RESET ROLE')
     }
   })
 

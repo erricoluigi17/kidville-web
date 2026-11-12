@@ -679,8 +679,12 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
     const erroreLog = b.soloMetadati
         ? { name: 'SupabaseHttpError', message: 'Errore HTTP Supabase', code: codiceTecnico }
         : err;
+    const persisti = daPersistere(livello, b.area, s);
     emetti(b, livello, { stato: s, ms }, erroreLog, {
-        persisti: daPersistere(livello, b.area, s),
+        persisti,
+        // Il messaggio fisso è uguale per operazioni diverse. Usa i due campi già filtrati
+        // nella chiave di app_log, che altrimenti conserva solo il contesto della prima riga.
+        distingui: b.soloMetadati && persisti ? ['operazione', 'metodo'] : undefined,
     });
 }
 

@@ -287,6 +287,54 @@ describe('fetch strumentato — emissione reale', () => {
             expect(scrittore.mock.results[0].value?.requestId).not.toBe(token);
         });
 
+        it('app_log distingue operazione e metodo degli errori HTTP, mantenendo la deduplica', async () => {
+            const rpc = vi.fn<(nome: string, args: { righe: Record<string, unknown>[] }) => Promise<{ error: null }>>()
+                .mockResolvedValue({ error: null });
+            vi.resetModules();
+            // Il sink è reale fino alla RPC: il suo client finto impedisce qualsiasi scrittura di rete.
+            vi.doMock('@/lib/supabase/server-client', () => ({ createLogClient: async () => ({ rpc }) }));
+            try {
+                const { creaFetchStrumentato: crea } = await import('@/lib/logging/supabase-fetch');
+                const { conContesto } = await import('@/lib/logging/context');
+                const f = crea(async () => risposta(JSON.stringify({ code: '42501', message: testo }), 403));
+                const casi = [
+                    { operazione: 'crm_appuntamenti', metodo: 'GET' },
+                    { operazione: 'crm_indisponibilita', metodo: 'GET' },
+                    { operazione: 'crm_appuntamenti', metodo: 'POST' },
+                    { operazione: 'crm_appuntamenti', metodo: 'GET' },
+                ];
+
+                await conContesto({
+                    route: 'crm/ai/slot:GET', path: '/api/crm/ai/slot', requestId: token,
+                    payload: { query: { valore: impronta } },
+                }, async () => {
+                    for (const [i, { operazione, metodo }] of casi.entries()) {
+                        await f(`${indirizzo}/rest/v1/${operazione}?filtro=${token}${i}`, {
+                            method: metodo, headers: { 'x-retry-count': String(i) },
+                        });
+                    }
+                });
+
+                await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(casi.length));
+                const identita = rpc.mock.calls.map(([funzione, { righe }], i) => {
+                    expect(funzione).toBe('app_log_registra');
+                    expect(righe).toHaveLength(1);
+                    expect(righe[0]).toMatchObject({
+                        stato_http: 403, codice: '42501',
+                        contesto: { campi: casi[i] }, fingerprint: expect.any(String),
+                    });
+                    expect(righe[0].contesto).not.toHaveProperty('payload');
+                    return righe[0].fingerprint;
+                });
+                const emissioni = `${scritto(log, err)}\n${inspect(rpc.mock.calls, { depth: 12 })}`;
+                expect(segreti.filter((segreto) => emissioni.includes(segreto))).toEqual([]);
+                expect(new Set(identita).size).toBe(3);
+                expect(identita[0]).toBe(identita[3]);
+            } finally {
+                vi.doUnmock('@/lib/supabase/server-client');
+            }
+        });
+
         it('mantiene la classificazione 406 e il segnale dell’anno, senza riportarne il testo', async () => {
             const { creaFetchStrumentato: crea, conContesto, erroreAnnoDellaRichiesta, appLog } = await caricaRumoroso();
             const url = `${indirizzo}/rest/v1/crm_integrazioni`;

@@ -355,7 +355,8 @@ describe('ripristino-demo.sql · una richiesta sola, COMMIT compreso (D7)', () =
     expect(await passaggi(SEDE_SIM)).toBe(0)
     expect(await gettoni(b.sim.da)).toBe(0)
     expect(await statiDi(SEDE_SIM, foto)).toEqual(foto)
-    expect(await una<string | null>(b.db, `SELECT to_regclass('pg_temp._sedi_simulazione')::text`), 'le tabelle temporanee sono sparite col COMMIT').toBeNull()
+    expect(await una<string | null>(b.db, `SELECT to_regclass('pg_temp._sedi_simulazione')::text`), 'la tabella di lavoro è sparita col COMMIT').toBeNull()
+    expect(await una<number>(b.db, `SELECT count(*)::int FROM pg_temp._sede_ripristinata`), 'resta solo la sede, per le letture finali').toBe(1)
   })
 })
 
@@ -374,7 +375,15 @@ describe('ripristino-demo.sql · la sede è di prova per il nome o per l\'elenco
       expect(await passaggi(SEDE_E2E)).toBe(1)
       expect(await gettoniSede(SEDE_E2E)).toBe(1)
 
-      await b.db.exec(dentro(compila({ sede: SEDE_E2E, dal, foto })))
+      const risultati = await b.db.exec(dentro(compila({ sede: SEDE_E2E, dal, foto })))
+
+      // (giro 2, N1) L'ultima tabella mostra gli stati e le frequenze della sede dichiarata, anche con `sedi_simulazione` vuoto.
+      const ultimo = risultati.at(-1)!.rows as { voce: string; valore: string }[]
+      for (const f of foto) expect(ultimo.map((r) => r.voce), 'gli stati della Demo').toContain(`stato · ${f.etichetta}`)
+      const frequenze = await conta(`SELECT 1 FROM public.frequenze f JOIN public.anni_sede a ON a.id = f.anno_sede_id WHERE a.scuola_id = $1`, [SEDE_E2E])
+      expect(frequenze, 'la sede di prova ha frequenze da guardare a mano').toBeGreaterThan(0)
+      expect(ultimo.filter((r) => r.voce.startsWith('da guardare a mano · frequenze ')).reduce((n, r) => n + Number(r.valore), 0),
+        'le frequenze della Demo nella tabella finale').toBe(frequenze)
 
       expect(await passaggi(SEDE_E2E), 'il passaggio di prova è tolto').toBe(0)
       expect(await gettoniSede(SEDE_E2E), 'il gettone di prova è tolto').toBe(0)

@@ -48,7 +48,7 @@
 -- LE INVARIANTI non fermano il blocco: dopo un passaggio confermato i bambini non tornano com'erano (vedi sopra) e sul banco di prova
 -- resta l'invariante 11 su `alunni`. Si leggono nella tabella finale e si decidono a mano.
 --
--- Ogni DELETE e ogni UPDATE passa da `_sedi_simulazione` (la tabella temporanea che il blocco riempie da `anno_regole.sedi_simulazione`):
+-- Ogni DELETE e ogni UPDATE passa da `_sedi_simulazione` (la tabella temporanea con la sola sede scritta in `c_sede`, già verificata come sede di prova; le letture dopo il COMMIT usano `_sede_ripristinata`, la stessa sede):
 -- nessuna sede è scritta qui, e nessun uuid.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -106,6 +106,10 @@ BEGIN
   DROP TABLE IF EXISTS _sedi_simulazione;
   -- Una sola sede, quella scritta in c_sede, già verificata sopra come sede di prova: ogni DELETE e UPDATE passa da qui.
   CREATE TEMP TABLE _sedi_simulazione ON COMMIT DROP AS SELECT v_sede AS scuola_id;
+  -- La stessa sede, per le letture dopo il COMMIT (le tabelle `ON COMMIT DROP` non ci sono più): vive quanto la sessione dell'editor,
+  -- ed è ricreata a ogni esecuzione. Non scrive niente e non è letta da nessun DELETE/UPDATE.
+  DROP TABLE IF EXISTS _sede_ripristinata;
+  CREATE TEMP TABLE _sede_ripristinata AS SELECT v_sede AS scuola_id;
 
   -- ── 2 · La fotografia di partenza ─────────────────────────────────────────────────────────
   -- ③ DA COMPILARE · una riga per ogni anno di Demo, come l'hai salvata prima di cominciare: etichetta breve (per esempio 2026/27),
@@ -252,17 +256,17 @@ COMMIT;
 SELECT 'stato · ' || s.etichetta_breve AS voce,
        a.stato || CASE WHEN a.domande_aperte THEN ' (domande aperte)' ELSE '' END AS valore
   FROM public.anni_sede a JOIN public.anni_scolastici s ON s.id = a.anno_id
- WHERE a.scuola_id IN (SELECT unnest(g.sedi_simulazione) FROM public.anno_regole g)
+ WHERE a.scuola_id IN (SELECT scuola_id FROM _sede_ripristinata)
 UNION ALL
 SELECT 'da guardare a mano · frequenze ' || s.etichetta_breve, count(*)::text
   FROM public.frequenze f
   JOIN public.anni_sede a ON a.id = f.anno_sede_id
   JOIN public.anni_scolastici s ON s.id = a.anno_id
- WHERE a.scuola_id IN (SELECT unnest(g.sedi_simulazione) FROM public.anno_regole g)
+ WHERE a.scuola_id IN (SELECT scuola_id FROM _sede_ripristinata)
  GROUP BY s.etichetta_breve
 UNION ALL
 SELECT 'passaggi che restano (se c''erano prima della partenza)', count(*)::text
-  FROM public.passaggi_anno p WHERE p.scuola_id IN (SELECT unnest(g.sedi_simulazione) FROM public.anno_regole g)
+  FROM public.passaggi_anno p WHERE p.scuola_id IN (SELECT scuola_id FROM _sede_ripristinata)
 UNION ALL
 SELECT 'invarianti non a zero', count(*)::text FROM public.anno_invarianti() WHERE righe <> 0
 UNION ALL

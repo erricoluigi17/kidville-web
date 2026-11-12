@@ -176,13 +176,23 @@ describe('ripristino-demo.sql · il blocco si ferma da solo', () => {
     })
   })
 
-  it('D6 · `sedi_simulazione` vuoto: si ferma, non tocca niente', async () => {
+  it('D6 · una sede che NON comincia per e2e00000 con `sedi_simulazione` vuoto: si ferma (RIPRISTINO_SEDE_NON_DI_PROVA), non tocca niente', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()
       const foto = await fotografia(SEDE_SIM)
       await simula(true)
       await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[]`)
-      await fermato(compila({ sede: SEDE_SIM, dal, foto }), 'RIPRISTINO_SEDI_NON_UNA', quadroSede(SEDE_SIM))
+      await fermato(compila({ sede: SEDE_SIM, dal, foto }), 'RIPRISTINO_SEDE_NON_DI_PROVA', quadroSede(SEDE_SIM))
+    })
+  })
+
+  it('(correzioni dopo la revisione finale, F2) una sede VERA fuori elenco: si ferma e la sua storia resta intatta', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const foto = await fotografia(SEDE_VERA)
+      await seminaVera()
+      await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[]`)
+      await fermato(compila({ sede: SEDE_VERA, dal, foto }), 'RIPRISTINO_SEDE_NON_DI_PROVA', quadroSede(SEDE_VERA))
     })
   })
 
@@ -346,5 +356,42 @@ describe('ripristino-demo.sql · una richiesta sola, COMMIT compreso (D7)', () =
     expect(await gettoni(b.sim.da)).toBe(0)
     expect(await statiDi(SEDE_SIM, foto)).toEqual(foto)
     expect(await una<string | null>(b.db, `SELECT to_regclass('pg_temp._sedi_simulazione')::text`), 'le tabelle temporanee sono sparite col COMMIT').toBeNull()
+  })
+})
+
+describe('ripristino-demo.sql · la sede è di prova per il nome o per l\'elenco (correzioni dopo la revisione finale, F2)', () => {
+  it('la Demo `e2e00000…` con `sedi_simulazione` VUOTO: riesce (il database la ammette già a simulare, non serve scrivere niente)', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const foto = await fotografia(SEDE_E2E)
+      await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[]`)
+      await b.db.query(`INSERT INTO public.passaggi_anno (scuola_id, da_anno_sede_id, a_anno_sede_id, stato) VALUES ($1, $2, $3, 'anteprima')`, [SEDE_E2E, b.da, b.a])
+      await b.db.query(
+        `INSERT INTO public.correzioni_anno_chiuso (utente_id, ruolo, anno_sede_id, codice, motivo) VALUES ($1, 'admin', $2, 'correzione', 'motivo finto di prova')`,
+        [UTENTE, b.da])
+      await seminaVera()
+      const veraPrima = await quadroSede(SEDE_VERA)()
+      expect(await passaggi(SEDE_E2E)).toBe(1)
+      expect(await gettoniSede(SEDE_E2E)).toBe(1)
+
+      await b.db.exec(dentro(compila({ sede: SEDE_E2E, dal, foto })))
+
+      expect(await passaggi(SEDE_E2E), 'il passaggio di prova è tolto').toBe(0)
+      expect(await gettoniSede(SEDE_E2E), 'il gettone di prova è tolto').toBe(0)
+      expect(await quadroSede(SEDE_VERA)(), 'la sede vera è intatta').toEqual(veraPrima)
+    })
+  })
+
+  it('una sede vera UNICA in elenco: riesce, come prima', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const foto = await fotografia(SEDE_VERA)
+      await seminaVera()
+      await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = ARRAY[$1]::uuid[]`, [SEDE_VERA])
+      expect(await passaggi(SEDE_VERA)).toBe(1)
+      await b.db.exec(dentro(compila({ sede: SEDE_VERA, dal, foto })))
+      expect(await passaggi(SEDE_VERA)).toBe(0)
+      expect(await gettoniSede(SEDE_VERA)).toBe(0)
+    })
   })
 })

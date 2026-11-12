@@ -14,8 +14,9 @@ altro in Demo vede cose che non tornano. Si chiede un sì esplicito, e si scrive
 Regole che non si derogano:
 
 - **Non si tocca mai una sede vera.** Il tick e il passaggio con una data nel futuro (`p_oggi`) sono ammessi solo per una sede di prova
-  (`e2e0…`) o per una sede in `anno_regole.sedi_simulazione`. Se Demo non è lì, il database rifiuta (`ANNI_TICK_OGGI_NON_AMMESSO`,
-  `PASSAGGIO_OGGI_NON_AMMESSO`): non si cerca un'altra via.
+  (`e2e0…`) o per una sede in `anno_regole.sedi_simulazione`. **Demo è già una sede di prova**: il suo id comincia per `e2e00000`, quindi il
+  database la ammette da sé e il titolare non deve scrivere niente in `sedi_simulazione`. Per una sede che non comincia per `e2e00000` e non è
+  in elenco il database rifiuta (`ANNI_TICK_OGGI_NON_AMMESSO`, `PASSAGGIO_OGGI_NON_AMMESSO`): non si cerca un'altra via.
 - **Mai nomi, mai codici fiscali, mai righe di anagrafica** nei risultati: conteggi, stati, codici d'errore.
 - **L'agente non esegue il ripristino.** Lo esegue il titolare dall'editor SQL.
 
@@ -27,11 +28,11 @@ La guardia dell'anno (`ANNO_CHIUSO`, `PASSAGGIO_DA_FARE`, il gettone di correzio
 
 | Che cosa | In Demo, oggi (guardia spenta, in osservazione) | Per vedere il rifiuto vero |
 |---|---|---|
-| Il tick cambia gli stati degli anni | **Sì, anche a guardia spenta**: per una sede in `sedi_simulazione` il tick agisce comunque (`anno_stati_aggiorna`: la guardia vale `sede ammessa OR guardia_attiva`) | non serve |
+| Il tick cambia gli stati degli anni | **Sì, anche a guardia spenta**: per una sede di prova (`e2e00000…`, come Demo) o in `sedi_simulazione` il tick agisce comunque (`anno_stati_aggiorna`: la guardia vale `sede ammessa OR guardia_attiva`) | non serve |
 | Il passaggio d'anno (anteprima, conferma, annullo) con la data scelta | **Sì**, con `p_oggi`, da SQL (vedi il passo 6) | non serve |
 | `ANNO_CHIUSO`, il dialogo «Registra come correzione», il gettone | **No**: la scrittura PASSA e viene **contata** in `anno_guardia_osservazioni` (tabella, operazione, stato dell'anno). Si vede ciò che la guardia *rifiuterebbe*, non il rifiuto | accendere la guardia per **tutte** le sedi: decisione del titolare, prevista entro il 30/06/2027 dopo due settimane di osservazione. **Non si accende per la simulazione** |
 | `PASSAGGIO_DA_FARE` | **No**: confronta l'inizio dell'anno nuovo con l'orologio **vero**, non con `p_oggi` (M49b), e Demo ha l'anno nuovo nel 2027 | l'orologio vero a o dopo l'inizio dell'anno nuovo, senza passaggio (vedi la fine) |
-| L'allarme «sedi con il passaggio d'anno da fare» in `salute_anno()` | **No**: `passaggio_da_fare` **esclude** le sedi in `sedi_simulazione`, e vale 0 | idem |
+| L'allarme «sedi con il passaggio d'anno da fare» in `salute_anno()` | **No**: `passaggio_da_fare` **esclude** le sedi `e2e00000…` (Demo) e quelle in `sedi_simulazione`, e vale 0 | idem |
 
 Come si simula la correzione dell'anno chiuso (i passi 11-12) con la guardia spenta: si fa la scrittura sul vecchio anno e si guarda
 che il contatore salga (`SELECT tabella, op, stato, origine, n FROM public.anno_guardia_osservazioni ORDER BY ultima_il DESC LIMIT 10;`).
@@ -44,8 +45,10 @@ non Demo.
 2. **La guardia non va accesa per la simulazione** (vedi sopra). Si controlla com'è: `SELECT guardia_attiva, guardia_osserva FROM public.anno_regole;`.
    Con `guardia_attiva` falsa il tick di Demo funziona lo stesso. Solo se il titolare ha già acceso la guardia per tutti (non prima del
    periodo di osservazione) i passi 5, 11 e 12 daranno il rifiuto vero invece del conteggio, per **tutte** le sedi.
-3. **Demo è in `anno_regole.sedi_simulazione`, e solo Demo**, scritta dal titolare: `UPDATE public.anno_regole SET sedi_simulazione = ARRAY['<DEMO>']::uuid[];`
-   (il segnaposto `<DEMO>` lo sostituisce lui; qui non c'è l'uuid e non ci deve essere). Il ripristino si ferma da solo se le sedi sono due o nessuna.
+3. **Demo è già ammessa come sede di prova** (l'id comincia per `e2e00000`): `sedi_simulazione` può restare com'è, vuoto, e il titolare non scrive niente.
+   `sedi_simulazione` serve solo per simulare in una sede che NON comincia per `e2e00000`: allora la scrive lui, e solo quella sede
+   (`UPDATE public.anno_regole SET sedi_simulazione = ARRAY['<SEDE>']::uuid[];`, il segnaposto lo sostituisce lui; qui non c'è l'uuid e non ci deve
+   essere). Il ripristino accetta la sede se comincia per `e2e00000` oppure se è l'unica in elenco; una sede vera fuori elenco, o in un elenco di due, lo ferma.
 4. Le invarianti sono pulite: `SELECT count(*) FROM public.anno_invarianti() WHERE righe <> 0;` → `0`.
 
 ## La fotografia di partenza (si salva prima di tutto)
@@ -120,7 +123,7 @@ SELECT public.passaggio_annulla('<PASSAGGIO>'::uuid, '<UTENTE>'::uuid, DATE 'AAA
 ```
 
 Codici d'errore da aspettarsi: `PASSAGGIO_TROPPO_PRESTO` (la data è `U` o prima), `PASSAGGIO_NON_PRONTO` (il nuovo non è `iscrizioni_aperte`, o il
-vecchio non è l'anno attivo), `PASSAGGIO_OGGI_NON_AMMESSO` (Demo non è in `sedi_simulazione`), `RIGHE_DA_DECIDERE`, `ANTEPRIMA_VECCHIA` (rifai l'anteprima).
+vecchio non è l'anno attivo), `PASSAGGIO_OGGI_NON_AMMESSO` (la sede non comincia per `e2e00000` e non è in `sedi_simulazione`), `RIGHE_DA_DECIDERE`, `ANTEPRIMA_VECCHIA` (rifai l'anteprima).
 
 ### Se il passo 6 non viene fatto
 
@@ -160,7 +163,7 @@ Il file `docs/superpowers/simulazione/ripristino-demo.sql` è **un blocco solo**
 4. Se riesce, l'ultima tabella mostra gli stati finali di Demo, le frequenze da guardare a mano e le invarianti non a zero. **Dopo un passaggio
    confermato è normale che resti un'invariante** (sul banco di prova l'11 su `alunni`): tornano gli stati degli anni, non i bambini. Si decide a
    mano se bonificarli: Demo è una sede di prova, ma il titolare può averci messo dati propri.
-5. Si toglie Demo da `sedi_simulazione` (`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[];`) e, se il titolare aveva cambiato la guardia, la si
+5. Se per la simulazione era stata messa una sede in `sedi_simulazione`, la si toglie (`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[];`; per Demo non serve) e, se il titolare aveva cambiato la guardia, la si
    riporta com'era (con la data nel PRD).
 
 **Che cosa è provato e che cosa no.** Il file è eseguito nel banco automatico (`__tests__/db/anno-ripristino-demo.test.ts`, PGlite), con la stessa

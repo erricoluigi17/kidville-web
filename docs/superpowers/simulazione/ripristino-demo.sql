@@ -31,9 +31,11 @@
 --
 -- IL BLOCCO SI FERMA (RAISE EXCEPTION) SE:
 --   · RIPRISTINO_SEGNAPOSTO       la sede, la data o gli stati della fotografia sono ancora i segnaposto (o non sono ciò che devono);
---   · RIPRISTINO_SEDI_NON_UNA     `anno_regole.sedi_simulazione` non contiene ESATTAMENTE una sede (nessuna, due o più) o `anno_regole`
---                                 non ha una riga sola;
---   · RIPRISTINO_SEDE_DIVERSA     l'unica sede di `sedi_simulazione` non è quella che hai scritto in `c_sede`;
+--   La sede scritta in `c_sede` è ammessa se COMINCIA PER `e2e00000` (come Demo: il database la ammette già a simulare, e
+--   `sedi_simulazione` può restare vuoto) OPPURE se è l'unica sede di `anno_regole.sedi_simulazione`. Altrimenti:
+--   · RIPRISTINO_SEDE_NON_DI_PROVA  la sede non comincia per `e2e00000` e `sedi_simulazione` è vuoto (una sede vera fuori elenco);
+--   · RIPRISTINO_SEDI_NON_UNA     la sede non è di prova e `sedi_simulazione` contiene più di una sede, o `anno_regole` non ha una riga sola;
+--   · RIPRISTINO_SEDE_DIVERSA     la sede non è di prova e l'unica sede di `sedi_simulazione` non è quella che hai scritto in `c_sede`;
 --   · RIPRISTINO_DATA             la data è nel futuro, oppure PRECEDE la nascita di un anno della fotografia. È il criterio scelto:
 --                                 la simulazione non può essere cominciata prima che esistessero gli anni che ha toccato, quindi una
 --                                 data più vecchia della riga `creato_il` di un anno di Demo è sbagliata (e cancellerebbe la storia
@@ -54,7 +56,7 @@ BEGIN;
 
 DO $ripristino$
 DECLARE
-  -- ① DA COMPILARE · la sede di Demo, che deve essere l'UNICA in `anno_regole.sedi_simulazione`. Sostituisci <DEMO> con il suo uuid.
+  -- ① DA COMPILARE · la sede di Demo (comincia per `e2e00000`; altrimenti deve essere l'UNICA in `anno_regole.sedi_simulazione`). Sostituisci <DEMO> con il suo uuid.
   c_sede       constant text := '<DEMO>';
   -- ② DA COMPILARE · la PARTENZA: quando è cominciata la simulazione, con ora e fuso (per esempio 2026-11-20 09:00:00+01).
   c_partenza   constant text := 'AAAA-MM-GG';
@@ -82,22 +84,28 @@ BEGIN
     RAISE EXCEPTION 'RIPRISTINO_SEGNAPOSTO: la data di partenza non è stata compilata (punto 2)';
   END;
 
-  -- ── 1 · Le sedi in simulazione sono esattamente una, ed è quella attesa ──────────────────
-  SELECT count(*) INTO v_n FROM public.anno_regole;
-  IF v_n <> 1 THEN
-    RAISE EXCEPTION 'RIPRISTINO_SEDI_NON_UNA: anno_regole ha % righe invece di una', v_n;
-  END IF;
-  SELECT g.sedi_simulazione INTO v_elenco FROM public.anno_regole g;
-  IF coalesce(cardinality(v_elenco), 0) <> 1 THEN
-    RAISE EXCEPTION 'RIPRISTINO_SEDI_NON_UNA: sedi_simulazione contiene % sedi invece di una', coalesce(cardinality(v_elenco), 0);
-  END IF;
-  IF v_elenco[1] IS DISTINCT FROM v_sede THEN
-    RAISE EXCEPTION 'RIPRISTINO_SEDE_DIVERSA: l''unica sede in sedi_simulazione non è quella scritta in c_sede';
+  -- ── 1 · La sede è di prova: o comincia per `e2e00000` (come Demo, già ammessa dal database a simulare), oppure è l'UNICA in
+  --      `anno_regole.sedi_simulazione`. Ogni altra sede si ferma, e il blocco non scrive niente.
+  IF v_sede::text NOT LIKE 'e2e00000%' THEN
+    SELECT count(*) INTO v_n FROM public.anno_regole;
+    IF v_n <> 1 THEN
+      RAISE EXCEPTION 'RIPRISTINO_SEDI_NON_UNA: anno_regole ha % righe invece di una', v_n;
+    END IF;
+    SELECT g.sedi_simulazione INTO v_elenco FROM public.anno_regole g;
+    IF coalesce(cardinality(v_elenco), 0) = 0 THEN
+      RAISE EXCEPTION 'RIPRISTINO_SEDE_NON_DI_PROVA: la sede scritta in c_sede non comincia per e2e00000 e sedi_simulazione è vuoto';
+    END IF;
+    IF cardinality(v_elenco) <> 1 THEN
+      RAISE EXCEPTION 'RIPRISTINO_SEDI_NON_UNA: sedi_simulazione contiene % sedi invece di una', cardinality(v_elenco);
+    END IF;
+    IF v_elenco[1] IS DISTINCT FROM v_sede THEN
+      RAISE EXCEPTION 'RIPRISTINO_SEDE_DIVERSA: l''unica sede in sedi_simulazione non è quella scritta in c_sede';
+    END IF;
   END IF;
 
   DROP TABLE IF EXISTS _sedi_simulazione;
-  CREATE TEMP TABLE _sedi_simulazione ON COMMIT DROP AS
-    SELECT unnest(g.sedi_simulazione) AS scuola_id FROM public.anno_regole g;
+  -- Una sola sede, quella scritta in c_sede, già verificata sopra come sede di prova: ogni DELETE e UPDATE passa da qui.
+  CREATE TEMP TABLE _sedi_simulazione ON COMMIT DROP AS SELECT v_sede AS scuola_id;
 
   -- ── 2 · La fotografia di partenza ─────────────────────────────────────────────────────────
   -- ③ DA COMPILARE · una riga per ogni anno di Demo, come l'hai salvata prima di cominciare: etichetta breve (per esempio 2026/27),

@@ -27,7 +27,7 @@ const FILE = path.resolve(__dirname, '../../docs/superpowers/simulazione/riprist
 /** Tre DELETE (gettoni, passaggi, cronologia) e due UPDATE (gli stati: prima i non-corrente, poi il corrente). */
 const MIN_ISTRUZIONI_DI_SCRITTURA = 5
 const MIN_RAISE = 12
-const CODICI_DI_STOP = ['RIPRISTINO_SEGNAPOSTO', 'RIPRISTINO_SEDI_NON_UNA', 'RIPRISTINO_SEDE_DIVERSA', 'RIPRISTINO_DATA', 'RIPRISTINO_FOTOGRAFIA', 'RIPRISTINO_CONTEGGI']
+const CODICI_DI_STOP = ['RIPRISTINO_SEGNAPOSTO', 'RIPRISTINO_SEDI_NON_UNA', 'RIPRISTINO_SEDE_DIVERSA', 'RIPRISTINO_SEDE_NON_DI_PROVA', 'RIPRISTINO_DATA', 'RIPRISTINO_FOTOGRAFIA', 'RIPRISTINO_CONTEGGI']
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 const TABELLE_VIETATE = /\b(enrollment_submissions|alunni|tutori|genitori|utenti|anagrafica_[a-z_]+|famiglie|pagamenti|presenze|valutazioni|chat_messages)\b/i

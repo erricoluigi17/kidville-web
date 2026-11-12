@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl'
 import { Copy, KeyRound } from 'lucide-react'
 import type { AuthChangeEvent } from '@supabase/supabase-js'
 import { Modal } from '@/components/ui/Modal'
+import { useRuoloCockpit } from '@/lib/context/admin-identity'
 import { useDateFormat } from '@/lib/i18n/date'
 import { logClient } from '@/lib/logging/client'
 import { getSupabase } from '@/lib/supabase/browser-client'
@@ -70,6 +71,11 @@ function soloDirezione(errore: EsitoErrore) {
 }
 
 export function Integrazioni({ scuolaId }: { scuolaId: string }) {
+  const t = useTranslations('crmShell')
+  // Il ruolo si sa PRIMA di chiamare la rotta: una segretaria non deve provocare un 403, un avviso
+  // salvato e un errore lato client a ogni apertura. Serve a decidere cosa mostrare; il gate vero
+  // resta sul server (`SOLO_ADMIN`). `''` = non ancora noto (o provider assente): non chiama niente.
+  const ruolo = useRuoloCockpit()
   const [sospesa, setSospesa] = useState(false)
 
   useEffect(() => {
@@ -87,6 +93,9 @@ export function Integrazioni({ scuolaId }: { scuolaId: string }) {
       window.removeEventListener('pageshow', riprendi)
     }
   }, [])
+
+  if (ruolo === '') return <p className={CARD} role="status">{t('integrazioniCaricamento')}</p>
+  if (ruolo !== 'admin') return <p className={CARD} role="status">{t('integrazioniSoloDirezione')}</p>
 
   // Il cambio sede smonta l'intero pannello: nessun render intermedio con la chiave della sede precedente.
   return sospesa ? null : <PannelloSede key={scuolaId} scuolaId={scuolaId} />

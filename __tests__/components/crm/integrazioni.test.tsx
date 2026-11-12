@@ -7,7 +7,9 @@ import { SEDE_A, SEDE_B } from '../../fixtures/sedi'
 const h = vi.hoisted(() => ({
   auth: null as ((evento: string) => void) | null,
   log: vi.fn(),
+  ruolo: 'admin',
 }))
+vi.mock('@/lib/context/admin-identity', () => ({ useRuoloCockpit: () => h.ruolo }))
 vi.mock('@/lib/supabase/browser-client', () => ({
   getSupabase: () => ({
     auth: {
@@ -55,6 +57,7 @@ beforeEach(() => {
   fetchFinto.mockImplementation(async () => { throw new Error('Richiesta non prevista') })
   writeText.mockReset().mockResolvedValue(undefined)
   h.log.mockClear()
+  h.ruolo = 'admin'
   vi.stubGlobal('fetch', fetchFinto)
   vi.stubGlobal('navigator', Object.assign(Object.create(navigator), { clipboard: { writeText } }))
 })
@@ -73,6 +76,26 @@ async function preparaCreazione() {
 }
 
 describe('CRM · Chiave dell’assistente', () => {
+  it('una segretaria vede subito «riservata alla Direzione», senza chiamare la rotta né scrivere un log', async () => {
+    h.ruolo = 'segreteria'
+    const { container } = render(<Integrazioni scuolaId={SEDE_A} />)
+    expect(container.textContent).toBe(SOLO_DIREZIONE)
+    await act(async () => { await Promise.resolve() })
+    expect(fetchFinto).not.toHaveBeenCalled()
+    expect(h.log).not.toHaveBeenCalled()
+    expect(h.auth).toBeNull()
+  })
+
+  it('finché il ruolo non è noto non chiama la rotta e non mostra né l’avviso né il modulo', async () => {
+    h.ruolo = ''
+    const { container } = render(<Integrazioni scuolaId={SEDE_A} />)
+    await act(async () => { await Promise.resolve() })
+    expect(fetchFinto).not.toHaveBeenCalled()
+    expect(h.log).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain(SOLO_DIREZIONE)
+    expect(screen.queryByRole('button', { name: CREA })).toBeNull()
+  })
+
   it('con 403 SOLO_ADMIN mostra soltanto l’avviso per la Direzione', async () => {
     fetchFinto.mockResolvedValueOnce(rifiuto(403, 'SOLO_ADMIN'))
     const { container } = render(<Integrazioni scuolaId={SEDE_A} />)

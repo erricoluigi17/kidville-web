@@ -402,6 +402,15 @@ export const JOB_CRON: readonly JobCron[] = [
     // il 2026-11-09, nella PR-B della 4.5, con la migrazione già in produzione e il battito già visto in `app_log`.
     // Finestra 3 × `ORA`: assorbe un giro saltato senza gridare, e non due.
     { nome: 'anni-tick', finestraMs: 3 * ORA },
+    // `passaggio-ricopia-schede` (`35 * * * *`, OGNI ORA, `public.passaggio_ricopia_schede()`, PR 4.8): il giorno dell'inizio dell'anno nuovo ricopia le
+    // schede dei bambini sulla classe nuova ed e' idempotente; batte `ok` anche a vuoto (`cron:passaggio-ricopia-schede`, «giro completato»).
+    // Entrato il 2026-11-12 (PR-B della 4.8, dentro la 4.9): migrazione in produzione e primo battito visto in `app_log` alle 17:35 UTC.
+    // Finestra 3 × `ORA`, come `anni-tick`.
+    { nome: 'passaggio-ricopia-schede', finestraMs: 3 * ORA },
+    // `anno-invarianti` (`17 3 * * *`, `anno_invarianti_notturno`, PR 4.5): batte sempre `ok` (il lavoro e' girato; che i dati siano a posto lo dice la riga
+    // `error` che scrive se un'invariante non e' zero, e il controllo `anno-invarianti`). Entrato il 2026-11-12 con tre notti di battito di fila
+    // (l'ultima alle 03:17 UTC del 12/11). Finestra 26 × `ORA` come gli altri notturni.
+    { nome: 'anno-invarianti', finestraMs: 26 * ORA },
     // Notturno di sola SQL (`29 4 * * *`, `fascicolo_audit_ip_retention_tick`): azzera `ip` e
     // `user_agent` del registro degli accessi ai dati dei bambini dopo un anno. Battito
     // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
@@ -475,24 +484,6 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri. ' +
             'Il 20/10 era SPENTO in cron.job: `cron-esiti` legge i soli job attivi, e lo ' +
             'riprende da solo il giorno in cui torna attivo.',
-    },
-    {
-        nome: 'passaggio-ricopia-schede',
-        perche:
-            'Orario (`35 * * * *`), PR 4.8 giro 2: la migrazione è nella PR 4.8 e non è ancora nella fotografia delle ' +
-            'applicate (il lock `cron-sorvegliato-e-applicato` vieta un nome in `JOB_CRON` prima). Il giorno dell’inizio dell’anno nuovo ricopia le schede dei bambini sulla ' +
-            'classe nuova ed è idempotente. Nel frattempo lo sorveglia `cron-esiti`; logga anche il successo, con i conteggi. ' +
-            'Passa in `JOB_CRON` con `finestraMs` 3 × `ORA` con la PR-B della 4.8, che sta nella parte B della 4.9, dopo la rigenerazione della fotografia e il primo battito visto in `app_log`.',
-    },
-    {
-        nome: 'anno-invarianti',
-        perche:
-            'Notturno (`17 3 * * *`). La migrazione è in produzione dal 09/11/2026 e la fotografia la contiene, ma il suo ' +
-            'primo battito arriva solo alle 03:17 del giorno dopo: entrato in `JOB_CRON` prima, `/api/health` si sarebbe ' +
-            'acceso fino a quella notte. Il nome passa in `JOB_CRON` con `finestraMs` 26 × `ORA` nella prossima PR-B (parte B della 4.9), ' +
-            'a primo battito visto in `app_log`. ' +
-            'Nel frattempo lo sorveglia `cron-esiti`. Batte sempre `ok` (il lavoro è girato): che i dati siano a ' +
-            'posto lo dice la riga `error` che scrive se un’invariante non è zero, e il controllo `anno-invarianti`.',
     },
     {
         nome: 'app-log-purge',

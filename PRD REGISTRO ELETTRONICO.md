@@ -43,7 +43,9 @@
 
 **Sul DB della CI non migrato** il controllo `anno` non trova le chiavi nuove di `salute_anno()` e scrive una riga `info` (`salute-anno-senza-chiavi-4-9`), come prima.
 
-**Da fare dopo il merge (PR-B).** Rigenerare dalla produzione la fotografia delle migrazioni (+2) e togliere la voce di M49b da `MIGRAZIONI_ATTESE_AL_MERGE`; riportare questo blocco a ✅ con il numero della PR; `passaggio_ricopia_schede` e `anno-invarianti` in `JOB_CRON` dopo il loro primo battito (sono della 4.8). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-9-difetti-secondari.md`.
+**Correzioni dopo la revisione finale (12/11).** Le righe `error` orarie di `anni_tick` (passaggio da fare, guardia spenta) restano UNA al giorno per sede (`DO NOTHING`), così `tasso-errore` non si accende da solo; il ripristino della Demo accetta una sede `e2e00000…` anche con `sedi_simulazione` vuoto (e il manuale non chiede più di scriverla); i commenti di M49a/M49b dicono che cosa cambia davvero; M49b ha il suo `lock_timeout`; gli eventi differiti già in coda si eseguono prima del ciclo del tick; `statoAnnoDellaSezione` registra l'errore di lettura; `.superpowers/**` esce dal gate di eslint e vitest.
+
+**Da fare dopo il merge (PR-B).** Rigenerare dalla produzione la fotografia delle migrazioni (+2) e togliere la voce di M49b da `MIGRAZIONI_ATTESE_AL_MERGE`; riportare questo blocco a ✅ con il numero della PR. Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-9-difetti-secondari.md`.
 
 ## 🗓️ Changelog — Anno scolastico, PR 4.8: il passaggio d'anno — 2026-11-10 (#307, `872b1f03`, in produzione il 12/11/2026)
 

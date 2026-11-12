@@ -2,14 +2,25 @@
 -- ANNO SCOLASTICO, PR 4.9 · «Il passaggio non fatto» · M49b (compito 4.9.2)
 -- La applica l'integrazione GitHub di Supabase al merge, con la version del FILE. Dopo M49a.
 --
--- Due cose, nessuna scrittura su dati:
+-- Nessuna scrittura su dati. Quello che cambia:
 --   · la guardia (`anno_guardia_verifica`) solleva `PASSAGGIO_DA_FARE` per una scrittura di una tabella `data` che cade in
 --     un anno `in_preparazione`/`iscrizioni_aperte` già cominciato e non passato (confermato). Solo con la guardia accesa;
 --     in osservazione conta (chiave `passaggio_da_fare`) e lascia passare; a guardia spenta e osservazione spenta non fa
 --     niente, come tutta la guardia. Tutto il resto della funzione è l'ultima definizione (`20261107165503_anno_scrittura.sql`);
+--   · `anno_assegna_e_verifica` ha un ramo in più (R3): quando una scrittura è già rifiutata con `SEZIONE_DI_ALTRO_ANNO` e la causa è il
+--     passaggio non fatto, risponde `PASSAGGIO_DA_FARE`, a qualunque stato della guardia. Cambia SOLO il codice di un rifiuto che c'era già:
+--     non aggiunge nessun rifiuto;
+--   · i due CHECK di `correzioni_anno_chiuso` (`_codice_check`, `_utente_check`) sono rifatti con DROP e ADD: ammettono il codice
+--     `passaggio` (un insieme più largo, nessuna riga esistente li viola);
+--   · `passaggio_conferma` e `passaggio_annulla` sono l'ultima definizione della 4.8 (`20261109182422`) con in più, e solo, l'interruttore
+--     `anno_passaggio.in_corso` acceso e spento, e in `passaggio_annulla` `domande_aperte` che torna com'era solo se il vecchio anno è
+--     stato riaperto;
+--   · `anno_colonne_esenti` ha tre righe in più (`periodo_id`, `promemoria_inviato_il`);
 --   · `salute_anno()` porta due chiavi nuove: `passaggio_da_fare` e `guardia_spenta_vicina`. Le tre di prima non cambiano.
 -- Mai l'uuid di una sede, niente `schools.operativa`.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
+
+SET LOCAL lock_timeout = '10s';
 
 -- (giro 1, R1/R2; chiusura A) L'interruttore del passaggio (`anno_passaggio.in_corso`) lo accendono SOLO `passaggio_conferma` e
 -- `passaggio_annulla` per la durata della loro transazione. La guardia lo tratta come l'oblio: passa, e lascia un gettone per anno-sede

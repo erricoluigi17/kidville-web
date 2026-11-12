@@ -369,8 +369,9 @@ END
 $$;
 
 -- ── 4 · Le invarianti: la riga 16 ───────────────────────────────────────────
--- Copia dell'ULTIMA definizione (`20261109035213_anno_alunno_in_arrivo.sql`, con le righe 7, 11-bis, 11-ter, 11-quater, 13, 14). Cambia
--- solo il blocco 16, nuovo, subito dopo la riga 1. Nessun'altra riga è stata toccata.
+-- Copia dell'ULTIMA definizione, quella della 4.8 (`20261109182422_anno_passaggio_conferma.sql`: righe 7 con `anno_visibile`, 11 e le sue
+-- varianti, 13, 14, 15 e 15-bis). Cambiano due cose: il blocco 16, nuovo, subito dopo la riga 1, e la riga 6, che conta solo gli anni
+-- `chiuso` (non più `in_chiusura`). Le righe 7, 15 e 15-bis restano quelle della 4.8, parola per parola.
 CREATE OR REPLACE FUNCTION public.anno_invarianti()
 RETURNS TABLE (invariante text, tabella text, righe bigint)
 LANGUAGE plpgsql

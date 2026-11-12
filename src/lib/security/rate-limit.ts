@@ -1,8 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { conContesto, contesto, contestoCrmAiAttivo } from '@/lib/logging/context';
 import { logEvento } from '@/lib/logging/logger';
 import { segnaleConTetto } from '@/lib/logging/tetto';
 import { eScadenzaSupabase } from '@/lib/logging/supabase-fetch';
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico';
 
 /**
  * Rate-limiter a finestra scorrevole, con il contatore su POSTGRES.
@@ -218,7 +220,7 @@ type MotivoDegrado =
 
 let clientCondiviso: Promise<ClientConRpc | null> | null = null;
 
-function prendiClient(): Promise<ClientConRpc | null> {
+function prendiClient(gruppo: string): Promise<ClientConRpc | null> {
   if (!clientCondiviso) {
     clientCondiviso = createAdminClient()
       .then((c) => c as unknown as ClientConRpc)
@@ -226,7 +228,7 @@ function prendiClient(): Promise<ClientConRpc | null> {
         // Un catch che non logga è un bug (AGENTS.md, regola 6). Qui il motivo è
         // per giunta il più insidioso: senza client il tetto è cieco per SEMPRE,
         // non per una richiesta.
-        degrada('client_assente', 'sconosciuto', undefined, err);
+        degrada('client_assente', 'sconosciuto', undefined, err, gruppo === 'crm-ai');
         clientCondiviso = null; // si riprova alla prossima richiesta
         return null;
       });
@@ -242,31 +244,38 @@ function prendiClient(): Promise<ClientConRpc | null> {
  * personale e in `app_log` non ci entra — la regola 8 di AGENTS.md non ha
  * eccezioni «di diagnostica».
  */
-function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: unknown): void {
+function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: unknown, gruppoCrmAi = gruppo === 'crm-ai'): void {
   const adesso = Date.now();
   if (adesso - ultimoLogDegrado < SILENZIO_LOG_MS) return;
   ultimoLogDegrado = adesso;
-  logEvento(
-    'db',
-    // UNA SCADENZA NON È UN GUASTO, ed è per questo che ha un livello suo.
-    //
-    // Il degrado su tetto è un comportamento PROGETTATO: il DB non ha risposto in tempo, si
-    // conta in locale, la richiesta prosegue. Registrarlo a `error` — com'era fino al
-    // 2026-08-05 — significa far scattare un errore durante il funzionamento normale, e un
-    // errore che scatta sempre insegna a tutti a ignorare gli errori: è il modo in cui si
-    // perdono quelli veri. Le altre cause restano `error`, perché lì qualcosa è davvero rotto:
-    // la funzione non esiste, la riga non ha la forma attesa, il client è esploso.
-    motivo === 'rpc_scaduta' ? 'warn' : 'error',
-    {
-      operazione: 'security/rate-limit:degrado',
-      azione: motivo,
-      tipo: gruppo,
-      esito: 'conteggio_locale',
-      error_code: codice,
-      attesa_ms: ATTESA_MASSIMA_DB_MS,
-    },
-    err,
-  );
+  // Il timeout è un degrado previsto: si conta in locale e la richiesta prosegue.
+  const livello = motivo === 'rpc_scaduta' ? 'warn' : 'error';
+  const contestoProtetto = contestoCrmAiAttivo();
+  const soloMetadati = gruppoCrmAi || contestoProtetto;
+  const campi = {
+    operazione: 'security/rate-limit:degrado',
+    azione: motivo,
+    tipo: soloMetadati && gruppo !== 'crm-ai' ? 'sconosciuto' : gruppo,
+    esito: 'conteggio_locale',
+    error_code: soloMetadati ? undefined : codice,
+    attesa_ms: ATTESA_MASSIMA_DB_MS,
+  };
+  if (soloMetadati) {
+    let code = 'rate_limit_crm_ai';
+    try {
+      code = erroreDbSoloCodice(err ?? { code: codice }).code ?? code;
+    } catch {
+      // Anche un errore con un getter ostile lascia il codice tecnico di ripiego.
+    }
+    const scrivi = () => logEvento('db', livello, campi, { code, message: 'Errore del limitatore CRM AI' },
+      { distingui: ['azione', 'tipo'] });
+    // Se il gruppo viene usato fuori dal wrapper AI, il logger non deve ereditare
+    // l'id, l'utente o il payload dell'eventuale chiamante ordinario.
+    if (contestoProtetto || !contesto()) scrivi();
+    else void conContesto({ requestId: '', path: '/api/crm/ai' }, async () => scrivi());
+    return;
+  }
+  logEvento('db', livello, campi, err);
 }
 
 /** `iscrizione:203.0.113.7` → `iscrizione`. Il soggetto non esce da questa funzione. */
@@ -302,8 +311,9 @@ async function consumaCondiviso(
   chiave: string,
   opts: RateLimitOptions,
 ): Promise<RateLimitResult | null> {
+  const gruppo = gruppoDi(chiave);
   try {
-    const supabase = await prendiClient();
+    const supabase = await prendiClient(gruppo);
     if (!supabase) return null;
 
     const query = supabase.rpc('tetto_frequenza_consuma', {
@@ -321,7 +331,7 @@ async function consumaCondiviso(
     const esito = await conTettoDiTempo(conSegnale as Promise<unknown>, ATTESA_MASSIMA_DB_MS);
 
     if (esito.scaduto) {
-      degrada('rpc_scaduta', gruppoDi(chiave));
+      degrada('rpc_scaduta', gruppo);
       return null;
     }
 
@@ -342,7 +352,7 @@ async function consumaCondiviso(
       // mentre la verità era «il database non ha risposto in tempo». Due guasti che si
       // riparano in modi opposti, indistinguibili in `app_log`.
       const scaduta = eScadenzaSupabase(error);
-      degrada(scaduta ? 'rpc_scaduta' : 'rpc_errore', gruppoDi(chiave), error.code, error);
+      degrada(scaduta ? 'rpc_scaduta' : 'rpc_errore', gruppo, error.code, error);
       return null;
     }
 
@@ -356,7 +366,7 @@ async function consumaCondiviso(
       typeof riga.rimanenti !== 'number' ||
       typeof riga.riprova_fra_ms !== 'number'
     ) {
-      degrada('rpc_malformata', gruppoDi(chiave));
+      degrada('rpc_malformata', gruppo);
       return null;
     }
 
@@ -366,7 +376,7 @@ async function consumaCondiviso(
       retryAfterMs: riga.riprova_fra_ms,
     };
   } catch (err) {
-    degrada('eccezione', gruppoDi(chiave), undefined, err);
+    degrada('eccezione', gruppo, undefined, err);
     return null;
   }
 }

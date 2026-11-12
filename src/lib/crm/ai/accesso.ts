@@ -5,6 +5,7 @@ import { formaConfronto } from '@/lib/auth/scope'
 import { rispostaErroreDb } from '@/lib/crm/errori'
 import { logEvento } from '@/lib/logging/logger'
 import { rateLimit } from '@/lib/security/rate-limit'
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 import { crmAiAttivo, sedeAmmessaAi, sediAmmesseAi } from './interruttore'
@@ -72,7 +73,7 @@ export async function requireIntegrazioneAi(
     .eq('token_impronta', improntaToken(token))
     .maybeSingle()
   // Il testo di un errore può contenere il valore cercato: al registro passa solo il codice.
-  if (error) return { response: rispostaErroreDb({ code: error.code }, 'crm/ai/accesso:requireIntegrazioneAi') }
+  if (error) return { response: rispostaErroreDb(erroreDbSoloCodice(error), 'crm/ai/accesso:requireIntegrazioneAi') }
   if (!riga || riga.revocata_il !== null) return { response: rifiutoAnonimo(op, 'TOKEN_NON_VALIDO') }
 
   const identita = { integrazione_id: riga.id, scuola_id: riga.scuola_id }
@@ -99,7 +100,7 @@ export async function requireIntegrazioneAi(
     .eq('id', riga.id)
     .eq('scuola_id', riga.scuola_id)
   if (erroreUso) {
-    logEvento('crm', 'error', { operazione: op, esito: 'ai-ultimo-uso-non-scritto', ...identita }, { code: erroreUso.code })
+    logEvento('crm', 'error', { operazione: op, esito: 'ai-ultimo-uso-non-scritto', ...identita }, erroreDbSoloCodice(erroreUso))
   }
 
   return { ai: { integrazioneId: riga.id, scuolaId: riga.scuola_id, operazione, inizioMs } }

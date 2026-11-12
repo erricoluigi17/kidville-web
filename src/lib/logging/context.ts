@@ -74,6 +74,7 @@ export interface ContestoRichiesta {
 }
 
 const als = new AsyncLocalStorage<ContestoRichiesta>();
+const richiesteCrmAi = new WeakMap<ContestoRichiesta, Request>();
 
 /**
  * Guardia di rientranza, su un ALS SEPARATO. Due ragioni, entrambe vincolanti:
@@ -147,6 +148,30 @@ export function conContesto<T>(
 }
 
 /**
+ * Le route CRM AI hanno un contesto di soli metadati. Si riusa solo lo store
+ * già protetto della stessa Request; da un contesto esterno non si eredita nulla.
+ * `path` e `route` vengono scelti dal wrapper, senza segmenti dell'URL del client.
+ */
+export function conContestoCrmAi<T>(
+    richiesta: Request,
+    route: string,
+    path: string,
+    fn: () => Promise<T>,
+): Promise<T> {
+    const corrente = als.getStore();
+    if (corrente && richiesteCrmAi.has(corrente) && richiesteCrmAi.get(corrente) === richiesta) return fn();
+    const store = { requestId: requestIdSicuro(''), path: pathSicuro(path), route };
+    richiesteCrmAi.set(store, richiesta);
+    return als.run(store, fn);
+}
+
+/** Non basta un nome simile: lo store deve essere stato aperto come CRM AI. */
+export function contestoCrmAiAttivo(): boolean {
+    const s = als.getStore();
+    return s !== undefined && richiesteCrmAi.has(s);
+}
+
+/**
  * Il requestId arriva tipicamente da un header (`x-request-id`, `x-vercel-id`): è INPUT DEL
  * CLIENT. Finisce in ogni riga di un formato A RIGHE, quindi un `\n` nel valore non è un
  * carattere strano: è una riga di log FALSA, scritta da chi fa la richiesta. Stesso argomento
@@ -190,7 +215,7 @@ export function impostaUtente(u: {
     scuolaId?: string | null;
 }): void {
     const s = als.getStore();
-    if (!s) return;
+    if (!s || richiesteCrmAi.has(s)) return;
     if (u.userId) s.userId = u.userId;
     if (u.ruolo) s.ruolo = u.ruolo;
     if (u.scuolaId) s.scuolaId = u.scuolaId;
@@ -285,7 +310,8 @@ const CONTEGGIO_SCARTATI = /^\[\+(\d+) /;
 export function impostaPayload(dove: string, valore: unknown): void {
     // Uscita rapida fuori da una richiesta: senza store non c'è niente da depositare, e
     // redigere per buttare via costerebbe una passata su ogni body in un cron o in un test.
-    if (!als.getStore()) return;
+    const s = als.getStore();
+    if (!s || richiesteCrmAi.has(s)) return;
     deposita(dove, redactInput(valore));
 }
 
@@ -301,7 +327,8 @@ export function impostaPayload(dove: string, valore: unknown): void {
  * L'`esito` è un enumerato scritto a mano nel sorgente: non è mai un valore di richiesta.
  */
 export function impostaPayloadEsito(dove: string, esito: string): void {
-    if (!als.getStore()) return;
+    const s = als.getStore();
+    if (!s || richiesteCrmAi.has(s)) return;
     deposita(dove, redact({ esito }));
 }
 

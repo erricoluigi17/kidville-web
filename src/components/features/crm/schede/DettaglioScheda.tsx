@@ -399,6 +399,7 @@ function SezioneBambini({ scheda, bambini, rileggi }: { scheda: SchedaRow; bambi
       <h3 id={id} className={TITOLO_SEZIONE}>
         {t('sezioneBambini')}
       </h3>
+      {bambini.length === 0 && <p className={TESTO_SECONDARIO}>{t('nessunBambino')}</p>}
       {bambini.map((b) => (
         // La chiave porta `aggiornata_il`: dopo un salvataggio la riga cambia e la bozza riparte da ciò
         // che il database ha davvero, senza un effetto che la riallinei.

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { creaFintoSupabase, type DBFinto, type ErrorePostgrest, type Riga, type Scrittura } from '../fixtures/finto-supabase'
+import { creaFintoSupabase, type DBFinto, type ErrorePostgrest, type Riga, type RispostaRpc, type Scrittura } from '../fixtures/finto-supabase'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { INTEGRAZIONE_A, INTEGRAZIONE_B, TOKEN_B, accendiAi, integrazioniFinte, nessunNomeIn, richiestaAi } from '../fixtures/crm-ai'
 import { personeDellaSede } from '@/lib/crm/accesso'
@@ -13,13 +13,16 @@ const h = vi.hoisted(() => ({
   lette: [] as string[],
   scritture: [] as Scrittura[],
   guastoUtenti: null as { lettura: number; errore: ErrorePostgrest | Error } | null,
+  annoAttivo: vi.fn<(args: Riga) => RispostaRpc>(),
   logErrore: vi.fn(),
   logEvento: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => {
-    const client = creaFintoSupabase(h.db, h.lette, { errori: h.errori, scritture: h.scritture })
+    const client = creaFintoSupabase(h.db, h.lette, {
+      errori: h.errori, scritture: h.scritture, rpc: { anno_attivo: h.annoAttivo },
+    })
     const from = client.from.bind(client)
     let lettureUtenti = 0
     vi.spyOn(client, 'from').mockImplementation((tabella: string) => {
@@ -43,6 +46,11 @@ vi.mock('@/lib/logging/logger', async (importActual) => ({
 const U1 = '20000000-0000-4000-8000-000000000001'
 const U2 = '20000000-0000-4000-8000-000000000002'
 const U_B = '20000000-0000-4000-8000-00000000000b'
+const ANNO = '70000000-0000-4000-8000-000000000001'
+const ANNO_STORICO = '70000000-0000-4000-8000-000000000002'
+const ANNO_FUTURO = '70000000-0000-4000-8000-000000000003'
+const ANNO_SEDE_A = '80000000-0000-4000-8000-000000000001'
+const ANNO_SEDE_B = '80000000-0000-4000-8000-000000000002'
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -52,6 +60,9 @@ beforeEach(() => {
   h.lette = []
   h.scritture = []
   h.guastoUtenti = null
+  h.annoAttivo.mockReset().mockImplementation(({ p_scuola }) => ({
+    data: p_scuola === SEDE_A ? ANNO_SEDE_A : ANNO_SEDE_B, error: null,
+  }))
   h.logErrore.mockClear()
   h.logEvento.mockClear()
   h.db = {
@@ -62,7 +73,11 @@ beforeEach(() => {
       { id: U_B, nome: 'Marta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },
     ],
     utenti_scuole: [],
-    sections: [{ id: 'sez-1', scuola_id: SEDE_A, name: 'Coccinelle', school_type: 'infanzia' }],
+    anni_sede: [
+      { id: ANNO_SEDE_A, scuola_id: SEDE_A, anno_id: ANNO },
+      { id: ANNO_SEDE_B, scuola_id: SEDE_B, anno_id: ANNO },
+    ],
+    sections: [{ id: 'sez-1', scuola_id: SEDE_A, anno_id: ANNO, name: 'Coccinelle', school_type: 'infanzia' }],
     crm_schede: [],
     crm_appuntamenti: [],
     crm_settimane: [],
@@ -225,11 +240,53 @@ describe('GET /api/crm/ai/slot', () => {
 
   it('una sezione compatibile di un’altra sede non basta e non viene consultata l’agenda', async () => {
     programma(null, [{}])
-    h.db.sections.push({ id: 'sez-2', scuola_id: SEDE_B, school_type: 'primaria' })
+    h.db.sections.push({ id: 'sez-2', scuola_id: SEDE_B, anno_id: ANNO, school_type: 'primaria' })
     const r = await chiama({ nascita: '2016-05' })
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ sede: SEDE_A, gradi: ['primaria'], etaCoperta: false, troncato: false, slot: [] })
-    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni', 'sections'])
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni', 'anni_sede', 'sections'])
+  })
+
+  it.each([
+    ['storico', ANNO_STORICO],
+    ['futuro', ANNO_FUTURO],
+  ])('ignora le sezioni compatibili della sede quando sono solo nell’anno %s', async (_caso, annoId) => {
+    programma(null, [{}])
+    h.db.sections[0].anno_id = annoId
+    const r = await chiama()
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ etaCoperta: false, slot: [] })
+    expect(h.annoAttivo).toHaveBeenCalledExactlyOnceWith({ p_scuola: SEDE_A })
+    expect(h.lette).not.toContain('crm_appuntamenti')
+
+    h.db.sections[0].anno_id = ANNO
+    const conAnnoAttivo = await chiama()
+    expect(conAnnoAttivo.status).toBe(200)
+    expect(await conAnnoAttivo.json()).toMatchObject({ etaCoperta: true, slot: [expect.anything(), expect.anything()] })
+  })
+
+  it.each([
+    ['assente', null],
+    ['di un’altra sede', ANNO_SEDE_B],
+  ])('un anno attivo %s dà errore tecnico senza leggere sezioni o agenda', async (_caso, annoSedeId) => {
+    h.annoAttivo.mockReturnValue({ data: annoSedeId, error: null })
+    const r = await chiama()
+    expect(r.status).toBe(500)
+    expect(await r.json()).toEqual({ error: expect.any(String), codice: 'CRM_OPERAZIONE_NON_RIUSCITA' })
+    expect(h.lette).not.toContain('sections')
+    expect(h.lette).not.toContain('crm_appuntamenti')
+  })
+
+  it('se il selettore dell’anno attivo non è installato risponde 503 e registra il solo codice tecnico', async () => {
+    const sentinella = 'Dato privato sintetico'
+    h.annoAttivo.mockReturnValue({ data: null, error: { code: 'PGRST202', message: sentinella } })
+    const r = await chiama()
+    expect(r.status).toBe(503)
+    const risposta = await r.json()
+    expect(risposta).toMatchObject({ codice: 'CRM_NON_INSTALLATO' })
+    expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ esito: 'schema-crm-assente' }), { code: 'PGRST202' })
+    nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls], [sentinella])
+    expect(h.lette).not.toContain('sections')
   })
 
   it('con un mese di nascita futuro non legge sezioni né agenda', async () => {

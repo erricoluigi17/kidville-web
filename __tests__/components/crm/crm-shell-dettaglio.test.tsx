@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { useState } from 'react'
 import { SEDE_A } from '../../fixtures/sedi'
 import { CrmShell } from '@/components/features/crm/CrmShell'
@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   query: '',
   montaggi: { agenda: 0, elenco: 0, richiamare: 0 },
   dettaglio: [] as string[],
+  dettaglioReale: false,
 }))
 
 vi.mock('next/navigation', () => ({
@@ -73,8 +74,10 @@ vi.mock('@/components/features/crm/follow-up/DaRichiamare', () => ({
     )
   },
 }))
-vi.mock('@/components/features/crm/schede/DettaglioScheda', () => ({
-  DettaglioScheda: ({ schedaId, onChiudi }: { schedaId: string; onChiudi: () => void }) => {
+vi.mock('@/components/features/crm/follow-up/AzioniScheda', () => ({ AzioniScheda: () => null }))
+vi.mock('@/components/features/crm/schede/DettaglioScheda', async (importOriginal) => {
+  const reale = await importOriginal<typeof import('@/components/features/crm/schede/DettaglioScheda')>()
+  function Segnaposto({ schedaId, onChiudi }: React.ComponentProps<typeof reale.DettaglioScheda>) {
     useState(() => {
       h.dettaglio.push(schedaId)
       return null
@@ -86,8 +89,12 @@ vi.mock('@/components/features/crm/schede/DettaglioScheda', () => ({
         </button>
       </div>
     )
-  },
-}))
+  }
+  return {
+    DettaglioScheda: (props: React.ComponentProps<typeof reale.DettaglioScheda>) =>
+      h.dettaglioReale ? <reale.DettaglioScheda {...props} /> : <Segnaposto {...props} />,
+  }
+})
 
 const INVITO = 'Scegli una scheda dall’elenco per vederne lo storico.'
 
@@ -97,8 +104,11 @@ beforeEach(() => {
   h.montaggi.elenco = 0
   h.montaggi.richiamare = 0
   h.dettaglio.length = 0
+  h.dettaglioReale = false
   window.history.replaceState(null, '', '/admin/crm')
 })
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('CrmShell · il pannello di dettaglio', () => {
   it('nella linguetta Schede il pannello c’è sempre, con l’invito a sceglierne una', () => {
@@ -116,6 +126,29 @@ describe('CrmShell · il pannello di dettaglio', () => {
 
     expect(screen.getByTestId('dettaglio').getAttribute('data-scheda-id')).toBe('scheda-1')
     expect(screen.queryByText(INVITO)).toBeNull()
+  })
+
+  it('apre il dettaglio reale di una scheda del sito senza bambini', async () => {
+    h.query = 'tab=schede'
+    h.dettaglioReale = true
+    const fetch = vi.fn(async () => Response.json({
+      scheda: {
+        id: 'scheda-1', scuola_id: SEDE_A, genitore_nome: 'Famiglia Prova', origine: 'sito',
+        creato_via: 'ai', creata_il: '2026-11-12T09:00:00.000Z',
+        telefono1: null, telefono2: null, email1: null, email2: null,
+        routine: null, paura: null, desiderio: null, domanda_da_associare: null,
+      },
+      bambini: [], appuntamenti: [], azioni_aperte: [], eventi: [], eventi_totale: 0,
+    }))
+    vi.stubGlobal('fetch', fetch)
+    render(<CrmShell scuolaId={SEDE_A} />)
+    fireEvent.click(screen.getByRole('button', { name: 'apri-scheda-1' }))
+
+    expect(await screen.findByRole('heading', { name: 'Famiglia Prova' })).toBeInTheDocument()
+    const bambini = screen.getByRole('region', { name: 'Bambini' })
+    expect(within(bambini).getByText('Nessun bambino')).toBeInTheDocument()
+    expect(within(bambini).getByRole('button', { name: 'Aggiungi un bambino' })).toBeEnabled()
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/admin/crm/schede/scheda-1', undefined)
   })
 
   it('passare da una famiglia all’altra rimonta il dettaglio: niente stato della scheda di prima', () => {

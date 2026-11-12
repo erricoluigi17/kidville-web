@@ -260,11 +260,13 @@ function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: u
     attesa_ms: ATTESA_MASSIMA_DB_MS,
   };
   if (soloMetadati) {
-    let code = 'rate_limit_crm_ai';
+    const codiceDiRipiego = 'rate_limit_crm_ai';
+    let code: string;
     try {
-      code = erroreDbSoloCodice(err ?? { code: codice }).code ?? code;
+      code = erroreDbSoloCodice(err ?? { code: codice }).code ?? codiceDiRipiego;
     } catch {
       // Anche un errore con un getter ostile lascia il codice tecnico di ripiego.
+      code = codiceDiRipiego;
     }
     logEvento('db', livello, campi, { code, message: 'Errore del limitatore CRM AI' },
       { distingui: ['azione', 'tipo'] });

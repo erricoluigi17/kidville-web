@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi } from '@/lib/crm/ai/accesso'
 import { dettagliSchede, schedaPerTelefono } from '@/lib/crm/ai/contatti'
-import { normalizzaTelefono } from '@/lib/crm/contatti'
+import { normalizzaTelefonoAi } from '@/lib/crm/ai/telefono'
 import { withRoute } from '@/lib/logging/with-route'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { zUuid } from '@/lib/validation/common'
@@ -25,7 +25,7 @@ export const POST = withRoute('crm/ai/contatti/stato:POST', async (request: Next
   const altraSede = assertSedeDelToken(ai, b.data.sede)
   if (altraSede) return chiudiChiamataAi(ai, altraSede, { codice: 'SEDE_NON_ACCESSIBILE' })
 
-  const telefonoNorm = normalizzaTelefono(b.data.telefono)
+  const telefonoNorm = normalizzaTelefonoAi(b.data.telefono)
   if (telefonoNorm === null) {
     return chiudiChiamataAi(ai, rifiutoAi('CONTATTO_OBBLIGATORIO', 422), { codice: 'CONTATTO_OBBLIGATORIO' })
   }

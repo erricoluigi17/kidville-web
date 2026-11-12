@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NextResponse } from 'next/server'
 import { personeDellaSede } from '@/lib/crm/accesso'
-import { rispostaCrmNonRiuscita, rispostaErroreDb, tabellaAssente } from '@/lib/crm/errori'
+import { rispostaCrmNonRiuscita, rispostaErroreDb, rispostaErroreDbSchema, tabellaAssente } from '@/lib/crm/errori'
 import { caricaFasceEffettive } from '@/lib/crm/settimane'
 import { calcolaSlotLiberi, type SlotLibero } from '@/lib/crm/slot'
 import type { AppuntamentoRow, IndisponibilitaRow } from '@/lib/crm/tipi'
@@ -114,11 +114,28 @@ export async function sedeCopre(
   supabase: SupabaseClient, scuolaId: string, gradi: Grado[], operazione: string,
 ): Promise<{ coperta: boolean } | { response: NextResponse }> {
   if (gradi.length === 0) return { coperta: false }
+
+  const opAnno = operazione + ':anno-attivo'
+  const opSezioni = operazione + ':sezioni'
+  const annoNonDisponibile = () => {
+    logErrore({ operazione: opAnno, stato: 500 }, new Error('Anno attivo della sede non disponibile'))
+    return { response: rispostaCrmNonRiuscita() }
+  }
   try {
-    const { data, error } = await supabase.from('sections').select('id').eq('scuola_id', scuolaId).in('school_type', gradi).limit(1)
-    if (error) return erroreLettura(error, operazione + ':sezioni')
+    const { data: annoSedeId, error: erroreAttivo } = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
+    if (erroreAttivo) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(erroreAttivo), opAnno) }
+    if (typeof annoSedeId !== 'string') return annoNonDisponibile()
+
+    const { data: anno, error: erroreAnno } = await supabase.from('anni_sede')
+      .select('anno_id').eq('scuola_id', scuolaId).eq('id', annoSedeId).maybeSingle<{ anno_id: string }>()
+    if (erroreAnno) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(erroreAnno), opAnno) }
+    if (!anno?.anno_id) return annoNonDisponibile()
+
+    const { data, error } = await supabase.from('sections').select('id')
+      .eq('scuola_id', scuolaId).eq('anno_id', anno.anno_id).in('school_type', gradi).limit(1)
+    if (error) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(error), opSezioni) }
     return { coperta: (data?.length ?? 0) > 0 }
   } catch (errore) {
-    return erroreLettura(errore, operazione + ':sezioni')
+    return erroreLettura(errore, opSezioni)
   }
 }

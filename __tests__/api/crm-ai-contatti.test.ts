@@ -203,10 +203,15 @@ describe('E1 · registra contatto', () => {
     }))
   })
 
-  it('risponde 422 per un telefono non normalizzabile, senza chiamare la RPC', async () => {
-    const r = await registra({ telefono: 'sconosciuto' })
+  it.each(['sconosciuto', `${TEL} ${NOTA}`])('risponde 422 per recapito non valido (%s), senza chiamare la RPC', async (telefono) => {
+    h.rpc.mockResolvedValue({ data: { scheda_id: S1, creata: true }, error: null })
+    const r = await registra({ telefono })
     expect(r.status).toBe(422)
-    expect(await r.json()).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    const risposta = await r.json()
+    expect(risposta).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls], [NOTA, TEL, TEL_NORM])
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
+    expect(h.scritture.map(({ tabella }) => tabella)).toEqual(['crm_integrazioni'])
     expect(h.rpc).not.toHaveBeenCalled()
   })
 
@@ -284,10 +289,19 @@ describe('E2 · stato contatto', () => {
     })
   })
 
-  it('rifiuta il telefono non normalizzabile e i campi aggiuntivi senza leggere schede', async () => {
-    const r = await stato({ telefono: 'sconosciuto' })
+  it.each(['sconosciuto', `${TEL} ${NOTA}`])('rifiuta un recapito non valido (%s) senza leggere schede', async (telefono) => {
+    h.db.crm_schede.push(scheda())
+    const r = await stato({ telefono })
     expect(r.status).toBe(422)
-    expect(await r.json()).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    const risposta = await r.json()
+    expect(risposta).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls], [NOTA, TEL, TEL_NORM])
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])
+    expect(h.scritture.map(({ tabella }) => tabella)).toEqual(['crm_integrazioni'])
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('rifiuta i campi aggiuntivi senza leggere schede', async () => {
     const rifiutata = await stato({ [NOME_BIMBO]: NOTA })
     expect(rifiutata.status).toBe(400)
     nessunNomeIn(await rifiutata.json(), [NOME_BIMBO, NOTA])

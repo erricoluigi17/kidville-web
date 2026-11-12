@@ -4,7 +4,7 @@ import {
   assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi, type CodiceAi,
 } from '@/lib/crm/ai/accesso'
 import { MOTIVI_PASSAGGIO } from '@/lib/crm/ai/richiami'
-import { normalizzaTelefono } from '@/lib/crm/contatti'
+import { normalizzaTelefonoAi } from '@/lib/crm/ai/telefono'
 import { rispostaErroreDbSchema } from '@/lib/crm/errori'
 import { ORIGINI, type ParametriRichiamoAi } from '@/lib/crm/tipi'
 import { logEvento } from '@/lib/logging/logger'
@@ -44,15 +44,9 @@ export const POST = withRoute('crm/ai/richiami:POST', async (request: NextReques
   if (altraSede) return chiudiChiamataAi(ai, altraSede, { codice: 'SEDE_NON_ACCESSIBILE' })
 
   const rifiuta = (codice: CodiceAi, stato: number) => chiudiChiamataAi(ai, rifiutoAi(codice, stato), { codice })
-  const comuni = {
-    p_integrazione_id: ai.integrazioneId,
-    p_scuola_id: ai.scuolaId,
-    p_motivo: b.data.motivo,
-  }
-  let parametri: ParametriRichiamoAi
+  let parametri: Omit<ParametriRichiamoAi, 'p_integrazione_id' | 'p_scuola_id' | 'p_motivo'>
   if ('schedaId' in b.data) {
     parametri = {
-      ...comuni,
       p_scheda_id: b.data.schedaId.toLowerCase(),
       p_telefono: null,
       p_telefono_norm: null,
@@ -61,12 +55,9 @@ export const POST = withRoute('crm/ai/richiami:POST', async (request: NextReques
     }
   } else {
     const { telefono, origine, genitoreNome } = b.data
-    // Il recapito originale può finire in scheda. Accetta solo caratteri di un numero formattato.
-    if (/[^\d+()./\p{Zs}-]/u.test(telefono)) return rifiuta('CONTATTO_OBBLIGATORIO', 422)
-    const telefonoNorm = normalizzaTelefono(telefono)
+    const telefonoNorm = normalizzaTelefonoAi(telefono)
     if (telefonoNorm === null) return rifiuta('CONTATTO_OBBLIGATORIO', 422)
     parametri = {
-      ...comuni,
       p_scheda_id: null,
       p_telefono: telefono,
       p_telefono_norm: telefonoNorm,
@@ -77,7 +68,12 @@ export const POST = withRoute('crm/ai/richiami:POST', async (request: NextReques
 
   // La RPC decide assegnazione e replay e salva il richiamo con i due eventi.
   const supabase = await createAdminClient()
-  const { data, error } = await supabase.rpc('crm_ai_richiamo', parametri)
+  const { data, error } = await supabase.rpc('crm_ai_richiamo', {
+    ...parametri,
+    p_integrazione_id: ai.integrazioneId,
+    p_scuola_id: ai.scuolaId,
+    p_motivo: b.data.motivo,
+  })
   if (error) return chiudiChiamataAi(ai, rispostaErroreDbSchema(erroreDbSoloCodice(error), operazione))
 
   const esito = esitoRpcSchema.safeParse(data)

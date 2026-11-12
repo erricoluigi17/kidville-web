@@ -21,7 +21,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => creaFintoSupabase(h.db, h.lette, {
     errori: h.errori,
     scritture: h.scritture,
-    rpc: { crm_ai_prenota: h.rpc },
+    rpc: {
+      anno_attivo: ({ p_scuola }) => ({ data: p_scuola === SEDE_A ? ANNO_SEDE : null, error: null }),
+      crm_ai_prenota: h.rpc,
+    },
   }),
 }))
 vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: async () => ({ ok: true, remaining: 59, retryAfterMs: 0 }) }))
@@ -41,6 +44,8 @@ const U2 = '20000000-0000-4000-8000-000000000002'
 const U_B = '20000000-0000-4000-8000-00000000000b'
 const VISITA = '40000000-0000-4000-8000-000000000001'
 const SCHEDA = '30000000-0000-4000-8000-000000000001'
+const ANNO = '70000000-0000-4000-8000-000000000001'
+const ANNO_SEDE = '80000000-0000-4000-8000-000000000001'
 const INIZIO = '2026-11-17T08:00:00.000Z'
 const FINE = '2026-11-17T08:45:00.000Z'
 const FINE_BREVE = '2026-11-17T08:30:00.000Z'
@@ -74,7 +79,8 @@ beforeEach(() => {
       { id: U_B, nome: 'Marta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },
     ],
     utenti_scuole: [],
-    sections: [{ id: 'sez-1', scuola_id: SEDE_A, name: 'Coccinelle', school_type: 'infanzia' }],
+    anni_sede: [{ id: ANNO_SEDE, scuola_id: SEDE_A, anno_id: ANNO }],
+    sections: [{ id: 'sez-1', scuola_id: SEDE_A, anno_id: ANNO, name: 'Coccinelle', school_type: 'infanzia' }],
     crm_schede: [],
     crm_bambini: [],
     crm_appuntamenti: [],
@@ -388,9 +394,12 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(h.rpc).toHaveBeenCalledTimes(1)
   })
 
-  it('basta che la sede copra l’età di uno dei bambini, senza indicare la classe', async () => {
+  it('basta che la sede copra l’età di uno dei bambini nell’anno attivo, senza indicare la classe', async () => {
     const nonCoperto = { nome: NOME_BIMBO, dataNascita: '2016-05-10' }
-    h.db.sections.push({ id: 'sez-2', scuola_id: SEDE_B, school_type: 'primaria' })
+    h.db.sections.push(
+      { id: 'sez-2', scuola_id: SEDE_B, anno_id: ANNO, school_type: 'primaria' },
+      { id: 'sez-3', scuola_id: SEDE_A, anno_id: '70000000-0000-4000-8000-000000000002', school_type: 'primaria' },
+    )
     const r = await chiama({ bambini: [nonCoperto] })
     expect(r.status).toBe(422)
     expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
@@ -403,12 +412,17 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(await s.json()).toEqual(successo)
   })
 
-  it('telefono che non è un numero: 422 CONTATTO_OBBLIGATORIO prima del registro', async () => {
-    const r = await chiama({ telefono: 'non lo so' })
+  it.each(['non lo so', `${TEL} ${NOTA}`])('422 per recapito non valido (%s) prima del registro', async (telefono) => {
+    h.rpc.mockReturnValue(esito(creata()))
+    const r = await chiama({ telefono })
     expect(r.status).toBe(422)
-    expect(await r.json()).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    const risposta = await r.json()
+    expect(risposta).toMatchObject({ codice: 'CONTATTO_OBBLIGATORIO' })
+    nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls, h.logOk.mock.calls], [NOTA, TEL, TEL_NORM])
     expect(h.lette).toEqual(LETTURE_GATE)
+    expect(h.scritture.map(({ tabella }) => tabella)).toEqual(['crm_integrazioni'])
     expect(h.rpc).not.toHaveBeenCalled()
+    expect(h.notifica).not.toHaveBeenCalled()
   })
 
   it.each<[string, Riga, string | null]>([

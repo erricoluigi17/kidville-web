@@ -2691,7 +2691,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Misurato rieseguendo il lock: 402 → 403.
             // 403 → 404 il 2026-11-09 (PR 4.7, 4.7.2): entra `admin/anni/[annoSedeId]/senza-firma-app` (GET). CONTROLLATA, nessuna esenzione:
             // gate `requireStaff`, `assertAnnoSedeInScope`; i nomi sono SOLO della pagina e ogni bambino mostrato passa dal registro degli accessi.
-            routeConServiceRole: 404,
+            // 404 → 413 il 2026-11-12 (CRM, accesso AI): 7 route `crm/ai/*` e 2 `admin/crm/integrazioni*`.
+            // La sede viene dalla chiave AI o dalla sessione di Direzione. Incremento misurato col lock.
+            routeConServiceRole: 413,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3052,7 +3054,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 619 → 621 il 2026-11-09 (4.6.4): `rette:GET` e `rette:PUT`, entrambi CONTROLLATI; `handlerEsentati` non cambia (108).
             // 621 → 622 il 2026-11-09 (PR 4.7, 4.7.6): `cruscotto:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
             // 622 → 623 il 2026-11-09 (PR 4.7, 4.7.2): `senza-firma-app:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
-            handlerControllati: 623,
+            // 623 → 633 il 2026-11-12 (CRM, accesso AI): 7 handler AI e 3 di Direzione (elenco, creazione, revoca).
+            // Tutti controllati. Le esenzioni restano 108.
+            handlerControllati: 633,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

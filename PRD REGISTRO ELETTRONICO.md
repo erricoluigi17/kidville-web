@@ -1,3 +1,31 @@
+## 🤖 Changelog — CRM: orari, prenotazioni, contatti e «Da richiamare» per l’assistente — 2026-11-12 (branch `ripresa-crm`)
+
+**Stato.** Lavoro locale sul ramo `ripresa-crm`, in attesa di pubblicazione. Nessuna PR remota, migrazione applicata, attivazione o verifica CI/E2E per questo ramo. `CRM_AI_ATTIVO` è spento di default e `CRM_AI_SEDI_AMMESSE` limita l’accesso alle sedi elencate. Il primo collaudo è previsto solo in Demo, dopo il sì del titolare. L’integrazione applicherà `20261111225125_crm_accesso_ai.sql` al merge autorizzato.
+
+**Perché.** Il §8 della [specifica del CRM](docs/superpowers/specs/2026-10-30-crm-segreteria-design.md) prevede un accesso riservato per le visite. Il flusso dell’assistente approvato il 10/11 aggiunge la presa in carico dei nuovi contatti e il passaggio alla segreteria.
+
+| API sotto `/api/crm/ai` | Cosa fa | Dati esclusi dalla risposta |
+|---|---|---|
+| `GET /slot` | Orari liberi in coppie inizio/fine e copertura per fascia d’età nell’anno attivo della sede | Nomi, persone assegnabili, classe |
+| `POST /prenota` | Fissa la coppia scelta e restituisce gli ID e gli orari | Nomi, recapiti, assegnataria, note |
+| `DELETE /prenotazioni/{id}` | Annulla una visita fissata dalla stessa chiave e dice se era già annullata | Nomi, recapiti, assegnataria, note |
+| `POST /contatti` (E1) | Registra il contatto, anche senza bambini, o ritrova la scheda e la visita | Nomi, recapiti, note |
+| `POST /contatti/stato` (E2) | Riconosce il numero e restituisce ID, visita e mesi di nascita | Nomi, recapiti, giorno di nascita, note |
+| `GET /contatti/nuovi` (E3) | Elenca le nuove schede attive della segreteria con il primo numero normalizzato, in pagine con cursore composto | Nomi, altri recapiti, giorno di nascita, note |
+| `POST /richiami` (E4) | Crea o ritrova un richiamo aperto tramite ID scheda o tramite telefono e origine | Nomi, recapiti, assegnataria, note |
+
+**Direzione.** `GET /api/admin/crm/integrazioni` elenca le chiavi e indica lo stato per sede, `POST` sullo stesso indirizzo ne crea una e `DELETE /api/admin/crm/integrazioni/{id}` la revoca. In **CRM → Assistente** la Direzione vede i metadati e il token intero al solo momento della creazione. In **Schede**, elenco e pannello indicano «Nessun bambino» per una famiglia senza bambini registrati, come nei contatti che arrivano dal sito.
+
+**Permessi del token AI.** Il §8 copre orari, prenotazione e annullamento della propria visita. Le quattro eccezioni alla riservatezza delle schede sono E1 (registrazione o riscontro), E2 (riconoscimento puntuale), E3 (elenco ristretto dei nuovi contatti di segreteria) ed E4 (passaggio a una persona). L’accesso alle note delle visite (E5) è rimandato.
+
+**Protezione.** Una chiave attiva per sede, con impronta SHA-256, coda e metadati, revocabile dalla Direzione. Il controllo della chiave precede la lettura dei dati. Le quattro API che ricevono un telefono rifiutano lettere e testo libero prima delle operazioni sulle schede. Il limite è di 60 chiamate al minuto per chiave. Il registro `app_log` conserva solo dati tecnici anche in caso di errore di trasporto. La chiave di idempotenza evita di ripetere una prenotazione, il blocco per famiglia coordina le richieste concorrenti e il vincolo del database impedisce visite sovrapposte per la stessa persona. Annullamento e storico si aggiornano insieme. Il primo annullamento tenta un avviso nella campanella della persona assegnata, con giorno e ora, dopo la conferma nel database.
+
+**Anno attivo.** `/slot` e `/prenota` usano le sezioni della sola sede nell’anno scolastico attivo, con errore tecnico se l’anno non è disponibile. La fascia d’età serve a proporre una visita e non determina ammissione o classe.
+
+**Da completare.** Regole e accesso alle note per i richiami E5, registrazione del consenso a WhatsApp per i contatti inseriti a mano, pulizia a 90 giorni del registro di idempotenza, prova di concorrenza in CI, disponibilità e attivazione autorizzata delle tre sedi vere, fasce di visita distinte per grado e integrazione con l’anonimizzazione delle schede a 12 mesi.
+
+**Come si prova.** Le suite `__tests__/api/crm-ai-*.test.ts` e `__tests__/api/crm-integrazioni*.test.ts` coprono le API. `__tests__/lib/crm/migrazione-crm-accesso-ai-sql.test.ts` prova le operazioni SQL con dati finti. Il banco PostgreSQL locale a tre sessioni ha superato sette prove di concorrenza su dati sintetici. I test di `__tests__/components/crm/` coprono Assistente e le schede senza bambini. Il Compito 12 è la prova manuale sulla sola Demo dopo autorizzazione. Per i campi e gli esempi aggiornati vale il [contratto delle API](docs/crm-accesso-ai.md), che include `fine` da `/slot` per ogni prenotazione.
+
 ## Changelog — CRM Assistente Famiglie, base SQL predisposta — 2026-11-11
 
 Il compito 1 prepara le chiavi per sede, il registro delle richieste e le operazioni atomiche per contatti, prenotazioni, annullamenti e richiami. La prenotazione ricontrolla l’agenda nel database e l’annullamento verifica il token autore. Il richiamo via telefono conserva l’origine del contatto e il nome del genitore quando viene fornito. Le prove usano PGlite e il calendario scolastico di prova. Migrazione in attesa di applicazione al merge, accesso ancora da attivare.
@@ -1099,6 +1127,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 - segreteria: tutto sulla **propria** sede, colleghe comprese (vede, modifica e sposta anche le loro visite; fissa una visita a nome di una collega della stessa sede); niente sulle altre — una scheda o una visita di un'altra sede risponde `403 SEDE_NON_ACCESSIBILE` senza leggere altro, una persona di un'altra sede `422 PERSONA_NON_DELLA_SEDE`;
 - admin: tutte le sedi; con più sedi, ogni scrittura dichiara la sua (`resolveScuolaScrittura`, `400` se manca);
 - coordinatrici, docenti, genitori, cucina: `403`;
+- token AI (sul ramo `ripresa-crm`): solo §8 e le quattro eccezioni per la sede della chiave, E1 registra o ritrova il contatto, E2 lo riconosce dal numero, E3 legge i soli nuovi contatti inseriti dalla segreteria, E4 apre o ritrova un richiamo;
 - le statistiche per persona di tutta la sede le vede ogni segretaria di quella sede (decisione del titolare).
 
 **Schermate.** `/admin/crm`, voce di menu per segreteria e admin, cinque linguette (`?tab=`):
@@ -1107,6 +1136,7 @@ Poi `get_advisors`: **0 ERROR**. Poi la **prova d'uso in sede Demo**, scenari 1�
 - **Schede**: elenco con filtri e ricerca; il dettaglio si apre **sullo storico**, con sopra famiglia, bambini (badge dell'esito, «Associa» alla domanda, «Aggiungi un bambino»), visite e prossima azione; nota libera nello storico;
 - **Disponibilità**: ognuna modifica la propria settimana e le proprie assenze (dal 31/10, sul branch `feat/crm-quota-disponibilita`, per settimana e anche per la sede: vedi la voce sopra);
 - **Statistiche**: vedi sotto.
+- **Assistente** (sul ramo `ripresa-crm`): la Direzione elenca, crea e revoca le chiavi della sede selezionata.
 
 **Collegamento con la domanda** (`src/lib/crm/collegamento.ts`):
 - all'invio del modulo pubblico (`/api/iscrizione`), **dopo** la risposta alla famiglia (`after()`), se email o telefono (normalizzato: `+39`, `0039`, spazi) coincidono con una scheda della **stessa** sede, il bambino diventa «iscritto» e la scheda ricorda la domanda. Il modulo non può rompersi né rallentare per colpa del CRM. Con più schede coincidenti, o con bambini che non si abbinano con certezza, non si indovina: lo storico chiede alla segreteria di associare. Un telefono che coincide con una scheda di un'altra sede non collega niente;

@@ -6,7 +6,8 @@ import { assertSedeDelToken, chiudiChiamataAi, requireIntegrazioneAi, rifiutoAi,
 import { candidatiPer, caricaAgendaAi, sedeCopre } from '@/lib/crm/ai/disponibilita'
 import { gradiPerNascita, meseDiNascita } from '@/lib/crm/ai/eta'
 import { chiaveIdempotenza, improntaCorpo } from '@/lib/crm/ai/idempotenza'
-import { normalizzaEmail, normalizzaTelefono } from '@/lib/crm/contatti'
+import { normalizzaTelefonoAi } from '@/lib/crm/ai/telefono'
+import { normalizzaEmail } from '@/lib/crm/contatti'
 import { rispostaCrmNonRiuscita, rispostaErroreDbSchema } from '@/lib/crm/errori'
 import { ORIGINI, type EsitoPrenotaAi } from '@/lib/crm/tipi'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -109,7 +110,7 @@ export const POST = withRoute('crm/ai/prenota:POST', async (request: NextRequest
   }
 
   const rifiuta = (codice: CodiceAi, stato: number) => chiudiChiamataAi(ai, rifiutoAi(codice, stato), { codice })
-  const telefonoNorm = normalizzaTelefono(b.data.telefono)
+  const telefonoNorm = normalizzaTelefonoAi(b.data.telefono)
   if (telefonoNorm === null) return rifiuta('CONTATTO_OBBLIGATORIO', 422)
   const emailNorm = normalizzaEmail(b.data.email)
   const inizio = new Date(b.data.inizio).toISOString()

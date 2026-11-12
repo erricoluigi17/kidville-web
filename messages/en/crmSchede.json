@@ -39,6 +39,7 @@
   "domandaDesiderio": "What do they wish for the child?",
   "domandaVuota": "Not collected yet",
   "sezioneBambini": "Children",
+  "nessunBambino": "No children",
   "bambinoSenzaNome": "Child without a name",
   "bambinoNascita": "Date of birth: {data}",
   "bambinoAnno": "Start: {anno}",

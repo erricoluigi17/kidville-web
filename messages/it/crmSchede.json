@@ -39,6 +39,7 @@
   "domandaDesiderio": "Che cosa desidera per il bambino?",
   "domandaVuota": "Non ancora raccolta",
   "sezioneBambini": "Bambini",
+  "nessunBambino": "Nessun bambino",
   "bambinoSenzaNome": "Bambino senza nome",
   "bambinoNascita": "Data di nascita: {data}",
   "bambinoAnno": "Ingresso: {anno}",

@@ -1,10 +1,11 @@
-import { logEvento, type Livello, type Valore } from './logger';
-import { contesto, inLogger, segnalaErroreAnno } from './context';
+import { logEvento, type Livello, type OpzioniEvento, type Valore } from './logger';
+import { conContesto, contesto, inLogger, segnalaErroreAnno } from './context';
 import { codiceAnnoDa } from '@/lib/anno/tipi';
 import { redigiPath } from './redact';
 import { sanificaMessaggio } from './serialize';
 import { conTetto, eTimeout, erroreTimeout, fraseScadenza, tettoNostro, tettoSano } from './tetto';
 import { limitaRetryAfter, METODI_RITENTABILI, STATI_RITENTABILI } from '@/lib/supabase/attesa-ritentativi';
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico';
 import { RIGHE_MASSIME_POSTGREST } from '@/lib/db/blocchi';
 
 /**
@@ -288,20 +289,25 @@ export function tettoMsArea(area: string, richiesto?: number): number {
  *    Perciò si sanifica QUI, alla sorgente: una volta sola, e vale per entrambi i canali.
  */
 export function analizzaBersaglio(url: string): Bersaglio {
+    const { area, nome } = bersaglioDalPath(url);
+    return { area, nome: redigiNomeBersaglio(nome) };
+}
+
+function bersaglioDalPath(url: string): Bersaglio {
     try {
         const { pathname } = new URL(url);
-        if (pathname.startsWith('/rest/v1/rpc/')) return bersaglio('rpc', pathname.slice(13));
-        if (pathname.startsWith('/rest/v1/')) return bersaglio('db', pathname.slice(9));
-        if (pathname.startsWith('/storage/v1/')) return bersaglio('storage', pathname.slice(12));
-        if (pathname.startsWith('/auth/v1/')) return bersaglio('auth', pathname.slice(9));
-        return bersaglio('altro', pathname);
+        if (pathname.startsWith('/rest/v1/rpc/')) return { area: 'rpc', nome: pathname.slice(13) };
+        if (pathname.startsWith('/rest/v1/')) return { area: 'db', nome: pathname.slice(9) };
+        if (pathname.startsWith('/storage/v1/')) return { area: 'storage', nome: pathname.slice(12) };
+        if (pathname.startsWith('/auth/v1/')) return { area: 'auth', nome: pathname.slice(9) };
+        return { area: 'altro', nome: pathname };
     } catch {
         return { area: 'altro', nome: '?' };
     }
 }
 
-function bersaglio(area: Bersaglio['area'], nome: string): Bersaglio {
-    return { area, nome: sanificaMessaggio(redigiPath(nome)) };
+function redigiNomeBersaglio(nome: string): string {
+    return nome === '?' ? nome : sanificaMessaggio(redigiPath(nome));
 }
 
 export interface OpzioniStrumento {
@@ -394,7 +400,7 @@ export function creaFetchStrumentato(base?: Fetch, opzioni?: OpzioniStrumento): 
             const scaduto = eTimeout(err);
             registraErroreDiRete(
                 b,
-                scaduto
+                scaduto && !b.soloMetadati
                     ? erroreTimeout(NOME_SCADENZA, 'da Supabase', nostro ? tetto : null, err, ms)
                     : err,
                 ms,
@@ -453,21 +459,46 @@ interface Descrizione {
     metodo: string;
     /** `X-Retry-Count`: 0 al primo colpo. Lo mette postgrest-js sulla RICHIESTA. */
     tentativo: number;
+    soloMetadati: boolean;
+}
+
+const ROTTA_CRM_AI = /^(?:\/api\/)?crm\/ai(?=[:/]|$)/;
+// Le RPC e le tabelle dedicate si proteggono anche prima di `withRoute`, inclusa la lettura
+// dell'impronta in crm_integrazioni. Nei log l'operazione è invece un nome noto, mai un path.
+const RISORSE_CRM_AI = new Set([
+    'crm_integrazioni', 'crm_ai_richieste', 'crm_ai_token_attivo', 'crm_ai_persone',
+    'crm_ai_scheda', 'crm_ai_bambini', 'crm_ai_registra_contatto', 'crm_ai_candidati',
+    'crm_ai_prenota', 'crm_ai_annulla', 'crm_ai_richiamo',
+    // Tabelle non dedicate, consultate dal calcolo degli orari della route slot.
+    'sections', 'crm_appuntamenti', 'crm_indisponibilita', 'crm_settimane', 'crm_fasce', 'utenti', 'utenti_scuole',
+]);
+const METODI_HTTP = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']);
+
+function inRottaCrmAi(): boolean {
+    const c = contesto();
+    return ROTTA_CRM_AI.test(c?.route ?? '') || ROTTA_CRM_AI.test(c?.path ?? '');
 }
 
 /** Non lancia: `input` può essere una stringa, una URL o una Request, e in JS qualunque cosa. */
 function descrivi(input: unknown, init: RequestInit | undefined): Descrizione {
     try {
-        const { area, nome } = analizzaBersaglio(url(input));
+        const { area, nome } = bersaglioDalPath(url(input));
+        const apiAi = area === 'altro' && ROTTA_CRM_AI.test(nome);
+        const rest = area === 'db' || area === 'rpc';
+        const radice = rest ? nome.split('/', 1)[0] : '';
+        const soloMetadati = apiAi || inRottaCrmAi() || radice === 'crm_integrazioni' || radice.startsWith('crm_ai_');
         const n = Number(intestazione(init, 'x-retry-count'));
         return {
             area,
-            nome,
+            nome: soloMetadati
+                ? (RISORSE_CRM_AI.has(radice) ? radice : apiAi ? 'crm/ai' : '?')
+                : redigiNomeBersaglio(nome),
             metodo: metodo(input, init),
             tentativo: Number.isFinite(n) && n > 0 ? n : 0,
+            soloMetadati,
         };
     } catch {
-        return { area: 'altro', nome: '?', metodo: 'GET', tentativo: 0 };
+        return { area: 'altro', nome: '?', metodo: 'GET', tentativo: 0, soloMetadati: inRottaCrmAi() };
     }
 }
 
@@ -481,10 +512,25 @@ function descrivi(input: unknown, init: RequestInit | undefined): Descrizione {
 function campiDi(b: Descrizione, extra: Record<string, Valore>): Record<string, Valore> {
     return {
         operazione: b.nome,
-        metodo: b.metodo,
+        metodo: b.soloMetadati && !METODI_HTTP.has(b.metodo) ? '?' : b.metodo,
         tentativo: b.tentativo > 0 ? b.tentativo : undefined,
         ...extra,
     };
+}
+
+/** Il logger aggiunge da sé contesto e payload: per questi log gli diamo solo la route nota. */
+function emetti(
+    b: Descrizione, livello: Livello, extra: Record<string, Valore>, err?: unknown, opzioni?: OpzioniEvento,
+): void {
+    const scrivi = () => logEvento(b.area, livello, campiDi(b, extra), err, opzioni);
+    if (!b.soloMetadati || !contesto()) {
+        scrivi();
+        return;
+    }
+    // Vale solo durante l'emissione (compreso il sink async). Il contesto originale resta
+    // disponibile al chiamante. Non si eredita il requestId: può arrivare da un header esterno.
+    const path = inRottaCrmAi() ? '/api/crm/ai' : '';
+    void conContesto({ path, requestId: '' }, () => Promise.resolve(scrivi()));
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -541,7 +587,12 @@ function registraErroreDiRete(b: Descrizione, err: unknown, ms: number, scaduto:
         //
         // MAI in tabella: se l'host Supabase non si raggiunge (o non risponde), non si raggiunge
         // nemmeno per scriverci il log. Vedi `persistibile`.
-        logEvento(b.area, abort ? 'info' : 'error', campiDi(b, { ms }), err, { persisti: false });
+        const erroreLog = b.soloMetadati
+            ? (scaduto ? { name: NOME_SCADENZA, message: 'Scadenza Supabase', code: 'timeout' }
+                : abort ? { name: 'AbortError', message: 'Chiamata Supabase annullata', code: 'abort' }
+                    : { name: 'SupabaseNetworkError', message: 'Errore di rete Supabase', code: 'errore_rete' })
+            : err;
+        emetti(b, abort ? 'info' : 'error', { ms }, erroreLog, { persisti: false });
     } catch {
         // Fail-open: l'errore di rete lo rilancia comunque il chiamante.
     }
@@ -619,10 +670,16 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
     // Il corpo si legge SOLO qui, mai sulle risposte ok: `storage.download()` passa da questo
     // wrapper, e leggerne il corpo distruggerebbe lo streaming e farebbe esplodere la memoria.
     const err = leggeIlCorpo(b.area) ? await erroreDalCorpo(res, s) : undefined;
-    riconosciErroreAnno(b.area, err);
+    const codiceTecnico = b.soloMetadati ? erroreDbSoloCodice(err).code ?? 'supabase_http' : undefined;
+    riconosciErroreAnno(b.area, err, codiceTecnico);
     const livello = livelloDi(b.area, s, err);
 
-    logEvento(b.area, livello, campiDi(b, { stato: s, ms }), err, {
+    // Classificazione e rete dell'anno usano il corpo originale; ai sink arriva solo questo
+    // oggetto nuovo, senza message, details, hint, stack o cause provenienti da Supabase.
+    const erroreLog = b.soloMetadati
+        ? { name: 'SupabaseHttpError', message: 'Errore HTTP Supabase', code: codiceTecnico }
+        : err;
+    emetti(b, livello, { stato: s, ms }, erroreLog, {
         persisti: daPersistere(livello, b.area, s),
     });
 }
@@ -639,13 +696,13 @@ async function registraFallimento(b: Descrizione, res: Response, ms: number): Pr
  * con 503/520, e un `RAISE EXCEPTION` di PostgREST è un 400. Non lancia mai, e salva nel contesto
  * il codice LETTERALE della lista, mai testo del database.
  */
-function riconosciErroreAnno(area: Bersaglio['area'], err: unknown): void {
+function riconosciErroreAnno(area: Bersaglio['area'], err: unknown, codiceTecnico?: string): void {
     try {
         if (area !== 'db' && area !== 'rpc') return;
         const e = err as { message?: unknown; code?: unknown } | null | undefined;
         const codice = codiceAnnoDa(e?.message);
         if (codice === null) return;
-        segnalaErroreAnno(typeof e?.code === 'string' ? e.code : '', codice);
+        segnalaErroreAnno(codiceTecnico ?? (typeof e?.code === 'string' ? e.code : ''), codice);
     } catch {
         // Fail-open: il riconoscimento è osservabilità, la risposta al chiamante resta intatta.
     }
@@ -659,7 +716,7 @@ function riconosciErroreAnno(area: Bersaglio['area'], err: unknown): void {
  */
 function registraIlleggibile(b: Descrizione, res: Response, ms: number): void {
     const s = stato(res);
-    logEvento(b.area, 'warn', campiDi(b, { stato: s, ms, esito: 'esito-illeggibile' }), undefined, {
+    emetti(b, 'warn', { stato: s, ms, esito: 'esito-illeggibile' }, undefined, {
         persisti: daPersistere('warn', b.area, s ?? 0),
     });
 }
@@ -674,7 +731,7 @@ function registraIlleggibile(b: Descrizione, res: Response, ms: number): void {
 function registraLenta(b: Descrizione, res: Response, ms: number): void {
     const n = contaLenta();
     if (n !== undefined && !SOGLIE_LENTE.has(n)) return;
-    logEvento(b.area, 'info', campiDi(b, { stato: stato(res), ms, lenta: true, lente: n }),
+    emetti(b, 'info', { stato: stato(res), ms, lenta: true, lente: n },
         undefined, { persisti: false });
 }
 
@@ -787,10 +844,10 @@ function registraMaxRows(b: Descrizione, input: unknown, res: Response): void {
         });
         if (!visto) return;
         const s = stato(res);
-        logEvento(
-            b.area,
+        emetti(
+            b,
             'warn',
-            campiDi(b, { stato: s, righe: visto.righe, limite: visto.limite, esito: 'max-rows-raggiunto' }),
+            { stato: s, righe: visto.righe, limite: b.soloMetadati ? undefined : visto.limite, esito: 'max-rows-raggiunto' },
             undefined,
             { persisti: daPersistere('warn', b.area, s ?? 0), distingui: ['operazione'] },
         );

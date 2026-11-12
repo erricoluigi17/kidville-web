@@ -506,3 +506,31 @@ describe('una sede che esplode non ferma le altre', () => {
     }
   })
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+describe('(correzioni dopo la revisione finale, F4) un evento differito GIÀ in coda prima del tick', () => {
+  let db: PGlite
+  beforeAll(async () => { db = await creaBanco([E(51), E(52)]) }, 180_000)
+  afterAll(async () => { await db?.close() })
+
+  it('non viene scambiato per un errore di ogni sede: il tick lo dice subito e non cambia niente', async () => {
+    await riporta(db)
+    // Nella STESSA transazione del tick (come un tick lanciato da un'altra funzione): una scrittura che il vincolo differito rifiuterà.
+    // Prima della correzione il `SET CONSTRAINTS … IMMEDIATE` del blocco di OGNI sede eseguiva quell'evento, falliva dentro il blocco e
+    // lo rimetteva in coda: tutte le sedi risultavano in errore (`errori: 2`) e il giro cadeva comunque alla COMMIT.
+    const vecchio = await idAnno(db, E(51), 2025)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2027-08-01T10:00:00Z'))
+    await db.exec('BEGIN')
+    let esito = 'nessun-errore'
+    try {
+      await db.query(`UPDATE public.anni_sede SET domande_aperte = true WHERE id = $1`, [vecchio])
+      esito = await messaggio(tick(db, null, null))
+    } finally {
+      await db.exec('ROLLBACK')
+    }
+    expect(esito, 'il tick dice subito che c’è una violazione già in coda').toContain('ANNO_CHIUSO_CON_DOMANDE')
+    expect((await stati(db, E(52)))['2026'], 'l’altra sede non è stata toccata').toBe('corrente')
+    expect(await righeLog(db, 'anni-tick-stati-errore:'), 'nessun errore scritto sulle sedi').toEqual([])
+  })
+})

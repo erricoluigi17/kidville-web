@@ -233,6 +233,13 @@ BEGIN
     v_oggi := public.giorno_roma(now());
   END IF;
 
+  -- (correzioni dopo la revisione finale, F4) Gli eventi dei vincoli differiti GIÀ in coda in questa transazione (non scritti dal tick) si
+  -- eseguono qui, una volta, fuori da ogni blocco di sede: `SET CONSTRAINTS … IMMEDIATE` esegue TUTTA la coda, e se uno di quegli eventi
+  -- fallisse dentro il blocco di una sede verrebbe attribuito a lei, annullato col suo blocco e rimesso in coda (ogni sede in errore, e il
+  -- giro che cade comunque alla COMMIT). Così una violazione che non è del tick lo ferma subito e per intero, col suo messaggio.
+  SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita IMMEDIATE;
+  SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita DEFERRED;
+
   FOR r IN
     SELECT DISTINCT s.scuola_id FROM public.anni_sede s
      WHERE p_scuola IS NULL OR s.scuola_id = p_scuola
@@ -291,7 +298,8 @@ BEGIN
       -- (giro 1, S1; giro 2, S1) I vincoli DIFFERITI `anni_sede_domande_solo_aperto` e `anni_sede_continuita`: se la sede ha un
       -- buco, lo scoprirebbero alla COMMIT, fuori da questo blocco, e butterebbero giù il giro di TUTTE le sedi. Qui li si
       -- verifica subito: l'errore resta di questa sede (il blocco annulla i suoi cambi di stato) e le altre proseguono.
-      -- Poi tornano differiti, com'erano.
+      -- Poi tornano differiti, com'erano. La coda è vuota di eventi altrui (svuotata prima del ciclo, F4): qui ci sono solo quelli
+      -- scritti da questa sede (passo 1 e passo 2), e il loro errore è davvero suo.
       SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita IMMEDIATE;
       SET CONSTRAINTS public.anni_sede_domande_solo_aperto, public.anni_sede_continuita DEFERRED;
       v_stati := v_stati + coalesce((v_passo2 ->> 'in_chiusura')::integer, 0) + coalesce((v_passo2 ->> 'chiusi')::integer, 0);

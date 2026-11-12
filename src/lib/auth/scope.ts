@@ -892,13 +892,13 @@ async function statoAnnoDellaSezione(supabase: SupabaseClient, sectionId: string
   const annoId = (sez.data as { anno_id?: string | null } | null)?.anno_id
   // PostgREST non lancia: l'errore va guardato. Il ripiego resta (fail-closed), ma il perché si registra: col solo codice dell'errore.
   if (sez.error) {
-    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', lettura: 'sections' }, sez.error)
+    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', operazione: 'sections' }, sez.error)
     return null
   }
   if (!annoId) return null
   const st = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
   if (st.error) {
-    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', lettura: 'anni_sede' }, st.error)
+    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', operazione: 'anni_sede' }, st.error)
     return null
   }
   return (st.data as { stato?: string | null } | null)?.stato ?? null

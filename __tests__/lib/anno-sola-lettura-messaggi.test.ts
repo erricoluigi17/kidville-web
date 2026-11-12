@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 import { assertSezioneScrivibile, assertSezionePrimariaFirmabile } from '@/lib/auth/scope'
 import { logEvento } from '@/lib/logging/logger'
+import { redact } from '@/lib/logging/redact'
 import shared from '../../messages/it/shared.json'
 import sharedEn from '../../messages/en/shared.json'
 
@@ -77,6 +78,10 @@ describe('assertSezioneScrivibile · il codice dice in che anno è la classe', (
         expect(log, 'un solo log del ripiego').toHaveLength(1)
         expect(log[0][1]).toBe('warn')
         expect(JSON.stringify(log[0])).toContain('57014')
+        // (giro 2, N6) Come arriva in `app_log`: i campi passano dalla redazione a lista bianca, e il codice della lettura si deve LEGGERE.
+        const registrato = JSON.stringify(redact(log[0][2]))
+        expect(registrato, 'la riga dice quale lettura è fallita').toContain('anni_sede')
+        expect(registrato, 'e non è stata redatta').not.toMatch(/redatt|\*\*\*|\[REDACTED/i)
         expect(JSON.stringify(log[0]), 'nessun nome, nessun testo libero').not.toMatch(/Mario|@/)
     })
     it('sezione senza anno → SEZIONE_SOLA_LETTURA', async () => {

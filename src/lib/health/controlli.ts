@@ -1719,12 +1719,12 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
     return misura('anno', 'degradato', async () => {
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
-        const { sedi_senza_successivo: sedi, in_ritardo_giorni: giorni, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
-        if (sedi > 0 && giorni >= 1) {
-            return { esito: 'degradato', dettaglio: `${sedi} sedi senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
+        const { sedi_senza_successivo: senza, in_ritardo_giorni: giorni, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
+        if (senza > 0 && giorni >= 1) {
+            return { esito: 'degradato', dettaglio: `${sedi(senza)} senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
         }
         // PR 4.9. Il passaggio non fatto a una settimana (o meno) dall'inizio dell'anno nuovo è il più grave: l'anno comincia e le
-        // scritture datate lì verrebbero fermate. Poi la guardia spenta a un mese dalla chiusura: il tick non cambierebbe lo stato.
+        // scritture datate lì verrebbero fermate. Poi la guardia spenta, con l'anno a un mese dalla chiusura o già rimasto `in_chiusura` oltre la `fine`: il tick non cambierebbe lo stato.
         // Mai `giu` (regola comune dei controlli nuovi): `degradato`, col solo numero. Chiavi assenti: funzione di prima, come prima.
         if (passaggio === null || guardia === null) {
             logEvento('rpc', 'info', {
@@ -1739,7 +1739,7 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
             return { esito: 'degradato', dettaglio: fraseDelPassaggio(passaggio, letto.salute.passaggio_iniziato) }
         }
         if (guardia !== null && guardia > 0) {
-            return { esito: 'degradato', dettaglio: `${guardia} sedi vicine alla chiusura dell’anno con la guardia spenta` }
+            return { esito: 'degradato', dettaglio: `${sedi(guardia)} con l’anno da chiudere, o vicino alla chiusura, e la guardia spenta: lo stato dell’anno non cambia finché non la si accende` }
         }
         return { esito: 'ok', dettaglio: 'anno successivo in regola' }
     })

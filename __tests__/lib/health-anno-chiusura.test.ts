@@ -11,7 +11,7 @@ vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(),
  * COMPITO 4.9.2 · LE DUE CHIAVI NUOVE DI `salute_anno()` (M49b) NEL CONTROLLO `anno`.
  *
  * `passaggio_da_fare` (il passaggio non fatto a 7 giorni o meno dall'inizio dell'anno nuovo) e `guardia_spenta_vicina` (la guardia
- * spenta a 30 giorni o meno dalla chiusura). I giorni li conta il database (`anno-passaggio-da-fare.test.ts`: 8 → 0, 7 e 6 → 1; 31 → 0,
+ * spenta a 30 giorni o meno dalla chiusura, OPPURE con l'anno rimasto `in_chiusura` oltre la `fine`: M1 del giro 3). I giorni li conta il database (`anno-passaggio-da-fare.test.ts`: 8 → 0, 7 e 6 → 1; 31 → 0,
  * 30 e 29 → 1); qui si prova solo che il controllo legge i numeri giusti e dice la frase giusta. Mai `giu`: `degradato`.
  * Le chiavi assenti (la funzione di prima: il merge a metà, o il database della CI) sono come prima e lasciano una riga `info`.
  */
@@ -89,11 +89,21 @@ describe('anno · il passaggio e la guardia', () => {
         }
     })
 
-    it('la guardia spenta vicina alla chiusura: degradato, col solo numero', async () => {
+    it('la guardia spenta (anno da chiudere o vicino alla chiusura): degradato, col numero e il rimedio', async () => {
         const c = conSalute({ ...BASE, passaggio_da_fare: 0, guardia_spenta_vicina: 3 })
         expect(await controlloAnno(c, ADESSO)).toMatchObject({
-            esito: 'degradato', dettaglio: '3 sedi vicine alla chiusura dell’anno con la guardia spenta',
+            esito: 'degradato',
+            dettaglio: '3 sedi con l’anno da chiudere, o vicino alla chiusura, e la guardia spenta: lo stato dell’anno non cambia finché non la si accende',
         })
+    })
+
+    it('una sola sede: tutto al singolare (guardia spenta e ritardo dell’anno successivo)', async () => {
+        const uno = conSalute({ ...BASE, passaggio_da_fare: 0, guardia_spenta_vicina: 1 })
+        expect(await controlloAnno(uno, ADESSO)).toMatchObject({
+            dettaglio: '1 sede con l’anno da chiudere, o vicino alla chiusura, e la guardia spenta: lo stato dell’anno non cambia finché non la si accende',
+        })
+        const ritardo = conSalute({ sedi_senza_successivo: 1, in_ritardo_giorni: 2, invarianti_non_zero: 0, passaggio_da_fare: 0, guardia_spenta_vicina: 0 })
+        expect(await controlloAnno(ritardo, ADESSO)).toMatchObject({ dettaglio: '1 sede senza l’anno successivo, in ritardo fino a 2 giorni' })
     })
 
     it('tutte e due: vince il passaggio (è il più grave: l’anno sta per cominciare)', async () => {

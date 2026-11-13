@@ -12,7 +12,8 @@
 -- │      fattura o un movimento di cassa collegato NON si tocca: si conta e si elenca per uuid;   │
 -- │    · le domande del modulo pubblico dirette all'anno nuovo (con le decisioni);                 │
 -- │    · gli alunni nati dopo la partenza (chi è entrato con una domanda accolta), SOLO se non     │
--- │      resta loro nessuna riga altrove (frequenze, presenze, genitori, documenti…). Gli altri    │
+-- │      resta loro nessuna riga altrove (frequenze, presenze, documenti…): il LEGAME con un   │
+-- │      genitore non lo trattiene, va via con lui. Gli altri                                      │
 -- │      si contano e si elencano per uuid: li decide il titolare;                                 │
 -- │    · le sezioni dell'anno nuovo nate dopo la partenza (l'apertura delle iscrizioni le copia),  │
 -- │      con le copie che si portano dietro (docenti, materie, orario, campanelle…), se nessuno   │
@@ -40,7 +41,8 @@
 -- │  CHE COSA NON TOCCA MAI:                                                                       │
 -- │    · una riga nata prima della partenza (salvo la configurazione sopra, che torna com'era);    │
 -- │    · qualunque altra sede, e gli anni corrente, in chiusura, chiuso con le loro righe;          │
--- │    · i genitori (utenti) creati accogliendo una domanda: restano, e il loro alunno con loro.   │
+-- │    · gli ACCOUNT (parents, utenti) creati accogliendo una domanda: restano, elencati se nati   │
+-- │      dopo la partenza (il legame con l'alunno, e l'alunno, vanno via).                         │
 -- └────────────────────────────────────────────────────────────────────────────────────────────────┘
 --
 -- ⚠️ LO ESEGUE IL TITOLARE DALL'EDITOR SQL DI SUPABASE, MAI L'AGENTE: il freno `.claude/hooks/supabase_sql_freno.py` nega queste

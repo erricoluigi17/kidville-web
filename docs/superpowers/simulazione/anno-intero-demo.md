@@ -246,8 +246,9 @@ chi sa che nessuno li usa) e il **CRM** (`crm_bambini`, `crm_schede`): un bambin
 l'elenco dice perché quell'alunno non se n'è andato. Per le righe lasciate si decide a mano; l'invariante 11 conta gli alunni «in arrivo» rimasti
 senza più la frequenza nuova.
 
-**Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; i genitori creati accogliendo una
-domanda (restano, e il loro alunno con loro).
+**Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; gli **account** dei genitori
+(`parents`, `utenti`) creati accogliendo una domanda: restano, e se sono nati dopo la partenza si elencano. Il legame con l'alunno e l'alunno
+vanno via.
 
 **Provato e no.** Il banco di prova ha le colonne della produzione per ogni tabella che lo script nomina, e `__tests__/db/anno-azzera-colonne.test.ts`
 confronta ogni colonna dello script con una fotografia delle colonne di produzione (si rigenera con `__tests__/fixtures/colonne-azzera-fotografia.mjs`).

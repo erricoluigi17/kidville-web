@@ -319,6 +319,7 @@ export function AnnoNotice() {
         onClick={() => setPerche((v) => !v)}
         aria-expanded={perche}
         aria-controls="kv-anno-avviso-perche"
+        aria-label={t('annoAvvisoPercheEtichetta', { anno: effettivo.etichettaBreve })}
         className="min-h-[44px] px-2 font-bold underline min-[640px]:hidden"
       >
         {t('annoAvvisoPerche')}

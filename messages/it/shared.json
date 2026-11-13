@@ -839,6 +839,7 @@
   "annoAvvisoTesto": "Stai lavorando sul {anno} ({stato}): le nuove classi, le votazioni e gli elenchi caricati vanno in quell’anno. Anche gli elenchi delle classi sul video mostrano quell’anno.",
   "annoAvvisoBreve": "Stai guardando il {anno} ({stato})",
   "annoAvvisoPerche": "Perché?",
+  "annoAvvisoPercheEtichetta": "Perché vedo questo avviso sul {anno}",
   "annoAvvisoPercheTesto": "Quello che salvi da qui (nuove classi, votazioni, elenchi caricati) va nel {anno}, non nell’anno in corso. Anche gli elenchi delle classi sul video mostrano il {anno}.",
   "annoAvvisoTorna": "Torna all’anno in corso",
   "annoStatoDiverso": "stato diverso fra le sedi",

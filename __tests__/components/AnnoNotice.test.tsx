@@ -147,7 +147,7 @@ describe('AnnoNotice', () => {
     expect(lunga.className).toContain('hidden')
     expect(lunga.className).toContain('min-[640px]:inline')
 
-    const perche = screen.getByRole('button', { name: 'Perché?' })
+    const perche = screen.getByRole('button', { name: 'Perché vedo questo avviso sul 2027/28' })
     expect(perche.className).toContain('min-[640px]:hidden')
     expect(perche).toHaveAttribute('aria-expanded', 'false')
     expect(avviso.querySelectorAll('#kv-anno-avviso-perche')).toHaveLength(0)
@@ -176,7 +176,7 @@ describe('AnnoNotice', () => {
     expect(avviso.className.split(/\s+/)).toContain('flex-wrap') // senza, il pulsante non va a capo
     // Le due aree di tocco sono pulsanti figli diretti dell'avviso, alti min 44px per costruzione: stanno su
     // righe/colonne proprie e non si sovrappongono (nessuna estensione `after:-inset` che dipende dal font).
-    for (const nome of [/^Perché\?$/, /torna all.anno in corso/i]) {
+    for (const nome of [/^Perché vedo questo avviso sul 2027\/28$/, /torna all.anno in corso/i]) {
       const b = screen.getByRole('button', { name: nome })
       expect(b.parentElement).toBe(avviso)
       expect(b.className.split(/\s+/)).toContain('min-h-[44px]')

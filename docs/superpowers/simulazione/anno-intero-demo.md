@@ -207,7 +207,7 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
-| `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro (sezioni, frequenze, domande, voci…): il messaggio dice i conteggi per tabella, non si tocca niente |
+| `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro, di **qualunque** tabella (sezioni, frequenze, domande, voci di pagamento, presenze, valutazioni…): il messaggio dice i conteggi per tabella, non si tocca niente. Cosa fare: guardare quelle righe (sono dati del collaudo datati nell'anno nato col viaggio nel tempo) e toglierle a mano, poi rilanciare |
 | `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
 | `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
 

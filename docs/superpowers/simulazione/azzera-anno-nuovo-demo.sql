@@ -50,8 +50,9 @@
 --   · AZZERA_DATA                 lo scatto della fotografia è nel futuro, oppure non torna con i suoi conteggi (la Demo è cambiata fra lo scatto e il collaudo in un modo che li sposta);
 --   · AZZERA_ANNO_NUOVO_NON_UNO   la sede non ha UN SOLO anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza;
 --   · AZZERA_PRIMA_IL_RIPRISTINO  l'anno nuovo è già `corrente`, l'anno di partenza non è tornato `corrente`, oppure restano passaggi dopo la partenza: si esegue prima il ripristino;
---   · AZZERA_ANNI_NATI_USATI      a un anno nato nel collaudo (dopo l'anno nuovo) puntano ancora righe (sezioni, frequenze, domande, voci…):
---                                 il messaggio dice i conteggi per tabella; non si tocca niente;
+--   · AZZERA_ANNI_NATI_USATI      a un anno nato nel collaudo (dopo l'anno nuovo) puntano ancora righe, di QUALUNQUE tabella (sezioni, frequenze, domande,
+--                                 voci, presenze, valutazioni…; chiavi su una o più colonne, con o senza `scuola_id`): il messaggio dice i conteggi
+--                                 per tabella; non si tocca niente;
 --   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è della versione 2 con `scattata_il` (si rifà), non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
@@ -132,6 +133,8 @@ DECLARE
   v_nati        uuid[];     -- anni_sede.id degli anni nati durante il collaudo (il 2028/29 del tick)
   v_nati_anni   uuid[];     -- i loro anni_scolastici.id
   v_usi         text;
+  v_solo        uuid[];     -- fra gli anni globali nati nel collaudo, quelli che nessun'altra sede usa
+  v_cnt         jsonb;      -- tabella → righe che puntano agli anni nati nel collaudo
   fk            record;
   v_part        jsonb;      -- l'anno di partenza (corrente) della fotografia, con le sue frequenze
   v_par         uuid;       -- anni_sede.id dell'anno di partenza
@@ -376,30 +379,59 @@ BEGIN
    WHERE a.scuola_id = v_sede AND a.creato_il >= v_dal AND a.id <> v_anno
      AND a.inizio > (SELECT n.inizio FROM public.anni_sede n WHERE n.id = v_anno);
   IF cardinality(v_nati) > 0 THEN
-    v_usi := '';
+    -- Gli anni «solo di questa sede» (nessun'altra sede ha una riga su quell'anno globale): QUALUNQUE riga che punta a uno di loro è sospetta,
+    -- anche in una tabella senza `scuola_id`. Per un anno globale che un'altra sede usa, valgono solo le righe di questa sede.
+    SELECT coalesce(array_agg(y.id), ARRAY[]::uuid[]) INTO v_solo
+      FROM unnest(v_nati_anni) y(id) WHERE NOT EXISTS (SELECT 1 FROM public.anni_sede o WHERE o.anno_id = y.id AND o.scuola_id <> v_sede);
+    v_cnt := '{}'::jsonb;
+    -- (a) le chiavi verso `anni_sede`, anche su PIÙ colonne ((scuola_id, anno_id) è la forma di 25 tabelle): il filtro nasce da tutte le coppie
+    --     colonna/colonna referenziata
     FOR fk IN
-      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome, at.attname AS colonna, ct.relname = 'anni_sede' AS verso_sede
+      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome,
+             (SELECT string_agg(CASE rf.attname
+                                  WHEN 'id'        THEN format('x.%I = ANY ($1)', pa.attname)
+                                  WHEN 'scuola_id' THEN format('x.%I = $3', pa.attname)
+                                  WHEN 'anno_id'   THEN format('x.%I = ANY ($2)', pa.attname)
+                                  ELSE format('x.%I IS NOT NULL', pa.attname) END, ' AND ' ORDER BY k.ord)
+                FROM unnest(c.conkey, c.confkey) WITH ORDINALITY k(a, r, ord)
+                JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = k.a
+                JOIN pg_attribute rf ON rf.attrelid = c.confrelid AND rf.attnum = k.r) AS filtro
         FROM pg_constraint c
         JOIN pg_class cl ON cl.oid = c.conrelid
         JOIN pg_namespace ns ON ns.oid = cl.relnamespace
-        JOIN pg_class ct ON ct.oid = c.confrelid
-        JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = c.conkey[1]
-       WHERE c.contype = 'f' AND cardinality(c.conkey) = 1 AND ct.relname IN ('anni_sede', 'anni_scolastici')
+       WHERE c.contype = 'f' AND c.confrelid = 'public.anni_sede'::regclass
          AND c.conrelid <> c.confrelid AND ns.nspname = 'public'
-         AND cl.relname NOT IN ('listino_voci', 'moduli_richiesti', 'posti_autorizzati', 'anni_sede_stati', 'anni_sede')
-         AND (ct.relname = 'anni_sede'
-              OR EXISTS (SELECT 1 FROM pg_attribute sc WHERE sc.attrelid = c.conrelid AND sc.attname = 'scuola_id' AND NOT sc.attisdropped))
-       ORDER BY 2, 3
+         AND cl.relname NOT IN ('listino_voci', 'moduli_richiesti', 'posti_autorizzati', 'anni_sede_stati')
+       ORDER BY 2, c.conname
     LOOP
-      IF fk.verso_sede THEN
-        EXECUTE format('SELECT count(*) FROM %s x WHERE x.%I = ANY ($1)', fk.da, fk.colonna) INTO v_n USING v_nati;
-      ELSE
-        EXECUTE format('SELECT count(*) FROM %s x WHERE x.scuola_id = $1 AND x.%I = ANY ($2)', fk.da, fk.colonna) INTO v_n USING v_sede, v_nati_anni;
-      END IF;
+      EXECUTE format('SELECT count(*) FROM %s x WHERE %s', fk.da, fk.filtro) INTO v_n USING v_nati, v_nati_anni, v_sede;
       IF v_n > 0 THEN
-        v_usi := v_usi || CASE WHEN v_usi = '' THEN '' ELSE ', ' END || fk.nome || '=' || v_n;
+        v_cnt := jsonb_set(v_cnt, ARRAY[fk.nome], to_jsonb(greatest(coalesce((v_cnt->>fk.nome)::integer, 0), v_n)));
       END IF;
     END LOOP;
+    -- (b) le chiavi verso `anni_scolastici` (una colonna sola), con o senza `scuola_id` nella tabella
+    FOR fk IN
+      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome, pa.attname AS colonna,
+             EXISTS (SELECT 1 FROM pg_attribute sc WHERE sc.attrelid = c.conrelid AND sc.attname = 'scuola_id' AND NOT sc.attisdropped) AS ha_sede
+        FROM pg_constraint c
+        JOIN pg_class cl ON cl.oid = c.conrelid
+        JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+        JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = c.conkey[1]
+       WHERE c.contype = 'f' AND cardinality(c.conkey) = 1 AND c.confrelid = 'public.anni_scolastici'::regclass
+         AND c.conrelid <> c.confrelid AND ns.nspname = 'public' AND cl.relname <> 'anni_sede'
+       ORDER BY 2, 3
+    LOOP
+      EXECUTE format('SELECT count(*) FROM %s x WHERE x.%I = ANY ($1)', fk.da, fk.colonna) INTO v_n USING v_solo;
+      IF fk.ha_sede THEN
+        EXECUTE format('SELECT count(*) FROM %s x WHERE x.scuola_id = $2 AND x.%I = ANY ($1) AND NOT (x.%I = ANY ($3))', fk.da, fk.colonna, fk.colonna)
+          INTO v_tot USING v_nati_anni, v_sede, v_solo;
+        v_n := v_n + v_tot;
+      END IF;
+      IF v_n > 0 THEN
+        v_cnt := jsonb_set(v_cnt, ARRAY[fk.nome], to_jsonb(greatest(coalesce((v_cnt->>fk.nome)::integer, 0), v_n)));
+      END IF;
+    END LOOP;
+    SELECT coalesce(string_agg(j.key || '=' || j.value, ', ' ORDER BY j.key), '') INTO v_usi FROM jsonb_each_text(v_cnt) j;
     IF v_usi <> '' THEN
       RAISE EXCEPTION 'AZZERA_ANNI_NATI_USATI: % anni nati nel collaudo hanno ancora righe attaccate (%): si guardano a mano', cardinality(v_nati), v_usi;
     END IF;

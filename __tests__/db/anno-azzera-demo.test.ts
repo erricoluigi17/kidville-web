@@ -476,6 +476,31 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
     })
   })
 
+  it('un anno nato nel collaudo con una voce di pagamento, una presenza e una valutazione datate nel 2028/29 → AZZERA_ANNI_NATI_USATI con i conteggi (mai un 23503 grezzo)', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      await collaudo(true)
+      await ripristina(dal, stati)
+      // l'anno lo assegna da sé il database in base alla data: queste tre righe finiscono nel 2028/29, che il tick ha fatto nascere
+      await b.db.query(`INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza) VALUES ($1, $2, 'retta 2028', 300, DATE '2028-10-05')`, [AL.a, DEMO])
+      await b.db.query(`INSERT INTO public.presenze (alunno_id, scuola_id, section_id, data) VALUES ($1, $2, $3, DATE '2028-10-05')`, [AL.a, DEMO, sezioneVecchia])
+      await b.db.query(`INSERT INTO public.valutazioni (alunno_id, section_id, data_evento) VALUES ($1, $2, DATE '2028-10-05')`, [AL.a, sezioneVecchia])
+      const nato = await una<string>(b.db, `SELECT s.anno_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO])
+      for (const t of ['pagamenti', 'presenze', 'valutazioni']) {
+        expect(await conta(`SELECT 1 FROM public.${t} WHERE anno_id = $1`, [nato]), `${t} nel 2028/29`).toBe(1)
+      }
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_ANNI_NATI_USATI', dal)
+      await b.db.exec('SAVEPOINT leggi_messaggio')
+      const messaggio = await b.db.exec(compila({ sede: DEMO, foto: f.fotografia! })).then(() => '', (e: Error) => e.message)
+      await b.db.exec('ROLLBACK TO SAVEPOINT leggi_messaggio')
+      expect(messaggio).toContain('pagamenti=1')
+      expect(messaggio).toContain('presenze=1')
+      expect(messaggio).toContain('valutazioni=1')
+    })
+  })
+
   it('i conteggi dopo non tornano (un trigger rimette una sezione): AZZERA_CONTEGGI e tutto annullato', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

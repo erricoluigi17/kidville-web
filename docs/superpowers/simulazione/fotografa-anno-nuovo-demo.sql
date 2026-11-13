@@ -13,7 +13,7 @@
 -- L'ISTANTE in cui l'hai eseguita sta dentro la fotografia (`scattata_il`, versione 2): è la PARTENZA, e non devi annotarla né scriverla.
 -- Una fotografia della versione 1 (senza `scattata_il`) lo script la rifiuta con AZZERA_FOTOGRAFIA: si rifà.
 --
--- CHE COSA CONTIENE: le frequenze dell'anno corrente (uuid, stato, date, codice del «no»), lo stato e le «domande aperte» dell'anno nuovo, le righe di listino, di moduli richiesti e di posti autorizzati
+-- CHE COSA CONTIENE: le frequenze dell'anno corrente (uuid, stato, date, codice del «no»), le quattro date dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»), lo stato e le «domande aperte» dell'anno nuovo, le righe di listino, di moduli richiesti e di posti autorizzati
 -- (con i loro uuid, uguali a come sono ora), e i conteggi di partenza (frequenze, voci di pagamento, sezioni, domande). Nessun nome,
 -- nessun codice fiscale, nessun dato di un bambino: sono configurazione e numeri.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -22,7 +22,7 @@ WITH sede AS (
   -- ① DA COMPILARE · l'uuid della sede di Demo (sostituisci <DEMO>).
   SELECT '<DEMO>'::uuid AS id
 ), candidati AS (
-  SELECT a.id, a.anno_id, a.scuola_id, a.stato, a.domande_aperte, y.etichetta_breve
+  SELECT a.id, a.anno_id, a.scuola_id, a.stato, a.domande_aperte, a.inizio, a.fine, a.ultimo_giorno_aperto, a.prepara_successivo_dal, y.etichetta_breve
     FROM public.anni_sede a
     JOIN public.anni_scolastici y ON y.id = a.anno_id
    WHERE a.scuola_id = (SELECT id FROM sede)
@@ -41,6 +41,9 @@ SELECT
         'etichetta', c.etichetta_breve,
         'stato', c.stato,
         'domande_aperte', c.domande_aperte,
+        -- Le DATE dell'anno nuovo (confine d'inizio e di fine, ultimo giorno aperto, «prepara il successivo dal»): il collaudo può spostare un
+        -- confine con `sposta_confine_anno`; l'azzeramento le rimette com'erano.
+        'date', jsonb_build_object('inizio', c.inizio, 'fine', c.fine, 'ultimo_giorno_aperto', c.ultimo_giorno_aperto, 'prepara_successivo_dal', c.prepara_successivo_dal),
         'listino', (SELECT coalesce(jsonb_agg(to_jsonb(l) ORDER BY l.id), '[]'::jsonb) FROM public.listino_voci l WHERE l.anno_sede_id = c.id),
         'moduli',  (SELECT coalesce(jsonb_agg(to_jsonb(m) ORDER BY m.id), '[]'::jsonb) FROM public.moduli_richiesti m WHERE m.anno_sede_id = c.id),
         'posti',   (SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb) FROM public.posti_autorizzati p WHERE p.anno_sede_id = c.id),
@@ -49,6 +52,7 @@ SELECT
         'partenza', (SELECT jsonb_build_object(
             'etichetta', y.etichetta_breve,
             'stato', p.stato,
+            'date', jsonb_build_object('inizio', p.inizio, 'fine', p.fine, 'ultimo_giorno_aperto', p.ultimo_giorno_aperto, 'prepara_successivo_dal', p.prepara_successivo_dal),
             'frequenze', (SELECT coalesce(jsonb_agg(jsonb_build_object(
                                 'id', f.id, 'stato', f.stato, 'data_uscita', f.data_uscita,
                                 'non_rinnova_il', f.non_rinnova_il, 'non_rinnova_motivo', f.non_rinnova_motivo) ORDER BY f.id), '[]'::jsonb)

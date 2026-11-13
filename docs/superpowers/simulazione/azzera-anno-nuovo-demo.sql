@@ -135,6 +135,27 @@ BEGIN
 END
 $nipoti$;
 
+-- Le quattro date di un anno nella fotografia: un oggetto con `inizio`, `fine`, `ultimo_giorno_aperto`, `prepara_successivo_dal`, tutte
+-- date vere (AAAA-MM-GG), e nei limiti che le regole dell'anno impongono (fine dopo inizio; le due date di servizio dentro il periodo).
+CREATE FUNCTION pg_temp.azzera_date_ok(p jsonb) RETURNS boolean
+LANGUAGE plpgsql AS $date$
+DECLARE
+  k text;
+  v date;
+  v_i date; v_f date; v_u date; v_p date;
+BEGIN
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object' THEN RETURN false; END IF;
+  FOREACH k IN ARRAY ARRAY['inizio', 'fine', 'ultimo_giorno_aperto', 'prepara_successivo_dal'] LOOP
+    IF jsonb_typeof(p->k) IS DISTINCT FROM 'string' OR (p->>k) !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN RETURN false; END IF;
+    v := (p->>k)::date;
+  END LOOP;
+  v_i := (p->>'inizio')::date; v_f := (p->>'fine')::date; v_u := (p->>'ultimo_giorno_aperto')::date; v_p := (p->>'prepara_successivo_dal')::date;
+  RETURN v_f > v_i AND v_u BETWEEN v_i AND v_f AND v_p BETWEEN v_i AND v_f;
+EXCEPTION WHEN OTHERS THEN
+  RETURN false;
+END
+$date$;
+
 DO $azzera$
 DECLARE
   -- ① DA COMPILARE · la sede di Demo (comincia per `e2e00000`; altrimenti deve essere l'UNICA in `anno_regole.sedi_simulazione`). Sostituisci <DEMO> con il suo uuid.
@@ -218,6 +239,10 @@ BEGIN
                  WHERE jsonb_typeof(v_foto->'conteggi'->k) IS DISTINCT FROM 'number') THEN
     RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: la fotografia non ha la forma attesa (etichetta, stato, domande_aperte, listino, moduli, posti, conteggi)';
   END IF;
+  -- Le quattro date dell'anno nuovo (e, sotto, dell'anno di partenza): date vere, nel formato AAAA-MM-GG.
+  IF pg_temp.azzera_date_ok(v_foto->'date') IS NOT TRUE THEN
+    RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: le date dell''anno nuovo non hanno la forma attesa (inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal)';
+  END IF;
   v_etichetta := v_foto->>'etichetta';
   v_part := CASE WHEN jsonb_typeof(v_foto->'partenza') = 'object' THEN v_foto->'partenza' END;
   IF v_foto ? 'partenza' AND jsonb_typeof(v_foto->'partenza') NOT IN ('object', 'null') THEN
@@ -225,6 +250,7 @@ BEGIN
   END IF;
   IF v_part IS NOT NULL THEN
     IF jsonb_typeof(v_part->'etichetta') IS DISTINCT FROM 'string' OR (v_part->>'etichetta') !~ '^[0-9]{4}/[0-9]{2}$'
+       OR pg_temp.azzera_date_ok(v_part->'date') IS NOT TRUE
        OR jsonb_typeof(v_part->'frequenze') IS DISTINCT FROM 'array'
        OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e
                    WHERE jsonb_typeof(e) <> 'object' OR e->>'id' !~ '^[0-9a-f-]{36}$'
@@ -353,6 +379,20 @@ BEGIN
     GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   END IF;
   INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
+
+  -- 6b-bis · le DATE dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»): un confine spostato durante il collaudo
+  --          (`sposta_confine_anno`) torna dov'era. Un UNICO UPDATE per tutte le righe: i vincoli di continuità e di non sovrapposizione sono
+  --          differiti e si giudicano sul risultato finale, non a metà.
+  UPDATE public.anni_sede ys
+     SET inizio = (d.dt->>'inizio')::date, fine = (d.dt->>'fine')::date,
+         ultimo_giorno_aperto = (d.dt->>'ultimo_giorno_aperto')::date, prepara_successivo_dal = (d.dt->>'prepara_successivo_dal')::date
+    FROM (SELECT v_anno AS id, v_foto->'date' AS dt
+          UNION ALL SELECT v_par, v_part->'date' WHERE v_part IS NOT NULL) d
+   WHERE ys.id = d.id
+     AND (ys.inizio, ys.fine, ys.ultimo_giorno_aperto, ys.prepara_successivo_dal)
+         IS DISTINCT FROM ((d.dt->>'inizio')::date, (d.dt->>'fine')::date, (d.dt->>'ultimo_giorno_aperto')::date, (d.dt->>'prepara_successivo_dal')::date);
+  GET DIAGNOSTICS v_rimesse = ROW_COUNT;
+  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('date degli anni rimesse come nella fotografia (anni cambiati)', v_rimesse);
 
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
   INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
@@ -653,6 +693,7 @@ $azzera$;
 
 DROP FUNCTION pg_temp.azzera_blocca(text, text[], text);
 DROP FUNCTION pg_temp.azzera_blocca_nipoti(text, text, text, text[]);
+DROP FUNCTION pg_temp.azzera_date_ok(jsonb);
 
 COMMIT;
 

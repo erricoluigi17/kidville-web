@@ -779,6 +779,46 @@ describe('azzera-anno-nuovo-demo.sql · le tabelle di lavoro stanno solo nello s
   })
 })
 
+describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
+  const date = () => impronta(`SELECT id, inizio, fine, ultimo_giorno_aperto, prepara_successivo_dal FROM public.anni_sede WHERE id IN ($1, $2)`, [annoVecchio, annoNuovo])
+
+  it('un confine spostato durante il collaudo (e le due date di servizio) tornano com’erano, senza rompere la continuità', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const prima = await date()
+      // il collaudo sposta il confine fra i due anni (fine del 2026/27 e inizio del 2027/28) e tocca le due date di servizio
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine - 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      await b.db.query(`UPDATE public.anni_sede SET ultimo_giorno_aperto = fine WHERE id = $1`, [annoNuovo])
+      await b.db.query(`UPDATE public.anni_sede SET prepara_successivo_dal = inizio WHERE id = $1`, [annoVecchio])
+      expect(await date(), 'il collaudo ha davvero cambiato le date').not.toBe(prima)
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      await b.db.exec('SET CONSTRAINTS ALL IMMEDIATE') // i vincoli differiti (continuità, sovrapposizioni) si giudicano ORA, non al COMMIT che qui non c'è
+      expect(await date()).toBe(prima)
+      const voci = (risultati.at(-1)!.rows as { voce: string }[]).map((r) => r.voce)
+      expect(voci.some((v) => v.startsWith('date degli anni')), 'l’esito lo dice').toBe(true)
+    })
+  })
+
+  it('senza collaudo le date non si toccano; e una fotografia senza le date, o con una data che non lo è → AZZERA_FOTOGRAFIA', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const j = JSON.parse(f.fotografia!)
+      expect(Object.keys(j.date).sort(), 'le date dell’anno nuovo').toEqual(['fine', 'inizio', 'prepara_successivo_dal', 'ultimo_giorno_aperto'])
+      expect(Object.keys(j.partenza.date).sort(), 'e quelle dell’anno di partenza').toEqual(['fine', 'inizio', 'prepara_successivo_dal', 'ultimo_giorno_aperto'])
+      const prima = await date()
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      expect(await date()).toBe(prima)
+      const senzaDate = { ...j }
+      delete senzaDate.date
+      const senzaPartenza = { ...j, partenza: { ...j.partenza, date: undefined } }
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify(senzaDate) }), 'AZZERA_FOTOGRAFIA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify(senzaPartenza) }), 'AZZERA_FOTOGRAFIA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, date: { ...j.date, fine: 'ieri' } }) }), 'AZZERA_FOTOGRAFIA', dal)
+    })
+  })
+})
+
 describe('azzera-anno-nuovo-demo.sql · una richiesta sola, COMMIT compreso', () => {
   // ULTIMA prova del file: scrive davvero (COMMIT), quindi niente ROLLBACK a proteggere il banco dopo di lei.
   it('riesce con il file COM’È (BEGIN, funzione, DO, DROP, COMMIT in un invio) e la scrittura è definitiva', async () => {

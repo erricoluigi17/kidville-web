@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 
 import itPassaggio from '../../messages/it/annoPassaggio.json'
 import itShared from '../../messages/it/shared.json'
+import itSettings from '../../messages/it/adminSettings.json'
+import enSettings from '../../messages/en/adminSettings.json'
+import enPassaggio from '../../messages/en/annoPassaggio.json'
 
 // =============================================================================
 // PR 4.8 · compito 4.8.9 · LA PAGINA «PASSAGGIO D'ANNO».
@@ -430,6 +433,22 @@ describe('PassaggioClient · giro di correzione 1', () => {
     render(<PassaggioClient />)
     expect(await screen.findByText(itPassaggio.rimandoSelettore)).toBeTruthy()
     expect(screen.queryByRole('button', { name: itPassaggio.azioneCalcola })).toBeNull()
+  })
+
+  it('anno IN PREPARAZIONE (iscrizioni chiuse): non rimanda al selettore, dice che le iscrizioni vanno aperte', async () => {
+    s.passaggio = null
+    s.righe = []
+    h.anno = { effettivo: { annoSedeId: ANNO, attivo: false, stato: 'in_preparazione' } }
+    render(<PassaggioClient />)
+    expect(await screen.findByText(itPassaggio.rimandoApertura)).toBeTruthy()
+    expect(screen.queryByText(itPassaggio.rimandoSelettore)).toBeNull()
+    expect(screen.queryByRole('button', { name: itPassaggio.azioneCalcola })).toBeNull()
+  })
+
+  it('la frase di apertura nomina il PULSANTE da premere, come il cruscotto (it e en)', () => {
+    expect(itPassaggio.rimandoApertura).toContain(`«${itSettings.annoApriConferma}»`)
+    expect(enPassaggio.rimandoApertura).toContain(`“${enSettings.annoApriConferma}”`)
+    expect(enPassaggio.rimandoApertura).not.toMatch(/[«»]/)
   })
 
   it('S15 · la classe di PARTENZA viene dalla riga, non dalla scheda del bambino', async () => {

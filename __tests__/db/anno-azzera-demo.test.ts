@@ -370,7 +370,6 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       await b.db.exec(`
         UPDATE public.sections SET created_at = now() - interval '1 day' WHERE scuola_id = '${DEMO}';
         UPDATE public.anni_sede_stati SET dal = now() - interval '1 day' WHERE anno_sede_id = '${annoNuovo}';`)
-      const dal = await adesso()
       const f = await fotografa()
       expect(JSON.parse(f.fotografia!).stato).toBe('iscrizioni_aperte')
       // una riga «dopo» la partenza: il listino cambia e lo stato si sposta
@@ -383,7 +382,6 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
 
   it('una sede NON `e2e00000…` ma unica in `sedi_simulazione` è ammessa', async () => {
     await inRollback(b.db, async () => {
-      const dal = await adesso()
       const f = await fotografa(SEDE_SIM)
       expect(f.sede_di_prova).toBe(true)
       // righe nate DOPO la fotografia nella sede di simulazione (non `e2e00000…`) e, per confronto, nella sede di Demo e in una sede vera
@@ -622,7 +620,8 @@ describe('azzera-anno-nuovo-demo.sql · la partenza la dà la fotografia', () =>
       const j = JSON.parse(f.fotografia!)
       expect(j.versione, 'la fotografia è della versione 2').toBe(2)
       expect(typeof j.scattata_il).toBe('string')
-      const { scattata_il: _tolta, ...senza } = j
+      const senza = { ...j }
+      delete senza.scattata_il
       await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, versione: 1 }) }), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(compila({ sede: DEMO, foto: JSON.stringify(senza) }), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, scattata_il: 'ieri' }) }), 'AZZERA_FOTOGRAFIA', dal)
@@ -709,7 +708,6 @@ describe('azzera-anno-nuovo-demo.sql · le dipendenze di secondo livello (O4)', 
       // sections → materie → valutazioni (NO ACTION): togliere la sezione trascinerebbe la materia e farebbe fallire il DELETE con un 23503 grezzo.
       // mensa_class_menu_assignment.section_id è SET NULL: togliere la sezione scollegherebbe il menù senza dire niente.
       const f = await fotografa()
-      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
       const sez = async (nome: string) =>
         una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, $3, 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoNuovoId, nome])
       const materia = async (s: string, codice: string) =>

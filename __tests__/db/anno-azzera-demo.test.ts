@@ -865,6 +865,40 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
     })
   })
 
+  it('l’ingresso spostato nei giorni del confine ferma il controllo anche per una frequenza della fotografia (S-n5, O-n12)', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine + 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      await collaudo(true)
+      await ripristina(dal, stati)
+      // il collaudo sposta l'INGRESSO di una frequenza della fotografia nei giorni allungati: il 6i non lo rimette
+      const x = await frequenzaVecchia(AL.a)
+      await b.db.query(`UPDATE public.frequenze SET data_ingresso = (SELECT fine - 2 FROM public.anni_sede WHERE id = $1) WHERE id = $2`, [annoVecchio, x])
+      await b.db.exec('SAVEPOINT ing')
+      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1/)
+      await b.db.exec('ROLLBACK TO SAVEPOINT ing')
+      await b.db.exec('RELEASE SAVEPOINT ing')
+    })
+  })
+
+  it('una frequenza nata nel collaudo, legata con continua_da, con l’ingresso nei giorni allungati → AZZERA_CONFINE_CON_RIGHE con 1 (S-n5)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine + 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      await b.db.query(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $2, 'iscritto')`, [id(62), DEMO])
+      const nata = await frequenzaVecchia(id(62))
+      // una frequenza della fotografia punta a lei con continua_da: il 6a-bis la lascia, e il suo ingresso cade nei giorni allungati
+      await b.db.query(`UPDATE public.frequenze SET continua_da = $2 WHERE id = $1`, [await frequenzaVecchia(AL.b), nata])
+      await b.db.query(`UPDATE public.frequenze SET data_ingresso = (SELECT fine - 2 FROM public.anni_sede WHERE id = $1) WHERE id = $2`, [annoVecchio, nata])
+      await b.db.exec('SAVEPOINT ing2')
+      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1/)
+      await b.db.exec('ROLLBACK TO SAVEPOINT ing2')
+      await b.db.exec('RELEASE SAVEPOINT ing2')
+    })
+  })
+
   it('senza collaudo le date non si toccano; e una fotografia senza le date, o con una data che non lo è → AZZERA_FOTOGRAFIA', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

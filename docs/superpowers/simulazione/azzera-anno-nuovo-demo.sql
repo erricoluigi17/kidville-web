@@ -591,13 +591,15 @@ BEGIN
         SELECT greatest(v_y.cur_i, v_y.foto_f + 1), v_y.cur_f WHERE v_y.cur_f > v_y.foto_f
       LOOP
         IF v_tab.tabella = 'frequenze' THEN
-          -- stesso criterio della funzione di produzione (anno, sede, ingresso O uscita nei giorni), meno le frequenze della FOTOGRAFIA: il 6i le
-          -- riscrive com'erano (un passaggio confermato dopo aver allungato l'anno le ha fatte uscire proprio in quei giorni) e il loro trigger
-          -- le rivalida sul periodo rimesso. Contano solo le frequenze NATE o CAMBIATE nel collaudo: quelle si guardano a mano.
+          -- stesso criterio della funzione di produzione (anno, sede, ingresso O uscita nei giorni), con UNA eccezione: la data d'USCITA delle frequenze
+          -- della FOTOGRAFIA non conta, perché il 6i la riscrive com'era (un passaggio confermato dopo aver allungato l'anno le ha fatte uscire proprio in
+          -- quei giorni). La data d'INGRESSO conta sempre, anche per quelle della fotografia: il 6i non la rimette, quindi una frequenza il cui ingresso
+          -- il collaudo ha spostato nei giorni persi resterebbe fuori dal suo anno. Quelle si guardano a mano: si rimette la data, non si cancella la riga.
           SELECT count(*) INTO v_n FROM public.frequenze fx
            WHERE fx.anno_sede_id = v_y.anno_sede AND fx.scuola_id = v_sede
-             AND (fx.data_ingresso BETWEEN v_g.dal AND v_g.al OR fx.data_uscita BETWEEN v_g.dal AND v_g.al)
-             AND fx.id NOT IN (SELECT (fz->>'id')::uuid FROM jsonb_array_elements(coalesce(v_part->'frequenze', '[]'::jsonb)) fz);
+             AND (fx.data_ingresso BETWEEN v_g.dal AND v_g.al
+                  OR (fx.data_uscita BETWEEN v_g.dal AND v_g.al
+                      AND fx.id NOT IN (SELECT (fz->>'id')::uuid FROM jsonb_array_elements(coalesce(v_part->'frequenze', '[]'::jsonb)) fz)));
         ELSE
           v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, v_g.dal, v_g.al);
         END IF;

@@ -1,4 +1,10 @@
-## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 4: area di tocco dei pulsanti IT/EN della lingua — 2026-11-13 (ramo `claude/anno-agente1-lotto4`, dalla testa del lotto 3)
+## 🔎 Changelog — Azzeramento della Demo, passo 7 e prima prova a secco in produzione — 2026-11-13 (ramo `feat/anno-azzera-passo7`)
+
+- **La prova a secco è stata eseguita dall'editor di Supabase sulla Demo**, con la fotografia v2 appena scattata, ed è finita in `AZZERA_PROVA_A_SECCO` come deve: tutte le voci a 0 tranne «stato e domande aperte dell'anno nuovo · tolte 0 · rimesse 1», mentre lo stato nel database era già identico alla fotografia. Il ripristino e l'azzeramento veri **non** sono ancora stati eseguiti.
+- **Difetto.** L'`UPDATE` del passo 7 non aveva il filtro `IS DISTINCT FROM` che hanno i passi 6h e 6i: contava 1 riga rimessa anche con niente da rimettere (e il trigger di cronologia poteva scrivere una riga a vuoto). Correzione: `AND (a.stato, a.domande_aperte) IS DISTINCT FROM (…)`.
+- **Test:** prova a secco subito dopo la fotografia, senza collaudo: la voce dice «rimesse 0» (visto rosso prima, verde dopo; 46 prove nel file più 7 del lock). L'intestazione dello script dice che la prova è stata eseguita. Nessuna migrazione, nessun log da aggiungere (script SQL manuale).
+
+## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 4: area di tocco dei pulsanti IT/EN della lingua — 2026-11-13 (PR #312 `068fe9ac`, in produzione il 13/11/2026)
 
 - **Difetto.** I pulsanti «Italiano»/«English» del `LanguageSwitcher` (login, profilo genitore, nuova password, cancellazione account) erano alti 24 px: sotto i 44 px di area di tocco minima del progetto (misurato in produzione, Chrome non autenticato, 390 e 320 px).
 - **Correzione.** Ogni pulsante ha un pseudo-elemento alto 44 px fissi (`before:h-11`), centrato in verticale e fuori dal flusso: l'area di tocco non dipende dal font e la pill a vista non cresce (gruppo 32 px, pulsanti 24 px, identici a prima).
@@ -9,13 +15,13 @@
 - **568×320 (caso in più, misurato a parte).** Il riquadro del titolo (x 122–446) tocca l'area di tocco della pill (da x 421), ma il testo del titolo sta a x 215–353: nessuna copertura.
 - **Test:** `LanguageSwitcher-area-di-tocco.test.tsx` (il contratto di classi: visto rosso prima; jsdom non calcola il layout, la misura vera sta sopra). Nessun log da aggiungere. Nessuna migrazione.
 
-## 🔎 Changelog — Collaudo dell'anno scolastico, «Passaggio d'anno» su un anno in preparazione — 2026-11-13 (ramo `claude/anno-agente1-passaggio-testo`)
+## 🔎 Changelog — Collaudo dell'anno scolastico, «Passaggio d'anno» su un anno in preparazione — 2026-11-13 (PR #312 `068fe9ac`, in produzione il 13/11/2026)
 
 - **Etichetta falsa trovata sull'iPhone.** Sul 2027/28 «in preparazione» (iscrizioni non ancora aperte) la pagina «Passaggio d'anno» diceva «scegli quell'anno dal selettore in alto», ma quell'anno era già scelto: non diceva perché non c'era il pulsante per calcolare l'anteprima.
 - **Correzione.** `PassaggioClient` distingue l'anno in corso (resta il rimando al selettore) dall'anno `in_preparazione`, per cui mostra la nuova frase `rimandoApertura` (it/en): le iscrizioni non sono aperte, si aprono da Impostazioni → «Anno scolastico» → «Sì, apri le iscrizioni» (il pulsante, non il titolo della sezione); la stessa dicitura corretta vale per `annoCruscotto.annoNonAperto`, it/en, e in en le virgolette sono “” come nel resto del file. Non nomina un altro anno con le iscrizioni aperte: servirebbero gli stati degli anni, che la pagina non ha.
 - **Test:** `passaggio-client.test.tsx` (anno in preparazione: niente rimando al selettore, niente pulsante «Calcola», frase nuova; visto rosso prima). Nessun log da aggiungere (testo). Nessuna migrazione.
 
-## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 3: «Esci» chiede conferma — 2026-11-13 (ramo `claude/anno-agente1-lotto3`, sopra il lotto 2)
+## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 3: «Esci» chiede conferma — 2026-11-13 (PR #312 `068fe9ac`, in produzione il 13/11/2026)
 
 - **E3 — un tocco sbagliato su «Esci» faceva uscire da tutta l'app.** Nel collaudo sull'iPhone un tocco caduto mentre il foglio Menu scorreva per inerzia ha premuto «Esci»: `doLogout` → `auth.signOut()` (scope globale) ha cancellato le sessioni su tutti i dispositivi (prova: «Uscita…» era sullo schermo, `auth.sessions` a 0 righe, nessun 401/403 nei log). Non era un difetto di Conferme.
 - **Correzione.** «Esci» non esce più al primo tocco: apre `ConfermaUscita` («Vuoi uscire da Kidville su questo dispositivo?», «Annulla» predefinito e primo controllo, «Esci»; Esc o tocco fuori chiudono senza uscire; aree da 44px). Vale per `LogoutMenuButton` (drawer segreteria, sidebar, menu docente/genitore), `UserMenu` (barra segreteria) e il profilo del genitore. In più «Esci» è staccato dalle altre voci (spazio e filetto sopra) nel foglio della segreteria e nel menu docente/genitore.
@@ -28,14 +34,14 @@
 
 Nessun log da aggiungere (dialogo). Nessuna migrazione.
 
-## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 2 — 2026-11-13 (ramo `claude/anno-agente1-lotto2`, sopra il lotto 1)
+## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 2 — 2026-11-13 (PR #310 `cba70069`, in produzione il 13/11/2026)
 
 - **D1 — l'avviso fisso dell'anno non in corso occupava ~155 pt su 844 a 390 di larghezza.** Sotto i 640px diventa compatto, su due righe: sopra «Stai guardando il 2027/28 (in preparazione)» con «Perché?», sotto «Perché?» e il pulsante «Torna all'anno in corso», entrambi alti almeno 44px per costruzione (`min-h-[44px]`, figli diretti dell'avviso, sulla stessa riga o su righe diverse: le aree non si sovrappongono mai; niente estensioni `after:-inset` che dipendono dal font). Il testo ha `basis-full` sotto i 640px, perché con `flex-1` da solo restavano ~106px accanto al pulsante a 390 e ~36px a 320 (difetto trovato in revisione). «Perché?» apre un testo che dice chiaro che ciò che si salva da lì (nuove classi, votazioni, elenchi caricati) va nell'anno guardato e non in quello in corso (`annoAvvisoPercheTesto`, it/en). Da 640px in su resta l'avviso intero di sempre. Misurato in Chrome con il CSS compilato e con Maven Pro e Barlow Condensed veri: 86 pt a 390 e a 320 a «Perché?» chiuso (148 pt a 390 e 168 pt a 320 aperto), 65 pt a 1280, «Perché?» 70x44 e «Torna» 168x44 affiancati, nessuno scorrimento orizzontale. Test: contratto di classi in `AnnoNotice.test.tsx` (base piena, niente nowrap/truncate), che NON vede il layout reale: quella è la misura in Chrome.
 - **Schede di Impostazioni in una riga che scorre (telefono): area di tocco 36px → 44px** (`min-h-[44px]`), il dito ne sbagliava una vicina. Lock: `__tests__/architecture/impostazioni-schede-area-di-tocco.test.ts`.
 
 Nessun log da aggiungere (solo interfaccia). Nessuna migrazione.
 
-## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 1 — 2026-11-13 (ramo `claude/anno-agente1-b963c0`, sopra `631c9fac`)
+## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 1 — 2026-11-13 (PR #309 `1700af15`, in produzione il 13/11/2026)
 
 Primo giro in sola lettura sulla Demo (Chrome 1280 e 390, iPhone 16e), due difetti corretti:
 
@@ -147,7 +153,7 @@ Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
 
 **Consegne alla 4.9.** Il lock `anni-tick-non-fa-il-passaggio` e la guardia della 3-B sono della 4.9 (la 4.8 non tocca `anni_tick`, così il lock resta verde); il testo del 403 «anno passato» per `in_chiusura` lo riprende la 4.9; in `anno_invarianti()` la 4.9 riparte dal corpo con la `15` e la `15-bis` (il suo `16` resta suo). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-8-difetti-secondari.md`.
 
-## 🧹 Changelog — Anno scolastico, PR 4.9-B: pulizia dopo il merge — 2026-11-13
+## 🧹 Changelog — Anno scolastico, PR 4.9-B: pulizia dopo il merge — 2026-11-13 (PR #311 `d92fa2d8`, in produzione il 13/11/2026)
 
 Senza migrazioni. PRD della 4.9 a ✅ (#308, `631c9fac`), fotografia delle migrazioni rigenerata dalla produzione (277), `MIGRAZIONI_ATTESE_AL_MERGE` svuotata, e porta dentro lo strumento di collaudo descritto qui sotto (azzeramento dell'anno nuovo della Demo).
 

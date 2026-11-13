@@ -1030,6 +1030,16 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     })
   })
 
+  it('manuale e PRD: la fotografia vecchia (senza data d’ingresso) si rifà PRIMA dei collaudi che scrivono (O-r5-2); il ROLLBACK chiude il paragrafo delle date (O-r5-3)', () => {
+    const manuale = fs.readFileSync(path.join(DIR, 'anno-intero-demo.md'), 'utf8')
+    const prd = fs.readFileSync(path.join(DIR, '..', '..', '..', 'PRD REGISTRO ELETTRONICO.md'), 'utf8')
+    expect(manuale).toMatch(/fotografia[^.]*senza `data_ingresso`[^.]*si rifà[^.]*prima dei collaudi che scrivono/)
+    expect(prd).toMatch(/fotografia[^.]*senza `data_ingresso`[^.]*si rifà[^.]*prima dei collaudi che scrivono/)
+    const date = manuale.slice(manuale.indexOf('**Le date degli anni.**'), manuale.indexOf('**Quello che nasce accogliendo'))
+    expect(date.indexOf('Per le **frequenze**'), 'il criterio delle frequenze viene prima').toBeGreaterThan(-1)
+    expect(date.lastIndexOf('`ROLLBACK;` da solo'), 'il ROLLBACK chiude il paragrafo').toBeGreaterThan(date.indexOf('Per le **frequenze**'))
+  })
+
   it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

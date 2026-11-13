@@ -399,6 +399,8 @@ BEGIN
      WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
   PERFORM pg_temp.azzera_blocca_nipoti('pagamenti', 'pagamenti_quote', 'pagamento_id', ARRAY[]::text[]);
+  -- Il blocco dei nipoti può aver fermato una figlia: la madre che la ha come figlia resta con lei. Si ripete il giro madre/figlia.
+  PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
   DELETE FROM public.pagamenti g WHERE g.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND k.bloccata;

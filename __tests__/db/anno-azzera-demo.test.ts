@@ -739,6 +739,24 @@ describe('azzera-anno-nuovo-demo.sql · le dipendenze di secondo livello (O4)', 
     })
   })
 
+  it('una voce figlia bloccata solo dal nipote (incasso sulla quota) blocca anche la madre: nessun AZZERA_CONTEGGI (O-n1)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const voce = async (madre: string | null) =>
+        una<string>(b.db, `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id, parent_payment_id) VALUES ($1, $2, 'voce', 100, DATE '2027-10-05', $3, $4) RETURNING id`, [AL.a, DEMO, annoNuovoId, madre])
+      const madre = await voce(null)
+      const figlia = await voce(madre)
+      const quota = await una<string>(b.db, `INSERT INTO public.pagamenti_quote (pagamento_id, adult_id, importo) VALUES ($1, $2, 100) RETURNING id`, [figlia, id(96)])
+      await b.db.query(`INSERT INTO public.incassi (quota_id, importo) VALUES ($1, 100)`, [quota])
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      const voci = (risultati.at(-1)!.rows as { voce: string }[]).map((r) => r.voce)
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [figlia]), 'la figlia resta').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [madre]), 'e con lei la madre').toBe(1)
+      expect(voci).toContain(`lasciata · pagamenti · ${madre}`)
+      expect(voci).toContain(`lasciata · pagamenti · ${figlia}`)
+    })
+  })
+
   it('una voce di pagamento con una quota a cui punta un incasso resta (elencata): l’incasso non perde il legame in silenzio', async () => {
     await inRollback(b.db, async () => {
       // pagamenti → pagamenti_quote (cascade) → incassi.quota_id (SET NULL): togliere la voce lascerebbe l'incasso senza quota, senza dirlo.

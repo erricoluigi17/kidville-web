@@ -289,6 +289,13 @@ export function useDiaryDay(
      */
     const tipoAperto = useRef<DiaryEventType | null>(null);
     const [showSavedToast, setShowSavedToast] = useState(false);
+    // Il timer che chiude il toast sta in un ref: un secondo salvataggio annulla quello del primo (il
+    // toast nuovo non si chiude in anticipo) e lo smontaggio lo annulla (niente `setState` su un
+    // componente morto).
+    const timerToastSalvato = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (timerToastSalvato.current !== null) clearTimeout(timerToastSalvato.current);
+    }, []);
     /** Cosa dice il toast: quanti salvati e quanti orari tolti nell'ultimo salvataggio. */
     const [esitoSalvataggio, setEsitoSalvataggio] = useState<{ salvati: number; tolti: number; nanna: boolean }>({ salvati: 0, tolti: 0, nanna: true });
     const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -1414,7 +1421,11 @@ export function useDiaryDay(
                 setSegniTolti(0);
                 setEsitoSalvataggio({ salvati, tolti: tolti.length, nanna: selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine' });
                 setShowSavedToast(true);
-                setTimeout(() => setShowSavedToast(false), 2500);
+                if (timerToastSalvato.current !== null) clearTimeout(timerToastSalvato.current);
+                timerToastSalvato.current = setTimeout(() => {
+                    timerToastSalvato.current = null;
+                    setShowSavedToast(false);
+                }, 2500);
                 opts?.onSaved?.();
             }
         } catch (err) {

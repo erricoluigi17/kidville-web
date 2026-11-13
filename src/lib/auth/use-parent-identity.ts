@@ -270,7 +270,7 @@ const lettiAlle = new Map<string, number>();
 export function useRipresaApp(scadi: () => void = scadiElencoFigli): number {
   const [ripresa, setRipresa] = useState(0);
   const scadiRef = useRef(scadi);
-  scadiRef.current = scadi;
+  useEffect(() => { scadiRef.current = scadi; });
   useEffect(() => osservaVisibilita((c) => {
     if (!c.ripresa) return;
     scadiRef.current();

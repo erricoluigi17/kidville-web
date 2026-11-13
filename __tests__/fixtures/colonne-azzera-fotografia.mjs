@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const TABELLE = [
-    'alunni', 'anni_scolastici', 'anni_sede', 'anni_sede_stati', 'anno_regole', 'crm_bambini', 'crm_schede', 'enrollment_submissions',
+    'alunni', 'anni_scolastici', 'anni_sede', 'anni_sede_stati', 'anno_regole', 'anno_tabelle', 'crm_bambini', 'crm_schede', 'enrollment_submissions',
     'frequenze', 'frequenze_moduli', 'incassi', 'iscrizioni_decisioni', 'iscrizioni_inviti_credenziali', 'legame_genitori_alunni',
     'listino_voci', 'materie', 'mensa_class_menu_assignment', 'moduli_richiesti', 'pagamenti', 'pagamenti_quote', 'parents',
     'passaggi_anno', 'passaggi_anno_righe', 'posti_autorizzati', 'registro_orario', 'scrutinio_giudizi', 'sections', 'student_parents',

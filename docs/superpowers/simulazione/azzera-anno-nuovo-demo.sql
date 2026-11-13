@@ -29,7 +29,8 @@
 -- │  PRIMA della partenza resta. E rimette lo stato dell'anno nuovo, le «domande aperte», il listino, i     │
 -- │  moduli richiesti e i posti autorizzati, riga per riga (con gli stessi uuid), e le QUATTRO DATE │
 -- │  dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»): un confine    │
--- │  spostato nel collaudo con `sposta_confine_anno` torna dov'era.                                │
+-- │  spostato nel collaudo con `sposta_confine_anno` torna dov'era (se non c'è nei giorni spostati    │
+-- │  qualcosa di nato dopo: altrimenti si ferma con AZZERA_CONFINE_CON_RIGHE).                    │
 -- │                                                                                                │
 -- │  Una sezione o una voce a cui è attaccato qualcosa anche al SECONDO livello (una valutazione    │
 -- │  sulla materia, un incasso sulla quota, il menù della mensa) RESTA e si elenca: toglierla       │
@@ -67,6 +68,7 @@
 --                                 per tabella; non si tocca niente;
 --   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
 --   · AZZERA_PROVA_A_SECCO       l'interruttore c_prova_a_secco è acceso (per difetto): nel messaggio c'è il riassunto, e non si scrive niente;
+--   · AZZERA_CONFINE_CON_RIGHE    rimettere le date dei due anni lascerebbe fuori dal loro anno righe nate nel collaudo nei giorni di un confine spostato: si ferma, con i conteggi;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è della versione 2 con `scattata_il` (si rifà), non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
@@ -206,6 +208,8 @@ DECLARE
   fk            record;
   v_part        jsonb;      -- l'anno di partenza (corrente) della fotografia, con le sue frequenze
   v_par         uuid;       -- anni_sede.id dell'anno di partenza
+  v_y           record;     -- un anno di cui si rimettono le date
+  v_tab         record;     -- una tabella del registro dell'anno
   v_msg         text;       -- il riassunto della prova a secco
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
@@ -384,34 +388,6 @@ BEGIN
     INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('frequenze nate dopo la partenza nell''anno di partenza (lasciate: con legami)', v_tolte, v_lasciate);
   END IF;
 
-  -- 6b · le frequenze dell'anno di PARTENZA com'erano nella fotografia: stato, data di uscita e «no» (il passaggio confermato fa uscire chi non
-  --      ha risposto e chi ha detto «no»; un «no» registrato PRIMA della partenza resta). L'anno è di nuovo `corrente`, e lo specchio verso la
-  --      scheda dell'alunno riallinea `alunni`.
-  v_rimesse := 0;
-  IF v_part IS NOT NULL THEN
-    UPDATE public.frequenze f
-       SET stato = x.stato, data_uscita = x.data_uscita, non_rinnova_il = x.non_rinnova_il, non_rinnova_motivo = x.non_rinnova_motivo
-      FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
-     WHERE f.id = x.id AND f.anno_sede_id = v_par
-       AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
-    GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  END IF;
-  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
-
-  -- 6b-bis · le DATE dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»): un confine spostato durante il collaudo
-  --          (`sposta_confine_anno`) torna dov'era. Un UNICO UPDATE per tutte le righe: i vincoli di continuità e di non sovrapposizione sono
-  --          differiti e si giudicano sul risultato finale, non a metà.
-  UPDATE public.anni_sede ys
-     SET inizio = (d.dt->>'inizio')::date, fine = (d.dt->>'fine')::date,
-         ultimo_giorno_aperto = (d.dt->>'ultimo_giorno_aperto')::date, prepara_successivo_dal = (d.dt->>'prepara_successivo_dal')::date
-    FROM (SELECT v_anno AS id, v_foto->'date' AS dt
-          UNION ALL SELECT v_par, v_part->'date' WHERE v_part IS NOT NULL) d
-   WHERE ys.id = d.id
-     AND (ys.inizio, ys.fine, ys.ultimo_giorno_aperto, ys.prepara_successivo_dal)
-         IS DISTINCT FROM ((d.dt->>'inizio')::date, (d.dt->>'fine')::date, (d.dt->>'ultimo_giorno_aperto')::date, (d.dt->>'prepara_successivo_dal')::date);
-  GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('date degli anni rimesse come nella fotografia (anni cambiati)', v_rimesse);
-
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
   INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
     SELECT 'pagamenti', g.id,
@@ -579,6 +555,62 @@ BEGIN
     GET DIAGNOSTICS v_lasciate = ROW_COUNT;
     INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('righe globali degli anni nati (lasciate: usate da altre sedi)', v_tolte, v_lasciate);
   END IF;
+
+  -- 6h · le DATE dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»): un confine spostato durante il collaudo
+  --      (`sposta_confine_anno`) torna dov'era. Si fa DOPO le cancellazioni (restano solo le righe che non se ne vanno) e prima di rimettere le
+  --      frequenze (la loro data di uscita si valida sul periodo dell'anno). `sposta_confine_anno` rifiuta lo spostamento se nei giorni che
+  --      cambiano anno ci sono righe già assegnate all'anno che li perde (CONFINE_CON_RIGHE): un UPDATE diretto non ha quel controllo, quindi lo
+  --      rifà questo blocco, con le stesse tabelle del registro. Righe nate DOPO lo spostamento nei giorni spostati: si fermano qui.
+  v_cnt := '{}'::jsonb;
+  FOR v_y IN
+    SELECT ys.anno_id AS anno_id, ys.inizio AS cur_i, ys.fine AS cur_f, (d.dt->>'inizio')::date AS foto_i, (d.dt->>'fine')::date AS foto_f
+      FROM public.anni_sede ys
+      JOIN (SELECT v_anno AS id, v_foto->'date' AS dt UNION ALL SELECT v_par, v_part->'date' WHERE v_part IS NOT NULL) d ON d.id = ys.id
+  LOOP
+    FOR v_tab IN
+      SELECT atb.tabella FROM public.anno_tabelle atb
+       WHERE atb.modo = 'data' OR (atb.modo = 'dichiarato' AND (atb.colonna_data IS NOT NULL OR atb.tabella = 'frequenze'))
+       ORDER BY atb.tabella
+    LOOP
+      -- i giorni che l'anno PERDE: prima del nuovo inizio e/o dopo la nuova fine
+      IF v_y.cur_i < v_y.foto_i THEN
+        v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, v_y.cur_i, least(v_y.cur_f, v_y.foto_i - 1));
+        IF v_n > 0 THEN v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n)); END IF;
+      END IF;
+      IF v_y.cur_f > v_y.foto_f THEN
+        v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, greatest(v_y.cur_i, v_y.foto_f + 1), v_y.cur_f);
+        IF v_n > 0 THEN v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n)); END IF;
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF v_cnt <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'AZZERA_CONFINE_CON_RIGHE: nei giorni che tornerebbero all''altro anno ci sono righe già assegnate all''anno che li perde (tabella → righe): %. Si guardano a mano (sono dati del collaudo datati in quei giorni), poi si rilancia', v_cnt::text;
+  END IF;
+  -- Un UNICO UPDATE per tutte le righe: i vincoli di continuità e di non sovrapposizione sono differiti e si giudicano sul risultato finale.
+  UPDATE public.anni_sede ys
+     SET inizio = (d.dt->>'inizio')::date, fine = (d.dt->>'fine')::date,
+         ultimo_giorno_aperto = (d.dt->>'ultimo_giorno_aperto')::date, prepara_successivo_dal = (d.dt->>'prepara_successivo_dal')::date
+    FROM (SELECT v_anno AS id, v_foto->'date' AS dt
+          UNION ALL SELECT v_par, v_part->'date' WHERE v_part IS NOT NULL) d
+   WHERE ys.id = d.id
+     AND (ys.inizio, ys.fine, ys.ultimo_giorno_aperto, ys.prepara_successivo_dal)
+         IS DISTINCT FROM ((d.dt->>'inizio')::date, (d.dt->>'fine')::date, (d.dt->>'ultimo_giorno_aperto')::date, (d.dt->>'prepara_successivo_dal')::date);
+  GET DIAGNOSTICS v_rimesse = ROW_COUNT;
+  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('date degli anni rimesse come nella fotografia (anni cambiati)', v_rimesse);
+
+  -- 6i · le frequenze dell'anno di PARTENZA com'erano nella fotografia: stato, data di uscita e «no» (il passaggio confermato fa uscire chi non
+  --      ha risposto e chi ha detto «no»; un «no» registrato PRIMA della partenza resta). L'anno è di nuovo `corrente`, e lo specchio verso la
+  --      scheda dell'alunno riallinea `alunni`.
+  v_rimesse := 0;
+  IF v_part IS NOT NULL THEN
+    UPDATE public.frequenze f
+       SET stato = x.stato, data_uscita = x.data_uscita, non_rinnova_il = x.non_rinnova_il, non_rinnova_motivo = x.non_rinnova_motivo
+      FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
+     WHERE f.id = x.id AND f.anno_sede_id = v_par
+       AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
+    GET DIAGNOSTICS v_rimesse = ROW_COUNT;
+  END IF;
+  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
 
   -- ── 7 · LO STATO dell'anno nuovo, come nella fotografia; la cronologia degli stati scritta dopo la partenza va via ──
   UPDATE public.anni_sede a SET stato = v_foto->>'stato', domande_aperte = (v_foto->>'domande_aperte')::boolean

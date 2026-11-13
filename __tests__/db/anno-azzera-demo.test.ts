@@ -801,6 +801,23 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
     })
   })
 
+  it('una riga nata nei giorni spostati dal collaudo blocca il ripristino delle date: AZZERA_CONFINE_CON_RIGHE, e non cambia niente (S-n1)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      // il collaudo accorcia il 2026/27: gli ultimi giorni passano al 2027/28, e la Demo ci scrive una presenza (assegnata al 2027/28)
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine - 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      const giorno = await una<string>(b.db, `SELECT (inizio + 1)::text FROM public.anni_sede WHERE id = $1`, [annoNuovo])
+      const sezNuova = await una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Del confine', 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoNuovoId])
+      await b.db.query(`INSERT INTO public.presenze (alunno_id, scuola_id, section_id, data) VALUES ($1, $2, $3, $4::date)`, [AL.a, DEMO, sezNuova, giorno])
+      const finePrima = await date()
+      await b.db.exec('SAVEPOINT conf')
+      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*presenze/)
+      await b.db.exec('ROLLBACK TO SAVEPOINT conf')
+      await b.db.exec('RELEASE SAVEPOINT conf')
+      expect(await date(), 'le date non sono state toccate').toBe(finePrima)
+    })
+  })
+
   it('senza collaudo le date non si toccano; e una fotografia senza le date, o con una data che non lo è → AZZERA_FOTOGRAFIA', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

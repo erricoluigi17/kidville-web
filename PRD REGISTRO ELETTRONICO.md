@@ -1,7 +1,7 @@
 ## 🔎 Changelog — Collaudo dell'anno scolastico, «Passaggio d'anno» su un anno in preparazione — 2026-11-13 (ramo `claude/anno-agente1-passaggio-testo`)
 
 - **Etichetta falsa trovata sull'iPhone.** Sul 2027/28 «in preparazione» (iscrizioni non ancora aperte) la pagina «Passaggio d'anno» diceva «scegli quell'anno dal selettore in alto», ma quell'anno era già scelto: non diceva perché non c'era il pulsante per calcolare l'anteprima.
-- **Correzione.** `PassaggioClient` distingue l'anno in corso (resta il rimando al selettore) dall'anno `in_preparazione`, per cui mostra la nuova frase `rimandoApertura` (it/en): le iscrizioni non sono aperte, si aprono da Impostazioni → «Anno scolastico» → «Apri le iscrizioni».
+- **Correzione.** `PassaggioClient` distingue l'anno in corso (resta il rimando al selettore) dall'anno `in_preparazione`, per cui mostra la nuova frase `rimandoApertura` (it/en): le iscrizioni non sono aperte, si aprono da Impostazioni → «Anno scolastico» → «Sì, apri le iscrizioni» (il pulsante, non il titolo della sezione); la stessa dicitura corretta vale per `annoCruscotto.annoNonAperto`, it/en, e in en le virgolette sono “” come nel resto del file. Non nomina un altro anno con le iscrizioni aperte: servirebbero gli stati degli anni, che la pagina non ha.
 - **Test:** `passaggio-client.test.tsx` (anno in preparazione: niente rimando al selettore, niente pulsante «Calcola», frase nuova; visto rosso prima). Nessun log da aggiungere (testo). Nessuna migrazione.
 
 ## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 3: «Esci» chiede conferma — 2026-11-13 (ramo `claude/anno-agente1-lotto3`, sopra il lotto 2)

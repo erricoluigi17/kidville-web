@@ -6,6 +6,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 import itCruscotto from '../../messages/it/annoCruscotto.json'
 import enCruscotto from '../../messages/en/annoCruscotto.json'
 import enSettings from '../../messages/en/adminSettings.json'
+import itSettings from '../../messages/it/adminSettings.json'
 import itConfermeCat from '../../messages/it/annoConferme.json'
 import enConfermeCat from '../../messages/en/annoConferme.json'
 
@@ -291,7 +292,9 @@ describe('CruscottoClient — più sedi attive (revisione finale, B2)', () => {
     expect(itCruscotto.annoNonAperto).toMatch(/Impostazioni/)
     expect(enCruscotto.annoNonAperto).toMatch(/Settings/)
     // N6: un nome solo per il comando, quello di `adminSettings.json`
-    expect(enCruscotto.annoNonAperto).toContain(`“${enSettings.annoIscrizioniTitolo}”`)
+    // (rilettura del 13/11) si nomina il PULSANTE da premere («Sì, apri le iscrizioni»), non il titolo della sezione
+    expect(enCruscotto.annoNonAperto).toContain(`“${enSettings.annoApriConferma}”`)
+    expect(itCruscotto.annoNonAperto).toContain(`«${itSettings.annoApriConferma}»`)
     // N5: la nota del confronto non promette un accordo con «Hanno confermato» che non vale
     expect(itCruscotto.confrontoNota).not.toMatch(/Hanno confermato/)
     expect(enCruscotto.confrontoNota).not.toMatch(/Confirmed/)

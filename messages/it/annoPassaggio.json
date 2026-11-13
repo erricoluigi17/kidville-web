@@ -122,7 +122,7 @@
   "azioneScarta": "Scarta l’anteprima",
   "esitoScartata": "L’anteprima è scartata: se serve, se ne calcola un’altra.",
   "rimandoSelettore": "Il passaggio si prepara sull’anno con le iscrizioni aperte: scegli quell’anno dal selettore in alto.",
-  "rimandoApertura": "Le iscrizioni di questo anno non sono ancora aperte: il passaggio si calcola quando lo sono. Si aprono da Impostazioni, nella voce «Anno scolastico», con «Apri le iscrizioni».",
+  "rimandoApertura": "Le iscrizioni di questo anno non sono ancora aperte: il passaggio si calcola quando lo sono. Si aprono da Impostazioni, nella voce «Anno scolastico», con «Sì, apri le iscrizioni».",
   "correggiContinuaQui": "Continua in questa classe",
   "esitoDocenteRestaAssegnato": "Tolto dall’elenco del passaggio, ma resta assegnato alla classe nuova: l’assegnazione è sulla scheda della classe e si cambia da lì.",
   "dialogoGiaCominciato": "L’anno nuovo è già cominciato: le famiglie dei bambini che continuano vedono la classe nuova subito, e chi esce perde subito l’accesso.",

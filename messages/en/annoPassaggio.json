@@ -122,7 +122,7 @@
   "azioneScarta": "Discard the preview",
   "esitoScartata": "The preview is discarded: calculate another one if needed.",
   "rimandoSelettore": "The changeover is prepared on the year with open enrolment: choose that year from the selector above.",
-  "rimandoApertura": "Enrolment for this year is not open yet: the changeover can be calculated once it is. Open it from Settings, under «School year», with «Open enrolment».",
+  "rimandoApertura": "Enrolment for this year is not open yet: the changeover can be calculated once it is. Open it from Settings, under “School year”, with “Yes, open enrolment”.",
   "correggiContinuaQui": "Continues in this class",
   "esitoDocenteRestaAssegnato": "Removed from the transition list, but still assigned to the new class: the assignment is on the class page and is changed from there.",
   "dialogoGiaCominciato": "The new year has already started: families of children who continue see the new class right away, and those who leave lose access right away.",

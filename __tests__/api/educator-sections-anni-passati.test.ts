@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
-import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
+import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 import type { DBFinto } from '../fixtures/finto-supabase'
 
 // =============================================================================

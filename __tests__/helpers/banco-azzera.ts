@@ -15,6 +15,13 @@ import { creaBancoPassaggio, type BancoPassaggio } from './passaggio-banco'
 export async function creaBancoAzzera(): Promise<BancoPassaggio> {
   const b = await creaBancoPassaggio({ fino: 'M49b' })
   await b.db.exec(`
+    -- Le colonne VERE di produzione dove il banco condiviso (usato anche da altri test) differisce (B1, revisione del 13/11/2026): pagamenti.fattura_id
+    -- non esiste, la fattura sta in fattura_aruba_id, fattura_emessa_il…; alunni.creato_il c'è. Si allineano QUI, per non toccare i test degli altri.
+    ALTER TABLE public.alunni ADD COLUMN IF NOT EXISTS creato_il timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE public.pagamenti DROP COLUMN IF EXISTS fattura_id;
+    ALTER TABLE public.pagamenti
+      ADD COLUMN IF NOT EXISTS fattura_aruba_id text, ADD COLUMN IF NOT EXISTS fattura_emessa_il timestamptz,
+      ADD COLUMN IF NOT EXISTS fattura_pdf_path text, ADD COLUMN IF NOT EXISTS fattura_causale text;
     ALTER TABLE public.parents ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
     ALTER TABLE public.utenti ADD COLUMN IF NOT EXISTS creato_il timestamptz NOT NULL DEFAULT now();
     -- i genitori: la chiave verso gli alunni c'è in produzione (il banco del passaggio non la metteva)

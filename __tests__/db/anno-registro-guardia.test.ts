@@ -888,7 +888,7 @@ describe('1.4b · la guardia dell\'anno chiuso', () => {
       await guardia(true)
       await db.query(
         `UPDATE public.pagamenti SET stato = 'pagato', importo_pagato = 100, data_incasso = DATE '2026-11-01',
-                fattura_aruba_id = gen_random_uuid()::text, fattura_stato = 'inviata', ultimo_sollecito_il = now(), aggiornato_il = now()
+                fattura_id = gen_random_uuid(), fattura_stato = 'inviata', ultimo_sollecito_il = now(), aggiornato_il = now()
           WHERE id = $1`, [v])
       expect(await una<string>(`SELECT stato FROM public.pagamenti WHERE id = $1`, [v])).toBe('pagato')
       expect(await usi()).toHaveLength(0)

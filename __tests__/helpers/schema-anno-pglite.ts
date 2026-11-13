@@ -82,7 +82,6 @@ export const SCHEMA_BASE = `
     scuola_id uuid,
     section_id uuid,
     classe_sezione text,
-    creato_il timestamptz NOT NULL DEFAULT now(),
     -- 1.5: una colonna che alunni e frequenze hanno con lo stesso nome (l'invariante 11 la confronta)
     usa_pannolino boolean NOT NULL DEFAULT false
   );
@@ -151,12 +150,8 @@ export const SCHEMA_BASE = `
     creato_il timestamptz DEFAULT now(),
     -- 1.4b: le colonne d'incasso che la guardia lascia passare senza gettone (nomi veri di produzione)
     data_incasso date,
-    -- le colonne VERE della fattura su una voce (baseline 20260704120000): fattura_id non esiste, e il banco la inventava (B1, 13/11/2026)
-    fattura_aruba_id text,
+    fattura_id uuid,
     fattura_stato text,
-    fattura_emessa_il timestamptz,
-    fattura_pdf_path text,
-    fattura_causale text,
     ultimo_sollecito_il timestamptz,
     aggiornato_il timestamptz
   );

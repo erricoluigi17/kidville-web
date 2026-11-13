@@ -16,6 +16,10 @@
      `dvh` segue la barra degli indirizzi mobile che si apre/chiude. La deroga
      per schermi molto bassi (landscape) è in fondo al file. */
   height: 100dvh;
+  /* La pill della lingua sta in position:absolute a `max(12px, safe-area)` ed è alta ~32px:
+     il padding di testa deve stare SOTTO il suo bordo inferiore (+4px), altrimenti sui telefoni
+     col notch (safe-area ~50px) copre la «e» del logo (rilievo collaudo 13/11, iPhone 16e). */
+  --kv-testa-login: max(calc(16px + env(safe-area-inset-top)), calc(max(12px, env(safe-area-inset-top)) + 36px));
   /* ═══ IL CONTENUTO CENTRATO NON SCAVALCA LA SAFE-AREA (rilievo Q32) ═══════
      Misura CDP sulla WebView viva (emulatore, 2026-08-08): `env(safe-area-inset-top)`
      vale 24 px, `.page` ha `padding-top: 40px` (16 + 24) e i conti tornano — ma
@@ -52,7 +56,7 @@
   /* Il margine orizzontale (18px) lo mette .scene: qui sommerebbe e stringerebbe
      la card. Il padding-top ingloba la safe-area del notch (in shell nativa il
      body ha già env(safe-area-inset-top): vedi il margin-top negativo sotto). */
-  padding: calc(16px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom));
+  padding: var(--kv-testa-login) 0 calc(16px + env(safe-area-inset-bottom));
 }
 
 /* Shell nativa: il body porta padding-top: env(safe-area-inset-top) (globals.css)
@@ -343,7 +347,7 @@
 @media (max-height: 720px) {
   .page {
     /* Come sopra: il padding-top ingloba la safe-area del notch in shell nativa. */
-    padding: calc(12px + env(safe-area-inset-top)) 0 calc(12px + env(safe-area-inset-bottom));
+    padding: var(--kv-testa-login) 0 calc(12px + env(safe-area-inset-bottom));
   }
   .logo {
     width: 168px;

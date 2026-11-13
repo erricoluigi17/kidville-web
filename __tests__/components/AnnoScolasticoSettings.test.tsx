@@ -363,6 +363,9 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     scegli('2027/28')
     expect(await screen.findByText(/^Mancano: quota di conferma, quota di nuova iscrizione, moduli per la conferma, moduli per la nuova iscrizione$/)).toBeInTheDocument()
     expect(screen.getByText(itSettings.annoListinoNelleRette)).toBeInTheDocument()
+    // Le voci si inseriscono già dalle schede lì sopra: il testo non deve rimandare a un aggiornamento futuro.
+    expect(itSettings.annoListinoNelleRette).not.toMatch(/prossimo aggiornamento|non si possono ancora/i)
+    expect(screen.getByRole('button', { name: 'Quote' })).toBeInTheDocument()
     expect(apri()).toHaveAttribute('aria-disabled', 'true')
     expect(fetchMock).toHaveBeenCalledWith(`/api/admin/anni/${S27}`, expect.objectContaining({ headers: expect.objectContaining({ 'x-user-id': USER }) }))
     fireEvent.click(apri())

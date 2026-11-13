@@ -1,3 +1,12 @@
+## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 1 — 2026-11-13 (ramo `claude/anno-agente1-b963c0`, sopra `631c9fac`)
+
+Primo giro in sola lettura sulla Demo (Chrome 1280 e 390, iPhone 16e), due difetti corretti:
+
+- **E1 — testo falso in Impostazioni → Anno scolastico, anno in preparazione.** Sotto «Apri le iscrizioni» la frase «queste voci non si possono ancora inserire: arriveranno con un prossimo aggiornamento» era rimasta da prima della PR 4.5: quote, rette, moduli e posti si inseriscono già dalle schede sopra. La chiave `annoListinoNelleRette` (it/en) dice ora dove inserirle; il test `AnnoScolasticoSettings` vieta il rimando a un aggiornamento futuro.
+- **E2 — la pill della lingua copriva il logo nella login nativa.** La pill sta in `position:absolute` a `max(12px, safe-area)` ed è alta ~32px; col notch (safe-area ~50px) il logo, con il padding di testa a `16px + safe-area`, finiva sotto di lei. Il padding di testa è ora la variabile `--kv-testa-login`, almeno 36px sotto la posizione della pill (anche nel ramo per schermi bassi). Lock: `__tests__/architecture/login-pill-lingua-sotto-safe-area.test.ts`.
+
+Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.9: la chiusura dell'anno — 2026-11-09 (ramo `worktree-agent-a6aa8e587ce8ffe4a`, sopra `872b1f03`)
 
 **Rebase e pulizia (12/11).** La 4.9 poggia su `main` (4.8 unita come #307, `872b1f03`) e porta con sé, come primo commit, la pulizia della 4.8: PRD ✅, fotografia delle migrazioni rigenerata dalla produzione, tre migrazioni tolte da `IN_CODA`, `passaggio-ricopia-schede` e `anno-invarianti` in `JOB_CRON`. I corpi di `anno_invarianti`, `passaggio_conferma` e `passaggio_annulla` ridefiniti da M49a/M49b partono dal corpo FINALE della 4.8 (tracce dell'archiviazione, 15-bis, NB4) con le sole modifiche della 4.9; le due migrazioni hanno nomi definitivi `20261112181553` e `20261112181554`.

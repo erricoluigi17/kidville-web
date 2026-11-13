@@ -234,8 +234,8 @@ risultato). Se il collaudo ha spostato un confine fra i due anni con `sposta_con
 **non trascina righe** con sé, e rifiuta lo spostamento se nei giorni che cambiano anno c'è già qualcosa. Il rischio vero sono le righe **nate
 dopo** lo spostamento, dentro i giorni spostati (presenze, diario, registro, mensa, avvisi…): assegnate all'anno nuovo, con una data che dopo il
 ripristino del confine apparterrebbe all'anno vecchio. Lo script le conta con lo stesso criterio di `sposta_confine_anno` e, se ne trova, si
-ferma con `AZZERA_CONFINE_CON_RIGHE` e i conteggi per tabella, senza cambiare niente. Come trovarle: per ogni tabella nominata nel messaggio,
-le righe della Demo con la data fra il confine del collaudo e quello della fotografia (la tabella `anno_tabelle` dice quale colonna è la data);
+ferma con `AZZERA_CONFINE_CON_RIGHE`, i conteggi per tabella e, per ogni anno colpito, i giorni (`dal`, `al`) e gli id dell'anno (`anni_sede` e anno scolastico), senza cambiare niente. Come trovarle: per ogni tabella nominata nel messaggio,
+le righe della Demo con la data fra il confine del collaudo e quello della fotografia, cioè nei giorni `dal`–`al` del messaggio (la tabella `anno_tabelle` dice quale colonna è la data; per `pagamenti` conta anche `scadenza` quando `periodo_competenza` è vuoto; per `frequenze` contano `data_ingresso` e `data_uscita`);
 si tolgono a mano (sono righe nate o cambiate nel collaudo) e si rilancia. Per le **frequenze** il criterio è lo stesso (anno, sede, `data_ingresso` o `data_uscita` nei giorni) meno quelle **della fotografia**: il passo successivo le rimette com'erano, e se il collaudo ha allungato l'anno e confermato il passaggio le ha fatte uscire proprio in quei giorni, quindi non sono un ostacolo. **Una frequenza che sta nella fotografia non si cancella mai a mano.**
 
 **Quello che nasce accogliendo una domanda.** Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori

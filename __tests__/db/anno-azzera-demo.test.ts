@@ -835,7 +835,10 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
       await b.db.query(`INSERT INTO public.presenze (alunno_id, scuola_id, section_id, data) VALUES ($1, $2, $3, $4::date)`, [AL.a, DEMO, sezNuova, giorno])
       const finePrima = await date()
       await b.db.exec('SAVEPOINT conf')
-      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*presenze/)
+      const errore = await b.db.exec(compila({ sede: DEMO, foto: f.fotografia! })).then(() => '', (e: Error) => e.message)
+      expect(errore).toMatch(/AZZERA_CONFINE_CON_RIGHE[\s\S]*presenze/)
+      // O-n10: per ogni anno colpito il messaggio dice l'anno e i giorni (dal, al), non solo «tabella → righe»
+      expect(errore, 'l’anno e i giorni').toMatch(new RegExp(`anni_sede ${annoNuovo} \\(anno ${annoNuovoId}\\) dal \\d{4}-\\d{2}-\\d{2} al \\d{4}-\\d{2}-\\d{2}: presenze 1`))
       await b.db.exec('ROLLBACK TO SAVEPOINT conf')
       await b.db.exec('RELEASE SAVEPOINT conf')
       expect(await date(), 'le date non sono state toccate').toBe(finePrima)

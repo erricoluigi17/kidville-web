@@ -216,6 +216,7 @@ DECLARE
   v_tab         record;     -- una tabella del registro dell'anno
   v_g           record;     -- un intervallo di giorni (dal, al) che un anno perde
   v_msg         text;       -- il riassunto della prova a secco
+  v_dett        text;       -- AZZERA_CONFINE_CON_RIGHE: per anno e giorni, che cosa c'è
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
   BEGIN
@@ -572,6 +573,7 @@ BEGIN
   --      cambiano anno ci sono righe già assegnate all'anno che li perde (CONFINE_CON_RIGHE): un UPDATE diretto non ha quel controllo, quindi lo
   --      rifà questo blocco, con le stesse tabelle del registro. Righe nate DOPO lo spostamento nei giorni spostati: si fermano qui.
   v_cnt := '{}'::jsonb;
+  v_dett := '';
   FOR v_y IN
     SELECT ys.anno_id AS anno_id, ys.id AS anno_sede, ys.inizio AS cur_i, ys.fine AS cur_f, (d.dt->>'inizio')::date AS foto_i, (d.dt->>'fine')::date AS foto_f
       FROM public.anni_sede ys
@@ -599,12 +601,15 @@ BEGIN
         ELSE
           v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, v_g.dal, v_g.al);
         END IF;
-        IF v_n > 0 THEN v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n)); END IF;
+        IF v_n > 0 THEN
+          v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n));
+          v_dett := v_dett || E'\n  anni_sede ' || v_y.anno_sede || ' (anno ' || v_y.anno_id || ') dal ' || v_g.dal || ' al ' || v_g.al || ': ' || v_tab.tabella || ' ' || v_n;
+        END IF;
       END LOOP;
     END LOOP;
   END LOOP;
   IF v_cnt <> '{}'::jsonb THEN
-    RAISE EXCEPTION 'AZZERA_CONFINE_CON_RIGHE: nei giorni che tornerebbero all''altro anno ci sono righe già assegnate all''anno che li perde (tabella → righe): %. Si guardano a mano (righe nate o cambiate nel collaudo, datate in quei giorni), poi si rilancia', v_cnt::text;
+    RAISE EXCEPTION E'AZZERA_CONFINE_CON_RIGHE: nei giorni che tornerebbero all\'altro anno ci sono righe già assegnate all\'anno che li perde (tabella → righe): %. Per anno e giorni:%\nSono righe nate o cambiate nel collaudo, datate in quei giorni: si guardano a mano, poi si rilancia', v_cnt::text, v_dett;
   END IF;
   -- Un UNICO UPDATE per tutte le righe: i vincoli di continuità e di non sovrapposizione sono differiti e si giudicano sul risultato finale.
   UPDATE public.anni_sede ys

@@ -50,10 +50,17 @@ function visita(n: ts.Node, f: (x: ts.Node) => void): void {
 
 const NOMI_USCITA = ['doLogout', 'signOut']
 
-/** Il nome «vero» di un import o di una destrutturazione: `a as b` → `a`, `{ a: b }` → `a`, `{ a }` → `a`. */
+/** Il testo di una chiave: `a`, `'a'`, `['a']`. */
+function testoChiave(k: ts.Node | undefined): string | null {
+  if (!k) return null
+  if (ts.isIdentifier(k) || ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k)) return k.text
+  if (ts.isComputedPropertyName(k)) return testoChiave(k.expression)
+  return null
+}
+
+/** Il nome «vero» di un import o di una destrutturazione: `a as b` → `a`, `{ a: b }` / `{ 'a': b }` → `a`, `{ a }` → `a`. */
 function nomeOriginale(n: ts.ImportSpecifier | ts.BindingElement): string | null {
-  const nome = n.propertyName ?? n.name
-  return ts.isIdentifier(nome) ? nome.text : null
+  return testoChiave(n.propertyName ?? n.name)
 }
 
 /**
@@ -71,13 +78,26 @@ function alias(sf: ts.SourceFile): Set<string> {
   return a
 }
 
-/** Un identificatore che sta nella DICHIARAZIONE di un import o di una destrutturazione (non è un uso). */
-function eDichiarazione(n: ts.Identifier): boolean {
+/**
+ * Un nodo che sta nella DICHIARAZIONE di un import o di una destrutturazione (non è un uso): il nome locale o la chiave
+ * (`a`, `'a'`, `['a']`). NON lo è il valore di default (`{ x = doLogout }`): quello è un riferimento vero.
+ */
+function eDichiarazione(n: ts.Node): boolean {
   const p = n.parent
-  return ts.isImportSpecifier(p) || (ts.isBindingElement(p) && ts.isObjectBindingPattern(p.parent))
+  if (!p) return false
+  if (ts.isImportSpecifier(p)) return true
+  if (ts.isBindingElement(p) && ts.isObjectBindingPattern(p.parent)) {
+    if (p.name === n || p.propertyName === n) return true
+  }
+  // chiave computata: `{ ['signOut']: esci }` — la stringa sta dentro un ComputedPropertyName che è la propertyName
+  if (ts.isComputedPropertyName(p) && ts.isBindingElement(p.parent) && p.parent.propertyName === p) return true
+  return false
 }
 
-/** `doLogout` come identificatore, `.signOut` come proprietà, un alias risolto, o la stringa del modulo (statico o dinamico). */
+/**
+ * `doLogout` come identificatore, `.signOut` / `['signOut']` come proprietà, un alias risolto, la destrutturazione
+ * stessa, o la stringa del modulo (import statico o dinamico).
+ */
 function eRiferimentoUscita(n: ts.Node, nomi: Set<string>): boolean {
   if (ts.isIdentifier(n)) {
     if (nomi.has(n.text)) return true
@@ -86,7 +106,15 @@ function eRiferimentoUscita(n: ts.Node, nomi: Set<string>): boolean {
     // `const { signOut } = …`: la destrutturazione stessa è un riferimento (conta per «chi chiama»), anche senza uso.
     if (n.text === 'signOut' && eDichiarazione(n)) return true
   }
-  if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && n.text === MODULO_LOGOUT) return true
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+    if (n.text === MODULO_LOGOUT) return true
+    if (NOMI_USCITA.includes(n.text)) {
+      // `supabase.auth['signOut']`
+      if (n.parent && ts.isElementAccessExpression(n.parent) && n.parent.argumentExpression === n) return true
+      // `const { 'signOut': esci } = …` / `{ ['signOut']: esci }`: la destrutturazione stessa è un riferimento
+      if (eDichiarazione(n)) return true
+    }
+  }
   return false
 }
 
@@ -162,7 +190,7 @@ export function violazioni(percorso: string, src: string): string[] {
   for (const r of riferimenti(sf)) {
     // L'import della funzione non è un uso; la stringa del modulo sta solo nell'import.
     if (ts.isStringLiteral(r) && ts.isImportDeclaration(r.parent)) continue
-    if (ts.isIdentifier(r) && eDichiarazione(r)) continue
+    if (eDichiarazione(r)) continue
     if (!ammesso(r, new Set())) {
       const { line } = sf.getLineAndCharacterOfPosition(r.getStart())
       v.push(`${percorso}:${line + 1}: «${r.getText()}» fuori dal percorso di conferma (onConferma)`)
@@ -255,6 +283,24 @@ export function X() { return <><button onClick={() => setC(true)}>Esci</button><
   it('variante 8c: la destrutturazione usata SOLO dentro onConferma è ammessa', () => {
     const ok = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nexport function X() { return <ConfermaUscita open onConferma={async () => { const { signOut } = supabase.auth; await signOut({ scope: 'local' }) }} /> }`
     expect(violazioni('x.tsx', ok)).toEqual([])
+  })
+  it('variante 9 (nuova): il valore di DEFAULT di una destrutturazione — `const { x = doLogout } = o; x()` — è un riferimento', () => {
+    const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport function X(o: any) { const { x = doLogout } = o; return <><button onClick={() => x()}>Esci</button><ConfermaUscita open onConferma={() => {}} /></> }`
+    expect(violazioni('x.tsx', rotto).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
+  })
+  it('variante 10 (nuova): chiave fra apici nella destrutturazione — `{ \'signOut\': esci } = …` — è un alias', () => {
+    const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nexport function X() { const { 'signOut': esci } = supabase.auth; return <><button onClick={() => esci()}>Esci</button><ConfermaUscita open onConferma={() => {}} /></> }`
+    expect(violazioni('x.tsx', rotto).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
+    const computata = rotto.replace("'signOut':", "['signOut']:")
+    expect(violazioni('x.tsx', computata).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
+  })
+  it('variante 11 (nuova): accesso con parentesi quadre — `supabase.auth[\'signOut\']()` — è visto', () => {
+    const rotto = `export const X = () => <button onClick={() => supabase.auth['signOut']()}>Esci</button>`
+    expect(chiamanti({ 'x.tsx': rotto })).toEqual(['x.tsx'])
+    const ok = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nexport const X = () => <ConfermaUscita open onConferma={() => supabase.auth['signOut']({ scope: 'local' })} />`
+    expect(violazioni('x.tsx', ok)).toEqual([])
+    const fuori = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nexport const X = () => <><button onClick={() => supabase.auth['signOut']()}>Esci</button><ConfermaUscita open onConferma={() => {}} /></>`
+    expect(violazioni('x.tsx', fuori).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
   })
   it('un import dinamico del modulo viene visto', () => {
     expect(chiamanti({ 'x.tsx': `export const X = async () => { const m = await import('@/lib/auth/logout'); await m.doLogout() }` })).toEqual(['x.tsx'])

@@ -72,7 +72,7 @@
 --                                 per tabella; non si tocca niente;
 --   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
 --   · AZZERA_PROVA_A_SECCO       l'interruttore c_prova_a_secco è acceso (per difetto): nel messaggio c'è il riassunto, e non si scrive niente;
---   · AZZERA_CONFINE_CON_RIGHE    rimettere le date dei due anni lascerebbe fuori dal loro anno righe nate nel collaudo nei giorni di un confine spostato: si ferma, con i conteggi;
+--   · AZZERA_CONFINE_CON_RIGHE    rimettere le date dei due anni lascerebbe fuori dal loro anno righe nate o cambiate nel collaudo nei giorni di un confine spostato: si ferma, con i conteggi;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è della versione 2 con `scattata_il` (si rifà), non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
@@ -364,7 +364,7 @@ BEGIN
   -- Queste due vivono quanto la sessione dell'editor (come `_sede_ripristinata`): servono alle letture dopo il COMMIT. Non le legge
   -- nessun DELETE/UPDATE.
   DROP TABLE IF EXISTS pg_temp._azzera_esito;
-  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, gruppo integer NOT NULL DEFAULT 0, voce text NOT NULL, tolte integer NOT NULL DEFAULT 0, rimesse integer NOT NULL DEFAULT 0, lasciate integer NOT NULL DEFAULT 0);
+  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, gruppo integer NOT NULL DEFAULT 0, voce text NOT NULL, tolte integer DEFAULT 0, rimesse integer DEFAULT 0, lasciate integer DEFAULT 0);
   DROP TABLE IF EXISTS pg_temp._azzera_lasciate;
   CREATE TEMP TABLE pg_temp._azzera_lasciate (tabella text NOT NULL, id uuid NOT NULL);
 
@@ -427,10 +427,10 @@ BEGIN
      WHERE u.creato_il >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
        AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
   -- Le domande non hanno copia nella scatola nera: se una famiglia VERA avesse scritto con un link della Demo, la sua domanda sparirebbe senza
-  -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto). Le righe per uuid hanno tolte = 0: il totale è nella riga «domande del modulo pubblico».
+  -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto). Le righe per uuid non portano numeri (NULL): il totale è nella riga «domande del modulo pubblico».
   -- gruppo 1: in fondo, dopo tutti i conteggi (gruppo 0), qualunque sia il numero delle domande.
-  INSERT INTO pg_temp._azzera_esito (gruppo, voce, tolte)
-    SELECT 1, 'domanda tolta · ' || k.id::text, 0 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
+  INSERT INTO pg_temp._azzera_esito (gruppo, voce, tolte, rimesse, lasciate)
+    SELECT 1, 'domanda tolta · ' || k.id::text, NULL, NULL, NULL FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
   DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte) VALUES ('inviti con le credenziali tolti con le domande (senza copia: contengono l''email)', v_tolte);

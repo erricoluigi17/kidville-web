@@ -702,7 +702,7 @@ describe('azzera-anno-nuovo-demo.sql · quello che nasce accogliendo una domanda
       expect(voci.filter((v) => v.startsWith('domanda tolta · ')), 'solo quella tolta, non quella trattenuta dal CRM').toEqual([`domanda tolta · ${D}`])
       // O-n4: le righe per uuid non si sommano al totale (chi somma la colonna le conterebbe due volte)
       const righe = risultati.at(-1)!.rows as { voce: string; tolte: string }[]
-      expect(righe.filter((r) => r.voce.startsWith('domanda tolta · ')).map((r) => r.tolte), 'le domande per uuid hanno tolte = 0').toEqual(['0'])
+      expect(righe.filter((r) => r.voce.startsWith('domanda tolta · ')).map((r) => r.tolte), 'le righe per uuid non portano numeri (NULL, non 0)').toEqual([null])
       expect(righe.find((r) => r.voce.startsWith('domande del modulo pubblico'))?.tolte, 'il totale le conta una volta').toBe('1')
       // O-n6: gli inviti con le credenziali tolti con la domanda non hanno copia: l'esito li conta
       expect(righe.find((r) => r.voce.startsWith('inviti con le credenziali'))?.tolte, 'inviti tolti').toBe('1')

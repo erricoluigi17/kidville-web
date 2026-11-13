@@ -65,7 +65,7 @@ describe('anno · l’anno successivo è stato creato in tempo?', () => {
 
     it('un solo giorno di ritardo è già degradato (il confine è `>= 1`)', async () => {
         const c = conSalute({ sedi_senza_successivo: 3, in_ritardo_giorni: 1, invarianti_non_zero: 0 })
-        expect(await controlloAnno(c, ADESSO)).toMatchObject({ esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorni' })
+        expect(await controlloAnno(c, ADESSO)).toMatchObject({ esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorno' })
     })
 
     it('le invarianti non fanno suonare `anno`', async () => {
@@ -137,6 +137,11 @@ describe('anno-invarianti · i dati dell’anno sono a posto? (non accende nessu
             esito: 'degradato',
             dettaglio: '3 invarianti dell’anno non a zero',
         })
+    })
+
+    it('una sola invariante: singolare', async () => {
+        const c = conSalute({ sedi_senza_successivo: 0, in_ritardo_giorni: 0, invarianti_non_zero: 1 })
+        expect(await controlloAnnoInvarianti(c, ADESSO)).toMatchObject({ dettaglio: '1 invariante dell’anno non a zero' })
     })
 
     it('il ritardo dell’anno successivo non lo riguarda', async () => {

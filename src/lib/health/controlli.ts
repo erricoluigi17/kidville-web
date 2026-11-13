@@ -1692,6 +1692,7 @@ async function leggiSalute(
 }
 
 const sedi = (n: number) => `${n} ${n === 1 ? 'sede' : 'sedi'}`
+const giorni = (n: number) => `${n} ${n === 1 ? 'giorno' : 'giorni'}`
 
 /**
  * La frase del passaggio d'anno non fatto. «Entro 7 giorni» è vero solo PRIMA dell'inizio dell'anno nuovo: dopo, l'anno è già
@@ -1719,9 +1720,9 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
     return misura('anno', 'degradato', async () => {
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
-        const { sedi_senza_successivo: senza, in_ritardo_giorni: giorni, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
-        if (senza > 0 && giorni >= 1) {
-            return { esito: 'degradato', dettaglio: `${sedi(senza)} senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
+        const { sedi_senza_successivo: senza, in_ritardo_giorni: ritardo, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
+        if (senza > 0 && ritardo >= 1) {
+            return { esito: 'degradato', dettaglio: `${sedi(senza)} senza l’anno successivo, in ritardo fino a ${giorni(ritardo)}` }
         }
         // PR 4.9. Il passaggio non fatto a una settimana (o meno) dall'inizio dell'anno nuovo è il più grave: l'anno comincia e le
         // scritture datate lì verrebbero fermate. Poi la guardia spenta, con l'anno a un mese dalla chiusura o già rimasto `in_chiusura` oltre la `fine`: il tick non cambierebbe lo stato.
@@ -1755,7 +1756,7 @@ export async function controlloAnnoInvarianti(supabase: SupabaseClient, adesso: 
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
         const n = letto.salute.invarianti_non_zero
-        if (n > 0) return { esito: 'degradato', dettaglio: `${n} invarianti dell’anno non a zero` }
+        if (n > 0) return { esito: 'degradato', dettaglio: `${n} ${n === 1 ? 'invariante' : 'invarianti'} dell’anno non a zero` }
         return { esito: 'ok', dettaglio: 'invarianti dell’anno a zero' }
     })
 }

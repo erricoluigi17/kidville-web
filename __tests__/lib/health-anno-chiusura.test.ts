@@ -104,6 +104,8 @@ describe('anno · il passaggio e la guardia', () => {
         })
         const ritardo = conSalute({ sedi_senza_successivo: 1, in_ritardo_giorni: 2, invarianti_non_zero: 0, passaggio_da_fare: 0, guardia_spenta_vicina: 0 })
         expect(await controlloAnno(ritardo, ADESSO)).toMatchObject({ dettaglio: '1 sede senza l’anno successivo, in ritardo fino a 2 giorni' })
+        const unGiorno = conSalute({ sedi_senza_successivo: 1, in_ritardo_giorni: 1, invarianti_non_zero: 0, passaggio_da_fare: 0, guardia_spenta_vicina: 0 })
+        expect(await controlloAnno(unGiorno, ADESSO)).toMatchObject({ dettaglio: '1 sede senza l’anno successivo, in ritardo fino a 1 giorno' })
     })
 
     it('tutte e due: vince il passaggio (è il più grave: l’anno sta per cominciare)', async () => {
@@ -114,7 +116,7 @@ describe('anno · il passaggio e la guardia', () => {
     it('il ritardo dell’anno successivo resta quello di prima e vince su tutte e due', async () => {
         const c = conSalute({ sedi_senza_successivo: 3, in_ritardo_giorni: 1, invarianti_non_zero: 0, passaggio_da_fare: 1, guardia_spenta_vicina: 1 })
         expect(await controlloAnno(c, ADESSO)).toMatchObject({
-            esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorni',
+            esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorno',
         })
     })
 

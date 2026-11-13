@@ -111,6 +111,27 @@ afterEach(() => {
 })
 
 describe('AvvisiSettimanaliApp', () => {
+  it('lotto 5: con la card «Le notifiche sono spente» già nella pagina il foglio NON c\u2019è (un avviso solo); tolta la card, torna', async () => {
+    await monta()
+    expect(await screen.findByText(T.avvisoNotificheTitolo)).toBeTruthy()
+    const { segnalaCardNotifiche } = await import('@/lib/native/card-notifiche-visibile')
+    act(() => segnalaCardNotifiche(true))
+    expect(screen.queryByText(T.avvisoNotificheTitolo)).toBeNull()
+    act(() => segnalaCardNotifiche(false))
+    expect(await screen.findByText(T.avvisoNotificheTitolo)).toBeTruthy()
+  })
+
+  it('lotto 5: se la card c\u2019è GIÀ quando la decisione arriva, il foglio non compare e non scrive «mostrato»', async () => {
+    vi.resetModules()
+    const { segnalaCardNotifiche } = await import('@/lib/native/card-notifiche-visibile')
+    segnalaCardNotifiche(true)
+    const { AvvisiSettimanaliApp } = await import('@/components/providers/AvvisiSettimanaliApp')
+    rendi(AvvisiSettimanaliApp)
+    await lasciaDecidere()
+    expect(screen.queryByText(T.avvisoNotificheTitolo)).toBeNull()
+    expect(messaggiLog()).not.toContain('avviso-notifiche-disattivate-mostrato')
+  })
+
   it('sul web non rende niente e non logga', async () => {
     stato.nativo = false
     const { container } = await monta()

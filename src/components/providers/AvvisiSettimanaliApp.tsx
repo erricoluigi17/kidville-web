@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import { X } from 'lucide-react'
 import { Capacitor } from '@capacitor/core'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { useCardNotificheVisibile } from '@/lib/native/card-notifiche-visibile'
 import {
   apriImpostazioniNotifiche,
   avvisoDaMostrare,
@@ -91,17 +92,22 @@ export function AvvisiSettimanaliApp() {
       const manuale = !impostazioniApribili()
       setPercorsoManuale(manuale)
       setAvviso(deciso)
-      if (!comparsaRegistrata) {
-        comparsaRegistrata = true
-        logAvviso(deciso, 'mostrato', manuale ? 'percorso-manuale' : 'bottone')
-      }
     })
     return () => {
       attivo = false
     }
   }, [])
 
-  if (!avviso) return null
+  // Con la card della home già a schermo il riquadro non si disegna (un avviso solo): la comparsa si registra quando si vede davvero.
+  const cardVisibile = useCardNotificheVisibile()
+  const visibile = avviso !== null && !cardVisibile
+  useEffect(() => {
+    if (!visibile || !avviso || comparsaRegistrata) return
+    comparsaRegistrata = true
+    logAvviso(avviso, 'mostrato', percorsoManuale ? 'percorso-manuale' : 'bottone')
+  }, [visibile, avviso, percorsoManuale])
+
+  if (!avviso || cardVisibile) return null
 
   const chiudi = () => {
     logAvviso(avviso, 'chiuso')

@@ -213,6 +213,7 @@ DECLARE
   v_par         uuid;       -- anni_sede.id dell'anno di partenza
   v_y           record;     -- un anno di cui si rimettono le date
   v_tab         record;     -- una tabella del registro dell'anno
+  v_g           record;     -- un intervallo di giorni (dal, al) che un anno perde
   v_msg         text;       -- il riassunto della prova a secco
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
@@ -580,18 +581,28 @@ BEGIN
        ORDER BY atb.tabella
     LOOP
       -- i giorni che l'anno PERDE: prima del nuovo inizio e/o dopo la nuova fine
-      IF v_y.cur_i < v_y.foto_i THEN
-        v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, v_y.cur_i, least(v_y.cur_f, v_y.foto_i - 1));
+      FOR v_g IN
+        SELECT v_y.cur_i AS dal, least(v_y.cur_f, v_y.foto_i - 1) AS al WHERE v_y.cur_i < v_y.foto_i
+        UNION ALL
+        SELECT greatest(v_y.cur_i, v_y.foto_f + 1), v_y.cur_f WHERE v_y.cur_f > v_y.foto_f
+      LOOP
+        IF v_tab.tabella = 'frequenze' THEN
+          -- stesso criterio della funzione di produzione (anno, sede, ingresso O uscita nei giorni), meno le frequenze della FOTOGRAFIA: il 6i le
+          -- riscrive com'erano (un passaggio confermato dopo aver allungato l'anno le ha fatte uscire proprio in quei giorni) e il loro trigger
+          -- le rivalida sul periodo rimesso. Contano solo le frequenze NATE o CAMBIATE nel collaudo: quelle si guardano a mano.
+          SELECT count(*) INTO v_n FROM public.frequenze fx
+           WHERE fx.anno_sede_id = v_y.anno_id AND fx.scuola_id = v_sede
+             AND (fx.data_ingresso BETWEEN v_g.dal AND v_g.al OR fx.data_uscita BETWEEN v_g.dal AND v_g.al)
+             AND fx.id NOT IN (SELECT (fz->>'id')::uuid FROM jsonb_array_elements(coalesce(v_part->'frequenze', '[]'::jsonb)) fz);
+        ELSE
+          v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, v_g.dal, v_g.al);
+        END IF;
         IF v_n > 0 THEN v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n)); END IF;
-      END IF;
-      IF v_y.cur_f > v_y.foto_f THEN
-        v_n := public.anno_conta_righe_assegnate_nei_giorni(v_tab.tabella, v_y.anno_id, v_sede, greatest(v_y.cur_i, v_y.foto_f + 1), v_y.cur_f);
-        IF v_n > 0 THEN v_cnt := jsonb_set(v_cnt, ARRAY[v_tab.tabella], to_jsonb(coalesce((v_cnt->>v_tab.tabella)::bigint, 0) + v_n)); END IF;
-      END IF;
+      END LOOP;
     END LOOP;
   END LOOP;
   IF v_cnt <> '{}'::jsonb THEN
-    RAISE EXCEPTION 'AZZERA_CONFINE_CON_RIGHE: nei giorni che tornerebbero all''altro anno ci sono righe già assegnate all''anno che li perde (tabella → righe): %. Si guardano a mano (sono dati del collaudo datati in quei giorni), poi si rilancia', v_cnt::text;
+    RAISE EXCEPTION 'AZZERA_CONFINE_CON_RIGHE: nei giorni che tornerebbero all''altro anno ci sono righe già assegnate all''anno che li perde (tabella → righe): %. Si guardano a mano (righe nate o cambiate nel collaudo, datate in quei giorni), poi si rilancia', v_cnt::text;
   END IF;
   -- Un UNICO UPDATE per tutte le righe: i vincoli di continuità e di non sovrapposizione sono differiti e si giudicano sul risultato finale.
   UPDATE public.anni_sede ys

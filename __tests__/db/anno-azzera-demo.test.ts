@@ -842,6 +842,26 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
     })
   })
 
+  it('confine ALLUNGATO e passaggio confermato: le uscite della fotografia non fermano il controllo, il 6i le rimette com’erano (S-n3, O-n11)', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      const prima = await date()
+      const uscite = `SELECT id, stato, data_uscita FROM public.frequenze WHERE anno_sede_id = $1`
+      const frequenzePrima = await impronta(uscite, [annoVecchio])
+      // il collaudo allunga il 2026/27 di cinque giorni, poi conferma il passaggio: chi esce ha `data_uscita` = la fine SPOSTATA
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine + 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      await collaudo(true)
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND data_uscita > (SELECT fine - 5 FROM public.anni_sede WHERE id = $1)`, [annoVecchio]), 'uscite nei giorni allungati').toBeGreaterThanOrEqual(2)
+      await ripristina(dal, stati)
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      await b.db.exec('SET CONSTRAINTS ALL IMMEDIATE')
+      expect(await date(), 'le date tornano').toBe(prima)
+      expect(await impronta(uscite, [annoVecchio]), 'le frequenze di partenza come nella fotografia (data_uscita NULL)').toBe(frequenzePrima)
+    })
+  })
+
   it('senza collaudo le date non si toccano; e una fotografia senza le date, o con una data che non lo è → AZZERA_FOTOGRAFIA', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

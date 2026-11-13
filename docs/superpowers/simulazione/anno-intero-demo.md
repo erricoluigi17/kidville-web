@@ -216,7 +216,7 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza, oppure l'anno di partenza non è tornato `corrente` |
 | `AZZERA_PROVA_A_SECCO` | l'interruttore `c_prova_a_secco` è acceso (lo è per difetto): il messaggio porta il riassunto, non è stato scritto niente. Per scrivere davvero si mette `false` |
-| `AZZERA_CONFINE_CON_RIGHE` | rimettere le date dei due anni farebbe cadere nell'anno sbagliato righe nate nel collaudo nei giorni di un confine spostato: il messaggio dà i conteggi per tabella, non si tocca niente. Cosa fare: trovarle (vedi «Le date degli anni»), toglierle a mano, rilanciare |
+| `AZZERA_CONFINE_CON_RIGHE` | rimettere le date dei due anni farebbe cadere nell'anno sbagliato righe nate o cambiate nel collaudo nei giorni di un confine spostato: il messaggio dà i conteggi per tabella, non si tocca niente. Cosa fare: trovarle (vedi «Le date degli anni»), toglierle a mano, rilanciare |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
 | `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro, di **qualunque** tabella (sezioni, frequenze, domande, voci di pagamento, presenze, valutazioni…): il messaggio dice i conteggi per tabella, non si tocca niente. Cosa fare: guardare quelle righe (sono dati del collaudo datati nell'anno nato col viaggio nel tempo) e toglierle a mano, poi rilanciare |
 | `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa (anche le quattro date dei due anni), è di un altro anno, o contiene righe di un altro anno |
@@ -236,7 +236,7 @@ dopo** lo spostamento, dentro i giorni spostati (presenze, diario, registro, men
 ripristino del confine apparterrebbe all'anno vecchio. Lo script le conta con lo stesso criterio di `sposta_confine_anno` e, se ne trova, si
 ferma con `AZZERA_CONFINE_CON_RIGHE` e i conteggi per tabella, senza cambiare niente. Come trovarle: per ogni tabella nominata nel messaggio,
 le righe della Demo con la data fra il confine del collaudo e quello della fotografia (la tabella `anno_tabelle` dice quale colonna è la data);
-si tolgono a mano (sono dati del collaudo) e si rilancia.
+si tolgono a mano (sono righe nate o cambiate nel collaudo) e si rilancia. Per le **frequenze** il criterio è lo stesso (anno, sede, `data_ingresso` o `data_uscita` nei giorni) meno quelle **della fotografia**: il passo successivo le rimette com'erano, e se il collaudo ha allungato l'anno e confermato il passaggio le ha fatte uscire proprio in quei giorni, quindi non sono un ostacolo. **Una frequenza che sta nella fotografia non si cancella mai a mano.**
 
 **Quello che nasce accogliendo una domanda.** Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori
 (`legame_genitori_alunni`, `student_parents`) e l'invito con le credenziali (`iscrizioni_inviti_credenziali`). Questi **vanno via** insieme

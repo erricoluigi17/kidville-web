@@ -14,7 +14,12 @@ import { creaBancoAzzera } from '../helpers/banco-azzera'
  * Come funziona: dal testo dello script (senza commenti né stringhe) si ricava, per ogni ALIAS di tabella (`FROM public.pagamenti g`,
  * `jsonb_populate_recordset(NULL::public.listino_voci, …) r`), la tabella a cui punta; poi ogni `alias.colonna` e ogni colonna a sinistra
  * di un `SET` si confronta con `__tests__/fixtures/colonne-azzera-snapshot.json`, la fotografia delle colonne PRESA DALLA PRODUZIONE
- * (si rigenera con `colonne-azzera-fotografia.mjs`). Un alias usato per più tabelle passa se la colonna c'è in almeno una di esse.
+ * (si rigenera con `colonne-azzera-fotografia.mjs`). Ogni alias dello script punta a UNA tabella sola (lo verifica un test: altrimenti la
+ * colonna passerebbe se c'è in una qualunque delle tabelle che lo condividono).
+ *
+ * COSA NON VEDE (se ne è accorta la revisione del 13/11/2026): le colonne dentro le STRINGHE (`format()` e SQL dinamico del passo 6g, e il corpo
+ * delle funzioni d'appoggio, che leggono il catalogo), le colonne senza alias, e le colonne di un `jsonb_to_recordset(…) AS rj(…)`, che
+ * l'istruzione stessa dichiara. Per quelle vale la prova a secco (che gira il blocco, ma non il 6g subito dopo la fotografia) e il banco di prova.
  * In più il banco non deve avere colonne che la produzione non ha, nelle tabelle che lo script nomina.
  */
 
@@ -104,17 +109,22 @@ describe('le colonne che gli script di azzeramento nominano esistono in produzio
     expect(problemi(FOTOGRAFA)).toEqual([])
   })
 
+  it('ogni alias dello script punta a UNA tabella sola (altrimenti la colonna passa se c’è in una qualunque delle tabelle che lo condividono)', () => {
+    const condivisi = [...alias(nudo(SCRIPT))].filter(([, t]) => t.size > 1).map(([a, t]) => `${a} → ${[...t].sort().join(' / ')}`).sort()
+    expect(condivisi).toEqual([])
+  })
+
   it('il controllo non è cieco: legge davvero alias e colonne dello script', () => {
     const conAlias = alias(nudo(SCRIPT))
-    expect([...(conAlias.get('g') ?? [])], 'g = le voci di pagamento').toContain('pagamenti')
-    expect([...(conAlias.get('r') ?? [])], 'r = le righe della fotografia').toContain('listino_voci')
+    expect([...(conAlias.get('pg') ?? [])], 'pg = le voci di pagamento').toContain('pagamenti')
+    expect([...(conAlias.get('rl') ?? [])], 'rl = le righe di listino della fotografia').toContain('listino_voci')
     expect(usi(nudo(SCRIPT), conAlias).length, 'colonne lette').toBeGreaterThan(40)
   })
 
-  it('e vede l’errore di B1: g.fattura_id su pagamenti', () => {
-    const rotto = SCRIPT.replace('g.fattura_aruba_id IS NOT NULL', 'g.fattura_id IS NOT NULL')
+  it('e vede l’errore di B1: pg.fattura_id su pagamenti', () => {
+    const rotto = SCRIPT.replace('pg.fattura_aruba_id IS NOT NULL', 'pg.fattura_id IS NOT NULL')
     expect(rotto, 'la sostituzione deve cambiare qualcosa (altrimenti il test non prova niente)').not.toBe(SCRIPT)
-    expect(problemi(rotto).join('\n')).toContain('g.fattura_id: la colonna non esiste in produzione')
+    expect(problemi(rotto).join('\n')).toContain('pg.fattura_id: la colonna non esiste in produzione')
   })
 })
 

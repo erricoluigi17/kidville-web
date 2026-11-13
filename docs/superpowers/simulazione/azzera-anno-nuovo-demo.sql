@@ -6,7 +6,8 @@
 -- passaggi e gettoni) e usa la fotografia di `fotografa-anno-nuovo-demo.sql`.
 --
 -- ┌─ CHE COSA CANCELLA ──────────────────────────────────────────────────────────────────────────┐
--- │  Solo nella sede di Demo, solo nell'anno nuovo, e solo righe nate DOPO la PARTENZA (l'istante in cui hai scattato la fotografia):           │
+-- │  Solo nella sede di Demo, solo nell'anno nuovo, e solo righe nate DOPO la PARTENZA             │
+-- │  (l'istante in cui hai scattato la fotografia):                                                 │
 -- │    · le frequenze dell'anno nuovo (con le spunte dei moduli);                                  │
 -- │    · le voci di pagamento dell'anno nuovo (quote e rette). Una voce con un incasso, una       │
 -- │      fattura o un movimento di cassa collegato NON si tocca: si conta e si elenca per uuid;   │
@@ -239,7 +240,7 @@ BEGIN
   IF v_sede::text NOT LIKE 'e2e00000%' THEN
     SELECT count(*) INTO v_n FROM public.anno_regole;
     IF v_n = 1 THEN
-      SELECT g.sedi_simulazione INTO v_elenco FROM public.anno_regole g;
+      SELECT ar.sedi_simulazione INTO v_elenco FROM public.anno_regole ar;
     END IF;
     IF v_n <> 1 OR coalesce(cardinality(v_elenco), 0) <> 1 OR v_elenco[1] IS DISTINCT FROM v_sede THEN
       RAISE EXCEPTION 'AZZERA_SEDE_NON_DI_PROVA: la sede scritta in c_sede non comincia per e2e00000 e non è l''unica in sedi_simulazione';
@@ -304,7 +305,7 @@ BEGIN
   END IF;
 
   -- Se il ripristino non è stato eseguito restano passaggi (anteprime) dopo la partenza: si esegue prima quello.
-  SELECT count(*) INTO v_n FROM public.passaggi_anno p WHERE p.scuola_id = v_sede AND p.creato_il >= v_dal;
+  SELECT count(*) INTO v_n FROM public.passaggi_anno pan WHERE pan.scuola_id = v_sede AND pan.creato_il >= v_dal;
   IF v_n > 0 THEN
     RAISE EXCEPTION 'AZZERA_PRIMA_IL_RIPRISTINO: restano % passaggi dopo la partenza: si esegue prima ripristino-demo.sql', v_n;
   END IF;
@@ -319,8 +320,8 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.anni_sede a WHERE a.id = v_par AND a.stato = 'corrente') THEN
       RAISE EXCEPTION 'AZZERA_PRIMA_IL_RIPRISTINO: l''anno di partenza % non è tornato corrente: si esegue prima ripristino-demo.sql', v_part->>'etichetta';
     END IF;
-    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid)
-     WHERE NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.id = x.id AND f.anno_sede_id = v_par);
+    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS rj(id uuid)
+     WHERE NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.id = rj.id AND f.anno_sede_id = v_par);
     IF v_n > 0 THEN
       RAISE EXCEPTION 'AZZERA_FREQUENZA_SPARITA: % frequenze dell''anno di partenza della fotografia non ci sono più (o sono di un altro anno)', v_n;
     END IF;
@@ -341,11 +342,11 @@ BEGIN
   IF v_n <> (v_foto->'conteggi'->>'frequenze')::integer THEN
     RAISE EXCEPTION 'AZZERA_DATA: la partenza non torna con la fotografia: % frequenze prima della data, la fotografia ne ha %', v_n, v_foto->'conteggi'->>'frequenze';
   END IF;
-  SELECT count(*) INTO v_n FROM public.pagamenti g WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il < v_dal;
+  SELECT count(*) INTO v_n FROM public.pagamenti pg WHERE pg.scuola_id = v_sede AND pg.anno_id = v_anno_id AND pg.creato_il < v_dal;
   IF v_n <> (v_foto->'conteggi'->>'pagamenti')::integer THEN
     RAISE EXCEPTION 'AZZERA_DATA: la partenza non torna con la fotografia: % voci di pagamento prima della data, la fotografia ne ha %', v_n, v_foto->'conteggi'->>'pagamenti';
   END IF;
-  SELECT count(*) INTO v_n FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at < v_dal;
+  SELECT count(*) INTO v_n FROM public.sections se WHERE se.scuola_id = v_sede AND se.anno_id = v_anno_id AND se.created_at < v_dal;
   IF v_n <> (v_foto->'conteggi'->>'sezioni')::integer THEN
     RAISE EXCEPTION 'AZZERA_DATA: la partenza non torna con la fotografia: % sezioni prima della data, la fotografia ne ha %', v_n, v_foto->'conteggi'->>'sezioni';
   END IF;
@@ -370,7 +371,7 @@ BEGIN
   -- ── 6 · LE CANCELLAZIONI, in quest'ordine: chi tiene gli altri per primo ──────────────────
 
   -- 6a · le frequenze dell'anno nuovo nate dopo la partenza (le spunte dei moduli vanno via a cascata)
-  SELECT count(*) INTO v_n FROM public.frequenze_moduli m JOIN public.frequenze f ON f.id = m.frequenza_id
+  SELECT count(*) INTO v_n FROM public.frequenze_moduli fm JOIN public.frequenze f ON f.id = fm.frequenza_id
    WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
   DELETE FROM public.frequenze f WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
@@ -392,16 +393,16 @@ BEGIN
 
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
   INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
-    SELECT 'pagamenti', g.id,
-           (coalesce(g.importo_pagato, 0) <> 0 OR g.data_incasso IS NOT NULL
-            OR g.fattura_aruba_id IS NOT NULL OR g.fattura_stato IS NOT NULL OR g.fattura_emessa_il IS NOT NULL OR coalesce(g.stato, 'da_pagare') <> 'da_pagare')
-      FROM public.pagamenti g
-     WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
+    SELECT 'pagamenti', pg.id,
+           (coalesce(pg.importo_pagato, 0) <> 0 OR pg.data_incasso IS NOT NULL
+            OR pg.fattura_aruba_id IS NOT NULL OR pg.fattura_stato IS NOT NULL OR pg.fattura_emessa_il IS NOT NULL OR coalesce(pg.stato, 'da_pagare') <> 'da_pagare')
+      FROM public.pagamenti pg
+     WHERE pg.scuola_id = v_sede AND pg.anno_id = v_anno_id AND pg.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
   PERFORM pg_temp.azzera_blocca_nipoti('pagamenti', 'pagamenti_quote', 'pagamento_id', ARRAY[]::text[]);
   -- Il blocco dei nipoti può aver fermato una figlia: la madre che la ha come figlia resta con lei. Si ripete il giro madre/figlia.
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
-  DELETE FROM public.pagamenti g WHERE g.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
+  DELETE FROM public.pagamenti pg WHERE pg.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
@@ -415,8 +416,8 @@ BEGIN
   -- Accogliere la domanda ha creato un invito con le credenziali: va via con la domanda (nasce con lei, nella Demo, dopo la partenza). L'ACCOUNT
   -- che ha creato (parents, utenti) NON si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
   INSERT INTO pg_temp._azzera_lasciate
-    SELECT DISTINCT 'parents', ic.parent_id FROM public.iscrizioni_inviti_credenziali ic JOIN public.parents p ON p.id = ic.parent_id
-     WHERE p.created_at >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
+    SELECT DISTINCT 'parents', ic.parent_id FROM public.iscrizioni_inviti_credenziali ic JOIN public.parents pr ON pr.id = ic.parent_id
+     WHERE pr.created_at >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
        AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = ic.parent_id);
   INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'utenti', u.id FROM public.iscrizioni_inviti_credenziali ic JOIN public.utenti u ON u.id = ic.auth_user_id
@@ -442,8 +443,8 @@ BEGIN
   -- I legami con i genitori nascono accogliendo la domanda (student_parents va via a cascata, legame_genitori_alunni no): si tolgono con l'alunno
   -- che se ne va. L'ACCOUNT non si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
   INSERT INTO pg_temp._azzera_lasciate
-    SELECT DISTINCT 'parents', sp.parent_id FROM public.student_parents sp JOIN public.parents p ON p.id = sp.parent_id
-     WHERE p.created_at >= v_dal AND sp.student_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
+    SELECT DISTINCT 'parents', sp.parent_id FROM public.student_parents sp JOIN public.parents pr ON pr.id = sp.parent_id
+     WHERE pr.created_at >= v_dal AND sp.student_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
        AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = sp.parent_id);
   INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'utenti', u.id FROM public.legame_genitori_alunni lg JOIN public.utenti u ON u.id = lg.genitore_id
@@ -466,14 +467,14 @@ BEGIN
 
   -- 6f · le sezioni dell'anno nuovo nate dopo la partenza; le copie (docenti, materie, orario, campanelle…) vanno via a cascata
   INSERT INTO pg_temp._azzera_cand (tabella, id)
-    SELECT 'sections', s.id FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at >= v_dal;
+    SELECT 'sections', se.id FROM public.sections se WHERE se.scuola_id = v_sede AND se.anno_id = v_anno_id AND se.created_at >= v_dal;
   PERFORM pg_temp.azzera_blocca('sections',
     ARRAY['utenti_sezioni', 'utenti_sezioni_materie', 'materie', 'sezione_materia_obiettivo', 'orario_settimanale', 'campanelle',
           'tempo_scuola', 'locker_config']);
   -- sections → materie → (valutazioni, registro, scrutini…): le copie che vanno via con la materia non bloccano, il resto sì
   PERFORM pg_temp.azzera_blocca_nipoti('sections', 'materie', 'section_id',
     ARRAY['utenti_sezioni_materie', 'sezione_materia_obiettivo', 'orario_settimanale']);
-  DELETE FROM public.sections s WHERE s.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'sections' AND NOT k.bloccata);
+  DELETE FROM public.sections se WHERE se.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'sections' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'sections' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
@@ -543,10 +544,10 @@ BEGIN
     IF v_usi <> '' THEN
       RAISE EXCEPTION 'AZZERA_ANNI_NATI_USATI: % anni nati nel collaudo hanno ancora righe attaccate (%): si guardano a mano', cardinality(v_nati), v_usi;
     END IF;
-    SELECT (SELECT count(*) FROM public.listino_voci x WHERE x.anno_sede_id = ANY (v_nati))
-         + (SELECT count(*) FROM public.moduli_richiesti x WHERE x.anno_sede_id = ANY (v_nati))
-         + (SELECT count(*) FROM public.posti_autorizzati x WHERE x.anno_sede_id = ANY (v_nati))
-         + (SELECT count(*) FROM public.anni_sede_stati x WHERE x.anno_sede_id = ANY (v_nati))
+    SELECT (SELECT count(*) FROM public.listino_voci lv WHERE lv.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.moduli_richiesti mr WHERE mr.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.posti_autorizzati po WHERE po.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.anni_sede_stati st WHERE st.anno_sede_id = ANY (v_nati))
       INTO v_n;
     -- listino, moduli, posti e storia degli stati vanno via a cascata con l'anno
     DELETE FROM public.anni_sede a WHERE a.id = ANY (v_nati) AND a.scuola_id = v_sede;
@@ -610,10 +611,10 @@ BEGIN
   v_rimesse := 0;
   IF v_part IS NOT NULL THEN
     UPDATE public.frequenze f
-       SET stato = x.stato, data_uscita = x.data_uscita, non_rinnova_il = x.non_rinnova_il, non_rinnova_motivo = x.non_rinnova_motivo
-      FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
-     WHERE f.id = x.id AND f.anno_sede_id = v_par
-       AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
+       SET stato = rj.stato, data_uscita = rj.data_uscita, non_rinnova_il = rj.non_rinnova_il, non_rinnova_motivo = rj.non_rinnova_motivo
+      FROM jsonb_to_recordset(v_part->'frequenze') AS rj(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
+     WHERE f.id = rj.id AND f.anno_sede_id = v_par
+       AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (rj.stato, rj.data_uscita, rj.non_rinnova_il, rj.non_rinnova_motivo);
     GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   END IF;
   INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
@@ -622,7 +623,7 @@ BEGIN
   UPDATE public.anni_sede a SET stato = v_foto->>'stato', domande_aperte = (v_foto->>'domande_aperte')::boolean
    WHERE a.id = v_anno AND a.scuola_id = v_sede;
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  DELETE FROM public.anni_sede_stati s WHERE s.anno_sede_id = v_anno AND s.dal >= v_dal;
+  DELETE FROM public.anni_sede_stati st WHERE st.anno_sede_id = v_anno AND st.dal >= v_dal;
   GET DIAGNOSTICS v_cron = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('stato e domande aperte dell''anno nuovo (tolte: righe di cronologia)', v_cron, v_rimesse);
 
@@ -633,43 +634,43 @@ BEGIN
    WHERE l.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'listino') e WHERE e->>'id' = l.id::text);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   UPDATE public.listino_voci l
-     SET voce = r.voce, fascia = r.fascia, payment_category_id = r.payment_category_id, importo = r.importo, mesi = r.mesi, scadenza = r.scadenza
-    FROM jsonb_populate_recordset(NULL::public.listino_voci, v_foto->'listino') r
-   WHERE l.id = r.id AND l.anno_sede_id = v_anno AND to_jsonb(l) <> to_jsonb(r);
+     SET voce = rl.voce, fascia = rl.fascia, payment_category_id = rl.payment_category_id, importo = rl.importo, mesi = rl.mesi, scadenza = rl.scadenza
+    FROM jsonb_populate_recordset(NULL::public.listino_voci, v_foto->'listino') rl
+   WHERE l.id = rl.id AND l.anno_sede_id = v_anno AND to_jsonb(l) <> to_jsonb(rl);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO public.listino_voci
-    SELECT r.* FROM jsonb_populate_recordset(NULL::public.listino_voci, v_foto->'listino') r
-     WHERE NOT EXISTS (SELECT 1 FROM public.listino_voci x WHERE x.id = r.id);
+    SELECT rl.* FROM jsonb_populate_recordset(NULL::public.listino_voci, v_foto->'listino') rl
+     WHERE NOT EXISTS (SELECT 1 FROM public.listino_voci lv WHERE lv.id = rl.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('listino (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
   -- 8b · moduli richiesti
-  DELETE FROM public.moduli_richiesti m
-   WHERE m.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'moduli') e WHERE e->>'id' = m.id::text);
+  DELETE FROM public.moduli_richiesti mr
+   WHERE mr.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'moduli') e WHERE e->>'id' = mr.id::text);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  UPDATE public.moduli_richiesti m
-     SET lista = r.lista, codice = r.codice, titolo = r.titolo, ordine = r.ordine
-    FROM jsonb_populate_recordset(NULL::public.moduli_richiesti, v_foto->'moduli') r
-   WHERE m.id = r.id AND m.anno_sede_id = v_anno AND to_jsonb(m) <> to_jsonb(r);
+  UPDATE public.moduli_richiesti mr
+     SET lista = rm.lista, codice = rm.codice, titolo = rm.titolo, ordine = rm.ordine
+    FROM jsonb_populate_recordset(NULL::public.moduli_richiesti, v_foto->'moduli') rm
+   WHERE mr.id = rm.id AND mr.anno_sede_id = v_anno AND to_jsonb(mr) <> to_jsonb(rm);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO public.moduli_richiesti
-    SELECT r.* FROM jsonb_populate_recordset(NULL::public.moduli_richiesti, v_foto->'moduli') r
-     WHERE NOT EXISTS (SELECT 1 FROM public.moduli_richiesti x WHERE x.id = r.id);
+    SELECT rm.* FROM jsonb_populate_recordset(NULL::public.moduli_richiesti, v_foto->'moduli') rm
+     WHERE NOT EXISTS (SELECT 1 FROM public.moduli_richiesti mr WHERE mr.id = rm.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('moduli richiesti (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
   -- 8c · posti autorizzati
-  DELETE FROM public.posti_autorizzati p
-   WHERE p.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'posti') e WHERE e->>'id' = p.id::text);
+  DELETE FROM public.posti_autorizzati po
+   WHERE po.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'posti') e WHERE e->>'id' = po.id::text);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  UPDATE public.posti_autorizzati p
-     SET fascia = r.fascia, posti = r.posti, fonte = r.fonte
-    FROM jsonb_populate_recordset(NULL::public.posti_autorizzati, v_foto->'posti') r
-   WHERE p.id = r.id AND p.anno_sede_id = v_anno AND to_jsonb(p) <> to_jsonb(r);
+  UPDATE public.posti_autorizzati po
+     SET fascia = rp.fascia, posti = rp.posti, fonte = rp.fonte
+    FROM jsonb_populate_recordset(NULL::public.posti_autorizzati, v_foto->'posti') rp
+   WHERE po.id = rp.id AND po.anno_sede_id = v_anno AND to_jsonb(po) <> to_jsonb(rp);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   INSERT INTO public.posti_autorizzati
-    SELECT r.* FROM jsonb_populate_recordset(NULL::public.posti_autorizzati, v_foto->'posti') r
-     WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati x WHERE x.id = r.id);
+    SELECT rp.* FROM jsonb_populate_recordset(NULL::public.posti_autorizzati, v_foto->'posti') rp
+     WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati po WHERE po.id = rp.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('posti autorizzati (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
@@ -679,9 +680,9 @@ BEGIN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno nuovo dopo la partenza', v_n;
   END IF;
   IF v_part IS NOT NULL THEN
-    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
-      JOIN public.frequenze f ON f.id = x.id
-     WHERE (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
+    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS rj(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
+      JOIN public.frequenze f ON f.id = rj.id
+     WHERE (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (rj.stato, rj.data_uscita, rj.non_rinnova_il, rj.non_rinnova_motivo);
     IF v_n <> 0 THEN
       RAISE EXCEPTION 'AZZERA_CONTEGGI: % frequenze dell''anno di partenza non coincidono con la fotografia', v_n;
     END IF;
@@ -696,7 +697,7 @@ BEGIN
       RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno di partenza nate dopo la partenza, ma le lasciate sono %', v_n, v_tot;
     END IF;
   END IF;
-  SELECT count(*) INTO v_n FROM public.pagamenti g WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
+  SELECT count(*) INTO v_n FROM public.pagamenti pg WHERE pg.scuola_id = v_sede AND pg.anno_id = v_anno_id AND pg.creato_il >= v_dal;
   SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'pagamenti';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % voci di pagamento dopo la partenza, ma le lasciate sono %', v_n, v_tot;
@@ -711,7 +712,7 @@ BEGIN
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % alunni nati dopo la partenza, ma i lasciati sono %', v_n, v_tot;
   END IF;
-  SELECT count(*) INTO v_n FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at >= v_dal;
+  SELECT count(*) INTO v_n FROM public.sections se WHERE se.scuola_id = v_sede AND se.anno_id = v_anno_id AND se.created_at >= v_dal;
   SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'sections';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % sezioni dopo la partenza, ma le lasciate sono %', v_n, v_tot;
@@ -726,17 +727,17 @@ BEGIN
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % anni nati dopo la partenza', v_n;
   END IF;
-  SELECT count(*) INTO v_n FROM public.anni_sede_stati s WHERE s.anno_sede_id = v_anno AND s.dal >= v_dal;
+  SELECT count(*) INTO v_n FROM public.anni_sede_stati st WHERE st.anno_sede_id = v_anno AND st.dal >= v_dal;
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % righe di cronologia dell''anno nuovo dopo la partenza', v_n;
   END IF;
   -- La configurazione coincide con la fotografia, riga per riga, in entrambe le direzioni.
   SELECT (SELECT count(*) FROM public.listino_voci l WHERE l.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'listino') e WHERE e = to_jsonb(l)))
        + (SELECT count(*) FROM jsonb_array_elements(v_foto->'listino') e WHERE NOT EXISTS (SELECT 1 FROM public.listino_voci l WHERE l.anno_sede_id = v_anno AND to_jsonb(l) = e))
-       + (SELECT count(*) FROM public.moduli_richiesti m WHERE m.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'moduli') e WHERE e = to_jsonb(m)))
-       + (SELECT count(*) FROM jsonb_array_elements(v_foto->'moduli') e WHERE NOT EXISTS (SELECT 1 FROM public.moduli_richiesti m WHERE m.anno_sede_id = v_anno AND to_jsonb(m) = e))
-       + (SELECT count(*) FROM public.posti_autorizzati p WHERE p.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'posti') e WHERE e = to_jsonb(p)))
-       + (SELECT count(*) FROM jsonb_array_elements(v_foto->'posti') e WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati p WHERE p.anno_sede_id = v_anno AND to_jsonb(p) = e))
+       + (SELECT count(*) FROM public.moduli_richiesti mr WHERE mr.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'moduli') e WHERE e = to_jsonb(mr)))
+       + (SELECT count(*) FROM jsonb_array_elements(v_foto->'moduli') e WHERE NOT EXISTS (SELECT 1 FROM public.moduli_richiesti mr WHERE mr.anno_sede_id = v_anno AND to_jsonb(mr) = e))
+       + (SELECT count(*) FROM public.posti_autorizzati po WHERE po.anno_sede_id = v_anno AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_foto->'posti') e WHERE e = to_jsonb(po)))
+       + (SELECT count(*) FROM jsonb_array_elements(v_foto->'posti') e WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati po WHERE po.anno_sede_id = v_anno AND to_jsonb(po) = e))
     INTO v_n;
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: % righe di listino, moduli o posti non coincidono con la fotografia', v_n;

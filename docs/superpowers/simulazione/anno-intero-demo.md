@@ -210,11 +210,11 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 
 | Codice | Vuol dire |
 |---|---|
-| `AZZERA_SEGNAPOSTO` | sede, data o fotografia sono ancora i segnaposto (o la fotografia non è un JSON) |
+| `AZZERA_SEGNAPOSTO` | la sede o la fotografia sono ancora i segnaposto (o la fotografia non è un JSON) |
 | `AZZERA_SEDE_NON_DI_PROVA` | la sede non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione` |
 | `AZZERA_DATA` | lo scatto della fotografia è nel futuro, o non torna con i suoi conteggi (le righe «di prima» non sono quante la fotografia dice) |
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
-| `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
+| `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza, oppure l'anno di partenza non è tornato `corrente` |
 | `AZZERA_PROVA_A_SECCO` | l'interruttore `c_prova_a_secco` è acceso (lo è per difetto): il messaggio porta il riassunto, non è stato scritto niente. Per scrivere davvero si mette `false` |
 | `AZZERA_CONFINE_CON_RIGHE` | rimettere le date dei due anni farebbe cadere nell'anno sbagliato righe nate nel collaudo nei giorni di un confine spostato: il messaggio dà i conteggi per tabella, non si tocca niente. Cosa fare: trovarle (vedi «Le date degli anni»), toglierle a mano, rilanciare |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |

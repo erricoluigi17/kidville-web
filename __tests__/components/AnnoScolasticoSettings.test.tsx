@@ -363,11 +363,25 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     scegli('2027/28')
     expect(await screen.findByText(/^Mancano: quota di conferma, quota di nuova iscrizione, moduli per la conferma, moduli per la nuova iscrizione$/)).toBeInTheDocument()
     expect(screen.getByText(itSettings.annoListinoNelleRette)).toBeInTheDocument()
+    // Le voci si inseriscono già dalle schede lì sopra: il testo non deve rimandare a un aggiornamento futuro.
+    expect(itSettings.annoListinoNelleRette).not.toMatch(/prossimo aggiornamento|non si possono ancora/i)
+    expect(screen.getByRole('button', { name: 'Quote' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Moduli' })).toBeInTheDocument()
     expect(apri()).toHaveAttribute('aria-disabled', 'true')
     expect(fetchMock).toHaveBeenCalledWith(`/api/admin/anni/${S27}`, expect.objectContaining({ headers: expect.objectContaining({ 'x-user-id': USER }) }))
     fireEvent.click(apri())
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(chiamate('POST')).toHaveLength(0)
+  })
+
+  it('se manca la fascia delle classi, il rimando dice che si sistema nella scheda Classi', async () => {
+    rispostaGet = ok({ mancano: ['classi_senza_fascia'] })
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    expect(await screen.findByText(/^Mancano: la fascia di ogni classe/)).toBeInTheDocument()
+    expect(screen.getByText(itSettings.annoListinoNelleRette)).toHaveTextContent(/scheda Classi/)
+    expect(itSettings.annoListinoNelleRette).not.toMatch(/Rette|Posti/)
   })
 
   it('dice solo ciò che manca davvero', async () => {

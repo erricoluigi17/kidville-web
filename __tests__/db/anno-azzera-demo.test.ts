@@ -988,6 +988,18 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     expect(date, 'perché non si cancellano').toMatch(/AZZERA_DATA/)
   })
 
+  it('una riga di conteggio con NULL fa cadere lo script, non sparisce in silenzio dal messaggio (O-r4-1)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const rotto = compila({ sede: DEMO, foto: f.fotografia!, prova: true }).replace("('frequenze dell''anno nuovo', v_tolte)", "('frequenze dell''anno nuovo', NULL)")
+      expect(rotto).not.toBe(compila({ sede: DEMO, foto: f.fotografia!, prova: true }))
+      await b.db.exec('SAVEPOINT nul')
+      await expect(b.db.exec(dentro(rotto))).rejects.toThrow(/check constraint|violates/i)
+      await b.db.exec('ROLLBACK TO SAVEPOINT nul')
+      await b.db.exec('RELEASE SAVEPOINT nul')
+    })
+  })
+
   it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

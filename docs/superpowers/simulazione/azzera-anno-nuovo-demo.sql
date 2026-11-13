@@ -364,7 +364,8 @@ BEGIN
   -- Queste due vivono quanto la sessione dell'editor (come `_sede_ripristinata`): servono alle letture dopo il COMMIT. Non le legge
   -- nessun DELETE/UPDATE.
   DROP TABLE IF EXISTS pg_temp._azzera_esito;
-  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, gruppo integer NOT NULL DEFAULT 0, voce text NOT NULL, tolte integer DEFAULT 0, rimesse integer DEFAULT 0, lasciate integer DEFAULT 0);
+  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, gruppo integer NOT NULL DEFAULT 0, voce text NOT NULL, tolte integer DEFAULT 0, rimesse integer DEFAULT 0, lasciate integer DEFAULT 0,
+    CHECK (gruppo = 1 OR (tolte IS NOT NULL AND rimesse IS NOT NULL AND lasciate IS NOT NULL)));  -- solo le righe per uuid (gruppo 1) portano NULL
   DROP TABLE IF EXISTS pg_temp._azzera_lasciate;
   CREATE TEMP TABLE pg_temp._azzera_lasciate (tabella text NOT NULL, id uuid NOT NULL);
 

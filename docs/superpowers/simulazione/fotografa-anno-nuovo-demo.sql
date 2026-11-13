@@ -6,7 +6,7 @@
 --
 -- COME SI USA. Sostituisci <DEMO> con l'uuid della sede di Demo (una volta sola, nel testo qui sotto) ed esegui. La query restituisce
 -- UNA riga con tre colonne:
---   · sede_di_prova   dice `true`: la sede comincia per `e2e00000` oppure è l'unica in `anno_regole.sedi_simulazione`. Altrimenti la query si FERMA con
+--   · sede_di_prova   dice `true`: la sede comincia per `e2e00000` oppure è l'unica in `anno_regole.sedi_simulazione` (e `anno_regole` ha UNA sola riga, come chiede lo script di azzeramento). Altrimenti la query si FERMA con
 --                     FOTOGRAFIA_SEDE_NON_DI_PROVA e non esce niente;
 --   · anni_candidati  deve dire `1`: l'anno nuovo è l'unico anno della sede `in_preparazione` o `iscrizioni_aperte`;
 --   · fotografia      un testo JSON: COPIALO TUTTO (è il punto ② di `azzera-anno-nuovo-demo.sql`, al posto di <FOTOGRAFIA>). Se
@@ -30,7 +30,7 @@ WITH sede AS (
      AND a.stato IN ('in_preparazione', 'iscrizioni_aperte')
 )
 SELECT
-  -- LA GUARDIA. Una sede che non è di prova (non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione`) FERMA la query con
+  -- LA GUARDIA. Una sede che non è di prova (non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione`, con `anno_regole` di una sola riga: né zero né due) FERMA la query con
   -- FOTOGRAFIA_SEDE_NON_DI_PROVA e non esce nessuna riga: la fotografia porta uuid e date di ogni frequenza, e di una sede vera non devono uscire.
   -- (Una SELECT non ha RAISE: l'errore è il cast di quel testo a boolean, e il codice sta nel messaggio. Il testo viene da una sottoquery per non
   -- farlo valutare al planner anche quando la sede è di prova.)

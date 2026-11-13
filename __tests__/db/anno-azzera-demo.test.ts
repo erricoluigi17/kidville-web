@@ -245,6 +245,9 @@ describe('fotografa-anno-nuovo-demo.sql · sola lettura', () => {
       await b.db.query(`INSERT INTO public.anno_regole (id) VALUES (false)`)
       await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = ARRAY[$1]::uuid[]`, [SEDE_SIM])
       expect(await esito('due')).toMatch(/FOTOGRAFIA_SEDE_NON_DI_PROVA/)
+      // zero righe: la fotografia si ferma, come lo script di azzeramento (che chiede esattamente una riga)
+      await b.db.query(`DELETE FROM public.anno_regole`)
+      expect(await esito('zero')).toMatch(/FOTOGRAFIA_SEDE_NON_DI_PROVA/)
     })
   })
 

@@ -27,12 +27,11 @@ export function gradiPerNascita(nascita: string, oggi: string): Grado[] {
   const gradi = new Set<Grado>()
   // Il nido guarda i mesi di vita al prossimo 1° settembre, inizio dell'anno in cui entrerebbe. Chi ha già
   // 3 mesi oggi li ha anche a settembre, quindi basta questa data; chi non è ancora nato conta come gli altri.
-  // I mesi sono di calendario: il giorno esatto non c'è.
+  // I mesi sono di calendario: il giorno esatto non c'è. Il prossimo 1° settembre è l'inizio dell'anno dopo
+  // quello di oggi: la soglia la decide il modulo dell'anno, non questo file.
   const mese = (y: number, m: number) => y * 12 + m
-  const annoOggi = Number(oggi.slice(0, 4))
-  const meseOggi = Number(oggi.slice(5, 7))
   const meseNascita = mese(annoNascita, Number(nascita.slice(5)))
-  const prossimoSettembre = mese(meseOggi >= 9 ? annoOggi + 1 : annoOggi, 9)
+  const prossimoSettembre = mese(annoInizio + 1, 9)
   const nidoPossibile = prossimoSettembre - meseNascita >= ETA_MINIMA_NIDO_MESI
 
   for (const anno of [annoInizio, annoInizio + 1]) {

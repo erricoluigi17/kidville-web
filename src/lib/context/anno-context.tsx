@@ -297,9 +297,11 @@ export function AnnoNotice() {
       data-kv-anno-avviso
       className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-x-3 gap-y-1 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2 font-maven text-[14px] text-kidville-ink min-[640px]:py-2.5"
     >
-      {/* Sotto i 640px (telefono) una riga sola: l'anno guardato, il suo stato e il pulsante per tornare;
-          il testo lungo sta dietro «Perché?». Da 640px in su l'avviso è quello intero di sempre. */}
-      <div className="min-w-0 flex-1">
+      {/* Sotto i 640px (telefono) due righe compatte: sopra l'anno guardato e il suo stato con «Perché?» (il testo
+          lungo sta lì dietro), sotto il pulsante per tornare. `basis-full` costringe il pulsante ad andare a capo
+          invece di schiacciare il testo (con `flex-1` da solo restavano ~106px a 390 e ~36px a 320).
+          Da 640px in su l'avviso è quello intero di sempre, testo e pulsante sulla stessa riga. */}
+      <div className="min-w-0 basis-full min-[640px]:flex-1 min-[640px]:basis-0">
         <p>
           <span className="min-[640px]:hidden">{t('annoAvvisoBreve', { anno: effettivo.etichettaBreve, stato })}</span>
           <span className="hidden min-[640px]:inline">{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</span>
@@ -315,7 +317,7 @@ export function AnnoNotice() {
         </p>
         {perche && (
           <p id="kv-anno-avviso-perche" className="mt-1 text-[13px] min-[640px]:hidden">
-            {t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}
+            {t('annoAvvisoPercheTesto', { anno: effettivo.etichettaBreve })}
           </p>
         )}
       </div>

@@ -839,6 +839,7 @@
   "annoAvvisoTesto": "You are working on {anno} ({stato}): new classes, votes and uploaded lists go to that year. The class lists on screen show that year too.",
   "annoAvvisoBreve": "Viewing {anno} ({stato})",
   "annoAvvisoPerche": "Why?",
+  "annoAvvisoPercheTesto": "Whatever you save from here (new classes, votes, uploaded lists) goes into {anno}, not the current year. The class lists on screen also show {anno}.",
   "annoAvvisoTorna": "Back to the current year",
   "annoStatoDiverso": "status differs between locations",
   "erroreScritturaIncompleta": "The change was only partly saved: the school-year enrolment record is updated, the child’s card is not. Try again: if the fault was temporary, the new attempt completes the work.",

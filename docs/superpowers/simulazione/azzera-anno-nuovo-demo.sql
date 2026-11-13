@@ -573,7 +573,7 @@ BEGIN
   --      rifà questo blocco, con le stesse tabelle del registro. Righe nate DOPO lo spostamento nei giorni spostati: si fermano qui.
   v_cnt := '{}'::jsonb;
   FOR v_y IN
-    SELECT ys.anno_id AS anno_id, ys.inizio AS cur_i, ys.fine AS cur_f, (d.dt->>'inizio')::date AS foto_i, (d.dt->>'fine')::date AS foto_f
+    SELECT ys.anno_id AS anno_id, ys.id AS anno_sede, ys.inizio AS cur_i, ys.fine AS cur_f, (d.dt->>'inizio')::date AS foto_i, (d.dt->>'fine')::date AS foto_f
       FROM public.anni_sede ys
       JOIN (SELECT v_anno AS id, v_foto->'date' AS dt UNION ALL SELECT v_par, v_part->'date' WHERE v_part IS NOT NULL) d ON d.id = ys.id
   LOOP
@@ -593,7 +593,7 @@ BEGIN
           -- riscrive com'erano (un passaggio confermato dopo aver allungato l'anno le ha fatte uscire proprio in quei giorni) e il loro trigger
           -- le rivalida sul periodo rimesso. Contano solo le frequenze NATE o CAMBIATE nel collaudo: quelle si guardano a mano.
           SELECT count(*) INTO v_n FROM public.frequenze fx
-           WHERE fx.anno_sede_id = v_y.anno_id AND fx.scuola_id = v_sede
+           WHERE fx.anno_sede_id = v_y.anno_sede AND fx.scuola_id = v_sede
              AND (fx.data_ingresso BETWEEN v_g.dal AND v_g.al OR fx.data_uscita BETWEEN v_g.dal AND v_g.al)
              AND fx.id NOT IN (SELECT (fz->>'id')::uuid FROM jsonb_array_elements(coalesce(v_part->'frequenze', '[]'::jsonb)) fz);
         ELSE

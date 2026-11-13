@@ -423,10 +423,12 @@ BEGIN
      WHERE u.creato_il >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
        AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
   -- Le domande non hanno copia nella scatola nera: se una famiglia VERA avesse scritto con un link della Demo, la sua domanda sparirebbe senza
-  -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto).
+  -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto). Le righe per uuid hanno tolte = 0: il totale è nella riga «domande del modulo pubblico».
   INSERT INTO pg_temp._azzera_esito (voce, tolte)
-    SELECT 'domanda tolta · ' || k.id::text, 1 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
+    SELECT 'domanda tolta · ' || k.id::text, 0 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
   DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
+  GET DIAGNOSTICS v_tolte = ROW_COUNT;
+  INSERT INTO pg_temp._azzera_esito (voce, tolte) VALUES ('inviti con le credenziali tolti con le domande (senza copia: contengono l''email)', v_tolte);
   DELETE FROM public.enrollment_submissions e WHERE e.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata;

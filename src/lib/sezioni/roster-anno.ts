@@ -15,7 +15,6 @@ import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
  * `[]` = anno passato senza bambini. Un guasto di lettura LANCIA: una classe vuota per un errore è la bugia che qui si evita.
  */
 const STATI_PASSATI = ['in_chiusura', 'chiuso']
-const FREQUENZE_CHE_CONTANO = ['iscritto', 'ritirato', 'trasferito', 'uscito']
 const CODICI_SCHEMA_ASSENTE = ['42703', '42P01', 'PGRST204', 'PGRST205']
 
 function schemaAssente(e: { code?: string } | null): boolean {
@@ -40,7 +39,7 @@ export async function rosterDellAnnoDellaSezione(db: SupabaseClient, sectionId: 
   const stato = (sede.data as { stato?: string } | null)?.stato
   if (!stato || !STATI_PASSATI.includes(stato)) return null
 
-  const fr = await db.from('frequenze').select('alunno_id').eq('anno_id', annoId).eq('section_id', sectionId).in('stato', FREQUENZE_CHE_CONTANO)
+  const fr = await db.from('frequenze').select('alunno_id').eq('anno_id', annoId).eq('section_id', sectionId).neq('stato', 'in_attesa')
   if (fr.error) {
     if (schemaAssente(fr.error)) return null
     throw fr.error

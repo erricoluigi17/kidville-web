@@ -79,8 +79,8 @@ const dbBase = (): DBFinto => ({
   utenti_scuole: [],
 })
 
-const richiesta = (sectionId: string) =>
-  new NextRequest(`http://localhost/api/diary/students?sectionId=${sectionId}`)
+const richiesta = (sectionId: string, dellAnno = true) =>
+  new NextRequest(`http://localhost/api/diary/students?sectionId=${sectionId}${dellAnno ? '&dellAnno=1' : ''}`)
 
 const ids = async (res: Response) => ((await res.json()) as { id: string }[]).map((a) => a.id).sort()
 
@@ -105,6 +105,12 @@ describe('GET /api/diary/students?sectionId= — classe di un anno passato', () 
   it('la classe dell’anno in corso resta letta come sempre (alunni.section_id)', async () => {
     const res = await GET(richiesta(SEC_NUOVA))
     expect(await ids(res)).toEqual([ALU_1, ALU_2, ALU_NUOVO].sort())
+    expect(h.tabelle).not.toContain('frequenze')
+  })
+
+  it('senza `dellAnno=1` (il diario) la lettura è quella di sempre: i bambini che ci sono ORA', async () => {
+    const res = await GET(richiesta(SEC_VECCHIA, false))
+    expect(await res.json()).toEqual([])
     expect(h.tabelle).not.toContain('frequenze')
   })
 

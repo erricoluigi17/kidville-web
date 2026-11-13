@@ -274,13 +274,15 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
     // La PATCH accettava già qualunque giorno — mancava solo il collegamento, e senza
     // di esso rettificare il ritardo di martedì voleva dire tornare su «Oggi» e
     // navigare la data all'indietro.
-    const [correzione, setCorrezione] = useState<{ alunnoId: string; giorno: string } | null>(null);
-    // Cambiando classe la correzione aperta sulla vecchia non resta a schermo (potrebbe finire su una classe di sola lettura).
-    useEffect(() => { setCorrezione(null); }, [sectionId, sezione]);
+    // La correzione porta con sé la classe in cui è stata aperta: cambiando classe NON resta a schermo (derivato, senza un effetto
+    // che azzera lo stato) — su una classe di sola lettura finirebbe un chip con i campi d'orario.
+    const classeCorrente = sectionId ?? sezione;
+    const [correzioneAperta, setCorrezione] = useState<{ alunnoId: string; giorno: string; classe: string } | null>(null);
+    const correzione = correzioneAperta && correzioneAperta.classe === classeCorrente ? correzioneAperta : null;
     const [erroreOrario, setErroreOrario] = useState<string | null>(null);
 
     const apriCorrezione = (alunnoId: string, giorno: string) => {
-        setCorrezione({ alunnoId, giorno });
+        setCorrezione({ alunnoId, giorno, classe: classeCorrente });
         setErroreOrario(null);
     };
 
@@ -333,7 +335,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
             // Carica SEMPRE tutti gli studenti della sezione + presenze del mese in parallelo.
             // Così i mesi senza presenze mostrano comunque la lista completa con celle vuote.
             const [studRes, presRes] = await Promise.all([
-                fetch(`/api/diary/students?${paramClasse}`, { cache: 'no-store' }).catch(() => null),
+                fetch(`/api/diary/students?${paramClasse}${solaLettura ? '&dellAnno=1' : ''}`, { cache: 'no-store' }).catch(() => null),
                 fetch(`/api/attendance/monthly?year=${year}&month=${month}&${paramClasse}`, { cache: 'no-store' }).catch(() => null),
             ]);
             if (studRes?.ok && presRes) {
@@ -352,7 +354,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
         } finally {
             setIsLoading(false);
         }
-    }, [year, month, paramClasse]);
+    }, [year, month, paramClasse, solaLettura]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 

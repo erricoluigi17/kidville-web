@@ -301,7 +301,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false, solaLe
     // ── Fetch studenti reali dall'anagrafica Supabase ──
     // Restituisce null in caso di errore (rete o HTTP), mai eccezioni.
     const fetchStudents = useCallback(async (): Promise<Student[] | null> => {
-        const res = await fetch(`/api/diary/students?${paramClasse}`).catch(() => null);
+        const res = await fetch(`/api/diary/students?${paramClasse}${solaLettura ? '&dellAnno=1' : ''}`).catch(() => null);
         if (!res?.ok) return null;
         const data = await res.json().catch(() => null);
         if (Array.isArray(data)) {
@@ -312,7 +312,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false, solaLe
             }));
         }
         return [];
-    }, [paramClasse]);
+    }, [paramClasse, solaLettura]);
 
     // ── Fetch presenze del giorno selezionato da Supabase ──
     const fetchTodayRecords = useCallback(async () => {

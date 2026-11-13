@@ -41,6 +41,9 @@ const getBySezioneQuerySchema = z.object({
     // La sede scelta nel SedeSelector (R70): finora non viaggiava mai, e con tre
     // plessi il nome-classe da solo non dice più di quale sede si parli.
     scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+    // `dellAnno=1`: i bambini dell'ANNO di quella classe (sola lettura di un anno passato, L6-1). Senza, la lettura è quella di sempre:
+    // il diario di una classe elenca i bambini che ci sono ORA.
+    dellAnno: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['0', '1']).optional()),
 });
 
 // GET /api/diary/students?sezione=<classe>                    → lista classe (tutti)
@@ -172,7 +175,7 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     // Una classe di un anno PASSATO (sola lettura del docente, L6-1): i bambini sono quelli dell'ANNO di quella classe
     // (`frequenze`), non quelli che `alunni.section_id` indica oggi — dopo la ricopia di settembre punta alla classe nuova.
     // Con la funzione dell'anno assente (DB E2E non migrato) `rosterDellAnnoDellaSezione` dà `null`: lettura di sempre.
-    if (!idsStorici && q.data.sectionId && classe.sectionIds.length === 1) {
+    if (!idsStorici && q.data.dellAnno === '1' && q.data.sectionId && classe.sectionIds.length === 1) {
         try {
             const delloAnno = await rosterDellAnnoDellaSezione(admin, q.data.sectionId);
             if (delloAnno !== null) {
@@ -185,7 +188,7 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
             }
         } catch (error) {
             logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'roster-anno-non-letto' }, error);
-            return NextResponse.json({ error: 'Lettura dei bambini non riuscita' }, { status: 500 });
+            return NextResponse.json({ error: 'Lettura dei bambini non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 });
         }
     }
     // La lettura storica usa gli UUID del roster; la lettura ordinaria resta

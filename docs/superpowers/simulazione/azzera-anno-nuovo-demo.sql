@@ -62,7 +62,7 @@
 
 BEGIN;
 
--- La funzione d'appoggio: dato un insieme di candidati alla cancellazione (`_azzera_cand`), segna come «bloccate» le righe a cui
+-- La funzione d'appoggio: dato un insieme di candidati alla cancellazione (`pg_temp._azzera_cand`), segna come «bloccate» le righe a cui
 -- qualcos'altro è ancora attaccato, guardando le chiavi esterne VERE del database (non un elenco scritto qui, che invecchierebbe).
 -- Le tabelle in `p_ignora` sono copie che vanno via a cascata con la riga (o tracce automatiche): non bloccano. Vive solo in questa
 -- transazione, e solo nello schema temporaneo.
@@ -86,7 +86,7 @@ BEGIN
        AND NOT (ns.nspname = 'public' AND cl.relname = ANY (p_ignora))
   LOOP
     EXECUTE format(
-      'UPDATE _azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM %s x WHERE x.%I = k.id)',
+      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM %s x WHERE x.%I = k.id)',
       p_tabella, r.da, r.colonna);
   END LOOP;
   -- Una tabella che punta a sé stessa (una voce figlia di un'altra; un alunno a carico di un altro): la riga resta bloccata se la
@@ -94,13 +94,13 @@ BEGIN
   IF p_auto IS NOT NULL THEN
     LOOP
       EXECUTE format(
-        'UPDATE _azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I x WHERE x.%I = k.id AND NOT EXISTS (SELECT 1 FROM _azzera_cand h WHERE h.tabella = %L AND h.id = x.id AND NOT h.bloccata))',
+        'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I x WHERE x.%I = k.id AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_cand h WHERE h.tabella = %L AND h.id = x.id AND NOT h.bloccata))',
         p_tabella, p_tabella, p_auto, p_tabella);
       GET DIAGNOSTICS v_n = ROW_COUNT;
       EXIT WHEN v_n = 0;
     END LOOP;
   END IF;
-  SELECT count(*) INTO v_bloccate FROM _azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
+  SELECT count(*) INTO v_bloccate FROM pg_temp._azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
   RETURN v_bloccate;
 END
 $blocca$;
@@ -127,10 +127,10 @@ BEGIN
        AND NOT (ns.nspname = 'public' AND cl.relname = ANY (p_ignora))
   LOOP
     EXECUTE format(
-      'UPDATE _azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I f JOIN %s x ON x.%I = f.id WHERE f.%I = k.id)',
+      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I f JOIN %s x ON x.%I = f.id WHERE f.%I = k.id)',
       p_tabella, p_figlia, r.da, r.colonna, p_colonna);
   END LOOP;
-  SELECT count(*) INTO v_bloccate FROM _azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
+  SELECT count(*) INTO v_bloccate FROM pg_temp._azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
   RETURN v_bloccate;
 END
 $nipoti$;
@@ -305,14 +305,14 @@ BEGIN
   END IF;
 
   -- ── 5 · Le tabelle di lavoro ─────────────────────────────────────────────────────────────
-  DROP TABLE IF EXISTS _azzera_cand;
-  CREATE TEMP TABLE _azzera_cand (tabella text NOT NULL, id uuid NOT NULL, bloccata boolean NOT NULL DEFAULT false, PRIMARY KEY (tabella, id)) ON COMMIT DROP;
+  DROP TABLE IF EXISTS pg_temp._azzera_cand;
+  CREATE TEMP TABLE pg_temp._azzera_cand (tabella text NOT NULL, id uuid NOT NULL, bloccata boolean NOT NULL DEFAULT false, PRIMARY KEY (tabella, id)) ON COMMIT DROP;
   -- Queste due vivono quanto la sessione dell'editor (come `_sede_ripristinata`): servono alle letture dopo il COMMIT. Non le legge
   -- nessun DELETE/UPDATE.
-  DROP TABLE IF EXISTS _azzera_esito;
-  CREATE TEMP TABLE _azzera_esito (ordine serial, voce text NOT NULL, tolte integer NOT NULL DEFAULT 0, rimesse integer NOT NULL DEFAULT 0, lasciate integer NOT NULL DEFAULT 0);
-  DROP TABLE IF EXISTS _azzera_lasciate;
-  CREATE TEMP TABLE _azzera_lasciate (tabella text NOT NULL, id uuid NOT NULL);
+  DROP TABLE IF EXISTS pg_temp._azzera_esito;
+  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, voce text NOT NULL, tolte integer NOT NULL DEFAULT 0, rimesse integer NOT NULL DEFAULT 0, lasciate integer NOT NULL DEFAULT 0);
+  DROP TABLE IF EXISTS pg_temp._azzera_lasciate;
+  CREATE TEMP TABLE pg_temp._azzera_lasciate (tabella text NOT NULL, id uuid NOT NULL);
 
   SELECT count(*) INTO v_inv FROM public.anno_invarianti() WHERE righe <> 0;
   RAISE NOTICE 'prima: anno nuovo %, % invarianti non a zero', v_etichetta, v_inv;
@@ -324,20 +324,20 @@ BEGIN
    WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
   DELETE FROM public.frequenze f WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte) VALUES ('frequenze dell''anno nuovo', v_tolte), ('spunte dei moduli (a cascata)', v_n);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte) VALUES ('frequenze dell''anno nuovo', v_tolte), ('spunte dei moduli (a cascata)', v_n);
 
   -- 6a bis · le frequenze dell'anno di PARTENZA nate dopo la partenza (un bambino registrato nell'anno in corso durante il collaudo):
   --          si tolgono come le altre righe nate dopo, se non hanno legami; altrimenti restano e si elencano
   IF v_par IS NOT NULL THEN
-    INSERT INTO _azzera_cand (tabella, id) SELECT 'frequenze', f.id FROM public.frequenze f
+    INSERT INTO pg_temp._azzera_cand (tabella, id) SELECT 'frequenze', f.id FROM public.frequenze f
        WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal
          AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e WHERE e->>'id' = f.id::text);  -- quelle della fotografia ESISTEVANO alla partenza, qualunque cosa dica la data
     PERFORM pg_temp.azzera_blocca('frequenze', ARRAY['frequenze_moduli'], 'continua_da');
-    DELETE FROM public.frequenze f WHERE f.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'frequenze' AND NOT k.bloccata);
+    DELETE FROM public.frequenze f WHERE f.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'frequenze' AND NOT k.bloccata);
     GET DIAGNOSTICS v_tolte = ROW_COUNT;
-    INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'frequenze' AND k.bloccata;
+    INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'frequenze' AND k.bloccata;
     GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-    INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('frequenze nate dopo la partenza nell''anno di partenza (lasciate: con legami)', v_tolte, v_lasciate);
+    INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('frequenze nate dopo la partenza nell''anno di partenza (lasciate: con legami)', v_tolte, v_lasciate);
   END IF;
 
   -- 6b · le frequenze dell'anno di PARTENZA com'erano nella fotografia: stato, data di uscita e «no» (il passaggio confermato fa uscire chi non
@@ -352,10 +352,10 @@ BEGIN
        AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
     GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   END IF;
-  INSERT INTO _azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
+  INSERT INTO pg_temp._azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
 
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
-  INSERT INTO _azzera_cand (tabella, id, bloccata)
+  INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
     SELECT 'pagamenti', g.id,
            (coalesce(g.importo_pagato, 0) <> 0 OR g.data_incasso IS NOT NULL
             OR g.fattura_aruba_id IS NOT NULL OR g.fattura_stato IS NOT NULL OR g.fattura_emessa_il IS NOT NULL OR coalesce(g.stato, 'da_pagare') <> 'da_pagare')
@@ -363,69 +363,69 @@ BEGIN
      WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
   PERFORM pg_temp.azzera_blocca_nipoti('pagamenti', 'pagamenti_quote', 'pagamento_id', ARRAY[]::text[]);
-  DELETE FROM public.pagamenti g WHERE g.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
+  DELETE FROM public.pagamenti g WHERE g.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'pagamenti' AND k.bloccata;
+  INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'pagamenti' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('voci di pagamento dell''anno nuovo (lasciate: con incasso o collegate)', v_tolte, v_lasciate);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('voci di pagamento dell''anno nuovo (lasciate: con incasso o collegate)', v_tolte, v_lasciate);
 
   -- 6d · le domande del modulo pubblico dirette all'anno nuovo (le decisioni vanno via a cascata)
-  INSERT INTO _azzera_cand (tabella, id)
+  INSERT INTO pg_temp._azzera_cand (tabella, id)
     SELECT 'enrollment_submissions', e.id FROM public.enrollment_submissions e
      WHERE e.scuola_id = v_sede AND e.anno_id = v_anno_id AND e.created_at >= v_dal;
   PERFORM pg_temp.azzera_blocca('enrollment_submissions', ARRAY['iscrizioni_decisioni', 'iscrizioni_inviti_credenziali']);
   -- Accogliere la domanda ha creato un invito con le credenziali: va via con la domanda (nasce con lei, nella Demo, dopo la partenza). L'ACCOUNT
   -- che ha creato (parents, utenti) NON si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
-  INSERT INTO _azzera_lasciate
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'parents', ic.parent_id FROM public.iscrizioni_inviti_credenziali ic JOIN public.parents p ON p.id = ic.parent_id
-     WHERE p.created_at >= v_dal AND ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
-       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = ic.parent_id);
-  INSERT INTO _azzera_lasciate
+     WHERE p.created_at >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = ic.parent_id);
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'utenti', u.id FROM public.iscrizioni_inviti_credenziali ic JOIN public.utenti u ON u.id = ic.auth_user_id
-     WHERE u.creato_il >= v_dal AND ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
-       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
+     WHERE u.creato_il >= v_dal AND ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
   -- Le domande non hanno copia nella scatola nera: se una famiglia VERA avesse scritto con un link della Demo, la sua domanda sparirebbe senza
   -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto).
-  INSERT INTO _azzera_esito (voce, tolte)
-    SELECT 'domanda tolta · ' || k.id::text, 1 FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
-  DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
-  DELETE FROM public.enrollment_submissions e WHERE e.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte)
+    SELECT 'domanda tolta · ' || k.id::text, 1 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
+  DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
+  DELETE FROM public.enrollment_submissions e WHERE e.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata;
+  INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('domande del modulo pubblico', v_tolte, v_lasciate);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('domande del modulo pubblico', v_tolte, v_lasciate);
 
   -- 6e · gli alunni nati dopo la partenza, solo se non resta loro NIENTE altrove (le tracce automatiche dello storico vanno via con loro)
-  INSERT INTO _azzera_cand (tabella, id)
+  INSERT INTO pg_temp._azzera_cand (tabella, id)
     SELECT 'alunni', al.id FROM public.alunni al WHERE al.scuola_id = v_sede AND al.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('alunni', ARRAY['alunni_classi_storico', 'storici_revisioni', 'storici_collegamenti', 'student_parents', 'legame_genitori_alunni'], 'retta_a_carico_di');
   -- I legami con i genitori nascono accogliendo la domanda (student_parents va via a cascata, legame_genitori_alunni no): si tolgono con l'alunno
   -- che se ne va. L'ACCOUNT non si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
-  INSERT INTO _azzera_lasciate
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'parents', sp.parent_id FROM public.student_parents sp JOIN public.parents p ON p.id = sp.parent_id
-     WHERE p.created_at >= v_dal AND sp.student_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
-       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = sp.parent_id);
-  INSERT INTO _azzera_lasciate
+     WHERE p.created_at >= v_dal AND sp.student_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = sp.parent_id);
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT DISTINCT 'utenti', u.id FROM public.legame_genitori_alunni lg JOIN public.utenti u ON u.id = lg.genitore_id
-     WHERE u.creato_il >= v_dal AND lg.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
-       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
-  DELETE FROM public.legame_genitori_alunni lg WHERE lg.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
-  DELETE FROM public.alunni al WHERE al.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
+     WHERE u.creato_il >= v_dal AND lg.alunno_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
+  DELETE FROM public.legame_genitori_alunni lg WHERE lg.alunno_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
+  DELETE FROM public.alunni al WHERE al.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata;
+  INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('alunni nati dopo la partenza (lasciati: con righe altrove)', v_tolte, v_lasciate);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('alunni nati dopo la partenza (lasciati: con righe altrove)', v_tolte, v_lasciate);
   -- Il CRM non si cancella: trattiene il suo alunno o la sua domanda, e si elenca per uuid (così si sa PERCHÉ quell'alunno resta).
-  INSERT INTO _azzera_lasciate
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT 'crm_bambini', cb.id FROM public.crm_bambini cb
-     WHERE cb.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata)
-        OR cb.domanda_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
-  INSERT INTO _azzera_lasciate
+     WHERE cb.alunno_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata)
+        OR cb.domanda_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
+  INSERT INTO pg_temp._azzera_lasciate
     SELECT 'crm_schede', cs.id FROM public.crm_schede cs
-     WHERE cs.domanda_da_associare IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
+     WHERE cs.domanda_da_associare IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
 
   -- 6f · le sezioni dell'anno nuovo nate dopo la partenza; le copie (docenti, materie, orario, campanelle…) vanno via a cascata
-  INSERT INTO _azzera_cand (tabella, id)
+  INSERT INTO pg_temp._azzera_cand (tabella, id)
     SELECT 'sections', s.id FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at >= v_dal;
   PERFORM pg_temp.azzera_blocca('sections',
     ARRAY['utenti_sezioni', 'utenti_sezioni_materie', 'materie', 'sezione_materia_obiettivo', 'orario_settimanale', 'campanelle',
@@ -433,11 +433,11 @@ BEGIN
   -- sections → materie → (valutazioni, registro, scrutini…): le copie che vanno via con la materia non bloccano, il resto sì
   PERFORM pg_temp.azzera_blocca_nipoti('sections', 'materie', 'section_id',
     ARRAY['utenti_sezioni_materie', 'sezione_materia_obiettivo', 'orario_settimanale']);
-  DELETE FROM public.sections s WHERE s.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'sections' AND NOT k.bloccata);
+  DELETE FROM public.sections s WHERE s.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'sections' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
-  INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'sections' AND k.bloccata;
+  INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'sections' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('sezioni dell''anno nuovo (lasciate: ancora usate)', v_tolte, v_lasciate);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('sezioni dell''anno nuovo (lasciate: ancora usate)', v_tolte, v_lasciate);
 
   -- 6g · gli anni nati DURANTE il collaudo, successivi all'anno nuovo (il viaggio nel tempo fa nascere al tick il 2028/29, in preparazione,
   --      con le copie di listino, moduli e posti). Se a un anno così punta altro (sezioni, frequenze, domande, voci…) il blocco si ferma
@@ -511,15 +511,15 @@ BEGIN
     -- listino, moduli, posti e storia degli stati vanno via a cascata con l'anno
     DELETE FROM public.anni_sede a WHERE a.id = ANY (v_nati) AND a.scuola_id = v_sede;
     GET DIAGNOSTICS v_tolte = ROW_COUNT;
-    INSERT INTO _azzera_esito (voce, tolte) VALUES ('anni nati nel collaudo', v_tolte), ('righe di listino, moduli, posti e storia di quegli anni (a cascata)', v_n);
+    INSERT INTO pg_temp._azzera_esito (voce, tolte) VALUES ('anni nati nel collaudo', v_tolte), ('righe di listino, moduli, posti e storia di quegli anni (a cascata)', v_n);
     -- La riga GLOBALE dell'anno (`anni_scolastici`) si toglie solo se non la punta più nessuno (un'altra sede può già averla).
-    INSERT INTO _azzera_cand (tabella, id) SELECT 'anni_scolastici', y.id FROM public.anni_scolastici y WHERE y.id = ANY (v_nati_anni);
+    INSERT INTO pg_temp._azzera_cand (tabella, id) SELECT 'anni_scolastici', y.id FROM public.anni_scolastici y WHERE y.id = ANY (v_nati_anni);
     PERFORM pg_temp.azzera_blocca('anni_scolastici', ARRAY[]::text[]);
-    DELETE FROM public.anni_scolastici y WHERE y.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'anni_scolastici' AND NOT k.bloccata);
+    DELETE FROM public.anni_scolastici y WHERE y.id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'anni_scolastici' AND NOT k.bloccata);
     GET DIAGNOSTICS v_tolte = ROW_COUNT;
-    INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'anni_scolastici' AND k.bloccata;
+    INSERT INTO pg_temp._azzera_lasciate SELECT k.tabella, k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'anni_scolastici' AND k.bloccata;
     GET DIAGNOSTICS v_lasciate = ROW_COUNT;
-    INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('righe globali degli anni nati (lasciate: usate da altre sedi)', v_tolte, v_lasciate);
+    INSERT INTO pg_temp._azzera_esito (voce, tolte, lasciate) VALUES ('righe globali degli anni nati (lasciate: usate da altre sedi)', v_tolte, v_lasciate);
   END IF;
 
   -- ── 7 · LO STATO dell'anno nuovo, come nella fotografia; la cronologia degli stati scritta dopo la partenza va via ──
@@ -528,7 +528,7 @@ BEGIN
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   DELETE FROM public.anni_sede_stati s WHERE s.anno_sede_id = v_anno AND s.dal >= v_dal;
   GET DIAGNOSTICS v_cron = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, rimesse) VALUES ('stato e domande aperte dell''anno nuovo (tolte: righe di cronologia)', v_cron, v_rimesse);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('stato e domande aperte dell''anno nuovo (tolte: righe di cronologia)', v_cron, v_rimesse);
 
   -- ── 8 · LA CONFIGURAZIONE come nella fotografia: stesse righe, stessi uuid. Si tolgono le righe che non c'erano, si correggono
   --      quelle cambiate, si rimettono quelle sparite. (Le spunte dei moduli delle frequenze vecchie restano: i moduli non si riscrivono.)
@@ -545,7 +545,7 @@ BEGIN
     SELECT r.* FROM jsonb_populate_recordset(NULL::public.listino_voci, v_foto->'listino') r
      WHERE NOT EXISTS (SELECT 1 FROM public.listino_voci x WHERE x.id = r.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, rimesse) VALUES ('listino (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('listino (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
   -- 8b · moduli richiesti
   DELETE FROM public.moduli_richiesti m
@@ -560,7 +560,7 @@ BEGIN
     SELECT r.* FROM jsonb_populate_recordset(NULL::public.moduli_richiesti, v_foto->'moduli') r
      WHERE NOT EXISTS (SELECT 1 FROM public.moduli_richiesti x WHERE x.id = r.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, rimesse) VALUES ('moduli richiesti (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('moduli richiesti (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
   -- 8c · posti autorizzati
   DELETE FROM public.posti_autorizzati p
@@ -575,7 +575,7 @@ BEGIN
     SELECT r.* FROM jsonb_populate_recordset(NULL::public.posti_autorizzati, v_foto->'posti') r
      WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati x WHERE x.id = r.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, tolte, rimesse) VALUES ('posti autorizzati (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
+  INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('posti autorizzati (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
 
   -- ── 9 · DOPO: i conti devono tornare, altrimenti il blocco si ferma e annulla tutto ────────
   SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
@@ -595,28 +595,28 @@ BEGIN
     END IF;
     SELECT count(*) INTO v_n FROM public.frequenze f
      WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e WHERE e->>'id' = f.id::text);
-    SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'frequenze';
+    SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'frequenze';
     IF v_n <> v_tot THEN
       RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno di partenza nate dopo la partenza, ma le lasciate sono %', v_n, v_tot;
     END IF;
   END IF;
   SELECT count(*) INTO v_n FROM public.pagamenti g WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
-  SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'pagamenti';
+  SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'pagamenti';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % voci di pagamento dopo la partenza, ma le lasciate sono %', v_n, v_tot;
   END IF;
   SELECT count(*) INTO v_n FROM public.enrollment_submissions e WHERE e.scuola_id = v_sede AND e.anno_id = v_anno_id AND e.created_at >= v_dal;
-  SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'enrollment_submissions';
+  SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'enrollment_submissions';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % domande dopo la partenza, ma le lasciate sono %', v_n, v_tot;
   END IF;
   SELECT count(*) INTO v_n FROM public.alunni al WHERE al.scuola_id = v_sede AND al.creato_il >= v_dal;
-  SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'alunni';
+  SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'alunni';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % alunni nati dopo la partenza, ma i lasciati sono %', v_n, v_tot;
   END IF;
   SELECT count(*) INTO v_n FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at >= v_dal;
-  SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'sections';
+  SELECT count(*) INTO v_tot FROM pg_temp._azzera_lasciate WHERE tabella = 'sections';
   IF v_n <> v_tot THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % sezioni dopo la partenza, ma le lasciate sono %', v_n, v_tot;
   END IF;
@@ -658,9 +658,9 @@ COMMIT;
 
 -- ── Ciò che l'editor mostra (solo lettura, dopo il COMMIT): i conteggi per tabella, le righe lasciate per uuid, le invarianti ──
 SELECT voce, tolte::text AS tolte, rimesse::text AS rimesse, lasciate::text AS lasciate
-  FROM (SELECT ordine, voce, tolte, rimesse, lasciate FROM _azzera_esito
+  FROM (SELECT ordine, voce, tolte, rimesse, lasciate FROM pg_temp._azzera_esito
         UNION ALL
-        SELECT 1000 + row_number() OVER (ORDER BY tabella, id)::integer, 'lasciata · ' || tabella || ' · ' || id::text, 0, 0, 1 FROM _azzera_lasciate
+        SELECT 1000 + row_number() OVER (ORDER BY tabella, id)::integer, 'lasciata · ' || tabella || ' · ' || id::text, 0, 0, 1 FROM pg_temp._azzera_lasciate
         UNION ALL
         SELECT 2000, 'invarianti non a zero', 0, 0, count(*)::integer FROM public.anno_invarianti() WHERE righe <> 0
         UNION ALL

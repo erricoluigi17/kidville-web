@@ -746,6 +746,24 @@ describe('azzera-anno-nuovo-demo.sql · le dipendenze di secondo livello (O4)', 
   })
 })
 
+describe('azzera-anno-nuovo-demo.sql · le tabelle di lavoro stanno solo nello schema temporaneo (O5)', () => {
+  it('con pg_temp in fondo al search_path, una tabella omonima di public non viene cancellata né letta', async () => {
+    await inRollback(b.db, async () => {
+      // Senza lo schema scritto, `DROP TABLE IF EXISTS _azzera_cand` cerca nel search_path: se `public` viene prima di `pg_temp`, il DROP
+      // cancellerebbe una tabella VERA con quel nome. Con `pg_temp.` esplicito non può.
+      const f = await fotografa()
+      await b.db.exec(`SET LOCAL search_path = public, pg_temp`)
+      await b.db.exec(`CREATE TABLE public._azzera_cand (tabella text, id uuid, bloccata boolean); INSERT INTO public._azzera_cand VALUES ('x', gen_random_uuid(), false)`)
+      await b.db.exec(`CREATE TABLE public._azzera_esito (voce text); INSERT INTO public._azzera_esito VALUES ('mia')`)
+      await b.db.exec(`CREATE TABLE public._azzera_lasciate (tabella text); INSERT INTO public._azzera_lasciate VALUES ('mia')`)
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      expect(await conta(`SELECT 1 FROM public._azzera_cand`), 'la tabella di public non è stata cancellata').toBe(1)
+      expect(await conta(`SELECT 1 FROM public._azzera_esito WHERE voce = 'mia'`)).toBe(1)
+      expect(await conta(`SELECT 1 FROM public._azzera_lasciate WHERE tabella = 'mia'`)).toBe(1)
+    })
+  })
+})
+
 describe('azzera-anno-nuovo-demo.sql · una richiesta sola, COMMIT compreso', () => {
   // ULTIMA prova del file: scrive davvero (COMMIT), quindi niente ROLLBACK a proteggere il banco dopo di lei.
   it('riesce con il file COM’È (BEGIN, funzione, DO, DROP, COMMIT in un invio) e la scrittura è definitiva', async () => {

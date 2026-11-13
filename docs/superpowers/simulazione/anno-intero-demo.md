@@ -1,7 +1,7 @@
 # Simulare l'anno intero in Demo (PR 4.9)
 
-> **Da fare SOLO dopo il merge della PR 4.9.** Le migrazioni M49a e M49b le applica l'integrazione al merge: prima, in Demo non c'è
-> niente da simulare. Questo manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
+> **La PR 4.9 è in produzione** (le migrazioni M49a e M49b le ha applicate l'integrazione al merge): la simulazione si può fare. Questo
+> manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
 > I comandi che scrivono (il tick, il passaggio, il ripristino) li lancia il titolare dall'editor SQL: il freno nega `anno_regole`,
 > `DELETE` e `UPDATE` all'agente, giustamente.
 

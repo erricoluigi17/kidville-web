@@ -110,6 +110,7 @@ describe('sezioniVisibiliConEsito', () => {
     const sb = conRpc(() => ({ data: RIGHE, error: null }))
     expect(await sezioniVisibiliConEsito(sb, DOCENTE)).toEqual({
       ok: true,
+      conAnni: true,
       sezioni: [{ sectionId: S_ATTIVA, solaLettura: false }, { sectionId: S_PASSATA, solaLettura: true }],
     })
   })

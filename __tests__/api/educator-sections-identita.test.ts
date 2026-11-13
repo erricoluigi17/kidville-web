@@ -140,7 +140,7 @@ describe('GET /api/educator-sections — ramo manager: due sedi, due identità',
     const j = await corpo(await GET(richiesta('', SEDE_B)))
 
     expect(j.sections).toEqual([
-      { id: SEC_B_2ANNI, name: OMONIMA, scuolaId: SEDE_B, scuolaNome: NOME_SEDE_B, school_type: 'nido' },
+      { id: SEC_B_2ANNI, name: OMONIMA, scuolaId: SEDE_B, scuolaNome: NOME_SEDE_B, school_type: 'nido', solaLettura: false, annoId: null, annoEtichetta: null, annoStato: null },
     ])
   })
 
@@ -161,7 +161,7 @@ describe('GET /api/educator-sections — ramo educator: identità e sede', () =>
 
     // È assegnato anche alla «2 ANNI» di SEDE_B, che non è un suo plesso.
     expect(j.sections).toEqual([
-      { id: SEC_A_2ANNI, name: OMONIMA, scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'nido' },
+      { id: SEC_A_2ANNI, name: OMONIMA, scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'nido', solaLettura: false, annoId: null, annoEtichetta: null, annoStato: null },
     ])
     expect(j.role).toBe('educator')
   })
@@ -170,7 +170,7 @@ describe('GET /api/educator-sections — ramo educator: identità e sede', () =>
     const j = await corpo(await GET(richiesta(`userId=${ID_DOCENTE}`, SEDE_B)))
 
     expect(j.sections).toEqual([
-      { id: SEC_B_2ANNI, name: OMONIMA, scuolaId: SEDE_B, scuolaNome: NOME_SEDE_B, school_type: 'nido' },
+      { id: SEC_B_2ANNI, name: OMONIMA, scuolaId: SEDE_B, scuolaNome: NOME_SEDE_B, school_type: 'nido', solaLettura: false, annoId: null, annoEtichetta: null, annoStato: null },
     ])
     expect(j.role).toBe('educator')
   })
@@ -200,7 +200,7 @@ describe('GET /api/educator-sections — ramo educator: identità e sede', () =>
     const j = await corpo(await GET(richiesta()))
 
     expect(j.sections).toEqual([
-      { id: SEC_A_3ANNI, name: '3 ANNI A', scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'infanzia' },
+      { id: SEC_A_3ANNI, name: '3 ANNI A', scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'infanzia', solaLettura: false, annoId: null, annoEtichetta: null, annoStato: null },
     ])
   })
 

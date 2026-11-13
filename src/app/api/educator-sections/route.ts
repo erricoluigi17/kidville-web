@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { filtraPerAnnoDiSede, type AnniAttivi } from '@/lib/anno/anni-attivi';
 import { resolveAnnoLetturaElenco, resolveScuoleAttive } from '@/lib/auth/scope';
-import { sezioniDiUtente } from '@/lib/sezioni/docenti';
+import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -21,6 +21,10 @@ const zUuidQueryOpzionale = z.preprocess(
 
 const getQuerySchema = z.object({
     userId: zUuidQueryOpzionale,
+    // `passati=1`: oltre all'anno in corso, le classi assegnate degli anni `in_chiusura` e `chiuso`, in SOLA LETTURA
+    // (decisione 14 e §4.10 della specifica dell'anno scolastico). Senza, la risposta è quella di sempre: le pagine che
+    // scrivono (mensa, armadietto, modulistica…) non si ritrovano in elenco una classe su cui il server risponderebbe 403.
+    passati: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['0', '1']).optional()),
 });
 
 /**
@@ -42,7 +46,16 @@ interface SezioneEsposta {
     /** Nome della sede: serve alle etichette «nome — sede» quando le sedi sono >1. */
     scuolaNome: string;
     school_type: string | null;
+    /** `true` per una classe di un anno `in_chiusura` o `chiuso`: si apre, non si scrive (il server rifiuta comunque). */
+    solaLettura: boolean;
+    /** `anni_scolastici.id` e `etichetta_breve` («2026/27»): solo quando la funzione dell'anno esiste (DB migrato). */
+    annoId: string | null;
+    annoEtichetta: string | null;
+    /** `corrente`, `in_chiusura` o `chiuso`: distingue «Anno che si sta chiudendo» da «Anno passato». */
+    annoStato: string | null;
 }
+
+interface InfoAnno { annoId: string | null; etichetta: string | null; stato: string | null }
 
 interface RigaSezione {
     id: string;
@@ -81,6 +94,40 @@ async function sezioniDeiPlessi(
         return null;
     }
     return (data ?? []) as unknown as RigaSezione[];
+}
+
+/**
+ * L'anno di ciascuna sezione: id, etichetta breve e stato (quello della SEDE della sezione). Tre letture, tutte in
+ * degrado: una che fallisce toglie l'etichetta, mai la sezione. Si chiama solo con la funzione dell'anno presente
+ * (altrimenti `anno_id` non esiste e darebbe `42703`).
+ */
+async function infoAnnoDelleSezioni(
+    supabase: SupabaseClient,
+    righe: RigaSezione[],
+): Promise<Map<string, InfoAnno>> {
+    const info = new Map<string, InfoAnno>();
+    if (righe.length === 0) return info;
+    const sez = await supabase.from('sections').select('id, anno_id').in('id', righe.map((s) => s.id));
+    if (sez.error) {
+        logEvento('db', 'warn', { operazione: 'educator-sections:GET', esito: 'anno-sezioni-non-letto' }, sez.error);
+        return info;
+    }
+    const annoDi = new Map(((sez.data ?? []) as unknown as { id: string; anno_id: string | null }[]).map((r) => [r.id, r.anno_id]));
+    const annoIds = [...new Set([...annoDi.values()].filter((a): a is string => !!a))];
+    if (annoIds.length === 0) return info;
+    const [anni, sedi] = await Promise.all([
+        supabase.from('anni_scolastici').select('id, etichetta_breve').in('id', annoIds),
+        supabase.from('anni_sede').select('anno_id, scuola_id, stato').in('anno_id', annoIds).in('scuola_id', [...new Set(righe.map((s) => s.scuola_id))]),
+    ]);
+    if (anni.error) logEvento('db', 'warn', { operazione: 'educator-sections:GET', esito: 'anni-non-letti' }, anni.error);
+    if (sedi.error) logEvento('db', 'warn', { operazione: 'educator-sections:GET', esito: 'stati-anno-non-letti' }, sedi.error);
+    const etichette = new Map(((anni.data ?? []) as unknown as { id: string; etichetta_breve: string | null }[]).map((r) => [r.id, r.etichetta_breve]));
+    const stati = new Map(((sedi.data ?? []) as unknown as { anno_id: string; scuola_id: string; stato: string | null }[]).map((r) => [`${r.scuola_id}|${r.anno_id}`, r.stato]));
+    for (const s of righe) {
+        const annoId = annoDi.get(s.id) ?? null;
+        info.set(s.id, { annoId, etichetta: annoId ? (etichette.get(annoId) ?? null) : null, stato: annoId ? (stati.get(`${s.scuola_id}|${annoId}`) ?? null) : null });
+    }
+    return info;
 }
 
 /** id sede → nome sede. Nome mancante = etichetta vuota, mai una sede sbagliata. */
@@ -237,21 +284,33 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
         }
 
         let righe: RigaSezione[];
+        // sezione → sola lettura, per le sole sezioni assegnate al docente (mai per il manager).
+        let solaLettura = new Map<string, boolean>();
+        let conAnni = false;
         if (isManager) {
             // Manager: tutte le sezioni dei plessi attivi.
             righe = candidate;
         } else {
-            // Metodo 0 (canonico): legame docente↔sezione in `utenti_sezioni`,
-            // INTERSECATO con i plessi attivi. Prima l'intersezione non c'era —
-            // il ramo manager rispettava il SedeSelector, questo no.
-            const assegnate = new Set(await sezioniDiUtente(supabase, userId));
-            righe = candidate.filter((s) => assegnate.has(s.id));
+            // Metodo 0 (canonico): legame docente↔sezione, INTERSECATO con i plessi attivi. La funzione dell'anno dà
+            // anche le classi `in_chiusura` e `chiuso` (con `sola_lettura`): con `passati=1` si tengono, altrimenti
+            // resta l'anno in corso, come prima.
+            const esito = await sezioniVisibiliConEsito(supabase, userId);
+            const visibili = esito.ok ? esito.sezioni : [];
+            conAnni = esito.ok && esito.conAnni === true;
+            solaLettura = new Map(visibili.map((v) => [v.sectionId, v.solaLettura]));
+            let base = candidate;
+            if (q.data.passati === '1' && visibili.length > 0) {
+                const tutte = await sezioniDeiPlessi(supabase, plessi, null);
+                if (tutte !== null) base = tutte;
+            }
+            righe = base.filter((s) => solaLettura.has(s.id));
             if (righe.length === 0) {
                 righe = await sezioniDaiMediaTaggati(supabase, userId, plessi, candidate);
             }
         }
 
         const nomiSedi = await nomiDelleSedi(supabase, [...new Set(righe.map((s) => s.scuola_id))]);
+        const anni = conAnni ? await infoAnnoDelleSezioni(supabase, righe) : new Map<string, InfoAnno>();
         const sections: SezioneEsposta[] = righe
             .map((s) => ({
                 id: s.id,
@@ -259,10 +318,16 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
                 scuolaId: s.scuola_id,
                 scuolaNome: nomiSedi.get(s.scuola_id) ?? '',
                 school_type: s.school_type ?? null,
+                solaLettura: solaLettura.get(s.id) === true,
+                annoId: anni.get(s.id)?.annoId ?? null,
+                annoEtichetta: anni.get(s.id)?.etichetta ?? null,
+                annoStato: anni.get(s.id)?.stato ?? null,
             }))
-            // Ordine stabile: per nome, e a parità di nome per sede — così le
-            // omonime di sedi diverse escono sempre nello stesso ordine.
-            .sort((a, b) => a.name.localeCompare(b.name) || a.scuolaNome.localeCompare(b.scuolaNome));
+            // Ordine stabile: prima le classi scrivibili (l'anno in corso), poi quelle di sola lettura; dentro, per nome, e a
+            // parità di nome per sede (le omonime di sedi diverse escono sempre nello stesso ordine) e per anno, il più recente prima.
+            .sort((a, b) => Number(a.solaLettura) - Number(b.solaLettura)
+                || a.name.localeCompare(b.name) || a.scuolaNome.localeCompare(b.scuolaNome)
+                || (b.annoEtichetta ?? '').localeCompare(a.annoEtichetta ?? ''));
 
         return NextResponse.json({
             // Contratto legacy: la lista dei NOMI, senza doppioni. Un nome

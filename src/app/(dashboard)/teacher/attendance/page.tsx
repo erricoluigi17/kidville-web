@@ -11,7 +11,7 @@ import { AppelloGiornaliero } from '@/components/features/teacher/attendance/App
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
-import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { fetchEducatorSections, nomeConAnno, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
 import { COLONNA_DOCENTE, COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
 
 type Tab = 'oggi' | 'mese';
@@ -46,20 +46,30 @@ function TeacherAttendanceContent() {
     // il nome al server, che filtrava `alunni.classe_sezione` per uguaglianza
     // esatta: cinque classi di Giugliano si aprivano vuote o quasi perché il
     // testo scritto dal foglio d'iscrizione differiva di uno spazio.
-    const [sezione, setSezione] = useState('');
+    // La CHIAVE della scelta è l'uuid (il nome, per la forma vecchia della risposta): la stessa classe esiste in più anni
+    // e i nomi si ripetono (L6-1).
+    const [sezioneScelta, setSezioneScelta] = useState('');
     const [availableSections, setAvailableSections] = useState<SezioneDocente[]>([]);
     const [sectionsLoaded, setSectionsLoaded] = useState(false);
-    const sectionId = availableSections.find((s) => s.name === sezione)?.id;
+    const chiave = (s: SezioneDocente) => s.id ?? s.name;
+    const corrente = availableSections.find((s) => chiave(s) === sezioneScelta);
+    const sezione = corrente?.name ?? '';
+    const sectionId = corrente?.id;
+    // Una classe di un anno passato si apre in SOLA LETTURA; la scritta dice di quale anno (§4.10).
+    const solaLettura = corrente?.solaLettura === true;
+    // La classe nuova, ancora vuota prima della ricopia delle schede (1° settembre), quando il docente ha anche una classe passata.
+    const inAttesaDeiBambini = corrente?.annoStato === 'corrente' && availableSections.some((s) => s.solaLettura === true);
+    const etichettaSezione = (s: SezioneDocente) => nomeConAnno(s, (nome, anno) => t('sezioneConAnno', { nome, anno }));
 
     useEffect(() => {
         if (!teacherId) return;
-        fetchEducatorSections(teacherId)
+        fetchEducatorSections(teacherId, { passati: true })
             .then((d) => {
                 // `sezioniDallaRisposta` regge entrambe le forme della risposta:
                 // `sections` (con l'id) e la vecchia `sectionNames` (senza).
                 const secs = sezioniDallaRisposta(d);
                 setAvailableSections(secs);
-                if (secs.length > 0) setSezione((prev) => prev || secs[0].name);
+                if (secs.length > 0) setSezioneScelta((prev) => prev || chiave(secs[0]));
             })
             .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `presenze-sezioni-docente-non-caricate: ${nomeErrore(err)}`, route: '/teacher/attendance' }))
             .finally(() => setSectionsLoaded(true));
@@ -81,7 +91,7 @@ function TeacherAttendanceContent() {
                 title={t('appello')}
                 subtitle={
                     <span className="inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
-                        <Users size={13} /> {t('sezioneCon', { sezione: sezione || '…' })}
+                        <Users size={13} /> {t('sezioneCon', { sezione: corrente ? etichettaSezione(corrente) : '…' })}
                     </span>
                 }
             />
@@ -92,13 +102,19 @@ function TeacherAttendanceContent() {
                     <label htmlFor="att-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">{t('sezioneSelettore')}</label>
                     <select
                         id="att-section-select"
-                        value={sezione}
-                        onChange={(e) => setSezione(e.target.value)}
+                        value={sezioneScelta}
+                        onChange={(e) => setSezioneScelta(e.target.value)}
                         className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none"
                     >
-                        {availableSections.map((sec) => <option key={sec.id ?? sec.name} value={sec.name}>{sec.name}</option>)}
+                        {availableSections.map((sec) => <option key={chiave(sec)} value={chiave(sec)}>{etichettaSezione(sec)}</option>)}
                     </select>
                 </div>
+            )}
+
+            {solaLettura && (
+                <p role="status" data-sola-lettura className="mt-3 rounded-2xl border border-kidville-line bg-kidville-cream px-4 py-2 font-maven text-sm text-kidville-ink">
+                    <strong>{corrente?.annoStato === 'in_chiusura' ? t('annoInChiusura') : t('annoPassato')}.</strong> {t('soloLetturaAiuto')}
+                </p>
             )}
 
             {/* ── Tab Switcher ── */}
@@ -150,11 +166,11 @@ function TeacherAttendanceContent() {
                             animate="center"
                             exit="exit"
                         >
-                            {activeTab === 'oggi' && <AppelloGiornaliero sezione={sezione} sectionId={sectionId} griglia />}
+                            {activeTab === 'oggi' && <AppelloGiornaliero sezione={sezione} sectionId={sectionId} griglia solaLettura={solaLettura} inAttesaDeiBambini={inAttesaDeiBambini} />}
 
                             {activeTab === 'mese' && (
                                 <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
-                                    <MonthlyAttendanceTable sezione={sezione} sectionId={sectionId} />
+                                    <MonthlyAttendanceTable sezione={sezione} sectionId={sectionId} solaLettura={solaLettura} />
                                 </div>
                             )}
                         </motion.div>

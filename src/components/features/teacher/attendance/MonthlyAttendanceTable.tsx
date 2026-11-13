@@ -244,7 +244,7 @@ function Cell({ record, isWeekend, giorno, alunnoId, nomeAlunno, dataLunga, onAp
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
-export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: string; sectionId?: string }) {
+export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = false }: { sezione?: string; sectionId?: string; solaLettura?: boolean }) {
     const t = useTranslations('teacherPresenze');
     const locale = useLocale();
     const now = new Date();
@@ -576,7 +576,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                                                 alunnoId={student.student_id}
                                                 nomeAlunno={`${student.student_nome} ${student.student_cognome}`}
                                                 dataLunga={`${day.getDate()} ${MESI[month - 1]}`}
-                                                onApri={apriCorrezione}
+                                                onApri={solaLettura ? undefined : apriCorrezione}
                                             />
                                         ))}
                                         {/* Summary — sticky right */}

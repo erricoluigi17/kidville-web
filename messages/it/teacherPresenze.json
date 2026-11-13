@@ -99,5 +99,10 @@
   "giustificaConfermaAnnulla": "Conferma annullamento",
   "giustificaMantieni": "Mantieni giustifica",
   "giustificaAnnullata": "Giustifica annullata. Originale conservato.",
-  "giustificaAnnullaErrore": "Giustifica non annullata. Rileggi la presenza e riprova."
+  "giustificaAnnullaErrore": "Giustifica non annullata. Rileggi la presenza e riprova.",
+  "nessunAlunnoAnnoNuovo": "I bambini di questa classe arrivano con l’inizio dell’anno.",
+  "annoInChiusura": "Anno che si sta chiudendo",
+  "annoPassato": "Anno passato",
+  "sezioneConAnno": "{nome} · {anno}",
+  "soloLetturaAiuto": "Si può solo consultare."
 }

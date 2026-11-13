@@ -36,6 +36,16 @@ export interface SezioneDocente {
    * per la forma vecchia della risposta.
    */
   scuolaId?: string;
+  /** Una classe di un anno `in_chiusura` o `chiuso` (con `passati`): si apre, non si scrive (L6-1). */
+  solaLettura?: boolean;
+  /** `etichetta_breve` dell'anno («2026/27») e il suo stato (`corrente`, `in_chiusura`, `chiuso`). */
+  annoEtichetta?: string | null;
+  annoStato?: string | null;
+}
+
+/** «TEST Infanzia · 2026/27»: l'anno accanto al nome, perché la stessa classe esiste in più anni. */
+export function nomeConAnno(s: Pick<SezioneDocente, 'name' | 'annoEtichetta'>, formato: (nome: string, anno: string) => string): string {
+  return s.annoEtichetta ? formato(s.name, s.annoEtichetta) : s.name;
 }
 
 export interface EducatorSectionsRisposta {
@@ -44,9 +54,13 @@ export interface EducatorSectionsRisposta {
   sectionNames?: string[];
 }
 
-async function caricaSezioni(userId: string): Promise<EducatorSectionsRisposta | null> {
+const SUFFISSO_PASSATI = '|passati';
+
+async function caricaSezioni(chiave: string): Promise<EducatorSectionsRisposta | null> {
+  const passati = chiave.endsWith(SUFFISSO_PASSATI);
+  const userId = passati ? chiave.slice(0, -SUFFISSO_PASSATI.length) : chiave;
   try {
-    const res = await fetch(`/api/educator-sections?userId=${userId}`);
+    const res = await fetch(`/api/educator-sections?userId=${userId}${passati ? '&passati=1' : ''}`);
     if (!res.ok) return null;
     return (await res.json()) as EducatorSectionsRisposta;
   } catch {
@@ -57,13 +71,21 @@ async function caricaSezioni(userId: string): Promise<EducatorSectionsRisposta |
 const cache = creaCachePromesse(caricaSezioni);
 
 /** Sezioni del docente indicato. `null` = non determinabile. */
-export function fetchEducatorSections(userId: string | null): Promise<EducatorSectionsRisposta | null> {
-  return cache.leggi(userId ?? '');
+export function fetchEducatorSections(
+  userId: string | null,
+  opzioni: { passati?: boolean } = {},
+): Promise<EducatorSectionsRisposta | null> {
+  return cache.leggi(`${userId ?? ''}${opzioni.passati ? SUFFISSO_PASSATI : ''}`);
 }
 
 /** Svuota la cache (cambio identità, e fra un test e l'altro). */
 export function invalidaEducatorSectionsCache(userId?: string): void {
+  if (userId === undefined) {
+    cache.invalida();
+    return;
+  }
   cache.invalida(userId);
+  cache.invalida(`${userId}${SUFFISSO_PASSATI}`);
 }
 
 /**

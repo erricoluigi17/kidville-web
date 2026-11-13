@@ -182,7 +182,8 @@ export type SezioneVisibile = { sectionId: string; solaLettura: boolean }
 
 const ERRORI_FUNZIONE_ASSENTE = new Set(['42883', 'PGRST202'])
 
-export type EsitoSezioniVisibili = { ok: true; sezioni: SezioneVisibile[] } | { ok: false }
+/** `conAnni`: la funzione dell'anno esiste (DB migrato). `false`/assente = il ripiego sulla riga diretta, anno ignoto. */
+export type EsitoSezioniVisibili = { ok: true; sezioni: SezioneVisibile[]; conAnni?: boolean } | { ok: false }
 
 /**
  * Le sezioni che un docente VEDE, per anno: viene dalla funzione SQL `sezioni_visibili_docente` (anni
@@ -202,6 +203,7 @@ export async function sezioniVisibiliConEsito(
   if (!error) {
     return {
       ok: true,
+      conAnni: true,
       sezioni: ((data ?? []) as { section_id: string; sola_lettura: boolean }[])
         .map(r => ({ sectionId: r.section_id, solaLettura: r.sola_lettura === true })),
     }

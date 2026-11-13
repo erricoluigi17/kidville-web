@@ -235,7 +235,7 @@ function Summary({
  * docente, che sul tablet ha la colonna larga: una riga sola da 900 px allontanerebbe il nome dai
  * bottoni di presenza. La segreteria (`admin/appello`) ha un suo impaginato e non la passa.
  */
-export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { sezione: string; sectionId?: string; griglia?: boolean }) {
+export function AppelloGiornaliero({ sezione, sectionId, griglia = false, solaLettura = false, inAttesaDeiBambini = false }: { sezione: string; sectionId?: string; griglia?: boolean; solaLettura?: boolean; inAttesaDeiBambini?: boolean }) {
     // L'uuid quando c'è, il nome quando no: la scelta sta in `parametroClasse`,
     // un posto solo per tutte e tre le chiamate qui sotto.
     const paramClasse = parametroClasse({ id: sectionId, name: sezione });
@@ -733,7 +733,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
                 <span className="text-5xl opacity-30">👶</span>
                 <p className="text-center font-maven text-sm text-kidville-sub">
                     {t('nessunAlunnoPre')} <strong>{sezione}</strong>.<br />
-                    {t('nessunAlunnoAiuto')}
+                    {inAttesaDeiBambini ? t('nessunAlunnoAnnoNuovo') : t('nessunAlunnoAiuto')}
                 </p>
             </div>
         );
@@ -842,8 +842,9 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
                         // Solo il giorno stesso, in data di ROMA — la stessa regola che il
                         // server applica con `APPELLO_ANNULLA_SOLO_OGGI`.
                         onAnnulla={appelloDiOggi || records[student.id]?.rettificaStoricaAmmessa ? handleAnnulla : undefined}
+                        solaLettura={solaLettura}
                     />
-                    {records[student.id]?.rettificaStoricaAmmessa && records[student.id]?.giustificata && records[student.id]?.id && (
+                    {!solaLettura && records[student.id]?.rettificaStoricaAmmessa && records[student.id]?.giustificata && records[student.id]?.id && (
                         <AnnullaGiustifica nomeAlunno={`${student.lastName} ${student.firstName}`} presenzaId={records[student.id]!.id!} firmaIl={records[student.id]?.giustificataIl ?? null} versioneAttesa={records[student.id]?.storico_versione} onCambiato={fetchTodayRecords} />
                     )}
                     </div>

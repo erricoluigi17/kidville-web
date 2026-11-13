@@ -86,6 +86,11 @@ interface Props {
      * (`record.appelloFatto`). La conferma la chiede chi la passa.
      */
     onAnnulla?: (studentId: string) => void;
+    /**
+     * La classe è di un anno `in_chiusura` o `chiuso` (L6-1): la riga mostra lo stato che c'è e NESSUN comando.
+     * Il server rifiuterebbe comunque la scrittura (`SEZIONE_SOLA_LETTURA`): qui non si invita a tentarla.
+     */
+    solaLettura?: boolean;
 }
 
 // Solo i token cromatici del badge "uscita anticipata"; le etichette testuali
@@ -160,7 +165,7 @@ const STATI_BOTTONI: {
  */
 
 
-export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso, onAnnulla }: Props) {
+export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso, onAnnulla, solaLettura = false }: Props) {
     const t = useTranslations('teacherPresenze');
     // L'etichetta della giustifica del genitore è GIÀ tradotta (it/en) per
     // l'appello della primaria: si riusa quella invece di scriverne una gemella.
@@ -184,10 +189,10 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     const mostraEntrata = ammessi.entrata;
     const mostraUscita = ammessi.uscita;
     const salva = (campo: CampoOrario) =>
-        onSetOrario ? (ora: string) => onSetOrario(student.id, campo, ora) : null;
+        onSetOrario && !solaLettura ? (ora: string) => onSetOrario(student.id, campo, ora) : null;
     // «Annulla» solo su un appello FATTO: la sola comunicazione del genitore non si
     // annulla da qui (è del genitore), e il server la respingerebbe comunque.
-    const annullabile = Boolean(onAnnulla && record?.appelloFatto);
+    const annullabile = !solaLettura && Boolean(onAnnulla && record?.appelloFatto);
 
     // ── Bordo sinistro = UNICO segnale cromatico dello stato della riga ──────────
     // WCAG 2.1 §1.4.11 chiede 3:1 per un segnale di stato non testuale, e i fondi
@@ -293,7 +298,12 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
 
             {/* Controlli stato — wrap sotto il nome sugli schermi stretti (320px) */}
             <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-                {isLoading ? (
+                {solaLettura ? (
+                    // Sola lettura: lo stato registrato come testo, nessun pulsante.
+                    <span className="min-h-11 flex items-center px-3 font-maven text-sm font-semibold text-kidville-sub">
+                        {stato ? t(stato === 'uscita_anticipata' ? 'uscitaAnt' : stato) : t('daRegistrare')}
+                    </span>
+                ) : isLoading ? (
                     <div className="w-6 h-6 border-2 border-kidville-green border-t-transparent rounded-full animate-spin" />
                 ) : (
                     <>

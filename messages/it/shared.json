@@ -65,6 +65,8 @@
   "erroreNewsFileSostituitiNonRimossi": "Non è stato possibile togliere dall’archivio pubblico le immagini sostituite: la modifica non è stata salvata. Riprova fra qualche istante",
   "erroreNewsMediaEstraneo": "Il contenuto richiama un’immagine che appartiene a un altro articolo: caricala di nuovo con il pulsante delle immagini",
   "esci": "Esci",
+  "uscitaConfermaTitolo": "Vuoi uscire da Kidville?",
+  "uscitaConfermaAnnulla": "Annulla",
   "fatto": "Fatto!",
   "formatoData": "gg/mm/aaaa",
   "formatoOra": "hh:mm",

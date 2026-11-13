@@ -110,32 +110,23 @@ export function candidatiPer(
   return { candidati: [...new Set([...dellaPersona, ...dellaSede])], durataMin: (fine - inizio) / 60_000, fine: primo.fine }
 }
 
+/**
+ * La sede accoglie l'età se offre almeno uno dei servizi indicati. L'elenco dei servizi di ogni sede è
+ * fisso (`crm_servizi_sede`, scelta del titolare del 13/11/2026) e non dipende dalle sezioni dell'anno.
+ * Una sede senza elenco non copre nessuna fascia: la richiesta passa a una persona.
+ */
 export async function sedeCopre(
   supabase: SupabaseClient, scuolaId: string, gradi: Grado[], operazione: string,
 ): Promise<{ coperta: boolean } | { response: NextResponse }> {
   if (gradi.length === 0) return { coperta: false }
 
-  const opAnno = operazione + ':anno-attivo'
-  const opSezioni = operazione + ':sezioni'
-  const annoNonDisponibile = () => {
-    logErrore({ operazione: opAnno, stato: 500 }, new Error('Anno attivo della sede non disponibile'))
-    return { response: rispostaCrmNonRiuscita() }
-  }
+  const op = operazione + ':servizi-sede'
   try {
-    const { data: annoSedeId, error: erroreAttivo } = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
-    if (erroreAttivo) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(erroreAttivo), opAnno) }
-    if (typeof annoSedeId !== 'string') return annoNonDisponibile()
-
-    const { data: anno, error: erroreAnno } = await supabase.from('anni_sede')
-      .select('anno_id').eq('scuola_id', scuolaId).eq('id', annoSedeId).maybeSingle<{ anno_id: string }>()
-    if (erroreAnno) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(erroreAnno), opAnno) }
-    if (!anno?.anno_id) return annoNonDisponibile()
-
-    const { data, error } = await supabase.from('sections').select('id')
-      .eq('scuola_id', scuolaId).eq('anno_id', anno.anno_id).in('school_type', gradi).limit(1)
-    if (error) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(error), opSezioni) }
+    const { data, error } = await supabase.from('crm_servizi_sede').select('grado')
+      .eq('scuola_id', scuolaId).in('grado', gradi).limit(1)
+    if (error) return { response: rispostaErroreDbSchema(erroreDbSoloCodice(error), op) }
     return { coperta: (data?.length ?? 0) > 0 }
   } catch (errore) {
-    return erroreLettura(errore, opSezioni)
+    return erroreLettura(errore, op)
   }
 }

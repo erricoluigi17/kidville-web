@@ -51,9 +51,6 @@ vi.mock('@/lib/logging/logger', async (importActual) => ({
 const U1 = '20000000-0000-4000-8000-000000000001'
 const U2 = '20000000-0000-4000-8000-000000000002'
 const U_B = '20000000-0000-4000-8000-00000000000b'
-const ANNO = '70000000-0000-4000-8000-000000000001'
-const ANNO_STORICO = '70000000-0000-4000-8000-000000000002'
-const ANNO_FUTURO = '70000000-0000-4000-8000-000000000003'
 const ANNO_SEDE_A = '80000000-0000-4000-8000-000000000001'
 const ANNO_SEDE_B = '80000000-0000-4000-8000-000000000002'
 
@@ -79,11 +76,12 @@ beforeEach(() => {
       { id: U_B, nome: 'Marta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },
     ],
     utenti_scuole: [],
-    anni_sede: [
-      { id: ANNO_SEDE_A, scuola_id: SEDE_A, anno_id: ANNO },
-      { id: ANNO_SEDE_B, scuola_id: SEDE_B, anno_id: ANNO },
+    // Elenco fisso dei servizi (13/11/2026): la sede A come Aversa (nido e infanzia), la B con tutti e tre.
+    // Nessuna sezione e nessun anno: la regola d'età non li legge più.
+    crm_servizi_sede: [
+      { scuola_id: SEDE_A, grado: 'nido' }, { scuola_id: SEDE_A, grado: 'infanzia' },
+      { scuola_id: SEDE_B, grado: 'nido' }, { scuola_id: SEDE_B, grado: 'infanzia' }, { scuola_id: SEDE_B, grado: 'primaria' },
     ],
-    sections: [{ id: 'sez-1', scuola_id: SEDE_A, anno_id: ANNO, name: 'Coccinelle', school_type: 'infanzia' }],
     crm_schede: [],
     crm_appuntamenti: [],
     crm_settimane: [],
@@ -143,7 +141,7 @@ describe('GET /api/crm/ai/slot', () => {
     expect(h.scritture).toMatchObject([{ tabella: 'crm_integrazioni', operazione: 'update', colpite: [{ id: INTEGRAZIONE_B, scuola_id: SEDE_B }] }])
   })
 
-  it('ricontrolla la chiave in SQL prima di leggere sezioni e agenda: revocata dopo il gate = 401', async () => {
+  it('ricontrolla la chiave in SQL prima di leggere servizi e agenda: revocata dopo il gate = 401', async () => {
     h.tokenAttivo.mockReturnValueOnce({ data: false, error: null })
     const r = await chiama()
     expect(r.status).toBe(401)
@@ -255,58 +253,72 @@ describe('GET /api/crm/ai/slot', () => {
     expect(await r.json()).toMatchObject({ etaCoperta: true, slot: [] })
   })
 
-  it('una sezione compatibile di un’altra sede non basta e non viene consultata l’agenda', async () => {
+  it('un servizio offerto solo da un’altra sede non basta e non viene consultata l’agenda', async () => {
     programma(null, [{}])
-    h.db.sections.push({ id: 'sez-2', scuola_id: SEDE_B, anno_id: ANNO, school_type: 'primaria' })
     const r = await chiama({ nascita: '2016-05' })
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ sede: SEDE_A, gradi: ['primaria'], etaCoperta: false, troncato: false, slot: [] })
-    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni', 'anni_sede', 'sections'])
+    expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni', 'crm_servizi_sede'])
+  })
+
+  it('la primaria è coperta dalla sede che la offre', async () => {
+    programma(null, [{}], '2026-11-16', SEDE_B)
+    const r = await chiama({ sede: SEDE_B, nascita: '2016-05' }, TOKEN_B)
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ gradi: ['primaria'], etaCoperta: true })
   })
 
   it.each([
-    ['storico', ANNO_STORICO],
-    ['futuro', ANNO_FUTURO],
-  ])('ignora le sezioni compatibili della sede quando sono solo nell’anno %s', async (_caso, annoId) => {
+    ['8 mesi: nido', '2026-03', ['nido'], true],
+    ['4 mesi: nessun servizio', '2026-07', [], false],
+    ['4 anni: infanzia', '2022-06', ['infanzia'], true],
+  ])('sede A (nido e infanzia) · %s', async (_caso, nascita, gradi, coperta) => {
     programma(null, [{}])
-    h.db.sections[0].anno_id = annoId
+    const r = await chiama({ nascita })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ gradi, etaCoperta: coperta })
+  })
+
+  it('non dipende dalle sezioni né dall’anno: nessuna sezione, nessun anno, la sede è coperta', async () => {
+    programma(null, [{}])
+    h.db.sections = []
+    h.db.anni_sede = []
     const r = await chiama()
     expect(r.status).toBe(200)
-    expect(await r.json()).toMatchObject({ etaCoperta: false, slot: [] })
-    expect(h.annoAttivo).toHaveBeenCalledExactlyOnceWith({ p_scuola: SEDE_A })
-    expect(h.lette).not.toContain('crm_appuntamenti')
-
-    h.db.sections[0].anno_id = ANNO
-    const conAnnoAttivo = await chiama()
-    expect(conAnnoAttivo.status).toBe(200)
-    expect(await conAnnoAttivo.json()).toMatchObject({ etaCoperta: true, slot: [expect.anything(), expect.anything()] })
-  })
-
-  it.each([
-    ['assente', null],
-    ['di un’altra sede', ANNO_SEDE_B],
-  ])('un anno attivo %s dà errore tecnico senza leggere sezioni o agenda', async (_caso, annoSedeId) => {
-    h.annoAttivo.mockReturnValue({ data: annoSedeId, error: null })
-    const r = await chiama()
-    expect(r.status).toBe(500)
-    expect(await r.json()).toEqual({ error: expect.any(String), codice: 'CRM_OPERAZIONE_NON_RIUSCITA' })
+    expect(await r.json()).toMatchObject({ etaCoperta: true, slot: [expect.anything(), expect.anything()] })
+    expect(h.annoAttivo).not.toHaveBeenCalled()
     expect(h.lette).not.toContain('sections')
+    expect(h.lette).not.toContain('anni_sede')
+  })
+
+  it('una sezione aperta quest’anno non basta se la sede non offre il servizio', async () => {
+    programma(null, [{}])
+    h.db.sections = [{ id: 'sez-9', scuola_id: SEDE_A, anno_id: 'x', school_type: 'primaria' }]
+    const r = await chiama({ nascita: '2016-05' })
+    expect(await r.json()).toMatchObject({ etaCoperta: false, slot: [] })
+  })
+
+  it('una sede senza elenco dei servizi non copre nessuna età: chiude in sicurezza', async () => {
+    programma(null, [{}])
+    h.db.crm_servizi_sede = []
+    const r = await chiama()
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ sede: SEDE_A, gradi: ['infanzia'], etaCoperta: false, troncato: false, slot: [] })
     expect(h.lette).not.toContain('crm_appuntamenti')
   })
 
-  it('se il selettore dell’anno attivo non è installato risponde 503 e registra il solo codice tecnico', async () => {
+  it('se la tabella dei servizi non è installata risponde 503 e registra il solo codice tecnico', async () => {
     const sentinella = 'Dato privato sintetico'
-    h.annoAttivo.mockReturnValue({ data: null, error: { code: 'PGRST202', message: sentinella } })
+    h.errori = { crm_servizi_sede: { code: '42P01', message: sentinella } }
     const r = await chiama()
     expect(r.status).toBe(503)
     const risposta = await r.json()
     expect(risposta).toMatchObject({ codice: 'CRM_NON_INSTALLATO' })
-    expect(h.logEvento).toHaveBeenCalledWith('crm', 'warn', expect.objectContaining({ esito: 'schema-crm-assente' }), { code: 'PGRST202' })
     nessunNomeIn([risposta, h.logEvento.mock.calls, h.logErrore.mock.calls], [sentinella])
-    expect(h.lette).not.toContain('sections')
+    expect(h.lette).not.toContain('crm_appuntamenti')
   })
 
-  it('con un mese di nascita futuro non legge sezioni né agenda', async () => {
+  it('con un mese di nascita futuro non legge servizi né agenda', async () => {
     const r = await chiama({ nascita: '2026-12' })
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ sede: SEDE_A, gradi: [], etaCoperta: false, troncato: false, slot: [] })
@@ -381,7 +393,7 @@ describe('GET /api/crm/ai/slot', () => {
     nessunNomeIn(h.logEvento.mock.calls, ['tabella riservata'])
   })
 
-  it.each(['sections', 'crm_appuntamenti', 'crm_fasce', 'crm_indisponibilita'])('in caso di errore su %s risponde 500 e registra solo il codice', async (tabella) => {
+  it.each(['crm_servizi_sede', 'crm_appuntamenti', 'crm_fasce', 'crm_indisponibilita'])('in caso di errore su %s risponde 500 e registra solo il codice', async (tabella) => {
     programma(null, [{}])
     h.errori = { [tabella]: { code: 'XX000', message: 'Famiglia Prova', details: 'Testo privato', hint: 'Altro testo privato' } }
     const r = await chiama()
@@ -427,7 +439,7 @@ describe('GET /api/crm/ai/slot', () => {
   })
 
   it('non registra un codice di errore dal formato non tecnico', async () => {
-    h.errori = { sections: { code: 'Famiglia Prova' } }
+    h.errori = { crm_servizi_sede: { code: 'Famiglia Prova' } }
     const r = await chiama()
     expect(r.status).toBe(500)
     expect(h.logErrore).toHaveBeenCalled()

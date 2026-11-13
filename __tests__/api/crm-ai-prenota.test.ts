@@ -22,7 +22,6 @@ vi.mock('@/lib/supabase/server-client', () => ({
     errori: h.errori,
     scritture: h.scritture,
     rpc: {
-      anno_attivo: ({ p_scuola }) => ({ data: p_scuola === SEDE_A ? ANNO_SEDE : null, error: null }),
       crm_ai_prenota: h.rpc,
     },
   }),
@@ -48,8 +47,6 @@ const U2 = '20000000-0000-4000-8000-000000000002'
 const U_B = '20000000-0000-4000-8000-00000000000b'
 const VISITA = '40000000-0000-4000-8000-000000000001'
 const SCHEDA = '30000000-0000-4000-8000-000000000001'
-const ANNO = '70000000-0000-4000-8000-000000000001'
-const ANNO_SEDE = '80000000-0000-4000-8000-000000000001'
 const INIZIO = '2026-11-17T08:00:00.000Z'
 const FINE = '2026-11-17T08:45:00.000Z'
 const FINE_BREVE = '2026-11-17T08:30:00.000Z'
@@ -83,8 +80,11 @@ beforeEach(() => {
       { id: U_B, nome: 'Marta', cognome: 'Prova', ruolo: 'segreteria', scuola_id: SEDE_B, archiviato_il: null },
     ],
     utenti_scuole: [],
-    anni_sede: [{ id: ANNO_SEDE, scuola_id: SEDE_A, anno_id: ANNO }],
-    sections: [{ id: 'sez-1', scuola_id: SEDE_A, anno_id: ANNO, name: 'Coccinelle', school_type: 'infanzia' }],
+    // Elenco fisso dei servizi (13/11/2026): la sede A come Aversa (nido e infanzia), la B con tutti e tre.
+    crm_servizi_sede: [
+      { scuola_id: SEDE_A, grado: 'nido' }, { scuola_id: SEDE_A, grado: 'infanzia' },
+      { scuola_id: SEDE_B, grado: 'nido' }, { scuola_id: SEDE_B, grado: 'infanzia' }, { scuola_id: SEDE_B, grado: 'primaria' },
+    ],
     crm_schede: [],
     crm_bambini: [],
     crm_appuntamenti: [],
@@ -249,7 +249,7 @@ describe('POST /api/crm/ai/prenota', () => {
       registra(h.rpc.mock.calls[0][0].p_impronta, prima)
       if (cambio === 'agenda occupata') occupa(U1, U2)
       if (cambio === 'fascia rimossa') h.db.crm_fasce = []
-      if (cambio === 'copertura cambiata') h.db.sections = []
+      if (cambio === 'copertura cambiata') h.db.crm_servizi_sede = []
       if (cambio === 'anticipo scaduto') vi.setSystemTime(new Date(INIZIO))
       h.lette = []
       const r = await chiama()
@@ -261,12 +261,12 @@ describe('POST /api/crm/ai/prenota', () => {
     },
   )
 
-  it.each(['sections', 'crm_appuntamenti'])('rilegge il registro prima del rifiuto se la prima visita viene registrata durante la lettura di %s', async (tabella) => {
+  it.each(['crm_servizi_sede', 'crm_appuntamenti'])('rilegge il registro prima del rifiuto se la prima visita viene registrata durante la lettura di %s', async (tabella) => {
     const prima = creata()
     h.rpc.mockReturnValueOnce(esito(prima))
     expect((await chiama()).status).toBe(201)
     const impronta = h.rpc.mock.calls[0][0].p_impronta
-    if (tabella === 'sections') h.db.sections = []
+    if (tabella === 'crm_servizi_sede') h.db.crm_servizi_sede = []
     else h.db.crm_fasce = []
 
     h.lette = []
@@ -281,7 +281,7 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(await r.json()).toEqual({ ...successo, ripetuta: true })
     expect(h.lette.filter((letta) => letta === 'crm_ai_richieste')).toHaveLength(2)
     expect(h.lette.indexOf(tabella)).toBeLessThan(h.lette.lastIndexOf('crm_ai_richieste'))
-    if (tabella === 'sections') expect(h.lette).not.toContain('crm_appuntamenti')
+    if (tabella === 'crm_servizi_sede') expect(h.lette).not.toContain('crm_appuntamenti')
     expect(h.rpc).toHaveBeenCalledTimes(1)
     expect(h.notifica).toHaveBeenCalledTimes(1)
   })
@@ -298,7 +298,7 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(Object.keys(risposta).sort()).toEqual(codice === 'SLOT_OCCUPATO'
       ? ['codice', 'error'] : ['codice', 'error', 'fine', 'id', 'inizio'])
     registra(h.rpc.mock.calls[0][0].p_impronta, dati)
-    h.db.sections = []
+    h.db.crm_servizi_sede = []
     h.lette = []
     const secondo = await chiama()
     expect(secondo.status).toBe(409)
@@ -331,7 +331,7 @@ describe('POST /api/crm/ai/prenota', () => {
     h.rpc.mockReturnValueOnce(esito(creata()))
     await chiama()
     registra(h.rpc.mock.calls[0][0].p_impronta, null)
-    h.db.sections = []
+    h.db.crm_servizi_sede = []
     h.lette = []
     h.rpc.mockReturnValueOnce(esito({ esito: 'in_corso' }))
     const r = await chiama()
@@ -398,12 +398,9 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(h.rpc).toHaveBeenCalledTimes(1)
   })
 
-  it('basta che la sede copra l’età di uno dei bambini nell’anno attivo, senza indicare la classe', async () => {
-    const nonCoperto = { nome: NOME_BIMBO, dataNascita: '2016-05-10' }
-    h.db.sections.push(
-      { id: 'sez-2', scuola_id: SEDE_B, anno_id: ANNO, school_type: 'primaria' },
-      { id: 'sez-3', scuola_id: SEDE_A, anno_id: '70000000-0000-4000-8000-000000000002', school_type: 'primaria' },
-    )
+  it('basta che la sede copra l’età di uno dei bambini, senza indicare la classe', async () => {
+    // 7 anni: la sede A (come Aversa) non offre la primaria. Le sezioni di altre sedi o anni non contano.
+    const nonCoperto = { nome: NOME_BIMBO, dataNascita: '2019-05-10' }
     const r = await chiama({ bambini: [nonCoperto] })
     expect(r.status).toBe(422)
     expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
@@ -414,6 +411,37 @@ describe('POST /api/crm/ai/prenota', () => {
     const s = await chiama({ bambini: [nonCoperto, { nome: 'Secondo Prova', dataNascita: NASCITA }] })
     expect(s.status).toBe(201)
     expect(await s.json()).toEqual(successo)
+  })
+
+  it('8 mesi: il nido è offerto, la visita si fissa', async () => {
+    h.rpc.mockReturnValueOnce(esito(creata()))
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-03-10' }] })
+    expect(r.status).toBe(201)
+  })
+
+  it('4 mesi: sotto i 6 mesi nessun servizio, ETA_NON_COPERTA', async () => {
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-07-10' }] })
+    expect(r.status).toBe(422)
+    expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('una sede senza elenco dei servizi rifiuta con ETA_NON_COPERTA: passa a una persona', async () => {
+    h.db.crm_servizi_sede = []
+    const r = await chiama()
+    expect(r.status).toBe(422)
+    expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
+  it('non legge sezioni né anno scolastico: una sede senza sezioni aperte prenota', async () => {
+    h.db.sections = []
+    h.db.anni_sede = []
+    h.rpc.mockReturnValueOnce(esito(creata()))
+    const r = await chiama()
+    expect(r.status).toBe(201)
+    expect(h.lette).not.toContain('sections')
+    expect(h.lette).not.toContain('anni_sede')
   })
 
   it.each(['non lo so', `${TEL} ${NOTA}`])('422 per recapito non valido (%s) prima del registro', async (telefono) => {

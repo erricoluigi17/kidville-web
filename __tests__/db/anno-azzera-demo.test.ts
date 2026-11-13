@@ -386,9 +386,26 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       const dal = await adesso()
       const f = await fotografa(SEDE_SIM)
       expect(f.sede_di_prova).toBe(true)
-      const prima = await quadro(dal)
+      // righe nate DOPO la fotografia nella sede di simulazione (non `e2e00000…`) e, per confronto, nella sede di Demo e in una sede vera
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      const nate: Record<string, { alunno: string; voce: string; domanda: string }> = {}
+      for (const [i, sede] of [SEDE_SIM, DEMO, SEDE_VERA].entries()) {
+        const alunno = `44444444-4444-4444-8444-4444444444${60 + i}`
+        await q(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $2, 'in_arrivo')`, [alunno, sede])
+        const voce = await una<string>(b.db, `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id) VALUES ($1, $2, 'voce nata dopo', 90, DATE '2027-10-05', $3) RETURNING id`, [alunno, sede, annoNuovoId])
+        const domanda = await una<string>(b.db, `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, 'pending') RETURNING id`, [sede, annoNuovoId])
+        nate[sede] = { alunno, voce, domanda }
+      }
       await b.db.exec(dentro(compila({ sede: SEDE_SIM, foto: f.fotografia! })))
-      expect(prima.altreFrequenze).toBeDefined()
+      const s = nate[SEDE_SIM]
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [s.voce]), 'la voce nata dopo, nella sede di simulazione, è tolta').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [s.domanda]), 'la domanda').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [s.alunno]), 'l’alunno').toBe(0)
+      for (const altra of [DEMO, SEDE_VERA]) {
+        expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [nate[altra].voce]), `la voce della sede ${altra === DEMO ? 'Demo' : 'vera'} resta`).toBe(1)
+        expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [nate[altra].domanda])).toBe(1)
+        expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [nate[altra].alunno])).toBe(1)
+      }
     })
   })
 })

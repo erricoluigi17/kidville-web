@@ -229,10 +229,22 @@ describe('fotografa-anno-nuovo-demo.sql · sola lettura', () => {
     })
   })
 
-  it('una sede vera fuori elenco: dice sede_di_prova = false', async () => {
+  it('una sede che non comincia per e2e00000 e non è in elenco: la fotografia si ferma con FOTOGRAFIA_SEDE_NON_DI_PROVA e non restituisce righe (O-r5-1)', async () => {
     await inRollback(b.db, async () => {
-      const f = await fotografa(SEDE_VERA)
-      expect(f.sede_di_prova).toBe(false)
+      await b.db.exec('SAVEPOINT vera')
+      let errore = ''
+      await b.db.query(FOTOGRAFA.replace("'<DEMO>'", `'${SEDE_VERA}'`)).then(
+        (r) => { errore = `righe: ${r.rows.length}` },
+        (e: Error) => { errore = e.message })
+      await b.db.exec('ROLLBACK TO SAVEPOINT vera')
+      await b.db.exec('RELEASE SAVEPOINT vera')
+      expect(errore).toMatch(/FOTOGRAFIA_SEDE_NON_DI_PROVA/)
+      // l'uuid di una sede finta, che non comincia per e2e00000
+      await b.db.exec('SAVEPOINT finta')
+      const finta = await b.db.query(FOTOGRAFA.replace("'<DEMO>'", "'44444444-4444-4444-8444-444444444444'")).then((r) => `righe: ${r.rows.length}`, (e: Error) => e.message)
+      await b.db.exec('ROLLBACK TO SAVEPOINT finta')
+      await b.db.exec('RELEASE SAVEPOINT finta')
+      expect(finta).toMatch(/FOTOGRAFIA_SEDE_NON_DI_PROVA/)
     })
   })
 })

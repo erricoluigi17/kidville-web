@@ -6,7 +6,8 @@
 --
 -- COME SI USA. Sostituisci <DEMO> con l'uuid della sede di Demo (una volta sola, nel testo qui sotto) ed esegui. La query restituisce
 -- UNA riga con tre colonne:
---   · sede_di_prova   deve dire `true`: la sede comincia per `e2e00000` oppure è l'unica in `anno_regole.sedi_simulazione`;
+--   · sede_di_prova   dice `true`: la sede comincia per `e2e00000` oppure è l'unica in `anno_regole.sedi_simulazione`. Altrimenti la query si FERMA con
+--                     FOTOGRAFIA_SEDE_NON_DI_PROVA e non esce niente;
 --   · anni_candidati  deve dire `1`: l'anno nuovo è l'unico anno della sede `in_preparazione` o `iscrizioni_aperte`;
 --   · fotografia      un testo JSON: COPIALO TUTTO (è il punto ② di `azzera-anno-nuovo-demo.sql`, al posto di <FOTOGRAFIA>). Se
 --                     `anni_candidati` non è 1 la colonna è vuota: non si parte.
@@ -29,9 +30,15 @@ WITH sede AS (
      AND a.stato IN ('in_preparazione', 'iscrizioni_aperte')
 )
 SELECT
-  ((SELECT id::text FROM sede) LIKE 'e2e00000%'
+  -- LA GUARDIA. Una sede che non è di prova (non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione`) FERMA la query con
+  -- FOTOGRAFIA_SEDE_NON_DI_PROVA e non esce nessuna riga: la fotografia porta uuid e date di ogni frequenza, e di una sede vera non devono uscire.
+  -- (Una SELECT non ha RAISE: l'errore è il cast di quel testo a boolean, e il codice sta nel messaggio. Il testo viene da una sottoquery per non
+  -- farlo valutare al planner anche quando la sede è di prova.)
+  CASE WHEN ((SELECT id::text FROM sede) LIKE 'e2e00000%'
     OR EXISTS (SELECT 1 FROM public.anno_regole g
-                WHERE cardinality(g.sedi_simulazione) = 1 AND g.sedi_simulazione[1] = (SELECT id FROM sede))) AS sede_di_prova,
+                WHERE cardinality(g.sedi_simulazione) = 1 AND g.sedi_simulazione[1] = (SELECT id FROM sede))) THEN true
+    ELSE (SELECT 'FOTOGRAFIA_SEDE_NON_DI_PROVA: la sede non comincia per e2e00000 e non è l''unica in anno_regole.sedi_simulazione; la fotografia è solo per la Demo' FROM sede)::boolean
+  END AS sede_di_prova,
   (SELECT count(*) FROM candidati) AS anni_candidati,
   CASE WHEN (SELECT count(*) FROM candidati) = 1 THEN
     (SELECT jsonb_build_object(

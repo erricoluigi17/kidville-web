@@ -84,12 +84,14 @@ async function fotografa(sede = DEMO): Promise<Fotografia> {
   return r.rows[0]
 }
 
-interface Compilazione { sede?: string; dal?: string; foto?: string }
+/** `scattata`: l'istante dello scatto che la fotografia dichiara (la PARTENZA dello script); senza, la fotografia va com'è. */
+interface Compilazione { sede?: string; foto?: string; scattata?: string }
 const compila = (o: Compilazione): string => {
   let sql = AZZERA
   if (o.sede) sql = sql.replace("'<DEMO>'", `'${o.sede}'`)
-  if (o.dal) sql = sql.replace("'AAAA-MM-GG'", `'${o.dal}'`)
-  if (o.foto) sql = sql.replace('$foto$<FOTOGRAFIA>$foto$', () => `$foto$${o.foto}$foto$`)
+  let foto = o.foto
+  if (foto && o.scattata) foto = JSON.stringify({ ...JSON.parse(foto), scattata_il: o.scattata })
+  if (foto) sql = sql.replace('$foto$<FOTOGRAFIA>$foto$', () => `$foto$${foto}$foto$`)
   return sql
 }
 /** Il file raccolto in un SAVEPOINT al posto di BEGIN/COMMIT: la prova sta già in una transazione che finisce in ROLLBACK. */
@@ -255,7 +257,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       await ripristina(dal, stati)
       expect((await statiDemo()).find((s) => s.etichetta === '2027/28')?.stato).toBe('in_preparazione')
 
-      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, dal, foto: f.fotografia! })))
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
 
       // listino, moduli e posti: riga per riga come la fotografia
       expect(await configurazione()).toEqual({ listino: foto.listino, moduli: foto.moduli, posti: foto.posti })
@@ -312,7 +314,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       const dal = await adesso()
       const f = await fotografa()
       const prima = { q: await quadro(dal), c: await configurazione(), s: await statiDemo() }
-      await b.db.exec(dentro(compila({ sede: DEMO, dal, foto: f.fotografia! })))
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
       expect({ q: await quadro(dal), c: await configurazione(), s: await statiDemo() }).toEqual(prima)
     })
   })
@@ -329,7 +331,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       expect(JSON.parse(f.fotografia!).stato).toBe('iscrizioni_aperte')
       // una riga «dopo» la partenza: il listino cambia e lo stato si sposta
       await b.db.query(`SELECT public.anno_listino_quota_imposta($1, 'quota_nuova', NULL, 999, NULL)`, [annoNuovo])
-      await b.db.exec(dentro(compila({ sede: DEMO, dal, foto: f.fotografia! })))
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
       expect(await configurazione()).toMatchObject({ listino: JSON.parse(f.fotografia!).listino })
       expect((await statiDemo()).find((s) => s.etichetta === '2027/28')?.stato).toBe('iscrizioni_aperte')
     })
@@ -341,7 +343,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       const f = await fotografa(SEDE_SIM)
       expect(f.sede_di_prova).toBe(true)
       const prima = await quadro(dal)
-      await b.db.exec(dentro(compila({ sede: SEDE_SIM, dal, foto: f.fotografia! })))
+      await b.db.exec(dentro(compila({ sede: SEDE_SIM, foto: f.fotografia! })))
       expect(prima.altreFrequenze).toBeDefined()
     })
   })
@@ -355,15 +357,14 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
     })
   })
 
-  it('un segnaposto alla volta: la sede, la data, la fotografia (anche non JSON)', async () => {
+  it('un segnaposto alla volta: la sede, la fotografia (anche non JSON)', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()
       const f = await fotografa()
       await collaudo()
-      await fermato(compila({ dal, foto: f.fotografia! }), 'AZZERA_SEGNAPOSTO', dal)
-      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_SEGNAPOSTO', dal)
-      await fermato(compila({ sede: DEMO, dal }), 'AZZERA_SEGNAPOSTO', dal)
-      await fermato(compila({ sede: DEMO, dal, foto: 'non è json' }), 'AZZERA_SEGNAPOSTO', dal)
+      await fermato(compila({ foto: f.fotografia! }), 'AZZERA_SEGNAPOSTO', dal)
+      await fermato(compila({ sede: DEMO }), 'AZZERA_SEGNAPOSTO', dal)
+      await fermato(compila({ sede: DEMO, foto: 'non è json' }), 'AZZERA_SEGNAPOSTO', dal)
     })
   })
 
@@ -372,13 +373,13 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       const dal = await adesso()
       const f = await fotografa(SEDE_SIM)
       // SEDE_VERA non comincia per e2e00000 e non è in elenco
-      await fermato(compila({ sede: SEDE_VERA, dal, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
+      await fermato(compila({ sede: SEDE_VERA, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
       // l'elenco vuoto
       await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[]`)
-      await fermato(compila({ sede: SEDE_SIM, dal, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
+      await fermato(compila({ sede: SEDE_SIM, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
       // l'elenco con due sedi
       await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = ARRAY[$1, $2]::uuid[]`, [SEDE_SIM, SEDE_VERA])
-      await fermato(compila({ sede: SEDE_SIM, dal, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
+      await fermato(compila({ sede: SEDE_SIM, foto: f.fotografia! }), 'AZZERA_SEDE_NON_DI_PROVA', dal)
     })
   })
 
@@ -387,7 +388,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       const dal = await adesso()
       const f = await fotografa()
       await collaudo()
-      await fermato(compila({ sede: DEMO, dal: '2999-01-01', foto: f.fotografia! }), 'AZZERA_DATA', dal)
+      await fermato(compila({ sede: DEMO, scattata: '2999-01-01T00:00:00Z', foto: f.fotografia! }), 'AZZERA_DATA', dal)
       // il collaudo è vecchio di 5 giorni; la «partenza ricordata male» è di 3 giorni fa
       await b.db.exec(`
         DELETE FROM public.passaggi_anno WHERE scuola_id = '${DEMO}';
@@ -398,7 +399,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
         UPDATE public.enrollment_submissions SET created_at = now() - interval '5 days' WHERE scuola_id = '${DEMO}' AND anno_id = '${annoNuovoId}';
       `)
       const tarda = await una<string>(b.db, `SELECT (now() - interval '3 days')::text`)
-      await fermato(compila({ sede: DEMO, dal: tarda, foto: f.fotografia! }), 'AZZERA_DATA', dal)
+      await fermato(compila({ sede: DEMO, scattata: tarda, foto: f.fotografia! }), 'AZZERA_DATA', dal)
     })
   })
 
@@ -406,7 +407,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
     await inRollback(b.db, async () => {
       const dal = await adesso()
       const f = await fotografa()
-      await fermato(compila({ sede: DEMO, dal: '2020-01-01', foto: f.fotografia! }), 'AZZERA_ANNO_NUOVO_NON_UNO', dal)
+      await fermato(compila({ sede: DEMO, scattata: '2020-01-01T00:00:00Z', foto: f.fotografia! }), 'AZZERA_ANNO_NUOVO_NON_UNO', dal)
     })
   })
 
@@ -417,7 +418,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       // un secondo anno “nuovo”: l’anno vecchio dell’altra parte del calendario torna in preparazione
       await b.db.query(`UPDATE public.anni_sede SET stato = 'in_preparazione' WHERE scuola_id = $1 AND id <> $2 AND id <> $3`, [DEMO, annoNuovo, annoVecchio])
       expect(await conta(`SELECT 1 FROM public.anni_sede WHERE scuola_id = $1 AND stato = 'in_preparazione'`, [DEMO])).toBe(2)
-      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_ANNO_NUOVO_NON_UNO', dal)
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_ANNO_NUOVO_NON_UNO', dal)
     })
   })
 
@@ -430,7 +431,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       await b.db.query(`UPDATE public.anni_sede SET stato = 'chiuso' WHERE id = $1`, [annoVecchio])
       await b.db.query(`UPDATE public.anni_sede SET stato = 'corrente' WHERE id = $1`, [annoNuovo])
       expect((await statiDemo()).find((s) => s.etichetta === '2027/28')?.stato).toBe('corrente')
-      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_PRIMA_IL_RIPRISTINO', dal)
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_PRIMA_IL_RIPRISTINO', dal)
     })
   })
 
@@ -440,7 +441,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       const f = await fotografa()
       await collaudo()
       expect(await conta(`SELECT 1 FROM public.passaggi_anno WHERE scuola_id = $1`, [DEMO])).toBe(1)
-      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_PRIMA_IL_RIPRISTINO', dal)
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_PRIMA_IL_RIPRISTINO', dal)
     })
   })
 
@@ -450,7 +451,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       const f = await fotografa()
       const j = JSON.parse(f.fotografia!)
       const con = (m: object) => JSON.stringify({ ...j, ...m })
-      const comp = (foto: string) => compila({ sede: DEMO, dal, foto })
+      const comp = (foto: string) => compila({ sede: DEMO, foto })
       await fermato(comp(con({ etichetta: '2028/29' })), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(comp(con({ stato: 'corrente' })), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(comp(con({ etichetta: 'duemila' })), 'AZZERA_FOTOGRAFIA', dal)
@@ -470,8 +471,8 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       await ripristina(dal, stati)
       const nato = await b.db.query<{ anno_id: string }>(`SELECT s.anno_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO])
       await b.db.query(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Sezione del 2028', 'infanzia', 'infanzia')`, [DEMO, nato.rows[0].anno_id])
-      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_ANNI_NATI_USATI', dal)
-      await expect(b.db.exec(compila({ sede: DEMO, dal, foto: f.fotografia! }))).rejects.toThrow(/sections=1/)
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_ANNI_NATI_USATI', dal)
+      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/sections=1/)
     })
   })
 
@@ -489,7 +490,7 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
         END $f$;
         CREATE TRIGGER prova_rimetti_sezione AFTER DELETE ON public.sections FOR EACH ROW WHEN (OLD.name NOT LIKE '% bis') EXECUTE FUNCTION public.prova_rimetti_sezione();
       `)
-      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_CONTEGGI', dal)
+      await fermato(compila({ sede: DEMO, foto: f.fotografia! }), 'AZZERA_CONTEGGI', dal)
     })
   })
 })
@@ -504,7 +505,7 @@ describe('azzera-anno-nuovo-demo.sql · le frequenze dell’anno di partenza', (
       const stati = await statiDemo()
       await collaudo(true)
       await ripristina(dal, stati)
-      await fermato(compila({ sede: DEMO, dal, foto: JSON.stringify(j) }), 'AZZERA_FREQUENZA_SPARITA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify(j) }), 'AZZERA_FREQUENZA_SPARITA', dal)
     })
   })
 
@@ -518,11 +519,50 @@ describe('azzera-anno-nuovo-demo.sql · le frequenze dell’anno di partenza', (
       // l'inserimento dell'alunno in un anno corrente fa nascere da sé la frequenza (specchio inverso)
       const nata = await una<string>(b.db, `SELECT id FROM public.frequenze WHERE anno_sede_id = $1 AND alunno_id = $2`, [annoVecchio, id(60)])
       await ripristina(dal, stati)
-      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, dal, foto: f.fotografia! })))
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
       expect(await conta(`SELECT 1 FROM public.frequenze WHERE id = $1`, [nata]), 'tolta').toBe(0)
       expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [id(60)]), 'e il suo alunno').toBe(0)
       const ultimo = risultati.at(-1)!.rows as { voce: string; tolte: string }[]
       expect(Number(ultimo.find((r) => r.voce.startsWith('frequenze nate dopo la partenza'))!.tolte)).toBe(1)
+    })
+  })
+})
+
+describe('azzera-anno-nuovo-demo.sql · la partenza la dà la fotografia', () => {
+  it('una fotografia della versione 1, o senza scattata_il, o con un istante che non lo è → AZZERA_FOTOGRAFIA', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const j = JSON.parse(f.fotografia!)
+      expect(j.versione, 'la fotografia è della versione 2').toBe(2)
+      expect(typeof j.scattata_il).toBe('string')
+      const { scattata_il: _tolta, ...senza } = j
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, versione: 1 }) }), 'AZZERA_FOTOGRAFIA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify(senza) }), 'AZZERA_FOTOGRAFIA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, scattata_il: 'ieri' }) }), 'AZZERA_FOTOGRAFIA', dal)
+      await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, scattata_il: 20261113 }) }), 'AZZERA_FOTOGRAFIA', dal)
+    })
+  })
+
+  it('una riga nata PRIMA della fotografia sopravvive sempre: anche una frequenza e un alunno di poche ore prima, e una data “storta”', async () => {
+    await inRollback(b.db, async () => {
+      // un bambino iscritto QUELLA MATTINA, tre ore prima di scattare la fotografia
+      await b.db.query(`INSERT INTO public.alunni (id, scuola_id, stato, section_id) VALUES ($1, $2, 'iscritto', $3)`, [id(70), DEMO, sezioneVecchia])
+      await b.db.query(`UPDATE public.alunni SET creato_il = now() - interval '3 hours' WHERE id = $1`, [id(70)])
+      await b.db.query(`UPDATE public.frequenze SET creata_il = now() - interval '3 hours' WHERE alunno_id = $1`, [id(70)])
+      const dal = await adesso()
+      const f = await fotografa()
+      expect(JSON.parse(f.fotografia!).partenza.frequenze.map((x: { id: string }) => x.id)).toContain(await frequenzaVecchia(id(70)))
+      const stati = await statiDemo()
+      await collaudo(true)
+      // e una frequenza della fotografia con la data di creazione “spostata” dopo lo scatto (un orologio storto): si riconosce dall'uuid
+      await b.db.query(`UPDATE public.frequenze SET creata_il = now() + interval '1 second' WHERE alunno_id = $1`, [AL.a])
+      const prima = await impronta(`SELECT f.id, f.alunno_id, f.anno_sede_id, f.creata_il FROM public.frequenze f WHERE f.alunno_id IN ($1, $2) AND f.anno_sede_id = $3`, [id(70), AL.a, annoVecchio])
+      const alunnoPrima = await impronta(`SELECT id, scuola_id, creato_il FROM public.alunni WHERE id = $1`, [id(70)])
+      await ripristina(dal, stati)
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      expect(await impronta(`SELECT f.id, f.alunno_id, f.anno_sede_id, f.creata_il FROM public.frequenze f WHERE f.alunno_id IN ($1, $2) AND f.anno_sede_id = $3`, [id(70), AL.a, annoVecchio])).toBe(prima)
+      expect(await impronta(`SELECT id, scuola_id, creato_il FROM public.alunni WHERE id = $1`, [id(70)])).toBe(alunnoPrima)
     })
   })
 })
@@ -539,7 +579,7 @@ describe('azzera-anno-nuovo-demo.sql · una richiesta sola, COMMIT compreso', ()
     await ripristina(dal, (await statiDemo()).map((s) => (s.etichetta === '2027/28' ? { ...s, stato: 'in_preparazione', domande: false } : s)), false)
     expect(await conta(`SELECT 1 FROM public.sections WHERE scuola_id = $1 AND anno_id = $2`, [DEMO, annoNuovoId])).toBeGreaterThan(1)
 
-    await b.db.exec(compila({ sede: DEMO, dal, foto: f.fotografia! }))
+    await b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))
 
     await expect(b.db.exec('COMMIT'), 'nessuna transazione aperta: un COMMIT in più è solo un avviso').resolves.toBeDefined()
     const foto = JSON.parse(f.fotografia!)

@@ -10,7 +10,8 @@
 --   · anni_candidati  deve dire `1`: l'anno nuovo è l'unico anno della sede `in_preparazione` o `iscrizioni_aperte`;
 --   · fotografia      un testo JSON: COPIALO TUTTO (è il punto ② di `azzera-anno-nuovo-demo.sql`, al posto di <FOTOGRAFIA>). Se
 --                     `anni_candidati` non è 1 la colonna è vuota: non si parte.
--- Annota anche l'ORA in cui l'hai eseguita, con il fuso (per esempio 2026-11-20 09:00:00+01): è la PARTENZA (punto ③).
+-- L'ISTANTE in cui l'hai eseguita sta dentro la fotografia (`scattata_il`, versione 2): è la PARTENZA, e non devi annotarla né scriverla.
+-- Una fotografia della versione 1 (senza `scattata_il`) lo script la rifiuta con AZZERA_FOTOGRAFIA: si rifà.
 --
 -- CHE COSA CONTIENE: le frequenze dell'anno corrente (uuid, stato, date, codice del «no»), lo stato e le «domande aperte» dell'anno nuovo, le righe di listino, di moduli richiesti e di posti autorizzati
 -- (con i loro uuid, uguali a come sono ora), e i conteggi di partenza (frequenze, voci di pagamento, sezioni, domande). Nessun nome,
@@ -34,7 +35,9 @@ SELECT
   (SELECT count(*) FROM candidati) AS anni_candidati,
   CASE WHEN (SELECT count(*) FROM candidati) = 1 THEN
     (SELECT jsonb_build_object(
-        'versione', 1,
+        'versione', 2,
+        -- L'ISTANTE dello scatto: è la PARTENZA di `azzera-anno-nuovo-demo.sql` (ciò che è nato prima non si tocca). Non si scrive a mano.
+        'scattata_il', now(),
         'etichetta', c.etichetta_breve,
         'stato', c.stato,
         'domande_aperte', c.domande_aperte,

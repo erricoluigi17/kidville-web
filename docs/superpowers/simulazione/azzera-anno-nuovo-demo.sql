@@ -6,7 +6,7 @@
 -- passaggi e gettoni) e usa la fotografia di `fotografa-anno-nuovo-demo.sql`.
 --
 -- ┌─ CHE COSA CANCELLA ──────────────────────────────────────────────────────────────────────────┐
--- │  Solo nella sede di Demo, solo nell'anno nuovo, e solo righe nate DOPO la PARTENZA:           │
+-- │  Solo nella sede di Demo, solo nell'anno nuovo, e solo righe nate DOPO la PARTENZA (l'istante in cui hai scattato la fotografia):           │
 -- │    · le frequenze dell'anno nuovo (con le spunte dei moduli);                                  │
 -- │    · le voci di pagamento dell'anno nuovo (quote e rette). Una voce con un incasso, una       │
 -- │      fattura o un movimento di cassa collegato NON si tocca: si conta e si elenca per uuid;   │
@@ -39,21 +39,21 @@
 -- istruzioni (DELETE, UPDATE), giustamente. Il file è provato sul banco di prova automatico (PGlite, mai su Demo né su produzione):
 -- `__tests__/db/anno-azzera-demo.test.ts`. NON è stato eseguito sull'editor di Supabase: vedi il manuale `anno-intero-demo.md`.
 --
--- COME SI USA. Si compila in tre punti (cerca «DA COMPILARE»), si invia TUTTO in una volta sola: BEGIN, la funzione di appoggio, il
+-- COME SI USA. Si compila in due punti (cerca «DA COMPILARE»: la sede e la fotografia; la PARTENZA la dà la fotografia, `scattata_il`), si invia TUTTO in una volta sola: BEGIN, la funzione di appoggio, il
 -- blocco DO e COMMIT stanno nella STESSA richiesta. Il blocco si ferma da solo con un errore `AZZERA_…`: la richiesta si interrompe lì,
 -- il COMMIT non viene raggiunto e non è cambiato niente. Se l'editor rifiutasse più istruzioni in un invio solo, si tolgono BEGIN e
 -- COMMIT e si lasciano le altre tre insieme. Se dopo un errore l'editor dice «current transaction is aborted», si invia `ROLLBACK;`.
 --
 -- IL BLOCCO SI FERMA (RAISE EXCEPTION) SE:
---   · AZZERA_SEGNAPOSTO           la sede, la data o la fotografia sono ancora i segnaposto;
+--   · AZZERA_SEGNAPOSTO           la sede o la fotografia sono ancora i segnaposto;
 --   · AZZERA_SEDE_NON_DI_PROVA    la sede non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione`;
---   · AZZERA_DATA                 la data è nel futuro, oppure non torna con i conteggi della fotografia (troppo vecchia o troppo tarda);
+--   · AZZERA_DATA                 lo scatto della fotografia è nel futuro, oppure non torna con i suoi conteggi (la Demo è cambiata fra lo scatto e il collaudo in un modo che li sposta);
 --   · AZZERA_ANNO_NUOVO_NON_UNO   la sede non ha UN SOLO anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza;
 --   · AZZERA_PRIMA_IL_RIPRISTINO  l'anno nuovo è già `corrente`, l'anno di partenza non è tornato `corrente`, oppure restano passaggi dopo la partenza: si esegue prima il ripristino;
 --   · AZZERA_ANNI_NATI_USATI      a un anno nato nel collaudo (dopo l'anno nuovo) puntano ancora righe (sezioni, frequenze, domande, voci…):
 --                                 il messaggio dice i conteggi per tabella; non si tocca niente;
 --   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
---   · AZZERA_FOTOGRAFIA           la fotografia non è fatta come deve, o parla di un anno che non è quello trovato;
+--   · AZZERA_FOTOGRAFIA           la fotografia non è della versione 2 con `scattata_il` (si rifà), non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
 -- LE INVARIANTI non fermano il blocco: si leggono nella tabella finale (come per il ripristino).
@@ -108,9 +108,8 @@ DO $azzera$
 DECLARE
   -- ① DA COMPILARE · la sede di Demo (comincia per `e2e00000`; altrimenti deve essere l'UNICA in `anno_regole.sedi_simulazione`). Sostituisci <DEMO> con il suo uuid.
   c_sede        constant text := '<DEMO>';
-  -- ② DA COMPILARE · la PARTENZA: quando hai eseguito la fotografia, con ora e fuso (per esempio 2026-11-20 09:00:00+01).
-  c_partenza    constant text := 'AAAA-MM-GG';
-  -- ③ DA COMPILARE · la FOTOGRAFIA: il testo JSON che ha restituito `fotografa-anno-nuovo-demo.sql`, incollato al posto di <FOTOGRAFIA>.
+  -- ② DA COMPILARE · la FOTOGRAFIA: il testo JSON che ha restituito `fotografa-anno-nuovo-demo.sql`, incollato al posto di <FOTOGRAFIA>.
+  --    La PARTENZA non si scrive: la dà la fotografia stessa (`scattata_il`, l'istante in cui l'hai scattata). Ciò che è nato prima non si tocca.
   c_fotografia  constant text := $foto$<FOTOGRAFIA>$foto$;
 
   v_sede        uuid;
@@ -144,14 +143,18 @@ BEGIN
     RAISE EXCEPTION 'AZZERA_SEGNAPOSTO: la sede di Demo non è stata compilata (punto 1)';
   END;
   BEGIN
-    v_dal := c_partenza::timestamptz;
-  EXCEPTION WHEN OTHERS THEN
-    RAISE EXCEPTION 'AZZERA_SEGNAPOSTO: la data di partenza non è stata compilata (punto 2)';
-  END;
-  BEGIN
     v_foto := c_fotografia::jsonb;
   EXCEPTION WHEN OTHERS THEN
-    RAISE EXCEPTION 'AZZERA_SEGNAPOSTO: la fotografia non è stata incollata (punto 3)';
+    RAISE EXCEPTION 'AZZERA_SEGNAPOSTO: la fotografia non è stata incollata (punto 2)';
+  END;
+  -- La PARTENZA è l'istante della fotografia. Una fotografia della versione 1 (o senza `scattata_il`) non lo dice: si rifà.
+  IF jsonb_typeof(v_foto) IS DISTINCT FROM 'object' OR v_foto->>'versione' IS DISTINCT FROM '2' OR jsonb_typeof(v_foto->'scattata_il') IS DISTINCT FROM 'string' THEN
+    RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: la fotografia non è della versione 2 con l''istante dello scatto (scattata_il): si rifà con fotografa-anno-nuovo-demo.sql';
+  END IF;
+  BEGIN
+    v_dal := (v_foto->>'scattata_il')::timestamptz;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: scattata_il non è un istante valido';
   END;
 
   -- ── 1 · La sede è di prova: o comincia per `e2e00000`, oppure è l'UNICA in `anno_regole.sedi_simulazione` ──
@@ -293,7 +296,9 @@ BEGIN
   -- 6a bis · le frequenze dell'anno di PARTENZA nate dopo la partenza (un bambino registrato nell'anno in corso durante il collaudo):
   --          si tolgono come le altre righe nate dopo, se non hanno legami; altrimenti restano e si elencano
   IF v_par IS NOT NULL THEN
-    INSERT INTO _azzera_cand (tabella, id) SELECT 'frequenze', f.id FROM public.frequenze f WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal;
+    INSERT INTO _azzera_cand (tabella, id) SELECT 'frequenze', f.id FROM public.frequenze f
+       WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e WHERE e->>'id' = f.id::text);  -- quelle della fotografia ESISTEVANO alla partenza, qualunque cosa dica la data
     PERFORM pg_temp.azzera_blocca('frequenze', ARRAY['frequenze_moduli'], 'continua_da');
     DELETE FROM public.frequenze f WHERE f.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'frequenze' AND NOT k.bloccata);
     GET DIAGNOSTICS v_tolte = ROW_COUNT;
@@ -484,7 +489,12 @@ BEGIN
     IF v_n <> 0 THEN
       RAISE EXCEPTION 'AZZERA_CONTEGGI: % frequenze dell''anno di partenza non coincidono con la fotografia', v_n;
     END IF;
-    SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal;
+    SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_par AND f.id IN (SELECT (e->>'id')::uuid FROM jsonb_array_elements(v_part->'frequenze') e);
+    IF v_n <> jsonb_array_length(v_part->'frequenze') THEN
+      RAISE EXCEPTION 'AZZERA_CONTEGGI: delle % frequenze della fotografia ne restano %', jsonb_array_length(v_part->'frequenze'), v_n;
+    END IF;
+    SELECT count(*) INTO v_n FROM public.frequenze f
+     WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e WHERE e->>'id' = f.id::text);
     SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'frequenze';
     IF v_n <> v_tot THEN
       RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno di partenza nate dopo la partenza, ma le lasciate sono %', v_n, v_tot;

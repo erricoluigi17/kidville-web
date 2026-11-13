@@ -183,9 +183,9 @@ domande, listino, moduli e posti dell'anno nuovo. Quando un agente di collaudo d
 secondo dopo il primo; l'utente inesperto che parte da zero), si usano due file in più:
 
 - `fotografa-anno-nuovo-demo.sql`: **sola lettura**, si esegue **prima** dei collaudi. Restituisce `sede_di_prova` (deve dire `true`), `anni_candidati`
-  (deve dire `1`) e la `fotografia`, un testo JSON da copiare. Si annota anche l'ora, con il fuso: è la partenza.
+  (deve dire `1`) e la `fotografia`, un testo JSON da copiare. L'istante dello scatto sta dentro la fotografia (`scattata_il`, versione 2): è la partenza, non va annotato né scritto.
 - `azzera-anno-nuovo-demo.sql`: lo esegue il titolare **dopo** il ripristino (mai prima: se l'anno nuovo è ancora `corrente`, o restano passaggi,
-  si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano tre punti: l'uuid di Demo al posto di `<DEMO>`, la partenza al posto di `AAAA-MM-GG`, la
+  si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano due punti: l'uuid di Demo al posto di `<DEMO>` e la
   fotografia al posto di `<FOTOGRAFIA>` (dentro `$foto$ … $foto$`). Si invia **tutto in una volta**; il `COMMIT` è già nel file.
 
 **Ordine.** fotografia → collaudo → `ripristino-demo.sql` → `azzera-anno-nuovo-demo.sql` → (se serve) collaudo successivo. La fotografia si rifà solo se
@@ -203,12 +203,12 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 |---|---|
 | `AZZERA_SEGNAPOSTO` | sede, data o fotografia sono ancora i segnaposto (o la fotografia non è un JSON) |
 | `AZZERA_SEDE_NON_DI_PROVA` | la sede non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione` |
-| `AZZERA_DATA` | la data è nel futuro, o non torna con i conteggi della fotografia (le righe «di prima» non sono quante la fotografia dice) |
+| `AZZERA_DATA` | lo scatto della fotografia è nel futuro, o non torna con i suoi conteggi (le righe «di prima» non sono quante la fotografia dice) |
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
 | `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro (sezioni, frequenze, domande, voci…): il messaggio dice i conteggi per tabella, non si tocca niente |
-| `AZZERA_FOTOGRAFIA` | la fotografia non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
+| `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
 | `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
 
 **Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; i genitori creati accogliendo una

@@ -53,7 +53,8 @@
 -- PROVA A SECCO. L'interruttore `c_prova_a_secco` (punto ③) è ACCESO per difetto: il file fa tutto, poi si ferma con l'errore
 -- `AZZERA_PROVA_A_SECCO` e nel MESSAGGIO c'è il riassunto (che cosa avrebbe tolto, rimesso, lasciato, una voce per riga). L'errore annulla ogni
 -- cosa, e il `COMMIT;` in fondo al file non viene raggiunto (se l'editor lo invia lo stesso, diventa un ROLLBACK). Per scrivere davvero si
--- mette `false`. Subito dopo la fotografia la prova NON esercita il passo 6g (gli anni nati nel collaudo): quello lo vede solo dopo un collaudo.
+-- mette `false`. Prima dei conti finali il file esegue `SET CONSTRAINTS ALL IMMEDIATE`: anche i vincoli di `anni_sede` che di solito si giudicano al COMMIT
+-- (continuità del calendario, sovrapposizioni) cadono già nella prova. Subito dopo la fotografia la prova NON esercita il passo 6g (gli anni nati nel collaudo): quello lo vede solo dopo un collaudo.
 --
 -- COME SI USA. Si compila in due punti (cerca «DA COMPILARE»: la sede e la fotografia; la PARTENZA la dà la fotografia, `scattata_il`), si invia TUTTO in una volta sola: BEGIN, la funzione di appoggio, il
 -- blocco DO e COMMIT stanno nella STESSA richiesta. Il blocco si ferma da solo con un errore `AZZERA_…`: la richiesta si interrompe lì,
@@ -684,6 +685,10 @@ BEGIN
      WHERE NOT EXISTS (SELECT 1 FROM public.posti_autorizzati po WHERE po.id = rp.id);
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte, rimesse) VALUES ('posti autorizzati (tolte: righe in più; rimesse: corrette o ricreate)', v_tolte, v_n + v_rimesse);
+
+  -- I vincoli differiti di `anni_sede` (continuità, domande solo con anno aperto, periodi senza sovrapposizioni) si giudicano di solito al COMMIT:
+  -- li si giudica ORA, così la prova a secco (che si ferma prima del COMMIT) cade negli stessi casi dell'esecuzione vera.
+  SET CONSTRAINTS ALL IMMEDIATE;
 
   -- ── 9 · DOPO: i conti devono tornare, altrimenti il blocco si ferma e annulla tutto ────────
   SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;

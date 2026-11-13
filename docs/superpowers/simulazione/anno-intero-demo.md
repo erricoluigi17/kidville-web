@@ -193,7 +193,7 @@ fa tutto e poi si ferma con l'errore `AZZERA_PROVA_A_SECCO`: nel **messaggio** d
 tolto, rimesso, lasciato; gli uuid delle domande che toglierebbe; gli uuid delle righe lasciate; le invarianti non a zero). L'errore annulla ogni cosa,
 quindi non cambia niente, e il `COMMIT;` in fondo non viene raggiunto (se l'editor lo invia lo stesso, è un `ROLLBACK`). Per scrivere davvero si
 mette `false`: un gesto in più, nel verso giusto. **Che cosa dimostra:** che il file è accettato dall'editor, che la sede e la fotografia sono
-quelle giuste e che ogni colonna nominata esiste. **Che cosa non dimostra:** subito dopo la fotografia non c'è ancora niente di nato dopo la
+quelle giuste e che ogni colonna nominata esiste. I vincoli differiti di `anni_sede` (continuità del calendario, sovrapposizioni) li giudica la prova stessa, perché lo script esegue `SET CONSTRAINTS ALL IMMEDIATE` prima dei conti finali: non si scoprono al `COMMIT` dell'esecuzione vera. **Che cosa non dimostra:** subito dopo la fotografia non c'è ancora niente di nato dopo la
 partenza, quindi il riassunto è fatto di zeri e il passo che toglie gli anni nati nel collaudo non gira. Quello si vede solo rifacendo la prova
 **dopo** un collaudo, prima di spegnere l'interruttore.
 

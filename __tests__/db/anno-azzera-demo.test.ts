@@ -923,6 +923,19 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     })
   })
 
+  it('la prova a secco giudica anche i vincoli differiti: un calendario non continuo cade già nella prova, non solo al COMMIT (O-n7)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const j = JSON.parse(f.fotografia!)
+      delete j.partenza // senza l'anno di partenza il 6h rimette solo l'anno nuovo: con un confine spostato il calendario resta rotto
+      await b.db.query(`SELECT public.sposta_confine_anno($1, (SELECT fine - 5 FROM public.anni_sede WHERE id = $1))`, [annoVecchio])
+      await b.db.exec('SAVEPOINT diff')
+      await expect(b.db.exec(compila({ sede: DEMO, foto: JSON.stringify(j), prova: true }))).rejects.toThrow('CALENDARIO_NON_CONTINUO')
+      await b.db.exec('ROLLBACK TO SAVEPOINT diff')
+      await b.db.exec('RELEASE SAVEPOINT diff')
+    })
+  })
+
   it('con l’interruttore acceso non si arriva mai a scrivere, nemmeno col COMMIT in fondo al file', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

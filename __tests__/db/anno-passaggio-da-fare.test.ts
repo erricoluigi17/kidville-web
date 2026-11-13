@@ -383,6 +383,28 @@ describe('`salute_anno()`: le due chiavi nuove', () => {
     })
   })
 
+  it('(M1, confini) passaggio fatto a guardia spenta: un giorno di agosto dentro la `fine` e il giorno stesso della `fine` NON contano (0)', async () => {
+    const r = await b.db.query<{ fine: string; ultimo: string }>(
+      `SELECT fine::text AS fine, ultimo_giorno_aperto::text AS ultimo FROM public.anni_sede WHERE id = $1`, [b.vera.da])
+    const { fine, ultimo } = r.rows[0]
+    const giornoDi = (iso: string, meno: number) => {
+      const d = new Date(`${iso}T10:00:00.000Z`)
+      d.setUTCDate(d.getUTCDate() - meno)
+      return d.toISOString()
+    }
+    const agosto = giornoDi(fine, 10)
+    expect(agosto.slice(0, 10) > ultimo, 'il giorno di agosto cade dopo l’ultimo giorno aperto (altrimenti non distingue)').toBe(true)
+    for (const [nome, giorno] of [['agosto, dentro la fine', agosto], ['il giorno stesso della fine', giornoDi(fine, 0)]] as const) {
+      await con(giorno, async () => {
+        await guardia(false)
+        await passaggioFatto(b.vera, 'in_chiusura')
+        const s = await salute()
+        expect(s.passaggio_da_fare, nome).toBe(0)
+        expect(s.guardia_spenta_vicina, nome).toBe(0)
+      })
+    }
+  })
+
   it('(M1) non conta: con la guardia accesa, per una sede `e2e00000…`, e per un anno già `chiuso`', async () => {
     const giorno = await giornoDopoLaFine(b.vera.da)
     await con(giorno, async () => {

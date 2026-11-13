@@ -7,8 +7,9 @@ import { Modal } from '@/components/ui/Modal';
 
 // Conferma prima di uscire. «Esci» chiude la sessione (`doLogout` → `auth.signOut()`): un tocco sbagliato
 // mentre un foglio scorre per inerzia (successo davvero nel collaudo del 13/11) non deve poterla chiudere.
-// Il testo è NEUTRO di proposito: se l'uscita valga per tutti i dispositivi o solo per questo lo decide il
-// titolare, e quando lo deciderà si cambia una chiave (`uscitaConfermaTitolo`/`uscitaConfermaTesto`).
+// Il testo dice «su questo dispositivo» perché la decisione è presa (titolare, 13/11/2026): `doLogout` chiude solo la
+// sessione locale (`signOut({ scope: 'local' })`). Se cambiasse, vanno cambiati INSIEME scope e chiave
+// `uscitaConfermaTitolo` (it/en in `shared.json`).
 // «Annulla» è il PRIMO controllo del dialogo, quindi il predefinito: `Modal` mette il focus sul primo.
 // Esc o un tocco fuori chiudono senza uscire (`Modal`). Aree di tocco da 44px.
 export function ConfermaUscita({

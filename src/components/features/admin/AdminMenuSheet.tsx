@@ -247,6 +247,9 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
   const tutteAttive = effettive.length === sedi.length;
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // Con la conferma d'uscita in un portale su `document.body` il tasto risale comunque i genitori REACT: se il
+    // bersaglio non sta nel DOM del foglio, l'evento è del dialogo e il foglio lo ignora (Esc, ma anche il Tab).
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();

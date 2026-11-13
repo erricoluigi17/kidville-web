@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 
 /**
  * DOVE STA LA VOCE — nei tre menu veri, e nell'ordine giusto.
@@ -195,5 +195,43 @@ describe('la voce «Passa a…» è nei tre menu, lontano da «Esci», e l’alt
 
     expect(screen.queryByRole('button', { name: /Passa a/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Cambia profilo/i })).toBeNull();
+  });
+});
+
+// O1 (revisione lotto 3): la conferma d'uscita sta in un portale su `document.body`, ma i tasti risalgono comunque i
+// genitori REACT del foglio. Esc sul dialogo deve chiudere SOLO il dialogo; col solo foglio aperto chiude il foglio.
+describe('Esc con la conferma d\'uscita aperta chiude solo la conferma, non il foglio sotto', () => {
+  it('foglio Direzione (AdminMenuSheet)', async () => {
+    stub.pathname = '/admin';
+    profiliServiti = STAFF_E_GENITORE;
+    const onClose = vi.fn();
+    const trigger = { current: null } as React.RefObject<HTMLButtonElement | null>;
+    render(
+      <AccessibilityProvider>
+        <AdminMenuSheet open onClose={onClose} withUser={(h) => h} ruolo="segreteria" returnFocusRef={trigger} />
+      </AccessibilityProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /^Esci$/i }));
+    const dialogo = await screen.findByRole('dialog', { name: /Vuoi uscire/i });
+    fireEvent.keyDown(within(dialogo).getByRole('button', { name: 'Annulla' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: /Vuoi uscire/i })).toBeNull();
+    expect(onClose, 'il foglio resta aperto').not.toHaveBeenCalled();
+
+    // Con la sola conferma chiusa, Esc chiude il foglio come prima.
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Esci$/i }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('foglio Famiglia (BottomNav genitore)', async () => {
+    render(<AccessibilityProvider><BottomNav /></AccessibilityProvider>);
+    await apriMenu(/Apri il menu|Menu/i);
+    fireEvent.click(await screen.findByRole('button', { name: /^Esci$/i }));
+    const dialogo = await screen.findByRole('dialog', { name: /Vuoi uscire/i });
+    fireEvent.keyDown(within(dialogo).getByRole('button', { name: 'Annulla' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: /Vuoi uscire/i })).toBeNull();
+    expect(screen.getByRole('dialog', { name: /Menu|famiglia/i }), 'il foglio resta aperto').toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Esci$/i }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Esci$/i })).toBeNull());
   });
 });

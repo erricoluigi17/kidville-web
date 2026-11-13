@@ -327,6 +327,8 @@ export default function BottomNav() {
                 aria-modal="true"
                 aria-labelledby="kv-menu-famiglia-titolo"
                 onKeyDown={(e) => {
+                  // Bersaglio nel portale della conferma d'uscita (fuori da questo foglio): non è un Esc per il foglio.
+                  if (!e.currentTarget.contains(e.target as Node)) return;
                   if (e.key === 'Escape') {
                     e.preventDefault();
                     setShowMenu(false);

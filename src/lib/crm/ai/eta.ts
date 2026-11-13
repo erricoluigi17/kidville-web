@@ -2,7 +2,7 @@
  * CRM ASSISTENTE FAMIGLIE · ORIENTAMENTO PER ETÀ.
  *
  * Indica gli ordini da proporre nell'anno scolastico corrente o nel prossimo.
- * Il nido parte dai 6 mesi di vita; i limiti superiori sono quelli per anno di nascita sotto.
+ * Il nido parte dai 3 mesi di vita; i limiti superiori sono quelli per anno di nascita sotto.
  * L'anno effettivo va confermato nella prenotazione. Per orientarsi basta il
  * mese di nascita: il giorno esatto non serve.
  */
@@ -12,8 +12,8 @@ import { annoDelGiorno, giornoValido } from '@/lib/anno-scolastico'
 export type Grado = 'nido' | 'infanzia' | 'primaria'
 
 const GRADI: readonly Grado[] = ['nido', 'infanzia', 'primaria']
-/** Il nido accoglie dai 6 mesi (decisione del titolare, 13/11/2026). */
-export const ETA_MINIMA_NIDO_MESI = 6
+/** Il nido accoglie dai 3 mesi (decisione del titolare, 13/11/2026). */
+export const ETA_MINIMA_NIDO_MESI = 3
 
 const FORMA_MESE = /^\d{4}-(0[1-9]|1[0-2])$/
 

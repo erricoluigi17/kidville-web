@@ -177,7 +177,7 @@ Decisione del titolare (13/11/2026). La visita si rifiuta per età (`etaCoperta:
 | Cesa | nido, infanzia, primaria |
 | Demo (prove) | nido, infanzia, primaria |
 
-Una sede senza righe non offre nessun servizio: la richiesta passa a una persona. Le fasce d’età sono calcolate dal solo mese di nascita (`src/lib/crm/ai/eta.ts`): nido dai 6 mesi di vita e fino ai 2 anni compiuti entro il 31 dicembre dell’anno di ingresso, infanzia da 3 a 5 anni con l’anticipo per i nati entro aprile, primaria da 6 a 10 anni con lo stesso anticipo. L’assistente può dire la fascia, mai la classe. I valori iniziali li inserisce la migrazione `20261113100000_crm_servizi_sede.sql`; per ora si cambiano con un intervento sul database, non c’è ancora una pagina nelle impostazioni del CRM.
+Una sede senza righe non offre nessun servizio: la richiesta passa a una persona. Le fasce d’età sono calcolate dal solo mese di nascita (`src/lib/crm/ai/eta.ts`): nido dai 3 mesi di vita e fino ai 2 anni compiuti entro il 31 dicembre dell’anno di ingresso, infanzia da 3 a 5 anni con l’anticipo per i nati entro aprile, primaria da 6 a 10 anni con lo stesso anticipo. L’assistente può dire la fascia, mai la classe. I valori iniziali li inserisce la migrazione `20261113100000_crm_servizi_sede.sql`; per ora si cambiano con un intervento sul database, non c’è ancora una pagina nelle impostazioni del CRM.
 
 ## Prima di aprire alle sedi vere
 

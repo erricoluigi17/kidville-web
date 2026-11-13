@@ -419,8 +419,14 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(r.status).toBe(201)
   })
 
-  it('4 mesi: sotto i 6 mesi nessun servizio, ETA_NON_COPERTA', async () => {
+  it('4 mesi: il nido è offerto, la visita si fissa', async () => {
+    h.rpc.mockReturnValueOnce(esito(creata()))
     const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-07-10' }] })
+    expect(r.status).toBe(201)
+  })
+
+  it('2 mesi: sotto i 3 mesi nessun servizio, ETA_NON_COPERTA', async () => {
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-09-10' }] })
     expect(r.status).toBe(422)
     expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
     expect(h.rpc).not.toHaveBeenCalled()

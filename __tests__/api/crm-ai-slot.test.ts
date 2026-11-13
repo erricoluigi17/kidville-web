@@ -270,7 +270,8 @@ describe('GET /api/crm/ai/slot', () => {
 
   it.each([
     ['8 mesi: nido', '2026-03', ['nido'], true],
-    ['4 mesi: nessun servizio', '2026-07', [], false],
+    ['4 mesi: nido', '2026-07', ['nido'], true],
+    ['2 mesi: nessun servizio', '2026-09', [], false],
     ['4 anni: infanzia', '2022-06', ['infanzia'], true],
   ])('sede A (nido e infanzia) · %s', async (_caso, nascita, gradi, coperta) => {
     programma(null, [{}])

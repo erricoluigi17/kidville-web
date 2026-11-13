@@ -3,9 +3,9 @@ import { gradiPerNascita, meseDiNascita } from '@/lib/crm/ai/eta'
 
 describe('gradiPerNascita', () => {
   it.each([
-    ['2026-05', ['nido']], // 6 mesi compiuti per mese: il nido comincia qui
-    ['2026-06', []], // 5 mesi: sotto i 6 mesi il nido non c'è
-    ['2026-07', []],
+    ['2026-08', ['nido']], // 3 mesi per mese di calendario: il nido comincia qui
+    ['2026-07', ['nido']],
+    ['2026-09', []], // 2 mesi: sotto i 3 mesi il nido non c'è
     ['2026-10', []],
     ['2026-11', []], // 0 mesi
     ['2025-04', ['nido', 'infanzia']], // anticipo infanzia nell'anno prossimo
@@ -35,8 +35,8 @@ describe('gradiPerNascita', () => {
   })
 
   it('accetta il 29 febbraio di un anno bisestile', () => {
-    expect(gradiPerNascita('2023-08', '2024-02-29')).toEqual(['nido'])
-    expect(gradiPerNascita('2023-09', '2024-02-29')).toEqual([])
+    expect(gradiPerNascita('2023-11', '2024-02-29')).toEqual(['nido'])
+    expect(gradiPerNascita('2023-12', '2024-02-29')).toEqual([])
   })
 
   it.each(['2023-02-29', '2026-04-31', '2026-01-00', '2026-13-01', '2026-9-01', '2026-09-01\n'])(

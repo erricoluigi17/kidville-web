@@ -3,22 +3,23 @@
 import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { CalendarDays, ChartColumn, Clock, ContactRound, PhoneCall } from 'lucide-react'
+import { CalendarDays, ChartColumn, Clock, ContactRound, KeyRound, PhoneCall } from 'lucide-react'
 import { Tabs, type TabOption } from '@/components/ui/cockpit'
 import { ColonnaDettaglio } from '@/components/ui/ColonnaDettaglio'
 import { schedaDaParametro, tabDaParametro, type TabCrm } from '@/lib/crm/tab'
 import { AgendaSettimana } from './agenda/AgendaSettimana'
 import { DisponibilitaPersona } from './disponibilita/DisponibilitaPersona'
 import { DaRichiamare } from './follow-up/DaRichiamare'
+import { Integrazioni } from './integrazioni/Integrazioni'
 import { DettaglioScheda } from './schede/DettaglioScheda'
 import { ElencoSchede } from './schede/ElencoSchede'
 import { StatisticheCrm } from './statistiche/StatisticheCrm'
 
 /**
- * CRM DELLA SEGRETERIA · LA CORNICE: cinque schede e un pannello di dettaglio.
+ * CRM DELLA SEGRETERIA · LA CORNICE: sei schede e un pannello di dettaglio.
  *
- * ── LE CINQUE SCHEDE ───────────────────────────────────────────────────────────
- * `?tab=` sceglie quella aperta; senza `tab`, o con un valore che non è una delle cinque, si apre
+ * ── LE SEI SCHEDE ───────────────────────────────────────────────────────────
+ * `?tab=` sceglie quella aperta; senza `tab`, o con un valore che non è una delle sei, si apre
  * l'agenda. Un indirizzo inventato non deve mai dare una pagina vuota: `tabDaParametro`
  * (`src/lib/crm/tab.ts`) ripiega sempre su una scheda che esiste.
  *
@@ -99,9 +100,10 @@ export function CrmShell({ scuolaId }: { scuolaId: string }) {
     { id: 'schede', label: t('tabSchede'), icon: ContactRound },
     { id: 'disponibilita', label: t('tabDisponibilita'), icon: Clock },
     { id: 'statistiche', label: t('tabStatistiche'), icon: ChartColumn },
+    { id: 'integrazioni', label: t('tabIntegrazioni'), icon: KeyRound },
   ]
 
-  // Le statistiche e la disponibilità non aprono famiglie: nessun pannello laterale, mai.
+  // Solo agenda, richiami e schede possono aprire il pannello di una famiglia.
   const conDettaglio = tab === 'agenda' || tab === 'richiamare' || tab === 'schede'
   const colonnaVisibile = conDettaglio && (tab === 'schede' || schedaAperta !== null)
 
@@ -116,6 +118,7 @@ export function CrmShell({ scuolaId }: { scuolaId: string }) {
           {tab === 'schede' && <ElencoSchede scuolaId={scuolaId} onApri={apri} />}
           {tab === 'disponibilita' && <DisponibilitaPersona scuolaId={scuolaId} />}
           {tab === 'statistiche' && <StatisticheCrm scuolaId={scuolaId} />}
+          {tab === 'integrazioni' && <Integrazioni scuolaId={scuolaId} />}
         </div>
 
         {colonnaVisibile && (

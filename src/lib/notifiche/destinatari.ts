@@ -3,6 +3,7 @@ import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { isScuolaE2E } from '@/lib/scuole/reali'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
 import { logEvento } from '@/lib/logging/logger'
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 
 /** Codici PostgREST/Postgres di «schema non ancora migrato» (DB E2E della CI). */
 const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
@@ -184,6 +185,10 @@ export async function genitoriDiScuola(
   }
 }
 
+interface OpzioniStaffScuola {
+  rigoroso?: boolean
+}
+
 /**
  * Staff della scuola con uno dei ruoli dati (schema legacy doppio: il ruolo può
  * stare su `role` O `ruolo` — stesso pattern di panic-alert e mensa).
@@ -200,12 +205,17 @@ export async function genitoriDiScuola(
  * finivano esattamente lì: nei log «non so a quale sede appartiene» e «avvisati
  * tutti» si leggevano identici. È `error` e non `warn` perché una notifica che
  * non sa dove andare è un guasto di configurazione, non una normalità.
+ *
+ * In modalità rigorosa un guasto di lettura risale al chiamante come solo
+ * codice tecnico: un'agenda non può proporre orari con un elenco parziale.
  */
 export async function staffScuola(
   supabase: SupabaseClient,
   scuolaId: string | null | undefined,
   ruoli: string[],
+  opzioni?: OpzioniStaffScuola,
 ): Promise<string[]> {
+  const rigoroso = opzioni?.rigoroso === true
   if (!scuolaId) {
     logEvento('notifica', 'error', {
       operazione: 'staffScuola', esito: 'sede-non-risolta', ruoli: ruoli.join(','),
@@ -226,6 +236,7 @@ export async function staffScuola(
     const { data: primari, error: errPrimari } = await supabase
       .from('utenti').select('id, role, ruolo').eq('scuola_id', scuolaId)
     if (errPrimari) {
+      if (rigoroso) throw errPrimari
       logEvento('notifica', 'error', {
         operazione: 'staffScuola', esito: 'utenti-non-letti', sede_id: scuolaId,
       }, errPrimari)
@@ -241,6 +252,7 @@ export async function staffScuola(
     const { data: ponte, error: errPonte } = await supabase
       .from('utenti_scuole').select('utente_id').eq('scuola_id', scuolaId)
     if (errPonte) {
+      if (rigoroso) throw errPonte
       const codice = (errPonte as { code?: string }).code ?? ''
       logEvento('notifica', SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
         operazione: 'staffScuola', esito: 'ponte-non-letto', sede_id: scuolaId,
@@ -251,6 +263,7 @@ export async function staffScuola(
       const { data: utentiPonte, error: errUtentiPonte } = await supabase
         .from('utenti').select('id, role, ruolo').in('id', daPonte)
       if (errUtentiPonte) {
+        if (rigoroso) throw errUtentiPonte
         logEvento('notifica', 'error', {
           operazione: 'staffScuola', esito: 'utenti-ponte-non-letti', sede_id: scuolaId,
         }, errUtentiPonte)
@@ -273,6 +286,7 @@ export async function staffScuola(
     }
     return [...ids]
   } catch (e) {
+    if (rigoroso) throw erroreDbSoloCodice(e)
     // Un catch muto qui significa notifiche che non partono senza che nessuno lo sappia.
     logEvento('notifica', 'error', {
       operazione: 'staffScuola', esito: 'eccezione', sede_id: scuolaId,

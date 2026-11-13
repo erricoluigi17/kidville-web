@@ -1,8 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { conContestoCrmAi, contestoCrmAiAttivo } from '@/lib/logging/context';
 import { logEvento } from '@/lib/logging/logger';
 import { segnaleConTetto } from '@/lib/logging/tetto';
 import { eScadenzaSupabase } from '@/lib/logging/supabase-fetch';
 import { conTettoDiTempo } from '@/lib/auth/errore-accesso';
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico';
 
 /**
  * Rate-limiter a finestra scorrevole, con il contatore su POSTGRES.
@@ -246,27 +248,31 @@ function degrada(motivo: MotivoDegrado, gruppo: string, codice?: string, err?: u
   const adesso = Date.now();
   if (adesso - ultimoLogDegrado < SILENZIO_LOG_MS) return;
   ultimoLogDegrado = adesso;
-  logEvento(
-    'db',
-    // UNA SCADENZA NON È UN GUASTO, ed è per questo che ha un livello suo.
-    //
-    // Il degrado su tetto è un comportamento PROGETTATO: il DB non ha risposto in tempo, si
-    // conta in locale, la richiesta prosegue. Registrarlo a `error` — com'era fino al
-    // 2026-08-05 — significa far scattare un errore durante il funzionamento normale, e un
-    // errore che scatta sempre insegna a tutti a ignorare gli errori: è il modo in cui si
-    // perdono quelli veri. Le altre cause restano `error`, perché lì qualcosa è davvero rotto:
-    // la funzione non esiste, la riga non ha la forma attesa, il client è esploso.
-    motivo === 'rpc_scaduta' ? 'warn' : 'error',
-    {
-      operazione: 'security/rate-limit:degrado',
-      azione: motivo,
-      tipo: gruppo,
-      esito: 'conteggio_locale',
-      error_code: codice,
-      attesa_ms: ATTESA_MASSIMA_DB_MS,
-    },
-    err,
-  );
+  // Il timeout è un degrado previsto: si conta in locale e la richiesta prosegue.
+  const livello = motivo === 'rpc_scaduta' ? 'warn' : 'error';
+  const soloMetadati = contestoCrmAiAttivo();
+  const campi = {
+    operazione: 'security/rate-limit:degrado',
+    azione: motivo,
+    tipo: soloMetadati && gruppo !== 'crm-ai' ? 'sconosciuto' : gruppo,
+    esito: 'conteggio_locale',
+    error_code: soloMetadati ? undefined : codice,
+    attesa_ms: ATTESA_MASSIMA_DB_MS,
+  };
+  if (soloMetadati) {
+    const codiceDiRipiego = 'rate_limit_crm_ai';
+    let code: string;
+    try {
+      code = erroreDbSoloCodice(err ?? { code: codice }).code ?? codiceDiRipiego;
+    } catch {
+      // Anche un errore con un getter ostile lascia il codice tecnico di ripiego.
+      code = codiceDiRipiego;
+    }
+    logEvento('db', livello, campi, { code, message: 'Errore del limitatore CRM AI' },
+      { distingui: ['azione', 'tipo'] });
+    return;
+  }
+  logEvento('db', livello, campi, err);
 }
 
 /** `iscrizione:203.0.113.7` → `iscrizione`. Il soggetto non esce da questa funzione. */
@@ -301,6 +307,7 @@ function gruppoDi(chiave: string): string {
 async function consumaCondiviso(
   chiave: string,
   opts: RateLimitOptions,
+  gruppo: string,
 ): Promise<RateLimitResult | null> {
   try {
     const supabase = await prendiClient();
@@ -321,7 +328,7 @@ async function consumaCondiviso(
     const esito = await conTettoDiTempo(conSegnale as Promise<unknown>, ATTESA_MASSIMA_DB_MS);
 
     if (esito.scaduto) {
-      degrada('rpc_scaduta', gruppoDi(chiave));
+      degrada('rpc_scaduta', gruppo);
       return null;
     }
 
@@ -342,7 +349,7 @@ async function consumaCondiviso(
       // mentre la verità era «il database non ha risposto in tempo». Due guasti che si
       // riparano in modi opposti, indistinguibili in `app_log`.
       const scaduta = eScadenzaSupabase(error);
-      degrada(scaduta ? 'rpc_scaduta' : 'rpc_errore', gruppoDi(chiave), error.code, error);
+      degrada(scaduta ? 'rpc_scaduta' : 'rpc_errore', gruppo, error.code, error);
       return null;
     }
 
@@ -356,7 +363,7 @@ async function consumaCondiviso(
       typeof riga.rimanenti !== 'number' ||
       typeof riga.riprova_fra_ms !== 'number'
     ) {
-      degrada('rpc_malformata', gruppoDi(chiave));
+      degrada('rpc_malformata', gruppo);
       return null;
     }
 
@@ -366,7 +373,7 @@ async function consumaCondiviso(
       retryAfterMs: riga.riprova_fra_ms,
     };
   } catch (err) {
-    degrada('eccezione', gruppoDi(chiave), undefined, err);
+    degrada('eccezione', gruppo, undefined, err);
     return null;
   }
 }
@@ -407,7 +414,12 @@ export async function rateLimit(
   opts: RateLimitOptions,
   now: number = Date.now(),
 ): Promise<RateLimitResult> {
-  const condiviso = await consumaCondiviso(key, opts);
+  const gruppo = gruppoDi(key);
+  // Anche il fetch che precede il degrado deve vedere il contesto CRM AI.
+  const consuma = () => consumaCondiviso(key, opts, gruppo);
+  const condiviso = await (gruppo === 'crm-ai' && !contestoCrmAiAttivo()
+    ? conContestoCrmAi(null, 'crm/ai/tetto-frequenza', '/api/crm/ai', consuma)
+    : consuma());
   if (condiviso) return condiviso;
   return consumaLocale(key, opts, now);
 }

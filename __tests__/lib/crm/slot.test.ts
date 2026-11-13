@@ -416,6 +416,58 @@ describe('calcolaSlotLiberi · il cambio dell’ora legale (Da tenere d’occhio
         expect(r.map((s) => s.inizio)).toEqual(['2026-03-29T08:00:00.000Z'])
     })
 
+    const primavera = {
+        dal: '2026-03-29',
+        al: '2026-03-29',
+        adesso: new Date('2026-03-28T08:00:00.000Z'),
+    }
+    const fasciaPrimavera = (oraInizio: string, oraFine: string, durataSlotMin: number) =>
+        fascia({ settimana: '2026-03-23', giornoSettimana: 7, oraInizio, oraFine, durataSlotMin })
+
+    it('primavera: la fascia 02:00–03:00 non contiene nessun inizio esistente', () => {
+        const r = slot({ ...primavera, fasce: [fasciaPrimavera('02:00', '03:00', 30)] })
+        expect(r).toEqual([])
+    })
+
+    it('primavera: conserva la durata reale quando l’intervallo attraversa il salto e sta nella fascia', () => {
+        const r = slot({ ...primavera, fasce: [fasciaPrimavera('01:30', '03:30', 45)] })
+        // 01:30 → 03:15 a Roma sono 45 minuti effettivi.
+        expect(r).toEqual([{ utenteId: PERSONA_1, inizio: '2026-03-29T00:30:00.000Z', fine: '2026-03-29T01:15:00.000Z' }])
+    })
+
+    it.each([
+        ['01:30', '03:15'],
+        ['01:15', '02:30'],
+    ])('primavera: una visita di un’ora sfora la fascia %s–%s anche se comincia a un’ora esistente', (oraInizio, oraFine) => {
+        const r = slot({ ...primavera, fasce: [fasciaPrimavera(oraInizio, oraFine, 60)] })
+        expect(r).toEqual([])
+    })
+
+    it('autunno: usa la seconda occorrenza dell’ora ripetuta', () => {
+        const r = slot({
+            fasce: [fascia({ giornoSettimana: 7, oraInizio: '02:00', oraFine: '03:00', durataSlotMin: 30, settimana: LUNEDI_PRIMA })],
+            dal: '2026-10-25',
+            al: '2026-10-25',
+        })
+        expect(r).toEqual([
+            { utenteId: PERSONA_1, inizio: '2026-10-25T01:00:00.000Z', fine: '2026-10-25T01:30:00.000Z' },
+            { utenteId: PERSONA_1, inizio: '2026-10-25T01:30:00.000Z', fine: '2026-10-25T02:00:00.000Z' },
+        ])
+    })
+
+    it('autunno: la fascia 01:30–03:30 comprende due visite di un’ora effettiva', () => {
+        const r = slot({
+            fasce: [fascia({ giornoSettimana: 7, oraInizio: '01:30', oraFine: '03:30', durataSlotMin: 60, settimana: LUNEDI_PRIMA })],
+            dal: '2026-10-25',
+            al: '2026-10-25',
+        })
+        // La prima visita termina alle 02:30 CEST. La successiva inizia alle 02:30 CET.
+        expect(r).toEqual([
+            { utenteId: PERSONA_1, inizio: '2026-10-24T23:30:00.000Z', fine: '2026-10-25T00:30:00.000Z' },
+            { utenteId: PERSONA_1, inizio: '2026-10-25T01:30:00.000Z', fine: '2026-10-25T02:30:00.000Z' },
+        ])
+    })
+
     it('una visita fissata domenica alle 10:00 di Roma occupa quello slot e non quello di un’ora dopo', () => {
         const r = slot({
             fasce: [fascia({ giornoSettimana: 7, oraInizio: '10:00', oraFine: '11:30', settimana: LUNEDI_PRIMA })],

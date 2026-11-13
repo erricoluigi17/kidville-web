@@ -368,6 +368,11 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'staff',
     descrizione: 'Quando una collega ti assegna una visita in agenda (il testo porta solo giorno e ora)',
   },
+  crm_visita_annullata: {
+    label: 'CRM: visita annullata',
+    gruppo: 'staff',
+    descrizione: 'Quando l’assistente annulla una visita assegnata a te (il testo porta solo giorno e ora)',
+  },
 }
 
 /** Risolve eventuali alias sul tipo canonico del catalogo. */

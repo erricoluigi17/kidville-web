@@ -890,6 +890,22 @@ describe('ElencoSchede', () => {
     rispondi('GET', URL_PERSONE, { corpo: { data: [{ id: 'persona-1', nome: 'Prova', cognome: 'Segreteria', ruolo: 'segreteria' }] } })
   })
 
+  it('mostra e apre una famiglia arrivata dal sito senza bambini', async () => {
+    rispondi('GET', URL_ELENCO, {
+      corpo: {
+        data: [riga(1, { genitore_nome: 'Famiglia Prova', origine: 'sito', bambini: [] })],
+        totale: 1, pagina: 1, perPagina: 50,
+      },
+    })
+    const onApri = vi.fn()
+    render(<ElencoSchede scuolaId={SEDE_A} onApri={onApri} />)
+
+    const famiglia = await screen.findByRole('button', { name: /Famiglia Prova/ })
+    expect(within(famiglia).getByText('Nessun bambino')).toBeInTheDocument()
+    fireEvent.click(famiglia)
+    expect(onApri).toHaveBeenCalledExactlyOnceWith('scheda-1')
+  })
+
   it('disegna le famiglie con i bambini, la prossima visita e il prossimo richiamo', async () => {
     rispondi('GET', URL_ELENCO, {
       corpo: {

@@ -230,8 +230,10 @@ sedi ammesse, ha un limite di richieste e ogni chiamata si registra senza dati p
 
 - `GET /api/crm/ai/slot?sede=…&dal=…&al=…[&persona=…]` → slot liberi, ciascuno con inizio, fine, id e nome
   di battesimo della segretaria, sede.
-- `POST /api/crm/ai/prenota` → corpo: sede, inizio, persona (facoltativa), famiglia (nome del genitore,
-  telefono, email facoltativa), bambini (nome, data di nascita), origine, nota facoltativa.
+- `POST /api/crm/ai/prenota` → corpo: sede, inizio e fine (la coppia offerta da `/slot`), famiglia (nome
+  del genitore, telefono, email facoltativa), bambini (nome, data di nascita), origine, e i campi facoltativi
+  `routine`, `paura` e `desiderio`. *(Aggiornato il 12/11/2026: al posto di «persona» e «nota» il corpo ha
+  quei tre campi. La persona la sceglie il CRM, la prima libera nell'ordine stabile; non c'è nota libera.)*
   - Se nella sede esiste già una scheda con quel telefono o quell'email, l'appuntamento va lì: niente
     doppioni. *(Scelta dell'assistente per i casi limite:)*
     - se quella scheda ha già un appuntamento «in programma», risponde `409 GIA_PRENOTATO`, con solo
@@ -242,7 +244,18 @@ sedi ammesse, ha un limite di richieste e ogni chiamata si registra senza dati p
   - La segretaria assegnata riceve una notifica nell'app.
 - `DELETE /api/crm/ai/prenotazioni/:id` → annulla, solo le prenotazioni fatte da quel token.
 
-L'AI **non legge** le schede esistenti. Nelle statistiche di «chi ha fissato» l'AI ha una riga sua.
+L'AI **non legge** le schede esistenti, salvo le eccezioni volute dal titolare il 10/11/2026, che restituiscono
+solo identificativi, stato della visita e mese di nascita (mai nomi, note o giorno di nascita):
+
+- **registra contatto** (`POST /api/crm/ai/contatti`): crea la scheda o ritrova quella della famiglia da
+  telefono o email; se l'email porta a una sola scheda e il telefono è nuovo, lo salva nel primo campo libero;
+- **ha già una visita** (`POST /api/crm/ai/contatti/stato`): dice se il numero ha una scheda e una visita;
+- **contatti nuovi** (`GET /api/crm/ai/contatti/nuovi`): elenca le schede messe a mano dalla segreteria dopo un
+  istante, con il primo recapito normalizzato, perché anche loro ricevano il primo messaggio;
+- **da richiamare** (`POST /api/crm/ai/richiami`): mette la famiglia nella lista «Da richiamare» per una persona.
+
+La lettura delle note delle visite resta fuori. Il contratto aggiornato è in `docs/crm-accesso-ai.md`.
+Nelle statistiche di «chi ha fissato» l'AI ha una riga sua.
 
 ## 9. Schermate, permessi, conservazione
 

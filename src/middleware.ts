@@ -9,6 +9,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase/public-config';
  * Middleware P0: rinnova la sessione Supabase dai cookie (refresh trasparente)
  * e reindirizza le navigazioni di pagina anonime verso `/auth/login`.
  * Le API non vengono mai reindirizzate qui: l'autorizzazione è nei gate.
+ * Le API CRM AI usano la chiave d'integrazione e vanno direttamente al loro gate.
  *
  * OSSERVABILITÀ — perché qui c'è solo un header e non il logger.
  *
@@ -17,8 +18,8 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase/public-config';
  * li attraversa (aprirlo qui sarebbe un contesto che muore alla fine di questo file).
  * L'unica cosa che passa davvero a valle è un HEADER — ed è per questo che il middleware
  * si limita a coniare `x-request-id` e a metterlo sulla richiesta: è `withRoute`, dall'altra
- * parte, a rileggerlo e ad aprirci sopra il contesto della richiesta. Un solo id di
- * correlazione, dal primo hop all'ultima riga.
+ * parte, a rileggerlo e ad aprirci sopra il contesto della richiesta. Per il CRM AI
+ * il wrapper protetto conia l'id degli eventi e della risposta.
  *
  * E non è nemmeno una scelta: importare `@/lib/logging/logger` (o `context`) da qui
  * romperebbe la build. La catena `logger → redact → node:crypto` è un modulo Node che
@@ -301,6 +302,12 @@ export async function middleware(request: NextRequest) {
     headers.set('x-request-id', requestId);
     return NextResponse.next({ request: { headers } });
   };
+
+  // Le route dell'assistente verificano la chiave con requireIntegrazioneAi.
+  // Qui il rid va solo a valle: withRoute assegna quello della risposta AI.
+  if (pathname === '/api/crm/ai' || pathname.startsWith('/api/crm/ai/')) {
+    return conRequestId();
+  }
 
   let response = conRequestId();
 

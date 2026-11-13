@@ -300,6 +300,7 @@ function RigaFamiglia({ riga, onApri }: { riga: Riga; onApri: (schedaId: string)
       <span className="block font-barlow text-base font-extrabold uppercase text-kidville-ink">{riga.genitore_nome ?? t('rigaSenzaNome')}</span>
 
       <span className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        {riga.bambini.length === 0 && <span className={TESTO_SECONDARIO}>{t('nessunBambino')}</span>}
         {riga.bambini.map((b) => (
           <span key={b.id} className="inline-flex items-center gap-2">
             <span className="font-maven text-sm text-kidville-ink">{b.nome ?? t('rigaBambinoSenzaNome')}</span>

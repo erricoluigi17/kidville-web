@@ -74,6 +74,8 @@ export interface ContestoRichiesta {
 }
 
 const als = new AsyncLocalStorage<ContestoRichiesta>();
+const richiesteCrmAi = new WeakMap<ContestoRichiesta, Request | null>();
+const delegheCrmAi = new WeakMap<ContestoRichiesta, WeakMap<Request, ContestoRichiesta>>();
 
 /**
  * Guardia di rientranza, su un ALS SEPARATO. Due ragioni, entrambe vincolanti:
@@ -146,6 +148,65 @@ export function conContesto<T>(
     return als.run(store, fn);
 }
 
+const PATH_CHIAVI_CRM = '/api/admin/crm/integrazioni';
+const FORMA_PATH_CHIAVI_CRM = /^\/api\/admin\/crm\/integrazioni(?:\/([^/]+))?\/?$/;
+
+/** Riconosce le due route delle chiavi e restituisce il pattern, senza riportare l’id richiesto. */
+export function pathTecnicoChiaviCrm(nome = '', path = ''): string | null {
+    if (nome === 'admin/crm/integrazioni:GET' || nome === 'admin/crm/integrazioni:POST') return PATH_CHIAVI_CRM;
+    if (nome === 'admin/crm/integrazioni/[id]:DELETE') return PATH_CHIAVI_CRM + '/[id]';
+    const match = FORMA_PATH_CHIAVI_CRM.exec(path);
+    if (!match) return null;
+    return match[1] ? PATH_CHIAVI_CRM + '/[id]' : PATH_CHIAVI_CRM;
+}
+
+/**
+ * Le route CRM AI e di gestione delle chiavi hanno un contesto di soli metadati. Si riusa solo lo store
+ * già protetto della stessa Request; da un contesto esterno non si eredita nulla.
+ * `path` e `route` vengono scelti dal codice. Il limitatore può aprire uno store
+ * tecnico senza una Request, quando il gruppo CRM AI è l'unico indicatore.
+ */
+export function conContestoCrmAi<T>(
+    richiesta: Request | null,
+    route: string,
+    path: string,
+    fn: () => Promise<T>,
+): Promise<T> {
+    const corrente = als.getStore();
+    if (corrente && richiesta && richiesteCrmAi.get(corrente) === richiesta) return fn();
+    const deleghe = corrente && richiesta ? delegheCrmAi.get(corrente) : undefined;
+    const precedente = richiesta && deleghe?.get(richiesta);
+    if (precedente) return als.run(precedente, fn);
+
+    const store = { requestId: requestIdSicuro(''), path: pathSicuro(path), route };
+    richiesteCrmAi.set(store, richiesta);
+    if (corrente && typeof richiesta === 'object' && richiesta !== null) {
+        const mappa = deleghe ?? new WeakMap<Request, ContestoRichiesta>();
+        mappa.set(richiesta, store);
+        delegheCrmAi.set(corrente, mappa);
+    }
+    return als.run(store, fn);
+}
+
+/** Verifica che lo store sia stato aperto come contesto di soli metadati. */
+export function contestoCrmAiAttivo(): boolean {
+    const s = als.getStore();
+    return s !== undefined && richiesteCrmAi.has(s);
+}
+
+/**
+ * Completa una Request delegata a un wrapper CRM AI. Il legame vale soltanto
+ * per la stessa Request nello stesso store esterno, anche se cambia la Response.
+ */
+export function conContestoCompletamentoCrmAi<T>(
+    richiesta: Request,
+    completa: (delegata: boolean) => T,
+): T {
+    const corrente = als.getStore();
+    const delegato = corrente && delegheCrmAi.get(corrente)?.get(richiesta);
+    return delegato ? als.run(delegato, () => completa(true)) : completa(false);
+}
+
 /**
  * Il requestId arriva tipicamente da un header (`x-request-id`, `x-vercel-id`): è INPUT DEL
  * CLIENT. Finisce in ogni riga di un formato A RIGHE, quindi un `\n` nel valore non è un
@@ -190,7 +251,7 @@ export function impostaUtente(u: {
     scuolaId?: string | null;
 }): void {
     const s = als.getStore();
-    if (!s) return;
+    if (!s || richiesteCrmAi.has(s)) return;
     if (u.userId) s.userId = u.userId;
     if (u.ruolo) s.ruolo = u.ruolo;
     if (u.scuolaId) s.scuolaId = u.scuolaId;
@@ -285,7 +346,8 @@ const CONTEGGIO_SCARTATI = /^\[\+(\d+) /;
 export function impostaPayload(dove: string, valore: unknown): void {
     // Uscita rapida fuori da una richiesta: senza store non c'è niente da depositare, e
     // redigere per buttare via costerebbe una passata su ogni body in un cron o in un test.
-    if (!als.getStore()) return;
+    const s = als.getStore();
+    if (!s || richiesteCrmAi.has(s)) return;
     deposita(dove, redactInput(valore));
 }
 
@@ -301,7 +363,8 @@ export function impostaPayload(dove: string, valore: unknown): void {
  * L'`esito` è un enumerato scritto a mano nel sorgente: non è mai un valore di richiesta.
  */
 export function impostaPayloadEsito(dove: string, esito: string): void {
-    if (!als.getStore()) return;
+    const s = als.getStore();
+    if (!s || richiesteCrmAi.has(s)) return;
     deposita(dove, redact({ esito }));
 }
 

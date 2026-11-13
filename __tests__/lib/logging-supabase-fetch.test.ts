@@ -208,6 +208,209 @@ describe('fetch strumentato — emissione reale', () => {
         vi.resetModules();
     });
 
+    describe('CRM AI: al trasporto restano solo metadati tecnici', () => {
+        const nome = 'PersonaFittiziaZefiro';
+        const telefono = '+39 000 1234567';
+        const token = 'kvai_token_esclusivamente_sintetico';
+        const impronta = '71af'.repeat(16);
+        const indirizzo = 'https://crm-fetch.invalid';
+        const segreti = [nome, telefono, token, impronta, indirizzo];
+        const testo = `${nome} ${telefono} Bearer ${token} ${indirizzo}/?impronta=${impronta}`;
+
+        function controllaSink(appLog: Awaited<ReturnType<typeof caricaRumoroso>>['appLog']) {
+            const emissioni = `${scritto(log, err)}\n${inspect(appLog.mock.calls, { depth: 12 })}`;
+            expect(segreti.filter((segreto) => emissioni.includes(segreto))).toEqual([]);
+        }
+
+        it.each([
+            ['ricerca chiave', 'crm_integrazioni', 'GET', 'db', 400, '42P01', '42P01'],
+            ['RPC familiare', 'rpc/crm_ai_registra_contatto', 'POST', 'rpc', 409, '23505', '23505'],
+            ['registro idempotenza', 'crm_ai_richieste', 'GET', 'db', 422, `P0001:${token}`, 'supabase_http'],
+            ['guasto database', 'rpc/crm_ai_scheda', 'POST', 'rpc', 502, 'PGRST002', 'PGRST002'],
+        ])('protegge %s anche senza contesto', async (_caso, risorsa, method, area, status, code, codice) => {
+            const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+            const contenuto = { code, message: testo, details: testo, hint: testo, cause: testo, stack: testo };
+            const res = risposta(JSON.stringify(contenuto), status);
+            const headers = { authorization: `Bearer ${token}`, 'x-retry-count': '3' };
+            const fetchFinto = vi.fn<typeof fetch>().mockResolvedValue(res);
+            const f = crea(fetchFinto);
+            const url = `${indirizzo}/rest/v1/${risorsa}?impronta=eq.${impronta}`;
+            const body = method === 'POST' ? JSON.stringify({ nome, telefono }) : undefined;
+
+            const originale = await f(url, { method, headers, body });
+
+            expect(originale).toBe(res);
+            expect(await originale.json()).toEqual(contenuto);
+            expect(fetchFinto).toHaveBeenCalledWith(url, expect.objectContaining({ method, headers, body }));
+            controllaSink(appLog);
+            expect(scritto(err)).toContain(`code=${codice}`);
+            expect(scritto(err)).toContain(`evt=${area}`);
+            expect(scritto(err)).toContain(`metodo=${method}`);
+            expect(scritto(err)).toContain(`stato=${status}`);
+            expect(scritto(err)).toContain('tentativo=3');
+            expect(scritto(err)).toMatch(/\bms=\d+/);
+            if (status < 500) {
+                expect(appLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                    livello: 'error', evento: area, codice, statoHttp: status,
+                    contestoExtra: expect.objectContaining({ campi: expect.objectContaining({
+                        operazione: risorsa.split('/').at(-1), metodo: method, tentativo: 3,
+                    }) }),
+                }));
+            } else {
+                expect(appLog).not.toHaveBeenCalled();
+            }
+        });
+
+        it.each([
+            ['crm/ai/slot:GET', '/estraneo'],
+            [undefined, '/api/crm/ai/slot'],
+        ])('protegge sections dal contesto reale %s o dal path %s', async (route, path) => {
+            const { creaFetchStrumentato: crea, conContesto, contesto, appLog } = await caricaRumoroso();
+            const scrittore = vi.fn(() => contesto());
+            appLog.mockImplementation(async () => { scrittore(); });
+            const res = risposta(JSON.stringify({ message: testo, code: 'P0001' }), 400);
+            const f = crea(async () => res);
+
+            await conContesto({ route, path, requestId: token, payload: { query: { valore: impronta } } }, async () => {
+                expect(await f(`${indirizzo}/rest/v1/sections?filtro=${token}`)).toBe(res);
+                expect(contesto()?.payload).toEqual({ query: { valore: impronta } });
+            });
+
+            controllaSink(appLog);
+            expect(appLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                codice: 'P0001', statoHttp: 400,
+                contestoExtra: expect.objectContaining({
+                    payload: undefined, campi: expect.objectContaining({ operazione: 'sections', metodo: 'GET' }),
+                }),
+            }));
+            expect(scrittore.mock.results[0].value?.path).toContain('/api/crm/ai');
+            expect(scrittore.mock.results[0].value?.requestId).not.toBe(token);
+        });
+
+        it('app_log distingue operazione e metodo degli errori HTTP, mantenendo la deduplica', async () => {
+            const rpc = vi.fn<(nome: string, args: { righe: Record<string, unknown>[] }) => Promise<{ error: null }>>()
+                .mockResolvedValue({ error: null });
+            vi.resetModules();
+            // Il sink è reale fino alla RPC: il suo client finto impedisce qualsiasi scrittura di rete.
+            vi.doMock('@/lib/supabase/server-client', () => ({ createLogClient: async () => ({ rpc }) }));
+            try {
+                const { creaFetchStrumentato: crea } = await import('@/lib/logging/supabase-fetch');
+                const { conContesto } = await import('@/lib/logging/context');
+                const f = crea(async () => risposta(JSON.stringify({ code: '42501', message: testo }), 403));
+                const casi = [
+                    { operazione: 'crm_appuntamenti', metodo: 'GET' },
+                    { operazione: 'crm_indisponibilita', metodo: 'GET' },
+                    { operazione: 'crm_appuntamenti', metodo: 'POST' },
+                    { operazione: 'crm_appuntamenti', metodo: 'GET' },
+                ];
+
+                await conContesto({
+                    route: 'crm/ai/slot:GET', path: '/api/crm/ai/slot', requestId: token,
+                    payload: { query: { valore: impronta } },
+                }, async () => {
+                    for (const [i, { operazione, metodo }] of casi.entries()) {
+                        await f(`${indirizzo}/rest/v1/${operazione}?filtro=${token}${i}`, {
+                            method: metodo, headers: { 'x-retry-count': String(i) },
+                        });
+                    }
+                });
+
+                await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(casi.length));
+                const identita = rpc.mock.calls.map(([funzione, { righe }], i) => {
+                    expect(funzione).toBe('app_log_registra');
+                    expect(righe).toHaveLength(1);
+                    expect(righe[0]).toMatchObject({
+                        stato_http: 403, codice: '42501',
+                        contesto: { campi: casi[i] }, fingerprint: expect.any(String),
+                    });
+                    expect(righe[0].contesto).not.toHaveProperty('payload');
+                    return righe[0].fingerprint;
+                });
+                const emissioni = `${scritto(log, err)}\n${inspect(rpc.mock.calls, { depth: 12 })}`;
+                expect(segreti.filter((segreto) => emissioni.includes(segreto))).toEqual([]);
+                expect(new Set(identita).size).toBe(3);
+                expect(identita[0]).toBe(identita[3]);
+            } finally {
+                vi.doUnmock('@/lib/supabase/server-client');
+            }
+        });
+
+        it('mantiene la classificazione 406 e il segnale dell’anno, senza riportarne il testo', async () => {
+            const { creaFetchStrumentato: crea, conContesto, erroreAnnoDellaRichiesta, appLog } = await caricaRumoroso();
+            const url = `${indirizzo}/rest/v1/crm_integrazioni`;
+            await crea(async () => risposta(JSON.stringify({
+                code: 'PGRST116', message: testo, details: `The result contains 0 rows: ${testo}`,
+            }), 406))(url);
+            expect(scritto(log)).toContain('code=PGRST116');
+            expect(err).not.toHaveBeenCalled();
+            expect(appLog).not.toHaveBeenCalled();
+
+            const f = crea(async () => risposta(JSON.stringify({ code: 'P0001', message: `ANNO_CHIUSO: ${testo}` }), 400));
+            await conContesto({ route: 'crm/ai/prenota:POST', path: '/api/crm/ai/prenota', requestId: 'test' }, async () => {
+                await f(`${indirizzo}/rest/v1/rpc/crm_ai_prenota`, { method: 'POST' });
+                expect(erroreAnnoDellaRichiesta()).toEqual({ code: 'P0001', message: 'ANNO_CHIUSO' });
+            });
+            expect(appLog).toHaveBeenCalledTimes(1);
+            controllaSink(appLog);
+        });
+
+        it.each(['html', 'json troncato', 'lettura fallita'])('protegge il corpo %s e lo lascia al chiamante', async (caso) => {
+            const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+            const grezzo = caso === 'html' ? `<h1>${testo}</h1>` : `{"message":"${testo}`;
+            const res = risposta(grezzo, 400);
+            if (caso === 'lettura fallita') vi.spyOn(res, 'clone').mockImplementation(() => { throw new Error(testo); });
+
+            expect(await crea(async () => res)(`${indirizzo}/rest/v1/crm_integrazioni`)).toBe(res);
+            expect(await res.text()).toBe(grezzo);
+            controllaSink(appLog);
+            expect(appLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ codice: 'supabase_http' }));
+        });
+
+        it.each([
+            ['errore di rete', `NomeErrore_${token}`, 'error', 'errore_rete'],
+            ['annullamento', 'AbortError', 'info', 'abort'],
+            ['scadenza', 'TimeoutError', 'error', 'timeout'],
+        ])('protegge %s, conserva il livello e rilancia come prima', async (_caso, name, livello, codice) => {
+            const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+            const guasto = Object.assign(new Error(testo, { cause: new Error(testo) }), {
+                name, code: `malformato-${token}`, stack: `Error: ${testo}\n    at x (${indirizzo}/${token}:1:2)`,
+            });
+            const f = crea(vi.fn<typeof fetch>().mockRejectedValue(guasto));
+            const chiamata = f(`${indirizzo}/rest/v1/rpc/crm_ai_scheda`, { method: 'POST' });
+
+            if (name === 'TimeoutError') {
+                await expect(chiamata).rejects.toMatchObject({ name: 'SupabaseTimeoutError', code: 'ABORT_ERR', cause: guasto });
+            } else {
+                await expect(chiamata).rejects.toBe(guasto);
+            }
+            expect(scritto(livello === 'info' ? log : err)).toContain(`code=${codice}`);
+            expect(livello === 'info' ? err : log).not.toHaveBeenCalled();
+            expect(appLog).not.toHaveBeenCalled();
+            controllaSink(appLog);
+        });
+
+        it('mantiene l’attesa del retry e la risposta OK originale', async () => {
+            const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+            const res = new Response(testo, { status: 503, headers: { 'retry-after': '120' } });
+            const ok = risposta(JSON.stringify({ nome, telefono }), 200);
+            const clone = vi.spyOn(ok, 'clone');
+            const base = vi.fn<typeof fetch>().mockResolvedValueOnce(res).mockResolvedValueOnce(ok);
+            const f = crea(base);
+            const url = `${indirizzo}/rest/v1/crm_integrazioni?impronta=eq.${impronta}`;
+
+            const daRitentare = await f(url);
+            expect(daRitentare.status).toBe(503);
+            expect(daRitentare.headers.get('retry-after')).toBe('2');
+            expect(await daRitentare.text()).toBe(testo);
+            expect(await f(url, { headers: { 'x-retry-count': '1' } })).toBe(ok);
+            expect(clone).not.toHaveBeenCalled();
+            expect(await ok.json()).toEqual({ nome, telefono });
+            expect(err).not.toHaveBeenCalled();
+            expect(log).not.toHaveBeenCalled();
+            expect(appLog).not.toHaveBeenCalled();
+        });
+    });
+
     /* ── L'INVARIANTE ────────────────────────────────────────────────────── */
 
     it('INVARIANTE: ogni 4xx applicativo di PostgREST è un error PERSISTITO', async () => {

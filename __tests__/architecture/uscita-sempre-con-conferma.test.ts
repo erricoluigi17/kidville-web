@@ -18,6 +18,8 @@ import { describe, expect, it } from 'vitest'
 // Gli alias si risolvono dall'AST: `import { doLogout as esci }` e `const { signOut } = …` / `{ signOut: esci }` (binding pattern)
 // contano come `doLogout`/`signOut`, e i loro usi seguono le stesse regole. (Gli identificatori si confrontano per testo:
 // può sbagliare solo verso il rosso.)
+// L'analisi è STATICA: una chiave costruita a runtime (`auth['sign' + 'Out']()`) o un identificatore dentro una chiave
+// computata (`{ [nome]: esci }`) non si vedono.
 const ECCEZIONI = [
   'src/lib/auth/logout.ts',
   'src/components/providers/BiometricGate.tsx',
